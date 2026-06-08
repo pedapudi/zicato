@@ -2700,13 +2700,18 @@
 
   /* ===================  tournament builder (B2)  =================== */
 
-  /* the top-bar nav entry. */
-  .dt-nav-build { display: inline-flex; align-items: center; gap: 5px; font-family: var(--v2-mono);
+  /* the top-bar nav entries — the ⚒ builder (its own full-width view) and the
+   * ⚙ settings chip read as a peer set, so they share one chip rule. */
+  .dt-nav-build,
+  .dt-nav-builder { display: inline-flex; align-items: center; gap: 5px; font-family: var(--v2-mono);
     font-size: 11px; color: var(--v2-ink-soft); border: 1px solid var(--v2-rule); border-radius: 5px;
     padding: 4px 9px; text-decoration: none; transition: background 0.15s, color 0.15s, border-color 0.15s; }
-  .dt-nav-build:hover { background: var(--v2-accent); color: var(--v2-paper); border-color: var(--v2-accent); }
-  .dt-nav-build-glyph { color: var(--v2-accent); }
-  .dt-nav-build:hover .dt-nav-build-glyph { color: var(--v2-paper); }
+  .dt-nav-build:hover,
+  .dt-nav-builder:hover { background: var(--v2-accent); color: var(--v2-paper); border-color: var(--v2-accent); }
+  .dt-nav-build-glyph,
+  .dt-nav-builder-glyph { color: var(--v2-accent); }
+  .dt-nav-build:hover .dt-nav-build-glyph,
+  .dt-nav-builder:hover .dt-nav-builder-glyph { color: var(--v2-paper); }
 
   /* the ZICATO-LEVEL harmonograf entry — top-bar "execution ↗" deep-link
    * into the meta-loop session. Matches the nav-build chip so the two top-bar
@@ -2938,6 +2943,12 @@
   a.dn-set-railitem-active { background: var(--v2-rule-soft); color: var(--v2-ink); border-color: var(--v2-rule); }
   .dn-set-railglyph { color: var(--v2-accent); font-size: 12px; flex: none; width: 14px; text-align: center; }
   .dn-set-raillabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  /* the LAUNCHER rail entry links OUT to the standalone `#/builder` view — a
+   * trailing ↗ marks it as a navigation away (not an in-host section) and a
+   * hairline below separates it from the in-host sections. */
+  a.dn-set-raillauncher { margin-bottom: 5px; padding-bottom: 11px; border-bottom: 1px solid var(--v2-rule-soft); border-radius: 5px; }
+  .dn-set-raillaunch-glyph { margin-left: auto; color: var(--v2-ink-faint); font-size: 11px; flex: none; }
+  a.dn-set-raillauncher:hover .dn-set-raillaunch-glyph { color: var(--v2-accent); }
   .dn-set-body { min-width: 0; }
   .dn-set-panel { background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 4px;
     padding: 11px 13px; margin: 12px 0; }

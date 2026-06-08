@@ -1084,6 +1084,12 @@ test('top bar: NO typeface picker (removed → Settings only); colour dropdown +
   assert(allByClass(topbar, 'dt-scale-pill')[0], 'the page-scale pill is still in the top bar');
   assert(allByClass(topbar, 'dt-status')[0], 'the live-status pill is still in the top bar');
   assert(allByClass(topbar, 'dt-nav-build')[0], 'the settings link is still in the top bar');
+  // the TOURNAMENT BUILDER is its own top-level view now — a discoverable nav
+  // entry sits beside the ⚙ settings chip and links to the standalone `#/builder`.
+  const navBuilder = allByClass(topbar, 'dt-nav-builder')[0];
+  assert(navBuilder, 'the tournament-builder nav entry is in the top bar (beside settings)');
+  assertEqual(navBuilder.getAttribute('href'), '#/builder', 'the builder nav entry links to the standalone builder view');
+  assertEqual(navBuilder.getAttribute('href'), router.href('builder', {}), 'the builder nav href is the router-canonical link (single source of truth)');
   assert(allByClass(topbar, 'dt-brand')[0], 'the brand is still in the top bar');
 
   // applyTypeface still applies live (the shared store path is intact even with
@@ -1102,6 +1108,68 @@ test('top bar: NO typeface picker (removed → Settings only); colour dropdown +
   shell.applyTypeface('editorial', root);
   assertEqual(Number(dot.getAttribute('cx')), cxBefore, 'the dot cx is unchanged across typeface switches');
   assertEqual(Number(dot.getAttribute('cx')), shell.wordmarkDotCx(), 'the dot cx still equals the computed brand-mono stem centre');
+});
+
+// THE STANDALONE BUILDER VIEW. `#/builder` is its own first-class view now
+// (promoted out of Settings): the shell's view dispatcher renders it FULL-WIDTH
+// in the main detail host (.dt-viewhost), NOT nested in the settings
+// section-host. We mount the real shell, navigate to `#/builder`, and assert
+// the builder's own chrome (.dn-builder) lands in the main view host with NO
+// settings section-host wrapping it (the un-nesting / clutter fix).
+test('view dispatcher: #/builder renders the builder full-width in the main view host (un-nested from settings)', async () => {
+  freshState();
+  const listeners = { hashchange: [] };
+  globalThis.HashChangeEvent = function HashChangeEvent() {};
+  globalThis.EventSource = function EventSource() { this.readyState = 0; this.addEventListener = () => {}; this.close = () => {}; };
+  globalThis.EventSource.CLOSED = 2;
+  globalThis.window = globalThis.window || {};
+  globalThis.window.localStorage = globalThis.window.localStorage || { getItem() { return null; }, setItem() {} };
+  globalThis.window.addEventListener = (t, fn) => { (listeners[t] = listeners[t] || []).push(fn); };
+  // a fetch that serves the env fixtures PLUS the builder's config + draft so
+  // its render() resolves its panes (and a steady draft so the chrome paints).
+  globalThis.fetch = async (path) => {
+    if (String(path).startsWith('/builder/config')) {
+      return { ok: true, json: async () => ({ chat_enabled: false, agent: {}, skills: [] }) };
+    }
+    if (String(path).startsWith('/builder/draft')) {
+      return { ok: true, json: async () => ({ session: 'dashboard', draft: { scoring: { tournament: { structure: 'gauntlet', params: {} } }, board: [], holdout: { train_ids: [], holdout_ids: [] }, proposer: {} }, cost: { board_runs_per_round: 0, breakdown: [] }, warnings: [], diff: { changed_components: [], rolls_epoch: false } }) };
+    }
+    const v = lookupFixture(FIXTURE, path);
+    if (v !== undefined) return { ok: true, json: async () => v };
+    return { ok: false, status: 404, json: async () => ({ error: 'not found: ' + path }) };
+  };
+  const loc = { _hash: '#/builder', search: '' };
+  Object.defineProperty(loc, 'hash', {
+    get() { return this._hash; },
+    set(v) { this._hash = v; for (const fn of (listeners.hashchange || [])) fn(); },
+  });
+  globalThis.location = loc;
+  globalThis.window.location = loc;
+  globalThis.window.dispatchEvent = () => { for (const fn of (listeners.hashchange || [])) fn(); };
+
+  const root = document.createElement('div');
+  document.body.appendChild(root);
+  shell.mountShell(root);
+  // let the async dispatch + the builder's config/draft fetch settle.
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+
+  const viewhost = allByClass(root, 'dt-viewhost')[0];
+  assert(viewhost, 'the main view host exists');
+  // the builder mounted INSIDE the main view host (full-width), not a settings host.
+  const builderRoot = allByClass(viewhost, 'dn-builder')[0];
+  assert(builderRoot, 'the builder chrome (.dn-builder) rendered in the main view host');
+  // it is NOT wrapped in the settings section-host (the un-nesting / clutter fix):
+  // no .dn-settings surface and no settings section-rail in the view host.
+  assertEqual(allByClass(viewhost, 'dn-settings').length, 0, 'the builder is NOT nested inside the settings surface');
+  assertEqual(allByClass(viewhost, 'dn-set-rail').length, 0, 'no settings section-rail wraps the builder (no double rail)');
+  // the builder kept its own four-pane chrome (its own rail + preview pane).
+  assert(allByClass(viewhost, 'dn-bld-preview')[0], 'the builder live-preview pane rendered full-width');
+  // the breadcrumb reads environment › tournament builder (no settings crumb).
+  const crumbs = allByClass(root, 'dt-crumbs')[0];
+  assert(crumbs && (crumbs.textContent || '').toLowerCase().includes('tournament builder'), 'the breadcrumb names the tournament builder');
+  assert(crumbs && !(crumbs.textContent || '').toLowerCase().includes('settings'), 'the builder breadcrumb does NOT pass through settings');
 });
 
 test('compare primitives: comparePicker reflects the value; splitFrame yields two sides only when B is given', () => {

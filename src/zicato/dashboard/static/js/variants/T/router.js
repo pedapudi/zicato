@@ -27,6 +27,12 @@
 export const PREFIX = '#';
 export const VIEWS = ['home', 'epoch', 'gens', 'candidate', 'diff', 'boards', 'board', 'mutations', 'publication', 'builder', 'settings'];
 
+// The Settings section a bare `#/settings` opens. The tournament builder used
+// to be the default Settings section; now that the builder is its OWN view,
+// Settings defaults to the read-mostly contract roll-up. Shared with
+// views/settings.js so the router's `up()` and the view agree on the default.
+export const DEFAULT_SETTINGS_SECTION = 'contract';
+
 // Split the hash into its path part and its `~k=v` suffix params (the compare
 // target). Everything before the first `~` is the structural path.
 function splitHash(hash) {
@@ -51,15 +57,18 @@ export function parseRoute(hash) {
   // bare `#/` prefix: the path part is everything after the leading slash.
   const parts = raw.replace(/^\/+/, '').split('/').filter(Boolean).map(dec);
   if (!parts.length || parts[0] === 'home') return { view: 'home', params: {}, cmp };
-  // SETTINGS (B3) homes the tournament builder + the contract / assistant /
-  // appearance sections. `#/settings[/<section>]` deep-links a section; a bare
-  // `#/settings` opens the default (builder) section.
+  // SETTINGS (B3) homes the contract / models / appearance sections. The
+  // tournament builder is NO LONGER a Settings section — it is its own
+  // first-class VIEW (below); Settings keeps only a launcher to it.
+  // `#/settings[/<section>]` deep-links a section; a bare `#/settings` opens
+  // the default (contract) section.
   if (parts[0] === 'settings') return { view: 'settings', params: { section: parts[1] || null }, cmp };
-  // `#/builder` is kept as a first-class DEEP-LINK to the builder (B2). B3
-  // re-homes the builder under Settings; the direct route resolves into the
-  // settings surface focused on its builder section, so one view component
-  // backs both entry points and the deep-link never breaks.
-  if (parts[0] === 'builder') return { view: 'settings', params: { section: 'builder' }, cmp };
+  // `#/builder` is the tournament builder's OWN first-class view (promoted out
+  // of Settings). The same route-agnostic builder module backs every entry
+  // point — the top-bar nav entry, this deep-link, the Settings launcher, and
+  // the standalone `zicato builder` CLI (which deep-links here) — but it now
+  // renders FULL-WIDTH in the main view host rather than nested in Settings.
+  if (parts[0] === 'builder') return { view: 'builder', params: {}, cmp };
   if (parts[0] !== 'e') return { view: 'home', params: {}, cmp };
 
   const epochId = parts[1] || null;
@@ -103,7 +112,7 @@ export function href(view, params, opts) {
     case 'settings':
       base = p.section ? `${PREFIX}/settings/${enc(p.section)}` : PREFIX + '/settings';
       break;
-    // `#/builder` is the canonical deep-link to the builder section.
+    // `#/builder` is the canonical link to the standalone tournament-builder view.
     case 'builder': base = PREFIX + '/builder'; break;
     case 'epoch': base = e || (PREFIX + '/'); break;
     case 'gens':
@@ -161,9 +170,12 @@ export function up(route) {
   switch (route ? route.view : 'home') {
     case 'home': return null;
     case 'settings':
-      // a non-default section steps up to the settings landing first.
-      if (p.section && p.section !== 'builder') return { view: 'settings', params: {} };
+      // a non-default section steps up to the settings landing first; the bare
+      // landing (or the default `contract` section) steps up to environment.
+      if (p.section && p.section !== DEFAULT_SETTINGS_SECTION) return { view: 'settings', params: {} };
       return { view: 'home', params: {} };
+    // the builder is its OWN view now — it steps up to environment (the crumb
+    // reads environment › tournament builder).
     case 'builder': return { view: 'home', params: {} };
     case 'epoch': return { view: 'home', params: {} };
     case 'gens':
@@ -199,7 +211,7 @@ export function crumbTrail(route) {
   switch (route.view) {
     case 'settings': {
       const labels = {
-        builder: 'tournament builder', contract: 'contract',
+        contract: 'contract',
         models: 'models / llm endpoints', appearance: 'appearance',
       };
       if (p.section && labels[p.section]) {

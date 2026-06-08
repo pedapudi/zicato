@@ -1,18 +1,18 @@
-// variants/T/views/settings.js — the Settings surface (B3).
+// variants/T/views/settings.js — the Settings surface.
 //
-// A wide Console-IV view that HOMES the flagship tournament builder alongside
-// the read-mostly contract at-a-glance, the builder-assistant config, and the
-// EDITABLE appearance pickers (colour / typeface / page scale / side-panel
-// width — every visual + layout preference). A left section rail drives ONE
-// section host on the right — the same idiom as the builder's own rail.
+// A wide Console-IV view homing the read-mostly contract at-a-glance, the
+// models / LLM-endpoint config, and the EDITABLE appearance pickers (colour /
+// typeface / page scale / side-panel width — every visual + layout
+// preference). A left section rail drives ONE section host on the right.
 //
-// RE-HOME DISCIPLINE: the tournament builder is NOT rewritten here. The B2
-// builder view module (`./builder.js`) is the single self-contained component;
-// this surface simply delegates its `builder` section to that module's
-// `render(host)`. `#/builder` still deep-links straight to this section (the
-// router resolves it into `settings/builder`), so one component backs every
-// entry point — the top-bar ⚙, the in-rail Tournament builder item, and the
-// `#/builder` deep-link / the standalone `zicato builder` CLI.
+// LAUNCHER, NOT EMBED: the tournament builder is its OWN first-class view now
+// (views/builder.js renders full-width at `#/builder`). Embedding it inside
+// this section-host nested it behind the settings rail — double rails + a
+// cramped centre. Settings therefore keeps only a LAUNCHER rail entry that
+// NAVIGATES to `#/builder` (an <a href> via the router) rather than rendering
+// the builder inside the host. One route-agnostic builder module still backs
+// every entry point: the top-bar nav entry, the `#/builder` deep-link, this
+// launcher, and the standalone `zicato builder` CLI.
 //
 // Render discipline: the chrome (rail + host) is built ONCE per mount and the
 // active section is swapped on selection; every section paints through a
@@ -27,9 +27,9 @@ import {
   SCALE_MIN, SCALE_MAX, SCALE_STEP, readScale,
   RAIL_MIN, RAIL_MAX, readRail,
 } from '../ui.js';
+import { DEFAULT_SETTINGS_SECTION } from '../router.js';
 import * as data from '../data.js';
 import { getModels, saveModels } from '../builder/api.js';
-import * as builder from './builder.js';
 // REUSE the SAME swatch-dropdown component the top bar renders (NOT a fork): the
 // settings theme picker is the very same control, so the two render identically
 // and stay in lockstep through the shared store (applyTheme → syncSwatchDropdowns).
@@ -48,12 +48,19 @@ import {
   applyTheme, applyTypeface, applyScale, resetScale, applyRail,
 } from '../shell.js';
 
+// The in-host settings sections (each drives the section host). The tournament
+// builder is NOT one of them any more — it is a launcher (LAUNCHER below) that
+// navigates out to its own full-width `#/builder` view.
 const SECTIONS = [
-  { id: 'builder', label: 'Tournament builder', glyph: '⚒' },
   { id: 'contract', label: 'Contract', glyph: '◷' },
   { id: 'models', label: 'Models / LLM endpoints', glyph: '✦' },
   { id: 'appearance', label: 'Appearance', glyph: '◑' },
 ];
+
+// The launcher rail entry: a link OUT to the standalone tournament-builder view
+// (`#/builder`). It rides at the top of the rail so the builder stays the most
+// discoverable affordance, but it navigates rather than swapping a section.
+const LAUNCHER = { view: 'builder', label: 'Tournament builder', glyph: '⚒' };
 
 // The four LLM roles the unified models section edits, in display order.
 const MODEL_ROLES = [
@@ -63,7 +70,9 @@ const MODEL_ROLES = [
   ['judge', 'Judge', 'In-run process judges / rubric matchers (falls back to auxiliary).'],
 ];
 const SECTION_IDS = SECTIONS.map((s) => s.id);
-const DEFAULT_SECTION = 'builder';
+// The default section a bare `#/settings` opens — sourced from the router so the
+// view and the router's `up()` agree (the builder is no longer the default).
+const DEFAULT_SECTION = DEFAULT_SETTINGS_SECTION;
 
 let _active = DEFAULT_SECTION;
 let _railHost = null;
@@ -72,7 +81,6 @@ let _ctx = null;
 let _models = null;         // /settings/models secret-safe view (models section)
 let _modelsDirty = false;   // an unsaved local edit is pending (digest-gate seam)
 let _modelsStatus = '';     // last save outcome message (saved / error)
-let _builderMounted = false; // the builder owns its own shared draft + chrome
 // The SHARED swatch dropdown for the Appearance theme picker — built ONCE and
 // its node REUSED across re-renders (gatedSwap re-appends the same node), so we
 // never register a fresh instance per repaint. applyTheme keeps it in sync.
@@ -104,7 +112,6 @@ export async function render(host, ctx, params) {
     root.appendChild(_railHost);
     root.appendChild(_sectionHost);
     host.appendChild(root);
-    _builderMounted = false;
   }
 
   renderRail();
@@ -113,38 +120,32 @@ export async function render(host, ctx, params) {
 
 function renderRail() {
   const digest = 'rail|' + _active;
-  gatedSwap(_railHost, digest, () => SECTIONS.map((s) => {
-    const item = el('a', {
+  gatedSwap(_railHost, digest, () => {
+    // The LAUNCHER rides first: a link OUT to the standalone `#/builder` view
+    // (it never marks active — it is not an in-host section, it navigates away).
+    const launcher = el('a', {
+      class: 'dn-set-railitem dn-set-raillauncher',
+      href: _ctx.href(LAUNCHER.view, {}),
+      title: 'Open the tournament builder (full-width view)',
+    }, [
+      el('span', { class: 'dn-set-railglyph', 'aria-hidden': 'true', text: LAUNCHER.glyph }),
+      el('span', { class: 'dn-set-raillabel', text: LAUNCHER.label }),
+      el('span', { class: 'dn-set-raillaunch-glyph', 'aria-hidden': 'true', text: '↗' }),
+    ]);
+    const items = SECTIONS.map((s) => el('a', {
       class: 'dn-set-railitem' + (s.id === _active ? ' dn-set-railitem-active' : ''),
-      // the builder section is the canonical `#/builder` deep-link; the rest
-      // ride the settings route so each section is itself deep-linkable.
-      href: s.id === 'builder' ? _ctx.href('builder', {}) : _ctx.href('settings', { section: s.id }),
+      // each section rides the settings route so it is itself deep-linkable.
+      href: _ctx.href('settings', { section: s.id }),
       'aria-current': s.id === _active ? 'page' : null,
     }, [
       el('span', { class: 'dn-set-railglyph', 'aria-hidden': 'true', text: s.glyph }),
       el('span', { class: 'dn-set-raillabel', text: s.label }),
-    ]);
-    return item;
-  }));
+    ]));
+    return [launcher, ...items];
+  });
 }
 
 async function renderSection() {
-  if (_active === 'builder') {
-    // RE-HOME: hand the section host straight to the B2 builder view. It owns
-    // its own digest-gated chrome + shared draft, so we mount it once and let
-    // its own re-dispatch path keep it fresh. (Clearing+remounting on every
-    // state tick would reset the operator's place — so we mount once.)
-    if (!_builderMounted) {
-      clearChildren(_sectionHost);
-      _sectionHost.removeAttribute('data-t-digest');
-      _builderMounted = true;
-    }
-    await builder.render(_sectionHost);
-    return;
-  }
-  // Leaving the builder section: drop its mount flag so a return re-mounts it.
-  _builderMounted = false;
-
   switch (_active) {
     case 'contract': return renderContract();
     case 'models': return renderModels();

@@ -1,13 +1,14 @@
-// test/settings.test.mjs — the Settings surface (B3).
+// test/settings.test.mjs — the Settings surface.
 //
 // Exercises the slice the structural tests can't reach: the router resolves
-// `#/settings[/<section>]` AND the `#/builder` deep-link into the settings
-// view (one component, multiple entry points); the section rail renders every
-// section; the Contract section reads /api/epoch as a read-only roll-up that
-// links into the builder; the Builder-assistant section surfaces the
-// builder.json model NAME + api_key_env NAME (never a secret) from
-// /builder/config; the builder section RE-HOMES the B2 builder view (its cards
-// render inside the settings host). Same harness style as builder.test.mjs.
+// `#/settings[/<section>]` to the settings view, and `#/builder` to the
+// STANDALONE tournament-builder view (the builder was promoted out of
+// Settings); the section rail renders the in-host sections PLUS a launcher link
+// out to `#/builder`; the Contract section reads /api/epoch as a read-only
+// roll-up that links into the builder; the Models section surfaces the
+// per-role model NAME + api_key_env NAME (never a secret); the builder is NO
+// LONGER embedded inside the settings host (only the launcher remains). Same
+// harness style as builder.test.mjs.
 
 import { installDom, test, run, assert, assertEqual, makeEvent } from './harness.mjs';
 
@@ -95,49 +96,68 @@ function tick() { return new Promise((r) => setTimeout(r, 0)); }
 
 // ── router: one component, multiple entry points ──────────────────────
 
-test('router: #/settings resolves to the settings view (default builder section)', () => {
+test('router: #/settings resolves to the settings view (default contract section)', () => {
   const r = router.parseRoute('#/settings');
   assertEqual(r.view, 'settings', 'view is settings');
   assertEqual(r.params.section, null, 'no explicit section ⇒ default');
+  // the builder is no longer the default Settings section — the router exports
+  // the new default so the view + the back/up target agree on it.
+  assertEqual(router.DEFAULT_SETTINGS_SECTION, 'contract', 'the default Settings section is now the contract roll-up');
 });
 
-test('router: #/settings/contract deep-links the contract section', () => {
-  const r = router.parseRoute('#/settings/contract');
+test('router: #/settings/models deep-links the models section', () => {
+  const r = router.parseRoute('#/settings/models');
   assertEqual(r.view, 'settings', 'view is settings');
-  assertEqual(r.params.section, 'contract', 'the contract section');
+  assertEqual(r.params.section, 'models', 'the models section');
 });
 
-test('router: #/builder deep-link resolves into the settings builder section', () => {
+test('router: #/builder resolves to the STANDALONE builder view (no longer into settings)', () => {
   const r = router.parseRoute('#/builder');
-  assertEqual(r.view, 'settings', 'the builder deep-link re-homes into settings');
-  assertEqual(r.params.section, 'builder', 'focused on the builder section');
-  // and the canonical href for the builder section is still `#/builder`.
-  assertEqual(router.href('settings', { section: 'builder' }) === '#/settings/builder', true, 'settings href encodes the section');
-  assertEqual(router.href('builder', {}), '#/builder', 'the builder href stays the canonical deep-link');
+  assertEqual(r.view, 'builder', 'the builder is its own first-class view');
+  assert(!r.params.section, 'it is NOT a settings section any more (no section param)');
+  // the canonical href for the builder view is `#/builder`.
+  assertEqual(router.href('builder', {}), '#/builder', 'the builder href is the canonical standalone link');
+  // its breadcrumb reads environment › tournament builder, and it steps up to
+  // environment (the un-nesting: it is a top-level view, not a settings child).
+  const trail = router.crumbTrail({ view: 'builder', params: {} });
+  assertEqual(trail[0].label, 'environment', 'crumb root is environment');
+  assert(trail[trail.length - 1].label === 'tournament builder' && trail[trail.length - 1].current, 'the leaf is the tournament builder');
+  assert(!trail.some((c) => c.label === 'settings'), 'the builder crumb does NOT pass through settings');
+  assertEqual(router.up({ view: 'builder', params: {} }).view, 'home', 'the builder view steps up to environment');
 });
 
 test('router: settings crumbs + up climb back to the landing then environment', () => {
-  const trail = router.crumbTrail({ view: 'settings', params: { section: 'contract' } });
+  const trail = router.crumbTrail({ view: 'settings', params: { section: 'models' } });
   assert(trail.some((c) => c.label === 'settings'), 'the settings crumb is present');
-  assert(trail[trail.length - 1].label === 'contract' && trail[trail.length - 1].current, 'the leaf is the contract section');
-  assertEqual(router.up({ view: 'settings', params: { section: 'contract' } }).view, 'settings', 'a section steps up to the landing');
+  assert(trail[trail.length - 1].label === 'models / llm endpoints' && trail[trail.length - 1].current, 'the leaf is the models section');
+  assert(!trail.some((c) => c.label === 'tournament builder'), 'no builder crumb inside settings (it is its own view)');
+  assertEqual(router.up({ view: 'settings', params: { section: 'models' } }).view, 'settings', 'a non-default section steps up to the landing');
+  // the DEFAULT section (contract) steps straight up to environment, like the bare landing.
+  assertEqual(router.up({ view: 'settings', params: { section: 'contract' } }).view, 'home', 'the default section steps up to environment');
   assertEqual(router.up({ view: 'settings', params: {} }).view, 'home', 'the landing steps up to environment');
 });
 
 // ── the settings surface ──────────────────────────────────────────────
 
-test('settings: the section rail renders the four sections (Dashboard retired)', async () => {
+test('settings: the rail renders three in-host sections + a builder LAUNCHER (Dashboard retired)', async () => {
   installFetch();
   const host = globalThis.document.createElement('div');
   await settings.render(host, ctx, { section: 'contract' });
   const items = byClass(host, 'dn-set-railitem');
-  assertEqual(items.length, 4, 'four settings sections in the rail');
+  // three in-host sections (contract / models / appearance) + the launcher.
+  assertEqual(items.length, 4, 'three in-host sections + one launcher entry in the rail');
   const labels = items.map((i) => i.textContent);
-  assert(labels.some((l) => l.includes('Tournament builder')), 'the builder section is in the rail');
   assert(labels.some((l) => l.includes('Contract')), 'the contract section is in the rail');
   assert(labels.some((l) => l.includes('Models')), 'the models / LLM-endpoints section is in the rail');
   assert(labels.some((l) => l.includes('Appearance')), 'the appearance section is in the rail');
   assert(!labels.some((l) => l.includes('Dashboard')), 'the Dashboard section was retired (folded into Appearance)');
+  // the builder is a LAUNCHER (a link OUT to the standalone view), NOT an
+  // in-host section: its rail entry carries the launcher class + the `#/builder`
+  // href, and there is exactly one of it.
+  const launchers = byClass(host, 'dn-set-raillauncher');
+  assertEqual(launchers.length, 1, 'exactly one builder launcher entry');
+  assert(launchers[0].textContent.includes('Tournament builder'), 'the launcher is labelled Tournament builder');
+  assertEqual(launchers[0].getAttribute('href'), '#/builder', 'the launcher navigates to the standalone builder view');
 });
 
 test('settings: the Appearance section is EDITABLE and shares the top-bar theme store', async () => {
@@ -343,19 +363,23 @@ test('settings: editing a Models role + saving round-trips through POST /setting
   assert(!flat.includes('sk-'), 'no secret value crossed the POST boundary');
 });
 
-test('settings: the builder section RE-HOMES the B2 builder view (its own chrome renders in the host)', async () => {
+test('settings: the builder is NO LONGER embedded in the host — it is a LAUNCHER to #/builder', async () => {
   installFetch();
   const host = globalThis.document.createElement('div');
+  // even if a stale `#/builder` ever resolved into a settings section, the
+  // surface must not render the builder's chrome inside its host (that nesting
+  // was the clutter we removed). The launcher links out instead.
   await settings.render(host, ctx, { section: 'builder' });
   await tick();
-  // the re-homed builder paints its OWN self-contained chrome inside the
-  // settings host: its six-section contract rail + its live preview pane. (We
-  // assert the always-present chrome, not the active section's body, since the
-  // shared builder module carries module-level section state across imports.)
-  const railItems = byClass(host, 'dn-bld-railitem');
-  assertEqual(railItems.length, 6, 'the builder kept its own six-section rail (self-contained, re-homed not rewritten)');
-  assert(firstClass(host, 'dn-builder'), 'the builder root mounted inside the settings host');
-  assert(firstClass(host, 'dn-bld-preview'), 'the builder live-preview pane rendered in the re-homed host');
+  // the builder's self-contained chrome must NOT appear inside the settings host.
+  assert(!firstClass(host, 'dn-builder'), 'the builder root is NOT mounted inside the settings host');
+  assert(!firstClass(host, 'dn-bld-preview'), 'no embedded builder preview pane in the settings host');
+  assertEqual(byClass(host, 'dn-bld-railitem').length, 0, 'no embedded builder rail inside settings');
+  // a non-section `section: 'builder'` param falls back to the default section;
+  // the launcher to the standalone view is still present.
+  const launchers = byClass(host, 'dn-set-raillauncher');
+  assertEqual(launchers.length, 1, 'the builder launcher is present');
+  assertEqual(launchers[0].getAttribute('href'), '#/builder', 'the launcher targets the standalone builder view');
 });
 
 await run();
