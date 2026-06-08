@@ -83,6 +83,61 @@ function shortLabel(s, n) {
   return str.length > max ? str.slice(0, max - 1) + '…' : str;
 }
 
+// ── responsive (aspect-locked, full-width hero) sizing ───────────────
+//
+// The SHARED contract every structure builder honours, mirroring the reference
+// `sparkline({responsive:true})` (the cross-epoch fix). Default OFF: a fixed
+// call site (mini cards, drills) is untouched. When opt-in:
+//   * `width:100%`, the fixed pixel `height` is DROPPED;
+//   * a CSS `aspect-ratio` (== the viewBox aspect w/h) is pinned inline so a
+//     `preserveAspectRatio:'none'` scale is UNIFORM (no shear) and the figure
+//     tracks the screen width up to the matched max (the *-hero CSS cap);
+//   * the hero class is appended (carrying the cap + a meet→none switch where a
+//     builder otherwise meets its box).
+// No measurement, no ResizeObserver, no post-mount mutation — leak-free and
+// digest-gate compatible. Returns the (mutated) svgAttrs for chaining.
+function applyResponsive(svgAttrs, opts, w, h, heroClass) {
+  const o = opts || {};
+  if (!o.responsive && !o.fitWidth) return svgAttrs;
+  delete svgAttrs.height;
+  svgAttrs.width = '100%';
+  // a uniform scale needs preserveAspectRatio:'none' against a box whose aspect
+  // EQUALS the viewBox aspect (pinned below); 'meet'/'xMid…' would letterbox.
+  svgAttrs.preserveAspectRatio = 'none';
+  svgAttrs.class = (svgAttrs.class ? svgAttrs.class + ' ' : '') + heroClass;
+  const aspect = `aspect-ratio:${w} / ${h};`;
+  svgAttrs.style = svgAttrs.style ? svgAttrs.style + aspect : aspect;
+  return svgAttrs;
+}
+
+// The lane set for a racing rung's FULL field (every survivor still racing this
+// rung), per the shared contract: the UNION of the rung's `live_progress` keys,
+// its `competitors`, and its `survivors`/`cut` ids — EXCLUDING the champion /
+// benchmark (which defends at the gate, never a rung lane). Stable, de-duped,
+// competitor-order-first so the figure is deterministic. A rung with survivors
+// v5 + v7 yields BOTH (not just the first matchup's competitors). `exclude` is a
+// Set of ids to drop (the champion / benchmark id).
+function rungFieldLanes(rung, exclude) {
+  const ex = exclude instanceof Set ? exclude : new Set(exclude ? [String(exclude)] : []);
+  const seen = new Set();
+  const out = [];
+  const add = (id) => {
+    if (id == null) return;
+    const s = String(id);
+    if (!s || ex.has(s) || seen.has(s)) return;
+    seen.add(s); out.push(s);
+  };
+  // competitor order first (deterministic), then any survivor/cut/live id not
+  // already listed (a rung whose live_progress carries a lane the published
+  // competitors elided — the multi-survivor case — still shows every lane).
+  for (const c of (Array.isArray(rung && rung.competitors) ? rung.competitors : [])) add(c);
+  for (const s of (Array.isArray(rung && rung.survivors) ? rung.survivors : [])) add(s);
+  for (const c of (Array.isArray(rung && rung.cut) ? rung.cut : [])) add(c);
+  const prog = (rung && rung.live_progress && typeof rung.live_progress === 'object') ? rung.live_progress : null;
+  if (prog) for (const k of Object.keys(prog)) add(k);
+  return out;
+}
+
 // ── orthogonal-pipe routers (the double-elim drop-bus language) ──────
 //
 // A rounded-corner orthogonal "pipe": a vertical drop from (x0,y0) to a
@@ -725,12 +780,17 @@ export function survivalFunnel(opts) {
   const deadH = 18;         // per-eliminated-branch row height below the lane
   // the widest stack of dead-end branches across stages bounds the figure height.
   const maxDead = Math.max(0, ...rungs.map((r) => (Array.isArray(r.cut) ? r.cut.length : 0)));
+  // the BENCHMARK (v0, the gate defender) is never a rung lane — but the crowned
+  // champion (e.g. a surviving rung competitor) IS, so exclude the benchmark
+  // ONLY, never the championId (the model already drops v0 from rung
+  // competitors; this guards a caller that still lists it).
+  const benchExcl = (o.benchmarkId != null) ? String(o.benchmarkId) : null;
   const w = rungs.length * stageW + Math.max(0, rungs.length - 1) * stageGap + stageGap + gateW + 8;
   const h = top + laneH + maxDead * deadH + 26;
-  const svg = svgEl('svg', {
+  const svg = svgEl('svg', applyResponsive({
     class: 'dn-funnel', width: '100%', height: h,
     viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMinYMin meet', role: 'img',
-  });
+  }, o, w, h, 'dn-funnel-hero'));
   if (rungs.length === 0) {
     const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
     t.textContent = 'no rungs yet';
@@ -749,8 +809,10 @@ export function survivalFunnel(opts) {
     svg.appendChild(bt);
   }
   const midY = top + laneH / 2;
-  // the entering field of stage 0 sets the maximum flow width (100% lane).
-  const field0 = Math.max(1, (Array.isArray(rungs[0].competitors) ? rungs[0].competitors.length : 1));
+  // the entering field of stage 0 sets the maximum flow width (100% lane). Drive
+  // it from the FULL field (every lane racing rung 0), not just the first
+  // matchup's competitors, so a wide entering rung reads at full width.
+  const field0 = Math.max(1, rungFieldLanes(rungs[0], benchExcl).length || 1);
   // a stage's flow band half-height ∝ its entering field size.
   const bandHalf = (n) => Math.max(6, (laneH / 2) * (Math.max(0, n) / field0));
   const stageX = (j) => j * (stageW + stageGap) + 2;
@@ -759,7 +821,11 @@ export function survivalFunnel(opts) {
   // entering width = |competitors|; leaving width = |survivors| (the field
   // carried to the next stage). A pending (live, undecided) stage keeps a
   rungs.forEach((rung, j) => {
-    const comps = Array.isArray(rung.competitors) ? rung.competitors : [];
+    // the FULL entering field of this rung (every lane racing it), per the shared
+    // contract: live_progress keys ∪ competitors ∪ survivors/cut, minus the
+    // champion/benchmark — so a multi-survivor rung shows ALL lanes, not just the
+    // first matchup's competitors.
+    const comps = rungFieldLanes(rung, benchExcl);
     const cut = new Set(Array.isArray(rung.cut) ? rung.cut.map(String) : []);
     const surv = Array.isArray(rung.survivors) ? rung.survivors.map(String) : [];
     const pending = !!rung.pending || (cut.size === 0 && surv.length === 0);
@@ -790,7 +856,9 @@ export function survivalFunnel(opts) {
     // (not queued) lane reads "racing · k/N boards" + a partial Δ-vs-champion
     // and grows a thin in-flight progress bar as boards land.
     const prog = (rung.live_progress && typeof rung.live_progress === 'object') ? rung.live_progress : null;
-    const survRunners = pending ? comps.map(String) : surv;
+    // a pending (live) rung shows the FULL field racing (every lane); a settled
+    // rung shows the survivors riding the band (the cut peel off below).
+    const survRunners = pending ? comps.slice() : surv;
     survRunners.forEach((sid, i) => {
       const cy = survRunners.length === 1 ? midY
         : midY - hOut + 8 + (i * (Math.max(1, 2 * hOut - 16)) / Math.max(1, survRunners.length - 1));
@@ -839,7 +907,7 @@ export function survivalFunnel(opts) {
   // the converging flow from the last stage's surviving band into the gate.
   const lastLeave = (() => {
     const r = rungs[rungs.length - 1];
-    const c = Array.isArray(r.competitors) ? r.competitors : [];
+    const c = rungFieldLanes(r, benchExcl);
     const s = Array.isArray(r.survivors) ? r.survivors.map(String) : [];
     const pend = !!r.pending || (s.length === 0 && (!Array.isArray(r.cut) || r.cut.length === 0));
     return pend ? c.length : s.length;
@@ -969,10 +1037,10 @@ export function swissLadder(opts) {
   // a standings column + a champion-gate column ride after the round columns.
   const w = Math.max(colW, ladderW + colGap + standW + colGap + gateW) + 8;
   const h = top + benchH + headH + maxRows * pairH + 8;
-  const svg = svgEl('svg', {
+  const svg = svgEl('svg', applyResponsive({
     class: 'dn-swissladder', width: '100%', height: h,
     viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMinYMin meet', role: 'img',
-  });
+  }, o, w, h, 'dn-swissladder-hero'));
   if (benchId) {
     const bt = hov(svgEl('text', { x: 4, y: top + 10, class: 'dn-swissladder-bench' }),
       `incumbent champion = ${benchId} · the swiss winner must beat the incumbent at the champion-gate to be promoted`);
@@ -1247,10 +1315,10 @@ export function elimFlow(opts) {
   const laneH = 22;
   const w = padL + Math.max(1, nCols) * colW + padR + 8;
   const h = top + Math.max(1, gens.length) * laneH + 18;
-  const svg = svgEl('svg', {
+  const svg = svgEl('svg', applyResponsive({
     class: 'dn-elimflow', width: '100%', height: h,
     viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMinYMin meet', role: 'img',
-  });
+  }, o, w, h, 'dn-elimflow-hero'));
   if (!nCols || !gens.length) {
     const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
     t.textContent = 'no bracket rounds yet';
@@ -1757,7 +1825,11 @@ export function racingScalarTrack(opts) {
     return null;
   };
 
-  const comps = (Array.isArray(rung.competitors) ? rung.competitors : []).map(String);
+  // the FULL field of THIS rung: every lane racing it (all survivors), per the
+  // shared contract — the union of live_progress keys ∪ competitors ∪
+  // survivors/cut, minus the champion/benchmark (which defends at the gate). A
+  // rung with survivors v5 + v7 plots BOTH markers, not just the first matchup.
+  const comps = rungFieldLanes(rung, benchId);
   const survSet = new Set((Array.isArray(rung.survivors) ? rung.survivors : []).map(String));
   const cutSet = new Set((Array.isArray(rung.cut) ? rung.cut : []).map(String));
   const prog = (rung.live_progress && typeof rung.live_progress === 'object') ? rung.live_progress : null;
@@ -1770,7 +1842,7 @@ export function racingScalarTrack(opts) {
   // marker model — scalar, radius (inverse loss), verdict, live lane.
   const vals = [];
   if (benchId != null && champScalar != null) vals.push(champScalar);
-  const marks = comps.map((id) => {
+  const marks = comps.map((id, idx) => {
     const lane = prog ? prog[id] : null;
     const v = scalarOf(id, lane);
     if (isNum(v)) vals.push(v);
@@ -1778,7 +1850,7 @@ export function racingScalarTrack(opts) {
     const cut = cutSet.has(id);
     const racing = !!lane && !survived && !cut;
     const projected = !!(lane && lane.projected && racing);
-    return { id, v, lane, survived, cut, racing, projected };
+    return { id, v, lane, survived, cut, racing, projected, idx };
   });
   const [lo, hi] = (() => {
     const e = extent(vals.length ? vals : [0, 1]);
@@ -1791,8 +1863,24 @@ export function racingScalarTrack(opts) {
     return (mini ? 3 : 4) + Math.sqrt(1 - norm) * (mini ? 6 : 9);       // area-honest inverse loss
   };
 
+  // NO-SCALAR SPREAD: a lane with no recoverable scalar (early in-flight, no
+  // committed/delta/projected_scalar yet) must NOT pile at x=padL — it is SPREAD
+  // across the axis by its lane index so an entering rung reads as a field, not a
+  // stack. Once a projected/committed scalar arrives the marker positions by it.
+  const noScalar = marks.filter((m) => !isNum(m.v));
+  const spreadX = (() => {
+    const n = noScalar.length;
+    if (n <= 0) return () => padL;
+    if (n === 1) return () => (padL + (W - padR)) / 2;
+    // even fractions across the inboard span (a small margin off each end).
+    const x0 = padL + (W - padR - padL) * 0.08;
+    const x1 = padL + (W - padR - padL) * 0.92;
+    const pos = new Map();
+    noScalar.forEach((m, k) => pos.set(m, x0 + (x1 - x0) * (k / (n - 1))));
+    return (m) => (pos.has(m) ? pos.get(m) : (padL + (W - padR)) / 2);
+  })();
   // stagger labels into tiers so near-x markers don't collide (greedy by x).
-  marks.forEach((m) => { m.x = isNum(m.v) ? X(m.v) : padL; m.r = radOf(m.v); });
+  marks.forEach((m) => { m.x = isNum(m.v) ? X(m.v) : spreadX(m); m.r = radOf(m.v); });
   const minDX = mini ? 22 : 30;
   const order = [...marks].sort((a, b) => a.x - b.x);
   const tierLastX = [];
@@ -1806,11 +1894,11 @@ export function racingScalarTrack(opts) {
   const axisY = top + 8 + maxTier * tierH;
   const H = axisY + (mini ? 26 : 40);
 
-  const svg = svgEl('svg', {
+  const svg = svgEl('svg', applyResponsive({
     class: 'dn-scalartrack', width: '100%', height: H,
     viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'xMinYMin meet', role: 'img',
     'aria-label': 'racing scalar track — lower is better, bigger marker = better',
-  });
+  }, o, W, H, 'dn-scalartrack-hero'));
   if (!comps.length) {
     const t = svgEl('text', { x: W / 2, y: H / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
     t.textContent = 'no challengers on the track yet';
@@ -2007,11 +2095,11 @@ export function gauntletFieldBars(opts) {
   })();
   const X = scale([lo, hi], [padL, W - padR]);
 
-  const svg = svgEl('svg', {
+  const svg = svgEl('svg', applyResponsive({
     class: 'dn-fieldbars', width: '100%', height: H,
     viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'xMinYMin meet', role: 'img',
     'aria-label': 'gauntlet field vs the champion standard — lower is better',
-  });
+  }, o, W, H, 'dn-fieldbars-hero'));
   if (!field.length) {
     const t = svgEl('text', { x: W / 2, y: H / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
     t.textContent = 'no challengers have entered the gauntlet';
@@ -2204,11 +2292,11 @@ export function elimRadial(opts) {
   const rings = Math.max(2, nCols + 1);             // one ring per round + the center gate ring
   const rr = (k) => R * (1 - k / rings) + (mini ? 5 : 8);
 
-  const svg = svgEl('svg', {
+  const svg = svgEl('svg', applyResponsive({
     class: 'dn-elimradial', width: '100%', height: H,
     viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'xMidYMid meet', role: 'img',
     'aria-label': 'radial bracket — rounds as rings narrowing to the champion gate',
-  });
+  }, o, W, H, 'dn-elimradial-hero'));
   if (!nCols || !gens.length) {
     const t = svgEl('text', { x: W / 2, y: H / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
     t.textContent = 'no bracket rounds yet';
@@ -2395,13 +2483,12 @@ export function radarSilhouette(opts) {
   const cx = mini ? W / 2 : (legend ? 210 : W / 2);
   const cy = H / 2 - (mini ? 0 : 6);
   const R = mini ? 76 : 128;
-  const showLabels = !mini && n <= 8;
 
-  const svg = svgEl('svg', {
+  const svg = svgEl('svg', applyResponsive({
     class: 'dn-radar', width: '100%', height: H,
     viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'xMidYMid meet', role: 'img',
     'aria-label': 'radar — challenger vs champion across the gate axes; outer = better',
-  });
+  }, o, W, H, 'dn-radar-hero'));
   if (n < 3) {
     const t = svgEl('text', { x: W / 2, y: H / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
     t.textContent = 'not enough axes to plot';
@@ -2419,22 +2506,41 @@ export function radarSilhouette(opts) {
     const pts = axes.map((_, i) => P(i, ring).join(',')).join(' ');
     svg.appendChild(svgEl('polygon', { points: pts, class: 'dn-radar-ring', fill: 'none' }));
   }
-  // spokes + axis labels (suppressed when dense — hover annotates instead).
+  // spokes + axis LABELS — render each axis's TEXT (opts.axes[].label) at the
+  // tip (the contract: the label, NOT an index 1..n), with the full label on
+  // hover. Long labels are TRUNCATED to a length that scales with the per-axis
+  // angular budget, and labels near the top/bottom (where the radius runs out
+  // before the next spoke) are ROTATED to follow the spoke so they don't overlap
+  // their neighbours. The mini radar suppresses tip labels (too small) but its
+  // vertices still carry the label on hover.
+  // budget: with more axes each gets less room, so truncate harder.
+  const labelMax = n <= 6 ? 16 : n <= 8 ? 12 : n <= 12 ? 9 : 7;
   axes.forEach((a, i) => {
     const [ex, ey] = P(i, 1);
     svg.appendChild(svgEl('line', { x1: cx, y1: cy, x2: ex, y2: ey, class: 'dn-radar-spoke' }));
-    if (showLabels) {
-      const [lx, ly] = P(i, 1.18);
-      const anchor = Math.abs(lx - cx) < 6 ? 'middle' : lx < cx ? 'end' : 'start';
-      const t = svgEl('text', { x: lx, y: ly + 3, class: 'dn-radar-axislab', 'text-anchor': anchor });
-      t.textContent = shortLabel(String(a.label), 12);
-      svg.appendChild(t);
-    } else if (!mini) {
-      const [lx, ly] = P(i, 1.08);
-      const t = svgEl('text', { x: lx, y: ly + 3, class: 'dn-radar-axistick', 'text-anchor': 'middle' });
-      t.textContent = String(i + 1);
-      svg.appendChild(t);
+    if (mini) return;
+    const [lx, ly] = P(i, 1.14);
+    const dx = lx - cx;
+    const dy = ly - cy;
+    const near = Math.abs(dx) < R * 0.34;                // near the vertical (top/bottom)
+    const anchor = Math.abs(dx) < 6 ? 'middle' : dx < 0 ? 'end' : 'start';
+    const full = String(a.label == null ? '' : a.label);
+    // a near-vertical, LONG label rotates to follow the spoke (so a long axis
+    // name at top/bottom does not run across its neighbours); others stay
+    // horizontal and rely on truncation + the quadrant anchor.
+    const rotate = near && full.length > labelMax;
+    const t = svgEl('text', {
+      x: lx, y: ly + 3, class: 'dn-radar-axislab',
+      'text-anchor': rotate ? (dy < 0 ? 'start' : 'end') : anchor,
+    });
+    if (rotate) {
+      // rotate around the tip so the text runs outward along the spoke direction.
+      const deg = Math.atan2(dy, dx) * 180 / Math.PI + (dy < 0 ? 90 : -90);
+      t.setAttribute('transform', `rotate(${deg.toFixed(1)} ${lx.toFixed(1)} ${(ly + 3).toFixed(1)})`);
     }
+    t.textContent = shortLabel(full, labelMax);
+    hov(t, full);
+    svg.appendChild(t);
   });
 
   // the champion polygon (dashed, faint).
