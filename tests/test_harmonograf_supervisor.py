@@ -404,6 +404,107 @@ def test_ensure_workspace_harmonograf_relaunches_on_stale_record(tmp_path: Path)
         handle.shutdown()
 
 
+def test_healthz_probe_false_on_dead_and_non_harmonograf_ports() -> None:
+    """``_harmonograf_healthz_ok`` is a *true* liveness signal.
+
+    A bare TCP connect would say "alive" for ANY listener that accepts a
+    connection on the port. The healthz probe must say "alive" ONLY when
+    the port answers harmonograf's ``/healthz`` with 200 — so a recycled
+    pid / unrelated process that grabbed the freed web port is correctly
+    rejected (the stale-record-reuse bug).
+    """
+    # 1. A non-positive port -> not ok (cheap guard, no socket).
+    assert supervisor._harmonograf_healthz_ok("127.0.0.1", 0) is False
+    # 2. A port nobody binds -> not ok (grab+release an ephemeral port).
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
+        _s.bind(("127.0.0.1", 0))
+        dead_port = _s.getsockname()[1]
+    assert supervisor._harmonograf_healthz_ok("127.0.0.1", dead_port) is False
+
+    # 3. A live listener that is NOT a harmonograf: a bare TCP connect
+    #    SUCCEEDS against it, but the healthz probe must still say "not
+    #    ok" because it does not answer /healthz with 200. This is the
+    #    exact failure mode the probe upgrade guards against.
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = srv.getsockname()[1]
+    try:
+        # The weak check is fooled by any open port...
+        assert supervisor._port_reachable("127.0.0.1", port) is True
+        # ...the strong check is not.
+        assert supervisor._harmonograf_healthz_ok("127.0.0.1", port, timeout_s=1.0) is False
+    finally:
+        srv.close()
+
+
+def test_healthz_probe_true_on_live_harmonograf(tmp_path: Path) -> None:
+    """``_harmonograf_healthz_ok`` returns True against a real server."""
+    handle = ensure_workspace_harmonograf(tmp_path)
+    try:
+        assert _wait_for_health(handle.web_url, deadline_s=15.0)
+        from urllib.parse import urlparse
+
+        parsed = urlparse(handle.web_url)
+        assert parsed.port is not None
+        assert (
+            supervisor._harmonograf_healthz_ok(
+                parsed.hostname or "127.0.0.1", parsed.port, timeout_s=2.0
+            )
+            is True
+        )
+    finally:
+        handle.shutdown()
+
+
+def test_ensure_relaunches_when_recorded_port_is_not_harmonograf(tmp_path: Path) -> None:
+    """A record whose pid is alive AND port is TCP-reachable but is NOT a
+    harmonograf must NOT be reused — it must relaunch.
+
+    This is the live-run bug: the recorded harmonograf process died, and
+    an unrelated listener (or this very test's dummy socket) holds the
+    freed web port. A bare TCP-connect liveness check would (wrongly)
+    reuse it and advertise a dead ``harmonograf_url``; the /healthz probe
+    rejects it.
+    """
+    import json as _json
+
+    data_dir = _harmonograf_data_dir(tmp_path)
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    # A dummy listener that accepts TCP connects but is NOT a harmonograf.
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    decoy_port = srv.getsockname()[1]
+
+    # pid = THIS process (definitely alive) so the pid check passes; the
+    # port is TCP-reachable so the *old* bare-connect check would pass too.
+    record = {
+        "web_url": f"http://127.0.0.1:{decoy_port}",
+        "grpc_target": f"127.0.0.1:{decoy_port}",
+        "pid": os.getpid(),
+        "started_iso": "2020-01-01T00:00:00Z",
+    }
+    (data_dir / "server.json").write_text(_json.dumps(record))
+
+    handle = ensure_workspace_harmonograf(tmp_path)
+    try:
+        # Not reused (the decoy is not a harmonograf) ⇒ a fresh launch on
+        # a DIFFERENT port that actually answers /healthz.
+        assert handle.launched is True
+        assert handle.web_url != f"http://127.0.0.1:{decoy_port}"
+        assert _wait_for_health(handle.web_url, deadline_s=15.0)
+        # The stale record was overwritten to name the live server.
+        rec = _json.loads((data_dir / "server.json").read_text())
+        assert rec["web_url"] == handle.web_url
+    finally:
+        handle.shutdown()
+        srv.close()
+
+
 def test_ensure_workspace_harmonograf_failure_isolated(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

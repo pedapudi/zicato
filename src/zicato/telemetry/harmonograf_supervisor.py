@@ -452,6 +452,49 @@ def _port_reachable(host: str, port: int, *, timeout_s: float = 0.5) -> bool:
         return False
 
 
+def _harmonograf_healthz_ok(host: str, port: int, *, timeout_s: float = 1.0) -> bool:
+    """True when ``host:port`` answers harmonograf's ``/healthz`` with 200.
+
+    A bare TCP connect (:func:`_port_reachable`) is too weak a liveness
+    signal for the reuse path: harmonograf binds TWO ports and the
+    ``web_url`` we record is the gRPC-Web port, which a *recycled* pid (or
+    an unrelated process that grabbed the freed port) can accept a TCP
+    connection on without being a live harmonograf at all. The
+    consequence is the bug this guards: a ``server.json`` whose owning
+    process has died — but whose port a TCP connect still "succeeds"
+    against — gets REUSED, and the orchestrator then advertises a dead
+    ``harmonograf_url`` (the deep-link 404s, the sinks dial a closed
+    gRPC socket).
+
+    harmonograf-server mounts ``/healthz`` on the web port (always 200
+    while the process is serving requests, exempt from the bearer guard),
+    so a 200 there is positive proof the recorded server is a live
+    harmonograf. We use ``http.client`` rather than ``urllib`` — the
+    latter mishandles harmonograf's hypercorn listener — and keep the
+    probe free of any third-party dependency.
+    """
+    if port <= 0:
+        return False
+    import http.client  # noqa: PLC0415 — stdlib, keep the import local to the probe
+
+    conn: http.client.HTTPConnection | None = None
+    try:
+        conn = http.client.HTTPConnection(host, port, timeout=timeout_s)
+        conn.request("GET", "/healthz")
+        resp = conn.getresponse()
+        # Drain the body so the connection closes cleanly.
+        resp.read()
+        return resp.status == 200
+    except (OSError, http.client.HTTPException):
+        return False
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001 — best-effort close
+                pass
+
+
 def _coerce_pid(value: Any) -> int:
     """Coerce a record's ``pid`` field to an int (``0`` when unusable)."""
     try:
@@ -615,13 +658,25 @@ def ensure_workspace_harmonograf(workspace_root: Path) -> WorkspaceHarmonografHa
         grpc_target = str(record.get("grpc_target") or "")
         pid = _coerce_pid(record.get("pid"))
         host, port = _parse_host_port(web_url.split("//", 1)[-1])
-        if web_url and _pid_alive(pid) and _port_reachable(host or "127.0.0.1", port):
+        # Liveness is a CONJUNCTION of three checks, weakest-to-strongest:
+        #   1. the recorded pid is still a live process (cheap, but a
+        #      recycled pid lies),
+        #   2. the recorded web port answers harmonograf's ``/healthz``
+        #      with 200 — positive proof the live process IS a serving
+        #      harmonograf, not merely *some* process that grabbed the
+        #      freed port. A bare TCP connect is too weak here: the port
+        #      can accept a connection from an unrelated listener (or a
+        #      lingering socket) after the real server died, which is
+        #      exactly how a stale record used to get reused and a dead
+        #      ``harmonograf_url`` advertised.
+        if web_url and _pid_alive(pid) and _harmonograf_healthz_ok(host or "127.0.0.1", port):
             log.debug("reusing live per-workspace harmonograf at %s (pid %d)", web_url, pid)
             return WorkspaceHarmonografHandle(
                 web_url=web_url, grpc_target=grpc_target, launched=False
             )
-        # Stale record (dead pid or unreachable port) — fall through and
-        # relaunch; the write below overwrites it.
+        # Stale record (dead pid, or a web port that no longer answers
+        # /healthz) — fall through and relaunch; the write below overwrites
+        # it.
         log.debug("ignoring stale harmonograf server record at %s", web_url or "<empty>")
 
     # 2. Launch a fresh server bound to this workspace's sqlite db.
