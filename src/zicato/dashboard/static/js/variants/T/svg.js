@@ -3453,28 +3453,21 @@ export function metaLoopLedger(opts) {
   }
 
   // ───────── contract-change RAIL + chips (opt 1), at each roll boundary ─────────
+  // RAIL + SOFT seam stay at the TRUE boundary b.x0; only the label box moves.
+  // Chips carry a COMPACT label (headline + "+N"), the FULL set on hover, and are
+  // de-collided by their VARIABLE widths so adjacent rolls never overlap/clip.
+  const chips = [];
   rows.forEach((e, i) => {
     if (i === 0) return;
     const changed = Array.isArray(e.changed_list) ? e.changed_list : [];
     if (!changed.length) return;
     const b = bx[i];
     const soft = !!e.soft;
+    // rail + soft seam at the TRUE boundary (do not move with the label).
     svg.appendChild(svgEl('line', {
       x1: b.x0, y1: stairTop - 2, x2: b.x0, y2: bandBot + 4,
       class: 'dn-metaledger-rail', 'stroke-dasharray': soft ? '3 3' : null,
     }));
-    const primary = changed[0];
-    const chipCol = LEDGER_COMP_COLOR[primary] || 'var(--v2-ink-faint)';
-    const label = changed.map((c) => (c === 'structure'
-      ? 'structure→' + (e.structure || '?') : (LEDGER_COMP_LABEL[c] || c))).join('+');
-    const cw = Math.max(54, label.length * 6.0 + 14);
-    const cx = Math.min(W - R - cw / 2, Math.max(L + cw / 2, b.x0));
-    svg.appendChild(svgEl('rect', {
-      x: cx - cw / 2, y: T - 44, width: cw, height: 18, rx: 4,
-      class: 'dn-metaledger-chip', fill: 'var(--v2-panel)',
-      stroke: chipCol, 'stroke-width': 1.5, 'stroke-dasharray': soft ? '3 3' : null,
-    }));
-    svg.appendChild(txt(cx, T - 31, label, { class: 'dn-metaledger-chiptxt', 'text-anchor': 'middle' }));
     if (soft) {
       svg.appendChild(svgEl('line', {
         x1: b.x0, y1: stairTop, x2: b.x0, y2: bandBot,
@@ -3482,6 +3475,54 @@ export function metaLoopLedger(opts) {
       }));
       svg.appendChild(txt(b.x0 + 4, bandBot - 6, 'SOFT', { class: 'dn-metaledger-softlbl' }));
     }
+    const primary = changed[0];
+    const chipCol = LEDGER_COMP_COLOR[primary] || 'var(--v2-ink-faint)';
+    // FULL set (hover) vs COMPACT (rendered: headline + "+N" overflow). Headline
+    // is →<structure> when structure rolled, else the primary lever's label.
+    const full = changed.map((c) => (c === 'structure'
+      ? 'structure→' + (e.structure || '?') : (LEDGER_COMP_LABEL[c] || c))).join('+');
+    const structRolled = changed.indexOf('structure') >= 0;
+    const head = structRolled ? '→' + (e.structure || '?') : (LEDGER_COMP_LABEL[primary] || primary);
+    const extra = changed.length - 1;
+    const compact = extra > 0 ? head + ' +' + extra : head;
+    const cw = Math.max(54, compact.length * 6.0 + 14);
+    chips.push({ desiredCx: b.x0, cw, compact, full, chipCol, soft, x0: b.x0 });
+  });
+
+  // ---- variable-width de-collide (the shared `decollide` assumes a uniform
+  // gap): sort by desired x, push left→right so no two boxes overlap (gap uses
+  // each box's half-width); if the run overruns the right edge, clamp the last
+  // and back-propagate the min gap. ----
+  const GAP = 6;
+  chips.sort((p, q) => p.desiredCx - q.desiredCx);
+  for (let k = 0; k < chips.length; k++) {
+    chips[k].cx = Math.max(L + chips[k].cw / 2, chips[k].desiredCx);
+    if (k > 0) {
+      const minCx = chips[k - 1].cx + chips[k - 1].cw / 2 + chips[k].cw / 2 + GAP;
+      if (chips[k].cx < minCx) chips[k].cx = minCx;
+    }
+  }
+  const lastK = chips.length - 1;
+  if (lastK >= 0 && chips[lastK].cx + chips[lastK].cw / 2 > W - R) {
+    chips[lastK].cx = W - R - chips[lastK].cw / 2;
+    for (let k = lastK - 1; k >= 0; k--) {
+      const maxCx = chips[k + 1].cx - chips[k + 1].cw / 2 - chips[k].cw / 2 - GAP;
+      if (chips[k].cx > maxCx) chips[k].cx = maxCx;
+    }
+  }
+  chips.forEach((c) => {
+    // subtle connector chip → true boundary when the label is pushed well off it.
+    if (Math.abs(c.cx - c.x0) > c.cw / 2 + 4) {
+      svg.appendChild(svgEl('line', {
+        x1: c.x0, y1: T - 26, x2: c.cx, y2: T - 26, class: 'dn-metaledger-chiplink',
+      }));
+    }
+    svg.appendChild(hov(svgEl('rect', {
+      x: c.cx - c.cw / 2, y: T - 44, width: c.cw, height: 18, rx: 4,
+      class: 'dn-metaledger-chip', fill: 'var(--v2-panel)',
+      stroke: c.chipCol, 'stroke-width': 1.5, 'stroke-dasharray': c.soft ? '3 3' : null,
+    }), c.full));
+    svg.appendChild(txt(c.cx, T - 31, c.compact, { class: 'dn-metaledger-chiptxt', 'text-anchor': 'middle' }));
   });
 
   // ───────── (B) EFFORT-PROPORTIONAL BANDS (opt 4) ─────────

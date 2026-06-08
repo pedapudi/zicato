@@ -308,7 +308,15 @@ def test_bundle_under_size_envelope(
     # (incl. the proposer* column the contract-diff omits) — wired as the home
     # view's primary cross-epoch overview. ~11 KB of new data-graphics; the
     # envelope is raised to 1.06 MB to cover it with headroom.
-    assert total < 1_060_000, f"bundle is {total} bytes, exceeds 1_060_000 envelope"
+    #
+    # The ledger zone-A LEGIBILITY pass then de-crowds the contract-change chip
+    # row — a COMPACT chip label (headline + "+N" overflow, the full change-set
+    # moved to the chip hovercard) plus a variable-WIDTH de-collide pass so
+    # adjacent roll boundaries never overlap/clip — and haloes the floor value
+    # labels (CSS-only, not in this counted bundle). The de-collide logic is net
+    # ~2 KB; the prior 1.06 MB line already sat ~2 KB under it, so the envelope is
+    # nudged to 1.062 MB to clear the de-collide pass with a thin margin.
+    assert total < 1_062_000, f"bundle is {total} bytes, exceeds 1_062_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
