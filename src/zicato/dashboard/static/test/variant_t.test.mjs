@@ -348,14 +348,14 @@ test('candidate view: the dossier reads as one organized layout — coordinated 
   // single (non-compare) view → the WIDE grid (not the narrow compare collapse).
   assertEqual(allByClass(host, 'dn-dossier-grid--narrow').length, 0,
     'the single-candidate dossier uses the wide 2-column grid (not the narrow collapse)');
-  // the SIDE column holds the radar; the MAIN column holds the per-board dot-plot
+  // the SIDE column holds the radar; the MAIN column holds the per-board DUMBBELL
   // (responsive, width-filling) + the gate ladder.
   const side = allByClass(host, 'dn-dossier-col--side')[0];
   assert(svgsByClass(side, 'dn-radar')[0], 'the radar sits in the side column');
   const main = allByClass(host, 'dn-dossier-col--main')[0];
-  const dot = svgsByClass(main, 'dn-valdot')[0];
-  assert(dot, 'the per-board dot-plot sits in the main column');
-  assertEqual(dot.getAttribute('width'), '100%', 'the per-board dot-plot is width-filling (responsive, not crammed right)');
+  const dot = svgsByClass(main, 'dn-dumbbell')[0];
+  assert(dot, 'the per-board champion○ → candidate● dumbbell sits in the main column');
+  assertEqual(dot.getAttribute('width'), '100%', 'the per-board dumbbell is width-filling (responsive, not crammed right)');
   assert(allByClass(main, 'dn-gate')[0], 'the promote-gate ladder sits in the main column beside the per-board read');
   // the lifecycle spine reads ABOVE the grid; the generalization slope BELOW it.
   assert(host.textContent.includes('Lifecycle · cause → effect → verdict'), 'the lifecycle spine section reads above the grid');
@@ -6700,7 +6700,7 @@ test('svg.heatmap: higher-contrast theme-aware cell scale — wider range, monot
   assertEqual(hi.style.cursor, 'pointer', 'clickable cells show a pointer cursor');
 });
 
-test('candidate view: per-board dot-plot click → board drill-down for THAT run; duplicate rungs disambiguated', async () => {
+test('candidate view: per-board dumbbell click → board drill-down for THAT run; duplicate rungs disambiguated', async () => {
   freshState(); installFetch();
   const candidate = await import('../js/variants/T/views/candidate.js');
   // same entry raced in TWO rungs (different match_id + rung) → two rows.
@@ -6715,17 +6715,140 @@ test('candidate view: per-board dot-plot click → board drill-down for THAT run
     let navTo = null;
     const ctx = { navigate: (v, p, o) => { navTo = { v, p, o }; }, href: router.href };
     await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
-    // both rungs show as distinct context tags on the dot-plot.
-    const ctxs = allByClass(host, 'dn-dot-ctx').map((n) => n.textContent);
+    // both rungs show as distinct context tags on the dumbbell.
+    const ctxs = allByClass(host, 'dn-dumbbell-ctx').map((n) => n.textContent);
     assert(ctxs.includes('rung 0') && ctxs.includes('rung 1'), 'the duplicate board rows show "rung 0" vs "rung 1"');
-    // clicking a dot row routes to the board drill-down for this entry + gen.
-    const rows = allByClass(host, 'dn-dotrow');
+    // clicking a dumbbell row routes to the board drill-down for this entry + gen.
+    const rows = allByClass(host, 'dn-dumbbell-row');
     assert(rows.length >= 2, 'at least the two re-raced rows are clickable');
     rows[0].dispatchEvent({ type: 'click' });
     assert(navTo && navTo.v === 'board' && navTo.p.entry === 'waffles_single' && navTo.p.gen === 'v1' && navTo.p.epochId === EPOCH_ID,
-      'a dot-plot row click opens the board drill-down for that exact run (entry + gen)');
+      'a dumbbell row click opens the board drill-down for that exact run (entry + gen)');
   } finally {
     FIXTURE[path] = saved;
+  }
+});
+
+// ---- Task A: the per-board figure is the study's champ○ → candidate● DUMBBELL ----
+// The study's opt-2 per-board figure is an explicit per-row dumbbell: a hollow
+// champion ○ and a filled candidate ● JOINED by a connector, with the Δ + the
+// pass/fail marker — NOT a single-series dot-plot against one aggregate champion
+// reference rule. v1 (parent v0 = champion) shares its slice with v0, so each
+// board row carries a real per-board champion value to draw the ○.
+test('candidate view: the per-board figure renders the champion○ → candidate● DUMBBELL (paired per row, not a single-series dot-plot)', async () => {
+  freshState(); installFetch();
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
+  // the dumbbell SVG is present + responsive (width-filling); the OLD single-series
+  // valueDotPlot (dn-valdot + its aggregate reference rule) is GONE from the dossier.
+  const dumbbell = svgsByClass(host, 'dn-dumbbell')[0];
+  assert(dumbbell, 'the per-board champion○ → candidate● dumbbell SVG rendered');
+  assertEqual(dumbbell.getAttribute('width'), '100%', 'the dumbbell is responsive (fills its dossier column)');
+  assertEqual(svgsByClass(host, 'dn-valdot').length, 0, 'the old single-series dot-plot is gone from the dossier (replaced by the dumbbell)');
+  // v1 has TWO scored boards, both shared with the champion v0 → two paired rows,
+  // each with a hollow champion ○, a filled candidate ●, a connector, AND a Δ.
+  const champDots = allByClass(dumbbell, 'dn-dumbbell-champ');
+  const candDots = allByClass(dumbbell, 'dn-dumbbell-cand');
+  const conns = allByClass(dumbbell, 'dn-dumbbell-conn');
+  const deltas = allByClass(dumbbell, 'dn-dumbbell-delta');
+  assertEqual(champDots.length, 2, 'a hollow champion ○ per board (one per paired row)');
+  assertEqual(candDots.length, 2, 'a filled candidate ● per board');
+  assertEqual(conns.length, 2, 'a champ→candidate connector per board (the dumbbell bar)');
+  assertEqual(deltas.length, 2, 'a per-board Δ (candidate − champion) per board');
+  // the champion ○ uses the REAL per-board champion value (v0: waffles 60.5,
+  // picky 105.5 — both come through s.championLoss, so the ○ is positioned by
+  // the actual champion-on-this-board loss, recoverable as cand − Δ).
+  const champCx = champDots.map((n) => parseFloat(n.getAttribute('cx')));
+  const candCx = candDots.map((n) => parseFloat(n.getAttribute('cx')));
+  assert(champCx.every((v) => Number.isFinite(v)) && candCx.every((v) => Number.isFinite(v)),
+    'both the ○ and ● are positioned on the shared per-row value axis');
+  // worst-first sort: picky (cand 642.5) is far worse than its champ (105.5) → a
+  // regressed (dn-bad) row; both connectors here are regressions vs the champion.
+  assert(conns.some((n) => (n.getAttribute('class') || '').includes('dn-bad')),
+    'a regressed board (candidate worse than champion on that board) colours its connector dn-bad');
+  // the rows are clickable → that board's drill-down (keeps the drill affordance).
+  const rows = allByClass(dumbbell, 'dn-dumbbell-row');
+  assertEqual(rows.length, 2, 'each board row is its own clickable group');
+  let navTo = null;
+  const host2 = document.createElement('div');
+  await candidate.render(host2, { navigate: (v, p) => { navTo = { v, p }; }, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
+  allByClass(host2, 'dn-dumbbell-row')[0].dispatchEvent({ type: 'click' });
+  assert(navTo && navTo.v === 'board' && navTo.p.gen === 'v1', 'clicking a dumbbell row opens that board\'s drill-down');
+});
+
+// ---- Task B: the generalization train→holdout slope is correctly GATED ----
+// The study's "(5) generalization · train → holdout" slope renders the train dot
+// → holdout dot, the gap, and the OK/over-tolerance verdict when the candidate's
+// experiment carries holdout data, and is cleanly ABSENT when there's none.
+test('candidate view (Task B): the train→holdout generalization slope RENDERS for a holdout-bearing candidate (slope + gap + verdict)', async () => {
+  freshState(); installFetch();
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  // give v1's experiment a holdout triplet within tolerance (gap 0.02 ≤ tol 0.05).
+  const saved = FIXTURE['/api/epoch'];
+  FIXTURE['/api/epoch'] = {
+    ...saved,
+    experiments: saved.experiments.map((x) => x.generation_id === 'v1'
+      ? { ...x, train_loss: 0.60, holdout_loss: 0.62, generalization_gap: 0.02, generalization_tolerance: 0.05 }
+      : x),
+  };
+  try {
+    const host = document.createElement('div');
+    await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
+    // the shrunk supporting panel + its section heading are present.
+    assert(host.textContent.includes('Generalization · train → holdout'), 'the generalization section heading renders');
+    const pane = allByClass(host, 'dn-genpane')[0];
+    assert(pane, 'the shrunk train→holdout slope pane renders');
+    // the slope itself: a train point → a holdout point joined by a slope line.
+    assert(allByClass(pane, 'dn-gen-train')[0], 'the train point renders');
+    assert(allByClass(pane, 'dn-gen-holdout')[0], 'the holdout point renders');
+    assert(allByClass(pane, 'dn-gen-slope')[0], 'the train→holdout slope line renders');
+    // the gap label carries the gap + the within-tolerance OK verdict.
+    const gap = allByClass(pane, 'dn-gen-gap')[0];
+    assert(gap, 'the gap label renders');
+    const gt = gap.textContent || '';
+    assert(gt.includes('gap') && gt.includes('OK'), 'the gap label reads the gap + the within-tolerance OK verdict');
+    // within tolerance → the caution tone, NOT the over-tolerance bad tone.
+    assert((gap.getAttribute('class') || '').includes('dn-caution'), 'a within-tolerance gap reads the caution tone (not over-tolerance bad)');
+  } finally {
+    FIXTURE['/api/epoch'] = saved;
+  }
+});
+
+test('candidate view (Task B): the generalization slope is ABSENT when the candidate has NO holdout data (cleanly gated)', async () => {
+  freshState(); installFetch();
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  // the default v1 experiment carries NO train/holdout/gap fields → no panel.
+  const host = document.createElement('div');
+  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
+  assert(!host.textContent.includes('Generalization · train → holdout'), 'no generalization heading when there is no holdout data');
+  assertEqual(allByClass(host, 'dn-genpane').length, 0, 'no generalization slope pane when there is no holdout data');
+  assertEqual(svgsByClass(host, 'dn-gen-svg').length, 0, 'no generalization slope SVG when there is no holdout data');
+});
+
+// the over-tolerance verdict: a holdout gap that EXCEEDS tolerance reads the bad
+// tone + the "> tol" / memorization caption (the other verdict branch).
+test('candidate view (Task B): an over-tolerance holdout gap reads the over-tolerance (memorization) verdict', async () => {
+  freshState(); installFetch();
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const saved = FIXTURE['/api/epoch'];
+  FIXTURE['/api/epoch'] = {
+    ...saved,
+    experiments: saved.experiments.map((x) => x.generation_id === 'v1'
+      ? { ...x, train_loss: 0.40, holdout_loss: 0.95, generalization_gap: 0.55, generalization_tolerance: 0.05 }
+      : x),
+  };
+  try {
+    const host = document.createElement('div');
+    await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
+    const pane = allByClass(host, 'dn-genpane')[0];
+    assert(pane, 'the slope pane renders for the over-tolerance candidate too');
+    const gap = allByClass(pane, 'dn-gen-gap')[0];
+    assert(gap && (gap.getAttribute('class') || '').includes('dn-bad'), 'an over-tolerance gap reads the bad tone');
+    assert((gap.textContent || '').includes('> tol'), 'the gap label flags it exceeds tolerance');
+    assert(pane.textContent.includes('memorization'), 'the caption flags possible memorization');
+  } finally {
+    FIXTURE['/api/epoch'] = saved;
   }
 });
 

@@ -2332,6 +2332,43 @@
     .dn-dossier-col--side .dn-section { position: static; }
   }
 
+  /* ---- PER-BOARD champion○ → candidate● DUMBBELL (study opt 2) ----
+   * The per-board figure is a per-row dumbbell: on each board the champion's loss
+   * (hollow ○) and the candidate's (filled ●) ride a shared per-row value axis,
+   * joined by a connector coloured improved/regressed; the Δ + pass/fail/timeout
+   * marker sit at the right. Theme-aware via the same tokens as the dot-plot. The
+   * SVG scales to width:100% (responsive); a non-scaling stroke keeps the
+   * connector + glyphs crisp under the uniform width stretch. */
+  .dn-dumbbell { display: block; width: 100%; height: auto; }
+  .dn-dumbbell-label { fill: var(--v2-ink-soft); font: 10px var(--v2-mono); }
+  .dn-dumbbell-ctx { fill: var(--v2-ink-faint); font: 9px var(--v2-mono); }
+  .dn-dumbbell-base { stroke: var(--v2-rule-soft); stroke-width: 0.75; vector-effect: non-scaling-stroke; }
+  .dn-dumbbell-conn { stroke-width: 2.2; vector-effect: non-scaling-stroke; }
+  .dn-dumbbell-conn.dn-good { stroke: var(--v2-good); }
+  .dn-dumbbell-conn.dn-bad { stroke: var(--v2-bad); }
+  .dn-dumbbell-conn.dn-flat { stroke: var(--v2-rule); }
+  /* champion ○ — hollow: panel fill + faint stroke (the per-board reference). */
+  .dn-dumbbell-champ { fill: var(--v2-panel); stroke: var(--v2-ink-faint); stroke-width: 1.4; }
+  /* candidate ● — filled, coloured by the per-board verdict (improved/regressed). */
+  .dn-dumbbell-cand { fill: var(--v2-ink); }
+  .dn-dumbbell-cand.dn-good { fill: var(--v2-good); }
+  .dn-dumbbell-cand.dn-bad { fill: var(--v2-bad); }
+  .dn-dumbbell-cand.dn-flat { fill: var(--v2-ink); }
+  .dn-dumbbell-delta { font: 700 8px var(--v2-mono); }
+  .dn-dumbbell-delta.dn-good { fill: var(--v2-good); }
+  .dn-dumbbell-delta.dn-bad { fill: var(--v2-bad); }
+  .dn-dumbbell-delta.dn-flat { fill: var(--v2-ink-faint); }
+  .dn-dumbbell-timeout { fill: var(--v2-caution); font: 9px var(--v2-mono); }
+  .dn-dumbbell-pass { fill: var(--v2-good); }
+  .dn-dumbbell-fail { stroke: var(--v2-bad); stroke-width: 1.4; vector-effect: non-scaling-stroke; }
+  .dn-dumbbell-aggtick { stroke: var(--v2-rule-soft); stroke-width: 1; stroke-dasharray: 2 4; vector-effect: non-scaling-stroke; }
+  .dn-dumbbell-aggcap { fill: var(--v2-ink-faint); font: 7px var(--v2-mono); }
+  /* the whole row is clickable → its board drill-down (cursor + focus/hover). */
+  .dn-dumbbell-row { cursor: pointer; }
+  .dn-dumbbell-row:hover .dn-dumbbell-label { fill: var(--v2-ink); }
+  .dn-dumbbell-row:focus { outline: none; }
+  .dn-dumbbell-row:focus .dn-dumbbell-label { fill: var(--v2-accent); }
+
   /* the "racing — settled comparisons appear once boards finish" affordance: a
    * compact projected-tone strip so an in-flight dossier reads WHY the settled
    * dumbbell / gate comparisons are not yet drawn, rather than reading bare. */
