@@ -3396,6 +3396,7 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
             "current_epoch_id": current,
             "epochs": rows,
             "sparkline": sparkline,
+            "ledger": [],
         }
 
     # Open the analytical index once for all epochs. Absent index = every
@@ -3502,10 +3503,21 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
         if conn is not None:
             conn.close()
 
+    # The cross-epoch COMPOSED META-LOOP LEDGER matrix (study opt 7): one
+    # ordered row per epoch carrying the held floor, the champion that set it,
+    # the generation_count (effort), the frozen structure, and the
+    # per-component change map vs the predecessor — including the ``proposer``
+    # + ``structure`` levers the L1 contract-diff omits. Derived from the same
+    # on-disk records; degrades independently to an empty list. Surfaced as a
+    # sibling field so the home view reads the ledger from the SAME
+    # ``/api/workspace`` read it already consumes (no extra fan-out).
+    ledger = build_meta_loop_ledger(paths).get("epochs", [])
+
     return {
         "current_epoch_id": current,
         "epochs": rows,
         "sparkline": sparkline,
+        "ledger": ledger,
     }
 
 
@@ -3610,6 +3622,169 @@ def build_contract_diff(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
         "components": components,
         "any_changed": any_changed,
     }
+
+
+# The surfaced ledger components, in heatstrip column order. This SUPERSETS
+# :data:`_CONTRACT_COMPONENT_NAMES` with the two levers the per-epoch
+# contract-diff endpoint omits:
+#
+#   * ``structure`` — NOT a ``contract_components.json`` sub-hash (structure is
+#     a per-epoch tournament attribute, not a contract-hash component). It is
+#     derived from each epoch's frozen ``scoring.json`` ``tournament.structure``
+#     and folded in as its own change signal so a structure roll is attributed.
+#   * ``proposer`` — IS persisted in ``contract_components.json`` (the
+#     orchestrator's :func:`compute_component_hashes` emits it), but the L1
+#     contract-diff endpoint surfaces only the original five. The meta-loop
+#     ledger restores it: "proposer/skills change rolls the epoch", so it must
+#     read as a first-class lever in the cross-epoch attribution.
+_LEDGER_COMPONENT_NAMES = (
+    "board",
+    "brief",
+    "scoring",
+    "entrypoint",
+    "mutable_trees",
+    "structure",
+    "proposer",
+)
+
+
+def _epoch_structure(paths: WorkspacePaths, epoch_id: str) -> str:
+    """Return one epoch's frozen tournament structure token.
+
+    Reads the per-epoch ``scoring.json`` ``tournament`` block (the
+    contract-frozen structure, the same source the Epoch view names). A
+    ``scoring.json`` that predates per-epoch structure (no ``tournament``
+    key) degrades to ``"gauntlet"`` — the data model's default and the
+    same fallback :func:`_tournament_block_from_scoring` applies.
+    """
+    block = _tournament_block_from_scoring(
+        _read_json_value(paths.epochs / epoch_id / "scoring.json")
+    )
+    if isinstance(block, dict):
+        return _normalize_structure(block.get("structure"))
+    return "gauntlet"
+
+
+def build_meta_loop_ledger(paths: WorkspacePaths) -> dict[str, Any]:
+    """The cross-epoch COMPOSED META-LOOP LEDGER matrix (study opt 7).
+
+    One ordered row per epoch (directory / lineage order) carrying the
+    three braided signals the composed ledger renders:
+
+    * ``floor``            — the held loss FLOOR: the lowest finite
+      per-generation scalar in the epoch (== ``best_scalar``; lower is
+      better). ``None`` when no generation has a scalar yet.
+    * ``champion_gen``     — the generation that SET that floor (the
+      champion reign tick); ``None`` paired with a ``None`` floor.
+    * ``generation_count`` — the epoch's generation count (effort → the
+      effort-proportional band width).
+    * ``structure``        — the epoch's frozen tournament structure token.
+    * ``closed`` / ``open`` — lifecycle, so the open epoch dashes.
+    * ``changed_components`` — the per-component change MAP vs the
+      PREDECESSOR epoch over :data:`_LEDGER_COMPONENT_NAMES` (the five
+      surfaced contract components PLUS ``structure`` and ``proposer``).
+      A component is ``True`` iff it has a comparable signal that differs
+      from the predecessor: contract sub-hashes are compared when BOTH are
+      present (an absent legacy hash is "no signal", not "changed");
+      ``structure`` is compared by its derived token. The first epoch has
+      an all-``False`` map (nothing to diff against).
+    * ``changed_list``     — the changed components as an ordered list (a
+      convenience for the change-chip rail).
+    * ``soft``             — ``True`` when this roll changed ``structure``:
+      the cross-roll floor comparison is a SOFT one (the figure stripes it).
+
+    Every datum is DERIVED from existing per-epoch records — no new
+    persistence: the floor / champion / generation_count mirror
+    :func:`build_workspace_view`, the component map reuses the
+    contract-component reader, and ``structure`` reads the frozen
+    ``scoring.json``. Each component degrades independently to a ``None`` /
+    ``False`` value, never an exception.
+    """
+    current = read_current_epoch(paths)
+    rows: list[dict[str, Any]] = []
+    if not paths.epochs.is_dir():
+        return {"current_epoch_id": current, "epochs": rows}
+
+    epoch_ids = sorted(d.name for d in paths.epochs.iterdir() if d.is_dir())
+
+    conn: sqlite3.Connection | None
+    try:
+        conn = _open_index(paths.index_db)
+    except (_IndexAbsent, sqlite3.Error):
+        conn = None
+
+    try:
+        prev_hashes: dict[str, str] = {}
+        prev_structure: str | None = None
+        for idx, epoch_id in enumerate(epoch_ids):
+            epoch_dir = paths.epochs / epoch_id
+
+            cfg = _read_json_value(epoch_dir / "config.json")
+            closed = bool(
+                isinstance(cfg, dict) and isinstance(cfg.get("closed"), bool) and cfg["closed"]
+            )
+
+            gens_dir = epoch_dir / "generations"
+            gen_ids: list[str] = []
+            if gens_dir.is_dir():
+                gen_ids = sorted(c.name for c in gens_dir.iterdir() if c.is_dir())
+
+            floor: float | None = None
+            champion_gen: str | None = None
+            if conn is not None:
+                for gid in gen_ids:
+                    scalar, _entries = _mean_drift_loss_per_generation(conn, epoch_id, gid)
+                    if scalar is None or not _is_finite(scalar):
+                        continue
+                    if floor is None or scalar < floor:
+                        floor = scalar
+                        champion_gen = gid
+
+            cur_hashes = _read_contract_components(paths, epoch_id)
+            structure = _epoch_structure(paths, epoch_id)
+
+            # Component-change map vs the PREDECESSOR. The first epoch has
+            # nothing to diff against → an all-False map.
+            changed: dict[str, bool] = {}
+            changed_list: list[str] = []
+            first = idx == 0
+            for name in _LEDGER_COMPONENT_NAMES:
+                is_changed = False
+                if not first:
+                    if name == "structure":
+                        # structure is derived per epoch, not a sub-hash; a
+                        # change is a token difference (always comparable).
+                        is_changed = prev_structure is not None and structure != prev_structure
+                    else:
+                        cur_h = cur_hashes.get(name) or None
+                        prev_h = prev_hashes.get(name) or None
+                        is_changed = cur_h is not None and prev_h is not None and cur_h != prev_h
+                changed[name] = is_changed
+                if is_changed:
+                    changed_list.append(name)
+
+            rows.append(
+                {
+                    "epoch_id": epoch_id,
+                    "floor": floor,
+                    "champion_gen": champion_gen,
+                    "generation_count": len(gen_ids),
+                    "structure": structure,
+                    "closed": closed,
+                    "open": not closed,
+                    "changed_components": changed,
+                    "changed_list": changed_list,
+                    "soft": bool(changed.get("structure")),
+                }
+            )
+
+            prev_hashes = cur_hashes
+            prev_structure = structure
+    finally:
+        if conn is not None:
+            conn.close()
+
+    return {"current_epoch_id": current, "epochs": rows}
 
 
 # ---------------------------------------------------------------------------

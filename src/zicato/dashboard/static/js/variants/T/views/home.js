@@ -22,6 +22,11 @@ export async function render(host, ctx) {
   const rows = (ws && Array.isArray(ws.epochs)) ? ws.epochs : [];
   const current = ws ? ws.current_epoch_id : null;
   const spark = (ws && Array.isArray(ws.sparkline)) ? ws.sparkline : [];
+  // The cross-epoch COMPOSED META-LOOP LEDGER matrix (study opt 7): one row per
+  // epoch carrying floor / champion / effort / structure / the per-component
+  // change set (incl. the proposer column the contract-diff omits). Surfaced as
+  // a sibling of `epochs` on the SAME /api/workspace read, so no extra fan-out.
+  const ledger = (ws && Array.isArray(ws.ledger)) ? ws.ledger : [];
   // Liveness is GATED on heartbeat freshness, never raw presence of
   // active_tournament.json — a torn-down run leaves that file on disk, and
   // reading it as "LIVE / tournament running" forever is the stale-live bug
@@ -48,6 +53,10 @@ export async function render(host, ctx) {
       svg.isNum(r.best_scalar) ? r.best_scalar.toFixed(3) : null, !!r.closed,
       (trajByEpoch.get(r.epoch_id) || []).map((v) => v.toFixed(3))]),
     trend: spark.map((p) => (p && svg.isNum(p.scalar) ? p.scalar.toFixed(3) : null)),
+    // The ledger is content-gated by its own builder digest so a no-op
+    // heartbeat (identical matrix) churns no DOM — the cross-epoch overview
+    // is the heaviest figure on this page.
+    ledger: svg.metaLoopLedgerDigest({ epochs: ledger, currentEpochId: current }),
     health: health ? (Array.isArray(health.findings) ? health.findings.length : 0) : -1,
   });
 
@@ -59,6 +68,22 @@ export async function render(host, ctx) {
     ]));
 
     nodes.push(overviewStrip(rows, live));
+
+    // The PRIMARY cross-epoch overview: the composed meta-loop ledger (study
+    // opt 7). It braids the held floor staircase, effort-proportional bands,
+    // and the contract-component heatstrip (incl. the proposer column the diff
+    // omits) into one figure — trajectory, attribution, and effort/champion in
+    // a single scan. The fleet cards stay below it as the per-epoch drill-in.
+    if (ledger.length >= 1) {
+      const lcard = el('div', { class: 'dn-panel dn-figpane dn-metaledger-pane' });
+      lcard.appendChild(svg.metaLoopLedger({
+        epochs: ledger, currentEpochId: current, responsive: true,
+        onEpoch: (id) => ctx.navigate && ctx.navigate('epoch', { epochId: id }),
+      }));
+      lcard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;',
+        text: 'is the meta-loop making net progress across contracts · which lever moved each reset · is effort buying floor' }));
+      nodes.push(section('Meta-loop ledger · cross-epoch', lcard));
+    }
 
     const fleet = rows.length === 0
       ? empty('No epochs recorded in this workspace yet.')

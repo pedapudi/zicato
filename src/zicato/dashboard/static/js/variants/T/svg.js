@@ -3280,3 +3280,340 @@ export function reignGantt(opts) {
   });
   return svg;
 }
+
+// ── the COMPOSED META-LOOP LEDGER — the cross-epoch zoom-level (study opt 7) ──
+//
+// The highest zoom-level figure: above any single tournament, the unit is the
+// EPOCH. It braids the three operator-liked cross-epoch views into ONE figure
+// over a single, EFFORT-proportional x-axis (each epoch owns a band whose WIDTH
+// ∝ its generation_count), with three stacked zones read top→bottom:
+//
+//   (A) FLOOR STAIRCASE (opt 1)  — the held loss floor as held steps + risers;
+//       a step DROPS when the floor improves, JUMPS UP on a reset; every roll
+//       seam carries a component-coded change CHIP on a vertical rail.
+//   (B) EFFORT BANDS    (opt 4)  — band width ∝ generation_count, fill ∝ floor
+//       (good→bad), with a champion-reign tick marking the generation that set
+//       the floor.
+//   (C) COMPONENT HEATSTRIP (opt 3) — epochs(cols) × components(rows incl. the
+//       proposer* column the contract-diff omits + structure); a filled cell =
+//       that lever changed vs the predecessor. A floor-Δ chip sits per epoch in
+//       the right gutter.
+//
+// A structure roll is a SOFT seam (the cross-roll floor comparison is not
+// directly comparable) — stripped down the staircase + bands and dashed on the
+// structure cell + the change chip.
+//
+// The decision it answers: "is the meta-loop making net progress across
+// contracts, which lever moved each reset, and is effort buying floor."
+//
+// CONVERGENCE: the figure is a pure function of the model — the live (current
+// epoch in flight, open=true → dashed) and the settled (closed) render are
+// byte-identical for the same row data. The home view digest-gates on
+// `metaLoopLedgerDigest` so a no-op heartbeat churns no DOM.
+//
+// DEGRADES on 0–1 epochs: an empty model paints an honest placeholder; a single
+// epoch paints its band + floor + heatstrip column with no risers/seams (there
+// is nothing to diff against — the change map is all-unchanged).
+//
+//   opts: {
+//     epochs: [{ epoch_id, floor, champion_gen, generation_count, structure,
+//                open|closed, changed_components:{name:bool}, changed_list:[..],
+//                soft }],
+//     currentEpochId, onEpoch(epoch_id), responsive
+//   }
+const LEDGER_COMPONENTS = ['board', 'brief', 'scoring', 'entrypoint', 'mutable_trees', 'structure', 'proposer'];
+const LEDGER_COMP_LABEL = {
+  board: 'board', brief: 'brief', scoring: 'scoring', entrypoint: 'entrypoint',
+  mutable_trees: 'mutable_trees', structure: 'structure', proposer: 'proposer*',
+};
+// component → accent for the change-chip primary colour (mirrors the study's rcol).
+const LEDGER_COMP_COLOR = {
+  board: 'var(--v2-accent)', scoring: 'var(--v2-good)', brief: 'var(--v2-caution)',
+  structure: 'var(--v2-bad)', entrypoint: 'var(--v2-accent)',
+  mutable_trees: 'var(--v2-ink-soft)', proposer: 'var(--v2-ink-faint)',
+};
+
+export function metaLoopLedger(opts) {
+  const o = opts || {};
+  const rows = (Array.isArray(o.epochs) ? o.epochs : []).filter((e) => e && e.epoch_id != null);
+  const W = o.width || 1120;
+  const L = 96;
+  const R = 150;
+  const T = 78;
+  const pw = W - L - R;
+  const n = rows.length;
+
+  // ---- empty / degenerate model: an honest placeholder, aspect-locked. ----
+  if (n === 0) {
+    const h = 120;
+    const svg = svgEl('svg', applyResponsive({
+      class: 'dn-metaledger', width: '100%', height: h,
+      viewBox: `0 0 ${W} ${h}`, preserveAspectRatio: 'xMidYMid meet', role: 'img',
+      'aria-label': 'cross-epoch meta-loop ledger',
+    }, o, W, h, 'dn-metaledger-hero'));
+    const t = svgEl('text', { x: W / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
+    t.textContent = 'no epochs recorded yet';
+    svg.appendChild(t);
+    return svg;
+  }
+
+  // ---- effort-proportional x geometry: each epoch owns a band whose width ∝
+  // generation_count. A floor of 1 gen-unit per epoch keeps a zero-gen epoch
+  // from collapsing to a hairline (still a readable band). ----
+  const efforts = rows.map((e) => Math.max(1, isNum(e.generation_count) ? e.generation_count : 1));
+  const totalEffort = efforts.reduce((a, v) => a + v, 0) || 1;
+  const bx = [];
+  let acc = L;
+  rows.forEach((e, i) => {
+    const bw = pw * efforts[i] / totalEffort;
+    bx.push({ x0: acc, x1: acc + bw, xc: acc + bw / 2, w: bw });
+    acc += bw;
+  });
+
+  // ---- zone layout (top→bottom) ----
+  const stairH = 190;
+  const stairTop = T;
+  const bandTop = stairTop + stairH + 34;
+  const bandH = 62;
+  const bandBot = bandTop + bandH;
+  const hsTop = bandBot + 40;
+  const hsRowH = 26;
+  const deltaW = 130;
+  const hsBot = hsTop + LEDGER_COMPONENTS.length * hsRowH;
+  const H = hsBot + 24;
+
+  // ---- the floor domain (the staircase y-scale). Lower loss sits LOWER on the
+  // axis (a descent reads downward); a flat/absent series gets a gentle pad. ----
+  const floors = finiteValues(rows.map((e) => e.floor));
+  let [flo, fhi] = extent(floors.length ? floors : [0, 1]);
+  const fpad = (fhi - flo) * 0.14 || 0.5;
+  flo -= fpad; fhi += fpad;
+  const sy = scale([flo, fhi], [stairTop + stairH, stairTop]);
+  // hue for a floor: good (low) → bad (high), area-honest mix.
+  const floorMix = (f) => {
+    if (!isNum(f)) return 'color-mix(in srgb, var(--v2-ink-faint) 30%, var(--v2-panel))';
+    const t = Math.max(0, Math.min(1, (f - flo) / (fhi - flo || 1)));
+    return `color-mix(in srgb, var(--v2-bad) ${Math.round(t * 100)}%, var(--v2-good))`;
+  };
+
+  const svg = svgEl('svg', applyResponsive({
+    class: 'dn-metaledger', width: '100%', height: H,
+    viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'xMinYMin meet', role: 'img',
+    'aria-label': 'cross-epoch composed meta-loop ledger — floor staircase, effort bands, contract-component heatstrip',
+  }, o, W, H, 'dn-metaledger-hero'));
+
+  const onEpoch = typeof o.onEpoch === 'function' ? o.onEpoch : null;
+  const txt = (x, y, s, attrs) => {
+    const t = svgEl('text', Object.assign({ x, y }, attrs || {}));
+    t.textContent = s == null ? '' : String(s);
+    return t;
+  };
+
+  // ───────── (A) FLOOR STAIRCASE (opt 1) ─────────
+  svg.appendChild(txt(L, T - 58, 'A · LOSS FLOOR — held steps across epochs (↓ better)',
+    { class: 'dn-metaledger-zonecap', 'text-anchor': 'start' }));
+  // y gridlines + ticks
+  for (let i = 0; i <= 4; i++) {
+    const v = flo + (fhi - flo) * i / 4;
+    const yy = sy(v);
+    svg.appendChild(svgEl('line', { x1: L, y1: yy, x2: W - R, y2: yy, class: 'dn-metaledger-grid' }));
+    svg.appendChild(txt(L - 8, yy + 3, fmt(v, 2), { class: 'dn-metaledger-axis', 'text-anchor': 'end' }));
+  }
+  let prevF = null;
+  rows.forEach((e, i) => {
+    const b = bx[i];
+    const open = !!e.open || e.closed === false;
+    const hasF = isNum(e.floor);
+    const yy = hasF ? sy(e.floor) : sy((flo + fhi) / 2);
+    const improved = prevF == null ? true : (hasF && e.floor < prevF);
+    const stepCls = open ? 'dn-metaledger-step-open'
+      : improved ? 'dn-metaledger-step-good' : 'dn-metaledger-step-bad';
+    // riser from the previous held level to this one
+    if (prevF != null && hasF) {
+      svg.appendChild(svgEl('line', {
+        x1: b.x0, y1: sy(prevF), x2: b.x0, y2: yy,
+        class: 'dn-metaledger-riser ' + stepCls, 'stroke-dasharray': open ? '5 4' : null,
+      }));
+    }
+    // held horizontal level
+    svg.appendChild(svgEl('line', {
+      x1: b.x0, y1: yy, x2: b.x1, y2: yy,
+      class: 'dn-metaledger-held ' + stepCls, 'stroke-dasharray': open ? '5 4' : null,
+    }));
+    svg.appendChild(svgEl('circle', { cx: b.xc, cy: yy, r: 4.5, class: 'dn-metaledger-floordot ' + stepCls }));
+    svg.appendChild(txt(b.xc, yy - 11, hasF ? fmt(e.floor, 3) : '—',
+      { class: 'dn-metaledger-floorlbl ' + stepCls, 'text-anchor': 'middle' }));
+    if (hasF) prevF = e.floor;
+  });
+  // open badge under the last held level
+  const last = rows[n - 1];
+  if (last && (last.open || last.closed === false)) {
+    const yy = isNum(last.floor) ? sy(last.floor) : sy((flo + fhi) / 2);
+    svg.appendChild(txt(bx[n - 1].xc, yy + 20, '● OPEN',
+      { class: 'dn-metaledger-openbadge', 'text-anchor': 'middle' }));
+  }
+
+  // ───────── contract-change RAIL + chips (opt 1), at each roll boundary ─────────
+  rows.forEach((e, i) => {
+    if (i === 0) return;
+    const changed = Array.isArray(e.changed_list) ? e.changed_list : [];
+    if (!changed.length) return;
+    const b = bx[i];
+    const soft = !!e.soft;
+    svg.appendChild(svgEl('line', {
+      x1: b.x0, y1: stairTop - 2, x2: b.x0, y2: bandBot + 4,
+      class: 'dn-metaledger-rail', 'stroke-dasharray': soft ? '3 3' : null,
+    }));
+    const primary = changed[0];
+    const chipCol = LEDGER_COMP_COLOR[primary] || 'var(--v2-ink-faint)';
+    const label = changed.map((c) => (c === 'structure'
+      ? 'structure→' + (e.structure || '?') : (LEDGER_COMP_LABEL[c] || c))).join('+');
+    const cw = Math.max(54, label.length * 6.0 + 14);
+    const cx = Math.min(W - R - cw / 2, Math.max(L + cw / 2, b.x0));
+    svg.appendChild(svgEl('rect', {
+      x: cx - cw / 2, y: T - 44, width: cw, height: 18, rx: 4,
+      class: 'dn-metaledger-chip', fill: 'var(--v2-panel)',
+      stroke: chipCol, 'stroke-width': 1.5, 'stroke-dasharray': soft ? '3 3' : null,
+    }));
+    svg.appendChild(txt(cx, T - 31, label, { class: 'dn-metaledger-chiptxt', 'text-anchor': 'middle' }));
+    if (soft) {
+      svg.appendChild(svgEl('line', {
+        x1: b.x0, y1: stairTop, x2: b.x0, y2: bandBot,
+        class: 'dn-metaledger-soft',
+      }));
+      svg.appendChild(txt(b.x0 + 4, bandBot - 6, 'SOFT', { class: 'dn-metaledger-softlbl' }));
+    }
+  });
+
+  // ───────── (B) EFFORT-PROPORTIONAL BANDS (opt 4) ─────────
+  svg.appendChild(txt(L, bandTop - 8, 'B · EFFORT — band width ∝ generation_count · fill ∝ floor · │ = champion reign',
+    { class: 'dn-metaledger-zonecap', 'text-anchor': 'start' }));
+  rows.forEach((e, i) => {
+    const b = bx[i];
+    const open = !!e.open || e.closed === false;
+    const g = svgEl('g', { class: 'dn-metaledger-band-g', tabindex: onEpoch ? '0' : null });
+    g.appendChild(hov(svgEl('rect', {
+      x: b.x0 + 1, y: bandTop, width: Math.max(2, b.w - 3), height: bandH, rx: 4,
+      class: 'dn-metaledger-band', fill: floorMix(e.floor),
+      stroke: 'var(--v2-rule)', 'stroke-width': 1, 'stroke-dasharray': open ? '5 4' : null,
+    }), `${e.epoch_id} · ${e.generation_count || 0} gen · floor ${fmt(e.floor, 3)}`
+      + ` · ${e.structure || 'gauntlet'}` + (open ? ' · OPEN' : '')));
+    g.appendChild(txt(b.x0 + 8, bandTop + 18, shortLabel(String(e.epoch_id), 14),
+      { class: 'dn-metaledger-bandid', 'text-anchor': 'start' }));
+    if (b.w > 84) {
+      g.appendChild(txt(b.x0 + 8, bandTop + 34, e.structure || 'gauntlet',
+        { class: 'dn-metaledger-bandsub', 'text-anchor': 'start' }));
+    }
+    g.appendChild(txt(b.x0 + 8, bandTop + 50,
+      `${e.generation_count || 0} gen`,
+      { class: 'dn-metaledger-bandsub', 'text-anchor': 'start' }));
+    if (open) {
+      g.appendChild(txt(b.x0 + b.w - 9, bandTop + 16, 'OPEN',
+        { class: 'dn-metaledger-bandopen', 'text-anchor': 'end' }));
+    }
+    // champion-reign tick — the generation that set the floor
+    if (e.champion_gen != null) {
+      const champX = b.x0 + Math.max(6, (b.w - 3) * 0.62);
+      g.appendChild(svgEl('rect', {
+        x: champX - 2, y: bandTop - 4, width: 4, height: bandH + 8, rx: 1.5,
+        class: 'dn-metaledger-champtick',
+      }));
+      if (b.w > 104) {
+        g.appendChild(txt(champX, bandTop + bandH + 13, 'champ ' + shortLabel(String(e.champion_gen), 8),
+          { class: 'dn-metaledger-champlbl', 'text-anchor': 'middle' }));
+      }
+    }
+    clickable(g, onEpoch && (() => onEpoch(String(e.epoch_id))));
+    svg.appendChild(g);
+  });
+
+  // ───────── (C) COMPONENT HEATSTRIP (opt 3) — epochs(cols) × components(rows) ─────────
+  svg.appendChild(txt(L, hsTop - 12, 'C · CONTRACT DELTA — filled = lever changed vs predecessor (proposer* not in contract-diff)',
+    { class: 'dn-metaledger-zonecap', 'text-anchor': 'start' }));
+  LEDGER_COMPONENTS.forEach((c, r) => {
+    const yc = hsTop + r * hsRowH + hsRowH / 2;
+    const isProp = c === 'proposer';
+    svg.appendChild(txt(L - 8, yc + 3, LEDGER_COMP_LABEL[c],
+      { class: 'dn-metaledger-rowlbl' + (isProp ? ' dn-metaledger-rowlbl-prop' : ''), 'text-anchor': 'end' }));
+  });
+  rows.forEach((e, i) => {
+    const b = bx[i];
+    const cmap = (e.changed_components && typeof e.changed_components === 'object') ? e.changed_components : {};
+    LEDGER_COMPONENTS.forEach((c, r) => {
+      const yTop = hsTop + r * hsRowH + 2;
+      const changed = !!cmap[c];
+      const soft = c === 'structure' && changed;
+      const cls = 'dn-metaledger-cell'
+        + (changed ? (soft ? ' dn-metaledger-cell-soft' : ' dn-metaledger-cell-on') : ' dn-metaledger-cell-off');
+      svg.appendChild(hov(svgEl('rect', {
+        x: b.x0 + 2, y: yTop, width: Math.max(2, b.w - 5), height: hsRowH - 4, rx: 3, class: cls,
+        'stroke-dasharray': soft ? '4 3' : null,
+      }), `${e.epoch_id} · ${LEDGER_COMP_LABEL[c]} ${changed ? 'CHANGED vs predecessor' : 'unchanged'}`
+        + (soft ? ` (→ ${e.structure || '?'} · SOFT seam)` : '')));
+      if (changed) {
+        svg.appendChild(txt(b.xc, yTop + (hsRowH - 4) / 2 + 3, soft ? ('→' + (e.structure || '?')) : '●',
+          { class: soft ? 'dn-metaledger-cellmark-soft' : 'dn-metaledger-cellmark', 'text-anchor': 'middle' }));
+      }
+    });
+    svg.appendChild(txt(b.xc, hsBot + 14, shortLabel(String(e.epoch_id), 14),
+      { class: 'dn-metaledger-colid', 'text-anchor': 'middle' }));
+  });
+
+  // ───────── floor-Δ chips (opt 3) — one per epoch, in the right gutter ─────────
+  svg.appendChild(txt(W - R + 8, hsTop - 12, 'floor Δ', { class: 'dn-metaledger-zonecap', 'text-anchor': 'start' }));
+  prevF = null;
+  rows.forEach((e, i) => {
+    const rowY = bandTop + (bandH - n * 22) / 2 + i * 22;
+    const hasF = isNum(e.floor);
+    if (prevF != null && hasF) {
+      const d = e.floor - prevF;
+      const up = d > 0;
+      const soft = !!e.soft;
+      const cls = 'dn-metaledger-dchip ' + (up ? 'dn-metaledger-dchip-bad' : 'dn-metaledger-dchip-good');
+      svg.appendChild(svgEl('rect', {
+        x: W - R + 8, y: rowY, width: deltaW - 12, height: 18, rx: 5, class: cls,
+        'stroke-dasharray': soft ? '4 3' : null,
+      }));
+      svg.appendChild(txt(W - R + 16, rowY + 13,
+        `${shortLabel(String(e.epoch_id), 10)} ${up ? '▲' : '▼'} ${fmtSigned(d, 3)}`,
+        { class: 'dn-metaledger-dtxt ' + (up ? 'dn-metaledger-dtxt-bad' : 'dn-metaledger-dtxt-good'), 'text-anchor': 'start' }));
+      if (soft) {
+        svg.appendChild(txt(W - 22, rowY + 13, 'SOFT', { class: 'dn-metaledger-softlbl', 'text-anchor': 'end' }));
+      }
+    } else {
+      svg.appendChild(svgEl('rect', {
+        x: W - R + 8, y: rowY, width: deltaW - 12, height: 18, rx: 5, class: 'dn-metaledger-dchip dn-metaledger-dchip-base',
+      }));
+      svg.appendChild(txt(W - R + 16, rowY + 13, `${shortLabel(String(e.epoch_id), 10)} baseline`,
+        { class: 'dn-metaledger-dtxt-base', 'text-anchor': 'start' }));
+    }
+    if (hasF) prevF = e.floor;
+  });
+
+  return svg;
+}
+
+// The content DIGEST for the meta-loop ledger — the home view gates its DOM
+// swap on this so a no-op SSE heartbeat (identical ledger) churns nothing. It
+// quantizes the floor to 3 dp (the rendered precision) and folds every field
+// the figure draws: floor, champion, effort, structure, lifecycle, and the
+// per-component change set (incl. proposer + structure). Two ledgers that
+// render byte-identically MUST produce the same digest — the live (open) and
+// settled (closed) paths included.
+export function metaLoopLedgerDigest(opts) {
+  const o = opts || {};
+  const rows = (Array.isArray(o.epochs) ? o.epochs : []).filter((e) => e && e.epoch_id != null);
+  return JSON.stringify({
+    cur: o.currentEpochId != null ? String(o.currentEpochId) : null,
+    e: rows.map((e) => [
+      String(e.epoch_id),
+      isNum(e.floor) ? e.floor.toFixed(3) : null,
+      e.champion_gen != null ? String(e.champion_gen) : null,
+      isNum(e.generation_count) ? e.generation_count : 0,
+      e.structure || 'gauntlet',
+      (e.open || e.closed === false) ? 'o' : 'c',
+      LEDGER_COMPONENTS.map((c) => (e.changed_components && e.changed_components[c]) ? 1 : 0).join(''),
+      e.soft ? 1 : 0,
+    ]),
+  });
+}
