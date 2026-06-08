@@ -286,7 +286,15 @@ def test_bundle_under_size_envelope(
     # the cross-round projected fallback, the digest quantization, and the
     # theme-derived projected tokens + treatment CSS — ~22 KB. The envelope is
     # raised to 880 KB to cover it with headroom for continued iteration.
-    assert total < 880_000, f"bundle is {total} bytes, exceeds 880_000 envelope"
+    #
+    # The TOURNAMENT-VIZ REDESIGN then ports the operator-selected study designs
+    # into the live Console: four new in-language svg builders (the racing
+    # `racingScalarTrack`, the gauntlet `gauntletFieldBars`, the `elimRadial`
+    # bracket, the candidate `radarSilhouette`) + the orthogonal-pipe `elimFlow`
+    # combo, their wiring across structure.js / candidate.js / the live hero, and
+    # the live-protocol coverage — ~70 KB of real new data-graphics. The envelope
+    # is raised to 980 KB to cover the redesign with headroom for iteration.
+    assert total < 980_000, f"bundle is {total} bytes, exceeds 980_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
