@@ -2538,12 +2538,19 @@
   .dn-metaledger-step-open { stroke: var(--v2-ink-faint); }
   .dn-metaledger-step-open.dn-metaledger-floordot { fill: var(--v2-ink-faint); stroke: none; }
   .dn-metaledger-step-open.dn-metaledger-floorlbl { fill: var(--v2-ink-faint); }
-  .dn-metaledger-floorlbl { font: 400 11px var(--v2-mono); font-variant-numeric: tabular-nums; }
+  /* weight 400 (NOT bold). A paper-coloured halo lets the value read cleanly
+     where a gridline / held-line crosses the glyphs (no struck-through artifact);
+     the stroke is thin enough to halo WITHOUT visually thickening the glyph. */
+  .dn-metaledger-floorlbl { font: 400 11px var(--v2-mono); font-variant-numeric: tabular-nums;
+    paint-order: stroke; stroke: var(--v2-paper); stroke-width: 3px; stroke-linejoin: round; }
   .dn-metaledger-openbadge { fill: var(--v2-ink-faint); font: 400 8.5px var(--v2-mono); }
   /* change rail + chip at each roll seam */
   .dn-metaledger-rail { stroke: var(--v2-rule-soft); stroke-width: 1;
     vector-effect: non-scaling-stroke; }
   .dn-metaledger-chip { vector-effect: non-scaling-stroke; }
+  /* a subtle connector from a de-collided chip back to its true roll boundary */
+  .dn-metaledger-chiplink { stroke: var(--v2-rule-soft); stroke-width: 1;
+    stroke-dasharray: 2 3; vector-effect: non-scaling-stroke; }
   .dn-metaledger-chiptxt { fill: var(--v2-ink); font: 400 9.5px var(--v2-mono); }
   .dn-metaledger-soft { stroke: var(--v2-caution); stroke-width: 2;
     stroke-dasharray: 2 5; vector-effect: non-scaling-stroke; }

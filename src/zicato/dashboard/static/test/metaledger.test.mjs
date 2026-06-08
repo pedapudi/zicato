@@ -24,6 +24,7 @@ const svg = await import('../js/variants/T/svg.js');
 const home = await import('../js/variants/T/views/home.js');
 const data = await import('../js/variants/T/data.js');
 const router = await import('../js/variants/T/router.js');
+const hovercard = await import('../js/variants/T/hovercard.js');
 
 function allByClass(host, cls) {
   return host.querySelectorAll('[class]').filter((n) =>
@@ -34,6 +35,15 @@ function hasClass(node, cls) {
 }
 function textOfClass(host, cls) {
   return allByClass(host, cls).map((n) => n.textContent);
+}
+// Drive the hovercard like a browser would (mirrors boardstatus.test.mjs): fire
+// mouseenter on a wired node and read the active card text.
+function hovercardTextOf(node) {
+  hovercard.hide();
+  node.dispatchEvent({ type: 'mouseenter', target: node });
+  const text = hovercard.cardText();
+  node.dispatchEvent({ type: 'mouseleave', target: node });
+  return text;
 }
 
 // A realistic 4-epoch chain mirroring the real workspace shape:
@@ -102,14 +112,83 @@ test('metaLoopLedger: a structure roll is a SOFT seam (caution-dashed cell + sea
   assertEqual(allByClass(node, 'dn-metaledger-soft').length, 1, 'one SOFT seam stripe');
 });
 
-test('metaLoopLedger: the change rail attributes each roll to a named lever', () => {
+test('metaLoopLedger: the change rail attributes each roll to a named lever (compact)', () => {
   const node = svg.metaLoopLedger(chain());
   // a change chip per epoch with a changed_list (e1, e2, e3 = 3; e0 baseline has none).
   const chips = textOfClass(node, 'dn-metaledger-chiptxt');
   assertEqual(chips.length, 3, 'a change chip at each roll boundary (not the baseline)');
-  assert(chips.some((t) => t.includes('board')), 'the board roll is labelled');
-  assert(chips.some((t) => t.includes('structure→swiss')), 'the structure roll names the rolled-into structure');
-  assert(chips.some((t) => t.includes('proposer')), 'the proposer roll is labelled');
+  // COMPACT labels: e1 ['board'] → 'board'; e2 ['scoring','structure'] (→swiss)
+  // leads with the structure headline → '→swiss +1'; e3 ['proposer','brief'] →
+  // 'proposer* +1' (the primary lever's label + the +N overflow).
+  assert(chips.some((t) => t === 'board'), 'a single-lever roll renders just the lever label');
+  assert(chips.some((t) => t === '→swiss +1'),
+    'a structure roll leads with →<structure> + the +N overflow, not the full set');
+  assert(chips.some((t) => t.startsWith('proposer*')), 'the proposer roll headlines the primary lever');
+  // the FULL set is NOT in the rendered chip text (it moved to the hovercard).
+  assert(!chips.some((t) => t.includes('structure→swiss')),
+    'the full "structure→swiss" string is no longer rendered in the chip (compact only)');
+  assert(!chips.some((t) => t.includes('+')) || chips.every((t) => !/scoring\+structure|board\+/.test(t)),
+    'no chip renders the joined full change-set');
+});
+
+test('metaLoopLedger: the FULL change-set lives on the chip hovercard (nothing lost)', () => {
+  const node = svg.metaLoopLedger(chain());
+  const chipRects = allByClass(node, 'dn-metaledger-chip');
+  assertEqual(chipRects.length, 3, 'a chip rect per roll boundary');
+  // every chip is hovercard-wired and the full join is on hover, not in the box.
+  chipRects.forEach((r) => assert(hovercard.hasHovercard(r), 'each chip is hovercard-wired'));
+  const tips = chipRects.map((r) => hovercardTextOf(r));
+  assert(tips.some((t) => t === 'board'), 'the board chip hover carries its (single) set');
+  assert(tips.some((t) => t.includes('scoring') && t.includes('structure→swiss')),
+    'the scoring+structure chip hover carries the FULL joined set incl. structure→swiss');
+  assert(tips.some((t) => t.includes('proposer*') && t.includes('brief')),
+    'the proposer+brief chip hover carries the full set');
+});
+
+test('metaLoopLedger: chips do NOT overlap given tight/adjacent boundaries + long change-sets', () => {
+  // A pathological chain: three rolls whose boundaries fall very close together
+  // (tiny generation_count epochs after a big one) AND a fat change-set, which
+  // pre-fix collided/clipped. The resolved chip x-extents MUST be disjoint.
+  const m = {
+    currentEpochId: 'e3',
+    epochs: [
+      { epoch_id: 'e0', floor: 0.5, champion_gen: 'v1', champion_index: 1, generation_count: 200,
+        structure: 'racing', closed: true, open: false,
+        changed_components: { board: false, brief: false, scoring: false, entrypoint: false, mutable_trees: false, structure: false, proposer: false },
+        changed_list: [], soft: false },
+      { epoch_id: 'e1', floor: 0.4, champion_gen: 'v2', champion_index: 1, generation_count: 1,
+        structure: 'racing', closed: true, open: false,
+        changed_components: { board: true, brief: true, scoring: true, entrypoint: false, mutable_trees: false, structure: false, proposer: false },
+        changed_list: ['board', 'brief', 'scoring'], soft: false },
+      { epoch_id: 'e2', floor: 0.35, champion_gen: 'v3', champion_index: 1, generation_count: 1,
+        structure: 'swiss', closed: true, open: false,
+        changed_components: { board: true, brief: false, scoring: true, entrypoint: false, mutable_trees: false, structure: true, proposer: false },
+        changed_list: ['board', 'scoring', 'structure'], soft: true },
+      { epoch_id: 'e3', floor: 0.3, champion_gen: 'v4', champion_index: 1, generation_count: 1,
+        structure: 'swiss', closed: true, open: false,
+        changed_components: { board: false, brief: true, scoring: false, entrypoint: false, mutable_trees: false, structure: false, proposer: true },
+        changed_list: ['proposer', 'brief'], soft: false },
+    ],
+  };
+  const node = svg.metaLoopLedger(m);
+  const rects = allByClass(node, 'dn-metaledger-chip');
+  assertEqual(rects.length, 3, 'three chips for the three rolls');
+  // build [x, x+width] extents, sort by left edge, assert pairwise disjoint.
+  const ext = rects.map((r) => {
+    const x = parseFloat(r.getAttribute('x'));
+    const w = parseFloat(r.getAttribute('width'));
+    return [x, x + w];
+  }).sort((a, b) => a[0] - b[0]);
+  for (let k = 1; k < ext.length; k++) {
+    assert(ext[k][0] >= ext[k - 1][1] - 0.001,
+      `chip ${k} left (${ext[k][0]}) is >= chip ${k - 1} right (${ext[k - 1][1]}) — no overlap`);
+  }
+  // and every chip stays inside the figure (no clipping at the edges).
+  const W = 1120; const L = 96; const R = 28;
+  ext.forEach((e) => {
+    assert(e[0] >= L - 0.5, 'chip left edge stays inside the left margin');
+    assert(e[1] <= W - R + 0.5, 'chip right edge stays inside the right margin');
+  });
 });
 
 test('metaLoopLedger: the floor staircase colours improvement vs reset', () => {
@@ -328,6 +407,26 @@ test('home view: an open (live) epoch in the ledger does not change the settled 
   // but the STRUCTURAL content (floors, changes, champions) is otherwise identical:
   const stripLifecycle = (d) => d.replace(/"o"|"c"/g, '"X"');
   assertEqual(stripLifecycle(dOpen), stripLifecycle(dClosed), 'only the lifecycle bit differs');
+});
+
+// ── zone-A floor labels: a paper halo so they don't read struck-through ──────
+
+test('metaLoopLedger: the floor value label carries a paper halo (paint-order: stroke) and stays weight 400', async () => {
+  const css = await import('node:fs').then((fs) =>
+    fs.readFileSync(new URL('../css/variants/T/console4.css', import.meta.url), 'utf8'));
+  const oneLine = css.replace(/\n/g, ' ');
+  // the floor label rule carries the halo: paint-order:stroke + a paper stroke,
+  // so a gridline crossing the glyphs no longer reads as a strike-through. Match
+  // the STANDALONE base selector (a leading boundary, NOT the compound
+  // `.dn-metaledger-step-good.dn-metaledger-floorlbl` colour rules).
+  const rule = (oneLine.match(/[\s}]\.dn-metaledger-floorlbl\s*\{[^}]*\}/) || [''])[0];
+  assert(rule, 'the .dn-metaledger-floorlbl rule exists');
+  assert(/paint-order:\s*stroke/.test(rule), 'paint-order: stroke (the halo paints behind the fill)');
+  assert(/stroke:\s*var\(--v2-paper\)/.test(rule), 'the halo is paper-coloured');
+  assert(/stroke-width:\s*[23](\.\d+)?px/.test(rule), 'the halo stroke-width is in the 2–3px haloing range');
+  assert(/stroke-linejoin:\s*round/.test(rule), 'rounded joins so the halo does not spike');
+  // it MUST still be weight 400 (the halo must not turn it bold).
+  assert(/font:\s*400\s/.test(rule), 'the floor label is still weight 400 (the halo, not bold, fixes the artifact)');
 });
 
 await run();
