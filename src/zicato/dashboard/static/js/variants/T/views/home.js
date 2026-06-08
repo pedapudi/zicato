@@ -1,8 +1,9 @@
 // variants/T/views/home.js — HOME / ENVIRONMENT: the workspace as a fleet.
 //
-// Console's home is dense: a cross-epoch overview strip, one compact console
-// card per epoch carrying the per-epoch loss TRENDLINE hero, loop health, and
-// a cross-epoch trajectory sparkline. Data-ink-maximal, tight chrome.
+// Console's home is dense: a cross-epoch overview strip, the fleet of compact
+// console cards (each carrying its per-epoch loss TRENDLINE hero), the composed
+// meta-loop ledger as the cross-epoch overview, and loop health.
+// Data-ink-maximal, tight chrome.
 //
 // Data: /api/workspace, /api/health-report, + live AppState.
 
@@ -21,7 +22,6 @@ export async function render(host, ctx) {
   const [ws, health] = await Promise.all([D.workspace(), D.healthReport()]);
   const rows = (ws && Array.isArray(ws.epochs)) ? ws.epochs : [];
   const current = ws ? ws.current_epoch_id : null;
-  const spark = (ws && Array.isArray(ws.sparkline)) ? ws.sparkline : [];
   // The cross-epoch COMPOSED META-LOOP LEDGER matrix (study opt 7): one row per
   // epoch carrying floor / champion / effort / structure / the per-component
   // change set (incl. the proposer column the contract-diff omits). Surfaced as
@@ -52,7 +52,6 @@ export async function render(host, ctx) {
     rows: rows.map((r) => [r.epoch_id, r.generation_count || 0, r.promoted_count || 0,
       svg.isNum(r.best_scalar) ? r.best_scalar.toFixed(3) : null, !!r.closed,
       (trajByEpoch.get(r.epoch_id) || []).map((v) => v.toFixed(3))]),
-    trend: spark.map((p) => (p && svg.isNum(p.scalar) ? p.scalar.toFixed(3) : null)),
     // The ledger is content-gated by its own builder digest so a no-op
     // heartbeat (identical matrix) churns no DOM — the cross-epoch overview
     // is the heaviest figure on this page.
@@ -69,11 +68,18 @@ export async function render(host, ctx) {
 
     nodes.push(overviewStrip(rows, live));
 
-    // The PRIMARY cross-epoch overview: the composed meta-loop ledger (study
-    // opt 7). It braids the held floor staircase, effort-proportional bands,
-    // and the contract-component heatstrip (incl. the proposer column the diff
-    // omits) into one figure — trajectory, attribution, and effort/champion in
-    // a single scan. The fleet cards stay below it as the per-epoch drill-in.
+    // The fleet of per-epoch console cards is the lead view — the workspace at
+    // a glance, each card the per-epoch drill-in.
+    const fleet = rows.length === 0
+      ? empty('No epochs recorded in this workspace yet.')
+      : el('div', { class: 'dn-fleet' }, rows.map((r) => fleetCard(r, r.epoch_id === current, ctx, trajByEpoch.get(r.epoch_id) || [], live)));
+    nodes.push(section('Fleet · ' + rows.length + ' epoch' + (rows.length === 1 ? '' : 's'), fleet));
+
+    // Below the fleet: the composed meta-loop ledger (study opt 7) — the
+    // cross-epoch overview that braids the held floor staircase, effort-
+    // proportional bands, and the contract-component heatstrip (incl. the
+    // proposer column the diff omits): trajectory, attribution, and
+    // effort/champion in one scan.
     if (ledger.length >= 1) {
       const lcard = el('div', { class: 'dn-panel dn-figpane dn-metaledger-pane' });
       lcard.appendChild(svg.metaLoopLedger({
@@ -85,33 +91,8 @@ export async function render(host, ctx) {
       nodes.push(section('Meta-loop ledger · cross-epoch', lcard));
     }
 
-    const fleet = rows.length === 0
-      ? empty('No epochs recorded in this workspace yet.')
-      : el('div', { class: 'dn-fleet' }, rows.map((r) => fleetCard(r, r.epoch_id === current, ctx, trajByEpoch.get(r.epoch_id) || [], live)));
-    nodes.push(section('Fleet · ' + rows.length + ' epoch' + (rows.length === 1 ? '' : 's'), fleet));
-
     if (health) nodes.push(healthPanel(health));
 
-    const trendVals = spark.map((p) => p && p.scalar).filter(svg.isNum);
-    if (trendVals.length >= 1) {
-      const card = el('div', { class: 'dn-panel' });
-      // This is a FULL-WIDTH hero panel (~1700–1950px in the real shell). The
-      // old fixed 760×84 viewBox with preserveAspectRatio:'none' was stretched
-      // ~2.5× horizontally there, flattening every slope into a skewed streak.
-      // `responsive` aspect-LOCKS the box to the viewBox aspect (14:1 here) so
-      // the scale is UNIFORM — the trajectory keeps its real slopes and the
-      // height tracks the pane width (≈136px at 1900px, capped on ultra-wide).
-      // padY breathes the y-domain, minSpan keeps a near-flat series gently
-      // varied (not dead-flat) without faking a slope, and markers dot each
-      // epoch so 1–3 epochs read as points, not one segment (a lone epoch → a
-      // centred dot).
-      card.appendChild(svg.sparkline({
-        width: 1400, height: 100, values: trendVals, band: true, goodDirection: 'down',
-        padY: 0.18, minSpan: 0.5, markers: true, responsive: true,
-      }));
-      card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text: 'best scalar per epoch · lower is better' }));
-      nodes.push(section('Cross-epoch trajectory', card));
-    }
     return nodes;
   });
 }

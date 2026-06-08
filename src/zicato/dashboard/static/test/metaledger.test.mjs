@@ -237,9 +237,10 @@ test('home view: builds the meta-loop ledger from /api/workspace and makes it th
   assertEqual(allByClass(host, 'dn-metaledger-band').length, 3, 'a band per epoch in the ledger figure');
   assertEqual(allByClass(host, 'dn-metaledger-cell').length, 7 * 3, 'the heatstrip renders 7 components × 3 epochs');
   assert(host.textContent.includes('Meta-loop ledger'), 'the ledger section is titled');
-  // it is the PRIMARY cross-epoch overview: it appears ABOVE the fleet cards.
+  // the fleet is the lead view; the ledger sits BELOW it as the composed
+  // cross-epoch overview.
   const txt = host.textContent;
-  assert(txt.indexOf('Meta-loop ledger') < txt.indexOf('Fleet'), 'the ledger precedes the fleet cards');
+  assert(txt.indexOf('Fleet') < txt.indexOf('Meta-loop ledger'), 'the fleet precedes the ledger (fleet leads, ledger below)');
 });
 
 test('home view: a no-op re-render of the same workspace churns NO ledger DOM (digest-gated)', async () => {

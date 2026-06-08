@@ -7216,7 +7216,7 @@ test('fleet cards: NO fabricated [best×1.18, best×1.06, best] fallback — an 
   assertEqual(sparkPointCount(cards[0]), 3, 'the other epoch still draws its real trajectory');
 });
 
-test('fleet cards: existing rendering preserved — stats, epoch links, current-epoch highlight, and the real cross-epoch sparkline', async () => {
+test('fleet cards: existing rendering preserved — stats, epoch links, current-epoch highlight (full-width cross-epoch trajectory removed)', async () => {
   freshState(); installFleetFetch();
   const home = await import('../js/variants/T/views/home.js');
   const host = document.createElement('div');
@@ -7232,10 +7232,9 @@ test('fleet cards: existing rendering preserved — stats, epoch links, current-
   assert((cards[1].getAttribute('class') || '').includes('dn-is-current'), 'the current epoch card is highlighted');
   assert(!(cards[0].getAttribute('class') || '').includes('dn-is-current'), 'the non-current epoch card is not highlighted');
 
-  // the cross-epoch trajectory sparkline is REAL workspace data (one point per
-  // epoch from ws.sparkline), NOT fabricated.
-  assert(host.textContent.includes('Cross-epoch trajectory'), 'the cross-epoch trajectory panel rendered');
-  assert(host.textContent.includes('best scalar per epoch'), 'it is the per-epoch (workspace) series, left intact');
+  // the full-width "Cross-epoch trajectory" sparkline was removed — the
+  // composed meta-loop ledger (tested separately) is the cross-epoch overview.
+  assert(!host.textContent.includes('Cross-epoch trajectory'), 'the full-width cross-epoch trajectory panel is gone');
 });
 
 test('fleet cards: digest-gated — identical workspace + trajectories do NOT rebuild the DOM (heartbeat no-op)', async () => {
