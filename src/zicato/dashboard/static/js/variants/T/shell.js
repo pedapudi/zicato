@@ -36,12 +36,13 @@ import { roundsForTree } from './views/rounds.js';
 import { deriveLiveStatus, liveStatusDigest, treeLiveSet, staleLabel } from './livestatus.js';
 import { LiveController } from './live.js';
 import { buildSwatchDropdown, syncSwatchDropdowns } from './swatchdropdown.js';
-import { syncTypefaceDropdowns } from './typefacedropdown.js';
+import { syncTypefaceDropdowns, syncFontSizeSegments } from './typefacedropdown.js';
 import {
   COLOR_THEMES, DEFAULT_COLOR, normaliseColor, readColor, persistColor,
   TYPE_THEMES, DEFAULT_TYPE, normaliseType, readType, persistType,
   DENSITY,
   SCALE_MIN, SCALE_MAX, SCALE_STEP, DEFAULT_SCALE, normaliseScale, readScale, persistScale,
+  normaliseFontSize, readFontSize, persistFontSize, fontSizeScale,
   RAIL_MIN, RAIL_MAX, DEFAULT_RAIL, normaliseRail, readRail, persistRail, pageScaleOf,
 } from './ui.js';
 
@@ -134,6 +135,27 @@ export function applyTypeface(typeface, rootEl) {
   // Legacy: keep any old button-group refs in lockstep (now an empty no-op list).
   for (const b of _typeEl) patchClass(b, 'dt-type-active', b.getAttribute('data-type') === t);
   return t;
+}
+
+// GLOBAL TEXT FONT-SIZE — the S/M/L control in the typeface picker. DISTINCT
+// from the page-scale pill (which `zoom`s the WHOLE page incl. figures): this is
+// a TEXT-ONLY multiplier. It stamps `--dt-font-scale` (the number every html
+// `font-size: calc(Npx * var(--dt-font-scale,1))` rule reads) + a `data-t-fontsize`
+// attribute on the app root, persists under its own key, and syncs every live
+// S/M/L segment (top bar + Settings). SMALL (1.0) is the current look — the
+// literal px render unchanged — so the default is byte-identical to today. SVG
+// figures are sized in svg.js (the `font:` shorthand), so they never grow here.
+export function applyFontSize(size, rootEl) {
+  const v = normaliseFontSize(size);
+  const root = rootEl || _root;
+  if (root) {
+    root.style.setProperty('--dt-font-scale', String(fontSizeScale(v)));
+    root.setAttribute('data-t-fontsize', v);
+  }
+  persistFontSize(v);
+  // Sync EVERY live S/M/L segment (top bar AND settings) — one source of truth.
+  syncFontSizeSegments(v);
+  return v;
 }
 
 // PAGE-WIDE SCALE — the draggable scale pill. Distinct from density: this is a
@@ -456,6 +478,7 @@ export function mountShell(root) {
   // that still keys on it, but it never changes.
   root.setAttribute('data-t-density', DENSITY);
   root.setAttribute('data-t-scale', String(readScale()));
+  root.setAttribute('data-t-fontsize', readFontSize());
 
   _crumbHost = el('nav', { class: 'dt-crumbs', 'aria-label': 'Breadcrumb' });
 
@@ -621,6 +644,7 @@ export function mountShell(root) {
 
   applyTheme(readColor());
   applyTypeface(readType());
+  applyFontSize(readFontSize());
   applyScale(readScale());
   applyRail(initialRail, root);
 
