@@ -1224,7 +1224,7 @@
     display: inline-flex; flex-direction: column; justify-content: center;
     align-self: center;
     pointer-events: none;            /* informational only — never blocks a click */
-    font: 7.5px/1.25 var(--v2-mono);
+    font: 9.5px/1.25 var(--v2-mono);   /* sized to the sibling "console" tag register (was 7.5px — too small to read) */
     text-transform: uppercase;
     letter-spacing: 0.1em;
     color: var(--v2-ink-faint);
@@ -1419,7 +1419,14 @@
      pinned over its stem). The letters fill with `currentColor` (so they flip
      dark/light with the theme like the mark); the dot fills with the accent
      token. Sized to the bar like the old text span. */
-  .dt-brand-name { height: 16px; width: auto; display: block; flex: none; color: var(--v2-ink); align-self: center; overflow: visible; }
+  /* OPTICAL CENTERING: the wordmark's text baseline sits at viewBox y=15 inside
+   * an 18-tall box, so ~3 units of empty descender space below the letters push
+   * the glyph mass low in the box — and align-items:center centres the BOX, not
+   * the ink, so the letters render ~2px below the shared centreline (the "console
+   * looks higher than zicato" effect). Lift the glyphs onto the centreline so
+   * the wordmark, "console", "research preview" and the breadcrumb all align.
+   * Tunable single value — nudge if it reads high/low. */
+  .dt-brand-name { height: 16px; width: auto; display: block; flex: none; color: var(--v2-ink); align-self: center; overflow: visible; transform: translateY(-1.5px); }
   .dt-brand-variant { font-family: var(--v2-mono); font-size: 9.5px; letter-spacing: 0.16em;
     text-transform: uppercase; color: var(--v2-accent); }
 
