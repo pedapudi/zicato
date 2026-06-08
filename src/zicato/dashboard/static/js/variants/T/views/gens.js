@@ -25,7 +25,7 @@ import { state } from '../../../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { gatedSwap, section, empty, verdictPill, normaliseDecision, decisionFor } from '../ui.js';
-import { renderStructure, structurePill, structureDigest, isNonGauntlet, normalizeStructure, reconstructRacing, buildLiveRacingModel, buildLiveSwissModel, buildLiveElimModel, racingModel } from './structure.js';
+import { renderStructure, structurePill, structureDigest, isNonGauntlet, normalizeStructure, resolveNonGauntletSt } from './structure.js';
 import { deriveLiveStatus } from '../livestatus.js';
 import { epochRoundModel, roundModelDigest } from './rounds.js';
 
@@ -206,22 +206,59 @@ async function renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roun
 
   // the live PROJECTED standing for an in-flight round's challenger (current
   // epoch only) — falls back to the projected scalar when no settled one exists.
+  const liveForThisEpoch = liveBelongsToEpoch(id);
   const liveAt = state.activeTournament;
-  const liveProjected = (liveBelongsToEpoch(id) && liveAt && liveAt.projected && typeof liveAt.projected === 'object') ? liveAt.projected : {};
+  const liveProjected = (liveForThisEpoch && liveAt && liveAt.projected && typeof liveAt.projected === 'object') ? liveAt.projected : {};
   const epochRounds = epochRoundModel({ gens, scalarBy: scalarByGen, bracket, structure, championId, projected: liveProjected });
   const want = String(roundParam);
   const round = epochRounds.find((r) => String(r.round_index) === want) || null;
 
-  // normalize the round's own field-tournament record (non-gauntlet only).
-  const st = (round && round.tournamentRef)
-    ? normalizeStructure({
-        structure: round.tournamentRef.structure || structure,
-        structure_params: round.tournamentRef.structure_params || (tournament && tournament.params) || {},
-        competitors: round.tournamentRef.competitors, rounds: round.tournamentRef.rounds,
-        standings: round.tournamentRef.standings,
-        champion_lineage: bracket && bracket.champion_lineage, source: 'index',
-      }, false)
-    : null;
+  // THE ROUND'S TOURNAMENT PAYLOAD — for a non-gauntlet structure, resolve it
+  // THROUGH THE SHARED resolver (live-first → reconstructRacing → per-round
+  // record) so the round view and the all-rounds Match-ups / epoch view CANNOT
+  // DRIFT. The old code read `round.tournamentRef.rounds` directly, but a RACING
+  // field record carries `rounds: []` by design (rungs live in the per-challenger
+  // records + the live envelope, not the aggregate field record) — so the round
+  // view came up with zero rungs and rendered "No rungs evaluated yet." while the
+  // epoch view, which went live-first → reconstruct, showed them. The per-round
+  // field record is now only the COMPLETED-record fallback (swiss/elim, whose
+  // rounds DO live in the record); racing is rebuilt by reconstructRacing.
+  let st = null;
+  if (isNonGauntlet(structure)) {
+    // the per-round field record → the completed-record fallback input (its
+    // `rounds` are authoritative for swiss/elim; empty for racing → ignored, the
+    // resolver reconstructs from the bracket instead).
+    const recordSt = (round && round.tournamentRef)
+      ? normalizeStructure({
+          structure: round.tournamentRef.structure || structure,
+          structure_params: round.tournamentRef.structure_params || (tournament && tournament.params) || {},
+          competitors: round.tournamentRef.competitors, rounds: round.tournamentRef.rounds,
+          standings: round.tournamentRef.standings,
+          champion_lineage: bracket && bracket.champion_lineage, source: 'index',
+        }, false)
+      : null;
+    const status = deriveLiveStatus({
+      heartbeat: state.heartbeat, activeRuns: state.activeRuns, activeTournament: state.activeTournament,
+    });
+    const liveRaw = (liveForThisEpoch && status.running) ? await D.activeTournament() : null;
+    const resolved = resolveNonGauntletSt({
+      structure, bracket, epochId: id, liveRaw,
+      heartbeat: state.heartbeat, activeRuns: state.activeRuns,
+      params: (tournament && tournament.params) || {},
+      completedRecord: recordSt,
+    });
+    st = resolved.st;
+  } else if (round && round.tournamentRef) {
+    // a gauntlet round that nonetheless carries a field record — normalize it
+    // directly (back-compat; gauntlet rungs are not reconstructed).
+    st = normalizeStructure({
+      structure: round.tournamentRef.structure || structure,
+      structure_params: round.tournamentRef.structure_params || (tournament && tournament.params) || {},
+      competitors: round.tournamentRef.competitors, rounds: round.tournamentRef.rounds,
+      standings: round.tournamentRef.standings,
+      champion_lineage: bracket && bracket.champion_lineage, source: 'index',
+    }, false);
+  }
 
   // the gauntlet match-ups for this round's challengers (no field record).
   const matchups = (bracket && Array.isArray(bracket.matchups)) ? bracket.matchups : [];
@@ -301,80 +338,45 @@ async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, 
     heartbeat: state.heartbeat, activeRuns: state.activeRuns, activeTournament: state.activeTournament,
   });
   // the LIVE topology (full {structure,phase,competitors,rounds,standings}) —
-  // adopted ONLY for the active epoch's view.
+  // adopted ONLY for the active epoch's view. The progressive live builders, the
+  // racing reconstruction, and the live-vs-record adoption decision ALL live in
+  // the SHARED resolver (resolveNonGauntletSt) so this all-rounds page and the
+  // per-round drill-down can never drift (see the resolver's header). We pre-fetch
+  // the COMPLETED per-tournament record here (the resolver is sync + I/O-free) and
+  // hand it in as the recorded fallback the resolver uses when no live run is
+  // adopted AND (for racing) the bracket reconstruction does not resolve.
   const liveRaw = (liveForThisEpoch && status.running) ? await D.activeTournament() : null;
-  // RACING — the live active-tournament `rounds` are EMPTY until each matchup
-  // COMPLETES, so a plain normalize would yield no rungs and the ladder would
-  // sit on the "being seeded" empty state for the whole race. Build a
-  // PROGRESSIVE, accumulating model from the field (competitors) + the
-  // heartbeat's active rung + per-gen board progress (/api/active-runs) +
-  // partial aggregates + any completed rounds, so the ladder fills rung-by-rung
-  // and never discards a finished rung. The epoch gen scope is the live field
-  // itself (only the field's gens race), so foreign in-flight runs are excluded.
-  // SWISS + ELIM share racing's problem: the live `rounds` carry pairings whose
-  // winner only lands as boards complete, so a plain normalize shows empty/being-
-  // seeded pairings. The progressive builders accumulate completed rounds, fill
-  // the active round board-by-board, and queue the future (racing's discipline).
-  let liveSt;
-  const liveStructure = liveRaw ? String(liveRaw.structure) : null;
-  if (liveRaw && (liveStructure === 'racing' || liveStructure === 'swiss'
-      || liveStructure === 'single_elim' || liveStructure === 'double_elim')) {
-    const epochGens = (Array.isArray(liveRaw.competitors) ? liveRaw.competitors : [])
-      .map((c) => c && c.generation_id).filter((g) => g != null).map(String);
-    const args = {
-      at: liveRaw, heartbeat: state.heartbeat, activeRuns: state.activeRuns,
-      epochGens: epochGens.length ? epochGens : null,
-    };
-    const built = liveStructure === 'racing' ? buildLiveRacingModel(args)
-      : liveStructure === 'swiss' ? buildLiveSwissModel(args)
-      : buildLiveElimModel(args);
-    liveSt = built || normalizeStructure(liveRaw, true);
-  } else {
-    liveSt = normalizeStructure(liveRaw, true);
-  }
-  // ADOPT the live model when it is flagged live OR when it carries an IN-FLIGHT,
-  // STREAMING racing rung (a published `live_progress` on a still-pending rung) —
-  // so a multi-survivor rung mid-flight renders ALL its lanes racing instead of
-  // falling back to the completed-record reconstruction (which would crown the
-  // eventual winner / mislabel in-flight lanes "rejected"). The streaming-rung
-  // signal is authoritative even when the phase string has not flipped `live`.
-  const hasStreamingRacingRung = (s) => {
-    if (!s || String(s.structure) !== 'racing') return false;
-    const m = racingModel(s);
-    return !!(m && Array.isArray(m.rungs) && m.rungs.some((r) =>
-      r && r.pending && r.live_progress && typeof r.live_progress === 'object'
-      && Object.keys(r.live_progress).length > 0));
-  };
-  const liveUsable = !!(liveSt && (liveSt.live || hasStreamingRacingRung(liveSt)));
 
-  // the COMPLETED record (only fetched/reconstructed when NOT showing live).
+  // pre-fetch the completed per-tournament record (the recorded fallback). For
+  // RACING this is the SECOND fallback behind reconstructRacing (the aggregate
+  // field record carries `rounds: []`, but a per-challenger flattened record can
+  // still resolve a ladder); for swiss/elim it is the primary recorded source.
+  // It is cached + failure-tolerant, so probing it is cheap and keeps the
+  // resolver sync.
   let tournamentId = null;
-  let st = null;
-  if (!liveUsable) {
-    // RACING is persisted as ONE record PER CHALLENGER — the per-tournament
-    // structure fetch only sees a single challenger's flattened rounds, which
-    // cannot rebuild the rung/field/cut/survivor ladder. Aggregate every
-    // racing record on /api/tournaments and group matches by their `match_id`
-    // rung prefix to reconstruct the whole ladder + champion-gate outcome.
-    if (structure === 'racing') {
-      st = reconstructRacing(bracket, id);
-      tournamentId = st ? 'racing:reconstructed' : null;
-    }
-    if (!st) {
-      const tournaments = (bracket && Array.isArray(bracket.tournaments)) ? bracket.tournaments : [];
-      const nonGaunt = tournaments.filter((t) => t && t.structure && t.structure !== 'gauntlet');
-      if (nonGaunt.length) tournamentId = nonGaunt[nonGaunt.length - 1].tournament_id;
-      else if (tournaments.length) tournamentId = tournaments[tournaments.length - 1].tournament_id;
-      else {
-        const matchups = (bracket && Array.isArray(bracket.matchups)) ? bracket.matchups : [];
-        const last = matchups[matchups.length - 1];
-        if (last && last.challenger) tournamentId = `${id}:${last.champion || ''}->${last.challenger}`;
-      }
-      st = tournamentId ? normalizeStructure(await D.tournamentStructure(id, tournamentId), false) : null;
+  {
+    const tournaments = (bracket && Array.isArray(bracket.tournaments)) ? bracket.tournaments : [];
+    const matchStruct = tournaments.filter((t) => t && t.structure === structure);
+    const nonGaunt = tournaments.filter((t) => t && t.structure && t.structure !== 'gauntlet');
+    if (matchStruct.length) tournamentId = matchStruct[matchStruct.length - 1].tournament_id;
+    else if (nonGaunt.length) tournamentId = nonGaunt[nonGaunt.length - 1].tournament_id;
+    else if (tournaments.length) tournamentId = tournaments[tournaments.length - 1].tournament_id;
+    else {
+      const matchups = (bracket && Array.isArray(bracket.matchups)) ? bracket.matchups : [];
+      const last = matchups[matchups.length - 1];
+      if (last && last.challenger) tournamentId = `${id}:${last.champion || ''}->${last.challenger}`;
     }
   }
+  const completedRecord = tournamentId ? normalizeStructure(await D.tournamentStructure(id, tournamentId), false) : null;
 
-  const shown = liveUsable ? liveSt : st;
+  const resolved = resolveNonGauntletSt({
+    structure, bracket, epochId: id, liveRaw,
+    heartbeat: state.heartbeat, activeRuns: state.activeRuns,
+    params, completedRecord,
+  });
+  const shown = resolved.st;
+  const liveUsable = resolved.source === 'live';
+  if (resolved.source === 'reconstructed') tournamentId = 'racing:reconstructed';
   const shownStructure = (shown && shown.structure) || structure;
   const digest = JSON.stringify({
     id, structure: shownStructure, tournamentId, live: liveUsable, st: structureDigest(shown),

@@ -2421,6 +2421,126 @@ test('structure: racing renders a fit-to-width survival funnel with cuts + board
   assert(host.textContent.includes('Rung 1') && host.textContent.includes('Rung 2'), 'both rungs render as stages');
 });
 
+// ---- REGRESSION: the per-ROUND Match-ups drill-down must build the SAME racing
+// rung model the all-rounds / epoch view does (the recurring "round view empty"
+// bug). A racing FIELD record carries `rounds: []` BY DESIGN — the rungs live in
+// the LIVE active-tournament envelope (in flight) and in reconstructRacing / the
+// per-tournament structure record (settled). The round drill-down used to read
+// `round.tournamentRef.rounds` directly, so it came up with ZERO rungs and showed
+// "No rungs evaluated yet." while the epoch view (live-first → reconstruct) showed
+// them. Both paths now resolve through ONE shared resolver (resolveNonGauntletSt),
+// so they CANNOT diverge — this pins LIVE and asserts live↔recorded convergence.
+
+// the per-round FIELD record the orchestrator opens at round start: it lists the
+// competitor field + proposing status but carries EMPTY rounds/standings (issue
+// #16, `state="in_progress"`). This is the e4 repro shape.
+const RACING_FIELD_EMPTY = {
+  tournament_id: '2026-05-30_e0:field:v1', epoch_id: EPOCH_ID, structure: 'racing',
+  structure_params: { board_fraction: 0.5, eta: 2, field_size: 4 },
+  competitors: [
+    { generation_id: 'v0', seed: 1, role: 'champion' }, { generation_id: 'v1', seed: 2, role: 'challenger' },
+    { generation_id: 'v2', seed: 3, role: 'challenger' }, { generation_id: 'v3', seed: 4, role: 'challenger' },
+  ],
+  rounds: [], standings: [], field_status: [], state: 'in_progress', source: 'index',
+};
+// the LIVE active-tournament envelope DOES carry the populated rungs (stage_index
+// stages, survivors/cut) — the in-flight source the round view must read.
+const RACING_LIVE_AT = {
+  epoch_id: EPOCH_ID, structure: 'racing', phase: 'tournament:round_0:running',
+  structure_params: { board_fraction: 0.5, eta: 2, field_size: 4 },
+  competitors: RACING_FIELD_EMPTY.competitors,
+  rounds: [
+    { stage_index: 0, label: 'Rung 0', matches: [{ match_id: 'rung0', competitors: ['v0', 'v1', 'v2', 'v3'], survivors: ['v1', 'v2'], cut: ['v3'], board_fraction: 0.5 }] },
+    { stage_index: 1, label: 'Rung 1', matches: [{ match_id: 'rung1', competitors: ['v1', 'v2'], survivors: ['v1'], cut: ['v2'], board_fraction: 1.0 }] },
+  ],
+  standings: [
+    { generation_id: 'v1', rank: 1, scalar: 40.0, status: 'alive' },
+    { generation_id: 'v0', rank: 2, scalar: 54.0, status: 'alive', role: 'champion' },
+  ],
+};
+
+function racingRoundFixture({ live }) {
+  const gens = RACING_FIELD_EMPTY.competitors.map((c) => ({ generation_id: c.generation_id, epoch_id: EPOCH_ID, parent_generation_id: c.role === 'champion' ? '' : 'v0', promoted: c.role === 'champion', round_index: 0 }));
+  // SETTLED: the field record + the per-tournament structure record carry the
+  // resolved rungs (the orchestrator's settle upsert, issue #16). LIVE: both stay
+  // empty (the in_progress shape) so the ONLY rung source is the live envelope.
+  const settledRounds = live ? [] : RACING_LIVE_AT.rounds.map((r) => ({ ...r, round_index: r.stage_index }));
+  const settledStandings = live ? [] : RACING_LIVE_AT.standings;
+  const fieldRec = { ...RACING_FIELD_EMPTY, rounds: settledRounds, standings: settledStandings, state: live ? 'in_progress' : 'settled' };
+  const structRec = { ...fieldRec, source: 'index' };
+  const F = {
+    '/api/epoch': { epoch_id: EPOCH_ID, closed: !live, goal: 'g', tournament: { structure: 'racing', params: RACING_FIELD_EMPTY.structure_params },
+      experiments: gens.map((g) => ({ generation_id: g.generation_id, parent_generation_id: g.parent_generation_id, outcome: { decision: g.promoted ? 'baseline' : 'pending' }, round_index: 0 })), board: [] },
+    '/api/lineage': { generations: gens },
+    '/api/score-trajectory': { points: live ? [] : [{ generation_id: 'v0', scalar: 54.0 }, { generation_id: 'v1', scalar: 40.0 }] },
+    '/api/tournaments': { epoch_id: EPOCH_ID, structure: 'racing', structure_params: RACING_FIELD_EMPTY.structure_params, champion_lineage: ['v0'],
+      matchups: [], tournaments: [fieldRec] },
+    [`/api/tournament-structure/${EPOCH_ID}/${fieldRec.tournament_id}`]: structRec,
+  };
+  // LIVE: the views fetch the in-flight topology fresh from /api/active-tournament
+  // (the only source carrying the rungs while the field record is still empty).
+  if (live) F['/api/active-tournament'] = RACING_LIVE_AT;
+  return F;
+}
+
+// helper: render a view and read whether the racing rung figures are present.
+async function renderRacingView(view, params, { live }) {
+  freshState();
+  installFixtureMap(racingRoundFixture({ live }));
+  if (live) {
+    coreState.state.activeTournament = RACING_LIVE_AT;
+    coreState.state.heartbeat = { phase: 'tournament:round_0:running', epoch_id: EPOCH_ID, last_heartbeat: new Date().toISOString() };
+    coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'run_v1' }];
+  } else {
+    coreState.state.activeTournament = null;
+    coreState.state.heartbeat = null;
+    coreState.state.activeRuns = [];
+  }
+  try {
+    const mod = await import(`../js/variants/T/views/${view}.js`);
+    const host = document.createElement('div');
+    await mod.render(host, { navigate() {}, href: router.href }, params);
+    return host;
+  } finally {
+    coreState.state.activeTournament = null;
+    coreState.state.heartbeat = null;
+    coreState.state.activeRuns = [];
+  }
+}
+
+test('REGRESSION (round-view-empty): the per-ROUND racing drill-down builds a NON-EMPTY rung model from the LIVE envelope when the field record carries rounds:[]', async () => {
+  const host = await renderRacingView('gens', { epochId: EPOCH_ID, round: 0 }, { live: true });
+  // the title is the round drill-down (not the all-rounds page).
+  assert(host.textContent.includes('round 0'), 'the round drill-down header reads "round 0"');
+  // THE BUG: the round view used to show this empty state. It must NOT now.
+  assert(!host.textContent.includes('No rungs evaluated yet'), 'the round view does NOT show the "No rungs evaluated yet." empty state');
+  // the racing scalar track + survival funnel render the rungs from the live envelope.
+  assert(host.textContent.includes('Scalar track'), 'the racing Scalar track renders in the round drill-down');
+  assert(svgsByClass(host, 'dn-funnel')[0], 'the survival funnel SVG renders the rungs (non-empty rung model)');
+  assert(host.textContent.includes('Rung 0') && host.textContent.includes('Rung 1'), 'both rungs render as stages in the round view');
+});
+
+test('REGRESSION (round-view-empty): the per-ROUND racing drill-down CONVERGES with the all-rounds + epoch views — same rungs LIVE and SETTLED', async () => {
+  // LIVE: round drill-down vs all-rounds Match-ups — both must show the rungs.
+  const roundLive = await renderRacingView('gens', { epochId: EPOCH_ID, round: 0 }, { live: true });
+  const allRoundsLive = await renderRacingView('gens', { epochId: EPOCH_ID }, { live: true });
+  const epochLive = await renderRacingView('epoch', { epochId: EPOCH_ID }, { live: true });
+  for (const [name, h] of [['round', roundLive], ['all-rounds', allRoundsLive], ['epoch', epochLive]]) {
+    assert(svgsByClass(h, 'dn-funnel')[0], `LIVE: the ${name} view renders the racing funnel (non-empty rungs)`);
+    assert(!h.textContent.includes('No rungs evaluated yet'), `LIVE: the ${name} view has no empty rung state`);
+  }
+  // SETTLED: the field/per-tournament record now carries the rungs (the
+  // orchestrator's settle upsert). With NO live run the round drill-down must
+  // STILL build the rungs — proving live↔recorded convergence (no source drift).
+  const roundSettled = await renderRacingView('gens', { epochId: EPOCH_ID, round: 0 }, { live: false });
+  const allRoundsSettled = await renderRacingView('gens', { epochId: EPOCH_ID }, { live: false });
+  for (const [name, h] of [['round', roundSettled], ['all-rounds', allRoundsSettled]]) {
+    assert(!h.textContent.includes('No rungs evaluated yet'), `SETTLED: the ${name} view has no empty rung state`);
+    assert(svgsByClass(h, 'dn-funnel')[0], `SETTLED: the ${name} view renders the racing funnel from the recorded rungs`);
+    assert(h.textContent.includes('Rung 0') && h.textContent.includes('Rung 1'), `SETTLED: the ${name} view shows both rungs`);
+  }
+});
+
 test('structure: a missing structure payload degrades gracefully (no throw, honest empty)', async () => {
   freshState();
   // epoch names swiss but the structure endpoint 404s + no tournaments[].
