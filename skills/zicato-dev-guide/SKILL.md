@@ -132,23 +132,23 @@ must never abort a resolution.
 
 ## Sharp edges (verified against the code, with corrections)
 
-- **Subprocess weights-transport gap — `per_judge_weights` is silently
-  dropped.** `_weights_spec` (`tournament/runner.py:692-713`) and
-  `_weights_from_args` (`_tournament_worker.py:685-720`) must stay symmetric.
-  They currently **omit `per_judge_weights` AND `default_judge_weight` on BOTH
-  sides**, so the worker's `reduce_loss` reconstructs them at their dataclass
-  defaults (`{}` / `1.0`) — i.e. per-judge weighting is NOT applied in the
-  production subprocess path, even though the reducer/scoring code reads them
-  (`telemetry/scoring.py:480`, `reducer.py compute_drift_loss`). The
-  `per_judge_weights` tests call `reduce_loss`/`compute_drift_loss` *in
-  process*; there is **no round-trip test** for `_weights_spec`↔
-  `_weights_from_args`, so this is unguarded. **The seed framing ("this exact
-  bug *dropped* per_judge_weights") implies it was fixed; in this tree it is
-  still dropped across the subprocess boundary.** Pattern to internalize: a
-  field present in-process but missing from BOTH spec/from-args is silently
-  reconstructed at its default — add the field to both sides AND a round-trip
-  test when you touch `ScoringWeights`.
-- **Four distinct timeout mechanisms (not three — the seed undercounts).**
+- **Subprocess weights-transport symmetry — the canonical "silent default"
+  trap.** `_weights_spec` (`tournament/runner.py`) and `_weights_from_args`
+  (`_tournament_worker.py`) MUST stay symmetric: a `ScoringWeights` field
+  present in-process but missing from BOTH the spec and the from-args side is
+  silently reconstructed at its dataclass default in the worker — no error, just
+  wrong scoring. This bit twice: `per_judge_weights`/`default_judge_weight` were
+  dropped (so per-judge weighting silently fell back to `1.0`), and later
+  `pass_rate_monotonicity_scope` would have desynced the worker-side gate the
+  same way. BOTH are now carried on both sides and guarded by round-trip tests
+  in `tests/test_subprocess_workers.py`
+  (`test_per_judge_weights_survive_worker_serialize_deserialize`,
+  `test_pass_rate_monotonicity_scope_survives_worker_serialize_deserialize`).
+  Pattern to internalize: when you add a `ScoringWeights` field, add it to BOTH
+  transport sides AND a worker serialize→JSON→deserialize round-trip test — the
+  in-process reducer tests will pass while the production subprocess path is
+  silently wrong.
+- **Five distinct timeout mechanisms — know which kills a process vs cancels in-process.**
   1. *Per-board wall-clock budget* — the worker's own cooperative
      `asyncio.wait_for(timeout=entry.wall_clock_budget_seconds)`
      (`_tournament_worker.py:590`); the parent runner wraps it in a
@@ -168,11 +168,16 @@ must never abort a resolution.
      `evolve_n_rounds` stops cleanly **between rounds** and cancels a round
      **within** it via Layer-1 `asyncio.wait_for` (cooperative only — a wedged
      blocking/CPU round needs the L3 worker layer)
-     (`orchestrator.py:2982-3005`). **Correction:** there is no per-MATCHUP
-     cap, but there IS a per-evolve total cap + a within-round cancel — the
-     seed's "no matchup/epoch-level wall-clock cap" overstates the gap. (Note:
-     `main` is ahead of this worktree and adds a matchup/final-rung racing
-     budget — re-check on the tip before claiming none exists.)
+     (`orchestrator.py:2982-3005`). There is a per-evolve total cap + a
+     within-round cancel here.
+  5. *Per-matchup / final-rung wall-clock budget (racing)* — opt-in
+     `matchup_budget_seconds` (all rungs) and `final_rung_budget_seconds` (the
+     final crowning duel) stamped onto `Matchup` and enforced in `run_matchup`:
+     once a duel's wall-clock is spent it stops launching board units and
+     records the rest as budget-exceeded (partial aggregate). Default unset =
+     uncapped (byte-identical to before). This closes the gap where a racing
+     FINAL — full board × replicates × both sides, each board only bounded by
+     its own per-board budget — could grind for hours with no aggregate cap.
 - **`uv sync --all-extras` ALWAYS.** A bare `uv sync` prunes the dev tooling
   (pytest, mypy, ruff, even uv) from `.venv` — the dev deps live behind extras
   (`pyproject.toml [project.optional-dependencies] dev`). Use `make install`.
@@ -201,13 +206,14 @@ must never abort a resolution.
   aspect-locked (inline `aspect-ratio` == viewBox) with
   `preserveAspectRatio:'none'`. A `max-height` clamps height while width follows
   the aspect → it shears the SVG; cap with `max-width` only
-  (`css/variants/T/console4.css:3032-3052`). **And specificity bites:** the
-  containment rule `.dn-figpane > svg { max-width:100% }` carries an svg type
-  (specificity 1,2,1) and out-ranks a bare `.dn-*-hero` cap (1,2,0). **Status
-  in THIS worktree:** the hero caps are *still bare* (`.dn-scalartrack-hero`
-  etc., L3048-3060) → the funnel/scalartrack can balloon. The fix that
-  qualifies them as `svg.dn-*-hero` landed on `main` (commit `d30ec4e`) but is
-  NOT in this worktree's HEAD — re-base or pull before relying on it.
+  (`css/variants/T/console4.css`). **And specificity bites:** the containment
+  rule `.dn-figpane > svg { max-width:100% }` carries an svg type (specificity
+  1,2,1) and out-ranks a bare `.dn-*-hero` cap (1,2,0), which silently clobbers
+  the cap to 100% of the panel and balloons the figure (this is what oversized
+  the racing funnel on `/gens`). The fix: hero caps MUST be written
+  `svg.dn-*-hero { max-width: … }` so the type qualifier ties the specificity
+  and wins on source order (commit `d30ec4e`). Keep the `svg.` prefix when
+  adding any new hero cap.
 - **Dashboard render discipline: digest-gate, never repaint on a no-op beat.**
   Live surfaces are digest-gated on the live *content* so the DOM rebuilds only
   on a real change, never on a no-op SSE heartbeat — the recurring
