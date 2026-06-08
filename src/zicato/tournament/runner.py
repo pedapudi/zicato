@@ -701,6 +701,8 @@ def _weights_spec(weights: ScoringWeights) -> dict[str, Any]:
         "pass_weight": weights.pass_weight,
         "severity_weights": dict(weights.severity_weights),
         "per_kind_weights": dict(weights.per_kind_weights),
+        "per_judge_weights": dict(weights.per_judge_weights),
+        "default_judge_weight": weights.default_judge_weight,
         "plan_revision_weight": weights.plan_revision_weight,
         "runtime_weight": weights.runtime_weight,
         "promote_margin": weights.promote_margin,
