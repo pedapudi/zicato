@@ -4240,14 +4240,17 @@ def _gen_agg_for_gate(
     agg: dict[str, Any] = dict(score)
 
     if not isinstance(agg.get("per_entry"), dict):
-        # Reconstruct {entry_id: {drift_loss, pass_fail}} from loss files
-        # so the monotonicity rule has the two points it compares.
+        # Reconstruct {entry_id: {drift_loss, pass_fail, score}} from loss
+        # files so the monotonicity rule has the two points it compares.
+        # ``score`` is the continuous per-entry outcome; ``None`` (or
+        # absent) falls back to the bool ``pass_fail`` in the gate's reader.
         loss_files = _read_run_loss_files(paths, epoch_id, generation_id)
         per_entry: dict[str, dict[str, Any]] = {}
         for entry_id, cell in loss_files.items():
             per_entry[entry_id] = {
                 "drift_loss": cell.get("drift_loss"),
                 "pass_fail": cell.get("pass_fail"),
+                "score": cell.get("score"),
             }
         if per_entry:
             agg["per_entry"] = per_entry

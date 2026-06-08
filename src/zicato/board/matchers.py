@@ -17,7 +17,12 @@ Matcher dispatch — keyed on the :class:`~zicato.core.ExpectationKind` enum
 * :attr:`~zicato.core.ExpectationKind.PREDICATE`
     ``spec`` is a dotted Python path. The dispatcher imports it, calls
     it with the :class:`~zicato.core.RunResult`, and awaits the result
-    if it is a coroutine. The callable must return :class:`bool`.
+    if it is a coroutine. This is BOTH the binary-predicate seam and the
+    continuous-SCORER seam: the callable may return a ``bool`` (the
+    historical pass/fail), a ``float`` in ``[0, 1]`` (a continuous score),
+    or a ``(float, metrics)`` 2-tuple (a score plus a decomposition such
+    as ``{"precision": .., "recall": ..}``). See
+    :func:`_predicate_outcome_to_result`.
 
 * :attr:`~zicato.core.ExpectationKind.EXPECTED_TEXT`
     Substring containment check against
@@ -61,6 +66,98 @@ from zicato.core.types import Expectation, ExpectationKind, ExpectationResult, R
 from zicato.import_path import import_dotted_path
 
 
+def _predicate_outcome_to_result(spec: str, outcome: object) -> ExpectationResult:
+    """Map a predicate / SCORER callable's return into an :class:`ExpectationResult`.
+
+    The dotted-path :attr:`~zicato.core.ExpectationKind.PREDICATE` seam is
+    also the SCORER seam: an operator's callable may return any of three
+    shapes, in addition to the historical ``bool``.
+
+    * ``bool`` — the historical binary verdict. ``passed`` is the bit and
+      ``score`` is left ``None`` (the reducer derives ``1.0`` / ``0.0``);
+      byte-identical to the pre-score path.
+    * ``float`` / ``int`` — a CONTINUOUS score. It is clamped to
+      ``[0.0, 1.0]`` and recorded as :attr:`ExpectationResult.score`;
+      ``passed`` is a display-only derivation (``score > 0.0`` — i.e. the
+      entry earned any credit), since the scalar and gate now run on the
+      continuous score, not on this bit.
+    * ``(score, metrics)`` — a 2-tuple of ``(float, Mapping[str, float])``.
+      The float is the score (clamped as above); the mapping is recorded
+      verbatim as :attr:`ExpectationResult.metrics` (e.g.
+      ``{"precision": .., "recall": ..}``) so a later aggregation step can
+      read the decomposition as numbers. This is how the F1 operator scorer
+      feeds precision/recall out to ``loss.json``.
+
+    Any other return type is a contract error and fails the entry with a
+    descriptive ``detail`` (mirroring the historical non-bool rejection).
+    """
+    metrics: dict[str, float] | None = None
+    # (score, metrics) tuple form.
+    if isinstance(outcome, tuple) and len(outcome) == 2:
+        raw_score, raw_metrics = outcome
+        if isinstance(raw_score, bool) or not isinstance(raw_score, int | float):
+            return ExpectationResult(
+                kind=ExpectationKind.PREDICATE,
+                passed=False,
+                detail=(
+                    f"scorer {spec!r} returned a 2-tuple whose first element is "
+                    f"{type(raw_score).__name__}, expected a float score"
+                ),
+            )
+        if not hasattr(raw_metrics, "items"):
+            return ExpectationResult(
+                kind=ExpectationKind.PREDICATE,
+                passed=False,
+                detail=(
+                    f"scorer {spec!r} returned a 2-tuple whose second element is "
+                    f"{type(raw_metrics).__name__}, expected a metrics mapping"
+                ),
+            )
+        metrics = {str(k): float(v) for k, v in raw_metrics.items()}
+        outcome = raw_score
+
+    # bool is the historical path — keep score=None so the reducer derives
+    # 1.0/0.0 and the all-bool scalar stays byte-identical. (bool is a
+    # subclass of int, so this check MUST precede the float branch.)
+    if isinstance(outcome, bool):
+        if metrics is not None:
+            # A (bool, metrics) tuple is ill-formed for the scorer seam.
+            return ExpectationResult(
+                kind=ExpectationKind.PREDICATE,
+                passed=False,
+                detail=f"scorer {spec!r} paired a bool score with metrics; expected a float score",
+            )
+        return ExpectationResult(
+            kind=ExpectationKind.PREDICATE,
+            passed=outcome,
+            detail="" if outcome else "predicate returned False",
+        )
+
+    # float / int continuous score.
+    if isinstance(outcome, int | float):
+        score = float(outcome)
+        # Clamp here too so a downstream consumer that reads
+        # ExpectationResult.score directly (not via the reducer) sees a
+        # well-formed [0,1] value; the reducer clamps again defensively.
+        clamped = max(0.0, min(1.0, score)) if score == score else 0.0  # score==score guards NaN
+        return ExpectationResult(
+            kind=ExpectationKind.PREDICATE,
+            passed=clamped > 0.0,
+            detail=f"scorer returned {score:.6f}" if score == score else "scorer returned NaN",
+            score=clamped,
+            metrics=metrics,
+        )
+
+    return ExpectationResult(
+        kind=ExpectationKind.PREDICATE,
+        passed=False,
+        detail=(
+            f"predicate {spec!r} returned {type(outcome).__name__}, "
+            f"expected bool, float, or (float, metrics)"
+        ),
+    )
+
+
 async def _eval_predicate(expectation: Expectation, result: RunResult) -> ExpectationResult:
     try:
         fn = import_dotted_path(expectation.spec, label=f"dotted path {expectation.spec!r}")
@@ -88,19 +185,7 @@ async def _eval_predicate(expectation: Expectation, result: RunResult) -> Expect
             passed=False,
             detail=f"predicate raised: {type(exc).__name__}: {exc}",
         )
-    if not isinstance(outcome, bool):
-        return ExpectationResult(
-            kind=ExpectationKind.PREDICATE,
-            passed=False,
-            detail=(
-                f"predicate {expectation.spec!r} returned {type(outcome).__name__}, expected bool"
-            ),
-        )
-    return ExpectationResult(
-        kind=ExpectationKind.PREDICATE,
-        passed=outcome,
-        detail="" if outcome else "predicate returned False",
-    )
+    return _predicate_outcome_to_result(expectation.spec, outcome)
 
 
 def _eval_expected_text(expectation: Expectation, result: RunResult) -> ExpectationResult:

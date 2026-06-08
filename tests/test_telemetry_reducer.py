@@ -375,6 +375,127 @@ def test_reduce_loss_pass_fail_from_expectation_result(tmp_path: Path) -> None:
     )
     assert profile.pass_fail is True
     assert profile.expectation_result == exp
+    # A bool expectation leaves score=None on the expectation result but the
+    # reducer derives the continuous score as 1.0 onto the profile.
+    assert profile.score == 1.0
+    assert profile.metrics is None
+
+
+def test_reduce_loss_continuous_score_and_metrics_flow_through(tmp_path: Path) -> None:
+    """A scorer's float score + precision/recall metrics land on the profile."""
+    p = tmp_path / "events.jsonl"
+    _write_events_jsonl(p, [])
+    exp = ExpectationResult(
+        kind="predicate",
+        passed=True,
+        score=0.625,
+        metrics={"precision": 0.5, "recall": 0.83},
+    )
+    profile = reduce_loss(
+        events_jsonl_path=p,
+        entry=_single_turn_entry(),
+        generation_id="v0",
+        epoch_id="ep1",
+        expectation_result=exp,
+        runtime_ms=0,
+        wall_clock_budget_exceeded=False,
+        weights=_default_weights(),
+    )
+    assert profile.score == 0.625
+    assert profile.metrics == {"precision": 0.5, "recall": 0.83}
+
+
+def test_reduce_loss_clamps_rogue_score(tmp_path: Path) -> None:
+    """An out-of-range / non-finite score is clamped before it reaches the profile."""
+    p = tmp_path / "events.jsonl"
+    _write_events_jsonl(p, [])
+    out_of_range = ExpectationResult(kind="predicate", passed=True, score=9.9)
+    nan_score = ExpectationResult(kind="predicate", passed=True, score=float("nan"))
+    weights = _default_weights()
+    hi = reduce_loss(
+        events_jsonl_path=p,
+        entry=_single_turn_entry(),
+        generation_id="v0",
+        epoch_id="ep1",
+        expectation_result=out_of_range,
+        runtime_ms=0,
+        wall_clock_budget_exceeded=False,
+        weights=weights,
+    )
+    nan = reduce_loss(
+        events_jsonl_path=p,
+        entry=_single_turn_entry(),
+        generation_id="v0",
+        epoch_id="ep1",
+        expectation_result=nan_score,
+        runtime_ms=0,
+        wall_clock_budget_exceeded=False,
+        weights=weights,
+    )
+    assert hi.score == 1.0  # clamped from 9.9
+    assert nan.score == 0.0  # NaN treated as a miss
+
+
+def test_loss_profile_round_trip_with_score_and_metrics(tmp_path: Path) -> None:
+    """score + metrics survive write_loss_profile / read_loss_profile unchanged."""
+    profile = LossProfile(
+        run_id="r-score",
+        entry_id="ent-score",
+        generation_id="v0",
+        epoch_id="ep1",
+        drift_counts=(),
+        plan_revisions=0,
+        task_failure_ratio=0.0,
+        runtime_ms=10,
+        wall_clock_budget_exceeded=False,
+        expectation_result=ExpectationResult(
+            kind="predicate",
+            passed=True,
+            score=0.4,
+            metrics={"precision": 0.3, "recall": 0.6},
+        ),
+        drift_loss=0.0,
+        pass_fail=True,
+        score=0.4,
+        metrics={"precision": 0.3, "recall": 0.6},
+    )
+    p = tmp_path / "loss.json"
+    write_loss_profile(profile, p)
+    loaded = read_loss_profile(p)
+    assert loaded == profile
+
+
+def test_loss_profile_round_trip_score_none_is_back_compat(tmp_path: Path) -> None:
+    """A profile written without score/metrics reads back with score=None (back-compat)."""
+    profile = LossProfile(
+        run_id="r-old",
+        entry_id="ent-old",
+        generation_id="v0",
+        epoch_id="ep1",
+        drift_counts=(),
+        plan_revisions=0,
+        task_failure_ratio=0.0,
+        runtime_ms=10,
+        wall_clock_budget_exceeded=False,
+        expectation_result=ExpectationResult(kind="predicate", passed=True),
+        drift_loss=0.0,
+        pass_fail=True,
+    )
+    p = tmp_path / "loss.json"
+    write_loss_profile(profile, p)
+    # Simulate a pre-feature loss.json: drop the score / metrics keys.
+    import json as _json
+
+    data = _json.loads(p.read_text(encoding="utf-8"))
+    data.pop("score", None)
+    data.pop("metrics", None)
+    data["expectation_result"].pop("score", None)
+    data["expectation_result"].pop("metrics", None)
+    p.write_text(_json.dumps(data), encoding="utf-8")
+    loaded = read_loss_profile(p)
+    assert loaded.score is None
+    assert loaded.metrics is None
+    assert loaded == profile
 
 
 # ---------------------------------------------------------------------------

@@ -264,6 +264,65 @@ def addressed_picky_feedback(result: Any) -> bool:
     return revised
 
 
+def _precision_recall_f1(
+    retrieved: set[str],
+    relevant: set[str],
+) -> tuple[float, float, float]:
+    """Return ``(precision, recall, f1)`` for a retrieved-vs-relevant set pair.
+
+    A small, dependency-free set-membership F1 — the canonical CONTINUOUS
+    per-entry quality a retrieval / search board scores on. Over-retrieval
+    (returning items that are not relevant) drives PRECISION down;
+    under-retrieval (missing relevant items) drives RECALL down; F1 is their
+    harmonic mean, so it penalises BOTH failure modes, unlike pure recall.
+
+    Edge cases are defined so the score is always a finite ``[0, 1]`` value:
+
+    * empty ``relevant`` AND empty ``retrieved`` — the agent correctly
+      returned nothing for an entry with nothing to find: ``(1, 1, 1)``;
+    * empty ``relevant`` but non-empty ``retrieved`` — pure over-retrieval
+      against a no-op entry: precision ``0`` (nothing it returned was
+      relevant), recall ``1`` (there was nothing to miss), F1 ``0``;
+    * empty ``retrieved`` but non-empty ``relevant`` — the agent returned
+      nothing when there was something: precision ``1`` (vacuously — it made
+      no false claims), recall ``0``, F1 ``0``.
+    """
+    true_positives = len(retrieved & relevant)
+    # Empty retrieved -> precision is vacuously 1.0 (no false claims made);
+    # empty relevant -> recall is vacuously 1.0 (nothing to miss).
+    precision = true_positives / len(retrieved) if retrieved else 1.0
+    recall = true_positives / len(relevant) if relevant else 1.0
+    if precision + recall == 0.0:
+        f1 = 0.0
+    else:
+        f1 = 2.0 * precision * recall / (precision + recall)
+    return precision, recall, f1
+
+
+def search_f1_score(
+    retrieved: set[str],
+    relevant: set[str],
+) -> tuple[float, float | dict[str, float]]:
+    """SCORER form of :func:`_precision_recall_f1` for the PREDICATE seam.
+
+    Returns the ``(score, metrics)`` 2-tuple the dotted-path scorer seam
+    accepts (see :func:`zicato.board.matchers._predicate_outcome_to_result`):
+    the F1 is the continuous ``score`` the scalar and gate run on, and
+    ``precision`` / ``recall`` ride out in the ``metrics`` mapping so a later
+    aggregation step can read the recall-vs-precision decomposition as
+    numbers — the prerequisite for the outcome-marginal proposer feedback.
+
+    Note: a board entry's dotted-path scorer takes a single
+    :class:`~zicato.core.RunResult`; an operator wires this helper into such
+    a callable by parsing the retrieved / relevant sets out of the run (e.g.
+    the agent's returned ids vs the entry's ground-truth ids). Exposed
+    standalone — and unit-tested directly — so the F1 logic is reusable
+    without inventing a whole search board here.
+    """
+    precision, recall, f1 = _precision_recall_f1(retrieved, relevant)
+    return f1, {"precision": precision, "recall": recall}
+
+
 __all__ = [
     "has_slide_titles",
     "mentions_waffles",
@@ -273,5 +332,6 @@ __all__ = [
     "avoids_offtopic_raccoons",
     "stayed_coherent_across_turns",
     "addressed_picky_feedback",
+    "search_f1_score",
     "Q3_METRICS",
 ]
