@@ -124,16 +124,6 @@ test('metaLoopLedger: the floor staircase colours improvement vs reset', () => {
   assert(open.length > 0, 'the open epoch reads as the open/ink step');
 });
 
-test('metaLoopLedger: a floor-Δ chip per non-baseline epoch + a baseline chip', () => {
-  const node = svg.metaLoopLedger(chain());
-  // 3 delta chips (e1,e2,e3) + 1 baseline chip (e0).
-  const good = allByClass(node, 'dn-metaledger-dchip-good').length;
-  const bad = allByClass(node, 'dn-metaledger-dchip-bad').length;
-  const base = allByClass(node, 'dn-metaledger-dchip-base').length;
-  assertEqual(base, 1, 'one baseline chip (the first epoch)');
-  assertEqual(good + bad, 3, 'three signed floor-Δ chips');
-});
-
 // ── degradation on 0–1 epochs ────────────────────────────────────────
 
 test('metaLoopLedger: degrades on 0 epochs to an honest placeholder', () => {
@@ -150,7 +140,6 @@ test('metaLoopLedger: degrades on 1 epoch (band + heatstrip, no risers/seams)', 
   assertEqual(allByClass(node, 'dn-metaledger-riser').length, 0, 'no risers (nothing to step from)');
   assertEqual(allByClass(node, 'dn-metaledger-chiptxt').length, 0, 'no change chips (no predecessor)');
   assertEqual(allByClass(node, 'dn-metaledger-cell').length, 7, 'the 7-component column still renders');
-  assertEqual(allByClass(node, 'dn-metaledger-dchip-base').length, 1, 'the lone epoch is a baseline chip');
 });
 
 test('metaLoopLedger: a missing-floor epoch does not throw and renders a band', () => {

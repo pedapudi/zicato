@@ -3338,7 +3338,7 @@ export function metaLoopLedger(opts) {
   const rows = (Array.isArray(o.epochs) ? o.epochs : []).filter((e) => e && e.epoch_id != null);
   const W = o.width || 1120;
   const L = 96;
-  const R = 150;
+  const R = 28;
   const T = 78;
   const pw = W - L - R;
   const n = rows.length;
@@ -3378,7 +3378,6 @@ export function metaLoopLedger(opts) {
   const bandBot = bandTop + bandH;
   const hsTop = bandBot + 40;
   const hsRowH = 26;
-  const deltaW = 130;
   const hsBot = hsTop + LEDGER_COMPONENTS.length * hsRowH;
   const H = hsBot + 24;
 
@@ -3557,37 +3556,6 @@ export function metaLoopLedger(opts) {
     });
     svg.appendChild(txt(b.xc, hsBot + 14, shortLabel(String(e.epoch_id), 14),
       { class: 'dn-metaledger-colid', 'text-anchor': 'middle' }));
-  });
-
-  // ───────── floor-Δ chips (opt 3) — one per epoch, in the right gutter ─────────
-  svg.appendChild(txt(W - R + 8, hsTop - 12, 'floor Δ', { class: 'dn-metaledger-zonecap', 'text-anchor': 'start' }));
-  prevF = null;
-  rows.forEach((e, i) => {
-    const rowY = bandTop + (bandH - n * 22) / 2 + i * 22;
-    const hasF = isNum(e.floor);
-    if (prevF != null && hasF) {
-      const d = e.floor - prevF;
-      const up = d > 0;
-      const soft = !!e.soft;
-      const cls = 'dn-metaledger-dchip ' + (up ? 'dn-metaledger-dchip-bad' : 'dn-metaledger-dchip-good');
-      svg.appendChild(svgEl('rect', {
-        x: W - R + 8, y: rowY, width: deltaW - 12, height: 18, rx: 5, class: cls,
-        'stroke-dasharray': soft ? '4 3' : null,
-      }));
-      svg.appendChild(txt(W - R + 16, rowY + 13,
-        `${shortLabel(String(e.epoch_id), 10)} ${up ? '▲' : '▼'} ${fmtSigned(d, 3)}`,
-        { class: 'dn-metaledger-dtxt ' + (up ? 'dn-metaledger-dtxt-bad' : 'dn-metaledger-dtxt-good'), 'text-anchor': 'start' }));
-      if (soft) {
-        svg.appendChild(txt(W - 22, rowY + 13, 'SOFT', { class: 'dn-metaledger-softlbl', 'text-anchor': 'end' }));
-      }
-    } else {
-      svg.appendChild(svgEl('rect', {
-        x: W - R + 8, y: rowY, width: deltaW - 12, height: 18, rx: 5, class: 'dn-metaledger-dchip dn-metaledger-dchip-base',
-      }));
-      svg.appendChild(txt(W - R + 16, rowY + 13, `${shortLabel(String(e.epoch_id), 10)} baseline`,
-        { class: 'dn-metaledger-dtxt-base', 'text-anchor': 'start' }));
-    }
-    if (hasF) prevF = e.floor;
   });
 
   return svg;
