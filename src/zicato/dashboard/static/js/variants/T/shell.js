@@ -588,12 +588,21 @@ export function mountShell(root) {
     // evolution itself). Filled by renderExecLink, digest-gated so a no-op
     // heartbeat never repaints it. See docs/design/HARMONOGRAF.md §3b.
     (_execHost = el('span', { class: 'dt-nav-exec', 'aria-live': 'polite' })),
-    // the SETTINGS entry (B3) — a ⚙ that opens the Settings surface, which now
-    // HOMES the tournament builder (the flagship section) alongside contract /
-    // assistant / appearance (editable). Uses the router href so the route
-    // stays the single source of truth; `#/builder` still deep-links the
-    // builder section directly.
-    el('a', { class: 'dt-nav-build', href: href('settings', {}), title: 'Settings (tournament builder + preferences)', 'aria-label': 'Open settings' }, [
+    // the TOURNAMENT BUILDER entry — a ⚒ that opens the builder as its OWN
+    // first-class, full-width view (`#/builder`). It is promoted out of Settings
+    // (where it was nested behind the settings rail — double rails + a cramped
+    // centre) so its four panes get the whole viewport. Sits beside the ⚙ so the
+    // two top-level surfaces read as peers; the same route-agnostic builder
+    // module backs this entry, the Settings launcher, and the CLI deep-link.
+    el('a', { class: 'dt-nav-builder', href: href('builder', {}), title: 'Tournament builder (compose the evaluation contract)', 'aria-label': 'Open the tournament builder' }, [
+      el('span', { class: 'dt-nav-builder-glyph', 'aria-hidden': 'true', text: '⚒' }),
+      el('span', { class: 'dt-nav-builder-text', text: 'builder' }),
+    ]),
+    // the SETTINGS entry — a ⚙ that opens the Settings surface (contract roll-up
+    // · models / LLM endpoints · appearance). The builder is no longer homed
+    // here; Settings keeps a launcher to the standalone `#/builder` view. Uses
+    // the router href so the route stays the single source of truth.
+    el('a', { class: 'dt-nav-build', href: href('settings', {}), title: 'Settings (contract · models · appearance)', 'aria-label': 'Open settings' }, [
       el('span', { class: 'dt-nav-build-glyph', 'aria-hidden': 'true', text: '⚙' }),
       el('span', { class: 'dt-nav-build-text', text: 'settings' }),
     ]),

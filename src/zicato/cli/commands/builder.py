@@ -1,10 +1,11 @@
 """``zicato builder`` — launch the dashboard focused on the tournament builder.
 
-ADVANCED — off the happy path. The tournament builder is the dashboard's
-flagship Settings surface: a form + live preview + chat copilot for composing
-an epoch's evaluation contract (board · proposer brief · scoring · structure ·
-overfitting). ``zicato evolve`` already serves it as part of the live
-dashboard; this command is the standalone counterpart that boots the same
+ADVANCED — off the happy path. The tournament builder is a first-class
+dashboard VIEW: a form + live preview + chat copilot for composing an epoch's
+evaluation contract (board · proposer brief · scoring · structure ·
+overfitting), rendered full-width at its own ``#/builder`` route (Settings
+keeps a launcher to it). ``zicato evolve`` already serves it as part of the
+live dashboard; this command is the standalone counterpart that boots the same
 dashboard service against an *existing* workspace and points the operator
 straight at the builder's deep-link.
 
@@ -27,8 +28,9 @@ import click
 from zicato.cli.commands.dashboard import resolve_static_dir
 
 #: The dashboard hash-route the builder lives behind. ``zicato builder`` prints
-#: this deep-link so the browser opens directly on the builder Settings section
-#: (the router resolves ``#/builder`` into the settings → builder section).
+#: this deep-link so the browser opens directly on the standalone tournament-
+#: builder view (the router resolves ``#/builder`` to its own first-class view,
+#: rendered full-width — no longer nested inside Settings).
 BUILDER_FRAGMENT = "/#/builder"
 
 
