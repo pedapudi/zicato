@@ -182,6 +182,24 @@ class PostApplyValidationError(ValueError):
 #: open at the start of the buffer, so this is unambiguous.
 _FENCE_RE = re.compile(r"^\s*```(?:json|JSON)?\s*\n(?P<body>.*?)\n```\s*$", re.DOTALL)
 
+#: Reasoning-wrapper stripping. A reasoning model often emits its chain of
+#: thought inside an XML-ish tag before (or around) the JSON answer —
+#: ``<think>…</think>``, ``<thinking>…</thinking>``, ``<reasoning>…</reasoning>``.
+#: We remove those blocks (case-insensitive, DOTALL so multi-line thoughts
+#: are caught) before re-attempting extraction. This only fires as a
+#: fallback after the clean path fails, so already-clean JSON is untouched.
+_REASONING_WRAPPER_RE = re.compile(
+    r"<\s*(think|thinking|reasoning)\s*>.*?<\s*/\s*\1\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+#: Any markdown code fence found ANYWHERE in the text (not only as the
+#: first/last token, unlike :data:`_FENCE_RE`). Used by the salvage path
+#: to recover a fenced JSON block that a model buried under a paragraph of
+#: prose. Each match's ``body`` group is tried in turn against
+#: :func:`json.loads`.
+_ANY_FENCE_RE = re.compile(r"```(?:json|JSON)?\s*\n(?P<body>.*?)\n```", re.DOTALL)
+
 
 def _strip_fences(response_text: str) -> str:
     """Remove a leading/trailing markdown code fence if present.
@@ -194,6 +212,168 @@ def _strip_fences(response_text: str) -> str:
     if m is not None:
         return m.group("body")
     return response_text
+
+
+def _strip_reasoning_wrappers(text: str) -> str:
+    """Remove ``<think>``/``<thinking>``/``<reasoning>`` blocks.
+
+    Case-insensitive, DOTALL. Returns the text unchanged when no wrapper
+    is present, so this is idempotent on already-clean JSON.
+    """
+
+    return _REASONING_WRAPPER_RE.sub("", text)
+
+
+def _scan_brace_objects(text: str) -> list[str]:
+    """Yield every top-level ``{ … }`` substring, brace-balanced.
+
+    A proper brace matcher that respects JSON string literals and their
+    escapes, so a ``{`` or ``}`` *inside* a string value does not throw
+    off the depth count. Returns the substrings in document order. Nested
+    objects are not returned separately — only the outermost balanced
+    spans, which is what a top-level experiment object is.
+    """
+
+    objects: list[str] = []
+    depth = 0
+    start = -1
+    in_string = False
+    escaped = False
+    for i, ch in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+            continue
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start != -1:
+                    objects.append(text[start : i + 1])
+                    start = -1
+    return objects
+
+
+def _looks_like_experiment(obj: dict[str, Any]) -> bool:
+    """True when a parsed object carries both experiment top-level keys.
+
+    Used by the salvage path to prefer a candidate object that is shaped
+    like an experiment (``hypothesis`` + ``patches``) over an incidental
+    JSON object the model may have embedded in its prose (e.g. a config
+    snippet inside a ``<think>`` block that survived stripping).
+    """
+
+    return "hypothesis" in obj and "patches" in obj
+
+
+def extract_json_object(text: str) -> str | None:
+    """Salvage a JSON object string from a possibly-messy model response.
+
+    A reasoning model under output pressure may wrap the answer in a
+    chain-of-thought block, bury it under a paragraph of prose, fence it
+    in markdown anywhere in the buffer, or trail commentary after it. This
+    extractor tries progressively more aggressive recovery, each step a
+    fallback only when the prior one did not yield parseable JSON:
+
+    1. **Clean path** — :func:`_strip_fences` + a direct
+       :func:`json.loads`. Byte-identical to the historical behaviour for
+       already-clean input, so this function is a no-op on a well-behaved
+       response and the clean string is returned unchanged.
+    2. **Reasoning-wrapper strip** — remove ``<think>``/``<thinking>``/
+       ``<reasoning>`` blocks, then retry the clean path on the remainder.
+    3. **Any-fence scan** — find a markdown ```` ```json … ``` ```` (or
+       bare ```` ``` … ``` ````) block ANYWHERE in the text and return
+       the first whose body parses as a JSON object.
+    4. **Balanced-brace scan** — scan for top-level ``{ … }`` objects with
+       a string-literal-aware brace matcher (so braces inside strings do
+       not miscount) and return the first that parses; an object that is
+       shaped like an experiment (``hypothesis`` + ``patches``) is
+       preferred over any other valid JSON object found earlier.
+
+    Returns the recovered JSON-object *string* (ready for
+    :func:`json.loads`), or ``None`` when no candidate parses to a dict.
+    The caller distinguishes an empty input from a salvage miss; this
+    function only reports "found / not found".
+    """
+
+    # Fallback 1 — the historical clean path. Kept byte-identical: when
+    # the input is already clean JSON the returned string is the
+    # fence-stripped, stripped original.
+    cleaned = _strip_fences(text).strip()
+    if cleaned:
+        try:
+            obj = json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+        else:
+            if isinstance(obj, dict):
+                return cleaned
+
+    # Fallback 2 — strip reasoning wrappers, then retry the clean path on
+    # the remainder. Catches ``<think>…</think>{…}`` and the variants.
+    dethought = _strip_reasoning_wrappers(text)
+    if dethought != text:
+        recleaned = _strip_fences(dethought).strip()
+        if recleaned:
+            try:
+                obj = json.loads(recleaned)
+            except json.JSONDecodeError:
+                pass
+            else:
+                if isinstance(obj, dict):
+                    return recleaned
+
+    # From here on, operate on the reasoning-stripped text so a JSON-like
+    # blob inside a thought block cannot be mistaken for the answer.
+    search_space = dethought
+
+    # Fallback 3 — a fenced block anywhere in the buffer. Prefer the first
+    # fenced body that is a JSON object; among those, an experiment-shaped
+    # object wins over an incidental one.
+    fenced_candidates: list[str] = []
+    for m in _ANY_FENCE_RE.finditer(search_space):
+        body = m.group("body").strip()
+        if not body:
+            continue
+        try:
+            obj = json.loads(body)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            fenced_candidates.append(body)
+    for body in fenced_candidates:
+        if _looks_like_experiment(json.loads(body)):
+            return body
+    if fenced_candidates:
+        return fenced_candidates[0]
+
+    # Fallback 4 — balanced-brace scan over the raw (reasoning-stripped)
+    # text. Respects string literals so a ``{`` inside a value is ignored.
+    brace_candidates: list[str] = []
+    for candidate in _scan_brace_objects(search_space):
+        try:
+            obj = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            brace_candidates.append(candidate)
+    for candidate in brace_candidates:
+        if _looks_like_experiment(json.loads(candidate)):
+            return candidate
+    if brace_candidates:
+        return brace_candidates[0]
+
+    return None
 
 
 def _validate_op_fields(patch_dict: Mapping[str, Any], idx: int) -> None:
@@ -296,9 +476,13 @@ def parse_experiment_json(
     Parameters
     ----------
     response_text:
-        The model's raw response. May contain a leading / trailing
-        markdown code fence; the parser strips it before
-        :func:`json.loads`.
+        The model's raw response. The parser is tolerant of messy
+        responses: a leading / trailing markdown fence, a fence buried in
+        prose, a ``<think>…</think>`` reasoning wrapper, or trailing
+        commentary after the object are all salvaged by
+        :func:`extract_json_object` before :func:`json.loads`. Only a
+        genuinely empty response, or one with no recoverable JSON object,
+        is rejected.
     epoch_id:
         The epoch this experiment belongs to (lineage coordinate).
     parent_gen:
@@ -336,20 +520,31 @@ def parse_experiment_json(
         back to the proposer on retry.
     """
 
-    cleaned = _strip_fences(response_text).strip()
-    if not cleaned:
+    # Distinguish EMPTY (nothing usable at all — likely the model spent
+    # its entire output budget on reasoning) from MALFORMED (content is
+    # present but no JSON object could be salvaged). The two get different
+    # error messages so the retry feedback can target the failure mode.
+    if not response_text.strip():
         raise ExperimentParseError(
             "empty response: expected a JSON object with 'hypothesis' and 'patches' keys"
         )
 
+    candidate = extract_json_object(response_text)
+    if candidate is None:
+        raise ExperimentParseError(
+            "could not extract a JSON object from the response: expected a single JSON "
+            "object with 'hypothesis' and 'patches' keys (no markdown fences, no "
+            "<think> reasoning, no surrounding prose)"
+        )
+
     try:
-        data = json.loads(cleaned)
-    except json.JSONDecodeError as exc:
+        data = json.loads(candidate)
+    except json.JSONDecodeError as exc:  # pragma: no cover — extractor returns parseable strings
         raise ExperimentParseError(
             f"response is not valid JSON: {exc.msg} at line {exc.lineno} col {exc.colno}"
         ) from exc
 
-    if not isinstance(data, dict):
+    if not isinstance(data, dict):  # pragma: no cover — extractor returns dict-shaped JSON
         raise ExperimentParseError(
             f"response must be a JSON object at the top level, got {type(data).__name__}"
         )
@@ -487,5 +682,6 @@ __all__ = [
     "EXPERIMENT_JSON_SCHEMA",
     "ExperimentParseError",
     "PostApplyValidationError",
+    "extract_json_object",
     "parse_experiment_json",
 ]

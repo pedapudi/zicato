@@ -258,6 +258,13 @@ async def propose_experiment(
     prior_experiments_list = list(prior_experiments)
 
     feedback = ""
+    # Repair-turn carriers. Each failed attempt that produced a response
+    # populates these so the NEXT attempt's prompt can echo the prior raw
+    # output back and target the empty-vs-malformed failure mode. An
+    # attempt that produced no response (timeout / opaque LLM error)
+    # clears them so a stale prior output is never shown.
+    feedback_prior_output = ""
+    feedback_was_empty = False
     attempt_errors: list[str] = []
 
     total_attempts = max_retries + 1
@@ -267,6 +274,8 @@ async def propose_experiment(
             patterns=patterns_list,
             mutations=mutations_list,
             feedback=feedback,
+            feedback_prior_output=feedback_prior_output,
+            feedback_was_empty=feedback_was_empty,
             insights=insights_block,
             prior_experiments=prior_experiments_list,
             restrict_visibility=restrict_visibility,
@@ -298,6 +307,10 @@ async def propose_experiment(
             err = f"auxiliary LLM call timed out after {aux_call_timeout_s():.1f}s"
             attempt_errors.append(err)
             feedback = err
+            # No response was produced — clear the repair carriers so the
+            # next attempt does not echo back a stale prior output.
+            feedback_prior_output = ""
+            feedback_was_empty = False
             if meta_loop_emitter is not None and invocation_id is not None:
                 try:
                     await meta_loop_emitter.proposer_completed(
@@ -313,6 +326,9 @@ async def propose_experiment(
             err = f"auxiliary LLM call raised {type(exc).__name__}: {exc}"
             attempt_errors.append(err)
             feedback = err
+            # No response was produced — clear the repair carriers.
+            feedback_prior_output = ""
+            feedback_was_empty = False
             if meta_loop_emitter is not None and invocation_id is not None:
                 try:
                     await meta_loop_emitter.proposer_completed(
@@ -349,6 +365,12 @@ async def propose_experiment(
             err = str(exc)
             attempt_errors.append(err)
             feedback = err
+            # Make the next attempt a genuine repair turn: echo the prior
+            # raw output back (so the model sees the stray <think> block /
+            # prose / fence it actually produced) and flag the empty case
+            # so the prompt can target "skip all reasoning, emit now".
+            feedback_prior_output = response_text or ""
+            feedback_was_empty = not (response_text or "").strip()
             continue
 
         if forbidden_ids:
@@ -359,6 +381,13 @@ async def propose_experiment(
                 )
                 attempt_errors.append(err)
                 feedback = err
+                # The response was well-formed JSON — this is a content
+                # (not shape) failure, so no prior-output echo / empty
+                # framing; the feedback string already names the offending
+                # ids. Clear the carriers so a stale parse-failure echo
+                # cannot leak in.
+                feedback_prior_output = ""
+                feedback_was_empty = False
                 continue
 
         # Post-parse validation hook — the experiment is well-formed and
@@ -376,6 +405,12 @@ async def propose_experiment(
                 err = "patches failed post-apply validation: " + "; ".join(post_apply_errors)
                 attempt_errors.append(err)
                 feedback = err
+                # Well-formed JSON whose patches broke the snapshot — a
+                # content failure, not a shape one. The validator findings
+                # in the feedback string are the actionable signal; no
+                # prior-output echo / empty framing.
+                feedback_prior_output = ""
+                feedback_was_empty = False
                 continue
 
         return experiment

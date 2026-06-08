@@ -181,6 +181,91 @@ async def test_propose_experiment_retries_on_invalid_json() -> None:
 
 
 @pytest.mark.asyncio
+async def test_propose_experiment_repairs_prose_response() -> None:
+    """A reasoning model returning prose on attempt 1 is repaired on attempt 2.
+
+    The first response is a paragraph of prose with no JSON — exactly the
+    live failure the operator hit. The retry must succeed AND the repair
+    prompt must (a) carry the forceful corrective instruction and (b) echo
+    the model's prior raw output so it can see what it produced.
+    """
+    prose = "I think the best move is to tighten the router, but I'm not sure yet."
+    stub = _StubLLM([prose, _valid_response()])
+    exp = await propose_experiment(
+        epoch_id="e1",
+        parent_generation_id="v0",
+        new_generation_id="v1",
+        patterns=[],
+        mutations=_MUTATIONS,
+        brief_text="",
+        current_loss_summary="",
+        aux_call_llm=stub,
+        max_retries=2,
+    )
+    assert exp.hypothesis.core_idea == "tighten router preamble"
+    assert len(stub.calls) == 2
+    _, retry_user, _ = stub.calls[1]
+    # The repair turn echoes the prior raw output back so the model sees it.
+    assert "Your previous output was:" in retry_user
+    assert prose in retry_user
+    # The forceful corrective instruction is present.
+    assert "ONLY the JSON object" in retry_user
+    assert "no markdown code fences" in retry_user
+    assert "hypothesis" in retry_user and "patches" in retry_user
+
+
+@pytest.mark.asyncio
+async def test_propose_experiment_repairs_empty_response() -> None:
+    """An EMPTY attempt-1 response gets the targeted "skip reasoning" repair.
+
+    A reasoning model that burns its whole budget on thinking returns an
+    empty string. The repair prompt must NOT echo a (nonexistent) prior
+    output and must instead carry the targeted instruction to skip all
+    reasoning and emit the JSON immediately.
+    """
+    stub = _StubLLM(["", _valid_response()])
+    exp = await propose_experiment(
+        epoch_id="e1",
+        parent_generation_id="v0",
+        new_generation_id="v1",
+        patterns=[],
+        mutations=_MUTATIONS,
+        brief_text="",
+        current_loss_summary="",
+        aux_call_llm=stub,
+        max_retries=2,
+    )
+    assert exp.hypothesis.core_idea == "tighten router preamble"
+    assert len(stub.calls) == 2
+    _, retry_user, _ = stub.calls[1]
+    assert "EMPTY" in retry_user
+    assert "Skip all reasoning" in retry_user
+    # No empty prior-output echo block on the empty path.
+    assert "Your previous output was:" not in retry_user
+
+
+@pytest.mark.asyncio
+async def test_propose_experiment_repairs_think_wrapped_response() -> None:
+    """A <think>-wrapped response is salvaged in the parser, no retry needed."""
+    wrapped = "<think>off_topic is high; tighten router</think>\n" + _valid_response()
+    stub = _StubLLM([wrapped])
+    exp = await propose_experiment(
+        epoch_id="e1",
+        parent_generation_id="v0",
+        new_generation_id="v1",
+        patterns=[],
+        mutations=_MUTATIONS,
+        brief_text="",
+        current_loss_summary="",
+        aux_call_llm=stub,
+        max_retries=2,
+    )
+    assert exp.hypothesis.core_idea == "tighten router preamble"
+    # Salvaged on the first attempt — no repair turn was spent.
+    assert len(stub.calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_propose_experiment_retries_on_schema_error() -> None:
     bad = json.dumps({"hypothesis": {}, "patches": []})
     stub = _StubLLM([bad, _valid_response()])
@@ -489,6 +574,47 @@ def test_render_user_prompt_includes_feedback_when_present() -> None:
     )
     assert "Previous attempt was rejected" in rendered
     assert "bad json" in rendered
+    # Even without an echoed prior output, the corrective instruction lands.
+    assert "ONLY the JSON object" in rendered
+
+
+def test_render_user_prompt_echoes_truncated_prior_output() -> None:
+    long_prior = "x" * 5000
+    rendered = render_user_prompt(
+        current_loss_summary="loss=1.0",
+        patterns=[],
+        mutations=_MUTATIONS,
+        feedback="could not extract a JSON object",
+        feedback_prior_output=long_prior,
+    )
+    assert "Your previous output was:" in rendered
+    # The echo is truncated, not the full 5000 chars.
+    assert "[... truncated ...]" in rendered
+    assert rendered.count("x") < 5000
+
+
+def test_render_user_prompt_empty_feedback_variant() -> None:
+    rendered = render_user_prompt(
+        current_loss_summary="loss=1.0",
+        patterns=[],
+        mutations=_MUTATIONS,
+        feedback="empty response: expected a JSON object",
+        feedback_was_empty=True,
+    )
+    assert "EMPTY" in rendered
+    assert "Skip all reasoning" in rendered
+    assert "Your previous output was:" not in rendered
+
+
+def test_render_user_prompt_no_feedback_is_unchanged() -> None:
+    """The no-feedback render carries no repair section at all."""
+    rendered = render_user_prompt(
+        current_loss_summary="loss=1.0",
+        patterns=[],
+        mutations=_MUTATIONS,
+    )
+    assert "Previous attempt was rejected" not in rendered
+    assert "ONLY the JSON object" not in rendered
 
 
 def test_render_user_prompt_renders_patterns_block_for_empty_list() -> None:
