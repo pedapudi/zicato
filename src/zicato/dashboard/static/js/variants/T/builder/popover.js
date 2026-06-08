@@ -1,4 +1,9 @@
-// variants/T/builder/popover.js — a small reusable info popover (ⓘ).
+// variants/T/builder/popover.js — a small reusable info popover.
+//
+// The trigger is a SINGLE circular affordance: the CSS draws the ring (a
+// faint, theme-token circle) and the glyph inside is a plain lowercase `i`
+// (NOT the pre-circled ⓘ — that stacked a circle inside the CSS circle and
+// read as two concentric rings). One ring, one mark.
 //
 // The additional-detail surface every param control carries: definition,
 // default, and the cost/contract tradeoff. Accessible — a real <button>
@@ -31,8 +36,10 @@ export function infoPopover(info) {
   const trigger = el('button', {
     class: 'dn-bld-info', type: 'button',
     'aria-label': (data.title ? data.title + ': ' : '') + 'more detail',
+    title: (data.title ? data.title + ': ' : '') + 'more detail',
     'aria-expanded': 'false', 'aria-describedby': panelId,
-    text: 'ⓘ',
+    // a plain lowercase `i`; the CSS ring supplies the circle (no doubled glyph).
+    text: 'i',
   });
 
   let open = false;

@@ -68,9 +68,17 @@ export async function render(host, ctx) {
     if (health) nodes.push(healthPanel(health));
 
     const trendVals = spark.map((p) => p && p.scalar).filter(svg.isNum);
-    if (trendVals.length >= 2) {
+    if (trendVals.length >= 1) {
       const card = el('div', { class: 'dn-panel' });
-      card.appendChild(svg.sparkline({ width: 760, height: 84, values: trendVals, band: true, goodDirection: 'down' }));
+      // Few epochs with near-equal best-scalars used to collapse this into a
+      // pin-flat, horizontally-skewed slash. padY breathes the y-domain,
+      // minSpan keeps a near-flat series gently varied (not dead-flat) without
+      // faking a slope, and markers dot each epoch so 1–3 epochs read as points
+      // rather than one skewed segment (a lone epoch → a centred dot).
+      card.appendChild(svg.sparkline({
+        width: 760, height: 84, values: trendVals, band: true, goodDirection: 'down',
+        padY: 0.18, minSpan: 0.5, markers: true,
+      }));
       card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text: 'best scalar per epoch · lower is better' }));
       nodes.push(section('Cross-epoch trajectory', card));
     }
