@@ -1723,6 +1723,11 @@ async def _evolve_multi_challenger(
             round_index=round_index,
             total_rounds=total_rounds,
             match_id=m.matchup_id,
+            # Opt-in wall-clock cap on this duel's TOTAL board-unit execution.
+            # None (the default for every structure that does not set it) keeps
+            # the run uncapped, byte-identical to today; a racing rung may pin
+            # it to bound a full-board grind (see Matchup.matchup_budget_seconds).
+            matchup_budget_seconds=m.matchup_budget_seconds,
         )
         # Attribute the CHAMPION's cached-vs-fresh board-unit tally for
         # this matchup (if the champion played in it). ``nonlocal`` so the

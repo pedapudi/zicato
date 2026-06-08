@@ -39,6 +39,7 @@ from zicato.selection.strategy import (
     Standing,
     _param_float,
     _param_int,
+    _param_opt_float,
     pending_match_record,
 )
 
@@ -58,6 +59,19 @@ class RacingStrategy(SelectionStrategy):
         raw_ids = self.params.get("board_ids", ())
         self._board_ids: tuple[str, ...] = tuple(str(x) for x in raw_ids)
         self._replicates = max(1, _param_int(self.params, "replicates", 1))
+
+        # --- Matchup-level wall-clock budgets (opt-in; None ⇒ uncapped). ---
+        # ``matchup_budget_seconds`` caps EVERY duel's total board-unit
+        # wall-clock; ``final_rung_budget_seconds`` overrides it for the
+        # final full-board crowning duel specifically — the rung that runs
+        # the FULL board × replicates × both sides and is the pathological
+        # grinder (each board individually under its per-board budget, but
+        # their sum unbounded). When the latter is unset the former applies
+        # to the final duel too; when both are unset behaviour is byte-
+        # identical to today (no cap).
+        self._matchup_budget_s = _param_opt_float(self.params, "matchup_budget_seconds")
+        final_budget = _param_opt_float(self.params, "final_rung_budget_seconds")
+        self._final_budget_s = final_budget if final_budget is not None else self._matchup_budget_s
 
         self._rung = 0
         self._alive: list[Contestant] = []
@@ -157,6 +171,7 @@ class RacingStrategy(SelectionStrategy):
                     board_subset=subset,
                     replicates=self._replicates,
                     stage_index=self._rung,
+                    matchup_budget_seconds=self._matchup_budget_s,
                 )
             )
         self._rung_started = True
@@ -182,6 +197,10 @@ class RacingStrategy(SelectionStrategy):
                 board_subset=None,  # full board for the crowning gate
                 replicates=self._replicates,
                 stage_index=self._rung + 1,
+                # The final crowning duel runs the FULL board × replicates ×
+                # both sides — the grind this budget exists to bound. Prefer
+                # the final-rung-specific cap, falling back to the matchup cap.
+                matchup_budget_seconds=self._final_budget_s,
             ),
         )
 

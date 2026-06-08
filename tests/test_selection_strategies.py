@@ -106,6 +106,42 @@ def _run_strategy(
     return strategy.champion()
 
 
+def _run_strategy_to_final(
+    strategy, scalars: dict[str, float]
+) -> tuple[list[Matchup], Matchup | None]:
+    """Drive an already-seeded racing strategy until the crowning duel is scheduled.
+
+    Records every rung result from ``scalars`` but STOPS the moment the
+    ``racing-final`` matchup is scheduled, returning ``(rung_matchups,
+    final)`` — every rung matchup it scheduled along the way plus the
+    crowning matchup (without recording the final's result), so a test can
+    inspect both rungs' and the crowning duel's fields (e.g. wall-clock
+    budgets). ``final`` is ``None`` if no final is ever scheduled.
+    """
+    rungs: list[Matchup] = []
+    guard = 0
+    while not strategy.resolved():
+        batch = strategy.next_matchups()
+        if not batch:
+            break
+        if any(m.matchup_id == "racing-final" for m in batch):
+            final = next(m for m in batch if m.matchup_id == "racing-final")
+            return rungs, final
+        for m in batch:
+            rungs.append(m)
+            strategy.record_result(
+                _result(
+                    m,
+                    left_scalar=scalars[m.left.generation_id],
+                    right_scalar=scalars[m.right.generation_id],
+                )
+            )
+        guard += 1
+        if guard > 100:
+            raise AssertionError("strategy did not converge (possible infinite loop)")
+    return rungs, None
+
+
 # ---------------------------------------------------------------------------
 # Gauntlet
 # ---------------------------------------------------------------------------
@@ -389,6 +425,59 @@ def test_racing_explicit_board_ids_override_the_epoch_default() -> None:
     # Rung-0 slice = ceil(0.5 * 4) = 2, drawn from the operator's subset
     # (in order), not from the wider epoch board.
     assert all(tuple(m.board_subset) == ("e2", "e4") for m in first)
+
+
+def test_racing_no_budget_leaves_matchups_uncapped() -> None:
+    # Default racing: no budget param ⇒ every scheduled matchup is uncapped,
+    # backwards-compatible with the unbounded run.
+    s = make_strategy(_racing_spec())
+    s.seed(_champion("v0"), [_challenger(f"v{i}") for i in (1, 2, 3, 4)])
+    rung = s.next_matchups()
+    assert rung
+    assert all(m.matchup_budget_seconds is None for m in rung)
+
+
+def test_racing_matchup_budget_stamped_on_rungs_and_final() -> None:
+    # A matchup_budget_seconds param caps EVERY duel (rungs + final).
+    s = make_strategy(_racing_spec(matchup_budget_seconds=120.0))
+    champ = _champion("v0")
+    challengers = [_challenger(f"v{i}") for i in (1, 2, 3, 4)]
+    s.seed(champ, challengers)
+    scalars = {"v0": 1.0, "v1": 0.9, "v2": 0.8, "v3": 0.5, "v4": 0.2}
+    rungs, final = _run_strategy_to_final(s, scalars)
+    assert rungs
+    assert all(m.matchup_budget_seconds == 120.0 for m in rungs)
+    assert final is not None
+    assert final.matchup_budget_seconds == 120.0
+
+
+def test_racing_final_rung_budget_overrides_for_crowning_duel() -> None:
+    # final_rung_budget_seconds overrides matchup_budget_seconds for the
+    # final full-board crowning duel specifically (the grind to bound),
+    # while the rungs keep the general matchup cap.
+    s = make_strategy(_racing_spec(matchup_budget_seconds=120.0, final_rung_budget_seconds=600.0))
+    champ = _champion("v0")
+    challengers = [_challenger(f"v{i}") for i in (1, 2, 3, 4)]
+    s.seed(champ, challengers)
+    scalars = {"v0": 1.0, "v1": 0.9, "v2": 0.8, "v3": 0.5, "v4": 0.2}
+    rungs, final = _run_strategy_to_final(s, scalars)
+    assert all(m.matchup_budget_seconds == 120.0 for m in rungs)
+    assert final is not None
+    assert final.matchup_budget_seconds == 600.0
+
+
+def test_racing_final_rung_budget_alone_only_caps_the_final() -> None:
+    # final_rung_budget_seconds without matchup_budget_seconds caps ONLY the
+    # crowning duel; the rungs stay uncapped.
+    s = make_strategy(_racing_spec(final_rung_budget_seconds=300.0))
+    champ = _champion("v0")
+    challengers = [_challenger(f"v{i}") for i in (1, 2, 3, 4)]
+    s.seed(champ, challengers)
+    scalars = {"v0": 1.0, "v1": 0.9, "v2": 0.8, "v3": 0.5, "v4": 0.2}
+    rungs, final = _run_strategy_to_final(s, scalars)
+    assert all(m.matchup_budget_seconds is None for m in rungs)
+    assert final is not None
+    assert final.matchup_budget_seconds == 300.0
 
 
 def test_make_strategy_without_board_ids_leaves_params_untouched() -> None:

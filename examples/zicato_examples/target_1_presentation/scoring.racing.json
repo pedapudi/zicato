@@ -21,7 +21,9 @@
       "replicates": 2,
       "eta": 2,
       "board_fraction": 0.4,
-      "rung0_board_size": 0
+      "rung0_board_size": 0,
+      "matchup_budget_seconds": null,
+      "final_rung_budget_seconds": 1800
     }
   }
 }

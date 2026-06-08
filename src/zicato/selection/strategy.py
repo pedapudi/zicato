@@ -83,6 +83,19 @@ class Matchup:
     bracket_slot:
         Single/double-elim bracket position (e.g. ``"WB-R1-0"``); empty
         for structures without a bracket.
+    matchup_budget_seconds:
+        Optional WALL-CLOCK cap (seconds) on this matchup's TOTAL board-unit
+        execution. ``None`` (the default) ⇒ uncapped: every board unit ×
+        replicate × side runs to completion exactly as today. When set, the
+        runner stops LAUNCHING further board units once the matchup's
+        running wall-clock total exceeds the cap and treats the un-run units
+        as budget-exceeded losses (see :func:`zicato.tournament.runner.run_matchup`).
+        This is distinct from the per-board ``BoardEntry.wall_clock_budget_seconds``
+        (which bounds ONE unit): it caps the AGGREGATE of an unbounded board ×
+        replicates × both-sides sweep — the failure mode where each unit is
+        individually under budget but their sum grinds for hours. Set by a
+        strategy that wants to bound a full-board rung (e.g. racing's final
+        crowning duel).
     """
 
     matchup_id: str
@@ -92,6 +105,7 @@ class Matchup:
     replicates: int = 1
     stage_index: int = 0
     bracket_slot: str = ""
+    matchup_budget_seconds: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -482,6 +496,25 @@ def _param_float(params: dict[str, Any], key: str, default: float) -> float:
         return float(params.get(key, default))
     except (TypeError, ValueError):
         return default
+
+
+def _param_opt_float(params: dict[str, Any], key: str) -> float | None:
+    """Read an OPTIONAL float param: absent / null / unparseable ⇒ ``None``.
+
+    Unlike :func:`_param_float` there is no scalar default — the field is a
+    genuine opt-in switch where "unset" must remain distinguishable from any
+    numeric value (used for wall-clock budgets, where ``None`` means "no
+    cap"). A non-positive value is also treated as "unset" so ``0`` cannot
+    accidentally cap a matchup to nothing.
+    """
+    raw = params.get(key, None)
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0.0 else None
 
 
 __all__ = [
