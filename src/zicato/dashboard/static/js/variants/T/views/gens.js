@@ -25,7 +25,7 @@ import { state } from '../../../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { gatedSwap, section, empty, verdictPill, normaliseDecision, decisionFor } from '../ui.js';
-import { renderStructure, structurePill, structureDigest, isNonGauntlet, normalizeStructure, reconstructRacing, buildLiveRacingModel, buildLiveSwissModel, buildLiveElimModel } from './structure.js';
+import { renderStructure, structurePill, structureDigest, isNonGauntlet, normalizeStructure, reconstructRacing, buildLiveRacingModel, buildLiveSwissModel, buildLiveElimModel, racingModel } from './structure.js';
 import { deriveLiveStatus } from '../livestatus.js';
 import { epochRoundModel, roundModelDigest } from './rounds.js';
 
@@ -332,7 +332,20 @@ async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, 
   } else {
     liveSt = normalizeStructure(liveRaw, true);
   }
-  const liveUsable = !!(liveSt && liveSt.live);
+  // ADOPT the live model when it is flagged live OR when it carries an IN-FLIGHT,
+  // STREAMING racing rung (a published `live_progress` on a still-pending rung) —
+  // so a multi-survivor rung mid-flight renders ALL its lanes racing instead of
+  // falling back to the completed-record reconstruction (which would crown the
+  // eventual winner / mislabel in-flight lanes "rejected"). The streaming-rung
+  // signal is authoritative even when the phase string has not flipped `live`.
+  const hasStreamingRacingRung = (s) => {
+    if (!s || String(s.structure) !== 'racing') return false;
+    const m = racingModel(s);
+    return !!(m && Array.isArray(m.rungs) && m.rungs.some((r) =>
+      r && r.pending && r.live_progress && typeof r.live_progress === 'object'
+      && Object.keys(r.live_progress).length > 0));
+  };
+  const liveUsable = !!(liveSt && (liveSt.live || hasStreamingRacingRung(liveSt)));
 
   // the COMPLETED record (only fetched/reconstructed when NOT showing live).
   let tournamentId = null;

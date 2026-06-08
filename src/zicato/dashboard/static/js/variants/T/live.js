@@ -453,8 +453,13 @@ export class LiveController {
       this.ticker.node,
     ]);
 
-    const body = el('div', { class: 'dt-live-hero-body' }, [this._funnelHost, this._tickerHost]);
-    this.node = el('section', { class: 'dt-live-hero', 'aria-label': 'Live run', role: 'region' }, [head, prog, this._matchesHost, body]);
+    // HERO opt 3 (the study pick): the compacted STRUCTURE FIGURE leads — the
+    // scalar-track mini for racing, the field-bars / bracket / ladder for the
+    // others. So the figure mini (`_funnelHost`) sits ABOVE the "what's running"
+    // matches list (`_matchesHost`); the ticker rides below both. The reading
+    // order is now figure → what's running → activity.
+    const body = el('div', { class: 'dt-live-hero-body' }, [this._matchesHost, this._tickerHost]);
+    this.node = el('section', { class: 'dt-live-hero', 'aria-label': 'Live run', role: 'region' }, [head, prog, this._funnelHost, body]);
   }
 
   // Drive the hero from the current live state. Returns true when a run is live
