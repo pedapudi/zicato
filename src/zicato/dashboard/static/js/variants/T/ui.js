@@ -235,14 +235,15 @@ export function persistScale(v) {
 // at the baseline; this lets the operator step the text up a notch or two.
 //
 // THREE stops — small / medium / large — each mapping to a `--dt-font-scale`
-// number. SMALL == the CURRENT look (1.0 → the literal px render unchanged), so
-// the default is byte-identical to today; medium / large are clear, tasteful
-// steps. applyFontSize (shell.js) stamps the var + a `data-t-fontsize` attribute
-// on the app root and persists; the picker's segmented control reads/sets it.
+// number. The raw literal-px baseline (scale 1.0) read too small for the low-
+// x-height faces, so the ladder starts ABOVE it: small 1.15 (the comfortable
+// floor + the default), medium 1.3, large 1.45 — even 0.15 steps. applyFontSize
+// (shell.js) stamps the var + a `data-t-fontsize` attribute on the app root and
+// persists; the picker's segmented control reads/sets it.
 export const FONTSIZE_OPTIONS = [
-  { id: 'small',  label: 'S', title: 'Small text (current size)', scale: 1 },
-  { id: 'medium', label: 'M', title: 'Medium text',              scale: 1.15 },
-  { id: 'large',  label: 'L', title: 'Large text',               scale: 1.3 },
+  { id: 'small',  label: 'S', title: 'Small text',  scale: 1.15 },
+  { id: 'medium', label: 'M', title: 'Medium text', scale: 1.3 },
+  { id: 'large',  label: 'L', title: 'Large text',  scale: 1.45 },
 ];
 const FONTSIZE_IDS = FONTSIZE_OPTIONS.map((o) => o.id);
 const FONTSIZE_BY_ID = new Map(FONTSIZE_OPTIONS.map((o) => [o.id, o]));

@@ -361,24 +361,25 @@ test('settings: the builder section RE-HOMES the B2 builder view (its own chrome
 // ── S/M/L FONT-SIZE control (text-only multiplier in the typeface picker) ──
 //
 // DISTINCT from the page-scale pill (whole-page `zoom`): this scales the HTML
-// text via `--dt-font-scale` WITHOUT touching the SVG figures. SMALL == the
-// current look (scale 1.0), so the default is byte-identical to today.
+// text via `--dt-font-scale` WITHOUT touching the SVG figures. The ladder
+// starts above the raw literal-px baseline (too small for low-x-height faces):
+// small 1.15 (the default floor), medium 1.3, large 1.45.
 
 test('ui: font-size model — normalise + read/persist round-trip + scale values', async () => {
   const ui = await import('../js/variants/T/ui.js');
   globalThis.window.localStorage.clear();
   // default is small; unknown / nullish values normalise to small.
-  assertEqual(ui.DEFAULT_FONTSIZE, 'small', 'the default font size is small (current look)');
+  assertEqual(ui.DEFAULT_FONTSIZE, 'small', 'the default font size is small');
   assertEqual(ui.normaliseFontSize('small'), 'small', 'small is a known size');
   assertEqual(ui.normaliseFontSize('medium'), 'medium', 'medium is a known size');
   assertEqual(ui.normaliseFontSize('large'), 'large', 'large is a known size');
   assertEqual(ui.normaliseFontSize('xl'), 'small', 'an unknown size falls back to small');
   assertEqual(ui.normaliseFontSize(null), 'small', 'null falls back to small');
-  // scale numbers: small=1 (byte-identical baseline), medium 1.15, large 1.3.
-  assertEqual(ui.fontSizeScale('small'), 1, 'small ⇒ scale 1.0 (current look)');
-  assertEqual(ui.fontSizeScale('medium'), 1.15, 'medium ⇒ scale 1.15');
-  assertEqual(ui.fontSizeScale('large'), 1.3, 'large ⇒ scale 1.3');
-  assertEqual(ui.fontSizeScale('nope'), 1, 'an unknown size scales at 1.0');
+  // scale numbers: small 1.15 (default floor), medium 1.3, large 1.45.
+  assertEqual(ui.fontSizeScale('small'), 1.15, 'small ⇒ scale 1.15');
+  assertEqual(ui.fontSizeScale('medium'), 1.3, 'medium ⇒ scale 1.3');
+  assertEqual(ui.fontSizeScale('large'), 1.45, 'large ⇒ scale 1.45');
+  assertEqual(ui.fontSizeScale('nope'), 1.15, 'an unknown size scales at the small floor');
   // read default with an empty store; persist + read round-trips each size.
   assertEqual(ui.readFontSize(), 'small', 'an empty store reads small');
   for (const size of ['medium', 'large', 'small']) {
@@ -395,7 +396,7 @@ test('shell: applyFontSize stamps --dt-font-scale + data-t-fontsize per size + p
   const shell = await import('../js/variants/T/shell.js');
   globalThis.window.localStorage.clear();
   const root = globalThis.document.createElement('div');
-  const expect = { small: 1, medium: 1.15, large: 1.3 };
+  const expect = { small: 1.15, medium: 1.3, large: 1.45 };
   for (const size of ['medium', 'large', 'small']) {
     const applied = shell.applyFontSize(size, root);
     assertEqual(applied, size, 'applyFontSize returns the applied size');
@@ -404,9 +405,9 @@ test('shell: applyFontSize stamps --dt-font-scale + data-t-fontsize per size + p
     assertEqual(root.getAttribute('data-t-fontsize'), size, 'data-t-fontsize stamped ' + size);
     assertEqual(ui.readFontSize(), size, 'applyFontSize persisted ' + size + ' to the shared store');
   }
-  // small ⇒ scale exactly 1.0 — the byte-identical baseline.
+  // small ⇒ the default floor, scale 1.15.
   shell.applyFontSize('small', root);
-  assertEqual(root.style._props['--dt-font-scale'], '1', 'small stamps scale 1.0 (current look preserved)');
+  assertEqual(root.style._props['--dt-font-scale'], '1.15', 'small stamps scale 1.15 (default floor)');
 });
 
 test('settings: the typeface popover carries the S/M/L text-size control + applies via the shared store', async () => {
