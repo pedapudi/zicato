@@ -190,6 +190,163 @@ async def test_free_text_fallback_trips_without_structured_event() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Real goldfive tool-ledger path — the artifact-fidelity fix
+# ---------------------------------------------------------------------------
+#
+# goldfive does NOT set ``ctx.extras["tool_event"]`` and does NOT dispatch
+# custom judges at tool-observation points; it records every tool call on
+# ``session.recent_events`` (``kind == "tool_observed"``) and dispatches
+# custom judges only at reasoning points, where that session is reachable
+# as ``ctx.session_state``. These tests model that REAL shape — the
+# detector must grade the agent's actual tool round-trips, not its
+# narration.
+
+
+class _FakeSession:
+    """Minimal stand-in for a goldfive ``Session`` recent-events ledger."""
+
+    def __init__(self, recent_events: list[dict[str, object]]) -> None:
+        self.recent_events = recent_events
+
+
+def _tool_observed(
+    tool_name: str,
+    *,
+    result_preview: str = "",
+    error_message: str = "",
+    ts_ms: int = 0,
+    args_preview: str = "",
+) -> dict[str, object]:
+    """Build one goldfive ``tool_observed`` recent-events entry."""
+    return {
+        "kind": "tool_observed",
+        "ts_ms": ts_ms,
+        "agent_name": "reviewer",
+        "task_id": "t1",
+        "tool_name": tool_name,
+        "args_preview": args_preview,
+        "result_preview": result_preview,
+        "is_error": bool(error_message) or "not found" in result_preview,
+        "error_message": error_message,
+    }
+
+
+def _reasoning_ctx_with_session(
+    reasoning_text: str, recent_events: list[dict[str, object]]
+) -> JudgeContext:
+    """A reasoning observation point carrying a live session tool ledger.
+
+    This is exactly the JudgeContext shape goldfive's
+    ``DriftObserver._dispatch_custom_judges`` builds: reasoning text +
+    ``session_state`` (with the real ``recent_events`` buffer) and NO
+    ``extras["tool_event"]``.
+    """
+    return JudgeContext(
+        reasoning_text=reasoning_text,
+        session_state=_FakeSession(recent_events),  # type: ignore[arg-type]
+    )
+
+
+async def test_reads_real_session_tool_ledger() -> None:
+    """The judge trips on goldfive's real ``recent_events`` tool ledger.
+
+    No ``extras["tool_event"]`` is set (goldfive never sets it); the
+    structured signal must come from ``ctx.session_state.recent_events``.
+    """
+    judge = FileFindabilityJudge()
+    events: list[dict[str, object]] = [
+        _tool_observed(
+            "read_presentation_files",
+            result_preview="{'outline.md': '<error reading outline.md: not found>'}",
+            ts_ms=1,
+        ),
+        _tool_observed(
+            "find_presentation_files",
+            result_preview="{'matched_slug': 'waffles'}",
+            ts_ms=2,
+        ),
+    ]
+    verdict = await judge.evaluate(_reasoning_ctx_with_session("Reviewing the deck now.", events))
+    assert verdict.drift_emitted is True
+    assert verdict.drift_kind == "custom"
+    assert judge._saw_read_not_found is True
+    assert judge._saw_find_tool is True
+
+
+async def test_session_ledger_dedups_across_observation_points() -> None:
+    """Re-snapshotting the same ring buffer never double-counts a read.
+
+    goldfive hands the judge a fresh JudgeContext per reasoning point, but
+    the ``recent_events`` ring persists the same entries until trimmed.
+    Folding the SAME read twice must not synthesise a phantom retry loop.
+    """
+    judge = FileFindabilityJudge()
+    one_read = [
+        _tool_observed("read_presentation_files", result_preview="{'deck.md': 'ok'}", ts_ms=1)
+    ]
+    # Two consecutive reasoning observation points see the identical ledger.
+    await judge.evaluate(_reasoning_ctx_with_session("step 1", one_read))
+    await judge.evaluate(_reasoning_ctx_with_session("step 2", list(one_read)))
+    # The single real read was counted once — no fabricated loop.
+    assert judge._read_call_count == 1
+    assert judge._saw_read_loop is False
+
+
+async def test_two_real_reads_are_a_loop_with_consistent_reason() -> None:
+    """Two real reads -> loop signal whose reason matches the real count.
+
+    Regression for the headline defect: the loop reason previously read
+    ``called 0× (retry loop)`` because the loop bit came from narration
+    while the structured counter stayed at 0. The count and the reason
+    can no longer disagree — the loop is derived only from the structured
+    read count.
+    """
+    judge = FileFindabilityJudge()
+    events = [
+        _tool_observed(
+            "read_presentation_files",
+            result_preview="{'deck.md': '<error reading: not found>'}",
+            ts_ms=1,
+        ),
+        _tool_observed(
+            "read_presentation_files",
+            result_preview="{'deck.md': '<error reading: not found>'}",
+            ts_ms=2,
+        ),
+    ]
+    await judge.evaluate(_reasoning_ctx_with_session("retrying the read", events))
+    assert judge._read_call_count == 2
+    assert judge._saw_read_loop is True
+    reason = judge._reason(judge._active_signal_count())
+    assert "called 2× (retry loop)" in reason
+    assert "called 0×" not in reason
+
+
+async def test_narration_cannot_fabricate_loop_when_tools_are_structured() -> None:
+    """With a real tool ledger present, narration cannot manufacture signals.
+
+    The agent's chain-of-thought mentions the tool names repeatedly, but
+    the structured ledger shows a single clean read. The detector grades
+    the artifact (one clean read), not the narration: no drift, no loop,
+    no self-contradictory reason.
+    """
+    judge = FileFindabilityJudge()
+    clean_read = [
+        _tool_observed("read_presentation_files", result_preview="{'deck.md': 'ok'}", ts_ms=1)
+    ]
+    chatty = (
+        "I will call read_presentation_files, then read_presentation_files again, "
+        "and if that fails files_not_found I'll run find_presentation_files."
+    )
+    verdict = await judge.evaluate(_reasoning_ctx_with_session(chatty, clean_read))
+    # The narration name-drops every failure token; the real ledger is clean.
+    assert verdict.drift_emitted is False
+    assert judge._saw_read_loop is False
+    assert judge._saw_find_tool is False
+    assert judge._saw_read_not_found is False
+
+
+# ---------------------------------------------------------------------------
 # Attach surface — Judge.python + judge_runtime resolution
 # ---------------------------------------------------------------------------
 

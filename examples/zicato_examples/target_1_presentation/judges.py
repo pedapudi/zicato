@@ -45,27 +45,58 @@ authoring helper, pointing at :data:`FILE_FINDABILITY_JUDGE_PATH`::
 and weights it in ``scoring.json`` under
 ``per_judge_weights["file_findability"]``.
 
+Where the signal really lives (artifact fidelity)
+-------------------------------------------------
+This judge must grade what the agent *did* — the tool round-trips it
+actually ran — NOT what its chain-of-thought *narrated*. goldfive does
+not emit a standalone tool-call wire event and does not put a
+``tool_event`` key on the :class:`~goldfive.judges.JudgeContext`; custom
+judges are dispatched only at REASONING observation points
+(``DriftObserver._dispatch_custom_judges`` runs from
+``observe_reasoning``). So a judge that reads ``ctx.reasoning_text`` /
+``ctx.transcript`` is reading the model's *narration*, and a judge that
+reads ``ctx.extras["tool_event"]`` is reading a key that is never set.
+That is the defect this detector previously tripped on: it fired
+``read_presentation_files called 0× (retry loop)`` because the loop
+signal came from the narration mentioning the tool name twice while the
+structured read counter stayed at zero — a self-contradiction.
+
+The REAL structured record of every tool call is the goldfive session's
+``recent_events`` ring buffer (``session.note_tool_observation`` appends
+one ``kind == "tool_observed"`` entry per call, carrying ``tool_name``,
+``args_preview``, ``result_preview``, ``is_error`` and
+``error_message``). It is reachable from the judge as
+``ctx.session_state.recent_events``. This detector reads THAT — the
+ground-truth tool ledger — as its primary, deterministic source. The
+reasoning/transcript text is consulted only as a last-resort fallback
+for the not-found / find markers when no structured tool ledger was
+available at all, and is NEVER allowed to manufacture the retry-loop
+signal (that signal is derived solely from the structured read count, so
+the count and the reason can never contradict each other).
+
 Stateful-by-observation-point contract
 ---------------------------------------
 goldfive calls :meth:`Judge.evaluate` once per observation point with a
-fresh :class:`~goldfive.judges.JudgeContext` snapshot (recent reasoning,
-a bounded transcript window, and ``extras`` carrying the current
-``tool_event``). The detector therefore keeps its own accumulator state
-across calls — exactly as the :class:`~goldfive.judges.Judge` protocol
-permits ("Implementations are free to keep their own state across
-calls") — and counts the *distinct* failure signals seen so far. It
-emits a drift verdict only when a NEW signal first fires, so the number
-of ``custom`` drift events the run accrues equals the number of distinct
-failure signals (1–4), and the verdict's severity escalates with that
-count. A clean run — writes once, reads once, no not-found, no find —
-never trips a signal and the judge stays silent (empty-default verdict,
-no event), exactly as a no-signal judge should.
+fresh :class:`~goldfive.judges.JudgeContext` snapshot. The detector
+keeps its own accumulator state across calls — exactly as the
+:class:`~goldfive.judges.Judge` protocol permits ("Implementations are
+free to keep their own state across calls") — and counts the *distinct*
+failure signals seen so far. The session ``recent_events`` buffer is a
+bounded ring (default 16) re-snapshotted on every call, so each tool
+observation is de-duplicated by a stable signature before it is folded
+in — re-seeing the same entry across observation points never
+double-counts a read. The detector emits a drift verdict only when a NEW
+signal first fires, so the number of ``custom`` drift events the run
+accrues equals the number of distinct failure signals (1–4), and the
+verdict's severity escalates with that count. A clean run — writes once,
+reads once, no not-found, no find — never trips a signal and the judge
+stays silent (empty-default verdict, no event), exactly as a no-signal
+judge should.
 """
 
 from __future__ import annotations
 
 import json
-import re
 from typing import TYPE_CHECKING, Any
 
 from goldfive import DriftKind, DriftSeverity
@@ -107,6 +138,14 @@ _READ_ERROR_MARKER = "<error reading"
 
 #: The reviewer's structured "I could not find the files" report token.
 _FILES_NOT_FOUND = "files_not_found"
+
+#: goldfive ``Session.recent_events`` discriminator for a tool call
+#: recorded by ``DriftObserver.note_tool_observation`` (mirrors
+#: ``goldfive.types.RECENT_EVENT_KIND_TOOL_OBSERVED``). Inlined as the
+#: literal rather than imported so the judge keeps resolving under a
+#: goldfive revision that has not landed the constant — the wire value
+#: ("tool_observed") is the stable contract.
+_TOOL_OBSERVED_KIND = "tool_observed"
 
 
 # ---------------------------------------------------------------------------
@@ -182,12 +221,6 @@ def _stringify(value: Any) -> str:
     return str(value)
 
 
-# A single read tool-call boundary in free transcript text. Used only as
-# a fallback when the structured ``tool_event`` is absent but the
-# transcript narrates the calls.
-_READ_CALL_RE = re.compile(re.escape(_READ_TOOL))
-
-
 class FileFindabilityJudge:
     """Deterministic process judge for the self-location failure mode.
 
@@ -215,6 +248,8 @@ class FileFindabilityJudge:
         "_saw_files_not_found_report",
         "_saw_read_loop",
         "_emitted_signals",
+        "_seen_tool_obs",
+        "_saw_structured_tools",
     )
 
     def __init__(self) -> None:
@@ -229,6 +264,16 @@ class FileFindabilityJudge:
         # so we emit exactly once per signal and escalate severity with
         # the running total.
         self._emitted_signals: int = 0
+        # De-dup ledger for the structured tool-observation buffer. The
+        # session ``recent_events`` ring is re-snapshotted on every
+        # observation point, so the SAME tool call appears again on the
+        # next call until it is trimmed; we count each one exactly once by
+        # a stable per-entry signature.
+        self._seen_tool_obs: set[tuple[Any, ...]] = set()
+        # Whether ANY structured tool ledger was available this run. When
+        # True, the free-text narration fallback stays disarmed — we have
+        # ground truth and must not let narration manufacture signals.
+        self._saw_structured_tools: bool = False
 
     def _active_signal_count(self) -> int:
         """Number of distinct failure signals observed so far (0–4)."""
@@ -241,10 +286,15 @@ class FileFindabilityJudge:
             )
         )
 
-    def _ingest(self, ctx: JudgeContext) -> None:
-        """Fold one observation-point snapshot into the accumulators."""
-        # 1. Structured tool_event path — the precise signal source.
-        tool_name, result_blob = _tool_event_fields(ctx.extras.get("tool_event"))
+    def _fold_tool_call(self, tool_name: str, result_blob: str) -> None:
+        """Fold one *real* tool call (name + searchable result blob) in.
+
+        The single chokepoint every structured tool source — the goldfive
+        session ledger and the legacy ``extras["tool_event"]`` — routes
+        through, so the retry-loop signal is derived ONLY from the
+        structured read count and the reason string can never contradict
+        it (the "called 0× (retry loop)" defect).
+        """
         if tool_name == _FIND_TOOL:
             self._saw_find_tool = True
         if tool_name == _READ_TOOL:
@@ -256,11 +306,42 @@ class FileFindabilityJudge:
         if _FILES_NOT_FOUND in result_blob:
             self._saw_files_not_found_report = True
 
-        # 2. Free-text fallback: the reasoning / transcript window may
-        #    narrate the same signals even when no structured tool_event
-        #    rode along on this observation point. Scanned defensively so
-        #    a runner that does not populate ``extras["tool_event"]``
-        #    still trips the detector.
+    def _ingest(self, ctx: JudgeContext) -> None:
+        """Fold one observation-point snapshot into the accumulators.
+
+        Source precedence (highest fidelity first):
+
+        1. ``ctx.session_state.recent_events`` — goldfive's real
+           ``tool_observed`` ledger, the ground truth for what the agent
+           actually ran. De-duplicated per entry across observation
+           points.
+        2. ``ctx.extras["tool_event"]`` — a structured tool event a
+           runner may attach directly (kept for back-compat / test
+           harnesses; goldfive itself does not set it today).
+        3. Free-text narration fallback — armed ONLY when no structured
+           ledger was seen for the whole run, and NEVER allowed to
+           manufacture the retry-loop signal.
+        """
+        # 1. Structured tool ledger from the live goldfive session — the
+        #    precise, deterministic signal source. Each ring-buffer entry
+        #    is counted once via a stable signature.
+        for tool_name, result_blob in self._new_session_tool_calls(ctx):
+            self._saw_structured_tools = True
+            self._fold_tool_call(tool_name, result_blob)
+
+        # 2. Legacy structured tool_event path (a runner-attached event).
+        if ctx.extras and ctx.extras.get("tool_event") is not None:
+            self._saw_structured_tools = True
+            tool_name, result_blob = _tool_event_fields(ctx.extras.get("tool_event"))
+            self._fold_tool_call(tool_name, result_blob)
+
+        # 3. Free-text fallback. Disarmed once any structured tool ledger
+        #    has been seen this run — with ground truth in hand we must
+        #    not let the model's chain-of-thought narration manufacture
+        #    signals (the artifact-fidelity defect). It exists only for a
+        #    runner that surfaces NO structured tool data at all.
+        if self._saw_structured_tools:
+            return
         text = " ".join(
             [ctx.reasoning_text or "", *(t or "" for t in (ctx.transcript or ()))]
         ).lower()
@@ -273,10 +354,50 @@ class FileFindabilityJudge:
             self._saw_read_not_found = True
         if _READ_ERROR_MARKER in text:
             self._saw_read_not_found = True
-        # A read loop narrated in text: two or more references to the
-        # read tool within the visible window.
-        if len(_READ_CALL_RE.findall(text)) >= 2:
-            self._saw_read_loop = True
+
+    def _new_session_tool_calls(self, ctx: JudgeContext) -> list[tuple[str, str]]:
+        """Yield ``(tool_name, result_blob)`` for unseen session tool calls.
+
+        Reads goldfive's ``recent_events`` ring buffer off
+        ``ctx.session_state`` and returns only entries with
+        ``kind == "tool_observed"`` not seen on a prior observation point.
+        The ring is re-snapshotted each call and trimmed (default 16), so
+        de-dup is by a stable per-entry signature
+        (``ts_ms``/``tool_name``/``args_preview``) rather than list index.
+        Tolerant of a missing session / buffer / fields — any degenerate
+        shape yields no calls so the detector never raises out of a judge.
+        """
+        session = getattr(ctx, "session_state", None)
+        if session is None:
+            return []
+        events = getattr(session, "recent_events", None)
+        if not events:
+            return []
+        out: list[tuple[str, str]] = []
+        for entry in events:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("kind") != _TOOL_OBSERVED_KIND:
+                continue
+            sig = (
+                entry.get("ts_ms"),
+                entry.get("tool_name"),
+                entry.get("args_preview"),
+            )
+            if sig in self._seen_tool_obs:
+                continue
+            self._seen_tool_obs.add(sig)
+            tool_name = str(entry.get("tool_name") or "").strip().lower()
+            # Fold every result-bearing field into one searchable blob so
+            # the not-found / error markers are found regardless of which
+            # key carried them (matches ``_tool_event_fields``' approach).
+            blob = " ".join(
+                _stringify(entry.get(key))
+                for key in ("result_preview", "error_message")
+                if entry.get(key) is not None
+            ).lower()
+            out.append((tool_name, blob))
+        return out
 
     async def evaluate(self, ctx: JudgeContext) -> JudgeVerdict:
         """Accumulate signals; emit escalating drift as new ones fire.
