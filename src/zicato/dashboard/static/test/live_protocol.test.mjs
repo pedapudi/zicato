@@ -627,4 +627,140 @@ test('producer/consumer parity — the racing scalar track consumes the publishe
   assertEqual(d1, d3, 'an identical live_progress shape yields an identical digest (no-op heartbeat → no repaint)');
 });
 
+// ===========================================================================
+// RACING — the MULTI-SURVIVOR IN-FLIGHT RUNG (the real published shape).
+//
+// A live racing rung is published as N champion-vs-survivor matchups
+// (`rung{N}_m0..mK`) inside ONE RoundRecord; only `matches[0]` carries the
+// authoritative full-rung `live_progress` map (EVERY lane), the rest keep it
+// null (see racing.py `_pending_round`). This section pins:
+//   * the rung's FULL FIELD = the union of all matchups + the live_progress lane
+//     keys (NOT matches[0]'s `[champion, challenger0]` alone) — every survivor
+//     renders on the Match-ups scalar track, not "No rungs evaluated yet.";
+//   * the hero LEADS with the scalar-track mini (figure ABOVE "what's running");
+//   * "what's running" emits ONE rung block (not one per matchup).
+// ===========================================================================
+
+// rung 1 mid-flight with TWO survivor lanes (v5, v7) racing the champion (v0),
+// published as TWO matchups (rung1_m0 = v0 vs v5, rung1_m1 = v0 vs v7). Only
+// matches[0] carries the full per-rung live_progress (v0 + v5 + v7).
+function racingMultiInflight(stage) {
+  const m0Progress = stage === 'projected'
+    ? {
+        v0: { boards_total: 8, inflight: 1, projected_scalar: 10.0, projected: true },
+        v5: { boards_done: 6, boards_total: 8, inflight: 1, projected: true, projected_scalar: 9.6, done: 6, total: 8 },
+        v7: { boards_done: 5, boards_total: 8, inflight: 1, projected: true, projected_scalar: 9.9, done: 5, total: 8 },
+      }
+    : {
+        v0: { boards_total: 8, inflight: 1 },
+        v5: { boards_done: 3, boards_total: 8, inflight: 1, projected: false, done: 3, total: 8 },
+        v7: { boards_done: 2, boards_total: 8, inflight: 1, projected: false, done: 2, total: 8 },
+      };
+  return {
+    structure: 'racing', phase: 'running', epoch_id: EPOCH,
+    structure_params: { rungs: [{ fraction: 0.5 }, { fraction: 1.0 }], board_size: 8 },
+    champion_lineage: ['v0'],
+    competitors: [
+      { generation_id: 'v0', role: 'champion' }, { generation_id: 'v5', role: 'challenger' },
+      { generation_id: 'v7', role: 'challenger' },
+    ],
+    rounds: [
+      { round_index: 0, label: 'Rung 1', matches: [
+        // slot 0 — the carrier of the full-rung live_progress (every lane).
+        { match_id: 'rung1_m0', competitors: ['v0', 'v5'], board_fraction: 0.5, live_progress: m0Progress },
+        // slot 1 — a per-duel matchup; live_progress is null (read off slot 0).
+        { match_id: 'rung1_m1', competitors: ['v0', 'v7'], board_fraction: 0.5 },
+      ] },
+    ],
+    standings: [],
+    partial_champion_agg: { scalar: 10.0 },
+  };
+}
+
+test('racing multi-survivor — the Match-ups view renders ALL lanes of an in-flight rung published as N matchups (not "No rungs evaluated")', () => {
+  const at = racingMultiInflight('inflight');
+  // build the live model the Match-ups view consumes (published rounds + active
+  // -runs overlay), then render it via the SAME renderStructure dispatch.
+  const built = STRUCT.buildLiveRacingModel({ at, heartbeat: hb({ phase: 'tournament:rung1' }),
+    activeRuns: [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r5' }, { generation_id: 'v7', entry_id: 'b1', run_id: 'r7' }],
+    epochGens: ['v0', 'v5', 'v7'] });
+  const host = document.createElement('div');
+  for (const n of STRUCT.renderStructure(built, CTX, EPOCH)) if (n) host.appendChild(n);
+
+  // the scalar track rendered (NOT the empty placeholder).
+  const track = svgsByClass(host, 'dn-scalartrack')[0];
+  assert(track, 'the in-flight rung renders the scalar track');
+  assert(!/No rungs evaluated/.test(textOf(host)), 'the "No rungs evaluated yet." empty is NOT reached for an in-flight rung');
+
+  // the rung's FULL FIELD — both survivors (v5 AND v7) are on the track, not just
+  // matches[0]'s first lane (v5).
+  const model = STRUCT.racingModel(built);
+  const rung = model.rungs[0];
+  assert(rung.competitors.indexOf('v5') >= 0 && rung.competitors.indexOf('v7') >= 0,
+    'the rung field is the UNION of all matchups (v5 AND v7), not just the first matchup');
+  assert(rung.competitors.indexOf('v0') < 0, 'the champion/benchmark v0 is NOT a rung lane');
+  // the union live_progress carries BOTH lanes (v7 survived even though it rode a
+  // non-slot-0 matchup whose own live_progress was null).
+  assert(rung.live_progress && rung.live_progress.v7, 'the rung live_progress carries v7 (the union, not just slot-0 competitors)');
+});
+
+test('racing multi-survivor — the live HERO leads with the scalar-track mini (figure ABOVE "what\'s running"); "what\'s running" is ONE rung block', () => {
+  const c = new live.LiveController({});
+  const at = racingMultiInflight('projected');
+  const heartbeat = hb({ phase: 'tournament:rung1' });
+  c.update({
+    status: { running: true, structure: 'racing' }, heartbeat,
+    activeRuns: [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r5' }, { generation_id: 'v7', entry_id: 'b1', run_id: 'r7' }],
+    activeTournament: at,
+  });
+
+  // the hero figure host carries the scalar-track mini for ALL lanes.
+  const track = svgsByClass(c._funnelHost, 'dn-scalartrack')[0];
+  assert(track, 'the hero leads with the racing scalar-track mini');
+
+  // ORDERING: the structure-figure mini (_funnelHost) appears BEFORE the
+  // "what's running" matches list (_matchesHost) in the hero's DOM.
+  const kids = c.node.childNodes;
+  const idxFunnel = kids.indexOf(c._funnelHost);
+  // _matchesHost rides inside the `body` wrapper, so find which top-level child
+  // subtree contains it.
+  const idxMatches = (() => {
+    for (let i = 0; i < kids.length; i++) {
+      let found = false;
+      walk(kids[i], (n) => { if (n === c._matchesHost) found = true; });
+      if (found) return i;
+    }
+    return -1;
+  })();
+  assert(idxFunnel >= 0 && idxMatches >= 0, 'both the figure mini and the matches list are mounted in the hero');
+  assert(idxFunnel < idxMatches, 'the scalar-track mini (_funnelHost) leads ABOVE the "what\'s running" list (_matchesHost)');
+
+  // "what's running" is ONE rung block (not one per champion-vs-survivor matchup).
+  const epochGens = ['v0', 'v5', 'v7'];
+  const model = STRUCT.buildLiveModel(at, heartbeat,
+    [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r5' }, { generation_id: 'v7', entry_id: 'b1', run_id: 'r7' }], epochGens);
+  const blocks = STRUCT.liveMatchBlocks(model);
+  const rungBlocks = blocks.filter((b) => b.kind === 'rung');
+  assertEqual(rungBlocks.length, 1, 'ONE rung block for the rung (not one per matchup)');
+  const ids = rungBlocks[0].entries.map((e) => e.id).sort();
+  assertEqual(JSON.stringify(ids), JSON.stringify(['v5', 'v7']), 'the single rung block carries BOTH lanes (v5, v7)');
+  assert(rungBlocks[0].entries.every((e) => e.id !== 'v0'), 'the champion/benchmark v0 is not a lane in the rung block');
+});
+
+test('racing multi-survivor — the rung block dedup is anti-flash: a no-op tick yields an identical liveMatchBlocks digest', () => {
+  const at = racingMultiInflight('projected');
+  const hbX = hb({ phase: 'tournament:rung1' });
+  const runs = [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r5' }, { generation_id: 'v7', entry_id: 'b1', run_id: 'r7' }];
+  const epochGens = ['v0', 'v5', 'v7'];
+  const d1 = STRUCT.liveMatchBlocksDigest(STRUCT.liveMatchBlocks(STRUCT.buildLiveModel(at, hbX, runs, epochGens)));
+  const d2 = STRUCT.liveMatchBlocksDigest(STRUCT.liveMatchBlocks(STRUCT.buildLiveModel(JSON.parse(JSON.stringify(at)), hbX, runs, epochGens)));
+  assertEqual(d1, d2, 'a no-op tick yields an identical rung-block digest (no flash on the dedup\'d block)');
+  // a board landing on v7 moves the digest (the union lane is folded in).
+  const moved = racingMultiInflight('projected');
+  moved.rounds[0].matches[0].live_progress.v7.boards_done = 7;
+  moved.rounds[0].matches[0].live_progress.v7.projected_scalar = 9.7;
+  const d3 = STRUCT.liveMatchBlocksDigest(STRUCT.liveMatchBlocks(STRUCT.buildLiveModel(moved, hbX, runs, epochGens)));
+  assert(d1 !== d3, 'a board landing on a union lane (v7) repaints the rung block');
+});
+
 await run();
