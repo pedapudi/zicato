@@ -30,6 +30,7 @@ mental model (epochs/rounds) + a discriminating contract (board + judges
 |---|---|
 | `zicato-manage-epochs-and-rounds` | The mental model + operations for the epoch → round → generation → run hierarchy: what an epoch is (a sealed contract), contract-hash auto-epoching, the **two senses of "round"** (outer evolve round vs a tournament's inner rounds), champion/challenger vs parent/child, `champion_eval_mode`, the mandatory pre-run hypothesis, and the `zicato epoch` escape hatches. **Read this first.** |
 | `zicato-bootstrap` | Zero-to-first-loop: scaffold a workspace, register an inner-harness adapter, wire the two `call_llm` callables, run the deterministic smoke loop, confirm the artifact tree. |
+| `zicato-dev-guide` | **For contributors editing zicato itself** (not operating a workspace): the design goals, a file-by-file **map of the codebase**, the data/control flow for an evolve round and for the live dashboard, the **sharp edges** (subprocess weights-transport gap, the four distinct timeout mechanisms, dashboard CSS/cache pitfalls, the pre-commit no-op, `uv sync --all-extras`), and how to build/test/verify locally. Grounded in the source with file:line citations and flags where docs drift from code. |
 
 ### Tier 1 — Author the evaluation contract (highest leverage)
 *Design principles (WHAT + WHY)* — pair each with its operational sibling:
