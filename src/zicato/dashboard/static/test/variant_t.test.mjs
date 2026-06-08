@@ -2111,6 +2111,93 @@ test('structure: the "Proposed field" section renders applied ✓ / rejected ✗
   assert(svg.proposingTracker, 'the shared proposingTracker renderer is exported for reuse');
 });
 
+test('proposing tracker: a rejected challenger shows its SPECIFIC reason INLINE (validation error visible, not a black box)', () => {
+  const tracker = svg.proposingTracker({
+    fieldStatus: [
+      { generation_id: 'v1', status: 'applied', reason: '', attempts: 1, attempt_reasons: [], hypothesis: 'swap the greeting string', seed: 2 },
+      {
+        generation_id: 'v2', status: 'rejected', seed: 3,
+        reason: "hypothesis.expected_metric_movements[0]: unknown drift kind 'file_findability'",
+        attempts: 2,
+        attempt_reasons: [
+          "hypothesis.expected_metric_movements[0]: unknown drift kind 'file_findability'",
+          "hypothesis.expected_metric_movements[0]: unknown drift kind 'file_findability'",
+        ],
+        hypothesis: '',
+      },
+    ],
+  });
+  // The rejected row renders the SPECIFIC reason inline (not just on hover).
+  const reasonEls = allByClass(tracker, 'dn-prop-reason');
+  assertEqual(reasonEls.length, 1, 'one inline reason line (for the rejected slot)');
+  assert(reasonEls[0].textContent.includes('file_findability'),
+    'the file_findability validation message is rendered inline, plainly visible');
+  // The retry badge surfaces the attempt count for the retried slot.
+  const attemptEls = allByClass(tracker, 'dn-prop-attempts');
+  assertEqual(attemptEls.length, 1, 'the retried slot shows an attempt badge');
+  assert(attemptEls[0].textContent.includes('2 attempts'), 'the badge reads "2 attempts"');
+  // The applied row renders its hypothesis as the detail line, not a reason.
+  const okRow = allByClass(tracker, 'dn-prop-row-ok')[0];
+  assert(okRow && okRow.textContent.includes('swap the greeting string'),
+    'the applied slot shows its hypothesis');
+  // Headline counts roll up applied + rejected.
+  const head = allByClass(tracker, 'dn-prop-head')[0];
+  assert(head.textContent.includes('2 proposed') && head.textContent.includes('1 applied')
+    && head.textContent.includes('1 rejected'), 'headline: 2 proposed · 1 applied · 1 rejected');
+});
+
+test('proposing tracker: an in-flight "proposing" slot reads as pending (not rejected, not all-rejected)', () => {
+  const tracker = svg.proposingTracker({
+    fieldStatus: [
+      { generation_id: 'v1', status: 'applied', reason: '', attempts: 1, attempt_reasons: [], hypothesis: 'h', seed: 2 },
+      { generation_id: 'v2', status: 'proposing', reason: '', attempts: 0, attempt_reasons: [], hypothesis: '', seed: 3 },
+    ],
+  });
+  const pendingRows = allByClass(tracker, 'dn-prop-row-pending');
+  assertEqual(pendingRows.length, 1, 'one pending row for the in-flight slot');
+  assert(pendingRows[0].textContent.includes('proposing'), 'the pending row reads "proposing…"');
+  const head = allByClass(tracker, 'dn-prop-head')[0];
+  assert(head.textContent.includes('proposing'), 'headline surfaces the in-flight count');
+  assert(!/all rejected/i.test(head.textContent),
+    'a field with a still-proposing slot is NOT declared all-rejected prematurely');
+  assert(!(head.getAttribute('class') || '').includes('dn-prop-head-allbad'),
+    'no all-bad headline class while a slot is still proposing');
+});
+
+test('data.fieldStatus: carries the v6 observability fields (status proposing, attempts, attempt_reasons, hypothesis)', () => {
+  const fs = data.fieldStatus({
+    field_status: [
+      {
+        generation_id: 'v1', status: 'rejected', reason: 'final reason', seed: 2,
+        attempts: 3, attempt_reasons: ['a', 'b', '', 'c'], hypothesis: 'ignored on reject',
+      },
+      { generation_id: 'v2', status: 'proposing' },
+      { generation_id: 'v3', status: 'applied', hypothesis: 'do the thing' },
+    ],
+  });
+  assertEqual(fs[0].status, 'rejected');
+  assertEqual(fs[0].attempts, 3, 'attempts preserved');
+  assertDeep(fs[0].attempt_reasons, ['a', 'b', 'c'], 'empty per-attempt reasons filtered out');
+  assertEqual(fs[1].status, 'proposing', 'the proposing status is recognised (not coerced to rejected)');
+  assertEqual(fs[1].attempts, 0, 'a proposing slot with no attempts count defaults to 0');
+  assertEqual(fs[2].hypothesis, 'do the thing', 'applied hypothesis preserved');
+  // The summary counts proposing distinctly + does not prematurely flag allRejected.
+  const sum = data.fieldStatusSummary(fs);
+  assertEqual(sum.proposing, 1, 'one proposing slot');
+  assertEqual(sum.applied, 1, 'one applied slot');
+  assertEqual(sum.rejected, 1, 'one rejected slot');
+  assertEqual(sum.allRejected, false, 'not all-rejected while a slot proposes / one applied');
+});
+
+test('proposingDigest: re-stamps on an attempt-count / reason change, stable on a no-op', () => {
+  const a = [{ generation_id: 'v1', status: 'proposing', attempts: 0, reason: '' }];
+  const b = [{ generation_id: 'v1', status: 'rejected', attempts: 2, reason: 'file_findability validation error' }];
+  assertEqual(svg.proposingDigest(a), svg.proposingDigest(a.map((x) => ({ ...x }))),
+    'identical field → identical digest (no-op → ZERO DOM)');
+  assert(svg.proposingDigest(a) !== svg.proposingDigest(b),
+    'a proposing → rejected transition (with a reason) re-stamps the digest');
+});
+
 test('structure: a completed field where ALL challengers rejected reads "0 applied — all rejected", not empty', async () => {
   freshState();
   const payload = JSON.parse(JSON.stringify(SWISS_STRUCT));
@@ -2514,6 +2601,55 @@ test('live-status: a DEAD run (stale phase + frozen active_tournament phase:runn
   assertEqual(dead.running, false, 'a dead run with a frozen running-tournament file but a stale heartbeat is NOT live');
   assertEqual(dead.tournamentRunning, true, 'the frozen tournament file is still reported as phase:running');
   assert(dead.label === 'idle' || dead.label === 'done', 'the dead run reads idle/done, not a running label');
+});
+
+test('live-status: a stale run exposes a heartbeat AGE + a "last seen Ns ago" affordance (not a silent freeze)', () => {
+  const now = 1_780_455_964_000;
+  const dead = livestatus.deriveLiveStatus({
+    heartbeat: { phase: 'tournament:round_0:racing-final', last_heartbeat: now - 90_000 /* 90s */ },
+    activeRuns: [],
+    activeTournament: { structure: 'racing', phase: 'running' },
+  }, now);
+  assertEqual(dead.running, false, 'a 90s-old heartbeat reads NOT live');
+  assertEqual(dead.heartbeatStale, true, 'flagged stale');
+  assertEqual(dead.heartbeatAgeMs, 90_000, 'the heartbeat age is exposed for the affordance');
+  assertEqual(livestatus.staleLabel(dead.heartbeatAgeMs), 'last seen 90s ago',
+    'the affordance reads "last seen 90s ago"');
+  // minutes / hours bucketing + the untimestamped fallback.
+  assertEqual(livestatus.staleLabel(125_000), 'last seen 2m ago', 'minutes bucket');
+  assertEqual(livestatus.staleLabel(2 * 3600_000 + 5000), 'last seen 2h ago', 'hours bucket');
+  assertEqual(livestatus.staleLabel(NaN), 'stale', 'an untimestamped frozen heartbeat reads a bare "stale"');
+});
+
+test('live-status: the chrome shows the stale affordance + a non-running dot when the heartbeat freezes (no LIVE banner)', () => {
+  try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  const now = Date.now();
+  coreState.state.connected = true;
+  coreState.state.connecting = false;
+  // a FROZEN heartbeat: an active-looking phase + a running tournament file,
+  // but a last_heartbeat well past the staleness window → NOT live.
+  coreState.state.setHeartbeat({ phase: 'tournament:round_0:racing-final', generation_id: 'v3', last_heartbeat: now - 120_000 });
+  coreState.state.activeRuns = [];
+  coreState.state.activeTournament = { structure: 'racing', phase: 'running', competitors: [{ generation_id: 'v0' }] };
+
+  const root = mountLiveShell('#/');
+
+  const statusEl = allByClass(root, 'dt-status')[0];
+  assert(statusEl, 'the chrome status pill mounted');
+  const cls = statusEl.getAttribute('class') || '';
+  assert(!cls.split(/\s+/).includes('dt-running'), 'a frozen heartbeat does NOT light the running (LIVE) chrome');
+  assert(cls.split(/\s+/).includes('dt-stale'), 'the chrome carries the dt-stale class');
+  const staleEl = allByClass(root, 'dt-status-stale')[0];
+  assert(staleEl && /last seen/.test(staleEl.textContent),
+    'the chrome shows a "last seen Ns ago" affordance rather than a silent freeze');
+  // the live run label must NOT read as running.
+  const runLabel = allByClass(root, 'dt-run-label')[0];
+  assert(!runLabel || runLabel.textContent.trim() === '', 'no running label for a stale run');
+
+  // reset to an idle environment so other tests start clean.
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = [];
+  coreState.state.activeTournament = null;
 });
 
 // ---- (b′) the chrome status pill reflects the running state, digest-gated ----

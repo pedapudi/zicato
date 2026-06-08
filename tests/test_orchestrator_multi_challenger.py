@@ -521,6 +521,156 @@ def test_field_status_when_all_challengers_rejected(
     assert all(f["status"] == "rejected" for f in struct["field_status"])
 
 
+def _findability_validation_response() -> str:
+    """A schema-INVALID response: predicts an undeclared board judge.
+
+    ``drift:file_findability`` is neither a built-in goldfive drift kind nor
+    a declared board judge, so the structured parser rejects it with the
+    exact ``file_findability``-style validation message the operator cited as
+    invisible on the dashboard. Used to prove the per-attempt reason is
+    captured on ``field_status`` and reaches the dashboard.
+    """
+    return json.dumps(
+        {
+            "hypothesis": {
+                "core_idea": "improve file findability",
+                "modulating": ["greeting"],
+                "why": "exercising the metric-movement validation reject path.",
+                "expected_metric_movements": [
+                    {
+                        "metric_name": "drift:file_findability",
+                        "direction": "decrease",
+                        "magnitude": "small",
+                    }
+                ],
+                "expected_pass_rate_delta": "+0.0 to +0.1",
+                "risks": "none",
+            },
+            "patches": [
+                {
+                    "mutation_id": "greeting",
+                    "op": "replace",
+                    "new_content": '"world"',
+                    "rationale": "different greeting word",
+                }
+            ],
+        }
+    )
+
+
+def test_field_status_carries_per_attempt_validation_reason(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A challenger rejected on a metric-movement validation error records the
+    SPECIFIC reason (the ``file_findability`` validation message) AND the full
+    per-attempt list + hypothesis, so the dashboard proposing tracker can show
+    WHY a slot was rejected — not just that it was."""
+    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2, rounds_n=1)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 0.5},
+        canned_pass_by_gen={"v0": True, "v1": True},
+    )
+
+    from zicato.orchestrator import evolve_once
+
+    # Challenger v1 applies; challenger v2 fails BOTH attempts on the same
+    # validation error (zero retries → one attempt each here would still
+    # reject, but we give 1 retry to prove attempt_reasons accumulates).
+    asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder(
+                [
+                    _valid_proposer_response(),  # v1 attempt 1 → applied
+                    _findability_validation_response(),  # v2 attempt 1 → reject
+                    _findability_validation_response(),  # v2 attempt 2 → reject
+                ]
+            ),
+            max_proposer_retries=1,
+        )
+    )
+
+    from zicato.runtime.state import read_active_tournament
+
+    active = read_active_tournament(workspace)
+    assert active is not None
+    by_gen = {f["generation_id"]: f for f in active.field_status}
+    assert set(by_gen) == {"v1", "v2"}
+
+    # The applied challenger carries its hypothesis summary.
+    assert by_gen["v1"]["status"] == "applied"
+    assert by_gen["v1"]["hypothesis"] == "swap the greeting string"
+    assert by_gen["v1"]["attempt_reasons"] == []
+
+    # The rejected challenger carries the SPECIFIC validation message —
+    # both in the condensed `reason` and the full per-attempt list.
+    v2 = by_gen["v2"]
+    assert v2["status"] == "rejected"
+    assert "file_findability" in v2["reason"]
+    assert v2["attempts"] == 2
+    assert len(v2["attempt_reasons"]) == 2
+    assert all("file_findability" in r for r in v2["attempt_reasons"])
+
+
+def test_field_status_publishes_proposing_phase_live(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The orchestrator publishes a ``phase="proposing"`` envelope as each
+    challenger slot ENTERS the field (status ``"proposing"``) — before the
+    whole batch is minted — so the dashboard reads the proposal phase live,
+    not only once it settles. We assert the on_status callback receives a
+    ``"proposing"`` record per slot ahead of its terminal record."""
+    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2, rounds_n=1)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 0.5, "v2": 1.5},
+        canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
+    )
+
+    seen: list[tuple[str, str]] = []
+    import zicato.orchestrator as orch
+
+    real = orch._propose_and_apply_challenger
+
+    async def _wrapped(*args: object, **kwargs: object) -> object:
+        on_status = kwargs.get("on_status")
+
+        def _tap(record: dict) -> None:
+            seen.append((str(record.get("generation_id")), str(record.get("status"))))
+            if on_status is not None:
+                on_status(record)  # type: ignore[operator]
+
+        kwargs["on_status"] = _tap
+        return await real(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(orch, "_propose_and_apply_challenger", _wrapped)
+
+    from zicato.orchestrator import evolve_once
+
+    asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder(
+                [_valid_proposer_response(), _valid_proposer_response()]
+            ),
+        )
+    )
+
+    # Each slot announces "proposing" before it settles to "applied".
+    assert ("v1", "proposing") in seen
+    assert ("v2", "proposing") in seen
+    v1_prop = seen.index(("v1", "proposing"))
+    v1_applied = seen.index(("v1", "applied"))
+    assert v1_prop < v1_applied
+
+
 def test_field_status_absent_is_empty_and_back_compatible() -> None:
     """An ActiveTournament with no ``field_status`` (old data / gauntlet)
     loads as an empty list and round-trips byte-identically when the key

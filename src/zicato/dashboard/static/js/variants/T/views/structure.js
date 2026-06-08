@@ -439,7 +439,10 @@ export function renderStructure(st, ctx, epochId) {
 }
 
 // Read the per-challenger proposing outcomes (the v5 `field_status`) off a
-// tournament-structure payload — same shape data.fieldStatus() produces, [] if absent.
+// tournament-structure payload — same shape data.fieldStatus() produces, []
+// if absent. Carries the v6 observability fields (status "proposing",
+// attempts, attempt_reasons, hypothesis) so the proposal phase is legible
+// post-hoc, not only live.
 export function fieldStatusOf(st) {
   const fs = st && st.field_status;
   if (!Array.isArray(fs)) return [];
@@ -448,10 +451,20 @@ export function fieldStatusOf(st) {
     if (!f || typeof f !== 'object') continue;
     const gid = f.generation_id;
     if (gid == null || gid === '') continue;
+    let status;
+    if (f.status === 'applied') status = 'applied';
+    else if (f.status === 'proposing') status = 'proposing';
+    else status = 'rejected';
+    const reasons = Array.isArray(f.attempt_reasons)
+      ? f.attempt_reasons.filter((r) => r != null && String(r) !== '').map((r) => String(r))
+      : [];
     out.push({
       generation_id: String(gid),
-      status: f.status === 'applied' ? 'applied' : 'rejected',
+      status,
       reason: f.reason == null ? '' : String(f.reason),
+      attempts: (typeof f.attempts === 'number' && f.attempts >= 0) ? f.attempts : reasons.length,
+      attempt_reasons: reasons,
+      hypothesis: f.hypothesis == null ? '' : String(f.hypothesis),
       seed: (typeof f.seed === 'number') ? f.seed : null,
     });
   }
@@ -463,9 +476,12 @@ export function fieldStatusOf(st) {
 function proposedFieldSection(st, ctx, epochId) {
   const fs = fieldStatusOf(st);
   if (!fs.length) return null;
-  const live = !!(st && st.live);
+  const proposing = fs.filter((f) => f.status === 'proposing').length;
+  // A slot still proposing means the field is forming RIGHT NOW — treat as
+  // live even if the payload's own `live` flag has not flipped yet.
+  const live = !!(st && st.live) || proposing > 0;
   const applied = fs.filter((f) => f.status === 'applied').length;
-  const rejected = fs.length - applied;
+  const rejected = fs.filter((f) => f.status === 'rejected').length;
   // The proposing tracker earns its own section only when it has something to
   // SAY: LIVE (proposals applying/rejecting in real time — the count + per-row
   // states update as the field mints) or a COMPLETED run WITH REJECTIONS to

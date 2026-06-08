@@ -1511,6 +1511,12 @@
   .dt-status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--v2-flat); transition: background 0.2s; }
   .dt-status.dt-connected .dt-status-dot { background: var(--v2-good); }
   .dt-status.dt-running .dt-status-dot { background: var(--v2-caution); }
+  /* A frozen heartbeat (stale, not live): a dim, hollow dot + a muted
+     "last seen Ns ago" note — never the live accent, never a silent freeze. */
+  .dt-status.dt-stale .dt-status-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--v2-flat); }
+  .dt-status-stale { color: var(--v2-ink-faint); font-size: 10px; margin-left: 6px;
+    font-style: italic; white-space: nowrap; }
+  .dt-status-stale:empty { display: none; }
 
   /* The RUN badge — surfaces an ACTIVE run for ANY tournament structure
    * (racing / swiss / elim / gauntlet). Hidden when idle/done; shown with the
@@ -2530,6 +2536,19 @@
   .dn-prop-clickable { cursor: pointer; }
   .dn-prop-clickable:hover { border-color: var(--v2-accent); }
   .dn-prop-clickable:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 1px; }
+  /* v6 observability: per-row detail line (reason / hypothesis), the
+     attempt badge, and the in-flight "proposing" state. A rejected row's
+     reason is rendered inline (faint mono) so the SPECIFIC validation /
+     parse / post-apply message is legible without a hover. */
+  .dn-prop-row { flex-direction: column; align-items: stretch; gap: 3px; }
+  .dn-prop-rowtop { display: flex; align-items: center; gap: 8px; }
+  .dn-prop-detail { font-family: var(--v2-mono); font-size: 11px; line-height: 1.35;
+    padding-left: calc(1em + 8px); overflow-wrap: anywhere; }
+  .dn-prop-reason { color: var(--v2-bad); }
+  .dn-prop-attempts { font-family: var(--v2-mono); font-size: 10.5px; color: var(--v2-ink-faint);
+    border: 1px solid var(--v2-rule); border-radius: 4px; padding: 0 5px; }
+  .dn-prop-pending { color: var(--v2-caution); }
+  .dn-prop-row-pending { border-left: 3px solid var(--v2-caution); }
 
   .dt-live-hero-ticker { min-width: 0; }
   .dt-live-hero-tickerhead { font-family: var(--v2-mono); font-size: 10px; text-transform: uppercase;
