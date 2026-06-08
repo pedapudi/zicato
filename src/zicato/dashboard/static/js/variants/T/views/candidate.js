@@ -389,8 +389,15 @@ function buildRadarModel({ primaryGate, championScalar, settledScalar, projected
     }
   }
 
-  if (axes.length < 3) return null;
-  return { axes, raw, live: !!live };
+  // ≥3 axes → a plottable silhouette (settled or ghosted-projected). A LIVE
+  // (racing / in-flight) candidate with only the scalar-inverse + a landed
+  // pass-rate axis (2) is below the radar's plottable minimum, but we still
+  // return the model with `projectedOnly:true` so the dossier renders the
+  // racing affordance ("settled comparisons appear once boards finish") instead
+  // of dropping the panel entirely.
+  if (axes.length >= 3) return { axes, raw, live: !!live, projectedOnly: false };
+  if (live && axes.length >= 1) return { axes, raw, live: true, projectedOnly: true };
+  return null;
 }
 
 // Read one gate payload (D.gate) into the lifecycle GATE node's explanation:
@@ -483,7 +490,7 @@ function candidateDigest(s) {
     // the RADAR silhouette model — folded in so a change to any axis (scalar,
     // pass-rate, per-judge) or its live/projected state repaints, but a no-op
     // heartbeat stays byte-identical. Delegates to svg.radarSilhouetteDigest.
-    radar: s.radar ? svg.radarSilhouetteDigest({ axes: s.radar.axes, live: s.radar.live }) : null,
+    radar: s.radar ? svg.radarSilhouetteDigest({ axes: s.radar.axes, live: s.radar.live }) + (s.radar.projectedOnly ? '·proj-only' : '') : null,
     // the train→holdout generalization triplet (rounded) so a change repaints
     // and a no-op beat stays equal.
     generalization: s.generalization ? [
@@ -685,7 +692,16 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     host.appendChild(section('Live · boards running for this candidate', liveCard));
   }
 
-  // ---- per-board scoring dot-plot ----
+  // ══ THE DOSSIER BODY — coordinated, NOT sprawling (study opt 2 layout) ══
+  // The study folds the per-board read, the promote-gate ladder and the LABELED
+  // radar silhouette into ONE coordinated grid beneath the full-width lifecycle
+  // spine, rather than a flat stack of full-bleed sections (the sprawl the
+  // operator flagged). Left column = the per-board comparison + the gate ladder;
+  // right column = the silhouette, STRETCHED to fill its column (no empty band).
+  // In the compare split the panes are already narrow, so the grid collapses to
+  // one column (dn-dossier-grid is single-column there) and the figures stack.
+
+  // (LEFT) ── per-board scoring dot-plot ──
   // Each per-entry record carries the tournament context it ran in (match_id /
   // rung). The SAME board entry can appear several times — raced across rungs /
   // rounds — so we surface a short context tag per row to disambiguate the
@@ -711,8 +727,13 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
         context: tournamentContext(e),
         entry_id: e.entry_id, run_id: e.run_id || null, gen: genId,
       }));
+    // RESPONSIVE: the dot-plot fills the width of its dossier column (the
+    // operator's "cramped to the right" was the old full-bleed section centring a
+    // 560-wide viewBox in a wide pane). `responsive:true` is the shared-contract
+    // aspect-locked flag; the wider viewBox + the grid column do the rest.
     scoreCard.appendChild(svg.valueDotPlot({
-      width: cmpId ? 480 : 560, rowHeight: dt.dotRow, labelWidth: cmpId ? 160 : 200, items,
+      width: narrow ? 480 : 720, rowHeight: dt.dotRow, labelWidth: narrow ? 160 : 200, items,
+      responsive: true,
       reference: svg.isNum(championScalar) ? { value: championScalar, label: `champion ${championId}` } : null,
       // click a row (board name AND dot) → the board drill-down for THIS exact
       // run: the board view opens its inline transcript for the selected gen.
@@ -724,31 +745,81 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
       el('span', null, [el('i', { class: 'dotpred', style: 'border-color:var(--v2-bad);' }), 'fail']),
       el('span', { class: 'dn-faint', text: '⏱ timeout · dim tag = rung/round it ran in · click an entry → its drill-down' }),
     ].filter(Boolean)));
+  } else if (s.radar && s.radar.projectedOnly) {
+    // RACING / IN-FLIGHT with no SETTLED per-board rows yet: don't read "no
+    // entries" — surface the racing affordance so the column isn't bare.
+    scoreCard.appendChild(racingAffordance());
   } else {
     scoreCard.appendChild(empty('No per-entry scores for this candidate (the index may not be built).'));
   }
-  host.appendChild(section('Per-board scoring · sorted, vs champion', scoreCard));
+  const scoreSection = section('Per-board scoring · sorted, vs champion', scoreCard);
 
-  // ---- RADAR SILHOUETTE (the FINAL liked study opt 2's folded-in panel) ----
-  // The candidate's SHAPE vs the champion across the heterogeneous axes the gate
-  // weighs (scalar-inverse, pass-rate, per-judge drift); OUTER = better. Folds in
-  // what was opt 4. A live/projected candidate ghosts in dn-proj. This REPLACES
-  // the old scalar-component bars (removed — redundant with the radar). Vendor-
-  // clean. For racing the silhouette compares against the field-leader reference.
-  if (s.radar && Array.isArray(s.radar.axes) && s.radar.axes.length >= 3) {
-    const racing = String(structure) === 'racing';
-    const radarCard = el('div', { class: 'dn-panel dn-figpane dn-radarpane' });
-    radarCard.appendChild(svg.radarSilhouette({
-      axes: s.radar.axes, raw: s.radar.raw, live: s.radar.live,
-      // compact in the compare split; the legend rides only the wide single view.
-      mini: false, legend: !cmpId,
-      onAxis: null,
-    }));
-    radarCard.appendChild(el('p', { class: 'dn-faint dn-radar-cap', text: racing
-      ? 'silhouette · candidate shape vs the field-leader reference · outer = better · hover a vertex for its value'
-      : 'silhouette · candidate shape vs champion · outer = better · hover a vertex for its value' }));
-    host.appendChild(section('Silhouette · candidate shape vs champion', radarCard));
+  // (LEFT) ── the STACKED promote gate(s) (fix #1) — moved INTO the dossier grid
+  // so the deciding rules read beside the per-board evidence + the silhouette.
+  const gateSections = [];
+  if (s.gates.some((g) => g && Array.isArray(g.rules))) {
+    s.gateSpecs.forEach((k, i) => {
+      const g = s.gates[i];
+      if (!g || !Array.isArray(g.rules)) return;
+      gateSections.push(section(`Promote gate · ${k.champ} → ${k.chall} (${k.role})`, gatePanel(g)));
+    });
+  } else if (!baseline) {
+    gateSections.push(section('Promote gate', el('div', { class: 'dn-panel' }, [empty('No gate decomposition recorded for this candidate’s round.')])));
+  } else {
+    gateSections.push(section('Promote gate', el('div', { class: 'dn-panel' }, [empty('The seed candidate has no gate — it defines the loss floor that challengers must beat.')])));
   }
+
+  // (RIGHT) ── RADAR SILHOUETTE (the FINAL liked study opt 2's folded-in panel) ──
+  // The candidate's SHAPE vs the champion across the heterogeneous axes the gate
+  // weighs (scalar-inverse, pass-rate, per-judge drift); OUTER = better, axes
+  // LABELED (the operator's "missing labels / 1–9" fix — we pass MEANINGFUL
+  // `axes[].label`). A live/projected candidate GHOSTS in dn-proj; a racing
+  // candidate with too few settled axes shows a clearly-marked PROJECTED radar +
+  // the "settled comparisons appear once boards finish" affordance instead of an
+  // empty pane. This REPLACES the old scalar-component bars (folded in). Vendor-
+  // clean. For racing the silhouette compares against the field-leader reference.
+  let radarSection = null;
+  if (s.radar && Array.isArray(s.radar.axes)) {
+    const racing = String(structure) === 'racing';
+    const plottable = s.radar.axes.length >= 3;
+    const radarCard = el('div', { class: 'dn-panel dn-figpane dn-radarpane' });
+    if (s.radar.projectedOnly && !plottable) {
+      // projected/in-flight with < 3 axes — too few to draw a silhouette, but we
+      // do NOT drop the panel: a clearly-marked projected placeholder + the
+      // racing affordance keep the dossier coherent while boards stream.
+      radarCard.appendChild(el('div', { class: 'dn-radar-projhint dt-proj' }, [
+        el('span', { class: 'dt-proj-badge', text: 'projected' }),
+        el('span', { class: 'dn-faint', text: ' silhouette forms as axes land · ' + s.radar.axes.length + ' of ≥3 so far' }),
+      ]));
+      radarCard.appendChild(racingAffordance());
+    } else {
+      // plottable: draw the silhouette (ghosted via live:true when projected).
+      radarCard.appendChild(svg.radarSilhouette({
+        axes: s.radar.axes, raw: s.radar.raw, live: s.radar.live,
+        // pass the shared-contract responsive flag so the silhouette fills its
+        // (full-width) dossier column rather than sitting narrow with empty space.
+        responsive: true,
+        // compact in the compare split; the legend rides only the wide single view.
+        mini: false, legend: !cmpId,
+        onAxis: null,
+      }));
+      radarCard.appendChild(el('p', { class: 'dn-faint dn-radar-cap', text: (s.radar.live ? 'projected silhouette (boards still streaming) · ' : '') + (racing
+        ? 'candidate shape vs the field-leader reference · outer = better · hover a vertex for its value'
+        : 'candidate shape vs champion · outer = better · hover a vertex for its value') }));
+      if (s.radar.live) radarCard.appendChild(racingAffordance());
+    }
+    radarSection = section(s.radar.live ? 'Silhouette · projected shape vs champion' : 'Silhouette · candidate shape vs champion', radarCard);
+  }
+
+  // ── arrange the dossier body: the coordinated grid (study opt 2). The LEFT
+  // column carries the per-board evidence + the gate ladder; the RIGHT column the
+  // silhouette. In the compare split (`narrow`) the grid is single-column so each
+  // half-width pane stacks its figures cleanly.
+  const dossierGrid = el('div', { class: 'dn-dossier-grid' + (narrow ? ' dn-dossier-grid--narrow' : '') }, [
+    el('div', { class: 'dn-dossier-col dn-dossier-col--main' }, [scoreSection, ...gateSections]),
+    radarSection ? el('div', { class: 'dn-dossier-col dn-dossier-col--side' }, [radarSection]) : null,
+  ].filter(Boolean));
+  host.appendChild(dossierGrid);
 
   // ---- RACING VARIATION — racing is FIELD-relative, not pairwise ----
   // Racing cuts the whole field rung-by-rung (successive-halving), so "how good"
@@ -765,20 +836,9 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
   if (isPrimary && s.entryParam) host.appendChild(entryDrilldown(ctx, epochId, genId, s.entryParam, s.drillRow, s.exps, s.judges, s.drillHeader));
 
   // ---- fix #3: ALL match-ups for this candidate ----
+  // (the STACKED promote gate(s), fix #1, now ride INSIDE the dossier grid above
+  // — beside the per-board evidence + the silhouette — per the study's layout.)
   host.appendChild(section('Match-ups · every round this candidate was in', allMatchupsPanel(s.mine, genId, championId, ctx, epochId)));
-
-  // ---- fix #1: the STACKED promote gate(s) on the candidate page ----
-  if (s.gates.some((g) => g && Array.isArray(g.rules))) {
-    s.gateSpecs.forEach((k, i) => {
-      const g = s.gates[i];
-      if (!g || !Array.isArray(g.rules)) return;
-      host.appendChild(section(`Promote gate · ${k.champ} → ${k.chall} (${k.role})`, gatePanel(g)));
-    });
-  } else if (!baseline) {
-    host.appendChild(section('Promote gate', el('div', { class: 'dn-panel' }, [empty('No gate decomposition recorded for this candidate’s round.')])));
-  } else {
-    host.appendChild(section('Promote gate', el('div', { class: 'dn-panel' }, [empty('The seed candidate has no gate — it defines the loss floor that challengers must beat.')])));
-  }
 
   // ---- GENERALIZATION · train → holdout (SHRUNK supporting panel) ----
   // The study reduced this from a hero figure to a small, width-capped slope.
@@ -835,6 +895,20 @@ function generalizationPanel(g) {
     ? 'holdout gap exceeds tolerance — possible memorization'
     : 'small gap — generalizes (no memorization)' }));
   return card;
+}
+
+// A small, clearly-marked "racing — settled comparisons appear once boards
+// finish" affordance. Shown when a candidate is still racing (only a projected
+// scalar / partial board slice), so the dossier surfaces WHY the dumbbell / gate
+// comparisons are not yet drawn rather than reading bare. Vendor-clean.
+function racingAffordance() {
+  return el('div', { class: 'dn-racing-affordance dt-proj' }, [
+    el('span', { class: 'dn-inflight-pulse', 'aria-hidden': 'true' }),
+    el('span', { class: 'dn-racing-affordance-lab' }, [
+      el('span', { class: 'dt-proj-badge', text: 'racing' }),
+      el('span', { class: 'dn-faint', text: ' settled comparisons (per-board dumbbell · gate ladder) appear once boards finish' }),
+    ]),
+  ]);
 }
 
 // The RACING field-relative panels — field standings (every racer ranked by
