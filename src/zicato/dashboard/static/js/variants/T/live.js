@@ -709,15 +709,19 @@ export class LiveController {
     this._funnelHost.appendChild(node);
   }
 
-  // Build the COMPACTED LIVE structure figure (the study "hero opt 3"): a MINI
-  // version of the SAME final tournament-viz designs the single-round page leads
-  // with, so the hero and the full page agree on the model + read consistently.
+  // Build the FULL-WIDTH LIVE structure figure (the study "hero opt 3"): the SAME
+  // final tournament-viz design the single-round page leads with, rendered
+  // RESPONSIVE so it scales aspect-locked to fill the hero width up to its
+  // `svg.dn-*-hero` max-width cap — every structure matching the racing scalar
+  // track's full-width treatment (wide figures fill to their cap; square ones —
+  // the elim radial — centre under it). The hero and the full page agree on the
+  // model + read consistently.
   //
-  //   racing      → racingScalarTrack({ mini:true })   (the single-round PRIMARY)
-  //   single_elim → elimRadial({ mini:true })          (the single-round PRIMARY)
-  //   double_elim → elimFlow combo (WB/LB bands)        (the single-round DEFAULT)
-  //   gauntlet    → gauntletFieldBars({ mini:true })   (the wave-vs-standard hero)
-  //   swiss       → swissLadder (unchanged; no mini mode in the builder)
+  //   racing      → racingScalarTrack({ mini, responsive })   (the single-round PRIMARY)
+  //   single_elim → elimRadial({ mini, responsive })          (square — centres under its cap)
+  //   double_elim → elimFlow combo ({ responsive }, WB/LB bands) (the single-round DEFAULT)
+  //   gauntlet    → gauntletFieldBars({ mini, responsive })   (the wave-vs-standard hero)
+  //   swiss       → swissLadder({ responsive })               (no mini mode in the builder)
   //
   // The model is reused from views/structure.js (buildLive*Model + the *Model
   // helpers + championScalarOf) so the hero mini stays byte-consistent with the
@@ -758,15 +762,19 @@ export class LiveController {
       return { node, digest: 'racing|' + racingScalarTrackDigest(opts) };
     }
     if (structure === 'swiss') {
-      // swissLadder has no mini mode — render it unchanged (the liked design).
+      // FULL-WIDTH HERO: the swiss ladder scales aspect-locked to fill the hero
+      // width (`responsive` → the svg.dn-swissladder-hero max-width cap governs),
+      // matching racing's full-width track. A wide figure → fills to its cap.
       const st = buildLiveSwissModel({ at, heartbeat, activeRuns, epochGens: gens }) || normalizeStructure(at, true);
       const model = swissModel(st);
       if (!model || !model.hasRounds) return null;
-      const node = swissLadder({
+      const opts = {
         rounds: model.rounds, standings: model.standings,
         championId: model.championId, benchmarkId: model.benchmarkId,
-        live: model.live, gateState: model.gateState, gateDelta: model.gateDelta, onCompetitor,
-      });
+        live: model.live, gateState: model.gateState, gateDelta: model.gateDelta,
+        responsive: true, onCompetitor,
+      };
+      const node = swissLadder(opts);
       return { node, digest: 'swiss|' + swissDigest(model) };
     }
     if (structure === 'single_elim' || structure === 'double_elim') {
@@ -782,16 +790,22 @@ export class LiveController {
         // glyphs read more truthfully than a tiny radial (a mini radial would
         // collapse two interleaved arcs into an unreadable knot), so we keep the
         // combo for consistency-with-default AND legibility.
+        // FULL-WIDTH HERO: the WB/LB elimFlow combo scales aspect-locked to fill
+        // the hero width (`responsive` → svg.dn-elimflow-hero cap governs), a wide
+        // figure filling to its cap — matching racing's full-width treatment.
         const opts = {
           winners: bands, championId: model.championId, benchmarkId: model.benchmarkId,
-          live: model.live, gateState: model.gateState, onCompetitor,
+          live: model.live, gateState: model.gateState, responsive: true, onCompetitor,
         };
         return { node: elimFlow(opts), digest: 'elim|' + elimDigest(model) };
       }
       // SINGLE-ELIM hero: the concentric-ring radial — the single-round PRIMARY.
+      // FULL-WIDTH HERO: aspect-locked + responsive; as a SQUARE figure the
+      // svg.dn-elimradial-hero cap centres it under the cap (margin-inline:auto).
       const opts = {
         rounds: bands, championId: model.championId, benchmarkId: model.benchmarkId,
-        gateState: model.gateState, live: model.live, double: false, mini: true, onCompetitor,
+        gateState: model.gateState, live: model.live, double: false, mini: true,
+        responsive: true, onCompetitor,
       };
       return { node: elimRadial(opts), digest: 'elim|' + elimRadialDigest(opts) };
     }
@@ -803,10 +817,13 @@ export class LiveController {
       const st = buildLiveModel(at, heartbeat, activeRuns, gens) || normalizeStructure(at, true);
       const model = gauntletModel(st);
       if (!model || !model.hasField) return null;
+      // FULL-WIDTH HERO: the field bars scale aspect-locked to fill the hero width
+      // (`responsive` → svg.dn-fieldbars-hero cap governs), a wide figure filling
+      // to its cap — matching racing's full-width treatment.
       const opts = {
         championId: model.championId, championScalar: model.championScalar,
         promoteMargin: model.promoteMargin, challengers: model.challengers,
-        live: model.live, mini: true, onCompetitor,
+        live: model.live, mini: true, responsive: true, onCompetitor,
       };
       const node = gauntletFieldBars(opts);
       return { node, digest: 'gauntlet|' + gauntletModelDigest(model) };

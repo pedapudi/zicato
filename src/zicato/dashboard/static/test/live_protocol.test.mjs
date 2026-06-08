@@ -95,6 +95,24 @@ function heroFigure(controller, { activeTournament, heartbeat, activeRuns }) {
   return controller._funnelHost;
 }
 
+// Assert a live-hero figure SVG is rendered FULL-WIDTH / aspect-locked (the same
+// `responsive:true` treatment racing's scalar track uses): width:100%, the fixed
+// pixel height DROPPED, preserveAspectRatio:none, an inline aspect-ratio pinned,
+// and the structure's `dn-*-hero` max-width cap class carried. `heroClass` is the
+// load-bearing svg.dn-*-hero cap the CSS sizes the figure against.
+function assertHeroResponsive(figure, heroClass, name) {
+  assert(figure, `${name}: the hero figure SVG is present`);
+  assertEqual(figure.getAttribute('width'), '100%', `${name}: hero figure fills the width (width:100%)`);
+  assert(!figure.hasAttribute('height') || figure.getAttribute('height') === null,
+    `${name}: hero figure DROPS its fixed pixel height (height follows the aspect)`);
+  assertEqual(figure.getAttribute('preserveAspectRatio'), 'none',
+    `${name}: hero figure scales uniformly (preserveAspectRatio:none — no shear)`);
+  const style = figure.getAttribute('style') || '';
+  assert(/aspect-ratio:\s*\d/.test(style), `${name}: hero figure pins an inline aspect-ratio (aspect-locked, no shear)`);
+  assert((figure.getAttribute('class') || '').split(/\s+/).includes(heroClass),
+    `${name}: hero figure carries its ${heroClass} max-width cap class`);
+}
+
 // the active-tournament epoch tag the hero scopes to (must match the heartbeat).
 function hb(extra) { return { phase: 'tournament:running', epoch_id: EPOCH, last_heartbeat: new Date().toISOString(), ...extra }; }
 
@@ -277,6 +295,9 @@ test('gauntlet — the live hero renders the field-bars mini (the default-struct
   // structure's figure.
   assert(svgsByClass(figHost, 'dn-fieldbars')[0], 'hero: the gauntlet field-bars mini renders');
   assertEqual(svgsByClass(figHost, 'dn-scalartrack').length, 0, 'hero: not the racing scalar track');
+  // FULL-WIDTH HERO: the field-bars fill the width (aspect-locked) like racing's
+  // scalar track — width:100% + the svg.dn-fieldbars-hero cap.
+  assertHeroResponsive(svgsByClass(figHost, 'dn-fieldbars')[0], 'dn-fieldbars-hero', 'gauntlet hero');
 });
 
 // ===========================================================================
@@ -337,6 +358,9 @@ test('single-elim — live hero renders the radial mini + emits the ✕ eliminat
   assert(radial, 'hero: the single-elim mini is the radial');
   assert(/✕/.test(textOf(radial)), 'hero: the decided semifinal emits ✕');
   assertEqual(svgsByClass(figHost, 'dn-scalartrack').length, 0, 'hero: no racing scalar track for an elim run');
+  // FULL-WIDTH HERO: the radial scales aspect-locked; as a SQUARE figure its
+  // svg.dn-elimradial-hero cap centres it under the cap (margin-inline:auto).
+  assertHeroResponsive(radial, 'dn-elimradial-hero', 'single-elim hero');
 });
 
 // ===========================================================================
@@ -401,6 +425,9 @@ test('double-elim — live hero KEEPS the elimFlow combo (not the radial)', () =
     activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1' }] });
   assert(svgsByClass(figHost, 'dn-elimflow')[0], 'hero: the double-elim mini is the elimFlow combo (WB/LB drops visible)');
   assertEqual(svgsByClass(figHost, 'dn-elimradial').length, 0, 'hero: the radial is the single-elim mini, NOT double-elim');
+  // FULL-WIDTH HERO: the WB/LB flow combo fills the width (aspect-locked) like
+  // racing's scalar track — width:100% + the svg.dn-elimflow-hero cap.
+  assertHeroResponsive(svgsByClass(figHost, 'dn-elimflow')[0], 'dn-elimflow-hero', 'double-elim hero');
 });
 
 // ===========================================================================
@@ -474,6 +501,52 @@ test('swiss — live hero renders the swiss ladder mini', () => {
     activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1' }] });
   assert(svgsByClass(figHost, 'dn-swissladder')[0], 'hero: the swiss mini is the ladder');
   assertEqual(svgsByClass(figHost, 'dn-scalartrack').length, 0, 'hero: no scalar track for a swiss run');
+  // FULL-WIDTH HERO: the ladder fills the width (aspect-locked) like racing's
+  // scalar track — width:100% + the svg.dn-swissladder-hero cap.
+  assertHeroResponsive(svgsByClass(figHost, 'dn-swissladder')[0], 'dn-swissladder-hero', 'swiss hero');
+});
+
+// ===========================================================================
+// FULL-WIDTH HERO — every NON-RACING structure's live-hero figure is responsive
+// (width:100% + aspect-locked + its svg.dn-*-hero cap), matching the racing
+// scalar track's now-full-width treatment; and a no-op heartbeat churns no DOM.
+// ===========================================================================
+
+// the non-racing structures shown in the live hero + their figure / hero-cap
+// classes (racing is asserted in live_racing_sequence.test.mjs).
+const NONRACING_HERO_CASES = [
+  ['swiss', () => swissLive('projected'), 'tournament:round_1', 'dn-swissladder', 'dn-swissladder-hero'],
+  ['single_elim', () => elimLive('inflight'), 'tournament:round_1', 'dn-elimradial', 'dn-elimradial-hero'],
+  ['double_elim', () => delimLive(), 'tournament:round_4', 'dn-elimflow', 'dn-elimflow-hero'],
+  ['gauntlet', () => gauntletLive('projected'), 'tournament:round_0', 'dn-fieldbars', 'dn-fieldbars-hero'],
+];
+
+test('full-width hero — every NON-RACING structure live-hero figure is responsive (width:100% + aspect-locked + its dn-*-hero cap), like racing', () => {
+  for (const [name, build, phase, figCls, heroCls] of NONRACING_HERO_CASES) {
+    const c = new live.LiveController({});
+    const figHost = heroFigure(c, { activeTournament: build(), heartbeat: hb({ phase }),
+      activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1' }] });
+    const fig = svgsByClass(figHost, figCls)[0];
+    assertHeroResponsive(fig, heroCls, `${name} live-hero`);
+  }
+});
+
+test('full-width hero — a no-op heartbeat repeat churns NO hero-figure DOM for each NON-RACING structure (digest-gated render discipline)', () => {
+  for (const [name, build, phase, figCls] of NONRACING_HERO_CASES) {
+    const c = new live.LiveController({});
+    const at = build();
+    c.update({ status: { running: true, structure: at.structure }, heartbeat: hb({ phase }), activeRuns: [], activeTournament: at });
+    const firstFig = svgsByClass(c._funnelHost, figCls)[0];
+    const firstNode = c._funnelHost.firstChild;
+    // an identical second tick (same digest) must preserve the existing figure node.
+    c.update({ status: { running: true, structure: at.structure }, heartbeat: hb({ phase }), activeRuns: [], activeTournament: at });
+    const secondFig = svgsByClass(c._funnelHost, figCls)[0];
+    const secondNode = c._funnelHost.firstChild;
+    assert(firstFig && secondFig && firstFig === secondFig,
+      `${name} hero: a no-op heartbeat preserves the figure SVG node (no flash / rebuild)`);
+    assert(firstNode && secondNode && firstNode === secondNode,
+      `${name} hero: a no-op heartbeat preserves the figure host's child node (zero DOM churn)`);
+  }
 });
 
 // ===========================================================================
