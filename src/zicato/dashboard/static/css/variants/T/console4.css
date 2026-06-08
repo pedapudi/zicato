@@ -2932,4 +2932,37 @@
     .dn-settings { grid-template-columns: 1fr; }
     .dn-set-rail { position: static; flex-direction: row; flex-wrap: wrap; }
   }
+
+  /* ===========================================================================
+   * STRUCTURE-BUILDER RESPONSIVE HEROES  (additive — owned by the SVG builder
+   * layer; figure/builder styles only).
+   *
+   * Each `*-hero` class is the aspect-locked, full-width mode opted into via a
+   * builder's `responsive`/`fitWidth` flag (the shared contract, mirroring
+   * .dn-spark-hero). The builder pins an inline `aspect-ratio` EQUAL to its
+   * viewBox aspect, so `width:100%` + `preserveAspectRatio:'none'` scale the
+   * figure UNIFORMLY (no shear) and the height tracks the width. These rules
+   * only add the cross-cutting box behaviour: drop the fixed pixel height (the
+   * builder already removed the height attr), keep the box block-level, and cap
+   * the width on ultra-wide screens. Because the aspect-ratio is inline + exact,
+   * capping max-width alone keeps the height matched (no re-introduced stretch);
+   * past the cap the figure stays left-aligned. The fixed/mini call sites do
+   * NOT carry these classes, so they are untouched.
+   * ======================================================================== */
+  .dn-scalartrack-hero,
+  .dn-funnel-hero,
+  .dn-elimflow-hero,
+  .dn-fieldbars-hero,
+  .dn-swissladder-hero {
+    display: block; width: 100%; height: auto; max-width: 1960px;
+  }
+  /* the square / centred figures cap on the SHORTER dimension so they never
+   * dominate a wide pane (they letterbox horizontally past the cap, centred). */
+  .dn-elimradial-hero {
+    display: block; width: 100%; height: auto;
+    max-width: 560px; margin-inline: auto;
+  }
+  .dn-radar-hero {
+    display: block; width: 100%; height: auto; max-width: 900px;
+  }
 }

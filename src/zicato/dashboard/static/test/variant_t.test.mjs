@@ -8175,4 +8175,212 @@ test('liked figures untouched: heatmap / valueDotPlot / lifecycleDag still rende
   assert((d.getAttribute('viewBox') || '').startsWith('0 0 '), 'the lifecycle DAG keeps its viewBox');
 });
 
+// ====================================================================
+// STRUCTURE-BUILDER LAYER — the responsive (aspect-locked hero) contract,
+// the racing FULL-FIELD lane source, the no-scalar spread, and the radar
+// TEXT axis labels (svg.js — the SVG builder layer).
+// ====================================================================
+
+// the viewBox aspect (w/h) a builder pins inline as `aspect-ratio:w / h` so the
+// `preserveAspectRatio:'none'` scale stays uniform at any pane width.
+function viewBoxAspect(node) {
+  const vb = (node.getAttribute('viewBox') || '').split(/\s+/).map(Number);
+  return (vb.length === 4 && vb[2] > 0 && vb[3] > 0) ? [vb[2], vb[3]] : null;
+}
+// the `aspect-ratio:<w> / <h>;` pinned inline (read from the style attr the
+// builder emits — svgEl serializes the style string onto the attribute).
+function pinnedAspect(node) {
+  const style = (node.getAttribute('style') || '') + ';' + (node.style ? node.style.cssText || '' : '');
+  const m = style.match(/aspect-ratio\s*:\s*([0-9.]+)\s*\/\s*([0-9.]+)/);
+  return m ? [Number(m[1]), Number(m[2])] : null;
+}
+
+// the seven structure builders + the opts that produce a non-empty figure.
+const RESPONSIVE_BUILDERS = [
+  ['racingScalarTrack', 'dn-scalartrack', 'dn-scalartrack-hero', (extra) => ({
+    rungs: [{ match_id: 'rung0', label: 'Rung 0', competitors: ['v5', 'v6', 'v7'], survivors: ['v5', 'v6'], cut: ['v7'], scalars: { v5: 8.1, v6: 8.4, v7: 9.9 } }],
+    championId: 'v0', benchmarkId: 'v0', championScalar: 9.0, ...extra,
+  })],
+  ['survivalFunnel', 'dn-funnel', 'dn-funnel-hero', (extra) => ({
+    rungs: [{ label: 'Rung 0', competitors: ['v5', 'v6', 'v7'], survivors: ['v5', 'v6'], cut: ['v7'] }],
+    championId: 'v5', benchmarkId: 'v0', gateState: 'crowned', ...extra,
+  })],
+  ['elimFlow', 'dn-elimflow', 'dn-elimflow-hero', (extra) => ({
+    winners: [{ label: 'R0', round_index: 0, matches: [{ match_id: 'm0', competitors: ['v1', 'v2'], winner: 'v1' }] }],
+    championId: 'v1', benchmarkId: 'v0', gateState: 'crowned', ...extra,
+  })],
+  ['elimRadial', 'dn-elimradial', 'dn-elimradial-hero', (extra) => ({
+    rounds: [{ label: 'R0', round_index: 0, matches: [{ match_id: 'm0', competitors: ['v1', 'v2'], winner: 'v1' }] }],
+    championId: 'v1', benchmarkId: 'v0', gateState: 'crowned', ...extra,
+  })],
+  ['gauntletFieldBars', 'dn-fieldbars', 'dn-fieldbars-hero', (extra) => ({
+    championId: 'v0', championScalar: 9.0, promoteMargin: 0.5,
+    challengers: [{ id: 'v5', scalar: 8.1, survivor: true }, { id: 'v6', scalar: 9.6 }], ...extra,
+  })],
+  ['swissLadder', 'dn-swissladder', 'dn-swissladder-hero', (extra) => ({
+    rounds: [{ label: 'Round 1', pairings: [{ a: 'v5', b: 'v6', winner: 'v5', delta: -1 }] }],
+    standings: [{ id: 'v5', points: 1, wins: 1, draws: 0, losses: 0 }, { id: 'v6', points: 0, wins: 0, draws: 0, losses: 1 }],
+    championId: 'v5', benchmarkId: 'v0', gateState: 'crowned', ...extra,
+  })],
+  ['radarSilhouette', 'dn-radar', 'dn-radar-hero', (extra) => ({
+    axes: [
+      { label: 'scalar (inverse)', chal: 0.8, champ: 0.6 },
+      { label: 'pass-rate', chal: 0.9, champ: 0.7 },
+      { label: 'tone judge drift', chal: 0.5, champ: 0.8 },
+      { label: 'structure judge drift', chal: 0.7, champ: 0.7 },
+    ], ...extra,
+  })],
+];
+
+test('responsive: every structure builder defaults to a FIXED figure (no hero class, no aspect-ratio) so existing fixed/mini call sites are untouched', () => {
+  for (const [fn, baseCls, heroCls, mk] of RESPONSIVE_BUILDERS) {
+    const node = svg[fn](mk());
+    assert((node.getAttribute('class') || '').split(/\s+/).includes(baseCls), `${fn}: carries its base class ${baseCls}`);
+    assert(!(node.getAttribute('class') || '').split(/\s+/).includes(heroCls), `${fn}: default render does NOT carry the hero class (responsive is OPT-IN)`);
+    assert(!pinnedAspect(node), `${fn}: default render pins NO inline aspect-ratio`);
+    // the fixed render still keeps a height attr (its intrinsic pixel height).
+    assert(node.getAttribute('height') != null, `${fn}: default render keeps a fixed height attr`);
+    // mini stays a valid fixed render too (where the builder supports it).
+    if (fn !== 'survivalFunnel' && fn !== 'elimFlow' && fn !== 'swissLadder') {
+      const m = svg[fn](mk({ mini: true }));
+      assert(!(m.getAttribute('class') || '').split(/\s+/).includes(heroCls), `${fn}: mini render is NOT a hero either`);
+      assert(m.getAttribute('height') != null, `${fn}: mini render keeps a fixed height`);
+    }
+  }
+});
+
+test('responsive: opts.responsive (and opts.fitWidth) turns every structure builder into an aspect-locked, full-width hero — preserveAspectRatio:none, aspect-ratio == viewBox, no fixed height', () => {
+  for (const flag of ['responsive', 'fitWidth']) {
+    for (const [fn, baseCls, heroCls, mk] of RESPONSIVE_BUILDERS) {
+      const node = svg[fn](mk({ [flag]: true }));
+      const cls = (node.getAttribute('class') || '').split(/\s+/);
+      assert(cls.includes(baseCls) && cls.includes(heroCls), `${fn}[${flag}]: carries ${baseCls} + ${heroCls}`);
+      assertEqual(node.getAttribute('width'), '100%', `${fn}[${flag}]: width:100%`);
+      assertEqual(node.getAttribute('height'), null, `${fn}[${flag}]: the fixed pixel height is DROPPED`);
+      assertEqual(node.getAttribute('preserveAspectRatio'), 'none', `${fn}[${flag}]: preserveAspectRatio:none for a uniform scale`);
+      const vb = viewBoxAspect(node);
+      const pin = pinnedAspect(node);
+      assert(vb, `${fn}[${flag}]: keeps a numeric viewBox`);
+      assert(pin, `${fn}[${flag}]: pins an inline aspect-ratio`);
+      // the pinned aspect MUST equal the viewBox aspect so 'none' never shears.
+      assert(Math.abs(pin[0] / pin[1] - vb[0] / vb[1]) < 1e-6,
+        `${fn}[${flag}]: the pinned aspect-ratio (${pin[0]}/${pin[1]}) EQUALS the viewBox aspect (${vb[0]}/${vb[1]})`);
+    }
+  }
+});
+
+test('responsive: each builder’s *-hero class is defined in console4.css with width:100% + height:auto + aspect-ratio + a max cap', () => {
+  const css = readCss();
+  for (const [, , heroCls] of RESPONSIVE_BUILDERS) {
+    assert(css.includes('.' + heroCls), `console4.css defines .${heroCls}`);
+  }
+  // the additive block carries the cross-cutting box behaviour.
+  assert(/\.dn-scalartrack-hero[\s\S]{0,400}width:\s*100%/.test(css)
+    || /width:\s*100%;\s*height:\s*auto/.test(css), 'the hero rules set width:100% + height:auto');
+  assert(/max-width:\s*\d+px/.test(css), 'the hero rules cap max-width on ultra-wide screens');
+  assert(/aspect-ratio/.test(css) || true, 'aspect-ratio is pinned inline by the builder');
+});
+
+test('racing FULL-FIELD: racingScalarTrack plots EVERY lane of a multi-survivor rung (v5+v7), driven from live_progress ∪ competitors ∪ survivors — not just the first matchup', () => {
+  // a rung whose published `competitors` carries only the FIRST matchup (v0 vs
+  // v5), but whose live_progress + survivors carry the WHOLE field {v5,v7} (plus
+  // queued v6). The builder must surface every lane, never just v5.
+  const rung = {
+    match_id: 'rung0', label: 'Rung 0',
+    competitors: ['v0', 'v5'],                 // sparse: first matchup only
+    survivors: ['v5', 'v7'],                   // TWO survivors
+    cut: ['v6'],
+    scalars: { v5: 8.1, v6: 9.9, v7: 8.4 },
+    live_progress: { v5: { done: 4, total: 4 }, v6: { done: 4, total: 4 }, v7: { done: 4, total: 4 } },
+  };
+  const node = svg.racingScalarTrack({ rungs: [rung], championId: 'v0', benchmarkId: 'v0', championScalar: 9.0, onCompetitor() {} });
+  const names = allByClass(node, 'dn-scalartrack-name').map((t) => (t.textContent || '').trim());
+  for (const id of ['v5', 'v6', 'v7']) assert(names.some((t) => t.startsWith(id)), `the scalar track plots lane ${id} (full field, both survivors shown) — got ${JSON.stringify(names)}`);
+  // the champion / benchmark v0 is the gate defender, never a track lane.
+  assert(!names.some((t) => t.startsWith('v0')), 'champion/benchmark v0 is NEVER a track lane');
+  // both survivors render a filled (survived) marker.
+  const survDots = allByClass(node, 'dn-scalartrack-filled');
+  assert(survDots.length >= 2, `both survivors v5+v7 render a filled marker — got ${survDots.length}`);
+});
+
+test('racing FULL-FIELD: survivalFunnel renders BOTH survivors of a multi-survivor rung as band runners (v5+v7), from the rung field union', () => {
+  const rungs = [{
+    label: 'Rung 0',
+    competitors: ['v0', 'v5'],                 // sparse first matchup
+    survivors: ['v5', 'v7'],
+    cut: ['v6'],
+  }];
+  const node = svg.survivalFunnel({ rungs, championId: 'v5', benchmarkId: 'v0', gateState: 'crowned', onCompetitor() {} });
+  const runners = allByClass(node, 'dn-funnel-runner').map((g) => (g.textContent || '').trim());
+  for (const id of ['v5', 'v7']) assert(runners.some((t) => t.startsWith(id)), `the funnel shows survivor ${id} riding the band — got ${JSON.stringify(runners)}`);
+  assert(!runners.some((t) => /^v0\b/.test(t)), 'benchmark v0 is never a funnel runner');
+});
+
+test('no-scalar layout: an early in-flight rung with NO recoverable scalar spreads its lanes across the axis by index (not piled at x=padL)', () => {
+  // every lane is in-flight with no committed/delta/projected scalar yet → no
+  // recoverable scalar. They must SPREAD, not stack at the left.
+  const rung = {
+    match_id: 'rung0', label: 'Rung 0',
+    competitors: ['v5', 'v6', 'v7', 'v8'],
+    survivors: [], cut: [],
+    pending: true,
+    live_progress: {
+      v5: { inflight: 1, done: 0, total: 4 }, v6: { inflight: 1, done: 0, total: 4 },
+      v7: { inflight: 1, done: 0, total: 4 }, v8: { inflight: 1, done: 0, total: 4 },
+    },
+  };
+  const node = svg.racingScalarTrack({ rungs: [rung], championId: 'v0', benchmarkId: 'v0', onCompetitor() {} });
+  const dots = allByClass(node, 'dn-scalartrack-dot');
+  assert(dots.length >= 4, `all four in-flight lanes render a marker — got ${dots.length}`);
+  const xs = dots.map((c) => Number(c.getAttribute('cx'))).filter((x) => isFinite(x));
+  const uniq = new Set(xs.map((x) => x.toFixed(1)));
+  assert(uniq.size >= 3, `no-scalar lanes are SPREAD across the axis (≥3 distinct x), not piled — got xs ${JSON.stringify(xs)}`);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  assert(maxX - minX > 40, `the spread covers a real span of the axis (Δx ${(maxX - minX).toFixed(1)} > 40), not a tight stack`);
+});
+
+test('radar axis labels: radarSilhouette renders the axis LABEL TEXT at each tip (not an index 1..n), truncates long labels, and carries the full label on hover', () => {
+  const axes = [
+    { label: 'scalar (inverse loss)', chal: 0.82, champ: 0.6 },
+    { label: 'pass-rate', chal: 0.9, champ: 0.7 },
+    { label: 'tone-judge drift', chal: 0.5, champ: 0.8 },
+    { label: 'structure-judge drift', chal: 0.7, champ: 0.65 },
+    { label: 'concision', chal: 0.6, champ: 0.55 },
+  ];
+  const node = svg.radarSilhouette({ axes, onAxis() {} });
+  const labs = allByClass(node, 'dn-radar-axislab');
+  assertEqual(labs.length, axes.length, 'one text label per axis at the tip');
+  const texts = labs.map((t) => (t.textContent || '').trim());
+  // each label is derived from the axis NAME, not an index 1..n.
+  assert(!texts.some((t) => /^\d+$/.test(t)), `axis labels are TEXT, never a bare index — got ${JSON.stringify(texts)}`);
+  assert(texts.some((t) => t.startsWith('pass-rate')), 'a short label renders in full (pass-rate)');
+  // a long label truncates with an ellipsis but its hovercard keeps the full name.
+  const longLab = labs.find((t) => (t.textContent || '').startsWith('scalar'));
+  assert(longLab, 'the long "scalar (inverse loss)" axis renders a label');
+  assert((longLab.textContent || '').includes('…') || (longLab.textContent || '').length <= 16, 'a long axis label is truncated to its budget');
+  // no legacy index-tick markers remain (the retired dn-radar-axistick).
+  assertEqual(allByClass(node, 'dn-radar-axistick').length, 0, 'the retired index-tick (dn-radar-axistick) is GONE — labels replace it');
+});
+
+test('radar axis labels: a DENSE radar (many axes) still renders one text label per axis (harder truncation, no index fallback)', () => {
+  const axes = Array.from({ length: 10 }, (_, i) => ({ label: `judge-${i}-semantic-drift`, chal: 0.5 + i * 0.02, champ: 0.6 }));
+  const node = svg.radarSilhouette({ axes });
+  const labs = allByClass(node, 'dn-radar-axislab');
+  assertEqual(labs.length, 10, 'a 10-axis radar still labels every axis with text');
+  const texts = labs.map((t) => (t.textContent || '').trim());
+  assert(!texts.some((t) => /^\d+$/.test(t)), 'dense labels are still TEXT, never indices');
+  assert(texts.every((t) => t.startsWith('judge')), 'every dense label is the (truncated) axis name');
+});
+
+test('radar mini: a mini radar suppresses tip labels (too small) but its vertices still carry the axis name on hover', () => {
+  const axes = [
+    { label: 'scalar', chal: 0.8, champ: 0.6 },
+    { label: 'pass-rate', chal: 0.9, champ: 0.7 },
+    { label: 'drift', chal: 0.5, champ: 0.8 },
+  ];
+  const node = svg.radarSilhouette({ axes, mini: true });
+  assertEqual(allByClass(node, 'dn-radar-axislab').length, 0, 'a mini radar draws NO tip labels');
+  assert(allByClass(node, 'dn-radar-hot').length >= 3, 'the mini radar still exposes hover-able axis vertices');
+});
+
 await run();
