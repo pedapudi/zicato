@@ -1,14 +1,17 @@
 """Tests for the :class:`ProposerAgent` abstraction (Phase 2a core).
 
-Covers three seams:
+Covers the build-time selection + the skill-composed engine:
 
-* :class:`DefaultProposerAgent` runs the single-shot engine and returns a
-  valid :class:`Experiment`.
+* :class:`DefaultProposerAgent` (the skill-composed single-shot engine)
+  runs and returns a valid :class:`Experiment`.
 * a spec carrying skills causes the skill body to land in the system
   prompt actually sent to the auxiliary callable.
-* :func:`build_proposer_agent` returns the default agent for the builtin
-  and for a skills-only ``dir:*`` spec, and raises ``NotImplementedError``
-  when a custom ``agent.py`` is present (the Phase 2b seam).
+* :func:`build_proposer_agent` returns the tool-using
+  :class:`~zicato.proposer.adk_agent.ADKProposerAgent` for the BUILTIN
+  DEFAULT (no proposer dir configured), the skill-composed
+  :class:`DefaultProposerAgent` for a skills-only ``dir:*`` spec (the
+  EXPLICIT opt-in), and raises ``ValueError`` when a custom ``agent.py`` is
+  present but no ``proposer_path`` was supplied.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from zicato.core.types import Experiment, MutationPoint, Pattern, ProposerSkill, ProposerSpec
+from zicato.proposer.adk_agent import ADKProposerAgent
 from zicato.proposer.agent import (
     DefaultProposerAgent,
     ProposerContext,
@@ -126,13 +130,22 @@ async def test_skills_reach_the_system_prompt_sent_to_aux() -> None:
     assert "Proposer skills (composable guidance modules" in system_prompt
 
 
-def test_build_agent_for_builtin_default() -> None:
+def test_build_agent_for_builtin_default_is_adk_tool_agent() -> None:
+    # The DEFAULT proposer (no proposer dir configured) is the tool-using
+    # ADK agent in builtin_default mode — NOT the skill-composed single-shot
+    # engine. It builds its LlmAgent lazily from ctx.model at propose time.
     agent = build_proposer_agent(ProposerSpec.default())
-    assert isinstance(agent, DefaultProposerAgent)
-    assert agent.spec.skills == ()
+    assert isinstance(agent, ADKProposerAgent)
+    assert agent.builtin_default is True
+    assert agent.proposer_path is None
+    assert agent.agent is None  # built lazily on first propose
+    assert agent.spec == ProposerSpec.default()
 
 
-def test_build_agent_for_skills_only_dir() -> None:
+def test_build_agent_for_skills_only_dir_stays_skill_composed() -> None:
+    # A configured proposer dir with skills but no agent.py is the EXPLICIT
+    # opt-in into the skill-composed single-shot engine — it is NOT the
+    # tool-using default.
     spec = ProposerSpec(
         agent_id="dir:demo",
         tools=(),

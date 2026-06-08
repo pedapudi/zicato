@@ -25,7 +25,11 @@ import pytest
 pytest.importorskip("google.adk")
 
 from zicato.core.types import ProposerSpec  # noqa: E402
-from zicato.proposer.adk_agent import ADKProposerAgent  # noqa: E402
+from zicato.proposer import adk_agent as adk_agent_mod  # noqa: E402
+from zicato.proposer.adk_agent import (  # noqa: E402
+    ADKProposerAgent,
+    build_default_adk_agent,
+)
 from zicato.proposer.agent import ProposerContext, build_proposer_agent  # noqa: E402
 from zicato.proposer.proposer import ProposerError  # noqa: E402
 from zicato.testing import make_mutation_point  # noqa: E402
@@ -344,6 +348,248 @@ def test_build_proposer_agent_requires_path_for_custom_spec() -> None:
     )
     with pytest.raises(ValueError, match="no proposer_path"):
         build_proposer_agent(spec)
+
+
+# ---------------------------------------------------------------------------
+# The BUILT-IN DEFAULT proposer — a tool-using ADK agent, used when a
+# contract configures no proposer dir.
+# ---------------------------------------------------------------------------
+
+
+def _default_agent_with_model(model: Any) -> Any:
+    """Build the built-in default proposer agent wired to a fake ``model``.
+
+    Reuses the production :func:`build_default_adk_agent` factory but swaps
+    the agent's model for ``model`` so the default-proposer instruction +
+    the full read-only tool registry are exactly what runs, with a scripted
+    fake model in place of a real endpoint.
+    """
+    agent = build_default_adk_agent("placeholder-model")
+    agent.model = model
+    return agent
+
+
+def test_build_proposer_agent_default_is_builtin_adk_agent() -> None:
+    # No proposer dir configured → the DEFAULT is the tool-using ADK agent
+    # in builtin_default mode (NOT the skill-composed single-shot engine).
+    built = build_proposer_agent(ProposerSpec.default())
+    assert isinstance(built, ADKProposerAgent)
+    assert built.builtin_default is True
+    assert built.agent is None  # built lazily at first propose
+
+
+def test_build_default_adk_agent_uses_full_tool_registry_and_model() -> None:
+    from zicato.proposer.tools import DEFAULT_PROPOSER_TOOLS
+
+    agent = build_default_adk_agent("my-proposer-model")
+    assert agent.model == "my-proposer-model"
+    # Every read-only proposer tool is wired in by name.
+    tool_names = {getattr(t, "__name__", None) for t in DEFAULT_PROPOSER_TOOLS}
+    wired = {getattr(getattr(t, "func", t), "__name__", None) for t in agent.tools}
+    assert tool_names <= wired
+
+
+@pytest.mark.asyncio
+async def test_default_proposer_runs_tool_agent_end_to_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # build_proposer_agent(default) → ADKProposerAgent(builtin_default) →
+    # propose() builds the default tool-using agent from ctx.model and runs
+    # it on ADK's own Runner. We intercept the factory so the agent runs on
+    # a scripted fake model (a tool round, then the final JSON).
+    snapshot, mutations = _build_snapshot(tmp_path)
+    ctx = _make_ctx(tmp_path, snapshot, mutations)
+
+    model = make_fake_adk_model(
+        [
+            FunctionCallTurn(name="list_mutation_points"),
+            TextTurn(text=_experiment_json()),
+        ],
+        model="default-proposer-model",
+    )
+    monkeypatch.setattr(
+        adk_agent_mod,
+        "build_default_adk_agent",
+        lambda _model: _default_agent_with_model(model),
+    )
+
+    proposer = build_proposer_agent(ProposerSpec.default())
+    assert isinstance(proposer, ADKProposerAgent)
+
+    experiment = await proposer.propose(ctx)
+
+    assert experiment.patches[0].mutation_id == "harness__system_prompt"
+    # The default agent ran on ADK's Runner: a tool round + the final JSON.
+    assert model.cursor >= 2
+
+
+@pytest.mark.asyncio
+async def test_default_proposer_builds_agent_from_ctx_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The built-in default binds its LlmAgent to ctx.model — the workspace's
+    # auxiliary model string the orchestrator threads on the context.
+    snapshot, mutations = _build_snapshot(tmp_path)
+    ctx = _make_ctx(tmp_path, snapshot, mutations, model="aux-model-xyz")
+
+    seen_models: list[Any] = []
+
+    def _capture(model: Any) -> Any:
+        seen_models.append(model)
+        fake = make_fake_adk_model([TextTurn(text=_experiment_json())], model="fake")
+        return _default_agent_with_model(fake)
+
+    monkeypatch.setattr(adk_agent_mod, "build_default_adk_agent", _capture)
+
+    proposer = build_proposer_agent(ProposerSpec.default())
+    await proposer.propose(ctx)
+
+    assert seen_models == ["aux-model-xyz"]
+
+
+@pytest.mark.asyncio
+async def test_default_proposer_salvages_malformed_then_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Robustness carried forward to the DEFAULT path: a first turn that
+    # buries the JSON under a <think> reasoning wrapper + prose is SALVAGED
+    # by parse_experiment_json (no retry needed); a genuinely unrecoverable
+    # turn would retry. Here the salvageable turn parses on the first run.
+    snapshot, mutations = _build_snapshot(tmp_path)
+    ctx = _make_ctx(tmp_path, snapshot, mutations)
+
+    buried = (
+        "<think>Let me reason about the prompt before answering. The TODO "
+        "marker suggests the preamble is too loose.</think>\n"
+        "Here is my proposal:\n```json\n" + _experiment_json() + "\n```\n"
+    )
+    model = make_fake_adk_model([TextTurn(text=buried)], model="default-proposer-model")
+    monkeypatch.setattr(
+        adk_agent_mod,
+        "build_default_adk_agent",
+        lambda _model: _default_agent_with_model(model),
+    )
+
+    proposer = build_proposer_agent(ProposerSpec.default())
+    experiment = await proposer.propose(ctx)
+
+    assert experiment.patches[0].mutation_id == "harness__system_prompt"
+    # Salvaged on the FIRST run — no retry round.
+    assert model.cursor == 1
+
+
+@pytest.mark.asyncio
+async def test_default_proposer_accepts_declared_judge_metric(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Judge-reference / semantic validation carried forward to the DEFAULT
+    # path: a hypothesis that addresses a declared custom judge via the
+    # ``drift:custom:<judge>`` mangle is normalized and accepted when the
+    # bare judge name is in ctx.custom_judge_names.
+    snapshot, mutations = _build_snapshot(tmp_path)
+    ctx = _make_ctx(
+        tmp_path,
+        snapshot,
+        mutations,
+        custom_judge_names=frozenset({"file_findability"}),
+    )
+
+    payload = json.dumps(
+        {
+            "hypothesis": {
+                "core_idea": "Tighten the system prompt.",
+                "modulating": ["harness__system_prompt"],
+                "why": "the prompt invites preambles.",
+                "expected_metric_movements": [
+                    {
+                        "metric_name": "drift:custom:file_findability",
+                        "direction": "increase",
+                        "magnitude": "medium",
+                    }
+                ],
+                "expected_pass_rate_delta": "+0.05",
+            },
+            "patches": [
+                {
+                    "mutation_id": "harness__system_prompt",
+                    "op": "replace",
+                    "new_content": "You are a terse, on-topic assistant.",
+                    "rationale": "Remove the preamble license.",
+                }
+            ],
+        }
+    )
+    model = make_fake_adk_model([TextTurn(text=payload)], model="default-proposer-model")
+    monkeypatch.setattr(
+        adk_agent_mod,
+        "build_default_adk_agent",
+        lambda _model: _default_agent_with_model(model),
+    )
+
+    proposer = build_proposer_agent(ProposerSpec.default())
+    experiment = await proposer.propose(ctx)
+
+    # The ``drift:custom:file_findability`` mangle resolved to the declared
+    # judge and the metric movement was kept verbatim.
+    metric_names = [m.metric_name for m in experiment.hypothesis.expected_metric_movements]
+    assert "drift:custom:file_findability" in metric_names
+
+
+@pytest.mark.asyncio
+async def test_default_proposer_rejects_unknown_judge_metric(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The flip side: a ``drift:bogus`` metric that is neither a built-in
+    # drift kind nor a declared judge is rejected, and (no salvage can fix
+    # a semantic error) the run exhausts retries → ProposerError.
+    snapshot, mutations = _build_snapshot(tmp_path)
+    ctx = _make_ctx(
+        tmp_path,
+        snapshot,
+        mutations,
+        custom_judge_names=frozenset({"file_findability"}),
+        max_retries=1,
+    )
+
+    payload = json.dumps(
+        {
+            "hypothesis": {
+                "core_idea": "Tighten the system prompt.",
+                "modulating": ["harness__system_prompt"],
+                "why": "the prompt invites preambles.",
+                "expected_metric_movements": [
+                    {
+                        "metric_name": "drift:bogus_unknown_kind",
+                        "direction": "decrease",
+                        "magnitude": "medium",
+                    }
+                ],
+                "expected_pass_rate_delta": "+0.05",
+            },
+            "patches": [
+                {
+                    "mutation_id": "harness__system_prompt",
+                    "op": "replace",
+                    "new_content": "x",
+                    "rationale": "y",
+                }
+            ],
+        }
+    )
+    model = make_fake_adk_model(
+        [TextTurn(text=payload), TextTurn(text=payload)],
+        model="default-proposer-model",
+    )
+    monkeypatch.setattr(
+        adk_agent_mod,
+        "build_default_adk_agent",
+        lambda _model: _default_agent_with_model(model),
+    )
+
+    proposer = build_proposer_agent(ProposerSpec.default())
+    with pytest.raises(ProposerError) as excinfo:
+        await proposer.propose(ctx)
+    assert any("bogus_unknown_kind" in a for a in excinfo.value.attempts)
 
 
 def test_adk_agent_loads_module_level_agent_from_disk(tmp_path: Path) -> None:

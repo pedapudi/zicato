@@ -1,12 +1,16 @@
 # The proposer — a first-class evaluation-contract input
 
 > **Status.** SHIPPED. The proposer is folded into the contract hash
-> (`zicato/epoch/contract.py`), the two-tier resolution
+> (`zicato/epoch/contract.py`), the resolution
 > (`zicato/proposer/{skills,agent,adk_agent,tools}.py`) is in the tree and
 > exercised by the test suite, and the operator surface
-> (`register --proposer-path`) is wired. §§1–2 describe the shipped design;
-> §3 is the Design-A rationale; §§4–5 are the contract/config mechanics.
-> Operator-facing how-to lives in the `zicato-design-proposer` skill.
+> (`register --proposer-path`) is wired. The **DEFAULT proposer is the
+> tool-using ADK agent** (`build_default_adk_agent`, run by
+> `ADKProposerAgent`), used whenever a contract configures no proposer dir;
+> the skill-composed text-shim engine remains available as an explicit
+> opt-in (§2b). §§1–2 describe the shipped design; §3 is the Design-A
+> rationale; §§4–5 are the contract/config mechanics. Operator-facing how-to
+> lives in the `zicato-design-proposer` skill.
 
 The **proposer** is the agent that, each round, reads the epoch's brief, the
 mutation manifest, the loss patterns, and the prior experiments, and emits the
@@ -47,8 +51,13 @@ proposers/<name>/
 
 A workspace points at a proposer dir with `zicato register --proposer-path
 PATH` (§5). When no proposer dir is configured the proposer is the **built-in
-default agent** — no skills, no tools, no custom module
-(`ProposerSpec.default()`, `agent_id = "builtin:default"`).
+default agent** — a tool-using ADK agent that owns the read-only proposer
+tool registry and runs on ADK's own `Runner`
+(`ProposerSpec.default()`, `agent_id = "builtin:default"`; the agent is
+`build_default_adk_agent`, run by `ADKProposerAgent` in `builtin_default`
+mode). The default proposer therefore *reads the world while it reasons* —
+the mutation manifest, the parent snapshot, the epoch journal, the analyzer
+insights — without any operator configuration.
 
 The proposer dir, like the board / brief / scoring, is the operator's *live,
 editable* copy. Its resolved spec is folded into the epoch's contract hash, so
@@ -57,41 +66,65 @@ epoch (§4).
 
 ---
 
-## 2. The two tiers
+## 2. The three resolutions
 
-There are exactly two ways to shape the proposer, and the *presence of
-`agent.py`* selects between them. `build_proposer_agent`
-(`zicato/proposer/agent.py`) makes the call: a custom `agent.py` (i.e.
-`spec.agent_source_sha256` is set) ⇒ the custom-agent path; otherwise the
-skill-composed default.
+`build_proposer_agent` (`zicato/proposer/agent.py`) resolves a
+`ProposerSpec` to a running agent in three ways, in order:
 
-### (a) Skill-composed default — drop `skills/*.md`, no code
+1. **Custom ADK agent** — a proposer dir ships a `proposers/<name>/agent.py`
+   (`spec.agent_source_sha256` is set). zicato loads that author-owned
+   `agent` and runs it on ADK's own `Runner`
+   (`ADKProposerAgent`, `zicato/proposer/adk_agent.py`).
+2. **Built-in default (the DEFAULT)** — no proposer dir is configured, so
+   `spec == ProposerSpec.default()`. zicato builds its **built-in
+   tool-using ADK agent** (`build_default_adk_agent`) and runs it through
+   `ADKProposerAgent` in `builtin_default` mode.
+3. **Skill-composed default (EXPLICIT opt-in)** — a proposer dir is
+   configured and carries `skills/*.md` but **no** `agent.py`. zicato runs
+   the single-shot `DefaultProposerAgent` over `--auxiliary-call-llm`,
+   steered by the skill bodies.
 
-The cheapest customization. Drop one or more `skills/*.md` into
+### (a) Built-in default — the tool-using ADK agent, zero config
+
+The DEFAULT. With no proposer dir configured, zicato runs
+`build_default_adk_agent` — a **native ADK `LlmAgent`** that opts into the
+full read-only proposer tool registry
+(`zicato.proposer.tools.DEFAULT_PROPOSER_TOOLS`) and is bound, per round, to
+the workspace's auxiliary model string (threaded as `ProposerContext.model`
+by the orchestrator). It runs on ADK's own `Runner` (NOT the auxiliary text
+shim, which cannot express the function-calls a tool-using agent needs —
+§3), so the default proposer can grep the mutable surface, read the parent
+snapshot, and consult the journal / analyzer insights *while it reasons*,
+out of the box. Because the default deliberately uses the operator's
+already-configured auxiliary model, the model-collusion smell test (§3) is
+skipped for it — that is the documented, expected posture, not an author
+error.
+
+### (b) Skill-composed default — drop `skills/*.md`, no code (opt-in)
+
+The cheapest *customization*. Drop one or more `skills/*.md` into
 `proposers/<name>/skills/` and configure the dir; do **not** write an
 `agent.py`. zicato runs the built-in `DefaultProposerAgent`, a single-shot text
 exchange driven on `--auxiliary-call-llm`: the auxiliary callable is handed a
 `(system, user, model) -> str` prompt and the returned string is parsed into
 the `Experiment`. Your skill bodies are injected into the **system prompt**, so
-they steer *how* the default proposer reasons (grounding instructions, house
-style, a checklist) without any code.
+they steer *how* this proposer reasons (grounding instructions, house
+style, a checklist) without any code. Configuring a proposer dir (without an
+`agent.py`) is the explicit opt-in into this single-shot text-shim engine;
+the bare, unconfigured default (a) is the tool-using agent.
 
-This is the right tier when you only want to shape the proposer's reasoning,
-not give it new capabilities. The model is the auxiliary model — you do not own
-it here.
+This is the right tier when you want to shape the proposer's reasoning over
+the text shim, not give it new capabilities. The model is the auxiliary
+model — you do not own it here.
 
-### (b) Custom ADK agent with tools — `agent.py`
+### (c) Custom ADK agent with tools — `agent.py`
 
-When the proposer needs to *read the world* while it reasons — grep the
-mutable surface, inspect the parent snapshot, recall what prior rounds tried —
-the skill-only default is not enough, because the text shim is text-in /
-text-out and cannot express the function-calls a tool-using agent needs (§3).
-
-For that, ship a `proposers/<name>/agent.py` that exposes a module-level
-`agent` — a **native ADK `LlmAgent`** with its **own `model=`** and a `tools=`
-list drawn from zicato's read-only proposer tool registry. zicato loads that
-agent and runs it on ADK's own `Runner`
-(`ADKProposerAgent`, `zicato/proposer/adk_agent.py`).
+When you want to *own the model* the proposer runs on, give it a curated
+tool subset, or write a bespoke instruction, ship a
+`proposers/<name>/agent.py` that exposes a module-level `agent` — a **native
+ADK `LlmAgent`** with its **own `model=`** and a `tools=` list drawn from
+zicato's read-only proposer tool registry. zicato loads that agent and runs
+it on ADK's own `Runner` (`ADKProposerAgent`, `zicato/proposer/adk_agent.py`).
 
 The read-only tool registry (`zicato.proposer.tools.DEFAULT_PROPOSER_TOOLS`):
 
@@ -126,39 +159,51 @@ The copy-me example is
 
 ## 3. Design A — why a tool-using proposer owns its own model
 
-The default proposer is a single-shot text exchange: zicato hands the auxiliary
+The text shim is a single-shot text exchange: zicato hands the auxiliary
 callable a `(system, user, model) -> str` prompt and parses the returned
 string. **That shim cannot express the function-calls a tool-using agent
 needs** — it is text-in / text-out by contract. A proposer that wants to grep
 the mutable surface or consult the journal *while it reasons* cannot run on it.
+That is precisely why the DEFAULT proposer (§2a) and any custom `agent.py`
+(§2c) are ADK agents, not text-shim calls.
 
 **Design A** resolves this by running a tool-using proposer as a **native ADK
 agent that declares its own `model=`**, driven on ADK's own `Runner` — NOT
 through the auxiliary text shim, and NOT through `goldfive.run`. The
 consequences, all deliberate:
 
-- **The agent author owns the model.** The agent's `model=` is its own; the
+- **The agent owns the model.** The agent's `model=` is its own; the
   `--auxiliary-call-llm` callable does not govern it. The per-round task (brief
   + skills + mutation manifest + patterns + loss + prior experiments + the
-  JSON-schema demand) is delivered as the agent's run *input* — the custom
-  agent owns its own static instruction (how to work), zicato owns the input
-  (what this round is).
-- **The proposer's model must differ from the harness model.** Because the
-  proposer runs on its own model rather than the shared auxiliary callable, the
-  `is`-identity collusion guard
+  JSON-schema demand) is delivered as the agent's run *input* — the agent owns
+  its own static instruction (how to work), zicato owns the input (what this
+  round is). The built-in default agent's `model=` is bound, per round, to the
+  workspace's auxiliary model string; a custom `agent.py` declares its own.
+- **A custom proposer's model should differ from the harness model.** Because
+  the proposer runs on its own model rather than the shared auxiliary callable,
+  the `is`-identity collusion guard
   (`assert_distinct_callables`) does not apply here. The model-distinctness is
   instead a **documented author responsibility**: a proposer scored on the same
   model it is mutating-and-judging risks collusion. When both model strings are
   trivially discoverable zicato emits a soft WARNING on a match; it does not
-  build a hard gate.
+  build a hard gate. The **built-in default deliberately reuses the auxiliary
+  model**, so this smell test is skipped for it — that reuse is the expected
+  zero-config posture, not an author error.
 - **The post-response loop is shared.** The agent's final message goes through
-  the same parse → forbidden-id enforcement → post-apply validation loop the
-  default proposer uses; a retryable failure feeds its feedback into the next
-  run's input, within the same bounded budget.
+  the same parse → forbidden-id enforcement → post-apply validation loop, with
+  the JSON salvage/repair and judge-reference normalization in
+  `parse_experiment_json` applying identically; a retryable failure feeds its
+  feedback into the next run's input, within the same bounded budget. The
+  text-shim path (§2b) and both ADK paths therefore share one robustness
+  surface.
 
 Every `google.adk` import on this path is lazy, so importing the proposer
-modules never forces the optional `google-adk` extra on the skill-only default
-path.
+modules never forces the optional `google-adk` extra; the extra is pulled in
+only when an ADK agent (the built-in default, or a custom `agent.py`) is
+actually built at the first `propose`. In practice a live `evolve` already
+requires the `adk` extra — the only shipped harness adapter is itself an ADK
+agent — so making the default proposer an ADK agent adds no new dependency to
+the live path; the text-shim path (§2b) remains usable without it.
 
 ---
 
@@ -183,6 +228,14 @@ The builtin default produces a stable canonical string, so a workspace that
 never registers a proposer keeps a stable hash. The per-component roll message
 (`compute_component_hashes`) names the changed component **`proposer`**, so when
 a roll is triggered by a proposer edit the operator sees exactly that.
+
+> **Note.** The builtin-default *spec* (`ProposerSpec.default()`) is
+> unchanged by the default-agent flip — the contract canonicalization still
+> serializes `agent_id = "builtin:default"`, empty tools/skills, and a `null`
+> `agent_source_sha256`. The choice of *which agent backs* that spec
+> (`build_proposer_agent` → the tool-using `ADKProposerAgent`) is a runtime
+> resolution, not a contract input, so flipping the default does **not** roll
+> any existing epoch.
 
 This composes with the brief: the **proposer brief** is per-epoch *operator
 guidance* (steering text the proposer reads fresh each round), while the
