@@ -2646,41 +2646,62 @@
     border-bottom: 1px solid var(--v2-rule);
     background: color-mix(in srgb, var(--v2-good) 6%, var(--v2-paper));
   }
-  .dt-live-hero-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  /* ── 1. THE STATUS HEADER — ONE muted metadata baseline ──
+   * `● LIVE · racing · rung 2 of 2 · field of 2 · 7 units running`. No competing
+   * big phase title: the LIVE pill + one muted mono metadata line on one row. */
+  .dt-live-hero-head { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
   .dt-live-hero-pill { display: inline-flex; align-items: center; gap: 6px;
     padding: 2px 9px; border-radius: 10px; border: 1px solid var(--v2-good);
     background: color-mix(in srgb, var(--v2-good) 12%, transparent);
     font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); letter-spacing: 0.08em;
-    color: var(--v2-good); font-weight: 700; }
+    color: var(--v2-good); }
   /* the breathing dot — subtle, GPU-friendly (opacity + box-shadow ring). */
   .dt-live-hero-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--v2-good);
     box-shadow: 0 0 0 0 var(--v2-good); animation: dt-run-pulse 1.8s ease-out infinite; }
-  .dt-live-hero-phase { font-family: var(--v2-mono); font-size: calc(13px * var(--dt-font-scale, 1)); color: var(--v2-ink);
-    font-weight: 600; }
-  .dt-live-hero-count { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
-  /* the determinate tournament-progress bar — width transitions smoothly. */
-  .dt-live-hero-prog { margin: 10px 0 12px; max-width: 520px; }
-  .dt-live-hero-progrow { display: flex; align-items: baseline; gap: 6px; margin-bottom: 4px;
-    font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); }
-  .dt-live-hero-proglab { color: var(--v2-ink-soft); font-weight: 600; }
-  .dt-live-hero-progbar { display: block; width: 100%; height: 8px; border-radius: 5px;
-    background: var(--v2-rule-soft); overflow: hidden; }
-  .dt-live-hero-progfill { display: block; height: 100%; width: 0%; background: var(--v2-good);
-    transition: width 0.5s cubic-bezier(0.22, 0.61, 0.36, 1); }
-  .dt-live-hero-progfill-pending { opacity: 0.45; }
-  /* ---- the MATCH-GROUPED "what's running" block (the hero, Task 1) ---- */
-  /* One block per in-flight match; each board entry shows a live progress bar
-   * (CSS width transition — the DOM is not rebuilt every tick) + an outcome
-   * glyph once it settles. Hidden until at least one match is in flight. */
-  .dt-live-hero-matches { display: none; margin: 0 0 14px; }
-  .dt-live-hero-matches.dt-live-hero-matches-on { display: block; }
-  .dt-live-hero-matcheshead { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase;
-    letter-spacing: 0.06em; margin-bottom: 6px; }
-  .dt-live-matches { display: flex; flex-wrap: wrap; gap: 10px; }
+  /* the ONE metadata line — consistent muted mono type, never a bold title. */
+  .dt-live-hero-meta { font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1));
+    color: var(--v2-ink-soft); letter-spacing: 0.01em; }
+
+  /* ── 2. THE RACE STATE — the PRIMARY, FULL-WIDTH viz ──
+   * the rung stepper (structural progress) caps the left edge of the full-width
+   * scalar number-line. The stepper rides the figure's top so it reads as the
+   * track's annotation, not a separate widget. */
+  .dt-live-hero-race { margin: 11px 0 14px; }
+  .dt-live-hero-step { display: flex; align-items: center; gap: 5px; margin-bottom: 6px; min-height: 9px; }
+  .dt-live-hero-track { min-width: 0; }
+  /* the RUNG STEPPER — one pip per rung; completed filled (muted ink = settled
+   * history), the current one accent green (alive/leading), not-yet hollow.
+   * COLOR ROLES are fixed here: no caution/bad on the stepper (a cut reads on the
+   * track), no bold. */
+  .dt-rungstep { display: inline-flex; align-items: center; gap: 5px; }
+  .dt-rungstep-pip { width: 16px; height: 4px; border-radius: 3px;
+    background: transparent; border: 1px solid var(--v2-rule);
+    transition: background 0.3s ease, border-color 0.3s ease; }
+  .dt-rungstep-done { background: var(--v2-ink-faint); border-color: var(--v2-ink-faint); }
+  .dt-rungstep-active { background: var(--v2-good); border-color: var(--v2-good); width: 24px; }
+
+  /* ── 3. THE DETAIL ROW — two BALANCED columns, shared panel chrome ──
+   * LEFT what's running ≈55 · RIGHT live activity ≈45; aligned tops, one panel
+   * style, one eyebrow style. The activity log is a peer, not an afterthought. */
+  .dt-live-hero-detail { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+    gap: 16px; align-items: stretch; }
+  .dt-live-hero-panel { min-width: 0; border: 1px solid var(--v2-rule); border-radius: 7px;
+    background: var(--v2-panel); padding: 11px 13px; display: flex; flex-direction: column; }
+  /* the ONE eyebrow style every section label in the hero shares. */
+  .dt-live-hero-eyebrow { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1));
+    text-transform: uppercase; letter-spacing: 0.07em; color: var(--v2-ink-faint); margin-bottom: 8px; }
+  /* ---- the MATCH-GROUPED "what's running" body (the densified champion-gate
+   * rows; reused as-is). Each board entry shows a live progress bar + an
+   * outcome glyph once it settles. */
+  .dt-live-hero-matchesbody { flex: 1 1 auto; min-width: 0; }
+  .dt-live-matches { display: flex; flex-direction: column; gap: 10px; }
   .dt-live-matches-empty { font-size: calc(11.5px * var(--dt-font-scale, 1)); padding: 6px 0; }
-  .dt-live-match { flex: 1 1 240px; min-width: 0; border: 1px solid var(--v2-rule); border-radius: 6px;
-    background: var(--v2-panel); padding: 8px 10px; }
-  .dt-live-match-head { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); font-weight: 600; color: var(--v2-ink-soft);
+  /* within the "what's running" panel the match blocks STACK (the panel is a
+   * column now, not a half-width row) — each block is borderless against the
+   * shared panel chrome, separated by a hairline rule. */
+  .dt-live-match { min-width: 0; }
+  .dt-live-match + .dt-live-match { border-top: 1px solid var(--v2-rule-soft); padding-top: 8px; }
+  .dt-live-match-head { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
     margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dt-live-match-rows { display: flex; flex-direction: column; gap: 4px; }
   /* ONE dense competitor row, fixed columns L→R that USE the width:
@@ -2720,10 +2741,6 @@
   .dt-live-match-state.dn-good { color: var(--v2-good); }
   .dt-live-match-state.dn-bad { color: var(--v2-bad); }
 
-  /* the hero body: the funnel beside the activity ticker. */
-  .dt-live-hero-body { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(220px, 1fr);
-    gap: 18px; align-items: start; }
-  .dt-live-hero-funnel { min-width: 0; }
   .dt-live-hero-nofunnel { font-size: calc(11.5px * var(--dt-font-scale, 1)); padding: 12px 0; }
 
   /* ---- the proposing-step tracker (the field forming) ---- */
@@ -2769,13 +2786,12 @@
    * dot+text vocabulary used elsewhere) — never a coloured left rail. */
   .dn-prop-row-pending { /* glyph + verdict carry the status */ }
 
-  .dt-live-hero-ticker { min-width: 0; }
-  .dt-live-hero-tickerhead { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase;
-    letter-spacing: 0.06em; margin-bottom: 5px; }
-
   /* ---- the activity ticker (append-only, newest on top, no flash) ---- */
-  .dt-ticker { max-height: 200px; overflow-y: auto; border: 1px solid var(--v2-rule);
-    border-radius: 5px; background: var(--v2-panel); padding: 4px; }
+  /* the ticker is the RIGHT balanced column's body — it fills the panel and
+   * scrolls internally, so the activity log reads as a peer of "what's running"
+   * (aligned tops, equal visual weight), never an afterthought. The panel chrome
+   * lives on `.dt-live-hero-panel`, so the ticker itself drops its own border. */
+  .dt-ticker { flex: 1 1 auto; min-height: 0; max-height: 240px; overflow-y: auto; padding: 0; }
   .dt-ticker-empty { font-size: calc(11px * var(--dt-font-scale, 1)); padding: 8px 6px; font-style: italic; }
   .dt-ticker-list { display: flex; flex-direction: column; gap: 1px; }
   .dt-ticker-row { display: flex; align-items: baseline; gap: 6px; padding: 2px 5px;
@@ -2808,12 +2824,13 @@
     .dn-funnel-band, .dn-funnel-runner, .dn-funnel-deadedge, .dn-funnel-bar,
     .dn-swissladder-pair, .dn-swissladder-stand, .dn-swissladder-edge, .dn-swissladder-bar,
     .dn-elimflow-lane, .dn-elimflow-seg, .dn-elimflow-conv,
-    .dt-live-hero-progfill, .dt-live-match-fill, .dn-hm-cell { transition: none; }
+    .dt-rungstep-pip, .dt-live-match-fill, .dn-hm-cell { transition: none; }
   }
 
   @media (max-width: 1080px) {
     .dt-split { grid-template-columns: 1fr; gap: 18px; }
-    .dt-live-hero-body { grid-template-columns: 1fr; }
+    /* the two balanced detail columns stack on a narrow viewport. */
+    .dt-live-hero-detail { grid-template-columns: 1fr; }
   }
   @media (max-width: 900px) {
     .dn-xscript-grid { grid-template-columns: 1fr; }

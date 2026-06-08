@@ -5828,18 +5828,16 @@ test('live hero: an active-tournament (racing, running) renders the live hero + 
   assert(heroHost && (heroHost.getAttribute('class') || '').includes('dt-hero-live'), 'the hero host is flagged live during a run');
   const hero = allByClass(root, 'dt-live-hero')[0];
   assert(hero && (hero.getAttribute('class') || '').includes('dt-live-on'), 'the live hero is shown (dt-live-on) for a running tournament');
-  // the prominent phase reads the structure+phase label.
-  const phase = allByClass(root, 'dt-live-hero-phase')[0];
-  assert(phase && phase.textContent.includes('racing'), 'the hero names the current phase (racing)');
-  // the tournament-level progress indicator: "rung k of N".
-  const proglab = allByClass(root, 'dt-live-hero-proglab')[0];
-  assert(proglab && /rung\s+\d+\s+of\s+\d+/.test(proglab.textContent), 'the hero shows a tournament-level "rung k of N" progress label');
-  // the determinate progress bar carries a width.
-  const fill = allByClass(root, 'dt-live-hero-progfill')[0];
-  assert(fill && /%/.test(fill.style.cssText || ''), 'the progress bar fill carries a width');
-  // the in-flight unit count.
-  const count = allByClass(root, 'dt-live-hero-count')[0];
-  assert(count && count.textContent.includes('2'), 'the hero shows the in-flight unit count (2)');
+  // the ONE muted metadata baseline names the structure + the 1-indexed "rung N
+  // of M" (the SAME rung-number source the stepper reads) + the in-flight count.
+  const meta = allByClass(root, 'dt-live-hero-meta')[0];
+  assert(meta && meta.textContent.includes('racing'), 'the metadata baseline names the structure (racing)');
+  assert(meta && /rung\s+\d+\s+of\s+\d+/.test(meta.textContent), 'the metadata baseline carries the "rung N of M" label (the one rung-number source)');
+  assert(meta && meta.textContent.includes('2 units running'), 'the metadata baseline shows the in-flight unit count (2 units running)');
+  // the rung STEPPER reflects the rung index/count (one pip per rung, one active).
+  const pips = allByClass(root, 'dt-rungstep-pip');
+  assert(pips.length >= 1, 'the rung stepper renders one pip per rung');
+  assert(allByClass(root, 'dt-rungstep-active').length === 1, 'exactly one stepper pip is active (the current rung)');
   // the racing scalar track rendered inside the hero (the live hero mini is the
   // single-round PRIMARY figure: the field on one loss number-line).
   const track = svgsByClass(root, 'dn-scalartrack')[0];
@@ -5864,21 +5862,22 @@ test('live hero: a phase/active-runs update mutates the live surfaces WITHOUT a 
   coreState.state.activeTournament = HERO_LIVE_RACING;
 
   const root = mountLiveShell('#/');
-  const phaseNodeBefore = allByClass(root, 'dt-live-hero-phase')[0];
-  const fillNodeBefore = allByClass(root, 'dt-live-hero-progfill')[0];
+  const metaNodeBefore = allByClass(root, 'dt-live-hero-meta')[0];
+  const stepperBefore = allByClass(root, 'dt-rungstep')[0];
   const trackBefore = svgsByClass(root, 'dn-scalartrack')[0];
   const tickerListBefore = allByClass(root, 'dt-ticker-list')[0];
-  assert(phaseNodeBefore && fillNodeBefore && trackBefore && tickerListBefore, 'the live surfaces mounted');
+  assert(metaNodeBefore && stepperBefore && trackBefore && tickerListBefore, 'the live surfaces mounted');
   const rowsBefore = allByClass(root, 'dt-ticker-row').length;
 
   // a STEADY re-tick with IDENTICAL live state writes no new ticker rows and
-  // does NOT rebuild the scalar track (the structure digest is unchanged → no flash).
+  // does NOT rebuild the scalar track NOR the rung stepper (every digest is
+  // unchanged → ZERO DOM, no flash).
   coreState.state._changed();
   assertEqual(allByClass(root, 'dt-ticker-row').length, rowsBefore, 'an identical re-tick appends NO ticker rows (no flash)');
   assert(svgsByClass(root, 'dn-scalartrack')[0] === trackBefore, 'an identical re-tick does NOT rebuild the scalar track (digest-gated structure)');
-  // the persistent phase / progress / ticker-list nodes keep identity.
-  assert(allByClass(root, 'dt-live-hero-phase')[0] === phaseNodeBefore, 'the phase node keeps identity across a re-tick (patched in place)');
-  assert(allByClass(root, 'dt-live-hero-progfill')[0] === fillNodeBefore, 'the progress-fill node keeps identity (its width is patched, not rebuilt)');
+  assert(allByClass(root, 'dt-rungstep')[0] === stepperBefore, 'an identical re-tick does NOT rebuild the rung stepper (digest-gated)');
+  // the persistent metadata node + ticker list keep identity (patched in place).
+  assert(allByClass(root, 'dt-live-hero-meta')[0] === metaNodeBefore, 'the metadata node keeps identity across a re-tick (patched in place)');
   assert(allByClass(root, 'dt-ticker-list')[0] === tickerListBefore, 'the ticker list keeps identity (append-only)');
 
   // now a REAL change: rung 2 resolves (v0 cut, v1 survives) + a run completes.
@@ -5893,7 +5892,7 @@ test('live hero: a phase/active-runs update mutates the live surfaces WITHOUT a 
   // the scalar track rebuilt (the structure digest changed) — but the ticker LIST
   // and the phase node are still the SAME persistent nodes (mutated, not replaced).
   assert(allByClass(root, 'dt-ticker-list')[0] === tickerListBefore, 'the ticker list is still the same node after a real change (append-only growth)');
-  assert(allByClass(root, 'dt-live-hero-phase')[0] === phaseNodeBefore, 'the phase node is still the same node (patched, not rebuilt)');
+  assert(allByClass(root, 'dt-live-hero-meta')[0] === metaNodeBefore, 'the metadata node is still the same node (patched, not rebuilt)');
   assert(allByClass(root, 'dt-ticker-row').length > rowsBefore, 'a real change (rung cut + run completed) appended new ticker rows');
   // the newly-built scalar track carries the one-shot entrance animation class.
   const trackAfter = svgsByClass(root, 'dn-scalartrack')[0];
@@ -5989,9 +5988,10 @@ test('live hero: a LIVE SWISS tournament shows the SWISS LADDER + round-based pr
   const root = mountLiveShell('#/');
   const hero = allByClass(root, 'dt-live-hero')[0];
   assert(hero && (hero.getAttribute('class') || '').includes('dt-live-on'), 'the live hero is shown for a running swiss tournament');
-  // the round-based progress line is present ("round k of N").
-  const proglab = allByClass(root, 'dt-live-hero-proglab')[0];
-  assert(proglab && /round\s+\d+\s+of\s+\d+/.test(proglab.textContent), 'the swiss hero shows a round-based progress label (round k of N)');
+  // the metadata baseline carries the round-based label ("round k of N") for a
+  // non-racing structure (the same 1-indexed "N of M" the stepper reads).
+  const meta = allByClass(root, 'dt-live-hero-meta')[0];
+  assert(meta && /round\s+\d+\s+of\s+\d+/.test(meta.textContent), 'the swiss hero metadata shows a round-based label (round k of N)');
   // the activity ticker still streams.
   assert(allByClass(root, 'dt-ticker')[0], 'the activity ticker renders for a swiss run');
   // the LIVE SWISS LADDER renders (the swiss analogue of the racing funnel) —
@@ -6110,10 +6110,12 @@ test('live hero: a CURRENT-EPOCH PROPOSING phase with a STALE racing tournament 
   assertEqual(svgsByClass(root, 'dn-funnel').length, 0, 'NO racing funnel while the current epoch is proposing with only a foreign-epoch active-tournament');
   // the honest proposing/empty placeholder is shown.
   assert(allByClass(root, 'dt-live-hero-nofunnel').length >= 1, 'the hero shows the honest proposing/empty progress state');
-  // the progress label reflects the CURRENT run (proposing), not "rung k of N".
-  const proglab = allByClass(root, 'dt-live-hero-proglab')[0];
-  assert(proglab && /propos/i.test(proglab.textContent), 'the progress label reads the current proposing phase, not a stale rung count');
-  assert(proglab && !/rung\s+\d+\s+of\s+\d+/.test(proglab.textContent), 'the progress label does NOT leak the stale rung count');
+  // the metadata baseline reflects the CURRENT run (proposing), not "rung k of N".
+  const meta = allByClass(root, 'dt-live-hero-meta')[0];
+  assert(meta && /propos/i.test(meta.textContent), 'the metadata baseline reads the current proposing phase, not a stale rung count');
+  assert(meta && !/rung\s+\d+\s+of\s+\d+/.test(meta.textContent), 'the metadata baseline does NOT leak the stale rung count');
+  // the rung stepper is absent while proposing (no topology → no pips).
+  assertEqual(allByClass(root, 'dt-rungstep-pip').length, 0, 'the rung stepper renders no pips while proposing (no rung topology yet)');
   // no leaked prior-epoch competitor ids anywhere in the hero (e.g. v5/v6/v7/v8).
   const heroText = hero.textContent || '';
   assert(!/v5|v6|v7|v8/.test(heroText), 'no leaked prior-epoch competitor ids (foreign survivors/cuts) appear in the hero');
@@ -6256,7 +6258,7 @@ test('live motion: prefers-reduced-motion suppresses the live animation classes/
   const rm = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
   assert(rm.includes('.dt-live-enter') && /\.dt-live-enter[^;{}]*\{?[^}]*animation: none/.test(rm) || rm.includes('.dt-live-enter'), 'the funnel/ladder entrance is suppressed under reduced motion');
   assert(rm.includes('.dt-ticker-row'), 'the ticker-row slide-in is suppressed under reduced motion');
-  assert(rm.includes('.dt-live-hero-progfill'), 'the progress-bar width transition is suppressed under reduced motion');
+  assert(rm.includes('.dt-rungstep-pip'), 'the rung-stepper pip transition is suppressed under reduced motion');
   assert(/\.dn-funnel-band/.test(rm) && /\.dn-funnel-bar/.test(rm), 'the funnel band + progress-bar transitions are suppressed under reduced motion');
   // sanity: the un-gated rules DO carry motion (so reduced-motion is a real gate).
   assert(/\.dt-ticker-row \{[^}]*animation: dt-ticker-in/.test(css), 'the ticker row animates by default (gated off only under reduced motion)');

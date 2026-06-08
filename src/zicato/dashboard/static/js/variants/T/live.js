@@ -47,10 +47,16 @@ import {
 // matchups (m/n); the elimination/swiss structures speak ROUNDS. Returns a
 // plain verdict the hero + the chrome can render:
 //
-//   { kind, label, detail, fraction }   (fraction ∈ [0,1] or null)
+//   { kind, label, detail, fraction, stepIndex, stepCount, fieldN }
 //
 // `label` is the headline ("rung 2 of 3"); `detail` is the matchup tally
 // ("m/n matchups" / "field of N"); `fraction` drives a determinate bar.
+//
+// `stepIndex` / `stepCount` are the 1-INDEXED "N of M" the hero header + the rung
+// stepper BOTH read — the ONE rung-number source of truth (so the header label
+// and the stepper can never contradict each other, and never disagree with the
+// 0-indexed raw phase string). `stepIndex` is the current rung/round (1..M),
+// `stepCount` is the total (M); `fieldN` is the current step's field size.
 export function liveProgress({ activeTournament, heartbeat, status } = {}) {
   const rawAt = (activeTournament && typeof activeTournament === 'object') ? activeTournament : null;
   // SCOPE TO THE CURRENT RUN: ignore an active-tournament retained from a
@@ -85,6 +91,7 @@ export function liveProgress({ activeTournament, heartbeat, status } = {}) {
           ? `${decided}/${fieldN} matchups`
           : (fieldN ? `field of ${fieldN}` : ''),
         fraction,
+        stepIndex: cur + 1, stepCount: total, fieldN,
       };
     }
   }
@@ -107,14 +114,15 @@ export function liveProgress({ activeTournament, heartbeat, status } = {}) {
       label: `round ${cur + 1} of ${total}`,
       detail: ms.length ? `${decided}/${ms.length} matchups` : '',
       fraction: total > 0 ? Math.min(1, done / total) : null,
+      stepIndex: cur + 1, stepCount: total, fieldN: ms.length,
     };
   }
 
   // no topology yet — fall back to the phase string (e.g. "proposing field").
   if (phase) {
-    return { kind: 'phase', label: String(phase).split(':').slice(0, 2).join(' · ').replace(/_/g, ' '), detail: '', fraction: null };
+    return { kind: 'phase', label: String(phase).split(':').slice(0, 2).join(' · ').replace(/_/g, ' '), detail: '', fraction: null, stepIndex: null, stepCount: null, fieldN: 0 };
   }
-  return { kind: 'idle', label: '', detail: '', fraction: null };
+  return { kind: 'idle', label: '', detail: '', fraction: null, stepIndex: null, stepCount: null, fieldN: 0 };
 }
 
 // normalize an active-tournament payload into the racingModel input shape (it
@@ -247,6 +255,53 @@ function humanPhase(p) {
   return String(p || '').replace(/:/g, ' · ').replace(/_/g, ' ');
 }
 function label(s) { return s == null ? '—' : String(s); }
+
+// the structure word for the metadata baseline (racing / single elim / …).
+function prettyStructureName(structure) {
+  const s = String(structure || '').toLowerCase();
+  switch (s) {
+    case 'single_elim': return 'single elim';
+    case 'double_elim': return 'double elim';
+    case '': return '';
+    default: return s.replace(/_/g, ' ');
+  }
+}
+
+// ── the RUNG STEPPER (the structural progress cap on the race track) ──
+//
+// Replaces the anonymous full-width percentage bar: ONE pip per rung/round, the
+// completed ones FILLED (muted ink — they are settled history), the CURRENT one
+// ACTIVE (accent green — alive/leading), the not-yet-reached ones HOLLOW. So
+// progress reads STRUCTURALLY ("rung 2 of 2" = the second of two pips active),
+// not as a faceless 73%. Pure: builds detached DOM; the stepIndex/stepCount come
+// from liveProgress (the ONE rung-number source), so the stepper can never
+// disagree with the header's rung label.
+//
+// COLOR ROLES (the hero's fixed palette): accent green = the active rung
+// (alive/leading); muted ink = a completed rung (settled history) + the rail.
+// No caution/bad here — a cut/eliminated competitor reads on the track, not on
+// the stepper (the stepper is structural, not a verdict).
+function rungStepper({ stepIndex, stepCount } = {}) {
+  const n = (stepCount != null && stepCount > 0) ? stepCount : 0;
+  const cur = (stepIndex != null && stepIndex > 0) ? stepIndex : 0;
+  const wrap = el('div', { class: 'dt-rungstep', role: 'img',
+    'aria-label': n > 0 ? `rung ${cur} of ${n}` : 'rung progress' });
+  if (n <= 0) return wrap;
+  for (let i = 1; i <= n; i++) {
+    const done = i < cur;
+    const active = i === cur;
+    const cls = 'dt-rungstep-pip'
+      + (done ? ' dt-rungstep-done' : '')
+      + (active ? ' dt-rungstep-active' : '');
+    wrap.appendChild(el('span', { class: cls, 'aria-hidden': 'true' }));
+  }
+  return wrap;
+}
+// the stepper digest — changes only when the structural position moves, so the
+// digest-gated cap repaints on a real rung advance, never on a no-op heartbeat.
+function rungStepperDigest({ stepIndex, stepCount } = {}) {
+  return 'step|' + (stepIndex == null ? '?' : stepIndex) + '/' + (stepCount == null ? '?' : stepCount);
+}
 
 // ── the activity ticker (append-only, capped, NEVER repaints) ─────────
 //
@@ -463,52 +518,57 @@ export class LiveController {
     this._prevSnap = null;
     this._funnelDigest = null;
     this._matchesDigest = null;
-    this._lastProgressKey = null;
+    this._metaKey = null;
+    this._stepDigest = null;
     this.ticker = new ActivityTicker({ cap: o.cap || 40 });
     this._build();
   }
 
   _build() {
+    // ── 1. THE STATUS HEADER — ONE muted metadata baseline ──────────────
+    // `● LIVE · racing · rung 2 of 2 · field of 2 · 7 units running`. NO
+    // competing big phase title; every token reads in the same muted mono type.
+    // The rung label here is the SAME 1-indexed "N of M" the rung stepper reads
+    // (liveProgress.stepIndex/stepCount) — never the 0-indexed raw phase string —
+    // so the header and the stepper can never contradict ("rung 0" vs "rung 2 of
+    // 2" was the bug: the title read the phase string, the subline read topology).
     this._pill = el('span', { class: 'dt-live-hero-pill' }, [
       el('span', { class: 'dt-live-hero-dot', 'aria-hidden': 'true' }),
       el('span', { class: 'dt-live-hero-pilltext', text: 'LIVE' }),
     ]);
-    this._phase = el('span', { class: 'dt-live-hero-phase', text: '' });
-    this._count = el('span', { class: 'dt-live-hero-count', text: '' });
-    this._progLabel = el('span', { class: 'dt-live-hero-proglab', text: '' });
-    this._progDetail = el('span', { class: 'dt-live-hero-progdetail dn-faint', text: '' });
-    this._progFill = el('span', { class: 'dt-live-hero-progfill' });
-    this._progBar = el('span', { class: 'dt-live-hero-progbar' }, [this._progFill]);
+    this._meta = el('span', { class: 'dt-live-hero-meta', text: '' });
+    const head = el('div', { class: 'dt-live-hero-head' }, [this._pill, this._meta]);
 
-    const head = el('div', { class: 'dt-live-hero-head' }, [
-      this._pill, this._phase, this._count,
-    ]);
-    const prog = el('div', { class: 'dt-live-hero-prog' }, [
-      el('div', { class: 'dt-live-hero-progrow' }, [this._progLabel, this._progDetail]),
-      this._progBar,
-    ]);
+    // ── 2. THE RACE STATE — the PRIMARY, FULL-WIDTH viz ─────────────────
+    // The scalar number-line fills the hero width (it IS the hero). A compact
+    // rung STEPPER caps its left edge as the structural progress annotation
+    // (one pip per rung; completed filled, current active) — replacing the
+    // anonymous full-width percentage bar. Both are digest-gated swaps.
+    this._stepHost = el('div', { class: 'dt-live-hero-step' });
+    this._trackHost = el('div', { class: 'dt-live-hero-track dn-figpane' });
+    // `_funnelHost` is kept as an ALIAS of the track host so the digest-gated
+    // figure machinery (and the existing tests) keep their handle on it.
+    this._funnelHost = this._trackHost;
+    const race = el('div', { class: 'dt-live-hero-race' }, [this._stepHost, this._trackHost]);
 
-    // the MATCH-GROUPED "what's running" block — the hero, grouped by in-flight
-    // match so it is obvious which boards are running in EVERY structure (Task 1).
-    this._matchesHost = el('div', { class: 'dt-live-hero-matches' }, [
-      el('div', { class: 'dt-live-hero-matcheshead dn-faint', text: 'what’s running' }),
+    // ── 3. THE DETAIL ROW — two BALANCED columns, shared panel chrome ────
+    // LEFT: the densified champion-gate "what's running" rows. RIGHT: the live
+    // activity log. Equal visual weight (≈55/45), aligned tops, one eyebrow style.
+    this._matchesHost = el('section', { class: 'dt-live-hero-panel dt-live-hero-matches' }, [
+      el('div', { class: 'dt-live-hero-eyebrow', text: 'what’s running' }),
       el('div', { class: 'dt-live-hero-matchesbody' }),
     ]);
     this._matchesBody = this._matchesHost.childNodes[1];
 
-    this._funnelHost = el('div', { class: 'dt-live-hero-funnel dn-figpane' });
-    this._tickerHost = el('div', { class: 'dt-live-hero-ticker' }, [
-      el('div', { class: 'dt-live-hero-tickerhead dn-faint', text: 'live activity' }),
+    this._tickerHost = el('section', { class: 'dt-live-hero-panel dt-live-hero-ticker' }, [
+      el('div', { class: 'dt-live-hero-eyebrow', text: 'live activity' }),
       this.ticker.node,
     ]);
 
-    // HERO opt 3 (the study pick): the compacted STRUCTURE FIGURE leads — the
-    // scalar-track mini for racing, the field-bars / bracket / ladder for the
-    // others. So the figure mini (`_funnelHost`) sits ABOVE the "what's running"
-    // matches list (`_matchesHost`); the ticker rides below both. The reading
-    // order is now figure → what's running → activity.
-    const body = el('div', { class: 'dt-live-hero-body' }, [this._matchesHost, this._tickerHost]);
-    this.node = el('section', { class: 'dt-live-hero', 'aria-label': 'Live run', role: 'region' }, [head, prog, this._funnelHost, body]);
+    const detail = el('div', { class: 'dt-live-hero-detail' }, [this._matchesHost, this._tickerHost]);
+
+    // reading order: status baseline → the full-width race → the balanced detail.
+    this.node = el('section', { class: 'dt-live-hero', 'aria-label': 'Live run', role: 'region' }, [head, race, detail]);
   }
 
   // Drive the hero from the current live state. Returns true when a run is live
@@ -523,30 +583,35 @@ export class LiveController {
     this._seq = seq;
     if (events.length) this.ticker.push(events);
     this._prevSnap = running ? snap : null;
-    if (!running) { this._funnelDigest = null; this._matchesDigest = null; return false; }
+    if (!running) { this._funnelDigest = null; this._matchesDigest = null; this._metaKey = null; this._stepDigest = null; return false; }
 
-    // ── prominent phase ──
-    patchText(this._phase, (status && status.label) || (heartbeat && heartbeat.phase) || 'running');
-
-    // ── in-flight unit count ──
-    const inFlight = status && isNum(status.inFlight) ? status.inFlight : (Array.isArray(activeRuns) ? activeRuns.length : 0);
-    patchText(this._count, inFlight > 0 ? (inFlight + (inFlight === 1 ? ' unit running' : ' units running')) : '');
-
-    // ── tournament-level progress (determinate bar + caption) ──
+    // ── tournament-level progress: the ONE rung-number source of truth ──
+    // liveProgress reads the live TOPOLOGY (resolved rungs + the active rung),
+    // so its 1-indexed stepIndex/stepCount + label feed BOTH the header metadata
+    // line AND the rung stepper — they can never disagree, and never fall back
+    // to the contradictory 0-indexed raw phase string.
     const prog = liveProgress({ activeTournament, heartbeat, status });
-    patchText(this._progLabel, prog.label || '');
-    patchText(this._progDetail, prog.detail ? '· ' + prog.detail : '');
-    const pct = isNum(prog.fraction) ? Math.round(Math.max(0, Math.min(1, prog.fraction)) * 100) : null;
-    const progKey = (prog.label || '') + '|' + (prog.detail || '') + '|' + pct;
-    if (progKey !== this._lastProgressKey) {
-      this._lastProgressKey = progKey;
-      // width transition (CSS) animates the bar smoothly toward the new value;
-      // an indeterminate (unknown) fraction shows a thin pending bar. Set via
-      // setProperty so the width lands in the style declaration (and survives a
-      // patch without rebuilding the node — that is what makes the CSS width
-      // transition fire rather than a node swap).
-      this._progFill.style.setProperty('width', (pct != null ? pct : 8) + '%');
-      patchClass(this._progFill, 'dt-live-hero-progfill-pending', pct == null);
+
+    // ── 1. the status header — ONE muted metadata baseline (digest-gated) ──
+    // `● LIVE · <structure> · rung N of M · field of K · J units running`.
+    const inFlight = status && isNum(status.inFlight) ? status.inFlight : (Array.isArray(activeRuns) ? activeRuns.length : 0);
+    const structure = (status && status.structure) || (activeTournament && activeTournament.structure) || null;
+    const meta = this._metaLine(prog, structure, inFlight);
+    const metaKey = meta.join('|');
+    if (metaKey !== this._metaKey) {
+      this._metaKey = metaKey;
+      patchText(this._meta, meta.length ? meta.join(' · ') : '');
+    }
+
+    // ── 2. the rung STEPPER caps the race track (digest-gated swap) ──
+    // structural progress: one pip per rung, completed filled, current active.
+    const stepDigest = rungStepperDigest(prog);
+    if (stepDigest !== this._stepDigest || !this._stepHost.firstChild) {
+      this._stepDigest = stepDigest;
+      clear(this._stepHost);
+      if (prog.stepCount != null && prog.stepCount > 0) {
+        this._stepHost.appendChild(rungStepper(prog));
+      }
     }
 
     // ── the MATCH-GROUPED "what's running" block: digest-gated on live CONTENT ──
@@ -562,11 +627,31 @@ export class LiveController {
     return true;
   }
 
+  // Build the ONE muted metadata baseline as an ordered token list:
+  //   `racing · rung N of M · field of K · J units running`
+  // The rung token is liveProgress.label (the SAME 1-indexed "N of M" the rung
+  // stepper reads — never the contradictory 0-indexed phase string). When the
+  // topology has not minted rungs yet, the phase verdict (e.g. "proposing field")
+  // stands in for the rung token. The field tally rides only when it is NOT
+  // already implied by the rung label's matchup detail.
+  _metaLine(prog, structure, inFlight) {
+    const out = [];
+    if (structure) out.push(prettyStructureName(structure));
+    if (prog.label) out.push(prog.label);
+    // the per-step detail ("m/n matchups" / "field of K") — the rung label's
+    // companion. Skip the bare "field of K" when there is no rung label (avoids a
+    // lone "field of K" with no structural context).
+    if (prog.detail && (prog.label || /matchups/.test(prog.detail))) out.push(prog.detail);
+    if (inFlight > 0) out.push(inFlight + (inFlight === 1 ? ' unit running' : ' units running'));
+    return out;
+  }
+
   // Build the match-grouped "what's running" block from the UNIFIED live model
   // (buildLiveModel — the single source the structure figures use too) and swap
   // it in ONLY when the live-content digest changes. A steady heartbeat with the
   // same matches + the same progress buckets writes ZERO DOM (the bars are
-  // CSS-animated). Hidden when the current run has no live topology yet.
+  // CSS-animated). The panel is always present in the balanced detail row; when
+  // no match is in flight the body shows its own honest placeholder.
   _updateMatches(activeTournament, heartbeat, activeRuns) {
     const at = (activeTournament && typeof activeTournament === 'object') ? activeTournament : null;
     let blocks = [];
@@ -577,7 +662,6 @@ export class LiveController {
       blocks = liveMatchBlocks(model) || [];
     }
     const digest = liveMatchBlocksDigest(blocks);
-    patchClass(this._matchesHost, 'dt-live-hero-matches-on', blocks.length > 0);
     if (digest === this._matchesDigest && this._matchesBody.firstChild) return; // no real change → no DOM.
     this._matchesDigest = digest;
     clear(this._matchesBody);
@@ -661,10 +745,14 @@ export class LiveController {
       const st = buildLiveRacingModel({ at, heartbeat, activeRuns, epochGens: gens }) || normalizeStructure(at, true);
       const model = racingModel(st);
       if (!model || !model.hasRungs) return null;
+      // FULL-WIDTH HERO: the scalar number-line IS the primary viz, so it scales
+      // aspect-locked to fill the hero width (`responsive` → the svg.dn-scalartrack
+      // -hero max-width cap governs). `mini` keeps the compact label/tick treatment
+      // (the rung stepper carries the structural progress, not a wide caption).
       const opts = {
         rungs: model.rungs, championId: model.championId, benchmarkId: model.benchmarkId,
         championScalar: model.championScalar, live: model.live, gateState: model.gateState,
-        mini: true, onCompetitor,
+        mini: true, responsive: true, onCompetitor,
       };
       const node = racingScalarTrack(opts);
       return { node, digest: 'racing|' + racingScalarTrackDigest(opts) };

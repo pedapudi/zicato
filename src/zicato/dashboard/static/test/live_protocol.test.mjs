@@ -718,22 +718,23 @@ test('racing multi-survivor — the live HERO leads with the scalar-track mini (
   const track = svgsByClass(c._funnelHost, 'dn-scalartrack')[0];
   assert(track, 'the hero leads with the racing scalar-track mini');
 
-  // ORDERING: the structure-figure mini (_funnelHost) appears BEFORE the
-  // "what's running" matches list (_matchesHost) in the hero's DOM.
+  // ORDERING: the full-width race (the scalar-track mini in `_funnelHost`/
+  // `_trackHost`) appears BEFORE the "what's running" matches list (_matchesHost)
+  // in the hero's DOM. Both ride inside wrapper divs (the `race` row + the
+  // `detail` row), so find which top-level child subtree contains each.
   const kids = c.node.childNodes;
-  const idxFunnel = kids.indexOf(c._funnelHost);
-  // _matchesHost rides inside the `body` wrapper, so find which top-level child
-  // subtree contains it.
-  const idxMatches = (() => {
+  const subtreeIndexOf = (target) => {
     for (let i = 0; i < kids.length; i++) {
       let found = false;
-      walk(kids[i], (n) => { if (n === c._matchesHost) found = true; });
+      walk(kids[i], (n) => { if (n === target) found = true; });
       if (found) return i;
     }
     return -1;
-  })();
+  };
+  const idxFunnel = subtreeIndexOf(c._funnelHost);
+  const idxMatches = subtreeIndexOf(c._matchesHost);
   assert(idxFunnel >= 0 && idxMatches >= 0, 'both the figure mini and the matches list are mounted in the hero');
-  assert(idxFunnel < idxMatches, 'the scalar-track mini (_funnelHost) leads ABOVE the "what\'s running" list (_matchesHost)');
+  assert(idxFunnel < idxMatches, 'the full-width scalar-track race leads ABOVE the "what\'s running" detail (_matchesHost)');
 
   // "what's running" is ONE rung block (not one per champion-vs-survivor matchup).
   const epochGens = ['v0', 'v5', 'v7'];
@@ -761,6 +762,138 @@ test('racing multi-survivor — the rung block dedup is anti-flash: a no-op tick
   moved.rounds[0].matches[0].live_progress.v7.projected_scalar = 9.7;
   const d3 = STRUCT.liveMatchBlocksDigest(STRUCT.liveMatchBlocks(STRUCT.buildLiveModel(moved, hbX, runs, epochGens)));
   assert(d1 !== d3, 'a board landing on a union lane (v7) repaints the rung block');
+});
+
+// ===========================================================================
+// THE LIVE-RACING HERO REDESIGN — the holistic restructure of the live hero:
+//   1. ONE muted metadata baseline (no competing big phase title).
+//   2. the race state = the PRIMARY, FULL-WIDTH viz, capped by a rung STEPPER.
+//   3. two BALANCED detail columns (what's running · live activity).
+//   4. cohesion + render discipline (a no-op heartbeat churns ZERO DOM).
+//
+// These pin the redesign's structural invariants on the REAL LiveController.
+// ===========================================================================
+
+// the TWO-RUNG racing topology that lands at RUNG 2 OF 2: rung 1 (round_index 0)
+// is SETTLED (survivors v1; cuts v2,v3) and rung 2 (round_index 1) is IN FLIGHT.
+// This is the operator's exact contradictory state — the OLD title read the
+// 0-indexed phase string ("rung 0"), the OLD subline read the topology ("rung 2
+// of 2"). Both rungs are real rungs (not the gate), so liveProgress focuses the
+// in-flight rung 2 of 2.
+const HERO_RUNG2_AT = {
+  structure: 'racing', phase: 'running', epoch_id: EPOCH,
+  structure_params: { rungs: [{ fraction: 0.5 }, { fraction: 1.0 }] },
+  champion_lineage: ['v0'],
+  competitors: [
+    { generation_id: 'v0', role: 'champion' }, { generation_id: 'v1', role: 'challenger' },
+    { generation_id: 'v2', role: 'challenger' }, { generation_id: 'v3', role: 'challenger' },
+  ],
+  rounds: [
+    { round_index: 0, label: 'Rung 1', matches: [{ match_id: 'rung1', competitors: ['v0', 'v1', 'v2', 'v3'], survivors: ['v0', 'v1'], cut: ['v2', 'v3'], board_fraction: 0.5, pending: false, deltas: { v1: -0.2, v2: 1.0, v3: 2.0 } }] },
+    { round_index: 1, label: 'Rung 2', matches: [{ match_id: 'rung2', competitors: ['v0', 'v1'], survivors: [], cut: [], board_fraction: 1.0, pending: true }] },
+  ],
+  standings: [],
+};
+
+// drive the hero one tick at the RUNG 2 OF 2 state above.
+function heroAtRung2() {
+  const c = new live.LiveController({});
+  const at = JSON.parse(JSON.stringify(HERO_RUNG2_AT));
+  // the heartbeat phase string is 0-INDEXED "rung0…" — the OLD title's source.
+  c.update({
+    status: { running: true, structure: 'racing', label: 'racing · rung 0', inFlight: 7 },
+    heartbeat: hb({ phase: 'tournament:round_0:rung0_m3' }),
+    activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1' }],
+    activeTournament: at,
+  });
+  return { c, at };
+}
+
+test('hero redesign — the rung label is INTERNALLY CONSISTENT: ONE "rung N of M", never the old 0-indexed phase-string title alongside a 1-indexed subline', () => {
+  const { c } = heroAtRung2();
+  const metaText = textOf(c._meta);
+  // the ONE rung token is the 1-indexed "rung 2 of 2" (topology), NOT "rung 0".
+  assert(/rung 2 of 2/.test(metaText), 'the metadata baseline reads the 1-indexed "rung 2 of 2"');
+  // the contradictory 0-indexed bare "rung 0" (from the raw phase string) is GONE
+  // from the hero — there is exactly ONE rung number, and it is the topology one.
+  assert(!/rung 0\b/.test(metaText), 'the contradictory 0-indexed "rung 0" phase-string title is GONE (no two rung numbers)');
+  const rungMatches = metaText.match(/rung \d+( of \d+)?/g) || [];
+  assertEqual(rungMatches.length, 1, 'exactly ONE rung token appears in the hero header (no contradiction)');
+});
+
+test('hero redesign — the rung STEPPER reflects the rung index/count (one pip per rung; the current rung active, the completed one filled)', () => {
+  const { c } = heroAtRung2();
+  const pips = nodesByClass(c._stepHost, 'dt-rungstep-pip');
+  assertEqual(pips.length, 2, 'one pip per rung (a field of two rungs)');
+  const active = nodesByClass(c._stepHost, 'dt-rungstep-active');
+  const done = nodesByClass(c._stepHost, 'dt-rungstep-done');
+  assertEqual(active.length, 1, 'exactly one pip is active (the current rung — rung 2)');
+  assertEqual(done.length, 1, 'exactly one pip is filled-complete (the settled rung 1)');
+  // the active pip is the LAST one (rung 2 of 2 = the final rung).
+  assert(pips[pips.length - 1] === active[0], 'the active pip is the final rung (rung 2 of 2)');
+});
+
+test('hero redesign — the rung stepper agrees with the metadata rung label (the ONE rung-number source): stepIndex/stepCount === the parsed "N of M"', () => {
+  const { c, at } = heroAtRung2();
+  const prog = live.liveProgress({ activeTournament: at, heartbeat: hb({ phase: 'tournament:round_0:rung0_m3' }), status: { structure: 'racing' } });
+  // the metadata label + the stepper both derive from this ONE liveProgress.
+  assertEqual(prog.stepIndex, 2, 'liveProgress stepIndex is 2 (rung 2)');
+  assertEqual(prog.stepCount, 2, 'liveProgress stepCount is 2 (of two rungs)');
+  const activeIdx = nodesByClass(c._stepHost, 'dt-rungstep-pip').findIndex((p) => (p._attrs.class || '').includes('dt-rungstep-active'));
+  assertEqual(activeIdx + 1, prog.stepIndex, 'the active pip index (1-based) equals stepIndex — the stepper cannot disagree with the label');
+});
+
+test('hero redesign — the race state is the FULL-WIDTH primary viz: the scalar track is responsive (aspect-locked scale-to-width), capped by the svg.dn-scalartrack-hero rule', () => {
+  const { c } = heroAtRung2();
+  const track = svgsByClass(c._funnelHost, 'dn-scalartrack')[0];
+  assert(track, 'the racing scalar track renders as the hero race viz');
+  // responsive → width:100% + the load-bearing hero class for the max-width cap.
+  assertEqual(track.getAttribute('width'), '100%', 'the track fills the hero width (responsive width:100%)');
+  assert((track.getAttribute('class') || '').includes('dn-scalartrack-hero'), 'the track carries the dn-scalartrack-hero class (the svg.* max-WIDTH cap governs)');
+  // the track host leads ABOVE the detail row in the hero DOM (race → detail).
+  const kids = c.node.childNodes;
+  const idxOf = (target) => { for (let i = 0; i < kids.length; i++) { let f = false; walk(kids[i], (n) => { if (n === target) f = true; }); if (f) return i; } return -1; };
+  assert(idxOf(c._trackHost) < idxOf(c._matchesHost), 'the full-width race leads above the detail row');
+});
+
+test('hero redesign — the detail row is TWO BALANCED columns: what\'s running (left) · live activity (right), shared panel + eyebrow chrome', () => {
+  const { c } = heroAtRung2();
+  // both columns are dt-live-hero-panel siblings (shared chrome) under one row.
+  const panels = nodesByClass(c.node, 'dt-live-hero-panel');
+  assertEqual(panels.length, 2, 'the detail row has exactly two panels (balanced columns)');
+  assert(panels.indexOf(c._matchesHost) >= 0 && panels.indexOf(c._tickerHost) >= 0, 'both "what\'s running" and "live activity" are panels (equal-weight peers)');
+  // LEFT is what's running, RIGHT is live activity (the activity log is not an
+  // afterthought tucked below — it is a peer column).
+  assert(panels.indexOf(c._matchesHost) < panels.indexOf(c._tickerHost), 'what\'s running (left) precedes live activity (right)');
+  // ONE eyebrow style for both section labels.
+  const eyebrows = nodesByClass(c.node, 'dt-live-hero-eyebrow').map((e) => textOf(e));
+  assert(eyebrows.some((t) => /what.s running/i.test(t)), 'the left eyebrow reads "what\'s running"');
+  assert(eyebrows.some((t) => /live activity/i.test(t)), 'the right eyebrow reads "live activity"');
+  assertEqual(nodesByClass(c.node, 'dt-live-hero-eyebrow').length, 2, 'both section labels use the ONE shared eyebrow style');
+});
+
+test('hero redesign — render discipline: a no-op heartbeat churns ZERO DOM (the metadata, the stepper, the track, the match rows, the ticker all hold node identity)', () => {
+  const { c, at } = heroAtRung2();
+  const beat = hb({ phase: 'tournament:round_0:rung0_m3' });
+  const runs = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1' }];
+  const tickOnce = () => c.update({ status: { running: true, structure: 'racing', inFlight: 7 }, heartbeat: beat, activeRuns: runs, activeTournament: at });
+  // capture the live DOM nodes after the first mount.
+  const metaText0 = textOf(c._meta);
+  const stepper0 = nodesByClass(c._stepHost, 'dt-rungstep')[0];
+  const track0 = svgsByClass(c._funnelHost, 'dn-scalartrack')[0];
+  const matchesNode0 = c._matchesBody.firstChild;
+  const tickerList0 = c.ticker._list;
+  const tickerRows0 = nodesByClass(c.ticker.node, 'dt-ticker-row').length;
+  assert(stepper0 && track0 && matchesNode0 && tickerList0, 'the hero surfaces mounted');
+
+  // an IDENTICAL second tick (a no-op SSE heartbeat) must rebuild NOTHING.
+  tickOnce();
+  assertEqual(textOf(c._meta), metaText0, 'the metadata baseline text is unchanged on a no-op tick');
+  assert(nodesByClass(c._stepHost, 'dt-rungstep')[0] === stepper0, 'the rung stepper node identity is preserved (no rebuild)');
+  assert(svgsByClass(c._funnelHost, 'dn-scalartrack')[0] === track0, 'the scalar track node identity is preserved (digest-gated)');
+  assert(c._matchesBody.firstChild === matchesNode0, 'the "what\'s running" match rows node identity is preserved');
+  assert(c.ticker._list === tickerList0, 'the activity ticker list is the same node');
+  assertEqual(nodesByClass(c.ticker.node, 'dt-ticker-row').length, tickerRows0, 'a no-op tick appends NO new activity rows (zero DOM churn)');
 });
 
 await run();
