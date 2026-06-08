@@ -1085,9 +1085,11 @@ export function racingModel(st) {
 // payload — the anchor for the racing scalar track + gauntlet field bars (a
 // competitor's absolute scalar is championScalar + its Δ-vs-champion). Reads, in
 // order: the benchmark's settled standings scalar; the live partial champion
-// aggregate (`partial_champion_agg.scalar`); any competitor row carrying a
-// scalar for the benchmark id. Returns null when the champion scalar is unknown
-// (the builders then fall back to a delta-only domain). PURE.
+// aggregate (`partial_champion_agg.scalar`); the live projected champion row;
+// and finally the benchmark's strategy-seeded champion lane on an in-flight rung
+// (`live_progress[bid].projected_scalar`). Returns null when the champion scalar
+// is genuinely unknown (the builders then fall back to a delta-only domain), so
+// no fabricated benchmark (e.g. a 10.000-style default) ever leaks. PURE.
 export function championScalarOf(st, benchmarkId) {
   if (!st || typeof st !== 'object') return null;
   const bid = benchmarkId != null ? String(benchmarkId) : null;
@@ -1106,6 +1108,22 @@ export function championScalarOf(st, benchmarkId) {
   // the projected champion scalar (live), if the runner wrote one for the bench.
   const proj = (bid != null && st.projected && typeof st.projected === 'object') ? st.projected[bid] : null;
   if (proj && typeof proj === 'object' && svg.isNum(proj.scalar)) return proj.scalar;
+  // LIVE FALLBACK: the strategy-seeded champion lane on an in-flight rung. When
+  // the per-board `partial_champion_agg` / `projected` map has not been written
+  // yet (the operator's empty-agg case), the champion lane's `projected_scalar`
+  // (seeded from the strategy's own champion scalar) is the REAL benchmark — read
+  // it off any rung's `live_progress` so the dashed champion line shows the true
+  // loss instead of being silently omitted.
+  if (bid != null) {
+    const rounds = Array.isArray(st.rounds) ? st.rounds : [];
+    for (const r of rounds) {
+      for (const m of (Array.isArray(r.matches) ? r.matches : [])) {
+        const lp = (m && m.live_progress && typeof m.live_progress === 'object') ? m.live_progress : null;
+        const lane = lp ? lp[bid] : null;
+        if (lane && typeof lane === 'object' && svg.isNum(lane.projected_scalar)) return lane.projected_scalar;
+      }
+    }
+  }
   return null;
 }
 
@@ -1226,6 +1244,29 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
     return out;
   })();
 
+  // ── the strategy-seeded CHAMPION BENCHMARK off the raw published rungs ──
+  // The champion is the gate defender, so the per-rung field-overlay below DROPS
+  // its lane from the rebuilt `live_progress` (a champion is never a rung lane).
+  // But its strategy-seeded `projected_scalar` (the real champion loss the field
+  // races against) lives on the raw published `live_progress[champion]` — capture
+  // it HERE, before the overlay discards it, so the benchmark line survives even
+  // when the runner has not written `partial_champion_agg` yet (the operator's
+  // empty-agg case). Used only as a FALLBACK seed for partial_champion_agg below.
+  const seededChampScalar = (() => {
+    if (!isRacing || !racingChampions.size) return null;
+    for (const r of rawRounds) {
+      for (const m of (Array.isArray(r.matches) ? r.matches : [])) {
+        const lp = (m && m.live_progress && typeof m.live_progress === 'object') ? m.live_progress : null;
+        if (!lp) continue;
+        for (const cid of racingChampions) {
+          const lane = lp[String(cid)];
+          if (lane && typeof lane === 'object' && svg.isNum(lane.projected_scalar)) return lane.projected_scalar;
+        }
+      }
+    }
+    return null;
+  })();
+
   // per-board total (k/N progress label): the contract pins board_size; for
   // racing each rung covers a board fraction (board_fraction on the match).
   const boardSize = svg.isNum(params.board_size) ? params.board_size
@@ -1280,7 +1321,15 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
   const overlay = (m, queued, entering, opts) => {
     if (settled(m)) return m;
     const total = totalFor(m);
-    if (isRacing) {
+    // the champion-GATE (`racing-final`) is a 1v1 full-board duel, NOT a rung —
+    // it carries both sides (champion + lone survivor). Route it through the
+    // pairwise path (below) so both seats show their board progress + projected
+    // scalar, reading the gate's OWN published `live_progress` (the per-board
+    // `at.projected` map may carry only the survivor). Falling through the racing-
+    // rung path would strip the champion seat (a rung excludes the champion) and,
+    // for a non-carrier match, drop live_progress entirely.
+    const isGateMatch = isRacing && isFinal(m.match_id);
+    if (isRacing && !isGateMatch) {
       const o = opts || {};
       const slot0 = !!o.slot0;
       // a racing rung's field is its NON-champion lanes. The rung is published as
@@ -1337,15 +1386,24 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
       }
       return Object.assign({}, m, { competitors: field, winner: null, pending: true, queued, live_progress: queued ? null : progress });
     }
-    // swiss / elim: a per-match done/inflight tally over the pairing's gens, plus
-    // a per-competitor PROJECTED standing so an in-flight pairing shows each side's
-    // climbing projected scalar (dashed/~prefix) before the duel commits.
+    // swiss / elim / racing-gate: a per-match done/inflight tally over the
+    // pairing's gens, plus a per-competitor PROJECTED standing so an in-flight
+    // pairing shows each side's climbing projected scalar (dashed/~prefix) before
+    // the duel commits. The racing-gate reads its OWN published `live_progress`
+    // (the per-board `at.projected` map may carry only the survivor, never the
+    // champion seat), falling back to `at.projected` for swiss/elim.
     const comps = (Array.isArray(m.competitors) ? m.competitors : []).map(String);
+    const gateLanes = (isGateMatch && m.live_progress && typeof m.live_progress === 'object') ? m.live_progress : null;
     let done = 0; let inf = 0;
     const projected = {};
     for (const g of comps) {
       const u = inflight.get(g); if (u) { inf += u.count; done += Math.floor(u.sumProgress); }
-      const lp = queued ? null : projFor(g);
+      if (queued) continue;
+      // prefer the gate's own published lane, else the per-board projected map.
+      const laneG = gateLanes ? gateLanes[g] : null;
+      const lp = (laneG && typeof laneG === 'object' && svg.isNum(laneG.projected_scalar))
+        ? { scalar: laneG.projected_scalar, boards_done: laneG.boards_done, boards_total: laneG.boards_total }
+        : projFor(g);
       if (lp != null) projected[g] = { scalar: lp.scalar, boards_done: lp.boards_done, boards_total: lp.boards_total != null ? lp.boards_total : total };
     }
     return Object.assign({}, m, { winner: null, pending: true,
@@ -1374,18 +1432,24 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
   const rounds = rawRounds.map((r, i) => {
     if (roundSettled(r)) return r;
     const m0 = firstMatch(r);
-    // the gate is never "active" until its rung field settles; keep it pending.
-    const isGate = isRacing && isFinal(m0.match_id);
-    const ri = svg.isNum(r.round_index) ? r.round_index : i;
-    const isActive = isGate ? false : (activeIdx != null ? ri === activeIdx
-      : rawRounds.slice(0, i).every(roundSettled));
-    // a racing rung the backend is ALREADY streaming boards on (a non-empty
+    // a racing round the backend is ALREADY streaming boards on (a non-empty
     // published live_progress) is inherently in-flight: never let a phase-derived
     // activeIdx mismatch (e.g. a "rungN" phase that disagrees with round_index)
-    // suppress its authoritative live projection.
-    const streaming = isRacing && !isGate
+    // suppress its authoritative live projection. This holds for the gate too —
+    // once every rung has settled, the champion-gate IS the running round.
+    const isGate = isRacing && isFinal(m0.match_id);
+    const ri = svg.isNum(r.round_index) ? r.round_index : i;
+    const streaming = isRacing
       && m0.live_progress && typeof m0.live_progress === 'object'
       && Object.keys(m0.live_progress).length > 0;
+    // The gate becomes ACTIVE only once every preceding rung has settled (it must
+    // not light up while a rung is still running), OR when the backend is already
+    // streaming the gate's full-board duel / the phase points at `racing-final`.
+    const gatePhase = isGate && /racing-final/.test(phase);
+    const gateActive = isGate && (streaming || gatePhase || rawRounds.slice(0, i).every(roundSettled));
+    const isActive = isGate
+      ? gateActive
+      : (activeIdx != null ? ri === activeIdx : rawRounds.slice(0, i).every(roundSettled));
     const queued = !isActive && !streaming;
     const entering = isRacing && !isGate && i === firstRungIdx;
     // ── RACING RUNG: compute the rung's AUTHORITATIVE full field + union
@@ -1472,7 +1536,14 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
     champion_lineage: Array.isArray(at.champion_lineage) ? at.champion_lineage : [],
     // carry the live champion aggregate + projection map so championScalarOf can
     // anchor the scalar track / field bars mid-race (additive — see normalize).
-    partial_champion_agg: (at.partial_champion_agg && typeof at.partial_champion_agg === 'object') ? at.partial_champion_agg : null,
+    // When the runner has not written the aggregate yet, FALL BACK to the
+    // strategy-seeded champion lane scalar (captured before the rung overlay
+    // dropped the champion's lane), so the benchmark line shows the REAL champion
+    // loss rather than being omitted — never a fabricated default.
+    partial_champion_agg: (at.partial_champion_agg && typeof at.partial_champion_agg === 'object'
+      && svg.isNum(at.partial_champion_agg.scalar))
+      ? at.partial_champion_agg
+      : (seededChampScalar != null ? { scalar: seededChampScalar } : null),
     projected: projectedMap && Object.keys(projectedMap).length ? projectedMap : null,
     phase: at.phase != null ? at.phase : (heartbeat && heartbeat.phase) || 'running',
     source: 'live',

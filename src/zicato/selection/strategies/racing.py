@@ -64,6 +64,14 @@ class RacingStrategy(SelectionStrategy):
         self._pending: dict[str, tuple[Contestant, Contestant]] = {}
         self._rung_scalars: dict[str, float] = {}
         self._scalars: dict[str, float] = {}
+        # The champion defends EVERY duel as the shared ``left`` side, so it is
+        # never recorded into ``_scalars`` (keyed on the challenger ``right``).
+        # We keep its last-known running scalar separately so the in-flight
+        # rung's champion lane carries a real ``projected_scalar`` benchmark
+        # (the dashed line the field races against) instead of a blank lane that
+        # forces the scalar-track to a delta-only domain. None until the first
+        # duel of the first rung lands.
+        self._champion_scalar: float | None = None
         self._eliminated_round: dict[str, int] = {}
         self._records: list[RoundRecord] = []
         self._audit: list[MatchupResult] = []
@@ -183,6 +191,16 @@ class RacingStrategy(SelectionStrategy):
         self._audit.append(result)
         # The challenger is the ``right`` side in a racing duel.
         self._scalars[result.right_id] = result.right_scalar()
+        # The champion is the shared ``left`` defender of every duel. Keep its
+        # last-known running scalar so ``_live_progress`` can seed the champion
+        # lane's projected benchmark. The N concurrent duels of a rung each
+        # aggregate the champion over only THEIR board slice, so take the
+        # most-favourable (lowest loss) seen — never let a less-progressed duel
+        # regress the benchmark (mirrors the keystone fold's champion guard).
+        if self._champion is not None and result.left_id == self._champion.generation_id:
+            champ_scalar = result.left_scalar()
+            if self._champion_scalar is None or champ_scalar < self._champion_scalar:
+                self._champion_scalar = champ_scalar
 
         if result.matchup_id == self._final_match_id and self._final_scheduled:
             self._final_result = result
@@ -351,16 +369,21 @@ class RacingStrategy(SelectionStrategy):
         """
         total = self._rung_board_size()
         progress: dict[str, dict[str, Any]] = {}
+        champion_id = self._champion.generation_id if self._champion is not None else None
         lanes: list[str] = []
-        if self._champion is not None:
-            lanes.append(self._champion.generation_id)
+        if champion_id is not None:
+            lanes.append(champion_id)
         for _mid, (_left, right) in self._pending.items():
             lanes.append(right.generation_id)
         for gid in lanes:
             row: dict[str, Any] = {"inflight": 1}
             if total > 0:
                 row["boards_total"] = int(total)
-            scalar = self._scalars.get(gid)
+            # The champion is the shared ``left`` defender, so it is not in
+            # ``_scalars`` (challenger-keyed) — seed it from the dedicated
+            # ``_champion_scalar`` benchmark so its lane shows the real
+            # last-known champion loss, not a blank lane.
+            scalar = self._champion_scalar if gid == champion_id else self._scalars.get(gid)
             if scalar is not None:
                 # The lane's last-known running aggregate vs the champion.
                 row["projected_scalar"] = float(scalar)
