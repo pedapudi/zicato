@@ -106,6 +106,7 @@ def _render_task_text(spec: ProposerSpec, ctx: ProposerContext, feedback: str) -
         feedback=feedback,
         prior_experiments=ctx.prior_experiments,
         restrict_visibility=ctx.restrict_visibility,
+        custom_judge_names=ctx.custom_judge_names or frozenset(),
     )
     return f"{system_text}\n\n{user_text}"
 

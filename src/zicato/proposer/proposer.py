@@ -279,6 +279,7 @@ async def propose_experiment(
             insights=insights_block,
             prior_experiments=prior_experiments_list,
             restrict_visibility=restrict_visibility,
+            custom_judge_names=custom_judge_names or frozenset(),
         )
         # Meta-loop bookends: one paired ``proposer_call_started`` /
         # ``proposer_call_completed`` per attempt. ``invocation_id`` is

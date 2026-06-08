@@ -70,10 +70,12 @@ def test_skill_without_description_renders_name_only() -> None:
 # verbatim, byte-for-byte as before this lever existed.
 # ---------------------------------------------------------------------------
 
-from zicato.core.types import Pattern, PriorExperiment  # noqa: E402
+from zicato.core.types import MutationPoint, Pattern, PriorExperiment  # noqa: E402
 from zicato.proposer.prompts import (  # noqa: E402
+    render_metric_targets_block,
     render_pattern_block,
     render_prior_experiments_block,
+    render_user_prompt,
 )
 
 
@@ -167,3 +169,69 @@ def test_prior_experiments_restricted_buckets_delta() -> None:
     # The exact number never reaches the prompt.
     assert "-0.137" not in improved
     assert "0.250" not in regressed
+
+
+# ---------------------------------------------------------------------------
+# Valid expectation targets block — the prompt must enumerate, for THIS
+# board, the declared judges and the valid built-in drift kinds, and show
+# the EXACT metric-movement shape so the proposer can write a movement that
+# validates instead of mangling a declared judge into ``drift:custom:<name>``.
+# These tests pin that the prompt and the validator's accepted forms agree.
+# ---------------------------------------------------------------------------
+
+
+def test_metric_targets_block_enumerates_declared_judges_and_correct_shape() -> None:
+    from zicato.core.drift_kinds import GOLDFIVE_DRIFT_KINDS
+
+    block = render_metric_targets_block(["file_findability"])
+    # The declared judge is named for THIS board.
+    assert "file_findability" in block
+    # The CORRECT metric-movement shape uses the bare judge name as
+    # metric_name — exactly what the validator accepts.
+    assert '"metric_name": "file_findability"' in block
+    # And the prompt explicitly flags the mangles the model naturally
+    # produces as WRONG, so it does not reach for them.
+    assert "drift:custom:file_findability" in block
+    assert "custom:file_findability" in block
+    assert "WRONG" in block
+    # The built-in drift kinds are enumerated and shown in their own
+    # (``drift:<kind>``) form, distinct from the bare-judge form.
+    assert "drift:<kind>" in block
+    for kind in GOLDFIVE_DRIFT_KINDS:
+        assert kind in block
+
+
+def test_metric_targets_block_no_judges_renders_explicit_notice() -> None:
+    block = render_metric_targets_block(())
+    assert "no custom judges" in block
+    # The drift-kind enumeration is always present, judges or not.
+    assert "drift:<kind>" in block
+
+
+def test_user_prompt_includes_valid_expectation_targets_for_declared_judges() -> None:
+    from pathlib import Path
+
+    mutation = MutationPoint(
+        id="router__system_prompt",
+        kind="span",
+        file=Path("/abs/router.py"),
+        source_root=Path("/abs"),
+        line_start=1,
+        line_end=3,
+        content="route the message",
+        content_hash="h",
+        metadata={},
+    )
+    rendered = render_user_prompt(
+        current_loss_summary="loss is high",
+        patterns=[],
+        mutations=[mutation],
+        custom_judge_names=["file_findability"],
+    )
+    # The dedicated section header is present in the assembled user prompt.
+    assert "## Valid expectation targets" in rendered
+    # The declared judge, the correct shape, and the drift-kind enumeration
+    # all reach the model in the rendered prompt.
+    assert '"metric_name": "file_findability"' in rendered
+    assert "drift:<kind>" in rendered
+    assert "off_topic" in rendered
