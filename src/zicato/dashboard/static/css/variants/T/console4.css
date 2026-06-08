@@ -773,6 +773,9 @@
   .dn-spark-dot { fill: var(--v2-ink); }
   .dn-spark-dot.dn-good { fill: var(--v2-good); }
   .dn-spark-dot.dn-bad { fill: var(--v2-bad); }
+  /* per-point markers (opt-in; few-points series) — the line ink, slightly
+   * recessed so the coloured end-dot still leads. */
+  .dn-spark-mark { fill: var(--v2-ink); opacity: 0.55; }
 
   .dn-empty-label { fill: var(--v2-ink-faint); font: italic 12px var(--v2-sans); }
   .dn-dot-label { fill: var(--v2-ink-soft); font: 11px var(--v2-mono); }
@@ -2664,10 +2667,15 @@
   .dn-bld-btn-confirm { background: var(--v2-bad); border-color: var(--v2-bad); color: var(--v2-paper); }
   .dn-bld-applyout { margin-top: 6px; }
 
-  /* the info popover (ⓘ). */
+  /* the info popover. ONE clean ring + a plain lowercase `i` (no pre-circled
+   * glyph — that read as a circle inside the CSS circle). The ring is a faint
+   * theme-token border; the mark is monospace-consistent and centred. */
   .dn-bld-popwrap { position: relative; display: inline-flex; }
-  .dn-bld-info { width: 16px; height: 16px; line-height: 1; padding: 0; border-radius: 50%;
-    border: 1px solid var(--v2-rule); background: transparent; color: var(--v2-ink-faint); font-size: 11px; cursor: help; }
+  .dn-bld-info { display: inline-flex; align-items: center; justify-content: center;
+    width: 15px; height: 15px; line-height: 1; padding: 0; border-radius: 50%;
+    border: 1px solid var(--v2-rule); background: transparent; color: var(--v2-ink-faint);
+    font-family: var(--v2-mono); font-size: 9.5px; font-weight: 700; font-style: italic;
+    cursor: help; user-select: none; transition: color 0.12s, border-color 0.12s; }
   .dn-bld-info:hover, .dn-bld-info:focus { color: var(--v2-accent); border-color: var(--v2-accent); outline: none; }
   .dn-bld-pop { position: absolute; left: 0; top: calc(100% + 6px); z-index: 30; width: max-content; max-width: 280px;
     background: var(--v2-paper); border: 1px solid var(--v2-accent); border-radius: 5px; padding: 9px 11px;

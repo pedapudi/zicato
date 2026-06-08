@@ -117,6 +117,18 @@ function laneProgressText(lane) {
 
 // ---- sparkline ------------------------------------------------------
 
+// A dependency-free sparkline. Opt-in robustness flags (default OFF so existing
+// dense call sites are untouched):
+//   o.padY    — pad the [min,max] y-domain by this FRACTION of its span (e.g.
+//               0.18) so the stroke breathes inside the frame.
+//   o.minSpan — enforce a MINIMUM absolute y-range: a near-flat series (every
+//               value ~equal) gets a CENTRED domain of at least this width, so
+//               it reads as gentle vertical variation rather than a pin-flat
+//               line — while a TRULY flat series stays calmly centred (its tiny
+//               real deltas show as tiny wiggles, never a fabricated slope).
+//   o.markers — draw a dot per finite point (atop the line). Useful for
+//               FEW-points series, where a single segment reads as a skewed
+//               slash; a single point renders as a centred dot, not a line.
 export function sparkline(opts) {
   const o = opts || {};
   const w = o.width || 120;
@@ -133,7 +145,24 @@ export function sparkline(opts) {
     svg.appendChild(svgEl('line', { x1: pad, y1: h / 2, x2: w - pad, y2: h / 2, class: 'dn-spark-empty' }));
     return svg;
   }
-  const [lo, hi] = extent(fin);
+  // y-domain with OPT-IN min-span + fractional padding. extent() already opens a
+  // ±0.5 window when lo===hi; minSpan/padY refine it so a near-flat series sits
+  // calmly CENTRED (mid ± span/2) instead of collapsed onto one frame edge.
+  let [lo, hi] = extent(fin);
+  if (isNum(o.minSpan) && o.minSpan > 0 && hi - lo < o.minSpan) {
+    const mid = (lo + hi) / 2;
+    lo = mid - o.minSpan / 2;
+    hi = mid + o.minSpan / 2;
+  }
+  if (isNum(o.padY) && o.padY > 0) {
+    const padAmt = (hi - lo) * o.padY;
+    lo -= padAmt;
+    hi += padAmt;
+  }
+  // a single finite point has no x-spread: render it as a centred dot, never a
+  // line to nowhere (handled below by skipping the path; the endDot/marker
+  // draws the dot at the vertical mid of the centred y-domain).
+  const singlePoint = fin.length === 1;
   const x = scale([0, Math.max(1, raw.length - 1)], [pad, w - pad]);
   const y = scale([lo, hi], [h - pad, pad]);
   if (o.band) {
@@ -143,17 +172,28 @@ export function sparkline(opts) {
     const by = y(o.baseline);
     svg.appendChild(svgEl('line', { x1: pad, x2: w - pad, y1: by, y2: by, class: 'dn-spark-baseline' }));
   }
-  let d = '';
-  let penDown = false;
-  raw.forEach((v, i) => {
-    if (!isNum(v)) { penDown = false; return; }
-    d += `${penDown ? 'L' : 'M'}${x(i).toFixed(2)},${y(v).toFixed(2)} `;
-    penDown = true;
-  });
-  svg.appendChild(svgEl('path', { d: d.trim(), class: 'dn-spark-line', fill: 'none' }));
+  if (!singlePoint) {
+    let d = '';
+    let penDown = false;
+    raw.forEach((v, i) => {
+      if (!isNum(v)) { penDown = false; return; }
+      d += `${penDown ? 'L' : 'M'}${x(i).toFixed(2)},${y(v).toFixed(2)} `;
+      penDown = true;
+    });
+    svg.appendChild(svgEl('path', { d: d.trim(), class: 'dn-spark-line', fill: 'none' }));
+  }
+  // the last finite index — the end-dot (good/bad coloured) is drawn here, so
+  // the opt-in per-point markers skip it to avoid a doubled dot.
+  let endI = -1;
+  for (let i = raw.length - 1; i >= 0; i--) { if (isNum(raw[i])) { endI = i; break; } }
+  if (o.markers) {
+    raw.forEach((v, i) => {
+      if (!isNum(v) || i === endI) return;
+      svg.appendChild(hov(svgEl('circle', { cx: x(i), cy: y(v), r: 1.8, class: 'dn-spark-mark' }), fmt(v)));
+    });
+  }
   if (o.endDot !== false) {
-    let lastI = -1;
-    for (let i = raw.length - 1; i >= 0; i--) { if (isNum(raw[i])) { lastI = i; break; } }
+    const lastI = endI;
     if (lastI >= 0) {
       const dir = o.goodDirection || 'down';
       let firstI = -1;
@@ -163,7 +203,9 @@ export function sparkline(opts) {
         : null;
       const cls = improved === null ? 'dn-spark-dot'
         : improved ? 'dn-spark-dot dn-good' : 'dn-spark-dot dn-bad';
-      svg.appendChild(hov(svgEl('circle', { cx: x(lastI), cy: y(raw[lastI]), r: 2.2, class: cls }), fmt(raw[lastI])));
+      // a lone centred point reads a hair larger so it's an intentional dot.
+      const r = singlePoint ? 2.8 : 2.2;
+      svg.appendChild(hov(svgEl('circle', { cx: x(lastI), cy: y(raw[lastI]), r, class: cls }), fmt(raw[lastI])));
     }
   }
   return svg;
