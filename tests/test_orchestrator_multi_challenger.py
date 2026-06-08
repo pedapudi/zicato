@@ -690,6 +690,88 @@ def test_field_status_absent_is_empty_and_back_compatible() -> None:
     assert t.to_dict()["field_status"] == []
 
 
+def test_applied_inflight_challenger_lineage_reports_pending_then_settles(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An applied-but-unresolved challenger is PENDING on /api/lineage at
+    creation, and carries the resolved bool after the round settles.
+
+    Regression for the broken live-racing render: the creation-time
+    ``append_to_lineage`` wrote ``promoted=False`` (a dead branch), so an
+    in-flight challenger rendered as "rejected" while it was still racing.
+    The fix lands it ``promoted=null`` (pending) at creation; the
+    settle-time append flips it to the crowned/rejected bool. We assert the
+    PENDING state by tapping the orchestrator just after the field is
+    applied (before resolution), then the SETTLED state from the final
+    record. The dashboard's ``build_lineage_view`` is the /api/lineage
+    source, so we assert through it.
+    """
+    from zicato.dashboard.state_reader import WorkspacePaths, build_lineage_view
+
+    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2, rounds_n=1)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 0.5, "v2": 1.5},
+        canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
+    )
+
+    import zicato.selection as sel
+
+    # Tap the strategy driver (imported locally in the orchestrator from
+    # ``zicato.selection``): by the time it requests the field the
+    # challengers have been applied to lineage (creation-time append) but
+    # NOT resolved — exactly the in-flight window the dashboard renders.
+    pending_snapshot: dict[str, object] = {}
+    real_resolve = sel.resolve_tournament
+
+    async def _tap_resolve(strategy, **kwargs):  # type: ignore[no-untyped-def]
+        request_field = kwargs["request_field"]
+
+        async def _wrapped_request(n: int):  # type: ignore[no-untyped-def]
+            field = await request_field(n)
+            # The field is now applied + appended to lineage; capture the
+            # in-flight lineage view before any matchup resolves.
+            view = build_lineage_view(WorkspacePaths(workspace))
+            pending_snapshot.update(
+                {node["generation_id"]: node["promoted"] for node in view["generations"]}
+            )
+            return field
+
+        kwargs["request_field"] = _wrapped_request
+        return await real_resolve(strategy, **kwargs)
+
+    monkeypatch.setattr(sel, "resolve_tournament", _tap_resolve)
+
+    from zicato.orchestrator import evolve_once
+
+    outcome = asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder(
+                [_valid_proposer_response(), _valid_proposer_response()]
+            ),
+        )
+    )
+
+    # Mid-flight: BOTH applied challengers reported promoted=None (pending),
+    # NOT False (which the frontend renders as a rejected dead branch).
+    assert pending_snapshot.get("v1") is None, "in-flight v1 must be pending, not rejected"
+    assert pending_snapshot.get("v2") is None, "in-flight v2 must be pending, not rejected"
+
+    # Settled: the resolved bool lands — crowned True, dead branch False.
+    crowned = outcome.proposed_generation_id
+    dead = "v2" if crowned == "v1" else "v1"
+    settled = {
+        n["generation_id"]: n["promoted"]
+        for n in build_lineage_view(WorkspacePaths(workspace))["generations"]
+    }
+    assert settled[crowned] is True, "the crowned challenger settles promoted=True"
+    assert settled[dead] is False, "the cut challenger settles promoted=False (dead branch)"
+
+
 def test_field_entries_seeds_one_row_per_competitor() -> None:
     """`_field_entries` builds the funnel field for the non-gauntlet path.
 

@@ -133,6 +133,94 @@ def test_append_to_lineage_updates_existing_generation(
     assert recorded["promoted"] is True
 
 
+def test_append_to_lineage_pending_writes_null_promoted_then_settles(
+    workspace: Path, board_file: Path, rubric_file: Path
+) -> None:
+    """An applied-but-unresolved in-flight challenger lands PENDING (null),
+    not a dead branch (False); the settle-time append flips it to the
+    resolved bool.
+
+    Regression for the broken live-racing render: the creation-time append
+    used the ``Generation.promoted`` default of ``False`` — which reads as
+    REJECTED — so an in-flight racer rendered as a dead branch while it was
+    still racing. The pending path writes ``null`` (→ "racing" on the
+    dashboard); the idempotent settle upsert composes onto the same node.
+    """
+    cfg = new_epoch(workspace, "alpha", board_file, rubric_file, ScoringWeights())
+    g = Generation(
+        id="v1",
+        epoch_id=cfg.id,
+        parent_id="v0",
+        snapshot_root=workspace / "snap",
+        created_at="2026-04-08T11:00:00+00:00",
+        round_index=1,
+    )
+    # CREATION-time append: in-flight challenger, promoted defaults False on
+    # the Generation, but pending=True must persist null instead.
+    append_to_lineage(workspace, cfg.id, g, "v0", pending=True)
+    data = load_lineage(workspace)
+    [entry] = [e for e in data["epochs"] if e["id"] == cfg.id]
+    [recorded] = entry["generations"]
+    assert recorded["promoted"] is None, "an in-flight challenger is PENDING, not rejected"
+    assert recorded["round_index"] == 1, "the birth round is recorded at creation"
+
+    # SETTLE-time append: the crowned bool lands, upserting in place.
+    from dataclasses import replace
+
+    append_to_lineage(workspace, cfg.id, replace(g, promoted=True), "v0")
+    data = load_lineage(workspace)
+    [entry] = [e for e in data["epochs"] if e["id"] == cfg.id]
+    [recorded] = entry["generations"]
+    assert recorded["promoted"] is True, "the settle-time append records the real outcome"
+    assert recorded["round_index"] == 1, "the birth round survives the settle upsert"
+
+
+def test_append_to_lineage_pending_then_rejected_settles_false(
+    workspace: Path, board_file: Path, rubric_file: Path
+) -> None:
+    """A pending challenger that loses its tournament settles to False
+    (a real dead branch) — distinct from the pending null."""
+    cfg = new_epoch(workspace, "alpha", board_file, rubric_file, ScoringWeights())
+    g = Generation(
+        id="v2",
+        epoch_id=cfg.id,
+        parent_id="v0",
+        snapshot_root=workspace / "snap",
+        created_at="2026-04-08T11:00:00+00:00",
+    )
+    append_to_lineage(workspace, cfg.id, g, "v0", pending=True)
+    [recorded] = load_lineage(workspace)["epochs"][0]["generations"]
+    assert recorded["promoted"] is None
+    # Cut by the tournament → settle records promoted=False (the default).
+    append_to_lineage(workspace, cfg.id, g, "v0")
+    [recorded] = load_lineage(workspace)["epochs"][0]["generations"]
+    assert recorded["promoted"] is False
+
+
+def test_render_lineage_summary_excludes_pending_from_rejected(
+    workspace: Path, board_file: Path, rubric_file: Path
+) -> None:
+    """A pending (null) generation counts toward NEITHER the promoted nor
+    the rejected column of the markdown summary until it settles."""
+    cfg = new_epoch(workspace, "alpha", board_file, rubric_file, ScoringWeights())
+    g = Generation(
+        id="v1",
+        epoch_id=cfg.id,
+        parent_id="v0",
+        snapshot_root=workspace / "snap",
+        created_at="2026-04-08T11:00:00+00:00",
+    )
+    append_to_lineage(workspace, cfg.id, g, "v0", pending=True)
+    summary = render_lineage_summary(workspace)
+    # The single epoch row reads `| ... | 0 | 0 | (root) |` — 0 promoted,
+    # 0 rejected (the pending challenger is in neither column).
+    epoch_row = next(line for line in summary.splitlines() if cfg.id in line)
+    cells = [c.strip() for c in epoch_row.split("|")]
+    # cells: ['', epoch, started, closed, promoted, rejected, parent, '']
+    assert cells[4] == "0", "no promoted yet"
+    assert cells[5] == "0", "a pending challenger is NOT counted as rejected"
+
+
 def test_append_to_lineage_auto_creates_epoch_entry(workspace: Path) -> None:
     g = Generation(
         id="v0",

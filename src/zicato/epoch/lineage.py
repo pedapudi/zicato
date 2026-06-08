@@ -132,6 +132,8 @@ def append_to_lineage(
     epoch_id: str,
     generation: Generation,
     parent_id: str | None,
+    *,
+    pending: bool = False,
 ) -> None:
     """Record a generation under its epoch.
 
@@ -140,6 +142,17 @@ def append_to_lineage(
     re-deriving from ``Generation.parent_id`` so the runner can record
     cross-epoch parents (e.g. a fresh epoch's ``v0`` whose parent is
     ``initial:v7``) if it ever needs to.
+
+    ``pending`` records an APPLIED-BUT-UNRESOLVED generation: an in-flight
+    challenger that has landed a snapshot (so it exists in the lineage DAG
+    with its parent + birth round) but has NOT yet been crowned or cut by a
+    tournament. Its ``promoted`` is persisted as ``null`` rather than the
+    ``Generation.promoted`` default of ``False`` — ``False`` reads as a
+    REJECTED dead branch, so an in-flight racer would otherwise render as
+    rejected while it is still racing. The settle-time append (with
+    ``pending=False``, the default) upserts the same node to its resolved
+    ``True`` / ``False`` state; the two writes compose because the upsert
+    is an idempotent update-in-place.
     """
     raw = _load_raw(workspace_root)
     entry = _find_epoch(raw, epoch_id)
@@ -155,11 +168,14 @@ def append_to_lineage(
             "generations": [],
         }
         raw["epochs"].append(entry)
+    # ``None`` (pending) for an applied-but-unresolved in-flight challenger;
+    # the resolved ``True`` / ``False`` for the settle-time upsert.
+    promoted: bool | None = None if pending else generation.promoted
     # Update-in-place if the generation already exists.
     for g in entry["generations"]:
         if g.get("id") == generation.id:
             g["parent_id"] = parent_id
-            g["promoted"] = generation.promoted
+            g["promoted"] = promoted
             g["created_at"] = generation.created_at
             # ``round_index`` is the BIRTH round of the generation; once
             # set it never changes, so re-recording the same generation
@@ -172,7 +188,7 @@ def append_to_lineage(
         {
             "id": generation.id,
             "parent_id": parent_id,
-            "promoted": generation.promoted,
+            "promoted": promoted,
             "created_at": generation.created_at,
             "round_index": generation.round_index,
         }
@@ -209,8 +225,11 @@ def render_lineage_summary(workspace_root: Path) -> str:
     rows.append("| --- | --- | --- | --- | --- | --- |")
     for entry in epochs:
         gens = entry.get("generations", [])
-        promoted = sum(1 for g in gens if g.get("promoted"))
-        rejected = sum(1 for g in gens if not g.get("promoted") and g.get("id") != "v0")
+        promoted = sum(1 for g in gens if g.get("promoted") is True)
+        # A pending (in-flight) generation has ``promoted=None`` — it is
+        # neither promoted nor rejected yet, so it counts toward neither
+        # column until its tournament settles.
+        rejected = sum(1 for g in gens if g.get("promoted") is False and g.get("id") != "v0")
         parent = entry.get("v0_parent") or "(root)"
         closed = entry.get("closed_at") or "(open)"
         rows.append(

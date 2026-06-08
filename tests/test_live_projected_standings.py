@@ -112,6 +112,175 @@ def test_update_tournament_projected_merges_and_preserves(tmp_path: Path) -> Non
     assert back.standings == [{"generation_id": "A", "rank": 1, "scalar": 0.0}]
 
 
+def _racing_rung_state(tmp_path: Path) -> None:
+    """An active racing tournament whose in-flight rung-0 carries per-lane
+    live_progress on its first match (the racing model's convention)."""
+    write_active_tournament(
+        tmp_path,
+        ActiveTournament(
+            tournament_id="t",
+            parent_generation_id="",
+            child_generation_id="",
+            epoch_id="e",
+            started_at="x",
+            structure="racing",
+            competitors=[
+                {"generation_id": "v0", "seed": 1, "role": "champion"},
+                {"generation_id": "v1", "seed": 2, "role": "challenger"},
+                {"generation_id": "v2", "seed": 3, "role": "challenger"},
+            ],
+            rounds=[
+                {
+                    "stage_index": 0,
+                    "label": "Rung 0",
+                    "matches": [
+                        {
+                            "match_id": "rung0_m0",
+                            "competitors": ["v0", "v1"],
+                            "winner": None,
+                            "pending": True,
+                            "live_progress": {
+                                # The champion lane seeds a strategy benchmark.
+                                "v0": {
+                                    "inflight": 1,
+                                    "boards_total": 2,
+                                    "projected_scalar": 1.0,
+                                    "projected": True,
+                                },
+                                "v1": {"inflight": 1, "boards_total": 2},
+                                "v2": {"inflight": 1, "boards_total": 2},
+                            },
+                        },
+                        {
+                            "match_id": "rung0_m1",
+                            "competitors": ["v0", "v2"],
+                            "winner": None,
+                            "pending": True,
+                            "live_progress": {},
+                        },
+                    ],
+                }
+            ],
+        ),
+    )
+
+
+def test_projected_write_folds_into_live_rung_progress(tmp_path: Path) -> None:
+    """FIX B-fold: as boards land mid-rung, ``update_tournament_projected``
+    refreshes the rung's per-lane ``live_progress`` IN PLACE — boards_done +
+    projected_scalar accrue, so the rung is no longer frozen at rung-start.
+    """
+    _racing_rung_state(tmp_path)
+    # A board lands for the v1 duel (champion + challenger).
+    update_tournament_projected(
+        tmp_path,
+        {
+            "v0": {"scalar": 1.1, "boards_done": 1, "boards_total": 2, "pass_rate": 1.0},
+            "v1": {"scalar": 0.3, "boards_done": 1, "boards_total": 2, "pass_rate": 1.0},
+        },
+    )
+    back = read_active_tournament(tmp_path)
+    assert back is not None
+    lanes = back.rounds[0]["matches"][0]["live_progress"]
+    # The challenger lane gained its live boards_done + streaming scalar.
+    assert lanes["v1"]["boards_done"] == 1
+    assert lanes["v1"]["projected_scalar"] == 0.3
+    assert lanes["v1"]["projected"] is True
+    # The champion lane gained boards_done but KEPT its strategy benchmark
+    # (B-champion: not overwritten by the per-duel scalar 1.1).
+    assert lanes["v0"]["boards_done"] == 1
+    assert lanes["v0"]["projected_scalar"] == 1.0, "champion keeps the strategy benchmark"
+    # boards_total stays the strategy's rung-slice size.
+    assert lanes["v0"]["boards_total"] == 2
+    # The projected map is also merged (the standings overlay's source).
+    assert back.projected["v1"]["scalar"] == 0.3
+
+
+def test_projected_write_champion_boards_done_never_regresses(tmp_path: Path) -> None:
+    """FIX B-champion: concurrent duels each write ``projected[champion]``;
+    the champion lane's boards_done takes the MOST-progressed duel and never
+    regresses to a less-progressed last writer (no thrash)."""
+    _racing_rung_state(tmp_path)
+    # Duel A reports the champion 2 boards in.
+    update_tournament_projected(
+        tmp_path, {"v0": {"scalar": 1.0, "boards_done": 2, "boards_total": 2}}
+    )
+    # Duel B (less progressed) reports the champion only 1 board in — a naive
+    # last-writer-wins would regress the lane to 1.
+    update_tournament_projected(
+        tmp_path, {"v0": {"scalar": 1.2, "boards_done": 1, "boards_total": 2}}
+    )
+    back = read_active_tournament(tmp_path)
+    assert back is not None
+    lanes = back.rounds[0]["matches"][0]["live_progress"]
+    assert lanes["v0"]["boards_done"] == 2, "champion boards_done grows, never regresses"
+    assert lanes["v0"]["projected_scalar"] == 1.0, "champion keeps its strategy benchmark"
+
+
+def test_projected_write_anti_flash_no_op_on_byte_identical(tmp_path: Path) -> None:
+    """FIX B anti-flash: a board that does not move any rounded lane value
+    leaves the rung's live_progress byte-identical (the dashboard
+    digest-gates on rounded scalar + integer board counts)."""
+    _racing_rung_state(tmp_path)
+    update_tournament_projected(
+        tmp_path, {"v1": {"scalar": 0.30001, "boards_done": 1, "boards_total": 2}}
+    )
+    first = read_active_tournament(tmp_path)
+    assert first is not None
+    rounds_after_first = [dict(r) for r in first.rounds]
+    # A second write whose scalar rounds to the SAME 4-dp value and whose
+    # board count is unchanged must NOT mutate the lane.
+    update_tournament_projected(
+        tmp_path, {"v1": {"scalar": 0.30004, "boards_done": 1, "boards_total": 2}}
+    )
+    second = read_active_tournament(tmp_path)
+    assert second is not None
+    assert second.rounds == rounds_after_first, "a sub-threshold board is a live_progress no-op"
+
+
+def test_projected_write_converges_to_settled_when_rung_drops_live_progress(
+    tmp_path: Path,
+) -> None:
+    """FIX B convergence: once the strategy republishes the SETTLED rung
+    (live_progress dropped), a stale projected write does not re-decorate
+    it — the live-arrived record matches the settled record."""
+    _racing_rung_state(tmp_path)
+    update_tournament_projected(
+        tmp_path, {"v1": {"scalar": 0.3, "boards_done": 1, "boards_total": 2}}
+    )
+    # The orchestrator republishes the settled rung: matches carry NO
+    # live_progress (the racing model serialises a settled match as {}).
+    settled_rounds = [
+        {
+            "stage_index": 0,
+            "label": "Rung 0",
+            "matches": [
+                {
+                    "match_id": "rung0",
+                    "competitors": ["v0", "v1", "v2"],
+                    "survivors": ["v1"],
+                    "cut": ["v2"],
+                    "pending": False,
+                    "live_progress": {},
+                }
+            ],
+        }
+    ]
+    current = read_active_tournament(tmp_path)
+    assert current is not None
+    from dataclasses import replace as _replace
+
+    write_active_tournament(tmp_path, _replace(current, rounds=settled_rounds))
+    # A late stale projected write for the now-settled rung is a no-op on
+    # live_progress (no lane to fold onto) — the figure stays settled.
+    update_tournament_projected(
+        tmp_path, {"v1": {"scalar": 0.25, "boards_done": 2, "boards_total": 2}}
+    )
+    back = read_active_tournament(tmp_path)
+    assert back is not None
+    assert back.rounds[0]["matches"][0]["live_progress"] == {}, "settled rung stays decoration-free"
+
+
 def test_partial_aggregate_and_projected_compose(tmp_path: Path) -> None:
     # both runner writers (partial aggregate + projected) read-modify-write the
     # same file; neither clobbers the other.

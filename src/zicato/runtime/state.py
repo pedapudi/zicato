@@ -727,10 +727,39 @@ def update_tournament_projected(
 
     Reads the current tournament JSON, MERGES the supplied per-generation
     rows onto :attr:`ActiveTournament.projected` (so concurrently-running
-    sides each keep their own row), and atomically writes the result. A
-    competitor settles out of the map naturally once the strategy folds a
-    real settled scalar onto its standing; until then the projected row is
-    the live read. If no tournament file exists, the call is a no-op.
+    sides each keep their own row), AND folds the just-written progress
+    onto the live rung's per-lane ``live_progress`` (data-model §2.4), then
+    atomically writes the result. A competitor settles out of the map
+    naturally once the strategy folds a real settled scalar onto its
+    standing; until then the projected row is the live read. If no
+    tournament file exists, the call is a no-op.
+
+    The ``live_progress`` fold is the keystone of the live-racing render:
+    the selection DRIVER republishes the whole envelope only ONCE per
+    scheduled batch (before the rung's matchups run), so the orchestrator's
+    :func:`_overlay_projected_live_progress` runs at rung START when nothing
+    has landed and never again that rung. Folding here — at the single point
+    each board lands — refreshes the live rung continuously, independent of
+    the driver's once-per-batch cadence, so the dashboard's rung no longer
+    freezes at ``{boards_total, inflight}`` mid-rung. The fold mirrors the
+    overlay's merge exactly so the live-arrived render is byte-identical to
+    a fresh republish + overlay.
+
+    ANTI-FLASH: a lane is mutated ONLY when a rounded value actually changes
+    (the dashboard digest-gates renders on the rounded scalar + integer
+    board counts), so a board that does not move any rounded lane value
+    leaves the record byte-identical and the republish stays a no-op.
+
+    CHAMPION BENCHMARK: a racing rung runs N concurrent
+    champion-vs-challenger duels, each with its own scorer writing
+    ``projected[champion_id]`` — last-writer-wins would thrash the champion
+    lane (each duel aggregates the champion over only ITS boards). So the
+    champion lane keeps the STRATEGY-seeded ``projected_scalar`` (the
+    benchmark the strategy wrote from its own ``_scalars[champion]``) rather
+    than the per-duel scalar, and its ``boards_done`` only ever GROWS to the
+    most-progressed duel — never regresses to a less-progressed last writer.
+    Per-challenger lanes are keyed by challenger id (one writer each) so
+    they take the projected scalar directly.
     """
     if not projected:
         return
@@ -741,7 +770,117 @@ def update_tournament_projected(
     for gid, row in projected.items():
         if isinstance(row, dict):
             merged[str(gid)] = dict(row)
-    write_active_tournament(workspace_root, replace(current, projected=merged))
+    rounds, rounds_changed = _fold_projected_into_live_progress(
+        current.rounds,
+        projected,
+        champion_ids=_champion_ids(current.competitors),
+    )
+    if not rounds_changed:
+        # The merge of ``projected`` may still differ (it always takes the
+        # latest row); but if neither the projected map nor any rounded lane
+        # value moved, the write is a no-op the dashboard would digest-gate
+        # away anyway. We still persist the merged projected map (cheap,
+        # additive) so the standings overlay reads the latest scalar.
+        write_active_tournament(workspace_root, replace(current, projected=merged))
+        return
+    write_active_tournament(workspace_root, replace(current, projected=merged, rounds=rounds))
+
+
+def _champion_ids(competitors: list[dict[str, Any]]) -> set[str]:
+    """Generation ids whose ``role`` marks them the champion (defender)."""
+    return {
+        str(c.get("generation_id", ""))
+        for c in competitors
+        if str(c.get("role", "")) == "champion" and c.get("generation_id")
+    }
+
+
+def _fold_projected_into_live_progress(
+    rounds: list[dict[str, Any]],
+    projected: dict[str, dict[str, Any]],
+    *,
+    champion_ids: set[str],
+) -> tuple[list[dict[str, Any]], bool]:
+    """Fold per-board ``projected`` rows onto the live rung ``live_progress``.
+
+    Returns ``(rounds, changed)`` — ``rounds`` is a deep-ish copy with the
+    fold applied in place, ``changed`` is ``True`` iff any lane's rounded
+    value actually moved (the anti-flash gate). Mirrors the orchestrator's
+    :func:`zicato.orchestrator._overlay_projected_live_progress` merge so
+    the live-arrived render converges to a fresh republish + overlay:
+
+    * ``boards_done`` ← the projected row's ``boards_done`` (champion lane:
+      max across duels, never regress);
+    * ``boards_total`` ← only when the strategy left the lane's total unset;
+    * ``projected_scalar`` / ``projected`` ← the projected row's ``scalar``
+      (challenger lanes only — the champion lane keeps its strategy-seeded
+      benchmark to avoid per-duel thrash).
+
+    A lane with no matching projected row is untouched (graceful fallback);
+    a round whose matches carry no ``live_progress`` (every non-racing
+    structure, and a racing rung before it is scheduled) is a no-op.
+    """
+    changed = False
+    new_rounds: list[dict[str, Any]] = []
+    for r in rounds:
+        new_r = dict(r)
+        matches = r.get("matches") or []
+        new_matches: list[dict[str, Any]] = []
+        for m in matches:
+            lanes = m.get("live_progress")
+            if not lanes:
+                new_matches.append(m)
+                continue
+            new_m = dict(m)
+            new_lanes: dict[str, Any] = {}
+            for gid, lane in lanes.items():
+                proj = projected.get(str(gid))
+                if not isinstance(proj, dict):
+                    new_lanes[gid] = lane
+                    continue
+                folded = dict(lane)
+                lane_changed = _fold_one_lane(folded, proj, is_champion=str(gid) in champion_ids)
+                changed = changed or lane_changed
+                new_lanes[gid] = folded
+            new_m["live_progress"] = new_lanes
+            new_matches.append(new_m)
+        new_r["matches"] = new_matches
+        new_rounds.append(new_r)
+    return new_rounds, changed
+
+
+def _fold_one_lane(lane: dict[str, Any], proj: dict[str, Any], *, is_champion: bool) -> bool:
+    """Fold one projected row onto one ``live_progress`` lane in place.
+
+    Returns ``True`` iff a rounded lane value actually changed (anti-flash).
+    The champion lane never overwrites its strategy-seeded
+    ``projected_scalar`` benchmark, and its ``boards_done`` only grows.
+    """
+    changed = False
+    if "boards_done" in proj:
+        new_done = int(proj["boards_done"])
+        cur_done = lane.get("boards_done")
+        # The champion lane is written by every concurrent duel — take the
+        # most-progressed (max), never let a less-progressed last writer
+        # regress the count.
+        if is_champion and isinstance(cur_done, int):
+            new_done = max(cur_done, new_done)
+        if cur_done != new_done:
+            lane["boards_done"] = new_done
+            changed = True
+    if "boards_total" in proj and "boards_total" not in lane:
+        lane["boards_total"] = int(proj["boards_total"])
+        changed = True
+    if not is_champion and "scalar" in proj:
+        # Round to the dashboard's display precision so a sub-threshold
+        # wobble in the running aggregate does not flash the lane.
+        new_scalar = round(float(proj["scalar"]), 4)
+        cur_scalar = lane.get("projected_scalar")
+        if not (isinstance(cur_scalar, int | float) and round(float(cur_scalar), 4) == new_scalar):
+            lane["projected_scalar"] = float(proj["scalar"])
+            lane["projected"] = True
+            changed = True
+    return changed
 
 
 def clear_active_tournament(workspace_root: Path) -> None:
