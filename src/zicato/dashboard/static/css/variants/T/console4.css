@@ -3045,17 +3045,25 @@
   .dn-swissladder-hero {
     display: block; width: 100%; height: auto;
   }
-  .dn-scalartrack-hero { max-width: 1000px; }  /* wide/short: ≈120–150px tall */
-  .dn-funnel-hero      { max-width: 640px;  }  /* aspect ≈2.2 → ≈290px tall */
-  .dn-elimflow-hero    { max-width: 820px;  }
-  .dn-fieldbars-hero   { max-width: 680px;  }
-  .dn-swissladder-hero { max-width: 760px;  }
+  /* The `svg` type qualifier below is LOAD-BEARING: the containment rule
+   * `.dn-figpane > svg { max-width:100% }` (and its .dn-panel/.dn-paper-fig
+   * siblings) carries an svg type selector → specificity (1,2,1), which would
+   * otherwise out-rank a bare `.dn-*-hero` cap (1,2,0) and clobber it back to
+   * 100% of the panel — ballooning the figure (catastrophic for the ~1.9
+   * aspect funnel; merely hidden by the scalartrack's ~6.4 aspect). Matching
+   * `svg.*-hero` ties that specificity and wins on source order. Do NOT drop
+   * the `svg.` prefix on these caps. */
+  svg.dn-scalartrack-hero { max-width: 1000px; }  /* wide/short: ≈120–150px tall */
+  svg.dn-funnel-hero      { max-width: 640px;  }  /* aspect ≈2.2 → ≈290px tall */
+  svg.dn-elimflow-hero    { max-width: 820px;  }
+  svg.dn-fieldbars-hero   { max-width: 680px;  }
+  svg.dn-swissladder-hero { max-width: 760px;  }
   /* square / centred figures: max-width caps BOTH dimensions cleanly (1:1). */
-  .dn-elimradial-hero {
+  svg.dn-elimradial-hero {
     display: block; width: 100%; height: auto;
     max-width: 380px; margin-inline: auto;
   }
-  .dn-radar-hero {
+  svg.dn-radar-hero {
     display: block; width: 100%; height: auto; max-width: 420px;
   }
 }
