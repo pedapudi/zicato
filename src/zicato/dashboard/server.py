@@ -145,6 +145,11 @@ def create_app(
             return Response(
                 candidate.read_bytes(),
                 media_type=mime or "application/octet-stream",
+                # The dashboard is served straight off disk and iterated on live;
+                # without a validator the browser caches CSS/JS heuristically, so
+                # edits look like they "didn't take" until a hard refresh. Force a
+                # revalidate on every load so updates always reach the browser.
+                headers={"Cache-Control": "no-cache"},
             )
         if name == "index.html":
             return Response(_PLACEHOLDER_HTML, media_type="text/html; charset=utf-8")
