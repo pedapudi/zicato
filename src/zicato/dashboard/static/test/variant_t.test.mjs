@@ -785,16 +785,22 @@ test('back button: navigates UP and renders the destination into the MAIN detail
   const backBtn = allByClass(root, 'dt-back')[0];
   assert(rail && detail && backBtn, 'the shell painted a rail, a detail pane, and a back button');
 
-  // THE RESEARCH-PREVIEW NOTE — a quiet, app-wide product-status mark mounted
-  // ONCE in the shell (NOT a Settings card). It must be present on this (non-
-  // Settings) candidate view too — pinned chrome that persists across views —
-  // carry the lowercase "research preview" label, and be the OPPOSITE of the
-  // retired light-up card: NO accent-tinted pulsing `dn-respreview` banner exists.
-  const note = allByClass(root, 'dt-respreview')[0];
-  assert(note, 'the lower-right research-preview note is mounted in the shell (app-wide)');
-  assert((note.textContent || '').toLowerCase().includes('research preview'),
-    'the note carries the lowercase "research preview" label');
-  assert(allByClass(note, 'dt-respreview-dot')[0], 'the note shows a tiny static accent dot');
+  // THE RESEARCH-PREVIEW PILL — a quiet product-status tag pinned NEXT TO the
+  // "zıcato console" wordmark in the top bar (NOT a Settings card, NOT a lower-
+  // right corner note). It lives inside the brand block, carries the "research"
+  // / "preview" label STACKED on two lines, and is the OPPOSITE of the retired
+  // light-up card: NO accent-tinted pulsing `dn-respreview` banner exists.
+  const pill = allByClass(root, 'dt-respreview')[0];
+  assert(pill, 'the research-preview pill is mounted in the shell (top-bar chrome)');
+  const brand = allByClass(root, 'dt-brand')[0];
+  assert(brand && allByClass(brand, 'dt-respreview')[0],
+    'the research-preview pill sits next to the wordmark inside the brand block');
+  assert((pill.textContent || '').toLowerCase().includes('research'),
+    'the pill carries the "research" label');
+  assert((pill.textContent || '').toLowerCase().includes('preview'),
+    'the pill carries the "preview" label');
+  const lines = allByClass(pill, 'dt-respreview-line');
+  assert(lines.length === 2, 'the pill stacks "research" / "preview" on two lines');
   assert(allByClass(root, 'dn-respreview').length === 0,
     'the old light-up Settings research-preview banner is gone');
   const railBefore = rail.innerHTML !== undefined ? rail.textContent : '';
