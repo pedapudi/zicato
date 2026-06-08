@@ -12,7 +12,7 @@ import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { deriveLiveStatus } from '../livestatus.js';
 import { gatedSwap, section, empty, stat, renderMarkdown, normaliseDecision, densityTokens } from '../ui.js';
-import { structurePill, isNonGauntlet, structureLabel, reconstructRacing, normalizeStructure, racingModel, swissOverviewModel, elimModel, buildLiveSwissModel, buildLiveElimModel, structureDigest } from './structure.js';
+import { structurePill, isNonGauntlet, structureLabel, normalizeStructure, racingModel, swissOverviewModel, elimModel, resolveNonGauntletSt, structureDigest } from './structure.js';
 import { epochRoundModel, roundModelDigest, waterfallModel } from './rounds.js';
 import { boardStatusModel, boardStatusDigest, renderBoardStatus } from './boardstatus.js';
 
@@ -86,12 +86,17 @@ export async function render(host, ctx, params) {
   const structure = (tournament && tournament.structure) || 'gauntlet';
   const nonGauntlet = isNonGauntlet(structure);
 
-  // ---- NON-GAUNTLET OVERVIEW data (LIVE-FIRST, else completed record) ----
+  // ---- NON-GAUNTLET OVERVIEW data (the SHARED resolver — one source of truth) ----
   // Each non-gauntlet structure renders a compact at-a-glance overview from the
-  // SAME normalized `st` the Match-ups ladder uses: the LIVE active-tournament
-  // topology when a run for THIS epoch is in flight, else the completed record
-  // (reconstructRacing for racing; the matching /api/tournaments entry for
-  // swiss/elim). Null (→ honest brief line) when there is no data.
+  // SAME normalized `st` the Match-ups ladder + per-round drill-down use. Building
+  // it HERE through the SHARED resolveNonGauntletSt (live-first → reconstructRacing
+  // → completed per-tournament record) — instead of a divergent inline
+  // construction — is the SINGLE-SOURCE-OF-TRUTH guarantee: the epoch overview
+  // funnel/bump/flow can never drift from the Match-ups figure for the same run
+  // (the old inline racing path used `normalizeStructure(liveRaw,true)` — no
+  // progressive overlay / projected-standing re-rank / seeded-champ benchmark —
+  // and bypassed the completed per-tournament record, so it diverged live AND
+  // settled). Null model (→ honest brief line) when there is no data.
   let racingFunnel = null;
   let swissOver = null;
   let elimOver = null;
@@ -108,30 +113,41 @@ export async function render(host, ctx, params) {
     const liveForThisEpoch = (liveRaw && liveRaw.epoch_id != null)
       ? String(liveRaw.epoch_id) === String(epochId) : !!liveRaw;
     if (liveForThisEpoch && liveRaw && liveRaw.projected && typeof liveRaw.projected === 'object') liveProjected = liveRaw.projected;
-    if (structure === 'racing') {
-      const liveSt = liveForThisEpoch ? normalizeStructure(liveRaw, true) : null;
-      const racingSt = (liveSt && liveSt.live) ? liveSt : reconstructRacing(bracket, epochId);
-      const model = racingModel(racingSt);
-      if (model && model.hasRungs) racingFunnel = { st: racingSt, model };
-    } else {
-      let st = null;
-      if (liveForThisEpoch && liveRaw && String(liveRaw.structure) === structure) {
-        const epochGens = (Array.isArray(liveRaw.competitors) ? liveRaw.competitors : [])
-          .map((c) => c && c.generation_id).filter((g) => g != null).map(String);
-        const args = { at: liveRaw, heartbeat: state.heartbeat, activeRuns: state.activeRuns, epochGens: epochGens.length ? epochGens : null };
-        st = (structure === 'swiss' ? buildLiveSwissModel(args) : buildLiveElimModel(args)) || normalizeStructure(liveRaw, true);
+
+    // pre-fetch the COMPLETED per-tournament record (the recorded fallback the
+    // resolver uses for swiss/elim, and the SECOND fallback behind
+    // reconstructRacing for racing). Same selection gens.js uses, so the recorded
+    // source is identical across the two callers. Cached + failure-tolerant.
+    let completedRecord = null;
+    {
+      const tournaments = (bracket && Array.isArray(bracket.tournaments)) ? bracket.tournaments : [];
+      const matchStruct = tournaments.filter((t) => t && t.structure === structure);
+      const nonGaunt = tournaments.filter((t) => t && t.structure && t.structure !== 'gauntlet');
+      let tournamentId = null;
+      if (matchStruct.length) tournamentId = matchStruct[matchStruct.length - 1].tournament_id;
+      else if (nonGaunt.length) tournamentId = nonGaunt[nonGaunt.length - 1].tournament_id;
+      else if (tournaments.length) tournamentId = tournaments[tournaments.length - 1].tournament_id;
+      if (tournamentId) completedRecord = normalizeStructure(await D.tournamentStructure(epochId, tournamentId), false);
+    }
+
+    const resolved = resolveNonGauntletSt({
+      structure, bracket, epochId, liveRaw: liveForThisEpoch ? liveRaw : null,
+      heartbeat: state.heartbeat, activeRuns: state.activeRuns,
+      params: (tournament && tournament.params) || {},
+      completedRecord,
+    });
+    const st = resolved.st;
+    if (st) {
+      if (structure === 'racing') {
+        const model = racingModel(st);
+        if (model && model.hasRungs) racingFunnel = { st, model };
+      } else if (structure === 'swiss') {
+        const m = swissOverviewModel(st);
+        if (m) swissOver = { st, model: m };
+      } else {
+        const m = elimModel(st);
+        if (m && m.hasMatches !== false && m.winners.length) elimOver = { st, model: m };
       }
-      if (!st) {
-        const tournaments = (bracket && Array.isArray(bracket.tournaments)) ? bracket.tournaments : [];
-        const rec = tournaments.filter((t) => t && String(t.structure) === structure).pop();
-        if (rec) st = normalizeStructure({
-          structure, structure_params: rec.structure_params || (tournament && tournament.params) || {},
-          competitors: rec.competitors, rounds: rec.rounds, standings: rec.standings,
-          champion_lineage: bracket && bracket.champion_lineage, source: 'index',
-        }, false);
-      }
-      if (st && structure === 'swiss') { const m = swissOverviewModel(st); if (m) swissOver = { st, model: m }; }
-      else if (st) { const m = elimModel(st); if (m && m.hasMatches !== false && m.winners.length) elimOver = { st, model: m }; }
     }
   }
 
@@ -234,7 +250,14 @@ export async function render(host, ctx, params) {
       // in the round drill-down (Match-ups). Prefer the aggregate (live-first)
       // model for a single round; fall back to the round's own record.
       if (structure === 'racing') {
-        let m = single && racingFunnel ? racingFunnel.model : (stFromRef ? racingModel(stFromRef) : null);
+        // RACING: a per-round FIELD record carries `rounds: []` by design (rungs
+        // live in the per-challenger records the resolver reconstructs), so
+        // racingModel(stFromRef) is empty — never render that as an empty funnel.
+        // Prefer the resolver-built aggregate model (single-round epochs, the
+        // common case) and fall back to it when the round's own record has no
+        // rungs, so this path can never diverge into the round-view-empty bug.
+        let m = (stFromRef ? racingModel(stFromRef) : null);
+        if (!m || !m.hasRungs) m = racingFunnel ? racingFunnel.model : m;
         if (m && m.hasRungs) return svg.survivalFunnel({
           rungs: m.rungs, championId: m.championId, benchmarkId: m.benchmarkId, live: m.live,
           gateState: m.gateState, gateDelta: m.gateDelta, onCompetitor: open,

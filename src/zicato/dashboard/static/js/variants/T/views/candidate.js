@@ -31,7 +31,7 @@ import { attachHovercard } from '../hovercard.js';
 import { lifecycleDag, rungProgression } from '../dag.js';
 import { gatedSwap, section, subhead, empty, stat, verdictPill, normaliseDecision, decisionFor, densityTokens } from '../ui.js';
 import { comparePicker, splitFrame } from '../compare.js';
-import { candidateProgression, inflightForActiveEpoch, inflightForEntryGen, runProgressRatio, liveMatchupsForCandidate, liveBelongsToEpoch, reconstructRacing, racingModel } from './structure.js';
+import { candidateProgression, inflightForActiveEpoch, inflightForEntryGen, runProgressRatio, liveMatchupsForCandidate, liveBelongsToEpoch, resolveNonGauntletSt, racingModel, structureDigest } from './structure.js';
 import { epochRoundModel, reignModel } from './rounds.js';
 import { deriveLiveStatus } from '../livestatus.js';
 import { harmonografIsLive, harmonografLink, harmonografMini } from '../../../core/harmonograf.js';
@@ -125,6 +125,22 @@ export async function render(host, ctx, params, route) {
   // scalar yet shows its climbing PROJECTED scalar / Δ (marked "projected").
   const liveProjected = (at && liveForThisEpoch && at.projected && typeof at.projected === 'object') ? at.projected : {};
 
+  // THE RACING FIELD MODEL — resolved through the SHARED resolveNonGauntletSt
+  // (live-first → reconstructRacing → recorded) so the candidate dossier's
+  // field-relative racing panels read the SAME `st` the Match-ups / epoch /
+  // per-round views do. The old path called reconstructRacing directly (settled
+  // only), so a LIVE racing run viewed from the dossier missed the in-flight
+  // rungs the other views showed — a live-only divergence. `at` is already in
+  // memory (state.activeTournament), so the resolver runs synchronously here.
+  const racingSt = (String(structure) === 'racing')
+    ? resolveNonGauntletSt({
+        structure: 'racing', bracket, epochId,
+        liveRaw: liveForThisEpoch ? at : null,
+        heartbeat: state.heartbeat, activeRuns: state.activeRuns,
+        params: (tournament && tournament.params) || {},
+      }).st
+    : null;
+
   // Resolve each side's full panel data (cached). Side B only when comparing.
   // The primary side (A) honours the entry drill-down param; the compare side
   // (B) reads its lifecycle clean.
@@ -135,6 +151,10 @@ export async function render(host, ctx, params, route) {
     epochId, genId, cmpId, entry: params.entry || null, structure,
     reigns: reigns.map((r) => [r.id, r.fromRound, r.toRound, r.current]),
     a: candidateDigest(sideA), b: sideB ? candidateDigest(sideB) : null,
+    // the racing FIELD model the field-relative panels draw — folded in so a real
+    // rung/field/projection change (the whole field, not just THIS candidate's
+    // scalars) repaints the panels, but a no-op heartbeat stays byte-identical.
+    racing: racingSt ? structureDigest(racingSt) : null,
   });
 
   gatedSwap(host, digest, () => {
@@ -161,8 +181,8 @@ export async function render(host, ctx, params, route) {
     ].filter(Boolean)));
 
     nodes.push(splitFrame({
-      a: { title: genId + (sideA.node.promoted ? ' ♛' : ''), sub: sideA.decision, build: (h) => paintCandidate(h, ctx, epochId, sideA, cmpId, true, !!cmpId, structure, reigns, bracket, liveProjected) },
-      b: cmpId ? { title: cmpId + (sideB.node.promoted ? ' ♛' : ''), sub: sideB.decision, build: (h) => paintCandidate(h, ctx, epochId, sideB, null, false, true, structure, reigns, bracket, liveProjected) } : null,
+      a: { title: genId + (sideA.node.promoted ? ' ♛' : ''), sub: sideA.decision, build: (h) => paintCandidate(h, ctx, epochId, sideA, cmpId, true, !!cmpId, structure, reigns, bracket, liveProjected, racingSt) },
+      b: cmpId ? { title: cmpId + (sideB.node.promoted ? ' ♛' : ''), sub: sideB.decision, build: (h) => paintCandidate(h, ctx, epochId, sideB, null, false, true, structure, reigns, bracket, liveProjected, racingSt) } : null,
       emptyTitle: 'no comparison',
       emptyPrompt: 'Choose a candidate above to compare its lifecycle, gate, match-ups and per-board scoring against ' + genId + '.',
     }));
@@ -531,7 +551,7 @@ function candidateDigest(s) {
 // SPLIT-LAYOUT flag — true for BOTH panes whenever a comparison is shown — and
 // drives the figure viewBox WIDTH (so A and B scale identically), independent
 // of the per-side `cmpId` (which is null on B but the layout is still split).
-function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structure, reigns, bracket, liveProjected) {
+function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structure, reigns, bracket, liveProjected, racingSt) {
   const opts = cmpId ? { cmp: cmpId } : undefined;
   const node = s.node;
   const genId = node.id;
@@ -843,7 +863,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
   // generalization stay put. Built from the REAL racing reconstruction + the
   // live projected standings — no synthesised field.
   if (String(structure) === 'racing') {
-    const fieldNodes = racingFieldPanels(bracket, epochId, genId, championId, s.scalarByGen, liveProjected, ctx, cmpId);
+    const fieldNodes = racingFieldPanels(racingSt, epochId, genId, championId, s.scalarByGen, liveProjected, ctx, cmpId);
     if (fieldNodes) host.appendChild(fieldNodes);
   }
 
@@ -1063,10 +1083,12 @@ function shortText(s, n) {
 // The RACING field-relative panels — field standings (every racer ranked by
 // scalar, candidate highlighted, survivors vs cut) + the rung ladder (entered /
 // cut / survived per rung, candidate's rank among survivors). Built from the
-// REAL racing reconstruction (reconstructRacing → racingModel) + the live
-// projected standings; returns null when no racing field can be recovered.
-function racingFieldPanels(bracket, epochId, genId, championId, scalarByGen, liveProjected, ctx, cmpId) {
-  const st = reconstructRacing(bracket, epochId);
+// SHARED-resolver `st` (live-first → reconstructRacing → recorded, resolved once
+// at render top) + the live projected standings — the SAME model the Match-ups /
+// epoch / per-round views read, so the dossier never drifts from them (the old
+// path called reconstructRacing here directly, missing the live envelope mid-
+// race). Returns null when no racing field can be recovered.
+function racingFieldPanels(st, epochId, genId, championId, scalarByGen, liveProjected, ctx, cmpId) {
   const model = st ? racingModel(st) : null;
   if (!model || !Array.isArray(model.rungs) || !model.rungs.length) return null;
   const opts = cmpId ? { cmp: cmpId } : undefined;

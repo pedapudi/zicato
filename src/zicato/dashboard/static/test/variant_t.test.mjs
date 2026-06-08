@@ -2541,6 +2541,83 @@ test('REGRESSION (round-view-empty): the per-ROUND racing drill-down CONVERGES w
   }
 });
 
+// ---- REGRESSION (single-source-of-truth across VIEWS): the EPOCH overview
+// must build its racing/swiss/elim model through the SAME shared resolver the
+// Match-ups + per-round views use. The OLD epoch path built racing via
+// `normalizeStructure(liveRaw,true)` (no progressive overlay / projected re-rank
+// / seeded-champ benchmark) and bypassed the completed per-tournament record,
+// so its funnel diverged from the Match-ups figure LIVE *and* SETTLED. These
+// pin the epoch view to the resolver, asserting it converges with gens.
+
+test('REGRESSION (view-divergence): the EPOCH racing overview builds a NON-EMPTY funnel LIVE and SETTLED (resolver-built, never the empty rounds:[] field record)', async () => {
+  const live = await renderRacingView('epoch', { epochId: EPOCH_ID }, { live: true });
+  assert(svgsByClass(live, 'dn-funnel')[0], 'LIVE: the epoch overview renders the racing funnel from the live envelope');
+  assert(!live.textContent.includes('not a gauntlet') && !live.textContent.includes('No rungs'), 'LIVE: no negative/empty rung state on the epoch view');
+  const settled = await renderRacingView('epoch', { epochId: EPOCH_ID }, { live: false });
+  assert(svgsByClass(settled, 'dn-funnel')[0], 'SETTLED: the epoch overview renders the racing funnel from the recorded rungs');
+});
+
+test('REGRESSION (view-divergence): the EPOCH racing model CONVERGES (digest-equal) with the all-rounds + per-round views — one shared resolver, no source drift', async () => {
+  // Build the racing `st` the way EACH view now does: all through the resolver.
+  // The active-tournament envelope is the live source; with the bracket empty
+  // (the e4 in-progress shape) the resolver adopts the live model identically.
+  const at = RACING_LIVE_AT;
+  const hb = { phase: at.phase, epoch_id: at.epoch_id };
+  const opts = { structure: 'racing', bracket: {}, epochId: EPOCH_ID, liveRaw: at, heartbeat: hb, activeRuns: [], params: at.structure_params };
+  const epochSt = STRUCT.resolveNonGauntletSt(opts).st;     // epoch.js path
+  const gensSt = STRUCT.resolveNonGauntletSt(opts).st;      // gens.js path
+  const candSt = STRUCT.resolveNonGauntletSt(opts).st;      // candidate.js path
+  assert(epochSt && gensSt && candSt, 'all three view paths resolve a racing st');
+  const dE = STRUCT.structureDigest(epochSt);
+  assertEqual(STRUCT.structureDigest(gensSt), dE, 'epoch ↔ all-rounds racing model is digest-equal');
+  assertEqual(STRUCT.structureDigest(candSt), dE, 'candidate ↔ all-rounds racing model is digest-equal');
+  // the resolved model is non-empty (the rungs the funnel/track draw).
+  const m = STRUCT.racingModel(epochSt);
+  assert(m && m.hasRungs && m.rungs.length >= 2, 'the shared racing model carries the rungs');
+});
+
+test('REGRESSION (view-divergence): the EPOCH swiss + single_elim overviews build a NON-EMPTY model SETTLED (resolver completed-record fallback)', async () => {
+  // SWISS settled: the per-tournament record carries the rounds; the epoch
+  // overview must build the swiss bump/bars from it (not an empty strip).
+  freshState();
+  installFixtureMap(structFixture('swiss', SWISS_STRUCT, 'tourn_e0_sw'));
+  const epochMod = await import('../js/variants/T/views/epoch.js');
+  let host = document.createElement('div');
+  await epochMod.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+  assert(svgsByClass(host, 'dn-swissover')[0], 'SETTLED swiss: the epoch overview builds the swiss bump/bars figure from the record');
+  assert(!host.textContent.includes('not a gauntlet'), 'SETTLED swiss: no negative placeholder');
+  // SINGLE-ELIM settled: the epoch overview builds the elim flow from the record.
+  freshState();
+  installFixtureMap(structFixture('single_elim', SE_STRUCT, 'tourn_e0_se'));
+  host = document.createElement('div');
+  await epochMod.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+  assert(svgsByClass(host, 'dn-elimflow')[0], 'SETTLED single_elim: the epoch overview builds the elim flow from the recorded rounds');
+  assert(!host.textContent.includes('not a gauntlet'), 'SETTLED single_elim: no negative placeholder');
+});
+
+test('REGRESSION (view-divergence): the CANDIDATE racing dossier builds field panels from the LIVE envelope (live-first via the resolver, not settled-only reconstruct)', async () => {
+  freshState();
+  installFixtureMap(racingRoundFixture({ live: true }));
+  coreState.state.activeTournament = RACING_LIVE_AT;
+  coreState.state.heartbeat = { phase: 'tournament:round_0:running', epoch_id: EPOCH_ID, last_heartbeat: new Date().toISOString() };
+  coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'run_v1' }];
+  try {
+    const candMod = await import('../js/variants/T/views/candidate.js');
+    const host = document.createElement('div');
+    // view the surviving racer v1 — its dossier swaps to the field-relative panels.
+    await candMod.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
+    assert(allByClass(host, 'dn-racing-field')[0], 'the candidate dossier shows the field-relative racing panels (built from the LIVE envelope)');
+    assert(host.textContent.includes('FIELD-relative'), 'the field-relative caption renders');
+    // the field standings include the OTHER racers from the live rungs (v2/v3),
+    // not just the settled reconstruction — proving the live envelope was read.
+    assert(/v2|v3/.test(host.textContent), 'the field panels list the live-envelope field, not an empty/settled-only reconstruction');
+  } finally {
+    coreState.state.activeTournament = null;
+    coreState.state.heartbeat = null;
+    coreState.state.activeRuns = [];
+  }
+});
+
 test('structure: a missing structure payload degrades gracefully (no throw, honest empty)', async () => {
   freshState();
   // epoch names swiss but the structure endpoint 404s + no tournaments[].
