@@ -129,6 +129,20 @@ function laneProgressText(lane) {
 //   o.markers — draw a dot per finite point (atop the line). Useful for
 //               FEW-points series, where a single segment reads as a skewed
 //               slash; a single point renders as a centred dot, not a line.
+//   o.responsive — OPT-IN aspect-locked sizing for a FULL-WIDTH hero panel (the
+//               cross-epoch trajectory). The dense, fixed-size call sites (fleet
+//               cards, board-status gap, dag sparks) are UNTOUCHED — they keep
+//               their small fixed pixel height. The default 'none' aspect ratio
+//               stretches a small viewBox NON-uniformly to a wide pane, which
+//               flattens every slope into the skewed streak. With `responsive`
+//               we DROP the fixed pixel height, keep `width:100%`, and pin the
+//               element's CSS `aspect-ratio` to the viewBox aspect (w / h) so the
+//               box aspect EQUALS the viewBox aspect — then the 'none' scale is
+//               UNIFORM (no distortion) and the height tracks the width. The
+//               .dn-spark-hero CSS caps it with a matched max-width / max-height
+//               on ultra-wide screens (so the cap never re-introduces a stretch).
+//               No measurement, no ResizeObserver, no post-mount mutation — so it
+//               is leak-free and fully compatible with the digest-gated swap.
 export function sparkline(opts) {
   const o = opts || {};
   const w = o.width || 120;
@@ -136,11 +150,20 @@ export function sparkline(opts) {
   const pad = 2;
   const raw = Array.isArray(o.values) ? o.values : [];
   const fin = finiteValues(raw);
-  const svg = svgEl('svg', {
+  const svgAttrs = {
     // fit-to-width: width:100% so the trend sparkline scales to its pane.
     class: 'dn-spark', width: '100%', height: h,
     viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'none', role: 'img',
-  });
+  };
+  if (o.responsive) {
+    // aspect-locked hero: drop the fixed pixel height and let the CSS
+    // aspect-ratio (== the viewBox aspect) drive it, so the 'none' scale is
+    // uniform and the trajectory keeps its real slopes at any pane width.
+    delete svgAttrs.height;
+    svgAttrs.class = 'dn-spark dn-spark-hero';
+    svgAttrs.style = `aspect-ratio:${w} / ${h};`;
+  }
+  const svg = svgEl('svg', svgAttrs);
   if (fin.length === 0) {
     svg.appendChild(svgEl('line', { x1: pad, y1: h / 2, x2: w - pad, y2: h / 2, class: 'dn-spark-empty' }));
     return svg;

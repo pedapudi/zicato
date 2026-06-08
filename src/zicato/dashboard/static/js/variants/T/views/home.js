@@ -70,14 +70,19 @@ export async function render(host, ctx) {
     const trendVals = spark.map((p) => p && p.scalar).filter(svg.isNum);
     if (trendVals.length >= 1) {
       const card = el('div', { class: 'dn-panel' });
-      // Few epochs with near-equal best-scalars used to collapse this into a
-      // pin-flat, horizontally-skewed slash. padY breathes the y-domain,
-      // minSpan keeps a near-flat series gently varied (not dead-flat) without
-      // faking a slope, and markers dot each epoch so 1–3 epochs read as points
-      // rather than one skewed segment (a lone epoch → a centred dot).
+      // This is a FULL-WIDTH hero panel (~1700–1950px in the real shell). The
+      // old fixed 760×84 viewBox with preserveAspectRatio:'none' was stretched
+      // ~2.5× horizontally there, flattening every slope into a skewed streak.
+      // `responsive` aspect-LOCKS the box to the viewBox aspect (14:1 here) so
+      // the scale is UNIFORM — the trajectory keeps its real slopes and the
+      // height tracks the pane width (≈136px at 1900px, capped on ultra-wide).
+      // padY breathes the y-domain, minSpan keeps a near-flat series gently
+      // varied (not dead-flat) without faking a slope, and markers dot each
+      // epoch so 1–3 epochs read as points, not one segment (a lone epoch → a
+      // centred dot).
       card.appendChild(svg.sparkline({
-        width: 760, height: 84, values: trendVals, band: true, goodDirection: 'down',
-        padY: 0.18, minSpan: 0.5, markers: true,
+        width: 1400, height: 100, values: trendVals, band: true, goodDirection: 'down',
+        padY: 0.18, minSpan: 0.5, markers: true, responsive: true,
       }));
       card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text: 'best scalar per epoch · lower is better' }));
       nodes.push(section('Cross-epoch trajectory', card));

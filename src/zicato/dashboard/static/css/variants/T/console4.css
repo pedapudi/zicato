@@ -766,6 +766,13 @@
   /* ===================  SVG mark styling (dn-*)  =================== */
 
   .dn-spark { display: block; }
+  /* Aspect-locked cross-epoch hero (opt-in via sparkline({responsive:true})).
+   * The inline `aspect-ratio` (== the viewBox aspect) makes width:100% +
+   * preserveAspectRatio:'none' scale UNIFORMLY — no horizontal stretch. The
+   * max-height/max-width are MATCHED to that aspect (140 × 14 = 1960) so the cap
+   * on ultra-wide screens shrinks the whole box, never just its height (which
+   * would re-introduce a stretch); past the cap it stays left-aligned. */
+  .dn-spark-hero { width: 100%; height: auto; max-height: 140px; max-width: 1960px; }
   .dn-spark-line { stroke: var(--v2-ink); stroke-width: 1.4; vector-effect: non-scaling-stroke; }
   .dn-spark-band { fill: var(--v2-rule-soft); }
   .dn-spark-baseline { stroke: var(--v2-rule); stroke-width: 1; stroke-dasharray: 2 2; vector-effect: non-scaling-stroke; }
