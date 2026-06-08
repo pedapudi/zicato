@@ -188,6 +188,142 @@ function floatOf(params, key, def) {
   return isFinite(n) ? n : def;
 }
 
+// ── pure cost / validation (the SAME arithmetic the backend's
+//    operations.estimate_cost / operations.validate run) ────────────────
+//
+// PURE port of zicato/builder/operations.py's estimate_cost + validate, so a
+// READ-ONLY contract preview can show the cost meter + validation diagnostics
+// CLIENT-SIDE — no `/builder/op` round-trip, no backend dependency. The builder
+// view still drives its preview from the live `/builder/op` envelope (the server
+// is the source of truth there); this is for surfacing a FROZEN contract's
+// estimate (Settings → Contract) from `/api/epoch` alone.
+//
+// The train/holdout COUNTS are passed in (the caller reads them from the same
+// place the backend would split to: the builder draft's `holdout`, or
+// `/api/epoch`'s server-computed `board_split`), so we never re-derive the
+// deterministic sha256 hash split here — only the order-of-magnitude arithmetic.
+
+// One cost-meter line: { label, runs, detail }.
+function costLine(label, runs, detail) { return { label, runs, detail }; }
+
+// Estimate board-runs-per-round for a structure + params over a given train /
+// holdout split. Mirrors operations.estimate_cost (+ _racing_cost). Returns the
+// SAME { board_runs_per_round, breakdown:[{label,runs,detail}] } shape the
+// `/builder/op` cost envelope carries, so the preview renderer reads one shape.
+export function estimateCost(structure, params, trainCount, holdoutCount) {
+  const boardSize = Math.max(0, trainCount || 0);
+  const holdoutSize = Math.max(0, holdoutCount || 0);
+  const replicates = Math.max(1, intOf(params, 'replicates', 1));
+  const fieldSize = Math.max(1, intOf(params, 'field_size', 2));
+  const lines = [];
+  let perRound;
+
+  if (structure === 'gauntlet' || fieldSize <= 1) {
+    perRound = fieldSize * replicates * boardSize;
+    lines.push(costLine('duel runs', perRound,
+      `field_size ${fieldSize} × replicates ${replicates} × board ${boardSize}`));
+  } else if (structure === 'single_elim' || structure === 'double_elim') {
+    let matches = Math.max(0, fieldSize - 1);
+    if (structure === 'double_elim') matches = Math.max(0, 2 * (fieldSize - 1));
+    perRound = matches * replicates * boardSize;
+    lines.push(costLine('bracket-match runs', perRound,
+      `${matches} matches × replicates ${replicates} × board ${boardSize}`));
+  } else if (structure === 'swiss') {
+    const roundsN = Math.max(1, intOf(params, 'rounds_n', 4));
+    const pairings = Math.max(1, Math.floor(fieldSize / 2));
+    perRound = roundsN * pairings * replicates * boardSize;
+    lines.push(costLine('swiss-pairing runs', perRound,
+      `rounds_n ${roundsN} × pairings ${pairings} × replicates ${replicates} × board ${boardSize}`));
+  } else if (structure === 'racing') {
+    const racing = racingCost(params, fieldSize, replicates, boardSize);
+    perRound = racing.total;
+    for (const l of racing.lines) lines.push(l);
+  } else {
+    perRound = fieldSize * replicates * boardSize;
+    lines.push(costLine('duel runs', perRound, 'fallback'));
+  }
+
+  const holdoutConfirm = holdoutSize * replicates;
+  if (holdoutConfirm) {
+    lines.push(costLine('holdout-confirm runs', holdoutConfirm,
+      `holdout ${holdoutSize} × replicates ${replicates}`));
+    perRound += holdoutConfirm;
+  }
+  return { board_runs_per_round: perRound, breakdown: lines };
+}
+
+// Successive-halving rung sum + the final full-board duel — the JS twin of
+// operations._racing_cost (rung r scores the surviving field on a slice that
+// grows by eta each rung, capped at the full board; the field halves by eta).
+function racingCost(params, fieldSize, replicates, boardSize) {
+  const eta = Math.max(2, intOf(params, 'eta', 2));
+  const boardFraction = floatOf(params, 'board_fraction', 0.25);
+  const rung0 = intOf(params, 'rung0_board_size', 0);
+  const baseSlice = rung0 > 0 ? rung0 : Math.max(1, Math.ceil(boardSize * boardFraction));
+  const lines = [];
+  let alive = Math.max(1, fieldSize);
+  let rung = 0;
+  let total = 0;
+  while (alive > 1 && rung < 32) {
+    const sliceSize = Math.min(boardSize, baseSlice * (eta ** rung));
+    const rungRuns = alive * replicates * sliceSize;
+    total += rungRuns;
+    lines.push(costLine(`rung ${rung} runs`, rungRuns,
+      `alive ${alive} × replicates ${replicates} × slice ${sliceSize}`));
+    if (sliceSize >= boardSize) break;
+    alive = Math.max(1, Math.floor(alive / eta));
+    rung += 1;
+  }
+  const finalRuns = replicates * boardSize;
+  total += finalRuns;
+  lines.push(costLine('racing-final runs', finalRuns,
+    `full board ${boardSize} × replicates ${replicates}`));
+  return { total, lines };
+}
+
+// Advisory warnings about a structure + params over a split. Mirrors
+// operations.validate (the checks that do NOT need the entry tag set: the
+// degenerate-field, racing rung-0, and bracket-replicates warnings). Returns
+// the SAME [{code, message, severity}] shape `/builder/op` carries.
+export function validateContract(structure, params, trainCount, holdoutCount, overfitting) {
+  const warnings = [];
+  const fieldSize = Math.max(1, intOf(params, 'field_size', 2));
+  const replicates = Math.max(1, intOf(params, 'replicates', 1));
+  const boardSize = Math.max(0, trainCount || 0) + Math.max(0, holdoutCount || 0);
+  const of = overfitting || {};
+
+  if (structure !== 'gauntlet' && fieldSize === 1) {
+    warnings.push({
+      code: 'field_size_degrades_to_gauntlet', severity: 'warning',
+      message: `structure '${structure}' with field_size=1 degrades to a single champion-vs-challenger duel (a gauntlet).`,
+    });
+  }
+  const minSplit = of.min_board_size_for_split != null ? of.min_board_size_for_split : 0;
+  if (boardSize && (holdoutCount || 0) === 0 && of.enabled !== false && minSplit && boardSize < minSplit) {
+    warnings.push({
+      code: 'holdout_disabled_small_board', severity: 'info',
+      message: `board has ${boardSize} entries, below min_board_size_for_split=${minSplit}; the hash-derived holdout is disabled (no entry held out).`,
+    });
+  }
+  if (structure === 'racing' && boardSize) {
+    const boardFraction = floatOf(params, 'board_fraction', 0.25);
+    const rung0 = intOf(params, 'rung0_board_size', 0);
+    const train = Math.max(0, trainCount || 0);
+    const sliceSize = rung0 > 0 ? rung0 : Math.max(1, Math.ceil(train * boardFraction));
+    warnings.push({
+      code: 'racing_rung0_slice', severity: 'info',
+      message: `racing rung-0 slice = ${sliceSize} entries (ceil(board_fraction ${boardFraction} × board ${train})).`,
+    });
+  }
+  if ((structure === 'single_elim' || structure === 'double_elim' || structure === 'swiss') && replicates < 2) {
+    warnings.push({
+      code: 'replicates_recommended_for_brackets', severity: 'warning',
+      message: `structure '${structure}' with replicates=${replicates}: a single noisy run can flip a match verdict; replicates>=2 is recommended.`,
+    });
+  }
+  return warnings;
+}
+
 // A small inline structure glyph as theme-adaptive SVG for the picker cards.
 // PORTED from the approved tournament-builder mockup (its five structure-card
 // figures), re-projected onto a crisp 24×24 viewBox at a single 1.6 stroke

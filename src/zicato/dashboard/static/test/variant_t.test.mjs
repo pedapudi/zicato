@@ -1172,6 +1172,114 @@ test('view dispatcher: #/builder renders the builder full-width in the main view
   assert(crumbs && !(crumbs.textContent || '').toLowerCase().includes('settings'), 'the builder breadcrumb does NOT pass through settings');
 });
 
+// THE SETTINGS DRAWER OVERLAY (Change 1). Settings is no longer a full-page
+// view: `#/settings[/<section>]` opens a routed RIGHT-SIDE DRAWER that paints
+// OVER the current view (the underlying view stays rendered in `.dt-viewhost`
+// behind a scrim, so an Appearance change applies live to the page behind it).
+// Esc / a scrim click / the × close it by navigating back to the underlying
+// route. We mount the real shell, drive the hash, and assert the overlay model.
+
+// Build a shell-mount harness with a live `location` whose hash setter re-fires
+// the registered hashchange listeners. Returns { root, loc, listeners }.
+function mountShellHarness(initialHash) {
+  const listeners = { hashchange: [], keydown: [] };
+  globalThis.HashChangeEvent = function HashChangeEvent() {};
+  globalThis.EventSource = function EventSource() { this.readyState = 0; this.addEventListener = () => {}; this.close = () => {}; };
+  globalThis.EventSource.CLOSED = 2;
+  globalThis.window = globalThis.window || {};
+  globalThis.window.localStorage = globalThis.window.localStorage || { getItem() { return null; }, setItem() {} };
+  globalThis.window.addEventListener = (t, fn) => { (listeners[t] = listeners[t] || []).push(fn); };
+  globalThis.window.removeEventListener = (t, fn) => { listeners[t] = (listeners[t] || []).filter((f) => f !== fn); };
+  const loc = { _hash: initialHash || '', search: '' };
+  Object.defineProperty(loc, 'hash', {
+    get() { return this._hash; },
+    set(v) { this._hash = v; for (const fn of (listeners.hashchange || [])) fn(); },
+  });
+  globalThis.location = loc;
+  globalThis.window.location = loc;
+  globalThis.window.dispatchEvent = () => { for (const fn of (listeners.hashchange || [])) fn(); };
+  const root = document.createElement('div');
+  document.body.appendChild(root);
+  return { root, loc, listeners };
+}
+const settleTicks = async (n) => { for (let i = 0; i < (n || 4); i += 1) await new Promise((r) => setTimeout(r, 0)); };
+
+test('settings overlay: #/settings opens a DRAWER over the current view (underlying view stays painted)', async () => {
+  freshState(); installFetch();
+  const { root, loc } = mountShellHarness(`#/e/${EPOCH_ID}`);
+  shell.mountShell(root);
+  await settleTicks();
+  // the underlying epoch view painted into the main host.
+  const viewhost = allByClass(root, 'dt-viewhost')[0];
+  assert(viewhost && viewhost.firstChild, 'the underlying epoch view painted into the main host');
+  // the drawer overlay exists but is CLOSED (no settings route yet).
+  const drawer = allByClass(root, 'dt-drawer')[0];
+  assert(drawer, 'the settings drawer overlay is mounted in the shell');
+  assertEqual(drawer.getAttribute('data-open'), '0', 'the drawer is closed before the settings route');
+
+  // navigate to #/settings — the drawer OPENS over the still-painted view.
+  loc.hash = '#/settings';
+  await settleTicks();
+  assertEqual(drawer.getAttribute('data-open'), '1', 'the drawer opens on the settings route');
+  // the underlying view is STILL rendered in the main host (painted behind the scrim).
+  assert(viewhost.firstChild, 'the underlying view stays painted behind the scrim (not torn down)');
+  // the settings surface rendered INTO the drawer body, NOT the main view host.
+  const drawerBody = allByClass(root, 'dt-drawer-body')[0];
+  assert(drawerBody && allByClass(drawerBody, 'dn-settings')[0], 'the settings surface painted into the drawer body');
+  assertEqual(allByClass(viewhost, 'dn-settings').length, 0, 'settings is NOT painted into the main view host (it is an overlay)');
+  // a scrim + a close affordance exist.
+  assert(allByClass(root, 'dt-drawer-scrim')[0], 'the drawer has a click-to-close scrim');
+  assert(allByClass(root, 'dt-drawer-x')[0], 'the drawer has a close (×) affordance');
+});
+
+test('settings overlay: a section deep-link opens the overlay over home when loaded cold', async () => {
+  freshState(); installFetch();
+  // cold load straight onto a settings section deep-link — opens over home.
+  const { root } = mountShellHarness('#/settings/contract');
+  shell.mountShell(root);
+  await settleTicks();
+  const drawer = allByClass(root, 'dt-drawer')[0];
+  assertEqual(drawer.getAttribute('data-open'), '1', 'the overlay is open on a cold settings deep-link');
+  const drawerBody = allByClass(root, 'dt-drawer-body')[0];
+  assert(allByClass(drawerBody, 'dn-settings')[0], 'the settings surface painted into the drawer');
+  // the underlying view is HOME (the environment fleet) — painted behind the scrim.
+  const viewhost = allByClass(root, 'dt-viewhost')[0];
+  assert(viewhost && viewhost.firstChild, 'home (the underlying view) painted behind the overlay on a cold deep-link');
+});
+
+test('settings overlay: Esc closes the overlay (returns to the underlying route)', async () => {
+  freshState(); installFetch();
+  const { root, loc, listeners } = mountShellHarness(`#/e/${EPOCH_ID}`);
+  shell.mountShell(root);
+  await settleTicks();
+  loc.hash = '#/settings';
+  await settleTicks();
+  const drawer = allByClass(root, 'dt-drawer')[0];
+  assertEqual(drawer.getAttribute('data-open'), '1', 'the overlay is open');
+  // fire an Escape keydown — the shell's window keydown handler closes it.
+  for (const fn of (listeners.keydown || [])) fn({ key: 'Escape', preventDefault() {} });
+  await settleTicks();
+  // Esc navigated back to the underlying epoch route + hid the overlay.
+  assertEqual(loc.hash, `#/e/${EPOCH_ID}`, 'Esc returned to the underlying route');
+  assertEqual(drawer.getAttribute('data-open'), '0', 'the overlay is closed after Esc');
+});
+
+test('settings overlay: a scrim click closes the overlay (returns to the underlying route)', async () => {
+  freshState(); installFetch();
+  const { root, loc } = mountShellHarness(`#/e/${EPOCH_ID}`);
+  shell.mountShell(root);
+  await settleTicks();
+  loc.hash = '#/settings/appearance';
+  await settleTicks();
+  const drawer = allByClass(root, 'dt-drawer')[0];
+  assertEqual(drawer.getAttribute('data-open'), '1', 'the overlay is open');
+  const scrim = allByClass(root, 'dt-drawer-scrim')[0];
+  scrim.dispatchEvent({ type: 'click', target: scrim });
+  await settleTicks();
+  assertEqual(loc.hash, `#/e/${EPOCH_ID}`, 'the scrim click returned to the underlying route');
+  assertEqual(drawer.getAttribute('data-open'), '0', 'the overlay is closed after the scrim click');
+});
+
 test('compare primitives: comparePicker reflects the value; splitFrame yields two sides only when B is given', () => {
   let chosen = '__unset__';
   const picker = compare.comparePicker({

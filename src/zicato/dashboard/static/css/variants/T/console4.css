@@ -2956,6 +2956,9 @@
   .dn-bld-impact { display: flex; align-items: center; gap: 7px; font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1));
     color: var(--v2-ink-soft); border: 1px dashed var(--v2-rule); border-radius: 4px; padding: 6px 9px; }
   .dn-bld-impact-roll { color: var(--v2-caution); border-color: var(--v2-caution); border-style: solid; }
+  /* the READ-ONLY contract preview's impact note — a quiet "current contract"
+   * tag (no apply affordance), set apart from the roll variant by a steady ink. */
+  .dn-bld-impact-current { color: var(--v2-ink-faint); border-style: dashed; }
   .dn-bld-impact-glyph { font-size: calc(12px * var(--dt-font-scale, 1)); }
   .dn-bld-cost { background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 4px; padding: 9px 11px; }
   .dn-bld-cost-head { display: flex; align-items: baseline; gap: 7px; margin-bottom: 7px; }
@@ -3061,6 +3064,12 @@
   .dn-set-panel { background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 4px;
     padding: 11px 13px; margin: 12px 0; }
 
+  /* the Contract section's READ-ONLY visualization — reuses the builder's
+   * preview pane classes (.dn-bld-preview + children) but un-sticks it (it
+   * leads the section in normal flow, it is not a side rail) and gives it a
+   * sensible max-width so the schematic does not stretch edge-to-edge. */
+  .dn-set-preview.dn-bld-preview { position: static; top: auto; margin: 12px 0; max-width: 560px; }
+
   /* the key/value grid — a read-mostly contract / config roll-up. The
    * contract rows are links into the builder; the static config rows are not. */
   .dn-set-kvgrid { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
@@ -3130,6 +3139,38 @@
   @media (max-width: 1080px) {
     .dn-settings { grid-template-columns: 1fr; }
     .dn-set-rail { position: static; flex-direction: row; flex-wrap: wrap; }
+  }
+
+  /* ===================  SETTINGS DRAWER OVERLAY (Change 1)  ===================
+   * Settings is a routed RIGHT-SIDE DRAWER that paints OVER the current view: a
+   * full-viewport scrim dims the underlying view (still visible + live behind it
+   * — an Appearance change applies through the scrim) and the panel slides in
+   * from the right. Esc / a scrim click / the × close it (returning to the
+   * underlying route). Hidden until `data-open="1"`. Theme tokens only. */
+  .dt-drawer { position: fixed; inset: 0; z-index: 60; display: none; }
+  .dt-drawer[data-open="1"] { display: block; }
+  .dt-drawer-scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.42);
+    backdrop-filter: blur(1px); cursor: pointer; }
+  .dt-drawer-panel { position: absolute; top: 0; right: 0; bottom: 0;
+    width: min(560px, 94vw); display: flex; flex-direction: column;
+    background: var(--v2-ground); border-left: 1px solid var(--v2-rule);
+    box-shadow: -8px 0 28px rgba(0, 0, 0, 0.32); overflow: hidden; }
+  .dt-drawer-head { display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 13px 18px; border-bottom: 1px solid var(--v2-rule); flex: none; }
+  .dt-drawer-title { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1));
+    text-transform: uppercase; letter-spacing: 0.08em; color: var(--v2-ink-faint); }
+  .dt-drawer-x { font-size: calc(18px * var(--dt-font-scale, 1)); line-height: 1; padding: 2px 8px;
+    cursor: pointer; color: var(--v2-ink-soft); background: transparent;
+    border: 1px solid var(--v2-rule); border-radius: 5px; }
+  .dt-drawer-x:hover { color: var(--v2-paper); background: var(--v2-accent); border-color: var(--v2-accent); }
+  .dt-drawer-x:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 2px; }
+  .dt-drawer-body { padding: 16px 18px 28px; overflow-y: auto; min-height: 0; flex: 1; }
+  /* In the drawer the settings surface is a single column (the section rail
+   * stacks above the body) — the wide two-column layout was for the full page. */
+  .dt-drawer-body .dn-settings { grid-template-columns: 1fr; gap: 14px; }
+  .dt-drawer-body .dn-set-rail { position: static; flex-direction: row; flex-wrap: wrap; }
+  @media (max-width: 560px) {
+    .dt-drawer-panel { width: 100vw; border-left: none; }
   }
 
   /* ===========================================================================
