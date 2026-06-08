@@ -3676,6 +3676,11 @@ def build_meta_loop_ledger(paths: WorkspacePaths) -> dict[str, Any]:
       better). ``None`` when no generation has a scalar yet.
     * ``champion_gen``     — the generation that SET that floor (the
       champion reign tick); ``None`` paired with a ``None`` floor.
+    * ``champion_index``   — the 0-based ordinal of ``champion_gen`` among
+      the epoch's generations in their natural (sorted) order; this anchors
+      the champion-reign tick so its position encodes WHEN in the epoch the
+      floor was set (early → left of the band, late → right). ``None`` when
+      the champion can't be located in the ordered list (never a guess).
     * ``generation_count`` — the epoch's generation count (effort → the
       effort-proportional band width).
     * ``structure``        — the epoch's frozen tournament structure token.
@@ -3740,6 +3745,17 @@ def build_meta_loop_ledger(paths: WorkspacePaths) -> dict[str, Any]:
                         floor = scalar
                         champion_gen = gid
 
+            # ``champion_index`` — the 0-based ordinal of the floor-setting
+            # champion among the epoch's generations in their natural
+            # (sorted) order; ``None`` when the champion can't be located
+            # in the ordered list (never a guess).
+            champion_index: int | None = None
+            if champion_gen is not None:
+                try:
+                    champion_index = gen_ids.index(champion_gen)
+                except ValueError:
+                    champion_index = None
+
             cur_hashes = _read_contract_components(paths, epoch_id)
             structure = _epoch_structure(paths, epoch_id)
 
@@ -3768,6 +3784,7 @@ def build_meta_loop_ledger(paths: WorkspacePaths) -> dict[str, Any]:
                     "epoch_id": epoch_id,
                     "floor": floor,
                     "champion_gen": champion_gen,
+                    "champion_index": champion_index,
                     "generation_count": len(gen_ids),
                     "structure": structure,
                     "closed": closed,

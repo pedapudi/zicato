@@ -43,19 +43,19 @@ function chain() {
   return {
     currentEpochId: 'e3',
     epochs: [
-      { epoch_id: 'e0', floor: 0.412, champion_gen: 'v3', generation_count: 38,
+      { epoch_id: 'e0', floor: 0.412, champion_gen: 'v3', champion_index: 3, generation_count: 38,
         structure: 'racing', closed: true, open: false,
         changed_components: { board: false, brief: false, scoring: false, entrypoint: false, mutable_trees: false, structure: false, proposer: false },
         changed_list: [], soft: false },
-      { epoch_id: 'e1', floor: 0.276, champion_gen: 'v6', generation_count: 29,
+      { epoch_id: 'e1', floor: 0.276, champion_gen: 'v6', champion_index: 6, generation_count: 29,
         structure: 'racing', closed: true, open: false,
         changed_components: { board: true, brief: false, scoring: false, entrypoint: false, mutable_trees: false, structure: false, proposer: false },
         changed_list: ['board'], soft: false },
-      { epoch_id: 'e2', floor: 0.331, champion_gen: 'v10', generation_count: 57,
+      { epoch_id: 'e2', floor: 0.331, champion_gen: 'v10', champion_index: 10, generation_count: 57,
         structure: 'swiss', closed: true, open: false,
         changed_components: { board: false, brief: false, scoring: true, entrypoint: false, mutable_trees: false, structure: true, proposer: false },
         changed_list: ['scoring', 'structure'], soft: true },
-      { epoch_id: 'e3', floor: 0.229, champion_gen: 'v14', generation_count: 22,
+      { epoch_id: 'e3', floor: 0.229, champion_gen: 'v14', champion_index: 14, generation_count: 22,
         structure: 'swiss', closed: false, open: true,
         changed_components: { board: false, brief: true, scoring: false, entrypoint: false, mutable_trees: false, structure: false, proposer: true },
         changed_list: ['proposer', 'brief'], soft: false },
@@ -146,8 +146,65 @@ test('metaLoopLedger: a missing-floor epoch does not throw and renders a band', 
   const m = chain();
   m.epochs[0].floor = null;
   m.epochs[0].champion_gen = null;
+  m.epochs[0].champion_index = null;
   const node = svg.metaLoopLedger(m);
   assertEqual(allByClass(node, 'dn-metaledger-band').length, 4, 'all bands still render');
+});
+
+// ── champion-reign tick: position encodes WHEN the floor was set ──────
+
+// A single wide-band epoch isolates the tick geometry. The band owns the
+// full plot width; champion_index/generation_count drives the tick x.
+function soloEpoch(champion_index, generation_count) {
+  return {
+    currentEpochId: 'e0',
+    epochs: [
+      { epoch_id: 'e0', floor: 0.30, champion_gen: 'v' + champion_index,
+        champion_index, generation_count,
+        structure: 'racing', closed: true, open: false,
+        changed_components: { board: false, brief: false, scoring: false, entrypoint: false, mutable_trees: false, structure: false, proposer: false },
+        changed_list: [], soft: false },
+    ],
+  };
+}
+
+function champTickX(node) {
+  const ticks = allByClass(node, 'dn-metaledger-champtick');
+  return ticks.map((t) => parseFloat(t.getAttribute('x')) + 2); // x attr is champX - 2
+}
+
+test('metaLoopLedger: an EARLY champion sits near the LEFT of its band, a LATE one near the RIGHT', () => {
+  // Same band width (same generation_count); only champion_index moves.
+  const early = champTickX(svg.metaLoopLedger(soloEpoch(1, 40)))[0];
+  const late = champTickX(svg.metaLoopLedger(soloEpoch(38, 40)))[0];
+  assert(early < late, 'an earlier champion_index → a tick further left than a later one');
+  // and within the same band, the late tick is clearly to the right (not a
+  // fixed 62% position — the spread reflects index/count).
+  assert(late - early > 50, 'the early/late spread is real, not a fixed offset');
+});
+
+test('metaLoopLedger: the tick x reflects champion_index / generation_count', () => {
+  // Mid-epoch champion (index 19 of 40) → tick near the band centre; a near-
+  // last champion (index 39 of 40) → tick near the right edge, > the mid one.
+  const mid = champTickX(svg.metaLoopLedger(soloEpoch(19, 40)))[0];
+  const last = champTickX(svg.metaLoopLedger(soloEpoch(39, 40)))[0];
+  const first = champTickX(svg.metaLoopLedger(soloEpoch(0, 40)))[0];
+  assert(first < mid && mid < last, 'monotone: first-gen < mid-gen < last-gen tick x');
+});
+
+test('metaLoopLedger: a NULL champion_index draws the champ label but NO bar', () => {
+  const m = soloEpoch(0, 40);
+  m.epochs[0].champion_index = null; // unlocatable champion → label only
+  const node = svg.metaLoopLedger(m);
+  assertEqual(allByClass(node, 'dn-metaledger-champtick').length, 0, 'no champion-reign bar when the index is null');
+  // the label still renders (band is wide enough: b.w > 104).
+  const labels = textOfClass(node, 'dn-metaledger-champlbl');
+  assert(labels.some((t) => t.includes('champ')), 'the champ label still renders without the bar');
+});
+
+test('metaLoopLedger: with a real champion_index the bar IS drawn (regression on the prior fixed 62% bar)', () => {
+  const node = svg.metaLoopLedger(soloEpoch(20, 40));
+  assertEqual(allByClass(node, 'dn-metaledger-champtick').length, 1, 'a single anchored champion-reign bar');
 });
 
 // ── digest: convergence + gating substrate ───────────────────────────
@@ -171,6 +228,10 @@ test('metaLoopLedgerDigest: flips when a floor / change-set / lifecycle moves', 
   assert(svg.metaLoopLedgerDigest(m2) !== base, 'a new changed component flips the digest');
   const m3 = chain(); m3.epochs[3].open = false; m3.epochs[3].closed = true;
   assert(svg.metaLoopLedgerDigest(m3) !== base, 'a lifecycle flip changes the digest');
+  // the tick POSITION is load-bearing: a champion_index move (the tick slides
+  // along the band) must regate the DOM even when champion_gen is unchanged.
+  const m4 = chain(); m4.epochs[3].champion_index = 0;
+  assert(svg.metaLoopLedgerDigest(m4) !== base, 'a champion_index (tick position) change flips the digest');
 });
 
 test('metaLoopLedgerDigest: tolerates an empty / malformed model', () => {
@@ -191,11 +252,11 @@ const WS_LEDGER = {
     { epoch_id: 'e0', scalar: 42.1 }, { epoch_id: 'e1', scalar: 40.5 }, { epoch_id: 'e2', scalar: 34.2 },
   ],
   ledger: [
-    { epoch_id: 'e0', floor: 42.1, champion_gen: 'v4', generation_count: 5, structure: 'racing', closed: true, open: false,
+    { epoch_id: 'e0', floor: 42.1, champion_gen: 'v4', champion_index: 4, generation_count: 5, structure: 'racing', closed: true, open: false,
       changed_components: { board: false, brief: false, scoring: false, entrypoint: false, mutable_trees: false, structure: false, proposer: false }, changed_list: [], soft: false },
-    { epoch_id: 'e1', floor: 40.5, champion_gen: 'v7', generation_count: 9, structure: 'racing', closed: true, open: false,
+    { epoch_id: 'e1', floor: 40.5, champion_gen: 'v7', champion_index: 7, generation_count: 9, structure: 'racing', closed: true, open: false,
       changed_components: { board: true, brief: false, scoring: false, entrypoint: false, mutable_trees: false, structure: false, proposer: false }, changed_list: ['board'], soft: false },
-    { epoch_id: 'e2', floor: 34.2, champion_gen: 'v7', generation_count: 6, structure: 'swiss', closed: false, open: true,
+    { epoch_id: 'e2', floor: 34.2, champion_gen: 'v7', champion_index: 5, generation_count: 6, structure: 'swiss', closed: false, open: true,
       changed_components: { board: false, brief: false, scoring: true, entrypoint: false, mutable_trees: false, structure: true, proposer: false }, changed_list: ['scoring', 'structure'], soft: true },
   ],
 };
