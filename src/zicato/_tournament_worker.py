@@ -690,11 +690,26 @@ def _weights_from_args(args: dict[str, Any]) -> ScoringWeights:
     falls back to the dataclass default — so a caller that does not care
     about scoring weights (a stub-adapter test) can omit the block
     entirely and still get a usable run.
+
+    The symmetric writer is :func:`zicato.tournament.runner._weights_spec`;
+    the two must stay field-for-field in lock-step. A field carried by the
+    writer but not read here (or vice versa) is silently reset to its default
+    in the subprocess — the defect class this reader's ``pass_rate_monotonicity_scope``
+    handling guards against (issue #17).
     """
     raw = args.get("weights") or {}
     if not isinstance(raw, dict):
         return ScoringWeights()
     defaults = ScoringWeights()
+    # The monotonicity scope is a closed Literal — coerce an unknown token
+    # back to the default so a malformed args file can never desync the
+    # worker's gate-view from the parent's. Valid tokens pass through.
+    raw_scope = raw.get("pass_rate_monotonicity_scope", defaults.pass_rate_monotonicity_scope)
+    scope = (
+        raw_scope
+        if raw_scope in ("per_entry", "aggregate")
+        else defaults.pass_rate_monotonicity_scope
+    )
     return ScoringWeights(
         drift_weight=float(raw.get("drift_weight", defaults.drift_weight)),
         pass_weight=float(raw.get("pass_weight", defaults.pass_weight)),
@@ -708,6 +723,7 @@ def _weights_from_args(args: dict[str, Any]) -> ScoringWeights:
         pass_rate_monotonicity=bool(
             raw.get("pass_rate_monotonicity", defaults.pass_rate_monotonicity)
         ),
+        pass_rate_monotonicity_scope=scope,
         regression_gate_enabled=bool(
             raw.get("regression_gate_enabled", defaults.regression_gate_enabled)
         ),

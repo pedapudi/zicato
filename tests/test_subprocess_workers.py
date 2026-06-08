@@ -321,6 +321,74 @@ def test_per_judge_weights_survive_worker_serialize_deserialize() -> None:
     assert weighted != under_counted
 
 
+def test_pass_rate_monotonicity_scope_survives_worker_serialize_deserialize() -> None:
+    """``pass_rate_monotonicity_scope`` survives the WORKER transport (issue #17).
+
+    A field present in-process but missing from the worker's serialise /
+    deserialise pair is silently reset to its default — the same defect
+    class fixed for ``per_judge_weights``. Here that would silently downgrade
+    an operator's ``aggregate`` scope to the default ``per_entry`` inside the
+    subprocess, so a net-improving challenger that reshuffles entries would
+    be (wrongly) rejected by the worker-side gate-view.
+
+    This walks the exact transport the worker uses — the serialise side
+    (:func:`zicato.tournament.runner._weights_spec`) → a JSON round-trip
+    (the args file is JSON) → the deserialise side
+    (:func:`zicato._tournament_worker._weights_from_args`) — then proves the
+    reconstructed scope DRIVES the gate decision: the same parent/child pair
+    that promotes under ``aggregate`` is rejected under ``per_entry``.
+    """
+    from zicato._tournament_worker import _weights_from_args
+    from zicato.tournament.gate import evaluate_gate
+    from zicato.tournament.runner import _weights_spec
+
+    weights = ScoringWeights(
+        promote_margin=0.02,
+        pass_rate_monotonicity=True,
+        pass_rate_monotonicity_scope="aggregate",
+    )
+
+    # Serialise → JSON → deserialise: exactly what the worker subprocess sees.
+    spec = _weights_spec(weights)
+    assert spec["pass_rate_monotonicity_scope"] == "aggregate"
+    round_tripped = _weights_from_args({"weights": json.loads(json.dumps(spec))})
+    assert round_tripped.pass_rate_monotonicity_scope == "aggregate"
+    assert round_tripped.pass_rate_monotonicity is True
+
+    # The scope must actually drive the gate after the round-trip. A net-
+    # neutral pass-rate challenger that reshuffled which entries pass + clears
+    # the scalar margin promotes under aggregate; the default per_entry would
+    # reject it (the silent-downgrade bug this guards).
+    parent = {
+        "scalar": 9.17,
+        "pass_rate": 4 / 9,
+        "per_entry": {f"E{i}": {"pass_fail": i <= 4} for i in range(1, 10)},
+    }
+    child = {
+        "scalar": 5.23,  # ~43% loss reduction, well past promote_margin
+        "pass_rate": 4 / 9,
+        "per_entry": {f"E{i}": {"pass_fail": i >= 6} for i in range(1, 10)},
+    }
+    assert evaluate_gate(parent, child, round_tripped).decision == "promoted"
+
+    # Counterfactual: had the scope been dropped to the default per_entry
+    # (the bug), the worker-side gate would reject the same challenger.
+    dropped = _weights_from_args(
+        {"weights": {k: v for k, v in spec.items() if k != "pass_rate_monotonicity_scope"}}
+    )
+    assert dropped.pass_rate_monotonicity_scope == "per_entry"
+    assert evaluate_gate(parent, child, dropped).decision == "rejected"
+
+
+def test_unknown_monotonicity_scope_token_coerces_to_default() -> None:
+    """A malformed scope token in the args file coerces to the default rather
+    than desyncing the worker's gate-view (defensive deserialise, issue #17)."""
+    from zicato._tournament_worker import _weights_from_args
+
+    rebuilt = _weights_from_args({"weights": {"pass_rate_monotonicity_scope": "bogus"}})
+    assert rebuilt.pass_rate_monotonicity_scope == "per_entry"
+
+
 def test_worker_stamps_its_own_pid_into_active_runs(tmp_path: Path) -> None:
     """The active_runs file the worker writes carries the WORKER's pid.
 

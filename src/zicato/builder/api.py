@@ -98,6 +98,7 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
             draft,
             promote_margin=args.get("promote_margin"),
             monotonicity=args.get("monotonicity"),
+            monotonicity_scope=args.get("monotonicity_scope"),
         )
     if op == "edit_board_entry":
         entry = validate_board_entry(args["entry"])

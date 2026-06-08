@@ -160,6 +160,7 @@ def _render_scoring_block(scoring: dict[str, object]) -> str:
     _row("runtime_weight", "runtime_weight")
     _row("promote_margin", "promote_margin")
     _row("pass_rate_monotonicity", "pass_rate_monotonicity")
+    _row("pass_rate_monotonicity_scope", "pass_rate_monotonicity_scope")
 
     sev = scoring.get("severity_weights")
     if isinstance(sev, dict) and sev:

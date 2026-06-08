@@ -342,8 +342,16 @@ def set_gate(
     *,
     promote_margin: float | None = None,
     monotonicity: bool | None = None,
+    monotonicity_scope: str | None = None,
 ) -> DraftPatch:
-    """Set the promote gate: the margin floor + pass-rate monotonicity."""
+    """Set the promote gate: the margin floor + pass-rate monotonicity.
+
+    ``monotonicity`` is the on/off switch; ``monotonicity_scope`` selects
+    the granularity when it is on (``"per_entry"`` — default, every
+    champion-passed entry must hold — or ``"aggregate"`` — only the overall
+    pass-rate may not regress; see SCORING.md §5). An invalid scope token
+    raises rather than silently coercing.
+    """
     changed: dict[str, Any] = {}
     scoring_changes: dict[str, Any] = {}
     if promote_margin is not None and promote_margin != draft.scoring.promote_margin:
@@ -358,6 +366,18 @@ def set_gate(
             "from": draft.scoring.pass_rate_monotonicity,
             "to": monotonicity,
         }
+    if monotonicity_scope is not None:
+        if monotonicity_scope not in ("per_entry", "aggregate"):
+            raise ValueError(
+                f"monotonicity_scope must be 'per_entry' or 'aggregate', got "
+                f"{monotonicity_scope!r}"
+            )
+        if monotonicity_scope != draft.scoring.pass_rate_monotonicity_scope:
+            scoring_changes["pass_rate_monotonicity_scope"] = monotonicity_scope
+            changed["pass_rate_monotonicity_scope"] = {
+                "from": draft.scoring.pass_rate_monotonicity_scope,
+                "to": monotonicity_scope,
+            }
     if scoring_changes:
         draft.scoring = _replace_scoring(draft, **scoring_changes)
     return DraftPatch(op="set_gate", changed=changed)

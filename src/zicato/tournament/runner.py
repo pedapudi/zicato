@@ -692,9 +692,15 @@ def _adapter_spec(adapter: Any) -> dict[str, Any]:
 def _weights_spec(weights: ScoringWeights) -> dict[str, Any]:
     """Serialise :class:`ScoringWeights` into a JSON-friendly subset dict.
 
-    Only the scalar / mapping / tuple fields are carried — enough for the
-    worker's :func:`reduce_loss` call. The worker rebuilds a
-    :class:`ScoringWeights` from this, defaulting any absent key.
+    Carries the scalar / mapping / tuple fields the worker needs to
+    reconstruct a faithful :class:`ScoringWeights` — both for its
+    :func:`reduce_loss` call AND for any gate-view it derives. The gate
+    fields (``promote_margin``, ``pass_rate_monotonicity`` and its
+    ``pass_rate_monotonicity_scope``) are carried too: a field present in the
+    parent's weights but missing here is silently reset to its default in the
+    subprocess, which would desync the worker's gate decision from the
+    parent's. :func:`_weights_from_args` is the symmetric reader and must
+    stay field-for-field in lock-step with this writer.
     """
     return {
         "drift_weight": weights.drift_weight,
@@ -707,6 +713,7 @@ def _weights_spec(weights: ScoringWeights) -> dict[str, Any]:
         "runtime_weight": weights.runtime_weight,
         "promote_margin": weights.promote_margin,
         "pass_rate_monotonicity": weights.pass_rate_monotonicity,
+        "pass_rate_monotonicity_scope": weights.pass_rate_monotonicity_scope,
         "regression_gate_enabled": weights.regression_gate_enabled,
         "regression_test_command": list(weights.regression_test_command),
         "regression_timeout_s": weights.regression_timeout_s,
