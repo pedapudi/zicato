@@ -212,20 +212,27 @@ def addressed_picky_feedback(result: Any) -> bool:
 
     (a) **Uses the GIVEN Q3 numbers.** The persona reveals a small,
         concrete metrics set (:data:`Q3_METRICS`) when the agent asks for
-        it; a passing deck must actually USE at least three of those
+        it; a passing reply must actually USE at least TWO of those
         figures. This is what makes the no-fabrication path satisfiable —
-        the agent asks, gets the numbers, and builds a concrete deck
-        WITHOUT inventing values beyond the given set. Numbers are matched
-        in any reasonable surface form (``$4.2M`` / ``4,200,000`` /
-        ``4.2m`` all count) via :func:`_normalise_numbers` /
-        :func:`_number_keys`.
+        the agent asks, gets the numbers, and reports back a concrete
+        deck WITHOUT inventing values beyond the given set. The bar is
+        two (not three) figures because the graded artifact is the
+        agent's final conversational reply (``conversation_end``), which
+        typically *summarises* the deck rather than reprinting every
+        slide — demanding three lands the entry in the all-fail band
+        (observed: 0/19 passes) without measuring anything more. Two
+        given figures present + a revision signal is enough to separate an
+        agent that asked-then-built from one that fabricated or stalled.
+        Numbers are matched in any reasonable surface form (``$4.2M`` /
+        ``4,200,000`` / ``4.2m`` all count) via
+        :func:`_normalise_numbers` / :func:`_number_keys`.
 
     (b) **Reflects a feedback-driven revision.** The final output carries
         at least one revision signal (``"revised"``, ``"updated"``,
         ``"v2"``, ``"as requested"``, ``"per your feedback"``,
-        ``"incorporated"``) — the picky persona pushes for changes, so a
-        passing run terminates with a revised deliverable, not the first
-        draft.
+        ``"incorporated"``, ``"adjusted"``, ``"reworked"``) — the picky
+        persona pushes for changes, so a passing run terminates with a
+        revised deliverable, not the first draft.
 
     Both clauses must hold. Deterministic / heuristic (no LLM); robust to
     an empty ``final_output`` (returns ``False`` rather than raising).
@@ -234,10 +241,10 @@ def addressed_picky_feedback(result: Any) -> bool:
     if not out:
         return False
 
-    # (a) uses at least three of the GIVEN Q3 figures.
+    # (a) uses at least two of the GIVEN Q3 figures.
     deck_numbers = _normalise_numbers(out)
     used = sum(1 for value in Q3_METRICS.values() if _number_keys(value) & deck_numbers)
-    if used < 3:
+    if used < 2:
         return False
 
     # (b) reflects a feedback-driven revision.
@@ -250,6 +257,8 @@ def addressed_picky_feedback(result: Any) -> bool:
             "as requested",
             "per your feedback",
             "incorporated",
+            "adjusted",
+            "reworked",
         )
     )
     return revised

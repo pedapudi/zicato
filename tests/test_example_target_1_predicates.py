@@ -89,7 +89,7 @@ def test_empty_output_fails_without_raising() -> None:
 def test_revision_signal_alone_is_insufficient() -> None:
     """The OLD heuristic ("contains 'revised'") must no longer pass alone.
 
-    A deck that says "revised" but carries fewer than three GIVEN figures
+    A deck that says "revised" but carries fewer than two GIVEN figures
     must fail — this is the regression the redesign closes.
     """
     weak = "Here is your revised, updated deck. Revenue grew nicely this quarter."
