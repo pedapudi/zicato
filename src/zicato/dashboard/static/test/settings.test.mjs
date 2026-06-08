@@ -35,8 +35,11 @@ const EPOCH = {
   goal: 'be crisper',
   brief: 'line one\nline two\nline three',
   board: [{ entry_id: 'waffles', kind: 'single_turn' }, { entry_id: 'picky', kind: 'multi_turn_emulated' }],
-  tournament: { structure: 'swiss', params: { rounds: 3 } },
+  tournament: { structure: 'swiss', params: { field_size: 4, replicates: 1, rounds_n: 3 } },
   scoring: { promote_margin: 0.05, pass_rate_monotonicity: true, overfitting: { enabled: true, holdout_fraction: 0.25 } },
+  // /api/epoch computes the train/holdout split SERVER-SIDE; the contract
+  // preview reads its counts (so it never re-derives the sha256 hash split).
+  board_split: { configured: true, enabled: true, holdout_fraction: 0.25, train_count: 2, holdout_count: 0, total: 2 },
   proposer: { has_custom_agent: false },
 };
 
@@ -289,6 +292,42 @@ test('settings: the Contract section reads /api/epoch as a read-only roll-up', a
   assert(rows.length > 0 && rows.every((r) => r.getAttribute('href') === '#/builder'), 'contract rows link into the builder');
 });
 
+// CHANGE 2: the Contract section LEADS with the builder's live-preview RENDERER
+// (reused read-only) — bound to /api/epoch's frozen contract. It shows the
+// per-structure schematic + the cost meter + the train/holdout strip + any
+// validation diagnostics, computed CLIENT-SIDE — and carries NO apply controls.
+test('settings: the Contract section renders the read-only builder PREVIEW from /api/epoch', async () => {
+  installFetch();
+  const host = globalThis.document.createElement('div');
+  await settings.render(host, ctx, { section: 'contract' });
+  await tick();
+  const body = firstClass(host, 'dn-set-body');
+  // the preview pane reuses the builder's preview classes, marked read-only.
+  const preview = firstClass(body, 'dn-set-preview');
+  assert(preview, 'the contract section renders the reused preview pane');
+  assert(preview.classList.contains('dn-bld-preview'), 'it reuses the builder preview classes');
+  // the per-structure schematic renders (a swiss epoch ⇒ the swiss ladder svg).
+  const fig = firstClass(preview, 'dn-bld-figure');
+  assert(fig, 'the schematic figure renders in the preview');
+  assert(firstClass(fig, 'dn-swissladder'), 'the schematic is the swiss-ladder svg figure');
+  // the cost meter renders a board-runs-per-round number computed client-side.
+  // swiss: rounds_n 3 × pairings (field_size 4 // 2 = 2) × replicates 1 × board 2 = 12.
+  const cost = firstClass(preview, 'dn-bld-cost');
+  assert(cost, 'the cost meter renders');
+  const costNum = firstClass(cost, 'dn-bld-cost-num');
+  assertEqual(costNum.textContent, '12', 'the board-runs/round is computed client-side from the contract');
+  // the train / holdout strip renders from the server-computed board_split.
+  const strip = firstClass(preview, 'dn-bld-previewstrip');
+  assert(strip, 'the train/holdout strip renders');
+  assert(strip.textContent.includes('train 2'), 'the train count comes from board_split');
+  assert(strip.textContent.includes('holdout 0'), 'the holdout count comes from board_split');
+  // the read-only impact note (NOT the editable roll/apply pill) is present.
+  assert(firstClass(preview, 'dn-bld-impact-current'), 'a read-only "current contract" impact note (no apply)');
+  // there are NO apply / dry-run controls anywhere in the contract preview.
+  assertEqual(byClass(body, 'dn-bld-applyrow').length, 0, 'no apply / dry-run controls in the read-only contract preview');
+  assertEqual(byClass(body, 'dn-bld-btn-apply').length, 0, 'no apply button in the read-only contract preview');
+});
+
 test('settings: the Models section renders all four roles, each editable (toggle + fields)', async () => {
   installFetch();
   const host = globalThis.document.createElement('div');
@@ -363,18 +402,21 @@ test('settings: editing a Models role + saving round-trips through POST /setting
   assert(!flat.includes('sk-'), 'no secret value crossed the POST boundary');
 });
 
-test('settings: the builder is NO LONGER embedded in the host — it is a LAUNCHER to #/builder', async () => {
+test('settings: the EDITABLE builder is NO LONGER embedded — only a LAUNCHER (+ a read-only contract preview)', async () => {
   installFetch();
   const host = globalThis.document.createElement('div');
   // even if a stale `#/builder` ever resolved into a settings section, the
-  // surface must not render the builder's chrome inside its host (that nesting
-  // was the clutter we removed). The launcher links out instead.
+  // surface must not render the builder's EDITABLE chrome inside its host (that
+  // nesting was the clutter we removed). The launcher links out instead. The
+  // Contract section DOES reuse the builder's read-only preview RENDERER (a
+  // schematic + cost + holdout strip), but never its rail / form / apply chrome.
   await settings.render(host, ctx, { section: 'builder' });
   await tick();
-  // the builder's self-contained chrome must NOT appear inside the settings host.
+  // the builder's self-contained EDITABLE chrome must NOT appear inside settings.
   assert(!firstClass(host, 'dn-builder'), 'the builder root is NOT mounted inside the settings host');
-  assert(!firstClass(host, 'dn-bld-preview'), 'no embedded builder preview pane in the settings host');
   assertEqual(byClass(host, 'dn-bld-railitem').length, 0, 'no embedded builder rail inside settings');
+  assertEqual(byClass(host, 'dn-bld-applyrow').length, 0, 'no apply / dry-run controls inside settings');
+  assertEqual(byClass(host, 'dn-bld-card').length, 0, 'no editable structure-picker cards inside settings');
   // a non-section `section: 'builder'` param falls back to the default section;
   // the launcher to the standalone view is still present.
   const launchers = byClass(host, 'dn-set-raillauncher');

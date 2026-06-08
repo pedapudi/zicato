@@ -19,12 +19,12 @@
 // panel or a standalone entry by changing only the route wiring.
 
 import { el, clearChildren, patchText } from '../../../core/dom.js';
-import * as svg from '../svg.js';
 import { gatedSwap, section, empty } from '../ui.js';
 import { infoPopover } from '../builder/popover.js';
 import { BuilderChat } from '../builder/chat.js';
+import { previewNodes } from '../builder/preview.js';
 import {
-  STRUCTURES, STRUCTURE_GLYPH, paramSpecsFor, schematicModel, structureGlyphSvg,
+  STRUCTURES, STRUCTURE_GLYPH, paramSpecsFor, structureGlyphSvg,
   readChatWidth, persistChatWidth, readChatCollapsed, persistChatCollapsed,
   CHAT_MIN, CHAT_MAX,
 } from '../builder/model.js';
@@ -477,72 +477,16 @@ function renderPreview(host) {
     board: board.length, train: (holdout.train_ids || []).length, hold: (holdout.holdout_ids || []).length,
   });
 
-  gatedSwap(host, 'preview|' + digest, () => {
-    const nodes = [];
-    nodes.push(el('h2', { class: 'dn-h2', text: 'Live preview' }));
-
-    // the contract-impact pill (from diff)
-    const changed = diff.changed_components || [];
-    nodes.push(el('div', {
-      class: 'dn-bld-impact' + (diff.rolls_epoch ? ' dn-bld-impact-roll' : ''),
-      title: diff.rolls_epoch ? 'applying this draft will roll the epoch' : 'no contract change',
-    }, [
-      el('span', { class: 'dn-bld-impact-glyph', 'aria-hidden': 'true', text: diff.rolls_epoch ? '⟳' : '=' }),
-      el('span', { text: diff.rolls_epoch ? ('rolls epoch · changed: ' + (changed.length ? changed.join(', ') : 'contract')) : 'no contract change' }),
-    ]));
-
-    // the per-structure schematic — REUSED from svg.js so the builder preview
-    // and the runtime view speak one visual language.
-    const model = schematicModel(structure, ts.params || {}, board.length);
-    let fig = null;
-    if (structure === 'racing') fig = svg.survivalFunnel(model);
-    else if (structure === 'swiss') fig = svg.swissLadder(model);
-    else if (structure === 'single_elim' || structure === 'double_elim') fig = svg.elimFlow(model);
-    else fig = svg.valueDotPlot(model); // gauntlet → the Δ dot-plot
-    nodes.push(el('div', { class: 'dn-bld-figure' }, [fig]));
-
-    // the cost meter
-    nodes.push(costMeter(cost));
-
-    // the board / holdout strip
-    const trainN = (holdout.train_ids || []).length;
-    const holdN = (holdout.holdout_ids || []).length;
-    nodes.push(el('div', { class: 'dn-bld-previewstrip', role: 'img', 'aria-label': `board ${board.length} · train ${trainN} · holdout ${holdN}` }, [
-      el('span', { class: 'dn-bld-split-train', style: `flex:${Math.max(1, trainN)}`, text: `train ${trainN}` }),
-      el('span', { class: 'dn-bld-split-hold', style: `flex:${Math.max(0.001, holdN)}`, text: `holdout ${holdN}` }),
-    ]));
-
-    // validation warnings (from warnings)
-    if (_warnings.length) {
-      nodes.push(el('ul', { class: 'dn-bld-warnings' }, _warnings.map((w) => el('li', {
-        class: 'dn-bld-warn dn-bld-warn-' + (w.severity || 'warning'),
-      }, [
-        el('span', { class: 'dn-bld-warn-glyph', 'aria-hidden': 'true', text: w.severity === 'info' ? 'ⓘ' : '⚠' }),
-        el('span', { class: 'dn-bld-warn-msg', text: w.message || w.code || '' }),
-      ]))));
-    } else {
-      nodes.push(el('p', { class: 'dn-faint', text: 'No validation warnings.' }));
-    }
-    return nodes;
-  });
-}
-
-function costMeter(cost) {
-  const runs = cost.board_runs_per_round != null ? cost.board_runs_per_round : 0;
-  const breakdown = Array.isArray(cost.breakdown) ? cost.breakdown : [];
-  const wrap = el('div', { class: 'dn-bld-cost' });
-  wrap.appendChild(el('div', { class: 'dn-bld-cost-head' }, [
-    el('span', { class: 'dn-bld-cost-num', text: String(runs) }),
-    el('span', { class: 'dn-bld-cost-lab', text: 'board-runs / round' }),
-  ]));
-  const total = Math.max(1, runs);
-  wrap.appendChild(el('div', { class: 'dn-bld-cost-bars' }, breakdown.map((line) => el('div', {
-    class: 'dn-bld-cost-bar', title: `${line.label}: ${line.runs} · ${line.detail || ''}`,
-  }, [
-    el('span', { class: 'dn-bld-cost-barfill', style: `width:${Math.round((line.runs / total) * 100)}%` }),
-    el('span', { class: 'dn-bld-cost-barlab', text: `${line.label} · ${line.runs}` }),
-  ]))));
-  return wrap;
+  gatedSwap(host, 'preview|' + digest, () => previewNodes({
+    structure,
+    params: ts.params || {},
+    cost,
+    warnings: _warnings,
+    diff,
+    boardCount: board.length,
+    trainCount: (holdout.train_ids || []).length,
+    holdoutCount: (holdout.holdout_ids || []).length,
+  }));
 }
 
 export { STRUCTURE_GLYPH };

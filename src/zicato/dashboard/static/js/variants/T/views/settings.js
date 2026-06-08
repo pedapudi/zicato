@@ -30,6 +30,14 @@ import {
 import { DEFAULT_SETTINGS_SECTION } from '../router.js';
 import * as data from '../data.js';
 import { getModels, saveModels } from '../builder/api.js';
+// REUSE the builder's live-PREVIEW renderer (NOT a fork): the frozen current
+// contract is the same shape the builder draft has, so the Contract section
+// renders the SAME schematic + cost meter + board/holdout strip + validation
+// diagnostics READ-ONLY, bound to /api/epoch. The cost / validation are the
+// pure client-side twins of the backend's estimate (builder/model.js), so this
+// needs no `/builder/op` round-trip.
+import { previewNodes } from '../builder/preview.js';
+import { estimateCost, validateContract } from '../builder/model.js';
 // REUSE the SAME swatch-dropdown component the top bar renders (NOT a fork): the
 // settings theme picker is the very same control, so the two render identically
 // and stay in lockstep through the shared store (applyTheme → syncSwatchDropdowns).
@@ -154,11 +162,16 @@ async function renderSection() {
   }
 }
 
-// ── Contract — read-mostly at-a-glance of the current epoch ───────────
+// ── Contract — read-mostly view of the current epoch ──────────────────
 //
-// board · brief · scoring · proposer · overfitting. Reuses /api/epoch (the
-// authoritative contract) + the builder draft for scoring/overfitting detail.
-// Each row links into the builder to edit, so this stays read-only.
+// LEADS with the builder's live-PREVIEW visualization (the per-structure
+// schematic + cost meter + train/holdout strip + validation diagnostics),
+// reused READ-ONLY and bound to the FROZEN contract /api/epoch returns. The
+// cost / validation are recomputed CLIENT-SIDE (builder/model.js's pure
+// estimateCost / validateContract twins of the backend) from the contract +
+// its server-computed `board_split` counts — no `/builder/op` round-trip. The
+// text roll-up follows below; each row links into the builder to edit, so this
+// surface stays strictly read-only.
 
 async function renderContract() {
   const ep = await data.epoch();
@@ -166,13 +179,21 @@ async function renderContract() {
   const board = Array.isArray(c.board) ? c.board : [];
   const tournament = (c.tournament && typeof c.tournament === 'object') ? c.tournament : null;
   const structure = (tournament && tournament.structure) || 'gauntlet';
+  const params = (tournament && tournament.params && typeof tournament.params === 'object') ? tournament.params : {};
   const brief = c.brief || '';
   const scoring = (c.scoring && typeof c.scoring === 'object') ? c.scoring : {};
   const overfitting = scoring.overfitting || c.overfitting || {};
   const proposer = (c.proposer && typeof c.proposer === 'object') ? c.proposer : null;
+  // /api/epoch computes the train/holdout split SERVER-SIDE (the same slices the
+  // gate plays) — read its counts so the preview's cost + strip never re-derive
+  // the deterministic sha256 hash split client-side.
+  const split = (c.board_split && typeof c.board_split === 'object') ? c.board_split : {};
+  const trainCount = split.train_count != null ? split.train_count : board.length;
+  const holdoutCount = split.holdout_count != null ? split.holdout_count : 0;
 
   const digest = JSON.stringify({
-    epoch: c.epoch_id || null, board: board.length, structure,
+    epoch: c.epoch_id || null, board: board.length, structure, params,
+    train: trainCount, hold: holdoutCount,
     briefLen: brief.length, margin: scoring.promote_margin,
     mono: !!scoring.pass_rate_monotonicity,
     holdFrac: overfitting.holdout_fraction, ofEnabled: overfitting.enabled,
@@ -180,7 +201,7 @@ async function renderContract() {
   });
 
   gatedSwap(_sectionHost, 'contract|' + digest, () => {
-    if (!ep) return [empty('No epoch contract is available yet.')];
+    if (!ep || !c.epoch_id) return [empty('No epoch contract is available yet.')];
     const briefLines = brief ? brief.split(/\n/).length : 0;
     const margin = scoring.promote_margin != null ? scoring.promote_margin : 0;
     const holdFrac = overfitting.holdout_fraction != null ? overfitting.holdout_fraction : null;
@@ -196,9 +217,21 @@ async function renderContract() {
       contractRow('Proposer',
         proposer ? (proposer.has_custom_agent ? 'custom ADK agent' : 'skill-composed default') : '—', 'builder'),
     ];
+    // The read-only preview model: the SAME shape the builder's preview reads,
+    // but with no diff (nothing to apply) and the cost / warnings recomputed
+    // client-side from the frozen contract.
+    const cost = estimateCost(structure, params, trainCount, holdoutCount);
+    const warnings = validateContract(structure, params, trainCount, holdoutCount, overfitting);
+    const preview = el('aside', { class: 'dn-set-preview dn-bld-preview', 'aria-label': 'Contract visualization' },
+      previewNodes({
+        structure, params, cost, warnings,
+        boardCount: board.length, trainCount, holdoutCount,
+        readonly: true, heading: 'Contract at a glance',
+      }));
     return [
       section('Contract — current epoch',
-        el('p', { class: 'dn-lede', text: 'A read-only at-a-glance of the evaluation contract this epoch runs on. Open the tournament builder to edit any of it (a change rolls the epoch).' }),
+        el('p', { class: 'dn-lede', text: 'A read-only view of the evaluation contract this epoch runs on — its tournament schematic, the estimated board-runs per round, the train / holdout split, and any validation diagnostics. Open the tournament builder to edit any of it (a change rolls the epoch).' }),
+        preview,
         el('div', { class: 'dn-set-kvgrid' }, rows),
         el('a', { class: 'dn-linkbtn', href: _ctx.href('builder', {}), text: 'Edit in the tournament builder →' })),
     ];

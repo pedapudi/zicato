@@ -89,6 +89,16 @@ let _renderToken = 0;
 let _live = null;             // the persistent LIVE-RUN controller (live hero + ticker)
 let _heroHost = null;         // the persistent host the live hero leads from
 let _lastViewKey = null;
+// THE SETTINGS OVERLAY (Change 1). Settings renders into a routed DRAWER that
+// paints over the current view rather than taking over `_viewHost`. The shell
+// owns the scrim + panel + the section host the settings view paints into.
+let _settingsOverlay = null;  // the overlay root (scrim + drawer panel)
+let _settingsScrim = null;    // the click-to-close backdrop
+let _settingsPanelHost = null; // the host the settings view's render() paints into
+let _settingsOpen = false;    // true while the drawer is open (gates Esc + the body host)
+// The last NON-settings route — the view the overlay paints over. A bare
+// `#/settings` loaded cold (no prior view) opens over Environment (home).
+let _underlyingRoute = { view: 'home', params: {}, cmp: null };
 let _lastCrumbDigest = null;
 let _lastStatusDigest = null;
 let _lastTreeDigest = null;
@@ -471,6 +481,9 @@ export function mountShell(root) {
   // Reset the exec-link digest: mountShell rebuilds the top bar (a fresh,
   // empty _execHost), so a stale digest must not skip the first paint.
   _lastExecHref = null;
+  // Reset the settings-overlay state on a fresh mount.
+  _settingsOpen = false;
+  _underlyingRoute = { view: 'home', params: {}, cmp: null };
   root.setAttribute('data-variant', 'T');
   root.setAttribute('data-t-theme', readColor());
   root.setAttribute('data-t-type', readType());
@@ -646,6 +659,41 @@ export function mountShell(root) {
   root.appendChild(_heroHost);
 
   root.appendChild(el('div', { class: 'dt-body' }, [_treeHost, _railHandle, _viewHost]));
+
+  // THE SETTINGS OVERLAY (Change 1). Settings is no longer a full-page view: it
+  // is a routed right-side DRAWER that paints OVER the current view. The shell
+  // owns a single scrim + drawer-panel pair, mounted once here and hidden until
+  // `#/settings[/<section>]` is the route. The underlying view stays rendered in
+  // `_viewHost` behind a scrim, so an Appearance change (theme / typeface / font
+  // size) applies LIVE to the page visible behind the panel. Esc, a scrim click,
+  // and the × all close the overlay by navigating to the underlying route.
+  _settingsPanelHost = el('div', { class: 'dt-drawer-body', role: 'region', 'aria-label': 'Settings' });
+  const closeBtn = el('button', {
+    class: 'dt-drawer-x', type: 'button', title: 'Close settings', 'aria-label': 'Close settings', text: '×',
+  });
+  closeBtn.addEventListener('click', () => closeSettingsOverlay());
+  const panel = el('div', {
+    class: 'dt-drawer-panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Settings',
+  }, [
+    el('div', { class: 'dt-drawer-head' }, [
+      el('span', { class: 'dt-drawer-title', text: 'settings' }),
+      closeBtn,
+    ]),
+    _settingsPanelHost,
+  ]);
+  _settingsScrim = el('div', { class: 'dt-drawer-scrim', 'aria-hidden': 'true' });
+  _settingsScrim.addEventListener('click', () => closeSettingsOverlay());
+  _settingsOverlay = el('div', { class: 'dt-drawer', 'data-open': '0' }, [_settingsScrim, panel]);
+  root.appendChild(_settingsOverlay);
+  // Esc closes the overlay (only while it is open). Bound once on the window.
+  window.addEventListener('keydown', (ev) => {
+    if (!_settingsOpen) return;
+    const k = ev && ev.key;
+    if (k === 'Escape' || k === 'Esc') {
+      if (ev.preventDefault) ev.preventDefault();
+      closeSettingsOverlay();
+    }
+  });
 
   // (The research-preview status tag now lives as a pill NEXT TO the wordmark in
   // the top bar — see researchPreviewPill() in brandWordmark's topbar block —
@@ -946,12 +994,80 @@ function renderBack(route) {
   patchClass(_backBtn, 'dt-back-off', !dest);
 }
 
+// ── the settings overlay (Change 1) ──────────────────────────────────
+//
+// `#/settings` opens the drawer OVER the underlying view; closing it returns to
+// the underlying route. The underlying route = the last non-settings route the
+// shell dispatched (or home if loaded cold straight onto `#/settings`).
+
+function openSettingsOverlay() {
+  _settingsOpen = true;
+  if (_settingsOverlay) {
+    _settingsOverlay.setAttribute('data-open', '1');
+    if (_settingsOverlay.classList) _settingsOverlay.classList.add('dt-drawer-open');
+  }
+}
+
+function closeSettingsOverlay() {
+  // Navigate back to the route the overlay paints over; dispatch then hides it.
+  if (!_settingsOpen) return;
+  const dest = _underlyingRoute || { view: 'home', params: {} };
+  navigate(dest.view, dest.params, dest.cmp ? { cmp: dest.cmp } : undefined);
+}
+
+function hideSettingsOverlay() {
+  _settingsOpen = false;
+  if (_settingsOverlay) {
+    _settingsOverlay.setAttribute('data-open', '0');
+    if (_settingsOverlay.classList) _settingsOverlay.classList.remove('dt-drawer-open');
+  }
+}
+
+// Render the underlying view (the one the overlay sits over) into `_viewHost`,
+// then the settings view into the drawer panel host. Tracked separately from
+// the normal dispatch path so an Appearance change applies live to the page
+// visible behind the scrim.
+async function dispatchSettingsOverlay(route) {
+  // The view the overlay paints over: the tracked underlying route. Render it
+  // into the main host (so the page behind the scrim is the real underlying
+  // view), reusing the normal renderer path, then paint settings into the panel.
+  const under = _underlyingRoute || { view: 'home', params: {}, cmp: null };
+  const underRenderer = RENDERERS[under.view] || RENDERERS.home;
+  const underKey = 'under|' + under.view + '|' + JSON.stringify(under.params || {}) + '|' + (under.cmp || '');
+  if (_lastViewKey !== underKey) {
+    clearChildren(_viewHost);
+    _lastViewKey = underKey;
+    try {
+      await underRenderer.render(_viewHost, _ctx, under.params || {}, under);
+    } catch (err) {
+      clearChildren(_viewHost);
+      _viewHost.appendChild(el('p', { class: 'dt-empty', text: 'This view hit an error: ' + ((err && err.message) || err) }));
+      // eslint-disable-next-line no-console
+      console.error('variant-T render error', err);
+    }
+  }
+
+  openSettingsOverlay();
+  // The settings view rebuilds its chrome ONCE per mount (it keys on
+  // `host.firstChild`); the panel host is cleared on a non-settings dispatch
+  // (when the overlay closes), so the next open rebuilds fresh. While the
+  // overlay stays open, a section deep-link / a no-op heartbeat re-dispatch
+  // keeps the existing chrome and only swaps the section (digest-gated) — no
+  // DOM rebuild on a no-op beat (render discipline).
+  const token = ++_renderToken;
+  try {
+    await RENDERERS.settings.render(_settingsPanelHost, _ctx, route.params || {}, route);
+  } catch (err) {
+    if (token !== _renderToken) return;
+    clearChildren(_settingsPanelHost);
+    _settingsPanelHost.appendChild(el('p', { class: 'dt-empty', text: 'Settings hit an error: ' + ((err && err.message) || err) }));
+    // eslint-disable-next-line no-console
+    console.error('variant-T settings render error', err);
+  }
+}
+
 async function dispatch() {
   const route = parseRoute(location.hash);
-  const renderer = RENDERERS[route.view] || RENDERERS.home;
-  // the compare target is part of the selection — a cmp change must clear +
-  // repaint the detail pane (the split appears/disappears).
-  const viewKey = route.view + '|' + JSON.stringify(route.params || {}) + '|' + (route.cmp || '');
 
   renderCrumbs(route);
   renderStatus();
@@ -959,6 +1075,25 @@ async function dispatch() {
   refreshLive();
   renderBack(route);
   renderTree(route);
+
+  // SETTINGS is an OVERLAY, not a `_viewHost` view: paint it into the drawer
+  // over the underlying view rather than taking over the main host.
+  if (route.view === 'settings') {
+    await dispatchSettingsOverlay(route);
+    return;
+  }
+
+  // A non-settings route closes the overlay (if open) and becomes the route the
+  // overlay will paint over next time it opens.
+  hideSettingsOverlay();
+  _underlyingRoute = { view: route.view, params: route.params || {}, cmp: route.cmp || null };
+  // Clear the settings panel host so the drawer re-mounts fresh next open.
+  if (_settingsPanelHost && _settingsPanelHost.firstChild) clearChildren(_settingsPanelHost);
+
+  const renderer = RENDERERS[route.view] || RENDERERS.home;
+  // the compare target is part of the selection — a cmp change must clear +
+  // repaint the detail pane (the split appears/disappears).
+  const viewKey = route.view + '|' + JSON.stringify(route.params || {}) + '|' + (route.cmp || '');
 
   const prevView = _lastViewKey == null ? null : String(_lastViewKey).split('|')[0];
   const prevKey = _lastViewKey;
