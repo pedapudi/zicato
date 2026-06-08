@@ -524,4 +524,84 @@ test('sequence — a REAL change between steps DOES move the digest (the swap fi
   assert(svg.racingScalarTrackDigest(o1) !== svg.racingScalarTrackDigest(o2), 'the benchmark appearing + the new rung moves the scalar-track digest');
 });
 
+// ===========================================================================
+// THE DENSE "WHAT'S RUNNING" CHAMPION-GATE CARD — each competitor is ONE aligned
+// row with fixed columns L→R: vN · progress bar (the width-filler) · ~projected
+// scalar · k/N boards · PROJ tag. The k/N boards-done is a FIRST-CLASS column,
+// not the clipped trailing afterthought it used to be.
+// ===========================================================================
+
+test('dense champion-gate card: each competitor row carries ALL fields inline — id · bar · ~scalar · k/N boards · PROJ — nothing clipped', () => {
+  // SEQUENCE[4] is the gate-deciding step: the champion-gate (racing-final) with
+  // the lone survivor v1 PROJECTED at 63.0, 8/16 boards in.
+  const step = SEQUENCE[4];
+  const c = new live.LiveController({ onCompetitor() {} });
+  c.update({ status: { running: true, structure: 'racing' }, heartbeat: hb(step.at._phase), activeRuns: [], activeTournament: step.at });
+
+  // the champion-gate block is present (`data-match="racing-final"`).
+  const gateBlock = nodesByClass(c._matchesBody, 'dt-live-match')
+    .find((b) => /champion-gate/i.test(textOf(b)));
+  assert(gateBlock, 'the champion-gate block renders in "what’s running"');
+
+  // the PROJECTED challenger row (v1) carries EVERY column, in order, inline.
+  const rows = nodesByClass(gateBlock, 'dt-live-match-row');
+  assert(rows.length >= 1, 'the gate card has at least one competitor row');
+  const projRow = rows.find((r) => /v1/.test(textOf(nodesByClass(r, 'dt-live-match-name')[0] || r)));
+  assert(projRow, 'the projected challenger v1 has a row');
+
+  // 1 — id column.
+  assertEqual(textOf(nodesByClass(projRow, 'dt-live-match-name')[0]), 'v1', 'col 1: the competitor id (vN)');
+  // 2 — the width-filling progress bar.
+  assert(nodesByClass(projRow, 'dt-live-match-bar').length === 1, 'col 2: exactly one progress bar (the width-filling element)');
+  const fill = nodesByClass(projRow, 'dt-live-match-fill')[0];
+  assert(fill && /width:\s*\d+%/.test(fill.style.cssText || ''), 'col 2: the bar fill width is set inline (CSS-animated, not a node swap)');
+  // 3 — the ~projected scalar column.
+  const scalar = nodesByClass(projRow, 'dt-live-match-scalar')[0];
+  assert(scalar && /~63/.test(textOf(scalar)), 'col 3: the ~projected scalar reads "~63"');
+  // 4 — the k/N boards column, FIRST-CLASS + not truncated (reads the full 8/16).
+  const boards = nodesByClass(projRow, 'dt-live-match-boards')[0];
+  assert(boards, 'col 4: a dedicated boards-done column exists (not the clipped trailing glyph)');
+  assertEqual(textOf(boards), '8/16', 'col 4: the boards-done reads the FULL k/N (8/16) — never a truncated "8…"');
+  // 5 — the PROJ tag column.
+  const tag = nodesByClass(projRow, 'dt-live-match-tag')[0];
+  assert(tag && /PROJ/i.test(textOf(tag)), 'col 5: the trailing tag reads PROJ for the in-flight projection');
+
+  // the column ORDER on the DOM is id → bar → scalar → boards → tag (no far-right
+  // floating: the five columns appear in that left-to-right sequence).
+  const order = (projRow.childNodes || []).filter((n) => n.nodeType === 1)
+    .map((n) => (n._attrs.class || '').split(/\s+/).find((k) => k.startsWith('dt-live-match-')));
+  assertEqual(order.join(' '), 'dt-live-match-name dt-live-match-bar dt-live-match-scalar dt-live-match-boards dt-live-match-tag',
+    'the five columns appear in the fixed L→R order (id · bar · scalar · boards · tag)');
+});
+
+test('dense champion-gate card: a no-op heartbeat repeat churns NO matches DOM (digest-gated render discipline)', () => {
+  const step = SEQUENCE[4];
+  const c = new live.LiveController({ onCompetitor() {} });
+  c.update({ status: { running: true, structure: 'racing' }, heartbeat: hb(step.at._phase), activeRuns: [], activeTournament: step.at });
+  const firstRows = nodesByClass(c._matchesBody, 'dt-live-match-row');
+  const firstNode = c._matchesBody.firstChild;
+  // an identical second tick (same digest) must preserve the existing DOM nodes.
+  c.update({ status: { running: true, structure: 'racing' }, heartbeat: hb(step.at._phase), activeRuns: [], activeTournament: step.at });
+  const secondNode = c._matchesBody.firstChild;
+  assert(firstNode && secondNode && firstNode === secondNode,
+    'a no-op heartbeat preserves the matches DOM node (no flash / rebuild)');
+  const secondRows = nodesByClass(c._matchesBody, 'dt-live-match-row');
+  assert(firstRows.length === secondRows.length && firstRows.every((r, i) => r === secondRows[i]),
+    'every competitor row is the SAME node across the no-op repeat (zero DOM churn)');
+});
+
+test('dense champion-gate card: the CSS row is a 5-track grid with the bar as the only flexible (1fr) column', async () => {
+  const fs = await import('node:fs');
+  const css = fs.readFileSync(new URL('../css/variants/T/console4.css', import.meta.url), 'utf8');
+  const m = css.match(/\.dt-live-match-row\s*\{[^}]*grid-template-columns:\s*([^;]+);/);
+  assert(m, 'the .dt-live-match-row grid-template-columns rule is defined');
+  const tracks = m[1].trim();
+  assert(/1fr/.test(tracks), 'the row grid carries a 1fr track (the bar is the width-filling column)');
+  assert((tracks.match(/max-content/g) || []).length >= 4, 'the other four columns are content-sized (no far-right floating)');
+  // each new column has its own CSS rule.
+  assert(/\.dt-live-match-scalar\s*\{/.test(css), 'the ~scalar column has a CSS rule');
+  assert(/\.dt-live-match-boards\s*\{/.test(css), 'the k/N boards column has a CSS rule');
+  assert(/\.dt-live-match-tag\s*\{/.test(css), 'the PROJ/verdict tag column has a CSS rule');
+});
+
 await run();

@@ -353,40 +353,89 @@ export function liveMatchGroupedBlocks(blocks, onCompetitor) {
     block.appendChild(el('div', { class: 'dt-live-match-head', text: b.label || (b.match_id || 'match') }));
     const rows = el('div', { class: 'dt-live-match-rows' });
     for (const e of (Array.isArray(b.entries) ? b.entries : [])) {
-      const queued = e.outcome === 'queued';
-      const settled = e.outcome === 'win' || e.outcome === 'loss' || e.outcome === 'timeout';
-      // PROJECTED — an in-flight side with a server-side projected scalar reads
-      // "~proj" (dimmed/dashed) so the hero distinguishes a climbing projection
-      // from a settled verdict.
-      const proj = !!(e.projected && isNum(e.projected_scalar) && !settled);
-      const row = el('div', { class: 'dt-live-match-row' + (proj ? ' dt-proj' : ''), tabindex: onCompetitor ? '0' : null });
-      const name = el('span', { class: 'dt-live-match-name dn-mono', text: String(e.id) });
-      const fill = el('span', { class: 'dt-live-match-fill' + (e.inflight ? ' dt-live-match-fill-live' : '') });
-      const pct = isNum(e.ratio) ? Math.round(Math.max(0, Math.min(1, e.ratio)) * 100) : (e.inflight ? 50 : 0);
-      fill.style.setProperty('width', pct + '%');
-      const bar = el('span', { class: 'dt-live-match-bar' + (queued ? ' dt-live-match-bar-queued' : ''), 'aria-hidden': 'true' }, [fill]);
-      const stateText = settled ? blockOutcomeGlyph(e.outcome)
-        : queued ? 'queued'
-        : (isNum(e.total) && e.total > 0 ? `${e.done || 0}/${e.total}` : (e.inflight ? `${e.inflight}…` : 'running'));
-      const glyph = el('span', { class: 'dt-live-match-state' + (e.outcome === 'win' ? ' dn-good' : e.outcome === 'loss' ? ' dn-bad' : ''), text: stateText });
-      row.appendChild(name);
-      if (proj) {
-        row.appendChild(el('span', { class: 'dt-proj-val dn-mono', title: 'projected — boards still streaming',
-          text: '~' + (Math.round(e.projected_scalar * 10) / 10) }));
-        row.appendChild(el('span', { class: 'dt-proj-badge', text: 'proj' }));
-      }
-      row.appendChild(bar);
-      row.appendChild(glyph);
-      if (onCompetitor && e.id && e.id !== 'tbd') {
-        row.addEventListener('click', () => onCompetitor(String(e.id)));
-        row.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onCompetitor(String(e.id)); } });
-      }
-      rows.appendChild(row);
+      rows.appendChild(liveMatchRow(e, onCompetitor));
     }
     block.appendChild(rows);
     wrap.appendChild(block);
   }
   return wrap;
+}
+
+// ── ONE dense competitor row — fixed columns, no far-right floating ──
+//
+// Each competitor (champion / challenger / a rung lane) is ONE aligned row with
+// a fixed left-to-right column order that fills the hero's full width:
+//
+//   [ vN ] [ ▓▓▓░░ progress bar — the width-filling element ] [ ~proj scalar ]
+//   [ k/N boards ] [ PROJ tag ]
+//
+// The bar is the only flexible column (`1fr`) so it eats the freed middle space;
+// every other column is content-sized and right-anchored AS A COLUMN — nothing
+// floats against the card edge, and the boards-done `k/N` is a first-class
+// column (never the clipped trailing state glyph it used to be). When a side has
+// no projection the scalar column is a faint placeholder so the grid stays
+// aligned across rows; once a side SETTLES the trailing tag carries its verdict
+// glyph (✓/✗/⏱) instead of PROJ, and the boards column reads its final k/N.
+function liveMatchRow(e, onCompetitor) {
+  const queued = e.outcome === 'queued';
+  const settled = e.outcome === 'win' || e.outcome === 'loss' || e.outcome === 'timeout';
+  // PROJECTED — an in-flight side with a server-side projected scalar reads
+  // "~proj" (dimmed/dashed) so the hero distinguishes a climbing projection
+  // from a settled verdict.
+  const proj = !!(e.projected && isNum(e.projected_scalar) && !settled);
+  const row = el('div', { class: 'dt-live-match-row' + (proj ? ' dt-proj' : ''), tabindex: onCompetitor ? '0' : null });
+
+  // 1 — the competitor id (fixed-width mono column).
+  const name = el('span', { class: 'dt-live-match-name dn-mono', text: String(e.id) });
+
+  // 2 — the progress bar: the width-filling element (the only flexible column).
+  const fill = el('span', { class: 'dt-live-match-fill' + (e.inflight ? ' dt-live-match-fill-live' : '') });
+  const pct = isNum(e.ratio) ? Math.round(Math.max(0, Math.min(1, e.ratio)) * 100) : (e.inflight ? 50 : 0);
+  fill.style.setProperty('width', pct + '%');
+  const bar = el('span', { class: 'dt-live-match-bar' + (queued ? ' dt-live-match-bar-queued' : ''), 'aria-hidden': 'true' }, [fill]);
+
+  // 3 — the ~projected scalar column (faint placeholder when none, so the grid
+  // column stays aligned across rows).
+  const scalar = proj
+    ? el('span', { class: 'dt-live-match-scalar dt-proj-val dn-mono', title: 'projected — boards still streaming',
+        text: '~' + (Math.round(e.projected_scalar * 10) / 10) })
+    : el('span', { class: 'dt-live-match-scalar dn-faint dn-mono', 'aria-hidden': 'true', text: '·' });
+
+  // 4 — the boards-done k/N column (FIRST-CLASS, never clipped). Prefer the
+  // explicit boards_done/boards_total a projection carries; else the per-match
+  // done/total tally. A faint placeholder keeps the column aligned when neither
+  // is known yet.
+  const bDone = isNum(e.boards_done) ? e.boards_done : (isNum(e.done) ? e.done : null);
+  const bTotal = isNum(e.boards_total) ? e.boards_total : (isNum(e.total) && e.total > 0 ? e.total : null);
+  const boardsText = (bTotal != null) ? `${bDone == null ? 0 : bDone}/${bTotal}`
+    : (bDone != null ? String(bDone) : '·');
+  const boards = el('span', { class: 'dt-live-match-boards dn-mono' + (bTotal == null && !isNum(bDone) ? ' dn-faint' : ''),
+    title: 'boards done', text: boardsText });
+
+  // 5 — the trailing tag column: PROJ while projecting, the settled verdict
+  // glyph (✓/✗/⏱) once decided, "queued" before the side starts.
+  let tag;
+  if (proj) {
+    tag = el('span', { class: 'dt-live-match-tag dt-proj-badge', text: 'PROJ' });
+  } else if (settled) {
+    tag = el('span', { class: 'dt-live-match-tag dt-live-match-state' + (e.outcome === 'win' ? ' dn-good' : e.outcome === 'loss' ? ' dn-bad' : ''),
+      text: blockOutcomeGlyph(e.outcome) });
+  } else if (queued) {
+    tag = el('span', { class: 'dt-live-match-tag dt-live-match-state dn-faint', text: 'queued' });
+  } else {
+    tag = el('span', { class: 'dt-live-match-tag dt-live-match-state dn-faint', text: 'live' });
+  }
+
+  row.appendChild(name);
+  row.appendChild(bar);
+  row.appendChild(scalar);
+  row.appendChild(boards);
+  row.appendChild(tag);
+  if (onCompetitor && e.id && e.id !== 'tbd') {
+    row.addEventListener('click', () => onCompetitor(String(e.id)));
+    row.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onCompetitor(String(e.id)); } });
+  }
+  return row;
 }
 
 // ── the LIVE-RUN HERO + controller ───────────────────────────────────
