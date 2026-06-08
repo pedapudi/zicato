@@ -358,4 +358,83 @@ test('settings: the builder section RE-HOMES the B2 builder view (its own chrome
   assert(firstClass(host, 'dn-bld-preview'), 'the builder live-preview pane rendered in the re-homed host');
 });
 
+// ── S/M/L FONT-SIZE control (text-only multiplier in the typeface picker) ──
+//
+// DISTINCT from the page-scale pill (whole-page `zoom`): this scales the HTML
+// text via `--dt-font-scale` WITHOUT touching the SVG figures. SMALL == the
+// current look (scale 1.0), so the default is byte-identical to today.
+
+test('ui: font-size model — normalise + read/persist round-trip + scale values', async () => {
+  const ui = await import('../js/variants/T/ui.js');
+  globalThis.window.localStorage.clear();
+  // default is small; unknown / nullish values normalise to small.
+  assertEqual(ui.DEFAULT_FONTSIZE, 'small', 'the default font size is small (current look)');
+  assertEqual(ui.normaliseFontSize('small'), 'small', 'small is a known size');
+  assertEqual(ui.normaliseFontSize('medium'), 'medium', 'medium is a known size');
+  assertEqual(ui.normaliseFontSize('large'), 'large', 'large is a known size');
+  assertEqual(ui.normaliseFontSize('xl'), 'small', 'an unknown size falls back to small');
+  assertEqual(ui.normaliseFontSize(null), 'small', 'null falls back to small');
+  // scale numbers: small=1 (byte-identical baseline), medium 1.15, large 1.3.
+  assertEqual(ui.fontSizeScale('small'), 1, 'small ⇒ scale 1.0 (current look)');
+  assertEqual(ui.fontSizeScale('medium'), 1.15, 'medium ⇒ scale 1.15');
+  assertEqual(ui.fontSizeScale('large'), 1.3, 'large ⇒ scale 1.3');
+  assertEqual(ui.fontSizeScale('nope'), 1, 'an unknown size scales at 1.0');
+  // read default with an empty store; persist + read round-trips each size.
+  assertEqual(ui.readFontSize(), 'small', 'an empty store reads small');
+  for (const size of ['medium', 'large', 'small']) {
+    assertEqual(ui.persistFontSize(size), size, 'persistFontSize returns the normalised size');
+    assertEqual(ui.readFontSize(), size, 'readFontSize round-trips ' + size);
+  }
+  // a bogus persisted value normalises back to small on read.
+  globalThis.window.localStorage.setItem('zicato.T.fontsize', 'huge');
+  assertEqual(ui.readFontSize(), 'small', 'a bogus stored size reads small');
+});
+
+test('shell: applyFontSize stamps --dt-font-scale + data-t-fontsize per size + persists', async () => {
+  const ui = await import('../js/variants/T/ui.js');
+  const shell = await import('../js/variants/T/shell.js');
+  globalThis.window.localStorage.clear();
+  const root = globalThis.document.createElement('div');
+  const expect = { small: 1, medium: 1.15, large: 1.3 };
+  for (const size of ['medium', 'large', 'small']) {
+    const applied = shell.applyFontSize(size, root);
+    assertEqual(applied, size, 'applyFontSize returns the applied size');
+    assertEqual(root.style._props['--dt-font-scale'], String(expect[size]),
+      '--dt-font-scale is set to ' + expect[size] + ' for ' + size);
+    assertEqual(root.getAttribute('data-t-fontsize'), size, 'data-t-fontsize stamped ' + size);
+    assertEqual(ui.readFontSize(), size, 'applyFontSize persisted ' + size + ' to the shared store');
+  }
+  // small ⇒ scale exactly 1.0 — the byte-identical baseline.
+  shell.applyFontSize('small', root);
+  assertEqual(root.style._props['--dt-font-scale'], '1', 'small stamps scale 1.0 (current look preserved)');
+});
+
+test('settings: the typeface popover carries the S/M/L text-size control + applies via the shared store', async () => {
+  installFetch();
+  globalThis.window.localStorage.clear();
+  const ui = await import('../js/variants/T/ui.js');
+  const host = globalThis.document.createElement('div');
+  await settings.render(host, ctx, { section: 'appearance' });
+  await tick();
+  const body = firstClass(host, 'dn-set-body');
+  const tf = firstClass(body, 'dt-tf');
+  assert(tf, 'the typeface grouped popover renders in Appearance');
+  // the S/M/L segmented control rides in the popover footer — three segments.
+  const segs = byClass(tf, 'dt-tf-sizeseg');
+  assertEqual(segs.length, 3, 'three text-size segments (S · M · L) in the popover footer');
+  const ids = segs.map((b) => b.getAttribute('data-fontsize'));
+  assert(ids.includes('small') && ids.includes('medium') && ids.includes('large'),
+    'the segments are small / medium / large');
+  // small is checked by default (the current look).
+  const small = segs.find((b) => b.getAttribute('data-fontsize') === 'small');
+  assertEqual(small.getAttribute('aria-checked'), 'true', 'small is checked by default');
+  // choosing LARGE applies via the shared store (persists to the same key).
+  const large = segs.find((b) => b.getAttribute('data-fontsize') === 'large');
+  large.dispatchEvent(makeEvent('click'));
+  assertEqual(ui.readFontSize(), 'large', 'choosing large persisted via the shared font-size store');
+  // the segment sync flipped aria-checked: large on, small off (cross-instance).
+  assertEqual(large.getAttribute('aria-checked'), 'true', 'the large segment is now checked');
+  assertEqual(small.getAttribute('aria-checked'), 'false', 'the small segment is no longer checked');
+});
+
 await run();

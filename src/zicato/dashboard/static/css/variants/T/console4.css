@@ -565,12 +565,21 @@
   --dt-card-gap: 18px;
   --dt-card-pad: 16px;
   --dt-reel-scale: 1.18;
-  --dt-font-scale: 1.04;
+  /* GLOBAL TEXT-SIZE multiplier — the S/M/L font-size control in the typeface
+   * picker drives this (small=1.0 · medium=1.15 · large=1.3). EVERY html-text
+   * `font-size` below is `calc(Npx * var(--dt-font-scale,1))`, so small renders
+   * the literal px (byte-identical to the prior look) and medium/large step the
+   * whole text up. SVG FIGURE text is sized by svg.js / the `font:` shorthand,
+   * NOT these `font-size` rules, so figures never grow with the control. The
+   * shell stamps this var inline (+ a `data-t-fontsize` attribute) from the
+   * chosen size; the default (no stamp) is 1.0 = small. */
+  --dt-font-scale: 1;
 }
 
 #variant-root[data-variant="T"] {
   font-family: var(--v2-sans);
-  font-size: calc(13px * var(--dt-font-scale, 1));
+  /* base text size — 13.5px at small (1.0) preserves the prior 13.52px look. */
+  font-size: calc(13.5px * var(--dt-font-scale, 1));
   color: var(--v2-ink);
   background: var(--v2-paper);
   display: block;
@@ -591,12 +600,12 @@
     border-bottom: 1px solid var(--v2-rule);
   }
   .dn-brand { display: inline-flex; align-items: baseline; gap: 6px; }
-  .dn-brand-name { font-weight: 700; font-size: 14px; letter-spacing: 0.02em; color: var(--v2-ink); }
-  .dn-brand-variant { font-family: var(--v2-mono); font-size: 9.5px; letter-spacing: 0.16em;
+  .dn-brand-name { font-weight: 700; font-size: calc(14px * var(--dt-font-scale, 1)); letter-spacing: 0.02em; color: var(--v2-ink); }
+  .dn-brand-variant { font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); letter-spacing: 0.16em;
     text-transform: uppercase; color: var(--v2-accent); }
 
   .dn-crumbs { display: inline-flex; align-items: center; gap: 3px; font-family: var(--v2-mono);
-    font-size: 11px; color: var(--v2-ink-faint); }
+    font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
   .dn-crumb { color: var(--v2-ink-soft); text-decoration: none; }
   .dn-crumb:hover { color: var(--v2-accent); }
   .dn-crumb-current { color: var(--v2-ink); }
@@ -605,14 +614,14 @@
   .dn-topbar-spacer { flex: 1; }
 
   .dn-nav { display: inline-flex; gap: 12px; }
-  .dn-nav-link { color: var(--v2-ink-soft); text-decoration: none; font-size: 11.5px; font-family: var(--v2-mono);
+  .dn-nav-link { color: var(--v2-ink-soft); text-decoration: none; font-size: calc(11.5px * var(--dt-font-scale, 1)); font-family: var(--v2-mono);
     padding-bottom: 2px; border-bottom: 1.5px solid transparent; }
   .dn-nav-link:hover { color: var(--v2-ink); }
   .dn-nav-link.dn-active { color: var(--v2-ink); border-bottom-color: var(--v2-accent); }
 
   /* the three-theme switcher (monokai default) */
   .dn-theme-switch { display: inline-flex; border: 1px solid var(--v2-rule); border-radius: 5px; overflow: hidden; }
-  .dn-theme-btn { font-family: var(--v2-mono); font-size: 9.5px; padding: 3px 7px; background: transparent;
+  .dn-theme-btn { font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); padding: 3px 7px; background: transparent;
     color: var(--v2-ink-faint); border: none; cursor: pointer; transition: background 0.15s, color 0.15s;
     border-right: 1px solid var(--v2-rule); }
   .dn-theme-btn:last-child { border-right: none; }
@@ -621,7 +630,7 @@
 
   /* the typeface switcher (Technical default) — second picker, beside colour */
   .dn-type-switch { display: inline-flex; border: 1px solid var(--v2-rule); border-radius: 5px; overflow: hidden; }
-  .dn-type-btn { font-family: var(--v2-sans); font-size: 9.5px; padding: 3px 7px; background: transparent;
+  .dn-type-btn { font-family: var(--v2-sans); font-size: calc(9.5px * var(--dt-font-scale, 1)); padding: 3px 7px; background: transparent;
     color: var(--v2-ink-faint); border: none; cursor: pointer; transition: background 0.15s, color 0.15s;
     border-right: 1px solid var(--v2-rule); }
   .dn-type-btn:last-child { border-right: none; }
@@ -629,7 +638,7 @@
   .dn-type-btn.dn-type-active { background: var(--v2-ink-soft); color: var(--v2-paper); }
 
   .dn-status { display: inline-flex; align-items: center; gap: 5px; font-family: var(--v2-mono);
-    font-size: 10.5px; color: var(--v2-ink-faint); }
+    font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
   .dn-status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--v2-flat); transition: background 0.2s; }
   .dn-status.dn-connected .dn-status-dot { background: var(--v2-good); }
   .dn-status.dn-running .dn-status-dot { background: var(--v2-caution); }
@@ -644,9 +653,9 @@
   /* dense overview strip + tiles */
   .dn-overview { gap: 30px; }
   .dn-tile { display: flex; flex-direction: column; gap: 1px; }
-  .dn-tile-value { font-family: var(--v2-mono); font-size: 20px; font-variant-numeric: tabular-nums; color: var(--v2-ink); }
-  .dn-tile-key { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--v2-ink-faint); }
-  .dn-tile-foot { font-size: 10.5px; color: var(--v2-ink-soft); margin-top: 1px; }
+  .dn-tile-value { font-family: var(--v2-mono); font-size: calc(20px * var(--dt-font-scale, 1)); font-variant-numeric: tabular-nums; color: var(--v2-ink); }
+  .dn-tile-key { font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.06em; color: var(--v2-ink-faint); }
+  .dn-tile-foot { font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); margin-top: 1px; }
 
   /* fleet cards — tighter than E */
   .dn-fleet { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
@@ -656,16 +665,16 @@
   .dn-fleet-card:hover { border-color: var(--v2-accent); transform: translateY(-1px); }
   .dn-fleet-card.dn-is-current { border-color: var(--v2-good); }
   .dn-fleet-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .dn-fleet-id { font-family: var(--v2-mono); font-size: 12.5px; color: var(--v2-ink); }
-  .dn-fleet-goal { font-size: 12px; color: var(--v2-ink-soft); margin: 5px 0 6px; line-height: 1.35;
+  .dn-fleet-id { font-family: var(--v2-mono); font-size: calc(12.5px * var(--dt-font-scale, 1)); color: var(--v2-ink); }
+  .dn-fleet-goal { font-size: calc(12px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); margin: 5px 0 6px; line-height: 1.35;
     max-height: 3.4em; overflow: hidden; }
   .dn-fleet-spark { margin: 3px 0 6px; }
   .dn-fleet-stats { display: flex; gap: 16px; }
   .dn-mini { display: flex; flex-direction: column; }
-  .dn-mini-k { font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--v2-ink-faint); }
-  .dn-mini-v { font-family: var(--v2-mono); font-size: 13px; font-variant-numeric: tabular-nums; color: var(--v2-ink); }
+  .dn-mini-k { font-size: calc(9px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em; color: var(--v2-ink-faint); }
+  .dn-mini-v { font-family: var(--v2-mono); font-size: calc(13px * var(--dt-font-scale, 1)); font-variant-numeric: tabular-nums; color: var(--v2-ink); }
 
-  .dn-chip { font-family: var(--v2-mono); font-size: 9.5px; padding: 1px 6px; border-radius: 8px;
+  .dn-chip { font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); padding: 1px 6px; border-radius: 8px;
     border: 1px solid var(--v2-rule); color: var(--v2-ink-soft); text-transform: lowercase; }
   .dn-chip-live { color: var(--v2-caution); border-color: var(--v2-caution); }
   .dn-chip-open { color: var(--v2-good); border-color: var(--v2-good); }
@@ -684,15 +693,15 @@
 
   /* ===================  shared chrome (dn-*)  =================== */
 
-  .dn-h1 { font-size: 19px; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 4px; color: var(--v2-ink); }
-  .dn-h2 { font-size: 13px; font-weight: 600; letter-spacing: 0.01em; margin: 0 0 9px; color: var(--v2-ink); }
+  .dn-h1 { font-size: calc(19px * var(--dt-font-scale, 1)); font-weight: 600; letter-spacing: -0.01em; margin: 0 0 4px; color: var(--v2-ink); }
+  .dn-h2 { font-size: calc(13px * var(--dt-font-scale, 1)); font-weight: 600; letter-spacing: 0.01em; margin: 0 0 9px; color: var(--v2-ink); }
   /* Q's roominess: more air between sections + inside panels. */
   .dn-section { margin: var(--dt-section-gap, 30px) 0; }
   .dn-section > .dn-h2 { border-bottom: 1px solid var(--v2-rule); padding-bottom: 6px; }
-  .dn-lede { font-size: 12.5px; color: var(--v2-ink-soft); margin: 2px 0 4px; max-width: 78ch; line-height: 1.45; }
-  .dn-mono { font-family: var(--v2-mono); font-size: 11.5px; }
+  .dn-lede { font-size: calc(12.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); margin: 2px 0 4px; max-width: 78ch; line-height: 1.45; }
+  .dn-mono { font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); }
   .dn-faint { color: var(--v2-ink-faint); }
-  .dn-empty { color: var(--v2-ink-faint); font-size: 12px; font-style: italic; padding: 10px 0; }
+  .dn-empty { color: var(--v2-ink-faint); font-size: calc(12px * var(--dt-font-scale, 1)); font-style: italic; padding: 10px 0; }
 
   .dn-panel { background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 4px;
     padding: var(--dt-panel-pad-y, 16px) var(--dt-panel-pad-x, 18px); }
@@ -707,11 +716,11 @@
   .dn-figpane { overflow-x: hidden; }
   .dn-row { display: flex; gap: var(--dt-row-gap, 24px); flex-wrap: wrap; align-items: flex-start; }
   .dn-stat { font-family: var(--v2-mono); }
-  .dn-stat .v { font-size: 18px; font-variant-numeric: tabular-nums; color: var(--v2-ink); }
-  .dn-stat .k { font-size: 10px; color: var(--v2-ink-faint); text-transform: uppercase; letter-spacing: 0.06em; display: block; margin-top: 1px; }
+  .dn-stat .v { font-size: calc(18px * var(--dt-font-scale, 1)); font-variant-numeric: tabular-nums; color: var(--v2-ink); }
+  .dn-stat .k { font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); text-transform: uppercase; letter-spacing: 0.06em; display: block; margin-top: 1px; }
 
   .dn-pill { display: inline-flex; align-items: center; gap: 5px; font-family: var(--v2-mono);
-    font-size: 10.5px; padding: 2px 8px; border-radius: 10px; border: 1px solid; }
+    font-size: calc(10.5px * var(--dt-font-scale, 1)); padding: 2px 8px; border-radius: 10px; border: 1px solid; }
   .dn-pill.dn-promoted { color: var(--v2-good); border-color: var(--v2-good); background: var(--v2-good-soft); }
   .dn-pill.dn-rejected { color: var(--v2-bad); border-color: var(--v2-bad); background: var(--v2-bad-soft); }
   .dn-pill.dn-deferred { color: var(--v2-caution); border-color: var(--v2-caution); }
@@ -731,33 +740,33 @@
 
   /* themed link/button (the E "open transcript" bug fix — never unstyled) */
   a.dn-linkbtn { display: inline-flex; align-items: center; gap: 4px; font-family: var(--v2-mono);
-    font-size: 11.5px; color: var(--v2-accent); text-decoration: none; padding: 4px 10px;
+    font-size: calc(11.5px * var(--dt-font-scale, 1)); color: var(--v2-accent); text-decoration: none; padding: 4px 10px;
     border: 1px solid var(--v2-accent); border-radius: 4px; background: transparent; transition: background 0.15s, color 0.15s; }
   a.dn-linkbtn:hover { background: var(--v2-accent); color: var(--v2-paper); }
 
   /* the objective callout is led by its faint mono uppercase "objective" label
    * (the standard caption idiom) + spacing — NOT a coloured accent left rail. */
   .dn-objective { padding: 5px 0 5px 0; margin: 9px 0 4px; }
-  .dn-objective .lab { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--v2-ink-faint); }
-  .dn-objective .txt { font-size: 16px; line-height: 1.35; color: var(--v2-ink); max-width: 66ch; }
+  .dn-objective .lab { font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.08em; color: var(--v2-ink-faint); }
+  .dn-objective .txt { font-size: calc(16px * var(--dt-font-scale, 1)); line-height: 1.35; color: var(--v2-ink); max-width: 66ch; }
 
   .dn-brief { border: 1px solid var(--v2-rule); border-radius: 4px; background: var(--v2-panel); }
-  .dn-brief summary { cursor: pointer; padding: 10px 14px; font-weight: 600; font-size: 12.5px;
+  .dn-brief summary { cursor: pointer; padding: 10px 14px; font-weight: 600; font-size: calc(12.5px * var(--dt-font-scale, 1));
     list-style: none; display: flex; align-items: center; gap: 8px; color: var(--v2-ink); }
   .dn-brief summary::-webkit-details-marker { display: none; }
   .dn-brief summary .chev { transition: transform 0.15s; color: var(--v2-ink-faint); }
   .dn-brief[open] summary .chev { transform: rotate(90deg); }
-  .dn-md-body { padding: 4px 20px 16px; max-width: 80ch; line-height: 1.55; font-size: 13px;
+  .dn-md-body { padding: 4px 20px 16px; max-width: 80ch; line-height: 1.55; font-size: calc(13px * var(--dt-font-scale, 1));
     color: var(--v2-ink); border-top: 1px solid var(--v2-rule-soft); }
   .dn-md-body h1, .dn-md-body h2, .dn-md-body h3, .dn-md-body h4 {
-    font-size: 12px; letter-spacing: 0.02em; text-transform: uppercase; color: var(--v2-accent); margin: 16px 0 6px; }
+    font-size: calc(12px * var(--dt-font-scale, 1)); letter-spacing: 0.02em; text-transform: uppercase; color: var(--v2-accent); margin: 16px 0 6px; }
   .dn-md-body p { margin: 0 0 9px; }
   .dn-md-body ul { margin: 0 0 9px; padding-left: 18px; }
   .dn-md-body li { margin: 2px 0; }
-  .dn-md-body code { font-family: var(--v2-mono); font-size: 11.5px; background: var(--v2-rule-soft); padding: 0 3px; border-radius: 2px; }
-  .dn-md-body pre { background: var(--v2-rule-soft); padding: 9px 11px; border-radius: 3px; overflow-x: auto; font-size: 11px; }
+  .dn-md-body code { font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); background: var(--v2-rule-soft); padding: 0 3px; border-radius: 2px; }
+  .dn-md-body pre { background: var(--v2-rule-soft); padding: 9px 11px; border-radius: 3px; overflow-x: auto; font-size: calc(11px * var(--dt-font-scale, 1)); }
 
-  .dn-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 10.5px; color: var(--v2-ink-faint);
+  .dn-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint);
     font-family: var(--v2-mono); margin-top: 9px; }
   .dn-legend span { display: inline-flex; align-items: center; gap: 5px; }
   .dn-legend i { width: 17px; height: 0; border-top: 2px solid; display: inline-block; }
@@ -846,16 +855,16 @@
   .dn-trellis-cell:hover { border-color: var(--v2-accent); }
   /* LIVE — a trellis cell with in-flight runs (current epoch) lights up. */
   .dn-trellis-cell.dn-trellis-live { border-color: var(--v2-accent); box-shadow: inset 0 0 0 1px var(--v2-accent); }
-  .dn-trellis-live-tag { display: inline-flex; align-items: center; gap: 3px; margin-left: auto; font-family: var(--v2-mono); font-size: 9px; color: var(--v2-accent); }
+  .dn-trellis-live-tag { display: inline-flex; align-items: center; gap: 3px; margin-left: auto; font-family: var(--v2-mono); font-size: calc(9px * var(--dt-font-scale, 1)); color: var(--v2-accent); }
   .dn-trellis-cap { display: flex; flex-direction: column; gap: 2px; margin-bottom: 5px; }
-  .dn-trellis-id { font-family: var(--v2-mono); font-size: 11.5px; color: var(--v2-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .dn-trellis-meta { display: flex; align-items: center; gap: 4px; font-size: 10px; }
-  .dn-kind-tag { font-family: var(--v2-mono); font-size: 9px; padding: 0 4px; border-radius: 3px; border: 1px solid var(--v2-rule); color: var(--v2-ink-soft); }
+  .dn-trellis-id { font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); color: var(--v2-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dn-trellis-meta { display: flex; align-items: center; gap: 4px; font-size: calc(10px * var(--dt-font-scale, 1)); }
+  .dn-kind-tag { font-family: var(--v2-mono); font-size: calc(9px * var(--dt-font-scale, 1)); padding: 0 4px; border-radius: 3px; border: 1px solid var(--v2-rule); color: var(--v2-ink-soft); }
   .dn-kind-tag.dn-kind-multi_turn_scripted { border-color: var(--v2-accent); color: var(--v2-accent); }
   .dn-kind-tag.dn-kind-multi_turn_emulated { border-color: var(--v2-good); color: var(--v2-good); }
-  .dn-trellis-foot { display: flex; gap: 9px; flex-wrap: wrap; font-size: 9.5px; margin-top: 4px; font-family: var(--v2-mono); }
+  .dn-trellis-foot { display: flex; gap: 9px; flex-wrap: wrap; font-size: calc(9.5px * var(--dt-font-scale, 1)); margin-top: 4px; font-family: var(--v2-mono); }
   .dn-trellis-tags { color: var(--v2-ink-faint); }
-  .dn-trellis-preview { font-size: 10px; margin-top: 4px; font-style: italic; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dn-trellis-preview { font-size: calc(10px * var(--dt-font-scale, 1)); margin-top: 4px; font-style: italic; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* sparkbar verdict overlay — the bars stretch to fill width, the glyph keeps
      its 1:1 aspect (a TRUE triangle, never sheared into an oval/wedge). */
@@ -878,23 +887,23 @@
   .dn-vbar-val { fill: var(--v2-ink-soft); font: 10px var(--v2-mono); font-variant-numeric: tabular-nums; }
 
   .dn-expect-grid { display: flex; flex-direction: column; gap: 5px; }
-  .dn-expect-row { display: flex; align-items: baseline; gap: 6px; font-size: 12px; line-height: 1.35; }
+  .dn-expect-row { display: flex; align-items: baseline; gap: 6px; font-size: calc(12px * var(--dt-font-scale, 1)); line-height: 1.35; }
   .dn-expect-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; align-self: center; }
   .dn-expect-dot.dn-good { background: var(--v2-good); }
   .dn-expect-dot.dn-bad { background: var(--v2-bad); }
   .dn-expect-dot.dn-flat { background: var(--v2-flat); }
-  .dn-expect-kind { font-family: var(--v2-mono); font-size: 11.5px; color: var(--v2-ink); }
-  .dn-expect-detail { font-size: 11.5px; }
+  .dn-expect-kind { font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); color: var(--v2-ink); }
+  .dn-expect-detail { font-size: calc(11.5px * var(--dt-font-scale, 1)); }
 
   /* transcript turns */
   .dn-turn { border-left: 2px solid var(--v2-rule); padding: 4px 0 4px 10px; margin: 5px 0; }
   .dn-turn-agent { border-left-color: var(--v2-accent); }
   .dn-turn-user { border-left-color: var(--v2-good); }
   .dn-turn-system { border-left-color: var(--v2-rule); }
-  .dn-turn-head { font-size: 10px; margin-bottom: 2px; }
-  .dn-turn-text { font-size: 12px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; color: var(--v2-ink); }
-  .dn-tool { font-size: 10.5px; color: var(--v2-ink-soft); margin-top: 2px; }
-  .dn-annot { font-size: 10.5px; color: var(--v2-ink-faint); margin-top: 2px; font-style: italic; }
+  .dn-turn-head { font-size: calc(10px * var(--dt-font-scale, 1)); margin-bottom: 2px; }
+  .dn-turn-text { font-size: calc(12px * var(--dt-font-scale, 1)); line-height: 1.45; white-space: pre-wrap; word-break: break-word; color: var(--v2-ink); }
+  .dn-tool { font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); margin-top: 2px; }
+  .dn-annot { font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); margin-top: 2px; font-style: italic; }
   .dn-annot-drift { color: var(--v2-bad); }
   .dn-annot-judge { color: var(--v2-accent); }
 
@@ -945,20 +954,20 @@
 
   /* ===================  illustrative tournament marks  =================== */
 
-  .dn-illustrative-banner { font-size: 11px; color: var(--v2-ink-soft); background: var(--v2-rule-soft);
+  .dn-illustrative-banner { font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); background: var(--v2-rule-soft);
     border: 1px solid var(--v2-rule); border-radius: 4px; padding: 7px 11px; margin-bottom: 12px; }
   .dn-alt-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); }
   .dn-alt-cell { margin: 0; }
   .dn-alt-cap { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 7px; }
-  .dn-alt-title { font-size: 12px; font-weight: 600; color: var(--v2-ink); }
-  .dn-alt-note { font-size: 10.5px; line-height: 1.4; margin: 7px 0 0; max-width: 46ch; }
+  .dn-alt-title { font-size: calc(12px * var(--dt-font-scale, 1)); font-weight: 600; color: var(--v2-ink); }
+  .dn-alt-note { font-size: calc(10.5px * var(--dt-font-scale, 1)); line-height: 1.4; margin: 7px 0 0; max-width: 46ch; }
 
 
   /* ===================  mutation-site × generation matrix  =================== */
 
-  .dn-mtx { border-collapse: collapse; font-family: var(--v2-mono); font-size: 11px; }
+  .dn-mtx { border-collapse: collapse; font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); }
   .dn-mtx th, .dn-mtx td { border: 1px solid var(--v2-rule); padding: 0; }
-  .dn-mtx-corner { text-align: left; padding: 5px 8px; color: var(--v2-ink-faint); font-weight: 400; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .dn-mtx-corner { text-align: left; padding: 5px 8px; color: var(--v2-ink-faint); font-weight: 400; font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em; }
   .dn-mtx-gen { padding: 5px 6px; }
   .dn-mtx-genlink { color: var(--v2-ink); text-decoration: none; }
   .dn-mtx-genlink:hover { color: var(--v2-accent); }
@@ -966,7 +975,7 @@
   .dn-mtx-sitelink { display: flex; flex-direction: column; gap: 1px; text-decoration: none; }
   .dn-mtx-file { color: var(--v2-ink); }
   .dn-mtx-sitelink:hover .dn-mtx-file { color: var(--v2-accent); }
-  .dn-mtx-role { color: var(--v2-ink-faint); font-size: 9.5px; }
+  .dn-mtx-role { color: var(--v2-ink-faint); font-size: calc(9.5px * var(--dt-font-scale, 1)); }
   .dn-mtx-row.dn-mtx-pinned .dn-mtx-site { border-left: 3px solid var(--v2-accent); }
   /* the SITE label is the "all generations" affordance — make it visibly a
    * link (underline on hover) so its click target reads distinctly from the
@@ -983,25 +992,25 @@
   .dn-mtx-square { fill: var(--v2-good); }
   .dn-mtx-blank { color: var(--v2-ink-faint); opacity: 0.4; }
   .dn-mtx-mark { display: block; }
-  .dn-mtx-drillhead { margin-bottom: 10px; font-size: 13px; }
+  .dn-mtx-drillhead { margin-bottom: 10px; font-size: calc(13px * var(--dt-font-scale, 1)); }
   .dn-mtx-drillhead .dn-mono { color: var(--v2-ink); }
   /* the scope chip names whether the pane is showing ONE generation or ALL. */
-  .dn-mtx-scope { display: inline-block; margin-left: 8px; font-family: var(--v2-mono); font-size: 9.5px;
+  .dn-mtx-scope { display: inline-block; margin-left: 8px; font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1));
     text-transform: uppercase; letter-spacing: 0.05em; color: var(--v2-ink-soft);
     padding: 1px 6px; border: 1px solid var(--v2-rule); border-radius: 3px; }
 
   .dn-patch-block { border: 1px solid var(--v2-rule-soft); border-radius: 4px; padding: 8px 10px; margin: 8px 0; }
   .dn-patch-head { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
-  .dn-patch-op { font-size: 10px; color: var(--v2-ink-soft); padding: 1px 6px; border: 1px solid var(--v2-rule); border-radius: 3px; }
-  .dn-patch-why { font-size: 11.5px; color: var(--v2-ink-soft); margin: 4px 0 6px; line-height: 1.4; }
+  .dn-patch-op { font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); padding: 1px 6px; border: 1px solid var(--v2-rule); border-radius: 3px; }
+  .dn-patch-why { font-size: calc(11.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); margin: 4px 0 6px; line-height: 1.4; }
   .dn-patch-why-lead { color: var(--v2-accent); font-weight: 600; }
-  .dn-patch-note { font-size: 10.5px; margin: 0 0 5px; }
+  .dn-patch-note { font-size: calc(10.5px * var(--dt-font-scale, 1)); margin: 0 0 5px; }
   .dn-patch-scalar { display: inline-flex; align-items: center; gap: 8px; }
-  .dn-patch-scalar-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--v2-ink-faint); }
-  .dn-patch-scalar-val { font-size: 14px; color: var(--v2-good); }
+  .dn-patch-scalar-label { font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.06em; color: var(--v2-ink-faint); }
+  .dn-patch-scalar-val { font-size: calc(14px * var(--dt-font-scale, 1)); color: var(--v2-good); }
 
   /* themed line diff (the patch's realized change) */
-  .dn-diff-body { font-family: var(--v2-mono); font-size: 11px; background: var(--v2-rule-soft); border-radius: 3px;
+  .dn-diff-body { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); background: var(--v2-rule-soft); border-radius: 3px;
     max-height: 320px; overflow: auto; }
   .dn-diff-line { display: flex; align-items: baseline; gap: 6px; padding: 0 8px; min-height: 16px; line-height: 16px; white-space: pre-wrap; word-break: break-word; }
   .dn-diff-line.dn-diff-add { background: var(--v2-good-soft); }
@@ -1013,7 +1022,7 @@
 
   .dn-num { text-align: right; font-variant-numeric: tabular-nums; }
   .dn-bad-t { color: var(--v2-bad); }
-  .dn-subhead { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--v2-ink-faint);
+  .dn-subhead { font-size: calc(11px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.07em; color: var(--v2-ink-faint);
     margin: 16px 0 7px; font-family: var(--v2-mono); }
   /* a CONTAINED horizontal scroll for genuinely-wide tables (publication body
    * GFM tables, the mutation matrix): the scroll lives on THIS wrapper, never
@@ -1021,7 +1030,7 @@
    * escaping its pane. */
   .dn-table-scroll { max-width: 100%; overflow-x: auto; }
   .dn-md-table, .dn-board-table, .dn-scores-table {
-    border-collapse: collapse; width: 100%; font-size: 12px; margin: 4px 0 12px; }
+    border-collapse: collapse; width: 100%; font-size: calc(12px * var(--dt-font-scale, 1)); margin: 4px 0 12px; }
   .dn-md-table th, .dn-md-table td, .dn-board-table th, .dn-board-table td,
   .dn-scores-table th, .dn-scores-table td {
     border: 1px solid var(--v2-rule); padding: 5px 9px; text-align: left; color: var(--v2-ink); }
@@ -1030,7 +1039,7 @@
   .dn-md-table .dn-num, .dn-board-table .dn-num, .dn-scores-table .dn-num { text-align: right; }
   .dn-board-table tr { transition: background 0.12s; }
   .dn-board-table tr.dn-board-champ td { background: var(--v2-good-soft); }
-  .dn-board-run { padding: 2px 7px; font-size: 10.5px; }
+  .dn-board-run { padding: 2px 7px; font-size: calc(10.5px * var(--dt-font-scale, 1)); }
 
   /* ===================  promote gate (stacked, no overlap — fix #1)  =================== */
 
@@ -1038,20 +1047,20 @@
   .dn-gate-head { display: flex; flex-direction: column; gap: 10px; }
   .dn-gate-decision { display: flex; align-items: center; gap: 10px; }
   .dn-gate-deltas { gap: 28px; }
-  .dn-gate-reason { font-size: 12px; color: var(--v2-ink-soft); margin: 10px 0 4px; line-height: 1.45; max-width: 88ch; }
+  .dn-gate-reason { font-size: calc(12px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); margin: 10px 0 4px; line-height: 1.45; max-width: 88ch; }
   .dn-rules { list-style: none; margin: 4px 0 8px; padding: 0; display: flex; flex-direction: column; gap: 0; }
   .dn-rule { display: grid; grid-template-columns: 14px minmax(150px, 220px) 110px 1fr; align-items: baseline;
-    gap: 10px; padding: 7px 4px; border-bottom: 1px solid var(--v2-rule-soft); font-size: 12px; }
+    gap: 10px; padding: 7px 4px; border-bottom: 1px solid var(--v2-rule-soft); font-size: calc(12px * var(--dt-font-scale, 1)); }
   .dn-rule:last-child { border-bottom: none; }
   .dn-rule-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--v2-flat); align-self: center; }
   .dn-rule-fail .dn-rule-dot { background: var(--v2-bad); }
   .dn-rule-pass .dn-rule-dot { background: var(--v2-good); }
   .dn-rule-skipped .dn-rule-dot, .dn-rule-not_reached .dn-rule-dot { background: var(--v2-flat); opacity: 0.5; }
   .dn-rule-label { font-family: var(--v2-mono); color: var(--v2-ink); }
-  .dn-rule-status { font-family: var(--v2-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--v2-ink-soft); }
+  .dn-rule-status { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.04em; color: var(--v2-ink-soft); }
   .dn-rule-fail .dn-rule-status { color: var(--v2-bad); }
   .dn-rule-pass .dn-rule-status { color: var(--v2-good); }
-  .dn-rule-detail { font-size: 11px; line-height: 1.4; }
+  .dn-rule-detail { font-size: calc(11px * var(--dt-font-scale, 1)); line-height: 1.4; }
 
   /* ===================  side-by-side mutation diff (fix #2)  =================== */
 
@@ -1059,13 +1068,13 @@
   .dn-mut-detail { min-height: 120px; }
   .dn-sxs { border: 1px solid var(--v2-rule); border-radius: 4px; overflow: hidden; margin: 8px 0; }
   .dn-sxs-head { display: grid; grid-template-columns: 1fr 1fr; background: var(--v2-rule-soft); }
-  .dn-sxs-col-h { font-family: var(--v2-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+  .dn-sxs-col-h { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em;
     padding: 5px 10px; color: var(--v2-ink-soft); }
   .dn-sxs-col-h.dn-sxs-new { border-left: 1px solid var(--v2-rule); }
-  .dn-sxs-body { font-family: var(--v2-mono); font-size: 11px; max-height: 340px; overflow: auto; }
+  .dn-sxs-body { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); max-height: 340px; overflow: auto; }
   .dn-sxs-row { display: grid; grid-template-columns: 26px 1fr 26px 1fr; align-items: baseline; min-height: 16px; }
   .dn-sxs-row.dn-sxs-changed { background: color-mix(in srgb, var(--v2-caution) 8%, transparent); }
-  .dn-sxs-gutter { color: var(--v2-ink-faint); text-align: right; padding-right: 5px; user-select: none; font-size: 9.5px; }
+  .dn-sxs-gutter { color: var(--v2-ink-faint); text-align: right; padding-right: 5px; user-select: none; font-size: calc(9.5px * var(--dt-font-scale, 1)); }
   .dn-sxs-cell { padding: 0 8px; white-space: pre-wrap; word-break: break-word; line-height: 1.45; color: var(--v2-ink); }
   .dn-sxs-cell.dn-sxs-new { border-left: 1px solid var(--v2-rule-soft); }
   .dn-sxs-cell.dn-sxs-del { background: var(--v2-bad-soft); }
@@ -1076,34 +1085,34 @@
   .dn-paper { max-width: 76ch; margin: 0 auto; background: var(--v2-panel); border: 1px solid var(--v2-rule);
     border-radius: 5px; padding: 30px 38px 44px; }
   .dn-paper-masthead { margin-bottom: 18px; }
-  .dn-paper-eyebrow { font-family: var(--v2-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.14em;
+  .dn-paper-eyebrow { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.14em;
     color: var(--v2-accent); margin-bottom: 8px; }
-  .dn-paper-title { font-family: var(--n-font-paper); font-size: 28px; line-height: 1.16; font-weight: 700;
+  .dn-paper-title { font-family: var(--n-font-paper); font-size: calc(28px * var(--dt-font-scale, 1)); line-height: 1.16; font-weight: 700;
     color: var(--v2-ink); margin: 0 0 10px; letter-spacing: -0.01em; }
   .dn-paper-rule { height: 2px; background: var(--v2-ink); opacity: 0.7; margin: 0 0 12px; }
   .dn-paper-metagrid { display: grid; gap: 8px 22px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    font-family: var(--v2-mono); font-size: 11px; padding-bottom: 12px; border-bottom: 1px solid var(--v2-rule); }
+    font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); padding-bottom: 12px; border-bottom: 1px solid var(--v2-rule); }
   .dn-paper-meta-cell { display: flex; flex-direction: column; gap: 1px; }
-  .dn-paper-meta-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--v2-ink-faint); }
+  .dn-paper-meta-label { font-size: calc(9px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.06em; color: var(--v2-ink-faint); }
   .dn-paper-meta-value { color: var(--v2-ink); }
   .dn-paper-statebox { background: var(--v2-rule-soft); border: 1px solid var(--v2-rule); border-radius: 4px; padding: 14px 16px; margin: 14px 0; }
   .dn-paper-statebox-h { font-weight: 600; margin: 0 0 4px; color: var(--v2-ink); }
   .dn-paper-abstract { margin: 14px 0 18px; }
-  .dn-paper-abstract-label { font-family: var(--v2-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--v2-ink-faint); margin-bottom: 5px; }
-  .dn-paper-abstract .dn-md-body { font-family: var(--n-font-paper); font-size: 14px; line-height: 1.6; color: var(--v2-ink-soft);
+  .dn-paper-abstract-label { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.08em; color: var(--v2-ink-faint); margin-bottom: 5px; }
+  .dn-paper-abstract .dn-md-body { font-family: var(--n-font-paper); font-size: calc(14px * var(--dt-font-scale, 1)); line-height: 1.6; color: var(--v2-ink-soft);
     font-style: italic; border-left: 3px solid var(--v2-accent); padding-left: 14px; }
-  .dn-paper-body .dn-md-body { font-family: var(--n-font-paper); font-size: 13.5px; line-height: 1.62; color: var(--v2-ink); max-width: 72ch; }
+  .dn-paper-body .dn-md-body { font-family: var(--n-font-paper); font-size: calc(13.5px * var(--dt-font-scale, 1)); line-height: 1.62; color: var(--v2-ink); max-width: 72ch; }
   .dn-paper-body .dn-md-body h1, .dn-paper-body .dn-md-body h2, .dn-paper-body .dn-md-body h3, .dn-paper-body .dn-md-body h4 {
     font-family: var(--n-font-head); color: var(--v2-ink); margin: 24px 0 8px; }
-  .dn-paper-body .dn-md-body h2 { font-size: 16px; }
-  .dn-paper-body .dn-md-body h3 { font-size: 13.5px; }
-  .dn-paper-body .dn-md-body code { font-family: var(--v2-mono); font-size: 12px; background: var(--v2-rule-soft); padding: 0 3px; border-radius: 2px; }
-  .dn-paper-body .dn-md-body pre { background: var(--v2-rule-soft); padding: 10px 12px; border-radius: 3px; overflow-x: auto; font-size: 11.5px; }
+  .dn-paper-body .dn-md-body h2 { font-size: calc(16px * var(--dt-font-scale, 1)); }
+  .dn-paper-body .dn-md-body h3 { font-size: calc(13.5px * var(--dt-font-scale, 1)); }
+  .dn-paper-body .dn-md-body code { font-family: var(--v2-mono); font-size: calc(12px * var(--dt-font-scale, 1)); background: var(--v2-rule-soft); padding: 0 3px; border-radius: 2px; }
+  .dn-paper-body .dn-md-body pre { background: var(--v2-rule-soft); padding: 10px 12px; border-radius: 3px; overflow-x: auto; font-size: calc(11.5px * var(--dt-font-scale, 1)); }
   .dn-paper-body .dn-md-body blockquote { border-left: 3px solid var(--v2-caution); margin: 0 0 12px; padding: 4px 0 4px 14px; color: var(--v2-ink-soft); }
-  .dn-paper-h2 { font-family: var(--n-font-head); font-size: 16px; color: var(--v2-ink); margin: 26px 0 8px; font-weight: 600; }
-  .dn-paper-code { font-family: var(--v2-mono); font-size: 12px; background: var(--v2-rule-soft); padding: 0 3px; border-radius: 2px; }
+  .dn-paper-h2 { font-family: var(--n-font-head); font-size: calc(16px * var(--dt-font-scale, 1)); color: var(--v2-ink); margin: 26px 0 8px; font-weight: 600; }
+  .dn-paper-code { font-family: var(--v2-mono); font-size: calc(12px * var(--dt-font-scale, 1)); background: var(--v2-rule-soft); padding: 0 3px; border-radius: 2px; }
   .dn-paper-fig { margin: 18px 0; padding: 14px; border: 1px solid var(--v2-rule); border-radius: 4px; background: var(--v2-paper); }
-  .dn-paper-figcap { font-size: 11px; color: var(--v2-ink-faint); font-family: var(--v2-mono); margin-top: 8px; line-height: 1.4; }
+  .dn-paper-figcap { font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); font-family: var(--v2-mono); margin-top: 8px; line-height: 1.4; }
   .dn-paper-plates, .dn-paper-matchups { margin-top: 24px; padding-top: 14px; border-top: 1px solid var(--v2-rule); }
   /* combined aggregate-scores visual: chart + table, one figure */
   .dn-scores-combined { display: grid; gap: 16px; grid-template-columns: minmax(220px, 320px) 1fr; align-items: center; min-width: 0; }
@@ -1246,12 +1255,12 @@
 
   /* 1 — the split strip. train = OUTLINE, holdout = ACCENT FILL (matches the
    * builder's Board & holdout strip). All theme tokens — carries every scheme. */
-  .dn-bs-counts { font-family: var(--v2-mono); font-size: 12px; margin-bottom: 8px; }
+  .dn-bs-counts { font-family: var(--v2-mono); font-size: calc(12px * var(--dt-font-scale, 1)); margin-bottom: 8px; }
   .dn-bs-counts-main { color: var(--v2-ink); font-variant-numeric: tabular-nums; }
   .dn-bs-noholdout { margin-left: 6px; }
   .dn-bs-grid { display: flex; flex-wrap: wrap; gap: 6px; }
   .dn-bs-chip {
-    font-family: var(--v2-mono); font-size: 10.5px; line-height: 1.4;
+    font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); line-height: 1.4;
     padding: 2px 8px; border-radius: 10px; border: 1px solid var(--v2-rule);
     color: var(--v2-ink-soft); background: transparent;
   }
@@ -1265,24 +1274,24 @@
   /* 2 — the played-at legend + the ladder budget readout. */
   .dn-bs-legend { display: flex; flex-direction: column; gap: 6px; padding-top: 4px;
     border-top: 1px solid var(--v2-rule-soft); }
-  .dn-bs-legrow { display: flex; align-items: center; gap: 8px; font-family: var(--v2-mono); font-size: 11.5px; }
+  .dn-bs-legrow { display: flex; align-items: center; gap: 8px; font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); }
   .dn-bs-legtxt strong { color: var(--v2-ink); font-weight: 600; }
   .dn-bs-sw { display: inline-block; width: 14px; height: 14px; border-radius: 3px; flex: 0 0 auto; }
   .dn-bs-sw.dn-bs-train { border: 1px solid var(--v2-rule); background: transparent; }
   .dn-bs-sw.dn-bs-holdout { border: 1px solid var(--v2-accent); background: var(--v2-accent); }
   .dn-bs-ladder { display: flex; align-items: baseline; gap: 8px; margin-top: 4px;
-    font-family: var(--v2-mono); font-size: 11.5px; }
-  .dn-bs-ladder-lab { color: var(--v2-ink-faint); text-transform: uppercase; letter-spacing: 0.05em; font-size: 9.5px; }
-  .dn-bs-ladder-val { color: var(--v2-ink); font-variant-numeric: tabular-nums; font-size: 14px; }
+    font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); }
+  .dn-bs-ladder-lab { color: var(--v2-ink-faint); text-transform: uppercase; letter-spacing: 0.05em; font-size: calc(9.5px * var(--dt-font-scale, 1)); }
+  .dn-bs-ladder-val { color: var(--v2-ink); font-variant-numeric: tabular-nums; font-size: calc(14px * var(--dt-font-scale, 1)); }
 
   /* 3 — the generalization-gap trend (two themed sparklines + a verdict). */
   .dn-bs-gap { padding-top: 4px; border-top: 1px solid var(--v2-rule-soft); }
   .dn-bs-gap-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px;
-    font-family: var(--v2-mono); font-size: 11.5px; color: var(--v2-ink); margin-bottom: 6px; }
-  .dn-bs-gap-note { font-size: 10.5px; }
+    font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); color: var(--v2-ink); margin-bottom: 6px; }
+  .dn-bs-gap-note { font-size: calc(10.5px * var(--dt-font-scale, 1)); }
   .dn-bs-gap-rows { display: flex; flex-direction: column; gap: 6px; }
   .dn-bs-gap-row { display: flex; align-items: center; gap: 10px; }
-  .dn-bs-gap-lab { font-family: var(--v2-mono); font-size: 10.5px; width: 56px; flex: 0 0 56px;
+  .dn-bs-gap-lab { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); width: 56px; flex: 0 0 56px;
     color: var(--v2-ink-faint); text-align: right; }
   .dn-bs-gap-spark { flex: 1 1 auto; min-width: 0; }
   /* the two series read apart: train = ink, holdout = accent (theme-aware). */
@@ -1290,7 +1299,7 @@
   .dn-bs-line-train .dn-spark-dot { fill: var(--v2-ink-soft); }
   .dn-bs-line-holdout .dn-spark-line { stroke: var(--v2-accent); }
   .dn-bs-line-holdout .dn-spark-dot { fill: var(--v2-accent); }
-  .dn-bs-verdict { margin-top: 8px; font-family: var(--v2-mono); font-size: 11px; }
+  .dn-bs-verdict { margin-top: 8px; font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); }
   .dn-bs-verdict.dn-good { color: var(--v2-good); }
   .dn-bs-verdict.dn-bad { color: var(--v2-bad); }
 
@@ -1321,7 +1330,7 @@
   .dn-rungprog-strip { display: flex; align-items: center; gap: 10px; margin: 2px 0 12px;
     padding: 6px 8px; border: 1px dashed var(--v2-rule); border-radius: 6px;
     background: color-mix(in srgb, var(--v2-panel) 40%, transparent); }
-  .dn-rungprog-cap { font-family: var(--v2-mono); font-size: 9.5px; text-transform: uppercase;
+  .dn-rungprog-cap { font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); text-transform: uppercase;
     letter-spacing: 0.08em; white-space: nowrap; flex: 0 0 auto; }
   .ezn-rungprog { display: block; flex: 1 1 auto; min-width: 0; }
   .ezn-rungprog-spine { stroke: var(--v2-rule); stroke-width: 2; }
@@ -1401,11 +1410,11 @@
 
   /* the top-left back / up control (THE BACK-BUTTON FIX) */
   .dt-back { display: inline-flex; align-items: center; gap: 5px;
-    font-family: var(--v2-mono); font-size: 11px; color: var(--v2-ink-soft);
+    font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
     background: transparent; border: 1px solid var(--v2-rule); border-radius: 5px;
     padding: 4px 9px; cursor: pointer; transition: background 0.15s, color 0.15s, border-color 0.15s; }
   .dt-back:hover { color: var(--v2-paper); background: var(--v2-accent); border-color: var(--v2-accent); }
-  .dt-back-glyph { font-size: 14px; line-height: 1; }
+  .dt-back-glyph { font-size: calc(14px * var(--dt-font-scale, 1)); line-height: 1; }
   .dt-back.dt-back-off { opacity: 0.35; cursor: default; }
   .dt-back.dt-back-off:hover { color: var(--v2-ink-soft); background: transparent; border-color: var(--v2-rule); }
   .dt-brand { display: inline-flex; align-items: center; gap: 8px; color: var(--v2-ink); }
@@ -1420,11 +1429,11 @@
      dark/light with the theme like the mark); the dot fills with the accent
      token. Sized to the bar like the old text span. */
   .dt-brand-name { height: 16px; width: auto; display: block; flex: none; color: var(--v2-ink); align-self: center; overflow: visible; }
-  .dt-brand-variant { font-family: var(--v2-mono); font-size: 9.5px; letter-spacing: 0.16em;
+  .dt-brand-variant { font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); letter-spacing: 0.16em;
     text-transform: uppercase; color: var(--v2-accent); }
 
   .dt-crumbs { display: inline-flex; align-items: center; gap: 4px; font-family: var(--v2-mono);
-    font-size: 11px; color: var(--v2-ink-faint); }
+    font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
   .dt-crumb { color: var(--v2-ink-soft); text-decoration: none; }
   .dt-crumb:hover { color: var(--v2-accent); }
   .dt-crumb-current { color: var(--v2-ink); }
@@ -1433,7 +1442,7 @@
 
   /* the typeface switcher stays as inline buttons (only 3 options) */
   .dt-type-switch { display: inline-flex; border: 1px solid var(--v2-rule); border-radius: 5px; overflow: hidden; }
-  .dt-type-btn { font-size: 9.5px; padding: 3px 7px; background: transparent;
+  .dt-type-btn { font-size: calc(9.5px * var(--dt-font-scale, 1)); padding: 3px 7px; background: transparent;
     color: var(--v2-ink-faint); border: none; cursor: pointer; transition: background 0.15s, color 0.15s;
     border-right: 1px solid var(--v2-rule); font-family: var(--v2-sans); }
   .dt-type-btn:last-child { border-right: none; }
@@ -1445,11 +1454,11 @@
   .dt-cd-trigger { display: inline-flex; align-items: center; gap: 6px;
     border: 1px solid var(--v2-rule); border-radius: 5px; padding: 2px 7px;
     background: transparent; color: var(--v2-ink-soft); cursor: pointer;
-    font-family: var(--v2-mono); font-size: 9.5px; transition: border-color 0.15s, color 0.15s; }
+    font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); transition: border-color 0.15s, color 0.15s; }
   .dt-cd-trigger:hover { color: var(--v2-ink); border-color: var(--v2-accent); }
   .dt-cd-trigger:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 2px; }
   .dt-cd-name { color: var(--v2-ink); white-space: nowrap; }
-  .dt-cd-caret { color: var(--v2-ink-faint); font-size: 8px; transition: transform 0.15s; }
+  .dt-cd-caret { color: var(--v2-ink-faint); font-size: calc(8px * var(--dt-font-scale, 1)); transition: transform 0.15s; }
   .dt-cd.dt-cd-open .dt-cd-caret { transform: rotate(180deg); }
 
   /* the swatch strip — a row of small colour chips (the legibility preview) */
@@ -1466,7 +1475,7 @@
   .dt-cd.dt-cd-open .dt-cd-list { display: block; }
   .dt-cd-option { display: flex; align-items: center; gap: 8px; padding: 5px 7px; border-radius: 4px;
     cursor: pointer; color: var(--v2-ink-soft); transition: background 0.12s, color 0.12s; }
-  .dt-cd-option .dt-cd-name { font-family: var(--v2-mono); font-size: 10.5px; }
+  .dt-cd-option .dt-cd-name { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); }
   .dt-cd-option:hover, .dt-cd-option.dt-cd-active { background: var(--v2-rule-soft); color: var(--v2-ink); }
   .dt-cd-option[aria-selected="true"] { color: var(--v2-ink); }
   .dt-cd-option[aria-selected="true"] .dt-cd-name { color: var(--v2-accent); }
@@ -1476,7 +1485,7 @@
    * specimens. A wider list so the face names + micro-previews read. */
   .dt-tf-list { min-width: 248px; }
   /* group headers — uppercase mode labels separating the four-option blocks */
-  .dt-cd-group { padding: 7px 7px 3px; font-family: var(--v2-mono); font-size: 8.5px;
+  .dt-cd-group { padding: 7px 7px 3px; font-family: var(--v2-mono); font-size: calc(8.5px * var(--dt-font-scale, 1));
     text-transform: uppercase; letter-spacing: 0.1em; color: var(--v2-ink-faint);
     border-top: 1px solid var(--v2-rule-soft); margin-top: 3px; }
   .dt-cd-group:first-child { border-top: none; margin-top: 0; }
@@ -1489,29 +1498,64 @@
   .dt-tf-option:hover, .dt-tf-option.dt-cd-active { background: var(--v2-rule-soft); color: var(--v2-ink); }
   .dt-tf-option[aria-selected="true"] { color: var(--v2-ink); }
   .dt-tf-option[aria-selected="true"] .dt-tf-name { color: var(--v2-accent); }
-  .dt-tf-option .dt-tf-name { font-family: var(--v2-mono); font-size: 10.5px; }
+  .dt-tf-option .dt-tf-name { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); }
   /* the type specimen — head "Aa", a prose word, a tabular sample, each in the
    * option's REAL faces (font-family inlined per span) so the row is a true
    * specimen independent of the active data-t-type. */
   .dt-tf-spec { display: inline-flex; align-items: baseline; gap: 9px; color: var(--v2-ink-soft); }
-  .dt-tf-spec-head { font-size: 15px; line-height: 1; }
-  .dt-tf-spec-prose { font-size: 12px; }
-  .dt-tf-spec-data { font-size: 11px; font-variant-numeric: tabular-nums; }
+  .dt-tf-spec-head { font-size: calc(15px * var(--dt-font-scale, 1)); line-height: 1; }
+  .dt-tf-spec-prose { font-size: calc(12px * var(--dt-font-scale, 1)); }
+  .dt-tf-spec-data { font-size: calc(11px * var(--dt-font-scale, 1)); font-variant-numeric: tabular-nums; }
   /* the closed trigger carries a small specimen beside the current face name */
   .dt-tf-trigger .dt-tf-spec-sm { gap: 5px; }
-  .dt-tf-spec-sm .dt-tf-spec-head { font-size: 12px; }
-  .dt-tf-spec-sm .dt-tf-spec-prose { font-size: 10px; }
-  .dt-tf-spec-sm .dt-tf-spec-data { font-size: 9.5px; }
+  .dt-tf-spec-sm .dt-tf-spec-head { font-size: calc(12px * var(--dt-font-scale, 1)); }
+  .dt-tf-spec-sm .dt-tf-spec-prose { font-size: calc(10px * var(--dt-font-scale, 1)); }
+  .dt-tf-spec-sm .dt-tf-spec-data { font-size: calc(9.5px * var(--dt-font-scale, 1)); }
+
+  /* ---- the typeface POPOVER container (listbox + S/M/L footer) ----
+   * The typeface dropdown wraps its listbox in `.dt-tf-pop` so the S/M/L text-
+   * size segmented control can ride in a FOOTER below the faces. The popover
+   * chrome (position / panel / shadow / open-toggle) moves onto `.dt-tf-pop`;
+   * the nested `.dt-tf-list` becomes a plain scrolling region inside it. The
+   * colour picker is untouched — it still uses `.dt-cd-list` as its popover. */
+  .dt-tf .dt-tf-pop { display: none; flex-direction: column; position: absolute;
+    top: calc(100% + 5px); right: 0; z-index: 30; min-width: 248px;
+    background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28); padding: 4px; }
+  .dt-tf.dt-cd-open .dt-tf-pop { display: flex; }
+  /* the listbox INSIDE the popover: drop its own positioning/panel chrome (the
+   * `.dt-tf-pop` owns it now) and just scroll within the popover. */
+  .dt-tf .dt-tf-pop .dt-cd-list { position: static; display: block; min-width: 0;
+    max-height: 56vh; overflow-y: auto; background: transparent; border: none;
+    box-shadow: none; padding: 0; }
+
+  /* the S/M/L text-size footer — a compact segmented control under the faces.
+   * Sits in the popover footer with a quiet rule above it; matches the picker
+   * idiom (mono label · segmented buttons that read/apply the text size). */
+  .dt-tf-foot { display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; margin-top: 4px; padding: 6px 4px 2px; border-top: 1px solid var(--v2-rule-soft); }
+  .dt-tf-foot-lab { font-family: var(--v2-mono); font-size: calc(8.5px * var(--dt-font-scale, 1));
+    text-transform: uppercase; letter-spacing: 0.1em; color: var(--v2-ink-faint); }
+  .dt-tf-sizeseg-wrap { display: inline-flex; border: 1px solid var(--v2-rule); border-radius: 5px;
+    overflow: hidden; }
+  .dt-tf-sizeseg { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1));
+    min-width: 26px; padding: 3px 8px; background: transparent; color: var(--v2-ink-soft);
+    border: none; border-left: 1px solid var(--v2-rule); cursor: pointer;
+    transition: background 0.12s, color 0.12s; }
+  .dt-tf-sizeseg:first-child { border-left: none; }
+  .dt-tf-sizeseg:hover { background: var(--v2-rule-soft); color: var(--v2-ink); }
+  .dt-tf-sizeseg[aria-checked="true"] { background: var(--v2-accent); color: var(--v2-paper); }
+  .dt-tf-sizeseg:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: -2px; }
 
   .dt-status { display: inline-flex; align-items: center; gap: 5px; font-family: var(--v2-mono);
-    font-size: 10.5px; color: var(--v2-ink-faint); }
+    font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
   .dt-status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--v2-flat); transition: background 0.2s; }
   .dt-status.dt-connected .dt-status-dot { background: var(--v2-good); }
   .dt-status.dt-running .dt-status-dot { background: var(--v2-caution); }
   /* A frozen heartbeat (stale, not live): a dim, hollow dot + a muted
      "last seen Ns ago" note — never the live accent, never a silent freeze. */
   .dt-status.dt-stale .dt-status-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--v2-flat); }
-  .dt-status-stale { color: var(--v2-ink-faint); font-size: 10px; margin-left: 6px;
+  .dt-status-stale { color: var(--v2-ink-faint); font-size: calc(10px * var(--dt-font-scale, 1)); margin-left: 6px;
     font-style: italic; white-space: nowrap; }
   .dt-status-stale:empty { display: none; }
 
@@ -1520,7 +1564,7 @@
    * structure+phase label + an in-flight board-unit count when running. */
   .dt-run-badge { display: none; align-items: center; gap: 5px; margin-left: 6px;
     padding: 1px 7px; border-radius: 9px; border: 1px solid var(--v2-rule);
-    background: var(--v2-panel); color: var(--v2-ink-soft); font-size: 10px;
+    background: var(--v2-panel); color: var(--v2-ink-soft); font-size: calc(10px * var(--dt-font-scale, 1));
     letter-spacing: 0.02em; white-space: nowrap; }
   .dt-status.dt-running .dt-run-badge { display: inline-flex; }
   .dt-run-pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--v2-good); flex: 0 0 auto;
@@ -1539,12 +1583,12 @@
    * "live" pill), NOT a coloured left rail — it wears the standard faint
    * .dn-panel border like every other card. */
   .dn-inflight-head { display: flex; align-items: center; gap: 6px; font-family: var(--v2-mono);
-    font-size: 11px; margin-bottom: 6px; }
+    font-size: calc(11px * var(--dt-font-scale, 1)); margin-bottom: 6px; }
   /* the faint mono "live" status pill in the in-flight header — the same pill
    * register as the wordmark/.dn-pill vocabulary; colour lives in the small dot
    * + text, never a slab. */
   .dn-inflight-pill { display: inline-flex; align-items: center; gap: 4px; flex: none;
-    font-family: var(--v2-mono); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
+    font-family: var(--v2-mono); font-size: calc(9px * var(--dt-font-scale, 1)); letter-spacing: 0.1em; text-transform: uppercase;
     color: var(--v2-good); border: 1px solid var(--v2-rule); border-radius: 9px; padding: 0 6px; }
   .dn-inflight-pill .dn-inflight-pulse { width: 5px; height: 5px; }
   .dn-inflight-pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--v2-good); flex: 0 0 auto;
@@ -1554,7 +1598,7 @@
   .dn-progress { display: inline-block; width: 120px; max-width: 40vw; height: 7px; border-radius: 4px;
     background: var(--v2-rule-soft); overflow: hidden; vertical-align: middle; }
   .dn-progress-fill { display: block; height: 100%; background: var(--v2-good); transition: width 0.3s ease; }
-  .dn-progress-pct { font-size: 10.5px; }
+  .dn-progress-pct { font-size: calc(10.5px * var(--dt-font-scale, 1)); }
 
   /* ---- the body split: persistent tree rail + single detail pane ---- */
   /* Q's spacing folded in: a roomier rail + a calmer detail column. */
@@ -1614,7 +1658,7 @@
 
   /* ---- the tree itself ---- */
   .dt-tree { display: flex; flex-direction: column; gap: 1px; }
-  .dt-tree-empty { color: var(--v2-ink-faint); font-size: 11.5px; font-style: italic; padding: 12px 10px; }
+  .dt-tree-empty { color: var(--v2-ink-faint); font-size: calc(11.5px * var(--dt-font-scale, 1)); font-style: italic; padding: 12px 10px; }
 
   .dt-node {
     display: grid;
@@ -1634,7 +1678,7 @@
 
   .dt-twisty {
     width: 18px; height: 24px; padding: 0; border: none; background: transparent;
-    color: var(--v2-ink-faint); font-size: 9px; cursor: pointer; line-height: 24px; text-align: center;
+    color: var(--v2-ink-faint); font-size: calc(9px * var(--dt-font-scale, 1)); cursor: pointer; line-height: 24px; text-align: center;
     transition: color 0.12s;
   }
   .dt-twisty:hover { color: var(--v2-ink); }
@@ -1645,7 +1689,7 @@
     display: inline-flex; align-items: center; gap: 6px; width: 100%;
     border: none; background: transparent; cursor: pointer; text-align: left;
     padding: 4px 6px 4px 2px; color: var(--v2-ink-soft);
-    font-family: var(--v2-sans); font-size: 12px; line-height: 1.2;
+    font-family: var(--v2-sans); font-size: calc(12px * var(--dt-font-scale, 1)); line-height: 1.2;
     transition: color 0.12s;
   }
   .dt-label:hover { color: var(--v2-ink); }
@@ -1654,8 +1698,8 @@
 
   /* branch labels (Environment / Epoch / Generations / Boards) read as headers */
   .dt-branch[data-kind="env"] .dt-label,
-  .dt-branch[data-kind="epoch"] .dt-label { font-family: var(--v2-mono); font-size: 11.5px; }
-  .dt-branch[data-kind="group"] .dt-label { text-transform: uppercase; letter-spacing: 0.05em; font-size: 10.5px; color: var(--v2-ink-faint); }
+  .dt-branch[data-kind="epoch"] .dt-label { font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); }
+  .dt-branch[data-kind="group"] .dt-label { text-transform: uppercase; letter-spacing: 0.05em; font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
   .dt-branch[data-kind="group"] .dt-label:hover { color: var(--v2-ink-soft); }
 
   .dt-icon { width: 12px; height: 12px; border-radius: 2px; flex: none; }
@@ -1665,7 +1709,7 @@
   /* a ROUND branch node (Epoch → Generations → Round N): a small accent bar */
   .dt-icon-round { background: color-mix(in srgb, var(--v2-accent) 55%, transparent); border-radius: 1px; height: 8px; }
 
-  .dt-glyph { width: 13px; text-align: center; flex: none; font-size: 10px; color: var(--v2-ink-faint); }
+  .dt-glyph { width: 13px; text-align: center; flex: none; font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
   .dt-glyph-gen-champ { color: var(--v2-good); }
   /* a CARRIED-IN champion (a reference under a round, not a minted node) */
   .dt-glyph-gen-carried { color: var(--v2-caution); opacity: 0.9; }
@@ -1680,9 +1724,9 @@
   .dt-leaf[data-kind="gen-former"] .dt-text { color: var(--v2-ink-soft); }
   .dt-leaf[data-kind="gen-orphan"] .dt-text { color: var(--v2-ink-faint); }
   .dt-tag-gen-orphan { color: var(--v2-ink-faint); border-color: var(--v2-rule); font-style: italic; }
-  .dt-leaf .dt-text { font-family: var(--v2-mono); font-size: 11.5px; }
+  .dt-leaf .dt-text { font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); }
   .dt-leaf[data-kind="mutations"] .dt-text,
-  .dt-leaf[data-kind="paper"] .dt-text { font-family: var(--v2-sans); font-size: 12px; }
+  .dt-leaf[data-kind="paper"] .dt-text { font-family: var(--v2-sans); font-size: calc(12px * var(--dt-font-scale, 1)); }
 
   /* the LIVE-ACTIVITY pulse (Task 2): a subtle clue on a running gen / board
    * row. It reuses the dn-inflight-pulse animation; sized small + nudged to the
@@ -1691,8 +1735,8 @@
    * change). Reduced-motion drops the animation (it keeps a static dot). */
   .dt-node-pulse { width: 6px; height: 6px; margin-left: auto; }
 
-  .dt-sub { font-family: var(--v2-mono); font-size: 9px; color: var(--v2-ink-faint); margin-left: auto; padding-left: 6px; }
-  .dt-tag { font-family: var(--v2-mono); font-size: 8.5px; padding: 0 5px; border-radius: 7px;
+  .dt-sub { font-family: var(--v2-mono); font-size: calc(9px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); margin-left: auto; padding-left: 6px; }
+  .dt-tag { font-family: var(--v2-mono); font-size: calc(8.5px * var(--dt-font-scale, 1)); padding: 0 5px; border-radius: 7px;
     border: 1px solid var(--v2-rule); color: var(--v2-ink-faint); margin-left: auto; white-space: nowrap; }
   .dt-tag-gen-champ { color: var(--v2-good); border-color: var(--v2-good); }
   .dt-tag-gen-former { color: var(--v2-ink-faint); border-color: var(--v2-rule); font-style: italic; }
@@ -1701,7 +1745,7 @@
   .dt-tag-gen-carried { color: var(--v2-caution); border-color: var(--v2-rule); font-style: italic; }
 
   /* ---- view affordances added by P ---- */
-  .dt-empty { color: var(--v2-ink-faint); font-size: 12px; font-style: italic; padding: 12px 0; }
+  .dt-empty { color: var(--v2-ink-faint); font-size: calc(12px * var(--dt-font-scale, 1)); font-style: italic; padding: 12px 0; }
   /* the patch node in the lifecycle DAG is now clickable */
   .ezn-node.ezn-clickable .ezn-node-box { stroke-dasharray: 3 2; }
   .ezn-node.ezn-clickable:hover .ezn-node-box { stroke: var(--v2-accent); stroke-width: 2; }
@@ -1725,12 +1769,12 @@
   /* the "compare with…" affordance bar */
   .dt-cmp-bar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 4px 0 18px; }
   .dt-cmp-picker { display: inline-flex; align-items: center; gap: 8px; }
-  .dt-cmp-picker-lab { font-family: var(--v2-mono); font-size: 10.5px; text-transform: uppercase;
+  .dt-cmp-picker-lab { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); text-transform: uppercase;
     letter-spacing: 0.06em; color: var(--v2-ink-faint); }
-  .dt-cmp-select { font-family: var(--v2-mono); font-size: 12px; color: var(--v2-ink);
+  .dt-cmp-select { font-family: var(--v2-mono); font-size: calc(12px * var(--dt-font-scale, 1)); color: var(--v2-ink);
     background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 5px; padding: 5px 10px; cursor: pointer; }
   .dt-cmp-select:hover { border-color: var(--v2-accent); }
-  .dt-cmp-clear { font-family: var(--v2-mono); font-size: 10.5px; color: var(--v2-ink-soft);
+  .dt-cmp-clear { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
     background: transparent; border: 1px solid var(--v2-rule); border-radius: 5px; padding: 4px 9px; cursor: pointer;
     transition: color 0.15s, border-color 0.15s; }
   .dt-cmp-clear:hover { color: var(--v2-bad); border-color: var(--v2-bad); }
@@ -1741,12 +1785,12 @@
   .dt-split-side { min-width: 0; }
   .dt-split-head { display: flex; align-items: center; gap: 9px; margin-bottom: 12px;
     padding-bottom: 7px; border-bottom: 2px solid var(--v2-rule); }
-  .dt-split-tag { font-family: var(--v2-mono); font-size: 10px; font-weight: 700;
+  .dt-split-tag { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); font-weight: 700;
     width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center;
     border-radius: 4px; background: var(--v2-accent); color: var(--v2-paper); }
   .dt-split-b .dt-split-tag { background: var(--v2-caution); }
-  .dt-split-title { font-family: var(--v2-mono); font-size: 14px; color: var(--v2-ink); }
-  .dt-split-sub { font-family: var(--v2-mono); font-size: 10px; color: var(--v2-ink-faint);
+  .dt-split-title { font-family: var(--v2-mono); font-size: calc(14px * var(--dt-font-scale, 1)); color: var(--v2-ink); }
+  .dt-split-sub { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint);
     text-transform: uppercase; letter-spacing: 0.05em; margin-left: auto; }
   .dt-split-host { display: flex; flex-direction: column; }
   /* a split side keeps its sections compact so two columns stay legible */
@@ -1765,7 +1809,7 @@
     border: 1px solid var(--v2-rule); border-radius: 5px; padding: 2px 9px;
   }
   .dt-scale-lab {
-    font-family: var(--v2-mono); font-size: 9.5px; text-transform: uppercase;
+    font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); text-transform: uppercase;
     letter-spacing: 0.08em; color: var(--v2-ink-faint);
   }
   .dt-scale-range {
@@ -1787,7 +1831,7 @@
   }
   .dt-scale-range::-moz-range-track { height: 4px; background: var(--v2-rule); border-radius: 3px; }
   .dt-scale-readout {
-    font-family: var(--v2-mono); font-size: 10.5px; color: var(--v2-ink-soft);
+    font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
     font-variant-numeric: tabular-nums; min-width: 3.4ch; text-align: right;
   }
   /* the RESET affordance — snaps the page scale back to 100% (keyboard-accessible <button>) */
@@ -1795,7 +1839,7 @@
     display: inline-flex; align-items: center; justify-content: center;
     width: 17px; height: 17px; padding: 0; margin-left: 1px;
     border: 1px solid var(--v2-rule); border-radius: 4px; background: transparent;
-    color: var(--v2-ink-faint); font-size: 11px; line-height: 1; cursor: pointer;
+    color: var(--v2-ink-faint); font-size: calc(11px * var(--dt-font-scale, 1)); line-height: 1; cursor: pointer;
     transition: color 0.15s, border-color 0.15s, background 0.15s;
   }
   .dt-scale-reset:hover { color: var(--v2-paper); background: var(--v2-accent); border-color: var(--v2-accent); }
@@ -1840,17 +1884,17 @@
   /* Selection is a small accent marker on the round tag — not a full-height rail. */
   .dn-roundtl-ep.dn-roundtl-ep-sel .dn-roundtl-eptag::before { content: '\25b8\00a0'; color: var(--v2-accent); }
   .dn-roundtl-ephead { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-  .dn-roundtl-eptag { font-family: var(--v2-mono); font-size: 9.5px; letter-spacing: 0.12em;
+  .dn-roundtl-eptag { font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); letter-spacing: 0.12em;
     text-transform: uppercase; color: var(--v2-accent); font-weight: 700; }
-  .dn-roundtl-epchamp { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; color: var(--v2-ink); }
+  .dn-roundtl-epchamp { display: inline-flex; align-items: center; gap: 5px; font-size: calc(13px * var(--dt-font-scale, 1)); color: var(--v2-ink); }
   .dn-roundtl-epcrown { color: var(--v2-caution); }
   .dn-roundtl-epdrill { margin-left: auto; }
   .dn-roundtl-fanrow { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
-  .dn-roundtl-fanlab { font-family: var(--v2-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
+  .dn-roundtl-fanlab { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.08em; }
   .dn-roundtl-fan { display: flex; gap: 6px; flex-wrap: wrap; }
   .dn-roundtl-chip { display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
     border: 1px solid var(--v2-rule); border-radius: 5px; padding: 2px 8px; background: var(--v2-flat);
-    font-family: var(--v2-mono); font-size: 11px; color: var(--v2-ink-soft);
+    font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
     transition: border-color 0.12s, color 0.12s; }
   .dn-roundtl-chip:hover { border-color: var(--v2-accent); color: var(--v2-ink); }
   .dn-roundtl-chip.dn-roundtl-chip-win { border-color: var(--v2-good); color: var(--v2-ink); }
@@ -1858,9 +1902,9 @@
   .dn-roundtl-chiploss { font-variant-numeric: tabular-nums; }
   .dn-roundtl-fig { margin-top: 10px; }
   .dn-roundtl-gate { display: flex; align-items: center; gap: 7px; margin-top: 10px;
-    font-family: var(--v2-mono); font-size: 11px; color: var(--v2-ink-soft); }
+    font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); }
   .dn-roundtl-gate.dn-roundtl-gate-win { color: var(--v2-good); }
-  .dn-roundtl-gatemark { font-size: 13px; }
+  .dn-roundtl-gatemark { font-size: calc(13px * var(--dt-font-scale, 1)); }
 
   /* ── configured tournament STRUCTURE (bracket / standings / racing) ──
      All marks read from CSS tokens so they theme across every swatch;
@@ -1872,31 +1916,31 @@
   /* the non-gauntlet epoch structure strip (replaces the champion-spine reel) */
   .dt-struct-strip { display: flex; flex-direction: column; gap: 8px; }
   .dt-struct-strip-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .dt-struct-strip-lab { font-family: var(--n-font-head); font-size: 17px; font-weight: 700; color: var(--v2-ink); }
-  .dt-struct-strip-fact { font-family: var(--v2-mono); font-size: 11px; color: var(--v2-ink-soft);
+  .dt-struct-strip-lab { font-family: var(--n-font-head); font-size: calc(17px * var(--dt-font-scale, 1)); font-weight: 700; color: var(--v2-ink); }
+  .dt-struct-strip-fact { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
     padding: 2px 9px; border: 1px solid var(--v2-rule); border-radius: 10px; background: var(--v2-rule-soft); }
   .dt-struct-strip-link { align-self: flex-start; }
   .dt-structure-pill { display: inline-flex; align-items: center; gap: 6px;
-    font-family: var(--v2-mono); font-size: 10px; padding: 3px 9px;
+    font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); padding: 3px 9px;
     border: 1px solid var(--v2-rule); border-radius: 11px; background: var(--v2-rule-soft); }
   .dt-structure-pill-k { color: var(--v2-ink-faint); text-transform: uppercase; letter-spacing: 0.07em; }
   .dt-structure-pill-v { color: var(--v2-ink); font-weight: 600; }
   /* a LIVE badge beside the structure pill while a run is in flight */
   .dt-live-pill { display: inline-flex; align-items: center; margin-left: 8px;
-    font-family: var(--v2-mono); font-size: 9.5px; font-weight: 700; letter-spacing: 0.1em;
+    font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); font-weight: 700; letter-spacing: 0.1em;
     padding: 2px 8px; border-radius: 10px; color: var(--v2-good);
     border: 1px solid var(--v2-good); background: color-mix(in srgb, var(--v2-good) 12%, transparent); }
 
   /* CACHED-champion provenance: a fast-mode champion whose per-board results
      were reused from a prior epoch/run (not re-executed this round). */
   .dn-cached-tag { display: inline-flex; align-items: center; gap: 4px; margin: 6px 0 0;
-    font-family: var(--v2-mono); font-size: 11px; }
+    font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); }
   .dn-cached-tag-pill { padding: 2px 8px; border-radius: 10px; font-weight: 700; letter-spacing: 0.04em;
     color: var(--v2-accent); border: 1px solid var(--v2-accent);
     background: color-mix(in srgb, var(--v2-accent) 10%, transparent); }
   .dn-cached-badge { display: inline-flex; align-items: center; gap: 4px; margin-bottom: 8px;
-    font-family: var(--v2-mono); font-size: 11px; }
-  .dn-cached-badge-mark { font-family: var(--v2-mono); font-size: 9.5px; font-weight: 700;
+    font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); }
+  .dn-cached-badge-mark { font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); font-weight: 700;
     letter-spacing: 0.06em; text-transform: uppercase; padding: 1px 6px; border-radius: 8px;
     color: var(--v2-accent); border: 1px solid var(--v2-accent);
     background: color-mix(in srgb, var(--v2-accent) 10%, transparent); }
@@ -1999,7 +2043,7 @@
   /* standings + swiss pairings — reuse the dn-board-table base */
   .dt-standings tr.dt-standings-out td { color: var(--v2-ink-faint); }
   .dt-standings tr.dt-standings-out .dn-mono { text-decoration: line-through; }
-  .dt-swiss-round-h { font-family: var(--v2-mono); font-size: 11px; color: var(--v2-ink-soft);
+  .dt-swiss-round-h { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
     text-transform: uppercase; letter-spacing: 0.05em; margin: 14px 0 6px; }
   .dt-swiss-round-h:first-child { margin-top: 0; }
   .dt-swiss-pairings { margin-bottom: 10px; }
@@ -2092,7 +2136,7 @@
   .dt-fieldflow-champ:hover { color: var(--v2-accent); }
   .dt-fieldflow-crown { color: var(--v2-caution); }
   .dt-fieldflow-champid { font-weight: 700; }
-  .dt-fieldflow-champmeta { font-size: 11px; }
+  .dt-fieldflow-champmeta { font-size: calc(11px * var(--dt-font-scale, 1)); }
   .dn-duelflow-ref { stroke: var(--v2-ink-faint); stroke-width: 1.2; stroke-dasharray: 3 3;
     vector-effect: non-scaling-stroke; }
   .dn-duelflow-axis { fill: var(--v2-ink-faint); font: 9.5px var(--v2-mono);
@@ -2298,7 +2342,7 @@
    * complementary panel beside the per-board read, never balloons to full bleed.
    * The radar SVG already scales to width:100%; the pane bounds it. */
   .dn-radarpane { max-width: 560px; }
-  .dn-radar-cap { font-size: 11px; margin: 6px 0 0; text-align: center; }
+  .dn-radar-cap { font-size: calc(11px * var(--dt-font-scale, 1)); margin: 6px 0 0; text-align: center; }
 
   /* ════════ CANDIDATE DOSSIER LAYOUT (additive — candidate.js dossier body) ════
    * The operator flagged the old dossier as sprawling: the per-board dot-plot
@@ -2375,10 +2419,10 @@
   .dn-racing-affordance { display: flex; align-items: center; gap: 8px;
     margin: 10px 0 2px; padding: 8px 10px; border: 1px dashed var(--v2-rule);
     border-radius: 4px; background: color-mix(in srgb, var(--v2-accent) 7%, transparent); }
-  .dn-racing-affordance-lab { display: inline-flex; align-items: baseline; gap: 6px; font-size: 11px; }
+  .dn-racing-affordance-lab { display: inline-flex; align-items: baseline; gap: 6px; font-size: calc(11px * var(--dt-font-scale, 1)); }
   /* the projected-radar placeholder hint (too few settled axes to plot yet). */
   .dn-radar-projhint { display: flex; align-items: baseline; gap: 6px;
-    font-size: 11px; margin: 4px 0 2px; }
+    font-size: calc(11px * var(--dt-font-scale, 1)); margin: 4px 0 2px; }
 
   /* ---- GENERALIZATION (train → holdout) — SHRUNK supporting panel ----
    * The study reduced this from a hero figure to a small, width-capped slope;
@@ -2403,13 +2447,13 @@
   .dn-gen-gaponly { font: 700 12px var(--v2-mono); padding: 6px 0; }
   .dn-gen-gaponly.dn-caution { color: var(--v2-caution); }
   .dn-gen-gaponly.dn-bad { color: var(--v2-bad); }
-  .dn-gen-cap { font-size: 11px; margin: 6px 0 0; }
+  .dn-gen-cap { font-size: calc(11px * var(--dt-font-scale, 1)); margin: 6px 0 0; }
 
   /* ---- RACING field-relative panels (candidate.js racing variation) ----
    * Racing cuts the whole field rung-by-rung; the candidate is read against the
    * field (standings + rung ladder), not a single champion. The candidate's own
    * row is accented so it stands out among the racers. */
-  .dn-racing-field-cap { font-size: 11px; margin: 0 0 8px; color: var(--v2-accent); letter-spacing: 0.02em; }
+  .dn-racing-field-cap { font-size: calc(11px * var(--dt-font-scale, 1)); margin: 0 0 8px; color: var(--v2-accent); letter-spacing: 0.02em; }
   .dn-racing-standhead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
   .dn-racing-cand-row td { background: color-mix(in srgb, var(--v2-accent) 14%, transparent); }
   .dn-racing-cand { color: var(--v2-accent); font-weight: 700; }
@@ -2451,7 +2495,7 @@
    * The current champion's bar reads --v2-accent + ♛; a former champion's bar is
    * dim ink + ♔. All --v2-* tokens. */
   .dn-reignribbon { margin-top: 12px; }
-  .dn-reignribbon-cap { font-size: 11px; margin-bottom: 6px; }
+  .dn-reignribbon-cap { font-size: calc(11px * var(--dt-font-scale, 1)); margin-bottom: 6px; }
   .dn-reigngantt-axis { fill: var(--v2-ink-faint); font: 9.5px var(--v2-mono); }
   .dn-reigngantt-grid { stroke: var(--v2-rule-soft); stroke-width: 0.6;
     vector-effect: non-scaling-stroke; }
@@ -2542,18 +2586,18 @@
   .dt-live-hero-pill { display: inline-flex; align-items: center; gap: 6px;
     padding: 2px 9px; border-radius: 10px; border: 1px solid var(--v2-good);
     background: color-mix(in srgb, var(--v2-good) 12%, transparent);
-    font-family: var(--v2-mono); font-size: 10px; letter-spacing: 0.08em;
+    font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); letter-spacing: 0.08em;
     color: var(--v2-good); font-weight: 700; }
   /* the breathing dot — subtle, GPU-friendly (opacity + box-shadow ring). */
   .dt-live-hero-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--v2-good);
     box-shadow: 0 0 0 0 var(--v2-good); animation: dt-run-pulse 1.8s ease-out infinite; }
-  .dt-live-hero-phase { font-family: var(--v2-mono); font-size: 13px; color: var(--v2-ink);
+  .dt-live-hero-phase { font-family: var(--v2-mono); font-size: calc(13px * var(--dt-font-scale, 1)); color: var(--v2-ink);
     font-weight: 600; }
-  .dt-live-hero-count { font-family: var(--v2-mono); font-size: 11px; color: var(--v2-ink-faint); }
+  .dt-live-hero-count { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
   /* the determinate tournament-progress bar — width transitions smoothly. */
   .dt-live-hero-prog { margin: 10px 0 12px; max-width: 520px; }
   .dt-live-hero-progrow { display: flex; align-items: baseline; gap: 6px; margin-bottom: 4px;
-    font-family: var(--v2-mono); font-size: 11px; }
+    font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); }
   .dt-live-hero-proglab { color: var(--v2-ink-soft); font-weight: 600; }
   .dt-live-hero-progbar { display: block; width: 100%; height: 8px; border-radius: 5px;
     background: var(--v2-rule-soft); overflow: hidden; }
@@ -2566,13 +2610,13 @@
    * glyph once it settles. Hidden until at least one match is in flight. */
   .dt-live-hero-matches { display: none; margin: 0 0 14px; }
   .dt-live-hero-matches.dt-live-hero-matches-on { display: block; }
-  .dt-live-hero-matcheshead { font-family: var(--v2-mono); font-size: 10px; text-transform: uppercase;
+  .dt-live-hero-matcheshead { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase;
     letter-spacing: 0.06em; margin-bottom: 6px; }
   .dt-live-matches { display: flex; flex-wrap: wrap; gap: 10px; }
-  .dt-live-matches-empty { font-size: 11.5px; padding: 6px 0; }
+  .dt-live-matches-empty { font-size: calc(11.5px * var(--dt-font-scale, 1)); padding: 6px 0; }
   .dt-live-match { flex: 1 1 240px; min-width: 0; border: 1px solid var(--v2-rule); border-radius: 6px;
     background: var(--v2-panel); padding: 8px 10px; }
-  .dt-live-match-head { font-family: var(--v2-mono); font-size: 11px; font-weight: 600; color: var(--v2-ink-soft);
+  .dt-live-match-head { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); font-weight: 600; color: var(--v2-ink-soft);
     margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dt-live-match-rows { display: flex; flex-direction: column; gap: 4px; }
   .dt-live-match-row { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr) auto;
@@ -2580,7 +2624,7 @@
   .dt-live-match-row[tabindex] { cursor: pointer; }
   .dt-live-match-row[tabindex]:hover { background: var(--v2-rule-soft); }
   .dt-live-match-row:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 1px; }
-  .dt-live-match-name { font-size: 11.5px; color: var(--v2-ink); overflow: hidden; text-overflow: ellipsis;
+  .dt-live-match-name { font-size: calc(11.5px * var(--dt-font-scale, 1)); color: var(--v2-ink); overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; }
   .dt-live-match-bar { display: block; height: 7px; border-radius: 4px; background: var(--v2-rule-soft);
     overflow: hidden; }
@@ -2588,7 +2632,7 @@
   .dt-live-match-fill { display: block; height: 100%; width: 0%; background: var(--v2-good);
     transition: width 0.5s cubic-bezier(0.22, 0.61, 0.36, 1); }
   .dt-live-match-fill-live { background: var(--v2-good); }
-  .dt-live-match-state { font-family: var(--v2-mono); font-size: 10.5px; color: var(--v2-ink-faint);
+  .dt-live-match-state { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint);
     text-align: right; min-width: 2.6em; }
   .dt-live-match-state.dn-good { color: var(--v2-good); }
   .dt-live-match-state.dn-bad { color: var(--v2-bad); }
@@ -2597,21 +2641,21 @@
   .dt-live-hero-body { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(220px, 1fr);
     gap: 18px; align-items: start; }
   .dt-live-hero-funnel { min-width: 0; }
-  .dt-live-hero-nofunnel { font-size: 11.5px; padding: 12px 0; }
+  .dt-live-hero-nofunnel { font-size: calc(11.5px * var(--dt-font-scale, 1)); padding: 12px 0; }
 
   /* ---- the proposing-step tracker (the field forming) ---- */
   /* Rendered in the live hero during the proposing phase + in the structure
      view as the "Proposed field" section. Theme-aware (every colour is a
      --v2-* token); applied rows lean good, rejected rows lean bad. */
   .dn-prop-tracker { min-width: 0; }
-  .dn-prop-caption { font-family: var(--v2-mono); font-size: 10px; text-transform: uppercase;
+  .dn-prop-caption { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase;
     letter-spacing: 0.06em; margin-bottom: 5px; }
-  .dn-prop-head { font-size: 12.5px; color: var(--v2-ink); margin-bottom: 8px; font-weight: 600; }
+  .dn-prop-head { font-size: calc(12.5px * var(--dt-font-scale, 1)); color: var(--v2-ink); margin-bottom: 8px; font-weight: 600; }
   .dn-prop-head-allbad { color: var(--v2-bad); }
   .dn-prop-list { display: flex; flex-direction: column; gap: 4px; }
   .dn-prop-row { display: flex; align-items: center; gap: 8px; padding: 4px 8px;
     border: 1px solid var(--v2-rule); border-radius: 5px; background: var(--v2-panel);
-    font-size: 12px; }
+    font-size: calc(12px * var(--dt-font-scale, 1)); }
   /* status is carried by the row's glyph (✓/⋯/✗) + the coloured verdict text +
    * the faint mono status pill in the row head — NOT a coloured left rail. The
    * rejected row keeps a gentle soft fill (the same understated tint .dn-pill.
@@ -2620,7 +2664,7 @@
   .dn-prop-row-bad { background: var(--v2-bad-soft); }
   .dn-prop-glyph { font-family: var(--v2-mono); font-weight: 700; width: 1em; text-align: center; }
   .dn-prop-gen { font-family: var(--v2-mono); color: var(--v2-ink); flex: 1 1 auto; }
-  .dn-prop-verdict { font-size: 11px; letter-spacing: 0.02em; }
+  .dn-prop-verdict { font-size: calc(11px * var(--dt-font-scale, 1)); letter-spacing: 0.02em; }
   .dn-prop-ok { color: var(--v2-good); }
   .dn-prop-bad { color: var(--v2-bad); }
   .dn-prop-clickable { cursor: pointer; }
@@ -2632,10 +2676,10 @@
      parse / post-apply message is legible without a hover. */
   .dn-prop-row { flex-direction: column; align-items: stretch; gap: 3px; }
   .dn-prop-rowtop { display: flex; align-items: center; gap: 8px; }
-  .dn-prop-detail { font-family: var(--v2-mono); font-size: 11px; line-height: 1.35;
+  .dn-prop-detail { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); line-height: 1.35;
     padding-left: calc(1em + 8px); overflow-wrap: anywhere; }
   .dn-prop-reason { color: var(--v2-bad); }
-  .dn-prop-attempts { font-family: var(--v2-mono); font-size: 10.5px; color: var(--v2-ink-faint);
+  .dn-prop-attempts { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint);
     border: 1px solid var(--v2-rule); border-radius: 4px; padding: 0 5px; }
   .dn-prop-pending { color: var(--v2-caution); }
   /* status conveyed by the ⋯ glyph + "proposing…" verdict text (the same
@@ -2643,16 +2687,16 @@
   .dn-prop-row-pending { /* glyph + verdict carry the status */ }
 
   .dt-live-hero-ticker { min-width: 0; }
-  .dt-live-hero-tickerhead { font-family: var(--v2-mono); font-size: 10px; text-transform: uppercase;
+  .dt-live-hero-tickerhead { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase;
     letter-spacing: 0.06em; margin-bottom: 5px; }
 
   /* ---- the activity ticker (append-only, newest on top, no flash) ---- */
   .dt-ticker { max-height: 200px; overflow-y: auto; border: 1px solid var(--v2-rule);
     border-radius: 5px; background: var(--v2-panel); padding: 4px; }
-  .dt-ticker-empty { font-size: 11px; padding: 8px 6px; font-style: italic; }
+  .dt-ticker-empty { font-size: calc(11px * var(--dt-font-scale, 1)); padding: 8px 6px; font-style: italic; }
   .dt-ticker-list { display: flex; flex-direction: column; gap: 1px; }
   .dt-ticker-row { display: flex; align-items: baseline; gap: 6px; padding: 2px 5px;
-    font-family: var(--v2-mono); font-size: 10.5px; line-height: 1.5; border-radius: 3px;
+    font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); line-height: 1.5; border-radius: 3px;
     color: var(--v2-ink-soft);
     /* each NEW row slides in once (prepended at top); surviving rows untouched. */
     animation: dt-ticker-in 0.3s ease-out; }
@@ -2702,7 +2746,7 @@
 
   /* the top-bar nav entry. */
   .dt-nav-build { display: inline-flex; align-items: center; gap: 5px; font-family: var(--v2-mono);
-    font-size: 11px; color: var(--v2-ink-soft); border: 1px solid var(--v2-rule); border-radius: 5px;
+    font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); border: 1px solid var(--v2-rule); border-radius: 5px;
     padding: 4px 9px; text-decoration: none; transition: background 0.15s, color 0.15s, border-color 0.15s; }
   .dt-nav-build:hover { background: var(--v2-accent); color: var(--v2-paper); border-color: var(--v2-accent); }
   .dt-nav-build-glyph { color: var(--v2-accent); }
@@ -2715,7 +2759,7 @@
   .dt-nav-exec { display: inline-flex; align-items: center; }
   .dt-nav-exec:empty { display: none; }
   .dt-exec-link { display: inline-flex; align-items: center; gap: 5px; font-family: var(--v2-mono);
-    font-size: 11px; color: var(--v2-ink-soft); border: 1px solid var(--v2-rule); border-radius: 5px;
+    font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); border: 1px solid var(--v2-rule); border-radius: 5px;
     padding: 4px 9px; text-decoration: none; transition: background 0.15s, color 0.15s, border-color 0.15s; }
   .dt-exec-link:hover { background: var(--v2-accent); color: var(--v2-paper); border-color: var(--v2-accent); }
 
@@ -2745,10 +2789,10 @@
   .dn-bld-rail { display: flex; flex-direction: column; gap: 3px; position: sticky; top: 8px; min-width: 0; }
   .dn-bld-railitem { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
     background: transparent; border: 1px solid transparent; border-radius: 5px; padding: 8px 10px;
-    color: var(--v2-ink-soft); font-size: 12.5px; cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s; }
+    color: var(--v2-ink-soft); font-size: calc(12.5px * var(--dt-font-scale, 1)); cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s; }
   .dn-bld-railitem:hover { background: var(--v2-rule-soft); color: var(--v2-ink); }
   .dn-bld-railitem-active { background: var(--v2-rule-soft); color: var(--v2-ink); border-color: var(--v2-rule); }
-  .dn-bld-railglyph { color: var(--v2-accent); font-size: 11px; flex: none; width: 14px; text-align: center; }
+  .dn-bld-railglyph { color: var(--v2-accent); font-size: calc(11px * var(--dt-font-scale, 1)); flex: none; width: 14px; text-align: center; }
   .dn-bld-railitem-done .dn-bld-railglyph { color: var(--v2-good); }
   .dn-bld-raillabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 
@@ -2756,18 +2800,18 @@
   .dn-bld-center { min-width: 0; }
   .dn-bld-flash { display: flex; align-items: center; gap: 8px; justify-content: space-between;
     background: var(--v2-bad-soft); border: 1px solid var(--v2-bad); border-radius: 4px;
-    color: var(--v2-ink); font-size: 12px; padding: 7px 10px; margin-bottom: 10px; }
-  .dn-bld-flash-x { background: transparent; border: none; color: var(--v2-ink-soft); cursor: pointer; font-size: 15px; line-height: 1; }
-  .dn-bld-busy { font-family: var(--v2-mono); font-size: 10.5px; color: var(--v2-ink-faint); margin-bottom: 8px; }
+    color: var(--v2-ink); font-size: calc(12px * var(--dt-font-scale, 1)); padding: 7px 10px; margin-bottom: 10px; }
+  .dn-bld-flash-x { background: transparent; border: none; color: var(--v2-ink-soft); cursor: pointer; font-size: calc(15px * var(--dt-font-scale, 1)); line-height: 1; }
+  .dn-bld-busy { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); margin-bottom: 8px; }
 
   .dn-bld-row { display: flex; flex-direction: column; gap: 5px; margin: 0 0 14px; min-width: 0; }
   .dn-bld-rowhead { display: flex; align-items: center; gap: 6px; }
-  .dn-bld-label { font-size: 12px; font-weight: 600; color: var(--v2-ink); }
+  .dn-bld-label { font-size: calc(12px * var(--dt-font-scale, 1)); font-weight: 600; color: var(--v2-ink); }
   .dn-bld-control { min-width: 0; }
-  .dn-bld-num { font-family: var(--v2-mono); font-size: 12px; width: 130px; max-width: 100%;
+  .dn-bld-num { font-family: var(--v2-mono); font-size: calc(12px * var(--dt-font-scale, 1)); width: 130px; max-width: 100%;
     background: var(--v2-paper); color: var(--v2-ink); border: 1px solid var(--v2-rule); border-radius: 4px; padding: 5px 8px; }
   .dn-bld-num:focus { outline: 2px solid var(--v2-accent); outline-offset: 0; }
-  .dn-bld-checkwrap { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--v2-ink-soft); cursor: pointer; }
+  .dn-bld-checkwrap { display: inline-flex; align-items: center; gap: 7px; font-size: calc(12px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); cursor: pointer; }
   .dn-bld-check { accent-color: var(--v2-accent); }
 
   /* structure picker cards. */
@@ -2779,12 +2823,12 @@
   .dn-bld-card-on { border-color: var(--v2-accent); background: var(--v2-rule-soft);
     box-shadow: inset 0 0 0 1px var(--v2-accent); }
   .dn-bld-cardglyph { color: var(--v2-accent); flex: none; }
-  .dn-bld-cardname { font-size: 12.5px; font-weight: 600; }
-  .dn-bld-cardblurb { font-size: 10.5px; color: var(--v2-ink-soft); line-height: 1.35; }
+  .dn-bld-cardname { font-size: calc(12.5px * var(--dt-font-scale, 1)); font-weight: 600; }
+  .dn-bld-cardblurb { font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); line-height: 1.35; }
 
   /* board + holdout. */
   .dn-bld-splitstrip, .dn-bld-previewstrip { display: flex; width: 100%; height: 22px; border-radius: 4px;
-    overflow: hidden; border: 1px solid var(--v2-rule); font-family: var(--v2-mono); font-size: 9.5px; margin: 4px 0 12px; }
+    overflow: hidden; border: 1px solid var(--v2-rule); font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); margin: 4px 0 12px; }
   .dn-bld-split-train { background: var(--v2-good-soft); color: var(--v2-ink); display: flex; align-items: center;
     justify-content: center; min-width: 0; overflow: hidden; white-space: nowrap; }
   .dn-bld-split-hold { background: var(--v2-caution); color: var(--v2-paper); display: flex; align-items: center;
@@ -2792,21 +2836,21 @@
   .dn-bld-boardlist { display: flex; flex-direction: column; gap: 3px; max-height: 320px; overflow-y: auto; }
   .dn-bld-boardrow { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px;
     padding: 5px 8px; border: 1px solid var(--v2-rule-soft); border-radius: 4px; }
-  .dn-bld-boardid { font-family: var(--v2-mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  .dn-bld-boardkind { font-size: 9.5px; color: var(--v2-ink-faint); font-family: var(--v2-mono); }
-  .dn-bld-holdtoggle { font-family: var(--v2-mono); font-size: 9.5px; padding: 2px 8px; border-radius: 9px;
+  .dn-bld-boardid { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .dn-bld-boardkind { font-size: calc(9.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); font-family: var(--v2-mono); }
+  .dn-bld-holdtoggle { font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); padding: 2px 8px; border-radius: 9px;
     border: 1px solid var(--v2-rule); background: transparent; color: var(--v2-ink-soft); cursor: pointer; }
   .dn-bld-holdtoggle.dn-bld-held { background: var(--v2-caution); color: var(--v2-paper); border-color: var(--v2-caution); }
 
   /* proposer + review panels. */
   .dn-bld-panel { background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 4px; padding: 11px 13px; }
   .dn-bld-kv { display: flex; align-items: baseline; gap: 10px; padding: 3px 0; min-width: 0; }
-  .dn-bld-k { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--v2-ink-faint); flex: none; width: 100px; }
-  .dn-bld-v { font-size: 12px; color: var(--v2-ink); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-  .dn-bld-skills { margin: 8px 0 0; padding-left: 16px; font-size: 11.5px; color: var(--v2-ink-soft); }
+  .dn-bld-k { font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em; color: var(--v2-ink-faint); flex: none; width: 100px; }
+  .dn-bld-v { font-size: calc(12px * var(--dt-font-scale, 1)); color: var(--v2-ink); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .dn-bld-skills { margin: 8px 0 0; padding-left: 16px; font-size: calc(11.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); }
   .dn-bld-skill-name { font-weight: 600; color: var(--v2-ink); }
   .dn-bld-applyrow { display: flex; gap: 10px; margin: 14px 0; flex-wrap: wrap; }
-  .dn-bld-btn { font-family: var(--v2-mono); font-size: 11.5px; padding: 7px 14px; border-radius: 5px;
+  .dn-bld-btn { font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); padding: 7px 14px; border-radius: 5px;
     border: 1px solid var(--v2-rule); background: transparent; color: var(--v2-ink); cursor: pointer; transition: background 0.12s, color 0.12s; }
   .dn-bld-btn-dry:hover { background: var(--v2-rule-soft); }
   .dn-bld-btn-apply { border-color: var(--v2-accent); color: var(--v2-accent); }
@@ -2821,7 +2865,7 @@
   .dn-bld-info { display: inline-flex; align-items: center; justify-content: center;
     width: 15px; height: 15px; line-height: 1; padding: 0; border-radius: 50%;
     border: 1px solid var(--v2-rule); background: transparent; color: var(--v2-ink-faint);
-    font-family: var(--v2-mono); font-size: 9.5px; font-weight: 700; font-style: italic;
+    font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); font-weight: 700; font-style: italic;
     cursor: help; user-select: none; transition: color 0.12s, border-color 0.12s; }
   .dn-bld-info:hover, .dn-bld-info:focus { color: var(--v2-accent); border-color: var(--v2-accent); outline: none; }
   .dn-bld-pop { position: absolute; left: 0; top: calc(100% + 6px); z-index: 30; width: max-content; max-width: 280px;
@@ -2831,30 +2875,30 @@
   /* flip to the right edge when the trigger sits in the right half so the panel
    * never clips off-screen (a pure-CSS containment guard). */
   .dn-bld-preview .dn-bld-pop, .dn-bld-pop:last-child { right: 0; left: auto; }
-  .dn-bld-pop-title { font-size: 11.5px; font-weight: 700; color: var(--v2-ink); margin-bottom: 3px; }
-  .dn-bld-pop-def { font-size: 10px; color: var(--v2-ink-soft); margin-bottom: 4px; }
+  .dn-bld-pop-title { font-size: calc(11.5px * var(--dt-font-scale, 1)); font-weight: 700; color: var(--v2-ink); margin-bottom: 3px; }
+  .dn-bld-pop-def { font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); margin-bottom: 4px; }
   .dn-bld-pop-def-v { color: var(--v2-accent); }
-  .dn-bld-pop-body { font-size: 11px; color: var(--v2-ink-soft); line-height: 1.45; margin: 0; }
+  .dn-bld-pop-body { font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); line-height: 1.45; margin: 0; }
 
   /* the live preview. */
   .dn-bld-preview { min-width: 0; position: sticky; top: 8px; display: flex; flex-direction: column; gap: 10px; }
   .dn-bld-figure { background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 4px; padding: 8px; overflow: hidden; }
   .dn-bld-figure > svg { display: block; max-width: 100%; }
-  .dn-bld-impact { display: flex; align-items: center; gap: 7px; font-family: var(--v2-mono); font-size: 10.5px;
+  .dn-bld-impact { display: flex; align-items: center; gap: 7px; font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1));
     color: var(--v2-ink-soft); border: 1px dashed var(--v2-rule); border-radius: 4px; padding: 6px 9px; }
   .dn-bld-impact-roll { color: var(--v2-caution); border-color: var(--v2-caution); border-style: solid; }
-  .dn-bld-impact-glyph { font-size: 12px; }
+  .dn-bld-impact-glyph { font-size: calc(12px * var(--dt-font-scale, 1)); }
   .dn-bld-cost { background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 4px; padding: 9px 11px; }
   .dn-bld-cost-head { display: flex; align-items: baseline; gap: 7px; margin-bottom: 7px; }
-  .dn-bld-cost-num { font-family: var(--v2-mono); font-size: 19px; font-variant-numeric: tabular-nums; color: var(--v2-accent); }
-  .dn-bld-cost-lab { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--v2-ink-faint); }
+  .dn-bld-cost-num { font-family: var(--v2-mono); font-size: calc(19px * var(--dt-font-scale, 1)); font-variant-numeric: tabular-nums; color: var(--v2-accent); }
+  .dn-bld-cost-lab { font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em; color: var(--v2-ink-faint); }
   .dn-bld-cost-bars { display: flex; flex-direction: column; gap: 4px; }
   .dn-bld-cost-bar { position: relative; height: 16px; border-radius: 3px; overflow: hidden; background: var(--v2-rule-soft); display: flex; align-items: center; }
   .dn-bld-cost-barfill { position: absolute; inset: 0 auto 0 0; background: var(--v2-good-soft); }
-  .dn-bld-cost-barlab { position: relative; font-family: var(--v2-mono); font-size: 9px; color: var(--v2-ink); padding: 0 6px;
+  .dn-bld-cost-barlab { position: relative; font-family: var(--v2-mono); font-size: calc(9px * var(--dt-font-scale, 1)); color: var(--v2-ink); padding: 0 6px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dn-bld-warnings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
-  .dn-bld-warn { display: flex; gap: 7px; font-size: 11px; line-height: 1.4; border-radius: 4px; padding: 6px 9px; }
+  .dn-bld-warn { display: flex; gap: 7px; font-size: calc(11px * var(--dt-font-scale, 1)); line-height: 1.4; border-radius: 4px; padding: 6px 9px; }
   .dn-bld-warn-warning { background: var(--v2-bad-soft); color: var(--v2-ink); }
   .dn-bld-warn-info { background: var(--v2-rule-soft); color: var(--v2-ink-soft); }
   .dn-bld-warn-glyph { flex: none; }
@@ -2875,25 +2919,25 @@
   .dn-bld-chat-strip { display: none; }
   .dn-bld-chat-collapsed .dn-bld-chat-strip { display: flex; align-items: center; justify-content: center; flex: 1;
     writing-mode: vertical-rl; background: transparent; border: none; color: var(--v2-ink-soft); cursor: pointer;
-    font-family: var(--v2-mono); font-size: 10px; letter-spacing: 0.1em; }
+    font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); letter-spacing: 0.1em; }
   .dn-bld-chat-strip:hover { color: var(--v2-accent); }
   .dn-bld-chat-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--v2-rule); }
   .dn-bld-chat-collapse { background: transparent; border: 1px solid var(--v2-rule); border-radius: 4px;
     color: var(--v2-ink-soft); cursor: pointer; width: 20px; height: 20px; line-height: 1; flex: none; }
-  .dn-bld-chat-title { font-size: 12px; font-weight: 600; color: var(--v2-ink); }
-  .dn-bld-chat-model { font-size: 9.5px; color: var(--v2-ink-faint); margin-left: auto; overflow: hidden;
+  .dn-bld-chat-title { font-size: calc(12px * var(--dt-font-scale, 1)); font-weight: 600; color: var(--v2-ink); }
+  .dn-bld-chat-model { font-size: calc(9.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); margin-left: auto; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; max-width: 50%; }
   .dn-bld-chat-log { flex: 1; min-height: 0; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
-  .dn-bld-chat-degrade { font-size: 12px; color: var(--v2-ink-soft); }
+  .dn-bld-chat-degrade { font-size: calc(12px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); }
   .dn-bld-chat-degrade p { margin: 0 0 6px; }
   .dn-bld-chat-hint { margin: 0; }
-  .dn-bld-bubble { border-radius: 7px; padding: 7px 10px; font-size: 12px; line-height: 1.45; max-width: 92%; min-width: 0; word-break: break-word; }
+  .dn-bld-bubble { border-radius: 7px; padding: 7px 10px; font-size: calc(12px * var(--dt-font-scale, 1)); line-height: 1.45; max-width: 92%; min-width: 0; word-break: break-word; }
   .dn-bld-bubble p { margin: 0; }
   .dn-bld-bubble-user { align-self: flex-end; background: var(--v2-accent); color: var(--v2-paper); }
   .dn-bld-bubble-asst { align-self: flex-start; background: var(--v2-rule-soft); color: var(--v2-ink); }
-  .dn-bld-bubble-err { color: var(--v2-bad); font-size: 11px; margin-top: 5px; }
+  .dn-bld-bubble-err { color: var(--v2-bad); font-size: calc(11px * var(--dt-font-scale, 1)); margin-top: 5px; }
   .dn-bld-bubble-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
-  .dn-bld-chip { font-family: var(--v2-mono); font-size: 9px; padding: 1px 6px; border-radius: 8px; border: 1px solid var(--v2-rule); }
+  .dn-bld-chip { font-family: var(--v2-mono); font-size: calc(9px * var(--dt-font-scale, 1)); padding: 1px 6px; border-radius: 8px; border: 1px solid var(--v2-rule); }
   .dn-bld-chip-tool { color: var(--v2-ink-faint); }
   .dn-bld-chip-edit { color: var(--v2-good); border-color: var(--v2-good); }
   .dn-bld-chat-typing { display: flex; gap: 4px; padding: 4px 6px; align-self: flex-start; }
@@ -2902,10 +2946,10 @@
   .dn-bld-chat-dot:nth-child(3) { animation-delay: 0.4s; }
   @keyframes dn-bld-typing { 0%, 60%, 100% { opacity: 0.3; } 30% { opacity: 1; } }
   .dn-bld-chat-composer { display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--v2-rule); }
-  .dn-bld-chat-input { flex: 1; min-width: 0; resize: none; font-family: var(--v2-sans); font-size: 12px;
+  .dn-bld-chat-input { flex: 1; min-width: 0; resize: none; font-family: var(--v2-sans); font-size: calc(12px * var(--dt-font-scale, 1));
     background: var(--v2-paper); color: var(--v2-ink); border: 1px solid var(--v2-rule); border-radius: 4px; padding: 6px 8px; }
   .dn-bld-chat-input:disabled { opacity: 0.5; cursor: not-allowed; }
-  .dn-bld-chat-send { font-family: var(--v2-mono); font-size: 11px; padding: 0 12px; border-radius: 4px;
+  .dn-bld-chat-send { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); padding: 0 12px; border-radius: 4px;
     border: 1px solid var(--v2-accent); background: var(--v2-accent); color: var(--v2-paper); cursor: pointer; flex: none; }
   .dn-bld-chat-send:disabled { opacity: 0.5; cursor: not-allowed; }
 
@@ -2933,10 +2977,10 @@
   .dn-set-rail { display: flex; flex-direction: column; gap: 3px; position: sticky; top: 8px; min-width: 0; }
   a.dn-set-railitem { display: flex; align-items: center; gap: 9px; width: 100%; text-decoration: none;
     background: transparent; border: 1px solid transparent; border-radius: 5px; padding: 9px 11px;
-    color: var(--v2-ink-soft); font-size: 12.5px; transition: background 0.12s, color 0.12s, border-color 0.12s; }
+    color: var(--v2-ink-soft); font-size: calc(12.5px * var(--dt-font-scale, 1)); transition: background 0.12s, color 0.12s, border-color 0.12s; }
   a.dn-set-railitem:hover { background: var(--v2-rule-soft); color: var(--v2-ink); }
   a.dn-set-railitem-active { background: var(--v2-rule-soft); color: var(--v2-ink); border-color: var(--v2-rule); }
-  .dn-set-railglyph { color: var(--v2-accent); font-size: 12px; flex: none; width: 14px; text-align: center; }
+  .dn-set-railglyph { color: var(--v2-accent); font-size: calc(12px * var(--dt-font-scale, 1)); flex: none; width: 14px; text-align: center; }
   .dn-set-raillabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .dn-set-body { min-width: 0; }
   .dn-set-panel { background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 4px;
@@ -2951,8 +2995,8 @@
     transition: background 0.12s, border-color 0.12s; }
   a.dn-set-kvrow:hover { background: var(--v2-rule-soft); border-color: var(--v2-accent); }
   .dn-set-kvrow-static { cursor: default; }
-  .dn-set-k { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--v2-ink-faint); }
-  .dn-set-v { font-size: 12.5px; color: var(--v2-ink); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .dn-set-k { font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em; color: var(--v2-ink-faint); }
+  .dn-set-v { font-size: calc(12.5px * var(--dt-font-scale, 1)); color: var(--v2-ink); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 
   /* the EDITABLE Appearance grid — a label cell + a live control cell per row.
    * The controls drive the SAME applyTheme/applyTypeface/applyScale/applyRail
@@ -2962,12 +3006,12 @@
     align-items: center; gap: 14px; padding: 8px 10px; border: 1px solid var(--v2-rule-soft);
     border-radius: 4px; }
   .dn-set-appctl { display: flex; align-items: center; min-width: 0; }
-  .dn-set-select { font-family: var(--n-font-body); font-size: 12px; color: var(--v2-ink);
+  .dn-set-select { font-family: var(--n-font-body); font-size: calc(12px * var(--dt-font-scale, 1)); color: var(--v2-ink);
     background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 4px;
     padding: 4px 8px; min-width: 160px; cursor: pointer; }
   .dn-set-select:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 2px; }
   .dn-set-typeswitch { display: inline-flex; border: 1px solid var(--v2-rule); border-radius: 5px; overflow: hidden; }
-  .dn-set-typebtn { font-size: 10px; padding: 4px 9px; background: transparent; cursor: pointer;
+  .dn-set-typebtn { font-size: calc(10px * var(--dt-font-scale, 1)); padding: 4px 9px; background: transparent; cursor: pointer;
     color: var(--v2-ink-soft); border: none; border-right: 1px solid var(--v2-rule); }
   .dn-set-typebtn:last-child { border-right: none; }
   .dn-set-typebtn:hover { color: var(--v2-ink); }
@@ -2976,9 +3020,9 @@
   .dn-set-range { width: 180px; max-width: 100%; accent-color: var(--v2-accent);
     height: 4px; background: var(--v2-rule); border-radius: 3px; cursor: grab; }
   .dn-set-range:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 3px; }
-  .dn-set-readout { font-family: var(--v2-mono); font-size: 11px; color: var(--v2-ink-soft);
+  .dn-set-readout { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
     min-width: 42px; text-align: right; }
-  .dn-set-reset { font-size: 12px; line-height: 1; padding: 3px 6px; cursor: pointer;
+  .dn-set-reset { font-size: calc(12px * var(--dt-font-scale, 1)); line-height: 1; padding: 3px 6px; cursor: pointer;
     color: var(--v2-ink-soft); background: transparent; border: 1px solid var(--v2-rule); border-radius: 4px; }
   .dn-set-reset:hover { color: var(--v2-paper); background: var(--v2-accent); border-color: var(--v2-accent); }
   .dn-set-reset:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 2px; }
@@ -2991,17 +3035,17 @@
   .dn-set-modelcard { background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 5px;
     padding: 11px 13px; display: flex; flex-direction: column; gap: 9px; min-width: 0; }
   .dn-set-modelhead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-  .dn-set-modelname { font-size: 12.5px; color: var(--v2-ink); font-weight: 600; }
+  .dn-set-modelname { font-size: calc(12.5px * var(--dt-font-scale, 1)); color: var(--v2-ink); font-weight: 600; }
   .dn-set-modelform { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
   .dn-set-field { display: grid; grid-template-columns: minmax(120px, 160px) minmax(0, 1fr) auto;
     align-items: center; gap: 10px; min-width: 0; }
-  .dn-set-fieldlabel { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+  .dn-set-fieldlabel { font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em;
     color: var(--v2-ink-faint); }
-  .dn-set-input { font-family: var(--v2-mono); font-size: 11.5px; color: var(--v2-ink);
+  .dn-set-input { font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); color: var(--v2-ink);
     background: var(--v2-paper); border: 1px solid var(--v2-rule); border-radius: 4px;
     padding: 4px 8px; min-width: 0; width: 100%; }
   .dn-set-input:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 1px; }
-  .dn-set-keyflag { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.05em;
+  .dn-set-keyflag { font-size: calc(9.5px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em;
     padding: 2px 7px; border-radius: 3px; border: 1px solid var(--v2-rule); flex: none; }
   .dn-set-keyflag-set { color: var(--v2-paper); background: var(--v2-accent); border-color: var(--v2-accent); }
   .dn-set-keyflag-unset { color: var(--v2-ink-faint); background: transparent; }

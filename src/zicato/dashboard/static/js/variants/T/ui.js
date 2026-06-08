@@ -225,6 +225,51 @@ export function persistScale(v) {
   return n;
 }
 
+// ---- GLOBAL TEXT FONT-SIZE (the S/M/L control in the typeface picker) ----
+//
+// DISTINCT from the page-scale pill: the scale pill `zoom`s the WHOLE page
+// (text AND figures); this is a TEXT-ONLY multiplier — it scales the HTML text
+// (every `font-size` in console4.css is `calc(Npx * var(--dt-font-scale,1))`)
+// WITHOUT touching the SVG figures (their text is sized by svg.js / the `font:`
+// shorthand, not those rules). Some faces (e.g. Ubuntu, Inconsolata) read tiny
+// at the baseline; this lets the operator step the text up a notch or two.
+//
+// THREE stops — small / medium / large — each mapping to a `--dt-font-scale`
+// number. SMALL == the CURRENT look (1.0 → the literal px render unchanged), so
+// the default is byte-identical to today; medium / large are clear, tasteful
+// steps. applyFontSize (shell.js) stamps the var + a `data-t-fontsize` attribute
+// on the app root and persists; the picker's segmented control reads/sets it.
+export const FONTSIZE_OPTIONS = [
+  { id: 'small',  label: 'S', title: 'Small text (current size)', scale: 1 },
+  { id: 'medium', label: 'M', title: 'Medium text',              scale: 1.15 },
+  { id: 'large',  label: 'L', title: 'Large text',               scale: 1.3 },
+];
+const FONTSIZE_IDS = FONTSIZE_OPTIONS.map((o) => o.id);
+const FONTSIZE_BY_ID = new Map(FONTSIZE_OPTIONS.map((o) => [o.id, o]));
+export const DEFAULT_FONTSIZE = 'small';
+const FONTSIZE_KEY = 'zicato.T.fontsize';
+
+// Normalise any stored / passed value to a known size id. Unknown ⇒ small.
+export function normaliseFontSize(v) {
+  return FONTSIZE_IDS.includes(v) ? v : DEFAULT_FONTSIZE;
+}
+// The `--dt-font-scale` NUMBER for a size id (small ⇒ 1, the byte-identical
+// baseline). Used by applyFontSize to stamp the root + by tests.
+export function fontSizeScale(v) {
+  const o = FONTSIZE_BY_ID.get(normaliseFontSize(v));
+  return o ? o.scale : 1;
+}
+export function readFontSize() {
+  let stored = null;
+  try { stored = window.localStorage.getItem(FONTSIZE_KEY); } catch (e) { /* private mode */ }
+  return normaliseFontSize(stored);
+}
+export function persistFontSize(v) {
+  const n = normaliseFontSize(v);
+  try { window.localStorage.setItem(FONTSIZE_KEY, n); } catch (e) { /* ignore */ }
+  return n;
+}
+
 // ---- LEFT SIDE-PANEL (rail) WIDTH (the draggable rail handle) -------
 //
 // Distinct from the page-scale pill (which zooms the WHOLE page): this resizes

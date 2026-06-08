@@ -26,17 +26,78 @@
 import { el, clearChildren, patchText, patchClass } from '../../core/dom.js';
 import {
   TYPE_OPTIONS, TYPE_MODE_ORDER, TYPE_MODE_LABEL, normaliseType, typeOption,
+  FONTSIZE_OPTIONS, normaliseFontSize,
 } from './ui.js';
 
 // Live instances — every mounted dropdown registers its setValue so
 // applyTypeface can sync them all from one call (top bar ↔ settings, one store).
 const _instances = new Set();
+// The S/M/L font-size segmented controls registered for cross-instance sync,
+// mirroring _instances — applyFontSize fans out to every one so the top-bar and
+// Settings pickers always show the same size.
+const _sizeInstances = new Set();
 
 // Sync EVERY live typeface dropdown to `value` — called from applyTypeface so
 // the top-bar and settings pickers always show the same selection.
 export function syncTypefaceDropdowns(value) {
   const v = normaliseType(value);
   for (const setValue of _instances) setValue(v);
+}
+
+// Sync EVERY live S/M/L font-size segmented control to `value` — called from
+// applyFontSize so the top-bar and settings pickers stay in lockstep.
+export function syncFontSizeSegments(value) {
+  const v = normaliseFontSize(value);
+  for (const setSize of _sizeInstances) setSize(v);
+}
+
+// Build the compact S/M/L segmented control that lives in the typeface popover
+// footer. Keyboard-accessible like the rest of the picker (each segment is a
+// real <button>; ArrowLeft/ArrowRight move between them). `onSizeChoose(id)` is
+// invoked with the chosen size id (the caller applies + persists + syncs). The
+// component is store-free (mirrors the typeface dropdown idiom); it registers a
+// `setSize` for cross-instance sync. Returns { node, setSize }.
+function buildFontSizeSegment(initial, onSizeChoose) {
+  let size = normaliseFontSize(initial);
+  const segs = [];
+  for (const o of FONTSIZE_OPTIONS) {
+    const b = el('button', {
+      class: 'dt-tf-sizeseg', type: 'button', role: 'radio',
+      'data-fontsize': o.id, 'aria-checked': String(o.id === size),
+      title: o.title, 'aria-label': o.title, text: o.label,
+    });
+    b.addEventListener('click', () => choose(o.id));
+    b.addEventListener('keydown', (ev) => {
+      const k = ev.key;
+      if (k === 'ArrowRight' || k === 'ArrowDown') { ev.preventDefault(); step(o.id, 1); }
+      else if (k === 'ArrowLeft' || k === 'ArrowUp') { ev.preventDefault(); step(o.id, -1); }
+    });
+    segs.push(b);
+  }
+  function idxOf(id) { return FONTSIZE_OPTIONS.findIndex((o) => o.id === id); }
+  function step(fromId, dir) {
+    const n = FONTSIZE_OPTIONS.length;
+    const next = FONTSIZE_OPTIONS[(idxOf(fromId) + dir + n) % n].id;
+    choose(next);
+    const target = segs[idxOf(next)];
+    if (target && typeof target.focus === 'function') target.focus();
+  }
+  function choose(id) {
+    size = normaliseFontSize(id);
+    if (typeof onSizeChoose === 'function') onSizeChoose(size); // caller applies + persists + syncs
+  }
+  function setSize(v) {
+    size = normaliseFontSize(v);
+    segs.forEach((b) => b.setAttribute('aria-checked', String(b.getAttribute('data-fontsize') === size)));
+  }
+  const node = el('div', {
+    class: 'dt-tf-foot', role: 'group', 'aria-label': 'Text size',
+  }, [
+    el('span', { class: 'dt-tf-foot-lab', 'aria-hidden': 'true', text: 'size' }),
+    el('div', { class: 'dt-tf-sizeseg-wrap', role: 'radiogroup', 'aria-label': 'Text size' }, segs),
+  ]);
+  _sizeInstances.add(setSize);
+  return { node, setSize };
 }
 
 // A micro type-specimen: "Aa" in the head face, a short prose word in the prose
@@ -54,7 +115,13 @@ function specimen(opt, cls) {
 
 // Build a typeface grouped-popover dropdown. `onChoose(id)` is invoked with the
 // chosen option id when the user selects a row (the caller applies + persists).
-export function buildTypefaceDropdown(initial, onChoose) {
+// `opts` (optional) carries the S/M/L font-size control: `{ size, onSizeChoose }`
+// — when present, a compact segmented control is mounted in the popover FOOTER
+// so the operator can step the text size right where they pick the face. The
+// caller wires `onSizeChoose(id)` to applyFontSize (store-free here, like the
+// face callback); the segment registers for cross-instance sync.
+export function buildTypefaceDropdown(initial, onChoose, opts) {
+  const cfg = opts || {};
   let value = normaliseType(initial);
   let open = false;
 
@@ -92,7 +159,18 @@ export function buildTypefaceDropdown(initial, onChoose) {
   }
   const listbox = el('div', { class: 'dt-cd-list dt-tf-list', role: 'listbox', 'aria-label': 'Typeface' }, listChildren);
 
-  const node = el('div', { class: 'dt-cd dt-tf', role: 'group', 'aria-label': 'Typeface' }, [trigger, listbox]);
+  // The S/M/L text-size segmented control — built only when the caller wires it.
+  // It rides in the popover FOOTER (the same `dt-cd-open` popover that holds the
+  // listbox), reading the current size + applying on click via onSizeChoose.
+  let sizeCtl = null;
+  if (typeof cfg.onSizeChoose === 'function') {
+    sizeCtl = buildFontSizeSegment(cfg.size, cfg.onSizeChoose);
+  }
+
+  const popChildren = [listbox];
+  if (sizeCtl) popChildren.push(sizeCtl.node);
+  const popover = el('div', { class: 'dt-tf-pop' }, popChildren);
+  const node = el('div', { class: 'dt-cd dt-tf', role: 'group', 'aria-label': 'Typeface' }, [trigger, popover]);
 
   const idxOf = (v) => options.findIndex((o) => o.getAttribute('data-type') === v);
   let activeIdx = Math.max(0, idxOf(value));
@@ -153,5 +231,7 @@ export function buildTypefaceDropdown(initial, onChoose) {
   // Register for cross-instance sync (top bar ↔ settings, one source of truth).
   _instances.add(setValue);
 
-  return { node, setValue };
+  // Expose the S/M/L segment's setSize when present so a caller can drive it too
+  // (cross-instance sync already fans out via syncFontSizeSegments).
+  return { node, setValue, setSize: sizeCtl ? sizeCtl.setSize : undefined };
 }

@@ -21,7 +21,7 @@
 
 import { el, clearChildren } from '../../../core/dom.js';
 import {
-  gatedSwap, section, empty, readColor, readType,
+  gatedSwap, section, empty, readColor, readType, readFontSize,
 } from '../ui.js';
 import {
   SCALE_MIN, SCALE_MAX, SCALE_STEP, readScale,
@@ -45,7 +45,7 @@ import { buildTypefaceDropdown } from '../typefacedropdown.js';
 // settings panel and the top bar are two views of ONE source of truth (changing
 // either updates the other and persists identically). NOT a fork.
 import {
-  applyTheme, applyTypeface, applyScale, resetScale, applyRail,
+  applyTheme, applyTypeface, applyFontSize, applyScale, resetScale, applyRail,
 } from '../shell.js';
 
 const SECTIONS = [
@@ -408,14 +408,15 @@ function redrawModels() {
 function renderAppearance() {
   const color = readColor();
   const type = readType();
+  const fontsize = readFontSize();
   const scale = readScale();
   const rail = readRail();
-  gatedSwap(_sectionHost, `appearance|${color}|${type}|${scale}|${rail}`, () => [
+  gatedSwap(_sectionHost, `appearance|${color}|${type}|${fontsize}|${scale}|${rail}`, () => [
     section('Appearance',
-      el('p', { class: 'dn-lede', text: 'Colour theme, typeface, page scale, and side-panel width — all persistent and shared with the top-bar controls (change either, the other follows).' }),
+      el('p', { class: 'dn-lede', text: 'Colour theme, typeface (with text size), page scale, and side-panel width — all persistent and shared with the top-bar controls (change either, the other follows).' }),
       el('div', { class: 'dn-set-appgrid' }, [
         appRow('Colour theme', themePicker(color)),
-        appRow('Typeface', typefacePicker(type)),
+        appRow('Typeface', typefacePicker(type, fontsize)),
         appRow('Page scale', scalePicker(scale)),
         appRow('Side-panel width', railPicker(rail)),
       ])),
@@ -446,12 +447,16 @@ function themePicker(current) {
 
 // TYPEFACE — the SAME grouped-popover the top bar renders (the shared component,
 // NOT a fork): a trigger + a grouped listbox of the operator's finalized 12
-// faces (4 per mode), each row a micro-preview in its real faces. Built ONCE and
-// its node REUSED across re-renders; choosing applies via applyTypeface (which
-// stamps the root, persists, AND syncs every live dropdown — top bar + here).
-function typefacePicker(current) {
+// faces (4 per mode), each row a micro-preview in its real faces, PLUS the
+// compact S/M/L text-size segmented control in the popover footer. Built ONCE
+// and its node REUSED across re-renders; choosing a face applies via
+// applyTypeface and choosing a size via applyFontSize (each stamps the root,
+// persists, AND syncs every live instance — top bar + here).
+function typefacePicker(current, currentSize) {
   if (!_typeDropdown) {
-    _typeDropdown = buildTypefaceDropdown(current, (id) => { applyTypeface(id); });
+    _typeDropdown = buildTypefaceDropdown(current, (id) => { applyTypeface(id); }, {
+      size: currentSize, onSizeChoose: (id) => { applyFontSize(id); },
+    });
   } else {
     _typeDropdown.setValue(current);
   }
