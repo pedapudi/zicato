@@ -1,6 +1,6 @@
 ---
 name: zicato-mutation-audit
-description: Tier 2 run — audit the mutable surface of a registered inner harness with `zicato mutations` (per-id span/file points, --id glob, --kind, --show full, --format json, [forbidden] annotations) to decide and verify what the proposer may change before an evolve run. Use this when reviewing the mutation surface, confirming markers resolve, or checking which ids are off-limits.
+description: Tier 2 run — audit the mutable surface of a registered inner harness with `zicato mutations` (per-id span/file/code points, --id glob, --kind, --show full, --format json, [forbidden] annotations) to decide and verify what the proposer may change before an evolve run. Use this when reviewing the mutation surface, confirming markers resolve, or checking which ids are off-limits.
 ---
 
 # zicato mutation audit — what the proposer may change
@@ -23,16 +23,35 @@ Each mutable location is a comment-form marker in the inner harness source:
 # zicato:mutable id="researcher_instruction" role="system_instruction"
 RESEARCHER_INSTRUCTION = "You are a researcher. ..."          # span marker
 
-# zicato:mutable file id="presentation_agent.prompts"         # file marker
+# zicato:mutable:file id="presentation_agent.prompts"        # file marker
+
+# zicato:mutable:code id="write_slug_logic"                  # code-region open
+slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+# zicato:mutable:end                                         # code-region close
 ```
 
 - **span** marker — covers the binding / keyword-arg on the line below. The
   default, smallest unit (one instruction, one tool description, one routing
   template).
-- **file** marker — in the file header region; the whole module is mutable.
+- **file** marker (`# zicato:mutable:file`) — in the file header region; the
+  whole module is mutable as one unit.
+- **code** marker (`# zicato:mutable:code` … `# zicato:mutable:end`) — a
+  pointed code REGION: the verbatim source lines *between* the opening marker
+  and the `:end` sentinel (control flow, not a string literal). Exposes a
+  block (e.g. a tool's slugify / path logic) as mutable without handing the
+  proposer the whole module. The `:end` sentinel carries no id/metadata.
 
-A point's `id` is its stable handle; `kind` is `span` or `file`. See
+A point's `id` is its stable handle; `kind` is `span`, `file`, or `code`. See
 [docs/design/MUTATION-SURFACE.md](../../docs/design/MUTATION-SURFACE.md).
+
+> **Not a mutation point: the proposer's failure-mode feedback channel.** The
+> proposer now receives a board-anonymized, train-slice-only *outcome-marginal
+> failure profile*, optionally extended by a `scoring.json`
+> `outcome_summarizer_spec` hook. That hook is a **scoring contract field** (an
+> operator input to the *evaluation*, hashed into the contract — changing it
+> rolls the epoch), NOT a mutable harness span. It never appears in `zicato
+> mutations`, and the proposer cannot edit it — it only *reads* the profile it
+> produces. Do not look for it in the mutation surface.
 
 ## The audit commands
 
@@ -50,7 +69,7 @@ warnings, no duplicate ids, the count matches what you expect.
 |---|---|
 | `--workspace PATH` | Workspace dir (default `.zicato`). |
 | `--id TEXT` | Filter by id glob, e.g. `--id 'researcher_*'` or `--id '*_instruction'`. |
-| `--kind span\|file` | Restrict the listing to one marker form. |
+| `--kind span\|file\|code` | Restrict the listing to one marker form. |
 | `--show preview\|full` | `preview` (default) truncates content; `full` dumps the entire current text of each point. |
 | `--format table\|json` | `table` (default) for humans; `json` emits the full `MutationPoint` shape. |
 

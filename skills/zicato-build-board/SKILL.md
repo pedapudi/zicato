@@ -52,9 +52,17 @@ Every entry carries an envelope the copilot's tools edit:
   `json_schema`) and **Rubric** (LLM-graded, runs on the aux callable, carries
   `threshold`/`scale`; `threshold: null` = advisory). An entry has at most one
   expectation; absent → the entry is scored on drift loss alone. `reads`
-  selects the slice graded (`final_output` vs `conversation_end`). Prefer a
-  deterministic matcher whenever the behavior is code-checkable — it adds zero
-  noise to pass-rate.
+  selects the slice graded (`final_output` vs `conversation_end`) — and must
+  point at the agent's *real* output, never a self-summary / proxy field.
+  Prefer a deterministic matcher whenever the behavior is code-checkable — it
+  adds zero noise to pass-rate. The `predicate` seam also accepts a **scorer**:
+  a callable returning a continuous `float` in `[0,1]` (or a `(float, metrics)`
+  tuple like `{"precision": .., "recall": ..}`) gives the entry a graded
+  per-entry `score` instead of a bare pass/fail — reach for it when partial
+  credit discriminates (a 0.6-vs-0.4 delta two candidates a bool would tie). A
+  bool matcher leaves the entry binary (`score=None` → the reducer derives
+  `1.0`/`0.0`); the score + `metrics` ride out to `loss.json` and feed the
+  failure-mode channel below.
 - **`tags`** — operator labels pattern detectors and the brief slice on. The
   **`holdout` tag is load-bearing**: it marks the entries withheld from the
   promotion signal and confirmed afterward (the train/holdout split — see "Hold
@@ -84,6 +92,17 @@ What the copilot sets on each judge:
 - **`body`** — the criterion text (`inline`) or the dotted path (`python`).
 - **`severity`** — `info` / `warning` / `critical`; scales how hard a violation
   weighs (default `1 / 3 / 10` via `severity_weights`).
+
+**Grade the tool ledger, not the narration.** A `python` judge that scores
+*what the agent did* reads goldfive's real tool-call ledger — its
+`ctx.session_state.recent_events` (`kind == "tool_observed"`: `tool_name`,
+`result_preview`, `error_message`) — NOT the model's reasoning text. Custom
+judges fire only at reasoning observation points, so a judge that scans the
+transcript for tool names grades the story the agent told (and fires on chatter
+that merely names a tool), not the round-trips it ran. The copilot steers an
+operator authoring a deliverable-grading judge to the ledger source; worked
+example `file_findability` in
+`examples/zicato_examples/target_1_presentation/judges.py`.
 
 Two more board-wide judge facts the copilot surfaces via the `board_meta`
 header (set when non-default):
@@ -121,7 +140,7 @@ operator means by "better":
 | `per_judge_weights` | judge `name` | telling *custom judges apart* — they all share the `custom` kind, so this is the only per-judge lever |
 | `default_judge_weight` | — | the fallback for a custom judge absent from `per_judge_weights` |
 | `namespace_weights` | namespace prefix (`drift:`, `cost:`, `rubric:`, …) | the multi-objective scalar — signed coefficients fold each namespace into the scalar |
-| pass-rate monotonicity | the gate | "a challenger may never break an entry the champion passed" |
+| pass-rate monotonicity (`pass_rate_monotonicity` bool + `pass_rate_monotonicity_scope`) | the gate | "a challenger may never break an entry the champion passed" — `per_entry` scope (default; no individual passing entry may regress — invariant/regression boards) vs `aggregate` (only the board-wide pass-rate may not drop — sampled evaluation boards). The bool is the on/off switch; there is no `off` scope |
 
 Worked example of *shaping*: to say "I care most that the agent stays on
 topic, and I will not promote anything that breaks a passing entry," the copilot
@@ -175,6 +194,18 @@ Thresholdout), what leakage restriction means, how the generalization gap is
 read — is in [OVERFITTING.md](../../docs/design/OVERFITTING.md). The builder's
 job is to make the split easy to set and to remind the operator it is the
 insurance against a board the proposer can game.
+
+The same **train-slice** the split defines also feeds an opt-in proposer
+**failure-mode feedback channel**: a board-anonymized, bucketed summary of
+*outcome marginals* (board-wide rates like "over-retrieves ~40% of runs",
+plus precision/recall from a scorer's `metrics`) computed over the train slice
+only — never the holdout, never any entry id / question / output token. It
+feeds the proposer the *marginal, never the joint*, so the proposer can target
+*why* answers are wrong without being able to reconstruct the board. The
+operator's `scoring.json` `outcome_summarizer_spec` hook can contribute extra
+marginals (numeric-only, sanitized + bucketed before they reach the proposer).
+The channel reuses the existing holdout split + bucketing; see
+[`zicato-design-experiment`](../zicato-design-experiment/SKILL.md).
 
 ## The copilot's operating contract — DRAFT, then apply
 
