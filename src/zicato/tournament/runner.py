@@ -732,6 +732,15 @@ def _weights_spec(weights: ScoringWeights) -> dict[str, Any]:
         "drift_kind_aggregation": {
             kind: dict(spec) for kind, spec in weights.drift_kind_aggregation.items()
         },
+        # Dotted-spec scoring plugins (issue #19 phase 3). ``drift_reducer``
+        # drives Seam 1, which the worker resolves + invokes itself in
+        # ``reduce_loss`` — drop it here and the worker scores drift with no
+        # plugin while the orchestrator believed otherwise (the per_judge_weights
+        # desync trap). ``scalar_fn`` is carried for symmetry / any worker-side
+        # gate view. Empty strings serialise verbatim; an absent key reads back
+        # as the neutral (no-plugin) default.
+        "drift_reducer": weights.drift_reducer,
+        "scalar_fn": weights.scalar_fn,
     }
 
 

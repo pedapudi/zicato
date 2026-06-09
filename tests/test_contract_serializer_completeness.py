@@ -114,6 +114,12 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
             "looping_reasoning": {"op": "harmonic"},
             "off_topic": {"op": "cap", "max": 5.0},
         },
+        # Issue #19 phase-3 dotted-spec scoring plugins. Folded into the contract
+        # hash with a source hash; the bare-spec strings here resolve to nothing
+        # at hash time (a degraded null source hash), which is fine for the
+        # round-trip / drop-a-field guard this test exercises.
+        "scalar_fn": "pkg.mod:my_scalar",
+        "drift_reducer": "pkg.mod:my_drift_reducer",
     },
 }
 

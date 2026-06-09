@@ -752,6 +752,14 @@ def _weights_from_args(args: dict[str, Any]) -> ScoringWeights:
         drift_kind_aggregation=dict(
             raw.get("drift_kind_aggregation", defaults.drift_kind_aggregation)
         ),
+        # Dotted-spec scoring plugins (issue #19 phase 3). Symmetric with the
+        # writer in ``runner._weights_spec``. ``drift_reducer`` drives Seam 1
+        # which runs HERE in the worker, so it MUST survive the boundary or the
+        # worker would score drift with no plugin while the orchestrator believed
+        # otherwise (the per_judge_weights desync class). A non-string / absent
+        # value reads back as the neutral (no-plugin) default.
+        drift_reducer=str(raw.get("drift_reducer", defaults.drift_reducer) or ""),
+        scalar_fn=str(raw.get("scalar_fn", defaults.scalar_fn) or ""),
     )
 
 

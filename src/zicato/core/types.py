@@ -2179,6 +2179,30 @@ class ScoringWeights:
     # contract only). An absent kind entry is NEUTRAL = ``linear`` =
     # ``severity × kind_weight × count`` (today's built-in).
     drift_kind_aggregation: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    # Dotted-spec scoring PLUGINS (issue #19 phase 3) — the escape hatch for
+    # arbitrary operator scoring logic the declarative registry cannot express
+    # (F-beta, cost-aware penalties, the retired harmonic-looping curve as a
+    # ~10-line operator plugin). Each is a dotted spec (``pkg.mod:fn`` /
+    # ``pkg.mod.fn``) resolved by the SAME importer predicates / judges use, and
+    # invoked as a PURE, deterministic, NO-LLM function over the matching frozen
+    # context (which carries the post-transform value as ``builtin_*`` so the
+    # plugin WRAPS the declarative shape rather than reimplementing it). The
+    # empty string (the default) configures NO plugin = the Phase-2/builtin path
+    # exactly. Both fold into the contract hash via the field-enumerating
+    # canonicalizer — and the canonicalizer additionally hashes the resolved
+    # plugin MODULE's SOURCE (``spec_with_source_hash``), so editing a plugin
+    # body rolls the epoch. A plugin that raises / returns a non-finite value
+    # fails OPEN to the pre-plugin value (logged + recorded in provenance), never
+    # crashing the run. Validated at construction only as strings; resolution
+    # happens at scoring time.
+    #
+    # ``drift_reducer`` is Seam 1 — it runs INSIDE the killable worker
+    # subprocess, so it (like ``drift_kind_aggregation``) MUST cross the
+    # ``_weights_spec`` boundary or the worker would score drift with no plugin
+    # while the orchestrator believed otherwise (the per_judge_weights desync
+    # class). ``scalar_fn`` is Seam 2 — it runs in the orchestrator.
+    drift_reducer: str = ""
+    scalar_fn: str = ""
 
     def __post_init__(self) -> None:
         """Validate the declarative transform specs fail-fast at construction.
@@ -2190,6 +2214,12 @@ class ScoringWeights:
         partway through a run. By the time the scoring dispatchers call
         :func:`zicato.scoring.transforms.apply_transform`, every spec on this
         instance is already known-good.
+
+        The dotted-spec scoring PLUGINS (``drift_reducer`` / ``scalar_fn``,
+        issue #19 phase 3) are validated HERE only as strings — resolution +
+        invocation happen at scoring time (the worker resolves ``drift_reducer``
+        itself), and a not-yet-written plugin must still construct so the
+        contract can be hashed with the spec string + a degraded source hash.
         """
         from zicato.scoring.transforms import validate_transform_spec  # noqa: PLC0415
 
@@ -2200,6 +2230,13 @@ class ScoringWeights:
                 validate_transform_spec(spec)
             except ValueError as exc:
                 raise ValueError(f"drift_kind_aggregation[{kind!r}]: {exc}") from exc
+        for plugin_field in ("drift_reducer", "scalar_fn"):
+            value = getattr(self, plugin_field)
+            if not isinstance(value, str):
+                raise ValueError(
+                    f"{plugin_field} must be a dotted-spec string (got "
+                    f"{type(value).__name__}); resolution happens at scoring time"
+                )
 
 
 # ---------------------------------------------------------------------------

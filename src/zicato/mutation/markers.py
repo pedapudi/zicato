@@ -49,11 +49,20 @@ MARKER_CODE_PREFIX = "# zicato:mutable:code"
 #: Code-region closing sentinel.
 MARKER_END_PREFIX = "# zicato:mutable:end"
 
+#: Operator-grading sentinel. A module carrying ``# zicato:grading`` anywhere
+#: declares itself OPERATOR-OWNED grading code — predicates, judges, or the
+#: scoring ``scalar_fn`` / ``drift_reducer`` plugins (issue #19 phase 3). The
+#: enumerator skips the WHOLE file: "the proposer does not get to rewrite the
+#: operator's grading." Scoring plugins / predicates / judges are never
+#: enumerated as mutation points, exactly like the documented contract.
+MARKER_GRADING_PREFIX = "# zicato:grading"
+
 
 _MARKER_RE = re.compile(
     r"""^\s*\#\s*zicato:mutable(?P<variant>:file|:code)?\s+id="(?P<id>[^"]+)"(?:\s+(?P<tail>.+))?\s*$"""
 )
 _END_RE = re.compile(r"""^\s*\#\s*zicato:mutable:end\s*$""")
+_GRADING_RE = re.compile(r"""^\s*\#\s*zicato:grading\b.*$""")
 _TAIL_KV_RE = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)="([^"]*)"')
 
 
@@ -90,6 +99,18 @@ def is_end_marker(line: str) -> bool:
     return _END_RE.match(line) is not None
 
 
+def is_grading_marker(line: str) -> bool:
+    """Return ``True`` iff ``line`` is a ``# zicato:grading`` sentinel.
+
+    A file carrying this marker is operator-owned grading code (predicates,
+    judges, or scoring ``scalar_fn`` / ``drift_reducer`` plugins) and is skipped
+    wholesale by the enumerator — the proposer never mutates the operator's
+    grading.
+    """
+
+    return _GRADING_RE.match(line) is not None
+
+
 def parse_marker_line(line: str) -> ParsedMarker | None:
     """Parse one source line.
 
@@ -121,8 +142,10 @@ __all__ = [
     "MARKER_CODE_PREFIX",
     "MARKER_END_PREFIX",
     "MARKER_FILE_PREFIX",
+    "MARKER_GRADING_PREFIX",
     "MARKER_SPAN_PREFIX",
     "ParsedMarker",
     "is_end_marker",
+    "is_grading_marker",
     "parse_marker_line",
 ]
