@@ -158,7 +158,8 @@ Two slots take a transform:
 
 - **`pass_transform`** reshapes the pass/miss term `(1 - mean_score)`.
   `{"op":"pow","exponent":2.0}` is the **replacement for the retired
-  `pass_exponent`** field — `pass_exponent=2` now lowers to this. Absent /
+  `pass_exponent`** field — express `pass_exponent=2` as this (a stray
+  `pass_exponent` key is rejected at load, not silently dropped). Absent /
   `linear` = today's plain linear miss.
 - **`drift_kind_aggregation`** reshapes, per drift KIND, how that kind's *count*
   aggregates into drift loss. An absent kind = `linear` = today's

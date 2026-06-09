@@ -10,7 +10,7 @@ Covers:
 * ``pass_transform`` ``pow(2)`` reproduces quadratic-recall at Seam 2;
 * ``drift_kind_aggregation`` ``harmonic`` reproduces the OLD looping value at
   Seam 1 (the unconditional special-case the builtin no longer carries);
-* the legacy ``pass_exponent`` config key lowers to a ``pow`` ``pass_transform``;
+* a retired ``pass_exponent`` config key is rejected loudly (not silently dropped);
 * NEUTRAL defaults (no transforms) leave drift + scalar at the linear builtin
   with ``"builtin"`` provenance;
 * provenance is recorded for the transformed pass term + each transformed kind.
@@ -370,46 +370,27 @@ def test_drift_kind_aggregation_only_touches_named_kind() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 5. Legacy pass_exponent lowers to a pow pass_transform.
+# 5. Legacy pass_exponent is REJECTED loudly (issue #19 retired the field).
 # ---------------------------------------------------------------------------
 
 
-def test_legacy_pass_exponent_lowers_to_pow() -> None:
+def test_legacy_pass_exponent_is_rejected_loudly() -> None:
+    """A retired ``pass_exponent`` key fails fast with the migration message,
+    rather than being silently ignored by the field-enumerating loader (which
+    would score linearly with no error, no warning, and no epoch roll)."""
     from zicato.workspace_loader import _scoring_weights_from_dict
 
-    w = _scoring_weights_from_dict({"pass_weight": 2.0, "pass_exponent": 2.0})
-    assert w.pass_transform == {"op": "pow", "exponent": 2.0}
-    assert w.pass_weight == 2.0
-    # pass_exponent is no longer a field; it must not survive as one.
-    assert not hasattr(w, "pass_exponent")
+    with pytest.raises(ValueError, match="pass_exponent") as exc:
+        _scoring_weights_from_dict({"pass_weight": 2.0, "pass_exponent": 2.0})
+    # The message points the operator at the replacement.
+    assert "pass_transform" in str(exc.value)
+    assert "pow" in str(exc.value)
 
 
-def test_legacy_pass_exponent_unit_is_neutral() -> None:
-    """``pass_exponent=1`` is identity; it should NOT synthesize a spec."""
-    from zicato.workspace_loader import _scoring_weights_from_dict
+def test_legacy_pass_exponent_rejected_via_lifecycle_path_too() -> None:
+    """The frozen-snapshot lifecycle loader rejects symmetrically, so a stale
+    contract can't sneak a silently-ignored ``pass_exponent`` through either path."""
+    from zicato.epoch.lifecycle import _scoring_from_dict
 
-    w = _scoring_weights_from_dict({"pass_exponent": 1.0})
-    assert w.pass_transform is None
-
-
-def test_explicit_pass_transform_wins_over_legacy_pass_exponent() -> None:
-    from zicato.workspace_loader import _scoring_weights_from_dict
-
-    w = _scoring_weights_from_dict(
-        {"pass_exponent": 2.0, "pass_transform": {"op": "pow", "exponent": 3.0}}
-    )
-    assert w.pass_transform == {"op": "pow", "exponent": 3.0}
-
-
-def test_legacy_pass_exponent_drives_quadratic_scalar_end_to_end() -> None:
-    """An old config with pass_exponent=2 scores the quadratic miss term."""
-    from zicato.workspace_loader import _scoring_weights_from_dict
-
-    weights = _scoring_weights_from_dict(
-        {"drift_weight": 1.0, "pass_weight": 1.0, "pass_exponent": 2.0}
-    )
-    ctx = _scalar_ctx(weights, mean_score=0.25, drift_loss_mean=0.0)
-    scalar, prov = resolve_scalar(ctx)
-    miss = 1.0 - 0.25
-    assert scalar == pytest.approx(miss**2)
-    assert prov == "transform:pass=pow(2.0)"
+    with pytest.raises(ValueError, match="pass_exponent"):
+        _scoring_from_dict({"pass_exponent": 2.0})

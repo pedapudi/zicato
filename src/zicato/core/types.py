@@ -2094,10 +2094,11 @@ class ScoringWeights:
         Optional declarative transform (a single
         :data:`zicato.scoring.transforms.TransformSpec`,
         ``{"op": ..., ...params}``) reshaping the scalar's pass/miss
-        term ``(1 - mean_score)`` at Seam 2 — the lowering target for
-        the retired ``pass_exponent`` field. ``None`` (default) is
-        NEUTRAL = ``linear`` = today's plain linear miss term. Validated
-        fail-fast in :meth:`__post_init__`.
+        term ``(1 - mean_score)`` at Seam 2 — the declarative replacement
+        for the retired ``pass_exponent`` field (a stray ``pass_exponent``
+        config key is now rejected at load, not silently dropped). ``None``
+        (default) is NEUTRAL = ``linear`` = today's plain linear miss term.
+        Validated fail-fast in :meth:`__post_init__`.
     drift_kind_aggregation:
         Optional per-drift-kind declarative transforms
         (``{kind: TransformSpec}``) reshaping how each kind's count
@@ -2167,10 +2168,11 @@ class ScoringWeights:
     # omitting one provokes no spurious roll.
     #
     # ``pass_transform`` reshapes the scalar's pass/miss term (the
-    # ``(1 - mean_score)`` recall miss) at Seam 2 — this is the lowering target
-    # for the retired ``pass_exponent`` field
-    # (``pass_exponent=2`` ⇒ ``{"op":"pow","exponent":2.0}``). ``None`` (the
-    # default) is NEUTRAL = ``linear`` = today's plain linear miss term.
+    # ``(1 - mean_score)`` recall miss) at Seam 2 — the declarative replacement
+    # for the retired ``pass_exponent`` field (express ``pass_exponent=2`` as
+    # ``{"op":"pow","exponent":2.0}``; a stray ``pass_exponent`` key is now
+    # rejected at load, not lowered). ``None`` (the default) is NEUTRAL =
+    # ``linear`` = today's plain linear miss term.
     pass_transform: Mapping[str, Any] | None = None
     # ``drift_kind_aggregation`` reshapes, per drift KIND, how that kind's
     # count aggregates into the drift loss at Seam 1 — the opt-in replacement

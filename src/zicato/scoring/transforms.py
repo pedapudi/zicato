@@ -64,10 +64,11 @@ def _linear(value: float) -> float:
 
 
 def _pow(value: float, *, exponent: float) -> float:
-    """``value ** exponent``. The lowering target for the old ``pass_exponent``.
+    """``value ** exponent``. The replacement for the retired ``pass_exponent``.
 
     ``pow(x, 2.0)`` reproduces the quadratic-recall miss term
-    ``(1 - mean_score) ** 2`` exactly.
+    ``(1 - mean_score) ** 2`` exactly. (A stray ``pass_exponent`` config key is
+    rejected at load — see ``workspace_loader._reject_retired_pass_exponent``.)
     """
     return float(value**exponent)
 

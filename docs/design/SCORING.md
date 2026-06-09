@@ -635,7 +635,7 @@ shapes, each a single `{"op": "<name>", ...params}` spec:
 | `op` | params | shape |
 |---|---|---|
 | `linear` | — | identity (the neutral default) |
-| `pow` | `exponent` | `x ** exponent` (the lowering target for `pass_exponent`) |
+| `pow` | `exponent` | `x ** exponent` (the replacement for the retired `pass_exponent`) |
 | `harmonic` | — | `1 + 1/2 + … + 1/n` (diminishing returns; the opt-in `looping_reasoning` curve) |
 | `cap` | `max` | `min(x, max)` |
 | `clip` | `lo`, `hi` | clamp to `[lo, hi]` (requires `lo <= hi`) |

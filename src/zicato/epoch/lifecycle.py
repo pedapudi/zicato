@@ -156,12 +156,13 @@ def _scoring_from_dict(d: dict[str, Any]) -> ScoringWeights:
     :func:`zicato.workspace_loader._scoring_weights_from_dict`.
     """
     from zicato.epoch.contract_serde import jsonable_to_dataclass  # noqa: PLC0415
-    from zicato.workspace_loader import _lower_legacy_pass_exponent  # noqa: PLC0415
+    from zicato.workspace_loader import _reject_retired_pass_exponent  # noqa: PLC0415
 
-    # Lower a legacy ``pass_exponent`` key (issue #19 phase 2) symmetrically
-    # with the live loader, so a hand-migrated / pre-feature frozen snapshot
-    # parses identically through either path.
-    return jsonable_to_dataclass(ScoringWeights, dict(_lower_legacy_pass_exponent(d)))
+    # Reject a retired ``pass_exponent`` key (issue #19) symmetrically with the
+    # live loader, so a stale / pre-feature snapshot fails loudly through either
+    # path rather than silently scoring linearly.
+    _reject_retired_pass_exponent(d)
+    return jsonable_to_dataclass(ScoringWeights, dict(d))
 
 
 def _config_to_dict(cfg: EpochConfig) -> dict[str, Any]:
