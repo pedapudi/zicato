@@ -143,16 +143,17 @@ That is the right trade for a system whose unit of progress is a
 
 ### 1.4 The gauntlet is the *default*, not the only, structure
 
-> **Status.** Design direction, not yet implemented. The interface
-> spec and backend plan are in
+> **Status.** SHIPPED. The `SelectionStrategy` seam, all five concrete
+> structures, the `tournament` contract block, and the
+> `--tournament-structure` / `--tournament-param` CLI surface are in the tree.
+> The interface spec and backend reference are in
 > [`TOURNAMENT-STRUCTURES.md`](TOURNAMENT-STRUCTURES.md); the
 > decision-theory placement is in
 > [`SELECTION.md §10`](SELECTION.md#10-configurable-per-epoch-tournament-structures).
 
 The king-of-the-hill gauntlet of §1.1–§1.3 is the **default** tournament
-structure and the only one shipped today. The design direction makes the
-*structure* a **per-epoch configurable choice**: an epoch's frozen
-contract gains a `tournament` block selecting one of `gauntlet`
+structure. The structure is a **per-epoch configurable choice**: an epoch's
+frozen contract carries a `tournament` block selecting one of `gauntlet`
 (default), `single_elim`, `double_elim`, `swiss`, or `racing`. The
 arguments in §1.3 *for* the gauntlet remain the reason it is the default;
 the other structures exist for regimes with a *large* proposer fan-out
@@ -340,6 +341,18 @@ Scalar breakdown
 
 This is the bridge between "the grid of per-entry numbers" and
 "the single number the gate consumes".
+
+> **Worker-transport fidelity.** Each board run executes in its own
+> subprocess worker ([RUNTIME.md](RUNTIME.md)), so the scalar a matchup
+> reports is only correct if the worker scores under the *same* weights the
+> parent process configured. Two correctness guarantees back that: the
+> per-epoch `per_judge_weights` (the per-judge loss weighting, scoring-side
+> in [SCORING.md](SCORING.md)) now survives the worker transport intact
+> (`src/zicato/_tournament_worker.py`), and the in-run process judges grade
+> against the **real tool-call ledger** the run produced, not a narrated
+> approximation of it — so a board judge like `file_findability` sees what
+> the agent actually did. These keep the two sides of a duel scored on the
+> identical, faithful basis the gate assumes.
 
 ### 3.5 Gate verdict
 
@@ -576,6 +589,21 @@ improvement costing me?". Fast mode (see
 [SCORING.md §7](SCORING.md#7-fast-mode-and-the-tournament)) shows
 up here directly — a `mode = fast` round runs one board pass, not
 two, and the cost column shows the saving.
+
+> **Bounding the cost up front (racing's grind guard).** Where the cost
+> column is the *retrospective* gauge, the `racing` structure also offers a
+> *prospective* cap: opt-in `matchup_budget_seconds` /
+> `final_rung_budget_seconds` params bound a duel's total board-unit
+> wall-clock, with the final rung — the full-board × replicates × both-sides
+> crowning duel — the pathological grinder the second param exists to bound.
+> Enforcement is the worker's per-run wall-clock cancellation
+> ([RUNTIME.md](RUNTIME.md), `src/zicato/_tournament_worker.py`); see
+> [TOURNAMENT-STRUCTURES.md §3.5](TOURNAMENT-STRUCTURES.md#35-racing-the-endorsed-bracket-shaped-option).
+> The builder's live cost meter, in turn, estimates per-round board-runs from
+> the **per-structure default replicates** (swiss / single-elim / double-elim
+> = 2, gauntlet / racing = 1) rather than a flat `1`, so the projected cost
+> matches the schedule a structure actually runs
+> ([TOURNAMENT-STRUCTURES.md §3](TOURNAMENT-STRUCTURES.md#3-the-five-concrete-strategies)).
 
 ## 5. The harmonograf split
 

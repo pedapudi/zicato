@@ -16,27 +16,27 @@ it correct against everything else.
 |---|---|---|---|
 | **L1** | `asyncio.wait_for` per-call + per-entry + per-evolve budgets | Cooperative network/IO hangs | **shipped** |
 | **L2** | structured cancellation (CancelledError) | Async code that yields | **shipped** |
-| **L3** | subprocess tournament workers | GIL-holding loops, any user-code pathology | **planned** — runs are in-process today |
-| **L4** | orchestrator watchdog (Rust supervisor) | Parent-side wedges | **shipped** (watchdog binary auto-spawned; escalation targets the in-process run today, per-run workers when L3 lands) |
+| **L3** | subprocess tournament workers | GIL-holding loops, any user-code pathology | **shipped** — every board-entry run executes in its own `python -m zicato._tournament_worker` process, with a hard per-run wall-clock budget |
+| **L4** | orchestrator watchdog (Rust supervisor) | Parent-side wedges | **shipped** (watchdog binary auto-spawned; escalation targets the per-run worker process) |
 | **L5** | consecutive-bad circuit breaker | Long unproductive epochs | **shipped** (consecutive-reject counter); richer signals planned |
 | **L6** | atomic writes (+ resume markers) | Mid-run crashes | atomic writes **shipped**; the resume protocol **planned** |
 
 The layers nest from inside to outside: L1 and L2 live inside the
-run, L3 is the (planned) worker boundary, L4 is the supervisor process
-outside the runs, L5 is the loop-level shutoff, L6 is the on-disk
-durability story.
+run, L3 is the per-run worker process boundary, L4 is the supervisor
+process outside the runs, L5 is the loop-level shutoff, L6 is the
+on-disk durability story.
 
-> **What this means in practice.** Today zicato is robust against
-> *cooperative* inner harnesses (L1+L2), durably writes its state
-> (L6 atomic writes), runs an external watchdog that escalates stalled
-> work (L4), and stops a fruitlessly-rejecting loop (L5). The one gap
-> versus the full model is **L3**: because runs execute in-process, a
-> truly uncooperative inner harness (a GIL-holding C extension, a
-> `while True: pass`) is not yet hard-killed at a per-run process
-> boundary — the L4 watchdog's escalation would terminate the whole
-> orchestrator process rather than one run. The resume protocol that
-> makes a post-kill restart pick up cleanly is also planned. L3 + the
-> resume protocol are the remaining production-hardening work.
+> **What this means in practice.** zicato is robust against
+> *cooperative* inner harnesses (L1+L2), isolates each run in its own
+> OS process so even an uncooperative harness (a GIL-holding C
+> extension, a `while True: pass`) is hard-killed at a per-run boundary
+> under a wall-clock budget (**L3 shipped** —
+> `src/zicato/_tournament_worker.py`), durably writes its state
+> (L6 atomic writes), runs an external watchdog that escalates a stalled
+> run by SIGTERM → SIGKILL on that run's own worker PID (L4), and stops
+> a fruitlessly-rejecting loop (L5). The remaining production-hardening
+> gap is the **resume protocol** that makes a post-kill restart pick up
+> cleanly (planned, see [RUNTIME.md](RUNTIME.md) §4).
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -110,10 +110,17 @@ L1 budgets are applied at two nested granularities, and **both
 apply at once** — the inner ceiling does not replace the outer one.
 
 * **Per-entry budget.** Each `BoardEntry` carries its own
-  `wall_clock_budget_seconds`. The runner wraps that single entry's
-  run in `asyncio.wait_for(..., timeout=entry.wall_clock_budget_seconds)`;
-  a run that overruns is aborted and scored worst-case
-  (`abort_reason="wall_clock_budget"`). This bounds *one* run.
+  `wall_clock_budget_seconds`, threaded into the run's worker args file.
+  As shipped (L3, §2.3) the per-run subprocess **worker** enforces it —
+  it self-aborts at the deadline (`asyncio.wait_for` *inside* the
+  worker) and the L4 supervisor backstops by SIGKILLing the worker PID
+  if it wedges — so a run that overruns is aborted and scored worst-case
+  (`abort_reason="wall_clock_budget"`) even against an uncooperative
+  harness. This bounds *one* run, hard. The `racing` structure can also
+  tighten this per duel via `matchup_budget_seconds` /
+  `final_rung_budget_seconds` (the grind guard,
+  [TOURNAMENT-STRUCTURES.md §3.5](TOURNAMENT-STRUCTURES.md#35-racing-the-endorsed-bracket-shaped-option)),
+  which ride on the `Matchup` and become the worker's board-unit budget.
 
 * **Per-evolve total budget.** `evolve_n_rounds` accepts an optional
   `max_wall_clock_seconds` ceiling on the *whole* `zicato evolve`
@@ -144,16 +151,16 @@ apply at once** — the inner ceiling does not replace the outer one.
       outcome = _budget_aborted_outcome(parent_id, max_wall_clock_seconds)
   ```
 
-**The blocking-call caveat applies to both.** Both budgets are L1
-`asyncio.wait_for` guards: they pre-empt only *cooperative* async
-work. A run — or a round — wedged in a blocking call, a CPU-bound
-loop, or a GIL-holding C extension is **not** hard-killed by either
-budget; the `wait_for` timeout fires inside the event loop but the
-underlying work keeps going (see §2.3). A true hard-kill of an
-uncooperative inner harness needs the L3 subprocess-worker boundary.
-The per-evolve budget therefore *bounds the cooperative case* and is
-honest about not bounding the adversarial one — exactly the contract
-the per-entry budget already makes.
+**The blocking-call caveat applies to the per-evolve budget.** The
+*per-evolve total* budget is an L1 `asyncio.wait_for` guard in the
+orchestrator process: it pre-empts only *cooperative* async work, so a
+round wedged in a blocking call or a GIL-holding C extension in the
+orchestrator itself is not hard-killed by it. The *per-entry* budget,
+by contrast, is now enforced at the **L3 worker process boundary**
+(§2.3) — a wedged run is killed by SIGTERM → SIGKILL on its own worker
+PID regardless of cooperation. So the per-evolve ceiling bounds the
+cooperative aggregate case honestly, while each individual run is
+bounded hard by its own process.
 
 ### 2.2 L2 — structured cancellation
 
@@ -198,15 +205,18 @@ in production by accident) need L3.
 
 ### 2.3 L3 — subprocess tournament workers (the non-negotiable layer)
 
-> **(Planned — not yet shipped.)** L3 is the one defense layer that
-> does not ship today. As shipped, tournament runs execute **in-process**
-> inside the orchestrator's event loop under the L1 budgets; there is no
-> `zicato _worker` subprocess and no per-run process boundary. The
-> argument below is exactly why L3 is the planned production-hardening
-> work — until it lands, the cooperative-correctness floor (L1+L2) plus
-> the external watchdog (L4) is the real-today story, and an
-> uncooperative inner harness can only be stopped by terminating the
-> orchestrator process as a whole.
+> **Shipped.** Every board-entry tournament run executes in its own
+> `python -m zicato._tournament_worker` subprocess
+> (`src/zicato/_tournament_worker.py`, spawned per run by
+> `src/zicato/tournament/runner.py` via
+> `asyncio.create_subprocess_exec`). The worker enforces the run's
+> wall-clock budget by self-aborting at the deadline, and the L4
+> supervisor SIGKILLs the worker PID if it wedges — so the per-run
+> process boundary that the argument below motivates is now in place.
+> Each run also gets a fresh interpreter (no module-cache bleed between
+> generations), and scoring inside the worker reads the transported
+> `per_judge_weights` + the real tool-call ledger (see
+> [RUNTIME.md](RUNTIME.md) §5).
 
 **This is the load-bearing layer.** Without L3, zicato cannot
 honour its robustness story against any agent that doesn't
@@ -357,10 +367,10 @@ L4 is the watchdog supervisor — a separate Rust process, separate
 language, separate runtime (`crates/supervisor/`). It **ships today**:
 `zicato evolve` auto-spawns it (in watchdog-only mode), and it watches
 `heartbeat.json` and the `active_runs/*` files, escalating
-SIGTERM → grace → SIGKILL on a stalled run. (Until L3 lands, the run's
-process *is* the orchestrator's, so the per-run escalation target is
-shared with the orchestrator; once L3 lands the watchdog kills one run
-without touching the orchestrator.)
+SIGTERM → grace → SIGKILL on a stalled run. With L3 shipped, each
+`active_runs/{run_id}.json` carries that run's own worker PID, so the
+watchdog kills exactly one stalled run without touching the
+orchestrator or any sibling run.
 
 See [RUNTIME.md](RUNTIME.md) §3 for the supervisor's lifecycle,
 state model, and escalation protocol. This section names what L4

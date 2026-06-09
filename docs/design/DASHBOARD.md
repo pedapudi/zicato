@@ -232,6 +232,16 @@ static directory and hands it to the server; an unknown asset 404s, and
 a missing bundle falls back to a placeholder page. No external CDN, no
 node_modules at runtime.
 
+Static assets are served `Cache-Control: no-cache` **plus an `ETag`**
+derived from the file's identity (`mtime-ns` + size — `server.py`). The
+`no-cache` keeps the browser from ever serving a stale CSS/JS bundle (a
+long-lived edit-during-development hazard), while the ETag makes that
+revalidation cheap: an unchanged asset with a matching `If-None-Match`
+returns a bodyless **`304`** (no re-download), and the moment a file is
+edited its ETag changes and the browser gets a fresh `200`. So edits
+always reach the browser, but an unchanged page reload pays only
+revalidation, not re-transfer.
+
 Styling mirrors `analysis.html`'s aesthetic — same font stack,
 same colour palette, same chart conventions. The two should look
 like the same thing in two modes: live and archival.
@@ -526,6 +536,17 @@ operator drills anywhere. It composes:
 - a **recent decisions** strip — the last few promote/reject verdicts
   with their deltas, each a click into its L3 decision view.
 
+In the Console (Variant T) home view this L0 read is realised as a fleet of
+per-epoch cards plus a **cross-epoch meta-loop ledger** — one composed figure
+that braids a **held-floor staircase** (the best scalar each contract held),
+**effort-proportional epoch bands** (band width ∝ generations spent), and a
+**contract-component heatstrip** (which lever moved at each epoch reset,
+including a proposer column the plain contract diff omits). It answers, in one
+scan, "is the meta-loop making net progress across contracts, which lever moved
+each reset, and is effort buying floor." It is served as a `ledger` sibling of
+`epochs` on the same `/api/workspace` read; see
+[variant-T.md](variant-T.md#decision-loop-wave-current-default--meta-loop-ledger--settings-drawer--racing-hero--builder-view).
+
 ### 4.4 L1 — the epoch and its decisions
 
 L1 frames "what contract is this epoch deciding under, and how have its
@@ -537,9 +558,11 @@ decisions gone?":
 - the **lineage ribbon** zoomed to this epoch's generations (§4.1);
 - the **contract diff** (`/api/contract-diff/{epoch_id}`) — what changed
   in the evaluation contract (scoring with nested weight dicts incl.
-  `per_judge_weights`, board, proposer brief, mutation paths) versus the
-  parent epoch, since a decision is only meaningful relative to the
-  contract it was made under;
+  `per_judge_weights` — which now survives the subprocess-worker transport
+  intact, so the scalar a duel reports is scored under the same per-judge
+  weighting the parent configured — board, proposer brief, mutation paths,
+  and the proposer) versus the parent epoch, since a decision is only
+  meaningful relative to the contract it was made under;
 - **per-entry and per-judge heatmaps** — which board entries and which
   judges are moving across the epoch's generations (the per-judge-trend
   and per-entry endpoints), the "what is the lineage learning?" view.
@@ -782,7 +805,7 @@ The route table:
 | `GET /api/health` | Liveness/identity (§6.1 detail below). |
 | `GET /api/state` | Composite live snapshot. |
 | `GET /api/environment?run-log-limit=N` | One coalesced read of the whole environment — the front-end refreshes the entire view from this instead of fanning out to many endpoints. |
-| `GET /api/workspace` | L0 cross-epoch workspace summary (feeds the L0 ribbon + recent decisions). |
+| `GET /api/workspace` | L0 cross-epoch workspace summary (feeds the L0 ribbon + recent decisions). Carries a `ledger` array — one row per epoch (held floor · champion · effort · structure · changed-component map incl. the proposer column) — that backs the cross-epoch meta-loop ledger (§4.3). |
 | `GET /api/epoch` | Current epoch's evaluation-contract view (scoring incl. `per_judge_weights`, board, brief, mutation paths). |
 | `GET /api/lineage` | Generation DAG incl. in-flight generations — the lineage ribbon's backbone. |
 | `GET /api/active-tournament` | In-progress decision shape (live) — feeds the in-flight L3 view. |
@@ -801,7 +824,7 @@ The route table:
 | `GET /api/contract-diff/{epoch_id}` | Contract diff vs the parent epoch (L1). |
 | `GET /api/epoch/{epoch_id}/per-judge-trend` | Per-judge loss trend across the epoch (L1 heatmap). |
 | `GET /api/generation/{epoch_id}/{generation_id}/per-judge` | Per-judge breakdown for one generation (L2). |
-| `GET /api/generation/{epoch_id}/{generation_id}/per-entry` | Per-entry breakdown for one generation (L2). |
+| `GET /api/generation/{epoch_id}/{generation_id}/per-entry` | Per-entry breakdown for one generation (L2) — surfaces the continuous outcome score and, where the scorer carries them, the precision / recall metrics per entry. |
 | `GET /api/run/{run_id}/per-judge` | Per-judge breakdown for one run (L4). |
 | `GET /api/run/{epoch_id}/{generation_id}/{entry_id}/per-judge` | Same, addressed by triple. |
 | `GET /api/run/{epoch_id}/{generation_id}/{entry_id}/expectations` | Outcome-check (expectations) results. |
@@ -814,6 +837,8 @@ The route table:
 | `GET /api/epoch/{epoch_id}/journal` and `.../journal.md` | Journal as data or rendered markdown. |
 | `GET /api/epoch/{epoch_id}/analysis` and `.../analysis.html` | Analysis as data or rendered HTML. |
 | `POST /api/control/{pause,skip-round,kill/{run_id},promote/{gen},reject/{gen},brief}` | Control surface (§6.2). |
+| `GET/POST /settings/models` | Secret-safe per-role LLM config (harness · auxiliary · builder · judge) for the Settings drawer's Models section — only the `api_key_env` NAME + a set/unset flag is ever serialized, never a secret (`settings_api.py`). |
+| `GET /builder/config`, `GET /builder/draft`, `POST /builder/op`, `POST /builder/apply`, `POST /builder/chat` (SSE) | The tournament-builder REST surface (the form + the copilot share one draft / op vocabulary). See [TOURNAMENT-BUILDER.md](TOURNAMENT-BUILDER.md). |
 
 The sections below detail the endpoints whose response shape is
 load-bearing.

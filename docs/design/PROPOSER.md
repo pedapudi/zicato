@@ -157,6 +157,71 @@ The copy-me example is
 
 ---
 
+## 2.5 What the proposer reads — the failure-mode feedback channel
+
+Independent of *which* resolution backs the proposer, every proposer reads the
+same per-round task input the orchestrator assembles: the brief, the mutation
+manifest, the loss summary, the prior-experiment digest, the analyzer
+insights. That input now also carries a **failure-mode profile** — a compact,
+board-anonymized read of *why* the parent's answers were wrong, not just
+*that* a scalar moved.
+
+Historically the proposer saw only a coarsened `Δscalar` plus an LLM digest of
+*decision* telemetry; it could not target over-retrieval vs misses vs
+empty/looping answers. The channel
+(`src/zicato/analyzer/outcome_marginals.py`, rendered by
+`render_failure_mode_profile` in `src/zicato/proposer/prompts.py`, wired by
+`_render_failure_profile` in `src/zicato/orchestrator.py`) closes that gap by
+feeding the proposer **outcome MARGINALS** — board-wide rates — under three
+non-negotiable safeguards, each reusing existing machinery:
+
+- **Train-slice only.** The orchestrator passes the *train-slice* losses it
+  already loaded — the same `split_board` / rotation partition it uses for the
+  patterns + loss summary — never the holdout. The aggregator never reads the
+  board or the filesystem, so it cannot widen the slice it is handed. This is
+  the same anti-leakage discipline as the rest of the proposer's view
+  ([OVERFITTING.md §11](OVERFITTING.md)).
+- **Bucketed / coarsened.** Every rendered number is banded at the render
+  boundary — rates to approximate `~N%` labels, quality means to
+  `low`/`medium`/`high` — mirroring the `_bucket_scalar_delta` discipline, so
+  no round-over-round response surface leaks that the proposer could climb
+  instead of true quality.
+- **Identity-free.** Only marginal rates are produced: no entry id, question
+  text, or output token exists anywhere in the summary, by construction (the
+  aggregator reads only the scalar / count / metric fields of each result).
+  The design invariant is *feed the MARGINAL, never the JOINT* — the proposer
+  may learn an aggregate property of the agent's behaviour ("over-retrieves
+  ~40% of runs") but can never reconstruct any board entry.
+
+When the slice is empty (a baseline round with no parent telemetry) the
+renderer returns the empty string — the proposer prompt stays byte-identical
+to before, exactly as the insights / prior-experiments blocks behave.
+
+### Operator hook — `outcome_summarizer_spec`
+
+An OPTIONAL operator summarizer can contribute **board-specific** marginals.
+It is a dotted spec — `outcome_summarizer_spec` on the scoring contract
+(`ScoringWeights`, `src/zicato/core/types.py`) — resolved exactly like
+predicates / judges (`zicato.import_path.import_dotted_path`). The resolved
+callable receives the train-slice per-entry results and must return a
+**STRUCTURED aggregate** — a `{marginal_name: numeric_rate}` mapping, NOT
+prose — precisely so zicato can ENFORCE bucketing + anonymity on its output:
+`sanitize_operator_marginals` drops anything non-numeric or identity-bearing
+(a free string, an entry id as a key, a list/dict value) before the operator's
+marginals are merged and banded. A free-text summary would be an un-auditable
+leak vector and is rejected by construction; a misbehaving or raising
+summarizer contributes nothing rather than aborting the round.
+
+Because it lives on `ScoringWeights`, the spec folds into the scoring
+component of the contract hash automatically: configuring or changing the
+summarizer rolls the epoch, exactly like every other contract field
+(the empty-string default configures no summarizer, leaving the prompt
+unchanged). The shaped numbers that band these marginals are part of the
+scoring surface and are owned by SCORING.md — this doc describes only the
+*channel*, not the scalar arithmetic.
+
+---
+
 ## 3. Design A — why a tool-using proposer owns its own model
 
 The text shim is a single-shot text exchange: zicato hands the auxiliary
@@ -286,4 +351,5 @@ docs are known to drift); as of writing the flag is `--proposer-path PATH`.
 | The hypothesis schema the proposer must emit | [EPOCHS-AND-JOURNALING.md §3](EPOCHS-AND-JOURNALING.md) |
 | Selection / tournament the proposer feeds | [SELECTION.md](SELECTION.md), [TOURNAMENT-STRUCTURES.md](TOURNAMENT-STRUCTURES.md) |
 | The copy-me tool-using proposer agent | [`examples/zicato_examples/proposer_with_tools/agent.py`](../../examples/zicato_examples/proposer_with_tools/agent.py) |
+| The failure-mode feedback channel — anti-leakage (train-slice, banded, identity-free) | [OVERFITTING.md §11](OVERFITTING.md), `src/zicato/analyzer/outcome_marginals.py` |
 | `register` CLI reference | [CLI.md](CLI.md#zicato-register) |
