@@ -49,6 +49,92 @@ no other variant directory (everything needed from P/S/Q is ported in). T is now
 the **converged default UI** (index.html boots `app_T.js`; `?ui=v1`/`?ui=v2` are
 the only fallbacks — exactly one UI loads at a time).
 
+## Decision-loop wave (current default — meta-loop ledger · settings drawer · racing hero · builder view)
+
+The most recent batch of Console changes, all scoped to Variant T and all
+preserving render discipline (digest-gated swaps, transient overlays never in
+the gated render):
+
+1. **Cross-epoch META-LOOP LEDGER on the home view** (`svg.metaLoopLedger`,
+   digest-gated by `svg.metaLoopLedgerDigest`; `views/home.js`). Below the
+   fleet, one composed figure braids three reads: a **held-floor staircase**
+   (the best scalar each contract held, a descending staircase), **effort-
+   proportional epoch bands** (band width ∝ generations spent), and a
+   **contract-component heatstrip** marking which lever moved at each epoch
+   reset. The heatstrip carries a **proposer column** (the seventh component,
+   `LEDGER_COMPONENTS = [board, brief, scoring, entrypoint, mutable_trees,
+   structure, proposer]`) that the plain contract diff omits. Sourced as a
+   `ledger` sibling of `epochs` on the same `/api/workspace` read (no extra
+   fan-out; backend `state_reader.py`). A structure roll is a SOFT seam
+   (cross-roll floors are not directly comparable) — dashed on the staircase +
+   that cell. Degrades honestly on 0–1 epochs.
+
+2. **SETTINGS is a routed right-side DRAWER overlay** (`shell.js` —
+   `dt-drawer` scrim + `dt-drawer-panel`, `role="dialog"` `aria-modal`), not a
+   full page. It paints OVER the current view; Esc / scrim-click / the `×`
+   close it. Its rail is **Tournament builder (launcher) · Contract · Models ·
+   Appearance**. The **Contract** section reuses the **builder's own live
+   preview** (`builder/preview.js` `previewNodes`) fed the current epoch as a
+   draft-shaped contract, rendered **read-only**. The **Models** section
+   generalised the former read-only "Builder assistant" read-out into an
+   editable per-role config (harness · auxiliary · builder · judge) over the
+   secret-safe `GET/POST /settings/models` (only the `api_key_env` NAME + a
+   set/unset flag ever shown — never a secret).
+
+3. **The tournament BUILDER is its OWN first-class view** (`#/builder` →
+   `{view: "builder"}` in `router.js`; rendered FULL-WIDTH in the main host).
+   Promoted out of Settings (where the nested rail gave it a cramped centre);
+   Settings keeps only a **launcher** rail entry that navigates to `#/builder`.
+   The same route-agnostic `builder.render(host)` backs the top-bar nav, the
+   deep-link, the Settings launcher, and the `zicato builder` CLI. See
+   [TOURNAMENT-BUILDER.md](TOURNAMENT-BUILDER.md).
+
+4. **The live racing HERO redesign** (`live.js` `LiveController`). One muted
+   **metadata baseline** — `● LIVE · racing · rung N of M · field of K · J
+   units running` — replaces the competing big phase title; the rung label is
+   the SAME 1-indexed "N of M" the stepper reads (`liveProgress`), so header
+   and stepper can never contradict. A **full-width scalar track** IS the hero,
+   with a compact **rung STEPPER** (one pip per rung; completed filled, current
+   active) capping its left edge in place of the anonymous percentage bar. The
+   "what's running" block is **dense single-line champion-gate rows** —
+   `vN · bar · ~scalar · k/N boards · PROJ` (a faint `~projected_scalar` while
+   boards stream, the boards-done `k/N` first-class, a trailing `PROJ` tag that
+   becomes the settled ✓/✗/⏱ verdict). The detail row is **two balanced
+   columns**: WHAT'S RUNNING | LIVE ACTIVITY (≈55/45, shared panel chrome).
+   Every sub-figure is a digest-gated swap; the bars animate via CSS.
+
+5. **S/M/L font-size control in the typeface picker** (`typefacedropdown.js`,
+   `FONTSIZE_OPTIONS` / `normaliseFontSize`). The typeface picker is now a
+   GROUPED popover (three mode headers — Technical · Editorial · Display — each
+   over four real faces = twelve, each row a true micro-specimen) carrying an
+   **S/M/L** segmented size control; `applyFontSize` fans out across every live
+   instance (top bar ↔ Settings → Appearance) so the size stays in lockstep.
+
+6. **Non-racing hero figures go responsive / full-width.** The non-racing
+   live-hero figures fill the pane instead of being clamped narrow. Hero
+   width caps are expressed as **`svg.dn-*-hero { max-width }`** rules
+   (`console4.css` — e.g. `svg.dn-scalartrack-hero`, `svg.dn-funnel-hero`,
+   `svg.dn-metaledger-hero`), so a hero scales to its pane up to its own cap.
+
+7. **ONE shared racing model resolver** (`resolveNonGauntletSt`,
+   `views/structure.js`) unifies the epoch / all-rounds / per-round / candidate
+   views onto a single live-first → `reconstructRacing` resolution, so every
+   non-gauntlet surface reads the same model (convergence + digest-gating
+   preserved; `views/epoch.js` and the round/candidate views call through it).
+
+8. **Per-entry views surface continuous score + precision/recall** (#18). A
+   per-entry surface now shows the continuous outcome score and, where the
+   scorer carries them, the precision / recall metrics — the same per-entry
+   `metrics` the proposer's failure-mode channel aggregates
+   ([PROPOSER.md §2.5](PROPOSER.md#25-what-the-proposer-reads--the-failure-mode-feedback-channel)).
+
+9. **Static assets served with ETag/304 revalidation** (kept `no-cache`). The
+   dashboard's static handler emits an `ETag` and honours
+   `If-None-Match` with a `304`, so an unchanged CSS/JS asset revalidates
+   cheaply while edits still always reach the browser (the prior no-cache
+   guarantee is preserved — `no-cache` forces revalidation, ETag makes it a
+   bodiless 304). See [DASHBOARD.md §3.2](DASHBOARD.md#32-bundled-assets).
+
 ## Round-10 polish (the converged default)
 
 Six operator-requested changes, all scoped to Variant T:
@@ -62,8 +148,11 @@ Six operator-requested changes, all scoped to Variant T:
    baked unconditionally onto the variant root, and the JS SIZE tokens are fixed
    at the cozy values. The page-scale pill is the sizing control now.
 3. **"Sans" typeface dropped.** It was redundant with Technical's Open-Sans
-   body. The typeface picker is exactly **Editorial / Technical / Display**
-   (default Technical); the dropped `sans` id normalises to Technical.
+   body. The typeface picker groups into three **modes** — **Editorial /
+   Technical / Display** (default Technical); the dropped `sans` id normalises
+   to Technical. *(Later evolved into a GROUPED popover of twelve faces — four
+   per mode — plus an S/M/L font-size segmented control; see the session-change
+   section below.)*
 4. **Scale RESET affordance.** A small keyboard-accessible `⟲` button beside the
    scale pill snaps the page scale back to 100 % and persists (`resetScale()`).
 5. **Thirteen Gogh colour themes** (real palettes from gogh-co.github.io/Gogh),

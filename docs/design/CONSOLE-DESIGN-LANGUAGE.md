@@ -152,29 +152,37 @@ lineage in full.
 
 ## 3. The typography system
 
-Typography is a separate axis from colour: a **typeface theme** picker (inline
-buttons — only three options, so no dropdown) swaps the family tokens via the
-`[data-t-type]` attribute on the root. The default is **Technical**. The three
-voices are genuinely distinct, body included, so toggling is immediately
-recognizable.
+Typography is a separate axis from colour: a **typeface** picker swaps the
+family tokens via the `[data-t-type]` attribute on the root. It is a **grouped
+popover** (`typefacedropdown.js`, one shared instance used identically by the
+top bar and Settings → Appearance): three **mode** headers — **Technical
+(default) · Editorial · Display** — each over **four** real faces (twelve
+total), every option row a true micro-specimen rendered in its own faces. The
+three voices are genuinely distinct, body included, so switching is immediately
+recognizable. Representative faces per mode:
 
-| id | voice | body | data / mono | headings | display |
-| --- | --- | --- | --- | --- | --- |
-| `editorial` | a typeset, literary reading voice | Source Serif 4 | Source Serif 4 | Source Serif 4 | Source Serif 4 |
-| `technical` (default) | a console technical voice | Open Sans | JetBrains Mono | Open Sans | — |
-| `display` | a punchy headline voice | Space Grotesk (geometric) | JetBrains Mono | Archivo Narrow (condensed) | Archivo Narrow |
+| mode | voice | example faces (`TYPE_OPTIONS`) |
+| --- | --- | --- |
+| `technical` (default) | a console technical voice | Google Sans Mono · Source Sans 3 + Source Code Pro · Inconsolata · Ubuntu + Ubuntu Mono |
+| `editorial` | a typeset, literary reading voice | Fraunces · Bitter · Literata · Domine |
+| `display` | a punchy headline voice | Archivo Narrow + Space Grotesk · Hanken Grotesk · Barlow Condensed · Bricolage Grotesque |
 
-The CSS resolves these through intermediate `--n-font-*` families and exposes
-two tokens the marks read: **`--v2-sans`** (body) and **`--v2-mono`** (all
-data, labels, axis text, code), plus `--n-font-head` (headings) and
-`--n-font-paper` (the publication body). Editorial routes *everything* —
-including the mono token — to the serif, so data and prose share one face;
-Display gives the body a geometric grotesque and the headings a condensed
+Alongside the face picker the popover carries an **S/M/L font-size** segmented
+control (`FONTSIZE_OPTIONS`); `applyFontSize` fans the choice out across every
+live picker instance (top bar ↔ Settings) so the size stays in lockstep, and it
+is orthogonal to the page-scale pill.
+
+The CSS resolves the chosen face through intermediate `--n-font-*` families and
+exposes two tokens the marks read: **`--v2-sans`** (body) and **`--v2-mono`**
+(all data, labels, axis text, code), plus `--n-font-head` (headings) and
+`--n-font-paper` (the publication body). An editorial face routes *everything* —
+including the mono token — to its serif, so data and prose share one face; a
+display face gives the body a geometric grotesque and the headings a condensed
 display face. Google Fonts is loaded in `app_T.js` with `display=swap` and
 system fallbacks — the only external dependency.
 
 (The legacy **Sans** typeface was dropped — it was redundant with Technical's
-Open-Sans body; the `sans` id normalises to Technical.)
+sans body; the `sans` id normalises to Technical.)
 
 ## 4. The visual-vocabulary grammar
 
@@ -196,6 +204,7 @@ grammar** — the same marks mean the same thing everywhere.
 | `waterfall` | the **loss-floor descent across rounds** — one downward step per round sized by its promotion Δ (good by direction; a held round is flat), the running floor annotated, the champion-spine baseline in `accent`, the winning mutation per step on hover. The headline figure of the epoch round-timeline. |
 | `reignGantt` | **champion tenure across rounds** — one bar per champion spanning the rounds it held; the current champion `accent` + `♛`, former champions dim ink + `♔`. The candidate page's **reign ribbon** (shown only for a generation that became champion). |
 | `roundTimeline` | the **epoch overview hero** — the epoch's N evolve rounds along a horizontal champion **spine** (one node per round's incoming champion, its loss annotated so the descending floor reads at a glance), each round an episode card (incoming champion + a fan of minted challengers + a compact per-round structure figure + the gate outcome). Subsumes the old gauntlet reel; a single round degrades to one episode. The `waterfall` rides above it as the descent headline. |
+| `metaLoopLedger` | the **cross-epoch home overview** — one composed figure braiding a **held-floor staircase** (best scalar each contract held), **effort-proportional epoch bands** (band width ∝ generations spent), and a **contract-component heatstrip** (which lever moved at each reset — board · brief · scoring · entrypoint · mutable_trees · structure · **proposer**, the last a column the plain diff omits). A structure roll is a SOFT seam (cross-roll floors aren't comparable) — dashed on the staircase + that cell. Digest-gated (`metaLoopLedgerDigest`); degrades on 0–1 epochs. Answers "is the meta-loop making net progress across contracts, which lever moved each reset, is effort buying floor." |
 | `bumps` | the lineage as ranked lanes — the champion spine on its own lane, rejected challengers branching into a lower lane. |
 | `heatmap` | the **board × generation drift-loss matrix** (epoch overview), a theme-token cool→hot ramp. |
 | `valueDotPlot` | per-board scoring — one row per entry, a dot vs a reference rule, an outcome glyph at the right edge. |

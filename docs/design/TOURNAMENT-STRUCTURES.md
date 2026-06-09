@@ -102,6 +102,9 @@ class Matchup:
                                   # not bracket shape, is the noise lever.
     round_index: int = 0          # bracket round / swiss round / racing rung
     bracket_slot: str = ""        # e.g. "WB-R1-0"; empty for non-bracket structures
+    matchup_budget_seconds: float | None = None  # opt-in per-duel wall-clock cap
+                                  # (racing's grind guard, §3.5); None = uncapped,
+                                  # enforced by the worker's per-run cancellation
 
 @dataclass(frozen=True, slots=True)
 class MatchupResult:
@@ -233,11 +236,23 @@ one-line scheduling / advance / stopping summary, then the notes.
 > | `single_elim` | `2` | `2` | — |
 > | `double_elim` | `2` | `2` | — |
 > | `swiss` | `2` | `2` | `rounds_n=4` |
-> | `racing` | `2` | `1` | `eta=2`, `board_fraction=0.25`, `rung0_board_size=0` |
+> | `racing` | `2` | `1` | `eta=2`, `board_fraction=0.25`, `rung0_board_size=0`, `matchup_budget_seconds`/`final_rung_budget_seconds` (opt-in) |
 >
 > `replicates` defaults are exactly that — DEFAULTS, not floors: an operator
 > may set any `>= 1`. `racing` defaults to `1` because it replicates
 > intrinsically via escalating board slices.
+>
+> Each strategy declares its own `_default_replicates` ClassVar, and the
+> registry derives `STRUCTURE_DEFAULT_REPLICATES` (and
+> `default_replicates_for(structure)`) from those ClassVars — the **single
+> source of truth** for "the default replicates a structure runs when
+> `params["replicates"]` is unset" (`src/zicato/selection/registry.py`). A
+> strategy resolves its own default in `__init__` against the same ClassVar
+> the map reads, so the map and the live strategy can never disagree. The
+> builder cost estimator reads `default_replicates_for` rather than assuming a
+> flat `1`, so the cost meter matches the schedule a structure actually runs
+> (swiss / single-elim / double-elim default to `2`, gauntlet / racing to
+> `1`) — see §4.0 and [`TOURNAMENT-BUILDER.md §4`](TOURNAMENT-BUILDER.md#4-the-consequence-forward-principle).
 
 ### 3.1 `gauntlet` (default — current behaviour, exactly)
 
@@ -335,6 +350,18 @@ the migration target is *byte-for-byte equivalent behaviour* with
   (escalating board slices = escalating sample), which is why this is the
   one bracket-shaped structure `SELECTION.md` endorses for zicato's
   regime.
+- **grind guard (opt-in wall-clock budgets)**: two optional params cap a
+  duel's total board-unit wall-clock. `matchup_budget_seconds` caps **every**
+  duel; `final_rung_budget_seconds` overrides it for the final, full-board
+  crowning duel specifically — the rung that runs the whole board ×
+  `replicates` × both sides and is the pathological grinder (each board may
+  be under its own per-board budget while their sum is unbounded). When
+  `final_rung_budget_seconds` is unset the matchup budget applies to the final
+  duel too; when **both** are unset behaviour is byte-identical to before (no
+  cap). The strategy threads these onto each scheduled `Matchup`
+  (`Matchup.matchup_budget_seconds`); enforcement is the worker's per-run
+  wall-clock cancellation (`RUNTIME.md`, `src/zicato/_tournament_worker.py`).
+  See `src/zicato/selection/strategies/racing.py`.
 
 ### 3.6 Degeneracy and the registry
 
@@ -417,7 +444,9 @@ it). Example — racing with a four-challenger field:
       "replicates": 2,            // paired runs per duel, averaged (§6 noise lever)
       "eta": 2,                   // racing: keep top 1/eta each rung
       "board_fraction": 0.4,      // racing: rung-0 board slice = ceil(fraction · |board|)
-      "rung0_board_size": 0       // racing: 0 ⇒ derive rung-0 size from board_fraction
+      "rung0_board_size": 0,      // racing: 0 ⇒ derive rung-0 size from board_fraction
+      "matchup_budget_seconds": 300,      // racing: opt-in per-duel wall-clock cap (grind guard, §3.5)
+      "final_rung_budget_seconds": 600    // racing: overrides the cap for the final crowning duel
       // swiss instead adds: "rounds_n": 4
     }
   }

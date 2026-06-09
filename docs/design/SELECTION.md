@@ -921,9 +921,11 @@ different places, two opposite statistical stances: be liberal about
 
 ## 10. Configurable per-epoch tournament structures
 
-> **Status.** Design direction, not yet implemented. The full interface
-> spec and the backend implementation plan live in
-> [`TOURNAMENT-STRUCTURES.md`](TOURNAMENT-STRUCTURES.md); this section is
+> **Status.** SHIPPED. The `SelectionStrategy` seam, all five structures
+> (gauntlet · single_elim · double_elim · swiss · racing), the
+> `tournament` contract block, and the CLI surface are in the tree; the
+> full interface spec and reference live in
+> [`TOURNAMENT-STRUCTURES.md`](TOURNAMENT-STRUCTURES.md). This section is
 > the *decision-theory* placement of that work into the rest of this
 > document — which structure approximates which §2/§5/§6 mechanism, and
 > the honesty about noise each one demands.

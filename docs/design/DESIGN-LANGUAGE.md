@@ -664,11 +664,18 @@ docked frame collapses to a normal scrolling single column.
   6-chip `.dt-swatch-strip` preview + a `.dt-cd-caret`) opens a
   `.dt-cd-list` listbox (`role` listbox; options `.dt-cd-option` with
   `aria-selected`; selected name in `--v2-accent`).
-- **Typeface** — `.dt-type-switch`: three inline `.dt-type-btn` (no dropdown,
-  only three options); active button fills `--v2-ink-soft` with `--v2-paper`.
+- **Typeface** — a **grouped popover** (`typefacedropdown.js`): a trigger
+  (current face + a micro-specimen) opens a listbox grouped under three mode
+  headers (Technical · Editorial · Display), each over four real faces (twelve
+  total), every option a true type specimen. The popover also carries an
+  **S/M/L** font-size segmented control (`FONTSIZE_OPTIONS`), orthogonal to the
+  page-scale pill. One shared instance is used identically by the top bar and
+  Settings → Appearance.
 
-Both persist to `localStorage` (`zicato.T.theme`, `zicato.T.typeface`) and drive
-the same `applyTheme` / `applyTypeface` the Settings → Appearance grid uses.
+The theme + typeface persist to `localStorage` (`zicato.T.theme`,
+`zicato.T.typeface`; the size as `zicato.T.fontsize`) and drive the same
+`applyTheme` / `applyTypeface` / `applyFontSize` the Settings → Appearance
+section uses — one source of truth, synced across every live picker.
 
 ---
 

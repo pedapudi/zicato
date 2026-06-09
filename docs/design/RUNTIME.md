@@ -17,14 +17,28 @@ tournaments coexist on one workspace.
 > SIGTERM → grace → SIGKILL, and serves a `/statusz` probe. The live
 > **dashboard is a separate Python (Starlette) service** spawned
 > alongside the watchdog (see [DASHBOARD.md](DASHBOARD.md)) — *not* the
-> Rust binary. Two layers remain **planned**: (1) **subprocess
-> tournament workers** — runs today execute in-process inside the
-> orchestrator under `asyncio.wait_for` budgets (L1), so the per-run
-> `active_runs/{run_id}.json` worker-owned-file model below describes
-> the planned L3 shape; and (2) **orchestrator-side consumption of
-> control commands** — the dashboard writes `control/` files today,
-> but the orchestrator does not yet read them at safe points. The
-> sections describing those two are marked **(planned)** inline.
+> Rust binary. The **subprocess tournament workers (L3) are now
+> SHIPPED**: every board-entry run executes in its own
+> `python -m zicato._tournament_worker` subprocess
+> (`src/zicato/_tournament_worker.py`, spawned by
+> `src/zicato/tournament/runner.py`), which lets a per-run wall-clock
+> budget be **hard-enforced** by killing the process and gives each run
+> a fresh interpreter (no module-cache bleed between generations). One
+> layer remains **planned**: **orchestrator-side consumption of control
+> commands** — the dashboard writes `control/` files today, but the
+> orchestrator does not yet read them at safe points. Sections that
+> still describe a not-yet-shipped shape are marked **(planned)**
+> inline.
+>
+> **Transport fidelity across the worker boundary.** Because scoring
+> now happens *inside* the subprocess, two correctness guarantees keep
+> a worker's verdict identical to an in-process one: the per-epoch
+> `per_judge_weights` survives the args-file transport into the worker
+> (`_tournament_worker._weights_from_args`), so a duel is scored
+> under the same per-judge weighting the parent configured; and the
+> in-run process judges grade against the **real tool-call ledger** the
+> run produced, not a narrated approximation of it (so a board judge
+> like `file_findability` sees what the agent actually did).
 
 The runtime layer is the **production-readiness pass**. The meta-loop
 described in [ARCHITECTURE.md](ARCHITECTURE.md) is correct against
@@ -266,15 +280,16 @@ For every tournament run currently executing, one file. The shipped
 `ActiveRun` dataclass and its read/write helpers live in
 `src/zicato/runtime/state.py`.
 
-> **(Planned: worker ownership.)** The model described here — the
+> **Worker ownership (SHIPPED — L3).** The model described here — the
 > *subprocess worker* that owns the run writes its own status file,
 > independent of the orchestrator, so detection survives an
-> orchestrator-side wedge — is the **L3** shape and is **not yet
-> shipped**. Today runs execute in-process inside the orchestrator's
-> event loop under `asyncio.wait_for` budgets (L1); the orchestrator
-> writes `active_runs/*.json` and bumps `last_progress`. The
-> worker-as-sole-writer story below describes the planned L3 layer (see
-> [ROBUSTNESS.md](ROBUSTNESS.md) §2.3).
+> orchestrator-side wedge — is the **L3** shape and is now **shipped**.
+> The per-run worker (`_tournament_worker.py`) writes
+> `active_runs/{run_id}.json` with `pid = os.getpid()` and bumps
+> `last_progress` from a per-run heartbeat thread
+> (`RunHeartbeatBeater`), removing the file on a clean exit; the
+> orchestrator reaps a worker that died without cleaning up. (See
+> [ROBUSTNESS.md](ROBUSTNESS.md) §2.3.)
 
 As shipped (`ActiveRun`), the file carries:
 
@@ -298,26 +313,28 @@ As shipped (`ActiveRun`), the file carries:
 treats a run whose `last_progress` is older than `--run-stale-kill`
 (default 120s) — or whose `deadline` has passed — as a candidate for
 escalation, independently of whether the orchestrator itself is
-healthy. (In the planned L3 shape, the per-run subprocess worker is the
-one bumping `last_progress`; today it is the orchestrator.)
+healthy. The per-run subprocess worker is the one bumping
+`last_progress` (via its `RunHeartbeatBeater` thread), so the signal
+survives an orchestrator-side wedge.
 
-**File lifecycle (planned L3 shape).**
+**File lifecycle (shipped L3 shape).**
 
 - Created when the worker is spawned (orchestrator does the
-  `Popen`; worker's first action is writing this file).
+  `asyncio.create_subprocess_exec`; the worker's first action is
+  writing this file with its own PID).
 - Updated by the worker as it makes progress.
 - Removed by the worker on clean exit, OR removed by the
   orchestrator if the worker exited without cleaning up (the
   orchestrator reaps zombies and ensures the file matches actual
   process state).
 
-Today (in-process runs) the orchestrator creates, updates
-(`write_active_run` / `touch_active_run_progress`), and removes
-(`remove_active_run`) the file directly.
+The `write_active_run` / `touch_active_run_progress` /
+`remove_active_run` helpers (`runtime/state.py`) are the same writers;
+they now run **inside the worker** rather than in the orchestrator.
 
 **Why a separate file per run, not one big `active_runs.json`.**
-Concurrent writes. Once L3 lands, the orchestrator may launch a fresh
-worker while another worker is updating its own status. One-file-per-run
+Concurrent writes. The orchestrator may launch a fresh worker while
+another worker is updating its own status. One-file-per-run
 means no inter-worker write contention; each worker is the sole
 writer of its own file.
 
@@ -539,9 +556,10 @@ not truncated mid-event) and exit cleanly. SIGKILL is uninterruptible
 — the process is gone immediately and we lose the last few events.
 Always preferring SIGKILL would corrupt the JSONL on every
 escalation; always preferring SIGTERM would leave a truly wedged
-process hanging forever. (In the in-process model shipped today the
-"run's PID" is the orchestrator's; the per-run-process target is the
-planned L3 shape — see [ROBUSTNESS.md](ROBUSTNESS.md) §2.3.)
+process hanging forever. The "run's PID" is the per-run subprocess
+worker's own PID (L3, shipped), so a SIGKILL takes out exactly that one
+run's process and leaves the orchestrator running — see
+[ROBUSTNESS.md](ROBUSTNESS.md) §2.3.
 
 **Why the supervisor, not the orchestrator, owns escalation.** The
 orchestrator IS a Python process; a wedge in the orchestrator
@@ -599,7 +617,7 @@ Inside `.zicato/runtime/` the writer rules are strict:
 | `heartbeat.json` | orchestrator | supervisor, dashboard |
 | `dashboard.json` | dashboard service | orchestrator (URL readback) |
 | `active_tournament.json` | orchestrator | supervisor, dashboard |
-| `active_runs/{run_id}.json` | orchestrator (planned: the **worker** that owns `run_id`) | supervisor, dashboard |
+| `active_runs/{run_id}.json` | the per-run subprocess **worker** that owns `run_id` (shipped L3); orchestrator only reaps a dead worker's file | supervisor, dashboard |
 | `control/<command>` | dashboard service | orchestrator (planned consumer) |
 | `control_log/*` | orchestrator (planned: on consume) | dashboard |
 
@@ -613,15 +631,14 @@ correctness in a multi-process system is hard. By making every
 file single-writer, we get correctness for free at the cost of
 some redundancy.
 
-**Workers writing their own files: why this is safe (planned L3).**
-A worker would ONLY write `active_runs/{run_id}.json` for the run it
+**Workers writing their own files: why this is safe (shipped L3).**
+A worker ONLY writes `active_runs/{run_id}.json` for the run it
 owns. Workers do not share files. The orchestrator may DELETE a
 worker's file (when reaping a dead worker), but does not write to a
 file a live worker owns. The only race window is "worker just deleted
 its own file because it finished, orchestrator reads the file expecting
 it to still exist" — and the orchestrator handles ENOENT as a normal
-terminal state, not an error. Today, with in-process runs, the
-orchestrator is the sole writer of these files.
+terminal state, not an error.
 
 ## 4. Resume semantics
 
@@ -713,19 +730,23 @@ that is still alive gets SIGTERM → SIGKILL (skipping the grace
 period; the run is being abandoned). Any PID that's already dead
 gets noted in the audit log.
 
-## 5. Worker subprocesses (planned — L3)
+## 5. Worker subprocesses (SHIPPED — L3)
 
-> **Not shipped today.** This section specifies the **L3 subprocess
-> worker** layer, which is **planned, not yet shipped**. As shipped,
-> the orchestrator runs each tournament run **in-process** in its own
-> event loop under `asyncio.wait_for` budgets (L1; see
-> [ROBUSTNESS.md](ROBUSTNESS.md) §2.1). There is no `zicato _worker`
-> subcommand yet. The design below is the target shape.
+> **Shipped.** The **L3 subprocess worker** is in the tree:
+> `src/zicato/_tournament_worker.py`, spawned per board-entry run by
+> `src/zicato/tournament/runner.py`. Each run executes in its own OS
+> process, so a per-run wall-clock budget can be **hard-enforced** by
+> killing the process — the only reliable defense against a
+> GIL-wedged or infinite-looping inner harness (§5.1). The shipped
+> invocation differs from the original plan below in one respect: it is
+> not a `zicato _worker` subcommand with flags but a module entry point
+> taking a single JSON **args file** (`python -m
+> zicato._tournament_worker <args-file.json>`); §5.2 is updated to that
+> shape, the rest of the section describes the live behaviour.
 
-The orchestrator will run each tournament run in a **subprocess
-worker** (Python, spawned via `multiprocessing` or
-`subprocess.Popen` depending on platform — see
-[ROBUSTNESS.md](ROBUSTNESS.md) §2.3 for the choice). One worker per
+The orchestrator runs each tournament run in a **subprocess worker**
+(Python, spawned via `asyncio.create_subprocess_exec` of
+`python -m zicato._tournament_worker`). One worker per
 (generation, entry) pair; the parent and candidate sides of one
 entry are two workers.
 
@@ -743,20 +764,19 @@ This is non-negotiable for production. See
 
 ### 5.2 Worker contract
 
-A worker is invoked as a CLI subcommand:
+A worker is invoked as a module entry point taking a single JSON
+**args file** — `_run_single` (`runner.py`) serialises one run's
+inputs (run id, generation, entry, side, snapshot root, the scoring
+weights incl. `per_judge_weights`, the wall-clock budget, the adapter
+spec, the harmonograf URL/gRPC dial, …) to a temp file and spawns:
 
 ```
-zicato _worker
-    --run-id <run_id>
-    --generation <v_N>
-    --entry-id <entry_id>
-    --side {parent|candidate}
-    --runtime-dir <.zicato/runtime/>
-    --workspace <.zicato/>
+python -m zicato._tournament_worker <args-file.json>
 ```
 
-The worker's first action is writing `active_runs/{run_id}.json`
-with its own PID. The worker then:
+via `asyncio.create_subprocess_exec(sys.executable, ...)`. The worker's
+first action is writing `active_runs/{run_id}.json` with its own PID.
+The worker then:
 
 1. Loads the generation's snapshot.
 2. Instantiates the adapter (see §5.4 below).
@@ -786,6 +806,17 @@ orchestrator health.
 | SIGTERM from supervisor | runs cleanup, emits `RunAborted(killed)`, exit | `phase: "killed"`, cause: `supervisor_sigterm` |
 | SIGKILL from supervisor | no cleanup; process gone | `phase: "agent_running"` — orchestrator reaps and re-stamps to `killed`, cause: `supervisor_sigkill` |
 | `kill_runs/{run_id}` from dashboard | orchestrator forwards SIGTERM to worker | same as SIGTERM path |
+
+**Where the per-run budget comes from.** Each run carries a
+`wall_clock_budget_seconds` in its args file, and the worker enforces
+it by self-aborting (and the supervisor backstops via the `deadline`).
+That budget is normally the per-call/per-run default, but the `racing`
+structure can tighten it per duel: its opt-in `matchup_budget_seconds`
+/ `final_rung_budget_seconds` params (the **grind guard**,
+[TOURNAMENT-STRUCTURES.md §3.5](TOURNAMENT-STRUCTURES.md#35-racing-the-endorsed-bracket-shaped-option))
+ride on each scheduled `Matchup` and become the board-unit budget the
+worker enforces — so the final full-board crowning duel, the
+pathological grinder, can be capped without capping every duel.
 
 The dashboard's "kill" button writes `control/kill_runs/{run_id}`;
 the orchestrator notices the file at the next safe point (in this
@@ -877,7 +908,7 @@ mapping; this section is the runtime-layer-specific phasing.
 | Phase | What lands |
 |---|---|
 | **v1** | `.zicato/runtime/lock.json`, `heartbeat.json` (live, written by `HeartbeatBeater`), `asyncio.wait_for` per-call timeouts. **Shipped today.** |
-| **v1.1** | Full `.zicato/runtime/` layout + atomic writes. Rust watchdog supervisor (watchdog role only) auto-spawned by `evolve`. SIGTERM → grace → SIGKILL escalation. **Shipped today**, *except* subprocess workers, the resume protocol, and `zicato status` / `zicato kill`, which remain **planned**. |
+| **v1.1** | Full `.zicato/runtime/` layout + atomic writes. Rust watchdog supervisor (watchdog role only) auto-spawned by `evolve`. SIGTERM → grace → SIGKILL escalation. **Subprocess tournament workers (L3) with hard per-run wall-clock budgets are shipped** (`_tournament_worker.py`). The resume protocol and `zicato status` / `zicato kill` remain **planned**. |
 | **v1.2** | Live dashboard, served as a **separate Python service** (HTTP + SSE), auto-spawned by `evolve`. **Shipped today** (the dashboard split out of the Rust binary into its own service). |
 | **v1.3** | Interactive dashboard controls. The dashboard's POST control endpoints and the control-file *write* side are **shipped**; the orchestrator's *consumption* of `control/` at safe points and the `control_log/` audit are **planned**. |
 

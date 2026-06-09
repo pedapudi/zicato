@@ -4,9 +4,9 @@
 > `zicato/builder/{config,draft,operations,api,copilot,copilot_tools}.py`; the
 > frontend is a self-contained Console view
 > (`dashboard/static/js/variants/T/views/builder.js` + `…/builder/*`); the
-> launch surfaces are the dashboard `#/builder` deep-link, the dashboard
-> Settings panel (`…/views/settings.js`), and the standalone `zicato builder`
-> CLI (`zicato/cli/commands/builder.py`). The whole stack is exercised by the
+> launch surfaces are the dashboard's first-class `#/builder` view, a launcher
+> rail entry in the Settings drawer (`…/views/settings.js`), and the standalone
+> `zicato builder` CLI (`zicato/cli/commands/builder.py`). The whole stack is exercised by the
 > test suite (`tests/test_builder_*.py`, the JS `builder.test.mjs` /
 > `settings.test.mjs`, `tests/test_cli_builder.py`). Operator-facing how-to
 > lives in the two builder skills.
@@ -36,19 +36,27 @@ There is exactly **one** builder view component
 (`views/builder.js`). It is deliberately self-contained — `render(host)` takes
 nothing but a host element, owns its own shared session draft, and never reads
 the tree, the route params, or the breadcrumb. That self-containment is what
-lets the same component be reached from three doors without a rewrite:
+lets the same component be reached from three doors without a rewrite. The
+builder is now its **own first-class view** rendered FULL-WIDTH in the main view
+host (`#/builder` is a top-level route returning `{view: "builder"}`, not a
+Settings section — `js/variants/T/router.js`); the prior nesting inside Settings
+gave it a cramped double-railed centre, so it was promoted out and Settings
+keeps only a **launcher** to it:
 
 | Door | Route / entry | What it does |
 |---|---|---|
-| **Settings panel** | top-bar **⚙ settings** → *Tournament builder* section | The flagship home. The Settings surface (`views/settings.js`) is a section rail (Tournament builder · Contract · Builder assistant · Appearance · Dashboard) over one body host; the builder section hands that host straight to `builder.render(host)`. |
-| **Deep-link** | `#/builder` | The router resolves `#/builder` into `settings/builder`, so the canonical deep-link still works and opens the surface already focused on the builder. |
+| **First-class view** | top-bar nav → **builder**, or `#/builder` | The flagship home. `#/builder` resolves to the builder view directly and paints full-width in the main host. The same route-agnostic `builder.render(host)` backs every door. |
+| **Settings launcher** | top-bar **⚙ settings** → *Tournament builder* rail entry | The Settings drawer (`views/settings.js`) is a section rail (Tournament builder · Contract · Models · Appearance) over one body host. The *Tournament builder* entry is a **launcher** — it does not swap a section; it navigates OUT to `#/builder` so the builder always renders full-width. |
 | **Standalone CLI** | `zicato builder` | Boots the same dashboard service as `zicato dashboard` and prints the builder deep-link (`http://127.0.0.1:<port>/#/builder`) so the browser opens on the builder. Loopback-only, same bind rule as `zicato dashboard` / `zicato evolve`. |
 
-The Settings panel does **not** reimplement the builder; it re-homes it. The
-contract section beside it is a **read-only at-a-glance** of the current epoch's
-board · brief · scoring · proposer · overfitting (sourced from `/api/epoch`),
-with every row linking *into* the builder to edit — so the panel reads as
-"here is the contract, here is where you change it."
+Settings does **not** reimplement the builder; it launches it. Its **Contract**
+section is a **read-only at-a-glance** of the current epoch's contract that
+*reuses the builder's own live preview* (`builder/preview.js` `previewNodes`
+fed the current epoch as a draft-shaped contract), rendered read-only — so the
+panel reads as "here is the contract as the builder would show it; click out to
+the builder to change it." The Settings surface itself is now a routed
+right-side **drawer overlay** that paints over the current view (DASHBOARD /
+variant-T), not a full page.
 
 ---
 
@@ -120,10 +128,14 @@ records how the copilot reaches a model:
 **Secret safety is structural.** `to_public_dict` — the only surface the REST
 layer serializes — carries the API-key *environment-variable name* through but
 never resolves it, so a credential can never leak to the UI. The Settings
-panel's *Builder assistant* section surfaces exactly that: the model name, the
-endpoint, the `api_key_env` **name**, the `chat_enabled` flag, and the composed
-builder skills — and nothing that could be a secret value. An absent or
-empty-model `builder.json` simply disables chat; the form keeps working.
+drawer's *Models* section (which generalised the former read-only "Builder
+assistant" read-out into an editable per-role config for harness · auxiliary ·
+**builder** · judge, backed by the secret-safe `GET/POST /settings/models`)
+surfaces exactly that for the builder role: the model name, the endpoint, and
+the `api_key_env` **name** plus a set/unset indicator — never a secret value
+(`api_key_env` is a NAME). An absent or empty-model `builder.json` simply
+disables chat; the form keeps working. A model / endpoint is runtime infra, so
+editing it here does **not** roll the epoch.
 
 ---
 
@@ -134,7 +146,13 @@ Every authoring choice is annotated with its downstream cost before commit:
 * **Cost.** The live preview's cost meter shows board-runs per round, broken
   down per contributing factor (field size × board size × replicates, holdout
   re-scoring, …), so an operator sees the compute a structure/field choice
-  implies as they make it.
+  implies as they make it. The replicates factor uses the **per-structure
+  default** (`default_replicates_for` / `STRUCTURE_DEFAULT_REPLICATES`, the
+  single source of truth — swiss / single-elim / double-elim = 2, gauntlet /
+  racing = 1) when the draft leaves `replicates` unset, rather than assuming a
+  flat 1, so the meter matches the schedule a structure actually runs (the
+  under-reporting bug class). See
+  [`TOURNAMENT-STRUCTURES.md §3`](TOURNAMENT-STRUCTURES.md#3-the-five-concrete-strategies).
 * **Contract impact.** The impact pill states whether applying the current
   draft **rolls the epoch** and which components changed; a draft that touches
   nothing contract-relevant reads "no contract change."
@@ -150,10 +168,10 @@ epoch-roll before apply, every time.
 
 ## 5. Theming carry-over
 
-The builder and the Settings panel use **theme tokens only** (`--v2-*` and the
+The builder and the Settings drawer use **theme tokens only** (`--v2-*` and the
 `--zicato-accent` brand token), so they inherit the dashboard's active colour
 theme and typeface with no separate styling. The Appearance section of the
-Settings panel surfaces the active colour theme and typeface and points at the
+Settings drawer surfaces the active colour theme and typeface and points at the
 persistent top-bar pickers rather than duplicating them — one source of truth
 for theme, carried across every view including the builder. `builder.json` may
 carry an optional `theme` hint, but the live UI defers to the operator's
