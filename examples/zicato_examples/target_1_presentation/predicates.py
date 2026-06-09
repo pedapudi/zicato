@@ -19,6 +19,7 @@ contract.
 
 from __future__ import annotations
 
+# zicato:grading — operator-owned pass/fail contract; never a proposer mutation point.
 from typing import Any
 
 

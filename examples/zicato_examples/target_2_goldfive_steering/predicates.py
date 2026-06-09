@@ -36,6 +36,7 @@ Three predicates live here:
 
 from __future__ import annotations
 
+# zicato:grading — operator-owned pass/fail contract; never a proposer mutation point.
 from zicato.core import RunResult
 
 

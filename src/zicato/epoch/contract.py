@@ -115,13 +115,57 @@ def _canon_board(board_path: Path) -> str:
 
     entries = load_board(board_path)
     canon_entries = [
-        json.dumps(_entry_to_dict(entry), sort_keys=True, ensure_ascii=False)
+        json.dumps(
+            _fold_entry_grading_source(_entry_to_dict(entry)),
+            sort_keys=True,
+            ensure_ascii=False,
+        )
         for entry in sorted(entries, key=lambda e: e.id)
     ]
     meta = _canon_board_meta(board_path)
     # Prepend the board-level metadata line so it participates in the
     # hash; the leading marker keeps it from colliding with an entry row.
     return "\n".join(["\x00board-meta\x00" + meta, *canon_entries])
+
+
+def _fold_entry_grading_source(entry: dict[str, object]) -> dict[str, object]:
+    """Fold the source hash of an entry's operator-grading dotted specs in.
+
+    Augments the serialized entry dict so editing a referenced PREDICATE or
+    PYTHON-mode per-entry JUDGE's source — not only swapping its dotted string —
+    rolls the contract hash (issue #19 cross-cutting #1, the ONE source-hashing
+    mechanism, aligned with the scoring plugins):
+
+    * an ``expectation`` of ``kind == "predicate"`` has a dotted ``spec``; a
+      ``"spec_source"`` key is added carrying its source hash;
+    * each per-entry ``judges`` entry with ``mode == "python"`` has a dotted
+      ``body``; a ``"body_source"`` key is added carrying its source hash.
+
+    Non-predicate expectations (text / regex / json_schema / rubric specs are not
+    dotted plugins) and inline judges are left untouched, so a board that names
+    no plugin canonicalizes byte-for-byte as before. Operates on a copy of the
+    nested dicts so the round-trip serializer (``_entry_to_dict``) is unaffected.
+    """
+    out = dict(entry)
+    exp = out.get("expectation")
+    if isinstance(exp, Mapping) and exp.get("kind") == "predicate":
+        spec = exp.get("spec")
+        new_exp = dict(exp)
+        new_exp["spec_source"] = _canon_dotted_spec(spec if isinstance(spec, str) else "")
+        out["expectation"] = new_exp
+    judges = out.get("judges")
+    if isinstance(judges, list):
+        new_judges: list[object] = []
+        for j in judges:
+            if isinstance(j, Mapping) and j.get("mode") == "python":
+                nj = dict(j)
+                body = nj.get("body")
+                nj["body_source"] = _canon_dotted_spec(body if isinstance(body, str) else "")
+                new_judges.append(nj)
+            else:
+                new_judges.append(j)
+        out["judges"] = new_judges
+    return out
 
 
 def _canon_board_meta(board_path: Path) -> str:
@@ -216,19 +260,50 @@ def _scan_raw_board_meta(board_path: Path) -> tuple[object, bool, bool]:
     return judges, disable_drift, judge_only
 
 
+def _canon_dotted_spec(spec: str) -> dict[str, object]:
+    """Canonical form of ONE operator-grading dotted spec, with source hash.
+
+    The single source-hashing mechanism every grading plugin shares (issue #19
+    cross-cutting #1): expands a dotted spec into
+    ``{"spec": <dotted>, "source_sha256": <hash-or-null>}`` via
+    :func:`zicato.scoring.plugins.spec_with_source_hash`, so editing the
+    resolved plugin's BODY rolls the contract hash, not only swapping the spec
+    string. Applied uniformly to the scoring ``scalar_fn`` / ``drift_reducer`` /
+    ``outcome_summarizer_spec`` AND the board predicates / judges.
+
+    An empty / non-string spec expands to ``{"spec": "", "source_sha256":
+    null}`` — byte-identical to "no plugin" — so a board / contract that names
+    no plugin canonicalizes exactly as before this alignment.
+    """
+    from zicato.scoring.plugins import spec_with_source_hash  # noqa: PLC0415
+
+    if not isinstance(spec, str) or not spec:
+        return {"spec": "", "source_sha256": None}
+    return dict(spec_with_source_hash(spec))
+
+
 def _canon_judges(judges: object) -> object:
     """Reduce the board's ``judges`` to a stable, order-independent form.
 
     Each judge is normalized to a sorted-key dict; the list is then
     sorted by its serialized form so judge declaration order does not
     move the hash. Adding, removing, or editing a judge does.
+
+    A PYTHON-mode judge (``mode == "python"``) points its ``body`` at an
+    operator dotted spec; that body is expanded via :func:`_canon_dotted_spec`
+    so editing the judge's SOURCE — not only swapping the dotted string — rolls
+    the epoch (issue #19 cross-cutting #1, the ONE source-hashing mechanism). A
+    non-python judge (inline criterion) is hashed verbatim as before.
     """
     if not isinstance(judges, list | tuple):
         return judges
     normalized: list[object] = []
     for judge in judges:
         if isinstance(judge, Mapping):
-            normalized.append({str(k): judge[k] for k in sorted(judge, key=str)})
+            norm = {str(k): judge[k] for k in sorted(judge, key=str)}
+            if norm.get("mode") == "python" and isinstance(norm.get("body"), str):
+                norm["body_source"] = _canon_dotted_spec(norm["body"])
+            normalized.append(norm)
         else:
             normalized.append(judge)
     normalized.sort(key=lambda j: json.dumps(j, sort_keys=True, ensure_ascii=False, default=str))
@@ -290,19 +365,41 @@ def _canon_scoring(scoring_path: Path) -> str:
     return json.dumps(_round_floats(_scoring_to_canon(weights)), sort_keys=True)
 
 
+#: ``ScoringWeights`` fields that carry a dotted-spec pointing at an operator
+#: GRADING plugin (resolved by the shared importer). The canonicalizer expands
+#: each into ``{"spec": ..., "source_sha256": ...}`` via
+#: :func:`zicato.scoring.plugins.spec_with_source_hash` so editing the plugin
+#: BODY rolls the epoch, not only swapping the spec string — the ONE
+#: source-hashing mechanism every grading plugin (scoring + predicates + judges)
+#: shares (issue #19 cross-cutting #1). An empty string expands to a null source
+#: hash, so a contract with no plugin canonicalizes identically to before.
+_SCORING_PLUGIN_SPEC_FIELDS: frozenset[str] = frozenset(
+    {"scalar_fn", "drift_reducer", "outcome_summarizer_spec"}
+)
+
+
 def _scoring_to_canon(weights: object) -> dict[str, object]:
     """Reduce a :class:`ScoringWeights` to a plain JSON-shaped dict.
 
     Every public field is included so the canonical form is complete
     and independent of which fields the operator spelled out in their
     ``scoring.json``.
+
+    The dotted-spec GRADING-plugin fields (:data:`_SCORING_PLUGIN_SPEC_FIELDS`)
+    are NOT folded in as bare strings: each is expanded to
+    ``{"spec": ..., "source_sha256": ...}`` so editing the resolved plugin's
+    source rolls the contract hash (issue #19 cross-cutting #1). This shares the
+    SAME mechanism the board predicates / judges use (see
+    :func:`_canon_dotted_spec`).
     """
     from dataclasses import fields, is_dataclass
 
     out: dict[str, object] = {}
     for f in fields(weights):  # type: ignore[arg-type]
         value = getattr(weights, f.name)
-        if is_dataclass(value) and not isinstance(value, type):
+        if f.name in _SCORING_PLUGIN_SPEC_FIELDS:
+            out[f.name] = _canon_dotted_spec(value if isinstance(value, str) else "")
+        elif is_dataclass(value) and not isinstance(value, type):
             # A nested frozen dataclass field (e.g. the tournament
             # structure). Recurse so it canonicalizes structurally —
             # its `params` mapping is dict-ified, lists become lists —

@@ -38,7 +38,7 @@ import logging
 from pathlib import Path
 
 from zicato.core.types import MutationPoint
-from zicato.mutation.markers import is_end_marker, parse_marker_line
+from zicato.mutation.markers import is_end_marker, is_grading_marker, parse_marker_line
 
 _log = logging.getLogger(__name__)
 
@@ -114,6 +114,20 @@ def _enumerate_file(file_path: Path, source_root: Path) -> list[MutationPoint]:
     for line_start, line_end, _node in literal_spans:
         for line_no in range(line_start, line_end + 1):
             literal_line_set.add(line_no)
+
+    # Operator-grading guard (issue #19 phase 3): a file declaring itself
+    # operator-owned grading code — predicates, judges, or the scoring
+    # ``scalar_fn`` / ``drift_reducer`` plugins — via a ``# zicato:grading``
+    # sentinel is skipped WHOLESALE. The proposer never gets to rewrite the
+    # operator's grading, so such a file contributes ZERO mutation points even
+    # if it also carries ``# zicato:mutable`` markers. The sentinel is honoured
+    # only on a real code line (not inside a docstring example), mirroring how
+    # mutable markers are resolved.
+    for line_idx, raw_line in enumerate(lines):
+        if line_idx + 1 in literal_line_set:
+            continue
+        if is_grading_marker(raw_line.rstrip("\n").rstrip("\r")):
+            return []
 
     # Walk markers in source order so file-level (top-of-module) markers
     # are emitted before span markers within the same file. The index is

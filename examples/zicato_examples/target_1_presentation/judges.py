@@ -96,6 +96,7 @@ judge should.
 
 from __future__ import annotations
 
+# zicato:grading — operator-owned process judges; never a proposer mutation point.
 import json
 from typing import TYPE_CHECKING, Any
 
