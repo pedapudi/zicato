@@ -18,7 +18,7 @@ import { el, clearChildren } from '../../../core/dom.js';
 import { state } from '../../../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, section, empty, stat, normaliseDecision, decisionFor, densityTokens } from '../ui.js';
+import { gatedSwap, section, empty, stat, normaliseDecision, decisionFor, densityTokens, prText, metricsDigest, scoreFmt } from '../ui.js';
 
 // In-flight board-units for THIS entry, read from /api/active-runs (folded
 // into AppState by /api/environment). Each carries a generation_id / run_id /
@@ -118,6 +118,10 @@ export async function render(host, ctx, params) {
       gen: g.id, promoted: g.promoted, parent: g.parent,
       loss: r && svg.isNum(r.drift_loss) ? r.drift_loss : NaN,
       pass: r ? r.pass_fail : null,
+      // continuous per-entry outcome + its precision/recall decomposition (#18);
+      // null/absent on a bool-only run — the row then shows just pass/fail.
+      score: r && svg.isNum(r.score) ? r.score : null,
+      metrics: (r && r.metrics) || null,
       timeout: r ? !!r.wall_clock_budget_exceeded : false,
       // Prefer the per-entry run_id (the scored record); fall back to the live
       // active-run's run_id so a RUNNING candidate's transcript resolves.
@@ -186,7 +190,10 @@ export async function render(host, ctx, params) {
     epochId, entryId, selGen,
     def: def ? [def.kind, def.weight, def.budget_s] : null,
     champ: championId,
-    rows: rows.map((r) => [r.gen, svg.isNum(r.loss) ? r.loss.toFixed(3) : null, r.pass, r.timeout, r.promoted, r.runId, !!r.running, !!r.cached, r.sourceEpoch || null]),
+    // rows fold the continuous score + its precision/recall metrics (#18) so a
+    // scored board repaints when a score moves; a bool-only row contributes
+    // null for both (back-compat: digest unchanged vs the pre-score path).
+    rows: rows.map((r) => [r.gen, svg.isNum(r.loss) ? r.loss.toFixed(3) : null, r.pass, r.timeout, r.promoted, r.runId, !!r.running, !!r.cached, r.sourceEpoch || null, svg.isNum(r.score) ? r.score.toFixed(3) : null, metricsDigest(r.metrics)]),
     inflight: inflight.map((r) => {
       const pr = progressRatio(r);
       return [r.generation_id || r.gen || null, r.run_id || null, pr != null ? pr.toFixed(2) : null];
@@ -313,10 +320,17 @@ export async function render(host, ctx, params) {
     // tabular breakdown — rows select the inline transcript (no route away).
     const tblCard = el('div', { class: 'dn-panel' });
     const tbl = el('table', { class: 'dn-board-table' });
+    // the continuous-score column (#18) only appears when AT LEAST ONE
+    // candidate scored this board; a wholly bool-only board keeps the
+    // pre-score column set so the table reads exactly as before.
+    const anyScored = rows.some((r) => svg.isNum(r.score));
     tbl.appendChild(el('thead', null, [el('tr', null, [
       el('th', { text: 'candidate' }), el('th', { class: 'dn-num', text: 'drift loss' }),
-      el('th', { text: 'predicate' }), el('th', { text: 'budget' }), el('th', { text: 'transcript' }),
-    ])]));
+      el('th', { text: 'predicate' }),
+      anyScored ? el('th', { class: 'dn-num', text: 'score' }) : null,
+      anyScored ? el('th', { text: 'P / R' }) : null,
+      el('th', { text: 'budget' }), el('th', { text: 'transcript' }),
+    ].filter(Boolean))]));
     const tbody = el('tbody');
     for (const r of rows.slice().sort((a, b) => (svg.isNum(b.loss) ? b.loss : -1) - (svg.isNum(a.loss) ? a.loss : -1))) {
       const isSel = r.gen === selGen;
@@ -331,6 +345,11 @@ export async function render(host, ctx, params) {
         ].filter(Boolean)),
         el('td', { class: 'dn-num dn-mono', text: svg.isNum(r.loss) ? svg.fmt(r.loss, 1) : (r.running ? 'running' : '—') }),
         el('td', { class: passClass(r.pass), text: r.running && !r.ran ? 'live' : passLabel(r.pass) }),
+        // continuous score + precision/recall (#18): only when this board has
+        // a scored candidate. A bool-only row leaves these cells '—' / '·'
+        // beside its pass/fail predicate above (which stays the verdict).
+        anyScored ? el('td', { class: 'dn-num dn-mono dn-score-cell', text: svg.isNum(r.score) ? scoreFmt(r.score, 2) : '—' }) : null,
+        anyScored ? el('td', { class: 'dn-mono dn-faint dn-pr-cell', text: prText(r.metrics) || '·' }) : null,
         el('td', { class: 'dn-mono', text: r.timeout ? 'timed out' : 'ok' }),
         el('td', null, [selectable
           // TOGGLE: an already-selected candidate's button collapses its inline

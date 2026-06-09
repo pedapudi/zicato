@@ -316,7 +316,14 @@ def test_bundle_under_size_envelope(
     # labels (CSS-only, not in this counted bundle). The de-collide logic is net
     # ~2 KB; the prior 1.06 MB line already sat ~2 KB under it, so the envelope is
     # nudged to 1.062 MB to clear the de-collide pass with a thin margin.
-    assert total < 1_062_000, f"bundle is {total} bytes, exceeds 1_062_000 envelope"
+    #
+    # The CONTINUOUS PER-ENTRY SCORE surface (#18) then adds the per-board score
+    # column to the candidate dumbbell (a 0→1 mini-bar + readout + the P/R tag),
+    # the score + precision/recall columns to the board breakdown table, the
+    # per-generation mean-score caption, three shared ui.js helpers (prText /
+    # metricsDigest / scoreFmt), and their scoped score CSS — ~5 KB of new
+    # surface. The envelope is raised to 1.072 MB to cover it with headroom.
+    assert total < 1_072_000, f"bundle is {total} bytes, exceeds 1_072_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

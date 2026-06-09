@@ -9003,4 +9003,186 @@ test('radar mini: a mini radar suppresses tip labels (too small) but its vertice
   assert(allByClass(node, 'dn-radar-hot').length >= 3, 'the mini radar still exposes hover-able axis vertices');
 });
 
+// ====================================================================
+// #18 — continuous per-entry score + precision/recall surfaced on the
+// candidate dossier + board view, degrading cleanly to pass/fail when the
+// score / metrics are absent (back-compat).
+// ====================================================================
+
+// ---- the shared ui.js helpers --------------------------------------
+
+test('#18 ui.prText: P / R tag from a metrics map; empty for the bool-only path', () => {
+  assertEqual(ui.prText({ precision: 0.70, recall: 0.55 }), 'P 0.70 / R 0.55', 'both axes present');
+  assertEqual(ui.prText({ precision: 0.70 }), 'P 0.70', 'precision only');
+  assertEqual(ui.prText({ recall: 0.55 }), 'R 0.55', 'recall only');
+  assertEqual(ui.prText({ f1: 0.9 }), '', 'a non-P/R metric does NOT produce a P/R tag');
+  assertEqual(ui.prText(null), '', 'no metrics → empty (bool-only path)');
+  assertEqual(ui.prText({ precision: 'x' }), '', 'a non-finite metric is dropped');
+});
+
+test('#18 ui.metricsDigest: stable, sorted, null when absent (folds into a content digest)', () => {
+  assertDeep(ui.metricsDigest({ recall: 0.5, precision: 0.9 }), [['precision', '0.900'], ['recall', '0.500']],
+    'keys are sorted + rounded for a stable digest');
+  assertEqual(ui.metricsDigest(null), null, 'no metrics → null (digest unchanged vs the pre-score path)');
+  assertEqual(ui.metricsDigest({}), null, 'an empty map → null');
+});
+
+test('#18 ui.scoreFmt: finite score formats; absent score reads "—"', () => {
+  assertEqual(ui.scoreFmt(0.6234, 2), '0.62', 'a finite score formats to N decimals');
+  assertEqual(ui.scoreFmt(null), '—', 'an absent score reads em-dash');
+  assertEqual(ui.scoreFmt(NaN), '—', 'NaN reads em-dash (the non-finite guard)');
+});
+
+// A scored fixture: v1 carries a CONTINUOUS score + precision/recall on
+// waffles_single and a BOOL-ONLY entry on picky (no score / metrics).
+function scoredFixture() {
+  const F = { ...FIXTURE };
+  F[`/api/generation/${EPOCH_ID}/v1/per-entry`] = {
+    epoch_id: EPOCH_ID, generation_id: 'v1', mean_score: 0.71, entries: [
+      { entry_id: 'waffles_single', run_id: 'run_v1_waffles', drift_loss: 60.5, pass_fail: 1,
+        runtime_ms: 180000, wall_clock_budget_exceeded: false,
+        score: 0.81, metrics: { precision: 0.88, recall: 0.74 } },
+      // bool-only entry: no score / metrics — must keep the pass/fail display.
+      { entry_id: 'picky_stakeholder_emulated', run_id: 'run_v1_picky', drift_loss: 105.5,
+        pass_fail: 0, runtime_ms: 360000, wall_clock_budget_exceeded: false },
+    ],
+  };
+  // champion v0 also has a scored waffles + a bool-only picky.
+  F[`/api/generation/${EPOCH_ID}/v0/per-entry`] = {
+    epoch_id: EPOCH_ID, generation_id: 'v0', mean_score: 0.62, entries: [
+      { entry_id: 'waffles_single', run_id: 'run_v0_waffles', drift_loss: 70.0, pass_fail: 1,
+        runtime_ms: 180000, wall_clock_budget_exceeded: false,
+        score: 0.62, metrics: { precision: 0.70, recall: 0.55 } },
+      { entry_id: 'picky_stakeholder_emulated', run_id: 'run_v0_picky', drift_loss: 99.0,
+        pass_fail: 1, runtime_ms: 360000, wall_clock_budget_exceeded: false },
+    ],
+  };
+  return F;
+}
+
+// ---- candidate dossier --------------------------------------------
+
+test('#18 candidate dossier: a scored entry shows the 0–1 score bar + P/R; the mean-score caption reads', async () => {
+  freshState(); installFixtureMap(scoredFixture());
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
+  const dot = svgsByClass(host, 'dn-dumbbell')[0];
+  assert(dot, 'the per-board dumbbell rendered');
+  // the score column draws a 0→1 track + fill + readout for the SCORED row.
+  assert(allByClass(dot, 'dn-score-track').length >= 1, 'a scored row draws the 0→1 score track');
+  assert(allByClass(dot, 'dn-score-fill').length >= 1, 'a scored row draws the score fill');
+  const vals = allByClass(dot, 'dn-score-val').map((t) => (t.textContent || '').trim());
+  assert(vals.includes('0.81'), 'the candidate score 0.81 is read out in the dumbbell');
+  // the precision/recall tag rides one faint line below the bar.
+  const pr = allByClass(dot, 'dn-score-pr').map((t) => (t.textContent || '').trim());
+  assert(pr.some((t) => t === 'P 0.88 / R 0.74'), 'the P/R decomposition surfaces on the scored row');
+  // the per-generation mean-score caption reads beneath the dumbbell.
+  assert(host.textContent.includes('mean score'), 'the per-generation mean-score caption renders');
+  const ms = allByClass(host, 'dn-meanscore-val')[0];
+  assert(ms && (ms.textContent || '').trim() === '0.71', 'the mean score 0.71 is shown');
+});
+
+test('#18 candidate dossier: a BOOL-ONLY board keeps its ✓/✗ — no score column when nothing scored', async () => {
+  freshState(); installFetch();   // the BASE fixture: no score / metrics anywhere.
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
+  const dot = svgsByClass(host, 'dn-dumbbell')[0];
+  assert(dot, 'the dumbbell still renders on the pre-score path');
+  // NO score column: a wholly bool-only dumbbell draws no score track / fill / val.
+  assertEqual(allByClass(dot, 'dn-score-track').length, 0, 'no score track on a bool-only board (back-compat)');
+  assertEqual(allByClass(dot, 'dn-score-val').length, 0, 'no score readout on a bool-only board');
+  assertEqual(allByClass(dot, 'dn-score-pr').length, 0, 'no P/R tag on a bool-only board');
+  // the pre-score right-edge glyph layer is unchanged (the base v1 fixture rows
+  // are timeouts → ⏱; a non-timeout bool row would draw the ✓/✗ instead).
+  assert(allByClass(dot, 'dn-dumbbell-timeout').length >= 1
+    || allByClass(dot, 'dn-dumbbell-fail').length >= 1
+    || allByClass(dot, 'dn-dumbbell-pass').length >= 1,
+    'the pre-score pass/fail/timeout glyph layer still renders (unchanged)');
+  // and no mean-score caption when the payload carries no mean_score.
+  assert(!host.textContent.includes('mean score'), 'no mean-score caption on the pre-score path');
+});
+
+// ---- candidate digest gating ---------------------------------------
+
+test('#18 candidate digest: a no-op heartbeat over a SCORED dossier churns NO DOM', async () => {
+  freshState(); installFixtureMap(scoredFixture());
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
+  const digest1 = host.getAttribute('data-t-digest');
+  const first = host.firstChild;
+  const writes1 = host.innerHTMLWriteCount();
+  await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
+  assertEqual(host.getAttribute('data-t-digest'), digest1, 'digest unchanged on a no-op beat over a scored dossier');
+  assert(host.firstChild === first, 'no clear-and-rebuild on the no-op beat');
+  assertEqual(host.innerHTMLWriteCount(), writes1, 'no innerHTML writes on the no-op beat (score/metrics folded, not churned)');
+});
+
+test('#18 candidate digest: a CHANGED score repaints (the score is folded into the content digest)', async () => {
+  freshState();
+  const F = scoredFixture();
+  installFixtureMap(F);
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
+  const digest1 = host.getAttribute('data-t-digest');
+  // move ONLY the score (drift_loss / pass unchanged) → the digest must flip.
+  freshState();
+  const F2 = scoredFixture();
+  F2[`/api/generation/${EPOCH_ID}/v1/per-entry`].entries[0].score = 0.42;
+  F2[`/api/generation/${EPOCH_ID}/v1/per-entry`].entries[0].metrics = { precision: 0.40, recall: 0.45 };
+  installFixtureMap(F2);
+  await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
+  assert(host.getAttribute('data-t-digest') !== digest1, 'a moved score flips the digest (a real repaint, no flashing bug)');
+});
+
+// ---- board view ----------------------------------------------------
+
+test('#18 board view: a scored board adds a score + P/R column; reads the score + decomposition', async () => {
+  freshState(); installFixtureMap(scoredFixture());
+  const board = await import('../js/variants/T/views/board.js');
+  const host = document.createElement('div');
+  await board.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single' });
+  assert(host.textContent.includes('Board · waffles_single'), 'the board view rendered');
+  const tbl = allByClass(host, 'dn-board-table')[0];
+  assert(tbl, 'the per-candidate breakdown table rendered');
+  assert(host.textContent.includes('score'), 'a "score" column header appears for a scored board');
+  const scoreCells = allByClass(host, 'dn-score-cell').map((c) => (c.textContent || '').trim());
+  assert(scoreCells.includes('0.81') && scoreCells.includes('0.62'), 'both candidates’ scores read in the table');
+  const prCells = allByClass(host, 'dn-pr-cell').map((c) => (c.textContent || '').trim());
+  assert(prCells.some((t) => t === 'P 0.88 / R 0.74'), 'the P/R decomposition reads in the table');
+});
+
+test('#18 board view: a BOOL-ONLY board (no scores) keeps the pre-score columns — no score column', async () => {
+  freshState(); installFetch();   // base fixture — no scores anywhere.
+  const board = await import('../js/variants/T/views/board.js');
+  const host = document.createElement('div');
+  await board.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single' });
+  // no score column → no dn-score-cell / dn-pr-cell rendered; the predicate
+  // column still carries the pass/fail label (back-compat).
+  assertEqual(allByClass(host, 'dn-score-cell').length, 0, 'no score column on a bool-only board');
+  assertEqual(allByClass(host, 'dn-pr-cell').length, 0, 'no P/R column on a bool-only board');
+  const tbl = allByClass(host, 'dn-board-table')[0];
+  assert(tbl, 'the breakdown table still renders');
+});
+
+// ---- CSS contract: the score classes are themed (no bold, theme tokens) ----
+
+test('#18 CSS: the score classes use theme tokens + carry NO bold weight', async () => {
+  const css = await readCssAsync();
+  for (const cls of ['.dn-score-track', '.dn-score-fill', '.dn-score-val', '.dn-score-pr', '.dn-meanscore']) {
+    assert(css.includes(cls), `the stylesheet defines ${cls}`);
+  }
+  // the verdict-coloured fill reuses the same good/bad tokens as the candidate ●.
+  assert(/\.dn-score-fill\.dn-good\s*\{\s*fill:\s*var\(--v2-good\)/.test(css), 'the improved fill uses --v2-good');
+  assert(/\.dn-score-fill\.dn-bad\s*\{\s*fill:\s*var\(--v2-bad\)/.test(css), 'the regressed fill uses --v2-bad');
+  // NO bold weight on any new score class (700 / bold is banned in the language).
+  const block = css.slice(css.indexOf('.dn-score-track'), css.indexOf('.dn-pr-cell') + 80);
+  assert(!/font:\s*(?:700|bold)\b/.test(block), 'no score class carries a 700 / bold font weight');
+});
+
 await run();

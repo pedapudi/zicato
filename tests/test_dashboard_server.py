@@ -1534,6 +1534,213 @@ def test_matchup_grid_scalar_breakdown_from_gen_scores(workspace: Path) -> None:
     assert scalar["components"]["pass"] == pytest.approx(0.10)
 
 
+def _seed_scored_loss_files(workspace: Path) -> None:
+    """Write loss.json carrying the continuous ``score`` + ``metrics`` (#18).
+
+    The champion (v0) and challenger (v1) each ran one SCORED entry
+    (``extract_invoice`` with a continuous score + precision/recall
+    decomposition) and one BOOL-ONLY entry (``schema_response`` with no
+    ``score`` / ``metrics`` — the back-compat path). gen_score.json
+    carries a per-generation ``mean_score`` for v0 and v1.
+    """
+    epoch_id = "2026-05-16_e0"
+    layout: dict[str, dict[str, dict[str, object]]] = {
+        "v0": {
+            "extract_invoice": {
+                "drift_loss": 0.30,
+                "pass_fail": True,
+                "score": 0.62,
+                "metrics": {"precision": 0.70, "recall": 0.55},
+            },
+            # bool-only entry: no score / metrics — renders by pass bit.
+            "schema_response": {"drift_loss": 0.12, "pass_fail": True},
+        },
+        "v1": {
+            "extract_invoice": {
+                "drift_loss": 0.21,
+                "pass_fail": True,
+                "score": 0.81,
+                "metrics": {"precision": 0.88, "recall": 0.74},
+            },
+            "schema_response": {"drift_loss": 0.34, "pass_fail": False},
+        },
+    }
+    for gen, entries in layout.items():
+        for entry, fields in entries.items():
+            loss = {
+                "run_id": f"{gen}--{entry}",
+                "entry_id": entry,
+                "generation_id": gen,
+                "epoch_id": epoch_id,
+                "drift_counts": [],
+                "runtime_ms": 1000,
+                "wall_clock_budget_exceeded": False,
+                "adk_session_id": f"session-{gen}-{entry}",
+                **fields,
+            }
+            _write_json(
+                workspace
+                / "epochs"
+                / epoch_id
+                / "generations"
+                / gen
+                / "runs"
+                / entry
+                / "loss.json",
+                loss,
+            )
+    _write_json(
+        workspace / "epochs" / epoch_id / "generations" / "v0" / "gen_score.json",
+        {"generation_id": "v0", "scalar": 0.21, "mean_score": 0.62},
+    )
+    _write_json(
+        workspace / "epochs" / epoch_id / "generations" / "v1" / "gen_score.json",
+        {"generation_id": "v1", "scalar": 0.375, "mean_score": 0.81},
+    )
+
+
+def test_matchup_grid_surfaces_continuous_score_and_metrics(workspace: Path) -> None:
+    """A scored entry carries ``parent_score`` / ``child_score`` plus the
+    ``parent_metrics`` / ``child_metrics`` precision/recall decomposition;
+    a bool-only entry carries ``None`` for all four (back-compat)."""
+    from zicato.dashboard.state_reader import WorkspacePaths, build_matchup_grid
+
+    _seed_scored_loss_files(workspace)
+    paths = WorkspacePaths(workspace)
+    grid = build_matchup_grid(paths, "2026-05-16_e0", "v0", "v1")
+    rows = {r["entry_id"]: r for r in grid["entry_grid"]}
+
+    scored = rows["extract_invoice"]
+    assert scored["parent_score"] == pytest.approx(0.62)
+    assert scored["child_score"] == pytest.approx(0.81)
+    assert scored["parent_metrics"] == {"precision": 0.70, "recall": 0.55}
+    assert scored["child_metrics"] == {"precision": 0.88, "recall": 0.74}
+
+    # Bool-only entry: no score / metrics — every score field is None so
+    # the view degrades to the existing pass/fail glyph.
+    boolean = rows["schema_response"]
+    assert boolean["parent_score"] is None
+    assert boolean["child_score"] is None
+    assert boolean["parent_metrics"] is None
+    assert boolean["child_metrics"] is None
+    assert boolean["parent_pass"] is True
+    assert boolean["child_pass"] is False
+
+
+def test_matchup_grid_scalar_carries_mean_score(workspace: Path) -> None:
+    """The scalar block carries a per-generation ``mean_score`` summary
+    (parent / child / delta) read from gen_score.json — never recomputed."""
+    from zicato.dashboard.state_reader import WorkspacePaths, build_matchup_grid
+
+    _seed_scored_loss_files(workspace)
+    paths = WorkspacePaths(workspace)
+    grid = build_matchup_grid(paths, "2026-05-16_e0", "v0", "v1")
+
+    ms = grid["scalar"]["mean_score"]
+    assert ms["parent"] == pytest.approx(0.62)
+    assert ms["child"] == pytest.approx(0.81)
+    assert ms["delta"] == pytest.approx(0.19)
+
+
+def test_matchup_grid_no_mean_score_when_absent(workspace: Path) -> None:
+    """Back-compat: a gen_score.json without ``mean_score`` yields a
+    scalar block with no ``mean_score`` key (degrades to today's view)."""
+    from zicato.dashboard.state_reader import WorkspacePaths, build_matchup_grid
+
+    _seed_loss_files(workspace)  # the pre-score seeder — no mean_score
+    paths = WorkspacePaths(workspace)
+    grid = build_matchup_grid(paths, "2026-05-16_e0", "v0", "v1")
+    assert grid["scalar"] is not None
+    assert "mean_score" not in grid["scalar"]
+    # And the entry rows carry score/metrics == None (bool-only path).
+    for row in grid["entry_grid"]:
+        assert row["parent_score"] is None
+        assert row["child_score"] is None
+        assert row["parent_metrics"] is None
+        assert row["child_metrics"] is None
+
+
+def _build_per_entry_index(db: Path, loss_json_by_run: dict[str, str]) -> None:
+    """Build a loss_profiles index with the full column set the per-entry
+    reader queries, one v1 row per ``loss_json_by_run`` entry."""
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE loss_profiles(run_id TEXT, epoch_id TEXT, generation_id TEXT, "
+        "entry_id TEXT, drift_loss REAL, pass_fail TEXT, runtime_ms INTEGER, "
+        "wall_clock_budget_exceeded INTEGER, loss_json TEXT, tournament_id TEXT)"
+    )
+    conn.executemany(
+        "INSERT INTO loss_profiles VALUES(?,?,?,?,?,?,?,?,?,?)",
+        [
+            (
+                run,
+                "2026-05-16_e0",
+                "v1",
+                "waffles_single",
+                0.2,
+                "pass",
+                100,
+                0,
+                lj,
+                None,
+            )
+            for run, lj in loss_json_by_run.items()
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_per_entry_for_generation_carries_score_from_loss_json(tmp_path: Path) -> None:
+    """``build_per_entry_for_generation`` parses the continuous ``score`` +
+    ``metrics`` out of the index's ``loss_json`` blob (no schema change),
+    and surfaces a per-generation ``mean_score`` from gen_score.json."""
+    import json as _json
+
+    from zicato.dashboard.state_reader import (
+        WorkspacePaths,
+        build_per_entry_for_generation,
+    )
+
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    _build_per_entry_index(
+        ws / "index.db",
+        {"r1": _json.dumps({"score": 0.77, "metrics": {"precision": 0.9, "recall": 0.6}})},
+    )
+    _write_json(
+        ws / "epochs" / "2026-05-16_e0" / "generations" / "v1" / "gen_score.json",
+        {"generation_id": "v1", "mean_score": 0.77},
+    )
+
+    paths = WorkspacePaths(ws)
+    pe = build_per_entry_for_generation(paths, "2026-05-16_e0", "v1")
+    assert pe["mean_score"] == pytest.approx(0.77)
+    entry = next(e for e in pe["entries"] if e["entry_id"] == "waffles_single")
+    assert entry["score"] == pytest.approx(0.77)
+    assert entry["metrics"] == {"precision": 0.9, "recall": 0.6}
+
+
+def test_per_entry_for_generation_back_compat_no_score(tmp_path: Path) -> None:
+    """An index whose ``loss_json`` is ``{}`` (the pre-score default)
+    yields ``score`` / ``metrics`` == None and ``mean_score`` == None."""
+    from zicato.dashboard.state_reader import (
+        WorkspacePaths,
+        build_per_entry_for_generation,
+    )
+
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    _build_per_entry_index(ws / "index.db", {"r1": "{}"})
+
+    paths = WorkspacePaths(ws)
+    pe = build_per_entry_for_generation(paths, "2026-05-16_e0", "v1")
+    assert pe["mean_score"] is None
+    entry = next(e for e in pe["entries"] if e["entry_id"] == "waffles_single")
+    assert entry["score"] is None
+    assert entry["metrics"] is None
+
+
 def test_matchup_grid_endpoint(client: TestClient, workspace: Path) -> None:
     """The ``/api/matchup-grid/{epoch}/{champion}/{challenger}`` route
     serves the persisted-loss-file grid as JSON."""

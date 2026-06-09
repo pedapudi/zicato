@@ -2288,16 +2288,56 @@ def build_matchup_detail(paths: WorkspacePaths, generation_id: str) -> dict[str,
 # files so a completed tournament's outcomes survive without the index.
 
 
+def _opt_score(value: Any) -> float | None:
+    """Coerce a raw ``score`` field into a finite float in ``[0, 1]`` or ``None``.
+
+    The continuous per-entry outcome (#18). ``None`` (the back-compat
+    default) when the field is absent, a bool, or a non-finite number —
+    every such case degrades to the bool ``pass_fail`` display upstream.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    f = float(value)
+    if f != f or f in (float("inf"), float("-inf")):  # NaN / inf guard
+        return None
+    return f
+
+
+def _opt_metrics(value: Any) -> dict[str, float] | None:
+    """Coerce a raw ``metrics`` field into ``{name: finite float}`` or ``None``.
+
+    The optional precision/recall (etc.) decomposition (#18). Non-finite
+    or non-numeric values are dropped; an empty result collapses to
+    ``None`` so a missing decomposition reads identically to the
+    pre-score path.
+    """
+    if not isinstance(value, dict):
+        return None
+    out: dict[str, float] = {}
+    for k, v in value.items():
+        if isinstance(v, bool) or not isinstance(v, int | float):
+            continue
+        f = float(v)
+        if f != f or f in (float("inf"), float("-inf")):
+            continue
+        out[str(k)] = f
+    return out or None
+
+
 def _read_run_loss_files(
     paths: WorkspacePaths, epoch_id: str, generation_id: str
 ) -> dict[str, dict[str, Any]]:
     """Read every ``runs/{entry}/loss.json`` under one generation.
 
-    Returns ``{entry_id: {drift_loss, pass_fail, adk_session_id, run_id}}``.
-    The entry id keys on the run directory name (the canonical board-run
-    layout) and is overridden by the ``entry_id`` field inside the
-    ``loss.json`` payload when present. Missing / malformed files are
-    skipped silently — a generation with no telemetry yet yields ``{}``.
+    Returns ``{entry_id: {drift_loss, pass_fail, score, metrics,
+    adk_session_id, run_id}}``. The entry id keys on the run directory
+    name (the canonical board-run layout) and is overridden by the
+    ``entry_id`` field inside the ``loss.json`` payload when present.
+    ``score`` (continuous outcome in ``[0, 1]``) and ``metrics`` (e.g.
+    precision/recall) are carried through when present and ``None``
+    otherwise — a pre-score loss.json reads exactly as before. Missing /
+    malformed files are skipped silently — a generation with no telemetry
+    yet yields ``{}``.
     """
     out: dict[str, dict[str, Any]] = {}
     runs_dir = paths.epochs / epoch_id / "generations" / generation_id / "runs"
@@ -2317,6 +2357,10 @@ def _read_run_loss_files(
             "entry_id": entry_id,
             "drift_loss": drift if isinstance(drift, int | float) else None,
             "pass_fail": loss.get("pass_fail"),
+            # Continuous per-entry outcome + its optional precision/recall
+            # decomposition (#18). ``None`` for a pre-score loss.json.
+            "score": _opt_score(loss.get("score")),
+            "metrics": _opt_metrics(loss.get("metrics")),
             "run_id": loss.get("run_id") if isinstance(loss.get("run_id"), str) else run_dir.name,
         }
         sid = loss.get("adk_session_id")
@@ -2420,6 +2464,14 @@ def build_matchup_grid(
             "child_drift_loss": child_drift,
             "parent_pass": p.get("pass_fail") if p else None,
             "child_pass": c.get("pass_fail") if c else None,
+            # Continuous per-entry outcome (#18) + its optional
+            # precision/recall decomposition. ``None`` for a pre-score
+            # loss.json, so a bool-only entry carries score/metrics ==
+            # None and renders by its pass bit exactly as before.
+            "parent_score": p.get("score") if p else None,
+            "child_score": c.get("score") if c else None,
+            "parent_metrics": p.get("metrics") if p else None,
+            "child_metrics": c.get("metrics") if c else None,
             "delta": delta,
             "verdict": _verdict(parent_drift, child_drift),
             "won_by": _grid_won_by(parent_drift, child_drift, champion_id, challenger_id),
@@ -2445,6 +2497,20 @@ def build_matchup_grid(
                 c_scalar - p_scalar if p_scalar is not None and c_scalar is not None else None
             ),
         }
+        # Per-generation mean continuous outcome (#18), read straight from
+        # the cached gen_score.json — never recomputed. ``None`` when the
+        # aggregate predates the field (back-compat); the higher mean is
+        # the better side. Folded under the scalar block so the candidate /
+        # board views can show a board-level score summary alongside the
+        # per-entry scores.
+        p_mean = _opt_score(parent_score.get("mean_score"))
+        c_mean = _opt_score(child_score.get("mean_score"))
+        if p_mean is not None or c_mean is not None:
+            scalar["mean_score"] = {
+                "parent": p_mean,
+                "child": c_mean,
+                "delta": (c_mean - p_mean if p_mean is not None and c_mean is not None else None),
+            }
         parent_components = parent_score.get("scalar_components")
         child_components = child_score.get("scalar_components")
         # The breakdown bars are the per-component CHANGE champion ->
@@ -4041,9 +4107,24 @@ def build_per_entry_for_generation(
             return False
         return bool(row[key]) if row[key] is not None else False
 
+    def _score_metrics_of(row: Any) -> tuple[float | None, dict[str, float] | None]:
+        # The continuous per-entry outcome + its precision/recall
+        # decomposition (#18) live in the raw ``loss_json`` blob the index
+        # stores verbatim, NOT in a dedicated column — so a stale index
+        # without new columns still surfaces the score. Absent / malformed
+        # blob -> (None, None), which renders by the bool pass bit exactly
+        # as before.
+        if "loss_json" not in _row_keys(row):
+            return None, None
+        lj = _opt_json(row["loss_json"])
+        if not isinstance(lj, dict):
+            return None, None
+        return _opt_score(lj.get("score")), _opt_metrics(lj.get("metrics"))
+
     entries = []
     for r in rows:
         match_id = _match_id_of(r)
+        entry_score, entry_metrics = _score_metrics_of(r)
         entries.append(
             {
                 "entry_id": r["entry_id"],
@@ -4053,6 +4134,11 @@ def build_per_entry_for_generation(
                     float(r["drift_loss"]) if isinstance(r["drift_loss"], int | float) else None
                 ),
                 "pass_fail": r["pass_fail"],
+                # Continuous per-entry outcome + precision/recall (#18),
+                # parsed from the row's loss_json blob. ``None`` for a
+                # pre-score entry (renders by pass_fail as before).
+                "score": entry_score,
+                "metrics": entry_metrics,
                 "runtime_ms": (int(r["runtime_ms"]) if isinstance(r["runtime_ms"], int) else None),
                 "wall_clock_budget_exceeded": bool(r["wall_clock_budget_exceeded"])
                 if r["wall_clock_budget_exceeded"] is not None
@@ -4073,10 +4159,18 @@ def build_per_entry_for_generation(
             }
         )
 
+    # Per-generation mean continuous outcome (#18), read from the cached
+    # gen_score.json — never recomputed. ``None`` when the aggregate
+    # predates the field, so the candidate view degrades to its pass-rate
+    # summary. Folded alongside the per-entry scores so the dossier can
+    # show a single board-level score number.
+    gen_mean_score = _opt_score(_read_gen_score(paths, epoch_id, generation_id).get("mean_score"))
+
     return {
         "epoch_id": epoch_id,
         "generation_id": generation_id,
         "tournament_id": tournament_id,
+        "mean_score": gen_mean_score,
         "entries": entries,
     }
 
