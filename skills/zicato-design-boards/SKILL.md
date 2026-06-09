@@ -53,6 +53,42 @@ as a measurable score delta. You discover the band empirically: run an epoch,
 read the per-entry A/B grid (`zicato-tournament-forensics`), and cut or
 re-tune entries that never moved.
 
+## Grade the real artifact, not the agent's story about it
+
+Discrimination is only real if every entry grades what the agent *actually
+produced*. Two fidelity rules the board's design depends on:
+
+- An **OUTCOME expectation** reads the agent's real output — `final_output` /
+  `conversation_end`, or the written artifact — never a self-summary / proxy
+  field (a `report_task_completed`, a "completed_results" blob). A proxy field
+  lets a run *claim* success without doing the work, and the entry stops
+  discriminating.
+- A **PROCESS judge** that grades the deliverable reads the **tool-call
+  ledger** (goldfive's `ctx.session_state.recent_events`, `kind ==
+  "tool_observed"`), never the model's reasoning narration. goldfive dispatches
+  custom judges only at *reasoning* observation points, so a judge that scans
+  the transcript for tool names grades the story the agent told, not the tool
+  round-trips it ran — and fires on chatter that merely mentions a tool.
+
+Both are the same trap: a board that grades narration rewards a candidate that
+*describes* doing the work over one that does it. Design entries so the signal
+comes from the artifact/ledger; the mechanics are in
+[`zicato-design-judges`](../zicato-design-judges/SKILL.md) and
+[`zicato-audit-board`](../zicato-audit-board/SKILL.md).
+
+## Continuous scores sharpen a wide-band entry
+
+An OUTCOME expectation may return a **continuous** per-entry score (a float in
+`[0,1]` — an F1, a similarity, a partial-credit rubric) plus an optional
+`metrics` decomposition, instead of a bare pass/fail. Reach for a scored entry
+when a behavior is *graded*, not binary — "retrieved 3 of 5 expected facts" is a
+0.6, and that 0.6-vs-0.4 delta discriminates two candidates a pass/fail bit
+would call a tie. A plain `bool` matcher still leaves the entry binary
+(`score=None` → the reducer derives `1.0`/`0.0`), so a binary board is
+unchanged. The score and `metrics` are carried to `loss.json` and feed the
+proposer's failure-mode profile; the *weighting/formula* over them is owned by
+[`zicato-tune-scoring`](../zicato-tune-scoring/SKILL.md).
+
 ## Coverage: span the behaviors, not the inputs
 
 Coverage means *the behaviors you would regress on*, not *the space of inputs*.

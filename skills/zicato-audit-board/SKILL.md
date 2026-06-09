@@ -59,8 +59,8 @@ The fields the recipes below key on are the **real** on-disk fields:
 
 | File | Fields the audit reads |
 |---|---|
-| `loss.json` | `entry_id`, `pass_fail`, `expectation_result.{kind,passed,detail}`, `drift_loss`, `drift_counts[].{kind,severity,count}` (a fired custom judge appears as `kind: "custom:<judge_name>"`), `per_judge_loss[].{judge_name,raw_loss,weight,weighted_loss}`, `adk_session_id` |
-| `gen_score.json` | `scalar` (lower=better), `scalar_components` (named contributions that sum to `scalar`: `drift`, `pass`, plus one per non-zero namespace), `pass_rate`, `drift_loss_mean`, `per_entry.{entry_id}.{drift_loss,pass_fail}`, `namespace_aggregates` |
+| `loss.json` | `entry_id`, `pass_fail`, `expectation_result.{kind,passed,detail,score,metrics}`, top-level `score` (continuous per-entry quality in `[0,1]`; `None` → derived `1.0`/`0.0` from `pass_fail`) + `metrics` (e.g. `{precision,recall}`), `drift_loss`, `drift_counts[].{kind,severity,count}` (a fired custom judge appears as `kind: "custom:<judge_name>"`), `per_judge_loss[].{judge_name,raw_loss,weight,weighted_loss}`, `adk_session_id` |
+| `gen_score.json` | `scalar` (lower=better), `scalar_components` (named contributions that sum to `scalar`: `drift`, `pass`, plus one per non-zero namespace), `pass_rate`, `mean_score` (the uniform continuous-outcome axis — the arithmetic mean of each entry's `[0,1]` score; *equals* `pass_rate` byte-for-byte on an all-bool board), `drift_loss_mean`, `per_entry.{entry_id}.{drift_loss,pass_fail}`, `namespace_aggregates` |
 | `board.jsonl` | per entry: `id`, `expectation.{kind,spec,reads}`, `judges[].name` (the declared judge set), `weight`, `tags` |
 
 > `loss.json` is canonical for one run; `gen_score.json` is the aggregate the
@@ -101,7 +101,18 @@ Each item: what to check, why, and the pass/fail bar.
       confirmed by diffing it against the raw `events.jsonl` transcript. It is
       NOT a self-summary / proxy (a `report_task_completed` field, a
       "completed_results" summary) unless that field provably equals the real
-      output.
+      output. The same rule binds **process judges**: a `python` judge that
+      grades the deliverable must read the real **tool-call ledger**
+      (goldfive's `ctx.session_state.recent_events`, `kind == "tool_observed"`
+      — `tool_name` / `result_preview` / `error_message`) or the written
+      artifact, NOT the model's reasoning narration / completion summary.
+      goldfive dispatches custom judges only at *reasoning* observation points,
+      so a judge that scans `ctx.reasoning_text` / the transcript for tool names
+      is grading narration the agent *wrote*, not the tool round-trips it *ran*
+      — a judge that fires off narration is the process-side proxy bug (worked
+      fix: `file_findability` in
+      `examples/zicato_examples/target_1_presentation/judges.py`). See
+      [`zicato-design-judges`](../zicato-design-judges/SKILL.md).
 - [ ] **Judge-fire counts.** Every judge declared in `board.jsonl` fired ≥ 1
       time across the baseline run. A 0-fire judge is mis-wired or its criterion
       is unreachable — dead weight that gives false coverage, never "passing".
@@ -114,6 +125,16 @@ Each item: what to check, why, and the pass/fail bar.
 - [ ] **Determinism.** Re-run identical behavior; confirm an identical verdict.
       Confirm previews/inputs handed to judges are not truncated below the
       signal needed to grade.
+- [ ] **Monotonicity scope matches intent.** The gate's pass-rate
+      monotonicity (the no-pass-regression rule) honors a
+      `pass_rate_monotonicity_scope` in `scoring.json`: `per_entry` (default —
+      *no individual* board entry the champion passed may regress; right for
+      invariant/regression boards) or `aggregate` (only the *board-wide
+      pass-rate* may not drop; right for sampled evaluation boards). The on/off
+      switch is still the `pass_rate_monotonicity` bool — there is no `off`
+      scope. Confirm the scope the board's verdicts were decided under matches
+      what you intend; the *values/formula* live in
+      [`zicato-tune-scoring`](../zicato-tune-scoring/SKILL.md).
 
 ## Diagnostic recipes (copy-paste, grounded in real artifacts)
 
@@ -174,6 +195,25 @@ jq -rs 'map(.payload // .) | map(select(.text? // .content?)) | last
 [`zicato-read-telemetry`](../zicato-read-telemetry/SKILL.md). The point is to
 read the *real* transcript, not trust a downstream summary the predicate
 consumed.)
+
+For a **process judge** the analogous proxy bug is grading the *tool-call
+ledger* vs the narration: confirm a deliverable-grading `python` judge reads
+`ctx.session_state.recent_events` (`kind == "tool_observed"`), not
+`ctx.reasoning_text` / the transcript. A `tool_observed`-derived signal is
+ground truth; a tool name found in narration is not. Spot-check by listing the
+run's real tool round-trips and confirming the judge's verdict tracks those,
+not the model's chatter:
+
+```sh
+ENTRY=recall_q1
+# the real tool ledger goldfive records (one entry per tool call):
+jq -rc 'select((.kind // .payload.kind) == "tool_observed")
+        | {tool: (.payload.tool_name // .tool_name),
+           err:  (.payload.is_error  // .is_error)}' \
+   "$RUNS"/v0/runs/$ENTRY/events.jsonl
+# a judge that fires on a tool name appearing in reasoning text — but with NO
+# matching tool_observed entry here — is grading narration, not the ledger.
+```
 
 **4. Recompute the scalar from its components — catch a mis-weighted/inverted
 scalar.** `scalar_components` sum exactly to `scalar`; confirm the arithmetic

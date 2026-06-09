@@ -46,6 +46,20 @@ sqlite3 -readonly .zicato/index.db "
 A good hypothesis names a *pattern* ("CONFABULATION_RISK fires on 70% of
 `[research]` entries and 0% on `[summarise]`"), not a vibe.
 
+The proposer now also sees an **outcome failure-mode profile** alongside the
+decision-telemetry digest: a board-anonymized, **train-slice-only**, bucketed
+summary of *outcome marginals* — board-wide rates of generic failure modes
+(over-retrieval, misses, empty/terse answers) plus precision/recall from any
+scorer `metrics`. It is the **marginal, never the joint**: aggregate rates
+("over-retrieves ~40% of runs"), never an entry id, question, or output token,
+and it reuses the same holdout split + bucketing the loss summary already uses
+(never the holdout slice). An operator may extend it with a numeric-only
+`outcome_summarizer_spec` hook in `scoring.json` (sanitized + bucketed before it
+reaches the proposer). When you ground a hypothesis, this profile is a second,
+*outcome*-side signal to name a pattern from — it tells you *why* answers were
+wrong (over-retrieval vs miss), not just that a scalar moved. It is OUTPUT-only
+and is NOT a mutation point (see `zicato-mutation-audit`).
+
 ## Step 2 — pick a mutation target that is allowed and justified
 
 The proposer may only touch enumerated mutation points, and never anything in
@@ -96,7 +110,11 @@ Field discipline:
   `magnitude` ∈ `minor`/`moderate`/`major`. Predict honestly, including the
   kinds you expect to get *worse* (that is what makes the match informative).
 - **expected_pass_rate_delta** — `{low, high}` band, e.g. `{0.0, 0.15}` = "no
-  worse, up to 15 points better".
+  worse, up to 15 points better". Note the gate's pass-rate monotonicity has a
+  `pass_rate_monotonicity_scope` (`scoring.json`): under `per_entry` (default) a
+  single entry the champion passed regressing is a hard reject regardless of the
+  band; under `aggregate` only the board-wide pass-rate matters. Predict with
+  the active scope in mind (`zicato-tune-scoring` owns the values).
 - **risks** — plausible failure modes; these become the things to check first
   if the outcome disappoints.
 

@@ -35,7 +35,9 @@ Always call the CLI from the project venv: `.venv/bin/zicato ...`. See
 - `--skip-regression`: skip the regression-suite gate even when scoring enables
   it (a per-invocation override).
 - Output is the `GateOutcome` printed as **JSON** (`decision`, `reason`,
-  `delta_scalar`, `delta_pass_rate`).
+  `delta_scalar`, `delta_pass_rate`). The `decision` field is the
+  authoritative verdict — `"promoted"` / `"rejected"` / `"deferred"`
+  (`TournamentDecision`); branch scripts on that JSON, not on the exit code.
 
 > **WARNING — this is a live, budget-spending run** in `full` mode (it executes
 > the inner harness over every board entry, twice). Per the project rules, do
@@ -45,14 +47,16 @@ Always call the CLI from the project venv: `.venv/bin/zicato ...`. See
 > [CLI.md §3.x](../../docs/design/CLI.md) reference to it is aspirational); a
 > live re-run records its outcome into the workspace.
 
-## Exit code
+## Reading the verdict (the JSON `decision`, not an exit code)
 
-The two-command happy path and CLI exit-code contract
-([CLI.md](../../docs/design/CLI.md)): **`0` = promote, `6` = reject** (with a
-successful, informational JSON payload — useful for scripts that branch on the
-verdict). `2`/`3` are usage/config errors. The standalone command's JSON
-`decision` field (`"promoted"` / `"rejected"`) is the authoritative verdict; the
-exit code mirrors it for scripting.
+The standalone `zicato tournament` command prints the `GateOutcome` as JSON and
+exits `0` on a successful run regardless of the verdict — it does **not** encode
+promote/reject in the exit code. Branch on the JSON `decision` field
+(`"promoted"` / `"rejected"` / `"deferred"`), which is authoritative. (The
+[CLI.md](../../docs/design/CLI.md) "`0` = promote, `6` = reject" exit-code
+contract is aspirational — no exit-6 path exists in the shipped CLI today; trust
+`zicato tournament --help` and the JSON, not the design doc.) A non-zero exit is
+a usage/config/runtime error, not a reject verdict.
 
 ## Read the verdict without re-running
 
@@ -79,10 +83,17 @@ A challenger must satisfy **both** to promote:
    but by less than the margin is a **near-miss reject**; a child whose loss
    *rose* is a **regressed reject**. `delta_scalar = child - parent` (negative =
    improvement).
-2. **Strict monotonicity (pass-rate side).** No board entry the parent passed
-   may regress (child fails, errors, or no longer evaluates it). Any such entry
-   → `rejection_reason = pass_rate_regression_on_<entry_id>` and the candidate
-   is rejected regardless of drift improvement.
+2. **Pass-rate monotonicity (pass-rate side).** Under the default
+   `per_entry` scope, no board entry the parent passed may regress (child
+   fails, errors, or no longer evaluates it). Any such entry →
+   `rejection_reason = pass_rate_regression_on_<entry_id>` and the candidate is
+   rejected regardless of drift improvement. The `pass_rate_monotonicity_scope`
+   in `scoring.json` selects this granularity: `per_entry` (strict — the rule
+   above) or `aggregate` (only the board-wide pass-rate may not drop). The
+   on/off switch is the separate `pass_rate_monotonicity` bool (there is no
+   `off` scope). The scope is part of the scoring weights and is carried through
+   the subprocess-worker transport like every other weight — read the verdict's
+   own breakdown to see which scope decided it.
 
 The matchup detail in the Tournament view
 ([TOURNAMENT.md §3](../../docs/design/TOURNAMENT.md#3-per-matchup-detail)) lays
@@ -96,7 +107,16 @@ this out in five sections; read them in order to localize the verdict:
   tied, and exactly which pass regressed (the monotonicity trip).
 - **Scalar breakdown** — how the per-entry numbers aggregate into the two
   `gen_score`s the gate consumes (`weighted_drift`, `pass_rate`, the weighted
-  terms).
+  terms). The per-entry numbers now include the **continuous** outcome
+  `score` (a float in `[0,1]`; a binary entry contributes `1.0`/`0.0`) and its
+  optional `metrics` (precision/recall) carried up from each run's `loss.json`.
+  **Provenance caveat:** the weights behind a `per_judge_loss` attribution
+  (`per_judge_weights` / `default_judge_weight` / `pass_rate_monotonicity_scope`)
+  are serialised across the subprocess-worker boundary
+  (`tournament/runner.py:_weights_spec` ↔ `_tournament_worker.py
+  :_weights_from_args`); a weight that doesn't match `scoring.json` in a verdict
+  means the transport dropped a field (it once silently scored all custom-judge
+  drift at `1.0`) — a scoring-provenance smell, not a candidate-quality one.
 - **Gate verdict** — the decision with both sides shown: the margin computation
   (`parent.score - candidate.score` vs `required margin`) and the monotonicity
   check, plus the exact `rejection_reason`. An operator override is never silent
@@ -129,8 +149,9 @@ all served from the analytical index:
 - Do NOT run a live `tournament` (especially `--mode full`) without explicit
   user go-ahead — it spends LLM budget and records an outcome. Prefer reading
   the settled artifacts.
-- The verdict is `0`/promote vs `6`/reject; the JSON `decision` is
-  `promoted`/`rejected`.
+- Read the verdict from the JSON `decision` (`promoted` / `rejected` /
+  `deferred`), not the exit code — the standalone command exits `0` on any
+  successful run.
 
 ## See also
 

@@ -100,7 +100,7 @@ rejected). The five `kind`s:
 
 | `kind` | `spec` | Notes |
 |---|---|---|
-| `predicate` | `"module.path:func"` (colon before the function) | Callable `(run_result) -> bool`; body lives in project source, never in JSON. |
+| `predicate` | `"module.path:func"` (colon before the function) | Callable `(run_result) -> bool`; body lives in project source, never in JSON. May instead be a **scorer** returning a `float` in `[0,1]` or a `(float, metrics)` 2-tuple (e.g. `{"precision": .., "recall": ..}`) for a continuous per-entry score — see "Continuous scores" below. |
 | `expected_text` | exact substring | Case- and whitespace-significant. |
 | `regex` | a `re` pattern | Matched with `re.search`; anchor with `^`/`$`. |
 | `json_schema` | inline JSON Schema | Output is parsed as JSON then validated. |
@@ -111,6 +111,30 @@ rejected). The five `kind`s:
 ```
 
 Predicates feed the **pass-rate** dimension; see `zicato-tune-scoring`.
+
+### Continuous scores (the `predicate` seam is also the scorer seam)
+
+A `predicate` callable need not return `bool`. The same dotted-path seam
+accepts a **scorer** returning a continuous per-entry score
+(`board/matchers.py:_predicate_outcome_to_result`):
+
+- `bool` — the historical binary verdict. `score` is left `None`; the reducer
+  derives `1.0`/`0.0` from `passed`, so a binary board is byte-identical to
+  before.
+- `float` (or `int`) — a continuous score, clamped to `[0,1]` and recorded as
+  `ExpectationResult.score`. `passed` becomes a display-only `score > 0.0` —
+  the scalar and gate run on the continuous score, not this bit. A `NaN` scores
+  `0.0`.
+- `(float, metrics)` 2-tuple — the float is the score; the mapping (e.g.
+  `{"precision": .., "recall": ..}`) is recorded verbatim as
+  `ExpectationResult.metrics` and carried out to `loss.json` for the proposer's
+  failure-mode profile. Any other return shape (including a `(bool, metrics)`
+  tuple) is a contract error that fails the entry with a descriptive `detail`.
+
+The score and `metrics` land on the run's `loss.json` (see
+`zicato-read-telemetry`). The body lives in project source, exactly like a
+boolean predicate; only the *return shape* changes. The weighting/formula over
+the score is `zicato-tune-scoring`.
 
 ## `judges` — PROCESS checks (in-run)
 
@@ -125,6 +149,15 @@ a goldfive `custom` drift identified by the judge `name` and feeds the
   (`body` is a dotted import path to a judge callable).
 - `body` — the criterion text or the dotted path, per `mode`.
 - `severity` — `info` \| `warning` \| `critical` (goldfive `DriftSeverity`).
+
+A `python` judge that grades *what the agent did* must read the real tool-call
+ledger — goldfive's `ctx.session_state.recent_events` (`kind ==
+"tool_observed"`: `tool_name` / `result_preview` / `error_message`) — NOT the
+model's reasoning narration (`ctx.reasoning_text` / the transcript): custom
+judges fire only at reasoning observation points, so the narration is the story
+the agent told, not the tool round-trips it ran. Worked example:
+`examples/zicato_examples/target_1_presentation/judges.py` (`file_findability`).
+See `zicato-design-judges`.
 
 ## The emulator two-callable rule
 

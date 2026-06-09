@@ -46,10 +46,11 @@ copy, and `diff` the two `index.db` files (binary) or compare row counts from
 the SQL below against a `find … | wc -l` of the canonical files. Exit-1-on-drift
 behaviour does not exist yet.
 
-## Schema (`src/zicato/index/schema.py`, SCHEMA_VERSION 2)
+## Schema (`src/zicato/index/schema.py`, SCHEMA_VERSION 8)
 
 `PRAGMA user_version` is authoritative; a mismatch means run `zicato reindex`.
-Tables and their key columns:
+(The version number rises as columns are added — read `SCHEMA_VERSION` in
+`schema.py` rather than trusting any number here.) Tables and their key columns:
 
 - **epochs** — `epoch_id` (PK), `contract_hash`, `created_at`, `closed`,
   `goal`, `parent_epoch_id`.
@@ -65,11 +66,17 @@ Tables and their key columns:
   `started_at`, `ended_at`, `aborted`, `runtime_ms`, `tournament_id`.
 - **loss_profiles** — `run_id` (PK), `epoch_id`, `generation_id`, `entry_id`,
   `drift_loss`, `pass_fail`, `runtime_ms`, `wall_clock_budget_exceeded`,
-  `loss_json`, `tournament_id`.
+  `loss_json`, `tournament_id`, `match_id`, `cached`, `source_epoch`,
+  `source_run`. (The continuous per-entry `score` / `metrics` stay inside
+  `loss_json` — they are not promoted to columns; read them via
+  `json_extract(loss_json, '$.score')` / `'$.metrics'`.)
 - **metric_counts** — `run_id`, `namespace`, `name`, `severity`, `count`.
 - **tournaments** — `tournament_id` (PK), `epoch_id`, `parent_generation_id`,
   `child_generation_id`, `decision`, `parent_scalar`, `child_scalar`,
-  `delta_scalar`, `rejection_reason`, `ran_at`.
+  `delta_scalar`, `rejection_reason`, `ran_at`, plus the structure columns
+  `structure`, `structure_params_json`, `competitors_json`, `rounds_json`,
+  `standings_json`, `field_status_json`, `champion_eval_mode`,
+  `champion_run_ref`.
 - **judge_losses** — (`run_id`,`judge_name`) PK, `weighted_loss`, `raw_loss`,
   `weight`.
 

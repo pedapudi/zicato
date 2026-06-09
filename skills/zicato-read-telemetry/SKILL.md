@@ -41,25 +41,50 @@ terminal event) is expected and tolerated — the reducer stamps
 
 ### Reading `loss.json` (the `LossProfile`)
 
-The fields that matter most when tracing a run:
+`loss.json` is a direct `asdict(LossProfile)` (`telemetry/reducer.py
+:_profile_to_dict`), so its keys are the `LossProfile` field names verbatim,
+tuples rendered as lists. The fields that matter most when tracing a run:
 
 | Field | Meaning |
 |---|---|
-| `entry_id`, `epoch_id`, `generation` | identity triple |
-| `drift_counts_by_kind` | per-`DriftKind` counts (symbolic enum names, e.g. `DRIFT_KIND_CONFABULATION_RISK`); `DRIFT_KIND_CUSTOM` buckets all custom-judge violations |
-| `drift_counts_by_judge` | the `CUSTOM` slice split by `judge_name` — what scoring weights via `per_judge_weights` |
-| `drift_counts_by_severity` | `INFO` / `WARNING` / `CRITICAL` |
-| `escalations`, `plan_revisions`, `task_failure_ratio` | other drift/loss features |
-| `drift_loss` | the weighted scalar the tournament scores on (computed in the reducer — the one place with both counts and weights) |
-| `pass_fail` | AND of the entry's expectations; `None` when there are no expectations |
-| `turn_count`, `drift_counts_by_kind_per_turn`, `stopped_reason` | multi-turn features |
-| `runtime_ms`, `aborted`, `abort_reason` | runtime features |
+| `entry_id`, `epoch_id`, `generation_id`, `run_id` | identity |
+| `drift_counts[].{kind,severity,count}` | one entry per `(kind, severity)` bucket; `kind` is the **lowercase wire-canonical** drift-kind string (`off_topic`, `confabulation_risk`, …); a fired custom judge appears as `kind: "custom:<judge_name>"` |
+| `per_judge_loss[].{judge_name,raw_loss,weight,weighted_loss}` | the custom-judge attribution split — what scoring weights via `per_judge_weights`; empty when no custom judge fired |
+| `plan_revisions`, `task_failure_ratio`, `wall_clock_budget_exceeded` | other drift/loss features |
+| `drift_loss` | the weighted scalar the tournament scores on (computed in the reducer — the one place with both counts and weights; already includes the per-judge contributions) |
+| `pass_fail` | the entry's expectation verdict; `None` when there is no expectation |
+| `expectation_result.{kind,passed,detail,score,metrics}` | the matcher's record; `None` when no expectation was attached |
+| `score` | top-level **continuous** per-entry quality in `[0,1]`; `None` (pre-score profiles / no expectation) → downstream derives `1.0`/`0.0` from `pass_fail`, so a binary board is byte-identical to before |
+| `metrics` | optional per-entry decomposition a scorer exposed (e.g. `{"precision": .., "recall": ..}`), carried straight through so the proposer's failure-mode profile can read it without re-running the scorer |
+| `metric_counts[]` | the generalised namespaced-metric superset (`drift:…`, `cost:…`, `rubric:…`); `unified_metrics()` merges drift + metric counts |
+| `turns_completed`, `memory_failure_count`, `context_loss_count` | multi-turn features |
+| `runtime_ms`, `match_id`, `cached`/`source_epoch`/`source_run` | runtime + provenance |
+| `adk_session_id` | the harmonograf deep-link key (below) |
 
 Drift counts feed both the proposer (as hypothesis-shaped features) and the
-tournament (`drift_loss`, `pass_fail`). If `drift_counts_by_kind` is
-identically empty across a whole epoch, the goldfive stream probably isn't
-reaching the reducer — that's the `flat_drift_signal` critical in
+tournament (`drift_loss`, `pass_fail`). If `drift_counts` is identically empty
+across a whole epoch, the goldfive stream probably isn't reaching the reducer —
+that's the `flat_drift_signal` critical in
 [zicato-diagnose-health](../zicato-diagnose-health/SKILL.md).
+
+> **Provenance of the weights.** `per_judge_loss` is the per-run *attribution*,
+> but the weights that produced it (`per_judge_weights` / `default_judge_weight`
+> / `pass_rate_monotonicity_scope`) only score correctly because they now
+> survive the subprocess-worker transport — a serialize/deserialize symmetry
+> (`tournament/runner.py:_weights_spec` ↔ `_tournament_worker.py
+> :_weights_from_args`). A field present in-process but dropped from that
+> transport is silently reset to its default inside the worker (it once scored
+> all custom-judge drift at weight `1.0`), so a `per_judge_loss` whose weights
+> don't match `scoring.json` is the tell. Tracing provenance, not tuning values
+> ([`zicato-tune-scoring`](../zicato-tune-scoring/SKILL.md)).
+
+> **`tool_observed` events.** Beyond reasoning/decision envelopes, the stream
+> carries goldfive's tool ledger — one `kind == "tool_observed"` event per tool
+> call (`tool_name`, `args_preview`, `result_preview`, `is_error`,
+> `error_message`). This is the ground-truth record of *what the agent did*; a
+> process judge that grades the deliverable reads it (off
+> `session.recent_events`), not the model's narration. See
+> [zicato-design-judges](../zicato-design-judges/SKILL.md).
 
 ### Regenerate the analyzer insight out of band
 

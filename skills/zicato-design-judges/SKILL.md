@@ -76,6 +76,54 @@ sets how hard the violation weighs (see severity weighting below). `name` is a
 stable slug, board-unique, and becomes goldfive's `judge_name` — the key
 `per_judge_weights` uses, so choose it deliberately.
 
+### Judge the tool-call ledger, not the narration
+
+A `python` judge that needs to grade *what the agent did* must read the real
+**tool-call ledger**, never the model's reasoning narration or its completion
+summary. goldfive dispatches custom judges only at **reasoning** observation
+points, so the `JudgeContext` it hands a judge carries the model's
+chain-of-thought (`ctx.reasoning_text`, the transcript window) — narration the
+agent merely *wrote*, not the tool round-trips it *ran*. A judge that scans that
+text for tool names grades a story the agent told about itself: text that
+mentions `read_files` twice will trip a "retry loop" signal while the agent
+never actually called the tool, and the same judge fires on unrelated chatter
+that names a tool in passing.
+
+The ground-truth record of every tool call is goldfive's session ring buffer,
+reachable from the judge as **`ctx.session_state.recent_events`** — each tool
+call appends one entry with `kind == "tool_observed"` carrying `tool_name`,
+`args_preview`, `result_preview`, `is_error`, and `error_message`. A
+deliverable-grading `python` judge reads *that* ledger (de-duplicating across
+observation points, since the bounded ring is re-snapshotted on every call). The
+narration is at most a last-resort fallback when no structured ledger is present
+at all, and must never be allowed to manufacture a signal the ledger contradicts
+(derive the count from the structured reads, so the count and the reason can
+never disagree). The worked example is `file_findability` in
+`examples/zicato_examples/target_1_presentation/judges.py`.
+
+The same fidelity rule binds OUTCOME expectations: an `expectation` that grades
+the deliverable must read the agent's *real* output (`final_output` /
+`conversation_end`) or the written artifact — never a self-summary / proxy
+field. See [`zicato-design-boards`](../zicato-design-boards/SKILL.md) and
+[`zicato-audit-board`](../zicato-audit-board/SKILL.md).
+
+### An expectation may now return a continuous per-entry score
+
+An OUTCOME `expectation` is no longer strictly pass/fail. A `predicate`-family
+matcher backed by a **scorer** callable may return a *continuous* score — a
+float in `[0.0, 1.0]` (an F1, a similarity, a partial-credit rubric) — and an
+optional `metrics` decomposition (e.g. `{"precision": .., "recall": ..}`). The
+matcher clamps the score to `[0,1]` and records it on `ExpectationResult.score`
+(and `metrics`), while `passed` keeps a thresholded bit for display/back-compat.
+A plain `bool` matcher leaves `score=None`, and the reducer then derives the
+score as `1.0`/`0.0` from `passed`, so a binary board is byte-identical to the
+pre-score behaviour. Both `score` and `metrics` are carried out to `loss.json`
+(see [`zicato-read-telemetry`](../zicato-read-telemetry/SKILL.md)); they feed the
+proposer's failure-mode profile. The *scalar/drift scoring formula* over these
+numbers is owned by [`zicato-tune-scoring`](../zicato-tune-scoring/SKILL.md) —
+design here decides *whether a behavior wants a graded score vs a binary
+verdict*, not the weights.
+
 ## How drift telemetry becomes loss
 
 The scalar's drift-loss half is a weighted sum over the run's **drift counts**,
