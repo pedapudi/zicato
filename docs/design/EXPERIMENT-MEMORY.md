@@ -28,7 +28,7 @@ it (a) stops re-proposing known failures and (b) builds on known wins.
 ## 1. The memoryless-hill-climb limitation
 
 Today's proposer call (`zicato.proposer.proposer.propose_experiment`)
-assembles its user prompt from exactly three live inputs (see
+assembles its user prompt from these live, present-tense inputs (see
 `zicato.proposer.prompts.render_user_prompt`):
 
 - `current_loss_summary` — a one-line digest of the *current champion's*
@@ -39,6 +39,16 @@ assembles its user prompt from exactly three live inputs (see
   epoch, rendered under `## Recent telemetry insights` (loaded by
   `zicato.analyzer.load_latest_insights` when `workspace_root` is
   supplied).
+- `failure_profile` — the bucketed, board-anonymized **outcome-marginal
+  failure-mode profile** (`orchestrator._render_failure_profile` →
+  `render_failure_mode_profile`): board-wide rates for *why* answers
+  failed (over-retrieval / misses / empty answers, plus precision/recall
+  when the board's continuous scores carry it), computed over the
+  **train slice only** and coarsened so no entry id, question, or output
+  leaks. This is the §11.5 channel in
+  [`OVERFITTING.md`](OVERFITTING.md); it carries the same
+  marginal-not-joint, holdout-integrity guarantees as the rest of the
+  proposer feed.
 
 Every one of those describes the *present*: the champion's current
 state and the most recent round's observations. None of them carries
