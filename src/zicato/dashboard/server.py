@@ -78,6 +78,23 @@ def _resolve_workspace(workspace_root: Path, *, harmonograf_url: str = "") -> Wo
     return WorkspacePaths(root, harmonograf_url=harmonograf_url)
 
 
+def _if_none_match(inm: str | None, etag: str) -> bool:
+    """True when the ``If-None-Match`` request header matches ``etag``.
+
+    Handles the ``*`` wildcard and a comma-separated list, and tolerates a
+    weak-validator ``W/`` prefix on the client's tag (we send a strong tag, so
+    we compare ignoring the prefix). Returns False for an absent header.
+    """
+    if not inm:
+        return False
+    if inm.strip() == "*":
+        return True
+    for tag in inm.split(","):
+        if tag.strip().removeprefix("W/") == etag:
+            return True
+    return False
+
+
 def create_app(
     workspace_root: Path,
     static_dir: Path,
@@ -129,7 +146,7 @@ def create_app(
     # Static serving. The JS references assets both at the document root
     # (`style.css`, `app.js`) and under `/static/`, so the bundle is
     # mounted at both. An unknown asset falls through to a 404.
-    def _serve_static(name: str) -> Response:
+    def _serve_static(name: str, inm: str | None = None) -> Response:
         if not name or name in (".", ".."):
             name = "index.html"
         # Reject path traversal.
@@ -140,30 +157,45 @@ def create_app(
             return PlainTextResponse("not found", status_code=404)
         if candidate.is_file():
             import mimetypes
+            from email.utils import formatdate
 
             mime, _ = mimetypes.guess_type(str(candidate))
+            # The dashboard is served straight off disk and iterated on live, and
+            # the asset URLs carry no version/hash to bust — so a plain cache
+            # would serve stale CSS/JS. Instead keep `no-cache` (the browser
+            # REVALIDATES on every load, so an edit always reaches it) but attach
+            # a validator: an ETag/Last-Modified derived from the file's identity
+            # (mtime-ns + size, a cheap stat). When the asset is unchanged the
+            # revalidation returns a bodyless 304 — no re-download — and the
+            # moment a file is edited its ETag changes and the browser gets a
+            # fresh 200. Caching efficiency without the stale-asset bug.
+            st = candidate.stat()
+            etag = f'"{st.st_mtime_ns:x}-{st.st_size:x}"'
+            cache_headers = {
+                "Cache-Control": "no-cache",
+                "ETag": etag,
+                "Last-Modified": formatdate(st.st_mtime, usegmt=True),
+            }
+            if _if_none_match(inm, etag):
+                return Response(status_code=304, headers=cache_headers)
             return Response(
                 candidate.read_bytes(),
                 media_type=mime or "application/octet-stream",
-                # The dashboard is served straight off disk and iterated on live;
-                # without a validator the browser caches CSS/JS heuristically, so
-                # edits look like they "didn't take" until a hard refresh. Force a
-                # revalidate on every load so updates always reach the browser.
-                headers={"Cache-Control": "no-cache"},
+                headers=cache_headers,
             )
         if name == "index.html":
             return Response(_PLACEHOLDER_HTML, media_type="text/html; charset=utf-8")
         return PlainTextResponse("not found", status_code=404)
 
-    async def serve_root(_request: Request) -> Response:
-        return _serve_static("index.html")
+    async def serve_root(request: Request) -> Response:
+        return _serve_static("index.html", request.headers.get("if-none-match"))
 
     async def serve_static_path(request: Request) -> Response:
-        return _serve_static(request.path_params["path"])
+        return _serve_static(request.path_params["path"], request.headers.get("if-none-match"))
 
     async def serve_fallback(request: Request) -> Response:
         # index.html's relative references resolve at the document root.
-        return _serve_static(request.url.path.lstrip("/"))
+        return _serve_static(request.url.path.lstrip("/"), request.headers.get("if-none-match"))
 
     routes = [
         Route("/", serve_root),

@@ -1918,6 +1918,42 @@ def test_unknown_static_is_404(client: TestClient) -> None:
     assert r.status_code == 404
 
 
+def test_static_asset_carries_etag_validator(client: TestClient) -> None:
+    # A served asset keeps `no-cache` but now carries an ETag/Last-Modified
+    # validator so the browser can revalidate cheaply instead of re-downloading.
+    r = client.get("/static/app_T.js")
+    assert r.status_code == 200
+    assert r.headers["cache-control"] == "no-cache"
+    assert r.headers.get("etag")
+    assert r.headers.get("last-modified")
+
+
+def test_static_revalidation_returns_304(client: TestClient) -> None:
+    first = client.get("/static/app_T.js")
+    etag = first.headers["etag"]
+    second = client.get("/static/app_T.js", headers={"If-None-Match": etag})
+    assert second.status_code == 304
+    assert second.content == b""  # a 304 carries no body — no re-download
+    assert second.headers["etag"] == etag
+
+
+def test_static_mismatched_etag_returns_fresh_200(client: TestClient) -> None:
+    r = client.get("/static/app_T.js", headers={"If-None-Match": '"deadbeef-1"'})
+    assert r.status_code == 200
+    assert "// app" in r.text
+
+
+def test_static_etag_changes_when_file_edited(client: TestClient, static_dir: Path) -> None:
+    before = client.get("/static/app_T.js").headers["etag"]
+    # An edit (changed size) must change the ETag so the browser refetches.
+    (static_dir / "app_T.js").write_text("// app — edited longer", encoding="utf-8")
+    after = client.get("/static/app_T.js")
+    assert after.status_code == 200
+    assert after.headers["etag"] != before
+    # The stale ETag no longer matches → a fresh 200, not a 304.
+    assert client.get("/static/app_T.js", headers={"If-None-Match": before}).status_code == 200
+
+
 # ---------------------------------------------------------------------------
 # Control endpoints
 # ---------------------------------------------------------------------------
