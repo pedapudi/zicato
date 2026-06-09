@@ -67,6 +67,7 @@ from zicato.core import (
     MetricCount,
     ScoringWeights,
 )
+from zicato.scoring import DriftContext, builtin_drift_loss, resolve_drift_loss
 
 # ---------------------------------------------------------------------------
 # Event walking — wire-form helpers
@@ -563,17 +564,37 @@ def compute_drift_loss(
     :attr:`ScoringWeights.severity_weights`,
     :attr:`ScoringWeights.per_kind_weights`, or — for custom judges —
     :attr:`ScoringWeights.per_judge_weights` instead.
+
+    Seam-1 dispatch (issue #19 phase 1)
+    -----------------------------------
+    The formula itself now lives in
+    :func:`zicato.scoring.builtins.builtin_drift_loss` (importable from
+    BOTH the orchestrator and the killable worker), and this function
+    routes through :func:`zicato.scoring.dispatch.resolve_drift_loss` —
+    the single seam later phases (declarative transforms / dotted-spec
+    plugins) plug into. PHASE 1 is a pure refactor: the dispatcher returns
+    the built-in value with a ``"builtin"`` provenance, so this function's
+    result is byte-identical to the historical inline formula. The
+    ``_TASK_FAILURE_RATIO_MULTIPLIER`` constant is kept here for
+    introspection / greppability; it equals the builtin's copy.
     """
-    sev_w = weights.severity_weights
-    loss = 0.0
-    for c in drift_counts:
-        sev_mult = sev_w.get(c.severity, 0.0)
-        kind_mult = _kind_multiplier(c.kind, weights)
-        loss += sev_mult * kind_mult * c.count
-    loss += weights.plan_revision_weight * plan_revisions
-    loss += _TASK_FAILURE_RATIO_MULTIPLIER * task_failure_ratio
-    loss += weights.runtime_weight * (runtime_ms / 1000.0)
-    return max(0.0, float(loss))
+    loss, _provenance = resolve_drift_loss(
+        DriftContext(
+            drift_counts=drift_counts,
+            plan_revisions=plan_revisions,
+            task_failure_ratio=task_failure_ratio,
+            runtime_ms=runtime_ms,
+            weights=weights,
+            builtin_loss=builtin_drift_loss(
+                drift_counts=drift_counts,
+                plan_revisions=plan_revisions,
+                task_failure_ratio=task_failure_ratio,
+                runtime_ms=runtime_ms,
+                weights=weights,
+            ),
+        )
+    )
+    return loss
 
 
 # ---------------------------------------------------------------------------
@@ -1051,14 +1072,27 @@ def reduce_loss(
         memory_failure_count = _memory_failure_count(agent_turns)
         context_loss_count = _context_loss_count(agent_turns, user_turns)
 
-    # --- 3. Compute drift loss ---
-
-    drift_loss = compute_drift_loss(
-        drift_counts=drift_counts,
-        plan_revisions=plan_revisions,
-        task_failure_ratio=task_failure_ratio,
-        runtime_ms=runtime_ms,
-        weights=weights,
+    # --- 3. Compute drift loss (Seam 1) ---
+    #
+    # Route through the scoring dispatcher so the provenance marker is
+    # captured for ``loss.json``. PHASE 1 (issue #19): the dispatcher
+    # returns the built-in value with a ``"builtin"`` provenance, so this
+    # is byte-identical to the historical ``compute_drift_loss`` path.
+    drift_loss, scoring_provenance = resolve_drift_loss(
+        DriftContext(
+            drift_counts=drift_counts,
+            plan_revisions=plan_revisions,
+            task_failure_ratio=task_failure_ratio,
+            runtime_ms=runtime_ms,
+            weights=weights,
+            builtin_loss=builtin_drift_loss(
+                drift_counts=drift_counts,
+                plan_revisions=plan_revisions,
+                task_failure_ratio=task_failure_ratio,
+                runtime_ms=runtime_ms,
+                weights=weights,
+            ),
+        )
     )
     if not_completed:
         # Heavy fixed-magnitude term keyed off severity_weights so the
@@ -1146,6 +1180,7 @@ def reduce_loss(
         per_judge_loss=per_judge_loss,
         score=score,
         metrics=metrics,
+        scoring_provenance=scoring_provenance,
     )
 
 
@@ -1281,6 +1316,9 @@ def read_loss_profile(path: Path) -> LossProfile:
         source_run=str(d.get("source_run", "") or ""),
         score=float(score_raw) if score_raw is not None else None,
         metrics=metrics,
+        scoring_provenance=(
+            str(d["scoring_provenance"]) if d.get("scoring_provenance") is not None else None
+        ),
     )
 
 
