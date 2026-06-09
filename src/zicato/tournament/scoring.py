@@ -59,6 +59,7 @@ import math
 from typing import Any
 
 from zicato.core import LossProfile, ScoringWeights
+from zicato.scoring import ScalarContext, builtin_scalar, resolve_scalar
 
 
 def entry_score(loss: LossProfile) -> float | None:
@@ -211,6 +212,31 @@ def aggregate_namespaced_metrics(
     return namespace_means
 
 
+def _per_judge_loss_aggregate(losses: list[LossProfile]) -> dict[str, float]:
+    """Mean per-judge ``weighted_loss`` across ``losses``, keyed by judge_name.
+
+    Carried onto :class:`~zicato.scoring.api.ScalarContext` purely for plugin
+    / provenance visibility — the built-in scalar does NOT add it separately
+    (each judge's contribution is already folded into ``drift_loss`` by the
+    reducer, hence into ``drift_loss_mean``). Summing each judge's per-run
+    ``weighted_loss`` and dividing by the run count mirrors the per-run mean
+    model the rest of the aggregation uses; a judge absent from a run
+    contributes zero to its sum. Returns ``{}`` for empty input.
+    """
+    if not losses:
+        return {}
+    sums: dict[str, float] = {}
+    for loss in losses:
+        # ``getattr`` (not attribute access) so a duck-typed loss stand-in —
+        # the projected-standings ``_FakeLoss``, or a profile materialised
+        # before the field existed — that carries no ``per_judge_loss`` is
+        # tolerated, mirroring :func:`entry_score`'s defensive ``getattr``.
+        for jl in getattr(loss, "per_judge_loss", ()) or ():
+            sums[jl.judge_name] = sums.get(jl.judge_name, 0.0) + jl.weighted_loss
+    n = len(losses)
+    return {name: total / n for name, total in sums.items()}
+
+
 def aggregate_generation_score(
     losses: list[LossProfile],
     weights: ScoringWeights,
@@ -299,7 +325,29 @@ def aggregate_generation_score(
         component_name = ns[:-1] if ns.endswith(":") else ns
         scalar_components[component_name] = value
 
-    scalar = sum(scalar_components.values())
+    # Seam 2 (issue #19 phase 1): synthesise the scalar through the scoring
+    # dispatcher. The built-in formula (drift + pass + non-drift namespaces)
+    # is byte-identical to ``sum(scalar_components.values())`` — the golden
+    # test pins that — and the dispatcher returns it with a ``"builtin"``
+    # provenance in this phase. ``scalar_components`` is still computed above
+    # for the display / gate breakdown; the dispatcher owns the scalar value
+    # the later phases (transforms / plugins) hook into.
+    scalar, scalar_provenance = resolve_scalar(
+        ScalarContext(
+            pass_rate=pass_rate,
+            mean_score=mean_score,
+            drift_loss_mean=drift_loss_mean,
+            namespace_aggregates=namespace_aggregates,
+            per_judge_loss=_per_judge_loss_aggregate(losses),
+            weights=weights,
+            builtin_scalar=builtin_scalar(
+                mean_score=mean_score,
+                drift_loss_mean=drift_loss_mean,
+                namespace_aggregates=namespace_aggregates,
+                weights=weights,
+            ),
+        )
+    )
 
     return {
         "drift_loss_mean": drift_loss_mean,
@@ -315,6 +363,10 @@ def aggregate_generation_score(
         "per_entry": per_entry,
         "namespace_aggregates": namespace_aggregates,
         "scalar_components": scalar_components,
+        # Which scoring path produced ``scalar`` (issue #19). PHASE 1:
+        # always ``"builtin"``; later phases enrich it. Additive — callers
+        # that don't read it are unaffected.
+        "scalar_provenance": scalar_provenance,
     }
 
 

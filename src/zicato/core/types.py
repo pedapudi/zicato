@@ -1072,6 +1072,14 @@ class LossProfile:
     # contract fields and never enter the contract hash.
     score: float | None = None
     metrics: dict[str, float] | None = None
+    # Scoring provenance (issue #19) — which scoring path produced
+    # ``drift_loss``. ``None`` (the back-compat default) and ``"builtin"``
+    # both mean the extracted built-in formula produced it; later phases
+    # enrich this with ``"transform:..."`` / ``"plugin:..."`` / a fail-open
+    # ``"builtin (fallback: ...)"`` marker. OUTPUT only — never a contract
+    # field, never enters the contract hash. A ``loss.json`` written before
+    # this field existed loads with ``scoring_provenance=None``.
+    scoring_provenance: str | None = None
 
     def unified_metrics(self) -> tuple[MetricCount, ...]:
         """Return the merged metric view across drift_counts + metric_counts.
