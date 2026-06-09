@@ -2918,6 +2918,155 @@ test('REGRESSION (view-divergence): the CANDIDATE racing dossier builds field pa
   }
 });
 
+// ---- the RADAR SILHOUETTE is UNIVERSAL across tournament structures --------
+// The radar is a PER-CANDIDATE quality view — THIS candidate's scalar-component
+// shape vs the champion across the heterogeneous gate axes (scalar / pass-rate /
+// per-judge drift). That comparison is independent of HOW the tournament was run
+// (gauntlet · single/double-elim · swiss · racing all schedule the SAME
+// champion→challenger gate), so the dossier must draw it for EVERY structure —
+// never gated on a gauntlet-only field. These regression tests lock that in so a
+// future structure-branch refactor can't silently drop the radar from a
+// non-gauntlet dossier. The radar's data source is the candidate's settled gate
+// (scalar_components) + its per-board slice, which exists for any structure; the
+// helper below enriches a structFixture with exactly that per-candidate data.
+
+// Enrich a structFixture so the viewed challenger v1 (parent v0) carries the
+// SETTLED per-candidate data a radar needs under ANY structure: a per-entry
+// slice with pass_fail (the pass-rate axis) + a champion per-entry slice (so the
+// dumbbell pairs) + a settled v0→v1 gate with scalar_components for BOTH sides
+// (the per-judge axes). Identical per-candidate payload regardless of structure,
+// so the only thing varying across the tests is the tournament structure.
+function radarStructFixture(structure, payload, tournamentId) {
+  const F = structFixture(structure, payload, tournamentId);
+  F[`/api/generation/${EPOCH_ID}/v0/per-entry`] = { epoch_id: EPOCH_ID, generation_id: 'v0', entries: [
+    { entry_id: 'waffles_single', run_id: 'run_v0_w', drift_loss: 60.5, pass_fail: 0, runtime_ms: 180000, wall_clock_budget_exceeded: false },
+    { entry_id: 'picky_stakeholder_emulated', run_id: 'run_v0_p', drift_loss: 70.0, pass_fail: 1, runtime_ms: 180000, wall_clock_budget_exceeded: false },
+  ] };
+  F[`/api/generation/${EPOCH_ID}/v1/per-entry`] = { epoch_id: EPOCH_ID, generation_id: 'v1', entries: [
+    { entry_id: 'waffles_single', run_id: 'run_v1_w', drift_loss: 55.0, pass_fail: 1, runtime_ms: 180000, wall_clock_budget_exceeded: false },
+    { entry_id: 'picky_stakeholder_emulated', run_id: 'run_v1_p', drift_loss: 66.0, pass_fail: 1, runtime_ms: 180000, wall_clock_budget_exceeded: false },
+  ] };
+  F[`/api/round/${EPOCH_ID}/v0/v1/gate`] = { decision: 'promoted', delta_scalar: -4.5, delta_pass_rate: 0.5,
+    reason: 'challenger improved', rules: [
+      { id: 'scalar_margin', label: 'Scalar margin', status: 'pass', fired: false, detail: '70.94 → 66.44 (needs ≤ -0.01)' },
+      { id: 'pass_rate_monotonicity', label: 'Pass-rate monotonicity', status: 'pass', fired: false },
+      { id: 'namespace_monotonicity', label: 'Namespace monotonicity', status: 'pass', fired: false },
+    ],
+    // BOTH sides decomposed across ≥2 components → the radar forms ≥3 axes
+    // (scalar-inverse + pass-rate + each per-judge component).
+    scalar_components: { champion: { drift: 68.5, schema: 1.43 }, challenger: { drift: 60.0, schema: 1.0 } } };
+  return F;
+}
+
+// Drive the candidate dossier for challenger v1 under `structure` + assert the
+// radar silhouette renders (folded into its width-capped side pane), names ≥3
+// real axes (not numeric indices), and is plottable (≥3 hover-able vertices).
+async function assertRadarRendersFor(structure, payload, tournamentId) {
+  freshState();
+  installFixtureMap(radarStructFixture(structure, payload, tournamentId));
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
+  const radar = svgsByClass(host, 'dn-radar')[0];
+  assert(radar, `the radar silhouette renders in the ${structure} candidate dossier`);
+  assert(allByClass(host, 'dn-radarpane')[0], `the ${structure} radar sits in its width-capped pane`);
+  assert(allByClass(host, 'dn-radar-hot').length >= 3, `the ${structure} radar exposes ≥3 hover-able axis vertices (plottable)`);
+  const labels = allByClass(radar, 'dn-radar-axislab').map((n) => (n.textContent || '').trim()).filter(Boolean);
+  assert(labels.includes('scalar'), `the ${structure} radar labels its scalar axis`);
+  assert(labels.includes('pass-rate'), `the ${structure} radar labels its pass-rate axis`);
+  assert(!labels.some((l) => /^\d+$/.test(l)), `the ${structure} radar uses named axes, not numeric indices`);
+  return host;
+}
+
+test('candidate dossier: the RADAR is UNIVERSAL — it renders for gauntlet', async () => {
+  // gauntlet uses the base FIXTURE (v0/v1 gate carries scalar_components already).
+  freshState(); installFetch();
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
+  assert(svgsByClass(host, 'dn-radar')[0], 'the radar renders in the gauntlet candidate dossier');
+  assert(allByClass(host, 'dn-radar-hot').length >= 3, 'the gauntlet radar is plottable (≥3 vertices)');
+  // gauntlet has no field-relative racing panels.
+  assertEqual(allByClass(host, 'dn-racing-field').length, 0, 'gauntlet shows no racing field panels');
+});
+
+test('candidate dossier: the RADAR is UNIVERSAL — it renders for single_elim', async () => {
+  await assertRadarRendersFor('single_elim', SE_STRUCT, 'tourn_e0_se');
+});
+
+test('candidate dossier: the RADAR is UNIVERSAL — it renders for double_elim', async () => {
+  const DE = JSON.parse(JSON.stringify(SE_STRUCT));
+  DE.structure = 'double_elim';
+  DE.structure_params = { grand_final_reset: true };
+  await assertRadarRendersFor('double_elim', DE, 'tourn_e0_de');
+});
+
+test('candidate dossier: the RADAR is UNIVERSAL — it renders for swiss', async () => {
+  await assertRadarRendersFor('swiss', SWISS_STRUCT, 'tourn_e0_sw');
+});
+
+test('candidate dossier: the RADAR is UNIVERSAL — a SETTLED racer shows the radar ALONGSIDE the field-relative panels', async () => {
+  // A settled racing candidate (settled scalar + a recorded gate with
+  // scalar_components) gets BOTH the per-candidate radar AND racing's
+  // field-relative panels — they answer different questions (component QUALITY
+  // vs field POSITION), so the radar ADDS to, never replaces, the field panels.
+  // Built from the SETTLED racing field record (its rungs reconstruct the field)
+  // enriched with v1's settled gate + per-board slice (so the radar is plottable).
+  freshState();
+  const F = racingRoundFixture({ live: false });
+  F[`/api/generation/${EPOCH_ID}/v0/per-entry`] = { epoch_id: EPOCH_ID, generation_id: 'v0', entries: [
+    { entry_id: 'b0', run_id: 'run_v0_b0', drift_loss: 60.5, pass_fail: 0, runtime_ms: 180000, wall_clock_budget_exceeded: false },
+    { entry_id: 'b1', run_id: 'run_v0_b1', drift_loss: 70.0, pass_fail: 1, runtime_ms: 180000, wall_clock_budget_exceeded: false },
+  ] };
+  F[`/api/generation/${EPOCH_ID}/v1/per-entry`] = { epoch_id: EPOCH_ID, generation_id: 'v1', entries: [
+    { entry_id: 'b0', run_id: 'run_v1_b0', drift_loss: 38.0, pass_fail: 1, runtime_ms: 180000, wall_clock_budget_exceeded: false },
+    { entry_id: 'b1', run_id: 'run_v1_b1', drift_loss: 42.0, pass_fail: 1, runtime_ms: 180000, wall_clock_budget_exceeded: false },
+  ] };
+  F[`/api/round/${EPOCH_ID}/v0/v1/gate`] = { decision: 'promoted', delta_scalar: -14.0, delta_pass_rate: 0.5,
+    reason: 'challenger improved', rules: [
+      { id: 'scalar_margin', label: 'Scalar margin', status: 'pass', fired: false, detail: '54.0 → 40.0 (needs ≤ -0.01)' },
+      { id: 'pass_rate_monotonicity', label: 'Pass-rate monotonicity', status: 'pass', fired: false },
+      { id: 'namespace_monotonicity', label: 'Namespace monotonicity', status: 'pass', fired: false },
+    ],
+    scalar_components: { champion: { drift: 53.0, schema: 1.4 }, challenger: { drift: 39.0, schema: 1.0 } } };
+  installFixtureMap(F);
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
+  // the per-candidate radar renders + is plottable (≥3 named axes).
+  const radar = svgsByClass(host, 'dn-radar')[0];
+  assert(radar, 'the radar renders in the settled racing candidate dossier');
+  assert(allByClass(host, 'dn-radar-hot').length >= 3, 'the settled-racing radar is plottable (≥3 vertices)');
+  const labels = allByClass(radar, 'dn-radar-axislab').map((n) => (n.textContent || '').trim()).filter(Boolean);
+  assert(labels.includes('scalar') && labels.includes('pass-rate'), 'the settled-racing radar names its scalar + pass-rate axes');
+  // racing's field-relative panels render TOO (additive, not a swap).
+  assert(allByClass(host, 'dn-racing-field')[0], 'the racing field-relative panels render alongside the radar');
+  assert(host.textContent.includes('FIELD-relative'), 'the racing field caption renders alongside the radar');
+  // and the radar reads the FIELD-leader-reference caption for racing (not the
+  // pairwise "vs champion" wording) — the structure-aware caption.
+  const cap = allByClass(host, 'dn-radar-cap')[0];
+  assert(cap && /field-leader/i.test(cap.textContent), 'the racing radar caption reads vs the field-leader reference');
+});
+
+test('candidate dossier: a no-op heartbeat over a NON-GAUNTLET (swiss) dossier WITH a radar churns NO DOM (digest-gated, anti-flash)', async () => {
+  freshState();
+  installFixtureMap(radarStructFixture('swiss', SWISS_STRUCT, 'tourn_e0_sw'));
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
+  // the radar IS present (so the digest folds a real radar model).
+  assert(svgsByClass(host, 'dn-radar')[0], 'the swiss dossier rendered its radar');
+  const digest1 = host.getAttribute('data-t-digest');
+  const first = host.firstChild;
+  const writes1 = host.innerHTMLWriteCount();
+  // an identical re-render (the no-op heartbeat) must write ZERO DOM.
+  await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
+  assertEqual(host.getAttribute('data-t-digest'), digest1, 'the radar-bearing swiss dossier digest is unchanged on a no-op beat');
+  assert(host.firstChild === first, 'no clear-and-rebuild on the no-op beat (radar model folded, not churned)');
+  assertEqual(host.innerHTMLWriteCount(), writes1, 'no innerHTML writes on the no-op beat over the radar-bearing dossier');
+});
+
 test('structure: a missing structure payload degrades gracefully (no throw, honest empty)', async () => {
   freshState();
   // epoch names swiss but the structure endpoint 404s + no tournaments[].
