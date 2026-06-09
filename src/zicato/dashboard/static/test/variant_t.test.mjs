@@ -121,6 +121,14 @@ FIXTURE[`/api/round/${EPOCH_ID}/v0/v1/gate`] = { decision: 'rejected', delta_sca
     { id: 'namespace_monotonicity', label: 'Namespace monotonicity', status: 'not_reached', fired: false },
   ],
   scalar_components: { champion: { drift: 68.5, schema: 1.43 }, challenger: { drift: 145.64, schema: 0.0 } },
+  // scalar-provenance decomposition (#19): the challenger's pass term was
+  // reshaped by a pow transform and its drift by a harmonic drift transform;
+  // the champion was plain built-in. No fail-open here.
+  scalar_decomposition: { present: true, fail_open: false,
+    champion: { scalar: { present: true, kind: 'builtin', source: 'built-in formula', transforms: [], fail_open: false, fallback_reason: null },
+                drift: { present: true, kind: 'builtin', source: 'built-in formula', transforms: [], fail_open: false, fallback_reason: null } },
+    challenger: { scalar: { present: true, kind: 'transform', source: 'pow(2.0)', transforms: [{ kind: 'pass', op: 'pow(2.0)' }], fail_open: false, fallback_reason: null },
+                  drift: { present: true, kind: 'transform', source: 'drift transform', transforms: [{ kind: 'looping_reasoning', op: 'harmonic' }], fail_open: false, fallback_reason: null } } },
   primary_driver: { judge: 'incorporates_feedback', delta: 24.0 } };
 FIXTURE[`/api/round/${EPOCH_ID}/v0/v2/gate`] = { decision: 'rejected', delta_scalar: 1.51, reason: 'regressed', rules: [
   { id: 'scalar_margin', label: 'Scalar margin', status: 'fail', fired: true, detail: '70.94 → 72.45' },
@@ -282,6 +290,83 @@ test('candidate view: the promote gate is ON the candidate page, stacked, no ove
   // bars as redundant with the radar silhouette — they must be GONE.
   assertEqual(allByClass(host, 'dn-sc-table').length, 0, 'the scalar-components block is REMOVED (folded into the radar)');
   assert(host.textContent.includes('Scalar margin'), 'a rule label present');
+});
+
+// ---- #19: scalar-provenance decomposition on the gate panel -------------
+
+test('#19 candidate gate: the scalar decomposition names the transform that shaped each side', async () => {
+  freshState(); installFetch();
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
+  // the decomposition block rendered (the v0/v1 gate fixture carries transforms).
+  const decomp = allByClass(host, 'dn-scalar-decomp')[0];
+  assert(decomp, 'the scalar-provenance decomposition rendered when a transform fired');
+  assert(decomp.textContent.includes('Scalar provenance'), 'the decomposition is headed');
+  // the challenger pass term came from pow(2.0); its drift from a drift transform.
+  assert(decomp.textContent.includes('pow(2.0)'), 'the pass transform token is named');
+  assert(decomp.textContent.includes('drift transform') || decomp.textContent.includes('looping_reasoning'),
+    'the drift transform is named');
+  // no fail-open here → no caution banner.
+  assertEqual(allByClass(host, 'dn-decomp-banner').length, 0, 'no fail-open banner when nothing failed open');
+  assertEqual(allByClass(host, 'dn-decomp-failopen').length, 0, 'no fail-open row when nothing failed open');
+});
+
+test('#19 candidate gate: a FAIL-OPEN plugin is flagged prominently (banner + caution row)', async () => {
+  freshState();
+  const F = { ...FIXTURE };
+  // Override the v0/v1 gate so the challenger's Seam-2 plugin FAILED OPEN.
+  F[`/api/round/${EPOCH_ID}/v0/v1/gate`] = {
+    ...FIXTURE[`/api/round/${EPOCH_ID}/v0/v1/gate`],
+    scalar_decomposition: { present: true, fail_open: true,
+      champion: { scalar: { present: true, kind: 'builtin', source: 'built-in formula', transforms: [], fail_open: false, fallback_reason: null },
+                  drift: { present: true, kind: 'builtin', source: 'built-in formula', transforms: [], fail_open: false, fallback_reason: null } },
+      challenger: { scalar: { present: true, kind: 'builtin', source: 'built-in formula', transforms: [], fail_open: true, fallback_reason: 'raised ValueError' },
+                    drift: { present: true, kind: 'builtin', source: 'built-in formula', transforms: [], fail_open: false, fallback_reason: null } } },
+  };
+  installFixtureMap(F);
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
+  // The fail-open caution banner is FIRST-CLASS — present + names the failure.
+  const banner = allByClass(host, 'dn-decomp-banner')[0];
+  assert(banner, 'a fail-open caution banner rendered prominently');
+  assert(banner.textContent.includes('FAILED OPEN'), 'the banner calls out the fail-open event');
+  // the offending seam row is caution-flagged and carries the reason.
+  const failRow = allByClass(host, 'dn-decomp-failopen')[0];
+  assert(failRow, 'the failed-open seam row is caution-flagged');
+  assert(failRow.textContent.includes('raised ValueError'), 'the fallback reason is surfaced on the row');
+});
+
+test('#19 candidate gate: a pre-#19 / built-in round renders NO decomposition (back-compat clean)', async () => {
+  freshState();
+  const F = { ...FIXTURE };
+  // A pre-#19 gate payload: no scalar_decomposition key at all.
+  const { scalar_decomposition: _drop, ...noProv } = FIXTURE[`/api/round/${EPOCH_ID}/v0/v1/gate`];
+  F[`/api/round/${EPOCH_ID}/v0/v1/gate`] = noProv;
+  installFixtureMap(F);
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
+  // the gate still renders, but the provenance block is absent (nothing new).
+  assert(allByClass(host, 'dn-gate')[0], 'the gate panel still renders on a pre-#19 round');
+  assertEqual(allByClass(host, 'dn-scalar-decomp').length, 0, 'no decomposition block on a pre-#19 / built-in round');
+  assertEqual(allByClass(host, 'dn-decomp-banner').length, 0, 'no caution banner on a pre-#19 round');
+});
+
+test('#19 candidate digest: a no-op heartbeat over a gate WITH provenance churns NO DOM', async () => {
+  freshState(); installFetch();   // the BASE fixture carries the v1 decomposition.
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
+  const digest1 = host.getAttribute('data-t-digest');
+  const first = host.firstChild;
+  const writes1 = host.innerHTMLWriteCount();
+  await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
+  assertEqual(host.getAttribute('data-t-digest'), digest1, 'digest unchanged on a no-op beat over a provenance-bearing gate');
+  assert(host.firstChild === first, 'no clear-and-rebuild on the no-op beat');
+  assertEqual(host.innerHTMLWriteCount(), writes1, 'no innerHTML writes on the no-op beat (provenance folded, not churned)');
 });
 
 // ---- the FINAL liked dossier: radar silhouette folded in, scalar-bars out ----

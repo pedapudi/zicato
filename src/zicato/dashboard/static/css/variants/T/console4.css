@@ -1062,6 +1062,38 @@
   .dn-rule-pass .dn-rule-status { color: var(--v2-good); }
   .dn-rule-detail { font-size: calc(11px * var(--dt-font-scale, 1)); line-height: 1.4; }
 
+  /* ===================  scalar provenance decomposition (#19)  =================== */
+  /* WHICH transform / plugin produced the scalar's pass term + drift component,
+     parsed from the recorded provenance tokens. Renders only when a transform /
+     plugin actually fired (a plain built-in run shows nothing). A plugin that
+     FAILED OPEN is the first-class caution signal — it must read loudly. */
+  .dn-scalar-decomp { margin: 2px 0 10px; padding: 0; }
+  .dn-decomp-sides { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .dn-decomp-side { border: 1px solid var(--v2-rule-soft); border-radius: 4px; padding: 8px 10px; }
+  .dn-decomp-sidehead { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1));
+    text-transform: uppercase; letter-spacing: 0.04em; color: var(--v2-ink-soft); margin: 0 0 6px; }
+  .dn-decomp-row { display: grid; grid-template-columns: 92px 1fr; gap: 8px; align-items: baseline;
+    font-size: calc(12px * var(--dt-font-scale, 1)); padding: 3px 0; line-height: 1.4; }
+  .dn-decomp-seam { font-family: var(--v2-mono); color: var(--v2-ink-soft); }
+  .dn-decomp-src { font-family: var(--v2-mono); color: var(--v2-ink); overflow-wrap: anywhere; }
+  .dn-decomp-builtin .dn-decomp-src { color: var(--v2-ink-soft); }
+  .dn-decomp-kindtag { color: var(--v2-ink-soft); font-size: calc(11px * var(--dt-font-scale, 1)); }
+  /* FAIL-OPEN: a fired plugin that fell back to the built-in / transformed
+     default. Caution-colored, with its reason, so a silently-degraded plugin is
+     obvious in the UI — never buried in a WARNING log. */
+  .dn-decomp-row.dn-decomp-failopen { color: var(--v2-caution);
+    background: color-mix(in srgb, var(--v2-caution) 10%, transparent);
+    border-left: 2px solid var(--v2-caution); padding-left: 6px; margin-left: -8px; }
+  .dn-decomp-row.dn-decomp-failopen .dn-decomp-src { color: var(--v2-caution); }
+  .dn-decomp-failtag { font-family: var(--v2-mono); color: var(--v2-caution);
+    font-size: calc(11px * var(--dt-font-scale, 1)); }
+  .dn-decomp-banner { display: flex; align-items: baseline; gap: 8px; margin: 0 0 8px;
+    padding: 6px 10px; border-radius: 4px; color: var(--v2-caution);
+    background: color-mix(in srgb, var(--v2-caution) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--v2-caution) 55%, transparent);
+    font-size: calc(12px * var(--dt-font-scale, 1)); line-height: 1.4; }
+  .dn-decomp-banner-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--v2-caution); align-self: center; flex: 0 0 auto; }
+
   /* ===================  side-by-side mutation diff (fix #2)  =================== */
 
   .dn-mut-combined { display: grid; gap: 14px; grid-template-columns: minmax(280px, 1fr) minmax(320px, 1.4fr); align-items: start; }

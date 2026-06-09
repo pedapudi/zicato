@@ -37,12 +37,26 @@ fine-grained codes without re-checking.
   alongside (`selection/registry.py`). The **promote gate is unchanged across
   every structure** — the strategy reads the gate verdict, never re-decides a
   duel (`selection/strategy.py:9-15`).
-- **Scoring is a weighted, drift-derived scalar (lower=better).** The formula
-  is `scalar = drift_weight·drift_loss_mean + pass_weight·(1−pass_rate)`
-  (`telemetry/scoring.py` `combined_scalar`, ~L102-114). **Scoring hazard:**
-  `drift_loss_mean` is *unbounded* while `(1−pass_rate)` is in [0,1], so with
-  the shipped equal defaults a noisy/large drift term can swamp pass-rate and
-  invert the ranking — the exact red flag `zicato-audit-board` hunts for.
+- **Scoring is a weighted, drift-derived scalar (lower=better), pluggable at
+  two seams (#19).** The built-in formula is
+  `scalar = drift_weight·drift_loss_mean + pass_weight·(1−mean_score)`, but the
+  LIVE path is NOT `telemetry/scoring.py::combined_scalar` (that helper is now
+  **test-only** parity). The live scalar runs through the seam architecture in
+  `zicato/scoring/` (`api` typed contexts · `builtins` extracted formulas ·
+  `transforms` registry · `plugins` dotted-spec · `dispatch` the single seam):
+  - **Seam 1 — per-run drift loss:** `telemetry/reducer.py compute_drift_loss`
+    builds a `DriftContext` and calls `scoring/dispatch.py::resolve_drift_loss`
+    (declarative `drift_kind_aggregation` + dotted `drift_reducer`). Runs in the
+    killable worker.
+  - **Seam 2 — per-gen scalar:** `tournament/scoring.py::aggregate_generation_score`
+    builds a `ScalarContext` and calls `scoring/dispatch.py::resolve_scalar`
+    (declarative `pass_transform` + dotted `scalar_fn`). Runs in the orchestrator.
+  Each composes **built-in → transform → plugin**, plugins fail-open to the
+  built-in (logged + recorded in `scoring_provenance`), and a plugin BODY edit
+  is source-hashed into the contract (rolls the epoch). **Scoring hazard:**
+  `drift_loss_mean` is *unbounded* while `(1−mean_score)` is in [0,1], so with
+  the shipped equal defaults a noisy/large drift term can swamp the pass term
+  and invert the ranking — the exact red flag `zicato-audit-board` hunts for.
   Per-judge weighting (`per_judge_weights`/`default_judge_weight`) folds into
   `drift_loss` inside the reducer (`telemetry/reducer.py compute_drift_loss`,
   `telemetry/scoring.py per_judge_loss`).
@@ -95,8 +109,9 @@ fine-grained codes without re-checking.
 | `tournament/runner.py` | Runs one duel: spawns a subprocess **worker per board-run**, escalates SIGTERM→SIGKILL on overrun, aggregates, ends in the unchanged `evaluate_gate`. Serialises the run via `_weights_spec`/`_entry_to_dict`/`_role_worker_spec`. |
 | `_tournament_worker.py` | The L3 subprocess that executes ONE run in its own OS process. Writes its OWN pid to `active_runs/{run_id}.json`, drives the entry under goldfive, reduces loss, writes `loss.json` + a result file. Deliberately killable. |
 | `tournament/gate.py` | `evaluate_gate` — the per-duel accept/reject (the `promote_margin` band + pass-rate/namespace monotonicity + holdout). Structure-independent. |
-| `tournament/ladder.py`, `regression.py`, `detail.py`, `scoring.py` | Thresholdout ladder (overfitting), optional regression-test gate, forensics detail, tournament-level aggregation. |
-| `telemetry/reducer.py` | `reduce_loss` + `compute_drift_loss` — the **one** place with both drift counts and weights; computes the scored scalar. `telemetry/scoring.py` = `aggregate_generation_score` + `combined_scalar`. |
+| `tournament/ladder.py`, `regression.py`, `detail.py`, `scoring.py` | Thresholdout ladder (overfitting), optional regression-test gate, forensics detail, and `scoring.py::aggregate_generation_score` — the LIVE Seam-2 entry (builds a `ScalarContext`, calls `scoring/dispatch.py::resolve_scalar`). |
+| `scoring/` (#19) | The pluggable-scoring seam package: `api` (frozen `DriftContext`/`ScalarContext` + provenance token) · `builtins` (extracted default formulas) · `transforms` (declarative registry + fail-fast validation) · `plugins` (dotted-spec resolution, source-hashing, fail-open) · `dispatch` (`resolve_drift_loss`/`resolve_scalar`, composes built-in→transform→plugin). |
+| `telemetry/reducer.py` | `reduce_loss` + `compute_drift_loss` — the **one** place with both drift counts and weights; the LIVE Seam-1 entry (builds a `DriftContext`, calls `scoring/dispatch.py::resolve_drift_loss`). `telemetry/scoring.py::combined_scalar` is a **test-only** parity reference, NOT the live path. |
 | `telemetry/sink.py`, `terminal_event.py`, `meta_loop.py`, `harmonograf_supervisor.py` | JSONL + harmonograf sinks, the terminal-frame invariant, the meta-loop session emitter, the auto-launched harmonograf server. |
 | `runtime/state.py` + `paths.py` | The control-file protocol: `heartbeat.json`, `active_runs/{run_id}.json`, `active_tournament.json`, `dashboard.json`, `lock.json`. **Every write is atomic** (`.tmp`+fsync+`os.replace`, `runtime/_atomic.py`); readers tolerate missing files. |
 | `runtime/heartbeat.py`, `control.py`, `lock.py` | The orchestrator/run heartbeat beaters, the dashboard control-command channel, the exclusive workspace lock. |

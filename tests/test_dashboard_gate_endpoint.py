@@ -35,6 +35,7 @@ def _gen_score(
     per_entry: dict[str, dict[str, object]],
     namespace_aggregates: dict[str, float] | None = None,
     scalar_components: dict[str, float] | None = None,
+    scalar_provenance: object = "__unset__",
 ) -> dict[str, object]:
     score: dict[str, object] = {
         "scalar": scalar,
@@ -44,7 +45,29 @@ def _gen_score(
     }
     if namespace_aggregates is not None:
         score["namespace_aggregates"] = namespace_aggregates
+    # ``"__unset__"`` (the default) writes NO ``scalar_provenance`` key — the
+    # pre-#19 / back-compat shape. ``None`` writes an explicit null; a string
+    # writes the recorded Seam-2 token.
+    if scalar_provenance != "__unset__":
+        score["scalar_provenance"] = scalar_provenance
     return score
+
+
+def _write_loss(
+    ws: Path, generation_id: str, entry_id: str, *, scoring_provenance: object = "__unset__"
+) -> None:
+    """Write a minimal per-run ``loss.json`` carrying a Seam-1 token.
+
+    Lets the decomposition tests seed the per-run drift provenance the gate
+    breakdown reads off the generation's ``runs/{entry}/loss.json`` files.
+    """
+    loss: dict[str, object] = {"entry_id": entry_id, "drift_loss": 0.3, "pass_fail": True}
+    if scoring_provenance != "__unset__":
+        loss["scoring_provenance"] = scoring_provenance
+    _write_json(
+        ws / "epochs" / EPOCH_ID / "generations" / generation_id / "runs" / entry_id / "loss.json",
+        loss,
+    )
 
 
 def _make_workspace(
@@ -372,3 +395,166 @@ def test_gate_missing_aggregate_degrades_to_unknown(tmp_path: Path) -> None:
     rules = {r["id"]: r for r in result["rules"]}
     assert rules["scalar_margin"]["status"] == "unknown"
     assert all(r["fired"] is False for r in result["rules"])
+
+
+# ---------------------------------------------------------------------------
+# Scoring provenance decomposition (#19 phase 4).
+# ---------------------------------------------------------------------------
+
+
+def test_provenance_parser_token_shapes() -> None:
+    """The parser decomposes every documented token shape (incl. fail-open)."""
+    from zicato.dashboard.state_reader import _parse_scoring_provenance
+
+    # None / builtin -> quiet built-in (None additionally marks present=False).
+    none_view = _parse_scoring_provenance(None)
+    assert none_view["kind"] == "builtin"
+    assert none_view["present"] is False
+    assert none_view["fail_open"] is False
+    builtin_view = _parse_scoring_provenance("builtin")
+    assert builtin_view["kind"] == "builtin"
+    assert builtin_view["present"] is True
+
+    # Seam-2 pass transform.
+    pass_view = _parse_scoring_provenance("transform:pass=pow(2.0)")
+    assert pass_view["kind"] == "transform"
+    assert pass_view["source"] == "pow(2.0)"
+    assert pass_view["fail_open"] is False
+
+    # Seam-1 drift transform with two reshaped kinds.
+    drift_view = _parse_scoring_provenance(
+        "transform:drift{looping_reasoning=harmonic, off_topic=cap(5)}"
+    )
+    assert drift_view["kind"] == "transform"
+    kinds = {t["kind"]: t["op"] for t in drift_view["transforms"]}
+    assert kinds == {"looping_reasoning": "harmonic", "off_topic": "cap(5)"}
+
+    # Dotted-spec plugins.
+    plugin_view = _parse_scoring_provenance("plugin:scalar_fn=mypkg.contract.scoring:my_scalar")
+    assert plugin_view["kind"] == "plugin"
+    assert plugin_view["source"] == "mypkg.contract.scoring:my_scalar"
+    assert plugin_view["seam"] == "scalar_fn"
+
+
+def test_provenance_parser_flags_fail_open() -> None:
+    """A ``(fallback: …)`` token is flagged fail-open with its reason, while
+    the underlying pre-plugin token is still classified."""
+    from zicato.dashboard.state_reader import _parse_scoring_provenance
+
+    view = _parse_scoring_provenance("builtin (fallback: raised ValueError)")
+    assert view["fail_open"] is True
+    assert view["fallback_reason"] == "raised ValueError"
+    # The pre-plugin value here was the built-in.
+    assert view["kind"] == "builtin"
+
+    # A transform that a plugin tried to wrap, then failed open over.
+    view2 = _parse_scoring_provenance("transform:pass=pow(2.0) (fallback: non-finite return)")
+    assert view2["fail_open"] is True
+    assert view2["fallback_reason"] == "non-finite return"
+    assert view2["kind"] == "transform"
+    assert view2["source"] == "pow(2.0)"
+
+
+def test_gate_breakdown_surfaces_scalar_decomposition(tmp_path: Path) -> None:
+    """build_gate_breakdown carries a scalar_decomposition parsed from the
+    recorded Seam-1 (loss.json) + Seam-2 (gen_score.json) provenance."""
+    champion = _gen_score(
+        scalar=0.50,
+        pass_rate=1.0,
+        per_entry={"e1": {"drift_loss": 0.5, "pass_fail": True}},
+        scalar_provenance="builtin",
+    )
+    challenger = _gen_score(
+        scalar=0.30,
+        pass_rate=1.0,
+        per_entry={"e1": {"drift_loss": 0.3, "pass_fail": True}},
+        scalar_provenance="transform:pass=pow(2.0)",
+    )
+    ws = _make_workspace(
+        tmp_path,
+        champion=champion,
+        challenger=challenger,
+        scoring={"promote_margin": 0.01},
+    )
+    # Challenger drift was reshaped by a harmonic transform on one kind.
+    _write_loss(
+        ws,
+        "v1",
+        "e1",
+        scoring_provenance="transform:drift{looping_reasoning=harmonic}",
+    )
+    result = build_gate_breakdown(WorkspacePaths(ws), EPOCH_ID, "v0", "v1")
+
+    decomp = result["scalar_decomposition"]
+    assert decomp["present"] is True
+    assert decomp["fail_open"] is False
+    # Challenger's pass term came from a pow transform; its drift from a
+    # harmonic drift transform.
+    chall = decomp["challenger"]
+    assert chall["scalar"]["kind"] == "transform"
+    assert chall["scalar"]["source"] == "pow(2.0)"
+    assert chall["drift"]["kind"] == "transform"
+    assert chall["drift"]["transforms"][0]["kind"] == "looping_reasoning"
+    # Champion was plain built-in — present but quiet.
+    assert decomp["champion"]["scalar"]["kind"] == "builtin"
+
+
+def test_gate_breakdown_flags_fail_open_event(tmp_path: Path) -> None:
+    """A fired plugin that failed open is flagged on the decomposition as a
+    first-class caution signal."""
+    champion = _gen_score(
+        scalar=0.50,
+        pass_rate=1.0,
+        per_entry={"e1": {"drift_loss": 0.5, "pass_fail": True}},
+        scalar_provenance="builtin",
+    )
+    challenger = _gen_score(
+        scalar=0.30,
+        pass_rate=1.0,
+        per_entry={"e1": {"drift_loss": 0.3, "pass_fail": True}},
+        # The Seam-2 scalar_fn plugin RAISED and fell back to the built-in.
+        scalar_provenance="builtin (fallback: raised ValueError)",
+    )
+    ws = _make_workspace(
+        tmp_path,
+        champion=champion,
+        challenger=challenger,
+        scoring={"promote_margin": 0.01},
+    )
+    result = build_gate_breakdown(WorkspacePaths(ws), EPOCH_ID, "v0", "v1")
+
+    decomp = result["scalar_decomposition"]
+    assert decomp["fail_open"] is True
+    chall_scalar = decomp["challenger"]["scalar"]
+    assert chall_scalar["fail_open"] is True
+    assert chall_scalar["fallback_reason"] == "raised ValueError"
+
+
+def test_gate_breakdown_decomposition_backcompat_none(tmp_path: Path) -> None:
+    """A pre-#19 run (no provenance recorded anywhere) yields a clean
+    decomposition with present=False — the UI renders nothing new."""
+    champion = _gen_score(
+        scalar=0.50,
+        pass_rate=1.0,
+        per_entry={"e1": {"drift_loss": 0.5, "pass_fail": True}},
+    )  # no scalar_provenance key
+    challenger = _gen_score(
+        scalar=0.30,
+        pass_rate=1.0,
+        per_entry={"e1": {"drift_loss": 0.3, "pass_fail": True}},
+    )
+    ws = _make_workspace(
+        tmp_path,
+        champion=champion,
+        challenger=challenger,
+        scoring={"promote_margin": 0.01},
+    )
+    # No loss.json files written either -> no Seam-1 token.
+    result = build_gate_breakdown(WorkspacePaths(ws), EPOCH_ID, "v0", "v1")
+
+    decomp = result["scalar_decomposition"]
+    assert decomp["present"] is False
+    assert decomp["fail_open"] is False
+    # Both sides still classify as built-in (quiet), present=False per seam.
+    assert decomp["champion"]["scalar"]["present"] is False
+    assert decomp["champion"]["scalar"]["kind"] == "builtin"

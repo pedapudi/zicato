@@ -2353,6 +2353,7 @@ def _read_run_loss_files(
         if not isinstance(entry_id, str) or not entry_id:
             entry_id = run_dir.name
         drift = loss.get("drift_loss")
+        prov = loss.get("scoring_provenance")
         cell: dict[str, Any] = {
             "entry_id": entry_id,
             "drift_loss": drift if isinstance(drift, int | float) else None,
@@ -2362,6 +2363,10 @@ def _read_run_loss_files(
             "score": _opt_score(loss.get("score")),
             "metrics": _opt_metrics(loss.get("metrics")),
             "run_id": loss.get("run_id") if isinstance(loss.get("run_id"), str) else run_dir.name,
+            # Seam-1 drift-reduction provenance (#19). ``None`` on a pre-#19
+            # loss.json (the field did not exist) — surfaced so the gate
+            # breakdown can show which transform / plugin shaped drift_loss.
+            "scoring_provenance": str(prov) if isinstance(prov, str) and prov else None,
         }
         sid = loss.get("adk_session_id")
         if isinstance(sid, str) and sid:
@@ -4354,6 +4359,194 @@ def _gen_agg_for_gate(
     return agg
 
 
+def _parse_scoring_provenance(token: str | None) -> dict[str, Any]:
+    """Decompose a scoring provenance token into a structured component view.
+
+    The two scoring seams (#19) each emit a parseable provenance string the
+    runner records on disk: the per-generation ``scalar_provenance`` (Seam 2,
+    in ``gen_score.json``) and the per-run ``scoring_provenance`` (Seam 1, in
+    each ``loss.json``). This is the read-only renderer that turns one such
+    token into the shape the dashboard explains a scalar with — WITHOUT
+    re-scoring. Token grammar (see ``zicato/scoring/dispatch.py`` +
+    ``plugins.py``)::
+
+        "builtin"                                  # the default formula
+        "transform:pass=pow(2.0)"                  # Seam-2 pass transform
+        "transform:drift{looping_reasoning=harmonic, off_topic=cap(5)}"  # Seam 1
+        "plugin:scalar_fn=<dotted spec>"           # Seam-2 dotted plugin
+        "plugin:drift_reducer=<dotted spec>"       # Seam-1 dotted plugin
+        "<any of the above> (fallback: <reason>)"  # FAIL-OPEN — plugin failed
+
+    Returns ``{kind, source, transforms, fail_open, fallback_reason, raw}``:
+
+    * ``kind`` — ``"builtin"`` / ``"transform"`` / ``"plugin"`` / ``"unknown"``.
+    * ``source`` — the human label of what produced the value (the transform
+      token, the dotted plugin spec, or ``"built-in formula"``).
+    * ``transforms`` — for a drift token, ``[{kind, op}]`` of every reshaped
+      drift kind; ``[]`` otherwise.
+    * ``fail_open`` — ``True`` iff the token carries the ``(fallback: …)``
+      marker: a fired plugin that FAILED OPEN to the built-in / transformed
+      default. This is the first-class caution signal the UI surfaces
+      prominently — a silently-degraded plugin must never hide in a log.
+    * ``fallback_reason`` — the parenthesised reason when ``fail_open``.
+    * ``raw`` — the original token (for the title / debugging).
+
+    ``None`` and ``"builtin"`` both yield ``kind="builtin"`` (and
+    ``None`` additionally sets ``present=False`` so a pre-#19 run renders
+    nothing new). Any unrecognised string degrades to ``kind="unknown"``
+    rather than raising — this is a display helper, never fatal.
+    """
+    out: dict[str, Any] = {
+        "present": token is not None,
+        "kind": "builtin",
+        "source": "built-in formula",
+        "transforms": [],
+        "fail_open": False,
+        "fallback_reason": None,
+        "raw": token,
+    }
+    if not token:
+        # None (pre-#19) or "" — nothing to decompose. ``present`` already
+        # records whether the field existed at all.
+        return out
+
+    body = token
+    # Fail-open marker: "<pre-plugin token> (fallback: <reason>)". A fired
+    # plugin that fell back to the built-in / transformed default. Strip the
+    # marker so we still classify the underlying (pre-plugin) token, but flag
+    # the degradation prominently.
+    marker = " (fallback: "
+    idx = token.find(marker)
+    if idx >= 0 and token.endswith(")"):
+        out["fail_open"] = True
+        out["fallback_reason"] = token[idx + len(marker) : -1]
+        body = token[:idx]
+
+    if body == "builtin":
+        out["kind"] = "builtin"
+        out["source"] = "built-in formula"
+    elif body.startswith("plugin:"):
+        out["kind"] = "plugin"
+        # "plugin:scalar_fn=<spec>" / "plugin:drift_reducer=<spec>"
+        rest = body[len("plugin:") :]
+        seam, _, spec = rest.partition("=")
+        out["source"] = spec or rest
+        out["seam"] = seam
+    elif body.startswith("transform:drift{") and body.endswith("}"):
+        out["kind"] = "transform"
+        out["source"] = "drift transform"
+        inner = body[len("transform:drift{") : -1]
+        transforms: list[dict[str, str]] = []
+        for part in inner.split(", "):
+            part = part.strip()
+            if not part:
+                continue
+            kind_name, _, op = part.partition("=")
+            transforms.append({"kind": kind_name, "op": op or "?"})
+        out["transforms"] = transforms
+    elif body.startswith("transform:pass="):
+        out["kind"] = "transform"
+        out["source"] = body[len("transform:pass=") :]
+        out["transforms"] = [{"kind": "pass", "op": body[len("transform:pass=") :]}]
+    elif body.startswith("transform:"):
+        out["kind"] = "transform"
+        out["source"] = body[len("transform:") :]
+    else:
+        out["kind"] = "unknown"
+        out["source"] = body
+    return out
+
+
+def _build_scalar_decomposition(
+    parent_agg: dict[str, Any] | None,
+    child_agg: dict[str, Any] | None,
+    parent_drift_prov: str | None,
+    child_drift_prov: str | None,
+) -> dict[str, Any]:
+    """Assemble the gate-breakdown scalar decomposition (#19 phase 4).
+
+    Reads the persisted provenance tokens — the per-generation
+    ``scalar_provenance`` (Seam 2, off ``gen_score.json``) and a
+    representative per-run ``scoring_provenance`` (Seam 1, off the
+    generation's ``loss.json`` files) — and renders, per side, WHICH
+    transform / plugin produced the pass term and the drift component, plus a
+    first-class ``fail_open`` flag.
+
+    Shape::
+
+        {
+          "present": bool,        # any non-None provenance on either side
+          "fail_open": bool,      # ANY side / seam failed open (caution)
+          "champion": {scalar, drift} | None,
+          "challenger": {scalar, drift} | None,
+        }
+
+    where each side's ``scalar`` / ``drift`` is the
+    :func:`_parse_scoring_provenance` view of that seam's token. A side with
+    only built-in / absent provenance still renders (cleanly / quietly); the
+    consumer decides whether to show the panel at all based on ``present``.
+    """
+
+    def _side(agg: dict[str, Any] | None, drift_prov: str | None) -> dict[str, Any] | None:
+        if not isinstance(agg, dict):
+            return None
+        scalar_prov_raw = agg.get("scalar_provenance")
+        scalar_prov = scalar_prov_raw if isinstance(scalar_prov_raw, str) else None
+        scalar_view = _parse_scoring_provenance(scalar_prov)
+        drift_view = _parse_scoring_provenance(drift_prov)
+        return {"scalar": scalar_view, "drift": drift_view}
+
+    champion = _side(parent_agg, parent_drift_prov)
+    challenger = _side(child_agg, child_drift_prov)
+
+    def _has_prov(side: dict[str, Any] | None) -> bool:
+        if side is None:
+            return False
+        return bool(side["scalar"]["present"] or side["drift"]["present"])
+
+    def _failed_open(side: dict[str, Any] | None) -> bool:
+        if side is None:
+            return False
+        return bool(side["scalar"]["fail_open"] or side["drift"]["fail_open"])
+
+    return {
+        "present": _has_prov(champion) or _has_prov(challenger),
+        "fail_open": _failed_open(champion) or _failed_open(challenger),
+        "champion": champion,
+        "challenger": challenger,
+    }
+
+
+def _representative_drift_provenance(
+    paths: WorkspacePaths, epoch_id: str, generation_id: str
+) -> str | None:
+    """Pick one generation's Seam-1 drift provenance token to display.
+
+    Every run in a generation scores its drift through the SAME contract
+    (same ``drift_kind_aggregation`` / ``drift_reducer``), so the token is
+    homogeneous across the generation EXCEPT that a fail-open event fires
+    per-run (a plugin that raised on one board's inputs). To keep a single
+    silently-degraded run visible, prefer a fail-open token (the
+    ``(fallback: …)`` form) over a clean one; otherwise return the first
+    non-``"builtin"`` token, else the first token, else ``None``.
+    """
+    cells = _read_run_loss_files(paths, epoch_id, generation_id)
+    tokens = [
+        c["scoring_provenance"]
+        for c in cells.values()
+        if isinstance(c.get("scoring_provenance"), str)
+    ]
+    if not tokens:
+        return None
+    for t in tokens:
+        if "(fallback: " in t:
+            return t
+    for t in tokens:
+        if t != "builtin":
+            return t
+    return tokens[0]
+
+
 def build_gate_breakdown(
     paths: WorkspacePaths,
     epoch_id: str,
@@ -4397,6 +4590,17 @@ def build_gate_breakdown(
         "delta_pass_rate": None,
         "rules": [],
         "scalar_components": {"champion": None, "challenger": None},
+        # Scoring provenance decomposition (#19 phase 4): which transform /
+        # plugin produced each side's pass term + drift component, parsed from
+        # the recorded provenance tokens, with a first-class fail-open flag.
+        # ``present=False`` on a pre-#19 run (no provenance recorded) so the UI
+        # renders nothing new — back-compat clean.
+        "scalar_decomposition": _build_scalar_decomposition(
+            parent_agg,
+            child_agg,
+            _representative_drift_provenance(paths, epoch_id, champion_id) if champion_id else None,
+            _representative_drift_provenance(paths, epoch_id, challenger_id),
+        ),
         "primary_driver": None,
     }
 

@@ -1,6 +1,6 @@
 ---
 name: zicato-tune-scoring
-description: Edit a zicato scoring.json — drift-loss weights, per_judge_weights/default_judge_weight, severity and per-kind weights, and the promotion gate (promote_margin + pass_rate_monotonicity). Use when calibrating how generations are scored or when tournament decisions disagree with operator intuition. Lower scalar = better.
+description: Edit a zicato scoring.json — drift-loss weights, per_judge_weights/default_judge_weight, severity and per-kind weights, the declarative transform registry (pass_transform / drift_kind_aggregation), the dotted-spec scalar_fn / drift_reducer plugins, and the promotion gate (promote_margin + pass_rate_monotonicity). Use when calibrating how generations are scored or when tournament decisions disagree with operator intuition. Lower scalar = better.
 ---
 
 # Tuning `scoring.json`
@@ -28,7 +28,21 @@ to the workspace; `evolve` reads it there and freezes a per-epoch copy under
    passed. Only entries that carry an `expectation` contribute.
 
 `drift_weight` and `pass_weight` are the coefficients combining the two
-(roughly `scalar = drift_weight * weighted_drift + pass_weight * (1 - pass_rate)`).
+(roughly `scalar = drift_weight * weighted_drift + pass_weight * (1 - mean_score)`).
+
+Tuning is **three layers of escalating power**, neutral by default — adding
+none of the lower layers leaves scoring byte-identical to the linear weights:
+
+1. **Linear weights** (below) — the common 90%: which kinds/judges/severities
+   matter, and how the two halves combine.
+2. **Transform registry** (the "Non-linear shapes" section) — a non-linear
+   *shape* (a quadratic recall curve, a diminishing-returns aggregation, a cap)
+   without writing operator code. Declarative, serializable.
+3. **Plugin escape hatch** (the "Plugins" section) — arbitrary pure logic
+   (F-beta, cost-aware) as a dotted-spec function in the operator package.
+
+Reach for the lowest layer that expresses the change. Do NOT add a transform or
+plugin to do something linear weights already cover.
 
 ## A real `scoring.json`
 
@@ -117,11 +131,97 @@ A child replaces the parent only when BOTH hold:
   entries. Flip `pass_rate_monotonicity` to `false` only for experimental epochs
   that expect non-monotone exploration (there is no `"off"` scope value).
 
+## Non-linear shapes — the transform registry
+
+When a linear weight can't express the shape you want (you need a *curve*, not
+just a coefficient), reach for a declarative transform. Each is a single
+`{"op": "<name>", ...params}` spec from `zicato.scoring.transforms`:
+
+| `op` | params | shape |
+|---|---|---|
+| `linear` | — | identity (neutral default) |
+| `pow` | `exponent` | `x ** exponent` |
+| `harmonic` | — | `1 + 1/2 + … + 1/n` (diminishing returns) |
+| `cap` | `max` | `min(x, max)` |
+| `clip` | `lo`, `hi` | clamp to `[lo, hi]` (needs `lo <= hi`) |
+| `log1p` | — | `log(1 + x)` |
+
+Two slots take a transform:
+
+```json
+"pass_transform":  { "op": "pow", "exponent": 2.0 },
+"drift_kind_aggregation": {
+  "looping_reasoning": { "op": "harmonic" },
+  "off_topic":         { "op": "cap", "max": 5 }
+}
+```
+
+- **`pass_transform`** reshapes the pass/miss term `(1 - mean_score)`.
+  `{"op":"pow","exponent":2.0}` is the **replacement for the retired
+  `pass_exponent`** field — `pass_exponent=2` now lowers to this. Absent /
+  `linear` = today's plain linear miss.
+- **`drift_kind_aggregation`** reshapes, per drift KIND, how that kind's *count*
+  aggregates into drift loss. An absent kind = `linear` = today's
+  `severity × kind_weight × count`. `{"looping_reasoning":{"op":"harmonic"}}`
+  opts THIS contract — and no other — into the harmonic looping curve (it used
+  to be an unconditional core special-case for everyone).
+
+One `op` per slot — no pipelines. Specs are **validated fail-fast at contract
+load**: an unknown op, a missing/non-finite/typo'd param, or a `clip` with
+`lo > hi` is rejected loudly at `evolve` time, never producing a `NaN`
+mid-scoring.
+
+## Plugins — the escape hatch for arbitrary logic
+
+For anything the registry can't express (an F-beta recall/precision blend, a
+cost-aware penalty), name a dotted-spec plugin in the operator package —
+resolved by the SAME importer predicates/judges use:
+
+```json
+"drift_reducer": "mypkg.contract.scoring:my_drift_reducer",   // Seam 1: per-run drift loss
+"scalar_fn":     "mypkg.contract.scoring:my_scalar"           // Seam 2: per-gen scalar
+```
+
+Each is a **pure, deterministic, NO-LLM, no-I/O** function over a frozen typed
+context (`zicato.scoring.api` — `DriftContext` / `ScalarContext`). The context
+carries the post-transform `builtin_loss` / `builtin_scalar`, so a plugin
+*wraps/adjusts* the built-in rather than reimplementing it:
+
+```python
+# mypkg/contract/scoring.py — immutable to the proposer, like predicates/judges
+def my_scalar(ctx) -> float:
+    cost = ctx.namespace_aggregates.get("cost:", 0.0)
+    return ctx.builtin_scalar + 0.001 * cost   # cost-aware penalty on top of the built-in
+```
+
+Rules:
+- **Pure only** — no LLM, no I/O, no wall-clock; re-scoring must be reproducible.
+- **Fail-open** — a plugin that raises / returns `NaN`/`inf` falls back to the
+  pre-plugin (built-in / transformed) value, logged + recorded in provenance.
+  Never crashes the run. Watch the dashboard for fail-open flags (next section).
+- **Immutable to the proposer** — plugins live in the operator package, never
+  enumerated as mutation points.
+- `drift_reducer` runs inside the killable worker; `scalar_fn` in the
+  orchestrator. Both fold into the contract hash, AND the plugin module's
+  **source is hashed** — editing the plugin BODY rolls the epoch.
+
+## Provenance — explaining a scalar
+
+Each seam records a parseable provenance token: per-run
+`loss.json::scoring_provenance` (Seam 1) and per-generation
+`gen_score.json::scalar_provenance` (Seam 2). The dashboard's promote-gate
+breakdown decomposes them into a per-side "which transform/plugin shaped this"
+view. Token shapes: `builtin`, `transform:pass=pow(2.0)`,
+`transform:drift{looping_reasoning=harmonic}`, `plugin:scalar_fn=<spec>`, and
+the **fail-open** form `<token> (fallback: <reason>)` — surfaced prominently
+(caution-colored) so a silently-degraded plugin is obvious, not buried in a log.
+
 ## `scoring.json` is part of the evaluation contract
 
-Weights are frozen per epoch. Editing `scoring.json` changes the contract hash,
-and the next `evolve` (default auto-epoching) closes the current epoch and opens
-a fresh one. Tune between epochs, not mid-epoch.
+Weights — AND the transforms and plugin specs — are frozen per epoch. Editing
+`scoring.json` (or a referenced plugin's body) changes the contract hash, and
+the next `evolve` (default auto-epoching) closes the current epoch and opens a
+fresh one. Tune between epochs, not mid-epoch.
 
 ## Calibration workflow
 

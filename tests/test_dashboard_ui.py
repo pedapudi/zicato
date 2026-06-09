@@ -323,7 +323,16 @@ def test_bundle_under_size_envelope(
     # per-generation mean-score caption, three shared ui.js helpers (prText /
     # metricsDigest / scoreFmt), and their scoped score CSS — ~5 KB of new
     # surface. The envelope is raised to 1.072 MB to cover it with headroom.
-    assert total < 1_072_000, f"bundle is {total} bytes, exceeds 1_072_000 envelope"
+    #
+    # The SCORING-PROVENANCE decomposition (#19 phase 4) then adds the gate
+    # panel's scalar-provenance block — per-side rows naming which transform /
+    # plugin produced the pass term + drift component (parsed from the recorded
+    # provenance tokens), a FIRST-CLASS fail-open caution banner + row for a
+    # plugin that degraded silently, the decomposition digest fold, and the
+    # scoped decomposition CSS — ~3 KB of new surface (back-compat: a pre-#19 /
+    # built-in round renders nothing new). The envelope is raised to 1.080 MB to
+    # cover it with headroom.
+    assert total < 1_080_000, f"bundle is {total} bytes, exceeds 1_080_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
