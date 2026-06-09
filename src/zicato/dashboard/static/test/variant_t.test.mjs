@@ -1635,6 +1635,45 @@ test('epoch view: the round timeline fits to width with ~11 rounds (one episode 
   }
 });
 
+test('epoch view: the proposer brief KEEPS its expanded state across a data-changing re-render (no auto-collapse)', async () => {
+  freshState();
+  const EP = 'ep_brief_persist';
+  // A long (>1200 char) brief defaults CLOSED, so a manual expand is the only
+  // way it is open — the perfect probe for the gatedSwap-resets-state bug.
+  const LONG_BRIEF = '# Long brief\n\n' + 'detail '.repeat(220);
+  const F = {
+    '/api/epoch': { epoch_id: EP, closed: false, goal: 'g', brief: LONG_BRIEF, experiments: [], board: [] },
+    '/api/lineage': { generations: [] },
+    '/api/tournaments': { epoch_id: EP, champion_lineage: [], matchups: [] },
+    '/api/score-trajectory': { points: [] },
+    '/api/workspace': { current_epoch_id: EP, epochs: [{ epoch_id: EP }], sparkline: [] },
+    '/api/health-report': { epoch_id: EP, healthy: true, findings: [] },
+  };
+  globalThis.fetch = async (path) => {
+    const v = lookupFixture(F, path);
+    return v !== undefined ? { ok: true, json: async () => v } : { ok: false, status: 404, json: async () => ({}) };
+  };
+  const epoch = await import('../js/variants/T/views/epoch.js');
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+
+  await epoch.render(host, ctx, { epochId: EP });
+  let details = allByClass(host, 'dn-brief')[0];
+  assert(details, 'the proposer-brief <details> rendered');
+  assert(!details.hasAttribute('open'), 'a long brief starts collapsed');
+
+  // The user expands it (the browser flips `.open` and fires `toggle`).
+  details.open = true;
+  details.dispatchEvent({ type: 'toggle' });
+
+  // A live heartbeat moves data → the epoch digest changes → gatedSwap REBUILDS
+  // the DOM. The brief must STAY expanded, not snap shut to its length default.
+  F['/api/epoch'].closed = true;
+  await epoch.render(host, ctx, { epochId: EP });
+  details = allByClass(host, 'dn-brief')[0];
+  assert(details.hasAttribute('open'), 'the brief stays EXPANDED across a data-changing re-render (no auto-collapse)');
+});
+
 // ---- (c) the generations page renders the banner + match-card grid ----
 
 test('generations view: the FIELD renders as the structure-flow graphic (duelFlow lanes) — NO dt-match-card / dt-champ-banner boxes', async () => {

@@ -16,6 +16,14 @@ import { structurePill, isNonGauntlet, structureLabel, normalizeStructure, racin
 import { epochRoundModel, roundModelDigest, waterfallModel } from './rounds.js';
 import { boardStatusModel, boardStatusDigest, renderBoardStatus } from './boardstatus.js';
 
+// The user's last expand/collapse of the proposer brief, keyed by epoch. The
+// epoch view is digest-gated: a live heartbeat that moves ANY data rebuilds the
+// DOM via gatedSwap, which would otherwise recreate the brief <details> at its
+// length-based DEFAULT and silently discard a manual expand (the "expand →
+// auto-collapses again" bug). Remembering the choice here keeps an expanded
+// brief expanded across those re-renders.
+const _briefOpen = new Map();
+
 export async function render(host, ctx, params) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading epoch contract…' }));
 
@@ -208,13 +216,19 @@ export async function render(host, ctx, params) {
     ]));
 
     const briefText = ep.brief || '';
-    const briefDetails = el('details', { class: 'dn-brief', open: briefText.length < 1200 ? '' : null }, [
+    // Default-open a short brief; but if the user has toggled it this session,
+    // honour THEIR choice so a live re-render doesn't snap it shut again.
+    const briefDefaultOpen = briefText.length < 1200;
+    const briefOpen = _briefOpen.has(epochId) ? _briefOpen.get(epochId) : briefDefaultOpen;
+    const briefDetails = el('details', { class: 'dn-brief', open: briefOpen ? '' : null }, [
       el('summary', null, [
         el('span', { class: 'chev', text: '▸' }), 'Proposer brief',
         el('span', { class: 'dn-faint', style: 'font-weight:400;font-size:11px;', text: briefText ? `· ${briefText.split(/\n/).length} lines` : '· none' }),
       ]),
       renderMarkdown(briefText),
     ]);
+    // Capture the user's expand/collapse so the next re-render restores it.
+    briefDetails.addEventListener('toggle', () => { _briefOpen.set(epochId, !!briefDetails.open); });
     nodes.push(section('Operator’s brief to the proposer', briefDetails));
 
     // ---- the CHAMPION-SPINE ROUND TIMELINE (the epoch overview hero) ----
