@@ -243,6 +243,113 @@ def test_cost_includes_holdout_confirm_runs() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Per-structure default replicates — the under-reporting bug + its anti-drift
+# pin. The cost meter must default ``replicates`` to the STRUCTURE's own
+# default (swiss / elim default to 2), not a flat 1, or it under-reports.
+# ---------------------------------------------------------------------------
+
+
+def _no_holdout(draft: TournamentDraft) -> None:
+    """Disable the hash-derived holdout so the whole board is the train slice.
+
+    Keeps the cost arithmetic a clean ``... × board`` with no holdout-confirm
+    term, so the default-replicates assertions read off one number.
+    """
+    import dataclasses
+
+    draft.scoring = dataclasses.replace(
+        draft.scoring,
+        overfitting=dataclasses.replace(draft.scoring.overfitting, enabled=False),
+    )
+
+
+def test_cost_swiss_unset_replicates_uses_strategy_default_two() -> None:
+    # The under-reporting bug: with ``replicates`` UNSET the meter must use
+    # swiss's strategy default of 2, not a flat 1. The old flat-1 default
+    # would have reported HALF this number.
+    draft = TournamentDraft()
+    draft.entries = _board(8)
+    _no_holdout(draft)
+    ops.set_structure(draft, "swiss")
+    ops.set_param(draft, "field_size", 4)
+    # ``replicates`` is deliberately NOT set.
+    est = ops.estimate_cost(draft)
+    # rounds_n 4 (default) × pairings (4//2=2) × replicates 2 (swiss default)
+    # × board 8 = 128. The old flat-1 default reported 64 — half the real cost.
+    assert est.board_runs_per_round == 128
+    detail = next(line.detail for line in est.breakdown if line.label == "swiss-pairing runs")
+    assert "replicates 2" in detail
+
+
+def test_cost_explicit_replicates_overrides_structure_default() -> None:
+    # An EXPLICIT ``replicates`` is honored verbatim even when it differs from
+    # the structure default (swiss default is 2; an explicit 1 still wins).
+    draft = TournamentDraft()
+    draft.entries = _board(8)
+    _no_holdout(draft)
+    ops.set_structure(draft, "swiss")
+    ops.set_param(draft, "field_size", 4)
+    ops.set_param(draft, "replicates", 1)
+    est1 = ops.estimate_cost(draft)
+    assert est1.board_runs_per_round == 64  # 4 × 2 × 1 × 8
+
+    ops.set_param(draft, "replicates", 3)
+    est3 = ops.estimate_cost(draft)
+    assert est3.board_runs_per_round == 192  # 4 × 2 × 3 × 8
+
+
+def test_cost_unset_replicates_per_structure_defaults() -> None:
+    # The per-structure default the estimator applies when ``replicates`` is
+    # unset, for EVERY structure: gauntlet=1, single_elim=2, double_elim=2,
+    # swiss=2, racing=1. (Each computed over an 8-board, field 4, holdout off.)
+    expected = {
+        "gauntlet": 1,
+        "single_elim": 2,
+        "double_elim": 2,
+        "swiss": 2,
+        "racing": 1,
+    }
+    for structure, default in expected.items():
+        draft = TournamentDraft()
+        draft.entries = _board(8)
+        _no_holdout(draft)
+        ops.set_structure(draft, structure)
+        ops.set_param(draft, "field_size", 4)
+        # ``replicates`` UNSET → the estimator resolves the structure default.
+        est_default = ops.estimate_cost(draft)
+        ops.set_param(draft, "replicates", default)
+        est_explicit = ops.estimate_cost(draft)
+        # The unset-default estimate equals the explicit-default estimate.
+        assert est_default.board_runs_per_round == est_explicit.board_runs_per_round, structure
+
+
+def test_estimator_default_matches_strategy_default_for_every_structure() -> None:
+    # ANTI-DRIFT PIN: the default the cost estimator applies per structure
+    # MUST equal the default the live SelectionStrategy uses when
+    # ``params["replicates"]`` is unset. They read the SAME source
+    # (``_default_replicates``); this test fails if a future change moves one
+    # without the other.
+    from zicato.core.types import VALID_TOURNAMENT_STRUCTURES
+    from zicato.selection import default_replicates_for
+    from zicato.selection.registry import STRATEGY_REGISTRY
+
+    for structure in VALID_TOURNAMENT_STRUCTURES:
+        cls = STRATEGY_REGISTRY[structure]
+        # The strategy's actual default, as resolved in its ``__init__`` with
+        # no ``replicates`` param.
+        strategy = cls(params={})
+        strategy_default = strategy._replicates  # type: ignore[attr-defined]
+        # The estimator's per-structure default, from the shared map.
+        estimator_default = default_replicates_for(structure)
+        assert estimator_default == strategy_default, (
+            f"{structure}: estimator default {estimator_default} != "
+            f"strategy default {strategy_default}"
+        )
+        # And both equal the class ClassVar that is the source of truth.
+        assert estimator_default == cls._default_replicates, structure
+
+
+# ---------------------------------------------------------------------------
 # validate
 # ---------------------------------------------------------------------------
 

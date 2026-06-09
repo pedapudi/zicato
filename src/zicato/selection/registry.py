@@ -33,6 +33,30 @@ STRATEGY_REGISTRY: dict[str, type[SelectionStrategy]] = {
     RacingStrategy.structure: RacingStrategy,
 }
 
+#: The per-structure default ``replicates`` (when ``params["replicates"]`` is
+#: unset), DERIVED from each strategy's own ``_default_replicates`` ClassVar —
+#: the SINGLE SOURCE OF TRUTH. A strategy resolves its own default in
+#: ``__init__`` against the same ClassVar this map reads, so the map and the
+#: live strategy can never disagree: changing one changes both. The builder
+#: cost estimator reads this instead of assuming a flat ``1``, so the cost
+#: meter matches the schedule a structure actually runs (the under-reporting
+#: bug class — swiss/elim default to 2, not 1). Keyed by structure token.
+STRUCTURE_DEFAULT_REPLICATES: dict[str, int] = {
+    structure: cls._default_replicates for structure, cls in STRATEGY_REGISTRY.items()
+}
+
+
+def default_replicates_for(structure: str) -> int:
+    """The default ``replicates`` for a structure when the param is unset.
+
+    Reads :data:`STRUCTURE_DEFAULT_REPLICATES` (derived from the strategy's
+    own ``_default_replicates``), falling back to ``1`` for an unknown
+    structure token so a caller never raises on a stray token — it simply
+    gets the universal single-run default. This is the lookup the builder
+    cost estimator uses so its default matches each strategy's actual default.
+    """
+    return STRUCTURE_DEFAULT_REPLICATES.get(structure, 1)
+
 
 def make_strategy(
     spec: TournamentStructure,
@@ -78,4 +102,9 @@ def make_strategy(
     return cls(params)
 
 
-__all__ = ["STRATEGY_REGISTRY", "make_strategy"]
+__all__ = [
+    "STRATEGY_REGISTRY",
+    "STRUCTURE_DEFAULT_REPLICATES",
+    "default_replicates_for",
+    "make_strategy",
+]

@@ -48,6 +48,11 @@ class RacingStrategy(SelectionStrategy):
     """Successive-halving rungs, then a final full-board champion-gate duel."""
 
     structure = "racing"
+    # Racing's replication is INTRINSIC — the escalating board slices are the
+    # sample, not per-duel ``replicates`` — so it keeps the base default of 1
+    # (a per-duel replicate would re-run a slice, not enlarge it). Declared
+    # explicitly so the shared default-replicates map reads a stable value.
+    _default_replicates = 1
 
     def __init__(self, params: dict[str, Any] | None = None) -> None:
         super().__init__(params)
@@ -58,7 +63,7 @@ class RacingStrategy(SelectionStrategy):
         self._rung0 = _param_int(self.params, "rung0_board_size", 0)  # 0 ⇒ use fraction
         raw_ids = self.params.get("board_ids", ())
         self._board_ids: tuple[str, ...] = tuple(str(x) for x in raw_ids)
-        self._replicates = max(1, _param_int(self.params, "replicates", 1))
+        self._replicates = max(1, _param_int(self.params, "replicates", self._default_replicates))
 
         # --- Matchup-level wall-clock budgets (opt-in; None ⇒ uncapped). ---
         # ``matchup_budget_seconds`` caps EVERY duel's total board-unit

@@ -39,9 +39,10 @@ class GauntletStrategy(SelectionStrategy):
         self._result: MatchupResult | None = None
         self._scheduled = False
         # ``replicates`` is the §9-lever-1 knob; the gauntlet defaults to
-        # 1 (today's exact single-run path). It is accepted from params so
-        # an operator may opt into replication without changing structure.
-        self._replicates = max(1, _param_int(self.params, "replicates", 1))
+        # 1 (today's exact single-run path) — the base
+        # ``_default_replicates``. It is accepted from params so an operator
+        # may opt into replication without changing structure.
+        self._replicates = max(1, _param_int(self.params, "replicates", self._default_replicates))
 
     def field_size(self) -> int:
         return 1

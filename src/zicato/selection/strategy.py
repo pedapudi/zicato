@@ -296,6 +296,20 @@ class SelectionStrategy(ABC):
 
     structure: ClassVar[str]
 
+    #: The per-structure default ``replicates`` when ``params["replicates"]``
+    #: is unset — the SINGLE SOURCE OF TRUTH for a structure's default
+    #: replication. The base default is ``1`` (the gauntlet's exact
+    #: single-run path, also racing's, whose replication is intrinsic to the
+    #: escalating board slices). Bracket / Swiss structures override it to
+    #: ``2`` (replication, not bracket shape, is their noise lever — see
+    #: SELECTION.md §8). EVERY consumer that needs "the default replicates
+    #: for this structure" reads it from here: the strategy ``__init__``
+    #: resolves ``params["replicates"]`` against it, and the builder cost
+    #: estimator reads it via
+    #: :data:`zicato.selection.registry.STRUCTURE_DEFAULT_REPLICATES` so the
+    #: meter can never under-report by assuming a flat ``1``.
+    _default_replicates: ClassVar[int] = 1
+
     def __init__(self, params: dict[str, Any] | None = None) -> None:
         self.params: dict[str, Any] = dict(params or {})
 
