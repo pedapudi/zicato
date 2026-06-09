@@ -32,6 +32,7 @@ from __future__ import annotations
 import textwrap
 from collections.abc import Iterable
 
+from zicato.analyzer.outcome_marginals import OutcomeMarginalSummary
 from zicato.core.drift_kinds import GOLDFIVE_DRIFT_KINDS
 from zicato.core.types import MutationPoint, Pattern, PriorExperiment, ProposerSkill
 
@@ -402,6 +403,130 @@ def _bucket_scalar_delta(delta: float) -> str:
     return "flat"
 
 
+#: Band edges for a rate in ``[0, 1]`` (a fraction-of-runs marginal). The
+#: proposer is given a COARSE band, never the exact rate, so it cannot read
+#: the board's round-over-round response surface off a failure-mode number
+#: (the same memorization-resistance rationale as :func:`_bucket_scalar_delta`,
+#: OVERFITTING.md §11.4). Edges are deliberately wide: "none" (essentially
+#: never), then ~10% steps surfaced as approximate labels. The label carries
+#: a ``~`` to signal it is approximate.
+def _band_rate(rate: float) -> str:
+    """Coarsen a fraction-of-runs rate to a memorization-resistant band.
+
+    Returns an approximate label like ``~20%`` (rounded to the nearest 10%)
+    or ``none`` for an essentially-zero rate and ``~all`` for an
+    essentially-one rate. The proposer keeps the actionable "how often does
+    this failure happen" signal without the exact per-round number that would
+    let it climb the board's response surface rather than true quality.
+    """
+    if rate <= 0.0:
+        return "none"
+    if rate >= 0.999:
+        return "~all"
+    # Round to the nearest 10% step; clamp a tiny-but-nonzero rate up to the
+    # smallest visible band so "it happens, rarely" never reads as "never".
+    pct = round(rate * 10) * 10
+    if pct <= 0:
+        pct = 10
+    if pct >= 100:
+        return "~all"
+    return f"~{pct}%"
+
+
+#: Band edges for a quality value in ``[0, 1]`` (recall / precision / score).
+#: A coarse three-band label — ``low`` / ``medium`` / ``high`` — with the
+#: midpoint of the band shown approximately, mirroring the issue's worked
+#: example (``recall: medium (~0.6)``). The exact mean never reaches the
+#: model, only the band, so no fine-grained response surface leaks.
+def _band_quality(value: float) -> str:
+    """Coarsen a ``[0, 1]`` quality mean to a ``low``/``medium``/``high`` band.
+
+    Returns a band label plus an approximate band-representative value (e.g.
+    ``low (~0.3)``) so the proposer can read the magnitude qualitatively
+    without the exact mean. The thirds split — ``< 1/3`` low, ``< 2/3``
+    medium, else high — matches the issue example's ``recall: medium (~0.6)``
+    / ``precision: low (~0.3)`` framing.
+    """
+    if value < 1.0 / 3.0:
+        return "low (~0.3)"
+    if value < 2.0 / 3.0:
+        return "medium (~0.6)"
+    return "high (~0.9)"
+
+
+def render_failure_mode_profile(summary: OutcomeMarginalSummary) -> str:
+    """Render the bucketed, identity-free outcome-marginal profile body.
+
+    Capability 2 of issue #18 (item 7). Produces the compact, train-slice-
+    only, BUCKETED ``Failure-mode profile`` block the proposer reads to
+    target *why* answers are wrong (over-retrieval vs misses vs empty
+    answers), not just *that* a scalar moved. Every number is banded — rates
+    through :func:`_band_rate`, quality means through :func:`_band_quality` —
+    so no exact per-run value and no round-over-round response surface leaks
+    (OVERFITTING.md §11.4). The summary itself carries only marginal rates
+    (no entry id, question, or output token), so the rendered block is
+    board-anonymous by construction.
+
+    An empty summary (no train-slice runs — see
+    :meth:`~zicato.analyzer.outcome_marginals.OutcomeMarginalSummary.is_empty`)
+    returns the EMPTY STRING — the proposer-side sentinel for "omit this
+    section entirely", exactly as the insights / prior-experiments / pattern
+    blocks behave. That is what keeps the proposer prompt byte-identical to
+    today when no outcome data is present.
+    """
+    if summary.is_empty():
+        return ""
+
+    lines: list[str] = []
+
+    # The recall/precision decomposition line — the most actionable signal,
+    # present only when Capability 1's per-entry metrics carried it. It tells
+    # over-retrieval (precision down) from misses (recall down) apart and is
+    # annotated with the dominant failure direction.
+    if summary.recall_mean is not None and summary.precision_mean is not None:
+        recall_band = _band_quality(summary.recall_mean)
+        precision_band = _band_quality(summary.precision_mean)
+        decomposition = f"- recall: {recall_band} | precision: {precision_band}"
+        # The directional read: precision materially below recall ⇒
+        # over-retrieval; recall materially below precision ⇒ misses.
+        gap = summary.recall_mean - summary.precision_mean
+        if gap > 0.15:
+            decomposition += "   => over-retrieves"
+        elif gap < -0.15:
+            decomposition += "   => misses relevant items"
+        lines.append(decomposition)
+
+    if summary.over_retrieval_rate is not None:
+        lines.append(
+            f"- over-retrieval (precision<0.5): {_band_rate(summary.over_retrieval_rate)} of runs"
+        )
+
+    # Generic, board-agnostic failure modes — one compact line.
+    generic_parts = [
+        f"empty / terse answers: {_band_rate(summary.empty_rate + summary.terse_rate)}",
+        f"looping: {_band_rate(summary.looping_rate)}",
+    ]
+    lines.append("- " + " | ".join(generic_parts))
+
+    # Pass-rate / score bands, when present — the binary + continuous outcome
+    # bands, banded so the exact aggregate never leaks.
+    outcome_parts: list[str] = []
+    if summary.pass_rate is not None:
+        outcome_parts.append(f"pass-rate: {_band_rate(summary.pass_rate)}")
+    if summary.mean_score is not None:
+        outcome_parts.append(f"mean score: {_band_quality(summary.mean_score)}")
+    if outcome_parts:
+        lines.append("- " + " | ".join(outcome_parts))
+
+    # Operator-contributed marginals (already sanitized + numeric). Render
+    # each as its own banded line, sorted for a stable block.
+    for name in sorted(summary.operator_marginals):
+        rate = summary.operator_marginals[name]
+        lines.append(f"- {name}: {_band_rate(rate)} of runs")
+
+    return "\n".join(lines)
+
+
 def _render_prior_experiment_line(pe: PriorExperiment, *, restrict: bool = False) -> str:
     """Render one prior experiment as a two-line compact entry.
 
@@ -567,6 +692,7 @@ def render_user_prompt(
     prior_experiments: Iterable[PriorExperiment] = (),
     restrict_visibility: bool = False,
     custom_judge_names: Iterable[str] = (),
+    failure_profile: str = "",
 ) -> str:
     """Build the user prompt for one proposer call.
 
@@ -631,6 +757,19 @@ def render_user_prompt(
         prompt and the validator's accepted forms in lockstep. Empty (the
         default) renders an explicit "no custom judges" notice alongside the
         always-present drift-kind enumeration.
+    failure_profile:
+        Optional pre-rendered, train-slice-only, BUCKETED outcome-marginal
+        block (Capability 2 of issue #18 — built by
+        :func:`~zicato.proposer.prompts.render_failure_mode_profile` from an
+        :class:`~zicato.analyzer.outcome_marginals.OutcomeMarginalSummary`).
+        When non-empty, a ``## Failure-mode profile (this round, aggregate —
+        train slice)`` section is prepended (after the telemetry insights,
+        before ``## What's already been tried``) so the proposer can target
+        *why* answers are wrong, not just *that* a scalar moved. The string
+        is already board-anonymized + banded by its renderer — this function
+        only splices it. Empty (the default) omits the section entirely, so a
+        caller that supplies no profile renders a byte-identical prompt to
+        before this surface existed.
     """
 
     body = USER_PROMPT_TEMPLATE.format(
@@ -646,6 +785,12 @@ def render_user_prompt(
             f"failures, build on wins)\n\n{prior_block}\n\n"
         )
         body = prior_prefix + body
+    if failure_profile.strip():
+        failure_prefix = (
+            "## Failure-mode profile (this round, aggregate — train slice)\n"
+            f"{failure_profile.strip()}\n\n"
+        )
+        body = failure_prefix + body
     if insights.strip():
         insights_prefix = f"## Recent telemetry insights\n{insights.strip()}\n\n"
         body = insights_prefix + body
@@ -693,6 +838,7 @@ def render_user_prompt(
 __all__ = [
     "SYSTEM_PROMPT_TEMPLATE",
     "USER_PROMPT_TEMPLATE",
+    "render_failure_mode_profile",
     "render_metric_targets_block",
     "render_pattern_block",
     "render_mutation_block",

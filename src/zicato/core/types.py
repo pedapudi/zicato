@@ -2116,6 +2116,20 @@ class ScoringWeights:
     # epoch. Default-on with a safe auto-degrade on small boards. See
     # :class:`OverfittingConfig` and ``docs/design/OVERFITTING.md``.
     overfitting: OverfittingConfig = field(default_factory=_default_overfitting_config)
+    # Optional operator outcome-summarizer hook (Capability 2 of issue #18,
+    # item 8). A dotted spec (``pkg.mod:fn`` / ``pkg.mod.fn``) resolved like
+    # predicates / judges. The resolved callable receives the TRAIN-SLICE
+    # per-entry results and returns a STRUCTURED aggregate — a
+    # ``{marginal_name: numeric_rate}`` mapping, NOT prose — so zicato can
+    # ENFORCE bucketing + anonymity on its output (it sanitizes + bands the
+    # returned values before they reach the proposer; see
+    # :func:`zicato.analyzer.outcome_marginals.run_operator_summarizer`). The
+    # empty string (the default) configures NO summarizer, so the proposer
+    # prompt is byte-identical to today. Because it is a plain
+    # ``ScoringWeights`` field, it folds into the field-enumerating contract
+    # serde + canonicalizer automatically: configuring (or changing) the spec
+    # rolls the epoch, exactly like every other contract field.
+    outcome_summarizer_spec: str = ""
 
 
 # ---------------------------------------------------------------------------

@@ -108,6 +108,7 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
             max_generations_per_contract=9,
             ladder=LadderConfig(threshold=0.27, budget=8),
         ),
+        "outcome_summarizer_spec": "pkg.mod:summarize_outcomes",
     },
 }
 

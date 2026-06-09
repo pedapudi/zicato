@@ -238,6 +238,36 @@ def test_hash_changes_on_restrict_visibility_edit(tmp_path: Path) -> None:
     assert h1 != h2
 
 
+def test_hash_changes_on_outcome_summarizer_spec_edit(tmp_path: Path) -> None:
+    # The optional operator outcome-summarizer hook (issue #18 cap 2, item 8)
+    # is a plain ScoringWeights field, so configuring or changing the dotted
+    # spec folds into the scoring canon and rolls the epoch — exactly like
+    # retuning any other contract field. The empty-string default (no
+    # summarizer) is byte-identical to today.
+    base = _write_contract(tmp_path)
+    base.scoring_path.write_text(json.dumps({}))
+    h_default = compute_contract_hash(base)
+    base.scoring_path.write_text(json.dumps({"outcome_summarizer_spec": "pkg.mod:summarize_a"}))
+    h1 = compute_contract_hash(base)
+    base.scoring_path.write_text(json.dumps({"outcome_summarizer_spec": "pkg.mod:summarize_b"}))
+    h2 = compute_contract_hash(base)
+    # Configuring a spec rolls off the default, and changing it rolls again.
+    assert h_default != h1
+    assert h1 != h2
+
+
+def test_hash_stable_when_outcome_summarizer_spec_omitted(tmp_path: Path) -> None:
+    # A contract that does not mention the new field hashes identically to one
+    # that spells out its empty-string default — no spurious roll for existing
+    # contracts that predate the field.
+    base = _write_contract(tmp_path)
+    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0}))
+    h_omitted = compute_contract_hash(base)
+    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0, "outcome_summarizer_spec": ""}))
+    h_explicit_default = compute_contract_hash(base)
+    assert h_omitted == h_explicit_default
+
+
 def test_hash_changes_on_ladder_knob_edit(tmp_path: Path) -> None:
     # The Ladder sub-config (OVERFITTING.md §12 #2) folds into the scoring
     # contract through OverfittingConfig — bumping a Ladder knob rolls the
