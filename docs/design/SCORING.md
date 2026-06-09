@@ -12,9 +12,25 @@ combining two signals:
   (`expectations` — `Predicate` / `Rubric`) passed. Only entries with
   a non-empty `expectations` list contribute.
 
-The two combine into a single tournament scalar via tunable weights.
-This document specifies both halves, their combination, and the
+The two combine into a single tournament scalar. The combination is
+**operator-tunable** at three levels of escalating power: a fixed
+vocabulary of linear weights (the 90%), a declarative **transform
+registry** for non-linear shapes (`pow` / `harmonic` / `cap` / `clip`
+/ `log1p`) with no operator code, and a dotted-spec **plugin** escape
+hatch for arbitrary pure logic — the same operator-owned, contract-
+referenced mechanism `predicates.py` and `judges.py` already use. This
+document specifies both halves, their combination (weights → transforms
+→ plugins), the seam architecture, scoring provenance, and the
 promotion gate.
+
+> **Not "fixed linear weights only".** Earlier zicato could shape the
+> score *only* through linear weights, so every new scoring *shape* (a
+> non-linear recall curve, a diminishing-returns aggregation, a cap)
+> leaked into core as a bespoke field or an unconditional special-case.
+> Issue #19 closed that gap. The linear weights below are the neutral
+> default; §11 documents the transform registry + plugin seams that
+> reshape them without a core edit, and §2.4 covers the source-hashing
+> that rolls the epoch when a plugin body changes.
 
 ## 1. Why both signals
 
@@ -198,6 +214,28 @@ interpretation — "this is the worst possible outcome for this entry" —
 is therefore baked into the per-run profile, not applied as a separate
 scoring term.
 
+### 2.4 Scoring config is part of the frozen contract
+
+Every `ScoringWeights` field — the linear weights, the gate knobs, the
+declarative transforms (§11.1), and the plugin specs (§11.2) — folds
+into the **frozen per-epoch contract hash** through the
+field-enumerating canonicalizer (`zicato/epoch/contract.py`). Changing
+any of them rolls the epoch: the next `evolve` closes the current epoch
+and opens a fresh one, so a scoring change is never silently applied to
+an in-flight epoch's already-scored generations.
+
+For the dotted-spec plugins this goes one step further than a plain
+field: the canonicalizer hashes the **plugin spec string AND the
+resolved module's source** (`spec_with_source_hash`), so editing a
+plugin's *body* — not just its dotted reference — is detected as a
+contract change and rolls the epoch. This is the **single
+source-hashing mechanism shared across every grading plugin**
+(predicates, judges, the outcome summarizer, and the scoring `scalar_fn`
+/ `drift_reducer`): a body edit anywhere on the operator's grading
+surface rolls the contract consistently. The declarative transforms
+need no source hashing — they serialize natively as dicts and are
+covered by the field canonicalizer for free.
+
 ## 3. Per-entry pass-rate
 
 For an entry with a non-empty `expectations` list, the reducer
@@ -220,9 +258,14 @@ both built-in and custom-judge violations land.
 
 ## 4. Per-generation aggregate score
 
-Given a generation's loss profiles for all N board entries
-(`aggregate_generation_score` then `combined_scalar` in
-`telemetry/scoring.py`):
+Given a generation's loss profiles for all N board entries, the live
+path is `aggregate_generation_score` in `tournament/scoring.py`, which
+mechanically aggregates the per-run profiles (means, namespace rollups)
+and then synthesises the scalar through **Seam 2** — the scoring
+dispatcher `zicato.scoring.dispatch.resolve_scalar`, which composes the
+built-in formula (`zicato.scoring.builtins.builtin_scalar`) with any
+declarative `pass_transform` and dotted-spec `scalar_fn` plugin (§11).
+The built-in formula is:
 
 ```
 drift_loss_mean = mean over entries i of loss_profile[i].drift_loss
@@ -231,8 +274,14 @@ observed        = count of entries i whose pass_fail is not None
 passes          = count of those entries with pass_fail == True
 pass_rate       = passes / observed   (or 1.0 when observed == 0)
 
-scalar = drift_weight * drift_loss_mean + pass_weight * (1.0 - pass_rate)
+scalar = drift_weight * drift_loss_mean + pass_weight * (1.0 - mean_score)
 ```
+
+(The pass term runs on the uniform continuous `mean_score` axis, issue
+#18; on an all-bool board `mean_score == pass_rate`, so this is
+byte-identical to the historical `(1 - pass_rate)` term. There is a
+`telemetry/scoring.py::combined_scalar` helper, but it is a TEST-ONLY
+parity reference — the live scalar is the dispatcher path above.)
 
 Notes:
 
@@ -535,12 +584,13 @@ A few things scoring does NOT do in v0:
   generation. LLM noise means small score deltas are sometimes
   spurious; the right answer is N trials per entry with confidence
   intervals. v0 leaves this to the conservative `promote_margin`.
-- **Cost-aware scoring.** Token counts and per-call cost are not in
-  the v0 `LossProfile` (the goldfive `GoldfiveLLMCallStart/End`
-  events carry latency but not token usage in v0). A future field
-  `cost_units` is the natural extension; this is forced by **target
-  2** (see [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md)) which needs
-  cost as a loss term.
+- **Cost-aware scoring.** Token counts and per-call cost are now
+  carried (`LossProfile.tokens_spent` surfaces under the `cost:`
+  namespace), and a cost-aware penalty no longer needs a core edit — a
+  `scalar_fn` plugin reading `ctx.namespace_aggregates["cost:"]`
+  expresses it (§11.5). What remains roadmap is folding cost into the
+  *default* scalar shape; this is forced by **target 2** (see
+  [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md)).
 - **Operator pinning.** "This entry must pass" or "the score must
   improve on this tag slice" as hard gates are not in v0. The
   proposer brief's `## Forbidden` list covers the mutation-side of
@@ -549,6 +599,170 @@ A few things scoring does NOT do in v0:
 
 These are roadmap items, not contract failures. The v0 score is
 intentionally narrow.
+
+## 11. Pluggable scoring — transforms and plugins (issue #19)
+
+The linear weights above are the neutral default; they cannot express a
+non-linear *shape* (a quadratic recall curve, a diminishing-returns
+aggregation, a cap, a cost-aware blend). Historically every such shape
+leaked into core as a bespoke `ScoringWeights` field plus a formula edit
+(`pass_exponent`), or — worse — an *unconditional* core special-case
+that changed scoring for every operator (the harmonic `looping_reasoning`
+edit). Issue #19 gives scoring the **operator-owned, contract-referenced
+plugin** treatment `predicates.py` / `judges.py` already have, at two
+**seams**:
+
+```
+per-run events ──(Seam 1: drift_reducer)──▶ per-run drift_loss   # reducer.py
+        │  (aggregate: means, namespace rollups — mechanical)
+        ▼
+per-gen aggregates ──(Seam 2: scalar_fn)──▶ per-gen scalar       # tournament/scoring.py
+        ▼
+(parent, child) ──(gate)──▶ decision                             # gate.py (§5)
+```
+
+Both seams are reshaped by a **hybrid**: a declarative transform
+registry for the common 90% (no operator code, serializable) plus a
+dotted-spec plugin escape hatch for arbitrary logic. Every layer is
+**neutral by default** — absent any new config, scoring is byte-identical
+to §4.
+
+### 11.1 Declarative transform registry
+
+`zicato.scoring.transforms` ships a handful of named, pure, parameterized
+shapes, each a single `{"op": "<name>", ...params}` spec:
+
+| `op` | params | shape |
+|---|---|---|
+| `linear` | — | identity (the neutral default) |
+| `pow` | `exponent` | `x ** exponent` (the lowering target for `pass_exponent`) |
+| `harmonic` | — | `1 + 1/2 + … + 1/n` (diminishing returns; the opt-in `looping_reasoning` curve) |
+| `cap` | `max` | `min(x, max)` |
+| `clip` | `lo`, `hi` | clamp to `[lo, hi]` (requires `lo <= hi`) |
+| `log1p` | — | `log(1 + x)` |
+
+Two `ScoringWeights` slots take a transform:
+
+```json
+"pass_transform":  { "op": "pow", "exponent": 2.0 },
+"drift_kind_aggregation": {
+    "looping_reasoning": { "op": "harmonic" },
+    "off_topic":         { "op": "cap", "max": 5 }
+}
+```
+
+- **`pass_transform`** (Seam 2) reshapes the scalar's pass/miss term
+  `(1 - mean_score)`. `{"op":"pow","exponent":2.0}` reproduces the
+  retired `pass_exponent=2` quadratic-recall behaviour. Absent /
+  `linear` is today's plain linear miss term.
+- **`drift_kind_aggregation`** (Seam 1) reshapes, per drift KIND, how
+  that kind's *count* aggregates into the drift loss
+  (`severity × kind_weight × transform(count)` in place of
+  `… × count`). An absent kind entry is `linear`, i.e. today's built-in.
+  `{"looping_reasoning":{"op":"harmonic"}}` opts THIS contract — and no
+  other — into the harmonic curve.
+
+A single `op` per slot — no pipelines (arbitrary multi-step logic is a
+plugin). Specs are **validated fail-fast at contract load**
+(`ScoringWeights.__post_init__` → `validate_transform_spec`): an unknown
+op, a missing / non-finite / non-numeric param, a typo'd param name, or a
+`clip` with `lo > hi` is rejected loudly, so `apply_transform` is total
+at scoring time and never produces a `NaN` mid-run. Both slots serialize
+natively and fold into the contract hash (§2.4).
+
+### 11.2 Dotted-spec plugins (the escape hatch)
+
+For anything the registry can't express (an F-beta recall/precision
+blend, a cost-aware penalty reading `ctx.namespace_aggregates["cost:"]`),
+two optional dotted specs on the contract, resolved by the **same
+importer** predicates / judges use:
+
+```json
+"drift_reducer": "mypkg.contract.scoring:my_drift_reducer",   // Seam 1
+"scalar_fn":     "mypkg.contract.scoring:my_scalar"           // Seam 2
+```
+
+Each is a **pure, deterministic, NO-LLM, no-I/O, no-wall-clock** function
+over a read-only typed **frozen context** (`zicato.scoring.api`:
+`DriftContext` / `ScalarContext`). Each context carries the **built-in /
+post-transform value** (`builtin_loss` / `builtin_scalar`), so a plugin
+*wraps/adjusts* the declarative shape rather than reimplementing the
+formula:
+
+```python
+def my_drift_reducer(ctx: DriftContext) -> float:
+    loop = sum(c.count for c in ctx.drift_counts if c.kind == "looping_reasoning")
+    base = ctx.builtin_loss - _linear_looping(ctx)
+    return base + sum(1.0 / k for k in range(1, int(loop) + 1))
+```
+
+The composition order at each seam is **built-in → transform → plugin**:
+the plugin sees the post-transform value as its `builtin_*`. Because
+scoring is pure, re-scoring an epoch is reproducible — unlike judges,
+there is no auxiliary callable to pass.
+
+**Fail-open semantics.** A plugin that raises, returns `NaN`/`inf`, or
+fails to resolve must NOT crash the run. Mirroring `evaluate_judges`, the
+dispatcher wraps the call in try/except, logs at WARNING, and **falls
+back to the pre-plugin (transformed-or-builtin) value** — and records the
+fallback in the provenance (§11.4) so a silently-degraded plugin is
+visible, not buried in a log.
+
+**Proposer immutability.** Scoring plugins live in the operator package
+(`mypkg/contract/scoring.py`), exactly like predicates / judges, and are
+**never** enumerated as mutation points — the proposer does not get to
+rewrite the operator's grading. A guard/test keeps the mutation walker
+off them.
+
+**Worker ↔ orchestrator parity.** Seam 1 (`drift_reducer`) runs INSIDE
+the killable worker subprocess; Seam 2 (`scalar_fn`) in the orchestrator.
+Both resolve through one shared importer, and `drift_reducer` (like
+`drift_kind_aggregation`) crosses the worker `_weights_spec` boundary so
+the worker and orchestrator never disagree on which plugin is active.
+
+### 11.3 Seam architecture (`zicato/scoring/`)
+
+| module | role |
+|---|---|
+| `api.py` | the frozen typed contexts (`DriftContext` / `ScalarContext`) + the `ScoringProvenance` token type |
+| `builtins.py` | the extracted default formulas (`builtin_drift_loss` / `builtin_scalar`) — the value every layer starts from |
+| `transforms.py` | the declarative registry (`linear`/`pow`/`harmonic`/`cap`/`clip`/`log1p`) + `validate_transform_spec` |
+| `plugins.py` | dotted-spec resolution, source-hashing (`spec_with_source_hash`), and the fail-open `apply_drift_reducer` / `apply_scalar_fn` |
+| `dispatch.py` | the single seam the live paths call (`resolve_drift_loss` / `resolve_scalar`) — composes built-in → transform → plugin and emits the provenance |
+
+`reducer.py` (Seam 1) and `tournament/scoring.py` (Seam 2) no longer
+inline their formulas: each builds the typed context and hands it to the
+matching dispatcher.
+
+### 11.4 Scoring provenance
+
+So a scalar is **explainable without reading code**, each dispatcher
+returns a parseable provenance token alongside the value. It is recorded
+on the per-run `loss.json` (`LossProfile.scoring_provenance`, Seam 1) and
+the per-generation aggregate (`scalar_provenance` in `gen_score.json`,
+Seam 2), and surfaced in the dashboard's promote-gate breakdown as a
+per-side **scalar decomposition** (which transform / plugin produced the
+pass term + each drift component). Token shapes:
+
+| token | meaning |
+|---|---|
+| `builtin` | the default formula produced it (also: `None` on a pre-#19 run) |
+| `transform:pass=pow(2.0)` | Seam-2 pass transform |
+| `transform:drift{looping_reasoning=harmonic, off_topic=cap(5)}` | Seam-1 per-kind drift transforms |
+| `plugin:scalar_fn=<spec>` / `plugin:drift_reducer=<spec>` | a dotted plugin produced it |
+| `<pre-plugin token> (fallback: <reason>)` | **FAIL-OPEN** — a fired plugin failed and fell back to the pre-plugin value |
+
+The fail-open form is surfaced **prominently** (caution-colored) in the
+dashboard so a degraded plugin is obvious, never silent.
+
+### 11.5 Worked migration
+
+| change | before #19 | under #19 |
+|---|---|---|
+| quadratic recall | `pass_exponent` field + `scoring.py` edit | `"pass_transform": {"op":"pow","exponent":2.0}` (no core edit) |
+| harmonic looping | unconditional core special-case (all operators) | `"drift_kind_aggregation": {"looping_reasoning":{"op":"harmonic"}}` (opt-in, this contract) |
+| F-beta blend | new field + formula | `scalar_fn` plugin, zero core change |
+| cost-aware penalty | new field + formula | `scalar_fn` plugin reading `ctx.namespace_aggregates["cost:"]` |
 
 ## 10. Cross-references
 

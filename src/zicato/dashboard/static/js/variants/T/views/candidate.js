@@ -534,7 +534,12 @@ function candidateDigest(s) {
       ? s.progression.stages.map((st) => [st.label, st.kind, svg.isNum(st.delta) ? st.delta.toFixed(2) : null, st.verdict]) : null,
     matchups: s.mine.map((m) => [m.champion, m.challenger, m.decision, svg.isNum(m.delta_scalar) ? m.delta_scalar.toFixed(2) : null]),
     gates: s.gates.map((g, i) => g && Array.isArray(g.rules)
-      ? [s.gateSpecs[i].champ, s.gateSpecs[i].chall, s.gateSpecs[i].role, g.decision, svg.isNum(g.delta_scalar) ? g.delta_scalar.toFixed(3) : null, g.rules.map((r) => [r.id, r.status, r.fired])]
+      ? [s.gateSpecs[i].champ, s.gateSpecs[i].chall, s.gateSpecs[i].role, g.decision, svg.isNum(g.delta_scalar) ? g.delta_scalar.toFixed(3) : null, g.rules.map((r) => [r.id, r.status, r.fired]),
+        // scalar-provenance decomposition (#19) folded in so a change to which
+        // transform/plugin shaped a side — or a fail-open event firing —
+        // repaints the gate, but a no-op heartbeat stays byte-identical. null
+        // (built-in / pre-#19) contributes nothing new (back-compat digest).
+        decompDigest(g.scalar_decomposition)]
       : null),
     drill: s.entryParam || null,
     drillExp: s.exps && Array.isArray(s.exps.outcomes) ? s.exps.outcomes.map((o) => [o.kind, o.passed, o.judge_name, o.detail]) : null,
@@ -1326,7 +1331,94 @@ function gatePanel(gate) {
     card.appendChild(ladder);
   }
 
+  // (c) the SCALAR DECOMPOSITION (#19): WHICH transform / plugin produced the
+  // pass term + drift component on each side, parsed from the recorded
+  // provenance tokens. Renders only when a transform / plugin actually fired
+  // (a plain built-in / pre-#19 round shows nothing — back-compat clean). A
+  // plugin that FAILED OPEN is surfaced loudly (caution-colored banner + row).
+  const decomp = scalarDecomp(gate.scalar_decomposition);
+  if (decomp) card.appendChild(decomp);
+
   return card;
+}
+
+// Render the scalar-provenance decomposition for a gate. Returns null when no
+// transform / plugin fired on either side (built-in everywhere or a pre-#19
+// run with `present:false`) so a default round stays visually quiet. When a
+// transform / plugin DID shape the scalar, shows per-side which one produced
+// the pass term + drift component; a FAIL-OPEN plugin (one that fell back to
+// the built-in / transformed default) is flagged as a first-class caution
+// signal — a prominent banner plus a caution-colored row — so a silently
+// degraded plugin is obvious here, not buried in a WARNING log.
+function scalarDecomp(d) {
+  if (!d || !d.present) return null;
+  const wrap = el('div', { class: 'dn-scalar-decomp' });
+  wrap.appendChild(subhead('Scalar provenance · which transform / plugin shaped this'));
+
+  if (d.fail_open) {
+    wrap.appendChild(el('div', { class: 'dn-decomp-banner', role: 'status' }, [
+      el('span', { class: 'dn-decomp-banner-dot', 'aria-hidden': 'true' }),
+      el('span', { text: 'A scoring plugin FAILED OPEN — it raised or returned a non-finite value and fell back to the built-in / transformed default. The scalar below is the fallback, not the plugin’s output.' }),
+    ]));
+  }
+
+  const sides = el('div', { class: 'dn-decomp-sides' });
+  const champ = decompSide('champion', d.champion);
+  const chall = decompSide('challenger', d.challenger);
+  if (champ) sides.appendChild(champ);
+  if (chall) sides.appendChild(chall);
+  if (!sides.childNodes.length) return null;
+  wrap.appendChild(sides);
+  return wrap;
+}
+
+// A content digest of the scalar-provenance decomposition: present + fail-open
+// + each side/seam's (kind, source, fail_open). null when absent / not present
+// (built-in / pre-#19) so it contributes NOTHING to the gate digest — a default
+// round's digest is byte-identical to the pre-#19 path (back-compat). Used by
+// the content-gated render so a provenance change repaints but a no-op
+// heartbeat does not.
+function decompDigest(d) {
+  if (!d || !d.present) return null;
+  const seam = (v) => v ? [v.kind || null, v.source || null, !!v.fail_open, v.fallback_reason || null] : null;
+  const side = (sd) => sd ? [seam(sd.scalar), seam(sd.drift)] : null;
+  return [!!d.fail_open, side(d.champion), side(d.challenger)];
+}
+
+// One side (champion / challenger) of the decomposition: a small card naming
+// the pass-term and drift-component producer. Returns null when the side is
+// absent. A side that is plain built-in still renders (quietly) so the two
+// sides line up; the per-seam row is caution-colored iff that seam failed open.
+function decompSide(label, side) {
+  if (!side) return null;
+  const card = el('div', { class: 'dn-decomp-side' });
+  card.appendChild(el('div', { class: 'dn-decomp-sidehead', text: label }));
+  card.appendChild(decompRow('pass', side.scalar));
+  card.appendChild(decompRow('drift', side.drift));
+  return card;
+}
+
+// One seam row: "<seam>  <source>  <kind/fallback tag>". The source is the
+// transform token / dotted plugin spec / "built-in"; a built-in row reads
+// faint, a fail-open row reads loud (caution).
+function decompRow(seam, view) {
+  view = view || { kind: 'builtin', source: 'built-in', fail_open: false };
+  const isBuiltin = view.kind === 'builtin' && !view.fail_open;
+  const failOpen = !!view.fail_open;
+  const cls = 'dn-decomp-row'
+    + (isBuiltin ? ' dn-decomp-builtin' : '')
+    + (failOpen ? ' dn-decomp-failopen' : '');
+  const source = view.source || 'built-in';
+  const tagText = failOpen
+    ? ('fell back · ' + (view.fallback_reason || 'plugin failed'))
+    : (view.kind && view.kind !== 'builtin' ? view.kind : '');
+  return el('div', { class: cls }, [
+    el('span', { class: 'dn-decomp-seam', text: seam }),
+    el('div', {}, [
+      el('span', { class: 'dn-decomp-src', text: source }),
+      tagText ? el('span', { class: failOpen ? 'dn-decomp-failtag' : 'dn-decomp-kindtag', text: ' · ' + tagText }) : null,
+    ].filter(Boolean)),
+  ]);
 }
 
 function entryDrilldown(ctx, epochId, genId, entryId, row, exps, judges, header) {
