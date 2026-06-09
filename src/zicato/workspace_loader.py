@@ -191,7 +191,36 @@ def _scoring_weights_from_dict(d: Mapping[str, Any]) -> ScoringWeights:
     """
     from zicato.epoch.contract_serde import jsonable_to_dataclass  # noqa: PLC0415
 
+    d = _lower_legacy_pass_exponent(d)
     return jsonable_to_dataclass(ScoringWeights, d)
+
+
+def _lower_legacy_pass_exponent(d: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Lower a legacy ``pass_exponent`` config key to a ``pass_transform`` spec.
+
+    ``pass_exponent`` was the bespoke field for quadratic-recall (the miss
+    term ``(1 - mean_score) ** pass_exponent``); issue #19 phase 2 retires it
+    in favour of the declarative ``pass_transform`` (``{"op":"pow",...}``).
+    This is a one-line CONFIG-PARSE convenience so an old ``scoring.json`` that
+    still carries ``pass_exponent`` keeps parsing: when ``pass_exponent`` is
+    present and ``pass_transform`` is NOT, synthesize
+    ``pass_transform = {"op":"pow","exponent":pass_exponent}``. (``pow`` with
+    exponent ``1.0`` is identity, so a legacy ``pass_exponent=1`` still scores
+    linearly.) It is lowering, not behaviour preservation — ``pass_exponent``
+    is no longer a field, so an explicit ``pass_transform`` always wins and the
+    stray key is dropped. ``pass_exponent=1.0`` is the neutral case the
+    canonicalizer should NOT roll on, so it is not synthesized (it would add a
+    non-neutral-looking spec); only a non-unit exponent lowers.
+    """
+    if "pass_exponent" not in d:
+        return d
+    lowered = {k: v for k, v in d.items() if k != "pass_exponent"}
+    raw = d["pass_exponent"]
+    if "pass_transform" not in d and isinstance(raw, int | float) and not isinstance(raw, bool):
+        exponent = float(raw)
+        if exponent != 1.0:  # exponent 1.0 == identity == neutral; leave unset.
+            lowered["pass_transform"] = {"op": "pow", "exponent": exponent}
+    return lowered
 
 
 def overfitting_config_from_dict(raw: Any) -> OverfittingConfig:

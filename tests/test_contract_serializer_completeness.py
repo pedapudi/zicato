@@ -109,6 +109,11 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
             ladder=LadderConfig(threshold=0.27, budget=8),
         ),
         "outcome_summarizer_spec": "pkg.mod:summarize_outcomes",
+        "pass_transform": {"op": "pow", "exponent": 2.0},
+        "drift_kind_aggregation": {
+            "looping_reasoning": {"op": "harmonic"},
+            "off_topic": {"op": "cap", "max": 5.0},
+        },
     },
 }
 

@@ -389,6 +389,65 @@ def test_unknown_monotonicity_scope_token_coerces_to_default() -> None:
     assert rebuilt.pass_rate_monotonicity_scope == "per_entry"
 
 
+def test_drift_kind_aggregation_survives_worker_serialize_deserialize() -> None:
+    """``drift_kind_aggregation`` survives the WORKER transport (issue #19 ph 2).
+
+    Seam 1 (the drift reducer) runs INSIDE the killable worker subprocess, so
+    if the transform config does not cross the serialize→JSON→deserialize
+    boundary the worker scores drift with neutral linear defaults while the
+    orchestrator believes it is transformed — the same silent-downgrade class
+    as the ``per_judge_weights`` / ``pass_rate_monotonicity_scope`` traps. This
+    walks the exact transport — ``_weights_spec`` → JSON → ``_weights_from_args``
+    — then DRIVES real drift scoring (``compute_drift_loss``, the consumer the
+    worker invokes via ``reduce_loss``) with the reconstructed weights.
+
+    Hand-check: a ``looping_reasoning`` warning-severity drift of count 4 under
+    a ``harmonic`` aggregation contributes ``warning_sev × kind_weight ×
+    (1 + 1/2 + 1/3 + 1/4)`` — STRICTLY less than the linear count-4 builtin.
+    """
+    import math
+
+    from zicato._tournament_worker import _weights_from_args
+    from zicato.core import DriftCount
+    from zicato.telemetry.reducer import compute_drift_loss
+    from zicato.tournament.runner import _weights_spec
+
+    weights = ScoringWeights(
+        severity_weights={"info": 1.0, "warning": 3.0, "critical": 10.0},
+        per_kind_weights={"looping_reasoning": 2.0},
+        pass_transform={"op": "pow", "exponent": 2.0},
+        drift_kind_aggregation={"looping_reasoning": {"op": "harmonic"}},
+    )
+
+    # Serialise → JSON → deserialise: exactly what the worker subprocess sees.
+    spec = _weights_spec(weights)
+    assert spec["drift_kind_aggregation"] == {"looping_reasoning": {"op": "harmonic"}}
+    assert spec["pass_transform"] == {"op": "pow", "exponent": 2.0}
+    round_tripped = _weights_from_args({"weights": json.loads(json.dumps(spec))})
+    assert round_tripped.drift_kind_aggregation == {"looping_reasoning": {"op": "harmonic"}}
+    assert round_tripped.pass_transform == {"op": "pow", "exponent": 2.0}
+
+    drift = (DriftCount(kind="looping_reasoning", severity="warning", count=4),)
+    weighted = compute_drift_loss(
+        drift, plan_revisions=0, task_failure_ratio=0.0, runtime_ms=0, weights=round_tripped
+    )
+    harmonic4 = 1.0 + 1.0 / 2.0 + 1.0 / 3.0 + 1.0 / 4.0
+    assert weighted == pytest.approx(3.0 * 2.0 * harmonic4)  # sev × kind × H(4)
+
+    # Counterfactual: the unconfigured worker-side path (aggregation dropped)
+    # scores LINEARLY — the exact silent-downgrade this transport guards.
+    dropped = _weights_from_args(
+        {"weights": {k: v for k, v in spec.items() if k != "drift_kind_aggregation"}}
+    )
+    assert dropped.drift_kind_aggregation == {}
+    linear = compute_drift_loss(
+        drift, plan_revisions=0, task_failure_ratio=0.0, runtime_ms=0, weights=dropped
+    )
+    assert linear == pytest.approx(3.0 * 2.0 * 4)  # sev × kind × linear count
+    assert weighted < linear  # the harmonic shape really survived + reshaped
+    assert not math.isnan(weighted)
+
+
 def test_worker_stamps_its_own_pid_into_active_runs(tmp_path: Path) -> None:
     """The active_runs file the worker writes carries the WORKER's pid.
 

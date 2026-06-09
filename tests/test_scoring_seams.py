@@ -177,6 +177,25 @@ _DRIFT_CORPUS: list[tuple[str, tuple[DriftCount, ...], int, float, int, ScoringW
         60_000,
         ScoringWeights(plan_revision_weight=0.3, runtime_weight=0.05),
     ),
+    (
+        # Issue #19 phase-2 migration pin: the builtin no longer carries the
+        # unconditional harmonic ``looping_reasoning`` special-case it once
+        # did. A looping_reasoning count scores PURELY LINEARLY in the builtin
+        # (severity × kind_weight × count), exactly like any other kind;
+        # harmonic is now opt-in via ``drift_kind_aggregation`` and is proven
+        # to reproduce the OLD value in ``test_scoring_transforms.py``. The
+        # reference here is the linear formula, so this case fails if anyone
+        # re-introduces a harmonic special-case into the builtin.
+        "looping_reasoning_is_linear_in_builtin",
+        (
+            DriftCount(kind="looping_reasoning", severity="warning", count=5),
+            DriftCount(kind="looping_reasoning", severity="info", count=3),
+        ),
+        0,
+        0.0,
+        0,
+        ScoringWeights(per_kind_weights={"looping_reasoning": 1.5}),
+    ),
 ]
 
 
