@@ -395,7 +395,7 @@ A board entry evaluates the inner harness along two facets (see
 [BOARD-FORMAT.md](BOARD-FORMAT.md) and
 [BOARD-AUTHORING.md](BOARD-AUTHORING.md)):
 
-- **Outcome** checks — the entry's `expectations` list (`Predicate` /
+- **Outcome** check — the entry's single `expectation` (`Predicate` /
   `Rubric`). Run post-hoc by the loss reducer (§4.5) against the run's
   output or transcript. They drive **pass-rate**.
 - **Process** checks — the entry's `judges` list (`Judge`). Run
@@ -419,6 +419,15 @@ set per board entry without forking goldfive's detector code:
 zicato hands the entry's `judges` to goldfive as additional judges
 when it wraps the inner harness for a run; goldfive evaluates them
 alongside its built-ins.
+
+goldfive dispatches custom judges at *reasoning* observation points,
+with the live `Session` reachable as `ctx.session_state`. A
+`Judge.python` body that needs to grade what the agent actually *did*
+reads the structured tool-call ledger at `session_state.recent_events`
+(`tool_observed` entries carrying `tool_name` / `args_preview` /
+`result_preview` / `is_error`) — **not** the agent's narration, which
+can name a tool failure it never hit or omit one it did. goldfive does
+not set `ctx.extras["tool_event"]`; the ledger is the ground truth.
 
 **The drift-emit path.** When a judge's criterion is violated,
 goldfive emits a judgement on the same wire it uses for any drift —
@@ -814,15 +823,29 @@ The full design lives in seven documents:
 The runtime layer ships in phases (see [ROBUSTNESS.md](ROBUSTNESS.md)
 §4 and [RUNTIME.md](RUNTIME.md) §8 for the exact what-ships boundary).
 **Shipped today:** L1+L2 (`asyncio.wait_for` budgets + structured
-cancellation), atomic writes everywhere, the Rust watchdog
-supervisor's watchdog role auto-spawned by `evolve`, the consecutive-
-reject circuit breaker, the `.zicato/runtime/` state files, and the
-dashboard — served as a **separate Python service**, not a role of the
-Rust binary — with its GET API + SSE and the write side of the control
-endpoints. **Planned:** L3 subprocess workers, the crash-resume
-protocol, the orchestrator's consumption of `control/` commands, and
-the git storage backend (v0+1, sequenced in [STORAGE.md](STORAGE.md)
-§4).
+cancellation), L3 subprocess workers (each board-entry run executes in
+its own `python -m zicato._tournament_worker` subprocess so a hung run
+can be SIGTERM'd without taking down the whole `evolve`), atomic writes
+everywhere, the Rust watchdog supervisor's watchdog role auto-spawned
+by `evolve`, the consecutive-reject circuit breaker, the
+`.zicato/runtime/` state files, and the dashboard — served as a
+**separate Python service**, not a role of the Rust binary — with its
+GET API + SSE and the write side of the control endpoints.
+**Planned:** the crash-resume protocol, the orchestrator's consumption
+of `control/` commands, and the git storage backend (v0+1, sequenced in
+[STORAGE.md](STORAGE.md) §4).
+
+Because each run crosses a process boundary, the run's inputs are
+serialised to a temp args file and rebuilt inside the worker. The
+`ScoringWeights` carried across that seam is written by
+`runner._weights_spec` and read back by
+`_tournament_worker._weights_from_args`, which must stay field-for-field
+in lock-step: a field present in the parent but missing from the reader
+is silently reset to its default in the subprocess, desyncing the
+worker's gate decision from the parent's. `per_judge_weights` (and
+`pass_rate_monotonicity_scope`) are carried across this boundary for
+exactly that reason — so the worker's per-judge loss attribution and
+its gate-view match what the parent would have computed in-process.
 
 ## 6. Storage layout
 

@@ -1,14 +1,21 @@
 # Overfitting the board — adaptive board reuse, Goodhart, and what to do about it
 
-> **Status.** RESEARCH / DESIGN NOTE. **Nothing in this document is
-> implemented.** It is a literature survey of overfitting under repeated,
-> adaptive evaluation — train/test discipline, the reusable holdout,
-> Goodhart's law, regularization, early stopping, and selection-bias
-> correction — mapped onto zicato's loop, with a ranked set of concrete
-> mechanisms to add. The recommendations are framed as *future* work and
-> are deliberately layered on the existing gate, replication direction,
-> and epoch machinery without changing them. No source, config schema, or
-> test in the tree changes because of this note.
+> **Status.** RESEARCH / DESIGN NOTE, now **partially shipped**. The body
+> below is a literature survey of overfitting under repeated, adaptive
+> evaluation — train/test discipline, the reusable holdout, Goodhart's
+> law, regularization, early stopping, and selection-bias correction —
+> mapped onto zicato's loop, with a ranked set of concrete mechanisms.
+> Several of those mechanisms have since been built and are default-on:
+> the **#1 train/holdout board split** with holdout-gated promotion
+> (`board/split.py`), the **#2 Ladder/Thresholdout** noisy-holdout query
+> (`tournament/ladder.py`), the **#3 proposer-leakage restrictions**
+> (train-slice-only patterns, aggregated entry ids, withheld inputs), the
+> **#5 generalization-gap detector** (a `zicato health` finding), and the
+> **#6 board-rotation cadence**. The recommendation sections (§11, §12)
+> still read in the future tense from the survey; treat the *mechanism →
+> verdict* analysis as the design rationale and the **Shipped** callouts
+> as the as-built status. The proposer **outcome-marginal failure-mode
+> channel** (§11.5) is the most recent addition.
 
 This is the companion to four shipped docs and one research note:
 
@@ -467,6 +474,54 @@ channel that nothing else closes. The only tradeoff is proposer
 precisely than one told "entries `a,b,c,d` fail," so it may need more
 rounds to find a fix — which is the *intended* trade (a general fix found
 slowly beats a memorized fix found fast).
+
+### 11.5 The outcome-marginal failure-mode channel (Shipped)
+
+Restrictions 1–3 narrow the *decision-telemetry* channel (what drift
+fired, on how many entries). They left a gap: the proposer saw a
+coarsened `Δscalar` plus a digest of goldfive's process telemetry, but
+never a summary of *why answers were wrong* — over-retrieval vs misses
+vs empty answers. It could target "the scalar moved" but not "the agent
+over-retrieves." Capability 2 of issue #18 adds a narrow channel for
+that, and it is the same leakage-discipline engine as §11 #1–#4, not a
+new evaluation:
+
+- **Marginal, never joint.** `zicato.analyzer.outcome_marginals
+  .aggregate_outcome_marginals` reduces a list of per-entry
+  `LossProfile`-shaped results to **board-wide rates** — `% of runs` for
+  generic, board-agnostic failure modes (empty answer, schema failure,
+  …), plus, when Capability 1's continuous-score `metrics` carry
+  `precision` / `recall` (see [`BOARD-AUTHORING.md`](BOARD-AUTHORING.md)
+  §2.1), the recall-vs-precision decomposition. The proposer may learn
+  aggregate *properties of the agent's behaviour* ("over-retrieves 40% of
+  runs") but the summary carries no entry id, question text, or output
+  token by construction — the module reads only the scalar/count fields
+  of each profile.
+- **Train slice only.** The orchestrator passes the same *train-slice*
+  losses it loaded for the patterns + loss summary (it threads the same
+  `split_board` / `rotation_seed` partition; §3, §7). The holdout's
+  per-entry behaviour never reaches this channel — the module cannot
+  widen the slice it is handed because it never reads the board or the
+  filesystem.
+- **Bucketed.** Every rendered rate is banded at the prompt boundary by
+  `prompts.render_failure_mode_profile`, mirroring `_bucket_scalar_delta`
+  (§11 #4), so no round-over-round response surface leaks. An empty or
+  signal-free slice renders the empty string, leaving the prompt
+  byte-identical to the pre-channel path.
+- **Operator hook, structured + sanitized.** A board's
+  `ScoringWeights.outcome_summarizer_spec` (a dotted path) can contribute
+  *additional* marginals. The hook is constrained to return a
+  **structured** `{marginal_name: numeric_rate}` dict, **not prose** —
+  free text would be an un-auditable leak vector — and
+  `sanitize_operator_marginals` strips anything non-numeric or
+  identifying before the operator's marginals are merged and banded. So
+  zicato enforces the bucketing + anonymity invariant on the operator's
+  contribution, not just its own.
+
+Because the channel reuses the existing holdout split, the existing
+bucketing step, and reads only aggregate scalars, it adds no new holdout
+exposure: it is restriction #3 extended from *which drift fired* to *why
+the outcome failed*, under the same marginal-not-joint guarantee.
 
 ---
 

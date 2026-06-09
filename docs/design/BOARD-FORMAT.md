@@ -307,7 +307,13 @@ The expectation object has exactly three fields:
 ### 3.1 `predicate`
 
 A Python callable, addressed by dotted path. The callable receives the
-`RunResult` and returns `bool`. Built with `Predicate.python(...)`.
+`RunResult` and returns either a `bool` (the historical pass/fail), a
+`float` in `[0, 1]` (a continuous per-entry score), or a
+`(float, metrics)` tuple (a score plus a `{name: rate}` decomposition
+such as precision/recall). Built with `Predicate.python(...)`. The
+continuous-score forms are a runtime behaviour of the callable; the wire
+schema is identical either way — the board still carries only the dotted
+path. See [BOARD-AUTHORING.md](BOARD-AUTHORING.md) §2.1.
 
 The `spec` is a dotted import path with a **colon** separating the
 module from the callable — `module.path:func` — exactly as the real

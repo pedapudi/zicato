@@ -137,10 +137,34 @@ module from the callable — `module.path:func` — the same convention
 the real presentation board writes (e.g.
 `zicato_examples.target_1_presentation.predicates:mentions_waffles`).
 The path must resolve under the project's import path at run time; the
-callable receives the `RunResult` and returns `bool`. Predicate
-**bodies are never serialized** — they live in the
-project's own source. Shipping arbitrary logic as JSON would invite
-injection, so the board carries only the dotted path.
+callable receives the `RunResult`. Predicate **bodies are never
+serialized** — they live in the project's own source. Shipping
+arbitrary logic as JSON would invite injection, so the board carries
+only the dotted path.
+
+The callable may return any of three shapes (sync or async):
+
+- **`bool`** — the historical pass/fail. `ExpectationResult.score`
+  stays `None`; the reducer derives `1.0` / `0.0` from `passed`, so
+  this is byte-identical to the binary path.
+- **`float` in `[0, 1]`** — a **continuous per-entry score** (F1,
+  similarity, a partial-credit fraction). It is clamped to `[0.0, 1.0]`
+  and recorded as `ExpectationResult.score`; the scalar and the gate
+  read that continuous value rather than the thresholded bit. `passed`
+  becomes a display-only derivation (`score > 0.0`).
+- **`(float, metrics)`** — a 2-tuple of the continuous score plus a
+  `Mapping[str, float]` decomposition (e.g.
+  `(0.71, {"precision": 0.8, "recall": 0.64})`). The mapping is
+  recorded as `ExpectationResult.metrics` and carried out to
+  `loss.json`, so downstream aggregation (the proposer's failure-mode
+  profile) can read precision/recall as numbers without re-running the
+  scorer.
+
+Returning a continuous score is the right shape for a **sampled
+evaluation board** where binary pass/fail throws away information —
+pair it with `pass_rate_monotonicity_scope="aggregate"` (§6.4) so a
+slightly-lower individual score does not veto an otherwise-better
+challenger. A bare `bool` remains the common case.
 
 ### 2.2 `Rubric` — graded outcome checks
 
@@ -321,6 +345,18 @@ Python callable that goldfive invokes against the reasoning stream;
 `Predicate.python`, the body lives in the project's source, never in
 the board JSON. The violation it raises emits the same `custom` drift +
 `judge_name` shape as `Judge.custom`.
+
+> **Grade the tool ledger, not the narration.** goldfive dispatches
+> custom judges at *reasoning* observation points and does **not** set
+> `ctx.extras["tool_event"]`. A `Judge.python` body that needs to know
+> what the agent actually *did* — which tools it called, with what
+> arguments, and whether they erred — must read the real tool-call
+> ledger at `ctx.session_state.recent_events` (each `tool_observed`
+> entry carries `tool_name`, `args_preview`, `result_preview`,
+> `is_error`). Do **not** infer tool behaviour from the reasoning text:
+> a model's narration can name-drop a failure it never hit (or omit one
+> it did), so a judge that grades the narration can be fabricated either
+> way. The structured ledger is the ground truth.
 
 Reach for `Judge.python` only when a natural-language criterion can't
 express the check. `Judge.custom` is the common case.
