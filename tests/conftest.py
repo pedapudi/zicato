@@ -102,6 +102,59 @@ def _pin_default_proposer_to_text_shim(
 
 
 # ---------------------------------------------------------------------------
+# Harmonograf auto-launch neutering for the evolve-driver suite
+# ---------------------------------------------------------------------------
+
+#: Test modules that exercise the REAL harmonograf auto-launch /
+#: resolution path and so must NOT have it stubbed. They either drive the
+#: supervisor directly or assert on the launch/no-launch decision.
+_REAL_HARMONOGRAF_LAUNCH_MODULES = frozenset(
+    {
+        "test_harmonograf_supervisor",
+        "test_harmonograf_operator_e2e",
+        "test_resolver_opt_out_does_not_launch",
+    }
+)
+
+
+@pytest.fixture(autouse=True)
+def _stub_harmonograf_launch(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stub the evolve harmonograf auto-launch to a no-op for the loop suite.
+
+    ``orchestrator.evolve_n_rounds`` calls
+    :func:`zicato.orchestrator._resolve_or_launch_harmonograf`, which — when
+    ``ZICATO_HARMONOGRAF_URL`` is unset — spawns a *real* in-process
+    harmonograf server and health-polls it (~5s) once per evolve. The
+    orchestrator/evolve test suites are about the tournament/lineage loop,
+    not the live console; the console is additive and never load-bearing,
+    so launching a real server in each of those tests adds ~50s of pure
+    startup wait across the suite for zero behavioural coverage.
+
+    This autouse fixture replaces the resolver with one that returns the
+    same shape the opt-out / degraded-install path already returns —
+    ``("", _NoopShutdownHandle())`` — so the orchestrator runs its
+    JSONL-only telemetry branch and the ``finally`` block's unconditional
+    ``handle.shutdown()`` stays a clean no-op. Modules in
+    :data:`_REAL_HARMONOGRAF_LAUNCH_MODULES` opt out so the launch / no-
+    launch decision and the supervisor lifecycle are still covered there.
+    """
+    module_name = request.module.__name__.rsplit(".", 1)[-1]
+    if module_name in _REAL_HARMONOGRAF_LAUNCH_MODULES:
+        return
+
+    import zicato.orchestrator as orchestrator_mod
+
+    def _no_launch(workspace_root: Path) -> tuple[str, Any]:
+        del workspace_root
+        return "", orchestrator_mod._NoopShutdownHandle()
+
+    monkeypatch.setattr(orchestrator_mod, "_resolve_or_launch_harmonograf", _no_launch)
+
+
+# ---------------------------------------------------------------------------
 # Dashboard subprocess hygiene
 # ---------------------------------------------------------------------------
 

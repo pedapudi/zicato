@@ -280,17 +280,44 @@ def test_close_epoch_with_no_current_raises(workspace: Path) -> None:
 
 
 def test_list_epochs_returns_creation_order(
-    workspace: Path, board_file: Path, brief_file: Path
+    workspace: Path,
+    board_file: Path,
+    brief_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     weights = ScoringWeights()
+    # ``created_at`` has second precision and ``list_epochs`` sorts by it,
+    # so the three epochs must carry strictly-increasing timestamps for the
+    # creation-order assertion to be meaningful. Rather than burn ~2s
+    # sleeping across the second boundary, drive the timestamp source
+    # (``lifecycle._now_iso``) through an increasing sequence of distinct
+    # second-precision stamps — the ordering the sort keys on is exactly
+    # what we control here.
+    from zicato.epoch import lifecycle as _lifecycle
+
+    # Every ``_now_iso`` call (created_at, and any auto-close closed_at)
+    # advances one second, so each successive new_epoch's created_at is
+    # strictly later than the prior epoch's — without depending on how many
+    # times the lifecycle internally stamps per call.
+    base = _dt.datetime(2026, 5, 15, 0, 0, 0, tzinfo=_dt.UTC)
+    ticks = iter(range(1, 1000))
+
+    def _fake_now_iso() -> str:
+        return (base + _dt.timedelta(seconds=next(ticks))).replace(microsecond=0).isoformat()
+
+    monkeypatch.setattr(_lifecycle, "_now_iso", _fake_now_iso)
+
     a = new_epoch(workspace, "alpha", board_file, brief_file, weights)
-    time.sleep(1.01)  # created_at has second precision
     b = new_epoch(workspace, "beta", board_file, brief_file, weights)
-    time.sleep(1.01)
     c = new_epoch(workspace, "gamma", board_file, brief_file, weights)
     epochs = list_epochs(workspace)
     ids = [e.id for e in epochs]
     assert ids == [a.id, b.id, c.id]
+    # The ordering is carried by the (increasing) created_at stamps, not by
+    # epoch-id lexical order — assert the stamps actually differ.
+    created = [e.created_at for e in epochs]
+    assert created == sorted(created)
+    assert len(set(created)) == 3
 
 
 def test_list_epochs_empty_when_no_workspace(tmp_path: Path) -> None:

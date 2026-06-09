@@ -20,6 +20,7 @@ dashboard server.
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
 
@@ -173,8 +174,33 @@ def _install_evolve_mocks(monkeypatch: pytest.MonkeyPatch, spawned: list[_FakePr
     ``evolve`` invocation."""
 
     async def _fake_exec(*args: str, **kwargs: object) -> _FakeProc:
-        proc = _FakeProc(tuple(str(a) for a in args))
+        del kwargs
+        argv = tuple(str(a) for a in args)
+        proc = _FakeProc(argv)
         spawned.append(proc)
+        # If this is the dashboard spawn, publish a fake endpoint file so the
+        # CLI's bound-port readback (_report_dashboard_url) resolves
+        # immediately instead of polling its full 10s fallback timeout — the
+        # real dashboard server writes this once it binds a port. Mirrors the
+        # conftest ``mock_dashboard_spawn`` fixture. (The 10s-fallback path is
+        # covered separately by test_evolve_cli_fixes.py's
+        # test_report_dashboard_url_falls_back_when_endpoint_never_appears.)
+        if "zicato.dashboard" in argv and "--workspace" in argv:
+            ws = Path(argv[argv.index("--workspace") + 1])
+            host = "127.0.0.1"
+            if "--host" in argv:
+                host = argv[argv.index("--host") + 1]
+            port = 7892
+            if "--port" in argv:
+                port = int(argv[argv.index("--port") + 1])
+            from zicato.runtime.paths import dashboard_endpoint_path
+
+            endpoint = dashboard_endpoint_path(ws)
+            endpoint.parent.mkdir(parents=True, exist_ok=True)
+            endpoint.write_text(
+                json.dumps({"host": host, "port": port}),
+                encoding="utf-8",
+            )
         return proc
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)

@@ -31,6 +31,7 @@ RUN_ALL = TEST_DIR / "run-all.mjs"
 _NODE = shutil.which("node")
 
 
+@pytest.mark.node
 @pytest.mark.skipif(_NODE is None, reason="node runtime not available")
 def test_dashboard_js_harness_passes() -> None:
     """The dashboard JS test harness runs green.
@@ -38,6 +39,15 @@ def test_dashboard_js_harness_passes() -> None:
     ``test/run-all.mjs`` imports every ``*.test.mjs`` file, each of
     which installs its own minimal DOM and asserts a slice of frontend
     behaviour. A non-zero exit means a JS behaviour regression.
+
+    Marked ``node`` and EXCLUDED from the default ``pytest`` run (see the
+    ``-m 'not node'`` addopts in ``pyproject.toml``): this test shells out
+    to the *entire* standalone Node suite, so leaving it in the default
+    in-pytest run duplicates work and serializes a multi-second Node spawn
+    inside every developer/CI pytest invocation. The Node behaviour suite
+    is still exercised — by ``make node-test`` (wired into ``make check``)
+    and the standalone ``node src/zicato/dashboard/static/test/run-all.mjs``
+    — and remains runnable through pytest with ``pytest -m node``.
     """
     assert RUN_ALL.is_file(), f"missing JS test driver: {RUN_ALL}"
     proc = subprocess.run(  # noqa: S603 — _NODE is resolved via shutil.which

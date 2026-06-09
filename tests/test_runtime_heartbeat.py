@@ -27,13 +27,13 @@ async def test_start_writes_immediate_heartbeat(tmp_path: Path) -> None:
 
 
 async def test_beater_bumps_periodically(tmp_path: Path) -> None:
-    beater = HeartbeatBeater(tmp_path, "default", interval_s=0.05)
+    beater = HeartbeatBeater(tmp_path, "default", interval_s=0.01)
     await beater.start()
     try:
         first = read_heartbeat(tmp_path)
         assert first is not None
-        # Wait long enough for at least 2 bumps.
-        await asyncio.sleep(0.2)
+        # Wait long enough for at least 2 bumps (interval 0.01s).
+        await asyncio.sleep(0.05)
         second = read_heartbeat(tmp_path)
         assert second is not None
         # last_heartbeat is at-or-after the first one (seconds precision
@@ -175,12 +175,12 @@ def test_run_heartbeat_beater_advances_last_progress(tmp_path: Path) -> None:
     """The background thread advances last_progress over time."""
     _sample_active_run(tmp_path, "v0--entry_a")
 
-    beater = RunHeartbeatBeater(tmp_path, "v0--entry_a", interval_s=0.05)
+    beater = RunHeartbeatBeater(tmp_path, "v0--entry_a", interval_s=0.01)
     beater.start()
     try:
         first = list_active_runs(tmp_path)[0].last_progress
-        # Wait for at least two bump intervals.
-        time.sleep(0.25)
+        # Wait for at least two bump intervals (interval 0.01s).
+        time.sleep(0.05)
         second = list_active_runs(tmp_path)[0].last_progress
         # last_progress must have advanced (or at minimum not regressed).
         assert second >= first

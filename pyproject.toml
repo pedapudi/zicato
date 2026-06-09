@@ -67,6 +67,14 @@ dashboard = [
 dev = [
     "pytest >= 8",
     "pytest-asyncio >= 0.23",
+    # Parallel test execution across worker processes. The default test
+    # run uses `-n auto` (see [tool.pytest.ini_options] addopts) so the
+    # ~2630-case suite fans out across CPU cores. The suite is already
+    # process-isolation-clean (tmp_path everywhere, dynamic ports via
+    # bind(("127.0.0.1", 0)), tempdir-isolated worker fixtures) so xdist
+    # needs no per-test fixes. `-n0` on the command line overrides back
+    # to a single in-process serial run for debugging.
+    "pytest-xdist >= 3.5",
     # The pre-commit framework itself, installed into .venv/bin/ via
     # `uv sync --all-extras`. The shared `.git/hooks/pre-commit` shim
     # (installed by `uv run pre-commit install`) execs
@@ -204,6 +212,23 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Default run: fan out across CPU cores with pytest-xdist, and exclude
+# the Node-suite shim from the in-pytest run. `-n auto` spawns one
+# worker per detected core (the suite is process-isolation-clean — see
+# the pytest-xdist note in the `dev` extra). Override to a single serial
+# in-process run for debugging with `-n0` on the command line, e.g.
+# `pytest -n0 tests/test_foo.py::test_bar`. `-m "not node"` drops the
+# `test_dashboard_js` shim that re-runs the whole standalone Node suite
+# inside pytest (a full duplicate of `make node-test` / the standalone
+# `node src/zicato/dashboard/static/test/run-all.mjs` run); pass
+# `-m node` (or `--no-header -m ''`) / run `make node-test` to exercise
+# the Node behaviour suite.
+addopts = "-n auto -m 'not node'"
+# Custom markers. `node` tags tests that shell out to the `node` runtime
+# (the dashboard JS harness); excluded from the default run via addopts.
+markers = [
+    "node: shells out to the standalone Node test harness (run via `make node-test`)",
+]
 # With the package under src/, an editable install puts `zicato` on
 # sys.path, but a bare `pytest` from a non-installed checkout would
 # not see it. Pin the repo root explicitly so src-layout imports

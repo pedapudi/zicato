@@ -526,8 +526,8 @@ def test_parent_kills_worker_that_blocks_past_budget_plus_grace(
     entry = _entry(budget_s=1)
 
     # Shrink the parent's grace margins so the test is fast.
-    monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", 2.0)
-    monkeypatch.setattr(runner_mod, "_SIGTERM_TO_SIGKILL_GRACE_S", 2.0)
+    monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", 0.3)
+    monkeypatch.setattr(runner_mod, "_SIGTERM_TO_SIGKILL_GRACE_S", 0.3)
 
     started = time.monotonic()
     loss = asyncio.run(
@@ -549,7 +549,7 @@ def test_parent_kills_worker_that_blocks_past_budget_plus_grace(
     assert loss.wall_clock_budget_exceeded is True
     assert loss.entry_id == entry.id
     assert loss.drift_loss > 0.0
-    # The parent fired at budget(1) + grace(2) = ~3s, not 3600s.
+    # The parent fired at budget(1) + grace(0.3) = ~1.3s, not 3600s.
     assert elapsed < 30.0
     # The parent cleaned up the worker's active_runs file.
     assert not active_run_path(workspace, f"{generation.id}--{entry.id}").exists()
@@ -577,8 +577,8 @@ def test_tournament_continues_after_a_budget_killed_run(
     workspace.mkdir()
     generation = _generation(workspace)
 
-    monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", 2.0)
-    monkeypatch.setattr(runner_mod, "_SIGTERM_TO_SIGKILL_GRACE_S", 2.0)
+    monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", 0.3)
+    monkeypatch.setattr(runner_mod, "_SIGTERM_TO_SIGKILL_GRACE_S", 0.3)
 
     losses: dict[str, LossProfile] = {}
     for entry, adapter in (
@@ -682,8 +682,8 @@ def test_parent_escalates_to_sigkill_when_worker_ignores_sigterm(
     generation = _generation(workspace)
     entry = _entry(budget_s=1)
 
-    monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", 2.0)
-    monkeypatch.setattr(runner_mod, "_SIGTERM_TO_SIGKILL_GRACE_S", 2.0)
+    monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", 0.3)
+    monkeypatch.setattr(runner_mod, "_SIGTERM_TO_SIGKILL_GRACE_S", 0.3)
 
     started = time.monotonic()
     loss = asyncio.run(
@@ -704,7 +704,7 @@ def test_parent_escalates_to_sigkill_when_worker_ignores_sigterm(
 
     assert isinstance(loss, LossProfile)
     assert loss.wall_clock_budget_exceeded is True
-    # budget(1) + grace(2) + sigterm->sigkill grace(2) ≈ 5s; well under 60.
+    # budget(1) + grace(0.3) + sigterm->sigkill grace(0.3) ≈ 1.6s; well under 60.
     assert elapsed < 40.0
     assert not active_run_path(workspace, f"{generation.id}--{entry.id}").exists()
 

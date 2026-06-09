@@ -1,12 +1,16 @@
 ROOT := $(shell pwd)
 
-.PHONY: help install install-hooks test lint format typecheck check clean supervisor supervisor-test supervisor-check install-supervisor
+.PHONY: help install install-hooks test node-test lint format typecheck check clean supervisor supervisor-test supervisor-check install-supervisor
+
+# Path to the dashboard JS behaviour suite (run standalone under node).
+JS_TEST_DIR := $(ROOT)/src/zicato/dashboard/static/test
 
 help:
 	@echo "zicato Makefile targets:"
 	@echo "  install            Install package + all optional dependencies via uv"
 	@echo "  install-hooks      Install the pre-commit git hook into .git/hooks/"
 	@echo "  test               Run pytest"
+	@echo "  node-test          Run the dashboard JS behaviour suite under node"
 	@echo "  lint               Run ruff check"
 	@echo "  format             Run ruff format"
 	@echo "  typecheck          Run mypy over src/zicato/"
@@ -26,6 +30,14 @@ install-hooks:
 test:
 	@cd $(ROOT) && uv run pytest tests/
 
+# The dashboard's JavaScript behaviour suite. The in-pytest shim
+# (tests/test_dashboard_js.py) carries the `node` marker and is EXCLUDED
+# from the default pytest run (`-m 'not node'` in pyproject) so it does
+# not duplicate this run inside every pytest invocation. This target is
+# the canonical standalone Node run and is wired into `make check`.
+node-test:
+	@cd $(JS_TEST_DIR) && node run-all.mjs
+
 lint:
 	@cd $(ROOT) && uv run ruff check .
 
@@ -35,7 +47,7 @@ format:
 typecheck:
 	@cd $(ROOT) && uv run mypy src/zicato/
 
-check: lint typecheck test
+check: lint typecheck test node-test
 
 clean:
 	@rm -rf $(ROOT)/dist $(ROOT)/build $(ROOT)/*.egg-info

@@ -189,17 +189,19 @@ def test_run_regression_suite_times_out_on_slow_test(tmp_path: Path) -> None:
         """
         import time
 
+        # Outlives the 1s timeout below (the process is killed at the
+        # deadline, so the exact duration only needs to exceed it).
         def test_slow():
-            time.sleep(30)
+            time.sleep(5)
         """,
     )
 
-    result = asyncio.run(run_regression_suite(snapshot_root, test_command=_PYTEST_CMD, timeout_s=2))
+    result = asyncio.run(run_regression_suite(snapshot_root, test_command=_PYTEST_CMD, timeout_s=1))
 
     assert result.passed is False
     assert result.failed_tests == ()
     assert "timeout" in result.summary
-    assert "2s" in result.summary
+    assert "1s" in result.summary
 
 
 # ---------------------------------------------------------------------------

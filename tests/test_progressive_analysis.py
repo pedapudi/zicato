@@ -10,7 +10,6 @@ the orchestrator-facing contract: empty epoch → no file, one experiment
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 
 from zicato.core.workspace import analysis_path
@@ -81,17 +80,16 @@ def test_regenerate_rewrites_on_subsequent_round(tmp_path: Path) -> None:
     first = regenerate_in_progress_html(tmp_path, "epoch_a")
     assert first is not None
     first_text = first.read_text()
-    first_mtime_ns = first.stat().st_mtime_ns
-
-    # Sleep enough that an OS-granularity mtime can advance even on
-    # filesystems with second-level resolution.
-    time.sleep(1.05)
+    # The first render only knows about v1, so it cannot mention v2.
+    assert "v2" not in first_text
 
     _write_experiment(tmp_path, "epoch_a", "v2", "v1", "rejected")
     second = regenerate_in_progress_html(tmp_path, "epoch_a")
     assert second == first
     second_text = second.read_text()
     assert "v2" in second_text
-    # Either the content changed or the mtime advanced — both are valid
-    # signals that the file was rewritten.
-    assert second_text != first_text or second.stat().st_mtime_ns > first_mtime_ns
+    # The rewrite landed: the new experiment's generation id is present and
+    # the content differs from the first render. (Asserting the content
+    # change directly avoids the old second-granularity mtime sleep — the
+    # added v2 lineage guarantees the text differs.)
+    assert second_text != first_text
