@@ -1,6 +1,6 @@
 ---
 name: zicato-diagnose-health
-description: Run zicato health and interpret it — detect a toothless / degenerate evolve loop (one that runs cleanly but optimises nothing), read the detectors and severities, branch on exit code 9, and prescribe the contract fix. Use whenever an epoch promotes nothing, scores look suspiciously identical, or you want to confirm the loop has real optimization signal before trusting a tournament.
+description: Run zicato health and interpret it — detect a toothless / degenerate evolve loop (one that runs cleanly but optimises nothing), read the detectors and severities, branch on the exit code (critical ⇒ exit 1), and prescribe the contract fix. Use whenever an epoch promotes nothing, scores look suspiciously identical, or you want to confirm the loop has real optimization signal before trusting a tournament.
 ---
 
 # Diagnose loop health
@@ -53,17 +53,23 @@ fires only when there's *also* a degenerate-eval reason.
 
 | Exit code | When |
 |---|---|
-| `0` | report produced; `overall` is `ok` or `info` |
-| `9` | report produced; `overall` is `warning` or `critical` — the distinct "the loop is degenerate" code |
-| `2` / `3` | usage / configuration error (e.g. no active epoch) |
+| `0` | report produced; `overall` is `ok` / `info` / **`warning`** — only `critical` exits non-zero |
+| `1` | a **`critical`** finding is present (`raise SystemExit(1)`, `health.py:241`) — the "do not trust the lineage" signal |
+| `1` | usage / configuration error too (no active epoch, unreadable board) — these raise `click.ClickException`, which also exits `1` |
 
-A CI wrapper branches on `9` exactly the way it branches on other meaningful
-outcomes:
+**The `9` in the design docs is aspirational, not implemented.** The shipped
+CLI exits `1` on a critical finding (and `1` on a config error), so you cannot
+distinguish "degenerate" from "bad usage" on the code alone — read the printed
+report. A CI wrapper branches on non-zero plus the report text:
 
 ```sh
 .venv/bin/zicato health --workspace .zicato; rc=$?
-if [ "$rc" -eq 9 ]; then echo "loop is degenerate — do not trust the lineage"; fi
+if [ "$rc" -ne 0 ]; then echo "health critical or usage error — read the report above"; fi
 ```
+
+Note: a `warning`-only report exits `0` — health only fails the process on
+`critical`. For a programmatic warning/critical distinction, read the raw
+`.zicato/epochs/{epoch}/loop_health/round_{NNN}.json` report's `overall` field.
 
 ## Prescribe the fix for a toothless loop
 
@@ -82,23 +88,24 @@ Each finding carries its own `remedy`; the contract-level fixes:
   is only half the signal — and silent degeneracy is far more likely with
   half the scoring structurally absent.
 
-## Pair with `evolve --stop-on-degenerate`
+## `evolve` stops itself on a degenerate loop (on by default)
 
-For unattended runs, the operator can pair health diagnostics with an opt-in
-early stop so a degenerate epoch doesn't burn the rest of the budget:
+For unattended runs you do not need a flag: `zicato evolve` **stops itself**
+the first time it sees a `critical` health finding whose cause is *sustained*
+degeneracy, so a degenerate epoch doesn't burn the rest of the budget. This is
+the orchestrator's `stop_on_degenerate_health` behaviour, **on by default**
+(`orchestrator.py:2982`); the loop halts cleanly — state fully written — and the
+terminal round records `stop_reason == "degenerate_health"` (`evolve.py:775`).
 
-```sh
-zicato evolve --rounds 20 --stop-on-degenerate
-```
-
-It halts cleanly — state fully written — the first time it sees a `critical`
-report whose cause is *sustained* degeneracy (the N-consecutive / shared-
-constant trigger, or a majority-non-differentiating board), and exits with
-the same code **`9`** as `zicato health`. A single tied round or a mere
-`no_expectations` notice does **not** stop the loop — only provably-wasted
-compute does. (This is a documented evolve flag; confirm against
-`zicato evolve --help` before relying on it. Per project policy, never start
-a live `evolve` yourself — verify via the test suite and the report files.)
+A single tied round or a mere `no_expectations` notice does **not** stop the
+loop — only provably-wasted compute does (the N-consecutive / shared-constant
+trigger, or a majority-non-differentiating board). There is **no
+`--stop-on-degenerate` CLI flag** — it is not opt-in, it is the default
+behaviour; the opt-out lives at the API level (`stop_on_degenerate_health=False`
+on `evolve_n_rounds`), not on the CLI. Confirm the flag surface against
+`zicato evolve --help` (the design docs drift). Per project policy, never start
+a live `evolve` yourself — verify via the test suite (`test_orchestrator_health.py`)
+and the on-disk report files.
 
 Critical findings also fire a bannered orchestrator warning to stderr and a
 `loop_health_critical` SSE event that turns the dashboard's loop-health panel
@@ -107,6 +114,7 @@ red — see [zicato-watch-dashboard](../zicato-watch-dashboard/SKILL.md).
 ## Guardrails
 
 - Cite only flags present in real `--help`. `--round` / `--format` are
-  doc-only; `--stop-on-degenerate` is an evolve flag.
+  doc-only (not on `zicato health`); there is no `--stop-on-degenerate` evolve
+  flag — degenerate-stop is on by default, not a flag.
 - Never launch a live `evolve` to test health — read the on-disk
   `loop_health/round_{NNN}.json` reports instead.

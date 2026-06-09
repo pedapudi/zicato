@@ -26,10 +26,11 @@ Z=.venv/bin/zicato
 $Z health                 # current epoch; add --epoch <id> to target one
 ```
 
-Exit codes: `0` = `overall` is `ok`/`info`; `9` = `overall` is
-`warning`/`critical`. Each finding carries a `severity` and a concrete
-`remedy` — read them; the detector tells you the fix. The five detectors
-(`docs/design/LOOP-HEALTH.md` §3):
+Exit codes: `0` = no `critical` finding (`ok`/`info`/even `warning`); `1` = a
+`critical` finding is present (`raise SystemExit(1)`; the design-doc `9` is not
+implemented — and a config error like "no active epoch" also exits `1`). Each
+finding carries a `severity` and a concrete `remedy` — read them; the detector
+tells you the fix. The five detectors (`docs/design/LOOP-HEALTH.md` §3):
 
 | Detector | Fires when | Points you at |
 |---|---|---|

@@ -46,9 +46,18 @@ fine-grained codes without re-checking.
   Per-judge weighting (`per_judge_weights`/`default_judge_weight`) folds into
   `drift_loss` inside the reducer (`telemetry/reducer.py compute_drift_loss`,
   `telemetry/scoring.py per_judge_loss`).
-- **The proposer is a first-class contract input.** Skill-composed default
-  (drop `skills/*.md`, no code) or an ADK-native tool agent owning its own
-  `model=`. See `docs/design/PROPOSER.md`.
+- **The proposer is a first-class contract input.** The DEFAULT (no proposer
+  dir) is a **tool-using ADK agent** in `builtin_default` mode — it owns the
+  full read-only tool registry and runs on ADK's own `Runner`, bound to the
+  auxiliary model (`proposer/agent.py build_proposer_agent`). The two opt-in
+  customizations: a **skill-composed text-shim** (drop `skills/*.md`, no code —
+  loses tools) or a **custom `agent.py`** owning its own `model=`. The selector
+  is `build_proposer_agent` (`agent.py:173-239`), NOT `adk_agent.py`'s module
+  docstring (which narrates the historical text-shim-default and is stale). A
+  **board-anonymized, train-slice-only, bucketed failure-mode feedback channel**
+  (`render_failure_mode_profile`, `orchestrator.py:3756-3779`) feeds the proposer
+  what fails without leaking entry identity, extensible via the
+  `outcome_summarizer_spec` operator hook. See `docs/design/PROPOSER.md`.
 - **Telemetry: the per-run `events.jsonl` is the source of truth.** zicato does
   not invent a wire format — it captures goldfive's `Event` stream verbatim and
   reduces it post-run to a typed `LossProfile` (`loss.json`). The SQLite
@@ -57,9 +66,18 @@ fine-grained codes without re-checking.
 - **Storage is a pluggable `StorageBackend`** (`storage/`): `files` (canonical,
   default) + `memory` (tests); a `git` backend is roadmap
   (`storage/factory.py`, `DEFAULT_BACKEND = "files"`).
-- **The dashboard is a separate concern.** The live UI is "Variant T", served
-  static from disk with **no bundle/build step** — `app_T.js` injects the
-  stylesheet via `import.meta.url` (see below).
+- **The dashboard is a separate concern.** The live UI is "Variant T"
+  (internally; user-facing "Console"), served static from disk with **no
+  bundle/build step** — `app_T.js` injects the stylesheet via `import.meta.url`
+  (see below). The home view carries a **cross-epoch meta-loop ledger**
+  (`views/home.js` → `svg.metaLoopLedgerDigest`); **settings is a routed
+  right-side DRAWER overlay**, not a full page (`shell.js:664-670`), and its
+  Contract tab reuses the builder's live preview; the **tournament builder is
+  its own first-class view** (`#/builder`, `views/builder.js`, + a settings
+  launcher + a `zicato builder` CLI command, `cli/commands/builder.py`). One
+  shared resolver `resolveNonGauntletSt` (`views/structure.js:404`) unifies the
+  racing/non-gauntlet model across epoch/gens/candidate views (convergence +
+  digest-gating preserved).
 - **goldfive + harmonograf are external pinned-git deps**, not vendored
   (`pyproject.toml [tool.uv.sources]`: goldfive at a pinned rev,
   harmonograf-client/server from the harmonograf monorepo). **Never edit
@@ -84,8 +102,9 @@ fine-grained codes without re-checking.
 | `runtime/heartbeat.py`, `control.py`, `lock.py` | The orchestrator/run heartbeat beaters, the dashboard control-command channel, the exclusive workspace lock. |
 | `epoch/` | Contract + hash (`contract.py`), lifecycle/auto-epoch, journal, lineage, analysis/html report, generation store (`genstore.py` + `git_genstore.py`), snapshot scope. |
 | `storage/` | `StorageBackend` base + `files`/`memory` backends + `factory.py`. |
-| `dashboard/` | The standalone Starlette service (`server.py`, `sse.py`, `state_reader.py`, `endpoints.py`) + the static UI (see next section). |
-| `cli/commands/*.py` | Click subcommands, auto-discovered; entry point `zicato.cli:main`. |
+| `dashboard/` | The standalone Starlette service (`server.py`, `sse.py`, `state_reader.py`, `endpoints.py`) + the static UI (see next section). Static is served `no-cache` **plus an ETag** so 304-revalidation avoids re-downloads without ever serving stale bytes (`server.py:165-180`). |
+| `builder/` | The tournament-builder backend — the draft-contract operations + the chat copilot's tool surface (`operations.py`, `copilot.py`, `copilot_tools.py`). The cost estimator uses **per-structure default replicates** (swiss/elim=2, gauntlet/racing=1) from `selection/registry.py STRUCTURE_DEFAULT_REPLICATES` (the single source of truth, derived from each strategy's `_default_replicates`), mirrored in `builder/preview` JS. |
+| `cli/commands/*.py` | Click subcommands, auto-discovered; entry point `zicato.cli:main`. Includes `builder` (launch the standalone tournament builder). |
 | `crates/supervisor/` | The Rust watchdog (heartbeat staleness + run staleness + per-run deadline kill). |
 
 ## Control + data flow: one evolve round
@@ -120,6 +139,8 @@ SelectionStrategy.live_rounds()/live_standings()   (selection/strategy.py)
   → runtime/state.py atomic write → .zicato/runtime/active_tournament.json
   → dashboard SSE (dashboard/sse.py watches the file)
   → js/core/state.js (debounced) → digest-gated render
+  → js/variants/T/views/structure.js resolveNonGauntletSt   (the ONE shared
+       racing/non-gauntlet model resolver, used by epoch/gens/candidate)
   → js/variants/T/live.js buildLiveModel / normalizeStructure
   → js/variants/T/svg.js figure builders
 ```
@@ -200,8 +221,13 @@ must never abort a resolution.
 - **Dashboard: verifying a CSS change needs a full document reload.** The SPA
   injects the stylesheet once on document load; hash-route navigation does NOT
   re-inject it, so you see stale CSS. Static is served `Cache-Control: no-cache`
-  (`dashboard/server.py:123,152`), but that only bites on a fresh document load
-  / fresh dashboard process — hard-reload the page to verify.
+  **plus an ETag** (`"{mtime_ns:x}-{size:x}"`) so a revalidation returns a
+  bodyless 304 when the file is unchanged but the moment a file is edited its
+  ETag flips and the browser re-downloads — `no-cache` is deliberately kept (a
+  plain long-lived cache would serve stale CSS/JS), the ETag is the no-redownload
+  optimization (`dashboard/server.py:140,165-180`). That only bites on a fresh
+  document load / fresh dashboard process — hard-reload the page to verify a CSS
+  edit.
 - **Dashboard CSS sizing: only max-WIDTH is shear-safe.** Hero figures are
   aspect-locked (inline `aspect-ratio` == viewBox) with
   `preserveAspectRatio:'none'`. A `max-height` clamps height while width follows
@@ -217,12 +243,13 @@ must never abort a resolution.
 - **Dashboard render discipline: digest-gate, never repaint on a no-op beat.**
   Live surfaces are digest-gated on the live *content* so the DOM rebuilds only
   on a real change, never on a no-op SSE heartbeat — the recurring
-  flashing/refresh bug class (`js/variants/T/data.js`, `live.js:327-400`).
+  flashing/refresh bug class (`js/variants/T/data.js` `liveDataSignature` +
+  the per-figure digests in `live.js`/`views/structure.js`).
   Preserve this when adding any SSE-driven view.
 - **`active_tournament.json` is read-modify-write from two writers.** The
   orchestrator's full-envelope republish PRESERVES the runner-written live
   fields across a republish (`orchestrator.py:_publish_active_tournament`,
-  ~L2276) — do not clobber them.
+  ~L2247) — do not clobber them.
 - **Process hygiene.** Killing dashboards/workers with a broad
   `pkill -f zicato…` can match the caller's own shell (self-kill, exit 144).
   Kill by explicit PID (the worker stamps its own pid into

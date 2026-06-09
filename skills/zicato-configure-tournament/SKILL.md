@@ -173,7 +173,11 @@ wall_clock ≈ board_runs × per_entry_budget ÷ parallelism
   pairings; an elim bracket = its depth; **double_elim ≈ 3–4× single_elim**;
   racing = its rung count (each rung on a fraction of the board, so racing's
   *effective* board cost is far below the naive product).
-- `replicates` multiplies directly (~N× per duel).
+- `replicates` multiplies directly (~N× per duel). **Left unset, it defaults
+  per structure** (swiss/single_elim/double_elim → `2`, gauntlet/racing → `1`,
+  from `selection.registry`) — so a swiss/elim run already costs ~2× a gauntlet
+  before you touch the knob. The cost estimator and the builder read those same
+  defaults, so an estimate is honest even when `replicates` is unspecified.
 - `rounds` is the OUTER evolve loop — total cost scales linearly in it.
 - `parallelism` is `RuntimeConfig.parallelism` (the run fan-out semaphore);
   raising it shortens wall-clock but, on a quota-limited endpoint, **invites
@@ -183,6 +187,15 @@ wall_clock ≈ board_runs × per_entry_budget ÷ parallelism
   LLM retries — a retry can blow the budget and the run is recorded aborted
   (worst-case scored). Set `--max-wall-clock-seconds` for the whole invocation
   as a hard stop; the loop halts cleanly between rounds once it is spent.
+- **Racing grind guard (opt-in per-matchup cap).** A racing FINAL rung is the
+  full board × `replicates` × both sides, each board only bounded by its OWN
+  per-board budget — so without a cap it can grind for a long time with no
+  aggregate ceiling. The `tournament.params` `matchup_budget_seconds` (all
+  rungs) and `final_rung_budget_seconds` (the crowning duel only) bound a
+  single duel's wall-clock: once spent it stops launching board units and
+  records the rest as budget-exceeded (a partial aggregate). Unset = uncapped
+  (byte-identical to before). Reach for it when a racing run's final rung is the
+  thing blowing the wall-clock estimate.
 
 Sanity-check the estimate before launching; runtime far above it means
 throttling or budget×retry blowups — not "the model is slow."
@@ -263,8 +276,8 @@ shape (`core_idea`, `modulating`, `decision`, `scalar_score_delta`) — see
 
 Cross-check with the automated degeneracy detectors —
 [`zicato-diagnose-health`](../zicato-diagnose-health/SKILL.md): a `stalled_loop`
-or `degenerate_scoring` finding (exit code 9) confirms a structurally
-non-evolving loop.
+or `degenerate_scoring` critical finding (`zicato health` exits `1` — the
+design-doc `9` is not implemented) confirms a structurally non-evolving loop.
 
 ## When to use / when not to use
 

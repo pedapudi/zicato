@@ -47,19 +47,25 @@ bare `#/`:
 
 | View | Route | What it shows / what to look for |
 |---|---|---|
-| **Environment** | `#/` | the workspace as a **FLEET** of epochs: an overview strip (epochs / generations / best scalar / LIVE-or-IDLE), one console card per epoch with its own loss **trendline** + best/gens/promoted, the **loop-health** panel, and the **cross-epoch trajectory** sparkline. Read health first: a finding here means the eval may be toothless. |
+| **Environment** | `#/` | the workspace as a **FLEET** of epochs: an overview strip (epochs / generations / best scalar / LIVE-or-IDLE), one console card per epoch with its own loss **trendline** + best/gens/promoted, the **loop-health** panel, and the **cross-epoch META-LOOP LEDGER** (a per-epoch-row matrix braiding the held-floor staircase / effort / outcomes — the cross-epoch overview, content-gated so a no-op heartbeat churns no DOM). Read health first: a finding here means the eval may be toothless. |
 | **Epoch** | `#/e/<epoch>` | the **objective**, the collapsible **proposer brief** (the operator's brief to the proposer), the structure pill, then the **champion-spine ROUND TIMELINE** hero (one node per evolve round along the descending champion spine) with the **loss-floor waterfall** riding above it, then the **board × generation drift-loss HEATMAP**. Quicklinks to Generations / Boards / Mutation surface / Publication. |
 | **Generations / round Match-ups** | `#/e/<epoch>/gens` (all rounds) · `#/e/<epoch>/gens/r/<round>` (one round) | the **Match-ups** — the per-structure tournament figure (see §3), the standings, and (for gauntlet) the per-round Δ-vs-champion lanes + roster. A `/r/<round>` drill scopes it to ONE evolve round's tournament. |
 | **Candidate** | `#/e/<epoch>/gen/<gen>[/<entry>]` | one challenger's life as a lifecycle DAG → gate; comparison-first (a **"compare with…"** picker sets a `~cmp=<gen>` hash suffix and splits the pane side-by-side). `/diff` shows its patch diff. |
-| **Boards** | `#/e/<epoch>/boards` · `#/e/<epoch>/board/<entry>[/<gen>]` | the small-multiples **board trellis** (one sparkbar + pass/fail dot row per entry); a board entry opens per-board scoring with champion-vs-challenger transcripts read **side-by-side inline**. |
+| **Boards** | `#/e/<epoch>/boards` · `#/e/<epoch>/board/<entry>[/<gen>]` | the small-multiples **board trellis** (one sparkbar + pass/fail dot row per entry); a board entry opens per-board scoring with champion-vs-challenger transcripts read **side-by-side inline**. Per-entry rows fold in the **continuous score** (a float in [0,1]) and its **precision/recall** decomposition when a scorer populated them — so a row shows *how well*, not just pass/fail. |
 | **Mutation surface** | `#/e/<epoch>/mutations[/<mutId>[/<gen>]]` | the mutable surface + the mutation matrix; a `mutId` pins one site (all gens that patched it), `mutId/gen` pins one site×generation diff. |
 | **Publication** | `#/e/<epoch>/paper` | the **ACM-style epoch report** (eyebrow / title / abstract / body, GFM tables render, figures splice in). |
 
 Navigation: the top-left **`↑ up`** control climbs the selection hierarchy
 (candidate → generations → epoch → environment; a compare split collapses to the
-bare candidate first). A page-wide **scale** pill (≈70–150 %) reflows the whole
-page; a **color theme** swatch dropdown (16 themes, monokai default) and a
-**typeface** picker (Technical default) re-skin without re-render.
+bare candidate first). A page-wide **scale** pill `zoom`s the WHOLE page
+(figures included), while a separate **S/M/L** text-size control (in the
+typeface picker) is a TEXT-ONLY multiplier (`--dt-font-scale`) that grows the
+type without rescaling figures; a **color theme** swatch dropdown (16 themes,
+monokai default) and a **typeface** picker (Technical default) re-skin without
+re-render. **Settings** opens as a routed right-side **drawer overlay** that
+paints over the current view (not a full page); the **tournament builder** is
+its own first-class view at `#/builder` (and the standalone `zicato builder`
+CLI deep-links there).
 
 ## 3. The per-structure Match-ups figure (consistency matters)
 
