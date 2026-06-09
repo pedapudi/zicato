@@ -719,6 +719,19 @@ def _weights_spec(weights: ScoringWeights) -> dict[str, Any]:
         "regression_timeout_s": weights.regression_timeout_s,
         "namespace_weights": dict(weights.namespace_weights),
         "namespace_monotonicity": dict(weights.namespace_monotonicity),
+        # Declarative scoring transforms (issue #19 phase 2). MUST cross the
+        # boundary: ``drift_kind_aggregation`` drives Seam 1, which runs IN the
+        # worker's ``reduce_loss`` — drop it here and the worker scores drift
+        # with neutral defaults while the orchestrator believes it is
+        # transformed (the per_judge_weights desync trap). ``pass_transform``
+        # is carried too for symmetry / any worker-side gate view. ``None`` is
+        # serialised verbatim; an absent key reads back as the neutral default.
+        "pass_transform": (
+            dict(weights.pass_transform) if weights.pass_transform is not None else None
+        ),
+        "drift_kind_aggregation": {
+            kind: dict(spec) for kind, spec in weights.drift_kind_aggregation.items()
+        },
     }
 
 

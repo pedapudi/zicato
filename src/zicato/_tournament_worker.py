@@ -735,6 +735,23 @@ def _weights_from_args(args: dict[str, Any]) -> ScoringWeights:
         namespace_monotonicity=dict(
             raw.get("namespace_monotonicity", defaults.namespace_monotonicity)
         ),
+        # Declarative scoring transforms (issue #19 phase 2). Symmetric with
+        # the writer in ``runner._weights_spec``: ``drift_kind_aggregation``
+        # drives Seam 1 which runs HERE in the worker, so it must survive the
+        # boundary or the worker would score drift with neutral defaults while
+        # the orchestrator shows transformed (the per_judge_weights desync
+        # class). An absent key falls back to the neutral default; ``None``
+        # for ``pass_transform`` is preserved (it means "no transform").
+        # ``ScoringWeights.__post_init__`` re-validates the reconstructed
+        # specs, so a corrupt args file fails fast here too.
+        pass_transform=(
+            raw["pass_transform"]
+            if isinstance(raw.get("pass_transform"), dict)
+            else defaults.pass_transform
+        ),
+        drift_kind_aggregation=dict(
+            raw.get("drift_kind_aggregation", defaults.drift_kind_aggregation)
+        ),
     )
 
 

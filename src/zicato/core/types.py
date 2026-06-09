@@ -2090,6 +2090,22 @@ class ScoringWeights:
         :attr:`namespace_weights`) by more than the namespace's
         tolerance — even when the combined scalar improves. Namespaces
         whose flag is missing or ``False`` are not gated this way.
+    pass_transform:
+        Optional declarative transform (a single
+        :data:`zicato.scoring.transforms.TransformSpec`,
+        ``{"op": ..., ...params}``) reshaping the scalar's pass/miss
+        term ``(1 - mean_score)`` at Seam 2 — the lowering target for
+        the retired ``pass_exponent`` field. ``None`` (default) is
+        NEUTRAL = ``linear`` = today's plain linear miss term. Validated
+        fail-fast in :meth:`__post_init__`.
+    drift_kind_aggregation:
+        Optional per-drift-kind declarative transforms
+        (``{kind: TransformSpec}``) reshaping how each kind's count
+        aggregates into the per-run drift loss at Seam 1 — the opt-in
+        replacement for the old unconditional harmonic
+        ``looping_reasoning`` special-case. An absent kind entry is
+        NEUTRAL = ``linear`` = ``severity × kind_weight × count``.
+        Validated fail-fast in :meth:`__post_init__`.
     """
 
     drift_weight: float = 1.0
@@ -2138,6 +2154,52 @@ class ScoringWeights:
     # serde + canonicalizer automatically: configuring (or changing) the spec
     # rolls the epoch, exactly like every other contract field.
     outcome_summarizer_spec: str = ""
+    # Declarative scoring transforms (issue #19 phase 2). Each is a single
+    # ``{"op": "<name>", ...params}`` spec from the
+    # :mod:`zicato.scoring.transforms` registry (``linear`` / ``pow`` /
+    # ``harmonic`` / ``cap`` / ``clip`` / ``log1p``). Single op per slot — NO
+    # pipelines (arbitrary multi-step logic is Phase 3's ``scalar_fn`` /
+    # ``drift_reducer`` plugin). Specs are validated fail-fast in
+    # ``__post_init__`` so a malformed transform is rejected at contract load,
+    # never producing a NaN mid-scoring. Both fold into the field-enumerating
+    # contract serde + canonicalizer automatically (plain dict / mapping
+    # fields), so configuring or changing a transform rolls the epoch and
+    # omitting one provokes no spurious roll.
+    #
+    # ``pass_transform`` reshapes the scalar's pass/miss term (the
+    # ``(1 - mean_score)`` recall miss) at Seam 2 — this is the lowering target
+    # for the retired ``pass_exponent`` field
+    # (``pass_exponent=2`` ⇒ ``{"op":"pow","exponent":2.0}``). ``None`` (the
+    # default) is NEUTRAL = ``linear`` = today's plain linear miss term.
+    pass_transform: Mapping[str, Any] | None = None
+    # ``drift_kind_aggregation`` reshapes, per drift KIND, how that kind's
+    # count aggregates into the drift loss at Seam 1 — the opt-in replacement
+    # for the old unconditional harmonic ``looping_reasoning`` special-case
+    # (``{"looping_reasoning": {"op": "harmonic"}}`` reproduces it for THIS
+    # contract only). An absent kind entry is NEUTRAL = ``linear`` =
+    # ``severity × kind_weight × count`` (today's built-in).
+    drift_kind_aggregation: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Validate the declarative transform specs fail-fast at construction.
+
+        Runs at contract load (the loader builds a :class:`ScoringWeights`
+        from ``scoring.json``), so a malformed transform — unknown op,
+        non-finite / missing / typo'd param — is rejected here with a clear
+        error rather than silently defaulting or surfacing as a ``NaN`` scalar
+        partway through a run. By the time the scoring dispatchers call
+        :func:`zicato.scoring.transforms.apply_transform`, every spec on this
+        instance is already known-good.
+        """
+        from zicato.scoring.transforms import validate_transform_spec  # noqa: PLC0415
+
+        if self.pass_transform is not None:
+            validate_transform_spec(self.pass_transform)
+        for kind, spec in self.drift_kind_aggregation.items():
+            try:
+                validate_transform_spec(spec)
+            except ValueError as exc:
+                raise ValueError(f"drift_kind_aggregation[{kind!r}]: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------

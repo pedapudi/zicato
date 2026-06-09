@@ -33,6 +33,13 @@ from zicato.scoring.api import (
 )
 from zicato.scoring.builtins import builtin_drift_loss, builtin_scalar
 from zicato.scoring.dispatch import resolve_drift_loss, resolve_scalar
+from zicato.scoring.transforms import (
+    TransformSpec,
+    TransformSpecError,
+    apply_transform,
+    transform_op_names,
+    validate_transform_spec,
+)
 
 __all__ = [
     "DriftContext",
@@ -43,4 +50,9 @@ __all__ = [
     "builtin_scalar",
     "resolve_drift_loss",
     "resolve_scalar",
+    "TransformSpec",
+    "TransformSpecError",
+    "apply_transform",
+    "validate_transform_spec",
+    "transform_op_names",
 ]
