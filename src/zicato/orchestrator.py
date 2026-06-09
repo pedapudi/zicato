@@ -1872,49 +1872,6 @@ async def _evolve_multi_challenger(
         # tournament, then re-raise.
         _clear_active_tournament(workspace_root)
         raise
-    # Settle the live envelope with the resolved rounds + standings so the
-    # dashboard's structure reader sees the final bracket. Unlike the
-    # gauntlet path (which clears its transient running record on exit),
-    # the multi-challenger envelope is RETAINED with phase="completed":
-    # competitors/rounds/standings are the dashboard's only live source for
-    # a non-gauntlet field until the next round's tournament starts.
-    _settle_active_tournament(
-        workspace_root,
-        tournament_id=tournament_id,
-        epoch_id=epoch_id,
-        structure=tournament_spec.structure,
-        structure_params=dict(tournament_spec.params),
-        competitors=competitors_meta,
-        strategy=strategy,
-        decision=decision,
-        round_index=round_index,
-        total_rounds=total_rounds,
-        field_status=field_status,
-    )
-    # Durably persist the settled FIELD structure (one record per round's
-    # non-gauntlet tournament). The runtime ``active_tournament`` envelope
-    # above is EPHEMERAL — it is overwritten by the next round and cleared
-    # on a crash — so a completed swiss / elim epoch would render blank from
-    # the index alone. The field record carries the same shape the live
-    # envelope does, so the dashboard's structure renderers serve the ladder
-    # post-run unchanged. Keyed on the round's first applied challenger so a
-    # multi-round epoch keeps a snapshot per round. FINALISES the
-    # ``in_progress`` envelope opened before resolution (issue #16) — the
-    # same tournament_id, so this is an idempotent upsert to ``settled``.
-    _persist_field_tournament(
-        workspace_root,
-        field_tournament_id=f"{epoch_id}:field:{first_challenger_id}",
-        first_challenger_id=first_challenger_id,
-        epoch_id=epoch_id,
-        structure=tournament_spec.structure,
-        structure_params=dict(tournament_spec.params),
-        competitors=competitors_meta,
-        rounds=_serialise_rounds(strategy.rounds()),
-        standings=_serialise_standings(decision.standings),
-        field_status=field_status or [],
-        decision=decision,
-        state="settled",
-    )
 
     # --- Final champion-gate Ladder-mediated holdout confirmation
     # (OVERFITTING.md §3/§4). The structure resolved its leader on the TRAIN
@@ -1986,6 +1943,76 @@ async def _evolve_multi_challenger(
             # dead branch, and the crowning reason carries the holdout cause.
             promoted_id = None
             crowning_reason_override = crowning_outcome.reason
+
+    # The EFFECTIVE crowning verdict — what the workspace will actually
+    # commit. The strategy's ``decision`` reflects the TRAIN-slice bracket
+    # only; the holdout confirmation above can DEMOTE a train winner (sets
+    # ``promoted_id = None``). The durable bracket + the live envelope must
+    # describe the post-confirmation truth, NOT the pre-confirmation train
+    # decision — otherwise a settled bracket would assert ``promoted`` /
+    # ``promoted_generation_id`` for a generation the champion pointer +
+    # lineage never advance to (issue #20). A holdout flip rewrites the
+    # decision to ``rejected`` with the holdout cause and no promoted id, so
+    # every queryable store agrees the champion stood.
+    effective_decision = decision
+    if promoted_id != decision.promoted_generation_id:
+        effective_decision = replace(
+            decision,
+            promoted_generation_id=promoted_id,
+            decision="promoted" if promoted_id is not None else "rejected",
+            reason=(
+                crowning_reason_override
+                if crowning_reason_override is not None
+                else decision.reason
+            ),
+        )
+
+    # Settle the live envelope with the resolved rounds + standings so the
+    # dashboard's structure reader sees the final bracket. Unlike the
+    # gauntlet path (which clears its transient running record on exit),
+    # the multi-challenger envelope is RETAINED with phase="completed":
+    # competitors/rounds/standings are the dashboard's only live source for
+    # a non-gauntlet field until the next round's tournament starts. Settled
+    # with the HOLDOUT-RESOLVED decision so the dashboard never shows a crown
+    # the champion pointer contradicts.
+    _settle_active_tournament(
+        workspace_root,
+        tournament_id=tournament_id,
+        epoch_id=epoch_id,
+        structure=tournament_spec.structure,
+        structure_params=dict(tournament_spec.params),
+        competitors=competitors_meta,
+        strategy=strategy,
+        decision=effective_decision,
+        round_index=round_index,
+        total_rounds=total_rounds,
+        field_status=field_status,
+    )
+    # Durably persist the settled FIELD structure (one record per round's
+    # non-gauntlet tournament). The runtime ``active_tournament`` envelope
+    # above is EPHEMERAL — it is overwritten by the next round and cleared
+    # on a crash — so a completed swiss / elim epoch would render blank from
+    # the index alone. The field record carries the same shape the live
+    # envelope does, so the dashboard's structure renderers serve the ladder
+    # post-run unchanged. Keyed on the round's first applied challenger so a
+    # multi-round epoch keeps a snapshot per round. FINALISES the
+    # ``in_progress`` envelope opened before resolution (issue #16) — the
+    # same tournament_id, so this is an idempotent upsert to ``settled``.
+    # Persisted with the HOLDOUT-RESOLVED decision (issue #20).
+    _persist_field_tournament(
+        workspace_root,
+        field_tournament_id=f"{epoch_id}:field:{first_challenger_id}",
+        first_challenger_id=first_challenger_id,
+        epoch_id=epoch_id,
+        structure=tournament_spec.structure,
+        structure_params=dict(tournament_spec.params),
+        competitors=competitors_meta,
+        rounds=_serialise_rounds(strategy.rounds()),
+        standings=_serialise_standings(effective_decision.standings),
+        field_status=field_status or [],
+        decision=effective_decision,
+        state="settled",
+    )
 
     rank_by_id = {s.generation_id: s.rank for s in decision.standings}
     matches_by_gen: dict[str, list[MatchOutcome]] = {c.generation_id: [] for c in applied}
@@ -2089,6 +2116,31 @@ async def _evolve_multi_challenger(
         finalised_by_id[gid] = finalised
         _ingest_experiment_into_index(workspace_root, epoch_id, gid)
 
+    # --- Crowning invariant (issue #20): the durable bracket and the
+    # champion state MUST agree. A settled bracket that records ``promoted``
+    # with a ``promoted_generation_id`` the champion pointer + lineage never
+    # advance to (or the inverse) is a silent correctness bug, so FAIL LOUDLY
+    # before writing lineage rather than persisting a contradiction. The
+    # persisted ``effective_decision`` is the post-holdout truth; ``promoted_id``
+    # is what drives lineage + ``current_generation`` below — these two are the
+    # same value by construction, and this guard makes that contract explicit
+    # and catches any future code path that lets them drift apart.
+    _bracket_promoted = effective_decision.decision == "promoted"
+    if _bracket_promoted != (promoted_id is not None):
+        raise RuntimeError(
+            "crowning invariant violated: settled bracket decision "
+            f"{effective_decision.decision!r} (promoted_generation_id="
+            f"{effective_decision.promoted_generation_id!r}) disagrees with the "
+            f"champion to be crowned ({promoted_id!r}); refusing to persist a "
+            "bracket the champion pointer / lineage contradict"
+        )
+    if promoted_id is not None and promoted_id not in by_id:
+        raise RuntimeError(
+            "crowning invariant violated: settled bracket promotes "
+            f"{promoted_id!r} but no such challenger applied this round; "
+            "refusing to advance the champion to a generation with no snapshot"
+        )
+
     # --- Lineage: the crowned generation on the spine (promoted), every
     # other challenger recorded as a dead branch (rejected child of the
     # champion). current_generation advances only on a promotion.
@@ -2107,6 +2159,18 @@ async def _evolve_multi_challenger(
         append_to_lineage(workspace_root, epoch_id, gen_record, parent_id=parent_id)
     if promoted_id is not None:
         _set_current_generation(workspace_root, epoch_id, promoted_id)
+        # The marker MUST now name the crowned generation — a write that did
+        # not stick (e.g. a read-only workspace) would leave a settled
+        # ``promoted`` bracket whose champion never advanced. Re-read and
+        # raise rather than diverge silently (issue #20 acceptance #3).
+        _crowned_head = _resolve_current_generation(workspace_root, epoch_id)
+        if _crowned_head != promoted_id:
+            raise RuntimeError(
+                "crowning invariant violated: bracket promoted "
+                f"{promoted_id!r} but current_generation resolves to "
+                f"{_crowned_head!r} after the crowning write; the champion "
+                "pointer did not advance to the promoted generation"
+            )
 
     # --- Journal: one entry per challenger (crowned + dead branches).
     for challenger in applied:

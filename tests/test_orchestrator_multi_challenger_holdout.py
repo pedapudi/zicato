@@ -238,6 +238,28 @@ def _crowned_outcome(workspace: Path, epoch_id: str, gid: str) -> dict[str, obje
     return json.loads((gens / gid / "experiment.json").read_text())["outcome"]
 
 
+def _field_bracket(workspace: Path, epoch_id: str, first_challenger_id: str) -> dict[str, object]:
+    """Read the durable per-round FIELD tournament snapshot."""
+    from zicato.core.workspace import field_tournament_path
+
+    path = field_tournament_path(workspace, epoch_id, first_challenger_id)
+    return json.loads(path.read_text())
+
+
+def _lineage_promoted(workspace: Path, epoch_id: str, gid: str) -> bool | None:
+    """Return the ``promoted`` flag the lineage records for ``gid``."""
+    from zicato.epoch.lineage import load_lineage
+
+    lineage = load_lineage(workspace)
+    for entry in lineage.get("epochs", []):
+        if entry.get("id") != epoch_id:
+            continue
+        for g in entry.get("generations", []):
+            if g.get("id") == gid:
+                return g.get("promoted")
+    return None
+
+
 @pytest.mark.parametrize("structure", _STRUCTURES)
 def test_holdout_confirms_a_true_win_and_persists_records(
     structure: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -451,3 +473,146 @@ def test_empty_holdout_degrades_to_whole_board(
     assert rec["holdout_loss"] is None
     assert rec["generalization_gap"] is None
     assert not ladder_state_path(workspace, epoch_id).exists()
+
+
+# --- issue #20: a settled bracket may never assert a promotion the workspace
+# contradicts. These tests pin the durable FIELD bracket against the champion
+# pointer + lineage for BOTH a true win and a holdout-flipped win, and prove
+# the crowning invariant fails loudly when they cannot be made to agree.
+
+
+@pytest.mark.parametrize("structure", _STRUCTURES)
+def test_settled_promotion_agrees_with_champion_and_lineage(
+    structure: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A round that settles ``promoted`` advances ``current_generation`` AND
+    lineage to the promoted generation, AND the durable FIELD bracket records
+    the SAME promotion — no store disagrees (issue #20, acceptance #1)."""
+    workspace, epoch_id = _bootstrap(tmp_path, structure=structure, field_size=2)
+    _install_stub_adapter_factory(monkeypatch)
+    loss: dict[tuple[str, str], float] = {}
+    for e in (*(f"train_{i}" for i in range(4)), "h0"):
+        loss[("v0", e)] = 2.0
+        loss[("v1", e)] = 0.5
+        loss[("v2", e)] = 1.5
+    _install_per_entry_telemetry_stubs(
+        monkeypatch,
+        loss_by_gen_entry=loss,
+        pass_by_gen={"v0": True, "v1": True, "v2": True},
+    )
+
+    from zicato.orchestrator import _resolve_current_generation, evolve_once
+
+    outcome = asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder(
+                [_valid_proposer_response(), _valid_proposer_response()]
+            ),
+        )
+    )
+
+    assert outcome.tournament_decision == "promoted", structure
+    crowned = outcome.proposed_generation_id
+    # The champion pointer advanced AND lineage marks the crowned gen promoted.
+    assert _resolve_current_generation(workspace, epoch_id) == crowned
+    assert _lineage_promoted(workspace, epoch_id, crowned) is True
+    # The durable FIELD bracket records the SAME promotion — no contradiction.
+    bracket = _field_bracket(workspace, epoch_id, "v1")
+    assert bracket["decision"] == "promoted", structure
+    assert bracket["promoted_generation_id"] == crowned
+    assert bracket["state"] == "settled"
+
+
+@pytest.mark.parametrize("structure", _STRUCTURES)
+def test_holdout_flip_persists_a_rejected_bracket_not_a_phantom_promotion(
+    structure: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The regression in issue #20: the durable bracket used to be persisted
+    from the TRAIN decision BEFORE the holdout confirmation could flip it, so a
+    holdout-demoted round left a settled bracket asserting ``promoted`` while
+    the champion pointer + lineage stayed at v0. The bracket must now record
+    the HOLDOUT-RESOLVED ``rejected`` verdict — agreeing with the champion that
+    stood."""
+    workspace, epoch_id = _bootstrap(tmp_path, structure=structure, field_size=2)
+    _install_stub_adapter_factory(monkeypatch)
+    loss: dict[tuple[str, str], float] = {}
+    for e in (f"train_{i}" for i in range(4)):
+        loss[("v0", e)] = 2.0
+        loss[("v1", e)] = 0.5
+        loss[("v2", e)] = 1.5
+    loss[("v0", "h0")] = 2.0
+    loss[("v1", "h0")] = 5.0  # holdout regression
+    loss[("v2", "h0")] = 5.0  # holdout regression
+    _install_per_entry_telemetry_stubs(
+        monkeypatch,
+        loss_by_gen_entry=loss,
+        pass_by_gen={"v0": True, "v1": True, "v2": True},
+    )
+
+    from zicato.orchestrator import _resolve_current_generation, evolve_once
+
+    outcome = asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder(
+                [_valid_proposer_response(), _valid_proposer_response()]
+            ),
+        )
+    )
+
+    assert outcome.tournament_decision == "rejected", structure
+    # Champion stands.
+    assert _resolve_current_generation(workspace, epoch_id) == "v0"
+    leader = outcome.proposed_generation_id
+    assert _lineage_promoted(workspace, epoch_id, leader) is False
+    # The durable bracket reflects the holdout flip — NOT a phantom promotion.
+    bracket = _field_bracket(workspace, epoch_id, "v1")
+    assert bracket["decision"] == "rejected", structure
+    assert not bracket["promoted_generation_id"]
+    assert "holdout_not_confirmed" in str(bracket["reason"])
+
+
+def test_crowning_invariant_raises_when_champion_pointer_cannot_advance(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """If crowning settles ``promoted`` but the champion pointer cannot be
+    updated to the promoted generation, settlement RAISES rather than persist a
+    contradictory bracket (issue #20, acceptance #3). We force the divergence
+    by stubbing the marker writer to a no-op so the re-read after the crowning
+    write still names the old champion."""
+    workspace, epoch_id = _bootstrap(tmp_path, structure="single_elim", field_size=2)
+    _install_stub_adapter_factory(monkeypatch)
+    loss: dict[tuple[str, str], float] = {}
+    for e in (*(f"train_{i}" for i in range(4)), "h0"):
+        loss[("v0", e)] = 2.0
+        loss[("v1", e)] = 0.5
+        loss[("v2", e)] = 1.5
+    _install_per_entry_telemetry_stubs(
+        monkeypatch,
+        loss_by_gen_entry=loss,
+        pass_by_gen={"v0": True, "v1": True, "v2": True},
+    )
+
+    import zicato.orchestrator as _orch
+
+    # The crowning write becomes a no-op, so current_generation stays v0 even
+    # though the bracket settled a promotion — exactly the silent divergence
+    # the fail-loud guard must catch.
+    monkeypatch.setattr(_orch, "_set_current_generation", lambda *a, **k: None)
+
+    with pytest.raises(RuntimeError, match="crowning invariant violated"):
+        asyncio.run(
+            _orch.evolve_once(
+                workspace_root=workspace,
+                epoch_id=epoch_id,
+                harness_call_llm=_harness_call_llm,
+                auxiliary_call_llm=_make_aux_responder(
+                    [_valid_proposer_response(), _valid_proposer_response()]
+                ),
+            )
+        )

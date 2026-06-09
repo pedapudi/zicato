@@ -89,6 +89,68 @@ def test_read_mutable_file_returns_content(tmp_path: Path) -> None:
     assert "You are a helpful assistant." in text
 
 
+def _build_declared_subtree_snapshot(tmp_path: Path) -> tuple[Path, tuple]:
+    """A generation snapshot whose adapter declares a NARROWER mutable subtree.
+
+    Layout — the mutable tree lives under ``agent/`` inside the snapshot,
+    exactly as a real generation snapshot copies a registered ``agent`` tree
+    under its basename::
+
+        {tmp}/generations/v1/snapshot/agent/prompts.py
+
+    The manifest's ``source_root`` is the DECLARED mutable subtree
+    (``{snapshot}/agent``) — what an adapter with a ``mutable_subpaths``
+    declaration enumerates from. This is the case the issue #20 regression
+    bit: the old derivation admitted ONLY that narrow subtree as a readable
+    root, while :func:`list_mutation_points` advertises the file
+    snapshot-relative (``agent/prompts.py``), so the advertised path no longer
+    resolved. The mismatch is unconditional (independent of round); the
+    ``agent`` basename is just this layout's folder name, not a special case.
+    """
+    snapshot = tmp_path / "generations" / "v1" / "snapshot"
+    agent = snapshot / "agent"
+    agent.mkdir(parents=True)
+    (agent / "prompts.py").write_text(
+        "SYSTEM_PROMPT = 'You are a helpful assistant.'\n", encoding="utf-8"
+    )
+    mp = make_mutation_point(
+        id="agent__system_prompt",
+        file=agent / "prompts.py",
+        # The adapter declared ``agent`` as the mutable subtree, so the
+        # enumerated point's source_root IS that subtree under the snapshot.
+        source_root=agent,
+        content="You are a helpful assistant.",
+    )
+    return snapshot, (mp,)
+
+
+def test_mutable_roots_admits_both_snapshot_and_subtree_relative_paths(tmp_path: Path) -> None:
+    """A generation with a DECLARED mutable subtree keeps the snapshot root in
+    its mutable surface, so the snapshot-relative path the manifest advertises
+    (``agent/prompts.py``) resolves — alongside the bare subtree-relative
+    ``prompts.py`` — regardless of which form the proposer issues
+    (issue #20, acceptance #2)."""
+    snapshot, mutations = _build_declared_subtree_snapshot(tmp_path)
+    ctx = ProposerToolContext(
+        workspace_root=tmp_path / "ws",
+        generation_root=snapshot,
+        epoch_id="ep-001",
+        mutations=mutations,
+    )
+    roots = ctx.mutable_roots()
+    # The snapshot root itself is in the surface (so a snapshot-relative path
+    # resolves) AND the declared subtree (so a subtree-relative path resolves).
+    assert snapshot.resolve() in roots
+    assert (snapshot / "agent").resolve() in roots
+    with bind_proposer_tool_context(ctx):
+        # The exact call shape the default proposer issues — relative to the
+        # snapshot root, i.e. carrying the ``agent/`` subtree prefix.
+        text = read_mutable_file("agent/prompts.py")
+        assert "You are a helpful assistant." in text
+        # The subtree-relative form still resolves too.
+        assert "You are a helpful assistant." in read_mutable_file("prompts.py")
+
+
 def test_read_mutable_file_rejects_traversal(tmp_path: Path) -> None:
     # Plant a secret OUTSIDE the mutable subtree the proposer may read.
     secret = tmp_path / "snapshot" / "secret.txt"

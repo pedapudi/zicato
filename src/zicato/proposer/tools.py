@@ -94,24 +94,42 @@ class ProposerToolContext:
     mutations: tuple[MutationPoint, ...]
 
     def mutable_roots(self) -> tuple[Path, ...]:
-        """Return the distinct mutable subtree roots under the snapshot.
+        """Return the mutable surface roots under the snapshot.
 
-        Derived from the manifest's :attr:`MutationPoint.source_root`
-        values, re-based onto :attr:`generation_root` by basename (the
-        same re-basing :meth:`ADKHarnessAdapter.mutable_subpaths` does —
-        a snapshot copies each registered tree under its basename). Falls
-        back to the whole :attr:`generation_root` when the manifest
-        declares no resolvable source roots, so the read/grep tools always
-        have a surface to walk.
+        Always includes the whole :attr:`generation_root` (the snapshot
+        root) FIRST, then each distinct mutable subtree the manifest's
+        :attr:`MutationPoint.source_root` values re-base onto it by
+        basename (the same re-basing :meth:`ADKHarnessAdapter.mutable_subpaths`
+        does — a snapshot copies each registered tree under its basename).
+
+        Why the snapshot root is always present
+        ---------------------------------------
+        :func:`list_mutation_points` advertises every mutable file RELATIVE TO
+        THE WHOLE SNAPSHOT (``file.relative_to(generation_root)`` — e.g.
+        ``agent/prompts.py``). The old derivation, however, admitted ONLY the
+        narrower declared subtree as a readable root when an adapter declared
+        one (``source_root`` basename ``agent`` → root ``<snapshot>/agent``), so
+        the very path the manifest hands the proposer resolved to
+        ``<snapshot>/agent/agent/prompts.py`` — not a file — and raised; only
+        the bare subtree-relative ``prompts.py`` resolved. The mismatch is
+        UNCONDITIONAL (the surface is identical every round); it tends to
+        surface once the proposer starts issuing the manifest-advertised
+        snapshot-relative form rather than a bare filename. Anchoring the
+        snapshot root makes the snapshot-relative path resolve too, so the read
+        no longer depends on which path shape the proposer happened to pick;
+        keeping the subtree roots lets the bare subtree-relative form resolve as
+        before. The escape guard in :func:`_resolve_under_mutable_roots` still
+        rejects any ``..`` traversal out of whichever root matched, so widening
+        the accepted roots never widens the readable surface beyond the
+        snapshot.
         """
         root = self.generation_root.resolve()
-        seen: dict[str, Path] = {}
+        seen: dict[str, Path] = {str(root): root}
         for mp in self.mutations:
             candidate = root / Path(mp.source_root).name
             if candidate.exists():
                 seen.setdefault(str(candidate), candidate)
-        roots = tuple(seen.values())
-        return roots or (root,)
+        return tuple(seen.values())
 
 
 _TOOL_CONTEXT: contextvars.ContextVar[ProposerToolContext | None] = contextvars.ContextVar(
