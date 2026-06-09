@@ -17,8 +17,8 @@ drift telemetry plus per-task pass/fail predicates, and promotes the
 child only when it beats the gate. Rounds group into **generations**;
 generations group into **epochs**; an epoch is defined by its
 **evaluation contract** (board + proposer brief + scoring +
-inner-harness identity) and by a **goal**. Change the contract and the
-next `zicato evolve` auto-rolls a fresh epoch.
+inner-harness identity + the proposer itself) and by a **goal**. Change
+the contract and the next `zicato evolve` auto-rolls a fresh epoch.
 
 The whole tool, for most operators, is two commands:
 
@@ -28,8 +28,9 @@ zicato evolve    # the single happy-path entry point to the loop
 ```
 
 Everything else (`board`, `propose`, `tournament`, `epoch`, `reindex`,
-`mutations`, `health`, …) is an advanced / debug tool for driving one
-stage in isolation. `evolve` orchestrates them for you.
+`mutations`, `health`, `builder`, `dashboard`, …) is an advanced / debug
+tool for driving one stage in isolation or opening a view on the
+workspace. `evolve` orchestrates the loop for you.
 
 ## Vocabulary (load-bearing)
 
@@ -77,9 +78,12 @@ These override convenience. Violating them is a defect.
    rebuildable SQLite projection. Never hand-edit the index; after a
    hand-edit of a canonical file, run `zicato reindex`.
 5. **Contract edits roll epochs.** Editing `board.jsonl`, `brief.md`,
-   or `scoring.json` changes the evaluation contract — the next
-   `evolve` auto-epochs. Mid-epoch board edits require `--force` and
-   degrade pattern history; prefer a new epoch.
+   `scoring.json`, the registered harness, or the proposer (a
+   `proposers/<name>/` dir or one of its skills) changes the evaluation
+   contract — the next `evolve` auto-epochs (use `--no-auto-epoch` to
+   make a drifted contract an error instead). Editing a live board mid-
+   epoch therefore rolls the epoch and resets pattern history; reach for
+   the `board` subcommands only to inspect or hand-edit a frozen board.
 6. **Mandatory hypothesis.** Every experiment carries a hypothesis
    written *before* the run and an outcome written *after*. Do not
    backfill a hypothesis to match a result.
@@ -90,6 +94,7 @@ These override convenience. Violating them is a defect.
   (Click, auto-discovered subcommands under `zicato/cli/commands/`).
 - Run the suite with `uv run pytest`; lint/type with the pre-commit
   hooks (`make install-hooks`).
-- Exit codes are a contract — scripts branch on them (e.g. `6` =
-  tournament reject, `7` = wall-clock exhausted, `9` = loop-health
-  degeneracy). See [`docs/design/CLI.md`](docs/design/CLI.md) §2.
+- The CLI is the contract — trust `zicato <command> --help` over the
+  design docs when they disagree (the docs drift). Every flag in
+  [`docs/design/CLI.md`](docs/design/CLI.md) should match a real option;
+  if it does not, the doc is stale.
