@@ -632,6 +632,18 @@ async def evolve_once(
     # --- 5. Loss summary ---
     loss_summary = _render_loss_summary(losses)
 
+    # --- 5a. Outcome-marginal failure-mode profile (issue #18 cap 2) ---
+    # Aggregate the SAME train-slice ``losses`` (holdout already excluded
+    # above) into board-anonymous outcome marginals — generic failure modes
+    # (empty / terse / looping / pass-rate / score bands) plus, when
+    # Capability 1's per-entry metrics carry them, the recall/precision
+    # decomposition. The optional operator summarizer hook contributes extra
+    # marginals, sanitized + banded by zicato so its output cannot leak. The
+    # rendered block is bucketed + identity-free; an empty slice (or no
+    # outcome data) renders the EMPTY STRING, so the proposer prompt is
+    # byte-identical to today (OVERFITTING.md §11.4).
+    failure_profile = _render_failure_profile(losses, weights)
+
     # --- 5b. Tournament-structure dispatch ---
     # The gauntlet (the default and back-compat baseline) has field_size
     # == 1: one champion, one challenger, one full-board duel. Steps 6-13
@@ -663,6 +675,7 @@ async def evolve_once(
             mutations=mutations,
             patterns=patterns,
             loss_summary=loss_summary,
+            failure_profile=failure_profile,
             disable_drift=disable_drift,
             judge_only=judge_only,
             fast_mode=fast_mode,
@@ -766,6 +779,7 @@ async def evolve_once(
                 custom_judge_names=custom_judge_names,
                 prior_experiments=tuple(prior),
                 restrict_visibility=weights.overfitting.restrict_proposer_visibility,
+                failure_profile=failure_profile,
             )
         )
     except ProposerError as exc:
@@ -1204,6 +1218,7 @@ async def _propose_and_apply_challenger(
     custom_judge_names: frozenset[str] = frozenset(),
     prior_experiments: tuple[PriorExperiment, ...] = (),
     restrict_visibility: bool = False,
+    failure_profile: str = "",
     on_status: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[_AppliedChallenger | None, dict[str, Any]]:
     """Propose + apply ONE challenger child of the champion.
@@ -1336,6 +1351,7 @@ async def _propose_and_apply_challenger(
                 custom_judge_names=custom_judge_names,
                 prior_experiments=prior_experiments,
                 restrict_visibility=restrict_visibility,
+                failure_profile=failure_profile,
             )
         )
     except ProposerError as exc:
@@ -1457,6 +1473,7 @@ async def _evolve_multi_challenger(
     mutations: list[Any],
     patterns: list[Any],
     loss_summary: str,
+    failure_profile: str,
     disable_drift: tuple[Any, ...],
     judge_only: bool,
     fast_mode: bool,
@@ -1601,6 +1618,7 @@ async def _evolve_multi_challenger(
             prior_experiments=prior + tuple(siblings),
             proposer_agent=proposer_agent,
             restrict_visibility=weights.overfitting.restrict_proposer_visibility,
+            failure_profile=failure_profile,
             on_status=_publish_proposing,
         )
         field_status.append(status)
@@ -3732,6 +3750,33 @@ def _build_events_paths(
         entry.id: events_jsonl_path(workspace_root, epoch_id, parent_id, entry.id)
         for entry in board
     }
+
+
+def _render_failure_profile(losses: list[Any], weights: Any) -> str:
+    """Build the bucketed, board-anonymized outcome-marginal profile block.
+
+    Capability 2 of issue #18. Aggregates the TRAIN-slice ``losses`` (the
+    caller has already excluded the holdout) into board-wide outcome
+    marginals and renders them through the proposer's banding step so every
+    number is coarsened and no entry id / question / output token reaches the
+    model. The optional operator summarizer hook (``weights
+    .outcome_summarizer_spec``) contributes extra marginals, every one of
+    them sanitized + numeric-only before it is banded.
+
+    Returns the empty string — the proposer-side "omit this section" sentinel
+    — when the slice is empty (a baseline round) or carries no outcome
+    signal, so the proposer prompt is byte-identical to today.
+    """
+    from zicato.analyzer.outcome_marginals import (  # noqa: PLC0415
+        aggregate_outcome_marginals,
+        run_operator_summarizer,
+    )
+    from zicato.proposer.prompts import render_failure_mode_profile  # noqa: PLC0415
+
+    spec = str(getattr(weights, "outcome_summarizer_spec", "") or "")
+    operator_marginals = run_operator_summarizer(spec, losses) if spec else {}
+    summary = aggregate_outcome_marginals(losses, operator_marginals=operator_marginals)
+    return render_failure_mode_profile(summary)
 
 
 def _render_loss_summary(losses: list[Any]) -> str:

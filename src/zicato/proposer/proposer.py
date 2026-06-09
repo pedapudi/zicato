@@ -102,6 +102,7 @@ async def propose_experiment(
     prior_experiments: Iterable[PriorExperiment] = (),
     skills: tuple[ProposerSkill, ...] = (),
     restrict_visibility: bool = False,
+    failure_profile: str = "",
 ) -> Experiment:
     """Compose prompts, call the auxiliary LLM, parse the response.
 
@@ -219,6 +220,16 @@ async def propose_experiment(
         experiment-memory Δscalar to buckets (OVERFITTING.md §11). ``False``
         (the default here so standalone callers are unaffected) renders the
         verbatim prompt, byte-for-byte as before this lever existed.
+    failure_profile:
+        Optional pre-rendered, train-slice-only, BUCKETED outcome-marginal
+        block (Capability 2 of issue #18). When non-empty, a
+        ``## Failure-mode profile`` section is spliced into the user prompt
+        so the proposer can target *why* answers are wrong, not just *that* a
+        scalar moved. The string is already board-anonymized + banded by its
+        renderer (:func:`~zicato.proposer.prompts.render_failure_mode_profile`);
+        this engine only forwards it. Empty (the default) omits the section,
+        so a caller that supplies no profile renders a byte-identical prompt
+        to before this surface existed.
 
     Returns
     -------
@@ -280,6 +291,7 @@ async def propose_experiment(
             prior_experiments=prior_experiments_list,
             restrict_visibility=restrict_visibility,
             custom_judge_names=custom_judge_names or frozenset(),
+            failure_profile=failure_profile,
         )
         # Meta-loop bookends: one paired ``proposer_call_started`` /
         # ``proposer_call_completed`` per attempt. ``invocation_id`` is

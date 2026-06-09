@@ -37,6 +37,12 @@ from zicato.analyzer.aggregator import (
     aggregate_decision_events,
 )
 from zicato.analyzer.insights import analyze_epoch_telemetry, load_latest_insights
+from zicato.analyzer.outcome_marginals import (
+    OutcomeMarginalSummary,
+    aggregate_outcome_marginals,
+    run_operator_summarizer,
+    sanitize_operator_marginals,
+)
 from zicato.analyzer.report import (
     generate_epoch_report,
     restamp_persisted_report,
@@ -48,6 +54,10 @@ __all__ = [
     "aggregate_decision_events",
     "analyze_epoch_telemetry",
     "load_latest_insights",
+    "OutcomeMarginalSummary",
+    "aggregate_outcome_marginals",
+    "run_operator_summarizer",
+    "sanitize_operator_marginals",
     "generate_epoch_report",
     "restamp_persisted_report",
     "EpochReportData",

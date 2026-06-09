@@ -105,6 +105,17 @@ class ProposerContext:
     #: counts/rates and coarsens experiment-memory Δscalar to buckets
     #: (OVERFITTING.md §11). ``False`` renders the verbatim prompt.
     restrict_visibility: bool = False
+    #: Pre-rendered, train-slice-only, BUCKETED outcome-marginal block
+    #: (Capability 2 of issue #18 — built by
+    #: :func:`~zicato.proposer.prompts.render_failure_mode_profile` from an
+    #: :class:`~zicato.analyzer.outcome_marginals.OutcomeMarginalSummary` the
+    #: orchestrator aggregates over the SAME train slice it passes to the
+    #: patterns + loss summary). When non-empty, a ``## Failure-mode profile``
+    #: section is spliced into the user prompt so the proposer can target
+    #: *why* answers are wrong. The string is already board-anonymized +
+    #: banded by its renderer; the agents only forward it. Empty (the
+    #: default) omits the section, byte-identical to before this surface.
+    failure_profile: str = ""
 
 
 class ProposerAgent(Protocol):
@@ -155,6 +166,7 @@ class DefaultProposerAgent:
             prior_experiments=ctx.prior_experiments,
             skills=self.spec.skills,
             restrict_visibility=ctx.restrict_visibility,
+            failure_profile=ctx.failure_profile,
         )
 
 

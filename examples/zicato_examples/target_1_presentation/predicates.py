@@ -323,6 +323,75 @@ def search_f1_score(
     return f1, {"precision": precision, "recall": recall}
 
 
+def _per_entry_metric(loss: Any, key: str) -> float | None:
+    """Read a finite float ``loss.metrics[key]`` off a per-entry result.
+
+    The reducer carries a scorer's optional decomposition out to
+    ``loss.json`` as :attr:`~zicato.core.types.LossProfile.metrics`. This
+    helper reads one key defensively — a missing mapping, a missing key, or
+    a non-numeric value all yield ``None`` so the summarizer never raises.
+    """
+    metrics = getattr(loss, "metrics", None)
+    if not isinstance(metrics, dict):
+        return None
+    raw = metrics.get(key)
+    if raw is None:
+        return None
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if val != val:  # NaN guard
+        return None
+    return val
+
+
+def search_outcome_summary(losses: list[Any]) -> dict[str, float]:
+    """OPERATOR outcome-summarizer hook (issue #18 cap 2, item 10).
+
+    The GT-aware summarizer for a search / retrieval board. It receives the
+    TRAIN-SLICE per-entry results (each a
+    :class:`~zicato.core.types.LossProfile`, with Capability 1's
+    ``precision`` / ``recall`` in :attr:`~zicato.core.types.LossProfile.metrics`
+    when :func:`search_f1_score` scored the entry) and returns a STRUCTURED
+    aggregate — a ``{marginal_name: numeric_rate}`` mapping, NOT prose. zicato
+    sanitizes + bands every value before it reaches the proposer (see
+    :func:`zicato.analyzer.outcome_marginals.run_operator_summarizer`), so
+    this plug-in only has to compute the recall/precision-decomposition
+    marginals; it cannot leak an entry id or a free-text note even if it
+    tried, because non-numeric / identity-bearing returns are stripped.
+
+    The marginals it contributes:
+
+    * ``over_retrieval`` — fraction of runs whose precision fell below 0.5
+      (the documented precision-collapse failure: the agent returned items
+      that were not relevant);
+    * ``misses`` — fraction of runs whose recall fell below 0.5 (the agent
+      missed relevant items);
+    * ``mean_recall`` / ``mean_precision`` — the board-wide means, so the
+      proposer can read the decomposition's magnitude (banded by zicato into
+      low / medium / high, never the exact mean).
+
+    Every name is a short, lowercase, identifier-like label and every value
+    is a finite float in ``[0, 1]`` — exactly the structured-aggregate shape
+    the hook contract requires. An empty slice (or a slice with no
+    precision/recall metrics) returns an empty mapping, contributing nothing.
+    """
+    precisions = [
+        p for p in (_per_entry_metric(loss, "precision") for loss in losses) if p is not None
+    ]
+    recalls = [r for r in (_per_entry_metric(loss, "recall") for loss in losses) if r is not None]
+
+    out: dict[str, float] = {}
+    if precisions:
+        out["over_retrieval"] = sum(1 for p in precisions if p < 0.5) / len(precisions)
+        out["mean_precision"] = sum(precisions) / len(precisions)
+    if recalls:
+        out["misses"] = sum(1 for r in recalls if r < 0.5) / len(recalls)
+        out["mean_recall"] = sum(recalls) / len(recalls)
+    return out
+
+
 __all__ = [
     "has_slide_titles",
     "mentions_waffles",
@@ -333,5 +402,6 @@ __all__ = [
     "stayed_coherent_across_turns",
     "addressed_picky_feedback",
     "search_f1_score",
+    "search_outcome_summary",
     "Q3_METRICS",
 ]
