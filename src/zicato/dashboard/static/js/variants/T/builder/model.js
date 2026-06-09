@@ -203,6 +203,22 @@ function floatOf(params, key, def) {
 // `/api/epoch`'s server-computed `board_split`), so we never re-derive the
 // deterministic sha256 hash split here — only the order-of-magnitude arithmetic.
 
+// The per-structure default `replicates` when params.replicates is UNSET — the
+// JS twin of zicato.selection.registry.STRUCTURE_DEFAULT_REPLICATES (itself
+// derived from each strategy's `_default_replicates`). swiss / elim default to
+// 2 (replication, not bracket shape, is their noise lever); gauntlet / racing
+// default to 1 (racing's replication is intrinsic to its escalating board
+// slices). The cost meter MUST resolve the default by structure, not a flat 1,
+// or it under-reports the schedule a structure actually runs — the Python
+// estimator and this twin must agree (the py↔js parity test pins it).
+export const STRUCTURE_DEFAULT_REPLICATES = {
+  gauntlet: 1, single_elim: 2, double_elim: 2, swiss: 2, racing: 1,
+};
+export function defaultReplicatesFor(structure) {
+  const d = STRUCTURE_DEFAULT_REPLICATES[structure];
+  return d == null ? 1 : d;
+}
+
 // One cost-meter line: { label, runs, detail }.
 function costLine(label, runs, detail) { return { label, runs, detail }; }
 
@@ -213,7 +229,10 @@ function costLine(label, runs, detail) { return { label, runs, detail }; }
 export function estimateCost(structure, params, trainCount, holdoutCount) {
   const boardSize = Math.max(0, trainCount || 0);
   const holdoutSize = Math.max(0, holdoutCount || 0);
-  const replicates = Math.max(1, intOf(params, 'replicates', 1));
+  // Default `replicates` to the STRUCTURE's own default (swiss / elim default
+  // to 2), NOT a flat 1 — matching the Python estimator. An explicit
+  // `replicates` in params is honored verbatim.
+  const replicates = Math.max(1, intOf(params, 'replicates', defaultReplicatesFor(structure)));
   const fieldSize = Math.max(1, intOf(params, 'field_size', 2));
   const lines = [];
   let perRound;

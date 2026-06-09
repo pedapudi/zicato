@@ -13,7 +13,12 @@ See ``docs/design/TOURNAMENT-STRUCTURES.md`` and
 from __future__ import annotations
 
 from zicato.selection.driver import resolve_tournament
-from zicato.selection.registry import STRATEGY_REGISTRY, make_strategy
+from zicato.selection.registry import (
+    STRATEGY_REGISTRY,
+    STRUCTURE_DEFAULT_REPLICATES,
+    default_replicates_for,
+    make_strategy,
+)
 from zicato.selection.strategy import (
     Contestant,
     MatchRecord,
@@ -38,5 +43,7 @@ __all__ = [
     "rung_for_match_id",
     "make_strategy",
     "STRATEGY_REGISTRY",
+    "STRUCTURE_DEFAULT_REPLICATES",
+    "default_replicates_for",
     "resolve_tournament",
 ]

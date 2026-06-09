@@ -34,6 +34,7 @@ from zicato.core.types import (
     ScoringWeights,
     TournamentStructure,
 )
+from zicato.selection.registry import default_replicates_for
 
 # ---------------------------------------------------------------------------
 # Result shapes
@@ -516,14 +517,20 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
     """
     ts = draft.scoring.tournament_structure
     params = ts.params
+    structure = ts.structure
     train_ids, holdout_ids = split_board(draft.entries, draft.scoring.overfitting)
     board_size = len(train_ids)
     holdout_size = len(holdout_ids)
-    replicates = max(1, _param_int(params, "replicates", 1))
+    # ``replicates`` defaults to the STRUCTURE's own default (swiss / elim
+    # default to 2 — replication, not bracket shape, is their noise lever),
+    # NOT a flat 1. The default is read from the selection layer's
+    # single source of truth (each strategy's ``_default_replicates``), so the
+    # meter cannot under-report the schedule a structure actually runs. An
+    # EXPLICIT ``replicates`` in params is honored verbatim.
+    replicates = max(1, _param_int(params, "replicates", default_replicates_for(structure)))
     field_size = max(1, _param_int(params, "field_size", 2))
 
     lines: list[CostLine] = []
-    structure = ts.structure
 
     if structure == "gauntlet" or field_size <= 1:
         duels = field_size

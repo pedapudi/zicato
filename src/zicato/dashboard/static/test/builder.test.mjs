@@ -509,4 +509,44 @@ test('builder CSS: the chat log is the flex:1 scrollable middle row + the compos
   assert(cols && /overflow-y:\s*auto/.test(cols[1]), 'the center + preview columns scroll internally');
 });
 
+// ── estimateCost: the per-structure default-replicates twin ───────────
+//
+// The JS estimateCost is the exact twin of operations.py's estimate_cost. The
+// under-reporting bug class: when `replicates` is UNSET the meter must default
+// to the STRUCTURE's own default (swiss / elim default to 2), not a flat 1, so
+// the dashboard preview matches the Python estimator. These mirror the Python
+// cost tests (test_cost_swiss_unset_replicates_uses_strategy_default_two, the
+// explicit-override test, and the per-structure-default pin) number-for-number.
+
+test('estimateCost: swiss with UNSET replicates uses the strategy default of 2 (not a flat 1)', () => {
+  // field_size 4, board 8, holdout 0, replicates UNSET. The Python estimator
+  // reports rounds_n 4 × pairings 2 × replicates 2 × board 8 = 128 — the SAME
+  // number this JS twin must produce. A flat-1 default would report 64 (half).
+  const est = builder.estimateCost('swiss', { field_size: 4 }, 8, 0);
+  assertEqual(est.board_runs_per_round, 128, 'swiss unset replicates → 128 (the py estimator value, not 64)');
+  const swissLine = est.breakdown.find((l) => l.label === 'swiss-pairing runs');
+  assert(swissLine && /replicates 2/.test(swissLine.detail), 'the breakdown detail shows replicates 2');
+});
+
+test('estimateCost: an explicit replicates is honored verbatim over the structure default', () => {
+  const est1 = builder.estimateCost('swiss', { field_size: 4, replicates: 1 }, 8, 0);
+  assertEqual(est1.board_runs_per_round, 64, 'explicit replicates=1 → 64 (4 × 2 × 1 × 8)');
+  const est3 = builder.estimateCost('swiss', { field_size: 4, replicates: 3 }, 8, 0);
+  assertEqual(est3.board_runs_per_round, 192, 'explicit replicates=3 → 192 (4 × 2 × 3 × 8)');
+});
+
+test('estimateCost: the per-structure default-replicates twin matches the Python map for every structure', () => {
+  // The JS default-replicates map is the twin of the Python
+  // STRUCTURE_DEFAULT_REPLICATES (derived from each strategy's
+  // _default_replicates). Pin every structure so the two can never drift.
+  const expected = { gauntlet: 1, single_elim: 2, double_elim: 2, swiss: 2, racing: 1 };
+  for (const [structure, def] of Object.entries(expected)) {
+    assertEqual(builder.defaultReplicatesFor(structure), def, `${structure} default replicates`);
+    // The UNSET-default estimate equals the explicit-default estimate.
+    const unset = builder.estimateCost(structure, { field_size: 4 }, 8, 0);
+    const explicit = builder.estimateCost(structure, { field_size: 4, replicates: def }, 8, 0);
+    assertEqual(unset.board_runs_per_round, explicit.board_runs_per_round, `${structure}: unset == explicit-default`);
+  }
+});
+
 await run();
