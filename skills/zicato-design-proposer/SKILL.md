@@ -128,6 +128,33 @@ it HOW to work (use the tools, then emit the `{hypothesis, patches}` JSON); the
 per-round WHAT (brief, skills, manifest, loss, prior experiments, the schema)
 is delivered by zicato as the run input.
 
+## The failure-mode feedback channel (what every proposer reads)
+
+Independent of which tier you pick, the proposer's per-round input carries a
+compact **failure-mode profile** — a bucketed, board-anonymized,
+**train-slice-only** outcome-marginal block rendered into the prompt
+(`render_failure_mode_profile`, `zicato.proposer.prompts`). It tells the
+proposer *why* answers are wrong (over-retrieval vs misses vs empty answers),
+not just *that* a scalar moved: a recall/precision decomposition plus banded
+marginal rates. Two invariants make it leakage-safe and contract-clean:
+
+- **Identity-free + holdout-free.** It is aggregated over the SAME train slice
+  the round duels on — the holdout is excluded — and carries only marginal
+  rates (no entry id, question, or output token), so it is board-anonymous by
+  construction and cannot leak the held-out slice (OVERFITTING.md §11.4).
+- **Banded, so it cannot memorize.** Every number is coarsened to a band, so no
+  exact per-run value and no round-over-round response surface leaks. An empty
+  train slice (no runs) renders the EMPTY STRING — the proposer prompt stays
+  byte-identical to today when there is no outcome data.
+
+An operator can extend the marginals via the **`outcome_summarizer_spec`**
+hook on `ScoringWeights` (a dotted callable spec): it contributes extra
+marginals over the same train slice, each still bucketed and identity-free
+before it reaches the prompt (`orchestrator.py` `render_failure_mode_profile`
+wiring). It is a *scoring* field, so setting it rolls the epoch like any other
+contract change. This channel is on by default and needs no proposer-dir
+configuration; you only touch `outcome_summarizer_spec` to add custom marginals.
+
 ## Register it
 
 Point the workspace at the proposer dir with `register` (off the happy path —

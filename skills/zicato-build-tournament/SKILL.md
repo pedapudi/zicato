@@ -46,7 +46,12 @@ a draft without having seen them:
    swiss is `rounds_n` pairings; an elim bracket is its bracket depth; racing
    is its rung count. The `holdout_confirm_runs` term is the extra runs the
    gate spends re-scoring the winner on the held-out slice (see "Board &
-   holdout" below). Always defer the exact schedule arithmetic to
+   holdout" below). **`replicates` defaults per structure** when the operator
+   leaves it unset — swiss/single_elim/double_elim default to `2`,
+   gauntlet/racing to `1` — and `estimate_cost` reads those same per-structure
+   defaults from one source of truth (`selection.registry`), so the number it
+   shows matches what the run will actually spend even before the operator sets
+   `replicates`. Always defer the exact schedule arithmetic to
    `zicato-design-tournament-structure`; the copilot's job is to call
    `estimate_cost` and *show the number* before the operator commits.
 
@@ -125,12 +130,16 @@ ids). Changing the split rolls the epoch like any board change.
 ### 5. The proposer
 
 Defer to [`zicato-design-proposer`](../zicato-design-proposer/SKILL.md). The
-copilot offers the two tiers: the **skill-composed default** (drop `skills/*.md`,
-no code — the cheaper, contract-clean lever) versus a **custom ADK agent**
-(its own `model=` + the read-only tool registry — only when the proposer needs
-to READ the world while it reasons). Remind the operator of the Design-A model
-rule: the proposer's model must differ from the harness model. Set it with
-`set_proposer`. Editing the proposer or any of its skills rolls the epoch.
+**default** (no proposer dir) is already a **tool-using ADK agent** — it reads
+the world (greps the mutable surface, reads the snapshot/journal) while it
+reasons, so the copilot offers customization only when there is a reason. The
+two opt-ins: a **skill-composed text shim** (drop `skills/*.md`, no code — the
+contract-clean lever for pure *reasoning* changes, but it drops the default's
+tools) versus a **custom ADK agent** (its own `model=` + the read-only tool
+registry — when the operator wants to own the model or curate the tool subset
+while keeping tools). Remind the operator of the Design-A model rule: a custom
+proposer's model must differ from the harness model. Set it with `set_proposer`.
+Editing the proposer or any of its skills rolls the epoch.
 
 ### 6. The gate
 
@@ -140,7 +149,13 @@ monotonicity), `promote_margin` as the noise floor a promotion must clear, and
 the weighted loss. The builder's gate controls are `promote_margin` and the
 monotonicity flags; the loss *weights* are set in the board builder via
 `set_weights`. Raise `promote_margin` on a noisy board (e.g. heavy emulated
-entries) so jitter doesn't flip a promotion.
+entries) so jitter doesn't flip a promotion. The pass-rate check also has a
+**scope** (`pass_rate_monotonicity_scope`): `per_entry` (default — reject if any
+champion-passed entry flips to fail, right for invariant/regression boards) vs
+`aggregate` (reject only when the overall pass-rate drops, right for sampled
+boards where a single noisy entry flip shouldn't veto a strictly-better
+challenger). Disable the check entirely with `pass_rate_monotonicity=False`
+(there is no `off` scope value).
 
 ## The copilot's operating contract — DRAFT, then apply
 

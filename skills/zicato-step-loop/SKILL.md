@@ -60,8 +60,11 @@ $Z tournament v3 v4 --mode fast             # child vs parent's cached aggregate
 $Z tournament v3 v4 --skip-regression       # bypass the regression gate
 ```
 
-`tournament` exit codes: `0` = promote, `6` = reject (a normal, scriptable
-outcome — branch on it), `2`/`3` = usage/config.
+**`tournament` does NOT encode the verdict in its exit code.** It prints a JSON
+result payload and exits `0` for both promote and reject; a usage/config problem
+raises a `click.ClickException` (exit `1`). The fine-grained codes the design
+docs describe (`6`=reject etc.) are **not implemented** — read the `decision` in
+the printed JSON, do not branch on the exit code for promote-vs-reject.
 
 ## What each stage leaves on disk (the inspection points)
 

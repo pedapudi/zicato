@@ -84,7 +84,7 @@ $PY -m zicato.cli epoch new t1_smoke --workspace .zicato \
     --board "$OLDPWD/$EX/board.jsonl" \
     --brief "$OLDPWD/$EX/rubric.md" \
     --scoring "$OLDPWD/$EX/scoring.json"
-$PY -m zicato.cli mutations --workspace .zicato        # expect 9 ids
+$PY -m zicato.cli mutations --workspace .zicato        # lists the example's mutable ids
 $PY -m zicato.cli evolve --workspace .zicato \
     --rounds 1 --mode full --no-dashboard \
     --harness-call-llm   zicato_examples.target_1_presentation.mocks:harness_llm \

@@ -86,6 +86,8 @@ Defaults below are the strategy constructors' real defaults.
 | `board_fraction` | racing | `0.25` | Rung-0 board slice = `ceil(board_fraction * |board|)`; the slice grows by `eta` each rung until it reaches the full board (the final rung). |
 | `rung0_board_size` | racing | `0` | Explicit rung-0 slice size in entries. `0` ⇒ derive it from `board_fraction`. |
 | `board_ids` | racing | full epoch board (auto-injected) | OPTIONAL. The board entry ids to slice. Omit it — the orchestrator defaults it to the whole epoch board. Pass an explicit list ONLY to race on a subset. |
+| `matchup_budget_seconds` | racing | unset (uncapped) | OPTIONAL. Wall-clock cap on EVERY duel's total board-unit time. Once spent the duel stops launching units and records the rest as budget-exceeded (a partial aggregate). The grind guard for a racing run. |
+| `final_rung_budget_seconds` | racing | unset (uncapped) | OPTIONAL. Overrides `matchup_budget_seconds` for the FINAL rung only — the crowning duel that runs the full board × replicates × both sides, the pathological grind case. |
 
 Notes that bite:
 - A **racing rung CUTS, it does not crown.** Elimination at a rung is by RANK
