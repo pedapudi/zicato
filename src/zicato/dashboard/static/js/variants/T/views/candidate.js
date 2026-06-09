@@ -29,7 +29,7 @@ import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { attachHovercard } from '../hovercard.js';
 import { lifecycleDag, rungProgression } from '../dag.js';
-import { gatedSwap, section, subhead, empty, stat, verdictPill, normaliseDecision, decisionFor, densityTokens } from '../ui.js';
+import { gatedSwap, section, subhead, empty, stat, verdictPill, normaliseDecision, decisionFor, densityTokens, prText, metricsDigest } from '../ui.js';
 import { comparePicker, splitFrame } from '../compare.js';
 import { candidateProgression, inflightForActiveEpoch, inflightForEntryGen, runProgressRatio, liveMatchupsForCandidate, liveBelongsToEpoch, resolveNonGauntletSt, racingModel, structureDigest } from './structure.js';
 import { epochRoundModel, reignModel } from './rounds.js';
@@ -204,6 +204,8 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
 
   const pe = await D.perEntry(epochId, genId);
   const entries = (pe && Array.isArray(pe.entries)) ? pe.entries : [];
+  // per-generation mean continuous outcome (#18); null on the pre-score path.
+  const meanScore = pe && svg.isNum(pe.mean_score) ? pe.mean_score : null;
 
   // The CHAMPION's per-board loss on the SAME boards/slice — so each lifecycle
   // circle, and the Σ node, can show candidate-vs-champion · Δ (the comparison
@@ -324,7 +326,7 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
   const generalization = buildGeneralizationModel(exp);
 
   return {
-    node, baseline, decision, mpts, entries, mine, gateSpecs, gates,
+    node, baseline, decision, mpts, entries, meanScore, mine, gateSpecs, gates,
     primaryDelta, championId, championScalar, scalarByGen, progression,
     championLoss, championSigma, candidateSigma, deltaSigma, gateExplain,
     entryParam, exps, judges, drillRow, drillHeader, inflight, cached, cachedProvenance,
@@ -520,7 +522,13 @@ function candidateDigest(s) {
       svg.isNum(s.generalization.gap) ? s.generalization.gap.toFixed(3) : null,
       svg.isNum(s.generalization.tolerance) ? s.generalization.tolerance.toFixed(3) : null,
     ] : null,
-    entries: s.entries.map((e) => [e.entry_id, svg.isNum(e.drift_loss) ? e.drift_loss.toFixed(3) : null, e.pass_fail, !!e.wall_clock_budget_exceeded, e.rung || null, e.match_id || null, !!e.cached]),
+    // entries fold the continuous score + its precision/recall metrics (#18)
+    // so a scored board repaints when its score/metrics move, but stays
+    // byte-identical on a no-op heartbeat. A bool-only entry contributes
+    // null for both (back-compat: unchanged digest vs the pre-score path).
+    entries: s.entries.map((e) => [e.entry_id, svg.isNum(e.drift_loss) ? e.drift_loss.toFixed(3) : null, e.pass_fail, !!e.wall_clock_budget_exceeded, e.rung || null, e.match_id || null, !!e.cached, svg.isNum(e.score) ? e.score.toFixed(3) : null, metricsDigest(e.metrics)]),
+    // per-generation mean continuous outcome (#18); null on the pre-score path.
+    meanScore: svg.isNum(s.meanScore) ? s.meanScore.toFixed(3) : null,
     cached: s.cached ? [s.cachedProvenance && s.cachedProvenance.sourceEpoch, s.cachedProvenance && s.cachedProvenance.sourceRun] : null,
     progression: s.progression && Array.isArray(s.progression.stages)
       ? s.progression.stages.map((st) => [st.label, st.kind, svg.isNum(st.delta) ? st.delta.toFixed(2) : null, st.verdict]) : null,
@@ -756,6 +764,9 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
         label: e.entry_id, value: e.drift_loss, id: e.entry_id,
         champ: svg.isNum(champByEntry[e.entry_id]) ? champByEntry[e.entry_id] : null,
         pass: e.pass_fail, timeout: !!e.wall_clock_budget_exceeded,
+        // continuous per-entry outcome + its precision/recall decomposition (#18);
+        // null/absent on a bool-only entry, where the row falls back to ✓/✗.
+        score: svg.isNum(e.score) ? e.score : null, metrics: e.metrics || null,
         context: tournamentContext(e),
         entry_id: e.entry_id, run_id: e.run_id || null, gen: genId,
       }));
@@ -779,6 +790,16 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
       svg.isNum(championScalar) ? el('span', null, [el('i', { class: 'spine', style: 'border-color:var(--v2-ink-faint);border-top-style:dashed;' }), `champ aggregate ${svg.fmt(championScalar, 1)}`]) : null,
       el('span', { class: 'dn-faint', text: '⏱ timeout · Δ = candidate − champion · dim tag = rung/round it ran in · click → drill-down' }),
     ].filter(Boolean)));
+    // per-generation MEAN continuous outcome (#18) — a board-level score
+    // summary beneath the per-board rows; higher is better. Absent on the
+    // pre-score path, so the caption simply does not render.
+    if (svg.isNum(s.meanScore)) {
+      scoreCard.appendChild(el('div', { class: 'dn-faint dn-meanscore' }, [
+        el('span', { text: 'mean score ' }),
+        el('span', { class: 'dn-meanscore-val', text: svg.fmt(s.meanScore, 2) }),
+        el('span', { text: ' · per-entry continuous outcome, higher is better' }),
+      ]));
+    }
   } else if (s.radar && s.radar.projectedOnly) {
     // RACING / IN-FLIGHT with no SETTLED per-board rows yet: don't read "no
     // entries" — surface the racing affordance so the column isn't bare.
@@ -968,6 +989,12 @@ function perBoardDumbbell(opts) {
   const top = 18;          // headroom above the first row
   const glyphW = 16;       // right-edge pass/fail/timeout glyph gutter
   const deltaW = 40;       // the Δ value column, just left of the glyph
+  // CONTINUOUS-SCORE column (#18): a 0→1 mini-bar + score readout, only
+  // reserved when AT LEAST ONE row carries a score; a wholly bool-only
+  // dumbbell keeps the pre-score geometry (zero-width score column) so its
+  // layout is byte-identical to today.
+  const anyScored = rows.some((r) => r && svg.isNum(r.score));
+  const scoreW = anyScored ? 84 : 0;
   const footH = 16;        // the faint aggregate-tick caption band at the foot
   const h = Math.max(rh + top + footH, top + rows.length * rh + footH);
   const svgNode = svgEl('svg', {
@@ -982,7 +1009,7 @@ function perBoardDumbbell(opts) {
     return svgNode;
   }
   const x0 = labelW + 6;
-  const x1 = w - glyphW - deltaW;
+  const x1 = w - glyphW - deltaW - scoreW;
   // a shared per-row value axis spanning BOTH champion + candidate across all
   // boards, so every ○/● sits on one comparable scale (the study's `X`).
   const vals = [];
@@ -1028,10 +1055,34 @@ function perBoardDumbbell(opts) {
     }
     // candidate marker — FILLED ● coloured by the per-board verdict.
     const candDot = svgEl('circle', { cx: dx, cy, r: 4, class: 'dn-dumbbell-cand ' + dirCls });
-    attachHovercard(candDot, paired
+    const prTip = prText(r.metrics);
+    const scoreTip = svg.isNum(r.score) ? ` · score ${svg.fmt(r.score, 2)}${prTip ? ' · ' + prTip : ''}` : '';
+    attachHovercard(candDot, (paired
       ? `${r.label}: candidate ${svg.fmt(r.value, 2)} vs champ ${svg.fmt(r.champ, 2)} (Δ ${svg.fmtSigned(r.value - r.champ, 2)})`
-      : `${r.label}: candidate ${svg.fmt(r.value, 2)}`);
+      : `${r.label}: candidate ${svg.fmt(r.value, 2)}`) + scoreTip);
     g.appendChild(candDot);
+
+    // CONTINUOUS SCORE (#18): a 0→1 mini-bar + the score number, then the
+    // compact precision/recall tag below it when the entry carries metrics.
+    // Only drawn for a scored row — a bool-only row leaves this column empty
+    // and relies on the ✓/✗ glyph at the edge exactly as before.
+    if (scoreW > 0 && svg.isNum(r.score)) {
+      const sbx = x1 + 8;                 // bar left, just past the value axis
+      const sbw = scoreW - 14;            // bar width within the score column
+      const sf = Math.max(0, Math.min(1, r.score));
+      const barY = cy - 3;
+      g.appendChild(svgEl('rect', { x: sbx, y: barY, width: sbw, height: 6, rx: 2, class: 'dn-score-track' }));
+      g.appendChild(svgEl('rect', { x: sbx, y: barY, width: Math.max(1, sbw * sf), height: 6, rx: 2, class: 'dn-score-fill ' + dirCls }));
+      const sv = svgEl('text', { x: sbx + sbw + 2, y: cy + 3, class: 'dn-score-val', 'text-anchor': 'start' });
+      sv.textContent = svg.fmt(r.score, 2);
+      g.appendChild(sv);
+      const pr = prText(r.metrics);
+      if (pr) {
+        const prt = svgEl('text', { x: sbx, y: cy + 11, class: 'dn-score-pr', 'text-anchor': 'start' });
+        prt.textContent = pr;
+        g.appendChild(prt);
+      }
+    }
 
     // per-board Δ (candidate − champion) just left of the glyph gutter.
     if (paired) {
@@ -1284,8 +1335,13 @@ function entryDrilldown(ctx, epochId, genId, entryId, row, exps, judges, header)
   card.appendChild(el('div', { class: 'dn-row' }, [
     stat(row && svg.isNum(row.drift_loss) ? svg.fmt(row.drift_loss, 1) : '—', 'drift loss'),
     stat(row ? passLabel(row.pass_fail) : '—', 'predicate'),
+    // continuous per-entry outcome (#18) — only when this entry was scored;
+    // a bool-only entry shows just the pass/fail predicate above, unchanged.
+    row && svg.isNum(row.score) ? stat(svg.fmt(row.score, 2), 'score') : null,
+    // precision/recall decomposition (#18) when the scorer exposed it.
+    row && prText(row.metrics) ? stat(prText(row.metrics), 'precision / recall') : null,
     stat(row && row.wall_clock_budget_exceeded ? 'timed out' : (row && svg.isNum(row.runtime_ms) ? `${(row.runtime_ms / 1000).toFixed(0)}s` : '—'), 'runtime'),
-  ]));
+  ].filter(Boolean)));
 
   const outcomes = (exps && Array.isArray(exps.outcomes)) ? exps.outcomes : [];
   if (outcomes.length) {

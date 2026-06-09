@@ -9,6 +9,46 @@
 import { el, clearChildren } from '../../core/dom.js';
 import { href } from './router.js';
 
+// ---- continuous per-entry score + precision/recall (#18) -------------
+//
+// Shared helpers for surfacing the continuous outcome `score` (∈ [0,1]) and its
+// optional `metrics` precision/recall decomposition wherever the dashboard
+// shows a per-entry / per-board outcome. All three degrade cleanly when the
+// fields are absent (the bool-only / pre-score path) so a board with no scores
+// reads exactly as before.
+
+// finite-number guard (local so ui.js stays free of an svg.js import).
+function _isNum(v) { return typeof v === 'number' && Number.isFinite(v); }
+
+// format a 0–1 score (or any finite number) to N decimals; '—' when absent.
+export function scoreFmt(v, n) {
+  return _isNum(v) ? v.toFixed(_isNum(n) ? n : 2) : '—';
+}
+
+// a compact precision/recall tag from a per-entry `metrics` map:
+// "P 0.70 / R 0.55" when both present, "P 0.70" / "R 0.55" when only one is,
+// '' when the entry carries no precision/recall (the bool-only path). Other
+// metric keys are ignored — this is the two-axis indicator only.
+export function prText(metrics) {
+  if (!metrics || typeof metrics !== 'object') return '';
+  const parts = [];
+  if (_isNum(metrics.precision)) parts.push('P ' + scoreFmt(metrics.precision, 2));
+  if (_isNum(metrics.recall)) parts.push('R ' + scoreFmt(metrics.recall, 2));
+  return parts.join(' / ');
+}
+
+// a stable digest signature for a per-entry `metrics` map: sorted
+// [key, rounded-value] pairs, or null when absent — folded into a view's
+// content digest so a change to any metric repaints while a no-op heartbeat
+// stays byte-identical. A bool-only entry (no metrics) folds null, leaving the
+// digest unchanged vs the pre-score path.
+export function metricsDigest(metrics) {
+  if (!metrics || typeof metrics !== 'object') return null;
+  const keys = Object.keys(metrics).filter((k) => _isNum(metrics[k])).sort();
+  if (!keys.length) return null;
+  return keys.map((k) => [k, metrics[k].toFixed(3)]);
+}
+
 // ---- digest-gated content swap (the no-flash guarantee) -------------
 //
 // A view computes a stable digest of ONLY its structural/content data
