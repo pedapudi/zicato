@@ -5,6 +5,85 @@ All notable changes to zicato are recorded here. Format roughly follows
 
 ## [Unreleased]
 
+### Dashboard — decision-centric console (Variant T)
+- **Cross-epoch meta-loop ledger** on the home view: the fleet of epochs
+  and the champion lineage across them now lead the environment overview,
+  replacing the full-width cross-epoch sparkline. Each contract change and
+  champion-reign tick is anchored to the real generation position.
+- **Settings is a routed right-side drawer overlay**, not a full page. Its
+  **Contract** tab reuses the tournament builder's live preview, so the
+  contract a run will use is previewed in place. Settings also carries a
+  launcher into the standalone builder.
+- The **tournament builder is its own first-class view** (`#/builder`),
+  reachable from the Settings launcher and from the `zicato builder` CLI
+  command (which boots the dashboard focused on the builder deep-link).
+- **Live racing hero redesigned**: a metadata baseline strip, a full-width
+  scalar track with a rung stepper, dense champion-gate rows, and a
+  two-column `WHAT'S RUNNING | LIVE ACTIVITY` layout. Per-round racing
+  models and the epoch/candidate views now build through one shared
+  structure resolver, so non-gauntlet views render identically.
+- **S/M/L font-size control** in the typeface picker (recalibrated ladder).
+- Non-racing live-hero figures go responsive / full-width.
+- **Per-entry views surface a continuous outcome score** plus
+  precision / recall, alongside the existing pass/fail.
+
+### Dashboard — static-asset revalidation
+- Static dashboard assets are served with an `ETag` derived from the
+  file's identity and honor `If-None-Match`: an unchanged file revalidates
+  to a bodyless `304` (no re-download), and editing a file changes its
+  `ETag` so the browser always picks up CSS/JS edits.
+
+### Proposer
+- The **tool-using ADK agent is now the DEFAULT proposer** (in
+  `builtin_default` mode, bound to the auxiliary model and the read-only
+  proposer tool registry). The skill-composed proposer is now the explicit
+  opt-in (a configured `proposers/<name>/` dir). The proposer is contract
+  input #5: configuring a proposer dir — or editing one of its skills —
+  rolls the epoch.
+- A **board-anonymized, train-slice-only failure-mode feedback channel**
+  to the proposer via the `outcome_summarizer_spec` operator hook: the
+  proposer is fed marginal failure signal computed over the train slice
+  only, with board contents anonymized, so it can target failure modes
+  without memorizing the board.
+
+### Tournament / runtime
+- **Configurable racing wall-clock budgets**: the racing strategy reads
+  `matchup_budget_seconds` (caps every duel's total board-unit wall-clock)
+  and `final_rung_budget_seconds` (overrides it for the final rung;
+  defaults to the matchup budget). Both are opt-in — unset leaves a rung
+  uncapped.
+- **Cost estimator uses per-structure default replicates**: when
+  `params["replicates"]` is unset, the builder's cost meter reads each
+  strategy's own `_default_replicates` (swiss / single-elim / double-elim
+  = 2; gauntlet / racing = 1) from the selection layer's single source of
+  truth, instead of assuming a flat 1, so the meter cannot under-report
+  the schedule a structure actually runs.
+
+### Gate / scoring
+- **Selectable pass-rate monotonicity scope.** `ScoringWeights`
+  `pass_rate_monotonicity_scope` selects `per_entry` (default — reject
+  when any entry the parent passed regressed) vs `aggregate` (reject only
+  when the child's overall pass-rate falls below the parent's beyond
+  tolerance). The on/off switch remains the separate
+  `pass_rate_monotonicity` bool. The scope is authored through the builder
+  gate-config op (`set_gate`), surfaced in the analyzer report and the
+  dashboard breakdown, and now carried through the subprocess-worker
+  transport so an operator's `aggregate` choice can never silently
+  downgrade to `per_entry` inside a worker.
+- **Continuous per-entry outcome scores.** An expectation may return a
+  float in `[0, 1]` recorded as a per-entry score plus precision / recall
+  metrics, surfaced per entry in the dashboard.
+
+### Correctness
+- `per_judge_weights` now survives the subprocess-worker transport
+  (symmetric with the other scoring fields), so a worker scores with the
+  operator's configured per-judge weights instead of resetting to the
+  default.
+- In-run process judges now grade the **real tool-call ledger** rather
+  than the agent's narration (the `file_findability` judge was reading the
+  agent's prose, not the actual tool calls), so a judgement reflects what
+  the harness actually did, not what it claimed.
+
 ### Storage
 - Settled the storage design end-to-end and rewrote `docs/design/STORAGE.md`
   around it. The five data kinds get five fits: runtime state and the
