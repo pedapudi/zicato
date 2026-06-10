@@ -36,6 +36,21 @@ writing to a per-run ``active_runs/{run_id}.json`` + ``events.jsonl`` +
 ``loss.json``, keyed on a unique ``run_id`` of
 ``{generation_id}--{entry_id}``.
 
+Cross-matchup parallelism (one global cap per round)
+----------------------------------------------------
+A non-gauntlet structure (swiss / elim / racing) schedules SEVERAL
+matchups of a round concurrently (the selection driver fans the round's
+batch out under one :func:`asyncio.gather`). Each :func:`run_matchup`
+accepts an OPTIONAL ``unit_semaphore``: when the orchestrator passes one
+shared semaphore to every matchup of a round, all of that round's board
+units across all its concurrent matchups draw from ONE global
+concurrency cap, instead of each matchup minting its own
+``Semaphore(parallelism)`` (which let N concurrent matchups run
+``N × parallelism`` units at once and re-pay worker-spawn + snapshot
+overhead serially per matchup). When ``unit_semaphore`` is ``None`` —
+every direct/gauntlet caller — each board-unit runner mints its own, so
+the single-matchup path is byte-identical to before.
+
 Set ``parallelism=1`` to run one board unit at a time. Note this is NOT
 the same as "one subprocess at a time": with ``parallelism=1`` in full
 mode a single board unit still spawns the champion and challenger
@@ -519,8 +534,23 @@ def _runtime_state() -> tuple[Any, Any] | None:
 _PARENT_BUDGET_GRACE_S: float = 30.0
 
 #: Seconds the parent waits after SIGTERM before escalating to SIGKILL.
-#: Matches the supervisor's two-stage escalation grace.
+#: Matches the supervisor's two-stage escalation grace. Used only by the
+#: last-resort reaper (:func:`_terminate_worker`) — the normal kill path
+#: now delegates escalation to the supervisor (see below).
 _SIGTERM_TO_SIGKILL_GRACE_S: float = 5.0
+
+#: Seconds the parent waits for the SUPERVISOR to escalate-kill a worker
+#: after the parent writes the kill-request marker, BEFORE falling back to
+#: a last-resort self-kill. The supervisor is the single SIGTERM→grace→
+#: SIGKILL escalator: the parent requests a kill and waits for the worker
+#: to die. This window must comfortably exceed the supervisor's own
+#: SIGTERM→SIGKILL grace + its watchdog tick so a healthy supervisor
+#: always wins the kill — the parent's fallback fires only when no
+#: supervisor is attached (e.g. an ad-hoc run with no watchdog, or a
+#: supervisor that itself died), which is exactly when the parent must
+#: still guarantee the worker is reaped. Generous on purpose: a few extra
+#: seconds on an already-overrun run is cheap; a leaked worker is not.
+_SUPERVISOR_KILL_WAIT_S: float = 20.0
 
 #: Filename prefix for a run's ephemeral snapshot working copy. The copy
 #: lives in the system temp dir (``tempfile.mkdtemp``) so it never sits
@@ -877,12 +907,24 @@ def _aborted_loss_profile(
 
 
 async def _terminate_worker(proc: Any) -> None:
-    """Escalate SIGTERM -> (grace) -> SIGKILL on a wedged worker process.
+    """LAST-RESORT escalate SIGTERM -> (grace) -> SIGKILL on a worker process.
 
-    Mirrors the supervisor's two-stage escalation. After SIGTERM we wait
-    :data:`_SIGTERM_TO_SIGKILL_GRACE_S` for a clean exit; if the worker
-    is still alive we SIGKILL it. Either way we ``await proc.wait()`` so
-    no zombie is left and the parent observes the final exit code.
+    The normal over-budget kill path delegates escalation to the
+    supervisor (the single SIGTERM→grace→SIGKILL escalator): the parent
+    writes a kill-request marker and waits for the worker to die. This
+    function is the parent's *fallback*, used only when the supervisor did
+    not reap the worker within :data:`_SUPERVISOR_KILL_WAIT_S` — i.e. no
+    supervisor is attached (an ad-hoc run with no watchdog) or the
+    supervisor itself is gone. In that case the parent MUST still
+    guarantee the worker is reaped, so it runs the same escalation here.
+    Because it fires only after the supervisor's whole escalation window
+    has elapsed with the worker still alive, it never races a healthy
+    supervisor over the same pid.
+
+    After SIGTERM we wait :data:`_SIGTERM_TO_SIGKILL_GRACE_S` for a clean
+    exit; if the worker is still alive we SIGKILL it. Either way we
+    ``await proc.wait()`` so no zombie is left and the parent observes the
+    final exit code.
     """
     if proc.returncode is not None:
         return
@@ -1135,14 +1177,41 @@ async def _run_single(
             )
         except TimeoutError:
             # --- 5. The worker's own cooperative budget did NOT fire.
-            # Escalate SIGTERM -> SIGKILL ourselves.
+            # The SINGLE SIGTERM→grace→SIGKILL escalator lives in the
+            # supervisor; the parent REQUESTS the kill via a control marker
+            # and waits for the supervisor to reap the worker, rather than
+            # escalating itself — so there is no parent↔supervisor race over
+            # the same worker pid.
             killed_by_parent = True
             log.warning(
-                "run %s exceeded budget+grace (%.0fs); terminating worker",
+                "run %s exceeded budget+grace (%.0fs); requesting supervisor kill",
                 run_id,
                 budget_s + _PARENT_BUDGET_GRACE_S,
             )
-            await _terminate_worker(proc)
+            if rt is not None:
+                state_mod, _ = rt
+                try:
+                    state_mod.request_worker_kill(workspace_root, run_id)
+                except Exception as exc:  # noqa: BLE001 — request is best-effort
+                    log.debug("run %s: kill-request write failed: %s", run_id, exc)
+            # Wait for the supervisor to escalate-kill the worker. The
+            # supervisor's escalation (SIGTERM→grace→SIGKILL) is bounded, so
+            # this wait is too. If the supervisor does NOT reap the worker
+            # within the window — no supervisor attached, or it died — the
+            # parent falls back to its own last-resort escalation so the
+            # worker is never leaked. The fallback fires only AFTER the whole
+            # supervisor window elapsed with the worker still alive, so it
+            # never races a healthy supervisor over the same pid.
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=_SUPERVISOR_KILL_WAIT_S)
+            except TimeoutError:
+                log.warning(
+                    "run %s: supervisor did not reap the worker within %.0fs; "
+                    "parent escalating as a last resort",
+                    run_id,
+                    _SUPERVISOR_KILL_WAIT_S,
+                )
+                await _terminate_worker(proc)
 
         runtime_ms = int((time.monotonic() - spawn_started) * 1000)
         result = _load_worker_result(result_path)
@@ -1268,6 +1337,15 @@ async def _run_single(
                 pass
         if rt is not None:
             state_mod, _ = rt
+            # Clear any kill-request marker this run wrote — the worker is
+            # gone now, and a recycled run id must not inherit a stale
+            # request (the supervisor would otherwise escalate a fresh,
+            # innocent pid). Best-effort + idempotent; a no-op when no kill
+            # was ever requested for this run.
+            try:
+                state_mod.clear_worker_kill_request(workspace_root, run_id)
+            except Exception as exc:  # noqa: BLE001 — cleanup is best-effort
+                log.debug("run %s: kill-request clear skipped: %s", run_id, exc)
             try:
                 state_mod.remove_active_run(workspace_root, run_id)
                 # A3: fold the run's per-entry loss summary into the live
@@ -1573,6 +1651,23 @@ async def _run_full_board_unit(
     return parent_result, child_result
 
 
+def _effective_unit_semaphore(
+    unit_semaphore: asyncio.Semaphore | None, config: RuntimeConfig
+) -> asyncio.Semaphore:
+    """Resolve the concurrency gate for a board-unit runner.
+
+    Returns the caller-supplied ``unit_semaphore`` when present — the
+    cross-matchup case, where one semaphore is shared across every matchup
+    of a round so the round runs under ONE global concurrency cap. When it
+    is ``None`` (every direct / gauntlet caller) a fresh
+    ``Semaphore(config.parallelism)`` is minted, byte-identical to the
+    historical per-runner behaviour.
+    """
+    if unit_semaphore is not None:
+        return unit_semaphore
+    return asyncio.Semaphore(config.parallelism)
+
+
 async def _run_board_units_full(
     *,
     adapter: Any,
@@ -1589,6 +1684,7 @@ async def _run_board_units_full(
     parent_force_fresh: bool | None = None,
     provenance: dict[str, _UnitProvenance] | None = None,
     matchup_deadline: float | None = None,
+    unit_semaphore: asyncio.Semaphore | None = None,
 ) -> tuple[dict[str, LossProfile], dict[str, LossProfile]]:
     """Run every board entry as a full-mode board unit, bounded concurrency.
 
@@ -1658,9 +1754,10 @@ async def _run_board_units_full(
             parent_force_fresh=parent_force_fresh,
             provenance=provenance,
             matchup_deadline=matchup_deadline,
+            unit_semaphore=unit_semaphore,
         )
 
-    semaphore = asyncio.Semaphore(config.parallelism)
+    semaphore = _effective_unit_semaphore(unit_semaphore, config)
     # Thread both competitors' generation ids + the board size so the scorer
     # writes the live PROJECTED standing per side (boards_done / boards_total)
     # alongside the running partial aggregate. The dashboard marks these
@@ -1760,16 +1857,21 @@ async def _run_board_units_full_budgeted(
     parent_force_fresh: bool | None = None,
     provenance: dict[str, _UnitProvenance] | None,
     matchup_deadline: float,
+    unit_semaphore: asyncio.Semaphore | None = None,
 ) -> tuple[dict[str, LossProfile], dict[str, LossProfile]]:
     """Budget-aware variant of :func:`_run_board_units_full`.
 
     Launches board units in board order, ``config.parallelism`` at a time,
     checking ``matchup_deadline`` (a :func:`time.monotonic` instant) BEFORE
-    each batch. Once the deadline has passed no further unit is launched —
-    every remaining unit is recorded as a budget-exceeded
-    :class:`LossProfile` (see :func:`_skipped_unit_loss`), persisted via
-    :func:`_persist_unit_loss` for cache consistency, and counted as a fresh
-    (genuinely-evaluated, not cache-reused) board unit in ``provenance``.
+    each batch. When a shared ``unit_semaphore`` is supplied (cross-matchup
+    parallelism) each launched unit also acquires it, so this matchup's
+    in-flight units count against the round's ONE global concurrency cap
+    rather than only against this matchup's per-batch ceiling. Once the
+    deadline has passed no further unit is launched — every remaining unit
+    is recorded as a budget-exceeded :class:`LossProfile` (see
+    :func:`_skipped_unit_loss`), persisted via :func:`_persist_unit_loss`
+    for cache consistency, and counted as a fresh (genuinely-evaluated,
+    not cache-reused) board unit in ``provenance``.
 
     The number of skipped units is LOGGED at WARNING so a cut-short matchup
     is never mistaken for full coverage. Returns the SAME ``(parent_losses,
@@ -1795,22 +1897,46 @@ async def _run_board_units_full_budgeted(
     effective_parent_force_fresh = force_fresh if parent_force_fresh is None else parent_force_fresh
 
     async def _bounded(entry: BoardEntry) -> tuple[LossProfile, LossProfile]:
-        return await _run_full_board_unit(
-            adapter=adapter,
-            parent_gen=parent_gen,
-            child_gen=child_gen,
-            entry=entry,
-            weights=weights,
-            config=config,
-            workspace_root=workspace_root,
-            epoch_id=epoch_id,
-            scorer=scorer,
-            match_id=match_id,
-            replicate_index=replicate_index,
-            force_fresh=force_fresh,
-            parent_force_fresh=parent_force_fresh,
-            provenance=provenance,
-        )
+        # A shared cross-matchup semaphore (when supplied) gates this unit
+        # against the round's one global cap; without it the per-batch
+        # ceiling below is the only bound (byte-identical to before).
+        # Either way the champion (parent) side cache-reads under
+        # ``parent_force_fresh`` (the immutable-champion reuse) while the
+        # child stays force-fresh per ``force_fresh``.
+        if unit_semaphore is None:
+            return await _run_full_board_unit(
+                adapter=adapter,
+                parent_gen=parent_gen,
+                child_gen=child_gen,
+                entry=entry,
+                weights=weights,
+                config=config,
+                workspace_root=workspace_root,
+                epoch_id=epoch_id,
+                scorer=scorer,
+                match_id=match_id,
+                replicate_index=replicate_index,
+                force_fresh=force_fresh,
+                parent_force_fresh=parent_force_fresh,
+                provenance=provenance,
+            )
+        async with unit_semaphore:
+            return await _run_full_board_unit(
+                adapter=adapter,
+                parent_gen=parent_gen,
+                child_gen=child_gen,
+                entry=entry,
+                weights=weights,
+                config=config,
+                workspace_root=workspace_root,
+                epoch_id=epoch_id,
+                scorer=scorer,
+                match_id=match_id,
+                replicate_index=replicate_index,
+                force_fresh=force_fresh,
+                parent_force_fresh=parent_force_fresh,
+                provenance=provenance,
+            )
 
     def _record_skip(entry: BoardEntry) -> bool:
         """Persist + record both sides of an un-run board unit.
@@ -1916,6 +2042,7 @@ async def _run_board_units_fast(
     replicate_index: int = 0,
     force_fresh: bool = False,
     provenance: dict[str, _UnitProvenance] | None = None,
+    unit_semaphore: asyncio.Semaphore | None = None,
 ) -> dict[str, LossProfile]:
     """Run every board entry as a fast-mode board unit, bounded concurrency.
 
@@ -1939,7 +2066,7 @@ async def _run_board_units_fast(
     :class:`~zicato.runtime.state.ActiveTournament` as every unit
     finishes, concurrently with the boards still in flight.
     """
-    semaphore = asyncio.Semaphore(config.parallelism)
+    semaphore = _effective_unit_semaphore(unit_semaphore, config)
     # Fast mode runs only the challenger; thread its generation id + the board
     # size so the live projected standing accrues for the in-flight challenger.
     scorer = _IncrementalScorer(
@@ -2974,6 +3101,7 @@ async def _run_replicated(
     match_id: str = "",
     fast: bool = False,
     matchup_budget_seconds: float | None = None,
+    unit_semaphore: asyncio.Semaphore | None = None,
 ) -> tuple[dict[str, LossProfile], dict[str, LossProfile], str, dict[str, _UnitProvenance]]:
     """Run a paired board ``replicates`` times, averaging per-entry losses.
 
@@ -3085,6 +3213,7 @@ async def _run_replicated(
             force_fresh=force_fresh,
             provenance=provenance,
             matchup_deadline=matchup_deadline,
+            unit_semaphore=unit_semaphore,
         )
         runs.append((left_losses, right_losses))
 
@@ -3147,6 +3276,7 @@ async def run_matchup(
     match_id: str = "",
     fast: bool = False,
     matchup_budget_seconds: float | None = None,
+    unit_semaphore: asyncio.Semaphore | None = None,
 ) -> TournamentResult:
     """Run ONE duel between two generations, ending in the unchanged gate.
 
@@ -3196,6 +3326,15 @@ async def run_matchup(
     the AGGREGATE of an unbounded board × replicates × both-sides sweep
     (e.g. a racing final rung), a different axis from the per-board
     :attr:`BoardEntry.wall_clock_budget_seconds` (which bounds ONE unit).
+
+    ``unit_semaphore`` is the OPT-IN cross-matchup concurrency gate. When
+    the orchestrator runs several matchups of a round concurrently it
+    passes ONE shared semaphore to every matchup so all of the round's
+    board units draw from a single global cap (instead of each matchup
+    minting its own ``Semaphore(parallelism)`` — which let N concurrent
+    matchups run ``N × parallelism`` units at once). ``None`` (every
+    direct / gauntlet caller) ⇒ each board-unit runner mints its own,
+    byte-identical to the single-matchup path.
     """
     from zicato.core import assert_distinct_callables  # noqa: PLC0415
 
@@ -3226,6 +3365,7 @@ async def run_matchup(
         match_id=match_id,
         fast=fast,
         matchup_budget_seconds=matchup_budget_seconds,
+        unit_semaphore=unit_semaphore,
     )
 
     left_agg = aggregate_generation_score(list(left_losses.values()), weights)

@@ -262,6 +262,30 @@ pub fn decide_run_deadline(
     }
 }
 
+/// Resolve the worker pid to escalate for a parent-requested kill, or
+/// `None` when there is nothing safe to signal.
+///
+/// Pure function of `(active_run, protected)` so it is unit-testable
+/// independent of the tokio loop, mirroring [`decide_run_deadline`]. The
+/// parent has already decided the worker must die (it wrote the
+/// `kill_requests/{run_id}` marker), so there is no deadline/staleness
+/// condition here — only the same pid-safety guard
+/// ([`is_signalable_run_pid`]) plus an aliveness check, so a recycled or
+/// already-dead pid is never signalled.
+pub fn decide_run_kill_request(
+    run: &crate::state::ActiveRun,
+    protected: &HashSet<i32>,
+) -> Option<i32> {
+    let pid = run.pid?;
+    if !is_signalable_run_pid(pid, protected) {
+        return None;
+    }
+    if !signal::is_alive(pid) {
+        return None;
+    }
+    Some(pid)
+}
+
 /// Long-running heartbeat watchdog task.
 ///
 /// **Warn-only for the orchestrator.** This loop never signals the
@@ -349,9 +373,56 @@ pub async fn runs_loop(
                     }
                 }
 
+                // Parent→supervisor kill requests pending this tick. The
+                // Python parent writes one when a worker overruns its budget,
+                // delegating the SINGLE SIGTERM→grace→SIGKILL escalator to
+                // this supervisor (no parent↔supervisor race over the pid).
+                let kill_requests = reader::read_kill_requests(&paths);
+
                 let runs = reader::read_active_runs(&paths);
                 for run in &runs {
                     let now = Utc::now();
+
+                    // Trigger 0: explicit parent kill request. Highest
+                    // priority — the parent has already decided this worker
+                    // must die, so escalate immediately rather than waiting
+                    // for the deadline/staleness thresholds.
+                    if kill_requests.contains(&run.run_id) {
+                        match decide_run_kill_request(run, &protected) {
+                            None => {
+                                // No signalable pid (absent / unsafe / dead):
+                                // nothing to escalate, but the request is
+                                // satisfied — clear it so it isn't retried.
+                                reader::clear_kill_request(&paths, &run.run_id);
+                            }
+                            Some(pid) => {
+                                warn!(
+                                    run_id = %run.run_id,
+                                    pid,
+                                    "parent requested kill; escalating (single escalator)",
+                                );
+                                let out = escalate(pid, thresholds.run_kill_grace).await;
+                                info!(
+                                    ?out,
+                                    run_id = %run.run_id,
+                                    "kill-request escalation complete; \
+                                     leaving state file for orchestrator cleanup",
+                                );
+                                log.record(Action {
+                                    ts: Utc::now(),
+                                    trigger: Trigger::KillRequest,
+                                    pid,
+                                    run_id: Some(run.run_id.clone()),
+                                    outcome: out.into(),
+                                });
+                                // Clear the consumed marker so the next tick
+                                // does not re-escalate a recycled pid; leave
+                                // the state file for the orchestrator reaper.
+                                reader::clear_kill_request(&paths, &run.run_id);
+                            }
+                        }
+                        continue;
+                    }
 
                     // Trigger 1: per-board wall-clock deadline (default-on).
                     if !thresholds.run_deadline_kill_disabled {
@@ -944,5 +1015,71 @@ mod tests {
         assert!(!is_signalable_run_pid(4242, &protected));
         // A plausible worker pid.
         assert!(is_signalable_run_pid(999_999, &protected));
+    }
+
+    // ---- decide_run_kill_request -----------------------------------
+
+    #[test]
+    fn kill_request_signals_a_live_worker_pid() {
+        // A real, alive, signalable worker pid is the one returned.
+        let sleeper = Sleeper::spawn();
+        let pid = sleeper.pid();
+        let run = ActiveRun {
+            run_id: "r1".into(),
+            pid: Some(pid),
+            ..Default::default()
+        };
+        assert_eq!(decide_run_kill_request(&run, &no_protected()), Some(pid));
+    }
+
+    #[test]
+    fn kill_request_with_no_pid_is_none() {
+        let run = ActiveRun {
+            run_id: "r1".into(),
+            pid: None,
+            ..Default::default()
+        };
+        assert_eq!(decide_run_kill_request(&run, &no_protected()), None);
+    }
+
+    #[test]
+    fn kill_request_never_signals_protected_or_unsafe_pid() {
+        // The orchestrator (protected) pid is refused even on explicit
+        // request — the supervisor kills run workers only.
+        let sleeper = Sleeper::spawn();
+        let orchestrator = sleeper.pid();
+        let mut protected = HashSet::new();
+        protected.insert(orchestrator);
+        let run = ActiveRun {
+            run_id: "r1".into(),
+            pid: Some(orchestrator),
+            ..Default::default()
+        };
+        assert_eq!(decide_run_kill_request(&run, &protected), None);
+
+        // pid 0/1 and the supervisor's own pid are refused too.
+        for bad in [0, 1, std::process::id() as i32] {
+            let run = ActiveRun {
+                run_id: "r1".into(),
+                pid: Some(bad),
+                ..Default::default()
+            };
+            assert_eq!(
+                decide_run_kill_request(&run, &no_protected()),
+                None,
+                "must never signal pid {bad} on request",
+            );
+        }
+    }
+
+    #[test]
+    fn kill_request_with_dead_pid_is_none() {
+        // pid 0 is never alive; an already-dead worker has nothing to kill.
+        let run = ActiveRun {
+            run_id: "r1".into(),
+            pid: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(decide_run_kill_request(&run, &no_protected()), None);
     }
 }

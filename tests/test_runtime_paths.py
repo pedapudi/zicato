@@ -13,6 +13,8 @@ from zicato.runtime.paths import (
     control_log_dir,
     ensure_runtime_dirs,
     heartbeat_path,
+    kill_request_path,
+    kill_requests_dir,
     lock_path,
     runtime_dir,
 )
@@ -49,6 +51,14 @@ def test_control_command_path_takes_relative_subpath(tmp_path: Path) -> None:
         control_command_path(tmp_path, "kill_runs/run_xyz")
         == rt / "control" / "kill_runs" / "run_xyz"
     )
+
+
+def test_kill_request_paths_live_under_a_distinct_control_subdir(tmp_path: Path) -> None:
+    # Parent→supervisor kill requests sit under control/kill_requests/, kept
+    # distinct from the operator's control/kill_runs/ channel.
+    rt = runtime_dir(tmp_path)
+    assert kill_requests_dir(tmp_path) == rt / "control" / "kill_requests"
+    assert kill_request_path(tmp_path, "run_xyz") == rt / "control" / "kill_requests" / "run_xyz"
 
 
 def test_ensure_runtime_dirs_creates_tree(tmp_path: Path) -> None:

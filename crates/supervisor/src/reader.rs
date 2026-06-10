@@ -50,6 +50,15 @@ impl WorkspacePaths {
         self.runtime.join("control")
     }
 
+    /// Directory holding parent→supervisor kill-escalation requests. The
+    /// Python parent writes `control/kill_requests/{run_id}` when a worker
+    /// overran its budget; this supervisor is the single SIGTERM→grace→
+    /// SIGKILL escalator that acts on them. Distinct from the operator's
+    /// `control/kill_runs/` channel (consumed by the orchestrator).
+    pub fn kill_requests_dir(&self) -> PathBuf {
+        self.control_dir().join("kill_requests")
+    }
+
     pub fn current_epoch_marker(&self) -> PathBuf {
         self.workspace.join("current_epoch")
     }
@@ -347,6 +356,49 @@ pub fn read_active_runs(paths: &WorkspacePaths) -> Vec<ActiveRun> {
     out
 }
 
+/// Read the set of run ids with a pending parent→supervisor kill request.
+///
+/// Each `control/kill_requests/{run_id}` marker (file basename = run id,
+/// no extension) means the Python parent asked this supervisor to
+/// escalate-kill that run's worker. A missing directory is the common
+/// case (no kills requested) and yields an empty set, never an error.
+pub fn read_kill_requests(paths: &WorkspacePaths) -> std::collections::HashSet<String> {
+    let dir = paths.kill_requests_dir();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return std::collections::HashSet::new()
+        }
+        Err(e) => {
+            warn!(?dir, error=%e, "failed to list kill_requests");
+            return std::collections::HashSet::new();
+        }
+    };
+    let mut out = std::collections::HashSet::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        // Skip any partial-write temp file the atomic writer may leave.
+        if path.extension().and_then(|s| s.to_str()) == Some("tmp") {
+            continue;
+        }
+        if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+            out.insert(name.to_string());
+        }
+    }
+    out
+}
+
+/// Remove a consumed kill-request marker. Best-effort: a vanished marker
+/// (the parent's cleanup beat us, or a double tick) is not an error.
+pub fn clear_kill_request(paths: &WorkspacePaths, run_id: &str) {
+    let path = paths.kill_requests_dir().join(run_id);
+    if let Err(e) = std::fs::remove_file(&path) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            warn!(?path, error=%e, "failed to clear kill_request marker");
+        }
+    }
+}
+
 /// An `active_runs/{run_id}.json` enriched with a computed deadline
 /// fraction for the dashboard's per-entry progress bars.
 ///
@@ -512,6 +564,42 @@ mod tests {
         // withstart → the float parses through intact
         assert_eq!(runs[1].run_id, "withstart");
         assert_eq!(runs[1].pid_start_time, Some(116_371_304.0));
+    }
+
+    #[test]
+    fn kill_requests_missing_dir_is_empty() {
+        let (_t, p) = make_ws();
+        assert!(read_kill_requests(&p).is_empty());
+    }
+
+    #[test]
+    fn kill_requests_are_collected_by_run_id() {
+        let (_t, p) = make_ws();
+        let dir = p.kill_requests_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        // Markers are named by bare run id (no extension); a partial-write
+        // .tmp file is ignored.
+        std::fs::write(dir.join("run_a"), r#"{"run_id":"run_a"}"#).unwrap();
+        std::fs::write(dir.join("run_b"), r#"{"run_id":"run_b"}"#).unwrap();
+        std::fs::write(dir.join("run_c.tmp"), "partial").unwrap();
+        let reqs = read_kill_requests(&p);
+        assert_eq!(reqs.len(), 2);
+        assert!(reqs.contains("run_a"));
+        assert!(reqs.contains("run_b"));
+        assert!(!reqs.contains("run_c.tmp"));
+    }
+
+    #[test]
+    fn clear_kill_request_removes_the_marker() {
+        let (_t, p) = make_ws();
+        let dir = p.kill_requests_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("run_a"), r#"{"run_id":"run_a"}"#).unwrap();
+        assert!(read_kill_requests(&p).contains("run_a"));
+        clear_kill_request(&p, "run_a");
+        assert!(!read_kill_requests(&p).contains("run_a"));
+        // Clearing a vanished marker is a no-op, not an error.
+        clear_kill_request(&p, "run_a");
     }
 
     #[test]

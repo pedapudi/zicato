@@ -1,11 +1,15 @@
 """``GitGenerationStore`` — the git-backed :class:`GenerationStore` backend.
 
 This is the roadmap's v0+1 generation-store backend
-(``docs/design/STORAGE.md`` §7), shipped as a drop-in second
-implementation of the :class:`~zicato.epoch.genstore.GenerationStore`
-protocol. :class:`~zicato.epoch.genstore.DirectoryGenerationStore`
-stays the default; the git backend is selected off a workspace config
-knob (``storage_backend: "git"``).
+(``docs/design/STORAGE.md`` §7), a drop-in implementation of the
+:class:`~zicato.epoch.genstore.GenerationStore` protocol and the
+**default** backend: it dedups blobs across a lineage and its worktree
+checkout *is* the isolated per-run tree, removing both the per-generation
+and per-run ``copytree`` the directory backend pays.
+:class:`~zicato.epoch.genstore.DirectoryGenerationStore` stays
+config-selectable for a no-git environment
+(``storage_backend: "directory"``); the git backend is what a workspace
+gets with no knob set.
 
 Why git, and why a private workspace repo
 -----------------------------------------
@@ -90,6 +94,16 @@ _META_SENTINEL = "---zicato-meta---"
 #: it is never a person, and it must not carry a vendor name.
 _GIT_AUTHOR_NAME = "zicato"
 _GIT_AUTHOR_EMAIL = "zicato@localhost"
+
+#: Top-level basenames that are git-administrative and must never be laid
+#: into a generation tree. A *git worktree* (what :meth:`snapshot_root`
+#: returns) carries a ``.git`` pointer file at its root; the worktree's
+#: own ``.gitignore`` is the repo's artifact-exclusion file, re-supplied
+#: from ``zicato-root``. Both appear in a worktree's ``iterdir()`` and
+#: would otherwise be copied when one generation's worktree seeds the
+#: next (a contract roll), corrupting the new commit. The directory
+#: backend never produced these, so this guard is git-backend-specific.
+_GIT_ADMIN_BASENAMES = frozenset({".git", ".gitignore"})
 
 
 class GitCommandError(RuntimeError):
@@ -202,8 +216,17 @@ class GitGenerationStore:
         self._git("config", "commit.gpgsign", "false")
 
     def _commit(self, message: str) -> str:
-        """Commit the staged index and return the new commit's full hash."""
-        self._git("commit", "--no-verify", "--allow-empty-message", "-m", message)
+        """Commit the staged index and return the new commit's full hash.
+
+        ``--allow-empty`` is intentional: a derived child generation can be
+        byte-identical to its parent (a proposer may propose a patch that
+        sets a value to what it already is, or two distinct mutation points
+        that cancel out). The directory backend records that as a normal
+        generation; the git backend must too, rather than aborting with
+        "nothing to commit". Every generation is a commit even when its
+        tree did not change — the lineage is the commit chain.
+        """
+        self._git("commit", "--no-verify", "--allow-empty-message", "--allow-empty", "-m", message)
         return self._git("rev-parse", "HEAD").strip()
 
     # ------------------------------------------------------------------
@@ -312,8 +335,19 @@ class GitGenerationStore:
         tagged. The epoch branch is created from the repo's
         ``zicato-root`` so it inherits the artifact-exclusion
         ``.gitignore``. Returns the generation's worktree path.
+
+        A source whose basename is git-administrative (``.git`` — a
+        worktree carries a ``.git`` *pointer file*, the directory backend's
+        snapshot never did) or the repo's own ``.gitignore`` is skipped:
+        these arise when seeding a v0 from a *git worktree* (a contract
+        roll seeds the next epoch from the previous epoch's promoted-head
+        worktree, whose ``iterdir()`` includes ``.git``/``.gitignore``).
+        Copying the worktree's ``.git`` pointer into a new generation would
+        make ``git add`` resolve it as a foreign repository and abort; the
+        seed ``.gitignore`` is already laid down by ``zicato-root``.
         """
         self._ensure_repo()
+        sources = [s for s in sources if Path(s).name not in _GIT_ADMIN_BASENAMES]
         for raw in sources:
             source = Path(raw).resolve()
             if not source.exists():

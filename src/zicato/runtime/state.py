@@ -36,6 +36,7 @@ from zicato.runtime._storage import (
     active_tournament_key,
     backend_for,
     heartbeat_key,
+    kill_request_key,
 )
 from zicato.runtime.paths import ensure_runtime_dirs
 
@@ -293,6 +294,36 @@ def write_active_run(workspace_root: Path, run: ActiveRun) -> None:
 def remove_active_run(workspace_root: Path, run_id: str) -> None:
     """Delete one run's state file. Idempotent if already gone."""
     backend_for(workspace_root).delete(active_run_key(run_id))
+
+
+def request_worker_kill(workspace_root: Path, run_id: str) -> None:
+    """Ask the supervisor to escalate-kill a run's worker (parent→supervisor).
+
+    Writes a ``control/kill_requests/{run_id}`` marker. The Rust
+    supervisor — the single SIGTERM→grace→SIGKILL escalator — reads it,
+    runs the escalation on the worker's pid, and clears the marker. The
+    Python parent therefore never signals the worker itself, so there is
+    no parent↔supervisor race over the same pid.
+
+    Best-effort and idempotent: re-requesting an already-pending kill
+    just rewrites the same marker. The payload carries the run id and a
+    timestamp for the supervisor's audit log.
+    """
+    ensure_runtime_dirs(workspace_root)
+    backend_for(workspace_root).write_json(
+        kill_request_key(run_id),
+        {"run_id": run_id, "requested_at": _utc_now_iso()},
+    )
+
+
+def clear_worker_kill_request(workspace_root: Path, run_id: str) -> None:
+    """Remove a run's kill-request marker. Idempotent if already gone.
+
+    The supervisor clears the marker once it has escalated; the parent
+    also clears it on cleanup so a marker never outlives its run (a
+    recycled run id must not inherit a stale request).
+    """
+    backend_for(workspace_root).delete(kill_request_key(run_id))
 
 
 def touch_active_run_progress(workspace_root: Path, run_id: str) -> None:
@@ -902,6 +933,8 @@ __all__ = [
     "list_active_runs",
     "write_active_run",
     "remove_active_run",
+    "request_worker_kill",
+    "clear_worker_kill_request",
     "touch_active_run_progress",
     "read_active_tournament",
     "write_active_tournament",

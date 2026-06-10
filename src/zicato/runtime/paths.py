@@ -20,6 +20,7 @@ zicato helper uses)::
         pause_epoch                   # flag file
         skip_round                    # flag file
         kill_runs/{run_id}            # one file per kill target
+        kill_requests/{run_id}        # parent->supervisor escalation request
         promote/{generation_id}       # one file per promote target
         reject/{generation_id}        # one file per reject target
         rubric_replacement.txt        # full rubric text payload
@@ -100,6 +101,26 @@ def control_command_path(workspace_root: Path, command: str) -> Path:
     return control_dir(workspace_root) / command
 
 
+#: Subdirectory of ``control/`` holding parent→supervisor kill-escalation
+#: requests. Distinct from the operator's ``kill_runs/`` channel (which the
+#: orchestrator consumes): a ``kill_requests/{run_id}`` marker is written by
+#: the *Python parent* when a worker overran its budget, asking the *Rust
+#: supervisor* to run the single SIGTERM→grace→SIGKILL escalator on that
+#: worker's pid. Consolidating escalation in the supervisor removes the
+#: parent↔supervisor race over the same worker pid.
+KILL_REQUESTS_DIRNAME = "kill_requests"
+
+
+def kill_requests_dir(workspace_root: Path) -> Path:
+    """Return the directory holding parent→supervisor kill-escalation requests."""
+    return control_dir(workspace_root) / KILL_REQUESTS_DIRNAME
+
+
+def kill_request_path(workspace_root: Path, run_id: str) -> Path:
+    """Return the path to one run's parent→supervisor kill-request marker."""
+    return kill_requests_dir(workspace_root) / run_id
+
+
 def ensure_runtime_dirs(workspace_root: Path) -> None:
     """Create the runtime directory tree (idempotent).
 
@@ -124,5 +145,8 @@ __all__ = [
     "control_dir",
     "control_log_dir",
     "control_command_path",
+    "KILL_REQUESTS_DIRNAME",
+    "kill_requests_dir",
+    "kill_request_path",
     "ensure_runtime_dirs",
 ]

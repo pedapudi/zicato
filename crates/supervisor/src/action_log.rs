@@ -31,6 +31,9 @@ pub enum Trigger {
     RunDeadline,
     /// A run stopped making progress (staleness trigger).
     RunStale,
+    /// The Python parent requested a kill via a control marker (the
+    /// supervisor is the single SIGTERM→grace→SIGKILL escalator).
+    KillRequest,
 }
 
 impl Trigger {
@@ -39,6 +42,7 @@ impl Trigger {
             Trigger::HeartbeatStale => "heartbeat_stale",
             Trigger::RunDeadline => "run_deadline",
             Trigger::RunStale => "run_stale",
+            Trigger::KillRequest => "kill_request",
         }
     }
 }

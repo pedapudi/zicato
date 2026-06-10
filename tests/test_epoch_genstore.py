@@ -76,7 +76,26 @@ def test_directory_store_satisfies_the_protocol(tmp_path: Path) -> None:
     assert isinstance(store, GenerationStore)
 
 
-def test_default_generation_store_returns_directory_backend(tmp_path: Path) -> None:
+def test_default_generation_store_returns_git_backend(tmp_path: Path) -> None:
+    # The default (no config, or a blank/missing knob) is the git backend:
+    # it removes the per-generation and per-run ``copytree`` the directory
+    # backend pays.
+    from zicato.epoch.git_genstore import GitGenerationStore
+
+    store = default_generation_store(tmp_path)
+    assert isinstance(store, GitGenerationStore)
+    assert store.workspace_root == tmp_path
+
+
+def test_default_generation_store_honours_directory_knob(tmp_path: Path) -> None:
+    # ``storage_backend: "directory"`` stays selectable for a no-git
+    # environment — flipping the default must not remove the directory
+    # backend, only change which one is picked when the knob is absent.
+    import json
+
+    (tmp_path / "config.json").write_text(
+        json.dumps({"storage_backend": "directory"}), encoding="utf-8"
+    )
     store = default_generation_store(tmp_path)
     assert isinstance(store, DirectoryGenerationStore)
     assert store.workspace_root == tmp_path
