@@ -45,28 +45,72 @@ from tests.test_orchestrator import (
     _harness_call_llm,
     _install_stub_adapter_factory,
     _install_telemetry_stubs,
-    _valid_proposer_response,
 )
 from zicato.core.types import ScoringWeights, TournamentStructure
 from zicato.epoch.lifecycle import new_epoch
 
 
+def _distinct_proposer_response(core_idea: str, new_word: str) -> str:
+    """A valid proposer response with a distinct ``core_idea`` + replacement.
+
+    The field-diversity constraint (FUNCTIONALITY-RECOMMENDATIONS.md §4.3)
+    soft-rejects a challenger that duplicates an in-flight sibling, so a field
+    of N distinct challengers needs N distinct proposals — these tests intend
+    a full field (v1..v4 etc.), so each proposer call gets a unique idea.
+    """
+    return json.dumps(
+        {
+            "hypothesis": {
+                "core_idea": core_idea,
+                "modulating": ["greeting"],
+                "why": "exercising the in-flight observability field path",
+                "expected_drift_movements": [
+                    {"kind": "off_topic", "direction": "decrease", "magnitude": "small"}
+                ],
+                "expected_pass_rate_delta": "+0.0 to +0.1",
+                "risks": "harmless",
+            },
+            "patches": [
+                {
+                    "mutation_id": "greeting",
+                    "op": "replace",
+                    "new_content": f'"{new_word}"',
+                    "rationale": "different greeting word",
+                }
+            ],
+        }
+    )
+
+
 def _infinite_proposer_responder() -> Any:
-    """An aux callable that ALWAYS returns a valid proposer response.
+    """An aux callable that returns a DISTINCT valid proposer response per call.
 
     These tests run several outer evolve rounds, each minting a field of
     challengers and ending in the epoch analyzer — so the number of aux
     calls is not easily counted ahead of time (proposer retries + the
     per-round analyzer all draw on the aux LLM). A fixed-length responder
     would run dry and narrow a field, perturbing the birth-round scenario.
-    An always-valid responder keeps every challenger applying cleanly; the
-    analyzer tolerates a proposer-shaped reply (it falls back to placeholder
-    prose), so this never aborts a round.
+
+    Every PROPOSER call (the one carrying the mutation manifest) gets a
+    UNIQUE ``core_idea`` so the field-diversity constraint keeps the whole
+    field — two byte-identical proposals would, correctly, collapse. A
+    non-proposer (analyzer) call gets a benign placeholder; the analyzer
+    tolerates a proposer-shaped reply (it falls back to placeholder prose),
+    so this never aborts a round.
     """
+    counter = {"n": 0}
 
     async def _aux(system: str, user: str, model: str) -> str:
-        del system, user, model
-        return _valid_proposer_response()
+        del system, model
+        if "## Mutation points" not in user:
+            # Non-proposer (analyzer) call — a benign placeholder.
+            return "report placeholder"
+        i = counter["n"]
+        counter["n"] = i + 1
+        return _distinct_proposer_response(
+            core_idea=f"swap the greeting string (variant {i})",
+            new_word=f"word{i}",
+        )
 
     return _aux
 

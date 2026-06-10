@@ -40,6 +40,7 @@ import pytest
 from zicato.core.types import (
     LadderConfig,
     OverfittingConfig,
+    ProposerQualityConfig,
     ScoringWeights,
     TournamentStructure,
 )
@@ -54,7 +55,12 @@ from zicato.workspace_loader import _scoring_weights_from_dict
 
 # Every contract dataclass whose frozen-snapshot serialization must be
 # field-complete. The structural tests below cover each one.
-_CONTRACT_DATACLASSES = [ScoringWeights, OverfittingConfig, LadderConfig]
+_CONTRACT_DATACLASSES = [
+    ScoringWeights,
+    OverfittingConfig,
+    LadderConfig,
+    ProposerQualityConfig,
+]
 
 # A hand-curated, constraint-VALID non-default value for every field of
 # every contract dataclass. Hand-curated (rather than blindly mutated)
@@ -83,6 +89,10 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         "rotate_holdout": False,
         "max_generations_per_contract": 9,
     },
+    "ProposerQualityConfig": {
+        "best_of_n": 4,
+        "critique_enabled": False,
+    },
     "ScoringWeights": {
         "drift_weight": 2.5,
         "pass_weight": 3.5,
@@ -108,6 +118,7 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
             max_generations_per_contract=9,
             ladder=LadderConfig(threshold=0.27, budget=8),
         ),
+        "proposer_quality": ProposerQualityConfig(best_of_n=5, critique_enabled=False),
         "outcome_summarizer_spec": "pkg.mod:summarize_outcomes",
         "pass_transform": {"op": "pow", "exponent": 2.0},
         "drift_kind_aggregation": {

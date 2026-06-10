@@ -546,6 +546,16 @@ async def evolve_once(
     # resolved from. ``None`` (the default / skill-only proposer) yields the
     # single-shot built-in unchanged.
     proposer_agent = build_proposer_agent(proposer_spec, proposer_path=_epoch_cfg.proposer_path)
+    # Proposer-quality levers (FUNCTIONALITY-RECOMMENDATIONS.md §4.1): when the
+    # contract opts in (``proposer_quality.best_of_n > 1``), interpose a
+    # best-of-N + self-critique wrapper around the resolved agent. With the
+    # default (``best_of_n == 1``) the wrapper returns the agent UNCHANGED, so
+    # the propose path is byte-identical to before this lever existed. The
+    # critic sees ONLY the same restricted proposer context (never the
+    # holdout), so best-of-N stays inside the overfitting-visibility envelope.
+    from zicato.proposer.best_of_n import wrap_with_proposer_quality  # noqa: PLC0415
+
+    proposer_agent = wrap_with_proposer_quality(proposer_agent, weights.proposer_quality)
     # Custom judges declared on the board / per_judge_weights are valid
     # ``drift:<judge_name>`` metric targets in a proposer hypothesis even
     # though they are not built-in goldfive drift kinds.
@@ -1464,6 +1474,42 @@ async def _propose_and_apply_challenger(
     )
 
 
+def _diversity_signature(experiment: Experiment) -> tuple[frozenset[str], str]:
+    """The field-diversity signature of a challenger: (modulating set, core idea).
+
+    Two siblings in the same field COLLAPSE the field when they propose the
+    same mutation (EXPERIMENT-MEMORY.md §2.2): a field of N becomes fewer than
+    N distinct experiments, wasting tournament compute on duplicates. The
+    signature is the *declared* targeted mutation-point id-SET (order-
+    insensitive) joined with a whitespace/-case-normalized core idea, so a
+    duplicate is detected by what the hypothesis TOUCHES and SAYS, not by
+    incidental ordering or capitalisation.
+    """
+    ids = frozenset(experiment.hypothesis.modulating)
+    core = " ".join(experiment.hypothesis.core_idea.split()).casefold()
+    return ids, core
+
+
+def _duplicates_inflight_sibling(
+    experiment: Experiment, sibling_signatures: list[tuple[frozenset[str], str]]
+) -> bool:
+    """Whether a challenger duplicates an already-minted in-flight sibling.
+
+    The field-diversity constraint (FUNCTIONALITY-RECOMMENDATIONS.md §4.3): a
+    challenger whose ``modulating`` id-set AND core idea both match a sibling
+    already minted THIS round is a duplicate that collapses the field, so the
+    caller soft-rejects it. A challenger that touches the same ids but with a
+    genuinely different idea (or the same idea on different ids) is NOT a
+    duplicate — it is a legitimately distinct experiment and is kept. An empty
+    ``modulating`` set never collapses the field (there is nothing to
+    duplicate), so it is never rejected on this basis.
+    """
+    ids, core = _diversity_signature(experiment)
+    if not ids:
+        return False
+    return any(ids == s_ids and core == s_core for s_ids, s_core in sibling_signatures)
+
+
 async def _evolve_multi_challenger(
     *,
     workspace_root: Path,
@@ -1572,6 +1618,12 @@ async def _evolve_multi_challenger(
     # challenger whose proposer failed contributes no sibling.
     prior = tuple(_load_prior_experiments(workspace_root, epoch_id))
     siblings: list[PriorExperiment] = []
+    # Field-diversity constraint (FUNCTIONALITY-RECOMMENDATIONS.md §4.3): the
+    # signatures of the siblings already minted this round, so a later
+    # challenger that duplicates one (same modulating id-set + core idea) is
+    # soft-rejected instead of collapsing the field (EXPERIMENT-MEMORY.md
+    # §2.2). Localized to this loop; no change to the SelectionStrategy.
+    sibling_signatures: list[tuple[frozenset[str], str]] = []
     # The LIVE field-status map, keyed by generation_id, rewritten as each
     # challenger slot enters ("proposing"), retries, and settles
     # ("applied"/"rejected"). The orchestrator publishes a "proposing"-phase
@@ -1627,6 +1679,37 @@ async def _evolve_multi_challenger(
             failure_profile=failure_profile,
             on_status=_publish_proposing,
         )
+        if challenger is not None and _duplicates_inflight_sibling(
+            challenger.experiment, sibling_signatures
+        ):
+            # Field-diversity soft-reject: this challenger duplicates an
+            # already-minted sibling (same modulating id-set + core idea), so
+            # it would collapse the field. Drop it from the run slate and
+            # record a legible rejected field-status — the SelectionStrategy
+            # still resolves over the distinct challengers that remain.
+            hyp = challenger.experiment.hypothesis
+            dup_status = {
+                "generation_id": challenger.generation_id,
+                "status": "rejected",
+                "reason": "field_diversity_duplicate",
+                "attempts": int(status.get("attempts", 0)) if isinstance(status, dict) else 0,
+                "attempt_reasons": [
+                    "duplicates an in-flight sibling (same modulating ids + core idea); "
+                    "soft-rejected to keep the field diverse"
+                ],
+                "hypothesis": _trim_reason(hyp.core_idea),
+                "seed": offset + 2,
+            }
+            field_status.append(dup_status)
+            _publish_proposing(dup_status)
+            log.info(
+                "multi-challenger field: %s/%s duplicates an in-flight sibling "
+                "(modulating=%s); soft-rejected for field diversity",
+                epoch_id,
+                challenger.generation_id,
+                tuple(hyp.modulating),
+            )
+            continue
         field_status.append(status)
         if challenger is not None:
             applied.append(challenger)
@@ -1643,6 +1726,7 @@ async def _evolve_multi_challenger(
                     same_contract=True,
                 )
             )
+            sibling_signatures.append(_diversity_signature(challenger.experiment))
 
     if not applied:
         # The whole field failed to apply — nothing to run. Record a

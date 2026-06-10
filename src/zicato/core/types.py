@@ -1770,6 +1770,71 @@ def _default_overfitting_config() -> OverfittingConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class ProposerQualityConfig:
+    """Proposer-quality levers: best-of-N sampling + a self-critique pass.
+
+    Part of the frozen evaluation contract — modelled as a field of
+    :class:`ScoringWeights` so it folds into the contract hash through the
+    existing scoring canonicalizer (it recurses into nested frozen
+    dataclasses), exactly like :class:`OverfittingConfig` and
+    :class:`TournamentStructure`. Changing any knob rolls the epoch, which is
+    correct: a proposer that samples N candidates and self-critiques proposes
+    *differently* than one that samples once.
+
+    The DEFAULT is byte-identical to today's single-sample proposer:
+    :attr:`best_of_n` ``= 1`` short-circuits the wrapper to a single inner
+    ``propose`` call with NO critique, so every epoch on disk and every
+    operator who never touches the knob behaves exactly as before this lever
+    existed. See ``docs/design/FUNCTIONALITY-RECOMMENDATIONS.md`` §4.1.
+
+    Overfitting discipline (LOAD-BEARING): the self-critique pass sees ONLY
+    the SAME restricted prompt context the proposer itself sees (the
+    train-slice patterns, the banded experiment memory, the bucketed
+    failure-mode profile) — NEVER the holdout, never a per-entry identity.
+    The critic is inside the same overfitting-visibility envelope as the
+    proposer (OVERFITTING.md §11); it cannot widen what the proposer is
+    allowed to learn about the board.
+
+    Fields
+    ------
+    best_of_n:
+        How many candidate experiments to sample per propose-step before
+        the critique pass picks the best. ``1`` (default) = today's single
+        sample, no critique. Must be ``>= 1``. Each sample is an independent
+        inner ``propose`` (the LLM's own sampling supplies the variety); a
+        candidate that the inner proposer cannot produce simply narrows the
+        slate, and an empty slate falls back to a final inner ``propose`` so
+        the step never silently yields nothing.
+    critique_enabled:
+        When ``True`` (default) and ``best_of_n > 1``, a single cheap
+        auxiliary-LLM self-critique pass scores the sampled candidates
+        against a quality bar (grounded in a tool call? targets a real
+        failure mode? minimal diff?) and selects the best. When ``False``,
+        best-of-N still samples ``best_of_n`` candidates but the selection
+        falls back to the deterministic built-in heuristic (smallest diff
+        that targets an observed failure mode) — no extra LLM call. With
+        ``best_of_n == 1`` this flag is inert (no critique ever runs).
+    """
+
+    best_of_n: int = 1
+    critique_enabled: bool = True
+
+    def __post_init__(self) -> None:
+        if self.best_of_n < 1:
+            raise ValueError(f"best_of_n must be >= 1, got {self.best_of_n!r}")
+
+    @classmethod
+    def defaults(cls) -> ProposerQualityConfig:
+        """The fully-defaulted (single-sample, today's behaviour) config."""
+        return cls()
+
+
+def _default_proposer_quality_config() -> ProposerQualityConfig:
+    """Default-factory for :attr:`ScoringWeights.proposer_quality`."""
+    return ProposerQualityConfig.defaults()
+
+
+@dataclass(frozen=True, slots=True)
 class OutcomeRecord:
     """The post-run record appended to an :class:`Experiment` after evaluation.
 
@@ -1910,6 +1975,17 @@ class PriorExperiment:
         directly comparable; ``False`` for a cross-contract entry from a
         different epoch under the same ``contract_hash``, which renders
         without its Δscalar because the number does not transfer.
+    prediction_accuracy:
+        The proposer's **hypothesis prediction-accuracy** for this settled
+        experiment — the fraction of its falsifiable predictions
+        (``expected_drift_movements`` / ``expected_metric_movements`` /
+        ``expected_pass_rate_delta``) that the realised movements bore out,
+        in ``[0.0, 1.0]``. ``None`` when the experiment is unsettled /
+        in-flight or made no predictions to grade. This is a DIAGNOSTIC,
+        ADVISORY calibration signal folded into the experiment-memory
+        section (banded, like the rest of the restricted memory); it NEVER
+        gates promotion. See ``docs/design/FUNCTIONALITY-RECOMMENDATIONS.md``
+        §4.2 and :func:`zicato.tournament.detail.hypothesis_ledger`.
     """
 
     generation_id: str
@@ -1920,6 +1996,7 @@ class PriorExperiment:
     rejection_reason: str
     scalar_score_delta: float | None
     same_contract: bool = True
+    prediction_accuracy: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -2195,6 +2272,16 @@ class ScoringWeights:
     # epoch. Default-on with a safe auto-degrade on small boards. See
     # :class:`OverfittingConfig` and ``docs/design/OVERFITTING.md``.
     overfitting: OverfittingConfig = field(default_factory=_default_overfitting_config)
+    # Proposer-quality levers: best-of-N sampling + a self-critique pass
+    # (FUNCTIONALITY-RECOMMENDATIONS.md §4.1). Modelled here so it factors
+    # into the contract hash through the existing scoring canonicalizer with
+    # zero new plumbing (the canonicalizer recurses into nested frozen
+    # dataclasses): changing the best-of-N count or the critique flag rolls
+    # the epoch. The DEFAULT (``best_of_n == 1``) is byte-identical to today's
+    # single-sample proposer. See :class:`ProposerQualityConfig`.
+    proposer_quality: ProposerQualityConfig = field(
+        default_factory=_default_proposer_quality_config
+    )
     # Optional operator outcome-summarizer hook (Capability 2 of issue #18,
     # item 8). A dotted spec (``pkg.mod:fn`` / ``pkg.mod.fn``) resolved like
     # predicates / judges. The resolved callable receives the TRAIN-SLICE
@@ -2782,6 +2869,7 @@ __all__ = [
     "ScoringWeights",
     "OverfittingConfig",
     "LadderConfig",
+    "ProposerQualityConfig",
     "EpochConfig",
     "Generation",
     # Patterns

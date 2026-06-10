@@ -137,10 +137,15 @@ _ANALYSIS_FINGERPRINT_HEADLINE = "Headline movements"
 _ANALYSIS_FINGERPRINT_REVIEWER = "expert reviewer summarizing one epoch"
 
 
-# Deterministic per-round proposer responses. The smoke test executes
-# two rounds; the first round targets ``researcher_instruction`` and the
-# second targets ``coordinator_instruction``. After round 2 the list
-# wraps around so callers that loop further still get something valid.
+# Deterministic per-call proposer responses. The gauntlet smoke test
+# executes two rounds (researcher_instruction, then coordinator_instruction);
+# a multi-challenger structure (e.g. racing, field_size=4) draws four in one
+# round. The four payloads are GENUINELY DISTINCT ideas (two on the
+# researcher marker, two on the coordinator marker) so a wide field stays
+# diverse under the field-diversity constraint
+# (FUNCTIONALITY-RECOMMENDATIONS.md §4.3) rather than collapsing on repeats.
+# The list still wraps around so a caller that loops further gets something
+# valid (a repeat past the fourth is a benign duplicate).
 _PROPOSER_ROUNDS: list[dict[str, Any]] = [
     {
         "hypothesis": {
@@ -237,6 +242,91 @@ _PROPOSER_ROUNDS: list[dict[str, Any]] = [
                 "rationale": (
                     "Tightening the routing flow reduces redundant "
                     "agent_transfer events and breaks reviewer loops."
+                ),
+            }
+        ],
+    },
+    # A third, GENUINELY DISTINCT idea on the researcher marker — a different
+    # lever (citations) on the same target. Distinct core idea, so the field-
+    # diversity constraint (FUNCTIONALITY-RECOMMENDATIONS.md §4.3) keeps it
+    # alongside the first researcher idea in a wide (field_size >= 3) field.
+    {
+        "hypothesis": {
+            "core_idea": (
+                "Require the researcher to attach a source citation to "
+                "every claim so the writer stops inventing unsupported "
+                "metrics."
+            ),
+            "modulating": ["researcher_instruction"],
+            "why": (
+                "Uncited claims drive the writer to fabricate numbers; "
+                "demanding a citation per bullet tightens factual grounding."
+            ),
+            "expected_drift_movements": [
+                {
+                    "kind": "context_pressure",
+                    "direction": "decrease_or_neutral",
+                    "magnitude": "small",
+                },
+            ],
+            "expected_pass_rate_delta": "+0.02 to +0.06",
+            "risks": "Strict citation demands may slow the researcher down.",
+        },
+        "patches": [
+            {
+                "mutation_id": "researcher_instruction",
+                "op": "replace",
+                "new_content": (
+                    "You are a researcher. Produce a bulleted synthesis "
+                    "where EACH bullet is one factual claim followed by a "
+                    "short source citation in parentheses. Do not assert a "
+                    "metric without a citation."
+                ),
+                "rationale": (
+                    "Per-bullet citations ground the writer's numbers and "
+                    "cut fabricated metrics."
+                ),
+            }
+        ],
+    },
+    # A fourth, GENUINELY DISTINCT idea on the coordinator marker — a budget
+    # hint rather than a routing rewrite. Distinct core idea + content, so a
+    # field_size==4 round mints four distinct challengers.
+    {
+        "hypothesis": {
+            "core_idea": (
+                "Give the coordinator an explicit turn budget so it stops "
+                "re-routing on revision turns once the budget is spent."
+            ),
+            "modulating": ["coordinator_instruction"],
+            "why": (
+                "Without a budget the coordinator re-dispatches the "
+                "reviewer indefinitely; a hard turn cap halts the loop."
+            ),
+            "expected_drift_movements": [
+                {
+                    "kind": "looping_reasoning",
+                    "direction": "decrease",
+                    "magnitude": "medium",
+                },
+            ],
+            "expected_pass_rate_delta": "+0.01 to +0.05",
+            "risks": "Too tight a budget may cut a revision the user wanted.",
+        },
+        "patches": [
+            {
+                "mutation_id": "coordinator_instruction",
+                "op": "replace",
+                "new_content": (
+                    "You are the Coordinator. You have a budget of six "
+                    "routing turns. Flow: topic -> research_agent -> "
+                    "web_developer_agent -> reviewer_agent. Route to "
+                    "debugger_agent at most once. When the budget is spent, "
+                    "report the best result to the user instead of "
+                    "re-dispatching."
+                ),
+                "rationale": (
+                    "A hard turn budget halts the reviewer re-dispatch loop " "deterministically."
                 ),
             }
         ],

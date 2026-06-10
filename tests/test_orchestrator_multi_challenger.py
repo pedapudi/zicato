@@ -39,6 +39,53 @@ from zicato.core.types import ScoringWeights, TournamentStructure
 from zicato.epoch.lifecycle import new_epoch
 
 
+def _distinct_proposer_response(core_idea: str, new_word: str) -> str:
+    """A schema-valid response targeting the ``greeting`` marker, made distinct.
+
+    The multi-challenger field's diversity constraint
+    (FUNCTIONALITY-RECOMMENDATIONS.md §4.3) soft-rejects a challenger that
+    duplicates an in-flight sibling (same ``modulating`` id-set + core idea).
+    A real field is a slate of *distinct* experiments, so a field test must
+    feed each challenger a distinct ``core_idea`` (and a distinct replacement
+    word) — two byte-identical proposals would, correctly, collapse to one.
+    """
+    return json.dumps(
+        {
+            "hypothesis": {
+                "core_idea": core_idea,
+                "modulating": ["greeting"],
+                "why": "exercising the multi-challenger field path",
+                "expected_drift_movements": [
+                    {"kind": "off_topic", "direction": "decrease", "magnitude": "small"}
+                ],
+                "expected_pass_rate_delta": "+0.0 to +0.1",
+                "risks": "harmless",
+            },
+            "patches": [
+                {
+                    "mutation_id": "greeting",
+                    "op": "replace",
+                    "new_content": f'"{new_word}"',
+                    "rationale": "different greeting word",
+                }
+            ],
+        }
+    )
+
+
+def _distinct_field_responses(n: int) -> list[str]:
+    """``n`` distinct schema-valid proposer responses for an ``n``-wide field.
+
+    Each carries a unique ``core_idea`` so none is soft-rejected by the
+    field-diversity constraint; together they form a genuinely diverse field
+    of ``n`` challengers, which is what these end-to-end tests intend.
+    """
+    return [
+        _distinct_proposer_response(f"swap the greeting string (variant {i})", f"word{i}")
+        for i in range(n)
+    ]
+
+
 def _bootstrap_swiss_workspace(
     tmp_path: Path, *, field_size: int, rounds_n: int = 1
 ) -> tuple[Path, str]:
@@ -131,9 +178,7 @@ def test_swiss_field_runs_end_to_end_and_promotes(
             epoch_id=epoch_id,
             harness_call_llm=_harness_call_llm,
             # field_size=2 ⇒ two proposer calls, one per challenger.
-            auxiliary_call_llm=_make_aux_responder(
-                [_valid_proposer_response(), _valid_proposer_response()]
-            ),
+            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
         )
     )
 
@@ -244,9 +289,7 @@ def test_swiss_field_rejects_when_no_challenger_beats_champion(
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(
-                [_valid_proposer_response(), _valid_proposer_response()]
-            ),
+            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
         )
     )
 
@@ -310,9 +353,7 @@ def test_fast_swiss_reuses_cached_champion(monkeypatch: pytest.MonkeyPatch, tmp_
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(
-                [_valid_proposer_response(), _valid_proposer_response()]
-            ),
+            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
             fast_mode=True,
         )
     )
@@ -365,9 +406,7 @@ def test_swiss_runs_each_gen_entry_at_most_once_over_multiple_rounds(
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(
-                [_valid_proposer_response(), _valid_proposer_response()]
-            ),
+            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
             # fast (the default) is the always-on cache; assert it explicitly.
             fast_mode=True,
         )
@@ -440,9 +479,7 @@ def test_field_status_records_applied_challengers(
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(
-                [_valid_proposer_response(), _valid_proposer_response()]
-            ),
+            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
         )
     )
 
@@ -657,9 +694,7 @@ def test_field_status_publishes_proposing_phase_live(
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(
-                [_valid_proposer_response(), _valid_proposer_response()]
-            ),
+            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
         )
     )
 
@@ -750,9 +785,7 @@ def test_applied_inflight_challenger_lineage_reports_pending_then_settles(
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(
-                [_valid_proposer_response(), _valid_proposer_response()]
-            ),
+            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
         )
     )
 
