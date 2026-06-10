@@ -3106,12 +3106,14 @@ export function roundTimeline(opts) {
     const promoted = r.gateOutcome && r.gateOutcome.kind === 'promoted';
     const selected = o.selected != null && String(o.selected) === String(r.round_index);
     const g = svgEl('g', {
-      class: 'dn-roundtl-node' + (promoted ? ' dn-roundtl-promote' : '') + (selected ? ' dn-roundtl-sel' : ''),
+      class: 'dn-roundtl-node' + (promoted ? ' dn-roundtl-promote' : '')
+        + (r.inflight ? ' dn-roundtl-live' : '') + (selected ? ' dn-roundtl-sel' : ''),
       tabindex: o.onRound ? '0' : null, role: o.onRound ? 'button' : null,
       'data-round': String(r.round_index),
       'aria-label': `Round ${r.round_index}: champion ${champId}`
         + (isNum(r.champion && r.champion.scalar) ? `, loss ${fmt(r.champion.scalar, 1)}` : '')
-        + (promoted ? `, promoted ${r.gateOutcome.gen}` : ', champion held'),
+        + (r.inflight ? ', in-flight — proposing the field'
+          : promoted ? `, promoted ${r.gateOutcome.gen}` : ', champion held'),
     }, [
       svgEl('circle', { cx, cy: spineY, r: 8, class: 'dn-roundtl-disc' }),
       svgEl('text', { x: cx, y: spineY + 3.5, class: 'dn-roundtl-glyph', 'text-anchor': 'middle' }, [CROWN.current]),
@@ -3139,9 +3141,12 @@ export function roundTimeline(opts) {
       'data-round': String(r.round_index), role: 'group',
       'aria-label': `Round ${r.round_index} episode`,
     });
-    // episode header: round ordinal + the incoming champion + a drill link.
-    const head = el('div', { class: 'dn-roundtl-ephead' }, [
+    // episode header: round ordinal + the incoming champion + a drill link. An
+    // IN-FLIGHT round (still proposing/applying its field, no settled gate yet)
+    // wears a LIVE badge so it reads as the round forming NOW (issue #16).
+    const head = el('div', { class: 'dn-roundtl-ephead' + (r.inflight ? ' dn-roundtl-ephead-live' : '') }, [
       el('span', { class: 'dn-roundtl-eptag', text: 'round ' + r.round_index }),
+      r.inflight ? el('span', { class: 'dn-roundtl-eplive', 'aria-label': 'in-flight round', text: 'LIVE' }) : null,
       el('span', { class: 'dn-roundtl-epchamp' }, [
         el('span', { class: 'dn-roundtl-epcrown', 'aria-hidden': 'true', text: CROWN.current }),
         el('span', { class: 'dn-mono', text: champId }),
@@ -3160,21 +3165,29 @@ export function roundTimeline(opts) {
     const fan = el('div', { class: 'dn-roundtl-fan' });
     if (r.challengers.length) {
       for (const c of r.challengers) {
+        // an in-flight round's chip carries its PROPOSING-STEP status (a
+        // proposing slot is dimmed/pending, a rejected slot dimmed, an applied
+        // slot reads normal) so the field reads as it forms (issue #16).
+        const st = c.status || null;
+        const statusCls = st === 'proposing' ? ' dn-roundtl-chip-proposing'
+          : st === 'rejected' ? ' dn-roundtl-chip-rejected' : '';
         const chip = el('button', {
-          class: 'dn-roundtl-chip' + (c.promoted ? ' dn-roundtl-chip-win' : ''),
+          class: 'dn-roundtl-chip' + (c.promoted ? ' dn-roundtl-chip-win' : '') + statusCls,
           type: 'button',
           'aria-label': `Challenger ${c.id}` + (isNum(c.scalar) ? `, loss ${fmt(c.scalar, 1)}` : '')
-            + (c.promoted ? ' — promoted' : ''),
+            + (c.promoted ? ' — promoted' : st === 'proposing' ? ' — proposing' : st === 'rejected' ? ' — rejected' : ''),
         }, [
           el('span', { class: 'dn-mono', text: shortLabel(String(c.id), 12) }),
           c.promoted ? el('span', { class: 'dn-roundtl-chipcrown', 'aria-hidden': 'true', text: CROWN.current }) : null,
+          st === 'proposing' ? el('span', { class: 'dn-faint dn-roundtl-chipstatus', 'aria-hidden': 'true', text: '⋯' }) : null,
+          st === 'rejected' ? el('span', { class: 'dn-faint dn-roundtl-chipstatus', 'aria-hidden': 'true', text: '✗' }) : null,
           isNum(c.scalar) ? el('span', { class: 'dn-faint dn-roundtl-chiploss', text: fmt(c.scalar, 1) }) : null,
         ].filter(Boolean));
         if (o.onCompetitor) chip.addEventListener('click', () => o.onCompetitor(String(c.id)));
         fan.appendChild(chip);
       }
     } else {
-      fan.appendChild(el('span', { class: 'dn-faint', text: 'no challengers minted this round' }));
+      fan.appendChild(el('span', { class: 'dn-faint', text: r.inflight ? 'minting the field…' : 'no challengers minted this round' }));
     }
     card.appendChild(el('div', { class: 'dn-roundtl-fanrow' }, [
       el('span', { class: 'dn-faint dn-roundtl-fanlab', text: 'field' }),
@@ -3185,15 +3198,32 @@ export function roundTimeline(opts) {
     const fig = o.figureFor ? o.figureFor(r) : null;
     if (fig) card.appendChild(el('div', { class: 'dn-roundtl-fig dn-figpane' }, [fig]));
 
-    // the GATE OUTCOME — promoted (merges onto the spine) or held.
-    card.appendChild(el('div', { class: 'dn-roundtl-gate' + (promoted ? ' dn-roundtl-gate-win' : '') }, [
-      el('span', { class: 'dn-roundtl-gatemark', 'aria-hidden': 'true', text: promoted ? CROWN.current : '=' }),
-      el('span', {
-        text: promoted
-          ? `${r.gateOutcome.gen} promoted → next round's champion`
-          : 'champion held — no promotion this round',
-      }),
-    ]));
+    // the GATE OUTCOME — promoted (merges onto the spine), held, or (in-flight)
+    // PROPOSING: the field is still minting, so the gate has not decided yet.
+    // The in-flight gate line carries the LIVE "N proposed · M applied" tally so
+    // the banner counts increment as the new round's field forms (issue #16).
+    if (r.inflight) {
+      const proposed = r.challengers.length;
+      const applied = r.challengers.filter((c) => c.status === 'applied').length;
+      const rejected = r.challengers.filter((c) => c.status === 'rejected').length;
+      const proposing = r.challengers.filter((c) => c.status === 'proposing').length;
+      let tally = `${proposed} proposed · ${applied} applied`;
+      if (rejected > 0) tally += ` · ${rejected} rejected`;
+      if (proposing > 0) tally += ` · ${proposing} proposing…`;
+      card.appendChild(el('div', { class: 'dn-roundtl-gate dn-roundtl-gate-live' }, [
+        el('span', { class: 'dn-roundtl-gatemark', 'aria-hidden': 'true', text: '⋯' }),
+        el('span', { text: 'proposing the field · ' + tally }),
+      ]));
+    } else {
+      card.appendChild(el('div', { class: 'dn-roundtl-gate' + (promoted ? ' dn-roundtl-gate-win' : '') }, [
+        el('span', { class: 'dn-roundtl-gatemark', 'aria-hidden': 'true', text: promoted ? CROWN.current : '=' }),
+        el('span', {
+          text: promoted
+            ? `${r.gateOutcome.gen} promoted → next round's champion`
+            : 'champion held — no promotion this round',
+        }),
+      ]));
+    }
     episodes.appendChild(card);
   });
   wrap.appendChild(episodes);

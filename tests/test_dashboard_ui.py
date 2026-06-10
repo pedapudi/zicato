@@ -332,7 +332,18 @@ def test_bundle_under_size_envelope(
     # scoped decomposition CSS — ~3 KB of new surface (back-compat: a pre-#19 /
     # built-in round renders nothing new). The envelope is raised to 1.080 MB to
     # cover it with headroom.
-    assert total < 1_080_000, f"bundle is {total} bytes, exceeds 1_080_000 envelope"
+    #
+    # The IN-FLIGHT ROUND surface (#16 second half) then makes a NEW round that
+    # is still proposing/applying its field show as its OWN round on the
+    # champion-spine timeline (an `appendInflightRound` overlay derived from the
+    # live envelope's `field_status`) instead of being folded under the prior
+    # settled round, with a LIVE badge + an incrementing "N proposed · M applied"
+    # banner + per-challenger proposing/applied/rejected chip states — the round
+    # model + the round-timeline renderer + the wiring through the epoch / round
+    # views + the scoped in-flight CSS, ~6 KB of new surface (back-compat: an
+    # epoch with no live proposing round renders byte-identically). The envelope
+    # is raised to 1.092 MB to cover it with headroom.
+    assert total < 1_092_000, f"bundle is {total} bytes, exceeds 1_092_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

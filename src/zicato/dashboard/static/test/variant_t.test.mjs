@@ -1547,6 +1547,110 @@ test('epoch view: leads with the CHAMPION-SPINE ROUND TIMELINE (one episode per 
   assert(allByClass(host, 'dn-heatmap')[0], 'the board×generation heatmap is still present on the epoch view');
 });
 
+// ---- (a2) the IN-FLIGHT round on the EPOCH VIEW (issue #16) ----------
+// A multi-round gauntlet epoch where round 0 has SETTLED (v0 → v1 promoted) and
+// round 1 is now PROPOSING its field (v5/v6/v7 via the live envelope, not yet in
+// the journal/lineage). The epoch view must surface round 1 as its OWN in-flight
+// round with a LIVE badge + an incrementing "N proposed · M applied" banner —
+// NOT fold v5/v6/v7 under round 0.
+
+const INFLIGHT_EPOCH = '2026-06-09_inflight';
+function installInflightFetch(fieldStatus) {
+  const gens = [
+    { generation_id: 'v0', epoch_id: INFLIGHT_EPOCH, parent_generation_id: '', promoted: false, round_index: 0 },
+    { generation_id: 'v1', epoch_id: INFLIGHT_EPOCH, parent_generation_id: 'v0', promoted: true, round_index: 0 },
+  ];
+  const F = {
+    '/api/epoch': { epoch_id: INFLIGHT_EPOCH, closed: false, goal: 'In-flight round.',
+      tournament: { structure: 'gauntlet', params: { field_size: 3 } },
+      experiments: gens.map((g) => ({ generation_id: g.generation_id, parent_generation_id: g.parent_generation_id,
+        round_index: g.round_index, outcome: { decision: g.promoted ? 'promoted' : 'rejected' } })),
+      board: [{ id: 'b1', kind: 'single_turn' }] },
+    '/api/lineage': { generations: gens },
+    '/api/tournaments': { epoch_id: INFLIGHT_EPOCH, champion_lineage: ['v0', 'v1'],
+      matchups: [{ champion: 'v0', challenger: 'v1', decision: 'promoted', delta_scalar: -20, ran_at: 'a' }],
+      tournaments: [] },
+    '/api/score-trajectory': { points: [{ generation_id: 'v0', scalar: 100 }, { generation_id: 'v1', scalar: 80 }] },
+    // the LIVE active-tournament envelope for round 1, still proposing.
+    '/api/active-tournament': { epoch_id: INFLIGHT_EPOCH, structure: 'gauntlet', phase: 'proposing',
+      round_index: 1, total_rounds: 2, structure_params: { field_size: 3 },
+      competitors: [{ generation_id: 'v1', seed: 1, role: 'champion' }],
+      field_status: fieldStatus, projected: {} },
+  };
+  for (const g of gens) F[`/api/generation/${INFLIGHT_EPOCH}/${g.generation_id}/per-entry`] = { entries: [{ entry_id: 'b1', drift_loss: 50 }] };
+  globalThis.fetch = async (path) => {
+    const v = lookupFixture(F, path);
+    return v !== undefined ? { ok: true, json: async () => v } : { ok: false, status: 404, json: async () => ({ error: 'nf: ' + path }) };
+  };
+}
+
+test('epoch view (issue #16): a round still PROPOSING shows as its OWN in-flight round (not folded under round 0) + a LIVE proposed/applied banner', async () => {
+  freshState();
+  installInflightFetch([
+    { generation_id: 'v5', status: 'applied' },
+    { generation_id: 'v6', status: 'applied' },
+    { generation_id: 'v7', status: 'proposing' },
+  ]);
+  // the live signals the epoch view reads to decide a run is active for this epoch.
+  coreState.state.activeTournament = { epoch_id: INFLIGHT_EPOCH, structure: 'gauntlet', phase: 'proposing', round_index: 1 };
+  coreState.state.heartbeat = { phase: 'proposing:round_1:v7', epoch_id: INFLIGHT_EPOCH, last_heartbeat: new Date().toISOString() };
+  coreState.state.activeRuns = [];
+
+  const epoch = await import('../js/variants/T/views/epoch.js');
+  const host = document.createElement('div');
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: INFLIGHT_EPOCH });
+
+  // TWO episodes now: the settled round 0 + the in-flight round 1.
+  const episodes = allByClass(host, 'dn-roundtl-ep');
+  assertEqual(episodes.length, 2, 'the settled round 0 + the in-flight round 1 (NOT one folded round)');
+  // the in-flight round wears a LIVE badge.
+  assert(allByClass(host, 'dn-roundtl-eplive').length >= 1, 'the in-flight round wears a LIVE badge');
+  // the incrementing banner reads 3 proposed · 2 applied · 1 proposing.
+  assert(/3 proposed/.test(host.textContent), 'the live banner reads the in-flight proposed count (3)');
+  assert(/2 applied/.test(host.textContent), 'the live banner reads the in-flight applied count (2)');
+  // round 0 keeps ONLY its settled field — v5/v6/v7 are NOT mis-attributed to it.
+  const round0 = episodes[0];
+  assert(!/v5|v6|v7/.test(round0.textContent), 'the SETTLED round 0 does NOT show the new round’s proposed gens (no mis-attribution)');
+  // the in-flight round carries the freshly-proposed field.
+  const round1 = episodes[1];
+  assert(/v5/.test(round1.textContent) && /v6/.test(round1.textContent) && /v7/.test(round1.textContent),
+    'the in-flight round 1 shows the freshly-proposed field v5/v6/v7');
+
+  coreState.state.activeTournament = null; coreState.state.heartbeat = null; coreState.state.activeRuns = [];
+});
+
+test('epoch view (issue #16): the banner INCREMENTS as the field mints (applied count climbs) + a no-op beat does NOT churn the round DOM', async () => {
+  freshState();
+  installInflightFetch([{ generation_id: 'v5', status: 'applied' }, { generation_id: 'v6', status: 'proposing' }]);
+  coreState.state.activeTournament = { epoch_id: INFLIGHT_EPOCH, structure: 'gauntlet', phase: 'proposing', round_index: 1 };
+  coreState.state.heartbeat = { phase: 'proposing:round_1:v6', epoch_id: INFLIGHT_EPOCH, last_heartbeat: new Date().toISOString() };
+  coreState.state.activeRuns = [];
+  const epoch = await import('../js/variants/T/views/epoch.js');
+  const host = document.createElement('div');
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: INFLIGHT_EPOCH });
+  assert(/2 proposed/.test(host.textContent) && /1 applied/.test(host.textContent), 'early: 2 proposed · 1 applied');
+  const tl1 = allByClass(host, 'dn-roundtl')[0];
+
+  // a NO-OP heartbeat (same field_status) → the round timeline node is preserved
+  // (digest-gated, no rebuild, no flash).
+  freshState();
+  installInflightFetch([{ generation_id: 'v5', status: 'applied' }, { generation_id: 'v6', status: 'proposing' }]);
+  coreState.state.activeTournament = { epoch_id: INFLIGHT_EPOCH, structure: 'gauntlet', phase: 'proposing', round_index: 1 };
+  coreState.state.heartbeat = { phase: 'proposing:round_1:v6', epoch_id: INFLIGHT_EPOCH, last_heartbeat: new Date().toISOString() };
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: INFLIGHT_EPOCH });
+  assert(allByClass(host, 'dn-roundtl')[0] === tl1, 'a no-op heartbeat preserves the timeline node (digest-gated, zero rebuild)');
+
+  // now v6 APPLIES → the banner increments to 2 applied + the DOM repaints.
+  freshState();
+  installInflightFetch([{ generation_id: 'v5', status: 'applied' }, { generation_id: 'v6', status: 'applied' }]);
+  coreState.state.activeTournament = { epoch_id: INFLIGHT_EPOCH, structure: 'gauntlet', phase: 'proposing', round_index: 1 };
+  coreState.state.heartbeat = { phase: 'proposing:round_1:v6', epoch_id: INFLIGHT_EPOCH, last_heartbeat: new Date().toISOString() };
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: INFLIGHT_EPOCH });
+  assert(/2 proposed/.test(host.textContent) && /2 applied/.test(host.textContent), 'after v6 applies: 2 proposed · 2 applied (the banner incremented)');
+
+  coreState.state.activeTournament = null; coreState.state.heartbeat = null; coreState.state.activeRuns = [];
+});
+
 // ---- (b) the timeline stays fit-to-width under a MANY-round fixture ----
 
 const MANY_EPOCH = '2026-05-31_many';
@@ -2874,6 +2978,45 @@ test('REGRESSION (view-divergence): the EPOCH racing model CONVERGES (digest-equ
   // the resolved model is non-empty (the rungs the funnel/track draw).
   const m = STRUCT.racingModel(epochSt);
   assert(m && m.hasRungs && m.rungs.length >= 2, 'the shared racing model carries the rungs');
+});
+
+// ---- REGRESSION (round-N "stuck on seeding"): when the NEXT round has only
+// begun PROPOSING — an empty live envelope (non-terminal phase, rounds:[]) —
+// the resolver must PRESERVE the just-SETTLED prior round's bracket rather than
+// let the empty envelope overwrite it with a "being seeded" ladder. The live
+// envelope is adopted only when it carries real content, OR when there is no
+// settled record (the first round's own proposing).
+test('REGRESSION (stuck-on-seeding): an EMPTY live proposing envelope does NOT overwrite a SETTLED prior round; with no record it still shows live', () => {
+  const liveProposing = {
+    epoch_id: EPOCH_ID, structure: 'racing', phase: 'proposing',
+    structure_params: { board_fraction: 0.5, eta: 2, field_size: 4 },
+    competitors: [
+      { generation_id: 'v0', seed: 1, role: 'champion' },
+      { generation_id: 'v5', seed: 2, role: 'challenger' },
+    ],
+    rounds: [], standings: [], field_status: [],
+  };
+  const settled = STRUCT.normalizeStructure({
+    structure: 'racing', source: 'record',
+    competitors: [{ generation_id: 'v0', seed: 1 }, { generation_id: 'v1', seed: 2 }],
+    rounds: [{ stage_index: 0, label: 'Rung 0', matches: [{ match_id: 'rung0_m0', competitors: ['v0', 'v1'], survivors: ['v1'], cut: [] }] }],
+    standings: [{ generation_id: 'v1', rank: 1, scalar: 1.0 }],
+  }, false);
+
+  const withRecord = STRUCT.resolveNonGauntletSt({
+    structure: 'racing', bracket: {}, epochId: EPOCH_ID,
+    liveRaw: liveProposing, heartbeat: { phase: 'proposing', epoch_id: EPOCH_ID },
+    activeRuns: [], completedRecord: settled,
+  });
+  assert(withRecord.source !== 'live', `the empty live envelope is rejected; settled round preserved (got source=${withRecord.source})`);
+  assert(withRecord.st && (withRecord.st.rounds || []).some((r) => (r.matches || []).length), 'the preserved record carries the settled match');
+
+  const firstRound = STRUCT.resolveNonGauntletSt({
+    structure: 'racing', bracket: {}, epochId: EPOCH_ID,
+    liveRaw: liveProposing, heartbeat: { phase: 'proposing', epoch_id: EPOCH_ID },
+    activeRuns: [], completedRecord: null,
+  });
+  assert(firstRound.source === 'live', `first-round proposing still shows the live being-seeded state (got source=${firstRound.source})`);
 });
 
 test('REGRESSION (view-divergence): the EPOCH swiss + single_elim overviews build a NON-EMPTY model SETTLED (resolver completed-record fallback)', async () => {
@@ -8688,6 +8831,141 @@ test('round model: degrades to a SINGLE round 0 when neither round_index nor fie
   // every challenger is accounted for across the rounds.
   const allChallengers = model.flatMap((r) => r.challengers.map((c) => c.id));
   assertDeep([...new Set(allChallengers)].sort(), ['v1', 'v2'], 'every challenger appears in the round model');
+});
+
+// ---- the IN-FLIGHT round (issue #16): a NEW round proposing/applying its
+// field — not yet in the journal/lineage NOR a settled tournament record —
+// surfaces as its OWN round, NOT folded under the prior settled round, and its
+// proposed/applied counts increment as the field mints. -------------------
+
+test('round model (issue #16): a NEW round still PROPOSING surfaces as its own in-flight round (not folded under the settled prior round)', () => {
+  // round 0 SETTLED: v0 → field {v1,v2}, v2 promoted. round 1 PROPOSING: the
+  // live envelope mints v5/v6/v7 (round_index 1) — none in the journal/lineage
+  // yet (gens carry only the settled v0/v1/v2).
+  const gens = [
+    { id: 'v0', parent: null, promoted: true, round_index: 0 },
+    { id: 'v1', parent: 'v0', promoted: false, round_index: 0 },
+    { id: 'v2', parent: 'v0', promoted: true, round_index: 0 },
+  ];
+  const scalarBy = new Map([['v0', 100], ['v1', 110], ['v2', 80]]);
+  const inflight = {
+    epoch_id: 'e0', structure: 'gauntlet', phase: 'proposing', round_index: 1,
+    competitors: [{ generation_id: 'v2', seed: 1, role: 'champion' }],
+    field_status: [
+      { generation_id: 'v5', status: 'applied' },
+      { generation_id: 'v6', status: 'applied' },
+      { generation_id: 'v7', status: 'proposing' },
+    ],
+  };
+  const model = rounds.epochRoundModel({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v2', inflight });
+  assertEqual(model.length, 2, 'the settled round 0 + the in-flight round 1 (NOT one folded round)');
+  const r1 = model[1];
+  assertEqual(r1.round_index, 1, 'the in-flight round takes round_index 1 (the NEW round, not 0)');
+  assert(r1.inflight === true, 'the new round is flagged in-flight');
+  assertEqual(r1.source, 'inflight', 'its source is the live envelope, not a settled record');
+  assertEqual(r1.champion.id, 'v2', 'the in-flight round carries the prior round’s promoted v2 as its champion (spine continues)');
+  assertDeep(r1.challengers.map((c) => c.id).sort(), ['v5', 'v6', 'v7'], 'the in-flight round holds the freshly-proposed field v5/v6/v7');
+  // the settled round 0 is unchanged — v5/v6/v7 are NOT mis-attributed to it.
+  assertDeep(model[0].challengers.map((c) => c.id).sort(), ['v1', 'v2'], 'round 0 keeps ONLY its settled field {v1,v2} — the new round’s gens are not folded in');
+  assert(!model[0].inflight, 'the settled round 0 is not flagged in-flight');
+  // the gate is pending (still proposing — not yet decided).
+  assertEqual(r1.gateOutcome.kind, 'pending', 'the in-flight round’s gate is pending (the field has not raced)');
+});
+
+test('round model (issue #16): the in-flight round carries per-challenger field_status so the proposed/applied banner can increment', () => {
+  const gens = [{ id: 'v0', parent: null, promoted: true, round_index: 0 }, { id: 'v1', parent: 'v0', promoted: true, round_index: 0 }];
+  const scalarBy = new Map([['v0', 100], ['v1', 80]]);
+  const base = { epoch_id: 'e0', structure: 'gauntlet', phase: 'proposing', round_index: 1, competitors: [{ generation_id: 'v1', seed: 1, role: 'champion' }] };
+  // EARLY: only v5 proposed (proposing). LATER: v5 applied, v6 proposing.
+  const early = rounds.epochRoundModel({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1',
+    inflight: { ...base, field_status: [{ generation_id: 'v5', status: 'proposing' }] } });
+  const later = rounds.epochRoundModel({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1',
+    inflight: { ...base, field_status: [{ generation_id: 'v5', status: 'applied' }, { generation_id: 'v6', status: 'proposing' }] } });
+  const eR = early[early.length - 1];
+  const lR = later[later.length - 1];
+  // proposed count goes 1 → 2, applied 0 → 1 as the field mints.
+  assertEqual(eR.challengers.length, 1, 'early: 1 proposed');
+  assertEqual(eR.challengers.filter((c) => c.status === 'applied').length, 0, 'early: 0 applied');
+  assertEqual(lR.challengers.length, 2, 'later: 2 proposed');
+  assertEqual(lR.challengers.filter((c) => c.status === 'applied').length, 1, 'later: 1 applied (v5)');
+  // the digest re-stamps on the proposing→applied transition (so the gated swap
+  // repaints), but is byte-IDENTICAL on a no-op re-derive (anti-flash).
+  assert(rounds.roundModelDigest(early) !== rounds.roundModelDigest(later),
+    'a field-status change (proposing → applied + a new slot) re-stamps the round digest');
+  const earlyAgain = rounds.epochRoundModel({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1',
+    inflight: { ...base, field_status: [{ generation_id: 'v5', status: 'proposing' }] } });
+  assertEqual(rounds.roundModelDigest(early), rounds.roundModelDigest(earlyAgain),
+    'a no-op re-derive (same field_status) yields a byte-identical digest — no repaint on an idle beat');
+});
+
+test('round model (issue #16): a SETTLED / done / idle envelope does NOT spawn a phantom in-flight round', () => {
+  const gens = [{ id: 'v0', parent: null, promoted: true, round_index: 0 }, { id: 'v1', parent: 'v0', promoted: true, round_index: 0 }];
+  const scalarBy = new Map([['v0', 100], ['v1', 80]]);
+  const base = { epoch_id: 'e0', structure: 'gauntlet', round_index: 1, competitors: [{ generation_id: 'v1' }],
+    field_status: [{ generation_id: 'v5', status: 'applied' }] };
+  for (const phase of ['done', 'complete', 'completed', 'idle', 'tournament:round_1:v5', '']) {
+    const model = rounds.epochRoundModel({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1',
+      inflight: { ...base, phase } });
+    assert(!model.some((r) => r.inflight), `phase="${phase}" must NOT spawn an in-flight round (it is terminal/settled)`);
+  }
+  // and no envelope at all → no in-flight round (the pre-feature path).
+  const none = rounds.epochRoundModel({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1' });
+  assert(!none.some((r) => r.inflight), 'no live envelope → no in-flight round');
+});
+
+test('round model (issue #16): once the new round SETTLES into a recorded round, the in-flight overlay defers (no duplicate)', () => {
+  // v5 has now landed in the journal (round_index 1) AND the live envelope still
+  // names it — the settled source owns it; the overlay must NOT duplicate it.
+  const gens = [
+    { id: 'v0', parent: null, promoted: true, round_index: 0 },
+    { id: 'v1', parent: 'v0', promoted: true, round_index: 0 },
+    { id: 'v5', parent: 'v1', promoted: false, round_index: 1 },
+  ];
+  const scalarBy = new Map([['v0', 100], ['v1', 80], ['v5', 85]]);
+  const inflight = { epoch_id: 'e0', structure: 'gauntlet', phase: 'proposing', round_index: 1,
+    competitors: [{ generation_id: 'v1' }], field_status: [{ generation_id: 'v5', status: 'applied' }] };
+  const model = rounds.epochRoundModel({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1', inflight });
+  assertEqual(model.length, 2, 'round 0 + the now-recorded round 1 (no phantom duplicate)');
+  const r1 = model[model.length - 1];
+  assert(!r1.inflight, 'the recorded round 1 is NOT re-flagged in-flight — the settled source is authoritative');
+  assertDeep(r1.challengers.map((c) => c.id), ['v5'], 'v5 appears exactly ONCE (in the recorded round)');
+});
+
+test('round model (issue #16): round 0’s OWN proposing overlays the forming field IN PLACE (no phantom duplicate round)', () => {
+  // only the seed v0 exists; round 0 is proposing its first field v1/v2 live.
+  const gens = [{ id: 'v0', parent: null, promoted: false, round_index: null }];
+  const scalarBy = new Map([['v0', 100]]);
+  const inflight = { epoch_id: 'e0', structure: 'gauntlet', phase: 'proposing', round_index: 0,
+    competitors: [{ generation_id: 'v0' }],
+    field_status: [{ generation_id: 'v1', status: 'applied' }, { generation_id: 'v2', status: 'proposing' }] };
+  const model = rounds.epochRoundModel({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v0', inflight });
+  assertEqual(model.length, 1, 'round 0’s own proposing stays ONE round (overlaid in place, not duplicated)');
+  const r0 = model[0];
+  assert(r0.inflight === true, 'round 0 is flagged in-flight while it proposes its first field');
+  assertEqual(r0.champion.id, 'v0', 'round 0’s champion is the seed v0');
+  assertDeep(r0.challengers.map((c) => c.id).sort(), ['v1', 'v2'], 'the forming field v1/v2 is overlaid onto round 0');
+});
+
+test('round timeline (issue #16): the in-flight round renders with a LIVE badge + a "N proposed · M applied" banner', () => {
+  const node = svg.roundTimeline({ rounds: [
+    { round_index: 0, champion: { id: 'v0', scalar: 100 }, structure: 'gauntlet',
+      challengers: [{ id: 'v1', scalar: 90, promoted: true }], gateOutcome: { kind: 'promoted', gen: 'v1' } },
+    { round_index: 1, champion: { id: 'v1', scalar: 90 }, structure: 'gauntlet', inflight: true,
+      challengers: [
+        { id: 'v5', scalar: null, promoted: false, status: 'applied' },
+        { id: 'v6', scalar: null, promoted: false, status: 'applied' },
+        { id: 'v7', scalar: null, promoted: false, status: 'proposing' },
+      ], gateOutcome: { kind: 'pending', gen: null } },
+  ], onRound() {}, onCompetitor() {} });
+  assertEqual(allByClass(node, 'dn-roundtl-ep').length, 2, 'two episodes — the settled round 0 + the in-flight round 1');
+  assert(allByClass(node, 'dn-roundtl-eplive').length >= 1, 'the in-flight round wears a LIVE badge');
+  assert(allByClass(node, 'dn-roundtl-gate-live').length >= 1, 'the in-flight gate reads as live (proposing)');
+  // the incrementing banner: 3 proposed · 2 applied · 1 proposing.
+  assert(/3 proposed/.test(node.textContent), 'the banner reads the proposed count (3)');
+  assert(/2 applied/.test(node.textContent), 'the banner reads the applied count (2)');
+  assert(/1 proposing/.test(node.textContent), 'the banner reads the still-proposing count (1)');
+  // the proposing chip is dimmed (its own status class), distinct from applied.
+  assert(allByClass(node, 'dn-roundtl-chip-proposing').length === 1, 'the still-proposing slot is marked proposing');
 });
 
 // ---- (2) the SPINE TIMELINE renders one episode per round ----------
