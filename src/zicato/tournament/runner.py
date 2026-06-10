@@ -2331,8 +2331,18 @@ async def run_tournament(
     judge_only: bool = False,
     round_index: int = 0,
     total_rounds: int = 0,
+    force_fresh: bool = True,
 ) -> TournamentResult:
     """Run a full A/B tournament. See module docstring.
+
+    ``force_fresh`` defaults to ``True`` — the historical behaviour, in
+    which the rigorous full A/B path re-evaluates BOTH sides from scratch
+    (no cache read) so a ``--mode full`` round always re-samples noise.
+    The orchestrator's conservative crash-resume (RUNTIME.md §4) passes
+    ``force_fresh=False`` for the one round it resumes in place, so the
+    per-unit ``loss.json`` cache HITs every board unit the interrupted run
+    already completed and only the unfinished entries re-run. Every other
+    caller leaves the default, so behaviour is byte-identical to today.
 
     ``disable_drift`` is the board-level drift-suppression set parsed
     from the board's ``board_meta`` header (see
@@ -2404,9 +2414,12 @@ async def run_tournament(
         # number of board units in flight — up to 2*parallelism run
         # subprocesses at once (champion + challenger per unit).
         # The gauntlet full A/B path forces a fresh evaluation of both
-        # sides (the orchestrator routes a cache-eligible round through
-        # ``run_fast_mode`` instead). Both sides are still persisted so a
-        # later fast round / structure can reuse them.
+        # sides by default (the orchestrator routes a cache-eligible round
+        # through ``run_fast_mode`` instead). Both sides are still persisted
+        # so a later fast round / structure can reuse them. The one
+        # exception is a conservative crash-resume (``force_fresh=False``),
+        # where the persisted per-unit ``loss.json`` of an interrupted round
+        # IS the cache that makes resume nearly free.
         parent_losses, child_losses = await _run_board_units_full(
             adapter=adapter,
             parent_gen=parent_gen,
@@ -2416,7 +2429,7 @@ async def run_tournament(
             config=config,
             workspace_root=workspace_root,
             epoch_id=epoch_id,
-            force_fresh=True,
+            force_fresh=force_fresh,
         )
     finally:
         if rt is not None:
