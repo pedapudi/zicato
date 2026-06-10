@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from zicato.core.drift_kinds import GOLDFIVE_DRIFT_KINDS, validate_drift_kind
 from zicato.core.types import (
+    BUDGET_ABORT_CAUSE,
     BoardEntry,
     BoardEntryKind,
     CallLLM,
@@ -55,6 +56,7 @@ from zicato.core.types import (
     ScriptedTurn,
     TournamentDecision,
     UserPersona,
+    is_infra_abort_cause,
     validate_board_entry,
 )
 from zicato.core.workspace import (
@@ -101,6 +103,8 @@ __all__ = [
     "JudgeLoss",
     "ExpectationResult",
     "LossProfile",
+    "BUDGET_ABORT_CAUSE",
+    "is_infra_abort_cause",
     # run record / lineage
     "RunRecord",
     "RunResult",

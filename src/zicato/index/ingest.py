@@ -410,12 +410,19 @@ def _upsert_loss_profile(
     cached = 1 if getattr(profile, "cached", False) else 0
     source_epoch = getattr(profile, "source_epoch", "") or None
     source_run = getattr(profile, "source_run", "") or None
+    # Abort-cause provenance (schema v9). Read straight off the profile: the
+    # runner/worker stamp it onto ``LossProfile.abort_cause`` for synthesised
+    # aborted profiles (``budget_exhausted`` vs the infra causes). An empty /
+    # absent value (a cleanly-reduced run, or a legacy profile) is stored as
+    # NULL so a reader can ``WHERE abort_cause = 'parent_kill'`` to spot an
+    # over-firing watchdog without re-parsing the ``loss_json`` blob.
+    abort_cause = getattr(profile, "abort_cause", None) or None
     conn.execute(
         "INSERT INTO loss_profiles("
         "run_id, epoch_id, generation_id, entry_id, drift_loss, pass_fail, "
         "runtime_ms, wall_clock_budget_exceeded, loss_json, tournament_id, match_id, "
-        "cached, source_epoch, source_run) "
-        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "cached, source_epoch, source_run, abort_cause) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(run_id) DO UPDATE SET "
         "epoch_id = excluded.epoch_id, "
         "generation_id = excluded.generation_id, "
@@ -429,7 +436,8 @@ def _upsert_loss_profile(
         "match_id = COALESCE(excluded.match_id, loss_profiles.match_id), "
         "cached = excluded.cached, "
         "source_epoch = COALESCE(excluded.source_epoch, loss_profiles.source_epoch), "
-        "source_run = COALESCE(excluded.source_run, loss_profiles.source_run)",
+        "source_run = COALESCE(excluded.source_run, loss_profiles.source_run), "
+        "abort_cause = excluded.abort_cause",
         (
             profile.run_id,
             profile.epoch_id,
@@ -445,6 +453,7 @@ def _upsert_loss_profile(
             cached,
             source_epoch,
             source_run,
+            abort_cause,
         ),
     )
 

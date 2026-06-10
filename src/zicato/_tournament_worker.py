@@ -63,6 +63,7 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core import (
+    BUDGET_ABORT_CAUSE,
     BoardEntry,
     LossProfile,
     RunResult,
@@ -663,6 +664,17 @@ async def _run(args: dict[str, Any]) -> None:
         weights,
         run_not_completed=run_not_completed,
     )
+    # Stamp the abort provenance so loop-health + the cache layer can tell a
+    # genuine wall-clock-budget exhaustion (the worker's own cooperative
+    # ``asyncio.wait_for`` fired) from an infra abort (a parent/supervisor
+    # kill or crash, which the parent stamps). A cooperative budget abort IS
+    # cache-eligible (re-running re-hits the same budget); the parent's
+    # ``is_infra_abort_cause`` reads this field to decide. A genuinely
+    # completed run leaves the field unset (``None``).
+    if budget_exceeded:
+        from dataclasses import replace as _replace  # noqa: PLC0415
+
+        loss = _replace(loss, abort_cause=BUDGET_ABORT_CAUSE)
     reducer_mod.write_loss_profile(loss, loss_path)
 
     _write_result(
@@ -685,82 +697,24 @@ async def _run(args: dict[str, Any]) -> None:
 def _weights_from_args(args: dict[str, Any]) -> ScoringWeights:
     """Reconstruct :class:`ScoringWeights` from the serialised args.
 
-    The args file carries the scalar-and-mapping subset of
-    :class:`ScoringWeights` under the ``weights`` key. A missing key
-    falls back to the dataclass default — so a caller that does not care
-    about scoring weights (a stub-adapter test) can omit the block
-    entirely and still get a usable run.
+    The args file carries the serialised :class:`ScoringWeights` under the
+    ``weights`` key. A missing key falls back to the dataclass default — so a
+    caller that does not care about scoring weights (a stub-adapter test) can
+    omit the block entirely and still get a usable run.
 
-    The symmetric writer is :func:`zicato.tournament.runner._weights_spec`;
-    the two must stay field-for-field in lock-step. A field carried by the
-    writer but not read here (or vice versa) is silently reset to its default
-    in the subprocess — the defect class this reader's ``pass_rate_monotonicity_scope``
-    handling guards against (issue #17).
+    Thin delegator to :meth:`ScoringWeights.from_json` — the inverse of the
+    SINGLE field-enumerating serde the runner serialises with
+    (:func:`zicato.tournament.runner._weights_spec` → :meth:`ScoringWeights.to_json`).
+    Because both sides now share ONE ``dataclasses.fields()``-driven serde, a
+    field can no longer be carried by the writer but dropped here (or vice
+    versa) — the silent worker-scores-under-defaults desync class
+    (``per_judge_weights`` / ``pass_rate_monotonicity_scope`` /
+    ``drift_kind_aggregation``) that two hand-aligned field lists kept
+    re-introducing. ``from_json`` coerces every field to its declared type and
+    re-runs ``ScoringWeights.__post_init__``, so a malformed transform / scope
+    token in the args file fails fast or coerces, exactly as before.
     """
-    raw = args.get("weights") or {}
-    if not isinstance(raw, dict):
-        return ScoringWeights()
-    defaults = ScoringWeights()
-    # The monotonicity scope is a closed Literal — coerce an unknown token
-    # back to the default so a malformed args file can never desync the
-    # worker's gate-view from the parent's. Valid tokens pass through.
-    raw_scope = raw.get("pass_rate_monotonicity_scope", defaults.pass_rate_monotonicity_scope)
-    scope = (
-        raw_scope
-        if raw_scope in ("per_entry", "aggregate")
-        else defaults.pass_rate_monotonicity_scope
-    )
-    return ScoringWeights(
-        drift_weight=float(raw.get("drift_weight", defaults.drift_weight)),
-        pass_weight=float(raw.get("pass_weight", defaults.pass_weight)),
-        severity_weights=dict(raw.get("severity_weights", defaults.severity_weights)),
-        per_kind_weights=dict(raw.get("per_kind_weights", defaults.per_kind_weights)),
-        per_judge_weights=dict(raw.get("per_judge_weights", defaults.per_judge_weights)),
-        default_judge_weight=float(raw.get("default_judge_weight", defaults.default_judge_weight)),
-        plan_revision_weight=float(raw.get("plan_revision_weight", defaults.plan_revision_weight)),
-        runtime_weight=float(raw.get("runtime_weight", defaults.runtime_weight)),
-        promote_margin=float(raw.get("promote_margin", defaults.promote_margin)),
-        pass_rate_monotonicity=bool(
-            raw.get("pass_rate_monotonicity", defaults.pass_rate_monotonicity)
-        ),
-        pass_rate_monotonicity_scope=scope,
-        regression_gate_enabled=bool(
-            raw.get("regression_gate_enabled", defaults.regression_gate_enabled)
-        ),
-        regression_test_command=tuple(
-            raw.get("regression_test_command", defaults.regression_test_command)
-        ),
-        regression_timeout_s=int(raw.get("regression_timeout_s", defaults.regression_timeout_s)),
-        namespace_weights=dict(raw.get("namespace_weights", defaults.namespace_weights)),
-        namespace_monotonicity=dict(
-            raw.get("namespace_monotonicity", defaults.namespace_monotonicity)
-        ),
-        # Declarative scoring transforms (issue #19 phase 2). Symmetric with
-        # the writer in ``runner._weights_spec``: ``drift_kind_aggregation``
-        # drives Seam 1 which runs HERE in the worker, so it must survive the
-        # boundary or the worker would score drift with neutral defaults while
-        # the orchestrator shows transformed (the per_judge_weights desync
-        # class). An absent key falls back to the neutral default; ``None``
-        # for ``pass_transform`` is preserved (it means "no transform").
-        # ``ScoringWeights.__post_init__`` re-validates the reconstructed
-        # specs, so a corrupt args file fails fast here too.
-        pass_transform=(
-            raw["pass_transform"]
-            if isinstance(raw.get("pass_transform"), dict)
-            else defaults.pass_transform
-        ),
-        drift_kind_aggregation=dict(
-            raw.get("drift_kind_aggregation", defaults.drift_kind_aggregation)
-        ),
-        # Dotted-spec scoring plugins (issue #19 phase 3). Symmetric with the
-        # writer in ``runner._weights_spec``. ``drift_reducer`` drives Seam 1
-        # which runs HERE in the worker, so it MUST survive the boundary or the
-        # worker would score drift with no plugin while the orchestrator believed
-        # otherwise (the per_judge_weights desync class). A non-string / absent
-        # value reads back as the neutral (no-plugin) default.
-        drift_reducer=str(raw.get("drift_reducer", defaults.drift_reducer) or ""),
-        scalar_fn=str(raw.get("scalar_fn", defaults.scalar_fn) or ""),
-    )
+    return ScoringWeights.from_json(args.get("weights"))
 
 
 def main(argv: list[str] | None = None) -> int:

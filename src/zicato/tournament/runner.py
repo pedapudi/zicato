@@ -129,11 +129,13 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core import (
+    BUDGET_ABORT_CAUSE,
     BoardEntry,
     Generation,
     LossProfile,
     RuntimeConfig,
     ScoringWeights,
+    is_infra_abort_cause,
 )
 from zicato.tournament.gate import GateOutcome, evaluate_gate
 from zicato.tournament.regression import RegressionResult, run_regression_suite
@@ -690,58 +692,19 @@ def _adapter_spec(adapter: Any) -> dict[str, Any]:
 
 
 def _weights_spec(weights: ScoringWeights) -> dict[str, Any]:
-    """Serialise :class:`ScoringWeights` into a JSON-friendly subset dict.
+    """Serialise :class:`ScoringWeights` for the subprocess worker.
 
-    Carries the scalar / mapping / tuple fields the worker needs to
-    reconstruct a faithful :class:`ScoringWeights` — both for its
-    :func:`reduce_loss` call AND for any gate-view it derives. The gate
-    fields (``promote_margin``, ``pass_rate_monotonicity`` and its
-    ``pass_rate_monotonicity_scope``) are carried too: a field present in the
-    parent's weights but missing here is silently reset to its default in the
-    subprocess, which would desync the worker's gate decision from the
-    parent's. :func:`_weights_from_args` is the symmetric reader and must
-    stay field-for-field in lock-step with this writer.
+    Thin delegator to :meth:`ScoringWeights.to_json` — the SINGLE,
+    field-enumerating serde shared by this writer and the worker's reader
+    (:func:`zicato._tournament_worker._weights_from_args`, which delegates to
+    :meth:`ScoringWeights.from_json`). Replacing the former hand-aligned field
+    list with one ``dataclasses.fields()``-driven serde means adding a field
+    can no longer silently desync the worker into scoring under defaults — the
+    documented ``per_judge_weights`` / ``pass_rate_monotonicity_scope`` /
+    ``drift_kind_aggregation`` desync class. Every field (including the
+    nested config dataclasses) crosses the boundary automatically.
     """
-    return {
-        "drift_weight": weights.drift_weight,
-        "pass_weight": weights.pass_weight,
-        "severity_weights": dict(weights.severity_weights),
-        "per_kind_weights": dict(weights.per_kind_weights),
-        "per_judge_weights": dict(weights.per_judge_weights),
-        "default_judge_weight": weights.default_judge_weight,
-        "plan_revision_weight": weights.plan_revision_weight,
-        "runtime_weight": weights.runtime_weight,
-        "promote_margin": weights.promote_margin,
-        "pass_rate_monotonicity": weights.pass_rate_monotonicity,
-        "pass_rate_monotonicity_scope": weights.pass_rate_monotonicity_scope,
-        "regression_gate_enabled": weights.regression_gate_enabled,
-        "regression_test_command": list(weights.regression_test_command),
-        "regression_timeout_s": weights.regression_timeout_s,
-        "namespace_weights": dict(weights.namespace_weights),
-        "namespace_monotonicity": dict(weights.namespace_monotonicity),
-        # Declarative scoring transforms (issue #19 phase 2). MUST cross the
-        # boundary: ``drift_kind_aggregation`` drives Seam 1, which runs IN the
-        # worker's ``reduce_loss`` — drop it here and the worker scores drift
-        # with neutral defaults while the orchestrator believes it is
-        # transformed (the per_judge_weights desync trap). ``pass_transform``
-        # is carried too for symmetry / any worker-side gate view. ``None`` is
-        # serialised verbatim; an absent key reads back as the neutral default.
-        "pass_transform": (
-            dict(weights.pass_transform) if weights.pass_transform is not None else None
-        ),
-        "drift_kind_aggregation": {
-            kind: dict(spec) for kind, spec in weights.drift_kind_aggregation.items()
-        },
-        # Dotted-spec scoring plugins (issue #19 phase 3). ``drift_reducer``
-        # drives Seam 1, which the worker resolves + invokes itself in
-        # ``reduce_loss`` — drop it here and the worker scores drift with no
-        # plugin while the orchestrator believed otherwise (the per_judge_weights
-        # desync trap). ``scalar_fn`` is carried for symmetry / any worker-side
-        # gate view. Empty strings serialise verbatim; an absent key reads back
-        # as the neutral (no-plugin) default.
-        "drift_reducer": weights.drift_reducer,
-        "scalar_fn": weights.scalar_fn,
-    }
+    return weights.to_json()
 
 
 def _entry_to_dict(entry: BoardEntry) -> dict[str, Any]:
@@ -863,12 +826,23 @@ def _aborted_loss_profile(
     weights: ScoringWeights,
     runtime_ms: int,
     match_id: str = "",
+    abort_cause: str | None = None,
 ) -> LossProfile:
     """Synthesise a worst-case aborted :class:`LossProfile` for one run.
 
     Used when the parent has to kill a wedged worker, or when a worker
     vanished (supervisor SIGKILL) without leaving a result file. The
     profile carries ``wall_clock_budget_exceeded=True``.
+
+    ``abort_cause`` records WHY the run aborted (see
+    :attr:`zicato.core.LossProfile.abort_cause`): the genuine
+    :data:`zicato.core.BUDGET_ABORT_CAUSE` wall-clock exhaustion, or one of
+    the INFRA causes (``parent_kill`` / ``gone_no_result`` /
+    ``nonzero_exit:{code}`` / ``prepare_failed`` / ``result_unreadable``).
+    The caller passes the cause it observed; ``None`` (the default — kept
+    for back-compat with ad-hoc callers) leaves the field unset. The cache
+    layer reads this to persist ONLY genuine budget exhaustion and never an
+    infra abort, so a transient blip cannot poison a unit's score.
 
     The ``drift_loss`` scalar is computed inline (empty drift counts, a
     full ``task_failure_ratio`` of 1.0, the heavy fixed budget-exceeded
@@ -898,6 +872,7 @@ def _aborted_loss_profile(
         drift_loss=drift_loss,
         pass_fail=(False if entry.expectation is not None else None),
         match_id=match_id,
+        abort_cause=abort_cause,
     )
 
 
@@ -1139,6 +1114,7 @@ async def _run_single(
                 weights=weights,
                 runtime_ms=0,
                 match_id=match_id,
+                abort_cause="prepare_failed",
             )
             return final_loss
 
@@ -1172,20 +1148,32 @@ async def _run_single(
         result = _load_worker_result(result_path)
 
         if killed_by_parent or result is None or proc.returncode != 0:
-            # Aborted run. Three indistinguishable-and-equivalent causes,
-            # all NORMAL outcomes that must not abort the tournament:
+            # Aborted run. Three causes — now DISTINGUISHED via abort_cause so
+            # loop-health can tell an honest agent infinite-loop (parent kill)
+            # from a transient crash from our OWN watchdog over-firing, and so
+            # the cache layer never persists an infra abort (only a genuine
+            # wall-clock-budget exhaustion is cache-eligible). All three remain
+            # NORMAL outcomes that must not abort the tournament:
             #   * the PARENT killed a wedged worker (killed_by_parent),
             #   * the SUPERVISOR SIGKILLed a worker past its deadline
             #     (process gone, result file missing),
             #   * the worker process itself crashed (non-zero exit, no
             #     usable result file).
-            if not killed_by_parent and result is None:
+            # killed_by_parent is checked FIRST: a parent kill can leave the
+            # returncode non-zero too, but the parent kill is the more specific
+            # (and the more actionable, for the over-firing-watchdog signal)
+            # provenance.
+            if killed_by_parent:
+                abort_cause = "parent_kill"
+            elif result is None:
+                abort_cause = "gone_no_result"
                 log.info(
                     "run %s: worker gone with no result file "
                     "(supervisor kill or crash); recording aborted run",
                     run_id,
                 )
-            elif proc.returncode not in (0, None):
+            else:
+                abort_cause = f"nonzero_exit:{proc.returncode}"
                 log.info(
                     "run %s: worker exited %s; recording aborted run",
                     run_id,
@@ -1216,6 +1204,7 @@ async def _run_single(
                 weights=weights,
                 runtime_ms=runtime_ms,
                 match_id=match_id,
+                abort_cause=abort_cause,
             )
             return final_loss
 
@@ -1239,6 +1228,7 @@ async def _run_single(
                 weights=weights,
                 runtime_ms=runtime_ms,
                 match_id=match_id,
+                abort_cause="result_unreadable",
             )
             return final_loss
 
@@ -1491,6 +1481,7 @@ async def _run_full_board_unit(
     match_id: str = "",
     replicate_index: int = 0,
     force_fresh: bool = False,
+    parent_force_fresh: bool | None = None,
     provenance: dict[str, _UnitProvenance] | None = None,
 ) -> tuple[LossProfile, LossProfile]:
     """Run ONE board entry's champion + challenger concurrently.
@@ -1500,6 +1491,14 @@ async def _run_full_board_unit(
     (``child_gen``) run **simultaneously** — two :func:`_run_single`
     coroutines started together under one :func:`asyncio.gather` — and
     does not return until BOTH have settled.
+
+    ``force_fresh`` governs the CHILD (challenger) side; ``parent_force_fresh``
+    governs the PARENT (champion) side independently, defaulting to
+    ``force_fresh`` when ``None`` (the uniform, back-compat behaviour). The
+    gauntlet champion is immutable within an epoch, so ``run_tournament``
+    passes ``parent_force_fresh=False`` to cache-READ the champion (it was
+    scored in a prior round / its seed) while still force-freshing the child
+    — except under ``--mode full``, which re-samples BOTH sides for noise.
 
     The two runs are safely concurrent: :func:`_run_single` spawns each
     in its OWN subprocess worker, each pointed at its OWN per-run
@@ -1524,6 +1523,11 @@ async def _run_full_board_unit(
     when a side raised — the failing unit is re-raised to the caller
     instead, which treats it as a hard tournament error.
     """
+    # The champion (parent) side may be cache-read independently of the
+    # challenger: ``parent_force_fresh`` defaults to the shared ``force_fresh``
+    # (uniform behaviour) but ``run_tournament`` overrides it to False so the
+    # immutable champion is reused rather than re-run every round.
+    effective_parent_force_fresh = force_fresh if parent_force_fresh is None else parent_force_fresh
     parent_result, child_result = await asyncio.gather(
         _run_unit_cache_first(
             adapter=adapter,
@@ -1536,7 +1540,7 @@ async def _run_full_board_unit(
             side="parent",
             replicate_index=replicate_index,
             match_id=match_id,
-            force_fresh=force_fresh,
+            force_fresh=effective_parent_force_fresh,
             provenance=provenance,
         ),
         _run_unit_cache_first(
@@ -1582,6 +1586,7 @@ async def _run_board_units_full(
     match_id: str = "",
     replicate_index: int = 0,
     force_fresh: bool = False,
+    parent_force_fresh: bool | None = None,
     provenance: dict[str, _UnitProvenance] | None = None,
     matchup_deadline: float | None = None,
 ) -> tuple[dict[str, LossProfile], dict[str, LossProfile]]:
@@ -1650,6 +1655,7 @@ async def _run_board_units_full(
             match_id=match_id,
             replicate_index=replicate_index,
             force_fresh=force_fresh,
+            parent_force_fresh=parent_force_fresh,
             provenance=provenance,
             matchup_deadline=matchup_deadline,
         )
@@ -1682,6 +1688,7 @@ async def _run_board_units_full(
                 match_id=match_id,
                 replicate_index=replicate_index,
                 force_fresh=force_fresh,
+                parent_force_fresh=parent_force_fresh,
                 provenance=provenance,
             )
 
@@ -1730,6 +1737,10 @@ def _skipped_unit_loss(
         weights=weights,
         runtime_ms=0,
         match_id=match_id,
+        # A unit skipped because the matchup's wall-clock budget was already
+        # spent IS a genuine budget exhaustion — re-running would re-hit the
+        # same cap — so it is cache-eligible (the one cacheable abort cause).
+        abort_cause=BUDGET_ABORT_CAUSE,
     )
 
 
@@ -1746,6 +1757,7 @@ async def _run_board_units_full_budgeted(
     match_id: str,
     replicate_index: int,
     force_fresh: bool,
+    parent_force_fresh: bool | None = None,
     provenance: dict[str, _UnitProvenance] | None,
     matchup_deadline: float,
 ) -> tuple[dict[str, LossProfile], dict[str, LossProfile]]:
@@ -1777,6 +1789,11 @@ async def _run_board_units_full_budgeted(
     skipped = 0
     budget_tripped = False
 
+    # The champion (parent) side may cache-read even when the child is
+    # force-fresh (``run_tournament``'s immutable-champion reuse). ``None``
+    # ⇒ uniform with ``force_fresh`` (back-compat).
+    effective_parent_force_fresh = force_fresh if parent_force_fresh is None else parent_force_fresh
+
     async def _bounded(entry: BoardEntry) -> tuple[LossProfile, LossProfile]:
         return await _run_full_board_unit(
             adapter=adapter,
@@ -1791,6 +1808,7 @@ async def _run_board_units_full_budgeted(
             match_id=match_id,
             replicate_index=replicate_index,
             force_fresh=force_fresh,
+            parent_force_fresh=parent_force_fresh,
             provenance=provenance,
         )
 
@@ -1806,9 +1824,10 @@ async def _run_board_units_full_budgeted(
         """
         any_skipped = False
         for gen in (parent_gen, child_gen):
+            side_force_fresh = effective_parent_force_fresh if gen is parent_gen else force_fresh
             cached = (
                 None
-                if force_fresh
+                if side_force_fresh
                 else _resolve_cached_unit(
                     workspace_root=workspace_root,
                     epoch_id=epoch_id,
@@ -2329,6 +2348,7 @@ async def run_tournament(
     epoch_id: str,
     disable_drift: tuple[Any, ...] = (),
     judge_only: bool = False,
+    champion_force_fresh: bool = False,
     round_index: int = 0,
     total_rounds: int = 0,
 ) -> TournamentResult:
@@ -2340,6 +2360,22 @@ async def run_tournament(
     every board entry's :attr:`~zicato.core.BoardEntry.context` so it
     threads through to the adapter's judge assembly; an empty tuple (the
     default) leaves the board entries untouched.
+
+    Champion (parent) cache-read
+    ----------------------------
+    The challenger (child) side is ALWAYS force-fresh here — a freshly
+    proposed generation has no prior evaluation under this contract, so it
+    must run. The champion (parent) is IMMUTABLE within an epoch, so by
+    default (``champion_force_fresh=False``) its per-board units are
+    cache-READ: if the champion was already scored this epoch (a prior round
+    / its seed-scoring) those results are reused rather than re-running the
+    immutable champion every round — the §2-item-3 efficiency win. The first
+    time the champion is seen it is a clean MISS and runs once (then caches),
+    so a fresh epoch still scores the champion exactly once with no behaviour
+    change. ``champion_force_fresh=True`` re-samples the champion too — the
+    ``--mode full`` noise-resampling semantics; fast mode (``run_fast_mode``)
+    is unchanged and still reuses the champion's historical aggregate
+    wholesale.
 
     ``round_index`` / ``total_rounds`` are threaded through from the
     orchestrator's evolve loop purely so the published
@@ -2403,10 +2439,17 @@ async def run_tournament(
         # (child) runs CONCURRENTLY. ``config.parallelism`` bounds the
         # number of board units in flight — up to 2*parallelism run
         # subprocesses at once (champion + challenger per unit).
-        # The gauntlet full A/B path forces a fresh evaluation of both
-        # sides (the orchestrator routes a cache-eligible round through
-        # ``run_fast_mode`` instead). Both sides are still persisted so a
-        # later fast round / structure can reuse them.
+        #
+        # The CHILD is always force-fresh (a freshly proposed generation
+        # has no prior evaluation under this contract). The CHAMPION is
+        # immutable within the epoch, so it is cache-READ by default
+        # (``champion_force_fresh=False``) — reused from a prior round /
+        # its seed-scoring rather than needlessly re-run every round (§2
+        # item 3). The first time it is seen it is a clean MISS and runs
+        # once, then caches. ``champion_force_fresh=True`` re-samples the
+        # champion too (the ``--mode full`` noise-resampling path). Both
+        # sides are persisted so a later fast round / structure can reuse
+        # them.
         parent_losses, child_losses = await _run_board_units_full(
             adapter=adapter,
             parent_gen=parent_gen,
@@ -2417,6 +2460,7 @@ async def run_tournament(
             workspace_root=workspace_root,
             epoch_id=epoch_id,
             force_fresh=True,
+            parent_force_fresh=champion_force_fresh,
         )
     finally:
         if rt is not None:
@@ -2863,14 +2907,33 @@ async def _run_unit_cache_first(
         side=side,
         match_id=match_id,
     )
-    _persist_unit_loss(
-        workspace_root=workspace_root,
-        epoch_id=epoch_id,
-        generation_id=generation.id,
-        entry_id=entry.id,
-        replicate_index=replicate_index,
-        loss=loss,
-    )
+    # Do NOT cache an INFRA abort (a parent/supervisor kill or a worker
+    # crash). Persisting its worst-case loss would make it a permanent cache
+    # HIT for the rest of the epoch, poisoning this unit's score off a single
+    # transient blip — only ``--mode full`` would ever re-attempt it. A
+    # genuine wall-clock-budget exhaustion IS cached (re-running re-hits the
+    # same budget), and a cleanly-reduced run (no abort_cause) always is.
+    # Skipping the persist leaves the next need a correct MISS, so re-running
+    # re-attempts the unit. The provenance still counts it as a fresh (run,
+    # not reused) evaluation so the journal's fast/full accounting is honest.
+    if is_infra_abort_cause(loss.abort_cause):
+        log.info(
+            "run %s/%s r%d aborted by infra (%s); NOT caching — re-running "
+            "will re-attempt the unit",
+            generation.id,
+            entry.id,
+            replicate_index,
+            loss.abort_cause,
+        )
+    else:
+        _persist_unit_loss(
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            generation_id=generation.id,
+            entry_id=entry.id,
+            replicate_index=replicate_index,
+            loss=loss,
+        )
     _record_provenance(provenance, generation.id, cached=False)
     return loss
 
