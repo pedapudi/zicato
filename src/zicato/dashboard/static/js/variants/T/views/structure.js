@@ -434,7 +434,24 @@ export function resolveNonGauntletSt(opts) {
       r && r.pending && r.live_progress && typeof r.live_progress === 'object'
       && Object.keys(r.live_progress).length > 0));
   };
-  if (liveSt && (liveSt.live || hasStreamingRacingRung(liveSt))) return { st: liveSt, source: 'live' };
+  // Adopt the live model only when it actually has bracket CONTENT to show (a
+  // committed/in-flight match, or a streaming racing rung) — OR when there is
+  // no settled record to fall back to (the FIRST round's own proposing, where
+  // an empty "being seeded" ladder IS the correct live state). This preserves a
+  // just-SETTLED round's bracket when the NEXT round has only begun proposing
+  // (an empty active-tournament envelope, phase="proposing", rounds: []),
+  // instead of letting that empty envelope overwrite the prior round's results
+  // with "being seeded" (the round-N "stuck on seeding" regression / issue #16).
+  const liveHasContent = (s) => {
+    if (!s) return false;
+    if (hasStreamingRacingRung(s)) return true;
+    return (Array.isArray(s.rounds) ? s.rounds : [])
+      .some((r) => r && Array.isArray(r.matches) && r.matches.length > 0);
+  };
+  if (liveSt && (liveSt.live || hasStreamingRacingRung(liveSt))
+      && (liveHasContent(liveSt) || !o.completedRecord)) {
+    return { st: liveSt, source: 'live' };
+  }
 
   // (2) RACING — reconstruct the rung/gate ladder from the per-challenger records
   // on the bracket (the aggregate field record carries `rounds: []` by design).

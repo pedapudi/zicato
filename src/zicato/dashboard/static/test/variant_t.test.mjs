@@ -2876,6 +2876,45 @@ test('REGRESSION (view-divergence): the EPOCH racing model CONVERGES (digest-equ
   assert(m && m.hasRungs && m.rungs.length >= 2, 'the shared racing model carries the rungs');
 });
 
+// ---- REGRESSION (round-N "stuck on seeding"): when the NEXT round has only
+// begun PROPOSING — an empty live envelope (non-terminal phase, rounds:[]) —
+// the resolver must PRESERVE the just-SETTLED prior round's bracket rather than
+// let the empty envelope overwrite it with a "being seeded" ladder. The live
+// envelope is adopted only when it carries real content, OR when there is no
+// settled record (the first round's own proposing).
+test('REGRESSION (stuck-on-seeding): an EMPTY live proposing envelope does NOT overwrite a SETTLED prior round; with no record it still shows live', () => {
+  const liveProposing = {
+    epoch_id: EPOCH_ID, structure: 'racing', phase: 'proposing',
+    structure_params: { board_fraction: 0.5, eta: 2, field_size: 4 },
+    competitors: [
+      { generation_id: 'v0', seed: 1, role: 'champion' },
+      { generation_id: 'v5', seed: 2, role: 'challenger' },
+    ],
+    rounds: [], standings: [], field_status: [],
+  };
+  const settled = STRUCT.normalizeStructure({
+    structure: 'racing', source: 'record',
+    competitors: [{ generation_id: 'v0', seed: 1 }, { generation_id: 'v1', seed: 2 }],
+    rounds: [{ stage_index: 0, label: 'Rung 0', matches: [{ match_id: 'rung0_m0', competitors: ['v0', 'v1'], survivors: ['v1'], cut: [] }] }],
+    standings: [{ generation_id: 'v1', rank: 1, scalar: 1.0 }],
+  }, false);
+
+  const withRecord = STRUCT.resolveNonGauntletSt({
+    structure: 'racing', bracket: {}, epochId: EPOCH_ID,
+    liveRaw: liveProposing, heartbeat: { phase: 'proposing', epoch_id: EPOCH_ID },
+    activeRuns: [], completedRecord: settled,
+  });
+  assert(withRecord.source !== 'live', `the empty live envelope is rejected; settled round preserved (got source=${withRecord.source})`);
+  assert(withRecord.st && (withRecord.st.rounds || []).some((r) => (r.matches || []).length), 'the preserved record carries the settled match');
+
+  const firstRound = STRUCT.resolveNonGauntletSt({
+    structure: 'racing', bracket: {}, epochId: EPOCH_ID,
+    liveRaw: liveProposing, heartbeat: { phase: 'proposing', epoch_id: EPOCH_ID },
+    activeRuns: [], completedRecord: null,
+  });
+  assert(firstRound.source === 'live', `first-round proposing still shows the live being-seeded state (got source=${firstRound.source})`);
+});
+
 test('REGRESSION (view-divergence): the EPOCH swiss + single_elim overviews build a NON-EMPTY model SETTLED (resolver completed-record fallback)', async () => {
   // SWISS settled: the per-tournament record carries the rounds; the epoch
   // overview must build the swiss bump/bars from it (not an empty strip).
