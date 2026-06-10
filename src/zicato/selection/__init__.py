@@ -13,11 +13,26 @@ See ``docs/design/TOURNAMENT-STRUCTURES.md`` and
 from __future__ import annotations
 
 from zicato.selection.driver import resolve_tournament
+from zicato.selection.rating import (
+    fit_bradley_terry,
+    prob_stronger,
+    theta_rank,
+)
 from zicato.selection.registry import (
     STRATEGY_REGISTRY,
     STRUCTURE_DEFAULT_REPLICATES,
     default_replicates_for,
     make_strategy,
+)
+from zicato.selection.resolve import (
+    Duel,
+    MarginMatrix,
+    build_matrix,
+    condorcet_check,
+    copeland_order,
+    ranked_pairs,
+    resolve_leader,
+    smith_set,
 )
 from zicato.selection.strategy import (
     Contestant,
@@ -46,4 +61,17 @@ __all__ = [
     "STRUCTURE_DEFAULT_REPLICATES",
     "default_replicates_for",
     "resolve_tournament",
+    # Opt-in rating layer (Bradley--Terry).
+    "fit_bradley_terry",
+    "prob_stronger",
+    "theta_rank",
+    # Opt-in winner-resolution layer.
+    "Duel",
+    "MarginMatrix",
+    "build_matrix",
+    "condorcet_check",
+    "smith_set",
+    "ranked_pairs",
+    "copeland_order",
+    "resolve_leader",
 ]
