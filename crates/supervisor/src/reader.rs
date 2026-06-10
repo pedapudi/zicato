@@ -491,6 +491,30 @@ mod tests {
     }
 
     #[test]
+    fn active_run_parses_python_pid_start_time_float() {
+        // Cross-language contract: the Python worker serializes the pid
+        // start time as a JSON float (the /proc tick count, e.g.
+        // `116371304.0`). The Rust `ActiveRun.pid_start_time` must accept
+        // that shape; a record without the field stays `None` (legacy).
+        let (_t, p) = make_ws();
+        let dir = p.active_runs_dir();
+        std::fs::write(
+            dir.join("withstart.json"),
+            r#"{"run_id":"withstart","pid":42,"pid_start_time":116371304.0}"#,
+        )
+        .unwrap();
+        std::fs::write(dir.join("legacy.json"), r#"{"run_id":"legacy","pid":7}"#).unwrap();
+        let runs = read_active_runs(&p);
+        assert_eq!(runs.len(), 2);
+        // legacy (no field) → None
+        assert_eq!(runs[0].run_id, "legacy");
+        assert_eq!(runs[0].pid_start_time, None);
+        // withstart → the float parses through intact
+        assert_eq!(runs[1].run_id, "withstart");
+        assert_eq!(runs[1].pid_start_time, Some(116_371_304.0));
+    }
+
+    #[test]
     fn snapshot_assembles_full_payload() {
         let (_t, p) = make_ws();
         std::fs::write(p.heartbeat(), r#"{"pid":1,"phase":"running"}"#).unwrap();
