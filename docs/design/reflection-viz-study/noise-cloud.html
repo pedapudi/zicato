@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="monokai">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zicato — noise cloud · reflection-viz study</title>
+<style>
+  /* ---- Console THEME tokens: the full 16-theme colour-scheme set, ported 1:1
+       from src/.../variants/T/console4.css --v2-* roles and mapped onto this
+       study's token names. The picker sets html[data-theme]; each block fully
+       restyles the page. --zicato-accent ← --v2-accent. Default: monokai. ---- */
+  html[data-theme="monokai"] {
+    --paper:#1e1f1c; --panel:#272822; --panel-2:#23241f;
+    --ink:#f8f8f2; --ink-soft:#c9cabf; --ink-faint:#8f908a;
+    --rule:#3a3b34; --rule-soft:#2f302a;
+    --good:#a6e22e; --good-soft:#2c361a; --bad:#f92672; --caution:#e6db74;
+    --accent:#66d9ef; --accent-2:#66d9ef; --zicato-accent:#66d9ef;
+  }
+  html[data-theme="solarized-dark"] {
+    --paper:#04222B; --panel:#0A2D38; --panel-2:#0A2730;
+    --ink:#93A1A1; --ink-soft:#839496; --ink-faint:#5E7079;
+    --rule:#0E3540; --rule-soft:#0B2E39;
+    --good:#8BB80E; --good-soft:#1C3320; --bad:#E0483C; --caution:#C4920A;
+    --accent:#2AA198; --accent-2:#2AA198; --zicato-accent:#2AA198;
+  }
+  html[data-theme="solarized-light"] {
+    --paper:#FDF6E3; --panel:#FBF1D6; --panel-2:#F2E9CE;
+    --ink:#586E75; --ink-soft:#657B83; --ink-faint:#93A1A1;
+    --rule:#E7DCBE; --rule-soft:#F0E7CC;
+    --good:#6B9B0B; --good-soft:#E3ECCB; --bad:#DC322F; --caution:#B58900;
+    --accent:#268BD2; --accent-2:#268BD2; --zicato-accent:#268BD2;
+  }
+  html[data-theme="google-light"] {
+    --paper:#FFFFFF; --panel:#F4F4F4; --panel-2:#F8F8F8;
+    --ink:#474A4E; --ink-soft:#5F6368; --ink-faint:#9FA1A4;
+    --rule:#E2E3E4; --rule-soft:#F1F1F1;
+    --good:#34A853; --good-soft:#D2ECD9; --bad:#EA4335; --caution:#C99700;
+    --accent:#1B9CB8; --accent-2:#1B9CB8; --zicato-accent:#1B9CB8;
+  }
+  html[data-theme="google-dark"] {
+    --paper:#202124; --panel:#2C2D30; --panel-2:#28292C;
+    --ink:#FFFFFF; --ink-soft:#E8EAED; --ink-faint:#989A9D;
+    --rule:#444548; --rule-soft:#323336;
+    --good:#34A853; --good-soft:#243F2E; --bad:#EA4335; --caution:#FBBC05;
+    --accent:#24C1E0; --accent-2:#24C1E0; --zicato-accent:#24C1E0;
+  }
+  html[data-theme="lunaria-light"] {
+    --paper:#EBE4E1; --panel:#E2DCD9; --panel-2:#E6DFDC;
+    --ink:#363434; --ink-soft:#484646; --ink-faint:#898584;
+    --rule:#CEC8C5; --rule-soft:#DCD6D3;
+    --good:#497D46; --good-soft:#C7CDBF; --bad:#783C1F; --caution:#8F750B;
+    --accent:#3778A9; --accent-2:#3778A9; --zicato-accent:#3778A9;
+  }
+  html[data-theme="lunaria-eclipse"] {
+    --paper:#323F46; --panel:#3B484F; --panel-2:#38454C;
+    --ink:#DFE2ED; --ink-soft:#C9CDD7; --ink-faint:#8D949D;
+    --rule:#4D5960; --rule-soft:#404C53;
+    --good:#BEDBC1; --good-soft:#516161; --bad:#BA9088; --caution:#F1DFB4;
+    --accent:#C8429F; --accent-2:#C8429F; --zicato-accent:#C8429F;
+  }
+  html[data-theme="belafonte-day"] {
+    --paper:#D5CCBA; --panel:#CCC3B2; --panel-2:#D0C6B5;
+    --ink:#34292D; --ink-soft:#45373C; --ink-faint:#7F736E;
+    --rule:#BBB1A3; --rule-soft:#C8BFAF;
+    --good:#6E6A4E; --good-soft:#C3BCA7; --bad:#BE100E; --caution:#B57A1E;
+    --accent:#426A79; --accent-2:#426A79; --zicato-accent:#426A79;
+  }
+  html[data-theme="belafonte-night"] {
+    --paper:#20111B; --panel:#271821; --panel-2:#25161F;
+    --ink:#D5CCBA; --ink-soft:#968C83; --ink-faint:#675B59;
+    --rule:#35272E; --rule-soft:#2B1C24;
+    --good:#A6A07A; --good-soft:#362A2B; --bad:#D6403E; --caution:#EAA549;
+    --accent:#6F8E97; --accent-2:#6F8E97; --zicato-accent:#6F8E97;
+  }
+  html[data-theme="paper"] {
+    --paper:#F2EEDE; --panel:#E6E2D3; --panel-2:#E8E4D5;
+    --ink:#1A1A1A; --ink-soft:#33312B; --ink-faint:#85837A;
+    --rule:#C6C3B6; --rule-soft:#DCD9CA;
+    --good:#216609; --good-soft:#CCD6B8; --bad:#CC3E28; --caution:#B58900;
+    --accent:#1E6FCC; --accent-2:#1E6FCC; --zicato-accent:#1E6FCC;
+  }
+  html[data-theme="zenburn"] {
+    --paper:#3A3A3A; --panel:#424241; --panel-2:#404040;
+    --ink:#DCDCCC; --ink-soft:#C5C5B8; --ink-faint:#83837C;
+    --rule:#575754; --rule-soft:#494947;
+    --good:#8FB28F; --good-soft:#2E3A2E; --bad:#CC9393; --caution:#FFD7A7;
+    --accent:#8CD0D3; --accent-2:#8CD0D3; --zicato-accent:#8CD0D3;
+  }
+  html[data-theme="selenized-black"] {
+    --paper:#181818; --panel:#202020; --panel-2:#1E1E1E;
+    --ink:#DEDEDE; --ink-soft:#B9B9B9; --ink-faint:#606060;
+    --rule:#353535; --rule-soft:#262626;
+    --good:#83C746; --good-soft:#243218; --bad:#FF5E56; --caution:#EFC541;
+    --accent:#56D8C9; --accent-2:#56D8C9; --zicato-accent:#56D8C9;
+  }
+  html[data-theme="relaxed"] {
+    --paper:#353A44; --panel:#3D424B; --panel-2:#3C404A;
+    --ink:#F7F7F7; --ink-soft:#D9D9D9; --ink-faint:#7F8287;
+    --rule:#53575F; --rule-soft:#444851;
+    --good:#A0AC77; --good-soft:#353D2E; --bad:#BC5653; --caution:#EBC17A;
+    --accent:#7EAAC7; --accent-2:#7EAAC7; --zicato-accent:#7EAAC7;
+  }
+  html[data-theme="espresso"] {
+    --paper:#323232; --panel:#3A3A3A; --panel-2:#383838;
+    --ink:#FFFFFF; --ink-soft:#D9D9D9; --ink-faint:#8A8A8A;
+    --rule:#4C4C4C; --rule-soft:#3E3E3E;
+    --good:#A5C261; --good-soft:#353D24; --bad:#D25252; --caution:#FFC66D;
+    --accent:#6C99BB; --accent-2:#6C99BB; --zicato-accent:#6C99BB;
+  }
+  html[data-theme="dracula"] {
+    --paper:#282A36; --panel:#343746; --panel-2:#2E303D;
+    --ink:#F8F8F2; --ink-soft:#D4D4CF; --ink-faint:#6272A4;
+    --rule:#44475A; --rule-soft:#353848;
+    --good:#50FA7B; --good-soft:#213A2A; --bad:#FF5555; --caution:#F1FA8C;
+    --accent:#BD93F9; --accent-2:#BD93F9; --zicato-accent:#BD93F9;
+  }
+  html[data-theme="ubuntu"] {
+    --paper:#300A24; --panel:#3D1530; --panel-2:#371129;
+    --ink:#EEEEEC; --ink-soft:#CBC3C9; --ink-faint:#8A7383;
+    --rule:#4B2640; --rule-soft:#3E1A32;
+    --good:#8AE234; --good-soft:#2E3320; --bad:#CC0000; --caution:#FCE94F;
+    --accent:#34E2E2; --accent-2:#34E2E2; --zicato-accent:#34E2E2;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 14px;
+    line-height: 1.5;
+    transition: background .18s, color .18s;
+    padding: 0 0 80px;
+  }
+
+  header {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; gap: 16px;
+    padding: 14px 24px;
+    background: color-mix(in srgb, var(--paper) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--rule);
+  }
+  header h1 { font-size: 15px; font-weight: 700; margin: 0; letter-spacing: .02em; }
+  header .spacer { flex: 1; }
+
+  main { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+  section { margin: 34px 0; }
+  h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .12em;
+    color: var(--ink-faint); border-bottom: 1px solid var(--rule);
+    padding-bottom: 8px; margin-bottom: 6px;
+  }
+  .lede { color: var(--ink-soft); font-size: 13px; margin: 4px 0 20px; max-width: 84ch; }
+  .lede code { background: var(--panel); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .mono { font-family: inherit; }
+  .good { color: var(--good); }
+  .bad  { color: var(--bad); }
+  .faint{ color: var(--ink-faint); }
+
+  /* sample fact strip */
+  .sample {
+    border: 1px solid var(--rule); border-radius: 10px; background: var(--panel);
+    padding: 16px 20px; margin: 0 0 12px;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap: 14px 24px;
+  }
+  .sample .kv { display: flex; flex-direction: column; gap: 2px; }
+  .sample .kv .k { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); }
+  .sample .kv .v { font-size: 15px; color: var(--ink); }
+  .sample .kv .v b { font-weight: 700; }
+
+  /* option card */
+  .opt {
+    border: 1px solid var(--rule); border-radius: 12px; background: var(--panel);
+    padding: 0; margin-bottom: 22px; overflow: hidden;
+  }
+  .opt > .opt-head {
+    display: flex; align-items: baseline; gap: 12px;
+    padding: 14px 20px; border-bottom: 1px solid var(--rule); background: var(--panel-2);
+  }
+  .opt-head .num {
+    font-size: 11px; font-weight: 700; letter-spacing: .1em; color: var(--paper);
+    background: var(--accent); border-radius: 5px; padding: 3px 9px;
+  }
+  .opt-head .name { font-size: 14px; font-weight: 700; color: var(--ink); }
+  .opt-head .why { font-size: 12px; color: var(--ink-soft); flex: 1; }
+  .views {
+    display: grid; grid-template-columns: 1fr; gap: 0;
+  }
+  .view { padding: 18px 20px; border-bottom: 1px dashed var(--rule-soft); }
+  .view:last-child { border-bottom: 0; }
+  .view-cap {
+    font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--ink-faint); margin-bottom: 12px; display: flex; align-items: center; gap: 8px;
+  }
+  .view-cap .tag {
+    font-size: 9px; padding: 1px 6px; border-radius: 999px;
+    border: 1px solid var(--rule); color: var(--ink-faint);
+  }
+  figure { margin: 0; width: 100%; }
+  figure svg { display: block; width: 100%; height: auto; }
+  .fig-narrow { max-width: 620px; }
+  .fig-mid { max-width: 760px; }
+
+  /* small inline legend under figures */
+  .leg { display: flex; gap: 16px; flex-wrap: wrap; font-size: 10.5px; color: var(--ink-faint); margin-top: 10px; }
+  .leg span { display: inline-flex; align-items: center; gap: 6px; }
+  .leg i { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
+  .leg i.g { background: var(--good); } .leg i.r { background: var(--bad); }
+  .leg i.a { background: var(--accent); } .leg i.f { background: var(--ink-faint); }
+
+  svg text { font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; }
+
+  footer { max-width: 1180px; margin: 40px auto 0; padding: 18px 24px; color: var(--ink-faint); font-size: 11px; border-top: 1px solid var(--rule); }
+
+  /* ---- the COLOUR SWATCH DROPDOWN (16 Console themes) — mirrors .dt-cd ---- */
+  .theme-pick-label { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); }
+  .dt-cd { position: relative; display: inline-flex; }
+  .dt-cd-trigger { display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--rule); border-radius: 5px; padding: 5px 9px;
+    background: var(--panel); color: var(--ink-soft); cursor: pointer;
+    font: inherit; font-size: 11px; transition: border-color .15s, color .15s; }
+  .dt-cd-trigger:hover { color: var(--ink); border-color: var(--accent); }
+  .dt-cd-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .dt-cd-name { color: var(--ink); white-space: nowrap; }
+  .dt-cd-caret { color: var(--ink-faint); font-size: 8px; transition: transform .15s; }
+  .dt-cd.dt-cd-open .dt-cd-caret { transform: rotate(180deg); }
+  .dt-swatch-strip { display: inline-flex; border-radius: 3px; overflow: hidden; border: 1px solid var(--rule); }
+  .dt-swatch { display: inline-block; width: 11px; height: 13px; }
+  .dt-swatch-strip-sm .dt-swatch { width: 9px; height: 11px; }
+  .dt-cd-list { display: none; position: absolute; top: calc(100% + 5px); right: 0; z-index: 60;
+    min-width: 200px; max-height: 70vh; overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--rule); border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.28); padding: 4px; }
+  .dt-cd.dt-cd-open .dt-cd-list { display: block; }
+  .dt-cd-option { display: flex; align-items: center; gap: 8px; padding: 5px 7px; border-radius: 4px;
+    cursor: pointer; color: var(--ink-soft); transition: background .12s, color .12s; }
+  .dt-cd-option .dt-cd-name { font-size: 10.5px; }
+  .dt-cd-option:hover, .dt-cd-option.dt-cd-active { background: var(--rule-soft); color: var(--ink); }
+  .dt-cd-option[aria-selected="true"] .dt-cd-name { color: var(--accent); }
+</style>
+
+</head>
+<body>
+<header>
+  <h1>zicato — noise cloud · reflection-viz study</h1>
+  <span class="spacer"></span>
+  <span class="theme-pick-label">theme</span>
+  <span id="theme-picker"></span>
+</header>
+
+<main>
+  <p class="lede" style="margin-top:24px">
+The <b>noise cloud</b> is the reliability headline. Run a fixed champion <b>K times</b>; the run-to-run spread of the
+scalar IS the measurement noise — the noise floor σ that <code>promote_margin</code> must clear. The figure draws the
+distribution as a violin and then draws the <b>promote_margin band INSIDE that noise</b>: if the margin sits within the
+cloud, you are <b>promoting on noise</b> — a challenger "wins" by a margin smaller than the instrument's own jitter.
+The companion stat is the <b>decision-flip rate</b>: run the whole tournament twice, measure P(the gate decision
+flips). Two variants: the violin with the margin overlay, and a flip-rate ledger.
+</p>
+  <p style="color:var(--ink-faint);font-size:12px;margin:8px 0 0;line-height:1.55">
+    Part of the <b>reflection / "Instrument lens"</b> design study — mockups for
+    <a href="../BOARD-REFLECTION.md" style="color:inherit;text-decoration:underline">board-reflection</a>
+    (Measurement-System-Analysis for the evaluation contract). Companion to the
+    board-reflection design note, not a TODO. <a href="index.html" style="color:inherit;text-decoration:underline">← study index</a>.
+  </p>
+
+<h2>The sample · K=24 champion self-replications</h2>
+<div class="sample" id="sample-strip"></div>
+<p class="lede" style="margin-top:0">
+  The same champion run 24 times. Noise floor σ = <b>0.018</b>; the configured <code>promote_margin = 0.010</code> sits
+  <b style="color:var(--bad)">inside</b> the noise (margin &lt; σ). Re-running the whole tournament flips the gate
+  decision <b style="color:var(--bad)">31%</b> of the time. The recommendation: raise the margin to ≈ <b>2–3× σ</b>
+  (0.036–0.054). Lower scalar = better.
+</p>
+
+<div id='options'></div>
+</main>
+
+<footer>
+  Standalone reflection-viz study (noise-cloud.html) · self-contained (inline CSS / SVG / sample data), no network or build deps ·
+  the instrument lens: reflection treats <code>board + scoring + judges + gate</code> as a measurement instrument and audits it.
+  Sample transcripts are generic (neutral assistant / user). Tokens ported 1:1 from the live Console <code>--v2-*</code> roles.
+</footer>
+
+<script>
+
+/* ---------- tiny svg helpers (theme-token fills; recolour live) ---------- */
+const NS = "http://www.w3.org/2000/svg";
+const VE = 'vector-effect="non-scaling-stroke"';
+function fmt(n, d=3){ return (n>=0?"+":"") + Number(n).toFixed(d); }
+function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+const C = {
+  ink: "var(--ink)", soft: "var(--ink-soft)", faint: "var(--ink-faint)",
+  good: "var(--good)", goodSoft: "var(--good-soft)", bad: "var(--bad)",
+  caution: "var(--caution)", accent: "var(--accent)",
+  rule: "var(--rule)", ruleSoft: "var(--rule-soft)",
+  panel: "var(--panel)", panel2: "var(--panel-2)", paper: "var(--paper)",
+};
+
+
+/* ============================================================
+   SAMPLE — K replicate scalars of one fixed champion + the margin + flips.
+   ============================================================ */
+const S = {
+  K: 24,
+  replicates: [
+    0.339,0.351,0.327,0.344,0.318,0.362,0.341,0.333,0.356,0.329,
+    0.348,0.337,0.322,0.359,0.345,0.331,0.353,0.340,0.326,0.347,
+    0.335,0.358,0.330,0.343,
+  ],
+  promote_margin: 0.010,
+  // tournament run twice → per-matchup decision agreement
+  decision_flips: { trials: 16, flipped: 5 },   // 31%
+};
+function mean(a){ return a.reduce((x,y)=>x+y,0)/a.length; }
+function sd(a){ const m=mean(a); return Math.sqrt(mean(a.map(x=>(x-m)*(x-m)))); }
+S.mu = mean(S.replicates);
+S.sigma = sd(S.replicates);
+S.flipRate = S.decision_flips.flipped / S.decision_flips.trials;
+S.recMargin = [2*S.sigma, 3*S.sigma];
+S.onNoise = S.promote_margin < S.sigma;
+
+document.getElementById('sample-strip').innerHTML = `
+  <div class="kv"><span class="k">replicates</span><span class="v mono">K = ${S.K}</span></div>
+  <div class="kv"><span class="k">μ scalar</span><span class="v mono">${S.mu.toFixed(3)}</span></div>
+  <div class="kv"><span class="k">noise σ</span><span class="v mono"><b>${S.sigma.toFixed(3)}</b></span></div>
+  <div class="kv"><span class="k">promote_margin</span><span class="v"><b class="${S.onNoise?'bad':'good'}">${S.promote_margin.toFixed(3)}</b> <span class="faint">${S.onNoise?'< σ (on noise)':'≥ σ'}</span></span></div>
+  <div class="kv"><span class="k">decision-flip</span><span class="v"><b class="bad">${(S.flipRate*100).toFixed(0)}%</b> <span class="faint">${S.decision_flips.flipped}/${S.decision_flips.trials}</span></span></div>
+  <div class="kv"><span class="k">recommend</span><span class="v mono good">${S.recMargin[0].toFixed(3)}–${S.recMargin[1].toFixed(3)}</span></div>
+`;
+
+/* gaussian-ish kernel for the violin from the samples */
+function kde(samples, xs, bw){
+  return xs.map(x => {
+    let s=0; samples.forEach(v=>{ const u=(x-v)/bw; s+=Math.exp(-0.5*u*u); });
+    return s/(samples.length*bw*Math.sqrt(2*Math.PI));
+  });
+}
+
+/* ============================================================
+   VARIANT 1 — VIOLIN WITH THE MARGIN DRAWN INSIDE THE NOISE
+   A horizontal violin of the replicate distribution; μ line; ±σ band; and the
+   promote_margin drawn as a band centred on μ. When the margin band sits WITHIN
+   the σ band, it's shaded red ("promoting on noise"); the recommended 2–3σ
+   margin is ghosted alongside to show where it SHOULD reach.
+   ============================================================ */
+function variant1(){
+  const W=600, H=300, padL=46, padR=20, padT=26, padB=46;
+  const x0=padL, x1=W-padR, cy=(padT+H-padB)/2;
+  const lo=0.30, hi=0.38;
+  const X = v => x0 + (v-lo)/(hi-lo)*(x1-x0);
+  const xs=[]; for(let v=lo; v<=hi; v+=(hi-lo)/120) xs.push(v);
+  const dens = kde(S.replicates, xs, 0.012);
+  const maxD = Math.max(...dens);
+  const amp = (cy-padT-6);
+  const top = xs.map((v,i)=>`${X(v)},${cy - (dens[i]/maxD)*amp}`).join(' ');
+  const bot = xs.map((v,i)=>`${X(v)},${cy + (dens[i]/maxD)*amp}`).slice().reverse().join(' ');
+  const sigmaBand = [S.mu-S.sigma, S.mu+S.sigma];
+  const marginBand = [S.mu-S.promote_margin, S.mu+S.promote_margin];
+  const recBand = [S.mu-S.recMargin[0], S.mu+S.recMargin[0]];   // 2σ inner edge
+  return `<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="noise violin with margin">
+    <!-- violin -->
+    <polygon points="${top} ${bot}" fill="${C.accent}" opacity="0.16" stroke="${C.accent}" stroke-opacity="0.5" ${VE}/>
+    <!-- sigma band -->
+    <rect x="${X(sigmaBand[0])}" y="${padT}" width="${X(sigmaBand[1])-X(sigmaBand[0])}" height="${H-padB-padT}" fill="${C.faint}" opacity="0.08"/>
+    <line x1="${X(sigmaBand[0])}" y1="${padT}" x2="${X(sigmaBand[0])}" y2="${H-padB}" stroke="${C.faint}" stroke-dasharray="2 3" ${VE}/>
+    <line x1="${X(sigmaBand[1])}" y1="${padT}" x2="${X(sigmaBand[1])}" y2="${H-padB}" stroke="${C.faint}" stroke-dasharray="2 3" ${VE}/>
+    <text x="${X(sigmaBand[1])}" y="${padT-4}" fill="${C.faint}" font-size="8" text-anchor="middle">μ ± σ</text>
+    <!-- mu line -->
+    <line x1="${X(S.mu)}" y1="${padT-2}" x2="${X(S.mu)}" y2="${H-padB+2}" stroke="${C.ink}" ${VE}/>
+    <text x="${X(S.mu)}" y="${padT-14}" fill="${C.ink}" font-size="9" text-anchor="middle">μ ${S.mu.toFixed(3)}</text>
+    <!-- promote_margin band — INSIDE the noise → red -->
+    <rect x="${X(marginBand[0])}" y="${cy-22}" width="${X(marginBand[1])-X(marginBand[0])}" height="44" fill="${C.bad}" opacity="0.26" stroke="${C.bad}" ${VE}/>
+    <text x="${X(S.mu)}" y="${cy+38}" fill="${C.bad}" font-size="9" font-weight="700" text-anchor="middle">promote_margin ±${S.promote_margin.toFixed(3)} — inside σ ⇒ PROMOTING ON NOISE</text>
+    <!-- recommended 2σ edges ghosted -->
+    <line x1="${X(recBand[0])}" y1="${cy-30}" x2="${X(recBand[0])}" y2="${cy+30}" stroke="${C.good}" stroke-dasharray="4 3" ${VE}/>
+    <line x1="${X(recBand[1])}" y1="${cy-30}" x2="${X(recBand[1])}" y2="${cy+30}" stroke="${C.good}" stroke-dasharray="4 3" ${VE}/>
+    <text x="${X(recBand[1])}" y="${cy-34}" fill="${C.good}" font-size="8" text-anchor="middle">recommended 2σ edge</text>
+    <!-- replicate ticks -->
+    ${S.replicates.map(v=>`<circle cx="${X(v)}" cy="${cy}" r="2" fill="${C.ink}" opacity="0.5"/>`).join('')}
+    <!-- axis -->
+    <line x1="${x0}" y1="${H-padB}" x2="${x1}" y2="${H-padB}" stroke="${C.rule}" ${VE}/>
+    ${[0.30,0.32,0.34,0.36,0.38].map(t=>`<text x="${X(t)}" y="${H-padB+14}" fill="${C.faint}" font-size="8" text-anchor="middle">${t.toFixed(2)}</text>`).join('')}
+    <text x="${(x0+x1)/2}" y="${H-6}" fill="${C.soft}" font-size="9" text-anchor="middle">scalar (K=${S.K} replicates of the fixed champion) · lower = better</text>
+  </svg>
+  <div class="leg" style="margin-top:10px">
+    <span><i style="background:var(--accent);opacity:.4"></i> replicate density</span>
+    <span><i style="background:var(--faint);opacity:.4"></i> μ ± σ (noise floor)</span>
+    <span><i style="background:var(--bad)"></i> promote_margin (drawn inside the noise)</span>
+    <span><i style="border:1px dashed var(--good);background:transparent"></i> recommended 2σ</span>
+  </div>`;
+}
+
+/* ============================================================
+   VARIANT 2 — DECISION-FLIP LEDGER
+   Run the tournament twice; each matchup is a row with run-A decision vs run-B
+   decision; agreement = stable (quiet), disagreement = a FLIP (red). The
+   headline flip-rate sits atop. Makes "promoting on noise" concrete at the
+   decision level, not just the scalar level.
+   ============================================================ */
+function variant2(){
+  // synthesize per-matchup decisions consistent with a 31% flip rate
+  const M = [
+    ["gen-0042 v gen-0039","promote","promote"],
+    ["gen-0043 v gen-0042","hold","hold"],
+    ["gen-0044 v gen-0042","promote","hold"],     // FLIP
+    ["gen-0045 v gen-0044","hold","hold"],
+    ["gen-0046 v gen-0044","hold","promote"],      // FLIP
+    ["gen-0047 v gen-0044","promote","promote"],
+    ["gen-0048 v gen-0047","hold","hold"],
+    ["gen-0049 v gen-0047","hold","hold"],
+    ["gen-0050 v gen-0047","promote","hold"],      // FLIP
+    ["gen-0051 v gen-0050","hold","hold"],
+    ["gen-0052 v gen-0050","hold","promote"],      // FLIP
+    ["gen-0053 v gen-0052","promote","promote"],
+    ["gen-0054 v gen-0053","hold","hold"],
+    ["gen-0055 v gen-0053","hold","hold"],
+    ["gen-0056 v gen-0053","promote","hold"],      // FLIP
+    ["gen-0057 v gen-0056","hold","hold"],
+  ];
+  const W=600, padL=14, top=58, rowH=22;
+  const H = top + M.length*rowH + 14;
+  const cAx=300, cBx=400, gx=510;
+  const cell = (x,y,dec,flip)=>{
+    const col = dec==='promote'?C.good:C.faint;
+    return `<rect x="${x}" y="${y-9}" width="78" height="18" rx="4" fill="${col}" opacity="${dec==='promote'?0.22:0.12}" stroke="${flip?C.bad:col}" stroke-opacity="${flip?0.9:0.4}" ${VE}/>
+      <text x="${x+39}" y="${y+3}" fill="${col}" font-size="9" text-anchor="middle">${dec}</text>`;
+  };
+  const rows = M.map(([m,a,b],i)=>{
+    const y=top+i*rowH+rowH/2, flip=a!==b;
+    return `<text x="${padL}" y="${y+3}" fill="${flip?C.bad:C.soft}" font-size="9">${m}${flip?'  ⚡':''}</text>
+      ${cell(cAx,y,a,flip)}${cell(cBx,y,b,flip)}
+      <text x="${gx}" y="${y+3}" fill="${flip?C.bad:C.faint}" font-size="9" font-weight="${flip?700:400}">${flip?'FLIP':'stable'}</text>`;
+  }).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="decision flip ledger">
+    <text x="${padL}" y="20" fill="${C.ink}" font-size="13" font-weight="700">DECISION-FLIP RATE · <tspan fill="${C.bad}">${(S.flipRate*100).toFixed(0)}%</tspan> <tspan fill="${C.faint}" font-size="10" font-weight="400">(${S.decision_flips.flipped}/${S.decision_flips.trials} matchups flip when the tournament is re-run)</tspan></text>
+    <text x="${padL}" y="38" fill="${C.soft}" font-size="10">the same candidates, re-run; a flip means the gate verdict was inside the noise.</text>
+    <text x="${cAx+39}" y="${top-8}" fill="${C.faint}" font-size="8" text-anchor="middle">run A</text>
+    <text x="${cBx+39}" y="${top-8}" fill="${C.faint}" font-size="8" text-anchor="middle">run B</text>
+    ${rows}
+  </svg>`;
+}
+
+const VARIANTS = [
+  { n:"VARIANT 1", name:"Violin · margin inside the noise",
+    why:"Draw the replicate distribution as a violin, then draw promote_margin as a band centred on μ. When the margin lands within μ±σ it shades red — you are promoting on noise. The recommended 2σ edge is ghosted to show where the margin SHOULD reach.",
+    fn: variant1 },
+  { n:"VARIANT 2", name:"Decision-flip ledger",
+    why:"The same noise at the decision level: run the tournament twice and show every matchup's run-A vs run-B verdict. Flips are red. The headline flip-rate is the single integrated reliability number.",
+    fn: variant2 },
+];
+document.getElementById('options').innerHTML = VARIANTS.map(v=>`
+  <section class="opt">
+    <div class="opt-head"><span class="num">${v.n}</span><span class="name">${v.name}</span><span class="why">${v.why}</span></div>
+    <div class="views"><div class="view"><figure>${v.fn()}</figure></div></div>
+  </section>`).join('');
+
+
+/* ===== Console colour-scheme picker — 16 themes ported from variants/T ===== */
+const THEMES=[
+  ["monokai","monokai",["#1e1f1c","#272822","#f8f8f2","#a6e22e","#f92672","#66d9ef"]],
+  ["solarized-dark","solarized dark",["#04222B","#0A2D38","#93A1A1","#8BB80E","#E0483C","#2AA198"]],
+  ["solarized-light","solarized light",["#FDF6E3","#FBF1D6","#586E75","#6B9B0B","#DC322F","#268BD2"]],
+  ["google-light","google light",["#FFFFFF","#F4F4F4","#474A4E","#34A853","#EA4335","#1B9CB8"]],
+  ["google-dark","google dark",["#202124","#2C2D30","#FFFFFF","#34A853","#EA4335","#24C1E0"]],
+  ["lunaria-light","lunaria light",["#EBE4E1","#E2DCD9","#363434","#497D46","#783C1F","#3778A9"]],
+  ["lunaria-eclipse","lunaria eclipse",["#323F46","#3B484F","#DFE2ED","#BEDBC1","#BA9088","#C8429F"]],
+  ["belafonte-day","belafonte day",["#D5CCBA","#CCC3B2","#34292D","#6e6a4e","#BE100E","#426A79"]],
+  ["belafonte-night","belafonte night",["#20111B","#271821","#D5CCBA","#a6a07a","#d6403e","#6F8E97"]],
+  ["paper","paper",["#F2EEDE","#E6E2D3","#1A1A1A","#216609","#CC3E28","#1E6FCC"]],
+  ["zenburn","zenburn",["#3A3A3A","#424241","#DCDCCC","#8FB28F","#CC9393","#8CD0D3"]],
+  ["selenized-black","selenized black",["#181818","#202020","#DEDEDE","#83C746","#FF5E56","#56D8C9"]],
+  ["relaxed","relaxed",["#353A44","#3D424B","#F7F7F7","#A0AC77","#BC5653","#7EAAC7"]],
+  ["espresso","espresso",["#323232","#3A3A3A","#FFFFFF","#A5C261","#D25252","#6C99BB"]],
+  ["dracula","dracula",["#282A36","#343746","#F8F8F2","#50FA7B","#FF5555","#BD93F9"]],
+  ["ubuntu","ubuntu",["#300A24","#3D1530","#EEEEEC","#8AE234","#CC0000","#34E2E2"]],
+];
+const DEFAULT_THEME = "monokai";
+const THEME_IDS = THEMES.map(t => t[0]);
+function strip(swatches, sm) {
+  return `<span class="dt-swatch-strip${sm?' dt-swatch-strip-sm':''}" aria-hidden="true">` +
+    swatches.map(c => `<span class="dt-swatch" style="background:${c}"></span>`).join('') + `</span>`;
+}
+function mountThemePicker(hostId) {
+  const host = document.getElementById(hostId);
+  let value = DEFAULT_THEME, open = false, activeIdx = THEME_IDS.indexOf(value);
+  const byId = new Map(THEMES.map(t => [t[0], t]));
+  host.innerHTML =
+    `<div class="dt-cd" role="group" aria-label="Colour theme">
+      <button class="dt-cd-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="Colour theme" title="Colour theme">
+        <span class="dt-cd-trig-strip"></span><span class="dt-cd-name dt-cd-trig-name"></span>
+        <span class="dt-cd-caret" aria-hidden="true">▾</span>
+      </button>
+      <div class="dt-cd-list" role="listbox" aria-label="Colour theme">
+        ${THEMES.map(([id,label,sw]) =>
+          `<div class="dt-cd-option" role="option" data-theme="${id}" aria-selected="${id===value}" tabindex="-1" title="colour: ${label}">
+             ${strip(sw)}<span class="dt-cd-name">${label}</span>
+           </div>`).join('')}
+      </div>
+    </div>`;
+  const cd = host.querySelector('.dt-cd');
+  const trigger = host.querySelector('.dt-cd-trigger');
+  const trigStrip = host.querySelector('.dt-cd-trig-strip');
+  const trigName = host.querySelector('.dt-cd-trig-name');
+  const list = host.querySelector('.dt-cd-list');
+  const options = Array.from(host.querySelectorAll('.dt-cd-option'));
+  function applyTheme(id) {
+    value = THEME_IDS.includes(id) ? id : DEFAULT_THEME;
+    document.documentElement.setAttribute('data-theme', value);
+    const def = byId.get(value);
+    trigStrip.className = 'dt-cd-trig-strip dt-swatch-strip dt-swatch-strip-sm';
+    trigStrip.setAttribute('aria-hidden', 'true');
+    trigStrip.innerHTML = def[2].map(c => `<span class="dt-swatch" style="background:${c}"></span>`).join('');
+    trigName.textContent = def[1];
+    options.forEach(o => o.setAttribute('aria-selected', String(o.getAttribute('data-theme') === value)));
+  }
+  function setActive(i) {
+    activeIdx = (i + options.length) % options.length;
+    options.forEach((o,k) => o.classList.toggle('dt-cd-active', k === activeIdx));
+  }
+  function setOpen(next) {
+    open = next; cd.classList.toggle('dt-cd-open', open);
+    trigger.setAttribute('aria-expanded', String(open));
+    if (open) setActive(Math.max(0, THEME_IDS.indexOf(value)));
+  }
+  function choose(id) { applyTheme(id); setOpen(false); }
+  options.forEach(o => o.addEventListener('click', () => choose(o.getAttribute('data-theme'))));
+  trigger.addEventListener('click', () => setOpen(!open));
+  trigger.addEventListener('keydown', ev => {
+    if (['ArrowDown','Enter',' ','Spacebar'].includes(ev.key)) { ev.preventDefault(); setOpen(true); list.focus?.(); }
+  });
+  list.setAttribute('tabindex','-1');
+  list.addEventListener('keydown', ev => {
+    if (ev.key === 'Escape') { ev.preventDefault(); setOpen(false); trigger.focus(); }
+    else if (ev.key === 'ArrowDown') { ev.preventDefault(); setActive(activeIdx+1); }
+    else if (ev.key === 'ArrowUp') { ev.preventDefault(); setActive(activeIdx-1); }
+    else if (['Enter',' ','Spacebar'].includes(ev.key)) {
+      ev.preventDefault();
+      const id = options[activeIdx]?.getAttribute('data-theme'); if (id) choose(id);
+    }
+  });
+  document.addEventListener('click', ev => {
+    if (!open) return; let n = ev.target; while (n) { if (n === cd) return; n = n.parentNode; } setOpen(false);
+  });
+  applyTheme(DEFAULT_THEME);
+}
+mountThemePicker('theme-picker');
+
+</script>
+</body>
+</html>
