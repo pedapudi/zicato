@@ -40,8 +40,19 @@ import { isNum } from '../svg.js';
 //     structure,
 //     gateOutcome:{ kind:'promoted'|'held', gen|null }
 //     tournamentRef: the matching tournaments[] record (or null)
-//     source: 'round_index' | 'field' | 'matchups' | 'single'
+//     source: 'round_index' | 'field' | 'matchups' | 'single' | 'inflight'
+//     inflight?: true — a NOT-YET-SETTLED round still proposing/applying its
+//                field (no settled bracket, journal, or lineage entry yet); its
+//                challengers come from the live envelope's `field_status`.
 //   }]
+//
+// IN-FLIGHT ROUND (issue #16): while round N+1 is PROPOSING/APPLYING its field,
+// its challengers exist in NEITHER the journal/lineage NOR a settled tournament
+// record yet — so the settled-source derivations below fold them under round N
+// (or drop them entirely). When the live envelope (`opts.inflight`) carries a
+// non-terminal phase for a round STRICTLY BEYOND the last settled one, we append
+// it as its OWN round so the spine timeline shows the new round forming live and
+// its proposed/applied counts increment, instead of mis-attributing them.
 export function epochRoundModel(opts) {
   const o = opts || {};
   const gens = Array.isArray(o.gens) ? o.gens : [];
@@ -131,6 +142,19 @@ export function epochRoundModel(opts) {
     });
   };
 
+  // ── the IN-FLIGHT round overlay (issue #16) ─────────────────────────
+  // A new round that has begun PROPOSING/APPLYING but whose tournament has not
+  // settled is invisible to every settled source above (no round_index stamp in
+  // the journal yet, no field record, no matchup). Append it as its OWN round —
+  // distinct from the last SETTLED one — so the spine shows it forming live and
+  // the proposed/applied banner counts increment. The challengers come from the
+  // live envelope's `field_status` (the per-challenger applied/rejected/proposing
+  // outcomes the orchestrator publishes as the field mints). Idempotent: returns
+  // the settled rounds unchanged when there is no genuinely-new in-flight round.
+  const withInflight = (settledRounds) => appendInflightRound(settledRounds, {
+    inflight: o.inflight, structure, scalarOf, promotedOf, projOf, seedId, isNum,
+  });
+
   // ── (1) per-gen round_index — the authoritative birth round ─────────
   const haveRoundIndex = gens.some((g) => g && isNum(g.round_index));
   if (haveRoundIndex) {
@@ -150,7 +174,7 @@ export function epochRoundModel(opts) {
       challengerIds: buckets.get(ri),
       tournamentRef: matchTournamentForField(tournaments, buckets.get(ri)),
     }));
-    return buildRounds(perRound, 'round_index');
+    return withInflight(buildRounds(perRound, 'round_index'));
   }
 
   // RACING is persisted as ONE record PER CHALLENGER (not per round), so its
@@ -173,7 +197,7 @@ export function epochRoundModel(opts) {
         for (const id of comps) seen.add(id);
         perRound.push({ round_index: i, challengerIds: fresh.length ? fresh : comps, tournamentRef: t });
       });
-      return buildRounds(perRound, 'field');
+      return withInflight(buildRounds(perRound, 'field'));
     }
 
     // ── (3) gauntlet matchups — each is its own single-challenger round ──
@@ -183,7 +207,7 @@ export function epochRoundModel(opts) {
       const perRound = matchups.map((m, i) => ({
         round_index: i, challengerIds: [String(m.challenger)], tournamentRef: null,
       }));
-      return buildRounds(perRound, 'matchups');
+      return withInflight(buildRounds(perRound, 'matchups'));
     }
   }
 
@@ -200,7 +224,144 @@ export function epochRoundModel(opts) {
   const singleRef = (structure !== 'racing')
     ? tournaments.find((t) => t && Array.isArray(t.competitors) && t.competitors.length) || null
     : null;
-  return buildRounds([{ round_index: 0, challengerIds, tournamentRef: singleRef }], 'single');
+  return withInflight(buildRounds([{ round_index: 0, challengerIds, tournamentRef: singleRef }], 'single'));
+}
+
+// ── append the IN-FLIGHT round (issue #16) ───────────────────────────
+//
+// Given the SETTLED rounds + the live active-tournament envelope, append a NEW
+// round for a field that is proposing/applying but has not settled. PURE: plain
+// inputs → a new rounds[] (or the same array when there is nothing in flight).
+//
+// A round qualifies as in-flight when ALL hold:
+//   * the envelope's phase is NON-TERMINAL (proposing / applying / running),
+//   * it carries a `field_status` (the challengers being minted this round),
+//   * its `round_index` is BEYOND the last settled round (APPEND — the issue-#16
+//     mis-attribution case: a genuinely NEW round), OR equals the last round
+//     when that round has NO settled challengers (IN-PLACE overlay — round 0's
+//     own first-field proposing). A field that already SETTLED into a recorded
+//     round, or a non-empty same-index round, is left untouched (no clobber, no
+//     duplicate).
+// The new round's `champion` is the carried-in spine champion (the last settled
+// round's outgoing champion, or — for the in-place round-0 case — its own
+// champion/seed). Its challengers are the field_status ids, each carrying its
+// proposing/applied/rejected status + any projected scalar.
+function appendInflightRound(settledRounds, ctx) {
+  const rounds = Array.isArray(settledRounds) ? settledRounds : [];
+  const at = (ctx && ctx.inflight && typeof ctx.inflight === 'object') ? ctx.inflight : null;
+  if (!at) return rounds;
+  const isNum = ctx.isNum;
+
+  // NON-TERMINAL phase only — a settled / done / idle envelope must not spawn a
+  // phantom round (the settled sources already own those).
+  const phase = String(at.phase == null ? '' : at.phase).trim().toLowerCase();
+  const head = phase.split(':')[0];
+  const terminal = phase === '' || head === 'idle'
+    || head === 'complete' || head === 'completed' || head === 'done' || head === 'tournament';
+  if (terminal) return rounds;
+
+  // the field the round is minting — the per-challenger field_status ids.
+  const fs = Array.isArray(at.field_status) ? at.field_status : [];
+  const fieldIds = fs.map((f) => (f && f.generation_id != null) ? String(f.generation_id) : null).filter(Boolean);
+  if (!fieldIds.length) return rounds;
+
+  // the in-flight round index — the envelope's stamp, else just past the last
+  // settled round.
+  const lastSettled = rounds.length ? rounds[rounds.length - 1] : null;
+  const lastIdx = (lastSettled && isNum(lastSettled.round_index)) ? lastSettled.round_index : -1;
+  const stampedIdx = isNum(at.round_index) ? at.round_index : null;
+  const inflightIdx = stampedIdx != null ? stampedIdx : (lastIdx + 1);
+
+  // GUARD: if any settled round already owns one of these challenger ids, the
+  // field has begun settling into a recorded round — defer to that record (the
+  // settled source is authoritative once the round lands).
+  const settledIds = new Set();
+  for (const r of rounds) for (const c of (Array.isArray(r.challengers) ? r.challengers : [])) settledIds.add(String(c.id));
+  if (fieldIds.some((id) => settledIds.has(id))) return rounds;
+
+  // IN-PLACE merge vs. APPEND. When the in-flight round is the SAME index as the
+  // last settled round AND that round has NO settled challengers, it is that
+  // round's OWN proposing (e.g. round 0's first field, or a re-derived single
+  // round whose tournament has not run) — overlay the forming field IN PLACE so
+  // the spine episode shows it minting (NOT a phantom duplicate round). When the
+  // in-flight round is STRICTLY beyond the last settled one it is a genuinely NEW
+  // round → append it (the issue-#16 mis-attribution case). An in-flight index
+  // that is <= the last settled round but whose field is already settled is the
+  // defer case above; a non-empty last round at the same index keeps its settled
+  // field (do not clobber).
+  const sameIdxRound = (rounds.length && inflightIdx === lastIdx) ? lastSettled : null;
+  if (sameIdxRound && (Array.isArray(sameIdxRound.challengers) ? sameIdxRound.challengers.length : 0) > 0) return rounds;
+  if (rounds.length && inflightIdx < lastIdx) return rounds;
+
+  // the carried-in champion = for an APPENDED new round, the last settled round's
+  // OUTGOING champion (its promoted challenger, else its own champion — the spine
+  // continues); for an IN-PLACE round-0 proposing, that round's own champion/seed.
+  let champId = null;
+  if (sameIdxRound) {
+    champId = sameIdxRound.champion ? String(sameIdxRound.champion.id) : (ctx.seedId != null ? String(ctx.seedId) : null);
+  } else if (lastSettled) {
+    const promoted = (Array.isArray(lastSettled.challengers) ? lastSettled.challengers : []).find((c) => c.promoted);
+    champId = promoted ? String(promoted.id) : (lastSettled.champion ? String(lastSettled.champion.id) : null);
+  } else if (ctx.seedId != null) {
+    champId = String(ctx.seedId);
+  }
+  // the champion's incoming loss floor (the spine baseline) — read from the
+  // carried champion's settled/projected scalar so the waterfall has a `from`.
+  const champScalar = champId != null
+    ? (ctx.scalarOf(champId) != null ? ctx.scalarOf(champId)
+      : ((ctx.projOf(champId) || {}).scalar != null ? ctx.projOf(champId).scalar : null))
+    : null;
+
+  // the challengers minted this round — each carries its proposing-step status
+  // (proposing / applied / rejected) so the timeline + the digest reflect the
+  // field forming, and any live projected scalar (a climbing standing) it has.
+  const challengers = fieldIds.map((id) => {
+    const status = statusOf(fs, id);
+    const settled = ctx.scalarOf(id);
+    const p = ctx.projOf(id);
+    const out = { id, scalar: settled != null ? settled : (p != null ? p.scalar : null), promoted: ctx.promotedOf(id), status };
+    if (settled == null && p != null) {
+      out.projected = true;
+      out.boards_done = isNum(p.boards_done) ? p.boards_done : null;
+      out.boards_total = isNum(p.boards_total) ? p.boards_total : null;
+    }
+    return out;
+  });
+
+  const inflightRound = {
+    round_index: inflightIdx,
+    champion: { id: champId, scalar: champScalar, evalMode: null, runRef: null, fromRecord: false },
+    challengers,
+    structure: ctx.structure,
+    // a still-proposing field has not reached its gate — the outcome is pending.
+    gateOutcome: { kind: 'pending', gen: null },
+    tournamentRef: null,
+    source: 'inflight',
+    inflight: true,
+    phase,
+  };
+  // IN-PLACE: replace the empty same-index round with the forming field (round 0's
+  // own proposing). APPEND: add the new round (the issue-#16 mis-attribution case).
+  if (sameIdxRound) {
+    const out = rounds.slice();
+    out[out.length - 1] = inflightRound;
+    return out;
+  }
+  return rounds.concat([inflightRound]);
+}
+
+// the proposing-step status of a challenger id in a field_status list:
+// 'applied' | 'proposing' | 'rejected' (default for anything else, mirroring
+// data.fieldStatus's normalization).
+function statusOf(fieldStatus, id) {
+  for (const f of (Array.isArray(fieldStatus) ? fieldStatus : [])) {
+    if (f && String(f.generation_id) === String(id)) {
+      if (f.status === 'applied') return 'applied';
+      if (f.status === 'proposing') return 'proposing';
+      return 'rejected';
+    }
+  }
+  return 'proposing';
 }
 
 // Pick the tournaments[] field record whose competitors best match a round's
@@ -227,9 +388,17 @@ export function roundModelDigest(rounds) {
   const list = Array.isArray(rounds) ? rounds : [];
   return JSON.stringify(list.map((r) => [
     r.round_index, r.structure, r.source,
+    // the IN-FLIGHT flag folds into the digest so a settling-in transition (a
+    // proposing round → a recorded round) repaints, but a steady proposing beat
+    // with the SAME field stays byte-identical (anti-flash).
+    r.inflight ? 'L' : '',
     r.champion ? [r.champion.id, isNum(r.champion.scalar) ? r.champion.scalar.toFixed(2) : null, r.champion.evalMode || ''] : null,
     (Array.isArray(r.challengers) ? r.challengers : []).map((c) => [
       c.id, c.promoted, isNum(c.scalar) ? c.scalar.toFixed(2) : null,
+      // the per-challenger proposing-step status (proposing/applied/rejected) on
+      // an in-flight round, so the banner's "N proposed · M applied" repaints as
+      // a slot transitions but stays stable on a no-op beat.
+      c.status || '',
       // a PROJECTED (in-flight) challenger — flag + ROUNDED scalar + integer
       // board counts so a no-op beat is byte-identical, a board landing repaints.
       c.projected ? 'j' + (isNum(c.scalar) ? c.scalar.toFixed(3) : '?')

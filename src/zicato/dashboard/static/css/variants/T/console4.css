@@ -1943,7 +1943,26 @@
   .dn-roundtl-gate { display: flex; align-items: center; gap: 7px; margin-top: 10px;
     font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); }
   .dn-roundtl-gate.dn-roundtl-gate-win { color: var(--v2-good); }
+  .dn-roundtl-gate.dn-roundtl-gate-live { color: var(--v2-accent); }
   .dn-roundtl-gatemark { font-size: calc(13px * var(--dt-font-scale, 1)); }
+
+  /* ── the IN-FLIGHT round (issue #16): the new round still proposing its
+     field, surfaced as its OWN round. A LIVE badge marks the episode + spine
+     node; proposing/rejected chips are dimmed so the field reads as it forms.
+     All CSS-only — no motion that would conflict with the digest-gated repaint
+     discipline (the breathing dot reuses the shared reduced-motion guard). */
+  .dn-roundtl-eplive { font-family: var(--v2-mono); font-size: calc(8.5px * var(--dt-font-scale, 1));
+    letter-spacing: 0.14em; text-transform: uppercase; font-weight: 700; color: var(--v2-accent);
+    border: 1px solid color-mix(in srgb, var(--v2-accent) 55%, transparent); border-radius: 4px;
+    padding: 1px 5px; line-height: 1.4; }
+  .dn-roundtl-node.dn-roundtl-live .dn-roundtl-disc { stroke: var(--v2-accent); stroke-dasharray: 3 2.4; }
+  .dn-roundtl-node.dn-roundtl-live .dn-roundtl-glyph { fill: var(--v2-accent); }
+  .dn-roundtl-chip.dn-roundtl-chip-proposing { border-style: dashed; color: var(--v2-ink-faint);
+    border-color: color-mix(in srgb, var(--v2-accent) 45%, var(--v2-rule)); }
+  .dn-roundtl-chip.dn-roundtl-chip-rejected { color: var(--v2-ink-faint);
+    border-color: color-mix(in srgb, var(--v2-bad) 35%, var(--v2-rule)); }
+  .dn-roundtl-chip.dn-roundtl-chip-rejected .dn-roundtl-chipstatus { color: var(--v2-bad); }
+  .dn-roundtl-chipstatus { font-variant-numeric: tabular-nums; }
 
   /* ── configured tournament STRUCTURE (bracket / standings / racing) ──
      All marks read from CSS tokens so they theme across every swatch;

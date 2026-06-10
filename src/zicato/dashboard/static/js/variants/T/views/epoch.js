@@ -113,7 +113,13 @@ export async function render(host, ctx, params) {
   // timeline so an in-flight round's challenger shows a climbing projected
   // scalar (marked "projected") rather than a blank "—".
   let liveProjected = {};
-  if (nonGauntlet) {
+  // the live active-tournament envelope SCOPED to this epoch — fed to
+  // epochRoundModel so a NEW round that is only proposing/applying (not yet
+  // settled) surfaces as its OWN in-flight round (issue #16). Fetched for EVERY
+  // structure (a multi-challenger gauntlet has in-flight rounds too), not only
+  // the non-gauntlet overview path.
+  let liveInflight = null;
+  {
     const status = deriveLiveStatus({
       heartbeat: state.heartbeat, activeRuns: state.activeRuns, activeTournament: state.activeTournament,
     });
@@ -121,6 +127,11 @@ export async function render(host, ctx, params) {
     const liveForThisEpoch = (liveRaw && liveRaw.epoch_id != null)
       ? String(liveRaw.epoch_id) === String(epochId) : !!liveRaw;
     if (liveForThisEpoch && liveRaw && liveRaw.projected && typeof liveRaw.projected === 'object') liveProjected = liveRaw.projected;
+    if (liveForThisEpoch && liveRaw) liveInflight = liveRaw;
+  }
+  if (nonGauntlet) {
+    const liveRaw = liveInflight;
+    const liveForThisEpoch = !!liveInflight;
 
     // pre-fetch the COMPLETED per-tournament record (the recorded fallback the
     // resolver uses for swiss/elim, and the SECOND fallback behind
@@ -165,7 +176,7 @@ export async function render(host, ctx, params) {
   // gauntlet matchups, else a single round 0 (every run so far). The timeline
   // SUBSUMES the old gauntlet reel + the non-gauntlet structure strip — one
   // renderer for all structures, degrading to a single episode for --rounds 1.
-  const epochRounds = epochRoundModel({ gens, scalarBy: scalarByGen, bracket, structure, championId, projected: liveProjected });
+  const epochRounds = epochRoundModel({ gens, scalarBy: scalarByGen, bracket, structure, championId, projected: liveProjected, inflight: liveInflight });
 
   // The BOARD-STATUS surface (train/holdout split + ladder + generalization
   // gap). Derived DEFENSIVELY from the epoch payload — graceful empty states
@@ -248,6 +259,11 @@ export async function render(host, ctx, params) {
     // normalize each round's own field-tournament record. Gauntlet → null (the
     // spine + the challenger fan already tell that round's one-duel story).
     const figureForRound = (r) => {
+      // an IN-FLIGHT round (still proposing/applying, no settled record) has no
+      // tournament figure yet — the proposing-step chips + the live banner ARE
+      // its read. Returning null here also stops it from borrowing the SETTLED
+      // aggregate model (racingFunnel/swissOver/elimOver) as a phantom figure.
+      if (r.inflight) return null;
       // normalize the round's OWN field-tournament record (multi-round path).
       const stFromRef = r.tournamentRef
         ? normalizeStructure({

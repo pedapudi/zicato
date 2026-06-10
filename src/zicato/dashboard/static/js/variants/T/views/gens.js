@@ -209,7 +209,10 @@ async function renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roun
   const liveForThisEpoch = liveBelongsToEpoch(id);
   const liveAt = state.activeTournament;
   const liveProjected = (liveForThisEpoch && liveAt && liveAt.projected && typeof liveAt.projected === 'object') ? liveAt.projected : {};
-  const epochRounds = epochRoundModel({ gens, scalarBy: scalarByGen, bracket, structure, championId, projected: liveProjected });
+  // the live envelope (this epoch only) so a still-proposing NEW round is drillable
+  // as its own in-flight round, not folded under the prior round (issue #16).
+  const liveInflight = liveForThisEpoch ? liveAt : null;
+  const epochRounds = epochRoundModel({ gens, scalarBy: scalarByGen, bracket, structure, championId, projected: liveProjected, inflight: liveInflight });
   const want = String(roundParam);
   const round = epochRounds.find((r) => String(r.round_index) === want) || null;
 
