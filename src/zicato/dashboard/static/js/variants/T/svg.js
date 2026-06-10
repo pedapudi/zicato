@@ -160,6 +160,59 @@ export function elbowPath(x0, y0, xt, yt, busY, rr) {
     + ` L${xt.toFixed(1)} ${yt.toFixed(1)}`;
 }
 
+// A WB→LB demotion route that runs in a DEDICATED CHANNEL below the whole lane
+// stack — never on (or across) any competitor's lane row. The old elbow anchored
+// its horizontal bus a half-row beneath the SOURCE lane, so the run cut straight
+// across the rows (boxes / labels / dots) of every lane physically between the
+// WB column and the LB re-entry column; with two losers demoted from one node the
+// two buses straddled the intervening lanes and crossed each other. Here each
+// demotion edge owns a distinct horizontal channel lane (chY) in a reserved
+// gutter under the stack, and a per-edge horizontal NUDGE (dx) so two edges that
+// share a source column (the two-loser case) drop on parallel, non-overlapping
+// verticals rather than one shared x. The endpoints stay EXACTLY on the source
+// dot (x0,y0) and the LB-entry node (xt,yt) so the visual connection is intact.
+//
+//   (x0,y0) ─┐                                   ┌─ (xt,yt)
+//            │  short stub, jog to the dx lane    │   rise, jog back to xt
+//            └──┐                              ┌──┘
+//   chY  ───────┴──────────── run across ─────┴───────────   (below all lanes)
+//
+// dx is signed toward the run direction so the jog opens into the channel, never
+// back over the source node. rr rounds every corner into the calm-pipe language.
+export function channelDropPath(x0, y0, xt, yt, chY, dx, rr) {
+  rr = rr || 5;
+  const dir = xt >= x0 ? 1 : -1;
+  const nx0 = x0 + dir * dx;        // nudged source vertical lane
+  const nxt = xt - dir * dx;        // nudged target vertical lane
+  // a short vertical stub off the dot before the jog, so the route leaves the
+  // node cleanly (and a same-column pair separates immediately, not at the dot).
+  const stub = Math.min(6, Math.abs(chY - y0) * 0.25);
+  const yA = y0 + stub;             // depth of the source stub before the jog
+  const yB = yt + stub;             // height of the target stub before the rise
+  const rRun = (a, b) => Math.min(rr, Math.abs(a - b) / 2);
+  const rJog = Math.max(1, Math.min(rr, (Math.abs(dx) || rr * 2) / 2, (stub || rr * 2) / 2));
+  const rRunA = rRun(chY, yA);
+  const rRunB = rRun(chY, yB);
+  return `M${x0.toFixed(1)} ${y0.toFixed(1)}`
+    // source: short stub down, jog out to the nudged lane
+    + ` L${x0.toFixed(1)} ${(yA - rJog).toFixed(1)}`
+    + ` Q${x0.toFixed(1)} ${yA.toFixed(1)} ${(x0 + dir * rJog).toFixed(1)} ${yA.toFixed(1)}`
+    + ` L${(nx0 - dir * rJog).toFixed(1)} ${yA.toFixed(1)}`
+    + ` Q${nx0.toFixed(1)} ${yA.toFixed(1)} ${nx0.toFixed(1)} ${(yA + rJog).toFixed(1)}`
+    // drop into the channel, arc onto the run
+    + ` L${nx0.toFixed(1)} ${(chY - rRunA).toFixed(1)}`
+    + ` Q${nx0.toFixed(1)} ${chY.toFixed(1)} ${(nx0 + dir * rRunA).toFixed(1)} ${chY.toFixed(1)}`
+    // run across the channel, arc off the run, rise toward the target stub
+    + ` L${(nxt - dir * rRunB).toFixed(1)} ${chY.toFixed(1)}`
+    + ` Q${nxt.toFixed(1)} ${chY.toFixed(1)} ${nxt.toFixed(1)} ${(chY - rRunB).toFixed(1)}`
+    + ` L${nxt.toFixed(1)} ${(yB + rJog).toFixed(1)}`
+    // target: jog back to the LB column, rise into the node
+    + ` Q${nxt.toFixed(1)} ${yB.toFixed(1)} ${(nxt + dir * rJog).toFixed(1)} ${yB.toFixed(1)}`
+    + ` L${(xt - dir * rJog).toFixed(1)} ${yB.toFixed(1)}`
+    + ` Q${xt.toFixed(1)} ${yB.toFixed(1)} ${xt.toFixed(1)} ${(yB - rJog).toFixed(1)}`
+    + ` L${xt.toFixed(1)} ${yt.toFixed(1)}`;
+}
+
 // a live racing lane's progress label: "k/N boards" when the rung's board total
 // is known, else "k running" when only the in-flight count is known.
 function laneProgressText(lane) {
@@ -1307,14 +1360,50 @@ export function elimFlow(opts) {
   const laneOf = new Map();
   gens.forEach((g, li) => laneOf.set(g.id, li));
 
+  // ── WB→LB DEMOTION EDGES (pre-pass) ──
+  // A dropped lane (lost a WB column, plays again in a later LB column) threads
+  // from its WB-loss dot into its LB re-entry node. These connectors used to dip
+  // a half-row beneath the SOURCE lane and run across there — straight through the
+  // rows of every lane physically between the two columns, and, with two losers
+  // demoted from one node, across each other. We instead route ALL of them through
+  // a reserved CHANNEL below the whole stack, each on its own horizontal lane.
+  // Collected here (before geometry) so the channel count sizes the figure.
+  const demotions = [];
+  if (isDouble) for (const g of genState.values()) {
+    const cols = [...g.played].sort((a, b) => a - b);
+    for (const ci of cols) {
+      // a DROP is a non-terminal WB loss (lost here, but it is NOT the lane's true
+      // elimination column → it plays on). A lane that is LATER eliminated in the
+      // LB still made this WB→LB drop, so it must be collected too.
+      const dropped = g.lostAt.has(ci) && g.eliminatedAt !== ci;
+      if (!dropped) continue;
+      const nextCi = cols.find((c) => c > ci);
+      if (nextCi == null || colSide[nextCi] !== 'LB') continue;  // only WB→LB drops use the channel
+      demotions.push({ id: g.id, fromCol: ci, toCol: nextCi, lane: laneOf.get(g.id) });
+    }
+  }
+  // assign each demotion a distinct channel lane. Order by (source column, lane)
+  // so an upper/earlier drop takes the shallower channel and the runs nest rather
+  // than cross; a per-edge horizontal nudge keeps two drops that share a source
+  // column (the two-loser case) on parallel, non-overlapping verticals.
+  demotions.sort((a, b) => a.fromCol - b.fromCol || a.toCol - b.toCol || a.lane - b.lane);
+  const chSlot = new Map();   // id+'|'+fromCol+'|'+toCol → channel index
+  demotions.forEach((d, k) => chSlot.set(`${d.id}|${d.fromCol}|${d.toCol}`, k));
+  const nCh = demotions.length;
+
   // ── geometry: columns × lanes, fit-to-width ──
   const colW = 116;
   const padL = 16;
   const padR = 116;          // gutter for the lane labels + gate marks
   const top = 30;
   const laneH = 22;
+  // the reserved demotion CHANNEL gutter under the lane stack: one lane per drop.
+  const chGap = 7;           // vertical spacing between channel lanes
+  const chPad = 12;          // clearance between the last lane row and the channel
+  const channelTop = top + Math.max(1, gens.length) * laneH + chPad;
+  const channelY = (k) => channelTop + k * chGap;
   const w = padL + Math.max(1, nCols) * colW + padR + 8;
-  const h = top + Math.max(1, gens.length) * laneH + 18;
+  const h = (nCh > 0 ? channelY(nCh - 1) + 12 : top + Math.max(1, gens.length) * laneH + 18);
   const svg = svgEl('svg', applyResponsive({
     class: 'dn-elimflow', width: '100%', height: h,
     viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMinYMin meet', role: 'img',
@@ -1397,11 +1486,6 @@ export function elimFlow(opts) {
     }
   });
 
-  // a per-figure drop-bus lane counter so concurrent WB→LB drops are staggered
-  // onto parallel buses (offset y) — never sharing one y, which is what kills the
-  // old fan-of-crossing curves (the study opt-7 routing discipline).
-  let dropBusN = 0;
-
   // ── one lane per generation: dots at each round it played, a segment to the
   // next column when it advanced, a ✕ where it was cut, the crown at the gate ──
   gens.forEach((g, li) => {
@@ -1437,16 +1521,21 @@ export function elimFlow(opts) {
         const toX = (nextCi != null) ? colX(nextCi)
           : ((advanced || pending) && ci === nCols - 1 ? gateX : null);
         // a DROP into an LB column (double-elim) routes as a rounded orthogonal
-        // PIPE: it dips to a staggered horizontal drop-bus below the lane row,
-        // runs across, then rises into the TOP of the LB re-entry node — a calm
-        // pipe with no crossing bezier (the study opt-7 elbow routing). Every
-        // other continuation stays a straight lane segment.
+        // PIPE through the RESERVED CHANNEL below the whole lane stack — it leaves
+        // the WB-loss dot, drops to its OWN channel lane, runs across there (never
+        // over another lane's row), then rises into the TOP of the LB re-entry
+        // node. Each demotion owns a distinct channel lane + a per-edge horizontal
+        // nudge, so the two-loser case renders as two parallel, non-crossing pipes.
+        // Every other continuation stays a straight lane segment.
         const dropToLB = dropped && isDouble && nextCi != null && colSide[nextCi] === 'LB';
         if (toX != null && dropToLB) {
-          const busY = y + laneH * 0.5 + 2 + (dropBusN % 3) * 2.5;   // staggered bus
-          dropBusN++;
+          const k = chSlot.get(`${g.id}|${ci}|${nextCi}`);
+          const chY = channelY(k != null ? k : 0);
+          // a per-edge nudge fans the source verticals apart (two drops sharing a
+          // WB column never overlap); kept small so the run stays near its column.
+          const dx = 6 + ((k != null ? k : 0) % 4) * 4;
           lane.appendChild(svgEl('path', {
-            d: elbowPath(x, y, toX, y, busY, 5),
+            d: channelDropPath(x, y, toX, y, chY, dx, 5),
             class: 'dn-elimflow-seg dn-elimflow-seg-drop dn-elimflow-bad', fill: 'none',
           }));
         } else if (toX != null) {
