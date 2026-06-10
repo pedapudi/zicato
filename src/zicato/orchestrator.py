@@ -1062,7 +1062,14 @@ async def evolve_once(
             # (no cached parent aggregate this round) cache-reads the immutable
             # champion (default) — reusing its prior-round / seed-scoring units
             # instead of re-running it every round (§2 item 3).
-            champion_force_fresh=not fast_mode,
+            #
+            # A conservative crash-resume (``resumed_experiment is not None``)
+            # is the OTHER cache-read case: the interrupted round's completed
+            # champion units are on disk and MUST be reused, or resume is no
+            # longer nearly free. So a resumed round suppresses the full-mode
+            # champion re-sample and cache-reads the champion regardless of
+            # mode — the union of the §2-item-3 win and the resume protocol.
+            champion_force_fresh=(not fast_mode) and resumed_experiment is None,
             round_index=round_index,
             total_rounds=total_rounds,
             # Conservative crash-resume: read the per-unit loss.json cache
