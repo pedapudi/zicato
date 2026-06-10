@@ -35,7 +35,6 @@ the corresponding path. Two flavors:
 
 from __future__ import annotations
 
-import datetime as _dt
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -49,6 +48,7 @@ from zicato.runtime.paths import (
     control_log_dir,
     ensure_runtime_dirs,
 )
+from zicato.util.iso_time import now_iso as _utc_now_iso
 
 # ---------------------------------------------------------------------------
 # Command name constants
@@ -114,11 +114,6 @@ class ControlCommand:
     arg: str = ""
     payload: str = ""
     file_path: Path = field(default_factory=Path)
-
-
-def _utc_now_iso() -> str:
-    """Return current UTC time as an ISO-8601 string with seconds precision."""
-    return _dt.datetime.now(_dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _audit_log_name(consumed_at: str, name: str, arg: str) -> str:

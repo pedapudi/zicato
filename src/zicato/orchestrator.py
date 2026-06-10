@@ -4460,13 +4460,15 @@ def _warn_loop_no_signal(epoch_id: str, round_n: int, summary: str) -> None:
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
-    """Atomically write ``text`` to ``path`` (``.tmp`` + :func:`os.replace`)."""
-    import os as _os  # noqa: PLC0415
+    """Atomically write ``text`` to ``path`` (``.tmp`` + :func:`os.replace`).
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    _os.replace(tmp, path)
+    Delegates to the single atomic-write definition in
+    :mod:`zicato.storage._atomic` so there is one ``.tmp`` + ``fsync`` +
+    rename implementation in the codebase.
+    """
+    from zicato.storage._atomic import atomic_write_text as _atomic_write_text_impl  # noqa: PLC0415
+
+    _atomic_write_text_impl(path, text)
 
 
 def _dump_mutations_snapshot(

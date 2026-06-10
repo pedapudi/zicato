@@ -23,7 +23,6 @@ is dead AND ``steal_stale=True`` (the default).
 
 from __future__ import annotations
 
-import datetime as _dt
 import errno
 import os
 from dataclasses import dataclass
@@ -32,11 +31,7 @@ from typing import Any
 
 from zicato.runtime._storage import backend_for, lock_key
 from zicato.runtime.paths import ensure_runtime_dirs
-
-
-def _utc_now_iso() -> str:
-    """Return current UTC time as an ISO-8601 string with seconds precision."""
-    return _dt.datetime.now(_dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+from zicato.util.iso_time import now_iso as _utc_now_iso
 
 
 class WorkspaceLockHeld(RuntimeError):

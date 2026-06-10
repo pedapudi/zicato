@@ -25,7 +25,6 @@ implementation — a caller cannot tell the difference.
 
 from __future__ import annotations
 
-import datetime as _dt
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -40,17 +39,10 @@ from zicato.runtime._storage import (
 )
 from zicato.runtime.paths import ensure_runtime_dirs
 
-
-def _utc_now_iso() -> str:
-    """Return current UTC time as an ISO-8601 string with seconds precision.
-
-    Uses ``timespec='seconds'`` so the strings diff cleanly in journals
-    and don't carry microsecond noise the dashboard would have to trim.
-    The trailing ``Z`` is the explicit UTC marker convention every other
-    zicato writer uses.
-    """
-    return _dt.datetime.now(_dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
+# Single second-precision UTC stamper, shared via :mod:`zicato.util.iso_time`.
+# Kept under this module's historical name so tests can monkeypatch
+# ``zicato.runtime.state._utc_now_iso`` and in-module writers stay unchanged.
+from zicato.util.iso_time import now_iso as _utc_now_iso
 
 # ---------------------------------------------------------------------------
 # Heartbeat
