@@ -11,9 +11,14 @@
 > (`tournament/ladder.py`), the **#3 proposer-leakage restrictions**
 > (train-slice-only patterns, aggregated entry ids, withheld inputs), the
 > **#5 generalization-gap detector** (a `zicato health` finding), and the
-> **#6 board-rotation cadence**. The recommendation sections (§11, §12)
-> still read in the future tense from the survey; treat the *mechanism →
-> verdict* analysis as the design rationale and the **Shipped** callouts
+> **#6 board-rotation cadence**. The holdout confirmation has since been
+> **extended through the non-gauntlet structures** (swiss / single_elim /
+> double_elim / racing) via `orchestrator._evolve_multi_challenger` +
+> `runner.confirm_crowning_holdout`, so a crowning under any structure is
+> Ladder-mediated on the holdout. §12 now carries per-lever **SHIPPED /
+> FUTURE** status tags (only **#4** diff-complexity regularization and
+> **#7** the random-baseline check remain unbuilt); treat the
+> *mechanism → verdict* analysis as the design rationale and those tags
 > as the as-built status. The proposer **outcome-marginal failure-mode
 > channel** (§11.5) is the most recent addition.
 
@@ -525,11 +530,26 @@ the outcome failed*, under the same marginal-not-joint guarantee.
 
 ---
 
-## 12. The recommendation (ranked, all FUTURE work)
+## 12. The recommendation (ranked)
 
 Ranked by leverage-per-effort, with what changes, where it lives, and the
-cost. **None of this is implemented.** Levers compose; the dependency
-arrows are noted.
+cost. **Status: most of this is shipped and default-on** (reconciling the
+survey's original future-tense framing with the §0 "Shipped" callouts).
+Built and live: **#1** train/holdout board split with holdout-gated
+promotion (`board/split.py`, `tournament/gate.py`); **#2** the
+Ladder/Thresholdout noisy-holdout query (`tournament/ladder.py`); **#3**
+the proposer-leakage restrictions (train-slice patterns, aggregated entry
+ids, withheld inputs — plus the §11.5 outcome-marginal channel); **#5**
+the `generalization_gap` loop-health detector (`health/diagnostics.py`);
+and **#6** the board-refresh / holdout-rotation cadence (`board/split.py`
+`rotation_seed`). The holdout confirmation has since been **extended
+through the non-gauntlet structures** (swiss / single_elim / double_elim /
+racing) via `orchestrator._evolve_multi_challenger` +
+`runner.confirm_crowning_holdout`, so a crowning under any structure — not
+just the gauntlet — is Ladder-mediated on the holdout. Still **future
+work**: **#4** diff-complexity regularization and **#7** the
+random-baseline holdout sanity check (both flagged inline below). Levers
+compose; the dependency arrows are noted.
 
 ```mermaid
 flowchart TB
@@ -548,7 +568,7 @@ flowchart TB
     R3 -. independent, ship first .-> R3done["(no prerequisite)"]
 ```
 
-**#1 — Train/holdout board split with holdout-gated promotion.**
+**#1 — Train/holdout board split with holdout-gated promotion. (SHIPPED.)**
 *What:* tag a subset of the board `holdout`
 (`BoardEntry.tags`, already exists); the proposer + detectors see only the
 *train* slice; the gate confirms a promotion on the *holdout* slice (the
@@ -562,7 +582,7 @@ winner's-curse confirmation idea (§8), so the two share the cost.
 board large enough to split (small boards can't afford it — make the split
 opt-in, off by default, like the namespace guards).
 
-**#2 — A Ladder/Thresholdout-style noisy, budgeted holdout.**
+**#2 — A Ladder/Thresholdout-style noisy, budgeted holdout. (SHIPPED.)**
 *What:* mediate every holdout query through a Ladder rule — release a
 holdout-based promotion signal *only* when the train-measured improvement
 clears a noise threshold, and feed the proposer back only a
@@ -573,7 +593,7 @@ budget to track per epoch; start parameter-free (Ladder's tuning-free
 variant). *Tradeoff:* strictly more conservative promotion (fewer, more
 trustworthy crowns) — which is the point. Depends on #1.
 
-**#3 — Restrict the proposer's per-entry visibility.**
+**#3 — Restrict the proposer's per-entry visibility. (SHIPPED.)**
 *What:* §11's restrictions 1–4 — patterns on train only, aggregate
 `affected_entry_ids` to counts, withhold exact failing inputs, coarsen
 experiment-memory deltas. *Where:* `patterns/detectors.py` (the detail
@@ -583,7 +603,7 @@ edits. *Tradeoff:* less precise steering → possibly more rounds to a fix.
 **Independently shippable — no prerequisite — so ship it first** as the
 cheapest, most direct strike at adversarial Goodhart.
 
-**#4 — Diff/complexity regularization in the gate or loss.**
+**#4 — Diff/complexity regularization in the gate or loss. (FUTURE — not built.)**
 *What:* `λ · complexity(diff)` added to the challenger scalar, or a
 complexity ceiling that rejects oversized diffs. *Where:* `scoring.py`
 (loss term) / `gate.py` (ceiling), with `complexity` counting mutation
@@ -592,7 +612,7 @@ points + chars changed + new branches. *Cost:* a new weight to calibrate.
 with the proposer-brief mutation budget (`SELECTION.md` §9 lever 4) rather
 than duplicating it.
 
-**#5 — A `generalization_gap` loop-health detector.**
+**#5 — A `generalization_gap` loop-health detector. (SHIPPED.)**
 *What:* track `train_loss` vs `holdout_loss` across the lineage; fire
 `warning`/`critical` when the gap widens past a threshold. *Where:* a new
 detector in [`health/diagnostics.py`](../../src/zicato/health/diagnostics.py)
@@ -600,7 +620,7 @@ beside the existing five ([`LOOP-HEALTH.md`](LOOP-HEALTH.md) §3), with a
 `ZICATO_HEALTH_*` knob. *Cost:* trivial (a pure function over history).
 *Tradeoff:* none beyond needing the split. Depends on #1.
 
-**#6 — Board refresh / rotation cadence.**
+**#6 — Board refresh / rotation cadence. (SHIPPED.)**
 *What:* a policy that refreshes the train slice and rotates the holdout
 entries on epoch roll, triggered when #5 fires. *Where:* operator workflow
 + orchestrator epoch-roll path; the contract-hash machinery
@@ -611,7 +631,7 @@ lineage. *Tradeoff:* loses warm-start within the contract — but that's the
 intended horizon reset ([`SELECTION-THEORY.md`](SELECTION-THEORY.md) §5.4).
 Depends on #1, #5.
 
-**#7 — Random-baseline holdout sanity check.**
+**#7 — Random-baseline holdout sanity check. (FUTURE — not built.)**
 *What:* periodically score a random mutation (or the re-drawn champion) on
 the holdout; if the lineage's holdout gain over this baseline is within
 noise, the "progress" is validation overfitting. *Where:* an optional
