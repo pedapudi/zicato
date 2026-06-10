@@ -343,7 +343,15 @@ def test_bundle_under_size_envelope(
     # views + the scoped in-flight CSS, ~6 KB of new surface (back-compat: an
     # epoch with no live proposing round renders byte-identically). The envelope
     # is raised to 1.092 MB to cover it with headroom.
-    assert total < 1_092_000, f"bundle is {total} bytes, exceeds 1_092_000 envelope"
+    #
+    # The FEATURE-WAVE INTEGRATION then lands every dashboard surface on one
+    # branch at once: the double-elim demotion line-routing (#34) and the
+    # in-flight LIVE-badge / status-chip round timeline (#31) both grew the
+    # shared svg.js + Variant-T view modules, and their union sits ~1.7 KB above
+    # the prior 1.092 MB line (no shared widget was duplicated — both renderers
+    # coexist; the frontend suite asserts both behaviours). The envelope is
+    # raised to 1.10 MB to cover the combined surface with headroom.
+    assert total < 1_100_000, f"bundle is {total} bytes, exceeds 1_100_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
