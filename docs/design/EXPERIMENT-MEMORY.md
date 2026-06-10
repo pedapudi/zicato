@@ -1,12 +1,27 @@
 # Experiment memory — feeding the proposer prior outcomes
 
-> **Status.** DESIGN (not yet implemented). This document specifies a
-> change to candidate *generation* — what the proposer sees before it
-> writes a hypothesis. It does not change selection, scoring, or the
-> tournament structure. The "current behaviour" sections are reconciled
-> against `src/zicato/proposer/`, `src/zicato/orchestrator.py`, and the
-> analytical index (`src/zicato/index/`); the "proposed" mechanism is
-> not yet built.
+> **Status. SHIPPED** (default-on). This document specifies a change to
+> candidate *generation* — what the proposer sees before it writes a
+> hypothesis. It does not change selection, scoring, or the tournament
+> structure. The "current behaviour" sections are reconciled against
+> `src/zicato/proposer/`, `src/zicato/orchestrator.py`, and the
+> analytical index (`src/zicato/index/`); the mechanism described below
+> is **built and live**:
+> [`prior_experiments_for_epoch`](../../src/zicato/index/query.py) (the
+> same-epoch reader), the `PriorExperiment` dataclass +
+> `EXPERIMENT_MEMORY_MAX_ENTRIES` cap in
+> [`core/types.py`](../../src/zicato/core/types.py),
+> [`render_prior_experiments_block`](../../src/zicato/proposer/prompts.py)
+> (the `## What's already been tried` prompt section), and the
+> orchestrator wiring — `_load_prior_experiments` plus the gauntlet and
+> multi-challenger (`_evolve_multi_challenger`, including in-flight
+> sibling accumulation) call sites. The §5 implementation plan describes
+> the as-built contract; read it in the past tense. The **only** part
+> that remains future work is the §3.4 / §5.2 **cross-contract transfer**
+> (`same_contract=False` — a different epoch under the *same*
+> `contract_hash`): the reader ships same-epoch-only, with the
+> cross-contract branch left as an explicit, unbuilt extension point in
+> [`query.py`](../../src/zicato/index/query.py).
 
 The proposer is the only learning component in zicato that, today, does
 not learn. The loss reducer accumulates across runs, the pattern
@@ -334,10 +349,15 @@ near-zero rejection is the first to fall off the cap. We deliberately do
 
 ## 5. Implementation plan
 
-This section is the contract the implementer follows. No behaviour
-changes unless `workspace_root` is supplied to `propose_experiment` (the
-same gating the analyzer-insights surface already uses), so every
-existing standalone-proposer test keeps passing untouched.
+> **As-built.** This section was the implementation contract and is now
+> the shipped shape — read it as a description of the live code, not a
+> plan. The §3.4 cross-contract branch is the lone exception (still an
+> unbuilt extension point; see the §5.2 note).
+
+No behaviour changes unless `workspace_root` is supplied to
+`propose_experiment` (the same gating the analyzer-insights surface
+already uses), so every existing standalone-proposer test keeps passing
+untouched.
 
 ### 5.1 New dataclass — `zicato/core/types.py`
 
@@ -380,17 +400,25 @@ cross-contract branch in this phase unless explicitly asked.)
 
 ### 5.3 Prompt rendering — `zicato/proposer/prompts.py`
 
-- Add `render_prior_experiments_block(prior: Iterable[PriorExperiment]) -> str`
-  producing the compact three-block render of §3.5 (promoted / rejected /
-  in-flight), returning `""` when `prior` is empty. Group by `decision`;
-  render `same_contract=False` entries without their Δscalar.
-- Add a `prior_experiments: Iterable[PriorExperiment] = ()` keyword to
-  `render_user_prompt`. When non-empty, prepend the
-  `## What's already been tried` section to the body — place it **after**
-  `## Recent telemetry insights` and **before** `## Current loss summary`
-  (settled history is context that frames the current state; it reads
-  naturally just under the analyzer insights). Mirror the existing
-  `insights`-block conditional exactly.
+- `render_prior_experiments_block(prior_experiments, *, restrict=...) -> str`
+  produces the compact three-block render of §3.5 (promoted / rejected /
+  in-flight), returning `""` when `prior_experiments` is empty. It groups
+  by `decision` and renders `same_contract=False` entries without their
+  Δscalar. (As shipped it also takes the §11 leakage-restriction flag so
+  the block obeys the same proposer-visibility discipline as the pattern
+  block — see [`OVERFITTING.md`](OVERFITTING.md) §11.)
+- `render_user_prompt` takes a `prior_experiments: Iterable[PriorExperiment] = ()`
+  keyword. When non-empty it prepends the `## What's already been tried`
+  section. **As built**, the section is prepended *before* the
+  failure-profile and telemetry-insights blocks (which are themselves
+  prepended after it), so the final top-to-bottom order is
+  `## Recent telemetry insights` → `## Failure-mode profile` →
+  `## What's already been tried` → the core loss/pattern/mutation body.
+  (The original plan said "after insights, before the loss summary"; the
+  implementation settled on this adjacent ordering — settled history sits
+  just above the current-state body, under the round's aggregate
+  signals.) The block mirrors the existing `insights`-block conditional —
+  empty input omits the section and renders a byte-identical prompt.
 - Update `__all__` and the `render_user_prompt` docstring.
 - Do **not** touch `SYSTEM_PROMPT_TEMPLATE` — experiment memory is
   advisory user-prompt context, never part of the hard schema.
@@ -461,8 +489,10 @@ Match the existing test layout (`tests/` mirrors `src/zicato/`):
   - Empty input → `""` and the section is omitted from `render_user_prompt`.
   - Promoted / rejected / in-flight grouping renders as in §3.5;
     `same_contract=False` entries render without a Δscalar.
-  - The `## What's already been tried` section lands after
-    `## Recent telemetry insights` and before `## Current loss summary`.
+  - The `## What's already been tried` section lands below the round's
+    aggregate signals (`## Recent telemetry insights`,
+    `## Failure-mode profile`) and above the core loss/pattern/mutation
+    body — the as-built ordering of §5.3.
 - **`tests/proposer/test_proposer_prior_experiments.py`** — a stub
   `aux_call_llm` captures the user prompt; assert the block appears when
   `prior_experiments` is non-empty and is absent when it is empty.
