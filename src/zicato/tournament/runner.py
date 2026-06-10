@@ -2351,8 +2351,18 @@ async def run_tournament(
     champion_force_fresh: bool = False,
     round_index: int = 0,
     total_rounds: int = 0,
+    force_fresh: bool = True,
 ) -> TournamentResult:
     """Run a full A/B tournament. See module docstring.
+
+    ``force_fresh`` defaults to ``True`` — the historical behaviour, in
+    which the rigorous full A/B path re-evaluates BOTH sides from scratch
+    (no cache read) so a ``--mode full`` round always re-samples noise.
+    The orchestrator's conservative crash-resume (RUNTIME.md §4) passes
+    ``force_fresh=False`` for the one round it resumes in place, so the
+    per-unit ``loss.json`` cache HITs every board unit the interrupted run
+    already completed and only the unfinished entries re-run. Every other
+    caller leaves the default, so behaviour is byte-identical to today.
 
     ``disable_drift`` is the board-level drift-suppression set parsed
     from the board's ``board_meta`` header (see
@@ -2363,9 +2373,12 @@ async def run_tournament(
 
     Champion (parent) cache-read
     ----------------------------
-    The challenger (child) side is ALWAYS force-fresh here — a freshly
-    proposed generation has no prior evaluation under this contract, so it
-    must run. The champion (parent) is IMMUTABLE within an epoch, so by
+    The challenger (child) side is force-fresh here under the default
+    (``force_fresh=True``) — a freshly proposed generation has no prior
+    evaluation under this contract, so it must run; only the conservative
+    crash-resume (``force_fresh=False``) cache-reads the child's already
+    completed units (see above). The champion (parent) is IMMUTABLE within
+    an epoch, so by
     default (``champion_force_fresh=False``) its per-board units are
     cache-READ: if the champion was already scored this epoch (a prior round
     / its seed-scoring) those results are reused rather than re-running the
@@ -2440,16 +2453,25 @@ async def run_tournament(
         # number of board units in flight — up to 2*parallelism run
         # subprocesses at once (champion + challenger per unit).
         #
-        # The CHILD is always force-fresh (a freshly proposed generation
-        # has no prior evaluation under this contract). The CHAMPION is
-        # immutable within the epoch, so it is cache-READ by default
-        # (``champion_force_fresh=False``) — reused from a prior round /
-        # its seed-scoring rather than needlessly re-run every round (§2
-        # item 3). The first time it is seen it is a clean MISS and runs
-        # once, then caches. ``champion_force_fresh=True`` re-samples the
-        # champion too (the ``--mode full`` noise-resampling path). Both
-        # sides are persisted so a later fast round / structure can reuse
-        # them.
+        # CHILD (challenger) side — governed by ``force_fresh``. It defaults
+        # to ``True`` (the historical full A/B semantics: a freshly proposed
+        # generation has no prior evaluation under this contract, so it must
+        # run). The orchestrator's conservative crash-resume passes
+        # ``force_fresh=False`` for the one round it resumes in place: the
+        # persisted per-unit ``loss.json`` of an interrupted round IS the
+        # cache, so the units the interrupted run already completed cache-HIT
+        # and only the unfinished entries re-run — resume is nearly free.
+        #
+        # CHAMPION (parent) side — governed by ``champion_force_fresh``. The
+        # champion is immutable within the epoch, so it is cache-READ by
+        # default (``champion_force_fresh=False``) — reused from a prior round
+        # / its seed-scoring rather than needlessly re-run every round (§2
+        # item 3). The first time it is seen it is a clean MISS and runs once,
+        # then caches. ``champion_force_fresh=True`` re-samples the champion
+        # too (the ``--mode full`` noise-resampling path).
+        #
+        # Both sides are persisted so a later fast round / structure can
+        # reuse them.
         parent_losses, child_losses = await _run_board_units_full(
             adapter=adapter,
             parent_gen=parent_gen,
@@ -2459,7 +2481,7 @@ async def run_tournament(
             config=config,
             workspace_root=workspace_root,
             epoch_id=epoch_id,
-            force_fresh=True,
+            force_fresh=force_fresh,
             parent_force_fresh=champion_force_fresh,
         )
     finally:

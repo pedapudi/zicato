@@ -49,6 +49,7 @@ from zicato.core.workspace import (
 )
 from zicato.runtime.heartbeat import HeartbeatBeater
 from zicato.runtime.lock import acquire_workspace_lock, release_workspace_lock
+from zicato.runtime.resume import ResumePlan, prepare_resume
 
 if TYPE_CHECKING:
     # Annotation-only — the proposer module is imported lazily inside
@@ -437,8 +438,20 @@ async def evolve_once(
     round_index: int = 0,
     total_rounds: int = 0,
     meta_loop_emitter: Any = None,
+    resume_plan: ResumePlan | None = None,
 ) -> EvolveRoundOutcome:
     """Run ONE evolve round against the current epoch.
+
+    ``resume_plan`` — when supplied by :func:`evolve_n_rounds` for the
+    FIRST round of a resumed invocation — carries the conservative
+    crash-resume decision (``runtime/resume.py``). When it
+    ``resumes_in_place`` for the generation this round would mint, the
+    propose + apply step is skipped and the persisted
+    ``experiment.json`` + patches are reused: the snapshot is re-derived
+    from those same patches (idempotent) and the tournament cache-HITs
+    every board unit that already has a ``loss.json`` on disk, so only
+    the entries that did not finish are re-run. ``None`` (the default, and
+    every round after the first) is byte-identical to a cold start.
 
     ``beater`` — when supplied by :func:`evolve_n_rounds` — receives a
     :meth:`HeartbeatBeater.update` call at every phase transition
@@ -700,7 +713,20 @@ async def evolve_once(
         )
 
     # --- 6. Propose ---
-    next_id = _next_generation_id(workspace_root, resolved_epoch_id)
+    # When resuming an interrupted round in place (runtime/resume.py), reuse
+    # the SAME generation id the prior run minted — its directory still
+    # exists, so ``_next_generation_id`` would otherwise skip past it to a
+    # fresh vN+1 and orphan the completed loss.json units. Every other path
+    # (cold start, discarded partial, post-resume rounds) picks the next
+    # fresh id exactly as before.
+    if (
+        resume_plan is not None
+        and resume_plan.resumes_in_place
+        and resume_plan.resume_generation_id is not None
+    ):
+        next_id = resume_plan.resume_generation_id
+    else:
+        next_id = _next_generation_id(workspace_root, resolved_epoch_id)
     _beat(
         beater,
         epoch_id=resolved_epoch_id,
@@ -769,46 +795,92 @@ async def evolve_once(
     prior = _load_prior_experiments(workspace_root, resolved_epoch_id)
 
     proposer_validation_failed: ProposerError | None = None
-    try:
-        experiment = await proposer_agent.propose(
-            ProposerContext(
-                epoch_id=resolved_epoch_id,
-                parent_generation_id=parent_id,
-                new_generation_id=next_id,
-                patterns=tuple(patterns),
-                mutations=tuple(mutations),
-                brief_text=brief.text,
-                current_loss_summary=loss_summary,
-                aux_call_llm=auxiliary_call_llm,
-                model=str(workspace_config.get("auxiliary_model", "")),
-                max_retries=max_proposer_retries,
-                forbidden_ids=brief.forbidden_ids,
-                workspace_root=workspace_root,
-                validate_experiment=_validate_experiment_post_apply,
-                meta_loop_emitter=meta_loop_emitter,
-                custom_judge_names=custom_judge_names,
-                prior_experiments=tuple(prior),
-                restrict_visibility=weights.overfitting.restrict_proposer_visibility,
-                failure_profile=failure_profile,
+    # --- 6r. Conservative crash-resume short-circuit (gauntlet path) ---
+    # When the prior evolve was interrupted mid-tournament on THIS exact
+    # generation, runtime/resume.py validated that the persisted
+    # experiment + patches + snapshot are self-consistent and at least one
+    # board unit completed. Reuse the persisted experiment verbatim rather
+    # than re-proposing (the proposer is non-deterministic — a fresh
+    # proposal would invalidate the on-disk loss.json cache). We still run
+    # the SAME validate/derive hook once, so the snapshot is re-derived
+    # from those same patches (idempotent) before the tournament; the unit
+    # cache then HITs every entry that already has a loss.json. ``None``
+    # (the common cold-start case) leaves the propose path untouched.
+    resumed_experiment: Experiment | None = None
+    if (
+        resume_plan is not None
+        and resume_plan.resumes_in_place
+        and resume_plan.resume_generation_id == next_id
+        and resume_plan.resume_experiment is not None
+    ):
+        candidate = replace(resume_plan.resume_experiment, round_index=round_index)
+        # Re-derive the child snapshot from the persisted patches so the
+        # tournament mounts the same tree the interrupted run scored. The
+        # hook clears any stale child tree and re-applies all-or-nothing.
+        resume_errors = await _validate_experiment_post_apply(candidate)
+        if resume_errors:
+            # The persisted patches no longer re-derive cleanly (e.g. the
+            # parent tree changed underneath them). Fall back to the
+            # conservative default: re-propose fresh, exactly as a cold
+            # start would — never score against a tree we cannot rebuild.
+            log.warning(
+                "resume: persisted patches for %s failed re-validation (%s); "
+                "discarding and re-proposing fresh",
+                next_id,
+                "; ".join(resume_errors),
             )
-        )
-    except ProposerError as exc:
-        # The proposer exhausted its bounded retries without producing a
-        # patch set that survives post-apply validation (or parsing).
-        # Fall through to the rejected-outcome path rather than crashing
-        # the round — the round still produces a clean ``rejected``
-        # journal entry, and the loop continues.
-        proposer_validation_failed = exc
-        experiment = None
+        else:
+            log.info("resume: reusing persisted experiment for %s (no re-propose)", next_id)
+            resumed_experiment = candidate
+
+    if resumed_experiment is not None:
+        # Skip the proposer entirely; the validate/derive hook above
+        # already populated ``last_child_snapshot``. Fall through to the
+        # shared step-7+ path below with the persisted experiment.
+        experiment = resumed_experiment
     else:
-        # Stamp the EVOLVE round that minted this generation onto the experiment
-        # so it persists into experiment.json — the dashboard's round-timeline /
-        # champion-spine attributes each generation to its birth round from this
-        # stamp (the canonical value the loop already threads as round_index).
-        # The guard is redundant at runtime (the `else` means propose succeeded,
-        # so experiment is non-None) but narrows the union type for the checker.
-        if experiment is not None:
-            experiment = replace(experiment, round_index=round_index)
+        try:
+            experiment = await proposer_agent.propose(
+                ProposerContext(
+                    epoch_id=resolved_epoch_id,
+                    parent_generation_id=parent_id,
+                    new_generation_id=next_id,
+                    patterns=tuple(patterns),
+                    mutations=tuple(mutations),
+                    brief_text=brief.text,
+                    current_loss_summary=loss_summary,
+                    aux_call_llm=auxiliary_call_llm,
+                    model=str(workspace_config.get("auxiliary_model", "")),
+                    max_retries=max_proposer_retries,
+                    forbidden_ids=brief.forbidden_ids,
+                    workspace_root=workspace_root,
+                    validate_experiment=_validate_experiment_post_apply,
+                    meta_loop_emitter=meta_loop_emitter,
+                    custom_judge_names=custom_judge_names,
+                    prior_experiments=tuple(prior),
+                    restrict_visibility=weights.overfitting.restrict_proposer_visibility,
+                    failure_profile=failure_profile,
+                )
+            )
+        except ProposerError as exc:
+            # The proposer exhausted its bounded retries without producing
+            # a patch set that survives post-apply validation (or parsing).
+            # Fall through to the rejected-outcome path rather than crashing
+            # the round — the round still produces a clean ``rejected``
+            # journal entry, and the loop continues.
+            proposer_validation_failed = exc
+            experiment = None
+        else:
+            # Stamp the EVOLVE round that minted this generation onto the
+            # experiment so it persists into experiment.json — the
+            # dashboard's round-timeline / champion-spine attributes each
+            # generation to its birth round from this stamp (the canonical
+            # value the loop already threads as round_index). The guard is
+            # redundant at runtime (the `else` means propose succeeded, so
+            # experiment is non-None) but narrows the union type for the
+            # checker.
+            if experiment is not None:
+                experiment = replace(experiment, round_index=round_index)
 
     # --- 7. Validate patch set against the manifest ---
     if experiment is not None:
@@ -993,6 +1065,11 @@ async def evolve_once(
             champion_force_fresh=not fast_mode,
             round_index=round_index,
             total_rounds=total_rounds,
+            # Conservative crash-resume: read the per-unit loss.json cache
+            # so an interrupted round's completed board units are HITS and
+            # only the unfinished entries re-run. A cold start keeps the
+            # historical force-fresh full A/B evaluation byte-for-byte.
+            force_fresh=resumed_experiment is None,
         )
 
     # Cache gen_score.json for future fast-mode runs.
@@ -3232,6 +3309,20 @@ async def evolve_n_rounds(
     # orchestrators from corrupting the same workspace; the beater writes
     # ``heartbeat.json`` so the supervisor binary can detect a wedge.
     lock = acquire_workspace_lock(workspace_root, instance_id)
+    # Conservative crash-resume reconciliation (RUNTIME.md §4, ROBUSTNESS.md
+    # §2.6) — runs ONCE, right after the lock is held and before any new
+    # work. It clears the stale runtime/ state of a prior dead evolve and,
+    # if the prior run was interrupted mid-tournament with completed board
+    # units on disk, returns a plan to resume that generation in place
+    # (reuse the persisted experiment so the unit cache HITs the done
+    # units). On ANY ambiguity it discards the partial generation so the
+    # round re-runs fresh. A clean workspace yields the default no-op plan,
+    # so a cold start is byte-identical to today. The plan is consumed by
+    # the FIRST round only; later rounds pass ``None``.
+    _prepared_plan = prepare_resume(workspace_root, epoch_id or "")
+    resume_plan: ResumePlan | None = (
+        None if _prepared_plan.classification == "clean" else _prepared_plan
+    )
     beater = HeartbeatBeater(workspace_root, instance_id, interval_s=2.0)
     # Resolve the harmonograf console URL once up front so the supervisor
     # / dashboard can surface a "watch live" link from the heartbeat for
@@ -3304,7 +3395,15 @@ async def evolve_n_rounds(
             )
             beater.bump_now()
 
-            async def _run_round(_round_idx: int = round_idx) -> EvolveRoundOutcome:
+            # The resume plan is consumed by the first round only; clear it
+            # afterwards so a later round always proposes fresh.
+            round_resume_plan = resume_plan
+            resume_plan = None
+
+            async def _run_round(
+                _round_idx: int = round_idx,
+                _resume_plan: ResumePlan | None = round_resume_plan,
+            ) -> EvolveRoundOutcome:
                 return await evolve_once(
                     workspace_root=workspace_root,
                     epoch_id=epoch_id,
@@ -3317,6 +3416,7 @@ async def evolve_n_rounds(
                     round_index=_round_idx,
                     total_rounds=rounds,
                     meta_loop_emitter=meta_loop_emitter,
+                    resume_plan=_resume_plan,
                 )
 
             if max_wall_clock_seconds is None:

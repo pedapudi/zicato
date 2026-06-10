@@ -60,6 +60,11 @@ from zicato.runtime.paths import (
     lock_path,
     runtime_dir,
 )
+from zicato.runtime.resume import (
+    ResumePlan,
+    clear_runtime_state,
+    prepare_resume,
+)
 from zicato.runtime.state import (
     ActiveRun,
     ActiveTournament,
@@ -127,4 +132,8 @@ __all__ = [
     "is_same_process",
     "acquire_workspace_lock",
     "release_workspace_lock",
+    # resume
+    "ResumePlan",
+    "clear_runtime_state",
+    "prepare_resume",
 ]
