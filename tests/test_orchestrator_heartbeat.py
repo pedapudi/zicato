@@ -53,6 +53,10 @@ def _bootstrap_workspace(tmp_path: Path) -> tuple[Path, str]:
             {
                 "instance_id": "test",
                 "created_at": "2026-05-14T00:00:00Z",
+                # Hand-built directory-backend snapshot layout below; pin the
+                # directory backend so the git default does not look for git
+                # tags this fixture never writes.
+                "storage_backend": "directory",
                 "adapter": {"kind": "stub"},
             }
         )
