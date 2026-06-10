@@ -1103,10 +1103,34 @@ def rebuild_index(workspace_root: Path, db_path: Path | None = None) -> Path:
         conn.execute("PRAGMA journal_mode=WAL")
         apply_schema(conn)
         _rebuild_all(conn, workspace_root)
+        # The read-only Elo analytics fold runs AFTER every tournament has
+        # been ingested (it reads the full match ledger off the
+        # ``tournaments`` rows). It only ever writes the additive
+        # ``generations.elo`` / ``generations.elo_games`` columns — Elo is
+        # for visibility, never for the gate — and never touches a
+        # decision/loss. A best-effort guard keeps a fold failure from
+        # aborting an otherwise-complete rebuild.
+        _fold_elo(conn)
         conn.commit()
     finally:
         conn.close()
     return target
+
+
+def _fold_elo(conn: sqlite3.Connection) -> None:
+    """Run the read-only Elo fold over the ingested match ledger.
+
+    Best-effort: an unexpected failure in the analytics fold must not
+    abort a rebuild whose canonical rows are already written. The fold is
+    purely derived (the ``elo`` columns re-derive on the next reindex), so
+    swallowing an error here loses nothing the files cannot reconstruct.
+    """
+    try:
+        from zicato.index.elo import fold_elo_into_index  # noqa: PLC0415
+
+        fold_elo_into_index(conn)
+    except Exception:  # noqa: BLE001 — analytics fold is best-effort
+        return
 
 
 def _rebuild_all(conn: sqlite3.Connection, workspace_root: Path) -> None:
