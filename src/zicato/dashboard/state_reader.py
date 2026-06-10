@@ -1503,11 +1503,7 @@ def build_epoch_view(paths: WorkspacePaths, epoch_id: str | None = None) -> dict
             from zicato.index.query import all_epochs as _all_epochs  # noqa: PLC0415
 
             for row in _all_epochs(paths.index_db):
-                if (
-                    row["epoch_id"] == epoch_id
-                    and isinstance(row.keys(), object)
-                    and "goal" in row.keys()
-                ):
+                if row["epoch_id"] == epoch_id and "goal" in row.keys():
                     raw = row["goal"]
                     if isinstance(raw, str):
                         goal_text = raw.strip()
