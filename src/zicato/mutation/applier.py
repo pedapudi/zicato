@@ -123,6 +123,53 @@ def _find_constant_after(
     return best
 
 
+def _resolve_string_literal_node(
+    file_path: Path,
+    marker_line: int,
+) -> ast.Constant | None:
+    """Find the exact string-literal node a span marker binds to.
+
+    Mirrors the enumerator's resolution rule
+    (:func:`zicato.mutation.enumerator._resolve_span_for_marker`): the
+    span marker binds to the string literal whose source line is the
+    *smallest* line strictly greater than ``marker_line``. The enumerator
+    works in whole lines and so loses the literal's COLUMN offsets; this
+    helper re-parses the file and returns the AST node itself so the
+    applier can rewrite exactly the literal's character span — preserving
+    everything else on the line (the ``NAME =`` assignment target, a
+    ``kwarg=`` name, the enclosing parens, a leading ``+`` concat operator,
+    a trailing comma). Replacing only the node is what keeps a
+    simple-assignment span (``NAME = "..."``) from losing its target when
+    the replacement is multi-line.
+
+    Returns ``None`` when the file does not parse or carries no string
+    literal after the marker — the caller then falls back to the
+    line-based path (which still produces a valid edit for the
+    whole-file / non-Python cases).
+    """
+
+    text = file_path.read_text(encoding="utf-8")
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return None
+    best: ast.Constant | None = None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+            continue
+        if node.lineno <= marker_line:
+            continue
+        # Smallest line strictly greater than the marker, breaking ties on
+        # column so a single line carrying two literals resolves the
+        # left-most — identical to the enumerator's ``line_start`` ordering.
+        if best is None or (
+            node.lineno < best.lineno
+            or (node.lineno == best.lineno and node.col_offset < best.col_offset)
+        ):
+            best = node
+    return best
+
+
 def _replace_node_text(
     file_path: Path,
     node: ast.expr | ast.stmt,
@@ -198,27 +245,41 @@ def _is_python_string_literal_source(text: str) -> bool:
 
 
 def _quote_as_python_string(content: str, indent: str) -> str:
-    """Wrap ``content`` as a Python triple-quoted string literal.
+    """Wrap ``content`` as a Python string literal whose VALUE is ``content``.
 
     The indent prefix is the leading whitespace of the original span's
     first line so the produced source slots into the original
     syntactic position (kwarg value, return expression, parenthesised
     concat, etc.) without disturbing the surrounding code's indent.
 
-    A triple delimiter is only safe when it cannot *fuse* with the
-    content: the triple sequence must be absent from ``content`` AND the
-    content must not start or end with that quote char. A trailing ``"``
-    fuses with the closing ``\"\"\"`` into a four-quote run (``\"\"\"\"``)
-    that Python reads as a closed empty literal plus a dangling quote — an
-    unterminated-string ``SyntaxError``; a leading ``"`` fuses the same way
-    at the opening delimiter. We try ``\"\"\"`` then ``'''``; if both would
-    fuse, fall back to ``repr(content)``, which is always a valid
-    (single-line) literal regardless of the content's quote characters.
+    The wrap is **value-preserving**: the literal the applier writes must
+    evaluate back to exactly ``content``. Two hazards make a naive
+    ``\"\"\"{content}\"\"\"`` wrong:
+
+    * **Delimiter fusing** — a leading/trailing quote, or an embedded
+      triple-quote run, fuses with the delimiter and produces an
+      unterminated-string ``SyntaxError`` (issue #11). A triple delimiter
+      is only safe when its triple sequence is absent from ``content`` and
+      ``content`` neither starts nor ends with that quote char.
+    * **Escape interpretation** — a backslash in ``content`` (``\\t`` in a
+      Windows path, ``\\d`` in an embedded regex) would be read as an
+      *escape sequence* inside a non-raw literal, silently changing the
+      string's value and emitting a ``SyntaxWarning`` for unknown escapes
+      (the ``\\d`` warning issue #38 observed). A non-raw triple-quote
+      therefore only preserves the value when ``content`` has no backslash.
+
+    So a triple-quote wrap is used only when ``content`` is both
+    fuse-free AND backslash-free. Otherwise we fall back to ``repr()``,
+    which is always a valid single-line literal that evaluates back to the
+    exact ``content`` regardless of quotes, backslashes, or newlines —
+    correctness over the triple-quote's readability.
     """
-    for triple in ('"""', "'''"):
-        q = triple[0]
-        if triple not in content and not content.startswith(q) and not content.endswith(q):
-            return f"{indent}{triple}{content}{triple}"
+    has_backslash = "\\" in content
+    if not has_backslash:
+        for triple in ('"""', "'''"):
+            q = triple[0]
+            if triple not in content and not content.startswith(q) and not content.endswith(q):
+                return f"{indent}{triple}{content}{triple}"
     return f"{indent}{repr(content)}"
 
 
@@ -292,6 +353,54 @@ def _reindent_python_literal(literal: str, indent: str) -> str:
     out = [indent + first_stripped]
     out.extend(raw_lines[1:])
     return "".join(out)
+
+
+def _strip_literal_first_line_indent(literal: str) -> str:
+    """Drop the leading whitespace from a literal's first line only.
+
+    Column-precise span surgery slots the replacement literal in right
+    after the assignment target / kwarg name (``NAME = `` already sits in
+    the ``before`` slice), so the literal's first line MUST NOT carry its
+    own indent — the surrounding source already positions it. Continuation
+    lines keep their relative indentation verbatim (a deliberately indented
+    docstring body is preserved). Idempotent on a literal whose first line
+    already has no leading whitespace.
+    """
+
+    raw_lines = literal.splitlines(keepends=True)
+    if not raw_lines:
+        return literal
+    out = [raw_lines[0].lstrip(" \t")]
+    out.extend(raw_lines[1:])
+    return "".join(out)
+
+
+def _build_literal_replacement(new_content: str) -> str:
+    """Produce valid Python string-literal source for a ``.py`` span replace.
+
+    The returned text is a bare literal (no leading indent — the caller
+    slots it in column-precise, right after the surrounding ``NAME =`` /
+    ``kwarg=`` / ``(`` prefix that already occupies the line). Two paths:
+
+    * **Preserve** ``new_content`` verbatim when BOTH the cheap
+      first-character heuristic AND a real parse confirm it is well-formed
+      string-literal source (a plain string, an f-string, an
+      implicitly-concatenated multi-line literal). The first line's own
+      indent is stripped so the literal anchors to its syntactic column;
+      continuation lines are left untouched.
+    * **Wrap** ``new_content`` as a collision-proof triple-quoted literal
+      otherwise (raw prose, an assignment echo, a stray-quote payload).
+      The wrap is guaranteed to parse — see :func:`_quote_as_python_string`.
+
+    Either way the result is a single Python expression that can replace a
+    string-literal node's exact character span without breaking the line.
+    """
+
+    if _looks_like_python_string_literal(new_content) and _is_python_string_literal_source(
+        new_content
+    ):
+        return _strip_literal_first_line_indent(new_content)
+    return _quote_as_python_string(new_content, "")
 
 
 def _region_base_indent(original_body: str) -> str:
@@ -374,10 +483,16 @@ def _apply_span_replace(point: MutationPoint, new_content: str) -> None:
     post-apply syntax check is the backstop).
     For span-kind points the policy depends on the file's syntax:
 
-    * For ``.py`` files, the span is a Python string-literal expression
-      and the applier either preserves ``new_content`` verbatim when it
-      already looks like a Python source-form string literal, or wraps
-      it as a triple-quoted literal. The wrap step is what makes
+    * For ``.py`` files, the span is a Python string-literal expression.
+      The applier replaces *exactly* the literal node's character span —
+      not the whole line — so the surrounding ``NAME =`` assignment
+      target, ``kwarg=`` name, enclosing parens, leading ``+`` concat
+      operator and trailing comma all survive verbatim (issue #38: a
+      whole-line replace of a simple ``NAME = "..."`` assignment dropped
+      the ``NAME =`` target whenever the replacement was multi-line). The
+      replacement literal is either ``new_content`` preserved verbatim
+      (when it already parses as string-literal source) or wrapped as a
+      collision-proof triple-quoted literal. The wrap step is what makes
       "describe-the-new-string-as-prose" patches survive the post-apply
       syntax check.
     * For non-``.py`` files (markdown prompt bodies, plain text, etc.)
@@ -393,6 +508,32 @@ def _apply_span_replace(point: MutationPoint, new_content: str) -> None:
     if point.kind == "file":
         _write_text_writable(point.file, new_content)
         return
+
+    if point.kind == "span" and point.file.suffix == ".py":
+        # Column-precise span surgery. The enumerator binds the marker to
+        # a string-literal AST node but reports only WHOLE LINES, so a
+        # naive line-replace of a simple ``NAME = "..."`` assignment would
+        # overwrite the ``NAME =`` target along with the literal (issue
+        # #38). Re-resolve the exact node and replace only its character
+        # span, leaving the rest of the line (assignment target, kwarg
+        # name, parens, ``+`` operator, trailing comma) untouched.
+        marker_line = _resolve_marker_line(point.file, point.id)
+        node = (
+            _resolve_string_literal_node(point.file, marker_line)
+            if marker_line is not None
+            else None
+        )
+        if node is not None:
+            literal = _build_literal_replacement(new_content)
+            # Multi-line literals (a ``\"\"\"...\"\"\"`` docstring) keep
+            # their continuation lines verbatim; the node already sits at
+            # its syntactic column, so no first-line indent is added.
+            _replace_node_text(point.file, node, literal)
+            return
+        # The node could not be re-resolved (an unparseable file, or a
+        # marker with no literal beneath it). Fall through to the
+        # line-based path below, which still produces a deterministic edit.
+
     before = "".join(lines[: point.line_start - 1])
     after = "".join(lines[point.line_end :])
 

@@ -120,6 +120,32 @@ def validate_patches(
     index: dict[str, MutationPoint] = {p.id: p for p in points}
 
     errors: list[str] = []
+
+    # Invariant: a mutation id must be UNIQUE across the whole surface.
+    # The enumerator emits a point per marker and does not dedupe, so two
+    # files (or two markers in one file) declaring the same id both
+    # enumerate. ``index`` above is keyed on id, so a patch targeting a
+    # duplicated id would silently resolve to whichever point happened to
+    # be enumerated last (last-write-wins) and the applier would edit an
+    # arbitrary one of the colliding spans. Reject the whole surface
+    # loudly instead — a patch can only mean one location. Only ids that a
+    # patch actually targets are reported, so an unrelated duplicate
+    # elsewhere in the tree does not block an otherwise-clean batch.
+    targeted_ids = {patch.mutation_id for patch in patches}
+    id_locations: dict[str, list[str]] = {}
+    for enumerated in points:
+        id_locations.setdefault(enumerated.id, []).append(
+            f"{enumerated.file}:{enumerated.line_start}"
+        )
+    for dup_id in sorted(targeted_ids):
+        locations = id_locations.get(dup_id, [])
+        if len(locations) > 1:
+            errors.append(
+                f"mutation_id {dup_id!r} is ambiguous: it resolves to "
+                f"{len(locations)} mutation points ({', '.join(sorted(locations))}); "
+                f"ids must be unique across the mutation surface"
+            )
+
     for patch in patches:
         rule = _OP_RULES.get(patch.op)
         if rule is None:
