@@ -42,6 +42,7 @@ def _insert_experiment(
     rejection_reason: str = "",
     hypothesis_json: str | None = None,
     core_idea: str = "do a thing",
+    outcome_json: str | None = None,
 ) -> None:
     """Insert one ``experiments`` row with explicit verdict / delta / ids."""
     if hypothesis_json is None:
@@ -64,7 +65,7 @@ def _insert_experiment(
                 scalar_delta,
                 None,
                 None,
-                None,
+                outcome_json,
             ),
         )
         conn.commit()
@@ -215,3 +216,129 @@ def test_deferred_included_only_when_budget_remains(tmp_path: Path) -> None:
     # already fill the budget).
     capped = prior_experiments_for_epoch(db, "e1", max_entries=2)
     assert {pe.generation_id for pe in capped} == {"v1", "v2"}
+
+
+# --------------------------------------------------------------------------
+# Hypothesis prediction-accuracy (FUNCTIONALITY-RECOMMENDATIONS.md §4.2)
+# --------------------------------------------------------------------------
+
+
+def _hyp(direction: str, magnitude: str) -> str:
+    """A hypothesis predicting one off_topic drift movement."""
+    return json.dumps(
+        {
+            "core_idea": "tighten router",
+            "modulating": ["router"],
+            "expected_drift_movements": [
+                {"kind": "off_topic", "direction": direction, "magnitude": magnitude}
+            ],
+        }
+    )
+
+
+def _outcome(from_rate: float, to_rate: float) -> str:
+    """A realised outcome moving off_topic from ``from_rate`` to ``to_rate``."""
+    return json.dumps(
+        {
+            "drift_movements": [
+                {
+                    "kind": "off_topic",
+                    "from_rate": from_rate,
+                    "to_rate": to_rate,
+                    "hypothesis_match": True,
+                }
+            ]
+        }
+    )
+
+
+def test_prediction_accuracy_full_match_scores_one(tmp_path: Path) -> None:
+    """A hypothesis whose predicted direction AND magnitude both bear out
+    scores prediction_accuracy == 1.0."""
+    db = _new_index(tmp_path)
+    # Predict a large decrease; off_topic drops 10 -> 2 (a large decrease with
+    # an empty metric-range falling back to the raw absolute movement).
+    _insert_experiment(
+        db,
+        epoch_id="e1",
+        generation_id="v1",
+        decision="promoted",
+        scalar_delta=-0.1,
+        hypothesis_json=_hyp("decrease", "large"),
+        outcome_json=_outcome(10.0, 2.0),
+    )
+    out = prior_experiments_for_epoch(db, "e1")
+    assert out[0].prediction_accuracy == 1.0
+
+
+def test_prediction_accuracy_wrong_direction_scores_zero(tmp_path: Path) -> None:
+    """A hypothesis whose realised direction contradicts the prediction
+    scores prediction_accuracy == 0.0 (a graded miss)."""
+    db = _new_index(tmp_path)
+    # Predict a decrease; off_topic actually INCREASES 2 -> 10.
+    _insert_experiment(
+        db,
+        epoch_id="e1",
+        generation_id="v1",
+        decision="rejected",
+        scalar_delta=0.1,
+        rejection_reason="regressed",
+        hypothesis_json=_hyp("decrease", "large"),
+        outcome_json=_outcome(2.0, 10.0),
+    )
+    out = prior_experiments_for_epoch(db, "e1")
+    assert out[0].prediction_accuracy == 0.0
+
+
+def test_prediction_accuracy_none_when_no_predictions(tmp_path: Path) -> None:
+    """A hypothesis that made no falsifiable movement claims has no graded
+    predictions, so prediction_accuracy is None (not 0.0)."""
+    db = _new_index(tmp_path)
+    _insert_experiment(
+        db,
+        epoch_id="e1",
+        generation_id="v1",
+        decision="promoted",
+        scalar_delta=-0.1,
+        hypothesis_json=json.dumps({"core_idea": "x", "modulating": ["router"]}),
+        outcome_json=_outcome(10.0, 2.0),
+    )
+    out = prior_experiments_for_epoch(db, "e1")
+    assert out[0].prediction_accuracy is None
+
+
+def test_prediction_accuracy_none_when_outcome_absent(tmp_path: Path) -> None:
+    """A settled-but-outcome-less row (NULL outcome_json) cannot be graded —
+    prediction_accuracy degrades to None, never raises."""
+    db = _new_index(tmp_path)
+    _insert_experiment(
+        db,
+        epoch_id="e1",
+        generation_id="v1",
+        decision="promoted",
+        scalar_delta=-0.1,
+        hypothesis_json=_hyp("decrease", "large"),
+        outcome_json=None,
+    )
+    out = prior_experiments_for_epoch(db, "e1")
+    assert out[0].prediction_accuracy is None
+
+
+def test_prediction_accuracy_is_diagnostic_only(tmp_path: Path) -> None:
+    """Prediction accuracy never changes the verdict, Δscalar, or curation —
+    it is a parallel advisory field. A promoted win with a wrong prediction
+    is still surfaced as a promoted win."""
+    db = _new_index(tmp_path)
+    _insert_experiment(
+        db,
+        epoch_id="e1",
+        generation_id="v1",
+        decision="promoted",
+        scalar_delta=-0.2,
+        hypothesis_json=_hyp("decrease", "large"),
+        outcome_json=_outcome(2.0, 10.0),  # prediction was wrong (increase)
+    )
+    out = prior_experiments_for_epoch(db, "e1")
+    assert out[0].decision == "promoted"  # verdict untouched
+    assert out[0].scalar_score_delta == -0.2  # delta untouched
+    assert out[0].prediction_accuracy == 0.0  # advisory signal only

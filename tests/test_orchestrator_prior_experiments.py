@@ -165,3 +165,104 @@ def test_failed_challenger_contributes_no_sibling(
     # The second challenger sees no in-flight sibling — the first failed and
     # produced no hypothesis — so the section is omitted entirely.
     assert "What's already been tried" not in p1
+
+
+def test_duplicate_sibling_is_soft_rejected_for_field_diversity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A challenger that duplicates an in-flight sibling (same modulating
+    id-set + core idea) is SOFT-REJECTED so it cannot collapse the field
+    (FUNCTIONALITY-RECOMMENDATIONS.md §4.3 / EXPERIMENT-MEMORY.md §2.2).
+
+    Two of three challengers are byte-identical proposals; the duplicate is
+    dropped from the run slate and recorded with a ``field_diversity_duplicate``
+    reason, leaving exactly two DISTINCT challengers to run."""
+    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=3, rounds_n=1)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.5, "v2": 1.0, "v3": 0.5},
+        canned_pass_by_gen={"v0": True, "v1": True, "v2": True, "v3": True},
+    )
+
+    idea_a = "challenger-A tighten the greeting"
+    idea_b = "challenger-B require a citation"
+    # Challenger 0 and 1 are IDENTICAL (same core idea + same modulating id);
+    # challenger 2 is distinct. The duplicate (challenger 1) must be rejected.
+    aux = _CapturingFieldLLM(
+        [
+            _response_with_core_idea(idea_a),
+            _response_with_core_idea(idea_a),  # duplicate of challenger 0
+            _response_with_core_idea(idea_b),
+        ]
+    )
+
+    from zicato.orchestrator import evolve_once
+    from zicato.runtime.state import read_active_tournament
+
+    asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=aux,
+        )
+    )
+
+    active = read_active_tournament(workspace)
+    assert active is not None
+    by_gen = {f["generation_id"]: f["status"] for f in active.field_status}
+    reasons = {f["generation_id"]: f.get("reason", "") for f in active.field_status}
+
+    # Three slots were proposed; the middle duplicate is soft-rejected.
+    assert by_gen.get("v1") == "applied"
+    assert by_gen.get("v2") == "rejected"
+    assert reasons.get("v2") == "field_diversity_duplicate"
+    assert by_gen.get("v3") == "applied"
+
+    # The duplicate did NOT become an in-flight sibling — the third (distinct)
+    # challenger's prompt carries only challenger-A's idea, never a second copy.
+    assert len(aux.proposer_prompts) == 3
+    p2 = aux.proposer_prompts[2]
+    assert p2.count(idea_a) == 1  # the single surviving sibling, not two
+
+
+def test_same_ids_different_idea_is_not_a_duplicate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Two challengers targeting the SAME mutation id with genuinely DIFFERENT
+    ideas are distinct experiments — neither is soft-rejected (the constraint
+    dedups by id-set AND core idea, not by id alone)."""
+    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2, rounds_n=1)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.0, "v2": 0.5},
+        canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
+    )
+
+    aux = _CapturingFieldLLM(
+        [
+            _response_with_core_idea("tighten the greeting tone"),
+            _response_with_core_idea("shorten the greeting length"),  # same id, different idea
+        ]
+    )
+
+    from zicato.orchestrator import evolve_once
+    from zicato.runtime.state import read_active_tournament
+
+    asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=aux,
+        )
+    )
+
+    active = read_active_tournament(workspace)
+    assert active is not None
+    statuses = {f["generation_id"]: f["status"] for f in active.field_status}
+    # Both applied — distinct ideas are kept even on the same target id.
+    assert statuses.get("v1") == "applied"
+    assert statuses.get("v2") == "applied"

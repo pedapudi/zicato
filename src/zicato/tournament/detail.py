@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -1180,6 +1181,44 @@ def _grade_movement(
     )
 
 
+def grade_hypothesis_predictions(
+    hypothesis_json: Mapping[str, Any],
+    outcome_json: Mapping[str, Any],
+    ranges: Mapping[str, float] | None = None,
+) -> tuple[int, int]:
+    """Grade ONE experiment's predictions against its realised outcome.
+
+    The per-experiment core of :func:`hypothesis_ledger`, factored out so a
+    caller that already holds the decoded ``hypothesis_json`` /
+    ``outcome_json`` of a single experiment (the experiment-memory reader,
+    FUNCTIONALITY-RECOMMENDATIONS.md §4.2) can score its prediction accuracy
+    without re-opening the index or re-querying the whole epoch.
+
+    Joins the hypothesis's expected movements (``expected_metric_movements``
+    preferred, ``expected_drift_movements`` as fallback — same precedence as
+    the ledger) against the realised movements in the outcome
+    (``metric_movements`` / ``drift_movements``). A movement *matches* iff
+    both its sign and its (range-normalised) magnitude bucket agree with the
+    prediction — identical semantics to :func:`hypothesis_ledger`.
+
+    Returns ``(matches, predictions)``. ``predictions == 0`` when the
+    hypothesis made no falsifiable movement claims; the caller decides how to
+    treat that (the experiment-memory reader maps it to ``None`` accuracy —
+    "made no graded predictions"). ``ranges`` normalises the realised
+    magnitude into small/medium/large buckets; an empty / absent mapping
+    falls back to the raw absolute movement per :func:`_magnitude_bucket`.
+    """
+    expected = _expected_movements(dict(hypothesis_json))
+    actual = _actual_movements(dict(outcome_json))
+    range_map = dict(ranges or {})
+    matches = 0
+    for metric, (direction, magnitude) in expected.items():
+        grade = _grade_movement(metric, direction, magnitude, actual.get(metric), range_map)
+        if grade.matched:
+            matches += 1
+    return matches, len(expected)
+
+
 def optimization_trajectory(db_path: str | Path, epoch_id: str) -> Trajectory:
     """Scalar + per-namespace metric values across the promoted lineage.
 
@@ -1433,6 +1472,7 @@ __all__ = [
     "per_entry_grid",
     "scalar_breakdown",
     "hypothesis_ledger",
+    "grade_hypothesis_predictions",
     "proposer_calibration_rate",
     "optimization_trajectory",
     "mutation_heat_map",
