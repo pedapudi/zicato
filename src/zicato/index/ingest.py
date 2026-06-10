@@ -50,6 +50,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from zicato.core import normalize_wire_drift_kind, normalize_wire_severity
 from zicato.core.types import Experiment, LossProfile
 from zicato.core.workspace import (
     events_jsonl_path,
@@ -186,32 +187,12 @@ def _drift_counts_from_events(events_path: Path) -> Counter[tuple[str, str]]:
     return tally
 
 
-def _normalize_drift_kind(raw: Any) -> str | None:
-    """Lowercase-canonicalise a wire-form drift-kind string.
-
-    Mirrors :func:`zicato.telemetry.reducer._normalize_drift_kind_str`:
-    accepts a bare lowercase kind, an uppercase ``DRIFT_KIND_*`` enum
-    name, or the unspecified sentinel (mapped to ``None``).
-    """
-    if not isinstance(raw, str) or not raw:
-        return None
-    if raw.startswith("DRIFT_KIND_"):
-        suffix = raw[len("DRIFT_KIND_") :].lower()
-        if suffix in ("", "unspecified"):
-            return None
-        return suffix
-    return raw.lower()
-
-
-def _normalize_severity(raw: Any) -> str | None:
-    """Map a wire-form severity string to ``info`` / ``warning`` / ``critical``."""
-    if not isinstance(raw, str) or not raw:
-        return None
-    if raw.startswith("DRIFT_SEVERITY_"):
-        suffix = raw[len("DRIFT_SEVERITY_") :].lower()
-        return suffix if suffix in ("info", "warning", "critical") else None
-    lo = raw.lower()
-    return lo if lo in ("info", "warning", "critical") else None
+# Wire-form drift-kind / severity normalisation is shared with the loss
+# reducer via ``zicato.core.drift_kinds`` so the analytical index agrees
+# with the loss profile (same parse-time contract for both). These
+# module-local aliases keep the ingest call surface stable.
+_normalize_drift_kind = normalize_wire_drift_kind
+_normalize_severity = normalize_wire_severity
 
 
 def _namespace_of(metric_name: str) -> str:

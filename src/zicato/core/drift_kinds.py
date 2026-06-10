@@ -22,6 +22,8 @@ zicato type surface — extending this set is forward-compatible.
 
 from __future__ import annotations
 
+from typing import Any
+
 #: All drift-kind strings zicato will accept inside :class:`DriftCount`,
 #: :class:`ExpectedDriftMovement`, :class:`DriftMovementActual`, and the
 #: ``required_drift_kinds`` field of synthetic-adversarial board entries.
@@ -87,3 +89,49 @@ def validate_drift_kind(kind: str) -> None:
     """
     if kind not in GOLDFIVE_DRIFT_KINDS:
         raise ValueError(f"unknown drift kind: {kind!r}")
+
+
+def normalize_wire_drift_kind(raw: Any) -> str | None:
+    """Normalise a wire-form drift-kind string to its lowercase canonical form.
+
+    Handles the shapes goldfive's event payloads carry:
+
+      * Bare lowercase already (``"off_topic"``) — returned as-is.
+      * Uppercase enum name (``"DRIFT_KIND_OFF_TOPIC"``) — prefix stripped,
+        lowercased.
+      * ``"DRIFT_KIND_UNSPECIFIED"`` / ``"DRIFT_KIND_"`` / empty / non-string
+        — returned as ``None``.
+
+    A non-string ``raw`` (the loss reducer always coerces to ``str`` first;
+    the index path may hand the raw JSON value through) yields ``None``
+    rather than raising, so both callers share one parse-time contract.
+
+    The aggregation step counts whatever string this hands back; the set of
+    *valid* drift kinds on the zicato side is validated separately via
+    :func:`validate_drift_kind`.
+    """
+    if not isinstance(raw, str) or not raw:
+        return None
+    if raw.startswith("DRIFT_KIND_"):
+        suffix = raw[len("DRIFT_KIND_") :].lower()
+        if suffix in ("", "unspecified"):
+            return None
+        return suffix
+    return raw.lower()
+
+
+def normalize_wire_severity(raw: Any) -> str | None:
+    """Map a wire-form severity string to ``"info"`` / ``"warning"`` / ``"critical"``.
+
+    Accepts a bare lowercase severity, an uppercase ``DRIFT_SEVERITY_*``
+    enum name, or mixed case. Anything outside the three scoring severities
+    — including ``"DRIFT_SEVERITY_UNSPECIFIED"``, an unknown spelling,
+    empty, or a non-string — yields ``None``.
+    """
+    if not isinstance(raw, str) or not raw:
+        return None
+    if raw.startswith("DRIFT_SEVERITY_"):
+        suffix = raw[len("DRIFT_SEVERITY_") :].lower()
+        return suffix if suffix in ("info", "warning", "critical") else None
+    lo = raw.lower()
+    return lo if lo in ("info", "warning", "critical") else None

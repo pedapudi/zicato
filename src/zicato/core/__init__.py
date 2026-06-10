@@ -14,7 +14,12 @@ goldfive drift-kind strings are in ``zicato/core/drift_kinds.py``.
 
 from __future__ import annotations
 
-from zicato.core.drift_kinds import GOLDFIVE_DRIFT_KINDS, validate_drift_kind
+from zicato.core.drift_kinds import (
+    GOLDFIVE_DRIFT_KINDS,
+    normalize_wire_drift_kind,
+    normalize_wire_severity,
+    validate_drift_kind,
+)
 from zicato.core.types import (
     BUDGET_ABORT_CAUSE,
     BoardEntry,
@@ -78,6 +83,8 @@ from zicato.core.workspace import (
 __all__ = [
     # drift-kind registry
     "GOLDFIVE_DRIFT_KINDS",
+    "normalize_wire_drift_kind",
+    "normalize_wire_severity",
     "validate_drift_kind",
     # mutation surface
     "MutationKind",
