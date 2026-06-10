@@ -18,6 +18,14 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from zicato.selection.standings_ext import (
+    apply_uncertainty_guard,
+    rating_order,
+    read_rating,
+    read_resolver,
+    read_uncertainty_threshold,
+    resolver_leader,
+)
 from zicato.selection.strategy import (
     Contestant,
     MatchRecord,
@@ -59,6 +67,13 @@ class SwissStrategy(SelectionStrategy):
         self._final_result: MatchupResult | None = None
         self._final_match_id = "swiss-final"
         self._leader: Contestant | None = None
+        # Opt-in rating / resolver / uncertainty-guard knobs (absent ⇒
+        # today's Copeland/scalar behaviour, byte-identical). These only
+        # ever re-order the INTERNAL standings / leader pick and add a
+        # promotion-blocking defer — never the gate.
+        self._rating = read_rating(self.params)
+        self._resolver = read_resolver(self.params)
+        self._uncertainty_threshold = read_uncertainty_threshold(self.params)
 
     def field_size(self) -> int:
         return max(1, _param_int(self.params, "field_size", 2))
@@ -126,8 +141,35 @@ class SwissStrategy(SelectionStrategy):
 
     def _standing_order(self) -> list[str]:
         ids = [c.generation_id for c in self._field]
+        if self._rating == "bradley_terry":
+            return self._theta_standing_order(ids)
         ids.sort(
             key=lambda gid: (
+                -self._copeland.get(gid, 0),
+                self._mean_scalar(gid),
+                gid,
+            )
+        )
+        return ids
+
+    def _theta_standing_order(self, ids: list[str]) -> list[str]:
+        """Bradley--Terry theta-rank, falling back to Copeland/scalar.
+
+        When ``rating="bradley_terry"`` the field is ordered by fitted
+        latent strength (best-first). Contestants the audit has not yet
+        rated (no resolvable duel for them) keep the existing Copeland /
+        scalar ordering among themselves and sort *after* every rated
+        contestant — so an early-round call (empty audit) is identical to
+        the Copeland order, and the theta order takes over as duels land.
+        """
+        order = rating_order(self._audit)
+        if not order:
+            ids.sort(key=lambda gid: (-self._copeland.get(gid, 0), self._mean_scalar(gid), gid))
+            return ids
+        rank = {gid: i for i, gid in enumerate(order)}
+        ids.sort(
+            key=lambda gid: (
+                rank.get(gid, len(order)),
                 -self._copeland.get(gid, 0),
                 self._mean_scalar(gid),
                 gid,
@@ -142,8 +184,7 @@ class SwissStrategy(SelectionStrategy):
     def _maybe_final(self) -> Sequence[Matchup]:
         if self._final_scheduled or self._champion is None:
             return ()
-        order = self._standing_order()
-        leader_id = next((g for g in order if g != self._champion.generation_id), None)
+        leader_id = self._pick_leader()
         if leader_id is None:
             # No challenger; champion stands.
             self._final_scheduled = True
@@ -159,6 +200,30 @@ class SwissStrategy(SelectionStrategy):
                 stage_index=self._stage_index,
             ),
         )
+
+    def _pick_leader(self) -> str | None:
+        """The challenger to face the champion in the crowning duel.
+
+        Default (no ``resolver``): the top non-champion in the standings
+        order (Copeland/scalar, or theta-rank when ``rating`` is set) —
+        byte-identical to the historical ``next(...)`` pick. When a
+        ``resolver`` knob is set, the proposed internal leader comes from the
+        resolver over the duel matrix (Smith-prune + Ranked Pairs, or
+        Copeland); if the resolver names the champion (or yields nothing),
+        fall back to the top non-champion in the standings order. The leader
+        is always a non-champion challenger — the resolver only proposes; the
+        unchanged champion gate still decides promotion.
+        """
+        assert self._champion is not None
+        champ = self._champion.generation_id
+        order = self._standing_order()
+        default_leader = next((g for g in order if g != champ), None)
+        if self._resolver is None:
+            return default_leader
+        proposed = resolver_leader(self._audit, self._resolver)
+        if proposed is not None and proposed != champ and proposed in self._by_id:
+            return proposed
+        return default_leader
 
     # -- result folding ----------------------------------------------------
 
@@ -221,12 +286,22 @@ class SwissStrategy(SelectionStrategy):
                 standings=self._standings(None),
             )
         outcome = self._final_result.outcome
-        promoted = outcome.decision == "promoted"
+        assert self._champion is not None
+        decision, reason, deferred = apply_uncertainty_guard(
+            outcome.decision,
+            outcome.reason,
+            audit=self._audit,
+            parent_id=self._champion.generation_id,
+            child_id=self._leader.generation_id,
+            threshold=self._uncertainty_threshold,
+        )
+        promoted = decision == "promoted"
         promoted_id = self._leader.generation_id if promoted else None
+        del deferred
         return SelectionDecision(
             promoted_generation_id=promoted_id,
-            decision=outcome.decision,
-            reason=outcome.reason,
+            decision=decision,  # type: ignore[arg-type]
+            reason=reason,
             matchups=audit,
             crowning_matchup_id=self._final_match_id,
             standings=self._standings(promoted_id),
