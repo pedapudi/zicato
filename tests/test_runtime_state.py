@@ -14,19 +14,21 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from zicato.runtime.paths import active_run_path, heartbeat_path
+from zicato.runtime.paths import active_run_path, heartbeat_path, kill_request_path
 from zicato.runtime.state import (
     ActiveRun,
     ActiveTournament,
     ActiveTournamentEntry,
     Heartbeat,
     clear_active_tournament,
+    clear_worker_kill_request,
     drift_count_snapshot_from_profile,
     list_active_runs,
     loss_summary_from_profile,
     read_active_tournament,
     read_heartbeat,
     remove_active_run,
+    request_worker_kill,
     touch_active_run_progress,
     update_tournament_entry,
     update_tournament_partial_aggregate,
@@ -193,6 +195,37 @@ def test_active_run_round_trip(tmp_path: Path) -> None:
     write_active_run(tmp_path, run)
     [back] = list_active_runs(tmp_path)
     assert back == run
+
+
+# ---------------------------------------------------------------------------
+# Parent→supervisor kill-request markers
+# ---------------------------------------------------------------------------
+
+
+def test_request_worker_kill_writes_marker(tmp_path: Path) -> None:
+    marker = kill_request_path(tmp_path, "run_a")
+    assert not marker.exists()
+    request_worker_kill(tmp_path, "run_a")
+    assert marker.exists()
+    # The payload carries the run id and a request timestamp for the
+    # supervisor's audit log.
+    body = json.loads(marker.read_text(encoding="utf-8"))
+    assert body["run_id"] == "run_a"
+    assert body["requested_at"]
+
+
+def test_request_worker_kill_is_idempotent(tmp_path: Path) -> None:
+    request_worker_kill(tmp_path, "run_a")
+    request_worker_kill(tmp_path, "run_a")  # re-request just rewrites
+    assert kill_request_path(tmp_path, "run_a").exists()
+
+
+def test_clear_worker_kill_request_removes_marker_idempotently(tmp_path: Path) -> None:
+    request_worker_kill(tmp_path, "run_a")
+    clear_worker_kill_request(tmp_path, "run_a")
+    assert not kill_request_path(tmp_path, "run_a").exists()
+    # Clearing a vanished marker is a no-op, not an error.
+    clear_worker_kill_request(tmp_path, "run_a")
 
 
 # ---------------------------------------------------------------------------

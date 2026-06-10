@@ -516,8 +516,16 @@ def _spawn_worker_blocking(args_path: Path) -> subprocess.CompletedProcess[bytes
 def test_parent_kills_worker_that_blocks_past_budget_plus_grace(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A worker wedged past budget+GRACE is terminated by the parent; _run_single
-    returns an aborted LossProfile and never raises."""
+    """A worker wedged past budget+GRACE is reaped; _run_single returns an
+    aborted LossProfile and never raises.
+
+    The single SIGTERM→grace→SIGKILL escalator lives in the supervisor:
+    the parent writes a kill-request marker and waits for the supervisor to
+    reap the worker. No supervisor is attached in this test, so the
+    parent's LAST-RESORT fallback escalation fires after
+    ``_SUPERVISOR_KILL_WAIT_S`` — shrunk here so the fallback is exercised
+    fast.
+    """
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
     generation = _generation(workspace)
@@ -525,8 +533,11 @@ def test_parent_kills_worker_that_blocks_past_budget_plus_grace(
     # a blocking sleep so its OWN cooperative budget cannot fire.
     entry = _entry(budget_s=1)
 
-    # Shrink the parent's grace margins so the test is fast.
+    # Shrink the parent's grace margins so the test is fast. With no
+    # supervisor present, the parent waits _SUPERVISOR_KILL_WAIT_S before its
+    # last-resort escalation — shrink that too so the fallback fires quickly.
     monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", 0.3)
+    monkeypatch.setattr(runner_mod, "_SUPERVISOR_KILL_WAIT_S", 0.5)
     monkeypatch.setattr(runner_mod, "_SIGTERM_TO_SIGKILL_GRACE_S", 0.3)
 
     started = time.monotonic()
@@ -549,10 +560,16 @@ def test_parent_kills_worker_that_blocks_past_budget_plus_grace(
     assert loss.wall_clock_budget_exceeded is True
     assert loss.entry_id == entry.id
     assert loss.drift_loss > 0.0
-    # The parent fired at budget(1) + grace(0.3) = ~1.3s, not 3600s.
+    # The parent reaped at budget(1) + grace(0.3) + supervisor-wait(0.5) +
+    # escalation(0.3) ≈ 2.1s, not 3600s.
     assert elapsed < 30.0
-    # The parent cleaned up the worker's active_runs file.
+    # The parent cleaned up the worker's active_runs file...
     assert not active_run_path(workspace, f"{generation.id}--{entry.id}").exists()
+    # ...and its own kill-request marker (a recycled run id must not inherit
+    # a stale request the supervisor would act on).
+    from zicato.runtime.paths import kill_request_path
+
+    assert not kill_request_path(workspace, f"{generation.id}--{entry.id}").exists()
     # The per-run ephemeral snapshot working copy is discarded even on
     # the abort path — _run_single's finally block runs unconditionally.
     run_id = f"{generation.id}--{entry.id}"
@@ -578,6 +595,7 @@ def test_tournament_continues_after_a_budget_killed_run(
     generation = _generation(workspace)
 
     monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", 0.3)
+    monkeypatch.setattr(runner_mod, "_SUPERVISOR_KILL_WAIT_S", 0.5)
     monkeypatch.setattr(runner_mod, "_SIGTERM_TO_SIGKILL_GRACE_S", 0.3)
 
     losses: dict[str, LossProfile] = {}
@@ -601,6 +619,87 @@ def test_tournament_continues_after_a_budget_killed_run(
     # The wedged entry aborted; the next entry still produced a profile.
     assert losses["entry_wedged"].wall_clock_budget_exceeded is True
     assert losses["entry_ok"].entry_id == "entry_ok"
+
+
+def test_parent_delegates_kill_to_supervisor_via_request_marker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """On an over-budget worker the parent REQUESTS a kill (control marker) and
+    waits for the supervisor to reap it — it does NOT self-escalate.
+
+    This is the §3 consolidation: the single SIGTERM→grace→SIGKILL
+    escalator lives in the supervisor. Here a fake supervisor task watches
+    for the ``kill_requests/{run_id}`` marker and SIGKILLs the worker,
+    standing in for the Rust ``runs_loop``. The parent's last-resort
+    ``_terminate_worker`` must NOT fire, proving the kill went through the
+    request channel rather than the parent racing the supervisor.
+    """
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    generation = _generation(workspace)
+    entry = _entry(budget_s=1)
+    run_id = f"{generation.id}--{entry.id}"
+
+    monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", 0.3)
+    # Generous supervisor-wait: the fake supervisor reaps well within it, so
+    # the parent's last-resort fallback should never be reached.
+    monkeypatch.setattr(runner_mod, "_SUPERVISOR_KILL_WAIT_S", 10.0)
+
+    # Trip a flag if the parent's last-resort escalation ever fires.
+    fallback_fired = {"value": False}
+    real_terminate = runner_mod._terminate_worker
+
+    async def _spy_terminate(proc: object) -> None:
+        fallback_fired["value"] = True
+        await real_terminate(proc)
+
+    monkeypatch.setattr(runner_mod, "_terminate_worker", _spy_terminate)
+
+    from zicato.runtime.paths import kill_request_path
+    from zicato.runtime.state import list_active_runs
+
+    async def _fake_supervisor() -> None:
+        """Stand in for the Rust runs_loop: on a kill-request, SIGKILL the pid."""
+        marker = kill_request_path(workspace, run_id)
+        while True:
+            await asyncio.sleep(0.05)
+            if not marker.exists():
+                continue
+            # Resolve the worker pid from its active_runs record and kill it,
+            # exactly as the supervisor's escalator does.
+            for run in list_active_runs(workspace):
+                if run.run_id == run_id and run.pid:
+                    try:
+                        os.kill(run.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+            return
+
+    async def _drive() -> LossProfile:
+        sup = asyncio.create_task(_fake_supervisor())
+        try:
+            return await _run_single(
+                adapter=SleepingAdapter(),
+                generation=generation,
+                entry=entry,
+                weights=ScoringWeights(),
+                config=_config(workspace),
+                workspace_root=workspace,
+                epoch_id="e0",
+                side="parent",
+            )
+        finally:
+            sup.cancel()
+
+    loss = asyncio.run(_drive())
+
+    assert isinstance(loss, LossProfile)
+    assert loss.wall_clock_budget_exceeded is True
+    # The supervisor reaped the worker, so the parent's last-resort
+    # escalation never ran — no parent↔supervisor race over the pid.
+    assert fallback_fired["value"] is False
+    # The kill-request marker was cleaned up on the run's finally block.
+    assert not kill_request_path(workspace, run_id).exists()
 
 
 # ---------------------------------------------------------------------------

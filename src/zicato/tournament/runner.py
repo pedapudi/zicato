@@ -532,8 +532,23 @@ def _runtime_state() -> tuple[Any, Any] | None:
 _PARENT_BUDGET_GRACE_S: float = 30.0
 
 #: Seconds the parent waits after SIGTERM before escalating to SIGKILL.
-#: Matches the supervisor's two-stage escalation grace.
+#: Matches the supervisor's two-stage escalation grace. Used only by the
+#: last-resort reaper (:func:`_terminate_worker`) — the normal kill path
+#: now delegates escalation to the supervisor (see below).
 _SIGTERM_TO_SIGKILL_GRACE_S: float = 5.0
+
+#: Seconds the parent waits for the SUPERVISOR to escalate-kill a worker
+#: after the parent writes the kill-request marker, BEFORE falling back to
+#: a last-resort self-kill. The supervisor is the single SIGTERM→grace→
+#: SIGKILL escalator: the parent requests a kill and waits for the worker
+#: to die. This window must comfortably exceed the supervisor's own
+#: SIGTERM→SIGKILL grace + its watchdog tick so a healthy supervisor
+#: always wins the kill — the parent's fallback fires only when no
+#: supervisor is attached (e.g. an ad-hoc run with no watchdog, or a
+#: supervisor that itself died), which is exactly when the parent must
+#: still guarantee the worker is reaped. Generous on purpose: a few extra
+#: seconds on an already-overrun run is cheap; a leaked worker is not.
+_SUPERVISOR_KILL_WAIT_S: float = 20.0
 
 #: Filename prefix for a run's ephemeral snapshot working copy. The copy
 #: lives in the system temp dir (``tempfile.mkdtemp``) so it never sits
@@ -917,12 +932,24 @@ def _aborted_loss_profile(
 
 
 async def _terminate_worker(proc: Any) -> None:
-    """Escalate SIGTERM -> (grace) -> SIGKILL on a wedged worker process.
+    """LAST-RESORT escalate SIGTERM -> (grace) -> SIGKILL on a worker process.
 
-    Mirrors the supervisor's two-stage escalation. After SIGTERM we wait
-    :data:`_SIGTERM_TO_SIGKILL_GRACE_S` for a clean exit; if the worker
-    is still alive we SIGKILL it. Either way we ``await proc.wait()`` so
-    no zombie is left and the parent observes the final exit code.
+    The normal over-budget kill path delegates escalation to the
+    supervisor (the single SIGTERM→grace→SIGKILL escalator): the parent
+    writes a kill-request marker and waits for the worker to die. This
+    function is the parent's *fallback*, used only when the supervisor did
+    not reap the worker within :data:`_SUPERVISOR_KILL_WAIT_S` — i.e. no
+    supervisor is attached (an ad-hoc run with no watchdog) or the
+    supervisor itself is gone. In that case the parent MUST still
+    guarantee the worker is reaped, so it runs the same escalation here.
+    Because it fires only after the supervisor's whole escalation window
+    has elapsed with the worker still alive, it never races a healthy
+    supervisor over the same pid.
+
+    After SIGTERM we wait :data:`_SIGTERM_TO_SIGKILL_GRACE_S` for a clean
+    exit; if the worker is still alive we SIGKILL it. Either way we
+    ``await proc.wait()`` so no zombie is left and the parent observes the
+    final exit code.
     """
     if proc.returncode is not None:
         return
@@ -1174,14 +1201,41 @@ async def _run_single(
             )
         except TimeoutError:
             # --- 5. The worker's own cooperative budget did NOT fire.
-            # Escalate SIGTERM -> SIGKILL ourselves.
+            # The SINGLE SIGTERM→grace→SIGKILL escalator lives in the
+            # supervisor; the parent REQUESTS the kill via a control marker
+            # and waits for the supervisor to reap the worker, rather than
+            # escalating itself — so there is no parent↔supervisor race over
+            # the same worker pid.
             killed_by_parent = True
             log.warning(
-                "run %s exceeded budget+grace (%.0fs); terminating worker",
+                "run %s exceeded budget+grace (%.0fs); requesting supervisor kill",
                 run_id,
                 budget_s + _PARENT_BUDGET_GRACE_S,
             )
-            await _terminate_worker(proc)
+            if rt is not None:
+                state_mod, _ = rt
+                try:
+                    state_mod.request_worker_kill(workspace_root, run_id)
+                except Exception as exc:  # noqa: BLE001 — request is best-effort
+                    log.debug("run %s: kill-request write failed: %s", run_id, exc)
+            # Wait for the supervisor to escalate-kill the worker. The
+            # supervisor's escalation (SIGTERM→grace→SIGKILL) is bounded, so
+            # this wait is too. If the supervisor does NOT reap the worker
+            # within the window — no supervisor attached, or it died — the
+            # parent falls back to its own last-resort escalation so the
+            # worker is never leaked. The fallback fires only AFTER the whole
+            # supervisor window elapsed with the worker still alive, so it
+            # never races a healthy supervisor over the same pid.
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=_SUPERVISOR_KILL_WAIT_S)
+            except TimeoutError:
+                log.warning(
+                    "run %s: supervisor did not reap the worker within %.0fs; "
+                    "parent escalating as a last resort",
+                    run_id,
+                    _SUPERVISOR_KILL_WAIT_S,
+                )
+                await _terminate_worker(proc)
 
         runtime_ms = int((time.monotonic() - spawn_started) * 1000)
         result = _load_worker_result(result_path)
@@ -1293,6 +1347,15 @@ async def _run_single(
                 pass
         if rt is not None:
             state_mod, _ = rt
+            # Clear any kill-request marker this run wrote — the worker is
+            # gone now, and a recycled run id must not inherit a stale
+            # request (the supervisor would otherwise escalate a fresh,
+            # innocent pid). Best-effort + idempotent; a no-op when no kill
+            # was ever requested for this run.
+            try:
+                state_mod.clear_worker_kill_request(workspace_root, run_id)
+            except Exception as exc:  # noqa: BLE001 — cleanup is best-effort
+                log.debug("run %s: kill-request clear skipped: %s", run_id, exc)
             try:
                 state_mod.remove_active_run(workspace_root, run_id)
                 # A3: fold the run's per-entry loss summary into the live

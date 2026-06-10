@@ -101,6 +101,18 @@ def control_log_prefix() -> str:
     return f"{RUNTIME_NS}/control_log"
 
 
+def kill_request_key(run_id: str) -> str:
+    """Storage key for one run's parent→supervisor kill-request marker.
+
+    Lives under ``control/kill_requests/{run_id}`` (no ``.json`` suffix —
+    the supervisor matches on the bare run id). Distinct from the
+    operator's ``kill_runs/{run_id}`` channel: this one asks the Rust
+    supervisor to run the single SIGTERM→grace→SIGKILL escalator on the
+    worker pid, so the Python parent never signals the worker itself.
+    """
+    return f"{control_prefix()}/kill_requests/{run_id}"
+
+
 __all__ = [
     "RUNTIME_NS",
     "backend_for",
@@ -112,4 +124,5 @@ __all__ = [
     "control_prefix",
     "control_command_key",
     "control_log_prefix",
+    "kill_request_key",
 ]
