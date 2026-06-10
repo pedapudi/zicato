@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from zicato.core.types import TournamentDecision
 from zicato.selection.standings_ext import (
     apply_uncertainty_guard,
     rating_order,
@@ -280,7 +281,7 @@ class SwissStrategy(SelectionStrategy):
         if self._final_result is None or self._leader is None:
             return SelectionDecision(
                 promoted_generation_id=None,
-                decision="rejected",
+                decision=TournamentDecision.REJECTED,
                 reason="swiss leader did not clear the champion gate",
                 matchups=audit,
                 standings=self._standings(None),

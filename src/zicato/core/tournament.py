@@ -8,19 +8,52 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any, Literal
 
 # ---------------------------------------------------------------------------
 # Tournament decision / structure
 # ---------------------------------------------------------------------------
 
-#: The tournament's decision about an experiment.
-#:
-#: * ``"promoted"`` — child wins; becomes the new lineage head.
-#: * ``"rejected"`` — child loses or regresses a hard gate.
-#: * ``"deferred"`` — neither wins decisively; lineage head unchanged but
-#:   the experiment is kept for analysis.
-TournamentDecision = Literal["promoted", "rejected", "deferred"]
+
+class TournamentDecision(StrEnum):
+    """The tournament's decision about an experiment.
+
+    * :attr:`PROMOTED` (``"promoted"``) — child wins; becomes the new
+      lineage head.
+    * :attr:`REJECTED` (``"rejected"``) — child loses or regresses a hard
+      gate.
+    * :attr:`DEFERRED` (``"deferred"``) — neither wins decisively; lineage
+      head unchanged but the experiment is kept for analysis.
+
+    A :class:`~enum.StrEnum`, so a member equals its lowercase wire token
+    and serialises through ``json.dumps`` with no converter — the JSON
+    output and contract hash are byte-identical to the prior ``Literal``.
+    The three members are exactly the prior ``Literal`` tokens, so any
+    value loaded from disk as a bare ``str`` still compares equal.
+    """
+
+    PROMOTED = "promoted"
+    REJECTED = "rejected"
+    DEFERRED = "deferred"
+
+
+class Side(StrEnum):
+    """The tournament side a scheduled run belongs to.
+
+    * :attr:`PARENT` (``"parent"``) — the champion / lineage head.
+    * :attr:`CHILD` (``"child"``) — the challenger being evaluated.
+
+    A :class:`~enum.StrEnum`, so a member equals its lowercase wire token
+    and serialises identically to the bare string. These are the two
+    gauntlet sides; non-gauntlet structures carry an opaque competitor
+    generation id in the same ``side`` slot, so the slot's storage type
+    stays ``str`` — this enum names only the two closed gauntlet tokens
+    at the sites that produce them.
+    """
+
+    PARENT = "parent"
+    CHILD = "child"
 
 
 #: Granularity of the promote gate's pass-rate monotonicity check, gating

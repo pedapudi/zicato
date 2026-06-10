@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from zicato.core.types import TournamentDecision
 from zicato.selection.standings_ext import (
     apply_uncertainty_guard,
     rating_order,
@@ -244,7 +245,7 @@ class SingleEliminationStrategy(SelectionStrategy):
         if self._final_result is None or self._survivor is None or self._champion is None:
             return SelectionDecision(
                 promoted_generation_id=None,
-                decision="rejected",
+                decision=TournamentDecision.REJECTED,
                 reason="no finalist cleared the champion gate",
                 matchups=all_matchups,
                 standings=self._standings(None),

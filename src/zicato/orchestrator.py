@@ -42,6 +42,7 @@ from zicato.core.types import (
     Generation,
     OutcomeRecord,
     PriorExperiment,
+    TournamentDecision,
 )
 from zicato.core.workspace import (
     experiment_json_path,
@@ -942,7 +943,7 @@ async def evolve_once(
             pass_rate_delta=0.0,
             drift_loss_delta=0.0,
             scalar_score_delta=0.0,
-            tournament_decision="rejected",
+            tournament_decision=TournamentDecision.REJECTED,
             rejection_reason=rejection_reason,
         )
         finalised = update_experiment_outcome(
@@ -1718,6 +1719,8 @@ async def _evolve_multi_challenger(
     live_status: dict[str, dict[str, Any]] = {}
     proposing_tournament_id = f"tourn_{epoch_id}_{base_id}"
 
+    from zicato.runtime.state import TournamentPhase  # noqa: PLC0415
+
     def _publish_proposing(record: dict[str, Any]) -> None:
         live_status[str(record.get("generation_id", ""))] = dict(record)
         ordered = list(live_status.values())
@@ -1732,7 +1735,7 @@ async def _evolve_multi_challenger(
             round_index=round_index,
             total_rounds=total_rounds,
             field_status=ordered,
-            phase="proposing",
+            phase=TournamentPhase.PROPOSING,
             entries=_field_entries(champion_only),
         )
 
@@ -1830,7 +1833,7 @@ async def _evolve_multi_challenger(
             round_index=round_index,
             total_rounds=total_rounds,
             field_status=field_status,
-            phase="proposing",
+            phase=TournamentPhase.PROPOSING,
             entries=_field_entries(champion_only),
         )
         return EvolveRoundOutcome(
@@ -2148,7 +2151,11 @@ async def _evolve_multi_challenger(
         effective_decision = replace(
             decision,
             promoted_generation_id=promoted_id,
-            decision="promoted" if promoted_id is not None else "rejected",
+            decision=(
+                TournamentDecision.PROMOTED
+                if promoted_id is not None
+                else TournamentDecision.REJECTED
+            ),
             reason=(
                 crowning_reason_override
                 if crowning_reason_override is not None
@@ -2549,6 +2556,9 @@ def _publish_active_tournament(
             write_active_tournament,
         )
 
+        # ``phase`` may arrive as the bare default ``"running"`` sentinel
+        # below or as a :class:`~zicato.runtime.state.TournamentPhase`
+        # member from a caller; both serialise to the same wire token.
         # PRESERVE the runner-written live fields across a republish. The
         # runner rewrites ``projected`` / ``partial_*_agg`` per settled board
         # via its OWN read-modify-write; this full envelope republish (one per
@@ -2611,7 +2621,7 @@ def _field_entries(
     a rung by relative loss). Absent standings (the pre-schedule publish)
     every row is ``queued`` with an empty loss summary.
     """
-    from zicato.runtime.state import ActiveTournamentEntry  # noqa: PLC0415
+    from zicato.runtime.state import ActiveTournamentEntry, RunStatus  # noqa: PLC0415
 
     by_gen: dict[str, dict[str, Any]] = {}
     for s in standings or []:
@@ -2624,12 +2634,17 @@ def _field_entries(
         gid = str(c.get("generation_id", ""))
         role = str(c.get("role", "") or "")
         standing = by_gen.get(gid)
+        status: RunStatus
         if standing is None:
-            status = "queued"
+            status = RunStatus.QUEUED
             loss_summary: dict[str, float] = {}
         else:
             raw_status = str(standing.get("status", "") or "")
-            status = "completed" if raw_status in ("eliminated", "champion") else "running"
+            status = (
+                RunStatus.COMPLETED
+                if raw_status in ("eliminated", "champion")
+                else RunStatus.RUNNING
+            )
             scalar = standing.get("scalar")
             loss_summary = {"scalar": float(scalar)} if isinstance(scalar, int | float) else {}
             # An IN-FLIGHT competitor carries a live PROJECTED scalar (the
@@ -3008,6 +3023,7 @@ def _settle_active_tournament(
     try:
         from zicato.runtime.state import (  # noqa: PLC0415
             ActiveTournament,
+            TournamentPhase,
             write_active_tournament,
         )
 
@@ -3021,7 +3037,7 @@ def _settle_active_tournament(
                 child_generation_id=decision.promoted_generation_id or "",
                 epoch_id=epoch_id,
                 started_at=_now_iso(),
-                phase="completed",
+                phase=TournamentPhase.COMPLETED,
                 round_index=round_index,
                 total_rounds=total_rounds,
                 structure=structure,
@@ -3070,6 +3086,7 @@ def _mark_run_terminal(workspace_root: Path) -> None:
     """
     try:
         from zicato.runtime.state import (  # noqa: PLC0415
+            TournamentPhase,
             read_active_tournament,
             write_active_tournament,
         )
@@ -3078,7 +3095,7 @@ def _mark_run_terminal(workspace_root: Path) -> None:
         if current is None:
             return
         if str(current.phase).strip().lower() == "running":
-            write_active_tournament(workspace_root, replace(current, phase="stopped"))
+            write_active_tournament(workspace_root, replace(current, phase=TournamentPhase.STOPPED))
     except Exception as exc:  # noqa: BLE001 — terminal-state write is best-effort
         log.debug("terminal active-tournament mark skipped: %s", exc)
 

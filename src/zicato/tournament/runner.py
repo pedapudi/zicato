@@ -150,6 +150,8 @@ from zicato.core import (
     LossProfile,
     RuntimeConfig,
     ScoringWeights,
+    Side,
+    TournamentDecision,
     is_infra_abort_cause,
 )
 from zicato.tournament.gate import GateOutcome, evaluate_gate
@@ -1061,7 +1063,7 @@ async def _run_single(
                 workspace_root,
                 entry.id,
                 side,
-                status="running",
+                status=state_mod.RunStatus.RUNNING,
                 started_at=_now_iso_utc(),
             )
         except Exception:  # noqa: BLE001 — state writes are best-effort
@@ -1615,7 +1617,7 @@ async def _run_full_board_unit(
             config=config,
             workspace_root=workspace_root,
             epoch_id=epoch_id,
-            side="parent",
+            side=Side.PARENT,
             replicate_index=replicate_index,
             match_id=match_id,
             force_fresh=effective_parent_force_fresh,
@@ -1629,7 +1631,7 @@ async def _run_full_board_unit(
             config=config,
             workspace_root=workspace_root,
             epoch_id=epoch_id,
-            side="child",
+            side=Side.CHILD,
             replicate_index=replicate_index,
             match_id=match_id,
             force_fresh=force_fresh,
@@ -2089,7 +2091,7 @@ async def _run_board_units_fast(
                 # Fast mode runs only the challenger; the side label is
                 # "child" for the rare case an ActiveTournament file does
                 # exist, and a benign no-op otherwise.
-                side="child",
+                side=Side.CHILD,
                 replicate_index=replicate_index,
                 match_id=match_id,
                 force_fresh=force_fresh,
@@ -2377,7 +2379,7 @@ def _ladder_mediated_outcome(
     if not cfg.enabled:
         if raw_reason:
             final = GateOutcome(
-                decision="rejected",
+                decision=TournamentDecision.REJECTED,
                 reason=raw_reason,
                 delta_scalar=train_outcome.delta_scalar,
                 delta_pass_rate=train_outcome.delta_pass_rate,
@@ -2414,7 +2416,7 @@ def _ladder_mediated_outcome(
     # promote intact.
     if release.released and not raw_confirmed:
         final = GateOutcome(
-            decision="rejected",
+            decision=TournamentDecision.REJECTED,
             reason=raw_reason,
             delta_scalar=train_outcome.delta_scalar,
             delta_pass_rate=train_outcome.delta_pass_rate,
@@ -2456,7 +2458,7 @@ def _regression_rejection(
     else:
         reason = f"regression suite failed: {regression.summary}"
     return GateOutcome(
-        decision="rejected",
+        decision=TournamentDecision.REJECTED,
         reason=reason,
         delta_scalar=child_scalar - parent_scalar,
         delta_pass_rate=child_pass - parent_pass,
@@ -2550,12 +2552,18 @@ async def run_tournament(
             from zicato.runtime.state import (  # noqa: PLC0415
                 ActiveTournament,
                 ActiveTournamentEntry,
+                RunStatus,
+                TournamentPhase,
             )
 
             now = _now_iso_utc()
             entries = [
-                ActiveTournamentEntry(entry_id=e.id, side="parent", status="queued") for e in board
-            ] + [ActiveTournamentEntry(entry_id=e.id, side="child", status="queued") for e in board]
+                ActiveTournamentEntry(entry_id=e.id, side=Side.PARENT, status=RunStatus.QUEUED)
+                for e in board
+            ] + [
+                ActiveTournamentEntry(entry_id=e.id, side=Side.CHILD, status=RunStatus.QUEUED)
+                for e in board
+            ]
             state_mod.write_active_tournament(
                 workspace_root,
                 ActiveTournament(
@@ -2565,7 +2573,7 @@ async def run_tournament(
                     epoch_id=epoch_id,
                     started_at=now,
                     entries=entries,
-                    phase="running",
+                    phase=TournamentPhase.RUNNING,
                     round_index=round_index,
                     total_rounds=total_rounds,
                 ),
@@ -2751,12 +2759,15 @@ async def run_fast_mode(
             from zicato.runtime.state import (  # noqa: PLC0415
                 ActiveTournament,
                 ActiveTournamentEntry,
+                RunStatus,
+                TournamentPhase,
             )
 
             now = _now_iso_utc()
             cached_per_entry = parent_historical_agg.get("per_entry") or {}
             child_entries = [
-                ActiveTournamentEntry(entry_id=e.id, side="child", status="queued") for e in board
+                ActiveTournamentEntry(entry_id=e.id, side=Side.CHILD, status=RunStatus.QUEUED)
+                for e in board
             ]
             parent_entries: list[ActiveTournamentEntry] = []
             for e in board:
@@ -2772,8 +2783,8 @@ async def run_fast_mode(
                 parent_entries.append(
                     ActiveTournamentEntry(
                         entry_id=e.id,
-                        side="parent",
-                        status="cached",
+                        side=Side.PARENT,
+                        status=RunStatus.CACHED,
                         completed_at=now,
                         loss_summary=loss_summary,
                     )
@@ -2787,7 +2798,7 @@ async def run_fast_mode(
                     epoch_id=epoch_id,
                     started_at=now,
                     entries=parent_entries + child_entries,
-                    phase="running",
+                    phase=TournamentPhase.RUNNING,
                     round_index=round_index,
                     total_rounds=total_rounds,
                     # Seed the champion-side partial aggregate with the

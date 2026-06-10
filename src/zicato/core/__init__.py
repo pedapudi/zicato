@@ -59,6 +59,7 @@ from zicato.core.types import (
     RuntimeConfig,
     ScoringWeights,
     ScriptedTurn,
+    Side,
     TournamentDecision,
     UserPersona,
     is_infra_abort_cause,
@@ -124,6 +125,7 @@ __all__ = [
     "DriftMovementActual",
     "MetricMovementActual",
     "TournamentDecision",
+    "Side",
     "OutcomeRecord",
     "Experiment",
     # epoch / generation

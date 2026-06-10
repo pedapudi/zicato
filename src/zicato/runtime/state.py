@@ -26,6 +26,7 @@ implementation — a caller cannot tell the difference.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,53 @@ from zicato.runtime.paths import ensure_runtime_dirs
 # Kept under this module's historical name so tests can monkeypatch
 # ``zicato.runtime.state._utc_now_iso`` and in-module writers stay unchanged.
 from zicato.util.iso_time import now_iso as _utc_now_iso
+
+
+class RunStatus(StrEnum):
+    """The lifecycle state of one :class:`ActiveTournamentEntry` row.
+
+    * :attr:`QUEUED` (``"queued"``) — seeded before the run kicks off.
+    * :attr:`RUNNING` (``"running"``) — the run is in flight.
+    * :attr:`COMPLETED` (``"completed"``) — the run settled normally.
+    * :attr:`ABORTED` (``"aborted"``) — the run was cut short.
+    * :attr:`CACHED` (``"cached"``) — no run was executed; a cached
+      per-entry scalar was reused.
+
+    A :class:`~enum.StrEnum`, so a member equals its wire token and
+    serialises identically to the bare string the field stored before —
+    the on-disk JSON is byte-identical. A value loaded from disk as a
+    bare ``str`` still compares equal.
+    """
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    ABORTED = "aborted"
+    CACHED = "cached"
+
+
+class TournamentPhase(StrEnum):
+    """The lifecycle phase of an :class:`ActiveTournament` envelope.
+
+    * :attr:`PROPOSING` (``"proposing"``) — the proposer is generating the
+      challenger; no duel has begun.
+    * :attr:`RUNNING` (``"running"``) — the tournament is executing.
+    * :attr:`COMPLETED` (``"completed"``) — the tournament settled.
+    * :attr:`STOPPED` (``"stopped"``) — a lingering envelope flipped to a
+      terminal state on shutdown.
+
+    A :class:`~enum.StrEnum`, so a member equals its wire token and
+    serialises identically to the bare string. This names only the closed
+    :class:`ActiveTournament` lifecycle tokens; the free-form
+    ``evolve_n_rounds:*`` heartbeat-phase labels are a separate slot and
+    stay bare strings.
+    """
+
+    PROPOSING = "proposing"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    STOPPED = "stopped"
+
 
 # ---------------------------------------------------------------------------
 # Heartbeat
@@ -916,6 +964,8 @@ def clear_active_tournament(workspace_root: Path) -> None:
 
 
 __all__ = [
+    "RunStatus",
+    "TournamentPhase",
     "Heartbeat",
     "ActiveRun",
     "ActiveTournamentEntry",

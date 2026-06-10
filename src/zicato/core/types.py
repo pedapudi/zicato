@@ -139,6 +139,7 @@ from zicato.core.tournament import (
     VALID_TOURNAMENT_STRUCTURES,
     MatchOutcome,
     PassRateMonotonicityScope,
+    Side,
     TournamentDecision,
     TournamentStructure,
 )
@@ -180,6 +181,7 @@ __all__ = [
     "DriftMovementActual",
     "MetricMovementActual",
     "TournamentDecision",
+    "Side",
     "PassRateMonotonicityScope",
     "VALID_TOURNAMENT_STRUCTURES",
     "MatchOutcome",

@@ -466,7 +466,7 @@ def evaluate_gate(
                 f"of at least {weights.promote_margin:.6f}"
             )
         return GateOutcome(
-            decision="rejected",
+            decision=TournamentDecision.REJECTED,
             reason=verdict,
             delta_scalar=delta_scalar,
             delta_pass_rate=delta_pass_rate,
@@ -480,7 +480,7 @@ def evaluate_gate(
         pass_reason = _pass_rate_regression_reason(parent_agg, child_agg, weights)
         if pass_reason:
             return GateOutcome(
-                decision="rejected",
+                decision=TournamentDecision.REJECTED,
                 reason=pass_reason,
                 delta_scalar=delta_scalar,
                 delta_pass_rate=delta_pass_rate,
@@ -494,7 +494,7 @@ def evaluate_gate(
     if regressed_ns:
         reason = "monotonicity_regression on namespace=" + ", ".join(regressed_ns)
         return GateOutcome(
-            decision="rejected",
+            decision=TournamentDecision.REJECTED,
             reason=reason,
             delta_scalar=delta_scalar,
             delta_pass_rate=delta_pass_rate,
@@ -508,14 +508,14 @@ def evaluate_gate(
         holdout_reason = _holdout_confirms(holdout_parent_agg, holdout_child_agg, weights)
         if holdout_reason:
             return GateOutcome(
-                decision="rejected",
+                decision=TournamentDecision.REJECTED,
                 reason=holdout_reason,
                 delta_scalar=delta_scalar,
                 delta_pass_rate=delta_pass_rate,
             )
 
     return GateOutcome(
-        decision="promoted",
+        decision=TournamentDecision.PROMOTED,
         reason="",
         delta_scalar=delta_scalar,
         delta_pass_rate=delta_pass_rate,
