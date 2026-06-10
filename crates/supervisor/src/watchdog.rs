@@ -72,14 +72,39 @@ impl Default for Thresholds {
 }
 
 /// What the heartbeat watchdog wants to do this tick.
+///
+/// **The watchdog never kills the orchestrator.** An orchestrator whose
+/// heartbeat has gone stale may simply be slow — a GC pause, a slow LLM
+/// endpoint, or a process paused under a debugger — none of which is a
+/// reason to destroy in-flight tournament work. Past the kill threshold
+/// the watchdog therefore *escalates the warning* (`Stale`) rather than
+/// signalling the orchestrator pid; automatic orchestrator restart is a
+/// process-supervisor concern (systemd/supervisord/k8s), exactly as
+/// RUNTIME.md §3.2 and ROBUSTNESS.md §2.4 already promise. There is no
+/// `Kill` variant by design: `decide_heartbeat` cannot ever produce one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeartbeatAction {
+    /// Heartbeat is fresh; nothing to do.
     Nothing,
+    /// Heartbeat is stale past the warn threshold — surface it.
     Warn,
-    Kill { pid: i32 },
+    /// Heartbeat is stale past the (former kill) deep-stale threshold —
+    /// surface it more loudly, but still **only a warning**. The
+    /// orchestrator pid is never signalled.
+    Stale,
+    /// No heartbeat file / no `last_heartbeat` field yet.
     MissingHeartbeat,
 }
 
+/// Decide what to do about the orchestrator heartbeat this tick.
+///
+/// This function is **warn-only by construction** — it can return
+/// `Nothing`, `Warn`, `Stale`, or `MissingHeartbeat`, but never a kill.
+/// The orchestrator is policed by an out-of-band process supervisor, not
+/// by zicato's own watchdog (it would otherwise be able to kill the very
+/// loop it exists to protect — see RUNTIME.md §3.2 / ROBUSTNESS.md §2.4).
+/// The `heartbeat_stale_kill` threshold is retained only as a *deep-stale*
+/// boundary that raises the warning's severity (`Warn` → `Stale`).
 pub fn decide_heartbeat(
     heartbeat: Option<&crate::state::Heartbeat>,
     now: DateTime<Utc>,
@@ -94,11 +119,11 @@ pub fn decide_heartbeat(
     let age = now.signed_duration_since(last);
     let age_secs = age.num_seconds().max(0) as u64;
 
+    // Deep-stale: past the former kill threshold. We do NOT kill — we
+    // escalate the warning's severity and leave the restart decision to
+    // the operator / process supervisor.
     if age_secs >= t.heartbeat_stale_kill.as_secs() {
-        if let Some(pid) = hb.pid {
-            return HeartbeatAction::Kill { pid };
-        }
-        return HeartbeatAction::Warn;
+        return HeartbeatAction::Stale;
     }
     if age_secs >= t.heartbeat_stale_warn.as_secs() {
         return HeartbeatAction::Warn;
@@ -220,8 +245,11 @@ pub fn decide_run_deadline(
     if !is_signalable_run_pid(pid, protected) {
         return RunDeadlineAction::None;
     }
-    // Sanity-check the worker is actually alive before deciding to signal.
-    if !signal::is_alive(pid) {
+    // Sanity-check the worker is actually alive AND is the same process we
+    // recorded — never signal a recycled pid. When the worker recorded its
+    // start time we verify it; absent a recorded start time this degrades
+    // to a bare liveness check (legacy writers).
+    if !signal::is_same_process(pid, run.pid_start_time) {
         return RunDeadlineAction::None;
     }
 
@@ -235,11 +263,21 @@ pub fn decide_run_deadline(
 }
 
 /// Long-running heartbeat watchdog task.
+///
+/// **Warn-only for the orchestrator.** This loop never signals the
+/// orchestrator pid. A stale heartbeat is surfaced (`warn!` + `/statusz`)
+/// so an operator or out-of-band process supervisor can decide whether to
+/// restart; the watchdog does not make that decision because the
+/// orchestrator may legitimately be slow (GC, a slow LLM endpoint, a
+/// debugger pause) and killing it would destroy in-flight work — exactly
+/// the failure RUNTIME.md §3.2 and ROBUSTNESS.md §2.4 promise will not
+/// happen. Run-worker enforcement (deadline/staleness) lives in
+/// [`runs_loop`] and is unaffected.
 pub async fn heartbeat_loop(
     paths: WorkspacePaths,
     thresholds: Thresholds,
     interval: Duration,
-    log: Arc<WatchdogLog>,
+    _log: Arc<WatchdogLog>,
     shutdown: Sender<()>,
 ) {
     let mut ticker = tokio::time::interval(interval);
@@ -255,21 +293,21 @@ pub async fn heartbeat_loop(
                     HeartbeatAction::Warn => {
                         warn!(?hb, "heartbeat is stale (warn threshold)");
                     }
+                    HeartbeatAction::Stale => {
+                        // Deep-stale past the former kill threshold. We do
+                        // NOT signal the orchestrator: restart is an
+                        // operator / process-supervisor decision. Surface
+                        // it loudly and move on.
+                        warn!(
+                            ?hb,
+                            "orchestrator heartbeat is deeply stale; NOT killing it \
+                             (orchestrator restart is a process-supervisor concern \
+                             — see RUNTIME.md §3.2)"
+                        );
+                    }
                     HeartbeatAction::MissingHeartbeat => {
                         // Don't spam: just debug-level after the initial warn.
                         tracing::debug!("no heartbeat file present");
-                    }
-                    HeartbeatAction::Kill { pid } => {
-                        warn!(pid, "heartbeat stale past kill threshold; escalating");
-                        let out = escalate(pid, thresholds.grace).await;
-                        info!(?out, pid, "escalation complete");
-                        log.record(Action {
-                            ts: Utc::now(),
-                            trigger: Trigger::HeartbeatStale,
-                            pid,
-                            run_id: None,
-                            outcome: out.into(),
-                        });
                     }
                 }
             }
@@ -488,7 +526,9 @@ mod tests {
     }
 
     #[test]
-    fn kill_threshold_for_heartbeat() {
+    fn deep_stale_heartbeat_warns_not_kills() {
+        // Past the former kill threshold (default 90s) the watchdog must
+        // NOT kill the orchestrator — it escalates the warning to `Stale`.
         let now = Utc::now();
         let hb = Heartbeat {
             pid: Some(999),
@@ -497,8 +537,49 @@ mod tests {
         };
         assert_eq!(
             decide_heartbeat(Some(&hb), now, &thresholds()),
-            HeartbeatAction::Kill { pid: 999 }
+            HeartbeatAction::Stale
         );
+    }
+
+    /// Core invariant of the §0 fix: `decide_heartbeat` must NEVER return a
+    /// kill for the orchestrator (heartbeat) pid — at *any* staleness. The
+    /// `HeartbeatAction` enum has no `Kill` variant by construction, but
+    /// this test pins the behavioral guarantee against future regressions:
+    /// we sweep ages from "fresh" through "absurdly stale" and assert every
+    /// outcome is warn-only (`Nothing`/`Warn`/`Stale`/`MissingHeartbeat`),
+    /// for several pids including init/sentinel values.
+    #[test]
+    fn decide_heartbeat_never_kills_the_orchestrator() {
+        let now = Utc::now();
+        let t = thresholds();
+        // A wide sweep of staleness in seconds, well past every threshold
+        // (kill default = 90s; we go to a full day).
+        let ages = [
+            0i64, 1, 5, 29, 30, 31, 60, 89, 90, 91, 120, 300, 600, 3_600, 86_400, 1_000_000,
+        ];
+        // Including the orchestrator pid, init, and sentinel pids.
+        let pids = [Some(424_242), Some(1), Some(0), Some(-1), None];
+        for &pid in &pids {
+            for &age in &ages {
+                let hb = Heartbeat {
+                    pid,
+                    last_heartbeat: Some(now - ChDuration::seconds(age)),
+                    ..Default::default()
+                };
+                let action = decide_heartbeat(Some(&hb), now, &t);
+                assert!(
+                    matches!(
+                        action,
+                        HeartbeatAction::Nothing
+                            | HeartbeatAction::Warn
+                            | HeartbeatAction::Stale
+                            | HeartbeatAction::MissingHeartbeat
+                    ),
+                    "decide_heartbeat must never kill the orchestrator: \
+                     pid={pid:?} age={age}s yielded {action:?}",
+                );
+            }
+        }
     }
 
     #[test]
@@ -764,6 +845,53 @@ mod tests {
         assert_eq!(
             decide_run_deadline(&run, now, Duration::from_secs(5), &protected),
             RunDeadlineAction::None
+        );
+    }
+
+    #[test]
+    fn deadline_overrun_with_recycled_pid_is_none() {
+        // A live, signalable worker pid whose recorded start time does NOT
+        // match the live process simulates pid reuse: the original worker
+        // died and the kernel reissued its number to an unrelated process.
+        // The deadline check must decline to signal it.
+        let sleeper = Sleeper::spawn();
+        let pid = sleeper.pid();
+        let now = Utc::now();
+        let real = signal::pid_start_time(pid);
+        // Only meaningful when we can read a real start time (Linux).
+        if let Some(real) = real {
+            let run = ActiveRun {
+                run_id: "r1".into(),
+                pid: Some(pid),
+                pid_start_time: Some(real + 999_999.0),
+                deadline: Some(now - ChDuration::seconds(30)),
+                ..Default::default()
+            };
+            assert_eq!(
+                decide_run_deadline(&run, now, Duration::from_secs(5), &no_protected()),
+                RunDeadlineAction::None,
+                "must not signal a recycled pid (start-time mismatch)",
+            );
+        }
+    }
+
+    #[test]
+    fn deadline_overrun_with_matching_start_time_signals() {
+        // Counterpart: a live worker whose recorded start time matches the
+        // live process IS the genuine worker — signal it on deadline.
+        let sleeper = Sleeper::spawn();
+        let pid = sleeper.pid();
+        let now = Utc::now();
+        let run = ActiveRun {
+            run_id: "r1".into(),
+            pid: Some(pid),
+            pid_start_time: signal::pid_start_time(pid),
+            deadline: Some(now - ChDuration::seconds(1)),
+            ..Default::default()
+        };
+        assert_eq!(
+            decide_run_deadline(&run, now, Duration::from_secs(5), &no_protected()),
+            RunDeadlineAction::Sigterm { pid },
         );
     }
 

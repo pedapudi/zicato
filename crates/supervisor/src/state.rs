@@ -57,6 +57,17 @@ pub struct ActiveRun {
     pub run_id: String,
     #[serde(default)]
     pub pid: Option<i32>,
+    /// The worker process's start time (Linux `/proc/<pid>/stat` field 22),
+    /// recorded by the worker when it writes this record. Paired with `pid`
+    /// it defeats pid reuse: the watchdog only signals a pid whose start
+    /// time still matches, so a recycled pid (the worker died and the kernel
+    /// reissued its number to an unrelated process) is never mis-targeted.
+    /// Absent for legacy writers → the watchdog degrades to bare liveness.
+    /// Carried as `f64` to match the Python writer (which serializes the
+    /// `/proc` tick count as a float, e.g. `116371304.0`); the values are
+    /// integer-valued so equality comparison is exact.
+    #[serde(default)]
+    pub pid_start_time: Option<f64>,
     #[serde(default)]
     pub entry_id: Option<String>,
     #[serde(default)]

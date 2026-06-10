@@ -768,7 +768,12 @@ async fn watchdog_escalates_to_sigkill_when_sigterm_ignored() {
 }
 
 #[tokio::test]
-async fn watchdog_kill_decision_fires_when_heartbeat_stale() {
+async fn watchdog_never_kills_orchestrator_on_stale_heartbeat() {
+    // A deeply-stale orchestrator heartbeat must NEVER produce a kill — the
+    // watchdog escalates the warning (`Stale`) and leaves the restart
+    // decision to an out-of-band process supervisor (RUNTIME.md §3.2,
+    // ROBUSTNESS.md §2.4). The `HeartbeatAction` enum has no `Kill`
+    // variant by construction.
     use zicato_supervisor::watchdog::{decide_heartbeat, HeartbeatAction, Thresholds};
     let thresholds = Thresholds {
         heartbeat_stale_warn: Duration::from_secs(1),
@@ -780,13 +785,18 @@ async fn watchdog_kill_decision_fires_when_heartbeat_stale() {
         run_deadline_kill_disabled: false,
     };
     let now = Utc::now();
+    // 10s stale, far past the 2s "deep stale" boundary.
     let hb = state::Heartbeat {
         pid: Some(424242),
         last_heartbeat: Some(now - ChDuration::seconds(10)),
         ..Default::default()
     };
     let action = decide_heartbeat(Some(&hb), now, &thresholds);
-    assert_eq!(action, HeartbeatAction::Kill { pid: 424242 });
+    assert_eq!(
+        action,
+        HeartbeatAction::Stale,
+        "stale orchestrator heartbeat must warn, never kill",
+    );
 }
 
 #[tokio::test]

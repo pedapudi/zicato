@@ -531,11 +531,14 @@ async def _run(args: dict[str, Any]) -> None:
     now = datetime.now(UTC)
     deadline = now + timedelta(seconds=int(budget_s))
     try:
+        from zicato.runtime.lock import pid_start_time as _pid_start_time
+
         state_mod.write_active_run(
             workspace_root,
             state_mod.ActiveRun(
                 run_id=run_id,
                 pid=os.getpid(),
+                pid_start_time=_pid_start_time(os.getpid()),
                 started_at=now.isoformat(),
                 last_progress=now.isoformat(),
                 wall_clock_budget_seconds=int(budget_s),

@@ -228,11 +228,13 @@ class ActiveRun:
     entry_id: str
     generation_id: str
     epoch_id: str
+    pid_start_time: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
             "pid": self.pid,
+            "pid_start_time": self.pid_start_time,
             "started_at": self.started_at,
             "last_progress": self.last_progress,
             "wall_clock_budget_seconds": self.wall_clock_budget_seconds,
@@ -245,6 +247,7 @@ class ActiveRun:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> ActiveRun:
+        raw_start = d.get("pid_start_time")
         return cls(
             run_id=str(d["run_id"]),
             pid=int(d["pid"]),
@@ -256,6 +259,7 @@ class ActiveRun:
             entry_id=str(d["entry_id"]),
             generation_id=str(d["generation_id"]),
             epoch_id=str(d["epoch_id"]),
+            pid_start_time=float(raw_start) if raw_start is not None else None,
         )
 
 
