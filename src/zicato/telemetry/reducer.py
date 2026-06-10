@@ -1319,6 +1319,7 @@ def read_loss_profile(path: Path) -> LossProfile:
         scoring_provenance=(
             str(d["scoring_provenance"]) if d.get("scoring_provenance") is not None else None
         ),
+        abort_cause=(str(d["abort_cause"]) if d.get("abort_cause") is not None else None),
     )
 
 

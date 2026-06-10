@@ -975,6 +975,12 @@ async def evolve_once(
             epoch_id=resolved_epoch_id,
             disable_drift=disable_drift,
             judge_only=judge_only,
+            # ``--mode full`` (not fast_mode) re-samples both sides for noise,
+            # so force-fresh the champion too. The fast-mode seeding fallback
+            # (no cached parent aggregate this round) cache-reads the immutable
+            # champion (default) — reusing its prior-round / seed-scoring units
+            # instead of re-running it every round (§2 item 3).
+            champion_force_fresh=not fast_mode,
             round_index=round_index,
             total_rounds=total_rounds,
         )

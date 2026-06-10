@@ -42,7 +42,7 @@ import sqlite3
 #: Bump this whenever the table/column shape below changes. Stamped
 #: into ``PRAGMA user_version`` and the ``schema_meta`` table by
 #: :func:`apply_schema`.
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 10
 
 
 #: The canonical table DDL. Ordered so that ``CREATE TABLE`` statements
@@ -69,6 +69,8 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
       promoted INTEGER,
       created_at TEXT,
       round_index INTEGER,
+      elo REAL,
+      elo_games INTEGER,
       PRIMARY KEY (epoch_id, generation_id)
     )
     """,
@@ -127,7 +129,8 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
       match_id TEXT,
       cached INTEGER,
       source_epoch TEXT,
-      source_run TEXT
+      source_run TEXT,
+      abort_cause TEXT
     )
     """,
     """
@@ -303,6 +306,38 @@ _V8_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
 )
 
 
+#: Columns added in v9 (abort-cause provenance). A run aborted by infra
+#: synthesises a worst-case ``loss_profiles`` row; ``abort_cause`` records
+#: WHY (``budget_exhausted`` = genuine wall-clock exhaustion, vs the infra
+#: causes ``parent_kill`` / ``gone_no_result`` / ``nonzero_exit:{code}`` /
+#: ``prepare_failed`` / ``result_unreadable``) so loop-health can distinguish
+#: an honest agent infinite-loop from a transient crash from our OWN watchdog
+#: over-firing — without re-parsing each row's ``loss_json`` blob. Same
+#: incremental-open ALTER pattern as the earlier waves: a pre-existing v8
+#: database gains the column as ``NULL`` on open (legacy rows + every cleanly-
+#: reduced non-aborted run read as ``abort_cause IS NULL``), and a full
+#: ``zicato reindex`` re-derives it from each run's ``loss.json`` (which now
+#: carries the cause for aborted runs).
+_V9_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (("loss_profiles", "abort_cause", "TEXT"),)
+
+
+#: Columns added in v10 (the read-only Elo analytics fold;
+#: FUNCTIONALITY-RECOMMENDATIONS.md §5). A generation row carries ``elo``
+#: (its folded Elo rating across the lineage's settled match ledger) and
+#: ``elo_games`` (how many settled duels contributed to it). These are
+#: **derived, read-only** analytics columns — Elo is for visibility, never
+#: for the promote decision — re-derived at index time by
+#: :func:`zicato.index.elo.fold_elo_into_index`. Same incremental-open
+#: ALTER pattern as the earlier waves: a pre-existing v9 database gains the
+#: columns as ``NULL`` on open (a generation reads as ``elo IS NULL`` —
+#: rating not yet computed), and a full ``zicato reindex`` re-derives them
+#: from the ingested ``tournaments`` rows after the tournaments land.
+_V10_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("generations", "elo", "REAL"),
+    ("generations", "elo_games", "INTEGER"),
+)
+
+
 def apply_schema(conn: sqlite3.Connection) -> None:
     """Create every table + index + stamp the schema version.
 
@@ -441,6 +476,22 @@ def _migrate_inplace(conn: sqlite3.Connection) -> None:
 
     if current < 8:
         for table, column, ddl_type in _V8_ADDED_COLUMNS:
+            if not _table_exists(conn, table):
+                continue
+            if column in _column_names(conn, table):
+                continue
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
+
+    if current < 9:
+        for table, column, ddl_type in _V9_ADDED_COLUMNS:
+            if not _table_exists(conn, table):
+                continue
+            if column in _column_names(conn, table):
+                continue
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
+
+    if current < 10:
+        for table, column, ddl_type in _V10_ADDED_COLUMNS:
             if not _table_exists(conn, table):
                 continue
             if column in _column_names(conn, table):

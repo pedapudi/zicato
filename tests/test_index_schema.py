@@ -134,6 +134,7 @@ def test_loss_profiles_columns_match_contract() -> None:
         "cached",
         "source_epoch",
         "source_run",
+        "abort_cause",
     ]
     conn.close()
 

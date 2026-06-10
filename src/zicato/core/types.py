@@ -1080,6 +1080,37 @@ class LossProfile:
     # field, never enters the contract hash. A ``loss.json`` written before
     # this field existed loads with ``scoring_provenance=None``.
     scoring_provenance: str | None = None
+    # Abort provenance — WHY a synthesised worst-case profile was recorded,
+    # so loop-health can tell an honest wall-clock-budget exhaustion from an
+    # INFRA abort (a parent/supervisor kill or a worker crash). ``None`` (the
+    # back-compat default) and ``""`` both mean "not an aborted profile" — a
+    # cleanly-reduced run carries no cause. The synthesised values are a
+    # small open vocabulary:
+    #
+    #   * ``"budget_exhausted"`` — the run genuinely hit its wall-clock
+    #     budget (the worker's own cooperative budget fired, or a matchup-
+    #     level budget skipped the un-run unit). This is the ONLY cause the
+    #     cache may persist: re-running would re-hit the same budget.
+    #   * ``"parent_kill"`` — the parent killed a wedged worker that blew
+    #     past ``budget + grace`` without self-terminating (an infra abort).
+    #   * ``"gone_no_result"`` — the worker vanished with no result file
+    #     (a supervisor SIGKILL past the deadline, or a hard crash before it
+    #     could write — an infra abort).
+    #   * ``"nonzero_exit:{code}"`` — the worker process exited non-zero
+    #     with no usable result (a crash — an infra abort).
+    #   * ``"prepare_failed"`` — the run could not be prepared for a
+    #     subprocess (the per-run snapshot copytree failed: disk full,
+    #     source missing — an infra abort).
+    #   * ``"result_unreadable"`` — the worker reported a clean exit but its
+    #     ``loss.json`` was missing/corrupt (an infra abort).
+    #
+    # Only the genuine budget cause is cache-persistable; an infra cause is
+    # NOT cached so a transient blip never poisons a board unit's score for
+    # the rest of the epoch (re-running re-attempts the unit). Readers MUST
+    # tolerate absence (``None`` / ``""``) — every profile written before
+    # this field existed, and every freshly-reduced (non-aborted) run, omits
+    # it. OUTPUT only — never a contract field, never enters the contract hash.
+    abort_cause: str | None = None
 
     def unified_metrics(self) -> tuple[MetricCount, ...]:
         """Return the merged metric view across drift_counts + metric_counts.
@@ -1130,6 +1161,29 @@ class LossProfile:
                     )
                 )
         return tuple(out)
+
+
+#: The single abort cause that is a GENUINE wall-clock-budget exhaustion —
+#: the only cause for which a synthesised worst-case :class:`LossProfile` may
+#: be persisted to the unit cache (re-running would re-hit the same budget,
+#: so caching it is correct and saves a wasted re-run). Every OTHER cause is
+#: an INFRA abort (a parent/supervisor kill or a worker crash) that must NOT
+#: be cached, so a transient blip cannot poison a board unit's score for the
+#: rest of the epoch.
+BUDGET_ABORT_CAUSE = "budget_exhausted"
+
+
+def is_infra_abort_cause(abort_cause: str | None) -> bool:
+    """Return ``True`` iff ``abort_cause`` names a non-cacheable INFRA abort.
+
+    A profile is an infra abort when it carries an ``abort_cause`` that is
+    NOT the genuine :data:`BUDGET_ABORT_CAUSE` wall-clock exhaustion — i.e. a
+    parent/supervisor kill, a worker crash, a prepare failure, or an
+    unreadable result. The empty string / ``None`` means "not an aborted
+    profile at all" and is therefore NOT an infra abort (a cleanly-reduced
+    run is always cacheable).
+    """
+    return bool(abort_cause) and abort_cause != BUDGET_ABORT_CAUSE
 
 
 # ---------------------------------------------------------------------------
@@ -2239,6 +2293,56 @@ class ScoringWeights:
                     f"{plugin_field} must be a dotted-spec string (got "
                     f"{type(value).__name__}); resolution happens at scoring time"
                 )
+
+    def to_json(self) -> dict[str, Any]:
+        """Serialise to a JSON-shaped dict via the field-enumerating serde.
+
+        The single source of truth for putting a :class:`ScoringWeights` on
+        the wire — used by BOTH the tournament runner (to hand weights to the
+        subprocess worker) and the frozen-contract snapshot. Because it walks
+        ``dataclasses.fields()`` (see
+        :mod:`zicato.epoch.contract_serde`) it covers EVERY field
+        automatically, recursing into nested config dataclasses. Adding a
+        field can therefore never silently desync the worker into scoring
+        under defaults — the historical ``per_judge_weights`` /
+        ``pass_rate_monotonicity_scope`` / ``drift_kind_aggregation`` desync
+        class that two hand-aligned field lists kept re-introducing.
+
+        :meth:`from_json` is the exact inverse:
+        ``ScoringWeights.from_json(w.to_json()) == w`` for every field.
+        """
+        from zicato.epoch.contract_serde import dataclass_to_jsonable  # noqa: PLC0415
+
+        return dataclass_to_jsonable(self)
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any] | None) -> ScoringWeights:
+        """Reconstruct from a :meth:`to_json` dict, the inverse of it.
+
+        Tolerant of a partial / absent payload — a key absent from ``data``
+        falls back to the field's dataclass default (so a caller that does
+        not care about scoring weights, e.g. a stub-adapter test, can pass
+        ``None`` / ``{}`` and still get a usable default-weighted instance).
+        ``__post_init__`` re-validates the reconstructed transform specs, so a
+        corrupt payload fails fast here. Used by the subprocess worker to
+        rebuild the weights the runner serialised with :meth:`to_json`.
+
+        Defensive coercion: ``pass_rate_monotonicity_scope`` is a closed
+        ``Literal``; a token outside ``{"per_entry", "aggregate"}`` (a
+        corrupt / future args file) is coerced back to the default rather
+        than letting an out-of-domain string desync the worker's gate-view
+        from the parent's (issue #17). The field-enumerating serde itself
+        passes a bare ``Literal`` token through unchanged, so this guard
+        lives here at the deserialise seam.
+        """
+        from zicato.epoch.contract_serde import jsonable_to_dataclass  # noqa: PLC0415
+
+        if not isinstance(data, Mapping):
+            return cls()
+        raw_scope = data.get("pass_rate_monotonicity_scope")
+        if raw_scope is not None and raw_scope not in ("per_entry", "aggregate"):
+            data = {**data, "pass_rate_monotonicity_scope": cls().pass_rate_monotonicity_scope}
+        return jsonable_to_dataclass(cls, data)
 
 
 # ---------------------------------------------------------------------------

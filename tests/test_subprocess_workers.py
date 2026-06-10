@@ -448,6 +448,57 @@ def test_drift_kind_aggregation_survives_worker_serialize_deserialize() -> None:
     assert not math.isnan(weighted)
 
 
+def test_scoring_weights_unified_serde_round_trips_every_field() -> None:
+    """ONE serde for both sides: ``ScoringWeights.to_json`` /
+    ``from_json`` (and the runner/worker delegators that wrap them) round-trip
+    EVERY field — so adding a field can no longer silently desync the worker
+    into scoring under defaults (the documented ``per_judge_weights`` desync).
+
+    Replaces the former hand-aligned ``_weights_spec`` / ``_weights_from_args``
+    field-list pair with one ``dataclasses.fields()``-driven serde. This walks
+    the FULL transport — ``_weights_spec`` → JSON → ``_weights_from_args`` —
+    over a weights instance with a non-default value on every field (reusing
+    the contract-completeness guard table), asserting the reconstruction is
+    field-identical including ``per_judge_weights``.
+    """
+    from dataclasses import fields
+
+    from tests.test_contract_serializer_completeness import _all_fields_nondefault
+    from zicato._tournament_worker import _weights_from_args
+    from zicato.tournament.runner import _weights_spec
+
+    weights = _all_fields_nondefault(ScoringWeights)
+    # No field on the instance equals its default — a genuine non-default value
+    # everywhere, so a dropped field would be observable.
+    base = ScoringWeights()
+    for f in fields(ScoringWeights):
+        assert getattr(weights, f.name) != getattr(base, f.name)
+
+    # The exact worker transport: runner serialises, JSON round-trips (the args
+    # file is JSON), worker deserialises.
+    spec = _weights_spec(weights)
+    round_tripped = _weights_from_args({"weights": json.loads(json.dumps(spec))})
+
+    # Field-identical — the single serde dropped nothing, including the
+    # historically-desynced fields.
+    assert round_tripped == weights
+    assert round_tripped.per_judge_weights == weights.per_judge_weights
+    assert round_tripped.per_judge_weights  # non-empty, a real per-judge map
+    assert round_tripped.default_judge_weight == weights.default_judge_weight
+
+    # The direct method form is the same single serde.
+    assert ScoringWeights.from_json(weights.to_json()) == weights
+
+    # Tolerance: a partial / absent payload falls back to defaults per field,
+    # so a stub-adapter test that omits the weights block still gets a usable
+    # default-weighted instance (back-compat with the old reader).
+    assert _weights_from_args({}) == ScoringWeights()
+    assert ScoringWeights.from_json(None) == ScoringWeights()
+    assert ScoringWeights.from_json({"per_judge_weights": {"q": 5.0}}).per_judge_weights == {
+        "q": 5.0
+    }
+
+
 def test_worker_stamps_its_own_pid_into_active_runs(tmp_path: Path) -> None:
     """The active_runs file the worker writes carries the WORKER's pid.
 
@@ -549,6 +600,9 @@ def test_parent_kills_worker_that_blocks_past_budget_plus_grace(
     assert loss.wall_clock_budget_exceeded is True
     assert loss.entry_id == entry.id
     assert loss.drift_loss > 0.0
+    # The parent stamped the abort cause so loop-health can tell its OWN kill
+    # of a wedged worker apart from a budget exhaustion or a supervisor kill.
+    assert loss.abort_cause == "parent_kill"
     # The parent fired at budget(1) + grace(0.3) = ~1.3s, not 3600s.
     assert elapsed < 30.0
     # The parent cleaned up the worker's active_runs file.
@@ -662,6 +716,9 @@ def test_run_single_handles_externally_killed_worker(
     assert isinstance(loss, LossProfile)
     assert loss.wall_clock_budget_exceeded is True
     assert loss.entry_id == entry.id
+    # A supervisor SIGKILL leaves the worker gone with no result file —
+    # distinguished from a parent kill by the abort cause.
+    assert loss.abort_cause == "gone_no_result"
     # The parent cleaned up the active_runs file the killed worker left.
     assert not active_run_path(workspace, run_id).exists()
 
@@ -750,6 +807,13 @@ def test_worker_cooperative_budget_produces_clean_aborted_result(
 
     loss = read_loss_profile(Path(result["loss_profile_path"]))
     assert loss.wall_clock_budget_exceeded is True
+    # A genuine cooperative-budget exhaustion is the ONE cache-eligible abort
+    # cause; the worker stamps it so the cache layer reuses it (re-running
+    # re-hits the same budget) rather than treating it as an infra abort.
+    from zicato.core import BUDGET_ABORT_CAUSE, is_infra_abort_cause  # noqa: PLC0415
+
+    assert loss.abort_cause == BUDGET_ABORT_CAUSE
+    assert is_infra_abort_cause(loss.abort_cause) is False
 
 
 # ---------------------------------------------------------------------------
