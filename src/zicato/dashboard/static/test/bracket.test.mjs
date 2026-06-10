@@ -137,6 +137,8 @@ function cutOn(flow, id, x) {
 // the column x the renderer uses: padL(16) + ci*colW(116) + 8.
 function colX(ci) { return 16 + ci * 116 + 8; }
 function gateX(nCols) { return 16 + nCols * 116 + 8; }
+// the lane row height the renderer uses (lanes are laneH apart, centred on lane y).
+function laneH() { return 22; }
 
 // ---- SINGLE-ELIM (settled, with a champion crowned) ----------------------
 
@@ -384,6 +386,135 @@ test('normalizeStructure: stage_index → round_index (new key + legacy fallback
     rounds: [{ round_index: 5, stage_index: 9, label: 'x', matches: [] }],
   }, false);
   assertEqual(both.rounds[0].round_index, 5, 'an explicit round_index is not overwritten by stage_index');
+});
+
+// ---- DOUBLE-ELIM DROP ROUTING (≥2 losers demoted: clean, non-crossing) ----
+//
+// Regression guard for the WB→LB demotion connectors. They used to dip a half-row
+// beneath the SOURCE lane and run their horizontal bus THERE — straight across the
+// rows (dots / labels / boxes) of every lane physically between the WB column and
+// the LB re-entry column; with TWO losers demoted from one node the two buses
+// straddled the intervening lanes and crossed each other. The fix routes every
+// demotion through a reserved CHANNEL below the whole lane stack, one horizontal
+// lane per drop, with a per-edge x-nudge so two drops that share a source column
+// never share a vertical. This test renders a double-elim where TWO losers drop
+// from the SAME WB column into the SAME LB column (the two-loser case) and asserts:
+//   * every horizontal run of every drop path sits BELOW the bottom lane row (in
+//     the channel) — so no run can cross a node box / label / dot,
+//   * each drop owns a DISTINCT channel run-y (its own lane),
+//   * the two same-column drops have DISTINCT source verticals (parallel, no overlap),
+//   * the path endpoints still land on the WB-loss dot and the LB-entry node
+//     (the visual connection is intact).
+
+// Parse an elbow/channel drop `d` into its absolute vertices (M / L / Q endpoints).
+function pathPoints(d) {
+  const pts = [];
+  const re = /([MLQ])\s*([-\d.]+)\s+([-\d.]+)(?:\s+([-\d.]+)\s+([-\d.]+))?/g;
+  let m;
+  while ((m = re.exec(String(d || '')))) {
+    if (m[1] === 'Q') pts.push({ x: Number(m[4]), y: Number(m[5]) });  // arc endpoint
+    else pts.push({ x: Number(m[2]), y: Number(m[3]) });
+  }
+  return pts;
+}
+// the (near-)horizontal runs of a path: consecutive vertices with ~equal y.
+function horizontalRuns(pts) {
+  const runs = [];
+  for (let i = 1; i < pts.length; i++) {
+    if (Math.abs(pts[i].y - pts[i - 1].y) < 0.5 && Math.abs(pts[i].x - pts[i - 1].x) > 0.5) {
+      runs.push({ y: pts[i].y, x1: Math.min(pts[i].x, pts[i - 1].x), x2: Math.max(pts[i].x, pts[i - 1].x) });
+    }
+  }
+  return runs;
+}
+// the longest horizontal run (the channel "bus" run, not a tiny jog).
+function busRun(pts) {
+  return horizontalRuns(pts).sort((a, b) => (b.x2 - b.x1) - (a.x2 - a.x1))[0] || null;
+}
+
+test('double-elim drop routing: ≥2 losers demoted route in their own channel below the stack — no run crosses a node, distinct lanes, no overlap', () => {
+  // Two losers (v2, v4) drop from the SAME WB column (WB-R0) into the SAME LB
+  // column (LB-R2); a third (v3) drops WB-R1 → LB-R3. Three demotion edges total,
+  // two of them sharing both endpoints' columns — the worst case for crossing.
+  const st = {
+    structure: 'double_elim',
+    champion_lineage: ['v0', 'v1'],
+    competitors: [{ generation_id: 'v0', role: 'champion' }, { generation_id: 'v1' }, { generation_id: 'v2' }, { generation_id: 'v3' }, { generation_id: 'v4' }],
+    rounds: [
+      { round_index: 0, label: "Winners' bracket", matches: [
+        { match_id: 'WB-R0-0', competitors: ['v1', 'v2'], winner: 'v1', bracket_slot: 'WB-R0-0' },
+        { match_id: 'WB-R0-1', competitors: ['v3', 'v4'], winner: 'v3', bracket_slot: 'WB-R0-1' },
+      ] },
+      { round_index: 1, label: "Winners' bracket", matches: [
+        { match_id: 'WB-R1-0', competitors: ['v1', 'v3'], winner: 'v1', bracket_slot: 'WB-R1-0' },
+      ] },
+      { round_index: 2, label: "Losers' bracket", matches: [
+        { match_id: 'LB-R2-0', competitors: ['v2', 'v4'], winner: 'v2', bracket_slot: 'LB-R2-0' },
+      ] },
+      { round_index: 3, label: "Losers' bracket", matches: [
+        { match_id: 'LB-R3-0', competitors: ['v2', 'v3'], winner: 'v2', bracket_slot: 'LB-R3-0' },
+      ] },
+      { round_index: 4, label: 'Grand final', matches: [
+        { match_id: 'GF', competitors: ['v0', 'v1'], winner: 'v1', decision: 'promoted', bracket_slot: 'GF' },
+      ] },
+    ],
+  };
+  const model = structure.elimModel(st);
+  const flow = svg.elimFlow({ winners: model.winners.concat(model.losers), championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState });
+
+  // collect the drop paths (raw `d`) so we can inspect their channel routing.
+  const drops = [];
+  walk(flow, (n) => {
+    const list = clsOf(n).split(/\s+/);
+    if (n.localName === 'path' && list.includes('dn-elimflow-seg-drop')) drops.push(n.getAttribute('d'));
+  });
+  assert(drops.length === 3, `three WB→LB demotion edges render (got ${drops.length})`);
+
+  // the bottom lane row: the lowest lane y the renderer placed a competitor on.
+  const f = readFlow(flow);
+  const bottomLaneY = Math.max(...f.lanes.map((l) => l.y));   // label baseline ≈ lane y + 3.2
+  const lastRowBottom = bottomLaneY + laneH() / 2;            // bottom edge of the last row's box
+
+  // (1) the long channel BUS run of EVERY drop path sits BELOW the last lane row —
+  // i.e. inside the reserved channel, so it cannot cross any node box / label / dot.
+  // (The only other horizontals are the tiny source/target jogs, which sit just
+  // below their OWN dot in the inter-row gap; the spanning run is what could cross.)
+  for (const d of drops) {
+    const pts = pathPoints(d);
+    for (const run of horizontalRuns(pts)) {
+      if (run.x2 - run.x1 > laneH()) {
+        assert(run.y > lastRowBottom, `a drop's channel run (y=${run.y}) is below the last lane row (${lastRowBottom}) — never across a node`);
+      }
+    }
+  }
+
+  // (2) each drop owns a DISTINCT channel run-y (its own lane — no shared bus).
+  const busYs = drops.map((d) => busRun(pathPoints(d)).y);
+  const uniqYs = new Set(busYs.map((y) => y.toFixed(1)));
+  assert(uniqYs.size === drops.length, `each demotion runs on its OWN channel lane (distinct run-y); got ${[...uniqYs].join(', ')}`);
+
+  // (3) the TWO losers sharing the SAME WB→LB columns (v2, v4: c0→c2) have
+  // DISTINCT source verticals — parallel pipes, never one overlapping vertical.
+  const sameCol = drops.filter((d) => {
+    const ep = dropPathEndpoints(d);
+    return ep && Math.abs(ep.x1 - colX(0)) < 1 && Math.abs(ep.x2 - colX(2)) < 1;
+  });
+  assert(sameCol.length === 2, 'two losers demote from WB-R0 into LB-R2 (the two-loser case)');
+  // the nudged source-vertical x (the x the path settles onto after the initial jog
+  // off the dot: the 4th vertex of the channel grammar); the per-edge nudge makes
+  // the two differ.
+  const srcVertX = (d) => {
+    const pts = pathPoints(d);
+    return pts.length > 3 ? pts[3].x : pts[0].x;
+  };
+  const [ax, bx] = sameCol.map(srcVertX);
+  assert(Math.abs(ax - bx) > 1.5, `the two same-column drops have DISTINCT source verticals (${ax} vs ${bx}) — no overlap`);
+
+  // (4) the path ENDPOINTS still land on the WB-loss dot and the LB-entry node, so
+  // the connection is intact (the routing change did not orphan any lane).
+  assert(segFromTo(flow, 'v2', colX(0), colX(2)) && segFromTo(flow, 'v2', colX(0), colX(2)).drop, 'v2 WB-R0→LB-R2 drop still connects dot→node');
+  assert(segFromTo(flow, 'v4', colX(0), colX(2)) && segFromTo(flow, 'v4', colX(0), colX(2)).drop, 'v4 WB-R0→LB-R2 drop still connects dot→node');
+  assert(segFromTo(flow, 'v3', colX(1), colX(3)) && segFromTo(flow, 'v3', colX(1), colX(3)).drop, 'v3 WB-R1→LB-R3 drop still connects dot→node');
 });
 
 await run();
