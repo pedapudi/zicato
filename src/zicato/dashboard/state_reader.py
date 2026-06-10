@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -186,6 +187,47 @@ def read_current_epoch(paths: WorkspacePaths) -> str | None:
     return text or None
 
 
+_NUM_RUN = re.compile(r"(\d+)")
+
+
+def _natural_key(name: str) -> tuple[tuple[int, Any], ...]:
+    """Numeric-aware sort key so ``v2`` sorts before ``v10`` (and ``e2``
+    before ``e10``), instead of the lexical order that puts ``v10`` first.
+
+    Splits the string into alternating text / digit runs and compares digit
+    runs numerically. This yields chronological order for the sequentially
+    minted ``eN`` epoch ids and ``vN`` generation ids, and preserves the
+    already-chronological lexical order of ISO-date-prefixed epoch ids
+    (``2026-04-01_slug``). The leading ``0``/``1`` tag keeps text and number
+    runs from ever being compared across types.
+    """
+    return tuple(
+        (1, int(part)) if part.isdigit() else (0, part) for part in _NUM_RUN.split(name) if part
+    )
+
+
+def _epoch_created_at(epoch_dir: Path) -> str:
+    """The epoch's recorded creation timestamp from its ``config.json`` (an
+    ISO-8601 string whose lexical order is chronological), or ``""`` when
+    absent so ordering falls back to the numeric id key.
+    """
+    cfg = _read_json_value(epoch_dir / "config.json")
+    if isinstance(cfg, dict):
+        ts = cfg.get("created_at")
+        if isinstance(ts, str) and ts:
+            return ts
+    return ""
+
+
+def _epoch_sort_key(epoch_dir: Path) -> tuple[str, tuple[tuple[int, Any], ...]]:
+    """Order epochs by recorded creation time, with the numeric-aware id as a
+    deterministic tiebreaker (and the fallback when the timestamp is missing).
+    Sorting by the actual timestamp — not the id — keeps date-named or
+    mixed-scheme epochs in true chronological order.
+    """
+    return (_epoch_created_at(epoch_dir), _natural_key(epoch_dir.name))
+
+
 def list_epoch_ids(paths: WorkspacePaths) -> list[str]:
     """Every epoch id on disk (the ``epochs/`` subdirectories), sorted.
 
@@ -194,7 +236,9 @@ def list_epoch_ids(paths: WorkspacePaths) -> list[str]:
     """
     if not paths.epochs.is_dir():
         return []
-    return sorted(d.name for d in paths.epochs.iterdir() if d.is_dir())
+    epoch_dirs = [d for d in paths.epochs.iterdir() if d.is_dir()]
+    epoch_dirs.sort(key=_epoch_sort_key)
+    return [d.name for d in epoch_dirs]
 
 
 def _resolve_epoch_id(paths: WorkspacePaths, epoch_id: str | None) -> str | None:
@@ -641,15 +685,17 @@ def build_lineage_view(paths: WorkspacePaths) -> dict[str, Any]:
                 }
 
     generations: list[dict[str, Any]] = []
+    epoch_created: dict[str, str] = {}
     if paths.epochs.is_dir():
-        for epoch_dir in sorted(paths.epochs.iterdir()):
+        for epoch_dir in sorted(paths.epochs.iterdir(), key=lambda p: _natural_key(p.name)):
             if not epoch_dir.is_dir():
                 continue
             epoch_id = epoch_dir.name
+            epoch_created[epoch_id] = _epoch_created_at(epoch_dir)
             gens_dir = epoch_dir / "generations"
             if not gens_dir.is_dir():
                 continue
-            for gen_dir in sorted(gens_dir.iterdir()):
+            for gen_dir in sorted(gens_dir.iterdir(), key=lambda p: _natural_key(p.name)):
                 if not gen_dir.is_dir():
                     continue
                 generation_id = gen_dir.name
@@ -720,7 +766,19 @@ def build_lineage_view(paths: WorkspacePaths) -> dict[str, Any]:
                     node["round_index"] = round_index
                 generations.append(node)
 
-    generations.sort(key=lambda g: (g["epoch_id"], g["generation_id"]))
+    # Sort by the RECORDED creation timestamp first (epoch ``config.json``
+    # created_at, then the generation's proposed_at/created_at), with the
+    # numeric-aware id as a deterministic tiebreaker / fallback. So the ledger
+    # is chronological even when ids diverge from creation order (date-named
+    # epochs, carried champions), and never lexical (v1, v10, v11, v2).
+    generations.sort(
+        key=lambda g: (
+            epoch_created.get(g["epoch_id"], ""),
+            _natural_key(g["epoch_id"]),
+            g.get("created_at") or "",
+            _natural_key(g["generation_id"]),
+        )
+    )
     return {"generations": generations}
 
 
@@ -922,7 +980,7 @@ def build_epochs_summary(paths: WorkspacePaths) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     if not paths.epochs.is_dir():
         return out
-    for epoch_dir in sorted(paths.epochs.iterdir()):
+    for epoch_dir in sorted(paths.epochs.iterdir(), key=lambda p: _natural_key(p.name)):
         if not epoch_dir.is_dir():
             continue
         goal = _distill_brief_goal(_read_epoch_brief(epoch_dir))
@@ -943,7 +1001,7 @@ def _read_epoch_experiments(epoch_dir: Path) -> list[dict[str, Any]]:
     if not gens_dir.is_dir():
         return []
     experiments: list[dict[str, Any]] = []
-    for gen_dir in sorted(gens_dir.iterdir()):
+    for gen_dir in sorted(gens_dir.iterdir(), key=lambda p: _natural_key(p.name)):
         if not gen_dir.is_dir():
             continue
         exp = _read_json_value(gen_dir / "experiment.json")
@@ -3479,7 +3537,7 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
         conn = None
 
     try:
-        for epoch_dir in sorted(paths.epochs.iterdir()):
+        for epoch_dir in sorted(paths.epochs.iterdir(), key=lambda p: _natural_key(p.name)):
             if not epoch_dir.is_dir():
                 continue
             epoch_id = epoch_dir.name
@@ -3509,7 +3567,7 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
             gens_dir = epoch_dir / "generations"
             gen_ids: list[str] = []
             if gens_dir.is_dir():
-                for child in sorted(gens_dir.iterdir()):
+                for child in sorted(gens_dir.iterdir(), key=lambda p: _natural_key(p.name)):
                     if child.is_dir():
                         gen_ids.append(child.name)
 
@@ -3655,7 +3713,7 @@ def build_contract_diff(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
     # in sort order.
     predecessor: str | None = None
     if paths.epochs.is_dir():
-        ids = sorted(d.name for d in paths.epochs.iterdir() if d.is_dir())
+        ids = sorted((d.name for d in paths.epochs.iterdir() if d.is_dir()), key=_natural_key)
         if epoch_id in ids:
             idx = ids.index(epoch_id)
             if idx > 0:
@@ -3781,7 +3839,7 @@ def build_meta_loop_ledger(paths: WorkspacePaths) -> dict[str, Any]:
     if not paths.epochs.is_dir():
         return {"current_epoch_id": current, "epochs": rows}
 
-    epoch_ids = sorted(d.name for d in paths.epochs.iterdir() if d.is_dir())
+    epoch_ids = sorted((d.name for d in paths.epochs.iterdir() if d.is_dir()), key=_natural_key)
 
     conn: sqlite3.Connection | None
     try:
