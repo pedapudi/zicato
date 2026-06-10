@@ -4531,7 +4531,7 @@ def _representative_drift_provenance(
     non-``"builtin"`` token, else the first token, else ``None``.
     """
     cells = _read_run_loss_files(paths, epoch_id, generation_id)
-    tokens = [
+    tokens: list[str] = [
         c["scoring_provenance"]
         for c in cells.values()
         if isinstance(c.get("scoring_provenance"), str)
