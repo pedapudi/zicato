@@ -36,6 +36,21 @@ writing to a per-run ``active_runs/{run_id}.json`` + ``events.jsonl`` +
 ``loss.json``, keyed on a unique ``run_id`` of
 ``{generation_id}--{entry_id}``.
 
+Cross-matchup parallelism (one global cap per round)
+----------------------------------------------------
+A non-gauntlet structure (swiss / elim / racing) schedules SEVERAL
+matchups of a round concurrently (the selection driver fans the round's
+batch out under one :func:`asyncio.gather`). Each :func:`run_matchup`
+accepts an OPTIONAL ``unit_semaphore``: when the orchestrator passes one
+shared semaphore to every matchup of a round, all of that round's board
+units across all its concurrent matchups draw from ONE global
+concurrency cap, instead of each matchup minting its own
+``Semaphore(parallelism)`` (which let N concurrent matchups run
+``N × parallelism`` units at once and re-pay worker-spawn + snapshot
+overhead serially per matchup). When ``unit_semaphore`` is ``None`` —
+every direct/gauntlet caller — each board-unit runner mints its own, so
+the single-matchup path is byte-identical to before.
+
 Set ``parallelism=1`` to run one board unit at a time. Note this is NOT
 the same as "one subprocess at a time": with ``parallelism=1`` in full
 mode a single board unit still spawns the champion and challenger
@@ -1569,6 +1584,23 @@ async def _run_full_board_unit(
     return parent_result, child_result
 
 
+def _effective_unit_semaphore(
+    unit_semaphore: asyncio.Semaphore | None, config: RuntimeConfig
+) -> asyncio.Semaphore:
+    """Resolve the concurrency gate for a board-unit runner.
+
+    Returns the caller-supplied ``unit_semaphore`` when present — the
+    cross-matchup case, where one semaphore is shared across every matchup
+    of a round so the round runs under ONE global concurrency cap. When it
+    is ``None`` (every direct / gauntlet caller) a fresh
+    ``Semaphore(config.parallelism)`` is minted, byte-identical to the
+    historical per-runner behaviour.
+    """
+    if unit_semaphore is not None:
+        return unit_semaphore
+    return asyncio.Semaphore(config.parallelism)
+
+
 async def _run_board_units_full(
     *,
     adapter: Any,
@@ -1584,6 +1616,7 @@ async def _run_board_units_full(
     force_fresh: bool = False,
     provenance: dict[str, _UnitProvenance] | None = None,
     matchup_deadline: float | None = None,
+    unit_semaphore: asyncio.Semaphore | None = None,
 ) -> tuple[dict[str, LossProfile], dict[str, LossProfile]]:
     """Run every board entry as a full-mode board unit, bounded concurrency.
 
@@ -1652,9 +1685,10 @@ async def _run_board_units_full(
             force_fresh=force_fresh,
             provenance=provenance,
             matchup_deadline=matchup_deadline,
+            unit_semaphore=unit_semaphore,
         )
 
-    semaphore = asyncio.Semaphore(config.parallelism)
+    semaphore = _effective_unit_semaphore(unit_semaphore, config)
     # Thread both competitors' generation ids + the board size so the scorer
     # writes the live PROJECTED standing per side (boards_done / boards_total)
     # alongside the running partial aggregate. The dashboard marks these
@@ -1748,16 +1782,21 @@ async def _run_board_units_full_budgeted(
     force_fresh: bool,
     provenance: dict[str, _UnitProvenance] | None,
     matchup_deadline: float,
+    unit_semaphore: asyncio.Semaphore | None = None,
 ) -> tuple[dict[str, LossProfile], dict[str, LossProfile]]:
     """Budget-aware variant of :func:`_run_board_units_full`.
 
     Launches board units in board order, ``config.parallelism`` at a time,
     checking ``matchup_deadline`` (a :func:`time.monotonic` instant) BEFORE
-    each batch. Once the deadline has passed no further unit is launched —
-    every remaining unit is recorded as a budget-exceeded
-    :class:`LossProfile` (see :func:`_skipped_unit_loss`), persisted via
-    :func:`_persist_unit_loss` for cache consistency, and counted as a fresh
-    (genuinely-evaluated, not cache-reused) board unit in ``provenance``.
+    each batch. When a shared ``unit_semaphore`` is supplied (cross-matchup
+    parallelism) each launched unit also acquires it, so this matchup's
+    in-flight units count against the round's ONE global concurrency cap
+    rather than only against this matchup's per-batch ceiling. Once the
+    deadline has passed no further unit is launched — every remaining unit
+    is recorded as a budget-exceeded :class:`LossProfile` (see
+    :func:`_skipped_unit_loss`), persisted via :func:`_persist_unit_loss`
+    for cache consistency, and counted as a fresh (genuinely-evaluated,
+    not cache-reused) board unit in ``provenance``.
 
     The number of skipped units is LOGGED at WARNING so a cut-short matchup
     is never mistaken for full coverage. Returns the SAME ``(parent_losses,
@@ -1778,21 +1817,41 @@ async def _run_board_units_full_budgeted(
     budget_tripped = False
 
     async def _bounded(entry: BoardEntry) -> tuple[LossProfile, LossProfile]:
-        return await _run_full_board_unit(
-            adapter=adapter,
-            parent_gen=parent_gen,
-            child_gen=child_gen,
-            entry=entry,
-            weights=weights,
-            config=config,
-            workspace_root=workspace_root,
-            epoch_id=epoch_id,
-            scorer=scorer,
-            match_id=match_id,
-            replicate_index=replicate_index,
-            force_fresh=force_fresh,
-            provenance=provenance,
-        )
+        # A shared cross-matchup semaphore (when supplied) gates this unit
+        # against the round's one global cap; without it the per-batch
+        # ceiling below is the only bound (byte-identical to before).
+        if unit_semaphore is None:
+            return await _run_full_board_unit(
+                adapter=adapter,
+                parent_gen=parent_gen,
+                child_gen=child_gen,
+                entry=entry,
+                weights=weights,
+                config=config,
+                workspace_root=workspace_root,
+                epoch_id=epoch_id,
+                scorer=scorer,
+                match_id=match_id,
+                replicate_index=replicate_index,
+                force_fresh=force_fresh,
+                provenance=provenance,
+            )
+        async with unit_semaphore:
+            return await _run_full_board_unit(
+                adapter=adapter,
+                parent_gen=parent_gen,
+                child_gen=child_gen,
+                entry=entry,
+                weights=weights,
+                config=config,
+                workspace_root=workspace_root,
+                epoch_id=epoch_id,
+                scorer=scorer,
+                match_id=match_id,
+                replicate_index=replicate_index,
+                force_fresh=force_fresh,
+                provenance=provenance,
+            )
 
     def _record_skip(entry: BoardEntry) -> bool:
         """Persist + record both sides of an un-run board unit.
@@ -1897,6 +1956,7 @@ async def _run_board_units_fast(
     replicate_index: int = 0,
     force_fresh: bool = False,
     provenance: dict[str, _UnitProvenance] | None = None,
+    unit_semaphore: asyncio.Semaphore | None = None,
 ) -> dict[str, LossProfile]:
     """Run every board entry as a fast-mode board unit, bounded concurrency.
 
@@ -1920,7 +1980,7 @@ async def _run_board_units_fast(
     :class:`~zicato.runtime.state.ActiveTournament` as every unit
     finishes, concurrently with the boards still in flight.
     """
-    semaphore = asyncio.Semaphore(config.parallelism)
+    semaphore = _effective_unit_semaphore(unit_semaphore, config)
     # Fast mode runs only the challenger; thread its generation id + the board
     # size so the live projected standing accrues for the in-flight challenger.
     scorer = _IncrementalScorer(
@@ -2889,6 +2949,7 @@ async def _run_replicated(
     match_id: str = "",
     fast: bool = False,
     matchup_budget_seconds: float | None = None,
+    unit_semaphore: asyncio.Semaphore | None = None,
 ) -> tuple[dict[str, LossProfile], dict[str, LossProfile], str, dict[str, _UnitProvenance]]:
     """Run a paired board ``replicates`` times, averaging per-entry losses.
 
@@ -3000,6 +3061,7 @@ async def _run_replicated(
             force_fresh=force_fresh,
             provenance=provenance,
             matchup_deadline=matchup_deadline,
+            unit_semaphore=unit_semaphore,
         )
         runs.append((left_losses, right_losses))
 
@@ -3062,6 +3124,7 @@ async def run_matchup(
     match_id: str = "",
     fast: bool = False,
     matchup_budget_seconds: float | None = None,
+    unit_semaphore: asyncio.Semaphore | None = None,
 ) -> TournamentResult:
     """Run ONE duel between two generations, ending in the unchanged gate.
 
@@ -3111,6 +3174,15 @@ async def run_matchup(
     the AGGREGATE of an unbounded board × replicates × both-sides sweep
     (e.g. a racing final rung), a different axis from the per-board
     :attr:`BoardEntry.wall_clock_budget_seconds` (which bounds ONE unit).
+
+    ``unit_semaphore`` is the OPT-IN cross-matchup concurrency gate. When
+    the orchestrator runs several matchups of a round concurrently it
+    passes ONE shared semaphore to every matchup so all of the round's
+    board units draw from a single global cap (instead of each matchup
+    minting its own ``Semaphore(parallelism)`` — which let N concurrent
+    matchups run ``N × parallelism`` units at once). ``None`` (every
+    direct / gauntlet caller) ⇒ each board-unit runner mints its own,
+    byte-identical to the single-matchup path.
     """
     from zicato.core import assert_distinct_callables  # noqa: PLC0415
 
@@ -3141,6 +3213,7 @@ async def run_matchup(
         match_id=match_id,
         fast=fast,
         matchup_budget_seconds=matchup_budget_seconds,
+        unit_semaphore=unit_semaphore,
     )
 
     left_agg = aggregate_generation_score(list(left_losses.values()), weights)

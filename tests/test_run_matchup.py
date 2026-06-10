@@ -351,6 +351,136 @@ def test_run_matchup_unset_budget_runs_every_unit(monkeypatch, tmp_path):
         assert right_loss.wall_clock_budget_exceeded is False
 
 
+# ---------------------------------------------------------------------------
+# cross-matchup parallelism — one shared semaphore caps the whole round
+# ---------------------------------------------------------------------------
+
+
+def _config_par(tmp_path: Path, parallelism: int) -> RuntimeConfig:
+    async def harness_call(system: str, user: str, model: str) -> str:
+        return ""
+
+    async def aux_call(system: str, user: str, model: str) -> str:
+        return ""
+
+    return RuntimeConfig(
+        instance_id="test",
+        workspace_root=tmp_path,
+        harness_call_llm=harness_call,
+        auxiliary_call_llm=aux_call,
+        parallelism=parallelism,
+    )
+
+
+class _PeakConcurrencyProbe:
+    """Stubs ``_run_single`` to track the live concurrent-run peak.
+
+    Each fake run increments a live counter, yields to the loop (so all
+    admitted runs overlap), records the running peak, then decrements.
+    """
+
+    def __init__(self) -> None:
+        self.live = 0
+        self.peak = 0
+
+    def install(self, monkeypatch) -> None:
+        async def fake_run_single(
+            *,
+            adapter,
+            generation,
+            entry,
+            weights,
+            config,
+            workspace_root,
+            epoch_id,
+            side,
+            match_id="",
+        ):
+            del adapter, weights, config, workspace_root, epoch_id, side, match_id
+            self.live += 1
+            self.peak = max(self.peak, self.live)
+            try:
+                # Yield repeatedly so every admitted run is in flight at once
+                # if the semaphore lets it be — that is what the peak measures.
+                for _ in range(5):
+                    await asyncio.sleep(0)
+            finally:
+                self.live -= 1
+            return _loss(
+                generation_id=generation.id, entry_id=entry.id, drift_loss=1.0, pass_fail=True
+            )
+
+        monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+
+
+def _run_two_concurrent_matchups(
+    monkeypatch, tmp_path, *, parallelism: int, shared: asyncio.Semaphore | None
+) -> int:
+    """Run two matchups concurrently and return the peak ``_run_single`` count.
+
+    Both matchups run in FULL mode, so each admitted board unit fans out
+    into two ``_run_single`` calls (champion + challenger) — the semaphore
+    counts board units, so the ``_run_single`` peak is ``2 × board-unit
+    concurrency``. Returns that observed peak.
+    """
+    probe = _PeakConcurrencyProbe()
+    probe.install(monkeypatch)
+    board = _big_board(4)
+
+    def _matchup(right_id: str, match_id: str):
+        return run_matchup(
+            adapter=object(),
+            left_gen=_gen(tmp_path, "v0"),
+            right_gen=_gen(tmp_path, right_id),
+            board=board,
+            weights=ScoringWeights(),
+            config=_config_par(tmp_path, parallelism),
+            workspace_root=tmp_path,
+            epoch_id="e0",
+            match_id=match_id,
+            unit_semaphore=shared,
+        )
+
+    async def _two() -> None:
+        await asyncio.gather(_matchup("v1", "m1"), _matchup("v2", "m2"))
+
+    asyncio.run(_two())
+    return probe.peak
+
+
+def test_shared_unit_semaphore_caps_concurrent_matchups(monkeypatch, tmp_path):
+    """Two matchups sharing ONE semaphore stay under the single global cap.
+
+    parallelism=2 caps BOARD UNITS at 2 across BOTH matchups combined, even
+    though they are scheduled concurrently. Each full-mode board unit fans
+    out into 2 ``_run_single`` calls (champion + challenger), so the
+    ``_run_single`` peak is bounded by ``2 × parallelism`` = 4 — never the
+    ``2 × (2 × parallelism)`` = 8 two independent caps would admit.
+    """
+    parallelism = 2
+    shared = asyncio.Semaphore(parallelism)
+    peak = _run_two_concurrent_matchups(
+        monkeypatch, tmp_path, parallelism=parallelism, shared=shared
+    )
+    assert (
+        peak <= 2 * parallelism
+    ), f"shared semaphore breached: _run_single peak {peak} > 2×cap {2 * parallelism}"
+    # The cap was actually exercised (work really did overlap across matchups).
+    assert peak >= 1
+
+
+def test_unshared_semaphore_each_matchup_caps_itself(monkeypatch, tmp_path):
+    """Without a shared semaphore, two concurrent matchups each fill their own
+    cap — the global peak overshoots a single matchup's cap. This is the
+    overshoot the shared semaphore corrects; the contrast pins WHY it exists.
+    """
+    parallelism = 2
+    peak = _run_two_concurrent_matchups(monkeypatch, tmp_path, parallelism=parallelism, shared=None)
+    # Two independent board-unit caps of 2 ⇒ up to 4 board units ⇒ up to 8
+    # ``_run_single`` calls — strictly more than one matchup's 2×parallelism=4.
+    assert peak > 2 * parallelism
+
+
 def test_average_losses_majority_pass_vote():
     """_average_losses takes a strict-majority vote for pass_fail."""
     from zicato.tournament.runner import _average_losses

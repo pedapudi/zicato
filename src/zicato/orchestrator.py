@@ -1710,6 +1710,17 @@ async def _evolve_multi_challenger(
     champion_cached_units = 0
     champion_fresh_units = 0
 
+    # --- Cross-matchup concurrency cap. A non-gauntlet structure schedules
+    # SEVERAL matchups of a round concurrently (the driver fans the batch out
+    # under one ``asyncio.gather``). Without a shared gate each matchup would
+    # mint its own ``Semaphore(parallelism)``, so N concurrent matchups could
+    # run ``N × parallelism`` board units at once — overshooting the operator's
+    # parallelism intent and the LLM endpoint's concurrency. One semaphore,
+    # created here per round and handed to every ``run_matchup``, makes the
+    # whole round draw from ONE global cap. Sized exactly as a single
+    # matchup's would be, so a round with one matchup is unchanged.
+    round_unit_semaphore = asyncio.Semaphore(max(1, int(config.parallelism)))
+
     # --- run_matchup: one duel via the board-unit runner + unchanged gate.
     async def _run_matchup(m: Matchup) -> MatchupResult:
         _beat(
@@ -1746,6 +1757,10 @@ async def _evolve_multi_challenger(
             # the run uncapped, byte-identical to today; a racing rung may pin
             # it to bound a full-board grind (see Matchup.matchup_budget_seconds).
             matchup_budget_seconds=m.matchup_budget_seconds,
+            # One shared semaphore across every matchup of this round, so all
+            # concurrently-scheduled matchups draw from ONE global concurrency
+            # cap rather than each minting its own ``Semaphore(parallelism)``.
+            unit_semaphore=round_unit_semaphore,
         )
         # Attribute the CHAMPION's cached-vs-fresh board-unit tally for
         # this matchup (if the champion played in it). ``nonlocal`` so the
