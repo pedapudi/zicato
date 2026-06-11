@@ -5,37 +5,33 @@ inline their formulas; they build the typed context from
 :mod:`zicato.scoring.api`, hand it to the matching dispatcher here, and use
 the returned value + provenance marker.
 
-PHASE 1 behaviour
------------------
-Each dispatcher computes the BUILT-IN result (already carried on the context
-as ``ctx.builtin_loss`` / ``ctx.builtin_scalar``) and returns it with the
-``"builtin"`` provenance marker. There is no transform, no plugin, no config
-crossing any boundary yet — this is a pure refactor whose only observable
-change is the additive provenance string.
+How a value is resolved
+-----------------------
+Each dispatcher composes two stages on top of the BUILT-IN result (carried on
+the context as ``ctx.builtin_loss`` / ``ctx.builtin_scalar``), in order:
 
-Where the later phases plug in (INERT hook points)
--------------------------------------------------
-Both dispatchers are structured so Phases 2-3 are PURELY ADDITIVE — they fill
-the marked branches, never rewrite the dispatch:
-
-* **Phase 2 — declarative transforms.** A future ``pass_transform`` /
+* **Declarative transforms.** A ``pass_transform`` /
   ``drift_kind_aggregation`` block on ``ScoringWeights`` (neutral by default)
-  would be applied here, BEFORE the built-in fallback, by reading the spec
-  off ``ctx.weights`` and composing the named transforms from a
-  ``zicato.scoring.transforms`` registry. The weights already cross the
-  worker boundary via ``_weights_spec`` / ``_weights_from_args``, so threading
-  the transform config is additive plumbing on that existing channel.
+  is applied first, BEFORE any plugin, by reading the spec off ``ctx.weights``
+  and composing the named transforms from the
+  :mod:`zicato.scoring.transforms` registry. When the spec is absent or
+  neutral the stage returns ``ctx.builtin_*`` with the ``"builtin"``
+  provenance marker — byte-identical to the un-transformed path. The weights
+  cross the worker boundary via ``_weights_spec`` / ``_weights_from_args``.
 
-* **Phase 3 — dotted-spec plugins.** An optional ``drift_reducer`` /
-  ``scalar_fn`` dotted spec on the contract would be resolved (via the shared
-  importer) and invoked here, wrapped in the fail-open try/except the issue
-  specifies: on raise / NaN / inf / timeout, log at WARNING and fall back to
-  ``ctx.builtin_*`` with a provenance marker recording the fallback. The
-  context already carries the built-in result precisely so a plugin can wrap
-  rather than reimplement.
+* **Dotted-spec plugins.** An optional ``drift_reducer`` / ``scalar_fn``
+  dotted spec on the contract is resolved (via the shared importer) and
+  invoked on top of the transformed value: the plugin sees the transformed
+  result as ``ctx.builtin_*`` so it WRAPS the declarative shape rather than
+  reimplementing it. Invocation is fail-open (see :mod:`zicato.scoring.plugins`):
+  on raise / NaN / inf, the plugin logs at WARNING and falls back to the
+  pre-plugin value with a ``"<pre token> (fallback: ...)"`` provenance.
 
-Each hook point below is marked ``# PHASE 2 HOOK`` / ``# PHASE 3 HOOK`` so the
-next agent can find them by grep.
+The transform stage lives in the private ``_drift_transform`` /
+``_scalar_transform`` helpers and the plugin stage in
+:func:`zicato.scoring.plugins.apply_drift_reducer` /
+:func:`~zicato.scoring.plugins.apply_scalar_fn`; the two boundaries are marked
+``# PHASE 2`` / ``# PHASE 3`` inline.
 """
 
 from __future__ import annotations
