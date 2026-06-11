@@ -78,6 +78,10 @@ from zicato.evolve.lifecycle_services import (
     _resolve_harmonograf_url,
     _resolve_or_launch_harmonograf,
 )
+from zicato.evolve.round import (
+    build_post_apply_validator,
+    check_patch_manifest_and_forbidden,
+)
 from zicato.runtime.control_consumer import (
     block_while_paused,
     claim_gate_override,
@@ -273,10 +277,6 @@ async def evolve_once(
     )
     from zicato.epoch.lifecycle import current_epoch_id  # noqa: PLC0415
     from zicato.mutation.enumerator import enumerate_mutations  # noqa: PLC0415
-    from zicato.mutation.validator import (  # noqa: PLC0415
-        check_forbidden_ids,
-        validate_post_apply,
-    )
     from zicato.patterns.detectors import (  # noqa: PLC0415
         ALL_DETECTORS,
         DetectorInput,
@@ -539,36 +539,20 @@ async def evolve_once(
     # and runs :func:`validate_post_apply`. ``last_child_snapshot``
     # captures the child tree of the last attempt — when the proposer
     # returns successfully it is the validated tree the tournament
-    # mounts; no second apply is needed.
+    # mounts; no second apply is needed. The hook itself is the shared
+    # ``build_post_apply_validator`` (``zicato.evolve.round``) the field
+    # path also uses — the previously-inlined closure was byte-identical.
     last_child_snapshot: dict[str, Path] = {}
-
-    async def _validate_experiment_post_apply(candidate: Experiment) -> list[str]:
-        _beat(
-            beater,
-            epoch_id=resolved_epoch_id,
-            generation_id=next_id,
-            round_index=round_index,
-            phase=f"applying:round_{round_index}:{next_id}",
-        )
-        # derive_generation is the generation-level transaction boundary:
-        # it copies the parent tree, applies the patch set all-or-nothing,
-        # and clears any stale child tree from a prior attempt — so a
-        # retry re-derives cleanly. See docs/design/STORAGE.md §4-§5.
-        # apply_patches now runs its own post-apply syntax gate and raises
-        # ValueError when a patch left a touched ``.py`` file unparseable;
-        # surface that as a retryable post-apply finding rather than letting
-        # it crash the evolve loop (issue #11).
-        try:
-            child = genstore.derive_generation(
-                epoch_id=resolved_epoch_id,
-                parent_generation_id=parent_id,
-                child_generation_id=next_id,
-                patches=list(candidate.patches),
-            )
-        except ValueError as exc:
-            return [f"derive_generation rejected the patch set: {exc}"]
-        last_child_snapshot["path"] = child
-        return validate_post_apply(child, list(candidate.patches), mutations)
+    _validate_experiment_post_apply = build_post_apply_validator(
+        genstore=genstore,
+        epoch_id=resolved_epoch_id,
+        parent_id=parent_id,
+        next_id=next_id,
+        mutations=mutations,
+        beater=beater,
+        round_index=round_index,
+        last_child_snapshot=last_child_snapshot,
+    )
 
     # Experiment memory: the settled cross-round digest for this epoch.
     # Best-effort — a missing / stale index yields an empty list and the
@@ -667,20 +651,7 @@ async def evolve_once(
 
     # --- 7. Validate patch set against the manifest ---
     if experiment is not None:
-        mutations_by_id = {m.id: m for m in mutations}
-        for patch in experiment.patches:
-            if patch.mutation_id not in mutations_by_id:
-                raise RuntimeError(
-                    f"proposer-emitted patch {patch.id!r} targets unknown "
-                    f"mutation_id {patch.mutation_id!r}"
-                )
-        forbidden_violations = check_forbidden_ids(
-            list(experiment.patches), list(brief.forbidden_ids)
-        )
-        if forbidden_violations:
-            raise RuntimeError(
-                "proposer-emitted patches violate forbidden_ids: " + "; ".join(forbidden_violations)
-            )
+        check_patch_manifest_and_forbidden(experiment, mutations, brief.forbidden_ids)
 
     # --- 8 + 9. Apply + post-apply validation ---
     # The proposer's validation hook already applied the (final,
@@ -1188,10 +1159,6 @@ async def _propose_and_apply_challenger(
     """
     from zicato.epoch import append_to_lineage, write_experiment  # noqa: PLC0415
     from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
-    from zicato.mutation.validator import (  # noqa: PLC0415
-        check_forbidden_ids,
-        validate_post_apply,
-    )
     from zicato.proposer.agent import ProposerContext  # noqa: PLC0415
     from zicato.proposer.proposer import ProposerError  # noqa: PLC0415
 
@@ -1230,29 +1197,19 @@ async def _propose_and_apply_challenger(
         }
     )
 
-    async def _validate(candidate: Experiment) -> list[str]:
-        _beat(
-            beater,
-            epoch_id=epoch_id,
-            generation_id=next_id,
-            round_index=round_index,
-            phase=f"applying:round_{round_index}:{next_id}",
-        )
-        # apply_patches runs a post-apply syntax gate and raises ValueError
-        # when a patch left a touched ``.py`` file unparseable; surface that
-        # as a retryable post-apply finding rather than crashing the round
-        # (issue #11).
-        try:
-            child = genstore.derive_generation(
-                epoch_id=epoch_id,
-                parent_generation_id=parent_id,
-                child_generation_id=next_id,
-                patches=list(candidate.patches),
-            )
-        except ValueError as exc:
-            return [f"derive_generation rejected the patch set: {exc}"]
-        last_child_snapshot["path"] = child
-        return validate_post_apply(child, list(candidate.patches), mutations)
+    # The post-apply validation hook — the SAME shared
+    # ``build_post_apply_validator`` (``zicato.evolve.round``) the gauntlet
+    # path uses; the previously-inlined closure was byte-identical.
+    _validate = build_post_apply_validator(
+        genstore=genstore,
+        epoch_id=epoch_id,
+        parent_id=parent_id,
+        next_id=next_id,
+        mutations=mutations,
+        beater=beater,
+        round_index=round_index,
+        last_child_snapshot=last_child_snapshot,
+    )
 
     try:
         experiment = await proposer_agent.propose(
@@ -1303,18 +1260,7 @@ async def _propose_and_apply_challenger(
         _emit_status(rejected)
         return None, rejected
 
-    mutations_by_id = {m.id: m for m in mutations}
-    for patch in experiment.patches:
-        if patch.mutation_id not in mutations_by_id:
-            raise RuntimeError(
-                f"proposer-emitted patch {patch.id!r} targets unknown "
-                f"mutation_id {patch.mutation_id!r}"
-            )
-    forbidden_violations = check_forbidden_ids(list(experiment.patches), list(brief.forbidden_ids))
-    if forbidden_violations:
-        raise RuntimeError(
-            "proposer-emitted patches violate forbidden_ids: " + "; ".join(forbidden_violations)
-        )
+    check_patch_manifest_and_forbidden(experiment, mutations, brief.forbidden_ids)
 
     child_snapshot = last_child_snapshot["path"]
     # Stamp the EVOLVE round that minted this challenger onto the experiment
