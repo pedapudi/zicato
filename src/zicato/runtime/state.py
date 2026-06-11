@@ -40,6 +40,11 @@ from zicato.runtime._storage import (
 )
 from zicato.runtime.paths import ensure_runtime_dirs
 
+# RUNTIME-V2 Phase 3: the active-tournament live state is an event log, not a
+# mutable snapshot. The public helpers below keep their signatures but delegate
+# to :mod:`zicato.runtime.tournament_log` (imported lazily inside each, since
+# that module folds back through ``ActiveTournament`` / the merge helpers here
+# and a top-level import would cycle).
 # Single second-precision UTC stamper, shared via :mod:`zicato.util.iso_time`.
 # Kept under this module's historical name so tests can monkeypatch
 # ``zicato.runtime.state._utc_now_iso`` and in-module writers stay unchanged.
@@ -703,45 +708,58 @@ class ActiveTournament:
         )
 
 
-def read_active_tournament(workspace_root: Path) -> ActiveTournament | None:
-    """Read the active-tournament JSON or return ``None`` if absent."""
+def read_active_tournament_snapshot(workspace_root: Path) -> ActiveTournament | None:
+    """Read the LEGACY ``active_tournament.json`` snapshot, or ``None``.
+
+    The compat reader the event-log fold falls back to when no log
+    exists (a pre-RUNTIME-V2 producer or a hand-edited snapshot). The
+    live producer no longer writes this file — use
+    :func:`read_active_tournament`, which folds the event log.
+    """
     raw = backend_for(workspace_root).read_json(active_tournament_key())
     if raw is None:
         return None
     return ActiveTournament.from_dict(raw)
 
 
-def write_active_tournament(workspace_root: Path, t: ActiveTournament) -> None:
-    """Atomically write the active-tournament JSON."""
-    ensure_runtime_dirs(workspace_root)
-    backend_for(workspace_root).write_json(active_tournament_key(), t.to_dict())
+def read_active_tournament(workspace_root: Path) -> ActiveTournament | None:
+    """Read the live active tournament by FOLDING the event log, or ``None``.
 
-
-def update_tournament_entry(workspace_root: Path, entry_id: str, side: str, **updates: Any) -> None:
-    """Update one entry inside the active tournament.
-
-    Reads the current tournament JSON, replaces the entry matching the
-    ``(entry_id, side)`` pair with the per-field overrides supplied as
-    keyword arguments, and atomically writes the result. If no
-    tournament file exists, the call is a no-op (rather than an error) —
-    the orchestrator may not have initialized one yet.
-
-    Each board entry appears TWICE in :attr:`ActiveTournament.entries` —
-    once with ``side="parent"`` and once with ``side="child"``. Matching
-    on ``entry_id`` alone would land a parent-side transition on the
-    child row (or both rows), so the ``side`` is part of the key. Only
-    the FIRST row matching the pair is updated; if two rows somehow
-    still share the same ``(entry_id, side)`` the later duplicates are
-    left untouched rather than crashing — the call stays a benign no-op
-    on a malformed tournament file.
-
-    Special-cased fields are passed through :class:`dataclasses.replace`
-    so unknown keyword names raise :class:`TypeError` — the call site
-    catches typos immediately.
+    RUNTIME-V2 Phase 3: the live state is an append-only single-writer
+    event log (:mod:`zicato.runtime.tournament_log`); this folds it into
+    the same :class:`ActiveTournament` the old snapshot held. Falls back
+    to the legacy snapshot when no log exists.
     """
-    current = read_active_tournament(workspace_root)
-    if current is None:
-        return
+    from zicato.runtime import tournament_log  # noqa: PLC0415
+
+    return tournament_log.fold_active_tournament(workspace_root)
+
+
+def write_active_tournament(workspace_root: Path, t: ActiveTournament) -> None:
+    """Publish a full-envelope ``Snapshot`` to the active-tournament log.
+
+    RUNTIME-V2 Phase 3: an authoritative whole-envelope publish appends a
+    ``Snapshot`` event (one atomic append) rather than overwriting the
+    mutable snapshot file. The fold restarts from the latest ``Snapshot``,
+    so a republish supersedes the prior state exactly as an overwrite did.
+    """
+    from zicato.runtime import tournament_log  # noqa: PLC0415
+
+    tournament_log.append_snapshot(workspace_root, t.to_dict())
+
+
+def _apply_entry_update(
+    current: ActiveTournament, entry_id: str, side: str, updates: dict[str, Any]
+) -> ActiveTournament:
+    """Return ``current`` with the first ``(entry_id, side)`` row overridden.
+
+    The pure fold step behind :func:`update_tournament_entry`: only the
+    FIRST row matching the ``(entry_id, side)`` pair is replaced (each
+    board entry appears once per side, so the ``side`` is part of the
+    key); later duplicates are left untouched. Unknown override names
+    raise :class:`TypeError` via :func:`dataclasses.replace`, catching a
+    producer typo at the call site.
+    """
     new_entries: list[ActiveTournamentEntry] = []
     updated = False
     for e in current.entries:
@@ -750,8 +768,30 @@ def update_tournament_entry(workspace_root: Path, entry_id: str, side: str, **up
             updated = True
         else:
             new_entries.append(e)
-    new = replace(current, entries=new_entries)
-    write_active_tournament(workspace_root, new)
+    return replace(current, entries=new_entries)
+
+
+def update_tournament_entry(workspace_root: Path, entry_id: str, side: str, **updates: Any) -> None:
+    """Append an ``EntryUpdate`` for one ``(entry_id, side)`` row.
+
+    RUNTIME-V2 Phase 3: one atomic append, never a read-modify-write of a
+    shared mutable file — so this writer and the runner's concurrent
+    aggregate/projection writers cannot lose each other's updates. The
+    fold applies the override to the first row matching the
+    ``(entry_id, side)`` pair (see :func:`_apply_entry_update`); a typo in
+    an override name surfaces there, when the log is folded.
+
+    Validate the override names eagerly (against the row dataclass) so an
+    unknown keyword still raises at the CALL site, preserving the
+    fail-fast contract the snapshot writer had via ``replace``.
+    """
+    valid = set(ActiveTournamentEntry.__dataclass_fields__)
+    unknown = set(updates) - valid
+    if unknown:
+        raise TypeError(f"update_tournament_entry got unexpected field(s): {sorted(unknown)}")
+    from zicato.runtime import tournament_log  # noqa: PLC0415
+
+    tournament_log.append_entry_update(workspace_root, entry_id, side, updates)
 
 
 def update_tournament_partial_aggregate(
@@ -760,32 +800,24 @@ def update_tournament_partial_aggregate(
     champion_agg: dict[str, Any] | None = None,
     challenger_agg: dict[str, Any] | None = None,
 ) -> None:
-    """Rewrite the active tournament's running partial-aggregate dicts.
+    """Append a ``PartialAggregate`` delta for the running aggregate(s).
 
     Called by the runner the instant a board unit settles, so a reader
     (the dashboard) sees a real server-side ``scalar`` accumulate as the
     tournament runs — rather than 0.00 until the whole round ends.
 
-    Reads the current tournament JSON, replaces only the
+    RUNTIME-V2 Phase 3: one atomic append carrying only the side(s)
+    supplied; the fold replaces the matching
     :attr:`ActiveTournament.partial_champion_agg` /
-    :attr:`ActiveTournament.partial_challenger_agg` fields with whichever
-    side(s) were supplied, and atomically writes the result. The
-    per-entry status rows are untouched — this writer and
-    :func:`update_tournament_entry` only ever read-modify-write the same
-    file from the single orchestrator process, so the two never race.
-    If no tournament file exists, the call is a no-op.
+    :attr:`ActiveTournament.partial_challenger_agg` field(s). No
+    read-modify-write, so this and :func:`update_tournament_entry` cannot
+    race to lose an update.
     """
-    current = read_active_tournament(workspace_root)
-    if current is None:
-        return
-    updates: dict[str, Any] = {}
-    if champion_agg is not None:
-        updates["partial_champion_agg"] = dict(champion_agg)
-    if challenger_agg is not None:
-        updates["partial_challenger_agg"] = dict(challenger_agg)
-    if not updates:
-        return
-    write_active_tournament(workspace_root, replace(current, **updates))
+    from zicato.runtime import tournament_log  # noqa: PLC0415
+
+    tournament_log.append_partial_aggregate(
+        workspace_root, champion_agg=champion_agg, challenger_agg=challenger_agg
+    )
 
 
 def update_tournament_projected(
@@ -835,30 +867,20 @@ def update_tournament_projected(
     most-progressed duel — never regresses to a less-progressed last writer.
     Per-challenger lanes are keyed by challenger id (one writer each) so
     they take the projected scalar directly.
+
+    RUNTIME-V2 Phase 3: this is now ONE atomic append of a
+    ``ProjectedUpdate`` delta; the ``projected`` merge AND the
+    ``live_progress`` fold (via :func:`_fold_projected_into_live_progress`)
+    run in the READER's fold, so concurrent duels appending their
+    projection rows cannot lose each other's updates. The merge semantics
+    (champion-max-progress, the rounding gate) are identical — they share
+    :func:`_fold_one_lane` with the fold.
     """
     if not projected:
         return
-    current = read_active_tournament(workspace_root)
-    if current is None:
-        return
-    merged = {str(k): dict(v) for k, v in current.projected.items()}
-    for gid, row in projected.items():
-        if isinstance(row, dict):
-            merged[str(gid)] = dict(row)
-    rounds, rounds_changed = _fold_projected_into_live_progress(
-        current.rounds,
-        projected,
-        champion_ids=_champion_ids(current.competitors),
-    )
-    if not rounds_changed:
-        # The merge of ``projected`` may still differ (it always takes the
-        # latest row); but if neither the projected map nor any rounded lane
-        # value moved, the write is a no-op the dashboard would digest-gate
-        # away anyway. We still persist the merged projected map (cheap,
-        # additive) so the standings overlay reads the latest scalar.
-        write_active_tournament(workspace_root, replace(current, projected=merged))
-        return
-    write_active_tournament(workspace_root, replace(current, projected=merged, rounds=rounds))
+    from zicato.runtime import tournament_log  # noqa: PLC0415
+
+    tournament_log.append_projected_update(workspace_root, projected)
 
 
 def _champion_ids(competitors: list[dict[str, Any]]) -> set[str]:
@@ -959,8 +981,15 @@ def _fold_one_lane(lane: dict[str, Any], proj: dict[str, Any], *, is_champion: b
 
 
 def clear_active_tournament(workspace_root: Path) -> None:
-    """Remove the active-tournament JSON. Idempotent."""
-    backend_for(workspace_root).delete(active_tournament_key())
+    """Clear the active tournament (the event log + legacy snapshot). Idempotent.
+
+    RUNTIME-V2 Phase 3: removes the event log so a folded read returns
+    ``None``; also drops any legacy ``active_tournament.json`` snapshot so
+    the compat reader cannot resurrect a stale tournament.
+    """
+    from zicato.runtime import tournament_log  # noqa: PLC0415
+
+    tournament_log.clear_log(workspace_root)
 
 
 __all__ = [
@@ -979,6 +1008,7 @@ __all__ = [
     "clear_worker_kill_request",
     "touch_active_run_progress",
     "read_active_tournament",
+    "read_active_tournament_snapshot",
     "write_active_tournament",
     "update_tournament_entry",
     "update_tournament_partial_aggregate",

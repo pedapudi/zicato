@@ -64,7 +64,16 @@ class WorkspacePaths:
 
     @property
     def active_tournament(self) -> Path:
+        # The LEGACY snapshot — kept for the compat reader. The live state
+        # is the event log below (RUNTIME-V2 Phase 3).
         return self.runtime / "active_tournament.json"
+
+    @property
+    def active_tournament_log(self) -> Path:
+        # The active-tournament EVENT LOG: the single-writer append-only
+        # JSONL the orchestrator/runner publish live state onto, folded by
+        # ``read_active_tournament`` into the structure view.
+        return self.runtime / "active_tournament.events.jsonl"
 
     @property
     def control_dir(self) -> Path:

@@ -67,8 +67,27 @@ def lock_key() -> str:
 
 
 def active_tournament_key() -> str:
-    """Storage key for the active-tournament record."""
+    """Storage key for the legacy active-tournament SNAPSHOT record.
+
+    Retained only for the compat reader: an ``active_tournament.json``
+    snapshot written by a pre-RUNTIME-V2 producer (or a hand-edited
+    file) is still read when no event log is present. The live producer
+    no longer writes it — see :func:`active_tournament_log_key`.
+    """
     return f"{RUNTIME_NS}/active_tournament.json"
+
+
+def active_tournament_log_key() -> str:
+    """Storage key for the active-tournament EVENT LOG (RUNTIME-V2 Phase 3).
+
+    The single-writer, append-only JSONL log that replaces the mutable
+    ``active_tournament.json`` snapshot. The orchestrator/runner appends
+    one typed event per state transition (a full-envelope ``Snapshot``
+    plus ``EntryUpdate`` / ``PartialAggregate`` / ``ProjectedUpdate``
+    deltas); a reader folds the log into the live view. Single-writer
+    append-only removes the snapshot's read-modify-write race.
+    """
+    return f"{RUNTIME_NS}/active_tournament.events.jsonl"
 
 
 def active_runs_prefix() -> str:
@@ -119,6 +138,7 @@ __all__ = [
     "heartbeat_key",
     "lock_key",
     "active_tournament_key",
+    "active_tournament_log_key",
     "active_runs_prefix",
     "active_run_key",
     "control_prefix",

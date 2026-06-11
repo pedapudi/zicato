@@ -76,8 +76,18 @@ def active_run_path(workspace_root: Path, run_id: str) -> Path:
 
 
 def active_tournament_path(workspace_root: Path) -> Path:
-    """Return the path to the current-tournament JSON file."""
+    """Return the path to the LEGACY current-tournament snapshot file.
+
+    Retained for the compat reader + resume cleanup. The live producer
+    writes the event log (see :func:`active_tournament_log_path`); this
+    snapshot is only read when no log exists.
+    """
     return runtime_dir(workspace_root) / "active_tournament.json"
+
+
+def active_tournament_log_path(workspace_root: Path) -> Path:
+    """Return the path to the active-tournament EVENT LOG (RUNTIME-V2 §3)."""
+    return runtime_dir(workspace_root) / "active_tournament.events.jsonl"
 
 
 def control_dir(workspace_root: Path) -> Path:
@@ -142,6 +152,7 @@ __all__ = [
     "active_runs_dir",
     "active_run_path",
     "active_tournament_path",
+    "active_tournament_log_path",
     "control_dir",
     "control_log_dir",
     "control_command_path",

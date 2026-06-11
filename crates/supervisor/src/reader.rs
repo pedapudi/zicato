@@ -42,8 +42,17 @@ impl WorkspacePaths {
         self.runtime.join("active_runs")
     }
 
+    /// The LEGACY active-tournament snapshot. Retained for the compat
+    /// reader; the live producer now writes the event log below.
     pub fn active_tournament(&self) -> PathBuf {
         self.runtime.join("active_tournament.json")
+    }
+
+    /// The active-tournament EVENT LOG (RUNTIME-V2 Phase 3): an
+    /// append-only JSONL the orchestrator/runner publish live state onto.
+    /// `read_active_tournament` folds it into the live view.
+    pub fn active_tournament_log(&self) -> PathBuf {
+        self.runtime.join("active_tournament.events.jsonl")
     }
 
     pub fn control_dir(&self) -> PathBuf {
@@ -116,8 +125,109 @@ pub fn read_lock(paths: &WorkspacePaths) -> Option<Lock> {
     read_json(&paths.lock())
 }
 
+/// Fold the active-tournament EVENT LOG (RUNTIME-V2 Phase 3) into the
+/// live view, or fall back to the legacy snapshot when no log exists.
+///
+/// The log is single-writer append-only JSONL: a full-envelope `Snapshot`
+/// event (the authoritative base/reset) plus `EntryUpdate` /
+/// `PartialAggregate` / `ProjectedUpdate` deltas. We fold from the LAST
+/// `Snapshot` forward, applying the deltas that affect this view's
+/// (coarse) fields — entry transitions + the partial aggregate — so the
+/// supervisor's tournament panel matches what the mutable snapshot held.
+/// Best-effort: a missing/empty/malformed log yields the snapshot
+/// fallback (or `None`).
 pub fn read_active_tournament(paths: &WorkspacePaths) -> Option<ActiveTournament> {
-    read_json(&paths.active_tournament())
+    match fold_active_tournament_value(&paths.active_tournament_log()) {
+        Some(value) => serde_json::from_value(value).ok(),
+        // No event log → the compat path: a pre-RUNTIME-V2 snapshot file.
+        None => read_json(&paths.active_tournament()),
+    }
+}
+
+/// Replay the event log into the folded envelope JSON `Value`, or `None`
+/// when the log is absent/empty (so the caller can fall back to the
+/// snapshot). Operates on raw JSON so the coarse `ActiveTournament` struct
+/// need not model every delta field — the fold matches `(entry_id, side)`
+/// on the raw rows exactly as the Python writer did.
+fn fold_active_tournament_value(log_path: &Path) -> Option<serde_json::Value> {
+    let text = match std::fs::read_to_string(log_path) {
+        Ok(t) => t,
+        Err(_) => return None,
+    };
+    // Each line is one event record: {seq, ts, type, payload}.
+    let events: Vec<serde_json::Value> = text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .collect();
+    if events.is_empty() {
+        return None;
+    }
+    // Fold from the last Snapshot (a Snapshot is the authoritative reset).
+    let base_idx = events
+        .iter()
+        .rposition(|e| e.get("type").and_then(|t| t.as_str()) == Some("Snapshot"))?;
+    let mut current = events[base_idx].get("payload")?.clone();
+    for ev in &events[base_idx + 1..] {
+        let ty = ev.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        let payload = match ev.get("payload") {
+            Some(p) => p,
+            None => continue,
+        };
+        match ty {
+            "Snapshot" => current = payload.clone(),
+            "EntryUpdate" => apply_entry_update(&mut current, payload),
+            "PartialAggregate" => apply_partial_aggregate(&mut current, payload),
+            // ProjectedUpdate folds into the structure envelope the coarse
+            // supervisor view does not model; the Python dashboard renders
+            // it. Ignored here (the snapshot view did not surface it either).
+            _ => {}
+        }
+    }
+    Some(current)
+}
+
+/// Apply one `EntryUpdate` delta: override the first `entries` row whose
+/// `(entry_id, side)` matches, mirroring the Python fold.
+fn apply_entry_update(current: &mut serde_json::Value, payload: &serde_json::Value) {
+    let entry_id = payload.get("entry_id").and_then(|v| v.as_str());
+    let side = payload.get("side").and_then(|v| v.as_str());
+    let updates = match payload.get("updates").and_then(|u| u.as_object()) {
+        Some(u) => u,
+        None => return,
+    };
+    let entries = match current.get_mut("entries").and_then(|e| e.as_array_mut()) {
+        Some(e) => e,
+        None => return,
+    };
+    for row in entries.iter_mut() {
+        let row_obj = match row.as_object_mut() {
+            Some(o) => o,
+            None => continue,
+        };
+        let matches = row_obj.get("entry_id").and_then(|v| v.as_str()) == entry_id
+            && row_obj.get("side").and_then(|v| v.as_str()) == side;
+        if matches {
+            for (k, v) in updates {
+                row_obj.insert(k.clone(), v.clone());
+            }
+            return; // only the first matching row, as in the Python fold.
+        }
+    }
+}
+
+/// Apply one `PartialAggregate` delta: replace the side(s) supplied.
+fn apply_partial_aggregate(current: &mut serde_json::Value, payload: &serde_json::Value) {
+    let obj = match current.as_object_mut() {
+        Some(o) => o,
+        None => return,
+    };
+    if let Some(champ) = payload.get("champion_agg") {
+        obj.insert("partial_champion_agg".to_string(), champ.clone());
+    }
+    if let Some(chal) = payload.get("challenger_agg") {
+        obj.insert("partial_challenger_agg".to_string(), chal.clone());
+    }
 }
 
 pub fn read_lineage(paths: &WorkspacePaths) -> Option<Lineage> {
@@ -600,6 +710,54 @@ mod tests {
         assert!(!read_kill_requests(&p).contains("run_a"));
         // Clearing a vanished marker is a no-op, not an error.
         clear_kill_request(&p, "run_a");
+    }
+
+    #[test]
+    fn folds_the_active_tournament_event_log() {
+        // RUNTIME-V2 Phase 3: the live producer writes an append-only event
+        // log, not the mutable snapshot. The reader folds it: a base
+        // Snapshot + an EntryUpdate delta + a PartialAggregate delta.
+        let (_t, p) = make_ws();
+        let log = [
+            r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"t1","entries":[{"entry_id":"b0","side":"child","status":"queued"},{"entry_id":"b0","side":"parent","status":"queued"}]}}"#,
+            r#"{"seq":2,"ts":"t","type":"EntryUpdate","payload":{"entry_id":"b0","side":"child","updates":{"status":"running"}}}"#,
+            r#"{"seq":3,"ts":"t","type":"PartialAggregate","payload":{"challenger_agg":{"scalar":0.5}}}"#,
+        ]
+        .join("\n");
+        std::fs::write(p.active_tournament_log(), log).unwrap();
+
+        let at = read_active_tournament(&p).expect("the folded tournament");
+        assert_eq!(at.tournament_id.as_deref(), Some("t1"));
+        // The EntryUpdate landed on the child row only.
+        let child = at.entries.iter().find(|e| e.entry_id == "b0").unwrap();
+        assert_eq!(child.status.as_deref(), Some("running"));
+    }
+
+    #[test]
+    fn last_snapshot_event_resets_the_fold() {
+        // A later Snapshot supersedes the earlier base (a republish).
+        let (_t, p) = make_ws();
+        let log = [
+            r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"old","entries":[]}}"#,
+            r#"{"seq":2,"ts":"t","type":"Snapshot","payload":{"tournament_id":"new","entries":[]}}"#,
+        ]
+        .join("\n");
+        std::fs::write(p.active_tournament_log(), log).unwrap();
+        let at = read_active_tournament(&p).expect("the folded tournament");
+        assert_eq!(at.tournament_id.as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn falls_back_to_the_legacy_snapshot_when_no_log() {
+        // The compat path: no event log → the pre-RUNTIME-V2 snapshot file.
+        let (_t, p) = make_ws();
+        std::fs::write(
+            p.active_tournament(),
+            r#"{"tournament_id":"legacy","entries":[]}"#,
+        )
+        .unwrap();
+        let at = read_active_tournament(&p).expect("the compat snapshot");
+        assert_eq!(at.tournament_id.as_deref(), Some("legacy"));
     }
 
     #[test]

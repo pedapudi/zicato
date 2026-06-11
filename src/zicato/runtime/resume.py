@@ -71,6 +71,7 @@ from typing import TYPE_CHECKING
 
 from zicato.runtime.paths import (
     active_runs_dir,
+    active_tournament_log_path,
     active_tournament_path,
     heartbeat_path,
 )
@@ -153,7 +154,8 @@ def _latest_generation_id(workspace_root: Path, epoch_id: str) -> str | None:
 def clear_runtime_state(workspace_root: Path) -> None:
     """Discard the live ``runtime/`` state of a prior, dead evolve.
 
-    Removes ``heartbeat.json``, ``active_tournament.json``, and every
+    Removes ``heartbeat.json``, the active-tournament event log AND its
+    legacy ``active_tournament.json`` snapshot, and every
     ``active_runs/{run_id}.json`` — the files RUNTIME.md §4.1 lists as
     "discarded on restart". The workspace lock is NOT touched here; the
     orchestrator's lock acquisition already stole any stale lock before
@@ -166,7 +168,11 @@ def clear_runtime_state(workspace_root: Path) -> None:
     exists. Their generations' ``loss.json`` outputs, if any completed,
     survive under ``epochs/`` and are picked up by the unit cache.
     """
-    for path in (heartbeat_path(workspace_root), active_tournament_path(workspace_root)):
+    for path in (
+        heartbeat_path(workspace_root),
+        active_tournament_path(workspace_root),
+        active_tournament_log_path(workspace_root),
+    ):
         try:
             path.unlink(missing_ok=True)
         except OSError as exc:  # noqa: BLE001 — runtime cleanup is best-effort

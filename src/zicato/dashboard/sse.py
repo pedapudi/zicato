@@ -70,7 +70,7 @@ def _classify(path: Path, paths: WorkspacePaths) -> str:
             return "heartbeat"
         if path == paths.lock:
             return "lock"
-        if path == paths.active_tournament:
+        if path == paths.active_tournament or path == paths.active_tournament_log:
             return "active_tournament"
         if path == paths.lineage:
             return "lineage"

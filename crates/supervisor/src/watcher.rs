@@ -52,7 +52,7 @@ fn classify(path: &Path, paths: &WorkspacePaths) -> ChangeKind {
     if path == paths.lock() {
         return ChangeKind::Lock;
     }
-    if path == paths.active_tournament() {
+    if path == paths.active_tournament() || path == paths.active_tournament_log() {
         return ChangeKind::ActiveTournament;
     }
     if path == paths.lineage() {
