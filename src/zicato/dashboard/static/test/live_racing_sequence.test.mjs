@@ -26,9 +26,9 @@ import { installDom, test, run, assert, assertEqual } from './harness.mjs';
 
 installDom();
 
-const STRUCT = await import('../js/variants/T/views/structure.js');
-const svg = await import('../js/variants/T/svg.js');
-const live = await import('../js/variants/T/live.js');
+const STRUCT = await import('../js/views/structure.js');
+const svg = await import('../js/svg.js');
+const live = await import('../js/live.js');
 
 const EPOCH = '2026-06-07_e9';
 const CTX = { navigate() {}, href: () => '#' };
@@ -592,7 +592,7 @@ test('dense champion-gate card: a no-op heartbeat repeat churns NO matches DOM (
 
 test('dense champion-gate card: the CSS row is a 5-track grid with the bar as the only flexible (1fr) column', async () => {
   const fs = await import('node:fs');
-  const css = fs.readFileSync(new URL('../css/variants/T/console4.css', import.meta.url), 'utf8');
+  const css = fs.readFileSync(new URL('../css/console.css', import.meta.url), 'utf8');
   const m = css.match(/\.dt-live-match-row\s*\{[^}]*grid-template-columns:\s*([^;]+);/);
   assert(m, 'the .dt-live-match-row grid-template-columns rule is defined');
   const tracks = m[1].trim();

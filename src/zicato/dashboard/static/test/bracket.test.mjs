@@ -28,8 +28,8 @@ import { installDom, test, run, assert, assertEqual } from './harness.mjs';
 
 installDom();
 
-const svg = await import('../js/variants/T/svg.js');
-const structure = await import('../js/variants/T/views/structure.js');
+const svg = await import('../js/svg.js');
+const structure = await import('../js/views/structure.js');
 
 // ---- SVG geometry readers ------------------------------------------------
 

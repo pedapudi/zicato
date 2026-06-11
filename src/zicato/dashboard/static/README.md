@@ -12,14 +12,14 @@ fallbacks). Everything else in this directory must remain self-contained
 The shipping UI is **Console** (the bake-off convergence winner,
 code-named **Variant T**); its design language is documented in
 `docs/design/CONSOLE-DESIGN-LANGUAGE.md`. It is self-contained under
-`js/variants/T/**` + `css/variants/T/console4.css`, reusing only the
+`js/**` + `css/console.css`, reusing only the
 shared `js/core/*` data spine. Exactly one UI loads at a time.
 
 ## Files
 
 The frontend is a modular ES-module app — a thin entry point (`app_T.js`)
-plus the shared core spine (`js/core/**`) and the Variant-T UI
-(`js/variants/T/**`). No build step. The full contracts every core
+plus the shared core spine (`js/core/**`) and the Console UI
+(`js/**`). No build step. The full contracts every core
 module codes against are pinned in `js/CONTRACTS.md`.
 
 - `index.html` — single-page shell hosting `#variant-root`. Loads the
@@ -33,7 +33,7 @@ module codes against are pinned in `js/CONTRACTS.md`.
   fetches), `sse.js` (EventSource + typed deltas), `dom.js` (the keyed,
   no-flash `el`/`svgEl` render primitives), `format.js`,
   `harmonograf.js`, `hypothesis_block.js`.
-- `js/variants/T/` — the Console UI. `shell.js` (chrome + the
+- `js/` — the Console UI. `shell.js` (chrome + the
   tree-sidebar ↔ detail-pane router host + the page-scale pill),
   `router.js` (the hierarchical hash routes), `tree.js` (the data-model
   TREE sidebar, round-grouped), `svg.js` (the data-viz primitives —
@@ -45,10 +45,10 @@ module codes against are pinned in `js/CONTRACTS.md`.
   status), `hovercard.js` (the singleton hover-for-detail card),
   `compare.js` (the side-by-side compare picker + split frame), `ui.js`
   (digest-gated swap, pills, themes), `data.js` (the per-epoch read
-  accessors). `js/variants/T/views/**` paints one detail pane each
+  accessors). `js/views/**` paints one detail pane each
   (`home`, `epoch`, `gens`, `candidate`, `board`, `boards`, `rounds`,
   `structure`, `mutations`, `publication`, `diff`).
-- `css/variants/T/console4.css` — all Console styling: the
+- `css/console.css` — all Console styling: the
   sixteen-theme `--v2-*` six-role token contract (swapped by
   `[data-t-theme]`), the typeface tokens (`[data-t-type]`), and every
   fit-to-width SVG mark's classes (`dn-*` / `dt-*`).

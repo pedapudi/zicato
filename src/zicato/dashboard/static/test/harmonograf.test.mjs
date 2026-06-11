@@ -1,11 +1,11 @@
 // test/harmonograf.test.mjs — the harmonograf deep-link builders + their
-// wiring into the variant-T candidate view.
+// wiring into the candidate view.
 //
 // Two concerns:
 //   1. The liveness-gated builders in core/harmonograf.js: a link renders
 //      ONLY while a run is live AND a harmonograf_url is in scope, deep-linking
 //      `/#/session/<adk_session_id>`; nothing renders otherwise.
-//   2. The candidate view (variants/T/views/candidate.js) actually RENDERS the
+//   2. The candidate view (js/views/candidate.js) actually RENDERS the
 //      per-run execution link in the entry drill-down (the dead-code bug fix):
 //      it appears for a live run with an adk_session_id, and NOT when the loop
 //      is dead / there is no session.
@@ -16,8 +16,8 @@ installDom();
 
 const harmonograf = await import('../js/core/harmonograf.js');
 const coreState = await import('../js/core/state.js');
-const router = await import('../js/variants/T/router.js');
-const data = await import('../js/variants/T/data.js');
+const router = await import('../js/router.js');
+const data = await import('../js/data.js');
 
 const EPOCH_ID = 'crisper-presentations';
 const HG_URL = 'http://127.0.0.1:42017';
@@ -264,7 +264,7 @@ test('candidate view: the per-run harmonograf execution link RENDERS for a live 
   data.invalidate();
   installFetch(FIX);
   setLive(true);
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
   // drill into the board entry so the entry drill-down (the link's home) renders.
@@ -285,7 +285,7 @@ test('candidate view: NO harmonograf link when the loop is not live', async () =
   setLive(false);
   // a stale url lingers on the heartbeat — the gate must still suppress the link.
   coreState.state.heartbeat = { harmonograf_url: HG_URL };
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
   await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1', entry: 'waffles_single' });
@@ -304,7 +304,7 @@ test('candidate view: the per-run link RENDERS against a persistent (post-mortem
   s.heartbeat = { harmonograf_url: HG_URL, harmonograf_persistent: true };
   harmonograf._resetHarmonografUiProbe();
   harmonograf._seedHarmonografUiProbe(HG_URL, true);
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
   await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1', entry: 'waffles_single' });

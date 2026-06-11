@@ -116,14 +116,14 @@ function installEnv() {
 
 installEnv();
 
-const builder = await import('../js/variants/T/builder/model.js');
-const popover = await import('../js/variants/T/builder/popover.js');
-const stream = await import('../js/variants/T/builder/stream.js');
-const { BuilderChat } = await import('../js/variants/T/builder/chat.js');
+const builder = await import('../js/builder/model.js');
+const popover = await import('../js/builder/popover.js');
+const stream = await import('../js/builder/stream.js');
+const { BuilderChat } = await import('../js/builder/chat.js');
 
 // the view module holds shared module-level draft state; re-import is cached
 // across tests, so each test re-mounts and drives through the public render().
-const view = await import('../js/variants/T/views/builder.js');
+const view = await import('../js/views/builder.js');
 
 // helper: find descendants by class via the harness querySelectorAll.
 function byClass(root, cls) { return root.querySelectorAll('[class]').filter((n) => n.classList.contains(cls)); }
@@ -482,7 +482,7 @@ function tick() { return new Promise((r) => setTimeout(r, 0)); }
 // a content-sized stub) and the message log is the flex:1 growable child.
 
 const _builderCss = (await import('node:fs'))
-  .readFileSync(new URL('../css/variants/T/console4.css', import.meta.url), 'utf8')
+  .readFileSync(new URL('../css/console.css', import.meta.url), 'utf8')
   .replace(/\n/g, ' ');
 function readBuilderCss() { return _builderCss; }
 

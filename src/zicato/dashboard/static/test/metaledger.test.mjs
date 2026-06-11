@@ -20,11 +20,11 @@ import { installDom, test, run, assert, assertEqual } from './harness.mjs';
 
 installDom();
 
-const svg = await import('../js/variants/T/svg.js');
-const home = await import('../js/variants/T/views/home.js');
-const data = await import('../js/variants/T/data.js');
-const router = await import('../js/variants/T/router.js');
-const hovercard = await import('../js/variants/T/hovercard.js');
+const svg = await import('../js/svg.js');
+const home = await import('../js/views/home.js');
+const data = await import('../js/data.js');
+const router = await import('../js/router.js');
+const hovercard = await import('../js/hovercard.js');
 
 function allByClass(host, cls) {
   return host.querySelectorAll('[class]').filter((n) =>
@@ -413,7 +413,7 @@ test('home view: an open (live) epoch in the ledger does not change the settled 
 
 test('metaLoopLedger: the floor value label carries a paper halo (paint-order: stroke) and stays weight 400', async () => {
   const css = await import('node:fs').then((fs) =>
-    fs.readFileSync(new URL('../css/variants/T/console4.css', import.meta.url), 'utf8'));
+    fs.readFileSync(new URL('../css/console.css', import.meta.url), 'utf8'));
   const oneLine = css.replace(/\n/g, ' ');
   // the floor label rule carries the halo: paint-order:stroke + a paper stroke,
   // so a gridline crossing the glyphs no longer reads as a strike-through. Match

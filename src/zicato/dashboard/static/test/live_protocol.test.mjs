@@ -29,10 +29,10 @@ import { installDom, test, run, assert, assertEqual } from './harness.mjs';
 
 installDom();
 
-const svg = await import('../js/variants/T/svg.js');
-const STRUCT = await import('../js/variants/T/views/structure.js');
-const ui = await import('../js/variants/T/ui.js');
-const live = await import('../js/variants/T/live.js');
+const svg = await import('../js/svg.js');
+const STRUCT = await import('../js/views/structure.js');
+const ui = await import('../js/ui.js');
+const live = await import('../js/live.js');
 
 const EPOCH = '2026-06-06_e7';
 const CTX = { navigate() {}, href: () => '#' };
