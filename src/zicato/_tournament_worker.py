@@ -72,6 +72,7 @@ from zicato.core import (
     validate_board_entry,
 )
 from zicato.import_path import import_dotted_path
+from zicato.util import best_effort
 
 log = logging.getLogger("zicato._tournament_worker")
 
@@ -250,7 +251,10 @@ def _build_sinks(
     sinks: list[Any] = [tracker]
 
     if harmonograf_url:
-        try:
+        with best_effort(
+            "worker harmonograf sink attach",
+            on_error=lambda exc: log.warning("worker could not attach harmonograf sink: %s", exc),
+        ):
             from zicato.telemetry.sink import _make_harmonograf_sink  # noqa: PLC0415
 
             # ``harmonograf_grpc`` carries the native gRPC dial target the
@@ -261,18 +265,17 @@ def _build_sinks(
             extra = _make_harmonograf_sink(harmonograf_url, grpc_target=harmonograf_grpc or None)
             if extra is not None:
                 sinks.append(extra)
-        except Exception as exc:  # noqa: BLE001 — harmonograf is additive only
-            log.warning("worker could not attach harmonograf sink: %s", exc)
     return sinks, tracker
 
 
 async def _close_sinks(sinks: list[Any]) -> None:
     """Best-effort close of every sink so the JSONL is flushed to disk."""
     for s in sinks:
-        try:
+        with best_effort(
+            "worker sink close",
+            on_error=lambda exc: log.debug("worker sink close failed: %s", exc),
+        ):
             await s.close()
-        except Exception as exc:  # noqa: BLE001 — never fail a run on sink close
-            log.debug("worker sink close failed: %s", exc)
 
 
 async def _emit_worker_abort(
@@ -315,11 +318,14 @@ async def _emit_worker_abort(
     seq = int(getattr(tracker, "max_sequence", -1)) + 1
     if seq <= 0:
         seq = 1
-    try:
+    with best_effort(
+        "worker run_aborted emit",
+        on_error=lambda exc: log.warning(
+            "worker could not emit run_aborted on budget cancel: %s", exc
+        ),
+    ):
         evt = run_aborted_event(run_id=run_id, sequence=seq, reason=reason)
         await emit(sinks, evt)
-    except Exception as exc:  # noqa: BLE001 — emit must never fail the worker
-        log.warning("worker could not emit run_aborted on budget cancel: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -531,7 +537,12 @@ async def _run(args: dict[str, Any]) -> None:
     # SIGKILL exactly this run by this pid.
     now = datetime.now(UTC)
     deadline = now + timedelta(seconds=int(budget_s))
-    try:
+    with best_effort(
+        "worker active_run write",
+        on_error=lambda exc: log.warning(
+            "worker could not write active_run for %s: %s", run_id, exc
+        ),
+    ):
         from zicato.runtime.lock import pid_start_time as _pid_start_time
 
         state_mod.write_active_run(
@@ -550,8 +561,6 @@ async def _run(args: dict[str, Any]) -> None:
                 epoch_id=epoch_id,
             ),
         )
-    except Exception as exc:  # noqa: BLE001 — state write is best-effort
-        log.warning("worker could not write active_run for %s: %s", run_id, exc)
 
     # --- Start the per-run heartbeat thread. ---
     # The thread bumps ``last_progress`` on the active-runs record every
@@ -563,10 +572,13 @@ async def _run(args: dict[str, Any]) -> None:
     from zicato.runtime.heartbeat import RunHeartbeatBeater  # noqa: PLC0415
 
     run_hb = RunHeartbeatBeater(workspace_root, run_id)
-    try:
+    with best_effort(
+        "worker run heartbeat start",
+        on_error=lambda exc: log.warning(
+            "worker could not start run heartbeat for %s: %s", run_id, exc
+        ),
+    ):
         run_hb.start()
-    except Exception as exc:  # noqa: BLE001 — heartbeat is best-effort
-        log.warning("worker could not start run heartbeat for %s: %s", run_id, exc)
 
     sinks, tracker = _build_sinks(events_path, harmonograf_url, harmonograf_grpc)
     adapter = _build_adapter(args["adapter"])
@@ -609,10 +621,13 @@ async def _run(args: dict[str, Any]) -> None:
     finally:
         # Stop the heartbeat thread before closing sinks so the thread
         # does not try to bump a run record that is about to be removed.
-        try:
+        with best_effort(
+            "worker run heartbeat stop",
+            on_error=lambda exc: log.debug(
+                "worker could not stop run heartbeat for %s: %s", run_id, exc
+            ),
+        ):
             run_hb.stop()
-        except Exception as exc:  # noqa: BLE001 — cleanup is best-effort
-            log.debug("worker could not stop run heartbeat for %s: %s", run_id, exc)
         # Terminal-event invariant: when the cooperative wait_for
         # cancelled the inner goldfive task, goldfive could not reach
         # its own ``_emit_run_aborted`` path (CancelledError propagated
@@ -631,7 +646,10 @@ async def _run(args: dict[str, Any]) -> None:
         # (e.g. the sink raised) the events file still lacks a terminal
         # frame on disk. Append one directly so the invariant holds.
         if budget_exceeded:
-            try:
+            with best_effort(
+                "worker terminal-event fallback",
+                on_error=lambda exc: log.debug("worker terminal-event fallback failed: %s", exc),
+            ):
                 from zicato.telemetry.terminal_event import (  # noqa: PLC0415
                     ensure_run_aborted_event,
                 )
@@ -640,8 +658,6 @@ async def _run(args: dict[str, Any]) -> None:
                     events_path,
                     reason=TERMINAL_REASON_WALL_CLOCK,
                 )
-            except Exception as exc:  # noqa: BLE001 — never fail the run on this
-                log.debug("worker terminal-event fallback failed: %s", exc)
 
     expectation_result = await _evaluate_expectation(entry, run_result, config)
 
@@ -691,10 +707,13 @@ async def _run(args: dict[str, Any]) -> None:
 
     # Clean exit — remove our own active-runs file. If the worker had
     # instead been SIGKILLed, this never runs and the parent removes it.
-    try:
+    with best_effort(
+        "worker active_run remove",
+        on_error=lambda exc: log.debug(
+            "worker could not remove active_run for %s: %s", run_id, exc
+        ),
+    ):
         state_mod.remove_active_run(workspace_root, run_id)
-    except Exception as exc:  # noqa: BLE001 — cleanup is best-effort
-        log.debug("worker could not remove active_run for %s: %s", run_id, exc)
 
 
 def _weights_from_args(args: dict[str, Any]) -> ScoringWeights:

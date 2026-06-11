@@ -63,6 +63,7 @@ from zicato.evolve.dashboard_projection import (
 from zicato.runtime.heartbeat import HeartbeatBeater
 from zicato.runtime.lock import acquire_workspace_lock, release_workspace_lock
 from zicato.runtime.resume import ResumePlan, prepare_resume
+from zicato.util import best_effort
 
 if TYPE_CHECKING:
     # Annotation-only — the proposer module is imported lazily inside
@@ -328,12 +329,13 @@ async def ensure_epoch_for_contract(
     # with pre-close counts. Now that the epoch is marked closed, re-stamp that
     # (deterministic) masthead so the persisted analysis.md/.html reflect the
     # final closed state. Cheap, no LLM; the narrative is left untouched.
-    try:
+    with best_effort(
+        "post-close report re-stamp",
+        on_error=lambda exc: log.debug("post-close report re-stamp skipped: %s", exc),
+    ):
         from zicato.analyzer import restamp_persisted_report  # noqa: PLC0415
 
         restamp_persisted_report(workspace_root, cur)
-    except Exception as exc:  # noqa: BLE001 — best-effort, never block the roll
-        log.debug("post-close report re-stamp skipped: %s", exc)
 
     next_n = len(list_epochs(workspace_root))
     new_id = _create_epoch_from_contract(
@@ -1208,7 +1210,10 @@ async def evolve_once(
     # proposer (via :func:`zicato.analyzer.load_latest_insights`) reads.
     # The round number is derived from the newly-proposed generation
     # id (``v{N}``) so the insight file lines up with the lineage.
-    try:
+    with best_effort(
+        "decision telemetry analyzer",
+        on_error=lambda exc: log.debug("decision telemetry analyzer skipped: %s", exc),
+    ):
         from zicato.analyzer import analyze_epoch_telemetry  # noqa: PLC0415
 
         analyzer_round = _round_n_from_generation_id(next_id)
@@ -1225,8 +1230,6 @@ async def evolve_once(
             mutation_ids=[m.id for m in mutations],
             meta_loop_emitter=meta_loop_emitter,
         )
-    except Exception as exc:  # noqa: BLE001 — analyser is best-effort
-        log.debug("decision telemetry analyzer skipped: %s", exc)
 
     # --- 16. Best-effort epoch analysis report regeneration ---
     await _regenerate_epoch_report(
@@ -1393,10 +1396,11 @@ async def _propose_and_apply_challenger(
         """Best-effort live publish of one challenger's proposal record."""
         if on_status is None:
             return
-        try:
+        with best_effort(
+            "proposal-status publish",
+            on_error=lambda exc: log.debug("proposal-status publish skipped: %s", exc),
+        ):
             on_status(record)
-        except Exception as exc:  # noqa: BLE001 — live status is best-effort
-            log.debug("proposal-status publish skipped: %s", exc)
 
     _beat(
         beater,
@@ -2392,7 +2396,10 @@ async def _evolve_multi_challenger(
     if health_critical:
         _warn_loop_no_signal(epoch_id, round_n, health_summary)
 
-    try:
+    with best_effort(
+        "decision telemetry analyzer",
+        on_error=lambda exc: log.debug("decision telemetry analyzer skipped: %s", exc),
+    ):
         from zicato.analyzer import analyze_epoch_telemetry  # noqa: PLC0415
 
         await analyze_epoch_telemetry(
@@ -2404,8 +2411,6 @@ async def _evolve_multi_challenger(
             mutation_ids=[m.id for m in mutations],
             meta_loop_emitter=meta_loop_emitter,
         )
-    except Exception as exc:  # noqa: BLE001 — analyser is best-effort
-        log.debug("decision telemetry analyzer skipped: %s", exc)
 
     await _regenerate_epoch_report(workspace_root, epoch_id, auxiliary_call_llm, auxiliary_model)
 
@@ -2920,7 +2925,12 @@ async def evolve_n_rounds(
             # Best-effort progressive analysis.html refresh so file://
             # readers (and the dashboard's static fallback) see the
             # latest lineage immediately after each round.
-            try:
+            with best_effort(
+                "progressive analysis.html refresh",
+                on_error=lambda exc: log.debug(
+                    "progressive analysis.html refresh skipped: %s", exc
+                ),
+            ):
                 from zicato.epoch.analysis import (  # noqa: PLC0415
                     regenerate_in_progress_html,
                 )
@@ -2929,8 +2939,6 @@ async def evolve_n_rounds(
                 eid = epoch_id or current_epoch_id(workspace_root)
                 if eid:
                     regenerate_in_progress_html(workspace_root, eid)
-            except Exception as exc:  # noqa: BLE001 — HTML refresh is non-critical
-                log.debug("progressive analysis.html refresh skipped: %s", exc)
             if outcome.tournament_decision == "promoted":
                 consecutive_rejections = 0
             else:
@@ -2982,17 +2990,19 @@ async def evolve_n_rounds(
         # supervisor is stopped — a sink that needs to push a final
         # buffer to the gRPC console wants the server still up.
         if meta_loop_emitter is not None:
-            try:
+            with best_effort(
+                "meta-loop emitter close",
+                on_error=lambda exc: log.debug("meta-loop emitter close raised: %s", exc),
+            ):
                 await meta_loop_emitter.close()
-            except Exception as exc:  # noqa: BLE001 — never raise from teardown
-                log.debug("meta-loop emitter close raised: %s", exc)
         # Shut down the auto-launched harmonograf server (no-op on the
         # opt-out / failure-isolation paths). MUST run unconditionally
         # so a crashed evolve still tears the embedded server down.
-        try:
+        with best_effort(
+            "harmonograf shutdown",
+            on_error=lambda exc: log.debug("harmonograf shutdown raised: %s", exc),
+        ):
             harmonograf_handle.shutdown()
-        except Exception as exc:  # noqa: BLE001 — never raise from teardown
-            log.debug("harmonograf shutdown raised: %s", exc)
     _set_stop_reason(stop_reason)
     return outcomes
 
@@ -3174,7 +3184,14 @@ def _build_meta_loop_emitter_safe(
     the orchestrator simply skips meta-loop emits (every call site is
     ``None``-tolerant).
     """
-    try:
+    with best_effort(
+        "meta-loop emitter build",
+        on_error=lambda exc: log.warning(
+            "meta-loop emitter build failed (%s); evolve continues without "
+            "proposer / analyzer telemetry envelopes",
+            exc,
+        ),
+    ):
         from zicato.telemetry.meta_loop import (  # noqa: PLC0415
             build_meta_loop_emitter,
         )
@@ -3184,13 +3201,7 @@ def _build_meta_loop_emitter_safe(
             harmonograf_url=harmonograf_url,
             evolve_started_at_iso=evolve_started_at_iso,
         )
-    except Exception as exc:  # noqa: BLE001 — meta-loop telemetry is additive
-        log.warning(
-            "meta-loop emitter build failed (%s); evolve continues without "
-            "proposer / analyzer telemetry envelopes",
-            exc,
-        )
-        return None
+    return None
 
 
 class _NoopShutdownHandle:
@@ -3229,14 +3240,18 @@ class _LaunchedHandle:
         # tournament-runner re-resolve does not pick up the auto-launched
         # URL after the server is gone.
         for restorer in self._restorers:
-            try:
+            with best_effort(
+                "env restoration during harmonograf shutdown",
+                on_error=lambda exc: log.debug(
+                    "env restoration during harmonograf shutdown failed: %s", exc
+                ),
+            ):
                 restorer.restore()
-            except Exception as exc:  # noqa: BLE001 — restoration is best-effort
-                log.debug("env restoration during harmonograf shutdown failed: %s", exc)
-        try:
+        with best_effort(
+            "harmonograf shutdown",
+            on_error=lambda exc: log.debug("harmonograf shutdown raised: %s", exc),
+        ):
             self._inner.shutdown()
-        except Exception as exc:  # noqa: BLE001 — never raise from teardown
-            log.debug("harmonograf shutdown raised: %s", exc)
 
 
 class _EnvVarRestorer:
@@ -3281,11 +3296,12 @@ def _beat(beater: HeartbeatBeater | None, **fields: Any) -> None:
     """
     if beater is None:
         return
-    try:
+    with best_effort(
+        "heartbeat update",
+        on_error=lambda exc: log.debug("heartbeat update skipped: %s", exc),
+    ):
         beater.update(**fields)
         beater.bump_now()
-    except Exception as exc:  # noqa: BLE001 — heartbeat is non-critical
-        log.debug("heartbeat update skipped: %s", exc)
 
 
 def _round_n_from_generation_id(generation_id: str) -> int | None:
@@ -3524,7 +3540,10 @@ async def _regenerate_epoch_report(
     separate artifact from the per-round ``insights/round_{N}.md``
     proposer-feedback files.
     """
-    try:
+    with best_effort(
+        "epoch analysis report regeneration",
+        on_error=lambda exc: log.debug("epoch analysis report regeneration skipped: %s", exc),
+    ):
         from zicato.analyzer import generate_epoch_report  # noqa: PLC0415
 
         await generate_epoch_report(
@@ -3533,8 +3552,6 @@ async def _regenerate_epoch_report(
             auxiliary_call_llm,
             model=auxiliary_model,
         )
-    except Exception as exc:  # noqa: BLE001 — report is best-effort
-        log.debug("epoch analysis report regeneration skipped: %s", exc)
 
 
 def _cache_gen_score(
@@ -3783,12 +3800,15 @@ def _assess_and_persist_loop_health(
 
     summary, has_critical = _summarise_loop_health(health)
 
-    try:
+    with best_effort(
+        "loop-health report write",
+        on_error=lambda exc: log.debug(
+            "loop-health report write skipped for %s round %d: %s", epoch_id, round_n, exc
+        ),
+    ):
         report_path = _health_round_report_path(workspace_root, epoch_id, round_n)
         report_path.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write_text(report_path, _loop_health_to_json(health, epoch_id, round_n))
-    except Exception as exc:  # noqa: BLE001 — report write is best-effort
-        log.debug("loop-health report write skipped for %s round %d: %s", epoch_id, round_n, exc)
 
     return summary, has_critical
 
@@ -3928,7 +3948,10 @@ def _dump_mutations_snapshot(
 
     from zicato.core.workspace import mutations_json_path  # noqa: PLC0415
 
-    try:
+    with best_effort(
+        "mutations.json snapshot",
+        on_error=lambda exc: log.debug("mutations.json snapshot skipped: %s", exc),
+    ):
         payload: list[dict[str, Any]] = []
         for point in mutations:
             raw = _dataclasses.asdict(point)
@@ -3951,8 +3974,6 @@ def _dump_mutations_snapshot(
             encoding="utf-8",
         )
         _os.replace(tmp, target)
-    except Exception as exc:  # noqa: BLE001 — snapshot write is best-effort
-        log.debug("mutations.json snapshot skipped: %s", exc)
 
 
 def _ensure_baseline_snapshot(
