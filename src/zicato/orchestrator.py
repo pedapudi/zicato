@@ -69,6 +69,12 @@ from zicato.evolve.lifecycle_services import (
     _resolve_harmonograf_url,
     _resolve_or_launch_harmonograf,
 )
+from zicato.runtime.control_consumer import (
+    block_while_paused,
+    claim_gate_override,
+    claim_rubric_replacement,
+    claim_skip_round,
+)
 from zicato.runtime.heartbeat import HeartbeatBeater
 from zicato.runtime.lock import acquire_workspace_lock, release_workspace_lock
 from zicato.runtime.resume import ResumePlan, prepare_resume
@@ -565,6 +571,25 @@ async def evolve_once(
             )
     else:
         resolved_epoch_id = epoch_id
+
+    # --- 0. Operator skip_round (control protocol, RUNTIME-V2 Phase 2) ---
+    # A clean safe point — the epoch is resolved but nothing has been
+    # proposed and no tournament write is in flight. A pending skip_round
+    # flag aborts this round cleanly, exactly like a wall-clock budget cut:
+    # the round produces a synthetic aborted outcome (no proposer call, no
+    # tournament) and the loop moves on. The flag is consumed (archived to
+    # control_log/) so it fires once. The common case (no skip queued)
+    # returns ``None`` and the round runs normally.
+    _skip_reason = claim_skip_round(workspace_root)
+    if _skip_reason is not None:
+        parent_for_skip = _safe_resolve_parent(workspace_root, resolved_epoch_id)
+        log.warning(
+            "evolve: round %d skipped by operator (skip_round); reason=%s",
+            round_index,
+            _skip_reason or "(none)",
+        )
+        return _skipped_round_outcome(parent_for_skip, _skip_reason)
+
     board, disable_drift, judge_only = workspace_loader.load_current_board_with_meta(workspace_root)
     weights = workspace_loader.load_current_scoring(workspace_root)
     brief = workspace_loader.load_current_brief(workspace_root)
@@ -1120,8 +1145,40 @@ async def evolve_once(
         tournament_spec, parent_id, next_id, child_snapshot, tournament_result
     )
 
-    # --- 11. Persist outcome ---
+    # --- 10c. Operator gate override (control protocol, RUNTIME-V2 Phase 2) ---
+    # The gate has settled but the outcome is not yet persisted — the safe
+    # point at which an operator's force-promote / force-reject of THIS
+    # generation can override the verdict. A matching command is claimed +
+    # archived to control_log/; the override is recorded explicitly on the
+    # OutcomeRecord below (never a silent flip). No pending override (the
+    # common case) leaves the gate's decision untouched.
     decision = selection_decision.decision
+    override_reason = selection_decision.reason
+    operator_override = False
+    operator_override_reason = ""
+    gate_override = claim_gate_override(workspace_root, next_id)
+    if gate_override is not None:
+        log.warning(
+            "evolve: operator override — generation %s force-%s "
+            "(gate said %r); recording as an explicit override. reason=%s",
+            next_id,
+            gate_override.decision,
+            decision,
+            gate_override.reason,
+        )
+        decision = gate_override.decision
+        operator_override = True
+        operator_override_reason = gate_override.reason
+        # The rejection_reason field carries the override note on a forced
+        # reject so the journal one-liner is legible; a forced promote clears
+        # it (a promotion has no rejection reason).
+        override_reason = (
+            f"operator override: {gate_override.reason}"
+            if gate_override.decision == "rejected"
+            else ""
+        )
+
+    # --- 11. Persist outcome ---
     # "deferred" → treat as a non-promotion for evolve loop bookkeeping.
     bookkeeping_decision = "promoted" if decision == "promoted" else "rejected"
     parent_scalar = float(tournament_result.parent_agg.get("scalar", 0.0))
@@ -1137,7 +1194,13 @@ async def evolve_once(
         ),
         scalar_score_delta=tournament_result.outcome.delta_scalar,
         tournament_decision=decision,
-        rejection_reason=selection_decision.reason,
+        rejection_reason=override_reason,
+        # Operator override (control protocol, RUNTIME-V2 Phase 2): when an
+        # operator force-promoted / force-rejected THIS generation, ``decision``
+        # above is the forced verdict and these two fields make that explicit
+        # in the journal/index so the override is never silent.
+        operator_override=operator_override,
+        operator_override_reason=operator_override_reason,
         # Record the structure the duel was decided under so the journal /
         # index carry it; gauntlet leaves the remaining fields at their
         # back-compat defaults (no bracket path to describe).
@@ -2666,6 +2729,75 @@ def _budget_aborted_outcome(parent_generation_id: str, budget_s: int) -> EvolveR
     )
 
 
+async def _apply_rubric_replacement(
+    workspace_root: Path,
+    payload: str,
+    *,
+    auto_epoch: bool,
+    aux_call_llm: CallLLM,
+    epoch_name: str | None,
+) -> str:
+    """Apply an operator ``rubric_replacement`` as a contract edit + epoch roll.
+
+    The proposer brief is part of the evaluation contract (board + brief +
+    scoring + harness identity). Replacing it mid-loop must NOT be a silent
+    in-place patch — pre- and post-edit generations are no longer comparable.
+    So this helper:
+
+    1. Writes the operator's payload to the LIVE proposer brief (the same
+       ``brief_path`` :func:`zicato.epoch.contract.resolve_contract_inputs`
+       hashes into the contract).
+    2. Re-runs :func:`ensure_epoch_for_contract`, which sees the drifted
+       contract hash and rolls a fresh epoch (closing the current one,
+       baselining from its promoted head) when ``auto_epoch`` is set.
+
+    Returns the epoch id the loop should pin for every subsequent round (the
+    rolled epoch when the brief drifted the contract; the current epoch if a
+    no-op replacement somehow left the hash unchanged).
+    """
+    from zicato.epoch.contract import resolve_contract_inputs  # noqa: PLC0415
+
+    brief_path = resolve_contract_inputs(workspace_root).brief_path
+    brief_path.parent.mkdir(parents=True, exist_ok=True)
+    brief_path.write_text(payload, encoding="utf-8")
+    log.warning(
+        "evolve: operator rubric_replacement — wrote %d bytes to the live "
+        "proposer brief %s and rolling the epoch (contract edit)",
+        len(payload),
+        brief_path,
+    )
+    # Re-resolve the epoch: the drifted contract hash rolls a fresh epoch.
+    return await ensure_epoch_for_contract(
+        workspace_root,
+        auto_epoch=auto_epoch,
+        aux_call_llm=aux_call_llm,
+        epoch_name=epoch_name,
+    )
+
+
+def _skipped_round_outcome(parent_generation_id: str, reason: str) -> EvolveRoundOutcome:
+    """Build the synthetic outcome for a round cut short by ``skip_round``.
+
+    Used when an operator queues the control protocol's ``skip_round`` flag
+    (RUNTIME-V2.md Phase 2). The round never proposed or ran a tournament,
+    so — exactly like :func:`_budget_aborted_outcome` — we fabricate a
+    rejection-style outcome. The ``rejection_reason`` is the symbolic
+    ``"skip_round"`` token (plus the operator's reason when given) so journal
+    readers and the CLI recognise an operator skip distinctly from a budget
+    cut or a real gate rejection.
+    """
+    suffix = f": {reason}" if reason else ""
+    return EvolveRoundOutcome(
+        parent_generation_id=parent_generation_id,
+        proposed_generation_id="",
+        tournament_decision="rejected",
+        rejection_reason=f"skip_round: operator skipped the round{suffix}",
+        parent_scalar=0.0,
+        child_scalar=0.0,
+        delta_scalar=0.0,
+    )
+
+
 async def evolve_n_rounds(
     *,
     rounds: int,
@@ -2856,6 +2988,33 @@ async def evolve_n_rounds(
                     budget_stopped = True
                     stop_reason = "wall_clock_budget_between_rounds"
                     break
+
+            # --- Operator control protocol, between-rounds safe point ---
+            # (RUNTIME-V2.md Phase 2.) BEFORE scheduling the next round:
+            #
+            #  * pause_epoch — block scheduling while the flag is present;
+            #    return only once the operator clears it (resume gesture).
+            #  * rubric_replacement — a CONTRACT edit: write the operator's
+            #    new proposer brief to the live brief and let contract-hash
+            #    auto-epoching roll the epoch (never a silent in-place patch).
+            #    The rolled epoch id is re-pinned for every subsequent round.
+            #
+            # A stale skip_round flag is drained here too: between rounds
+            # there is no in-flight round to abort, so it is archived as a
+            # no-op rather than firing on the next round. (The live skip is
+            # claimed at the top of evolve_once, the round it targets.)
+            block_while_paused(workspace_root)
+            claim_skip_round(workspace_root)
+            _rubric = claim_rubric_replacement(workspace_root)
+            if _rubric is not None:
+                epoch_id = await _apply_rubric_replacement(
+                    workspace_root,
+                    _rubric.payload,
+                    auto_epoch=auto_epoch,
+                    aux_call_llm=auxiliary_call_llm,
+                    epoch_name=epoch_name,
+                )
+
             beater.update(
                 epoch_id=epoch_id or "",
                 round_index=round_idx,
@@ -2872,10 +3031,15 @@ async def evolve_n_rounds(
             async def _run_round(
                 _round_idx: int = round_idx,
                 _resume_plan: ResumePlan | None = round_resume_plan,
+                # Bind the epoch as a default arg so a rubric_replacement that
+                # rolled ``epoch_id`` earlier this iteration is captured by
+                # value (not late-bound). The reassignment above means the
+                # closure must snapshot the current epoch, not the loop var.
+                _epoch_id: str | None = epoch_id,
             ) -> EvolveRoundOutcome:
                 return await evolve_once(
                     workspace_root=workspace_root,
-                    epoch_id=epoch_id,
+                    epoch_id=_epoch_id,
                     harness_call_llm=harness_call_llm,
                     auxiliary_call_llm=auxiliary_call_llm,
                     instance_id=instance_id,

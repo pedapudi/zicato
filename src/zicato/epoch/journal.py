@@ -285,6 +285,11 @@ def _outcome_from_dict(d: dict[str, Any] | None) -> OutcomeRecord | None:
         train_loss=_opt_float(d.get("train_loss")),
         holdout_loss=_opt_float(d.get("holdout_loss")),
         generalization_gap=_opt_float(d.get("generalization_gap")),
+        # Operator override (RUNTIME-V2.md Phase 2). ``False`` / absent on
+        # every gate-decided round and on journals written before the
+        # control consumer was wired.
+        operator_override=bool(d.get("operator_override", False)),
+        operator_override_reason=str(d.get("operator_override_reason", "")),
     )
 
 

@@ -283,6 +283,20 @@ class OutcomeRecord:
     train_loss: float | None = None
     holdout_loss: float | None = None
     generalization_gap: float | None = None
+    # Operator override (RUNTIME-V2.md Phase 2 — the control protocol's
+    # promote/reject commands). When an operator force-promotes or
+    # force-rejects the in-flight generation through the dashboard, the
+    # gate's own verdict is overridden — but NEVER silently: this flag is
+    # set and the reason recorded so the journal/index carry that the
+    # decision was an explicit operator override rather than the gate's.
+    # ``False`` (the default) on every gate-decided round and on every
+    # journal written before the feature. RUNTIME evidence, not a contract
+    # input.
+    operator_override: bool = False
+    # The freeform reason the operator attached to the override (the
+    # dashboard's ``reason`` field), or a synthesised note. Empty unless
+    # :attr:`operator_override` is ``True``.
+    operator_override_reason: str = ""
 
 
 #: Hard cap on the number of settled prior experiments surfaced to the
