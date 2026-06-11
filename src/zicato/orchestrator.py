@@ -59,6 +59,15 @@ from zicato.evolve.dashboard_projection import (
     _serialise_standings,
     _settle_active_tournament,
 )
+from zicato.evolve.epoching import (
+    _component_diff_label,
+    _create_epoch_from_contract,
+    _promoted_head_snapshot,
+    _roll_seed_marker,
+    _stored_component_hashes,
+    _write_component_hashes,
+    ensure_epoch_for_contract,
+)
 from zicato.evolve.lifecycle_services import (
     _beat,
     _build_meta_loop_emitter_safe,
@@ -171,283 +180,9 @@ def _declared_custom_judge_names(board: list[Any], weights: Any) -> frozenset[st
 # ---------------------------------------------------------------------------
 # Contract-hash auto-epoching
 # ---------------------------------------------------------------------------
-
-
-#: Internal sentinel: workspace-level state file recording, for each
-#: epoch, where its v0 baseline should be seeded from when the epoch is
-#: a contract-roll of a predecessor. Keyed by epoch id; value is the
-#: absolute path to the previous epoch's promoted-head snapshot. The
-#: file is written by :func:`ensure_epoch_for_contract` and consumed by
-#: :func:`_ensure_baseline_snapshot`.
-def _roll_seed_marker(workspace_root: Path, epoch_id: str) -> Path:
-    return workspace_root / "epochs" / epoch_id / "v0_seed_from"
-
-
-def _component_diff_label(prev_components: dict[str, str], cur_components: dict[str, str]) -> str:
-    """Return a human-readable label naming which contract components moved.
-
-    Compares the per-component sub-hashes; returns a comma-joined list
-    of the component names that differ (``board``, ``brief``,
-    ``scoring``, ``entrypoint``, ``mutable_trees``). Falls back to a
-    generic ``"contract"`` when no per-component breakdown is available
-    (e.g. a legacy epoch with no stored components).
-    """
-    if not prev_components:
-        return "contract"
-    changed = [
-        name for name, cur_hash in cur_components.items() if prev_components.get(name) != cur_hash
-    ]
-    return ", ".join(changed) if changed else "contract"
-
-
-def _stored_component_hashes(workspace_root: Path, epoch_id: str) -> dict[str, str]:
-    """Return the per-component sub-hashes recorded for an epoch.
-
-    The breakdown is written next to ``config.json`` as
-    ``contract_components.json`` at epoch creation / roll time. Absent
-    for legacy epochs (returns an empty dict — the caller falls back to
-    a generic message).
-    """
-    path = workspace_root / "epochs" / epoch_id / "contract_components.json"
-    if not path.exists():
-        return {}
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    if not isinstance(raw, dict):
-        return {}
-    return {str(k): str(v) for k, v in raw.items()}
-
-
-def _write_component_hashes(
-    workspace_root: Path, epoch_id: str, components: dict[str, str]
-) -> None:
-    """Persist an epoch's per-component contract sub-hashes."""
-    path = workspace_root / "epochs" / epoch_id / "contract_components.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(components, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-
-
-async def ensure_epoch_for_contract(
-    workspace_root: Path,
-    *,
-    auto_epoch: bool,
-    aux_call_llm: CallLLM,
-    epoch_name: str | None = None,
-) -> str:
-    """Resolve the epoch ``evolve`` should run against, auto-rolling on drift.
-
-    The "evaluation contract" is the board + proposer brief + scoring +
-    the registered inner-harness identity (entrypoint + mutable trees).
-    A change to any of those means generations on either side are no
-    longer comparable, so the epoch must roll. This function is the
-    roll-at-evolve-time hook: it is called before the orchestrator
-    resolves an epoch.
-
-    Logic:
-
-    1. Compute the current contract hash via
-       :func:`zicato.epoch.contract.compute_contract_hash`.
-    2. ``cur = current_epoch_id(workspace_root)``.
-    3. If ``cur`` is ``None``:
-
-       * ``auto_epoch`` True  — create epoch ``e0`` from the contract,
-         return it.
-       * ``auto_epoch`` False — raise (tell the operator to
-         ``zicato epoch new``).
-    4. Load ``cur``'s :class:`EpochConfig`.
-
-       * If ``cur.contract_hash == ""`` (legacy epoch) OR ``== `` the
-         current hash: return ``cur`` (continue, no roll).
-       * Else (the contract changed):
-
-         * ``auto_epoch`` True  — close ``cur`` (generating
-           ``analysis.md``), create a NEW epoch carrying the new
-           contract, baselined from ``cur``'s promoted head, auto-named
-           ``e{N+1}``; echo a clear message; return the new id.
-         * ``auto_epoch`` False — raise a clear error: the contract
-           drifted from the current epoch; revert the files or run
-           ``zicato epoch new``.
-
-    ``epoch_name`` overrides the default ``e{N}`` auto-name for any
-    epoch this function creates (the first epoch on a fresh workspace,
-    or the new epoch after a roll). When ``None``, the ``e{N}`` scheme
-    is used.
-
-    Returns the epoch id ``evolve`` should use.
-    """
-    from zicato.epoch.contract import (  # noqa: PLC0415
-        compute_component_hashes,
-        compute_contract_hash,
-        resolve_contract_inputs,
-    )
-    from zicato.epoch.lifecycle import (  # noqa: PLC0415
-        current_epoch_id,
-        list_epochs,
-        load_epoch,
-    )
-
-    inputs = resolve_contract_inputs(workspace_root)
-    current_hash = compute_contract_hash(inputs)
-    current_components = compute_component_hashes(inputs)
-
-    cur = current_epoch_id(workspace_root)
-    if cur is None:
-        if not auto_epoch:
-            raise FileNotFoundError(
-                f"no current_epoch marker under {workspace_root}; "
-                "run `zicato epoch new <name> ...` or drop --no-auto-epoch "
-                "so `zicato evolve` can create the first epoch"
-            )
-        new_id = _create_epoch_from_contract(
-            workspace_root,
-            inputs=inputs,
-            name=epoch_name or "e0",
-            aux_call_llm=aux_call_llm,
-        )
-        _write_component_hashes(workspace_root, new_id, current_components)
-        return new_id
-
-    cfg = load_epoch(workspace_root, cur)
-    if cfg.contract_hash == "" or cfg.contract_hash == current_hash:
-        # Legacy epoch (empty hash → treated as always-matching) or the
-        # contract is unchanged. Either way: no roll.
-        return cur
-
-    # The contract drifted from the current epoch.
-    if not auto_epoch:
-        drifted = _component_diff_label(
-            _stored_component_hashes(workspace_root, cur), current_components
-        )
-        raise RuntimeError(
-            f"evaluation contract has drifted from the current epoch "
-            f"{cur!r} (changed: {drifted}); either revert the contract "
-            "files or run `zicato epoch new` to start a new epoch. "
-            "(Remove --no-auto-epoch to let `zicato evolve` roll the "
-            "epoch automatically.)"
-        )
-
-    # Auto-roll: close the drifted epoch, open a fresh one carrying the
-    # new contract, baselined from the closed epoch's promoted head.
-    # close_epoch_async is awaited (we are already inside an event loop;
-    # the sync close_epoch would nest asyncio.run and raise).
-    from zicato.epoch.lifecycle import close_epoch_async  # noqa: PLC0415
-
-    await close_epoch_async(workspace_root, cur, aux_call_llm=aux_call_llm)
-
-    # The comprehensive report is regenerated every round, so the copy on disk
-    # is frozen at the last mid-run pass — masthead still reading "in progress"
-    # with pre-close counts. Now that the epoch is marked closed, re-stamp that
-    # (deterministic) masthead so the persisted analysis.md/.html reflect the
-    # final closed state. Cheap, no LLM; the narrative is left untouched.
-    with best_effort(
-        "post-close report re-stamp",
-        on_error=lambda exc: log.debug("post-close report re-stamp skipped: %s", exc),
-    ):
-        from zicato.analyzer import restamp_persisted_report  # noqa: PLC0415
-
-        restamp_persisted_report(workspace_root, cur)
-
-    next_n = len(list_epochs(workspace_root))
-    new_id = _create_epoch_from_contract(
-        workspace_root,
-        inputs=inputs,
-        name=epoch_name or f"e{next_n}",
-        aux_call_llm=aux_call_llm,
-    )
-    _write_component_hashes(workspace_root, new_id, current_components)
-
-    # Record where the new epoch's v0 should be seeded from: the
-    # promoted head of the epoch we just closed. `_ensure_baseline_snapshot`
-    # reads this marker on the first evolve round of the new epoch.
-    prev_head_snapshot = _promoted_head_snapshot(workspace_root, cur)
-    if prev_head_snapshot is not None:
-        _roll_seed_marker(workspace_root, new_id).write_text(
-            str(prev_head_snapshot) + "\n", encoding="utf-8"
-        )
-
-    changed = _component_diff_label(
-        _stored_component_hashes(workspace_root, cur), current_components
-    )
-    log.info("contract changed (%s) — rolled %s -> %s", changed, cur, new_id)
-    print(f"contract changed ({changed}) — rolled {cur} -> {new_id}")
-    # The auto-roll path has no operator interaction surface, so the
-    # epoch's ``goal`` field lands empty. Nudge the operator to fill it
-    # in later via the dedicated subcommand.
-    log.warning(
-        "epoch %s opened by auto-roll with no goal recorded; "
-        'run `zicato epoch set-goal --epoch %s --goal "..."` to fill it in.',
-        new_id,
-        new_id,
-    )
-    print(
-        f"NOTE: epoch {new_id} opened by auto-roll with no goal recorded; "
-        f'run `zicato epoch set-goal --epoch {new_id} --goal "..."` to fill it in.'
-    )
-    return new_id
-
-
-def _create_epoch_from_contract(
-    workspace_root: Path,
-    *,
-    inputs: Any,
-    name: str,
-    aux_call_llm: CallLLM,
-) -> str:
-    """Create an epoch from resolved contract inputs; return its id.
-
-    A thin wrapper over :func:`zicato.epoch.lifecycle.new_epoch` that
-    loads the scoring weights from the live ``scoring.json`` and carries
-    the registered inner-harness identity into the contract hash.
-    """
-    from zicato.epoch.lifecycle import new_epoch  # noqa: PLC0415
-    from zicato.workspace_loader import _scoring_weights_from_dict  # noqa: PLC0415
-
-    if inputs.scoring_path.exists():
-        weights = _scoring_weights_from_dict(
-            json.loads(inputs.scoring_path.read_text(encoding="utf-8"))
-        )
-    else:
-        from zicato.core.types import ScoringWeights  # noqa: PLC0415
-
-        weights = ScoringWeights()
-
-    cfg = new_epoch(
-        workspace_root=workspace_root,
-        name=name,
-        board_source=inputs.board_path,
-        brief_source=inputs.brief_path,
-        weights=weights,
-        auto_close_previous=False,  # ensure_epoch_for_contract closes explicitly
-        aux_call_llm=aux_call_llm,
-        entrypoint=inputs.entrypoint,
-        mutable_trees=tuple(inputs.mutable_trees),
-        proposer_path=inputs.proposer_path,
-    )
-    return cfg.id
-
-
-def _promoted_head_snapshot(workspace_root: Path, epoch_id: str) -> Path | None:
-    """Return the snapshot dir of an epoch's last promoted generation.
-
-    Reads the epoch's ``current_generation`` marker (the promoted head)
-    and returns that generation's ``snapshot/`` directory. Returns
-    ``None`` when the epoch has no promoted generation beyond a seed
-    that was never run, or when the snapshot directory is absent — the
-    caller then falls back to seeding from the registered mutable trees.
-    """
-    try:
-        head = _resolve_current_generation(workspace_root, epoch_id)
-    except FileNotFoundError:
-        return None
-    snap = _snapshot_root(workspace_root, epoch_id, head)
-    if not snap.exists() or not any(snap.iterdir()):
-        return None
-    return snap
+# The roll-at-evolve-time decision and its helpers live in
+# ``zicato.evolve.epoching``; re-exported above so callers (and the test
+# suite's ``orch.ensure_epoch_for_contract`` monkeypatch) keep working.
 
 
 # ---------------------------------------------------------------------------
@@ -4216,6 +3951,18 @@ __all__ = [
     "_NoopShutdownHandle",
     "_now_iso",
     "_resolve_harmonograf_url",
+    # Re-export shims for the contract-hash auto-epoching helpers moved to
+    # ``zicato.evolve.epoching``. These five are not used inside this
+    # module (only ``ensure_epoch_for_contract`` and ``_roll_seed_marker``
+    # are); listed so the import is recognised as a re-export and callers'
+    # ``from zicato.orchestrator import _create_epoch_from_contract`` keep
+    # resolving.
+    "_component_diff_label",
+    "_create_epoch_from_contract",
+    "_promoted_head_snapshot",
+    "_stored_component_hashes",
+    "_write_component_hashes",
+    "ensure_epoch_for_contract",
     "evolve_once",
     "evolve_n_rounds",
 ]
