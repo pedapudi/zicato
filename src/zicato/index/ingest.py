@@ -810,6 +810,32 @@ def _load_loss_profile(path: Path) -> LossProfile | None:
         return None
 
 
+def _heal_loss_profile(path: Path, profile: LossProfile) -> None:
+    """Persist a drift-recovered ``profile`` back to its ``loss.json``.
+
+    Called when an incomplete (drift-less) loss profile had its
+    ``drift_counts`` recovered from the run's events JSONL. Writing the
+    healed profile back makes the canonical file authoritative again: the
+    next ingest reads the recovered drift directly from loss.json instead
+    of re-tallying events, so the index becomes a pure projection of the
+    file. Only the recovered metric *surface* is restored — the scalar
+    fields (drift_loss, pass_fail, runtime_ms, ...) are unchanged because
+    ``profile`` was produced by ``dataclasses.replace`` of the on-disk
+    profile with the events-derived ``drift_counts`` only.
+
+    Best-effort and idempotent: a read-only file or any write failure is
+    swallowed so the ingest still populates the DB row from the in-memory
+    fold (matching the pre-heal behaviour). The reducer owns the
+    serialisation so the healed file round-trips byte-for-byte.
+    """
+    from zicato.telemetry.reducer import write_loss_profile  # noqa: PLC0415
+
+    try:
+        write_loss_profile(profile, path)
+    except OSError:
+        return
+
+
 def _iter_generation_dirs(workspace_root: Path, epoch_id: str) -> Iterable[str]:
     """Yield generation ids that have a directory on disk under ``epoch_id``.
 
@@ -895,6 +921,15 @@ def _ingest_run_into(
     # the index still reflects drift signal. We only synthesise when the
     # profile itself has no drift surface — otherwise the reducer's view
     # is authoritative and re-adding events would double-count.
+    #
+    # When we do recover drift from events, we also HEAL the canonical
+    # loss.json: writing the recovered drift_counts back so the file is
+    # no longer an incomplete projection of its own events. After the
+    # heal the guard below no longer fires for this run, so a subsequent
+    # reindex is a pure projection of loss.json (it no longer needs the
+    # events file to surface the drift). We only fill the raw drift_counts
+    # the events captured — we do NOT rescore (no weights/BoardEntry here),
+    # so drift_loss / the scalar / per-judge fields stay byte-identical.
     if not profile.drift_counts and not profile.metric_counts:
         epath = events_jsonl_path(workspace_root, epoch_id, generation_id, entry_id)
         tally = _drift_counts_from_events(epath)
@@ -908,6 +943,7 @@ def _ingest_run_into(
                 for (kind, sev), count in sorted(tally.items())
             )
             profile = replace(profile, drift_counts=synthesised)
+            _heal_loss_profile(lpath, profile)
 
     # Resolve the tournament round this run belongs to from the child
     # generation's experiment.json. Returns ``None`` for v0 seed runs

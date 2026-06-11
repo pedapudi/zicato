@@ -31,7 +31,7 @@ from zicato.index.query import (
     runs_for_generation,
     tournaments_for_epoch,
 )
-from zicato.telemetry.reducer import write_loss_profile
+from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
 from zicato.testing.fixtures import (
     make_drift_count,
     make_experiment,
@@ -100,6 +100,22 @@ def _build_workspace(tmp_path: Path) -> tuple[Path, str]:
     _seed_lineage(ws, cfg_b.id)
 
     return ws, eid_a
+
+
+def _dump_index(db: Path) -> str:
+    """Serialise the whole SQLite index to a deterministic SQL dump.
+
+    Used to assert that two rebuilds produce byte-identical indexes.
+    ``iterdump`` emits schema + data as SQL text; two equal dumps mean
+    two equal databases (row-for-row).
+    """
+    import sqlite3
+
+    conn = sqlite3.connect(db)
+    try:
+        return "\n".join(conn.iterdump())
+    finally:
+        conn.close()
 
 
 def _seed_lineage(ws: Path, epoch_id: str) -> None:
@@ -249,6 +265,61 @@ def test_rebuild_index_metric_counts_from_drift_events(tmp_path: Path) -> None:
     assert drift_rows[0]["severity"] == "warning"
     # Two synthetic off_topic/warning events were folded into the count.
     assert drift_rows[0]["count"] == pytest.approx(2.0)
+
+
+def test_rebuild_index_heals_incomplete_loss_profile_from_drift_events(
+    tmp_path: Path,
+) -> None:
+    # An incomplete loss.json (drift recovered from events, not carried
+    # by the file) is HEALED in place: after rebuild the canonical file
+    # carries the recovered drift_counts, scalar fields are untouched,
+    # and a subsequent reindex is a pure projection that no longer needs
+    # the events file.
+    ws, eid = _build_workspace(tmp_path)
+    lpath = loss_profile_path(ws, eid, "v0", "e1")
+    original = read_loss_profile(lpath)
+    # Precondition: the synthetic loss.json is incomplete (no drift
+    # surface) — the heal path is the one under test.
+    assert original.drift_counts == ()
+    assert original.metric_counts == ()
+
+    rebuild_index(ws)
+
+    # (1) The on-disk loss.json now carries the recovered drift_counts.
+    healed = read_loss_profile(lpath)
+    drift = {(c.kind, c.severity): c.count for c in healed.drift_counts}
+    assert drift == {("off_topic", "warning"): 2}
+
+    # (2) Every scalar field is byte-identical to the original — the heal
+    #     recovers the metric surface the events captured, it does not
+    #     rescore. Only drift_counts changed.
+    from dataclasses import replace as _replace
+
+    assert _replace(healed, drift_counts=()) == original
+    assert healed.drift_loss == pytest.approx(original.drift_loss)
+    assert healed.pass_fail == original.pass_fail
+    assert healed.runtime_ms == original.runtime_ms
+
+    # (3) Pure projection: delete the events file, reindex, and the index
+    #     STILL surfaces the drift rows — they now come from the healed
+    #     loss.json, not from events.
+    events_jsonl_path(ws, eid, "v0", "e1").unlink()
+    db = rebuild_index(ws)
+    run_id = f"run_{eid}_v0_e1"
+    drift_rows = [m for m in metric_counts_for_run(db, run_id) if m["namespace"] == "drift"]
+    assert len(drift_rows) == 1
+    assert drift_rows[0]["name"] == "drift:off_topic"
+    assert drift_rows[0]["count"] == pytest.approx(2.0)
+
+
+def test_rebuild_index_heal_is_idempotent(tmp_path: Path) -> None:
+    # Healing must not perturb determinism: once the loss.json is healed
+    # (first rebuild), a second rebuild produces a byte-identical index.
+    ws, _ = _build_workspace(tmp_path)
+    db = rebuild_index(ws)
+    first = _dump_index(db)
+    rebuild_index(ws)
+    assert _dump_index(db) == first
 
 
 def test_rebuild_index_metric_counts_from_loss_profile_surface(
