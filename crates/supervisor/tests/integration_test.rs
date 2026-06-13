@@ -31,6 +31,7 @@ fn serve_opts(read_only: bool) -> server::ServeOptions {
         action_log: Arc::new(WatchdogLog::new()),
         seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
         fold_diagnostics: Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new()),
+        ledger: None,
     }
 }
 
@@ -990,6 +991,7 @@ async fn watchdog_sigterms_run_past_its_deadline() {
             fast_thresholds(false),
             Duration::from_millis(50),
             Arc::new(WatchdogLog::new()),
+            None,
             loop_shutdown,
         )
         .await
@@ -1031,6 +1033,7 @@ async fn watchdog_escalates_to_sigkill_when_run_ignores_sigterm() {
             fast_thresholds(false),
             Duration::from_millis(50),
             Arc::new(WatchdogLog::new()),
+            None,
             loop_shutdown,
         )
         .await
@@ -1060,6 +1063,7 @@ async fn watchdog_does_not_kill_run_when_deadline_disabled() {
             fast_thresholds(true), // --run-deadline-kill-disabled
             Duration::from_millis(50),
             Arc::new(WatchdogLog::new()),
+            None,
             loop_shutdown,
         )
         .await
@@ -1105,6 +1109,7 @@ async fn watchdog_never_signals_orchestrator_or_init_pids() {
             fast_thresholds(false),
             Duration::from_millis(50),
             Arc::new(WatchdogLog::new()),
+            None,
             loop_shutdown,
         )
         .await
@@ -1650,6 +1655,7 @@ async fn statusz_routes_reachable_with_no_dashboard() {
         action_log: Arc::new(WatchdogLog::new()),
         seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
         fold_diagnostics: Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new()),
+        ledger: None,
     };
     let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);
@@ -1731,6 +1737,7 @@ async fn statusz_surfaces_recorded_watchdog_actions() {
         action_log: action_log.clone(),
         seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
         fold_diagnostics: Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new()),
+        ledger: None,
     };
     let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);
@@ -1750,6 +1757,158 @@ async fn statusz_surfaces_recorded_watchdog_actions() {
     assert_eq!(actions[0]["pid"].as_i64().unwrap(), 4343);
     assert_eq!(actions[0]["run_id"], "run-late");
     assert_eq!(actions[0]["outcome"], "killed_forcefully");
+
+    let _ = shutdown.send(());
+}
+
+// ---- audit ledger (INTEGRITY NOTARY record #1) --------------------------
+
+#[tokio::test]
+async fn audit_verify_reports_not_configured_without_a_ledger() {
+    // No --ledger-dir → the verify endpoint reports the ledger absent and
+    // /statusz shows it not-configured, exactly as a pre-ledger supervisor.
+    let (_t, paths) = make_workspace();
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let v: Value = client
+        .get(format!("{base}/api/audit/verify"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(v["configured"], false);
+
+    let s: Value = client
+        .get(format!("{base}/statusz.json"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(s["audit_ledger"]["configured"], false);
+    assert_eq!(s["audit_ledger"]["intact"], true);
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn audit_verify_reports_intact_chain_and_statusz_surfaces_it() {
+    use zicato_supervisor::ledger::{AuditLedger, RecordKind};
+    let (tmp, paths) = make_workspace();
+    // The ledger lives OUTSIDE the orchestrator's mutable trees — a
+    // supervisor-owned dir alongside the workspace.
+    let ledger_dir = tmp.path().join("super-runtime");
+    let ledger = Arc::new(AuditLedger::open(&ledger_dir));
+    ledger.append(RecordKind::SupervisorStart, serde_json::json!({"v": 1}));
+    ledger.append(
+        RecordKind::WatchdogAction,
+        serde_json::json!({"pid": 4242, "outcome": "killed_forcefully"}),
+    );
+
+    let opts = server::ServeOptions {
+        read_only: true,
+        dashboard_disabled: false,
+        heartbeat_stale_threshold_seconds: 30,
+        action_log: Arc::new(WatchdogLog::new()),
+        seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
+        fold_diagnostics: Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new()),
+        ledger: Some(ledger.clone()),
+    };
+    let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let v: Value = client
+        .get(format!("{base}/api/audit/verify"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(v["configured"], true);
+    assert_eq!(v["intact"], true);
+    assert_eq!(v["records"].as_u64().unwrap(), 2);
+
+    let s: Value = client
+        .get(format!("{base}/statusz.json"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(s["audit_ledger"]["configured"], true);
+    assert_eq!(s["audit_ledger"]["intact"], true);
+    assert_eq!(s["audit_ledger"]["records"].as_u64().unwrap(), 2);
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn audit_verify_detects_a_tampered_chain() {
+    use zicato_supervisor::ledger::{AuditLedger, RecordKind};
+    let (tmp, paths) = make_workspace();
+    let ledger_dir = tmp.path().join("super-runtime");
+    let ledger = Arc::new(AuditLedger::open(&ledger_dir));
+    ledger.append(RecordKind::SupervisorStart, serde_json::json!({}));
+    ledger.append(RecordKind::WatchdogAction, serde_json::json!({"pid": 7}));
+    // Tamper with the persisted ledger out of band: edit the second record's
+    // payload while leaving its digest, which the hash-chain must catch.
+    let path = ledger.path().to_path_buf();
+    let text = std::fs::read_to_string(&path).unwrap();
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    lines[1] = lines[1].replace("\"pid\":7", "\"pid\":13");
+    std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+
+    let opts = server::ServeOptions {
+        read_only: true,
+        dashboard_disabled: false,
+        heartbeat_stale_threshold_seconds: 30,
+        action_log: Arc::new(WatchdogLog::new()),
+        seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
+        fold_diagnostics: Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new()),
+        ledger: Some(ledger.clone()),
+    };
+    let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let v: Value = client
+        .get(format!("{base}/api/audit/verify"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(v["intact"], false);
+    assert_eq!(v["first_break_seq"].as_u64().unwrap(), 1);
+
+    let s: Value = client
+        .get(format!("{base}/statusz.json"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(s["audit_ledger"]["intact"], false);
+    // The terse HTML surfaces the break loudly.
+    let html = client
+        .get(format!("{base}/statusz"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(html.contains("CHAIN BREAK"));
 
     let _ = shutdown.send(());
 }

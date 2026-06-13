@@ -15,6 +15,7 @@
 //! for blowing its wall-clock budget.
 
 use crate::action_log::{Action, Trigger, WatchdogLog};
+use crate::ledger::{AuditLedger, RecordKind};
 use crate::reader::{self, WorkspacePaths};
 use crate::reap;
 use crate::signal::{self, escalate_target, KillTarget};
@@ -24,6 +25,60 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast::Sender;
 use tracing::{info, warn};
+
+/// Record one watchdog escalation in the in-memory ring AND, when a
+/// tamper-evident ledger is configured, append it to the persisted
+/// hash-chained ledger too.
+///
+/// The ledger is the INTEGRITY NOTARY's durable record: the in-memory ring
+/// is cleared on restart, but the ledger persists and chains every action so
+/// the history cannot be silently edited. `ledger` is `None` when no ledger
+/// is configured (the default), in which case this is exactly the prior
+/// behavior — a single `ring.record(...)`.
+fn record_action(ring: &WatchdogLog, ledger: Option<&Arc<AuditLedger>>, action: Action) {
+    if let Some(ledger) = ledger {
+        ledger.append(
+            RecordKind::WatchdogAction,
+            serde_json::json!({
+                "trigger": action.trigger.as_str(),
+                "pid": action.pid,
+                "run_id": action.run_id,
+                "outcome": action.outcome.as_str(),
+            }),
+        );
+    }
+    ring.record(action);
+}
+
+/// Observe promote/reject decision transitions and epoch contract-hash
+/// changes from the canonical (orchestrator-written) state and stamp each new
+/// one into the tamper-evident ledger.
+///
+/// Read-only and alarm-only: this never blocks a promotion or writes the
+/// orchestrator's trees — it only records what it observes into the
+/// supervisor's own chain. De-duplication lives in the [`TransitionObserver`],
+/// so a steady-state poll appends nothing.
+fn observe_transitions(
+    paths: &WorkspacePaths,
+    ledger: &Arc<AuditLedger>,
+    observer: &mut crate::ledger::TransitionObserver,
+) {
+    // Decisions: every resolved generation across every epoch.
+    let lineage = reader::build_lineage_view(paths);
+    observer.observe_decisions(
+        ledger,
+        lineage
+            .generations
+            .iter()
+            .map(|g| (g.epoch_id.as_str(), g.generation_id.as_str(), g.promoted)),
+    );
+
+    // Contract hash: the current epoch's frozen contract.
+    let epoch = crate::epoch::build_epoch_view(paths);
+    if let (Some(epoch_id), Some(contract_hash)) = (epoch.epoch_id, epoch.contract_hash) {
+        observer.observe_contract(ledger, &epoch_id, &contract_hash);
+    }
+}
 
 /// Thresholds for watchdog decisions.
 #[derive(Debug, Clone, Copy)]
@@ -668,6 +723,7 @@ async fn reap_dead_orchestrator_runs(
     protected_pgids: &HashSet<i32>,
     thresholds: &Thresholds,
     log: &Arc<WatchdogLog>,
+    ledger: Option<&Arc<AuditLedger>>,
 ) {
     // The orchestrator is dead, so its pid is not a live worker; an empty
     // protected pid set is correct here (the pgid set still fences the
@@ -684,13 +740,17 @@ async fn reap_dead_orchestrator_runs(
                 "reaping orphaned worker after orchestrator death; escalating",
             );
             let out = escalate_target(target, thresholds.run_kill_grace).await;
-            log.record(Action {
-                ts: Utc::now(),
-                trigger: Trigger::OrchestratorReap,
-                pid,
-                run_id: Some(run.run_id.clone()),
-                outcome: out.into(),
-            });
+            record_action(
+                log,
+                ledger,
+                Action {
+                    ts: Utc::now(),
+                    trigger: Trigger::OrchestratorReap,
+                    pid,
+                    run_id: Some(run.run_id.clone()),
+                    outcome: out.into(),
+                },
+            );
         }
 
         // 2. GC the leaked ztw-snap-* ephemeral snapshot (prefix-guarded).
@@ -724,14 +784,25 @@ pub async fn runs_loop(
     thresholds: Thresholds,
     interval: Duration,
     log: Arc<WatchdogLog>,
+    ledger: Option<Arc<AuditLedger>>,
     shutdown: Sender<()>,
 ) {
     let mut ticker = tokio::time::interval(interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut shutdown_rx = shutdown.subscribe();
+    // INTEGRITY NOTARY: when a ledger is configured, observe promote/reject
+    // decision transitions and epoch contract-hash changes once each and stamp
+    // them into the tamper-evident chain. Stateful across ticks; a no-op when
+    // no ledger is configured.
+    let mut transitions = crate::ledger::TransitionObserver::new();
     loop {
         tokio::select! {
             _ = ticker.tick() => {
+                // Record any newly-resolved decisions / contract changes into
+                // the audit ledger (alarm-only / read-only — never blocks).
+                if let Some(ledger) = ledger.as_ref() {
+                    observe_transitions(&paths, ledger, &mut transitions);
+                }
                 // Protect the orchestrator pid (carried by the heartbeat)
                 // from ever being treated as a run worker. The watchdog
                 // kills run pids only.
@@ -777,6 +848,7 @@ pub async fn runs_loop(
                         &protected_pgids,
                         &thresholds,
                         &log,
+                        ledger.as_ref(),
                     )
                     .await;
                     // The orchestrator is gone; the per-run deadline/staleness
@@ -816,13 +888,17 @@ pub async fn runs_loop(
                                     "kill-request escalation complete; \
                                      leaving state file for orchestrator cleanup",
                                 );
-                                log.record(Action {
-                                    ts: Utc::now(),
-                                    trigger: Trigger::KillRequest,
-                                    pid,
-                                    run_id: Some(run.run_id.clone()),
-                                    outcome: out.into(),
-                                });
+                                record_action(
+                                    &log,
+                                    ledger.as_ref(),
+                                    Action {
+                                        ts: Utc::now(),
+                                        trigger: Trigger::KillRequest,
+                                        pid,
+                                        run_id: Some(run.run_id.clone()),
+                                        outcome: out.into(),
+                                    },
+                                );
                                 // Clear the consumed marker so the next tick
                                 // does not re-escalate a recycled pid; leave
                                 // the state file for the orchestrator reaper.
@@ -879,13 +955,17 @@ pub async fn runs_loop(
                                     "run deadline escalation complete; \
                                      leaving state file for orchestrator cleanup",
                                 );
-                                log.record(Action {
-                                    ts: Utc::now(),
-                                    trigger: Trigger::RunDeadline,
-                                    pid,
-                                    run_id: Some(run.run_id.clone()),
-                                    outcome: out.into(),
-                                });
+                                record_action(
+                                    &log,
+                                    ledger.as_ref(),
+                                    Action {
+                                        ts: Utc::now(),
+                                        trigger: Trigger::RunDeadline,
+                                        pid,
+                                        run_id: Some(run.run_id.clone()),
+                                        outcome: out.into(),
+                                    },
+                                );
                                 // Deliberately do NOT remove the state
                                 // file: the orchestrator/worker owns that
                                 // lifecycle.
@@ -913,13 +993,17 @@ pub async fn runs_loop(
                             warn!(run_id=%run.run_id, pid, ?target, "active run past kill threshold; escalating");
                             let out = escalate_target(target, thresholds.grace).await;
                             info!(?out, run_id=%run.run_id, "run escalation complete");
-                            log.record(Action {
-                                ts: Utc::now(),
-                                trigger: Trigger::RunStale,
-                                pid,
-                                run_id: Some(run.run_id.clone()),
-                                outcome: out.into(),
-                            });
+                            record_action(
+                                &log,
+                                ledger.as_ref(),
+                                Action {
+                                    ts: Utc::now(),
+                                    trigger: Trigger::RunStale,
+                                    pid,
+                                    run_id: Some(run.run_id.clone()),
+                                    outcome: out.into(),
+                                },
+                            );
                             // Remove the state file so we don't re-escalate.
                             let run_file = paths.active_runs_dir().join(format!("{}.json", run.run_id));
                             if let Err(e) = std::fs::remove_file(&run_file) {
@@ -1935,6 +2019,7 @@ mod tests {
                 ..Thresholds::default()
             },
             &log,
+            None,
         )
         .await;
 
@@ -1998,6 +2083,7 @@ mod tests {
                 ..Thresholds::default()
             },
             &log,
+            None,
         )
         .await;
 
@@ -2037,11 +2123,61 @@ mod tests {
             &no_protected(),
             &thresholds(),
             &log,
+            None,
         )
         .await;
 
         assert!(!run_file.exists(), "state finalized even with no worker/snapshot");
         // No escalation was recorded (no live, signalable pid).
         assert!(log.is_empty());
+    }
+
+    #[tokio::test]
+    async fn reap_records_the_escalation_into_the_ledger_when_configured() {
+        // A live, signalable worker orphaned by a dead orchestrator: the reap
+        // escalation must be mirrored into the tamper-evident ledger (when one
+        // is configured) in addition to the in-memory ring.
+        use crate::ledger::AuditLedger;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ws = tmp.path().join("ws");
+        std::fs::create_dir_all(ws.join("runtime/active_runs")).unwrap();
+        let paths = WorkspacePaths::new(ws);
+
+        let sleeper = Sleeper::spawn();
+        let pid = sleeper.pid();
+        let run = ActiveRun {
+            run_id: "r-reap".into(),
+            pid: Some(pid),
+            pid_start_time: signal::pid_start_time(pid),
+            ..Default::default()
+        };
+        let run_file = paths.active_runs_dir().join("r-reap.json");
+        std::fs::write(&run_file, serde_json::to_vec(&run).unwrap()).unwrap();
+
+        let log = Arc::new(WatchdogLog::new());
+        let ledger = Arc::new(AuditLedger::open(&tmp.path().join("super-runtime")));
+        reap_dead_orchestrator_runs(
+            &paths,
+            std::slice::from_ref(&run),
+            &no_protected(),
+            &Thresholds {
+                run_kill_grace: Duration::from_millis(200),
+                ..Thresholds::default()
+            },
+            &log,
+            Some(&ledger),
+        )
+        .await;
+        // Reap the zombie so the assertion below is about state, not liveness.
+        drop(sleeper);
+
+        // The ring recorded one OrchestratorReap action...
+        let snap = log.snapshot();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].trigger, Trigger::OrchestratorReap);
+        // ...and the ledger recorded it too, with an intact chain.
+        let report = ledger.verify();
+        assert!(report.intact, "ledger chain must verify: {report:?}");
+        assert_eq!(report.records, 1);
     }
 }

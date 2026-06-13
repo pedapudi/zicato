@@ -79,6 +79,11 @@ pub struct ServeOptions {
     /// Cumulative torn-write / non-monotonic-seq counters over the canonical
     /// active-tournament JSONL fold; `/statusz` surfaces it.
     pub fold_diagnostics: Arc<crate::fold_stats::FoldDiagnostics>,
+    /// The tamper-evident audit ledger, when one is configured
+    /// (`--ledger-dir`). `None` → no ledger; `/statusz` and
+    /// `/api/audit/verify` then report it as "not configured". Shared with
+    /// the watchdog loops, which append their actions to it.
+    pub ledger: Option<Arc<crate::ledger::AuditLedger>>,
 }
 
 pub async fn serve(
@@ -108,6 +113,7 @@ pub async fn serve(
         action_log: options.action_log,
         seq_liveness: options.seq_liveness,
         fold_diagnostics: options.fold_diagnostics,
+        ledger: options.ledger,
     };
 
     let cors = CorsLayer::new()

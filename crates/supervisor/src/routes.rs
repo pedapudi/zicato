@@ -54,6 +54,10 @@ pub struct AppState {
     /// active-tournament JSONL fold. The fold path accumulates into it on
     /// each read; `/statusz` surfaces it.
     pub fold_diagnostics: Arc<crate::fold_stats::FoldDiagnostics>,
+    /// The tamper-evident audit ledger, when configured (`--ledger-dir`).
+    /// `None` → no ledger. `/api/audit/verify` walks its chain and `/statusz`
+    /// surfaces a chain-break indicator.
+    pub ledger: Option<Arc<crate::ledger::AuditLedger>>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -62,7 +66,12 @@ pub fn router(state: AppState) -> Router {
     // so they remain reachable even under `--no-dashboard`.
     let mut router = Router::new()
         .route("/statusz", get(statusz_html))
-        .route("/statusz.json", get(statusz_json));
+        .route("/statusz.json", get(statusz_json))
+        // The audit-ledger verify endpoint is part of the watchdog's own
+        // surface (like `/statusz`), so it stays reachable under
+        // `--no-dashboard` — an operator must be able to check chain
+        // integrity even in watchdog-only mode.
+        .route("/api/audit/verify", get(audit_verify));
 
     if !state.dashboard_disabled {
         // The full dashboard surface — UI, analytical API, SSE, and the
@@ -134,6 +143,21 @@ fn build_statusz_view(s: &AppState) -> statusz::StatuszView {
             })
             .unwrap_or(None)
     };
+    // Audit-ledger integrity for the chain-break indicator. When no ledger
+    // is configured this is the default not-configured/intact status.
+    let audit_ledger = match &s.ledger {
+        None => statusz::AuditStatus::default(),
+        Some(ledger) => {
+            let report = ledger.verify();
+            statusz::AuditStatus {
+                configured: true,
+                intact: report.intact,
+                records: report.records,
+                first_break_seq: report.first_break_seq,
+                break_reason: report.break_reason,
+            }
+        }
+    };
     statusz::build_statusz(
         &s.paths,
         &identity,
@@ -141,6 +165,7 @@ fn build_statusz_view(s: &AppState) -> statusz::StatuszView {
         seq_age_seconds,
         s.fold_diagnostics.view(),
         &s.action_log,
+        audit_ledger,
     )
 }
 
@@ -159,6 +184,32 @@ async fn statusz_json(State(s): State<AppState>) -> Response {
         Err(e) => {
             warn!(error=%e, "statusz serialization failed");
             (StatusCode::INTERNAL_SERVER_ERROR, "statusz error").into_response()
+        }
+    }
+}
+
+/// `GET /api/audit/verify` — walk the tamper-evident audit ledger's
+/// hash-chain and report whether it is intact.
+///
+/// Always 200. When no ledger is configured (`--ledger-dir` unset) the
+/// response is `{ "configured": false }`. When one is configured the body
+/// carries the full [`crate::ledger::VerifyReport`] plus `configured: true`
+/// and the ledger `path`, so an operator can confirm a clean chain or pin
+/// the first broken `seq`.
+async fn audit_verify(State(s): State<AppState>) -> Json<serde_json::Value> {
+    match &s.ledger {
+        None => Json(serde_json::json!({ "configured": false })),
+        Some(ledger) => {
+            let report = ledger.verify();
+            let mut body = serde_json::to_value(&report).unwrap_or(serde_json::Value::Null);
+            if let Some(obj) = body.as_object_mut() {
+                obj.insert("configured".to_string(), serde_json::Value::Bool(true));
+                obj.insert(
+                    "path".to_string(),
+                    serde_json::Value::String(ledger.path().display().to_string()),
+                );
+            }
+            Json(body)
         }
     }
 }

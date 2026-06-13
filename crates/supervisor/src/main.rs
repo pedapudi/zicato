@@ -87,6 +87,20 @@ struct Cli {
     #[arg(long, default_value_t = 6 * 3600)]
     max_run_seconds: u64,
 
+    /// Directory for the supervisor's tamper-evident audit ledger.
+    ///
+    /// When set, the supervisor opens (or creates) a persisted, append-only,
+    /// hash-chained `audit_ledger.jsonl` under this directory and records its
+    /// watchdog actions and observed promote/reject/contract-change
+    /// transitions into it. The directory should live OUTSIDE the
+    /// orchestrator's mutable trees (the supervisor's OWN runtime dir) so the
+    /// orchestrator cannot rewrite the ledger it is being audited against.
+    /// Absent (the default) → no ledger is written and the supervisor behaves
+    /// exactly as before. `/statusz` and `/api/audit/verify` surface the
+    /// chain's integrity when a ledger is configured.
+    #[arg(long)]
+    ledger_dir: Option<PathBuf>,
+
     /// Log level (default: info)
     #[arg(long, default_value = "info")]
     log: String,
@@ -178,6 +192,25 @@ async fn main() -> std::process::ExitCode {
     // surfaces.
     let fold_diagnostics = Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new());
 
+    // Tamper-evident audit ledger (INTEGRITY NOTARY). Opt-in: only created
+    // when `--ledger-dir` is set, so the default supervisor behaves exactly
+    // as before. When present, the watchdog loops record their actions into
+    // it and `/statusz` + `/api/audit/verify` surface the chain's integrity.
+    let ledger = cli.ledger_dir.as_ref().map(|dir| {
+        let led = Arc::new(zicato_supervisor::ledger::AuditLedger::open(dir));
+        info!(path=?led.path(), "tamper-evident audit ledger enabled");
+        // Mark the supervisor's start as the first record of this session so
+        // the chain has a fresh anchor an operator can correlate to a restart.
+        led.append(
+            zicato_supervisor::ledger::RecordKind::SupervisorStart,
+            serde_json::json!({
+                "build": zicato_supervisor::server::build_id(),
+                "workspace": paths.workspace.display().to_string(),
+            }),
+        );
+        led
+    });
+
     let interval = Duration::from_secs(cli.interval.max(1));
     let hb_paths = paths.clone();
     let hb_shutdown = shutdown_tx.clone();
@@ -189,8 +222,17 @@ async fn main() -> std::process::ExitCode {
     let run_paths = paths.clone();
     let run_shutdown = shutdown_tx.clone();
     let run_log = action_log.clone();
+    let run_ledger = ledger.clone();
     tokio::spawn(async move {
-        watchdog::runs_loop(run_paths, thresholds, interval, run_log, run_shutdown).await
+        watchdog::runs_loop(
+            run_paths,
+            thresholds,
+            interval,
+            run_log,
+            run_ledger,
+            run_shutdown,
+        )
+        .await
     });
 
     // HTTP server.
@@ -205,6 +247,7 @@ async fn main() -> std::process::ExitCode {
             action_log: action_log.clone(),
             seq_liveness: seq_liveness.clone(),
             fold_diagnostics: fold_diagnostics.clone(),
+            ledger: ledger.clone(),
         },
         watch_tx.clone(),
         shutdown_tx.clone(),

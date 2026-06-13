@@ -118,6 +118,37 @@ pub struct StatuszView {
     /// Cumulative torn-write / non-monotonic-seq counters over the canonical
     /// active-tournament JSONL fold (process lifetime).
     pub fold_diagnostics: crate::fold_stats::FoldDiagnosticsView,
+    /// Integrity status of the tamper-evident audit ledger.
+    pub audit_ledger: AuditStatus,
+}
+
+/// The audit ledger's configured-ness and chain integrity, for `/statusz`.
+#[derive(Debug, Clone, Serialize)]
+pub struct AuditStatus {
+    /// `true` when a ledger is configured (`--ledger-dir`).
+    pub configured: bool,
+    /// `true` when the chain verified intact (always `true` when not
+    /// configured — there is no chain to break).
+    pub intact: bool,
+    /// Number of records in the chain (`0` when not configured).
+    pub records: u64,
+    /// The seq of the first broken record, when the chain is broken.
+    pub first_break_seq: Option<u64>,
+    /// A human-readable reason for the first break, when the chain is broken.
+    pub break_reason: Option<String>,
+}
+
+impl Default for AuditStatus {
+    fn default() -> Self {
+        // The not-configured baseline: no chain, trivially intact.
+        Self {
+            configured: false,
+            intact: true,
+            records: 0,
+            first_break_seq: None,
+            break_reason: None,
+        }
+    }
 }
 
 /// Inputs the supervisor knows about itself, threaded in from `AppState`.
@@ -217,6 +248,7 @@ pub fn build_statusz(
     seq_age_seconds: Option<u64>,
     fold_diagnostics: crate::fold_stats::FoldDiagnosticsView,
     action_log: &Arc<WatchdogLog>,
+    audit_ledger: AuditStatus,
 ) -> StatuszView {
     let now = Utc::now();
 
@@ -263,6 +295,7 @@ pub fn build_statusz(
         summary,
         watchdog_actions: action_log.snapshot(),
         fold_diagnostics,
+        audit_ledger,
     }
 }
 
@@ -496,6 +529,41 @@ th{color:#888;font-weight:normal}\
     ));
     out.push_str("</table>");
 
+    // Audit ledger: the tamper-evident hash-chain's integrity.
+    let al = &v.audit_ledger;
+    out.push_str("<h2>audit ledger</h2><table>");
+    if !al.configured {
+        out.push_str(
+            "<tr><th>state</th><td class=\"dim\">not configured \
+(pass --ledger-dir to enable the tamper-evident ledger)</td></tr>",
+        );
+    } else {
+        let (cls, label) = if al.intact {
+            ("ok", "INTACT")
+        } else {
+            ("bad", "CHAIN BREAK")
+        };
+        out.push_str(&format!(
+            "<tr><th>chain</th><td class=\"{cls}\">{label}</td></tr>"
+        ));
+        out.push_str(&format!(
+            "<tr><th>records</th><td>{}</td></tr>",
+            al.records
+        ));
+        if let Some(seq) = al.first_break_seq {
+            out.push_str(&format!(
+                "<tr><th>first break</th><td class=\"bad\">seq {seq}</td></tr>"
+            ));
+        }
+        if let Some(reason) = &al.break_reason {
+            out.push_str(&format!(
+                "<tr><th>reason</th><td class=\"bad\">{}</td></tr>",
+                esc(reason)
+            ));
+        }
+    }
+    out.push_str("</table>");
+
     out.push_str(&format!(
         "<p class=\"dim\">generated {}</p>",
         esc(&v.generated_at)
@@ -654,6 +722,7 @@ mod tests {
                 outcome: Outcome::KilledForcefully,
             }],
             fold_diagnostics: Default::default(),
+            audit_ledger: Default::default(),
         };
         let html = render_html(&view);
         assert!(html.starts_with("<!doctype html>"));
@@ -687,6 +756,7 @@ mod tests {
             summary: "no active runs".into(),
             watchdog_actions: vec![],
             fold_diagnostics: Default::default(),
+            audit_ledger: Default::default(),
         };
         let html = render_html(&view);
         assert!(html.contains("/tmp/&lt;evil&gt;"));
