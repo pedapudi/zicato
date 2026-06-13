@@ -16,6 +16,7 @@
 
 use crate::action_log::{Action, Trigger, WatchdogLog};
 use crate::reader::{self, WorkspacePaths};
+use crate::reap;
 use crate::signal::{self, escalate_target, KillTarget};
 use chrono::{DateTime, Utc};
 use std::collections::HashSet;
@@ -639,6 +640,75 @@ pub async fn heartbeat_loop(
     }
 }
 
+/// Reap every orphaned worker + ephemeral snapshot after a CONFIRMED
+/// orchestrator death.
+///
+/// The caller has already established (via [`reap::decide_orchestrator_dead`])
+/// that the orchestrator is genuinely gone — not merely slow — so its own
+/// reaper will never run. For each active run this:
+///
+/// 1. **Group-kills the worker** through the same vetted escalation path the
+///    deadline/staleness triggers use ([`resolve_kill_target`] +
+///    [`escalate_target`]): a live, signalable, identity-matched worker is
+///    group-killed (its whole process group, when it carries a negatable
+///    pgid), else single-pid. A worker that is already gone is skipped.
+/// 2. **GCs the leaked ephemeral snapshot** via the prefix-guarded
+///    [`reap::reap_orphaned_snapshot`] — only a `ztw-snap-*` root under the
+///    system temp dir is removed; anything else is refused.
+/// 3. **Finalizes the state file** — removes `active_runs/{run_id}.json`, the
+///    finalization the dead orchestrator's reaper would otherwise have owned,
+///    so the run does not linger as a phantom active run.
+///
+/// Unlike the alive-orchestrator triggers (which deliberately LEAVE the state
+/// file for the orchestrator's reaper), this path removes it: there is no
+/// orchestrator left to do so.
+async fn reap_dead_orchestrator_runs(
+    paths: &WorkspacePaths,
+    runs: &[crate::state::ActiveRun],
+    protected_pgids: &HashSet<i32>,
+    thresholds: &Thresholds,
+    log: &Arc<WatchdogLog>,
+) {
+    // The orchestrator is dead, so its pid is not a live worker; an empty
+    // protected pid set is correct here (the pgid set still fences the
+    // supervisor's own group).
+    let protected: HashSet<i32> = HashSet::new();
+    for run in runs {
+        // 1. Group-kill the orphaned worker, when there is a live, vetted pid.
+        if let Some(pid) = decide_run_kill_request(run, &protected) {
+            let target = resolve_kill_target(run, pid, protected_pgids);
+            warn!(
+                run_id = %run.run_id,
+                pid,
+                ?target,
+                "reaping orphaned worker after orchestrator death; escalating",
+            );
+            let out = escalate_target(target, thresholds.run_kill_grace).await;
+            log.record(Action {
+                ts: Utc::now(),
+                trigger: Trigger::OrchestratorReap,
+                pid,
+                run_id: Some(run.run_id.clone()),
+                outcome: out.into(),
+            });
+        }
+
+        // 2. GC the leaked ztw-snap-* ephemeral snapshot (prefix-guarded).
+        reap::reap_orphaned_snapshot(run);
+
+        // 3. Finalize the state file the dead orchestrator's reaper can no
+        //    longer remove. Best-effort: a vanished file is not an error.
+        let run_file = paths
+            .active_runs_dir()
+            .join(format!("{}.json", run.run_id));
+        if let Err(e) = std::fs::remove_file(&run_file) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                warn!(?run_file, error=%e, "failed to finalize reaped run state file");
+            }
+        }
+    }
+}
+
 /// Long-running active-runs watchdog task.
 ///
 /// Each tick evaluates two independent triggers per `active_runs/*.json`:
@@ -683,6 +753,37 @@ pub async fn runs_loop(
                 let kill_requests = reader::read_kill_requests(&paths);
 
                 let runs = reader::read_active_runs(&paths);
+
+                // Trigger -1 (highest): CONFIRMED orchestrator death. When the
+                // heartbeat pid is genuinely gone (an identity check, not a
+                // stale timestamp — a slow-but-alive orchestrator keeps its pid
+                // alive and is NEVER reaped), the orchestrator's own reaper will
+                // never run. The supervisor steps in: group-kill every orphaned
+                // worker, GC each run's leaked ztw-snap-* ephemeral snapshot,
+                // and finalize the state files. When the orchestrator is alive
+                // we skip this entirely and leave state for its reaper, exactly
+                // as before.
+                if reap::decide_orchestrator_dead(
+                    reader::read_heartbeat(&paths).as_ref(),
+                ) && !runs.is_empty()
+                {
+                    warn!(
+                        run_count = runs.len(),
+                        "orchestrator is confirmed dead; reaping orphaned workers + ephemeral snapshots",
+                    );
+                    reap_dead_orchestrator_runs(
+                        &paths,
+                        &runs,
+                        &protected_pgids,
+                        &thresholds,
+                        &log,
+                    )
+                    .await;
+                    // The orchestrator is gone; the per-run deadline/staleness
+                    // triggers below are moot this tick.
+                    continue;
+                }
+
                 for run in &runs {
                     let now = Utc::now();
 
@@ -873,6 +974,14 @@ mod tests {
         }
         fn pid(&self) -> i32 {
             self.0.id() as i32
+        }
+        /// Reap the (killed) child so it is not left a zombie. A zombie pid
+        /// still answers `kill(pid, 0)`, so a liveness assertion in a test
+        /// must clear the zombie first — the real watchdog never parents
+        /// these workers (the dead orchestrator's children are reparented to
+        /// init, which reaps them), so this is a test-only concern.
+        fn reap(&mut self) {
+            let _ = self.0.wait();
         }
     }
 
@@ -1771,5 +1880,168 @@ mod tests {
         assert_eq!(b.seq_age_seconds, Some(40));
         // The tracker still holds the original change time.
         assert_eq!(tracker.last_seq_change_at(), Some(start));
+    }
+
+    // ---- reap_dead_orchestrator_runs (orphan reaping end-to-end) ----
+
+    /// Build a `ztw-snap-*` ephemeral-snapshot tree under the SYSTEM temp dir
+    /// (what the reap path's prefix guard checks against) and return
+    /// `(snapshot_root, recorded_working_copy_path)`.
+    fn make_ephemeral_snapshot() -> (tempfile::TempDir, String) {
+        let parent = tempfile::Builder::new()
+            .prefix(reap::SNAPSHOT_PREFIX)
+            .tempdir()
+            .unwrap();
+        let working_copy = parent.path().join("snapshot");
+        std::fs::create_dir_all(working_copy.join("src")).unwrap();
+        std::fs::write(working_copy.join("src/a.py"), b"x = 1\n").unwrap();
+        let recorded = working_copy.to_str().unwrap().to_string();
+        (parent, recorded)
+    }
+
+    #[tokio::test]
+    async fn dead_orchestrator_reap_group_kills_reaps_snapshot_and_finalizes_state() {
+        // End-to-end: a confirmed-dead orchestrator triggers the full reap —
+        // group-kill the live worker, GC its ztw-snap-* snapshot, remove the
+        // state file.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ws = tmp.path().to_path_buf();
+        std::fs::create_dir_all(ws.join("runtime/active_runs")).unwrap();
+        let paths = WorkspacePaths::new(ws);
+
+        let mut sleeper = Sleeper::spawn();
+        let pid = sleeper.pid();
+        let (snap_guard, snapshot_path) = make_ephemeral_snapshot();
+        let snap_root = snap_guard.path().to_path_buf();
+
+        let run = ActiveRun {
+            run_id: "r1".into(),
+            pid: Some(pid),
+            pid_start_time: signal::pid_start_time(pid),
+            snapshot_path: Some(snapshot_path),
+            ..Default::default()
+        };
+        // Write the state file so finalization has something to remove.
+        let run_file = paths.active_runs_dir().join("r1.json");
+        std::fs::write(&run_file, serde_json::to_vec(&run).unwrap()).unwrap();
+
+        let log = Arc::new(WatchdogLog::new());
+        reap_dead_orchestrator_runs(
+            &paths,
+            std::slice::from_ref(&run),
+            &no_protected(),
+            &Thresholds {
+                run_kill_grace: Duration::from_millis(200),
+                ..Thresholds::default()
+            },
+            &log,
+        )
+        .await;
+
+        // Worker killed. Reap the zombie first: a killed-but-unwaited child
+        // still answers kill(pid, 0) (the real watchdog never parents these
+        // workers, so this is a test artifact only).
+        sleeper.reap();
+        assert!(
+            !signal::is_alive(pid),
+            "the orphaned worker must be killed",
+        );
+        // Snapshot tree GC'd.
+        assert!(!snap_root.exists(), "the ztw-snap-* root must be reaped");
+        // State file finalized.
+        assert!(!run_file.exists(), "the run state file must be removed");
+        // An action was recorded under the reap trigger.
+        let recorded = log.snapshot();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].trigger, Trigger::OrchestratorReap);
+        // The TempDir guard's directory is already gone; defuse its drop.
+        std::mem::forget(snap_guard);
+    }
+
+    #[tokio::test]
+    async fn dead_orchestrator_reap_refuses_a_snapshot_outside_the_temp_dir() {
+        // The prefix guard protects against a malformed/hostile snapshot_path:
+        // a ztw-snap-* directory NOT under the system temp dir is left intact,
+        // while the worker is still killed and the state file finalized.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ws = tmp.path().to_path_buf();
+        std::fs::create_dir_all(ws.join("runtime/active_runs")).unwrap();
+        let paths = WorkspacePaths::new(ws);
+
+        // A ztw-snap-* tree genuinely OUTSIDE the system temp dir (the
+        // workspace TempDir lives UNDER the system temp dir, so anchor this
+        // under the current working directory instead).
+        let outside = tempfile::TempDir::new_in(std::env::current_dir().unwrap()).unwrap();
+        let outside_root = outside.path().join("ztw-snap-evil");
+        std::fs::create_dir_all(outside_root.join("snapshot")).unwrap();
+        let bogus = outside_root.join("snapshot").to_str().unwrap().to_string();
+
+        let mut sleeper = Sleeper::spawn();
+        let pid = sleeper.pid();
+        let run = ActiveRun {
+            run_id: "r1".into(),
+            pid: Some(pid),
+            pid_start_time: signal::pid_start_time(pid),
+            snapshot_path: Some(bogus),
+            ..Default::default()
+        };
+        let run_file = paths.active_runs_dir().join("r1.json");
+        std::fs::write(&run_file, serde_json::to_vec(&run).unwrap()).unwrap();
+
+        let log = Arc::new(WatchdogLog::new());
+        reap_dead_orchestrator_runs(
+            &paths,
+            std::slice::from_ref(&run),
+            &no_protected(),
+            &Thresholds {
+                run_kill_grace: Duration::from_millis(200),
+                ..Thresholds::default()
+            },
+            &log,
+        )
+        .await;
+
+        sleeper.reap();
+        assert!(!signal::is_alive(pid), "the worker is still killed");
+        assert!(!run_file.exists(), "the state file is still finalized");
+        // The guard refused the out-of-temp tree: it must remain intact.
+        assert!(
+            outside_root.exists(),
+            "a ztw-snap-* tree outside the temp dir must NOT be removed",
+        );
+    }
+
+    #[tokio::test]
+    async fn dead_orchestrator_reap_tolerates_an_absent_worker_and_no_snapshot() {
+        // A run whose worker is already gone and that recorded no snapshot:
+        // the reap is a clean no-op on the kill + GC, but STILL finalizes the
+        // state file (the dead orchestrator can no longer do it).
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ws = tmp.path().to_path_buf();
+        std::fs::create_dir_all(ws.join("runtime/active_runs")).unwrap();
+        let paths = WorkspacePaths::new(ws);
+
+        let run = ActiveRun {
+            run_id: "r1".into(),
+            pid: Some(0), // never alive
+            snapshot_path: None,
+            ..Default::default()
+        };
+        let run_file = paths.active_runs_dir().join("r1.json");
+        std::fs::write(&run_file, serde_json::to_vec(&run).unwrap()).unwrap();
+
+        let log = Arc::new(WatchdogLog::new());
+        reap_dead_orchestrator_runs(
+            &paths,
+            std::slice::from_ref(&run),
+            &no_protected(),
+            &thresholds(),
+            &log,
+        )
+        .await;
+
+        assert!(!run_file.exists(), "state finalized even with no worker/snapshot");
+        // No escalation was recorded (no live, signalable pid).
+        assert!(log.is_empty());
     }
 }
