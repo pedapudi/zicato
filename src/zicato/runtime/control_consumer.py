@@ -315,6 +315,33 @@ def claim_gate_override(workspace_root: Path, generation_id: str) -> GateOverrid
     return GateOverride(decision=decision, generation_id=generation_id, reason=reason)
 
 
+def drain_stale_gate_overrides(workspace_root: Path, *, reason: str) -> list[str]:
+    """Archive every pending promote/reject override as stale; return targets.
+
+    Called when an epoch rolls. A promote/reject override targets a *bare*
+    ``generation_id`` (e.g. ``"v3"``), but generation ids restart at ``v0``
+    in each epoch — so an override left pending across a roll would mis-fire
+    on the *new* epoch's same-named generation even though it was aimed at
+    the closed epoch's. An epoch roll opens a fresh, incomparable contract,
+    so any override still pending at that point can only have targeted the
+    epoch being closed; draining them (archived to the control log with
+    ``reason``, never silently deleted) is the sole correct disposition and
+    removes the cross-epoch mis-fire hazard.
+
+    Only ``promote``/``reject`` targets are drained — pause/skip flags and a
+    pending rubric_replacement are left untouched (a pause survives a roll by
+    design; the rubric_replacement *is* what rolled the epoch and is consumed
+    on its own path). Returns the drained generation-id targets, for logging.
+    """
+    drained: list[str] = []
+    for cmd in list_pending_commands(workspace_root):
+        if cmd.name not in (CMD_PROMOTE_PREFIX, CMD_REJECT_PREFIX):
+            continue
+        consume_command(workspace_root, cmd, source=CONSUMER_SOURCE, reason=reason)
+        drained.append(cmd.arg)
+    return drained
+
+
 # ---------------------------------------------------------------------------
 # rubric_replacement — a contract edit that rolls the epoch
 # ---------------------------------------------------------------------------
@@ -355,4 +382,5 @@ __all__ = [
     "claim_skip_round",
     "claim_gate_override",
     "claim_rubric_replacement",
+    "drain_stale_gate_overrides",
 ]

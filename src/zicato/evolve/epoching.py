@@ -238,6 +238,31 @@ async def ensure_epoch_for_contract(
     )
     log.info("contract changed (%s) — rolled %s -> %s", changed, cur, new_id)
     print(f"contract changed ({changed}) — rolled {cur} -> {new_id}")
+
+    # Drain any promote/reject overrides left pending across the roll. They
+    # target a bare generation id (e.g. "v3"); generation ids restart at v0
+    # in the new epoch, so a survivor would mis-fire on the new epoch's
+    # same-named generation. The roll opens a fresh, incomparable contract,
+    # so a pending override can only have targeted the epoch just closed.
+    with best_effort(
+        "drain stale gate overrides on epoch roll",
+        on_error=lambda exc: log.debug("stale-override drain skipped: %s", exc),
+    ):
+        from zicato.runtime.control_consumer import (  # noqa: PLC0415
+            drain_stale_gate_overrides,
+        )
+
+        drained = drain_stale_gate_overrides(
+            workspace_root, reason=f"superseded by epoch roll {cur} -> {new_id}"
+        )
+        if drained:
+            log.info(
+                "drained %d stale gate override(s) on epoch roll %s -> %s: %s",
+                len(drained),
+                cur,
+                new_id,
+                ", ".join(sorted(drained)),
+            )
     # The auto-roll path has no operator interaction surface, so the
     # epoch's ``goal`` field lands empty. Nudge the operator to fill it
     # in later via the dedicated subcommand.

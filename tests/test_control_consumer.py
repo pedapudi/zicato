@@ -48,6 +48,7 @@ from zicato.runtime.control_consumer import (
     claim_gate_override,
     claim_rubric_replacement,
     claim_skip_round,
+    drain_stale_gate_overrides,
 )
 from zicato.runtime.paths import control_log_dir
 
@@ -158,6 +159,47 @@ def test_claim_gate_override_promote_wins_and_drains_reject(tmp_path: Path) -> N
     assert list_pending_commands(tmp_path) == []
     archived = {r["command"] for r in _archived(tmp_path)}
     assert archived == {CMD_PROMOTE_PREFIX, CMD_REJECT_PREFIX}
+
+
+# ---------------------------------------------------------------------------
+# Unit — drain stale gate overrides on an epoch roll
+# ---------------------------------------------------------------------------
+
+
+def test_drain_stale_gate_overrides_archives_promote_and_reject(tmp_path: Path) -> None:
+    write_command(tmp_path, ControlCommand(name=CMD_PROMOTE_PREFIX, arg="v1"))
+    write_command(tmp_path, ControlCommand(name=CMD_REJECT_PREFIX, arg="v2"))
+    drained = drain_stale_gate_overrides(tmp_path, reason="superseded by epoch roll e0 -> e1")
+    assert sorted(drained) == ["v1", "v2"]
+    # Both are gone from pending and archived (never silently deleted).
+    assert list_pending_commands(tmp_path) == []
+    archived = _archived(tmp_path)
+    assert {r["command"] for r in archived} == {CMD_PROMOTE_PREFIX, CMD_REJECT_PREFIX}
+    assert all(r["reason"] == "superseded by epoch roll e0 -> e1" for r in archived)
+    assert all(r["source"] == CONSUMER_SOURCE for r in archived)
+
+
+def test_drain_stale_gate_overrides_leaves_flags_and_rubric(tmp_path: Path) -> None:
+    """Only promote/reject drain; a pause flag and a rubric payload survive a roll."""
+    write_command(tmp_path, ControlCommand(name=CMD_PROMOTE_PREFIX, arg="v3"))
+    write_command(tmp_path, ControlCommand(name=CMD_PAUSE_EPOCH))
+    write_command(tmp_path, ControlCommand(name=CMD_RUBRIC_REPLACEMENT, payload="new brief"))
+    drained = drain_stale_gate_overrides(tmp_path, reason="roll")
+    assert drained == ["v3"]
+    remaining = {(c.name, c.arg) for c in list_pending_commands(tmp_path)}
+    assert remaining == {(CMD_PAUSE_EPOCH, ""), (CMD_RUBRIC_REPLACEMENT, "")}
+
+
+def test_drained_override_cannot_misfire_on_a_reused_generation_id(tmp_path: Path) -> None:
+    """F4 regression: an override surviving a roll must not fire on the new epoch's vN.
+
+    A promote/v3 queued in the closed epoch is drained at the roll; the new
+    epoch's own v3 then gates without inheriting the stale override.
+    """
+    write_command(tmp_path, ControlCommand(name=CMD_PROMOTE_PREFIX, arg="v3"))
+    drain_stale_gate_overrides(tmp_path, reason="superseded by epoch roll e0 -> e1")
+    # New epoch's v3 reaches its gate — no stale override is claimed.
+    assert claim_gate_override(tmp_path, "v3") is None
 
 
 # ---------------------------------------------------------------------------
