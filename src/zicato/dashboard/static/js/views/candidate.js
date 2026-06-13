@@ -359,6 +359,17 @@ function buildGeneralizationModel(exp) {
   return { train, holdout, gap, tolerance };
 }
 
+// Prettify a raw scalar_components key for display (radar spoke, rule label).
+// The component maps carry machine keys (`diff_complexity`, a judge_name, a
+// namespace token); a known key gets a Title-cased human label, anything else
+// passes through verbatim so a per-judge / namespace axis keeps its own name.
+// Lean (a small map + a default), so it does not move the bundle-size budget.
+const COMPONENT_LABELS = { diff_complexity: 'Diff complexity' };
+function prettyComponentLabel(key) {
+  const k = String(key == null ? '' : key);
+  return COMPONENT_LABELS[k] || k;
+}
+
 // Build the radar silhouette model — `{axes:[{label,chal,champ}], raw:[{chal,
 // champ,unit,better}], live}` — from a candidate's gate data the way the study
 // computes it. Each axis is normalised 0..1 with OUTER = better:
@@ -443,7 +454,9 @@ export function buildRadarModel({ primaryGate, championScalar, settledScalar, pr
   if (sc && sc.champion && sc.challenger) {
     const keys = [...new Set([...Object.keys(sc.champion), ...Object.keys(sc.challenger)])].sort();
     for (const k of keys) {
-      lossAxis(k, sc.champion[k], sc.challenger[k], 'drift');
+      // a known machine key (e.g. diff_complexity) gets its human label on the
+      // spoke + the hover tip; a per-judge / namespace key passes through.
+      lossAxis(prettyComponentLabel(k), sc.champion[k], sc.challenger[k], 'drift');
     }
   }
 
@@ -597,7 +610,13 @@ function candidateDigest(s) {
         // folded in so a duel resolving / a CI tightening / P moving repaints the
         // gate, but a no-op heartbeat stays byte-identical. null (no rating /
         // present:false) contributes nothing → pre-feature digest (back-compat).
-        ratingDigest(g.rating)]
+        ratingDigest(g.rating),
+        // the DIFF-COMPLEXITY parsimony line item (the two rounded per-side
+        // diff-complexity costs, NO timestamp) folded in so the patch being
+        // re-scored — or the term appearing (weight turned on) — repaints the
+        // gate ladder, but a no-op heartbeat stays byte-identical. null (weight 0
+        // / pre-feature) contributes nothing → pre-feature digest (back-compat).
+        diffComplexityDigest(g)]
       : null),
     drill: s.entryParam || null,
     drillExp: s.exps && Array.isArray(s.exps.outcomes) ? s.exps.outcomes.map((o) => [o.kind, o.passed, o.judge_name, o.detail]) : null,
@@ -1683,6 +1702,68 @@ export function ratingDigest(rating) {
   ];
 }
 
+// ── the DIFF-COMPLEXITY line item (a free-riding parsimony read) ─────────────
+//
+// When the contract carries a non-zero diff_complexity_weight, the scalar grows
+// a `diff_complexity` term that penalises a bigger patch (more files / lines
+// changed). That term rides on `gate.scalar_components.{champion,challenger}`
+// as a per-side float — the SAME map the radar already plots — so we surface it
+// as ONE extra row in the rules ladder: the two per-side diff-complexity costs +
+// their Δ, in the deterministic-rule grammar (a dn-rule row).
+//
+// It is INFORMATIONAL, never short-circuiting: a parsimony cost is folded into
+// the weighted scalar, it does not REJECT on its own. So the row reads NEUTRAL
+// (flat dot) when the candidate's patch is no costlier than the champion's, and
+// takes the CAUTION tone (the shipped --v2-caution decision token, NO new hue)
+// only when the candidate's diff-complexity is strictly HIGHER — i.e. it is the
+// term pulling AGAINST promotion. `fired` is NEVER set (this is not a
+// short-circuit rule). Returns a rule-shaped dict {id,label,status,detail,fired}
+// or null.
+//
+// Back-compat (NO Python edits): the diff_complexity key is ABSENT from the
+// component maps on every default-off run (diff_complexity_weight = 0). Absent →
+// null → no row → the ladder is byte-identical to today. There is intentionally
+// NO read of `gate.diff_size` — that structured {added,removed,patches} block is
+// NOT emitted by build_gate_breakdown on this branch (followup: wire
+// diff_size_evidence() into the reader, Python, out of scope here).
+const DIFF_COMPLEXITY_KEY = 'diff_complexity';
+export function diffComplexityRule(gate) {
+  const sc = gate && gate.scalar_components;
+  if (!sc) return null;
+  const champ = sc.champion && svg.isNum(sc.champion[DIFF_COMPLEXITY_KEY]) ? sc.champion[DIFF_COMPLEXITY_KEY] : null;
+  const chall = sc.challenger && svg.isNum(sc.challenger[DIFF_COMPLEXITY_KEY]) ? sc.challenger[DIFF_COMPLEXITY_KEY] : null;
+  // the term is absent from BOTH sides (weight 0 / pre-feature) → no row.
+  if (champ == null && chall == null) return null;
+  // the candidate's patch is costlier than the champion's ⇒ the parsimony term
+  // is pulling against it (the "actually rejects" read) → caution; otherwise the
+  // row reads neutral (a flat-dot informational line).
+  const worse = champ != null && chall != null && chall > champ;
+  const detail = (champ != null && chall != null)
+    ? `${svg.fmt(champ, 2)} → ${svg.fmt(chall, 2)} (${svg.fmtSigned(chall - champ, 2)}; lower = simpler patch)`
+    : (chall != null ? `candidate ${svg.fmt(chall, 2)} (champion term absent)` : `champion ${svg.fmt(champ, 2)} (candidate term absent)`);
+  return {
+    id: 'diff_complexity',
+    label: prettyComponentLabel(DIFF_COMPLEXITY_KEY),
+    status: worse ? 'caution' : 'neutral',
+    detail,
+    fired: false,
+  };
+}
+
+// A content digest of the diff-complexity rule: the two rounded per-side costs +
+// the caution flag (NO timestamp). null when the term is absent on both sides so
+// it contributes NOTHING to the gate digest (back-compat: byte-identical to the
+// pre-feature path). A no-op heartbeat re-emits the same numbers → equal digest;
+// the term moving (a re-scored patch) or appearing (weight turned on) flips it.
+export function diffComplexityDigest(gate) {
+  const sc = gate && gate.scalar_components;
+  if (!sc) return null;
+  const champ = sc.champion && svg.isNum(sc.champion[DIFF_COMPLEXITY_KEY]) ? sc.champion[DIFF_COMPLEXITY_KEY].toFixed(2) : null;
+  const chall = sc.challenger && svg.isNum(sc.challenger[DIFF_COMPLEXITY_KEY]) ? sc.challenger[DIFF_COMPLEXITY_KEY].toFixed(2) : null;
+  if (champ == null && chall == null) return null;
+  return [champ, chall];
+}
+
 // fix #1 — the stacked, non-overlapping gate panel:
 // (a) decision header, (b) the rules ladder (each rule its own row).
 // The old (c) champion-vs-challenger SCALAR-COMPONENTS comparison block was
@@ -1748,10 +1829,16 @@ export function gatePanel(gate) {
   if (rating) card.appendChild(rating);
 
   const rules = Array.isArray(gate.rules) ? gate.rules : [];
-  if (rules.length) {
+  // the DIFF-COMPLEXITY line item free-rides the same ladder: an informational
+  // parsimony row appended AFTER the deterministic rules (it does not
+  // short-circuit). Absent (weight 0 / pre-feature) → null → the ladder is
+  // byte-identical to today.
+  const diffRule = diffComplexityRule(gate);
+  const ladderRules = diffRule ? rules.concat([diffRule]) : rules;
+  if (ladderRules.length) {
     card.appendChild(subhead('Rules · short-circuiting, in order'));
     const ladder = el('ol', { class: 'dn-rules' });
-    for (const r of rules) {
+    for (const r of ladderRules) {
       const st = String(r.status || 'pending');
       ladder.appendChild(el('li', { class: 'dn-rule dn-rule-' + st }, [
         el('span', { class: 'dn-rule-dot', 'aria-hidden': 'true' }),

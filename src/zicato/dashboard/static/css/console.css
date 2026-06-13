@@ -1106,6 +1106,12 @@
   .dn-rule-status { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.04em; color: var(--v2-ink-soft); }
   .dn-rule-fail .dn-rule-status { color: var(--v2-bad); }
   .dn-rule-pass .dn-rule-status { color: var(--v2-good); }
+  /* the diff-complexity parsimony line item: NEUTRAL (dn-rule-neutral) inherits
+     the flat dot/status (informational, never short-circuiting); CAUTION reuses
+     the shipped --v2-caution decision token (NO new hue) only when the
+     candidate's patch is strictly costlier — the term pulling against promote. */
+  .dn-rule-caution .dn-rule-dot { background: var(--v2-caution); }
+  .dn-rule-caution .dn-rule-status { color: var(--v2-caution); }
   .dn-rule-detail { font-size: calc(11px * var(--dt-font-scale, 1)); line-height: 1.4; }
 
   /* ===================  scalar provenance decomposition (#19)  =================== */
