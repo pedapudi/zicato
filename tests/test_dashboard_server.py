@@ -2059,6 +2059,55 @@ async def test_sse_stream_emits_snapshot_then_change(workspace: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_sse_frames_carry_progress_seq_and_terminal(workspace: Path) -> None:
+    """RUNTIME-V2 Phase 4: snapshot + state_change frames carry ``seq`` /
+    ``terminal`` — the orchestrator's true liveness cursor.
+    """
+    import asyncio
+
+    from zicato.dashboard.sse import ChangeBroker, sse_event_stream
+    from zicato.dashboard.state_reader import WorkspacePaths
+    from zicato.runtime import progress_log
+
+    # Seed the progress log: two genuine transitions then a terminal marker.
+    progress_log.append_progress(workspace, progress_log.LOOP_START)
+    progress_log.append_progress(workspace, progress_log.ROUND_START)
+    progress_log.append_progress(workspace, progress_log.SETTLED)
+
+    paths = WorkspacePaths(workspace)
+    broker = ChangeBroker(paths)
+    await broker.start()
+    try:
+        stream = sse_event_stream(broker, paths)
+        first = await asyncio.wait_for(stream.__anext__(), timeout=5)
+        assert first.startswith("event: snapshot")
+        snap_data = next(ln for ln in first.splitlines() if ln.startswith("data: "))
+        snap = json.loads(snap_data[len("data: ") :])
+        # The opening snapshot frame carries the live cursor at the top level.
+        assert snap["seq"] == 3
+        assert snap["terminal"] is True
+        # The heartbeat inside the snapshot also carries seq (round-tripped
+        # from the on-disk heartbeat; the fixture's legacy file reads 0).
+        assert snap["data"]["heartbeat"]["seq"] == 0
+
+        # Mutate a runtime file to drive a state_change frame.
+        (workspace / "runtime" / "lock.json").write_text(
+            json.dumps({"pid": 1, "instance_id": "x"}), encoding="utf-8"
+        )
+        change = await asyncio.wait_for(stream.__anext__(), timeout=8)
+        if change.startswith(": ping"):
+            change = await asyncio.wait_for(stream.__anext__(), timeout=8)
+        assert change.startswith("event: state_change")
+        ch_data = next(ln for ln in change.splitlines() if ln.startswith("data: "))
+        ch = json.loads(ch_data[len("data: ") :])
+        assert ch["seq"] == 3
+        assert ch["terminal"] is True
+        await stream.aclose()
+    finally:
+        await broker.stop()
+
+
+@pytest.mark.asyncio
 async def test_sse_coalesces_burst_into_one_state_change(workspace: Path) -> None:
     """A burst of file writes yields ONE coalesced state_change frame.
 

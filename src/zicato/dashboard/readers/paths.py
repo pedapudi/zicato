@@ -76,6 +76,13 @@ class WorkspacePaths:
         return self.runtime / "active_tournament.events.jsonl"
 
     @property
+    def progress_log(self) -> Path:
+        # The ORCHESTRATOR progress EVENT LOG (RUNTIME-V2 Phase 4): the
+        # single-writer append-only JSONL whose monotonic ``seq`` is the
+        # true liveness signal (advances only on a genuine transition).
+        return self.runtime / "progress.events.jsonl"
+
+    @property
     def control_dir(self) -> Path:
         return self.runtime / "control"
 
