@@ -128,6 +128,15 @@ class ScalarContext:
     builtin_scalar:
         What :func:`zicato.scoring.builtins.builtin_scalar` returns for the
         fields above — the default a wrapping plugin starts from.
+    diff_size:
+        The CHALLENGER's ``{added, removed, patches}`` diff size (see
+        :func:`zicato.scoring.diff_complexity.diff_size`), or ``None`` for a
+        side with no challenger experiment / a caller that does not thread it.
+        Carried for plugin/provenance visibility and as the input the built-in
+        ``diff_complexity`` term reads. ``None`` (the default) leaves the
+        scalar byte-identical — the opt-in term is gated on
+        :attr:`~zicato.core.types.ScoringWeights.diff_complexity_weight` being
+        ``> 0`` AND this being present.
     """
 
     pass_rate: float
@@ -137,6 +146,7 @@ class ScalarContext:
     per_judge_loss: Mapping[str, float]
     weights: ScoringWeights
     builtin_scalar: float
+    diff_size: Mapping[str, int] | None = None
 
 
 __all__ = [

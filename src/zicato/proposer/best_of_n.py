@@ -38,25 +38,9 @@ from zicato.core.types import Experiment, ProposerQualityConfig
 from zicato.proposer.agent import ProposerAgent, ProposerContext
 from zicato.proposer.prompts import render_user_prompt
 from zicato.proposer.proposer import ProposerError
+from zicato.scoring.diff_complexity import diff_char_size as _diff_size
 
 log = logging.getLogger("zicato.proposer.best_of_n")
-
-
-def _diff_size(experiment: Experiment) -> int:
-    """A cheap proxy for the description-length / diff size of an experiment.
-
-    Counts the total characters of replacement content plus a small constant
-    per patch, so a parsimony tie-break prefers the SMALLER edit (MDL /
-    OVERFITTING.md §5: a shorter-description edit provably overfits the board
-    less). A ``set_numeric`` / ``set_enum`` patch has no ``new_content`` but
-    still counts its per-patch constant.
-    """
-    total = 0
-    for patch in experiment.patches:
-        total += 16  # per-patch constant so an extra patch is never "free"
-        if patch.new_content is not None:
-            total += len(patch.new_content)
-    return total
 
 
 def _targets_observed_failure(experiment: Experiment, ctx: ProposerContext) -> bool:

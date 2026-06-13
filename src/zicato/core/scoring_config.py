@@ -372,6 +372,23 @@ class ScoringWeights:
         usually rely on the wall-clock budget as a hard ceiling rather
         than scoring runtime continuously, but the knob is here for
         cases where runtime matters intrinsically.
+    diff_complexity_weight:
+        Coefficient on the challenger's diff complexity — an opt-in
+        parsimony / MDL term (OVERFITTING.md §5 / §12 #4). When ``> 0`` the
+        scalar gains a ``diff_complexity`` component equal to
+        ``diff_complexity_weight * (added + removed + patches)``, where the
+        diff size comes from the challenger experiment's patch records (see
+        :func:`zicato.scoring.diff_complexity.diff_size`). A shorter-
+        description edit provably overfits the board less, so penalising diff
+        size biases the optimiser toward the smaller, more general edit.
+        Defaults to ``0.0`` — when ``0.0`` (or when no diff size is available,
+        e.g. the champion side has no challenger experiment) the term is
+        EXACTLY absent: it is not added to the scalar, not surfaced as a
+        component, and the scalar / contract hash / every golden are
+        byte-identical to a contract without this field. The contract
+        canonicalizer omits the field from the scoring hash at the default so
+        an unset contract does not roll its epoch; setting it ``> 0`` adds the
+        key and rolls the epoch like any other weight change.
     promote_margin:
         Minimum scalar-score improvement the child generation must show
         over the parent to be promoted. Acts as a regression-noise
@@ -459,6 +476,14 @@ class ScoringWeights:
     default_judge_weight: float = 1.0
     plan_revision_weight: float = 0.5
     runtime_weight: float = 0.0
+    # Opt-in parsimony / MDL term (OVERFITTING.md §5 / §12 #4). DEFAULT 0.0 ⇒
+    # the diff-complexity term is exactly absent and the scalar / contract hash
+    # / every golden are byte-identical to a contract without this field (the
+    # contract canonicalizer omits it at the default — see
+    # ``epoch/contract.py::_scoring_to_canon``). Set ``> 0`` to fold a
+    # ``diff_complexity_weight * (added + removed + patches)`` component into the
+    # challenger's scalar so a shorter-description edit is preferred.
+    diff_complexity_weight: float = 0.0
     promote_margin: float = 0.01
     pass_rate_monotonicity: bool = True
     pass_rate_monotonicity_scope: PassRateMonotonicityScope = "per_entry"
