@@ -720,3 +720,81 @@ def test_gate_breakdown_decomposition_backcompat_none(tmp_path: Path) -> None:
     # Both sides still classify as built-in (quiet), present=False per seam.
     assert decomp["champion"]["scalar"]["present"] is False
     assert decomp["champion"]["scalar"]["kind"] == "builtin"
+
+
+# ---------------------------------------------------------------------------
+# Operator override block (gate.override).
+# ---------------------------------------------------------------------------
+
+
+def _write_experiment_outcome(ws: Path, generation_id: str, outcome: dict[str, object]) -> None:
+    """Write a challenger's experiment.json with an ``outcome`` block."""
+    path = ws / "epochs" / EPOCH_ID / "generations" / generation_id / "experiment.json"
+    _write_json(path, {"outcome": outcome})
+
+
+def test_gate_override_block_absent_without_override(tmp_path: Path) -> None:
+    """A gate-decided pair reports override.present=False (back-compat clean)."""
+    champion = _gen_score(
+        scalar=0.50, pass_rate=1.0, per_entry={"e1": {"drift_loss": 0.5, "pass_fail": True}}
+    )
+    challenger = _gen_score(
+        scalar=0.30, pass_rate=1.0, per_entry={"e1": {"drift_loss": 0.3, "pass_fail": True}}
+    )
+    ws = _make_workspace(
+        tmp_path, champion=champion, challenger=challenger, scoring={"promote_margin": 0.01}
+    )
+    result = build_gate_breakdown(WorkspacePaths(ws), EPOCH_ID, "v0", "v1")
+    assert result["override"] == {"present": False, "action": None, "reason": None}
+
+
+def test_gate_override_block_promote(tmp_path: Path) -> None:
+    """A force-promoted challenger surfaces override.present=True + action."""
+    champion = _gen_score(
+        scalar=0.50, pass_rate=1.0, per_entry={"e1": {"drift_loss": 0.5, "pass_fail": True}}
+    )
+    challenger = _gen_score(
+        scalar=0.80, pass_rate=1.0, per_entry={"e1": {"drift_loss": 0.8, "pass_fail": True}}
+    )
+    ws = _make_workspace(
+        tmp_path, champion=champion, challenger=challenger, scoring={"promote_margin": 0.01}
+    )
+    _write_experiment_outcome(
+        ws,
+        "v1",
+        {
+            "tournament_decision": "promoted",
+            "operator_override": True,
+            "operator_override_reason": "prefer the diverse idea",
+        },
+    )
+    result = build_gate_breakdown(WorkspacePaths(ws), EPOCH_ID, "v0", "v1")
+    assert result["override"]["present"] is True
+    assert result["override"]["action"] == "promote"
+    assert result["override"]["reason"] == "prefer the diverse idea"
+
+
+def test_gate_override_block_reject(tmp_path: Path) -> None:
+    """A force-rejected challenger surfaces override.action == reject."""
+    champion = _gen_score(
+        scalar=0.50, pass_rate=1.0, per_entry={"e1": {"drift_loss": 0.5, "pass_fail": True}}
+    )
+    challenger = _gen_score(
+        scalar=0.30, pass_rate=1.0, per_entry={"e1": {"drift_loss": 0.3, "pass_fail": True}}
+    )
+    ws = _make_workspace(
+        tmp_path, champion=champion, challenger=challenger, scoring={"promote_margin": 0.01}
+    )
+    _write_experiment_outcome(
+        ws,
+        "v1",
+        {
+            "tournament_decision": "rejected",
+            "operator_override": True,
+            "operator_override_reason": "regression risk",
+        },
+    )
+    result = build_gate_breakdown(WorkspacePaths(ws), EPOCH_ID, "v0", "v1")
+    assert result["override"]["present"] is True
+    assert result["override"]["action"] == "reject"
+    assert result["override"]["reason"] == "regression risk"

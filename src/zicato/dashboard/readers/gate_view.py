@@ -685,6 +685,40 @@ def _live_challenger_projection(
     return out
 
 
+def _build_override_block(
+    paths: WorkspacePaths, epoch_id: str, challenger_id: str
+) -> dict[str, Any]:
+    """The ``gate.override`` block for one challenger.
+
+    Reads the challenger's persisted ``experiment.json`` outcome — which now
+    carries ``operator_override`` + ``operator_override_reason`` whenever an
+    operator force-promoted / force-rejected it through the control protocol —
+    and projects it into ``{present, action, reason}``. ``present`` is
+    ``False`` (action/reason ``None``) on every gate-decided round and every
+    pre-feature run, so a gate-decided breakdown is byte-compatible with the
+    pre-override shape. ``action`` is ``"promote"`` / ``"reject"`` derived
+    from the recorded ``tournament_decision`` so the L3 view can label the
+    override without re-deriving it.
+    """
+    absent: dict[str, Any] = {"present": False, "action": None, "reason": None}
+    if not challenger_id:
+        return absent
+    exp = _read_json_value(
+        paths.epochs / epoch_id / "generations" / challenger_id / "experiment.json"
+    )
+    if not isinstance(exp, dict):
+        return absent
+    outcome = exp.get("outcome")
+    if not isinstance(outcome, dict) or not outcome.get("operator_override"):
+        return absent
+    decision = str(outcome.get("tournament_decision", ""))
+    return {
+        "present": True,
+        "action": "promote" if decision == "promoted" else "reject",
+        "reason": str(outcome.get("operator_override_reason", "")),
+    }
+
+
 def build_gate_breakdown(
     paths: WorkspacePaths,
     epoch_id: str,
@@ -756,6 +790,13 @@ def build_gate_breakdown(
         # run (no ``promote_confidence_threshold`` in the structure params), so a
         # UI that does not know the field renders nothing new — back-compat clean.
         "rating": build_rating_view(paths, epoch_id, champion_id, challenger_id),
+        # Operator override block. ``present`` is ``False`` on every
+        # gate-decided round (and on every pre-feature run), so a breakdown for
+        # a gate-decided pair is byte-compatible with the pre-override shape;
+        # ``present=True`` carries ``{action, reason}`` when an operator
+        # force-promoted / force-rejected THIS challenger, so the L3 view never
+        # presents the override as the gate's own verdict.
+        "override": _build_override_block(paths, epoch_id, challenger_id),
     }
 
     # Echo the per-judge primary driver from the same source the L3

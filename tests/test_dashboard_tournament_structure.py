@@ -650,3 +650,97 @@ def test_structure_reader_no_diversity_block_for_single_challenger(swiss_workspa
     key — the block is reserved for real multi-challenger fields."""
     st = build_tournament_structure(WorkspacePaths(swiss_workspace), EPOCH, SWISS_TOURN)
     assert "diversity" not in st
+
+
+# ---------------------------------------------------------------------------
+# build_tournament_structure — the operator-override readback
+# ---------------------------------------------------------------------------
+
+
+def _write_durable_field_record(
+    ws: Path,
+    *,
+    override_status: dict[str, dict[str, object]] | None,
+    promoted_generation_ids: list[str] | None,
+) -> None:
+    """Write a durable ``tournaments/field-v1.json`` for the override readback."""
+    record: dict[str, object] = {
+        "tournament_id": f"{EPOCH}:field:v1",
+        "epoch_id": EPOCH,
+        "structure": "swiss",
+        "competitors": [
+            {"generation_id": "v0", "seed": 1, "role": "champion"},
+            {"generation_id": "v1", "seed": 2, "role": "challenger"},
+            {"generation_id": "v2", "seed": 3, "role": "challenger"},
+        ],
+        "rounds": [],
+        "standings": [],
+        "field_status": [],
+        "decision": "promoted",
+        "state": "settled",
+    }
+    if override_status is not None:
+        record["override_status"] = override_status
+    if promoted_generation_ids is not None:
+        record["promoted_generation_ids"] = promoted_generation_ids
+    path = ws / "epochs" / EPOCH / "tournaments" / "field-v1.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+
+def test_structure_reader_surfaces_override_status(tmp_path: Path) -> None:
+    """A field round with an operator override surfaces ``override_status`` +
+    ``promoted_generation_ids`` lifted from the durable field record."""
+    ws = tmp_path / ".zicato"
+    (ws / "runtime").mkdir(parents=True)
+    (ws / "current_epoch").write_text(EPOCH, encoding="utf-8")
+    field_status = [
+        {"generation_id": "v1", "status": "applied", "reason": "", "seed": 2},
+        {"generation_id": "v2", "status": "applied", "reason": "", "seed": 3},
+    ]
+    _build_field_index_with_patches(
+        ws / "index.db",
+        field_status=field_status,
+        patches={"v1": ["greeting"], "v2": ["closing"]},
+    )
+    _write_durable_field_record(
+        ws,
+        override_status={
+            "v2": {
+                "action": "promote",
+                "ts": "2026-06-01T00:31:00Z",
+                "reason": "prefer the diverse idea",
+                "state": "applied",
+            }
+        },
+        promoted_generation_ids=["v1", "v2"],
+    )
+
+    st = build_tournament_structure(WorkspacePaths(ws), EPOCH, FIELD_TOURN)
+    assert st["override_status"]["v2"]["action"] == "promote"
+    assert st["override_status"]["v2"]["reason"] == "prefer the diverse idea"
+    assert st["override_status"]["v2"]["state"] == "applied"
+    assert sorted(st["promoted_generation_ids"]) == ["v1", "v2"]
+
+
+def test_structure_reader_no_override_key_without_override(tmp_path: Path) -> None:
+    """A gate-decided field round carries NO ``override_status`` key — the
+    readback is key-absent when no override fired (back-compat clean)."""
+    ws = tmp_path / ".zicato"
+    (ws / "runtime").mkdir(parents=True)
+    (ws / "current_epoch").write_text(EPOCH, encoding="utf-8")
+    field_status = [
+        {"generation_id": "v1", "status": "applied", "reason": "", "seed": 2},
+        {"generation_id": "v2", "status": "applied", "reason": "", "seed": 3},
+    ]
+    _build_field_index_with_patches(
+        ws / "index.db",
+        field_status=field_status,
+        patches={"v1": ["greeting"], "v2": ["closing"]},
+    )
+    # A durable record with NO override keys (the common gate-decided case).
+    _write_durable_field_record(ws, override_status=None, promoted_generation_ids=None)
+
+    st = build_tournament_structure(WorkspacePaths(ws), EPOCH, FIELD_TOURN)
+    assert "override_status" not in st
+    assert "promoted_generation_ids" not in st

@@ -973,8 +973,70 @@ def build_tournament_structure(
         result = resolver(paths, epoch_id, tournament_id)
         if result is not None:
             enriched = _enrich_field_status(paths, epoch_id, tournament_id, result)
+            enriched = _enrich_override_status(paths, epoch_id, tournament_id, enriched)
             return _enrich_diversity(paths, epoch_id, enriched)
     return _empty_tournament_structure(epoch_id, tournament_id, "loss_files")
+
+
+def _enrich_override_status(
+    paths: WorkspacePaths, epoch_id: str, tournament_id: str, result: dict[str, Any]
+) -> dict[str, Any]:
+    """Attach the operator-override readback from the durable field record.
+
+    A field round's operator promote/reject overrides are recorded on the
+    durable ``tournaments/field-*.json`` snapshot (the orchestrator stamps
+    ``override_status`` — a ``{generation_id: {action, ts, reason, state}}``
+    map — and ``promoted_generation_ids`` — the full advanced SET — at
+    settle). The index columns do not carry them, so lift them from the
+    durable record onto the structure result the dashboard reads.
+
+    The durable record is keyed on the field's first challenger
+    (``field-<gid>.json``), which differs from the queried ``tournament_id``;
+    match the record whose competitor field overlaps this result's
+    challengers. KEY-ABSENT when no override fired (the common case) or when
+    no durable record matches, so a gate-decided field round and every
+    pre-feature run are byte-identical to before this readback existed.
+    """
+    if result.get("override_status") or result.get("promoted_generation_ids"):
+        return result  # already carried by the winning resolver — never clobber
+    from zicato.core.workspace import field_tournaments_dir  # noqa: PLC0415
+
+    challengers = set(_challenger_generation_ids(result))
+    tdir = field_tournaments_dir(paths.root, epoch_id)
+    if not tdir.is_dir():
+        return result
+    for record_path in sorted(tdir.glob("field-*.json")):
+        record = _read_json_value(record_path)
+        if not isinstance(record, dict):
+            continue
+        override_status = record.get("override_status")
+        promoted_ids = record.get("promoted_generation_ids")
+        if not (isinstance(override_status, dict) and override_status) and not (
+            isinstance(promoted_ids, list) and promoted_ids
+        ):
+            continue
+        # Match this record to the queried structure: same tournament_id, or
+        # (the common case, since the durable id is field-keyed) an overlap of
+        # the competitor generation ids.
+        rec_competitors = {
+            str(c.get("generation_id", ""))
+            for c in (record.get("competitors") or [])
+            if isinstance(c, dict)
+        }
+        if record.get("tournament_id") != tournament_id and not (
+            challengers and challengers & rec_competitors
+        ):
+            continue
+        if isinstance(override_status, dict) and override_status:
+            result["override_status"] = {
+                str(gid): dict(prov)
+                for gid, prov in override_status.items()
+                if isinstance(prov, dict)
+            }
+        if isinstance(promoted_ids, list) and promoted_ids:
+            result["promoted_generation_ids"] = [str(g) for g in promoted_ids]
+        break
+    return result
 
 
 def _enrich_field_status(
