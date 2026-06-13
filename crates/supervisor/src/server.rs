@@ -73,6 +73,9 @@ pub struct ServeOptions {
     pub heartbeat_stale_threshold_seconds: u64,
     /// Shared in-memory ring buffer of recent watchdog escalations.
     pub action_log: Arc<WatchdogLog>,
+    /// Heartbeat seq-liveness tracker shared with the watchdog loop so
+    /// `/statusz` reports the same seq-change age the watchdog decides on.
+    pub seq_liveness: Arc<std::sync::Mutex<crate::watchdog::SeqLiveness>>,
 }
 
 pub async fn serve(
@@ -100,6 +103,7 @@ pub async fn serve(
         dashboard_disabled: options.dashboard_disabled,
         heartbeat_stale_threshold_seconds: options.heartbeat_stale_threshold_seconds,
         action_log: options.action_log,
+        seq_liveness: options.seq_liveness,
     };
 
     let cors = CorsLayer::new()

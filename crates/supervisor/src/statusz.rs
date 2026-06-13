@@ -55,9 +55,21 @@ pub struct HeartbeatStatus {
     pub orchestrator_pid: Option<i32>,
     /// The last heartbeat timestamp (RFC-3339), when present.
     pub last_heartbeat: Option<String>,
-    /// Age of the last heartbeat in whole seconds.
+    /// Age of the last heartbeat TIMESTAMP in whole seconds. A periodic
+    /// timer keeps this fresh even when the orchestrator loop is wedged, so
+    /// it is the weaker of the two liveness signals — see `seq_age_seconds`.
     pub age_seconds: Option<i64>,
-    /// `true` when the age exceeds the staleness threshold.
+    /// The orchestrator's progress cursor (`seq`) from the heartbeat, when
+    /// present. Advances only on genuine loop progress (RUNTIME-V2 Phase 4).
+    pub seq: Option<u64>,
+    /// Age in whole seconds since `seq` last *changed*, when the watchdog is
+    /// tracking it. This is the stronger liveness signal: it keeps growing
+    /// when the loop is wedged even though the timestamp stays fresh. `None`
+    /// for a heartbeat that carries no `seq` (pre-Phase-4 writer), in which
+    /// case staleness is judged from `age_seconds` (the timestamp).
+    pub seq_age_seconds: Option<u64>,
+    /// `true` when the age exceeds the staleness threshold. Computed from
+    /// `seq_age_seconds` when seq is tracked, else from the timestamp age.
     pub stale: bool,
     /// The staleness threshold the watchdog is using (seconds).
     pub stale_threshold_seconds: u64,
@@ -139,20 +151,35 @@ fn run_deadline_status(run: &ActiveRun, now: DateTime<Utc>) -> RunDeadlineStatus
 }
 
 /// Heartbeat freshness, pure and `now`-injected.
+///
+/// `seq_age_seconds` is the seq-change age computed by the watchdog's
+/// stateful tracker (threaded in by the caller); when present it — not the
+/// timestamp age — decides staleness, because the periodic timer keeps the
+/// timestamp fresh even on a wedged loop. When absent (legacy heartbeat with
+/// no `seq`), staleness falls back to the timestamp age, exactly as before.
 fn heartbeat_status(
     hb: Option<&Heartbeat>,
     now: DateTime<Utc>,
     stale_threshold_seconds: u64,
+    seq_age_seconds: Option<u64>,
 ) -> HeartbeatStatus {
     match hb.and_then(|h| h.last_heartbeat.map(|ts| (h, ts))) {
         Some((h, last)) => {
             let age = (now - last).num_seconds();
+            // Prefer the seq-change age for the staleness verdict; fall back
+            // to the timestamp age when seq is not being tracked.
+            let stale = match seq_age_seconds {
+                Some(seq_age) => seq_age >= stale_threshold_seconds,
+                None => age.max(0) as u64 >= stale_threshold_seconds,
+            };
             HeartbeatStatus {
                 present: true,
                 orchestrator_pid: h.pid,
                 last_heartbeat: Some(last.to_rfc3339()),
                 age_seconds: Some(age),
-                stale: age.max(0) as u64 >= stale_threshold_seconds,
+                seq: h.seq,
+                seq_age_seconds,
+                stale,
                 stale_threshold_seconds,
                 phase: h.phase.clone(),
                 orchestrator_uptime_seconds: h.started_at.map(|s| (now - s).num_seconds().max(0)),
@@ -163,6 +190,8 @@ fn heartbeat_status(
             orchestrator_pid: hb.and_then(|h| h.pid),
             last_heartbeat: None,
             age_seconds: None,
+            seq: hb.and_then(|h| h.seq),
+            seq_age_seconds,
             stale: false,
             stale_threshold_seconds,
             phase: hb.and_then(|h| h.phase.clone()),
@@ -172,16 +201,28 @@ fn heartbeat_status(
 }
 
 /// Assemble the full `/statusz` view from disk + the action log.
+///
+/// `seq_age_seconds` is the watchdog's seq-change age for the current
+/// heartbeat (a read-only snapshot of its stateful tracker). Threaded in
+/// rather than recomputed here so `/statusz` reports exactly the figure the
+/// watchdog is deciding on. `None` means seq is not being tracked (legacy
+/// heartbeat) and staleness falls back to the timestamp age.
 pub fn build_statusz(
     paths: &WorkspacePaths,
     identity: &SupervisorIdentity,
     heartbeat_stale_threshold_seconds: u64,
+    seq_age_seconds: Option<u64>,
     action_log: &Arc<WatchdogLog>,
 ) -> StatuszView {
     let now = Utc::now();
 
     let hb = reader::read_heartbeat(paths);
-    let heartbeat = heartbeat_status(hb.as_ref(), now, heartbeat_stale_threshold_seconds);
+    let heartbeat = heartbeat_status(
+        hb.as_ref(),
+        now,
+        heartbeat_stale_threshold_seconds,
+        seq_age_seconds,
+    );
 
     let runs: Vec<RunDeadlineStatus> = reader::read_active_runs(paths)
         .iter()
@@ -323,10 +364,27 @@ th{color:#888;font-weight:normal}\
             "<tr><th>state</th><td class=\"{cls}\">{label}</td></tr>"
         ));
         out.push_str(&format!(
-            "<tr><th>age</th><td>{} (threshold {}s)</td></tr>",
+            "<tr><th>timestamp age</th><td>{}</td></tr>",
             h.age_seconds.map(hms).unwrap_or_else(|| "?".into()),
-            h.stale_threshold_seconds
         ));
+        // The seq-change age is the authoritative liveness signal when the
+        // orchestrator publishes a `seq` cursor; surface both so an operator
+        // can see a wedged loop (fresh timestamp, growing seq age).
+        if let Some(seq) = h.seq {
+            out.push_str(&format!("<tr><th>seq</th><td>{seq}</td></tr>"));
+        }
+        match h.seq_age_seconds {
+            Some(seq_age) => out.push_str(&format!(
+                "<tr><th>seq age</th><td>{} (threshold {}s)</td></tr>",
+                hms(seq_age as i64),
+                h.stale_threshold_seconds,
+            )),
+            None => out.push_str(&format!(
+                "<tr><th>seq age</th><td class=\"dim\">untracked \
+(no seq; staleness from timestamp, threshold {}s)</td></tr>",
+                h.stale_threshold_seconds,
+            )),
+        }
         out.push_str(&format!(
             "<tr><th>last</th><td>{}</td></tr>",
             esc(h.last_heartbeat.as_deref().unwrap_or("-"))
@@ -483,7 +541,8 @@ mod tests {
             last_heartbeat: Some(now - ChDuration::seconds(120)),
             ..Default::default()
         };
-        let st = heartbeat_status(Some(&hb), now, 90);
+        // No seq tracked → staleness falls back to the timestamp age.
+        let st = heartbeat_status(Some(&hb), now, 90, None);
         assert!(st.present);
         assert!(st.stale);
         assert_eq!(st.orchestrator_pid, Some(10015));
@@ -497,15 +556,51 @@ mod tests {
             last_heartbeat: Some(now - ChDuration::seconds(3)),
             ..Default::default()
         };
-        let st = heartbeat_status(Some(&hb), now, 90);
+        let st = heartbeat_status(Some(&hb), now, 90, None);
         assert!(!st.stale);
     }
 
     #[test]
     fn missing_heartbeat_is_not_present() {
-        let st = heartbeat_status(None, Utc::now(), 90);
+        let st = heartbeat_status(None, Utc::now(), 90, None);
         assert!(!st.present);
         assert!(!st.stale);
+    }
+
+    #[test]
+    fn seq_age_drives_staleness_when_tracked() {
+        // A FRESH timestamp but a stale seq-change age (the loop is wedged
+        // while the periodic timer keeps the timestamp current) must read
+        // STALE — the seq age is authoritative when tracked.
+        let now = Utc::now();
+        let hb = Heartbeat {
+            pid: Some(10015),
+            last_heartbeat: Some(now - ChDuration::seconds(2)),
+            seq: Some(7),
+            ..Default::default()
+        };
+        let st = heartbeat_status(Some(&hb), now, 90, Some(120));
+        assert!(st.stale, "stale seq age must mark the heartbeat stale");
+        assert_eq!(st.seq, Some(7));
+        assert_eq!(st.seq_age_seconds, Some(120));
+        // The fresh timestamp age is still surfaced alongside.
+        assert!(st.age_seconds.unwrap() < 10);
+    }
+
+    #[test]
+    fn fresh_seq_age_is_not_stale_even_with_old_timestamp() {
+        // The complementary case: a stale TIMESTAMP but a fresh seq-change
+        // age means the loop just advanced — not stale.
+        let now = Utc::now();
+        let hb = Heartbeat {
+            pid: Some(10015),
+            last_heartbeat: Some(now - ChDuration::seconds(300)),
+            seq: Some(42),
+            ..Default::default()
+        };
+        let st = heartbeat_status(Some(&hb), now, 90, Some(1));
+        assert!(!st.stale);
+        assert_eq!(st.seq_age_seconds, Some(1));
     }
 
     #[test]
@@ -522,7 +617,7 @@ mod tests {
                 dashboard_disabled: true,
                 pid: 1234,
             },
-            heartbeat: heartbeat_status(None, Utc::now(), 90),
+            heartbeat: heartbeat_status(None, Utc::now(), 90, None),
             runs: vec![],
             runs_over_deadline: 0,
             summary: "no active runs".into(),
@@ -560,7 +655,7 @@ mod tests {
                 dashboard_disabled: false,
                 pid: 1,
             },
-            heartbeat: heartbeat_status(None, Utc::now(), 90),
+            heartbeat: heartbeat_status(None, Utc::now(), 90, None),
             runs: vec![],
             runs_over_deadline: 0,
             summary: "no active runs".into(),

@@ -46,6 +46,10 @@ pub struct AppState {
     /// In-memory ring buffer of recent watchdog escalations, shared with
     /// the watchdog loops. `/statusz` surfaces its contents.
     pub action_log: Arc<WatchdogLog>,
+    /// The heartbeat seq-liveness tracker, shared with the watchdog
+    /// heartbeat loop. `/statusz` reads (does not advance) it to report the
+    /// seq-change age alongside the timestamp age. The loop owns advancement.
+    pub seq_liveness: Arc<std::sync::Mutex<crate::watchdog::SeqLiveness>>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -107,10 +111,30 @@ fn build_statusz_view(s: &AppState) -> statusz::StatuszView {
         read_only: s.read_only,
         dashboard_disabled: s.dashboard_disabled,
     };
+    // Read the watchdog's seq tracker WITHOUT advancing it (the heartbeat
+    // loop owns advancement) to report the same seq-change age it decides on.
+    let seq_age_seconds = {
+        let hb = reader::read_heartbeat(&s.paths);
+        let thresholds = crate::watchdog::Thresholds {
+            heartbeat_stale_warn: std::time::Duration::from_secs(
+                s.heartbeat_stale_threshold_seconds,
+            ),
+            ..Default::default()
+        };
+        s.seq_liveness
+            .lock()
+            .map(|tracker| {
+                tracker
+                    .snapshot(hb.as_ref(), chrono::Utc::now(), &thresholds)
+                    .seq_age_seconds
+            })
+            .unwrap_or(None)
+    };
     statusz::build_statusz(
         &s.paths,
         &identity,
         s.heartbeat_stale_threshold_seconds,
+        seq_age_seconds,
         &s.action_log,
     )
 }

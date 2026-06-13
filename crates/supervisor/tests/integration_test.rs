@@ -29,6 +29,7 @@ fn serve_opts(read_only: bool) -> server::ServeOptions {
         dashboard_disabled: false,
         heartbeat_stale_threshold_seconds: 30,
         action_log: Arc::new(WatchdogLog::new()),
+        seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
     }
 }
 
@@ -1575,6 +1576,7 @@ async fn statusz_routes_reachable_with_no_dashboard() {
         dashboard_disabled: true, // --no-dashboard
         heartbeat_stale_threshold_seconds: 30,
         action_log: Arc::new(WatchdogLog::new()),
+        seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
     };
     let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);
@@ -1654,6 +1656,7 @@ async fn statusz_surfaces_recorded_watchdog_actions() {
         dashboard_disabled: false,
         heartbeat_stale_threshold_seconds: 30,
         action_log: action_log.clone(),
+        seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
     };
     let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);

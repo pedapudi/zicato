@@ -157,12 +157,18 @@ async fn main() -> std::process::ExitCode {
     // escalations here, and `/statusz` reads them back.
     let action_log = Arc::new(WatchdogLog::new());
 
+    // Shared heartbeat seq-liveness tracker: the heartbeat loop advances it
+    // each tick; `/statusz` reads (does not advance) it to report the same
+    // seq-change age the watchdog is deciding on.
+    let seq_liveness = Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new()));
+
     let interval = Duration::from_secs(cli.interval.max(1));
     let hb_paths = paths.clone();
     let hb_shutdown = shutdown_tx.clone();
     let hb_log = action_log.clone();
+    let hb_seq = seq_liveness.clone();
     tokio::spawn(async move {
-        watchdog::heartbeat_loop(hb_paths, thresholds, interval, hb_log, hb_shutdown).await
+        watchdog::heartbeat_loop(hb_paths, thresholds, interval, hb_log, hb_seq, hb_shutdown).await
     });
     let run_paths = paths.clone();
     let run_shutdown = shutdown_tx.clone();
@@ -181,6 +187,7 @@ async fn main() -> std::process::ExitCode {
             dashboard_disabled: cli.no_dashboard,
             heartbeat_stale_threshold_seconds: cli.heartbeat_stale_warn,
             action_log: action_log.clone(),
+            seq_liveness: seq_liveness.clone(),
         },
         watch_tx.clone(),
         shutdown_tx.clone(),

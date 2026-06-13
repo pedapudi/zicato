@@ -43,6 +43,16 @@ pub struct Heartbeat {
     pub generation_id: Option<String>,
     #[serde(default)]
     pub round: Option<u64>,
+    /// The orchestrator's progress cursor (RUNTIME-V2 Phase 4): the tail
+    /// `seq` of the progress event log, stamped here only at a genuine
+    /// transition. The periodic heartbeat-timer bump RE-WRITES the same
+    /// value, so `seq` advances iff the loop actually made progress — it
+    /// does not move on the timer alone. That makes seq-change age a truer
+    /// liveness signal than the heartbeat timestamp (which a healthy timer
+    /// keeps fresh even when the loop is wedged). Absent in heartbeats
+    /// written before Phase 4 → the watchdog falls back to timestamp age.
+    #[serde(default)]
+    pub seq: Option<u64>,
 }
 
 /// `.zicato/runtime/active_runs/{run_id}.json`

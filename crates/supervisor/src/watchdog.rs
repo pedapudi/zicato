@@ -119,6 +119,14 @@ pub fn decide_heartbeat(
     let age = now.signed_duration_since(last);
     let age_secs = age.num_seconds().max(0) as u64;
 
+    classify_age(age_secs, t)
+}
+
+/// Classify a staleness age (seconds) into a warn-only `HeartbeatAction`.
+/// Shared by the timestamp path ([`decide_heartbeat`]) and the seq-advance
+/// path ([`SeqLiveness::observe`]) so both apply the same warn/deep-stale
+/// thresholds. Never returns a kill — there is no kill variant.
+fn classify_age(age_secs: u64, t: &Thresholds) -> HeartbeatAction {
     // Deep-stale: past the former kill threshold. We do NOT kill — we
     // escalate the warning's severity and leave the restart decision to
     // the operator / process supervisor.
@@ -129,6 +137,177 @@ pub fn decide_heartbeat(
         return HeartbeatAction::Warn;
     }
     HeartbeatAction::Nothing
+}
+
+/// Stateful tracker for the heartbeat's progress cursor (`seq`).
+///
+/// The heartbeat timestamp is refreshed by a periodic timer, so it stays
+/// fresh even when the orchestrator's loop is wedged — the timer is a
+/// separate thread. The `seq` cursor, by contrast, only advances when the
+/// loop makes genuine progress (RUNTIME-V2 Phase 4). Tracking *when seq
+/// last changed* therefore detects a wedged loop that a fresh timestamp
+/// would hide.
+///
+/// **Warn-only, like the rest of the heartbeat path** — this tracker
+/// classifies staleness but never escalates to a kill.
+#[derive(Debug, Clone, Default)]
+pub struct SeqLiveness {
+    /// The last `seq` value observed, once any heartbeat carried one.
+    last_seq: Option<u64>,
+    /// When `last_seq` last *changed* (not merely re-observed). Anchored on
+    /// first observation so an orchestrator that legitimately sits on seq 0
+    /// before its first transition is measured from when we started
+    /// watching, not from epoch zero.
+    last_seq_change_at: Option<DateTime<Utc>>,
+}
+
+/// The outcome of folding one heartbeat observation into a [`SeqLiveness`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SeqObservation {
+    /// The warn-only action implied by seq-change age (when seq is present)
+    /// or by timestamp age (the back-compat fallback when seq is absent).
+    pub action: HeartbeatAction,
+    /// Age in seconds of the last *seq change*, when seq is being tracked.
+    /// `None` when the heartbeat carries no seq (old writer) — the action
+    /// then comes from the timestamp path and `timestamp_age_seconds`
+    /// carries the meaningful figure.
+    pub seq_age_seconds: Option<u64>,
+    /// Age in seconds of the heartbeat *timestamp*, always computed when a
+    /// timestamp is present. Surfaced alongside `seq_age_seconds` so an
+    /// operator can see both signals.
+    pub timestamp_age_seconds: Option<u64>,
+}
+
+impl SeqLiveness {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The last seq value observed, for surfacing on `/statusz`.
+    pub fn last_seq(&self) -> Option<u64> {
+        self.last_seq
+    }
+
+    /// When the tracked `seq` last changed, when any has been observed.
+    pub fn last_seq_change_at(&self) -> Option<DateTime<Utc>> {
+        self.last_seq_change_at
+    }
+
+    /// Read-only snapshot of the seq/timestamp ages for `/statusz`, WITHOUT
+    /// advancing the change anchor (the watchdog loop owns advancement).
+    ///
+    /// When `seq` is present we report the age since the last *observed*
+    /// change anchor; if the live heartbeat already shows a newer seq than
+    /// the tracker has folded in yet (a tick race), we treat that as a
+    /// fresh change at `now`. When `seq` is absent we fall back to the
+    /// timestamp age, mirroring [`observe`].
+    pub fn snapshot(
+        &self,
+        heartbeat: Option<&crate::state::Heartbeat>,
+        now: DateTime<Utc>,
+        t: &Thresholds,
+    ) -> SeqObservation {
+        let Some(hb) = heartbeat else {
+            return SeqObservation {
+                action: HeartbeatAction::MissingHeartbeat,
+                seq_age_seconds: None,
+                timestamp_age_seconds: None,
+            };
+        };
+        let timestamp_age_seconds = hb
+            .last_heartbeat
+            .map(|last| now.signed_duration_since(last).num_seconds().max(0) as u64);
+        match hb.seq {
+            Some(seq) => {
+                // If the live seq already exceeds what we've folded in, the
+                // change is at-or-after now; report a zero-age fresh change.
+                let anchor = match self.last_seq {
+                    Some(prev) if prev == seq => self.last_seq_change_at.unwrap_or(now),
+                    _ => now,
+                };
+                let seq_age = now.signed_duration_since(anchor).num_seconds().max(0) as u64;
+                SeqObservation {
+                    action: classify_age(seq_age, t),
+                    seq_age_seconds: Some(seq_age),
+                    timestamp_age_seconds,
+                }
+            }
+            None => {
+                let action = match timestamp_age_seconds {
+                    Some(age) => classify_age(age, t),
+                    None => HeartbeatAction::MissingHeartbeat,
+                };
+                SeqObservation {
+                    action,
+                    seq_age_seconds: None,
+                    timestamp_age_seconds,
+                }
+            }
+        }
+    }
+
+    /// Fold one heartbeat observation in, advancing the change-anchor when
+    /// `seq` moved, and return the warn-only classification.
+    ///
+    /// Staleness source:
+    /// * `seq` present → age since the last seq *change* (the true liveness
+    ///   signal). A fresh timestamp on an unmoving seq is treated as stale.
+    /// * `seq` absent (legacy heartbeat) → falls back to timestamp age so
+    ///   older orchestrators keep their existing semantics.
+    ///
+    /// Never returns a kill — `classify_age` has no kill outcome.
+    pub fn observe(
+        &mut self,
+        heartbeat: Option<&crate::state::Heartbeat>,
+        now: DateTime<Utc>,
+        t: &Thresholds,
+    ) -> SeqObservation {
+        let Some(hb) = heartbeat else {
+            return SeqObservation {
+                action: HeartbeatAction::MissingHeartbeat,
+                seq_age_seconds: None,
+                timestamp_age_seconds: None,
+            };
+        };
+
+        let timestamp_age_seconds = hb
+            .last_heartbeat
+            .map(|last| now.signed_duration_since(last).num_seconds().max(0) as u64);
+
+        match hb.seq {
+            Some(seq) => {
+                // Advance the change anchor only when seq actually moved
+                // (or on the very first observation).
+                match self.last_seq {
+                    Some(prev) if prev == seq => { /* unchanged: keep anchor */ }
+                    _ => {
+                        self.last_seq = Some(seq);
+                        self.last_seq_change_at = Some(now);
+                    }
+                }
+                let anchor = self.last_seq_change_at.unwrap_or(now);
+                let seq_age = now.signed_duration_since(anchor).num_seconds().max(0) as u64;
+                SeqObservation {
+                    action: classify_age(seq_age, t),
+                    seq_age_seconds: Some(seq_age),
+                    timestamp_age_seconds,
+                }
+            }
+            None => {
+                // Back-compat: no seq cursor → timestamp age drives the
+                // classification, exactly as before Phase 4.
+                let action = match timestamp_age_seconds {
+                    Some(age) => classify_age(age, t),
+                    None => HeartbeatAction::MissingHeartbeat,
+                };
+                SeqObservation {
+                    action,
+                    seq_age_seconds: None,
+                    timestamp_age_seconds,
+                }
+            }
+        }
+    }
 }
 
 /// Staleness-trigger outcome for an active run.
@@ -302,6 +481,7 @@ pub async fn heartbeat_loop(
     thresholds: Thresholds,
     interval: Duration,
     _log: Arc<WatchdogLog>,
+    seq_liveness: Arc<std::sync::Mutex<SeqLiveness>>,
     shutdown: Sender<()>,
 ) {
     let mut ticker = tokio::time::interval(interval);
@@ -311,11 +491,23 @@ pub async fn heartbeat_loop(
         tokio::select! {
             _ = ticker.tick() => {
                 let hb = reader::read_heartbeat(&paths);
-                let action = decide_heartbeat(hb.as_ref(), Utc::now(), &thresholds);
-                match action {
+                // Carried across ticks (shared with `/statusz`): tracks when
+                // the heartbeat's `seq` cursor last advanced so a wedged loop
+                // (fresh timestamp, frozen seq) is caught. A poisoned lock is
+                // unreachable in practice (no panics under it); skip the tick.
+                let obs = match seq_liveness.lock() {
+                    Ok(mut tracker) => tracker.observe(hb.as_ref(), Utc::now(), &thresholds),
+                    Err(_) => continue,
+                };
+                match obs.action {
                     HeartbeatAction::Nothing => {}
                     HeartbeatAction::Warn => {
-                        warn!(?hb, "heartbeat is stale (warn threshold)");
+                        warn!(
+                            ?hb,
+                            seq_age_seconds = ?obs.seq_age_seconds,
+                            timestamp_age_seconds = ?obs.timestamp_age_seconds,
+                            "heartbeat is stale (warn threshold)"
+                        );
                     }
                     HeartbeatAction::Stale => {
                         // Deep-stale past the former kill threshold. We do
@@ -324,6 +516,8 @@ pub async fn heartbeat_loop(
                         // it loudly and move on.
                         warn!(
                             ?hb,
+                            seq_age_seconds = ?obs.seq_age_seconds,
+                            timestamp_age_seconds = ?obs.timestamp_age_seconds,
                             "orchestrator heartbeat is deeply stale; NOT killing it \
                              (orchestrator restart is a process-supervisor concern \
                              — see RUNTIME.md §3.2)"
@@ -1081,5 +1275,166 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(decide_run_kill_request(&run, &no_protected()), None);
+    }
+
+    // ---- SeqLiveness (seq-advance liveness) ------------------------
+
+    /// A heartbeat carrying a `seq` that never advances goes stale on the
+    /// SEQ-CHANGE age even though every observation refreshes the timestamp
+    /// to `now`. This is the wedged-loop case the seq cursor exists to catch.
+    #[test]
+    fn frozen_seq_goes_stale_despite_fresh_timestamps() {
+        let t = thresholds(); // warn 30s, deep-stale 90s
+        let mut tracker = SeqLiveness::new();
+        let start = Utc::now();
+
+        // First observation: seq=5, fresh. Anchors the change at `start`.
+        let hb = Heartbeat {
+            pid: Some(1),
+            last_heartbeat: Some(start),
+            seq: Some(5),
+            ..Default::default()
+        };
+        let obs = tracker.observe(Some(&hb), start, &t);
+        assert_eq!(obs.action, HeartbeatAction::Nothing);
+        assert_eq!(obs.seq_age_seconds, Some(0));
+
+        // 45s later, seq STILL 5, timestamp refreshed to the new now.
+        let now = start + ChDuration::seconds(45);
+        let hb = Heartbeat {
+            pid: Some(1),
+            last_heartbeat: Some(now), // fresh timestamp
+            seq: Some(5),              // but seq frozen
+            ..Default::default()
+        };
+        let obs = tracker.observe(Some(&hb), now, &t);
+        // Timestamp age is ~0, yet seq age is 45s → Warn.
+        assert_eq!(obs.action, HeartbeatAction::Warn);
+        assert_eq!(obs.seq_age_seconds, Some(45));
+        assert_eq!(obs.timestamp_age_seconds, Some(0));
+
+        // 100s later still frozen → deep-stale (Stale), but never a kill.
+        let now = start + ChDuration::seconds(100);
+        let hb = Heartbeat {
+            pid: Some(1),
+            last_heartbeat: Some(now),
+            seq: Some(5),
+            ..Default::default()
+        };
+        let obs = tracker.observe(Some(&hb), now, &t);
+        assert_eq!(obs.action, HeartbeatAction::Stale);
+        assert_eq!(obs.seq_age_seconds, Some(100));
+    }
+
+    /// When seq advances, the change anchor resets and the seq age drops
+    /// back to zero — the loop is making progress.
+    #[test]
+    fn advancing_seq_resets_the_age() {
+        let t = thresholds();
+        let mut tracker = SeqLiveness::new();
+        let start = Utc::now();
+
+        let hb = Heartbeat {
+            seq: Some(1),
+            last_heartbeat: Some(start),
+            ..Default::default()
+        };
+        tracker.observe(Some(&hb), start, &t);
+
+        // 45s later seq advanced to 2 → age resets to 0, no warning.
+        let now = start + ChDuration::seconds(45);
+        let hb = Heartbeat {
+            seq: Some(2),
+            last_heartbeat: Some(now),
+            ..Default::default()
+        };
+        let obs = tracker.observe(Some(&hb), now, &t);
+        assert_eq!(obs.action, HeartbeatAction::Nothing);
+        assert_eq!(obs.seq_age_seconds, Some(0));
+        assert_eq!(tracker.last_seq(), Some(2));
+    }
+
+    /// Back-compat: a heartbeat with NO seq (old writer) falls back to the
+    /// timestamp age for staleness, exactly as before Phase 4.
+    #[test]
+    fn absent_seq_falls_back_to_timestamp_age() {
+        let t = thresholds();
+        let mut tracker = SeqLiveness::new();
+        let now = Utc::now();
+        let hb = Heartbeat {
+            pid: Some(1),
+            last_heartbeat: Some(now - ChDuration::seconds(45)),
+            seq: None, // legacy heartbeat
+            ..Default::default()
+        };
+        let obs = tracker.observe(Some(&hb), now, &t);
+        assert_eq!(obs.action, HeartbeatAction::Warn); // from the 45s timestamp
+        assert_eq!(obs.seq_age_seconds, None);
+        assert_eq!(obs.timestamp_age_seconds, Some(45));
+    }
+
+    /// The seq path, like every heartbeat path, NEVER kills — sweep a wide
+    /// range of frozen-seq ages and assert the outcome stays warn-only.
+    #[test]
+    fn seq_liveness_never_kills() {
+        let t = thresholds();
+        for age in [0i64, 30, 90, 600, 86_400, 1_000_000] {
+            let mut tracker = SeqLiveness::new();
+            let start = Utc::now();
+            let hb0 = Heartbeat {
+                seq: Some(9),
+                last_heartbeat: Some(start),
+                ..Default::default()
+            };
+            tracker.observe(Some(&hb0), start, &t);
+            let now = start + ChDuration::seconds(age);
+            let hb = Heartbeat {
+                seq: Some(9),
+                last_heartbeat: Some(now),
+                ..Default::default()
+            };
+            let obs = tracker.observe(Some(&hb), now, &t);
+            assert!(
+                matches!(
+                    obs.action,
+                    HeartbeatAction::Nothing
+                        | HeartbeatAction::Warn
+                        | HeartbeatAction::Stale
+                        | HeartbeatAction::MissingHeartbeat
+                ),
+                "seq liveness must never kill: age={age}s yielded {:?}",
+                obs.action
+            );
+        }
+    }
+
+    /// The read-only `snapshot` reports ages without advancing the anchor,
+    /// so repeated calls are stable and the watchdog loop keeps sole
+    /// ownership of advancement.
+    #[test]
+    fn snapshot_is_read_only() {
+        let t = thresholds();
+        let mut tracker = SeqLiveness::new();
+        let start = Utc::now();
+        let hb0 = Heartbeat {
+            seq: Some(3),
+            last_heartbeat: Some(start),
+            ..Default::default()
+        };
+        tracker.observe(Some(&hb0), start, &t);
+
+        let now = start + ChDuration::seconds(40);
+        let hb = Heartbeat {
+            seq: Some(3),
+            last_heartbeat: Some(now),
+            ..Default::default()
+        };
+        // Two snapshots in a row must not move the anchor.
+        let a = tracker.snapshot(Some(&hb), now, &t);
+        let b = tracker.snapshot(Some(&hb), now, &t);
+        assert_eq!(a.seq_age_seconds, Some(40));
+        assert_eq!(b.seq_age_seconds, Some(40));
+        // The tracker still holds the original change time.
+        assert_eq!(tracker.last_seq_change_at(), Some(start));
     }
 }
