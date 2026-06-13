@@ -1986,6 +1986,37 @@ def test_control_promote_and_reject(rw_client: TestClient, workspace: Path) -> N
     assert (workspace / "runtime" / "control" / "reject" / "v1").exists()
 
 
+def test_control_promote_records_field_provenance(rw_client: TestClient, workspace: Path) -> None:
+    """A field promote's body carries epoch/tournament_id/structure/reason."""
+    import json as _json
+
+    body = {
+        "reason": "operator advances the diverse candidate",
+        "epoch": "e2",
+        "tournament_id": "tourn_e2_v3",
+        "structure": "racing",
+    }
+    r = rw_client.post("/api/control/promote/v3", json=body)
+    assert r.status_code == 202
+    written = _json.loads((workspace / "runtime" / "control" / "promote" / "v3").read_text())
+    assert written["generation_id"] == "v3"
+    assert written["reason"] == "operator advances the diverse candidate"
+    assert written["epoch"] == "e2"
+    assert written["tournament_id"] == "tourn_e2_v3"
+    assert written["structure"] == "racing"
+
+
+def test_control_reject_empty_body_is_back_compat(rw_client: TestClient, workspace: Path) -> None:
+    """A reason-less reject still writes a valid control file (no extra keys)."""
+    import json as _json
+
+    assert rw_client.post("/api/control/reject/v1").status_code == 202
+    written = _json.loads((workspace / "runtime" / "control" / "reject" / "v1").read_text())
+    assert written["generation_id"] == "v1"
+    assert "epoch" not in written
+    assert "structure" not in written
+
+
 def test_control_kill_rejects_bad_id(rw_client: TestClient) -> None:
     # An id the validator rejects (a space) is a 400, not a marker write.
     r = rw_client.post("/api/control/kill/bad%20id")

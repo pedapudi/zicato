@@ -873,6 +873,37 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
             return reason if isinstance(reason, str) else ""
         return ""
 
+    async def _read_override_body(request: Request) -> dict[str, str]:
+        """Read a promote/reject override's structured request body.
+
+        The dashboard's field promote/reject button POSTs a JSON body with
+        the override's provenance: ``{reason, epoch, tournament_id,
+        structure}`` (all optional — an empty body / a bare ``touch`` yields
+        no keys). Only string values are kept; the on-disk control file
+        records exactly the keys the operator supplied so the readback can
+        reconstruct WHICH field round, structure, and tournament the override
+        targeted. A non-JSON / non-object body yields an empty dict, so a
+        legacy reason-only POST still works.
+        """
+        try:
+            body = await request.body()
+        except Exception:
+            return {}
+        if not body:
+            return {}
+        try:
+            parsed = json.loads(body)
+        except json.JSONDecodeError:
+            return {}
+        if not isinstance(parsed, dict):
+            return {}
+        out: dict[str, str] = {}
+        for key in ("reason", "epoch", "tournament_id", "structure"):
+            val = parsed.get(key)
+            if isinstance(val, str) and val:
+                out[key] = val
+        return out
+
     def _control_path(*parts: str) -> Path:
         return paths.control_dir.joinpath(*parts)
 
@@ -921,8 +952,13 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         generation_id = request.path_params["generation_id"]
         if not _is_safe_id(generation_id):
             return PlainTextResponse("invalid generation_id", status_code=400)
+        # Carry the override's provenance (epoch / tournament_id / structure /
+        # reason) onto the control file additively — the consumer only reads
+        # ``reason``, so the extra keys are inert for the gauntlet path but let
+        # a FIELD override's readback name which round/structure it targeted.
+        extra = await _read_override_body(request)
         path = _control_path("promote", generation_id)
-        payload = {"generation_id": generation_id, "ts": _now_iso()}
+        payload = {"generation_id": generation_id, "ts": _now_iso(), **extra}
         _atomic_write(path, json.dumps(payload).encode())
         return JSONResponse(payload, status_code=202)
 
@@ -933,8 +969,9 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         generation_id = request.path_params["generation_id"]
         if not _is_safe_id(generation_id):
             return PlainTextResponse("invalid generation_id", status_code=400)
+        extra = await _read_override_body(request)
         path = _control_path("reject", generation_id)
-        payload = {"generation_id": generation_id, "ts": _now_iso()}
+        payload = {"generation_id": generation_id, "ts": _now_iso(), **extra}
         _atomic_write(path, json.dumps(payload).encode())
         return JSONResponse(payload, status_code=202)
 

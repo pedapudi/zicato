@@ -243,7 +243,12 @@ def write_command(workspace_root: Path, cmd: ControlCommand) -> Path:
             f"control command {cmd.name!r} requires a non-empty arg "
             "(e.g. run_id for kill_runs, generation_id for promote/reject)"
         )
-    backend.write_text(control_command_key(f"{cmd.name}/{cmd.arg}"), "")
+    # A targeted command's body is empty by default (the arg in the filename
+    # is the whole command). A promote/reject MAY carry a JSON ``payload`` body
+    # with the override's provenance ({reason, epoch, tournament_id,
+    # structure}); the consumer reads only ``reason`` from it, so an empty
+    # payload reproduces today's empty-file behaviour byte-for-byte.
+    backend.write_text(control_command_key(f"{cmd.name}/{cmd.arg}"), cmd.payload)
     return cdir / cmd.name / cmd.arg
 
 
