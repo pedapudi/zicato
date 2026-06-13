@@ -445,6 +445,8 @@ def _persist_field_tournament(
     field_status: list[dict[str, Any]],
     decision: Any,
     state: str = "settled",
+    override_status: dict[str, dict[str, Any]] | None = None,
+    promoted_generation_ids: list[str] | None = None,
 ) -> None:
     """Best-effort: durably persist a FIELD-level structure record.
 
@@ -505,6 +507,16 @@ def _persist_field_tournament(
         "state": state,
         "ran_at": _now_iso(),
     }
+    # Multi-promotion + operator-override readback (additive). Both keys are
+    # OMITTED when absent so a no-override single-promotion record is
+    # byte-identical to before this field existed. ``promoted_generation_ids``
+    # is the full advanced SET (a tie / an operator multi-promote);
+    # ``override_status`` is the per-generation override provenance the
+    # dashboard renders ({action, ts, reason, state}).
+    if promoted_generation_ids:
+        record["promoted_generation_ids"] = list(promoted_generation_ids)
+    if override_status:
+        record["override_status"] = {gid: dict(prov) for gid, prov in override_status.items()}
     try:
         from zicato.core.workspace import field_tournament_path  # noqa: PLC0415
 

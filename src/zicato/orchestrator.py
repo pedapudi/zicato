@@ -83,7 +83,9 @@ from zicato.evolve.round import (
     check_patch_manifest_and_forbidden,
 )
 from zicato.runtime.control_consumer import (
+    GateOverride,
     block_while_paused,
+    claim_field_gate_overrides,
     claim_gate_override,
     claim_rubric_replacement,
     claim_skip_round,
@@ -2196,18 +2198,103 @@ async def _evolve_multi_challenger(
             promoted_id = None
             crowning_reason_override = crowning_outcome.reason
 
+    # --- Operator gate override (control protocol) for the FIELD ---------
+    # The structure has settled (train bracket + holdout confirmation) but
+    # nothing is persisted yet — the safe point at which an operator's
+    # force-promote / force-reject of ANY field candidate overrides the
+    # verdict. Unlike the gauntlet (one in-flight generation), a field round
+    # resolves a whole slate, so an override may target a non-winner, the
+    # crowned leader, or SEVERAL candidates (a tie / a multi-promote). Each
+    # matching command is claimed + archived; the result drives a
+    # ``promoted_ids`` SET (multi-promotion) whose default — no override — is
+    # the single crowned id, so the single-promotion path is byte-identical.
+    #
+    # ``promoted_ids`` is the multi-promotion set; ``promoted_id`` stays the
+    # PRIMARY head that advances ``current_generation`` (the crowned leader,
+    # or the lowest-scalar operator-promoted candidate when the leader was
+    # demoted). Every member of the set is marked promoted in lineage; only
+    # the primary head moves the champion pointer, keeping the single-head
+    # invariant the downstream guards rely on.
+    field_candidate_ids = [c.generation_id for c in applied]
+    field_overrides: dict[str, GateOverride] = claim_field_gate_overrides(
+        workspace_root, field_candidate_ids
+    )
+    promoted_ids: set[str] = {promoted_id} if promoted_id is not None else set()
+    override_provenance: dict[str, dict[str, Any]] = {}
+    if field_overrides:
+        for gid, ov in field_overrides.items():
+            override_provenance[gid] = _field_override_provenance(workspace_root, ov)
+            if ov.decision == "promoted":
+                promoted_ids.add(gid)
+                log.warning(
+                    "evolve: operator field override — generation %s force-promoted "
+                    "(structure %s); recording as an explicit override. reason=%s",
+                    gid,
+                    tournament_spec.structure,
+                    ov.reason,
+                )
+            else:  # "rejected"
+                promoted_ids.discard(gid)
+                log.warning(
+                    "evolve: operator field override — generation %s force-rejected "
+                    "(structure %s); recording as an explicit override. reason=%s",
+                    gid,
+                    tournament_spec.structure,
+                    ov.reason,
+                )
+        # Re-resolve the PRIMARY head after the overrides mutated the set.
+        # Prefer the originally-crowned leader if it survived; otherwise the
+        # lowest-scalar promoted candidate is the deterministic new head
+        # (mirrors the gate's lower-scalar-wins convention). The set is empty
+        # only when every leader was force-rejected ⇒ the champion stands.
+        if promoted_id is not None and promoted_id in promoted_ids:
+            pass  # leader survived — primary head unchanged
+        elif promoted_ids:
+            promoted_id = min(
+                promoted_ids,
+                key=lambda g: (
+                    float((_first_aggregate_for(g, decision) or {}).get("scalar", 0.0)),
+                    g,
+                ),
+            )
+        else:
+            promoted_id = None
+
     # The EFFECTIVE crowning verdict — what the workspace will actually
     # commit. The strategy's ``decision`` reflects the TRAIN-slice bracket
     # only; the holdout confirmation above can DEMOTE a train winner (sets
-    # ``promoted_id = None``). The durable bracket + the live envelope must
-    # describe the post-confirmation truth, NOT the pre-confirmation train
-    # decision — otherwise a settled bracket would assert ``promoted`` /
-    # ``promoted_generation_id`` for a generation the champion pointer +
-    # lineage never advance to (issue #20). A holdout flip rewrites the
-    # decision to ``rejected`` with the holdout cause and no promoted id, so
-    # every queryable store agrees the champion stood.
+    # ``promoted_id = None``), and an operator override can promote a
+    # non-winner or reject the leader. The durable bracket + the live envelope
+    # must describe the post-confirmation/post-override truth, NOT the
+    # pre-confirmation train decision — otherwise a settled bracket would
+    # assert ``promoted`` / ``promoted_generation_id`` for a generation the
+    # champion pointer + lineage never advance to (issue #20). A flip rewrites
+    # the decision to ``rejected`` with the cause and no promoted id, so every
+    # queryable store agrees the champion stood.
+    # When an operator override fired, the reason carries the override note so
+    # the settled bracket / journal one-liner is legible — never a silent flip.
+    override_decision_reason: str | None = None
+    if field_overrides:
+        head_ov = field_overrides.get(promoted_id) if promoted_id is not None else None
+        if head_ov is not None and head_ov.decision == "promoted":
+            override_decision_reason = f"operator override: {head_ov.reason}"
+        elif promoted_id is None:
+            # The leader was force-rejected and no candidate was promoted in
+            # its place — the champion stands under the operator's reject.
+            rej = next(
+                (o for o in field_overrides.values() if o.decision == "rejected"),
+                None,
+            )
+            if rej is not None:
+                override_decision_reason = f"operator override: {rej.reason}"
+
     effective_decision = decision
-    if promoted_id != decision.promoted_generation_id:
+    _decision_reason = (
+        override_decision_reason
+        if override_decision_reason is not None
+        else (crowning_reason_override if crowning_reason_override is not None else decision.reason)
+    )
+    if promoted_id != decision.promoted_generation_id or _decision_reason != decision.reason:
         effective_decision = replace(
             decision,
             promoted_generation_id=promoted_id,
@@ -2216,11 +2303,7 @@ async def _evolve_multi_challenger(
                 if promoted_id is not None
                 else TournamentDecision.REJECTED
             ),
-            reason=(
-                crowning_reason_override
-                if crowning_reason_override is not None
-                else decision.reason
-            ),
+            reason=_decision_reason,
         )
 
     # Settle the live envelope with the resolved rounds + standings so the
@@ -2268,6 +2351,10 @@ async def _evolve_multi_challenger(
         field_status=field_status or [],
         decision=effective_decision,
         state="settled",
+        # Operator override readback (additive — omitted when no override
+        # fired, so a gate-decided field round's record is byte-identical).
+        override_status=override_provenance or None,
+        promoted_generation_ids=(sorted(promoted_ids) if len(promoted_ids) > 1 else None),
     )
 
     rank_by_id = {s.generation_id: s.rank for s in decision.standings}
@@ -2315,11 +2402,16 @@ async def _evolve_multi_challenger(
     child_scalar_crown = parent_scalar
     for challenger in applied:
         gid = challenger.generation_id
-        is_crowned = gid == promoted_id
+        # A generation is crowned if it is in the (possibly multi-element)
+        # promoted set. With no operator override the set is exactly
+        # ``{promoted_id}`` (or empty), so this is ``gid == promoted_id`` —
+        # byte-identical to the single-promotion path.
+        is_crowned = gid in promoted_ids
+        gid_override = field_overrides.get(gid)
         gen_decision = "promoted" if is_crowned else "rejected"
         agg = _first_aggregate_for(gid, decision)
         gen_scalar = float(agg.get("scalar", 0.0)) if agg else 0.0
-        if is_crowned:
+        if gid == promoted_id:
             child_scalar_crown = gen_scalar
         # The crowning challenger (the survivor that reached the final
         # champion-gate duel) carries the Ladder/holdout evidence block + the
@@ -2351,6 +2443,14 @@ async def _evolve_multi_challenger(
             rejection_reason = "" if is_crowned else decision.reason
             holdout_block = None
             gen_fields = _generalization_fields_from_scalars(gen_scalar, None)
+        # An operator override on THIS generation makes its verdict explicit
+        # (the reject reason carries the override note; a forced promote clears
+        # it). Only stamped when an override fired, so a no-override field round
+        # records each generation's OutcomeRecord byte-identically.
+        operator_override = gid_override is not None
+        operator_override_reason = gid_override.reason if gid_override is not None else ""
+        if gid_override is not None:
+            rejection_reason = f"operator override: {gid_override.reason}" if not is_crowned else ""
         outcome_record = OutcomeRecord(
             ran_at=_now_iso(),
             drift_movements=(),
@@ -2359,6 +2459,8 @@ async def _evolve_multi_challenger(
             scalar_score_delta=gen_scalar - parent_scalar,
             tournament_decision=gen_decision,  # type: ignore[arg-type]
             rejection_reason=rejection_reason,
+            operator_override=operator_override,
+            operator_override_reason=operator_override_reason,
             structure=tournament_spec.structure,
             final_rank=rank_by_id.get(gid),
             match_record=tuple(matches_by_gen.get(gid, ())),
@@ -2397,12 +2499,15 @@ async def _evolve_multi_challenger(
             "refusing to advance the champion to a generation with no snapshot"
         )
 
-    # --- Lineage: the crowned generation on the spine (promoted), every
-    # other challenger recorded as a dead branch (rejected child of the
-    # champion). current_generation advances only on a promotion.
+    # --- Lineage: every PROMOTED generation on the spine (promoted=True),
+    # every other challenger recorded as a dead branch (rejected child of the
+    # champion). With no operator override the promoted set is the single
+    # crowned id (or empty), so this is byte-identical to single-promotion;
+    # an operator multi-promote marks each advanced candidate promoted while
+    # current_generation still advances only to the PRIMARY head below.
     for challenger in applied:
         gid = challenger.generation_id
-        is_crowned = gid == promoted_id
+        is_crowned = gid in promoted_ids
         gen_record = Generation(
             id=gid,
             epoch_id=epoch_id,
@@ -2525,6 +2630,27 @@ async def _evolve_multi_challenger(
         health_summary=health_summary,
         health_critical=health_critical,
     )
+
+
+def _field_override_provenance(workspace_root: Path, override: GateOverride) -> dict[str, Any]:
+    """Build a per-generation override-status readback record.
+
+    Surfaced on the durable field-tournament record so the dashboard's
+    structure reader can render WHICH candidate an operator force-promoted /
+    force-rejected, why, and when — the override is never silent. Shape:
+    ``{action, ts, reason, state}`` where ``action`` is ``"promote"`` /
+    ``"reject"``, ``state`` is ``"applied"`` (the override fired this round),
+    and ``ts`` is the consume time. ``workspace_root`` is accepted so a future
+    revision can fold in the consumed control-log sidecar without changing the
+    callers.
+    """
+    del workspace_root  # reserved for a future control-log cross-reference
+    return {
+        "action": "promote" if override.decision == "promoted" else "reject",
+        "ts": _now_iso(),
+        "reason": override.reason,
+        "state": "applied",
+    }
 
 
 def _resolve_round_champion_mode(

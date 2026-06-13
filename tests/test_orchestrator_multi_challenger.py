@@ -844,3 +844,195 @@ def test_field_entries_seeds_one_row_per_competitor() -> None:
     assert live["v1"].status == "completed"
     assert live["v2"].status == "running"
     assert live["v1"].loss_summary["scalar"] == 0.5
+
+
+# ---------------------------------------------------------------------------
+# Field operator overrides (control protocol) — promote/reject + multi-promote
+# ---------------------------------------------------------------------------
+
+
+def _queue_override(workspace: Path, action: str, generation_id: str, **body: str) -> None:
+    """Enqueue a promote/reject control command for a field candidate.
+
+    Writes the same control file the dashboard's field promote/reject button
+    produces (``runtime/control/<action>/<gen>`` with a JSON body carrying the
+    override's provenance), so ``evolve_once`` claims it at the field gate.
+    """
+    from zicato.runtime.control import ControlCommand, write_command
+
+    payload = json.dumps({"generation_id": generation_id, **body})
+    write_command(workspace, ControlCommand(name=action, arg=generation_id, payload=payload))
+
+
+def _field_tournament_record(workspace: Path, epoch_id: str, first_challenger_id: str) -> dict:
+    from zicato.core.workspace import field_tournament_path
+
+    path = field_tournament_path(workspace, epoch_id, first_challenger_id)
+    return json.loads(path.read_text())
+
+
+def test_field_override_promotes_a_non_winner(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An operator force-promotes a field candidate the structure did not crown.
+
+    To make the test deterministic regardless of the structure's own
+    tie-break, the operator promotes v2 AND rejects v1: v2 is then the only
+    promoted candidate, so the crowned head is v2 (a candidate the structure
+    would not have crowned over v1's lower loss). The override is recorded on
+    v2's OutcomeRecord and current_generation advances to v2."""
+    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2, rounds_n=1)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 0.5, "v2": 1.5},
+        canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
+    )
+    # Operator promotes the weaker idea v2 and rejects the strong v1.
+    _queue_override(workspace, "promote", "v2", reason="prefer the diverse idea", structure="swiss")
+    _queue_override(workspace, "reject", "v1", reason="too risky")
+
+    from zicato.orchestrator import _resolve_current_generation, evolve_once
+
+    outcome = asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
+        )
+    )
+
+    assert outcome.tournament_decision == "promoted"
+    # The operator-promoted candidate is the head, not the lower-loss v1.
+    assert _resolve_current_generation(workspace, epoch_id) == "v2"
+
+    gens = workspace / "epochs" / epoch_id / "generations"
+    v2_oc = json.loads((gens / "v2" / "experiment.json").read_text())["outcome"]
+    v1_oc = json.loads((gens / "v1" / "experiment.json").read_text())["outcome"]
+    assert v2_oc["tournament_decision"] == "promoted"
+    assert v2_oc["operator_override"] is True
+    assert v2_oc["operator_override_reason"] == "prefer the diverse idea"
+    assert v1_oc["tournament_decision"] == "rejected"
+    assert v1_oc["operator_override"] is True
+
+    # Lineage marks v2 promoted, v1 a dead branch.
+    lineage = json.loads((workspace / "lineage.json").read_text())
+    by_id = {
+        n["id"]: n for ep in lineage["epochs"] if ep["id"] == epoch_id for n in ep["generations"]
+    }
+    assert by_id["v2"]["promoted"] is True
+    assert by_id["v1"]["promoted"] is False
+
+    # The override is gone from pending (claimed + archived to control_log).
+    from zicato.runtime.control import list_pending_commands
+
+    assert list_pending_commands(workspace) == []
+
+
+def test_field_override_multi_promote_advances_two(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A tie / multi-promote: the operator promotes two candidates in one round.
+
+    The operator promotes BOTH v1 and v3. Both end up promoted in lineage;
+    current_generation advances to the lowest-scalar head (v1), and the
+    durable field record carries the full promoted SET + per-generation
+    override status. Deterministic regardless of the structure's own crown."""
+    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=3, rounds_n=1)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 3.0, "v1": 0.5, "v2": 2.5, "v3": 1.5},
+        canned_pass_by_gen={"v0": True, "v1": True, "v2": True, "v3": True},
+    )
+    _queue_override(workspace, "promote", "v1", reason="train leader")
+    _queue_override(workspace, "promote", "v3", reason="co-leader worth keeping")
+
+    from zicato.orchestrator import _resolve_current_generation, evolve_once
+
+    outcome = asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(3)),
+        )
+    )
+
+    assert outcome.tournament_decision == "promoted"
+    # The PRIMARY head is the lowest-scalar promoted candidate (v1, loss 0.5).
+    assert _resolve_current_generation(workspace, epoch_id) == "v1"
+
+    gens = workspace / "epochs" / epoch_id / "generations"
+    v1_oc = json.loads((gens / "v1" / "experiment.json").read_text())["outcome"]
+    v3_oc = json.loads((gens / "v3" / "experiment.json").read_text())["outcome"]
+    # Both candidates are promoted by operator override.
+    assert v1_oc["tournament_decision"] == "promoted"
+    assert v3_oc["tournament_decision"] == "promoted"
+    assert v1_oc["operator_override"] is True
+    assert v3_oc["operator_override"] is True
+
+    # Lineage marks BOTH promoted (the multi-promote spine).
+    lineage = json.loads((workspace / "lineage.json").read_text())
+    by_id = {
+        n["id"]: n for ep in lineage["epochs"] if ep["id"] == epoch_id for n in ep["generations"]
+    }
+    assert by_id["v1"]["promoted"] is True
+    assert by_id["v3"]["promoted"] is True
+    assert by_id["v2"]["promoted"] is False
+
+    # The durable field record carries the full promoted SET + override status.
+    record = _field_tournament_record(workspace, epoch_id, "v1")
+    assert sorted(record["promoted_generation_ids"]) == ["v1", "v3"]
+    assert record["override_status"]["v3"]["action"] == "promote"
+    assert record["override_status"]["v3"]["state"] == "applied"
+    assert record["override_status"]["v3"]["reason"] == "co-leader worth keeping"
+
+
+def test_field_override_rejects_every_challenger_champion_stands(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An operator force-rejects the whole field — the champion stands.
+
+    Rejecting every applied challenger leaves no promoted candidate
+    regardless of which one the structure crowned, so current_generation
+    stays at v0 and each challenger's reject carries the override note."""
+    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2, rounds_n=1)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 0.5, "v2": 1.5},
+        canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
+    )
+    _queue_override(workspace, "reject", "v1", reason="regression risk")
+    _queue_override(workspace, "reject", "v2", reason="regression risk")
+
+    from zicato.orchestrator import _resolve_current_generation, evolve_once
+
+    outcome = asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
+        )
+    )
+
+    assert outcome.tournament_decision == "rejected"
+    # The champion stands — no challenger advanced.
+    assert _resolve_current_generation(workspace, epoch_id) == "v0"
+
+    gens = workspace / "epochs" / epoch_id / "generations"
+    for gid in ("v1", "v2"):
+        oc = json.loads((gens / gid / "experiment.json").read_text())["outcome"]
+        assert oc["tournament_decision"] == "rejected"
+        assert oc["operator_override"] is True
+        assert "regression risk" in oc["rejection_reason"]
+
+    lineage = json.loads((workspace / "lineage.json").read_text())
+    by_id = {
+        n["id"]: n for ep in lineage["epochs"] if ep["id"] == epoch_id for n in ep["generations"]
+    }
+    assert by_id["v1"]["promoted"] is False
+    assert by_id["v2"]["promoted"] is False
