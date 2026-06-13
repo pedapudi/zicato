@@ -53,6 +53,7 @@ def _holdout_aggs(
     child_losses: dict[str, LossProfile],
     weights: ScoringWeights,
     epoch_id: str | None = None,
+    child_diff_size: dict[str, int] | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     """Return the holdout parent/child aggregates, or ``(None, None)``.
 
@@ -66,6 +67,12 @@ def _holdout_aggs(
     the holdout ids — the confirmation-only slice the proposer never sees.
     A holdout id with no recorded loss on a side is simply omitted from
     that side's aggregate (the gate compares whatever overlaps).
+
+    ``child_diff_size`` is the opt-in parsimony / MDL input threaded ONLY into
+    the CHALLENGER (child) aggregate so the diff-complexity term measures the
+    challenger's diff against a champion baseline that pays no parsimony cost.
+    ``None`` (the default, and any contract with ``diff_complexity_weight ==
+    0.0``) leaves both aggregates byte-identical to today.
     """
     from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
 
@@ -80,7 +87,7 @@ def _holdout_aggs(
     child_holdout = _losses_for(board, holdout_set, child_losses)
     return (
         aggregate_generation_score(parent_holdout, weights),
-        aggregate_generation_score(child_holdout, weights),
+        aggregate_generation_score(child_holdout, weights, diff_size=child_diff_size),
     )
 
 
@@ -90,6 +97,7 @@ def _train_aggs(
     child_losses: dict[str, LossProfile],
     weights: ScoringWeights,
     epoch_id: str | None = None,
+    child_diff_size: dict[str, int] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return the TRAIN-slice parent/child aggregates.
 
@@ -97,6 +105,10 @@ def _train_aggs(
     standings. When the holdout is empty the train slice IS the full board,
     so these aggregates are byte-identical to the pre-split full-board
     aggregates — the back-compat invariant.
+
+    ``child_diff_size`` is the opt-in parsimony / MDL input threaded ONLY into
+    the CHALLENGER (child) aggregate (see :func:`_holdout_aggs`). ``None`` (the
+    default / a ``diff_complexity_weight == 0.0`` contract) is byte-identical.
     """
     from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
 
@@ -107,7 +119,7 @@ def _train_aggs(
     child_train = _losses_for(board, train_set, child_losses)
     return (
         aggregate_generation_score(parent_train, weights),
-        aggregate_generation_score(child_train, weights),
+        aggregate_generation_score(child_train, weights, diff_size=child_diff_size),
     )
 
 

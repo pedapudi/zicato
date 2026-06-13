@@ -794,6 +794,18 @@ async def evolve_once(
                 exc,
             )
             parent_historical = None
+    # Diff-complexity (parsimony / MDL) input, OVERFITTING.md §5 / §12 #4. The
+    # challenger's diff size from its patch records, threaded into the
+    # CHALLENGER aggregate only. Folds a ``diff_complexity`` component into the
+    # challenger's scalar ONLY when ``weights.diff_complexity_weight > 0``;
+    # ``aggregate_generation_score`` treats it as exactly absent at the default,
+    # so computing it here is harmless for a contract that does not opt in. Fast
+    # mode compares against a cached whole-board champion aggregate and does not
+    # re-derive the challenger scalar through this path, so the term applies on
+    # the full A/B path (where the gate actually re-scores the challenger).
+    from zicato.scoring.diff_complexity import diff_size as _diff_size  # noqa: PLC0415
+
+    child_diff_size = _diff_size(experiment)
     if fast_mode and parent_historical is not None:
         tournament_result = await run_fast_mode(
             adapter=adapter,
@@ -841,6 +853,11 @@ async def evolve_once(
             # only the unfinished entries re-run. A cold start keeps the
             # historical force-fresh full A/B evaluation byte-for-byte.
             force_fresh=resumed_experiment is None,
+            # Opt-in parsimony / MDL term: the challenger's diff size. A no-op
+            # at the default ``diff_complexity_weight == 0.0`` (the term is
+            # exactly absent), so this is byte-identical for contracts that do
+            # not opt in.
+            child_diff_size=child_diff_size,
         )
 
     # Cache gen_score.json for future fast-mode runs.

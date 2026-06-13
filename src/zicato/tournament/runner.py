@@ -898,8 +898,19 @@ async def run_tournament(
     round_index: int = 0,
     total_rounds: int = 0,
     force_fresh: bool = True,
+    child_diff_size: dict[str, int] | None = None,
 ) -> TournamentResult:
     """Run a full A/B tournament. See module docstring.
+
+    ``child_diff_size`` is the OPT-IN parsimony / MDL input (OVERFITTING.md §5
+    / §12 #4): the challenger generation's ``{added, removed, patches}`` diff
+    size (see :func:`zicato.scoring.diff_complexity.diff_size`), threaded by the
+    orchestrator from the child experiment's patch records. It folds a
+    ``diff_complexity`` component into the CHALLENGER's scalar only when
+    ``weights.diff_complexity_weight > 0``. ``None`` (every caller that does
+    not opt in, and any ``diff_complexity_weight == 0.0`` contract) is
+    byte-identical to today — the champion side never carries it, so the gate
+    compares the challenger's diff against a parsimony-free baseline.
 
     ``force_fresh`` defaults to ``True`` — the historical behaviour, in
     which the rigorous full A/B path re-evaluates BOTH sides from scratch
@@ -1051,9 +1062,11 @@ async def run_tournament(
     # to the pre-split full-board aggregates. The holdout slice (if any) is
     # confirmation-only and is threaded into the gate separately; it never
     # becomes the generation's reported score.
-    parent_agg, child_agg = _train_aggs(board, parent_losses, child_losses, weights, epoch_id)
+    parent_agg, child_agg = _train_aggs(
+        board, parent_losses, child_losses, weights, epoch_id, child_diff_size=child_diff_size
+    )
     holdout_parent_agg, holdout_child_agg = _holdout_aggs(
-        board, parent_losses, child_losses, weights, epoch_id
+        board, parent_losses, child_losses, weights, epoch_id, child_diff_size=child_diff_size
     )
 
     # The regression check + the three train-slice rules decide on the TRAIN

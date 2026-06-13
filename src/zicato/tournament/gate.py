@@ -522,11 +522,45 @@ def evaluate_gate(
     )
 
 
+def diff_size_evidence(
+    parent_agg: dict[str, Any],
+    child_agg: dict[str, Any],
+) -> list[str]:
+    """Return the opt-in ``diff_size:{side}:{added,removed,patches}`` evidence.
+
+    The parsimony / MDL term (OVERFITTING.md §5 / §12 #4) echoes the candidate
+    diff size onto an aggregate only when it is active (see
+    :func:`zicato.tournament.scoring.aggregate_generation_score`). This formats
+    those sizes as gate-evidence strings, one per side that carries one:
+
+        ``diff_size:champion:added=<a>,removed=<r>,patches=<p>``
+        ``diff_size:challenger:added=<a>,removed=<r>,patches=<p>``
+
+    Returns ``[]`` when neither aggregate carries a ``diff_size`` — the
+    default-off case — so a caller that always asks for the evidence pays
+    nothing and surfaces nothing when the term is disabled. The champion
+    aggregate ordinarily has no diff size (the runner threads it only for the
+    challenger), so this usually yields a single ``challenger`` line; the
+    ``champion`` branch is here for symmetry / completeness.
+    """
+    lines: list[str] = []
+    for side, agg in (("champion", parent_agg), ("challenger", child_agg)):
+        ds = agg.get("diff_size")
+        if not isinstance(ds, dict):
+            continue
+        added = int(ds.get("added", 0))
+        removed = int(ds.get("removed", 0))
+        patches = int(ds.get("patches", 0))
+        lines.append(f"diff_size:{side}:added={added},removed={removed},patches={patches}")
+    return lines
+
+
 __all__ = [
     "GateOutcome",
     "NAMESPACE_MONOTONICITY_TOLERANCE",
     "PASS_RATE_MONOTONICITY_TOLERANCE",
     "PER_ENTRY_SCORE_MONOTONICITY_TOLERANCE",
+    "diff_size_evidence",
     "evaluate_gate",
     "holdout_confirms",
 ]
