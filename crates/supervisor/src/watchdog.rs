@@ -48,6 +48,18 @@ pub struct PromotionGateConfig {
     pub findings: Arc<crate::promotion_gate::PromotionGateFindings>,
 }
 
+/// Index-vs-canonical divergence-audit configuration threaded into
+/// [`runs_loop`].
+///
+/// `enabled` gates the per-tick audit (off by default); `findings` is the
+/// shared store; `stuck_age_seconds` is the (c)-check threshold.
+#[derive(Clone)]
+pub struct DivergenceConfig {
+    pub enabled: bool,
+    pub findings: Arc<crate::divergence::DivergenceFindings>,
+    pub stuck_age_seconds: i64,
+}
+
 /// Record one watchdog escalation in the in-memory ring AND, when a
 /// tamper-evident ledger is configured, append it to the persisted
 /// hash-chained ledger too.
@@ -200,6 +212,51 @@ fn run_promotion_gate_scan(
     }
     *previously_flagged = current;
     gate.findings.record(view);
+}
+
+/// Run one index-vs-canonical divergence audit and surface its findings.
+///
+/// READ-ONLY (v1): joins the canonical lineage / epoch config against the
+/// index and records the latest findings into the shared store for `/statusz`.
+/// When a ledger is configured, appends a hard alert per newly-observed
+/// finding, de-duplicated by `(code, generation_id)` so a standing divergence
+/// alerts once. Never writes the index or the canonical trees.
+fn run_divergence_audit(
+    paths: &WorkspacePaths,
+    divergence: &DivergenceConfig,
+    ledger: Option<&Arc<AuditLedger>>,
+    previously_seen: &mut HashSet<(String, Option<String>)>,
+) {
+    let view =
+        crate::divergence::audit(paths, Utc::now(), divergence.stuck_age_seconds);
+
+    let mut current: HashSet<(String, Option<String>)> = HashSet::new();
+    for f in &view.findings {
+        let key = (f.code.to_string(), f.generation_id.clone());
+        current.insert(key.clone());
+        if !previously_seen.contains(&key) {
+            warn!(
+                code = f.code,
+                epoch_id = %f.epoch_id,
+                generation_id = ?f.generation_id,
+                "DIVERGENCE FINDING: {}",
+                f.detail,
+            );
+            if let Some(ledger) = ledger {
+                ledger.append(
+                    crate::ledger::RecordKind::DivergenceFinding,
+                    serde_json::json!({
+                        "code": f.code,
+                        "epoch_id": f.epoch_id,
+                        "generation_id": f.generation_id,
+                        "detail": f.detail,
+                    }),
+                );
+            }
+        }
+    }
+    *previously_seen = current;
+    divergence.findings.record(view);
 }
 
 /// Thresholds for watchdog decisions.
@@ -916,6 +973,7 @@ pub async fn runs_loop(
     ledger: Option<Arc<AuditLedger>>,
     diff: DiffContainmentConfig,
     promotion_gate: PromotionGateConfig,
+    divergence: DivergenceConfig,
     shutdown: Sender<()>,
 ) {
     let mut ticker = tokio::time::interval(interval);
@@ -931,6 +989,8 @@ pub async fn runs_loop(
     let mut quarantined: HashSet<(String, String)> = HashSet::new();
     // Generations flagged by the prior promotion-gate scan (same de-dup).
     let mut gate_flagged: HashSet<(String, String)> = HashSet::new();
+    // Findings seen by the prior divergence audit, keyed by (code, gen).
+    let mut divergence_seen: HashSet<(String, Option<String>)> = HashSet::new();
     loop {
         tokio::select! {
             _ = ticker.tick() => {
@@ -959,6 +1019,17 @@ pub async fn runs_loop(
                         &promotion_gate,
                         ledger.as_ref(),
                         &mut gate_flagged,
+                    );
+                }
+                // Index-vs-canonical divergence audit (read-only). Off by
+                // default; when enabled, joins canonical + index and flags
+                // divergences / stuck in-flight generations.
+                if divergence.enabled {
+                    run_divergence_audit(
+                        &paths,
+                        &divergence,
+                        ledger.as_ref(),
+                        &mut divergence_seen,
                     );
                 }
                 // Protect the orchestrator pid (carried by the heartbeat)

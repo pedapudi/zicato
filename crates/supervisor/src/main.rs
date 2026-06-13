@@ -111,6 +111,24 @@ struct Cli {
     #[arg(long, default_value_t = false)]
     promotion_gate: bool,
 
+    /// Enable the index-vs-canonical divergence auditor (INTEGRITY NOTARY
+    /// record #4).
+    ///
+    /// When set, each watchdog tick joins the canonical lineage / epoch config
+    /// against the SQLite index and flags promoted / parent / decision
+    /// divergence, contract-hash mismatch / malformed hashes, and a stuck
+    /// in-flight generation (dead worker, never resolved past the age
+    /// threshold). Read-only: it only reports (on `/statusz` and, when a
+    /// ledger is configured, the ledger). Off by default.
+    #[arg(long, default_value_t = false)]
+    divergence_audit: bool,
+
+    /// Age (seconds) past which a divergence-audit stuck in-flight generation
+    /// (dead worker, unresolved) is reported. Only consulted with
+    /// `--divergence-audit`.
+    #[arg(long, default_value_t = 3600)]
+    divergence_stuck_age_seconds: i64,
+
     /// Directory for the supervisor's tamper-evident audit ledger.
     ///
     /// When set, the supervisor opens (or creates) a persisted, append-only,
@@ -253,6 +271,13 @@ async fn main() -> std::process::ExitCode {
         info!("promotion gatekeeping enabled (alarm-only)");
     }
 
+    // Divergence-audit findings store (INTEGRITY NOTARY record #4).
+    let divergence_findings =
+        Arc::new(zicato_supervisor::divergence::DivergenceFindings::new());
+    if cli.divergence_audit {
+        info!("index-vs-canonical divergence auditor enabled (read-only)");
+    }
+
     let interval = Duration::from_secs(cli.interval.max(1));
     let hb_paths = paths.clone();
     let hb_shutdown = shutdown_tx.clone();
@@ -267,8 +292,11 @@ async fn main() -> std::process::ExitCode {
     let run_ledger = ledger.clone();
     let run_diff = diff_findings.clone();
     let run_gate = promotion_gate_findings.clone();
+    let run_divergence = divergence_findings.clone();
     let diff_enabled = cli.diff_containment;
     let gate_enabled = cli.promotion_gate;
+    let divergence_enabled = cli.divergence_audit;
+    let divergence_stuck_age = cli.divergence_stuck_age_seconds;
     tokio::spawn(async move {
         watchdog::runs_loop(
             run_paths,
@@ -283,6 +311,11 @@ async fn main() -> std::process::ExitCode {
             watchdog::PromotionGateConfig {
                 enabled: gate_enabled,
                 findings: run_gate,
+            },
+            watchdog::DivergenceConfig {
+                enabled: divergence_enabled,
+                findings: run_divergence,
+                stuck_age_seconds: divergence_stuck_age,
             },
             run_shutdown,
         )
@@ -304,6 +337,7 @@ async fn main() -> std::process::ExitCode {
             ledger: ledger.clone(),
             diff_findings: diff_findings.clone(),
             promotion_gate_findings: promotion_gate_findings.clone(),
+            divergence_findings: divergence_findings.clone(),
         },
         watch_tx.clone(),
         shutdown_tx.clone(),

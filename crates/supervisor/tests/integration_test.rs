@@ -38,6 +38,9 @@ fn serve_opts(read_only: bool) -> server::ServeOptions {
         promotion_gate_findings: Arc::new(
             zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
         ),
+        divergence_findings: Arc::new(
+            zicato_supervisor::divergence::DivergenceFindings::new(),
+        ),
     }
 }
 
@@ -1010,6 +1013,13 @@ async fn watchdog_sigterms_run_past_its_deadline() {
                     zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
                 ),
             },
+            watchdog::DivergenceConfig {
+                enabled: false,
+                findings: Arc::new(
+                    zicato_supervisor::divergence::DivergenceFindings::new(),
+                ),
+                stuck_age_seconds: 3600,
+            },
             loop_shutdown,
         )
         .await
@@ -1064,6 +1074,13 @@ async fn watchdog_escalates_to_sigkill_when_run_ignores_sigterm() {
                     zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
                 ),
             },
+            watchdog::DivergenceConfig {
+                enabled: false,
+                findings: Arc::new(
+                    zicato_supervisor::divergence::DivergenceFindings::new(),
+                ),
+                stuck_age_seconds: 3600,
+            },
             loop_shutdown,
         )
         .await
@@ -1105,6 +1122,13 @@ async fn watchdog_does_not_kill_run_when_deadline_disabled() {
                 findings: Arc::new(
                     zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
                 ),
+            },
+            watchdog::DivergenceConfig {
+                enabled: false,
+                findings: Arc::new(
+                    zicato_supervisor::divergence::DivergenceFindings::new(),
+                ),
+                stuck_age_seconds: 3600,
             },
             loop_shutdown,
         )
@@ -1163,6 +1187,13 @@ async fn watchdog_never_signals_orchestrator_or_init_pids() {
                 findings: Arc::new(
                     zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
                 ),
+            },
+            watchdog::DivergenceConfig {
+                enabled: false,
+                findings: Arc::new(
+                    zicato_supervisor::divergence::DivergenceFindings::new(),
+                ),
+                stuck_age_seconds: 3600,
             },
             loop_shutdown,
         )
@@ -1716,6 +1747,9 @@ async fn statusz_routes_reachable_with_no_dashboard() {
         promotion_gate_findings: Arc::new(
             zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
         ),
+        divergence_findings: Arc::new(
+            zicato_supervisor::divergence::DivergenceFindings::new(),
+        ),
     };
     let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);
@@ -1804,6 +1838,9 @@ async fn statusz_surfaces_recorded_watchdog_actions() {
         promotion_gate_findings: Arc::new(
             zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
         ),
+        divergence_findings: Arc::new(
+            zicato_supervisor::divergence::DivergenceFindings::new(),
+        ),
     };
     let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);
@@ -1890,6 +1927,9 @@ async fn audit_verify_reports_intact_chain_and_statusz_surfaces_it() {
         promotion_gate_findings: Arc::new(
             zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
         ),
+        divergence_findings: Arc::new(
+            zicato_supervisor::divergence::DivergenceFindings::new(),
+        ),
     };
     let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);
@@ -1951,6 +1991,9 @@ async fn audit_verify_detects_a_tampered_chain() {
         ),
         promotion_gate_findings: Arc::new(
             zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
+        ),
+        divergence_findings: Arc::new(
+            zicato_supervisor::divergence::DivergenceFindings::new(),
         ),
     };
     let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
@@ -2073,6 +2116,13 @@ async fn diff_containment_quarantines_an_out_of_bounds_child_end_to_end() {
                     zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
                 ),
             },
+            watchdog::DivergenceConfig {
+                enabled: false,
+                findings: Arc::new(
+                    zicato_supervisor::divergence::DivergenceFindings::new(),
+                ),
+                stuck_age_seconds: 3600,
+            },
             loop_shutdown,
         )
         .await
@@ -2093,6 +2143,9 @@ async fn diff_containment_quarantines_an_out_of_bounds_child_end_to_end() {
         diff_findings: findings.clone(),
         promotion_gate_findings: Arc::new(
             zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
+        ),
+        divergence_findings: Arc::new(
+            zicato_supervisor::divergence::DivergenceFindings::new(),
         ),
     };
     let (handle, server_shutdown) = start_server_with(paths.clone(), opts).await;
@@ -2187,6 +2240,13 @@ async fn diff_containment_passes_an_in_bounds_child_end_to_end() {
                     zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
                 ),
             },
+            watchdog::DivergenceConfig {
+                enabled: false,
+                findings: Arc::new(
+                    zicato_supervisor::divergence::DivergenceFindings::new(),
+                ),
+                stuck_age_seconds: 3600,
+            },
             loop_shutdown,
         )
         .await
@@ -2238,6 +2298,13 @@ async fn promotion_gate_alarms_on_a_decision_that_contradicts_the_scores() {
                 enabled: true,
                 findings: loop_findings,
             },
+            watchdog::DivergenceConfig {
+                enabled: false,
+                findings: Arc::new(
+                    zicato_supervisor::divergence::DivergenceFindings::new(),
+                ),
+                stuck_age_seconds: 3600,
+            },
             loop_shutdown,
         )
         .await
@@ -2257,6 +2324,9 @@ async fn promotion_gate_alarms_on_a_decision_that_contradicts_the_scores() {
             zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
         ),
         promotion_gate_findings: findings.clone(),
+        divergence_findings: Arc::new(
+            zicato_supervisor::divergence::DivergenceFindings::new(),
+        ),
     };
     let (handle, server_shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);
@@ -2286,6 +2356,121 @@ async fn promotion_gate_alarms_on_a_decision_that_contradicts_the_scores() {
         .await
         .unwrap();
     assert!(html.contains("DECISION CONTRADICTS SCORES"));
+
+    let _ = shutdown_tx.send(());
+    let _ = server_shutdown.send(());
+}
+
+// ---- index-vs-canonical divergence audit (INTEGRITY NOTARY record #4) ---
+
+#[tokio::test]
+async fn divergence_audit_flags_a_promoted_mismatch_end_to_end() {
+    let (_t, paths) = make_workspace();
+    // The shared index fixture marks v2 promoted=1. Make the CANONICAL side
+    // disagree: v2's experiment.json records a `rejected` outcome. The audit
+    // must flag the promoted divergence.
+    write_index_db(&paths);
+    std::fs::write(paths.current_epoch_marker(), "2026-05-15_e0").unwrap();
+    // Epoch config contract_hash matching the index's (the fixture's epochs
+    // table is absent, so no contract-hash finding — isolate the promoted one).
+    let gen_dir = paths
+        .epochs
+        .join("2026-05-15_e0")
+        .join("generations")
+        .join("v2");
+    std::fs::create_dir_all(&gen_dir).unwrap();
+    std::fs::write(
+        gen_dir.join("experiment.json"),
+        serde_json::json!({"parent_generation_id": "v0", "outcome": {"decision": "rejected"}})
+            .to_string(),
+    )
+    .unwrap();
+
+    let findings = Arc::new(zicato_supervisor::divergence::DivergenceFindings::new());
+    let (shutdown_tx, _) = broadcast::channel(4);
+    let loop_paths = paths.clone();
+    let loop_shutdown = shutdown_tx.clone();
+    let loop_findings = findings.clone();
+    tokio::spawn(async move {
+        watchdog::runs_loop(
+            loop_paths,
+            fast_thresholds(false),
+            Duration::from_millis(50),
+            Arc::new(WatchdogLog::new()),
+            None,
+            watchdog::DiffContainmentConfig {
+                enabled: false,
+                findings: Arc::new(
+                    zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+                ),
+            },
+            watchdog::PromotionGateConfig {
+                enabled: false,
+                findings: Arc::new(
+                    zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
+                ),
+            },
+            watchdog::DivergenceConfig {
+                enabled: true,
+                findings: loop_findings,
+                stuck_age_seconds: 3600,
+            },
+            loop_shutdown,
+        )
+        .await
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let opts = server::ServeOptions {
+        read_only: true,
+        dashboard_disabled: false,
+        heartbeat_stale_threshold_seconds: 30,
+        action_log: Arc::new(WatchdogLog::new()),
+        seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
+        fold_diagnostics: Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new()),
+        ledger: None,
+        diff_findings: Arc::new(
+            zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+        ),
+        promotion_gate_findings: Arc::new(
+            zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
+        ),
+        divergence_findings: findings.clone(),
+    };
+    let (handle, server_shutdown) = start_server_with(paths.clone(), opts).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let s: Value = client
+        .get(format!("{base}/statusz.json"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let dv = &s["divergence"];
+    assert_eq!(dv["scanned"], true);
+    let codes: Vec<&str> = dv["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["code"].as_str().unwrap())
+        .collect();
+    assert!(
+        codes.contains(&"promoted_divergence"),
+        "expected a promoted_divergence finding, got {codes:?}",
+    );
+
+    let html = client
+        .get(format!("{base}/statusz"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(html.contains("DIVERGENCE"));
 
     let _ = shutdown_tx.send(());
     let _ = server_shutdown.send(());

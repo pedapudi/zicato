@@ -91,6 +91,10 @@ pub struct ServeOptions {
     /// The latest promotion-gatekeeping scan result, shared with the watchdog
     /// loop (filled when `--promotion-gate` is set). `/statusz` surfaces it.
     pub promotion_gate_findings: Arc<crate::promotion_gate::PromotionGateFindings>,
+    /// The latest index-vs-canonical divergence-audit result, shared with the
+    /// watchdog loop (filled when `--divergence-audit` is set). `/statusz`
+    /// surfaces it.
+    pub divergence_findings: Arc<crate::divergence::DivergenceFindings>,
 }
 
 pub async fn serve(
@@ -123,6 +127,7 @@ pub async fn serve(
         ledger: options.ledger,
         diff_findings: options.diff_findings,
         promotion_gate_findings: options.promotion_gate_findings,
+        divergence_findings: options.divergence_findings,
     };
 
     let cors = CorsLayer::new()

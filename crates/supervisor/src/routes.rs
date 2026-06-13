@@ -64,6 +64,9 @@ pub struct AppState {
     /// The latest promotion-gatekeeping scan result; `/statusz` surfaces it as
     /// an ALERT when a recorded promotion contradicts its recorded scores.
     pub promotion_gate_findings: Arc<crate::promotion_gate::PromotionGateFindings>,
+    /// The latest index-vs-canonical divergence-audit result; `/statusz`
+    /// surfaces its findings.
+    pub divergence_findings: Arc<crate::divergence::DivergenceFindings>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -174,6 +177,7 @@ fn build_statusz_view(s: &AppState) -> statusz::StatuszView {
         audit_ledger,
         s.diff_findings.view(),
         s.promotion_gate_findings.view(),
+        s.divergence_findings.view(),
     )
 }
 

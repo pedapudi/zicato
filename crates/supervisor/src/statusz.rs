@@ -124,6 +124,8 @@ pub struct StatuszView {
     pub diff_containment: crate::diff_containment::DiffContainmentView,
     /// Latest promotion-gatekeeping scan result (record #3).
     pub promotion_gate: crate::promotion_gate::PromotionGateView,
+    /// Latest index-vs-canonical divergence-audit result (record #4).
+    pub divergence: crate::divergence::DivergenceView,
 }
 
 /// The audit ledger's configured-ness and chain integrity, for `/statusz`.
@@ -260,6 +262,7 @@ pub fn build_statusz(
     audit_ledger: AuditStatus,
     diff_containment: crate::diff_containment::DiffContainmentView,
     promotion_gate: crate::promotion_gate::PromotionGateView,
+    divergence: crate::divergence::DivergenceView,
 ) -> StatuszView {
     let now = Utc::now();
 
@@ -309,6 +312,7 @@ pub fn build_statusz(
         audit_ledger,
         diff_containment,
         promotion_gate,
+        divergence,
     }
 }
 
@@ -684,6 +688,50 @@ th{color:#888;font-weight:normal}\
         out.push_str("</table>");
     }
 
+    // Index-vs-canonical divergence audit.
+    let dv = &v.divergence;
+    out.push_str("<h2>index divergence</h2><table>");
+    if !dv.scanned {
+        out.push_str(
+            "<tr><th>state</th><td class=\"dim\">not scanned \
+(pass --divergence-audit to enable the auditor)</td></tr>",
+        );
+    } else {
+        let n = dv.findings.len();
+        let (cls, label) = if n > 0 {
+            ("bad", "DIVERGENCE")
+        } else {
+            ("ok", "consistent")
+        };
+        out.push_str(&format!(
+            "<tr><th>state</th><td class=\"{cls}\">{label}</td></tr>"
+        ));
+        out.push_str(&format!(
+            "<tr><th>generations checked</th><td>{}</td></tr>",
+            dv.generations_checked
+        ));
+        out.push_str(&format!(
+            "<tr><th>findings</th><td class=\"{}\">{}</td></tr>",
+            if n > 0 { "bad" } else { "ok" },
+            n
+        ));
+    }
+    out.push_str("</table>");
+    if !dv.findings.is_empty() {
+        out.push_str(
+            "<table><tr><th>code</th><th>generation</th><th>detail</th></tr>",
+        );
+        for f in &dv.findings {
+            out.push_str(&format!(
+                "<tr><td class=\"bad\">{}</td><td>{}</td><td class=\"bad\">{}</td></tr>",
+                f.code,
+                esc(f.generation_id.as_deref().unwrap_or("-")),
+                esc(&f.detail),
+            ));
+        }
+        out.push_str("</table>");
+    }
+
     out.push_str(&format!(
         "<p class=\"dim\">generated {}</p>",
         esc(&v.generated_at)
@@ -845,6 +893,7 @@ mod tests {
             audit_ledger: Default::default(),
             diff_containment: Default::default(),
             promotion_gate: Default::default(),
+            divergence: Default::default(),
         };
         let html = render_html(&view);
         assert!(html.starts_with("<!doctype html>"));
@@ -881,6 +930,7 @@ mod tests {
             audit_ledger: Default::default(),
             diff_containment: Default::default(),
             promotion_gate: Default::default(),
+            divergence: Default::default(),
         };
         let html = render_html(&view);
         assert!(html.contains("/tmp/&lt;evil&gt;"));

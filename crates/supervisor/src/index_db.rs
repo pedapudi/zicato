@@ -217,6 +217,20 @@ pub fn tournaments_for_epoch(conn: &Connection, epoch_id: &str) -> Vec<Tournamen
     }
 }
 
+/// The `epochs.contract_hash` recorded in the index for `epoch_id`, if the
+/// `epochs` table exists and carries a row. `None` when the table/row is
+/// absent or the column is NULL — the divergence auditor treats that as "no
+/// index hash to compare", not a divergence.
+pub fn epoch_contract_hash(conn: &Connection, epoch_id: &str) -> Option<String> {
+    let mut stmt = conn
+        .prepare("SELECT contract_hash FROM epochs WHERE epoch_id = ?1 LIMIT 1")
+        .ok()?;
+    let mut rows = stmt
+        .query_map([epoch_id], |row| Ok(opt_str(row, 0)))
+        .ok()?;
+    rows.next().and_then(|r| r.ok()).flatten()
+}
+
 /// All `generations` rows for `epoch_id`.
 pub fn generations_for_epoch(conn: &Connection, epoch_id: &str) -> Vec<GenerationRow> {
     let sql = "SELECT epoch_id, generation_id, parent_generation_id, promoted \
@@ -355,7 +369,9 @@ mod tests {
         let path = dir.join("index.db");
         let conn = Connection::open(&path).unwrap();
         conn.execute_batch(
-            "CREATE TABLE generations(epoch_id TEXT, generation_id TEXT, \
+            "CREATE TABLE epochs(epoch_id TEXT PRIMARY KEY, contract_hash TEXT, \
+                 created_at TEXT, closed INTEGER, goal TEXT, parent_epoch_id TEXT);
+             CREATE TABLE generations(epoch_id TEXT, generation_id TEXT, \
                  parent_generation_id TEXT, promoted INTEGER);
              CREATE TABLE experiments(epoch_id TEXT, generation_id TEXT, \
                  hypothesis_core_idea TEXT, hypothesis_why TEXT, hypothesis_json TEXT, \
@@ -369,6 +385,7 @@ mod tests {
                  parent_generation_id TEXT, child_generation_id TEXT, decision TEXT, \
                  parent_scalar REAL, child_scalar REAL, delta_scalar REAL, \
                  rejection_reason TEXT, ran_at TEXT);
+             INSERT INTO epochs VALUES('e1','abc123def456',NULL,0,NULL,NULL);
              INSERT INTO generations VALUES('e1','v0',NULL,1);
              INSERT INTO generations VALUES('e1','v1','v0',0);
              INSERT INTO generations VALUES('e1','v2','v0',1);
@@ -425,6 +442,19 @@ mod tests {
             Some("tighten the planner")
         );
         assert_eq!(rows[1].child_generation_id.as_deref(), Some("v2"));
+    }
+
+    #[test]
+    fn reads_epoch_contract_hash() {
+        let tmp = TempDir::new().unwrap();
+        let path = build_index(tmp.path());
+        let conn = open(&path).unwrap();
+        assert_eq!(
+            epoch_contract_hash(&conn, "e1").as_deref(),
+            Some("abc123def456")
+        );
+        // An unknown epoch has no row → None.
+        assert_eq!(epoch_contract_hash(&conn, "nope"), None);
     }
 
     #[test]
