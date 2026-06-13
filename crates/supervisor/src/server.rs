@@ -76,6 +76,9 @@ pub struct ServeOptions {
     /// Heartbeat seq-liveness tracker shared with the watchdog loop so
     /// `/statusz` reports the same seq-change age the watchdog decides on.
     pub seq_liveness: Arc<std::sync::Mutex<crate::watchdog::SeqLiveness>>,
+    /// Cumulative torn-write / non-monotonic-seq counters over the canonical
+    /// active-tournament JSONL fold; `/statusz` surfaces it.
+    pub fold_diagnostics: Arc<crate::fold_stats::FoldDiagnostics>,
 }
 
 pub async fn serve(
@@ -104,6 +107,7 @@ pub async fn serve(
         heartbeat_stale_threshold_seconds: options.heartbeat_stale_threshold_seconds,
         action_log: options.action_log,
         seq_liveness: options.seq_liveness,
+        fold_diagnostics: options.fold_diagnostics,
     };
 
     let cors = CorsLayer::new()

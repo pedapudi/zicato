@@ -137,37 +137,90 @@ pub fn read_lock(paths: &WorkspacePaths) -> Option<Lock> {
 /// Best-effort: a missing/empty/malformed log yields the snapshot
 /// fallback (or `None`).
 pub fn read_active_tournament(paths: &WorkspacePaths) -> Option<ActiveTournament> {
-    match fold_active_tournament_value(&paths.active_tournament_log()) {
-        Some(value) => serde_json::from_value(value).ok(),
+    read_active_tournament_with_stats(paths).0
+}
+
+/// `read_active_tournament`, additionally returning the [`FoldStats`]
+/// gathered while folding the event log (torn-write parse failures +
+/// non-monotonic-`seq` gaps). The supervisor accumulates these into the
+/// shared [`crate::fold_stats::FoldDiagnostics`] for `/statusz`; callers
+/// that do not care can use the thin [`read_active_tournament`] wrapper.
+///
+/// On the compat path (no event log, falling back to the legacy snapshot)
+/// the stats are zero — there is no JSONL to tear.
+pub fn read_active_tournament_with_stats(
+    paths: &WorkspacePaths,
+) -> (Option<ActiveTournament>, crate::fold_stats::FoldStats) {
+    match fold_active_tournament_value_with_stats(&paths.active_tournament_log()) {
+        (Some(value), stats) => (serde_json::from_value(value).ok(), stats),
         // No event log → the compat path: a pre-RUNTIME-V2 snapshot file.
-        None => read_json(&paths.active_tournament()),
+        (None, stats) => (read_json(&paths.active_tournament()), stats),
     }
 }
 
-/// Replay the event log into the folded envelope JSON `Value`, or `None`
-/// when the log is absent/empty (so the caller can fall back to the
-/// snapshot). Operates on raw JSON so the coarse `ActiveTournament` struct
-/// need not model every delta field — the fold matches `(entry_id, side)`
-/// on the raw rows exactly as the Python writer did.
-fn fold_active_tournament_value(log_path: &Path) -> Option<serde_json::Value> {
+/// Replay the event log into the folded envelope JSON `Value` (or `None`
+/// when the log is absent/empty, so the caller can fall back to the
+/// snapshot), tallying torn-write parse failures and non-monotonic-`seq`
+/// gaps over the canonical fold.
+///
+/// Operates on raw JSON so the coarse `ActiveTournament` struct need not
+/// model every delta field — the fold matches `(entry_id, side)` on the raw
+/// rows exactly as the Python writer did. The lenient behavior is preserved
+/// exactly — a bad line is still skipped, a republished snapshot still
+/// resets the fold — but each skipped/torn line now increments
+/// `parse_failures` and each `seq` that is not exactly one past its
+/// predecessor increments `seq_gaps`, so the conditions the fold otherwise
+/// hides become visible on `/statusz`.
+fn fold_active_tournament_value_with_stats(
+    log_path: &Path,
+) -> (Option<serde_json::Value>, crate::fold_stats::FoldStats) {
+    let mut stats = crate::fold_stats::FoldStats::default();
     let text = match std::fs::read_to_string(log_path) {
         Ok(t) => t,
-        Err(_) => return None,
+        Err(_) => return (None, stats),
     };
-    // Each line is one event record: {seq, ts, type, payload}.
-    let events: Vec<serde_json::Value> = text
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .collect();
+    // Each line is one event record: {seq, ts, type, payload}. Parse every
+    // non-blank line; count (not silently drop) the ones that fail.
+    let mut events: Vec<serde_json::Value> = Vec::new();
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        match serde_json::from_str::<serde_json::Value>(line) {
+            Ok(v) => events.push(v),
+            Err(_) => stats.parse_failures += 1,
+        }
+    }
+
+    // Count non-monotonic seq across the successfully-parsed events: each
+    // event's `seq` should be exactly one past the previous one. A gap or a
+    // backwards step (lost events / out-of-order republish) is tallied. The
+    // first event of the log is never a gap. Events without a `seq` field do
+    // not advance the cursor (they cannot be judged monotonic).
+    let mut prev_seq: Option<i64> = None;
+    for ev in &events {
+        if let Some(seq) = ev.get("seq").and_then(|s| s.as_i64()) {
+            if let Some(prev) = prev_seq {
+                if seq != prev + 1 {
+                    stats.seq_gaps += 1;
+                }
+            }
+            prev_seq = Some(seq);
+        }
+    }
+
     if events.is_empty() {
-        return None;
+        return (None, stats);
     }
     // Fold from the last Snapshot (a Snapshot is the authoritative reset).
-    let base_idx = events
+    let base_idx = match events
         .iter()
-        .rposition(|e| e.get("type").and_then(|t| t.as_str()) == Some("Snapshot"))?;
-    let mut current = events[base_idx].get("payload")?.clone();
+        .rposition(|e| e.get("type").and_then(|t| t.as_str()) == Some("Snapshot"))
+    {
+        Some(i) => i,
+        None => return (None, stats),
+    };
+    let mut current = match events[base_idx].get("payload") {
+        Some(p) => p.clone(),
+        None => return (None, stats),
+    };
     for ev in &events[base_idx + 1..] {
         let ty = ev.get("type").and_then(|t| t.as_str()).unwrap_or("");
         let payload = match ev.get("payload") {
@@ -184,7 +237,7 @@ fn fold_active_tournament_value(log_path: &Path) -> Option<serde_json::Value> {
             _ => {}
         }
     }
-    Some(current)
+    (Some(current), stats)
 }
 
 /// Apply one `EntryUpdate` delta: override the first `entries` row whose
@@ -782,5 +835,81 @@ mod tests {
             Some("t1")
         );
         assert_eq!(snap.epoch_id.as_deref(), Some("2026-05-14_test"));
+    }
+
+    // ---- fold diagnostics (torn writes + non-monotonic seq) --------
+
+    #[test]
+    fn clean_log_reports_zero_fold_diagnostics() {
+        let (_t, p) = make_ws();
+        let log = [
+            r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"t1","entries":[]}}"#,
+            r#"{"seq":2,"ts":"t","type":"EntryUpdate","payload":{"entry_id":"b0","side":"child","updates":{"status":"running"}}}"#,
+            r#"{"seq":3,"ts":"t","type":"PartialAggregate","payload":{"challenger_agg":{"scalar":0.5}}}"#,
+        ]
+        .join("\n");
+        std::fs::write(p.active_tournament_log(), log).unwrap();
+        let (at, stats) = read_active_tournament_with_stats(&p);
+        assert!(at.is_some());
+        assert_eq!(stats.parse_failures, 0);
+        assert_eq!(stats.seq_gaps, 0);
+    }
+
+    #[test]
+    fn torn_write_lines_are_counted_not_just_dropped() {
+        // Two corrupt (un-parseable) lines interleaved with good events. The
+        // fold still succeeds on the good lines (lenient), but the torn
+        // writes are now COUNTED rather than silently dropped.
+        let (_t, p) = make_ws();
+        let log = [
+            r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"t1","entries":[]}}"#,
+            r#"{"seq":2,"ts":"t","type":"EntryUp"#, // torn mid-line
+            r#"not json at all"#,                   // garbage
+            r#"{"seq":3,"ts":"t","type":"PartialAggregate","payload":{"challenger_agg":{"scalar":0.9}}}"#,
+        ]
+        .join("\n");
+        std::fs::write(p.active_tournament_log(), log).unwrap();
+        let (at, stats) = read_active_tournament_with_stats(&p);
+        // The good Snapshot still folds through.
+        assert_eq!(
+            at.expect("good lines still fold").tournament_id.as_deref(),
+            Some("t1")
+        );
+        assert_eq!(stats.parse_failures, 2);
+        // seq jumped 1 -> 3 across the two dropped lines: one gap.
+        assert_eq!(stats.seq_gaps, 1);
+    }
+
+    #[test]
+    fn non_monotonic_seq_is_counted() {
+        // seq goes 1, 2, 5, 3 — a forward gap (2->5) and a backward step
+        // (5->3) are each a non-monotonic event: two gaps.
+        let (_t, p) = make_ws();
+        let log = [
+            r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"t1","entries":[]}}"#,
+            r#"{"seq":2,"ts":"t","type":"PartialAggregate","payload":{}}"#,
+            r#"{"seq":5,"ts":"t","type":"PartialAggregate","payload":{}}"#,
+            r#"{"seq":3,"ts":"t","type":"PartialAggregate","payload":{}}"#,
+        ]
+        .join("\n");
+        std::fs::write(p.active_tournament_log(), log).unwrap();
+        let (_at, stats) = read_active_tournament_with_stats(&p);
+        assert_eq!(stats.parse_failures, 0);
+        assert_eq!(stats.seq_gaps, 2);
+    }
+
+    #[test]
+    fn compat_snapshot_path_reports_zero_stats() {
+        // No event log → legacy snapshot fallback. There is no JSONL to
+        // tear, so both counters are zero.
+        let (_t, p) = make_ws();
+        std::fs::write(
+            p.active_tournament(),
+            r#"{"tournament_id":"legacy","entries":[]}"#,
+        )
+        .unwrap();
+        let (at, stats) = read_active_tournament_with_stats(&p);
+        assert_eq!(at.unwrap().tournament_id.as_deref(), Some("legacy"));
+        assert_eq!(stats, crate::fold_stats::FoldStats::default());
     }
 }

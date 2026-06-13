@@ -50,6 +50,10 @@ pub struct AppState {
     /// heartbeat loop. `/statusz` reads (does not advance) it to report the
     /// seq-change age alongside the timestamp age. The loop owns advancement.
     pub seq_liveness: Arc<std::sync::Mutex<crate::watchdog::SeqLiveness>>,
+    /// Cumulative torn-write / non-monotonic-seq counters over the canonical
+    /// active-tournament JSONL fold. The fold path accumulates into it on
+    /// each read; `/statusz` surfaces it.
+    pub fold_diagnostics: Arc<crate::fold_stats::FoldDiagnostics>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -135,6 +139,7 @@ fn build_statusz_view(s: &AppState) -> statusz::StatuszView {
         &identity,
         s.heartbeat_stale_threshold_seconds,
         seq_age_seconds,
+        s.fold_diagnostics.view(),
         &s.action_log,
     )
 }
@@ -224,8 +229,12 @@ async fn api_active_runs(State(s): State<AppState>) -> Json<serde_json::Value> {
 }
 
 async fn api_active_tournament(State(s): State<AppState>) -> Json<serde_json::Value> {
+    // The canonical fold path: accumulate torn-write / seq-gap diagnostics
+    // into the shared counter so `/statusz` can surface them.
+    let (tournament, stats) = reader::read_active_tournament_with_stats(&s.paths);
+    s.fold_diagnostics.record(stats);
     Json(
-        reader::read_active_tournament(&s.paths)
+        tournament
             .map(|t| serde_json::to_value(t).unwrap_or(serde_json::Value::Null))
             .unwrap_or(serde_json::Value::Null),
     )

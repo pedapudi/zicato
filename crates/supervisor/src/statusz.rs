@@ -115,6 +115,9 @@ pub struct StatuszView {
     /// Recent watchdog escalations from the in-memory ring buffer,
     /// newest last.
     pub watchdog_actions: Vec<Action>,
+    /// Cumulative torn-write / non-monotonic-seq counters over the canonical
+    /// active-tournament JSONL fold (process lifetime).
+    pub fold_diagnostics: crate::fold_stats::FoldDiagnosticsView,
 }
 
 /// Inputs the supervisor knows about itself, threaded in from `AppState`.
@@ -212,6 +215,7 @@ pub fn build_statusz(
     identity: &SupervisorIdentity,
     heartbeat_stale_threshold_seconds: u64,
     seq_age_seconds: Option<u64>,
+    fold_diagnostics: crate::fold_stats::FoldDiagnosticsView,
     action_log: &Arc<WatchdogLog>,
 ) -> StatuszView {
     let now = Utc::now();
@@ -258,6 +262,7 @@ pub fn build_statusz(
         runs_over_deadline,
         summary,
         watchdog_actions: action_log.snapshot(),
+        fold_diagnostics,
     }
 }
 
@@ -471,6 +476,26 @@ th{color:#888;font-weight:normal}\
         out.push_str("</table>");
     }
 
+    // Fold diagnostics: torn-write / non-monotonic-seq counters over the
+    // canonical active-tournament JSONL fold (process lifetime).
+    let fd = &v.fold_diagnostics;
+    out.push_str("<h2>fold diagnostics</h2><table>");
+    let pf_cls = if fd.parse_failures > 0 { "bad" } else { "ok" };
+    let sg_cls = if fd.seq_gaps > 0 { "warn" } else { "ok" };
+    out.push_str(&format!(
+        "<tr><th>torn writes (parse failures)</th><td class=\"{pf_cls}\">{}</td></tr>",
+        fd.parse_failures
+    ));
+    out.push_str(&format!(
+        "<tr><th>non-monotonic seq (gaps)</th><td class=\"{sg_cls}\">{}</td></tr>",
+        fd.seq_gaps
+    ));
+    out.push_str(&format!(
+        "<tr><th>folds observed</th><td class=\"dim\">{}</td></tr>",
+        fd.folds
+    ));
+    out.push_str("</table>");
+
     out.push_str(&format!(
         "<p class=\"dim\">generated {}</p>",
         esc(&v.generated_at)
@@ -628,6 +653,7 @@ mod tests {
                 run_id: Some("r-late".into()),
                 outcome: Outcome::KilledForcefully,
             }],
+            fold_diagnostics: Default::default(),
         };
         let html = render_html(&view);
         assert!(html.starts_with("<!doctype html>"));
@@ -660,6 +686,7 @@ mod tests {
             runs_over_deadline: 0,
             summary: "no active runs".into(),
             watchdog_actions: vec![],
+            fold_diagnostics: Default::default(),
         };
         let html = render_html(&view);
         assert!(html.contains("/tmp/&lt;evil&gt;"));

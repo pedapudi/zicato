@@ -173,6 +173,11 @@ async fn main() -> std::process::ExitCode {
     // seq-change age the watchdog is deciding on.
     let seq_liveness = Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new()));
 
+    // Cumulative torn-write / non-monotonic-seq counters over the canonical
+    // active-tournament JSONL fold; the fold path accumulates, `/statusz`
+    // surfaces.
+    let fold_diagnostics = Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new());
+
     let interval = Duration::from_secs(cli.interval.max(1));
     let hb_paths = paths.clone();
     let hb_shutdown = shutdown_tx.clone();
@@ -199,6 +204,7 @@ async fn main() -> std::process::ExitCode {
             heartbeat_stale_threshold_seconds: cli.heartbeat_stale_warn,
             action_log: action_log.clone(),
             seq_liveness: seq_liveness.clone(),
+            fold_diagnostics: fold_diagnostics.clone(),
         },
         watch_tx.clone(),
         shutdown_tx.clone(),

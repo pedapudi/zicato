@@ -30,6 +30,7 @@ fn serve_opts(read_only: bool) -> server::ServeOptions {
         heartbeat_stale_threshold_seconds: 30,
         action_log: Arc::new(WatchdogLog::new()),
         seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
+        fold_diagnostics: Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new()),
     }
 }
 
@@ -1547,6 +1548,67 @@ async fn statusz_json_carries_identity_and_per_run_deadlines() {
 }
 
 #[tokio::test]
+async fn statusz_surfaces_fold_diagnostics_from_a_torn_log() {
+    // Write an active-tournament event log with two torn (un-parseable)
+    // lines and a seq gap. Hitting the canonical fold path
+    // (/api/active-tournament) accumulates the counters, which /statusz then
+    // surfaces — closing the Rust-drops-vs-Python-raises visibility gap.
+    let (_t, paths) = make_workspace();
+    write_statusz_state(&paths);
+    let log = [
+        r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"t1","entries":[]}}"#,
+        r#"{"seq":2,"ts":"t","type":"EntryUp"#, // torn mid-line
+        r#"garbage line"#,                      // not json
+        r#"{"seq":5,"ts":"t","type":"PartialAggregate","payload":{}}"#, // seq gap 1 -> 5 (over good lines)
+    ]
+    .join("\n");
+    std::fs::write(paths.active_tournament_log(), log).unwrap();
+
+    let (handle, shutdown) = start_server(paths.clone(), false).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    // Drive the fold path twice so the cumulative counters accumulate.
+    for _ in 0..2 {
+        let r = client
+            .get(format!("{base}/api/active-tournament"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 200);
+    }
+
+    let r: Value = client
+        .get(format!("{base}/statusz.json"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let fd = &r["fold_diagnostics"];
+    // Two torn lines per fold * two folds = 4 cumulative parse failures.
+    assert_eq!(fd["parse_failures"].as_u64().unwrap(), 4);
+    // One seq gap per fold (1 -> 5 across the dropped lines) * two folds = 2.
+    assert_eq!(fd["seq_gaps"].as_u64().unwrap(), 2);
+    assert_eq!(fd["folds"].as_u64().unwrap(), 2);
+
+    // The HTML surface renders the same counters.
+    let html = client
+        .get(format!("{base}/statusz"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(html.contains("fold diagnostics"));
+    assert!(html.contains("torn writes"));
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
 async fn statusz_html_serves_non_empty_page() {
     let (_t, paths) = make_workspace();
     write_statusz_state(&paths);
@@ -1587,6 +1649,7 @@ async fn statusz_routes_reachable_with_no_dashboard() {
         heartbeat_stale_threshold_seconds: 30,
         action_log: Arc::new(WatchdogLog::new()),
         seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
+        fold_diagnostics: Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new()),
     };
     let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);
@@ -1667,6 +1730,7 @@ async fn statusz_surfaces_recorded_watchdog_actions() {
         heartbeat_stale_threshold_seconds: 30,
         action_log: action_log.clone(),
         seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
+        fold_diagnostics: Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new()),
     };
     let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);
