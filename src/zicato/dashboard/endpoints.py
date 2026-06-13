@@ -500,6 +500,45 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
             )
         return JSONResponse(state_reader.build_drift_movements(paths, generation_id))
 
+    async def api_hypothesis_accuracy(request: Request) -> JSONResponse:
+        """Per-experiment hypothesis prediction-accuracy scorecard.
+
+        ``GET /api/hypothesis-accuracy/{epoch_id}/{generation_id}``. Joins
+        the proposer's falsifiable movement claims against the realised
+        movements and lifts the STAMPED ``hypothesis_match`` verdict
+        verbatim (never recomputed — it cannot disagree with the HTML
+        report). A malformed coordinate degrades to an empty scorecard
+        (HTTP 200), matching every other coordinate handler.
+        """
+        epoch_id = request.path_params["epoch_id"]
+        generation_id = request.path_params["generation_id"]
+        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id):
+            return JSONResponse(
+                {
+                    "epoch_id": epoch_id,
+                    "generation_id": generation_id,
+                    "claims": [],
+                    "score": {"hits": 0, "total": 0, "fraction": None, "brier": None},
+                    "pass_rate": {"predicted": "", "observed": None},
+                },
+                status_code=200,
+            )
+        return JSONResponse(state_reader.build_hypothesis_accuracy(paths, epoch_id, generation_id))
+
+    async def api_calibration_trend(request: Request) -> JSONResponse:
+        """Per-generation calibration trend over the lineage (DIAGNOSTIC).
+
+        ``GET /api/calibration-trend[?epoch=<id>]``. The score fraction per
+        generation in lineage order with rolling aggregates. Optional
+        ``?epoch=<id>`` scopes to a non-current epoch; omitted ⇒ current.
+        Explicitly diagnostic — it never feeds the gate.
+        """
+        try:
+            epoch_id = _epoch_query(request)
+            return JSONResponse(state_reader.build_calibration_trend(paths, epoch_id))
+        except (_BadEpoch, ValueError):
+            return JSONResponse({"error": "unknown epoch"}, status_code=404)
+
     # -- file-tree / file-browser endpoints --------------------------
 
     async def api_files(_request: Request) -> JSONResponse:
@@ -1019,6 +1058,8 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         "api_search": api_search,
         "api_score_trajectory": api_score_trajectory,
         "api_drift_movements": api_drift_movements,
+        "api_hypothesis_accuracy": api_hypothesis_accuracy,
+        "api_calibration_trend": api_calibration_trend,
         "api_files": api_files,
         "api_files_tree": api_files_tree,
         "api_files_content": api_files_content,

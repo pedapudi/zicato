@@ -269,6 +269,14 @@ def create_app(
             "/api/drift-movements/{generation_id}",
             handlers["api_drift_movements"],
         ),
+        Route(
+            "/api/hypothesis-accuracy/{epoch_id}/{generation_id}",
+            handlers["api_hypothesis_accuracy"],
+        ),
+        Route(
+            "/api/calibration-trend",
+            handlers["api_calibration_trend"],
+        ),
         Route("/api/files", handlers["api_files"]),
         Route(
             "/api/files/{epoch_id}/{generation_id}/tree",

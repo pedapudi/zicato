@@ -66,6 +66,10 @@ from zicato.dashboard.readers.gate_view import (
     build_rating_view,
     build_score_trajectory,
 )
+from zicato.dashboard.readers.hypothesis_view import (
+    build_calibration_trend,
+    build_hypothesis_accuracy,
+)
 from zicato.dashboard.readers.judge_view import (
     SEARCH_LIMIT_PER_CATEGORY,
     _collect_judge_names_from_board_file,
@@ -256,8 +260,10 @@ __all__ = [
     "build_environment",
     "build_epoch_view",
     "build_epochs_summary",
+    "build_calibration_trend",
     "build_expectation_outcomes_for_run",
     "build_gate_breakdown",
+    "build_hypothesis_accuracy",
     "build_rating_view",
     "build_health_report",
     "build_lineage_view",
