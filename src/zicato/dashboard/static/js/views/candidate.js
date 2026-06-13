@@ -29,7 +29,7 @@ import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { attachHovercard } from '../hovercard.js';
 import { lifecycleDag, rungProgression } from '../dag.js';
-import { gatedSwap, section, subhead, empty, stat, verdictPill, normaliseDecision, decisionFor, densityTokens, prText, metricsDigest } from '../ui.js';
+import { gatedSwap, section, subhead, empty, stat, verdictPill, overrideChip, overrideDigest, normaliseDecision, decisionFor, densityTokens, prText, metricsDigest } from '../ui.js';
 import { comparePicker, splitFrame } from '../compare.js';
 import { candidateProgression, inflightForActiveEpoch, inflightForEntryGen, runProgressRatio, liveMatchupsForCandidate, liveBelongsToEpoch, resolveNonGauntletSt, racingModel, structureDigest } from './structure.js';
 import { epochRoundModel, reignModel } from './rounds.js';
@@ -539,7 +539,11 @@ function candidateDigest(s) {
         // transform/plugin shaped a side — or a fail-open event firing —
         // repaints the gate, but a no-op heartbeat stays byte-identical. null
         // (built-in / pre-#19) contributes nothing new (back-compat digest).
-        decompDigest(g.scalar_decomposition)]
+        decompDigest(g.scalar_decomposition),
+        // operator-override provenance folded in (kind+action+state+reason, NO
+        // timestamp) so an override appearing/changing repaints the gate while a
+        // no-op beat stays byte-identical. null (none) → pre-override digest.
+        overrideDigest(g.override)]
       : null),
     drill: s.entryParam || null,
     drillExp: s.exps && Array.isArray(s.exps.outcomes) ? s.exps.outcomes.map((o) => [o.kind, o.passed, o.judge_name, o.detail]) : null,
@@ -1304,9 +1308,25 @@ function allMatchupsPanel(mine, genId, championId, ctx, epochId) {
 function gatePanel(gate) {
   const card = el('div', { class: 'dn-panel dn-gate' });
   // Class B: a gate with no resolved decision is still pending, not rejected.
+  // The backend emits decision:"deferred" verbatim until BOTH aggregates
+  // resolve — normaliseDecision threads it through to its caution-toned pill.
   const decision = normaliseDecision(gate) || 'pending';
+  // operator-override provenance rides BESIDE the verdict (overrideChip) WITHOUT
+  // recoloring it. Absent (gate-decided / pre-feature) → null → byte-identical.
+  const ovChip = overrideChip(gate && gate.override);
+  // hover detail (the operator's reason) lives in the hovercard singleton,
+  // OUTSIDE the gated render — the chip itself stays a stable node.
+  if (ovChip && gate && gate.override) {
+    const ov = gate.override;
+    const act = ov.action === 'promote' ? 'force-promoted' : 'force-rejected';
+    attachHovercard(ovChip, () => el('div', { class: 'dn-hc-body' }, [
+      el('div', { class: 'dn-hc-title', text: 'operator override · ' + act }),
+      ov.reason ? el('div', { class: 'dn-hc-row', text: ov.reason })
+        : el('div', { class: 'dn-hc-row dn-faint', text: 'no reason recorded' }),
+    ]));
+  }
   card.appendChild(el('div', { class: 'dn-gate-head' }, [
-    el('div', { class: 'dn-gate-decision' }, [verdictPill(decision)]),
+    el('div', { class: 'dn-gate-decision' }, [verdictPill(decision), ovChip].filter(Boolean)),
     el('div', { class: 'dn-row dn-gate-deltas' }, [
       svg.isNum(gate.delta_scalar) ? stat(svg.fmtSigned(gate.delta_scalar, 2), 'Δ scalar (loss)') : null,
       svg.isNum(gate.delta_pass_rate) ? stat(svg.fmtSigned(gate.delta_pass_rate, 2), 'Δ pass rate') : null,

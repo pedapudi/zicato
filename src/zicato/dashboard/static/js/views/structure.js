@@ -5,8 +5,9 @@
 
 import { el } from '../core/dom.js';
 import * as svg from '../svg.js';
-import { section, empty, verdictPill } from '../ui.js';
+import { section, empty, verdictPill, overrideChip, overrideDigest } from '../ui.js';
 import { structureStatusLabel } from '../livestatus.js';
+import { attachHovercard } from '../hovercard.js';
 const CROWN = svg.CROWN;
 
 // A friendly label + key params for a structure.
@@ -508,7 +509,12 @@ export function structureDigest(st) {
       // the in_flight flag, so an identical projection yields an identical digest
       // (no repaint) but a board landing or a re-rank fires the swap.
       s.in_flight ? 'j' + (svg.isNum(s.projected_scalar) ? s.projected_scalar.toFixed(3) : '?')
-        + '/' + (s.boards_done == null ? '?' : s.boards_done) + '/' + (s.boards_total == null ? '?' : s.boards_total) : '']),
+        + '/' + (s.boards_done == null ? '?' : s.boards_done) + '/' + (s.boards_total == null ? '?' : s.boards_total) : '',
+      // operator-override provenance folded in (kind+action+state+reason, NO
+      // timestamp) so an override appearing/changing repaints while a no-op
+      // beat stays byte-identical. null (none) → pre-override digest (back-compat).
+      (st.override_status && typeof st.override_status === 'object')
+        ? overrideDigest(st.override_status[String(s.generation_id)]) : null]),
     // the proposing-step field — so the "Proposed field" section's gated
     // swap fires when a challenger is minted / applied / rejected, but stays
     // stable on a no-op heartbeat.
@@ -2185,6 +2191,10 @@ function standingsTable(st, ctx, epochId, live) {
   const standings = (st && Array.isArray(st.standings)) ? st.standings.slice() : [];
   if (!standings.length) return null;
   const structure = (st && st.structure) || 'gauntlet';
+  // operator-override readback (durable field record): {gid: {action, ts,
+  // reason, state}}. KEY-ABSENT on every gate-decided / single-challenger /
+  // pre-feature run → no chip → byte-identical to today.
+  const overrides = (st && st.override_status && typeof st.override_status === 'object') ? st.override_status : null;
   // Racing (successive-halving / best-arm) has NO head-to-head winner/loser —
   // each rung ranks survivors by SCALAR and cuts the worst; the promote/reject
   // is the gate, not a match record. So W/L are structurally always 0 for
@@ -2226,10 +2236,23 @@ function standingsTable(st, ctx, epochId, live) {
           el('span', { class: 'dt-proj-badge', text: 'proj' }),
         ])
       : el('td', { class: 'dn-num dn-mono', text: svg.isNum(s.scalar) ? svg.fmt(s.scalar, 1) : '—' });
+    // operator-override provenance rides BESIDE the status pill (overrideChip),
+    // never recoloring the verdict. Absent → null → byte-identical to today.
+    const ovProv = overrides ? overrides[String(s.generation_id)] : null;
+    const ovChip = overrideChip(ovProv);
+    if (ovChip && ovProv) {
+      const act = ovProv.action === 'promote' ? 'force-promoted' : 'force-rejected';
+      attachHovercard(ovChip, () => el('div', { class: 'dn-hc-body' }, [
+        el('div', { class: 'dn-hc-title', text: 'operator override · ' + act }),
+        (typeof ovProv.reason === 'string' && ovProv.reason)
+          ? el('div', { class: 'dn-hc-row', text: ovProv.reason })
+          : el('div', { class: 'dn-hc-row dn-faint', text: 'no reason recorded' }),
+      ]));
+    }
     tbody.appendChild(el('tr', { class: rowCls }, [
       el('td', { class: 'dn-mono', text: svg.isNum(s.rank) ? String(s.rank) : '—' }),
       el('td', { class: 'dn-mono', text: (s.generation_id || '—') + (status === 'champion' ? ' ' + CROWN.current : '') }),
-      el('td', null, [statusPill(status)]),
+      el('td', null, [statusPill(status), ovChip].filter(Boolean)),
       scalarCell,
       ...(showWL ? [
         el('td', { class: 'dn-num dn-mono', text: svg.isNum(s.wins) ? String(s.wins) : '—' }),

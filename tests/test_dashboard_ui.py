@@ -363,7 +363,18 @@ def test_bundle_under_size_envelope(
     # pill in shell.js — ~10 KB of new spine (back-compat: a seq-less frame is
     # byte-identical to the prior always-refresh path). The envelope is raised
     # to 1.11 MB to cover it with headroom.
-    assert total < 1_110_000, f"bundle is {total} bytes, exceeds 1_110_000 envelope"
+    #
+    # The UNIFIED DECISION-STATE TAXONOMY + overrideChip primitive (the
+    # evidence-cockpit foundation BT/field-override consume) then threads the
+    # dormant `deferred` verdict end-to-end and adds `overrideChip`/
+    # `overrideDigest` in ui.js — a SIBLING to verdictPill that layers operator-
+    # override provenance (forced↑ / forced✕ / queued / drained) BESIDE the gate
+    # verdict / standings status pill WITHOUT recoloring it — wired into
+    # gatePanel (candidate.js) + standingsTable (structure.js) and folded into
+    # the candidate/structure digests (no timestamp leak). ~0.4 KB of new
+    # primitive + two consumers (back-compat: absent override → byte-identical
+    # to today). The envelope is raised to 1.111 MB to cover it with headroom.
+    assert total < 1_111_000, f"bundle is {total} bytes, exceeds 1_111_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

@@ -462,6 +462,73 @@ export function verdictPill(decision) {
   return el('span', { class: `dn-pill dn-${d}`, text: label });
 }
 
+// ---- operator-override provenance (the overrideChip primitive) -------
+//
+// The GATE owns the verdict (verdictPill); an OPERATOR override is a SEPARATE
+// provenance fact that rides BESIDE the verdict and must NOT recolor it.
+// `overrideChip` is the sibling primitive carrying that fact. `prov` accepts
+// either contract shape verbatim:
+//   * gate.override        — {present, action: "promote"|"reject", reason}
+//   * override_status[gid] — {action: "promote"|"reject", state, reason, ts}
+// Returns null (renders NOTHING — byte-identical to today) when no override is
+// present. The four operator states: `forced↑` (force-promote applied),
+// `forced✕` (force-reject applied), `queued` (recorded, not yet fired),
+// `drained` (queued but the round resolved without it — forward-compat).
+// Direction earns the colour (promote good / reject bad / queued caution /
+// drained faint) — never a new hue, never recoloring the verdict beside it.
+export function normaliseOverride(prov) {
+  if (!prov || typeof prov !== 'object') return null;
+  // gate.override carries an explicit `present` flag; absent → nothing.
+  if ('present' in prov && !prov.present) return null;
+  const action = String(prov.action || '').toLowerCase();
+  if (action !== 'promote' && action !== 'reject') return null;
+  const state = String(prov.state || 'applied').toLowerCase();
+  const reason = (typeof prov.reason === 'string' && prov.reason) ? prov.reason : null;
+  let kind;
+  let label;
+  let glyph;
+  if (state === 'queued' || state === 'pending') {
+    kind = 'queued'; label = 'queued'; glyph = '⋯'; // operator action recorded, not yet fired
+  } else if (state === 'drained' || state === 'expired') {
+    kind = 'drained'; label = 'drained'; glyph = '∅'; // queued, never fired this round
+  } else if (action === 'promote') {
+    kind = 'promote'; label = 'forced'; glyph = '↑'; // force-promoted
+  } else {
+    kind = 'reject'; label = 'forced'; glyph = '✕'; // force-rejected
+  }
+  return { kind, action, state, label, glyph, reason };
+}
+
+// Build the override chip — a `dn-chip dn-override dn-override-<kind>` span that
+// reads "⟳ forced↑ · operator" beside the verdict. Returns null when there is
+// no override (back-compat: absent → byte-identical). The chip's `kind` class
+// earns its tone by DIRECTION (promote good / reject bad / queued caution /
+// drained faint); it never touches the verdict pill's class.
+export function overrideChip(prov) {
+  const o = normaliseOverride(prov);
+  if (!o) return null;
+  const chip = el('span', {
+    class: `dn-chip dn-override dn-override-${o.kind}`,
+    'data-override': o.kind,
+    title: o.reason ? ('operator override · ' + o.reason) : 'operator override',
+  }, [
+    el('span', { class: 'dn-override-mark', 'aria-hidden': 'true', text: '⟳' }),
+    el('span', { class: 'dn-override-label', text: o.label + o.glyph }),
+    el('span', { class: 'dn-override-by dn-faint', text: ' · operator' }),
+  ]);
+  return chip;
+}
+
+// A content digest of an override (rounded/stable, no timestamps) so it folds
+// into a structural digest: a real override appearing/changing repaints, a
+// no-op beat stays byte-identical. null (no override) contributes nothing —
+// back-compat with the pre-override digest. NOTE: deliberately drops `ts` (a
+// timestamp would bust the no-op-beat-skip), keeping only kind + reason.
+export function overrideDigest(prov) {
+  const o = normaliseOverride(prov);
+  return o ? [o.kind, o.action, o.state, o.reason] : null;
+}
+
 export function stat(value, key) {
   return el('div', { class: 'dn-stat' }, [
     el('span', { class: 'v', text: value }),

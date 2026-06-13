@@ -680,6 +680,23 @@
   .dn-chip-open { color: var(--v2-good); border-color: var(--v2-good); }
   .dn-chip-closed { color: var(--v2-ink-faint); }
 
+  /* the overrideChip — operator-override provenance riding BESIDE a verdict
+   * pill / status pill, NEVER recoloring it. Tone is earned by DIRECTION only
+   * (no new hue): a force-promote reads good, a force-reject reads bad, a
+   * queued override reads caution (pending), a drained one reads faint (never
+   * fired). The ⟳ mark + " · operator" attribution make the provenance legible.
+   */
+  .dn-override { display: inline-flex; align-items: center; gap: 3px; text-transform: lowercase; }
+  .dn-override-mark { font-weight: 600; }
+  .dn-override-by { font-size: 0.92em; }
+  .dn-override.dn-override-promote { color: var(--v2-good); border-color: var(--v2-good);
+    background: color-mix(in srgb, var(--v2-good) 10%, transparent); }
+  .dn-override.dn-override-reject { color: var(--v2-bad); border-color: var(--v2-bad);
+    background: color-mix(in srgb, var(--v2-bad) 10%, transparent); }
+  .dn-override.dn-override-queued { color: var(--v2-caution); border-color: var(--v2-caution);
+    background: color-mix(in srgb, var(--v2-caution) 10%, transparent); }
+  .dn-override.dn-override-drained { color: var(--v2-ink-faint); border-color: var(--v2-rule); }
+
   .dn-good-t { color: var(--v2-good); }
   .dn-finding { margin-bottom: 9px; }
   /* the drill-down detail card wears the standard faint .dn-panel border like
