@@ -98,6 +98,44 @@ def test_heartbeat_defaults_round_trip(tmp_path: Path) -> None:
     assert got is not None
     assert got.epoch_id == ""
     assert got.round_index == 0
+    # seq defaults to 0 (the safe "no progress recorded" sentinel).
+    assert got.seq == 0
+
+
+def test_heartbeat_seq_round_trip(tmp_path: Path) -> None:
+    """The RUNTIME-V2 Phase 4 ``seq`` liveness cursor round-trips through disk."""
+    hb = Heartbeat(
+        pid=12345,
+        instance_id="default",
+        started_at="2026-05-14T10:00:00Z",
+        last_heartbeat="2026-05-14T10:00:05Z",
+        seq=7,
+    )
+    write_heartbeat(tmp_path, hb)
+    got = read_heartbeat(tmp_path)
+    assert got == hb
+    assert got is not None
+    assert got.seq == 7
+    # The on-disk JSON carries the key explicitly.
+    assert hb.to_dict()["seq"] == 7
+
+
+def test_heartbeat_seq_back_compat(tmp_path: Path) -> None:
+    """A heartbeat JSON written before ``seq`` existed loads with seq == 0."""
+    legacy = {
+        "pid": 7,
+        "instance_id": "old",
+        "started_at": "2026-05-14T00:00:00Z",
+        "last_heartbeat": "2026-05-14T00:00:00Z",
+        "epoch_id": "e0",
+        "generation_id": "v0",
+        "phase": "proposer",
+        "round_index": 0,
+        "round_started_at": "",
+    }
+    hb = Heartbeat.from_dict(legacy)
+    # Absent seq reads back as 0, not a KeyError — the safe back-compat default.
+    assert hb.seq == 0
 
 
 def test_heartbeat_atomic_write_leaves_no_tmp(tmp_path: Path) -> None:

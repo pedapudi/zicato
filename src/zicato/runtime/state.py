@@ -138,6 +138,21 @@ class Heartbeat:
         ISO-8601 UTC timestamp of when the current round began. Lets the
         supervisor compute elapsed-in-round without re-reading any other
         state file.
+    seq:
+        The orchestrator's TRUE liveness cursor (RUNTIME-V2 Phase 4): the
+        tail ``seq`` of the progress event log
+        (:mod:`zicato.runtime.progress_log`) at the last genuine
+        transition. Unlike ``last_heartbeat`` — which the beater thread
+        bumps on a timer regardless of progress — this advances ONLY when
+        the evolve loop appends a real transition (round start, propose,
+        apply, tournament start/settle, gate, promote/reject). A watchdog
+        keyed on ``seq`` advancing avoids the timestamp signal's
+        false-positive (a slow LLM call ages the stamp) and false-negative
+        (a wedged loop whose beater keeps stamping ``now()`` reads alive).
+        Defaults to ``0``; a heartbeat written before this field existed
+        reads back as ``0`` (the safe "no progress recorded" default),
+        indistinguishable from a workspace whose orchestrator never wrote a
+        progress log.
     harmonograf_url:
         Server address of the harmonograf console this run is streaming
         telemetry to, when configured (via ``ZICATO_HARMONOGRAF_URL`` or
@@ -166,6 +181,7 @@ class Heartbeat:
     phase: str = ""
     round_index: int = 0
     round_started_at: str = ""
+    seq: int = 0
     harmonograf_url: str = ""
     harmonograf_meta_session: str = ""
 
@@ -181,6 +197,7 @@ class Heartbeat:
             "phase": self.phase,
             "round_index": self.round_index,
             "round_started_at": self.round_started_at,
+            "seq": self.seq,
             "harmonograf_url": self.harmonograf_url,
             "harmonograf_meta_session": self.harmonograf_meta_session,
         }
@@ -198,6 +215,9 @@ class Heartbeat:
             phase=str(d.get("phase", "")),
             round_index=int(d.get("round_index", 0)),
             round_started_at=str(d.get("round_started_at", "")),
+            # Absent seq reads back as 0 — the safe back-compat default for
+            # a heartbeat written before RUNTIME-V2 Phase 4 (no progress log).
+            seq=int(d.get("seq", 0)),
             harmonograf_url=str(d.get("harmonograf_url", "")),
             harmonograf_meta_session=str(d.get("harmonograf_meta_session", "")),
         )

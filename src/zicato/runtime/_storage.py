@@ -90,6 +90,20 @@ def active_tournament_log_key() -> str:
     return f"{RUNTIME_NS}/active_tournament.events.jsonl"
 
 
+def progress_log_key() -> str:
+    """Storage key for the ORCHESTRATOR progress EVENT LOG (RUNTIME-V2 Phase 4).
+
+    A single-writer, append-only JSONL log the evolve loop appends one
+    typed event to on each genuine orchestrator transition (round start,
+    propose, apply, tournament start/settle, gate, promote/reject). Its
+    monotonic ``seq`` is the TRUE liveness signal: it advances only on real
+    progress, never on a timer, so a wedged loop whose heartbeat thread
+    keeps stamping ``now()`` no longer reads as alive. The tail ``seq`` is
+    stamped into ``heartbeat.json`` and the dashboard SSE frames.
+    """
+    return f"{RUNTIME_NS}/progress.events.jsonl"
+
+
 def active_runs_prefix() -> str:
     """Storage key prefix the per-run live-state records sit under."""
     return f"{RUNTIME_NS}/active_runs"
@@ -139,6 +153,7 @@ __all__ = [
     "lock_key",
     "active_tournament_key",
     "active_tournament_log_key",
+    "progress_log_key",
     "active_runs_prefix",
     "active_run_key",
     "control_prefix",

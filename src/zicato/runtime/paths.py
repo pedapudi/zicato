@@ -90,6 +90,16 @@ def active_tournament_log_path(workspace_root: Path) -> Path:
     return runtime_dir(workspace_root) / "active_tournament.events.jsonl"
 
 
+def progress_log_path(workspace_root: Path) -> Path:
+    """Return the path to the orchestrator progress EVENT LOG (RUNTIME-V2 §4).
+
+    The single-writer append-only JSONL whose monotonic ``seq`` is the
+    true orchestrator-produced liveness signal (advances only on a genuine
+    transition, never on the heartbeat timer).
+    """
+    return runtime_dir(workspace_root) / "progress.events.jsonl"
+
+
 def control_dir(workspace_root: Path) -> Path:
     """Return the directory operator commands are dropped into."""
     return runtime_dir(workspace_root) / "control"
@@ -153,6 +163,7 @@ __all__ = [
     "active_run_path",
     "active_tournament_path",
     "active_tournament_log_path",
+    "progress_log_path",
     "control_dir",
     "control_log_dir",
     "control_command_path",
