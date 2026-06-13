@@ -1617,6 +1617,38 @@
   }
   @media (prefers-reduced-motion: reduce) { .dt-run-pulse { animation: none; } }
 
+  /* The FOUR-STATE run pill (RUNTIME-V2 Phase 4) — keyed on the orchestrator
+   * progress seq, NOT a heartbeat timestamp. LIVE (seq advancing) / STALLED
+   * (no advance, still pulsing) / SETTLED (terminal marker) / DEAD (no advance,
+   * no pulse). Speaks the console decision language — good/caution/ink/bad by
+   * DIRECTION, no new hue: LIVE = good (progress), STALLED = caution, SETTLED =
+   * calm ink (the desired clean end), DEAD = bad (gone without settling). The
+   * `dt-rs-dot` reuses the `.dt-status-dot` shape; the word is a small mono pill. */
+  .dt-run-state { display: none; align-items: center; gap: 4px; margin-left: 7px;
+    font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1));
+    letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; }
+  .dt-run-state.dt-rs-on { display: inline-flex; }
+  .dt-run-state .dt-rs-dot { width: 6px; height: 6px; flex: 0 0 auto; }
+  .dt-run-state .dt-rs-text { color: var(--v2-ink-faint); }
+  /* LIVE — progress is happening: the good direction + a soft pulse on the dot. */
+  .dt-run-state.dt-rs-live .dt-rs-dot { background: var(--v2-good);
+    box-shadow: 0 0 0 0 var(--v2-good); animation: dt-run-pulse 1.6s ease-out infinite; }
+  .dt-run-state.dt-rs-live .dt-rs-text { color: var(--v2-good); }
+  /* STALLED — alive but no progress: caution. */
+  .dt-run-state.dt-rs-stalled .dt-rs-dot { background: var(--v2-caution); }
+  .dt-run-state.dt-rs-stalled .dt-rs-text { color: var(--v2-caution); }
+  /* SETTLED — the loop cleanly ended: a calm, neutral ink read (not a verdict). */
+  .dt-run-state.dt-rs-settled .dt-rs-dot { background: transparent;
+    box-shadow: inset 0 0 0 1.5px var(--v2-ink-faint); }
+  .dt-run-state.dt-rs-settled .dt-rs-text { color: var(--v2-ink-soft); }
+  /* DEAD — gone without settling: the bad direction, hollow dot (no pulse). */
+  .dt-run-state.dt-rs-dead .dt-rs-dot { background: transparent;
+    box-shadow: inset 0 0 0 1.5px var(--v2-bad); }
+  .dt-run-state.dt-rs-dead .dt-rs-text { color: var(--v2-bad); }
+  @media (prefers-reduced-motion: reduce) {
+    .dt-run-state.dt-rs-live .dt-rs-dot { animation: none; }
+  }
+
   /* board-detail — the LIVE in-flight candidates panel. Liveness is carried by
    * the idiomatic header vocabulary (the pulsing status dot + the faint mono
    * "live" pill), NOT a coloured left rail — it wears the standard faint

@@ -33,7 +33,7 @@ import { invalidateLive, liveDataSignature } from './data.js';
 import { buildTree, treeDigest } from './tree.js';
 import { normaliseDecision } from './ui.js';
 import { roundsForTree } from './views/rounds.js';
-import { deriveLiveStatus, liveStatusDigest, treeLiveSet, staleLabel } from './livestatus.js';
+import { deriveLiveStatus, liveStatusDigest, treeLiveSet, staleLabel, runStateLabel } from './livestatus.js';
 import { LiveController } from './live.js';
 import { buildSwatchDropdown, syncSwatchDropdowns } from './swatchdropdown.js';
 import { syncTypefaceDropdowns, syncFontSizeSegments } from './typefacedropdown.js';
@@ -73,6 +73,8 @@ let _treeHost = null;
 let _crumbHost = null;
 let _statusEl = null;
 let _statusTextEl = null;     // the connection word (live/connecting/offline)
+let _runStateEl = null;       // the four-state run pill (LIVE/STALLED/SETTLED/DEAD)
+let _runStateTextEl = null;   // the run-state WORD inside the pill
 let _runLabelEl = null;       // the structure+phase run label
 let _runCountEl = null;       // the in-flight board-unit count
 let _staleEl = null;          // the "last seen Ns ago / stale" affordance
@@ -559,6 +561,16 @@ export function mountShell(root) {
   // activeTournament). The run badge carries the structure + phase label and an
   // in-flight board-unit count; it is hidden when idle/done.
   _statusTextEl = el('span', { class: 'dt-status-text', text: 'connecting…' });
+  // The FOUR-STATE run pill (RUNTIME-V2 Phase 4): LIVE / STALLED / SETTLED /
+  // DEAD, keyed on the orchestrator progress seq (not a heartbeat timestamp).
+  // Reuses the `dt-status` dot vocabulary — `dt-run-state` carries a
+  // `dt-rs-<state>` modifier the CSS maps onto the existing console states
+  // (ink + --v2-caution + good/bad-by-direction); no new hue.
+  _runStateTextEl = el('span', { class: 'dt-rs-text', text: '' });
+  _runStateEl = el('span', { class: 'dt-run-state', 'aria-live': 'polite' }, [
+    el('span', { class: 'dt-rs-dot dt-status-dot', 'aria-hidden': 'true' }),
+    _runStateTextEl,
+  ]);
   _runLabelEl = el('span', { class: 'dt-run-label', text: '' });
   _runCountEl = el('span', { class: 'dt-run-count', text: '' });
   // The stale affordance: when a heartbeat exists but is FROZEN (older than
@@ -568,6 +580,7 @@ export function mountShell(root) {
   _statusEl = el('span', { class: 'dt-status' }, [
     el('span', { class: 'dt-status-dot' }),
     _statusTextEl,
+    _runStateEl,
     el('span', { class: 'dt-run-badge', 'aria-live': 'polite' }, [
       el('span', { class: 'dt-run-pulse', 'aria-hidden': 'true' }),
       _runLabelEl,
@@ -913,6 +926,11 @@ function renderStatus() {
     heartbeat: state.heartbeat,
     activeRuns: state.activeRuns,
     activeTournament: state.activeTournament,
+    // the orchestrator progress cursor (RUNTIME-V2 Phase 4) — drives the
+    // four-state run pill; absent / -1 degrades to the timestamp verdict.
+    seq: state.lastSeq,
+    terminal: state.terminal,
+    lastSeqAdvanceAt: state.lastSeqAdvanceAt,
   });
   const digest = liveStatusDigest(conn, status);
   if (digest === _lastStatusDigest) return;
@@ -924,6 +942,22 @@ function renderStatus() {
   // A frozen heartbeat (stale, not live) gets a distinct chrome class so the
   // dot/badge can read "not live" rather than borrowing the running accent.
   patchClass(_statusEl, 'dt-stale', !status.running && !!status.heartbeatStale);
+
+  // The FOUR-STATE run pill — show the LIVE/STALLED/SETTLED/DEAD word only
+  // while there is SOMETHING to report (a never-run workspace would read
+  // SETTLED, which is misleading). One `dt-rs-<state>` modifier maps onto
+  // the console states (no new hue — the class is toggled, never the accent).
+  if (_runStateEl) {
+    const everSeen = !!(state.heartbeat || state.activeTournament
+      || (state.activeRuns && state.activeRuns.length) || state.lastSeq >= 0);
+    const word = everSeen ? runStateLabel(status.runState) : '';
+    if (_runStateTextEl) patchText(_runStateTextEl, word);
+    patchClass(_runStateEl, 'dt-rs-live', word ? status.runState === 'live' : false);
+    patchClass(_runStateEl, 'dt-rs-stalled', word ? status.runState === 'stalled' : false);
+    patchClass(_runStateEl, 'dt-rs-settled', word ? status.runState === 'settled' : false);
+    patchClass(_runStateEl, 'dt-rs-dead', word ? status.runState === 'dead' : false);
+    patchClass(_runStateEl, 'dt-rs-on', !!word);
+  }
 
   if (_runLabelEl) patchText(_runLabelEl, status.running ? status.label : '');
   if (_runCountEl) {
@@ -975,6 +1009,9 @@ function refreshLive() {
     heartbeat: state.heartbeat,
     activeRuns: state.activeRuns,
     activeTournament: state.activeTournament,
+    seq: state.lastSeq,
+    terminal: state.terminal,
+    lastSeqAdvanceAt: state.lastSeqAdvanceAt,
   });
   _live.update({
     status,

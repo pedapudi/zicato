@@ -351,7 +351,19 @@ def test_bundle_under_size_envelope(
     # the prior 1.092 MB line (no shared widget was duplicated — both renderers
     # coexist; the frontend suite asserts both behaviours). The envelope is
     # raised to 1.10 MB to cover the combined surface with headroom.
-    assert total < 1_100_000, f"bundle is {total} bytes, exceeds 1_100_000 envelope"
+    #
+    # The SEQ-DRIVEN LIVENESS + PRINCIPLED RENDER GATE (the evidence-cockpit
+    # render-discipline backbone) then keys liveness on the orchestrator
+    # progress `seq` now carried on the SSE frames + the heartbeat, instead of
+    # a heartbeat timestamp: a progress cursor on AppState (noteProgress —
+    # advance / no-op / rollover), a seq no-op-skip gate in core/sse.js (a
+    # non-advancing state_change writes ZERO DOM), a four-state run verdict in
+    # livestatus.js (LIVE / STALLED / SETTLED / DEAD) with the legacy
+    # timestamp degrade when no seq is present, and the chrome `dt-run-state`
+    # pill in shell.js — ~10 KB of new spine (back-compat: a seq-less frame is
+    # byte-identical to the prior always-refresh path). The envelope is raised
+    # to 1.11 MB to cover it with headroom.
+    assert total < 1_110_000, f"bundle is {total} bytes, exceeds 1_110_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

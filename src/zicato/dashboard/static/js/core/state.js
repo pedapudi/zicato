@@ -21,6 +21,17 @@ export class AppState {
     // heartbeat.json — merged, never replaced (see setHeartbeat).
     this.heartbeat = null;
 
+    // ── the orchestrator PROGRESS cursor (RUNTIME-V2 Phase 4) ────────
+    // `lastSeq` is the highest progress `seq` seen (SSE frame or heartbeat)
+    // — the TRUE liveness cursor: it advances ONLY on a genuine transition,
+    // never on the heartbeat timer. Backs the seq no-op-skip gate (sse.js)
+    // + the four-state run pill. -1 = no seq seen yet (vs a real seq 0 = a
+    // never-run / empty log). `terminal` flips once a frame marks a cleanly-
+    // ended loop; `lastSeqAdvanceAt` = wall-clock ms the cursor last advanced.
+    this.lastSeq = -1;
+    this.terminal = false;
+    this.lastSeqAdvanceAt = NaN;
+
     // /api/active-runs — each: { ..., progress, elapsed_seconds, budget_seconds }
     this.activeRuns = [];
 
@@ -110,6 +121,53 @@ export class AppState {
         this.heartbeat.harmonograf_meta_session = prevMeta;
       }
     }
+    // The heartbeat `seq` MIRRORS the SSE frame seq (Heartbeat.to_dict),
+    // so fold it into the progress cursor too — this keeps the cursor
+    // current under plain /api/environment polling (no SSE) and gives the
+    // run-state pill a consistent advance timestamp. A heartbeat with no
+    // seq key (pre-RUNTIME-V2) reads back as 0 server-side; the merge above
+    // may also leave `seq` undefined on a minimal beat — noteProgress no-ops
+    // on a non-numeric/unchanged seq, so a steady beat never moves the cursor.
+    if (typeof this.heartbeat.seq === 'number') {
+      this.noteProgress(this.heartbeat.seq, undefined);
+    }
+  }
+
+  // -- progress seq cursor -----------------------------------------
+
+  // Fold a frame's progress `(seq, terminal)` into the cursor. Returns
+  // `{ advanced, rollover, present }` the SSE no-op-skip gate reads:
+  //   present  — the frame carried a numeric seq (false ⇒ DEGRADE to the
+  //              legacy timestamp+signature path; byte-identical to today).
+  //   advanced — seq strictly INCREASED (forward progress), or it is the
+  //              first seq ever seen.
+  //   rollover — seq went BACKWARDS = the log was cleared on a fresh evolve
+  //              boot (seq restarts from 1) ⇒ the run restarted; the caller
+  //              FORCES a full re-apply + the cursor resets to the low seq.
+  // `lastSeqAdvanceAt` is stamped only on a real advance (the "advancing
+  // within budget?" input). A repeat seq (a no-op beat) is neither ⇒ skip.
+  noteProgress(seq, terminal, now = Date.now()) {
+    if (typeof seq !== 'number' || !isFinite(seq)) {
+      return { advanced: false, rollover: false, present: false };
+    }
+    const prev = this.lastSeq;
+    let advanced = false;
+    let rollover = false;
+    if (prev < 0) {
+      // first seq ever — adopt it; treat as an advance so a fresh load paints.
+      advanced = true;
+    } else if (seq > prev) {
+      advanced = true;
+    } else if (seq < prev) {
+      // backwards ⇒ the log was cleared + restarted (seq begins again at 1).
+      rollover = true;
+    }
+    if (advanced || rollover) {
+      this.lastSeq = seq;
+      this.lastSeqAdvanceAt = now;
+    }
+    if (typeof terminal === 'boolean') this.terminal = terminal;
+    return { advanced, rollover, present: true };
   }
 
   // -- snapshot / environment --------------------------------------

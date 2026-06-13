@@ -29,6 +29,20 @@ const IDLE_PHASES = new Set(['idle', 'done', 'complete', 'completed', 'finished'
 // tolerate a slow tick, short enough that a completed run reads idle promptly.
 export const STALE_HEARTBEAT_MS = 30_000;
 
+// SEQ-ADVANCE BUDGET (RUNTIME-V2 Phase 4). How long the orchestrator progress
+// `seq` may sit unchanged before the run reads STALLED rather than LIVE. A single
+// transition can legitimately run a while, so this is generous — distinctly LONGER
+// than the heartbeat-staleness window: a frozen-seq run whose heartbeat still
+// pulses is STALLED (alive, no progress); only once the heartbeat ALSO freezes is
+// it DEAD. ~90s is a few × a per-transition time without masking a wedged loop.
+export const SEQ_STALL_BUDGET_MS = 90_000;
+
+// The four chrome run-states. Lowercase so the chrome class is `dt-rs-<state>`;
+// the visible label is uppercased by the chrome.
+export const RUN_STATE = Object.freeze({
+  LIVE: 'live', STALLED: 'stalled', SETTLED: 'settled', DEAD: 'dead',
+});
+
 // Is a heartbeat `phase` string a NON-idle (i.e. running) phase?
 //
 // The phase may be a colon-delimited path (`tournament:round_0:rung0_m3`,
@@ -167,9 +181,18 @@ function prettyStructure(structure) {
 //   heartbeat        — the /api/heartbeat object (or state.heartbeat).
 //   activeRuns       — the /api/active-runs array (or state.activeRuns).
 //   activeTournament — the /api/active-tournament object (or null).
+//   seq              — the progress cursor (state.lastSeq); -1 / absent ⇒ no seq
+//                      known yet (a pre-RUNTIME-V2 server) → the run-state DEGRADES
+//                      to the legacy timestamp-derived running/idle/stale verdict.
+//   terminal         — the latest frame's terminal marker (state.terminal).
+//   lastSeqAdvanceAt — wall-clock ms the cursor last advanced (state); NaN until
+//                      the first advance.
 //   now              — current epoch ms (defaults to Date.now(); injectable for
 //                      deterministic tests).
-export function deriveLiveStatus({ heartbeat, activeRuns, activeTournament } = {}, now = Date.now()) {
+export function deriveLiveStatus(
+  { heartbeat, activeRuns, activeTournament, seq, terminal, lastSeqAdvanceAt } = {},
+  now = Date.now(),
+) {
   const hb = (heartbeat && typeof heartbeat === 'object') ? heartbeat : null;
   const phase = hb ? hb.phase : null;
   const runs = Array.isArray(activeRuns) ? activeRuns : [];
@@ -224,6 +247,37 @@ export function deriveLiveStatus({ heartbeat, activeRuns, activeTournament } = {
     ? phaseLabel(phase, structure)
     : (heartbeat || activeRuns || activeTournament ? 'idle' : 'done');
 
+  // ── the FOUR-STATE run verdict (seq-driven, NOT heartbeat-timestamp) ─
+  //   SETTLED — a terminal progress marker (cleanly ended). Authoritative.
+  //   LIVE    — seq advanced within SEQ_STALL_BUDGET_MS (genuine progress).
+  //   STALLED — no advance within budget, but the heartbeat still pulses.
+  //   DEAD    — no advance within budget AND no fresh heartbeat.
+  // With NO seq known (pre-RUNTIME-V2: seq absent / -1) the run-state
+  // DEGRADES to the legacy timestamp verdict (byte-identical to today):
+  // running ⇒ LIVE, a frozen heartbeat ⇒ DEAD, an idle workspace ⇒ SETTLED.
+  const seqKnown = typeof seq === 'number' && isFinite(seq) && seq >= 0;
+  const advanceAge = isFinite(lastSeqAdvanceAt) ? Math.max(0, now - lastSeqAdvanceAt) : NaN;
+  const seqAdvancingFresh = seqKnown && isFinite(advanceAge) && advanceAge <= SEQ_STALL_BUDGET_MS;
+  // A heartbeat is "pulsing" when it exists AND is fresh (the run-state DEAD/
+  // STALLED split). In-flight board units corroborate a pulse too (those are
+  // bumped by per-run beaters independent of the orchestrator heartbeat).
+  const pulsing = heartbeatFresh || inFlight > 0;
+
+  let runState;
+  if (terminal === true) {
+    runState = RUN_STATE.SETTLED;
+  } else if (!seqKnown) {
+    // legacy degrade — derive from the timestamp verdict (byte-identical).
+    runState = running ? RUN_STATE.LIVE
+      : (heartbeatStale ? RUN_STATE.DEAD : RUN_STATE.SETTLED);
+  } else if (seqAdvancingFresh) {
+    runState = RUN_STATE.LIVE;
+  } else if (pulsing) {
+    runState = RUN_STATE.STALLED;
+  } else {
+    runState = RUN_STATE.DEAD;
+  }
+
   return {
     running,
     structure,
@@ -234,6 +288,10 @@ export function deriveLiveStatus({ heartbeat, activeRuns, activeTournament } = {
     heartbeatStale,
     heartbeatAgeMs,
     label,
+    runState,
+    terminal: terminal === true,
+    seqKnown,
+    seqAdvanceAgeMs: advanceAge,
   };
 }
 
@@ -280,6 +338,20 @@ export function treeLiveSet({ activeRuns, running, epochId } = {}) {
   return out;
 }
 
+// The visible chrome label for a four-state run verdict (uppercased token).
+// SETTLED on a never-run / empty workspace would read oddly, so the chrome
+// only shows the run-state word while there is SOMETHING to report; the
+// mapping itself is total.
+export function runStateLabel(runState) {
+  switch (runState) {
+    case RUN_STATE.LIVE: return 'LIVE';
+    case RUN_STATE.STALLED: return 'STALLED';
+    case RUN_STATE.SETTLED: return 'SETTLED';
+    case RUN_STATE.DEAD: return 'DEAD';
+    default: return '';
+  }
+}
+
 // A stable digest of the derived status so the chrome only re-stamps on a real
 // change (digest-gated — a steady heartbeat ping writes ZERO DOM).
 export function liveStatusDigest(conn, status) {
@@ -289,6 +361,11 @@ export function liveStatusDigest(conn, status) {
   // coarse "last seen Ns ago" climb) still flips the digest.
   const ageBucket = (s.heartbeatStale && isFinite(s.heartbeatAgeMs))
     ? Math.floor(s.heartbeatAgeMs / 5000) : '';
+  // The run-state is a DISCRETE token, so fold it raw — it already captures
+  // every LIVE/STALLED/SETTLED/DEAD transition. The seq advance AGE climbs
+  // every frame and is INTENTIONALLY NOT folded (folding it would re-stamp
+  // the chrome on every tick — the render-discipline bug); the discrete
+  // runState transition is the only thing that should flip the pill.
   return [
     conn,
     s.running ? 'R' : '-',
@@ -297,6 +374,7 @@ export function liveStatusDigest(conn, status) {
     s.inFlight || 0,
     s.tournamentRunning ? 'T' : '',
     s.heartbeatStale ? 'S' + ageBucket : '',
+    s.runState || '',
     s.label || '',
   ].join('|');
 }
