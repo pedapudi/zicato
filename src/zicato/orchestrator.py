@@ -1448,7 +1448,17 @@ async def _evolve_multi_challenger(
         append_to_lineage,
         update_experiment_outcome,
     )
-    from zicato.selection import resolve_tournament  # noqa: PLC0415
+    from zicato.selection import EvidencePreGate, resolve_tournament  # noqa: PLC0415
+    from zicato.selection.dead_letter import (  # noqa: PLC0415
+        InconclusiveRecord,
+        record_inconclusive,
+    )
+    from zicato.selection.driver import EvidenceResolution  # noqa: PLC0415
+    from zicato.selection.evidence_gate import (  # noqa: PLC0415
+        rating_block,
+        read_promote_confidence_threshold,
+        read_replicate_budget,
+    )
     from zicato.selection.strategy import (  # noqa: PLC0415
         Contestant,
         Matchup,
@@ -1855,6 +1865,67 @@ async def _evolve_multi_challenger(
             entries=_field_entries(competitors_meta, live_standings),
         )
 
+    # --- Opt-in Bradley--Terry promotion pre-gate (crown on evidence). When
+    # ``promote_confidence_threshold`` is set in the structure params, the
+    # driver holds a crowning promote until the fitted rating clears the
+    # confidence bar AND the CIs separate, spending closest-CI replicates in
+    # between (the defer→replicate loop). Unset ⇒ ``pre_gate`` stays ``None``
+    # and the resolution is byte-identical to today.
+    pre_gate: EvidencePreGate | None = None
+    replicate_duel = None
+    on_inconclusive = None
+    bt_threshold = read_promote_confidence_threshold(tournament_spec.params)
+    if bt_threshold is not None:
+        pre_gate = EvidencePreGate(
+            threshold=bt_threshold,
+            replicate_budget=read_replicate_budget(tournament_spec.params),
+        )
+
+        async def _replicate_duel(left_id: str, right_id: str) -> MatchupResult:
+            # One extra crowning-pair duel for the pre-gate's evidence loop,
+            # routed through the SAME board-unit runner + gate every other duel
+            # uses (so a replicate is scored identically to the original duel).
+            return await _run_matchup(
+                Matchup(
+                    matchup_id=f"bt-replicate:{left_id}:{right_id}",
+                    left=Contestant(generation_id=left_id, role="champion"),
+                    right=Contestant(generation_id=right_id, role="challenger"),
+                )
+            )
+
+        replicate_duel = _replicate_duel
+
+        def _on_inconclusive(resolution: EvidenceResolution) -> None:
+            # Record the unresolved crowning duel to the dead-letter queue so
+            # nothing is silently dropped. Best-effort: a write failure must
+            # not abort the round.
+            verdict = resolution.verdict
+            challenger_id = (
+                verdict.challenger.generation_id
+                if verdict.challenger is not None
+                else first_challenger_id
+            )
+            champion_id = (
+                verdict.champion.generation_id if verdict.champion is not None else parent_id
+            )
+            with best_effort(
+                "dead-letter inconclusive record",
+                on_error=lambda exc: log.debug("dead-letter record skipped: %s", exc),
+            ):
+                record_inconclusive(
+                    workspace_root,
+                    InconclusiveRecord(
+                        generation_id=challenger_id,
+                        champion_id=champion_id,
+                        epoch_id=epoch_id,
+                        rating=rating_block(verdict),
+                        ci_history=resolution.ci_history,
+                        reason=verdict.reason,
+                    ),
+                )
+
+        on_inconclusive = _on_inconclusive
+
     # --- Drive the strategy to a crowned decision.
     try:
         decision = await resolve_tournament(
@@ -1862,6 +1933,9 @@ async def _evolve_multi_challenger(
             request_field=_request_field,
             run_matchup=_run_matchup,
             on_progress=_publish_live_structure,
+            pre_gate=pre_gate,
+            replicate_duel=replicate_duel,
+            on_inconclusive=on_inconclusive,
         )
     except Exception:
         # A failure mid-resolution leaves no settled bracket — clear the
