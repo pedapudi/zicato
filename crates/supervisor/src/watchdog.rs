@@ -16,7 +16,7 @@
 
 use crate::action_log::{Action, Trigger, WatchdogLog};
 use crate::reader::{self, WorkspacePaths};
-use crate::signal::{self, escalate};
+use crate::signal::{self, escalate_target, KillTarget};
 use chrono::{DateTime, Utc};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -403,6 +403,66 @@ pub fn is_signalable_run_pid(pid: i32, protected: &HashSet<i32>) -> bool {
     true
 }
 
+/// Resolve the escalation target for a run whose worker `pid` has ALREADY
+/// been vetted (signalable + alive + identity-matched) by the caller.
+///
+/// The single worker pid is upgraded to a whole-process-group kill — taking
+/// down the worker AND any grandchildren the inner harness spawned — ONLY
+/// when every safety condition holds:
+///
+/// * the run records a `pgid`,
+/// * that pgid is the worker's OWN group (`pgid == pid`): the worker is
+///   spawned as a session/group leader, so its pgid equals its pid. We
+///   refuse to negate a pgid that is not the vetted leader's own group —
+///   that would be a foreign group we have not identity-matched,
+/// * the pgid passes [`signal::is_negatable_pgid`] (`pgid > 1`, not a
+///   protected group: the supervisor's or orchestrator's own pgid).
+///
+/// When any condition fails the target falls back to a single-pid
+/// [`KillTarget::Leader`] on the already-vetted worker pid — the legacy,
+/// always-safe behavior. The caller's pid vetting (`is_same_process` /
+/// `is_signalable_run_pid`) is the identity gate; this only decides
+/// leader-vs-group on top of that.
+pub fn resolve_kill_target(
+    run: &crate::state::ActiveRun,
+    vetted_pid: i32,
+    protected_pgids: &HashSet<i32>,
+) -> KillTarget {
+    let leader = KillTarget::Leader { pid: vetted_pid };
+    let Some(pgid) = run.pgid else {
+        return leader;
+    };
+    // Only negate the worker's OWN group. The worker is its group's leader
+    // (start_new_session → pgid == pid), so a pgid that does not equal the
+    // vetted leader pid is a group we have NOT identity-matched; refuse it.
+    if pgid != vetted_pid {
+        return leader;
+    }
+    if !signal::is_negatable_pgid(pgid, protected_pgids) {
+        return leader;
+    }
+    KillTarget::Group {
+        pgid,
+        leader_pid: vetted_pid,
+    }
+}
+
+/// Build the set of process groups the watchdog must never negate: its own
+/// group and the orchestrator's. Reading the orchestrator's pgid from its
+/// (heartbeat) pid is best-effort — `getpgid` can race a just-exited
+/// orchestrator — but the supervisor's own pgid is always fenced. Negating
+/// a protected group would signal the supervisor and/or the orchestrator.
+fn protected_pgids(heartbeat_pid: Option<i32>) -> HashSet<i32> {
+    let mut set = HashSet::new();
+    set.insert(signal::own_pgid());
+    if let Some(pid) = heartbeat_pid {
+        if let Some(pgid) = signal::pgid_of(pid) {
+            set.insert(pgid);
+        }
+    }
+    set
+}
+
 /// The effective, **clamped** deadline the watchdog enforces for a run.
 ///
 /// The deadline a run record carries is orchestrator-written and untrusted:
@@ -606,11 +666,15 @@ pub async fn runs_loop(
                 // from ever being treated as a run worker. The watchdog
                 // kills run pids only.
                 let mut protected: HashSet<i32> = HashSet::new();
-                if let Some(hb) = reader::read_heartbeat(&paths) {
-                    if let Some(pid) = hb.pid {
-                        protected.insert(pid);
-                    }
+                let heartbeat_pid = reader::read_heartbeat(&paths).and_then(|hb| hb.pid);
+                if let Some(pid) = heartbeat_pid {
+                    protected.insert(pid);
                 }
+
+                // Process groups the watchdog must NEVER negate: its own and
+                // the orchestrator's. A group-kill (`kill(-pgid, …)`) into a
+                // protected group would signal the supervisor / orchestrator.
+                let protected_pgids = protected_pgids(heartbeat_pid);
 
                 // Parent→supervisor kill requests pending this tick. The
                 // Python parent writes one when a worker overruns its budget,
@@ -635,12 +699,16 @@ pub async fn runs_loop(
                                 reader::clear_kill_request(&paths, &run.run_id);
                             }
                             Some(pid) => {
+                                let target =
+                                    resolve_kill_target(run, pid, &protected_pgids);
                                 warn!(
                                     run_id = %run.run_id,
                                     pid,
+                                    ?target,
                                     "parent requested kill; escalating (single escalator)",
                                 );
-                                let out = escalate(pid, thresholds.run_kill_grace).await;
+                                let out =
+                                    escalate_target(target, thresholds.run_kill_grace).await;
                                 info!(
                                     ?out,
                                     run_id = %run.run_id,
@@ -679,17 +747,23 @@ pub async fn runs_loop(
                                     .wall_clock_budget_seconds
                                     .map(|b| format!("{b:.0}"))
                                     .unwrap_or_else(|| "?".to_string());
+                                let target =
+                                    resolve_kill_target(run, pid, &protected_pgids);
                                 warn!(
                                     run_id = %run.run_id,
                                     pid,
+                                    ?target,
                                     budget_seconds = %budget,
                                     "run {} exceeded its {}s wall-clock budget; SIGTERM",
                                     run.run_id,
                                     budget,
                                 );
-                                // escalate() does SIGTERM, waits the grace
-                                // window, then SIGKILLs if still alive.
-                                let out = escalate(pid, thresholds.run_kill_grace).await;
+                                // escalate_target() does SIGTERM, waits the
+                                // grace window, then SIGKILLs if still alive —
+                                // group-wide when the run carries a negatable
+                                // pgid, else the single leader pid.
+                                let out =
+                                    escalate_target(target, thresholds.run_kill_grace).await;
                                 if out == crate::signal::EscalationOutcome::KilledForcefully {
                                     warn!(
                                         run_id = %run.run_id,
@@ -734,8 +808,9 @@ pub async fn runs_loop(
                                 );
                                 continue;
                             }
-                            warn!(run_id=%run.run_id, pid, "active run past kill threshold; escalating");
-                            let out = escalate(pid, thresholds.grace).await;
+                            let target = resolve_kill_target(run, pid, &protected_pgids);
+                            warn!(run_id=%run.run_id, pid, ?target, "active run past kill threshold; escalating");
+                            let out = escalate_target(target, thresholds.grace).await;
                             info!(?out, run_id=%run.run_id, "run escalation complete");
                             log.record(Action {
                                 ts: Utc::now(),
@@ -1359,6 +1434,116 @@ mod tests {
         assert!(!is_signalable_run_pid(4242, &protected));
         // A plausible worker pid.
         assert!(is_signalable_run_pid(999_999, &protected));
+    }
+
+    // ---- resolve_kill_target (group-vs-leader selection) -----------
+
+    #[test]
+    fn resolve_target_falls_back_to_leader_without_pgid() {
+        // A legacy record (no pgid) always resolves to a single-pid kill.
+        let run = ActiveRun {
+            run_id: "r1".into(),
+            pid: Some(4242),
+            pgid: None,
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_kill_target(&run, 4242, &no_protected()),
+            KillTarget::Leader { pid: 4242 },
+        );
+    }
+
+    #[test]
+    fn resolve_target_group_kills_the_workers_own_group() {
+        // The worker is its group's leader (pgid == pid): a group kill is
+        // selected, negating the whole group.
+        let run = ActiveRun {
+            run_id: "r1".into(),
+            pid: Some(4242),
+            pgid: Some(4242),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_kill_target(&run, 4242, &no_protected()),
+            KillTarget::Group {
+                pgid: 4242,
+                leader_pid: 4242,
+            },
+        );
+    }
+
+    #[test]
+    fn resolve_target_refuses_a_foreign_group() {
+        // A pgid that is NOT the vetted leader's own group (pgid != pid) is a
+        // group we have not identity-matched; fall back to the single-pid
+        // kill rather than negate a foreign group.
+        let run = ActiveRun {
+            run_id: "r1".into(),
+            pid: Some(4242),
+            pgid: Some(9999), // not the worker's own group
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_kill_target(&run, 4242, &no_protected()),
+            KillTarget::Leader { pid: 4242 },
+        );
+    }
+
+    #[test]
+    fn resolve_target_refuses_init_and_sentinel_pgids() {
+        // pgid <= 1 is never negatable, even when it equals the (degenerate)
+        // leader pid — fall back to the leader kill (which its own pid guard
+        // will then refuse downstream).
+        for bad in [0, 1] {
+            let run = ActiveRun {
+                run_id: "r1".into(),
+                pid: Some(bad),
+                pgid: Some(bad),
+                ..Default::default()
+            };
+            assert_eq!(
+                resolve_kill_target(&run, bad, &no_protected()),
+                KillTarget::Leader { pid: bad },
+                "pgid {bad} must never be negated",
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_target_refuses_a_protected_group() {
+        // Even the worker's own group is refused when that pgid is protected
+        // (the supervisor's or orchestrator's group): fall back to the leader.
+        let protected_pgids: HashSet<i32> = [4242].into_iter().collect();
+        let run = ActiveRun {
+            run_id: "r1".into(),
+            pid: Some(4242),
+            pgid: Some(4242),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_kill_target(&run, 4242, &protected_pgids),
+            KillTarget::Leader { pid: 4242 },
+        );
+    }
+
+    #[test]
+    fn protected_pgids_always_contains_the_supervisors_own_group() {
+        // The supervisor's own pgid is always fenced off; with no heartbeat
+        // pid that is the only protected group.
+        let set = protected_pgids(None);
+        assert!(set.contains(&signal::own_pgid()));
+    }
+
+    #[test]
+    fn protected_pgids_includes_the_orchestrator_group_when_resolvable() {
+        // Given an alive pid (our own), its pgid is added to the protected
+        // set alongside the supervisor's own group.
+        let me = std::process::id() as i32;
+        let set = protected_pgids(Some(me));
+        assert!(set.contains(&signal::own_pgid()));
+        if let Some(pgid) = signal::pgid_of(me) {
+            assert!(set.contains(&pgid));
+        }
     }
 
     // ---- decide_run_kill_request -----------------------------------

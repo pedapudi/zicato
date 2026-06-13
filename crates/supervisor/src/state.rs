@@ -78,6 +78,25 @@ pub struct ActiveRun {
     /// integer-valued so equality comparison is exact.
     #[serde(default)]
     pub pid_start_time: Option<f64>,
+    /// OS process-group id of the run's own worker. The worker is spawned in
+    /// its own session/process-group (`start_new_session`), so it is the
+    /// group leader and `pgid == pid`. Recording it lets the watchdog
+    /// GROUP-kill the worker AND any grandchildren the inner harness spawned
+    /// (shells, helper tools) by negating this id, rather than leaking them
+    /// when it kills the leader pid alone. `None` for a legacy record (or a
+    /// platform without process groups) → the watchdog falls back to the
+    /// single-pid kill.
+    #[serde(default)]
+    pub pgid: Option<i32>,
+    /// Absolute path to the run's ephemeral snapshot working copy (the
+    /// `ztw-snap-*` temp directory the runner copytrees the code snapshot
+    /// into for this run). Discarded by the runner on a clean run-end, but
+    /// orphaned if the orchestrator dies mid-run; recording it here lets the
+    /// supervisor GC the leftover `ztw-snap-*` tree after a confirmed
+    /// orchestrator death. `None` for a legacy record or a run that mounted
+    /// no ephemeral snapshot.
+    #[serde(default)]
+    pub snapshot_path: Option<String>,
     #[serde(default)]
     pub entry_id: Option<String>,
     #[serde(default)]
