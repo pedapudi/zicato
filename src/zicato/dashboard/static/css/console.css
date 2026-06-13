@@ -1114,6 +1114,61 @@
     font-size: calc(12px * var(--dt-font-scale, 1)); line-height: 1.4; }
   .dn-decomp-banner-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--v2-caution); align-self: center; flex: 0 0 auto; }
 
+  /* ===========  Bradley–Terry uncertainty pre-gate (the marquee)  ===========
+   * The confidence-thresholded winner-resolution that runs BEFORE the rule
+   * ladder: two θ̂ whiskers on a shared domain + the P(stronger) bar against the
+   * threshold + (when deferred) the replication strip. ONE accent stays the spine;
+   * direction earns good/bad; caution carries "still resolving". No new hue. */
+  .dn-bt-rating { margin: 2px 0 12px; }
+  .dn-bt-whiskers { display: grid; gap: 4px; margin: 6px 0 10px; }
+  .dn-bt-row { display: grid; grid-template-columns: 84px minmax(120px, 1fr) auto; gap: 10px; align-items: center; }
+  .dn-bt-rowlab { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1));
+    text-transform: uppercase; letter-spacing: 0.04em; color: var(--v2-ink-soft); }
+  .dn-bt-rowfig { display: block; min-width: 0; }
+  .dn-bt-rowval { font-size: calc(11px * var(--dt-font-scale, 1)); white-space: nowrap; }
+  .dn-bt-whisker { display: block; }
+  .dn-bt-rail { stroke: var(--v2-rule); stroke-width: 1; }
+  .dn-bt-ci { stroke: var(--v2-flat); stroke-width: 2; }
+  .dn-bt-ci.dn-good { stroke: var(--v2-good); }
+  .dn-bt-ci.dn-bad { stroke: var(--v2-bad); }
+  .dn-bt-cap { stroke: var(--v2-flat); stroke-width: 1.5; }
+  .dn-bt-cap.dn-good { stroke: var(--v2-good); }
+  .dn-bt-cap.dn-bad { stroke: var(--v2-bad); }
+  .dn-bt-theta { fill: var(--v2-ink); }
+  .dn-bt-theta.dn-good { fill: var(--v2-good); }
+  .dn-bt-theta.dn-bad { fill: var(--v2-bad); }
+  .dn-bt-unfit { fill: var(--v2-ink-faint); font: italic 10px var(--v2-mono); }
+  .dn-bt-probwrap { margin: 4px 0 6px; }
+  .dn-bt-probhead { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .dn-bt-problab { font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
+    text-transform: uppercase; letter-spacing: 0.04em; }
+  .dn-bt-probval { font-size: calc(12px * var(--dt-font-scale, 1)); color: var(--v2-ink); }
+  .dn-bt-prob { display: block; }
+  .dn-bt-prob-track { fill: var(--v2-rule-soft); }
+  .dn-bt-prob-fill.dn-good-fill { fill: var(--v2-good); }
+  .dn-bt-prob-fill.dn-caution-fill { fill: var(--v2-caution); }
+  .dn-bt-prob-thr { stroke: var(--v2-ink); stroke-width: 1.5; stroke-dasharray: 2 2; }
+  .dn-bt-prob-thrlab { fill: var(--v2-ink-soft); font: 9px var(--v2-mono); }
+  .dn-bt-readout { font-size: calc(11px * var(--dt-font-scale, 1)); margin: 2px 0 0; }
+  .dn-bt-forming { display: flex; align-items: baseline; gap: 6px; margin: 6px 0; }
+  /* the replication strip (deferred) — replicates-spent pips + next duel + the
+     CI-convergence sparkline. Reuses dt-rungstep + dn-spark verbatim. */
+  .dn-bt-replication { margin: 8px 0 2px; }
+  .dn-bt-repl-row { display: flex; align-items: center; gap: 8px; margin: 5px 0;
+    font-size: calc(11px * var(--dt-font-scale, 1)); }
+  .dn-bt-repl-lab { text-transform: uppercase; letter-spacing: 0.04em; min-width: 110px; }
+  .dn-bt-repl-n { color: var(--v2-ink-soft); }
+  .dn-bt-duelpair { color: var(--v2-ink); }
+  .dn-bt-convspark { display: inline-block; width: 120px; }
+  .dn-bt-inconclusive { font-size: calc(11px * var(--dt-font-scale, 1)); margin: 6px 0 0;
+    border-left: 2px solid var(--v2-caution); padding-left: 8px; color: var(--v2-caution); }
+  /* the BT credible-interval band drawn on the radar scalar vertex. */
+  .dn-radar-ciband { stroke: var(--v2-accent); stroke-width: 2; opacity: 0.55; }
+  .dn-radar-citick { stroke: var(--v2-accent); stroke-width: 1.4; opacity: 0.7; }
+  .dn-radar-ciband.dn-proj, .dn-radar-citick.dn-proj { stroke-dasharray: 2 2; opacity: 0.45; }
+  /* the field-level deferred caption under the standings table. */
+  .dt-standings-deferred { border-left: 2px solid var(--v2-caution); padding-left: 8px; }
+
   /* ===================  side-by-side mutation diff (fix #2)  =================== */
 
   .dn-mut-combined { display: grid; gap: 14px; grid-template-columns: minmax(280px, 1fr) minmax(320px, 1.4fr); align-items: start; }

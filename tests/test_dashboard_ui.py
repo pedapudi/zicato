@@ -385,7 +385,22 @@ def test_bundle_under_size_envelope(
     # backend field). ~3.6 KB of new surface incl. the prior wave's accrued
     # spend (back-compat: a gate with no resolved scalars renders byte-identical
     # to today). The envelope is raised to 1.124 MB to cover it with headroom.
-    assert total < 1_124_000, f"bundle is {total} bytes, exceeds 1_124_000 envelope"
+    #
+    # The BRADLEY–TERRY UNCERTAINTY GATE (the evidence-cockpit marquee) then
+    # mounts `ratingBlock`/`replicationStrip`/`ratingDigest` into candidate.js
+    # gatePanel: the champion/challenger θ̂ whiskers with credible-interval caps,
+    # the P(challenger stronger) bar against the configured threshold marker, and
+    # — when the rating is deferred — the replication strip (replicates-spent
+    # dt-rungstep pips + the next closest-CI duel + a CI-convergence sparkline,
+    # capped with an explicit "inconclusive" caption when the schedule exhausts).
+    # It overlays the challenger's CI band on the radar scalar vertex
+    # (buildRadarModel → `chalBand`, drawn by svg.radarSilhouette) and threads a
+    # field-level "deferred" caption under the structure.js standings table. All
+    # of it reads gate.rating VERBATIM (build_rating_view) + its own CSS block;
+    # back-compat: rating absent / present:false → the gate panel is byte-
+    # identical to today. ~10.5 KB of real new evidence surface (JS + CSS). The
+    # envelope is raised to 1.14 MB to cover it with headroom.
+    assert total < 1_140_000, f"bundle is {total} bytes, exceeds 1_140_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

@@ -2191,6 +2191,11 @@ function standingsTable(st, ctx, epochId, live) {
   const standings = (st && Array.isArray(st.standings)) ? st.standings.slice() : [];
   if (!standings.length) return null;
   const structure = (st && st.structure) || 'gauntlet';
+  // track whether any row resolves to the DEFERRED status-pill state (still in
+  // contention — no crown / no elimination committed) so the table can carry an
+  // explicit field-level "deferred · winner resolves after the duels" caption,
+  // making a held-but-not-rejected field read intentionally rather than blank.
+  let anyDeferred = false;
   // operator-override readback (durable field record): {gid: {action, ts,
   // reason, state}}. KEY-ABSENT on every gate-decided / single-challenger /
   // pre-feature run → no chip → byte-identical to today.
@@ -2221,6 +2226,9 @@ function standingsTable(st, ctx, epochId, live) {
     // "racing"), NEVER a blanket "racing" for a non-racing tournament.
     if (live && (raw === 'champion' || raw === 'eliminated')) raw = 'competing';
     const status = structureStatusLabel(raw, structure);
+    // the statusPill verdict-state mirror: anything that is NOT a committed
+    // champion / eliminated reads as the DEFERRED pill (still in contention).
+    if (status !== 'champion' && status !== 'eliminated') anyDeferred = true;
     // PROJECTED — an in-flight row (boards still streaming) shows a projected
     // scalar, not a settled one: dashed/dimmed row + a "proj" badge + the
     // ~prefix on the number + a scored board-progress sub-bar.
@@ -2268,6 +2276,20 @@ function standingsTable(st, ctx, epochId, live) {
     ]));
   }
   tbl.appendChild(tbody);
+  // a field-level DEFERRED caption — when at least one standing is held in
+  // contention (the deferred pill state) and nothing has yet been crowned /
+  // eliminated, surface WHY the field reads unsettled: the winner resolves once
+  // the duels separate the strengths. Only while LIVE (an uncommitted run) and
+  // only when no terminal verdict has landed, so a settled board stays quiet.
+  const anyTerminal = standings.some((s) => {
+    const r = String(s.status || '').toLowerCase();
+    return r === 'champion' || r === 'eliminated';
+  });
+  if (live && anyDeferred && !anyTerminal) {
+    const cap = el('p', { class: 'dn-faint dt-standings-deferred', style: 'font-size:11px;margin:8px 0 0;',
+      text: 'deferred — no winner committed yet · the standing resolves once the duels separate the strengths (held, not rejected)' });
+    return el('div', { class: 'dt-standings-wrap' }, [tbl, cap]);
+  }
   return tbl;
 }
 

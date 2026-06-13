@@ -2637,6 +2637,24 @@ export function radarSilhouette(opts) {
   svg.appendChild(svgEl('polygon', { points: champPts, class: 'dn-radar-champ', fill: 'none' }));
   axes.forEach((a, i) => { const [x, y] = P(i, a.champ); svg.appendChild(svgEl('circle', { cx: x, cy: y, r: mini ? 1.8 : 2.5, class: 'dn-radar-champ-dot', fill: 'none' })); });
 
+  // the BRADLEY–TERRY credible-interval BAND on an axis vertex (the scalar axis
+  // carries `chalBand:{lo,hi}` in radius space) — a short radial whisker from the
+  // inner to the outer credible radius along the spoke, so the candidate vertex
+  // reads as an interval, not a false point. Drawn UNDER the candidate polygon so
+  // the vertex dot still sits on top. Absent on every axis → byte-identical.
+  axes.forEach((a, i) => {
+    if (!a.chalBand || !isNum(a.chalBand.lo) || !isNum(a.chalBand.hi)) return;
+    const [ix, iy] = P(i, a.chalBand.lo);
+    const [ox, oy] = P(i, a.chalBand.hi);
+    svg.appendChild(svgEl('line', { x1: ix, y1: iy, x2: ox, y2: oy, class: 'dn-radar-ciband' + (live ? ' dn-proj' : '') }));
+    // small ticks at each credible endpoint, perpendicular to the spoke.
+    const ang = angle(i);
+    const tx = Math.cos(ang + Math.PI / 2), ty = Math.sin(ang + Math.PI / 2);
+    const tk = mini ? 2.5 : 3.5;
+    svg.appendChild(svgEl('line', { x1: ix - tx * tk, y1: iy - ty * tk, x2: ix + tx * tk, y2: iy + ty * tk, class: 'dn-radar-citick' + (live ? ' dn-proj' : '') }));
+    svg.appendChild(svgEl('line', { x1: ox - tx * tk, y1: oy - ty * tk, x2: ox + tx * tk, y2: oy + ty * tk, class: 'dn-radar-citick' + (live ? ' dn-proj' : '') }));
+  });
+
   // the candidate polygon (filled accent; dn-proj when live/projected).
   const candPts = axes.map((a, i) => P(i, a.chal).join(',')).join(' ');
   svg.appendChild(svgEl('polygon', { points: candPts, class: 'dn-radar-cand' + (live ? ' dn-proj' : ''), 'aria-hidden': 'true' }));
@@ -2684,7 +2702,12 @@ export function radarSilhouetteDigest(opts) {
   const axes = Array.isArray(o.axes) ? o.axes : [];
   return JSON.stringify({
     l: !!o.live,
-    a: axes.map((a) => [String(a.label), isNum(a.chal) ? a.chal.toFixed(3) : '?', isNum(a.champ) ? a.champ.toFixed(3) : '?']),
+    a: axes.map((a) => [String(a.label), isNum(a.chal) ? a.chal.toFixed(3) : '?', isNum(a.champ) ? a.champ.toFixed(3) : '?',
+      // the BT credible-interval band (rounded radii, no timestamps) so a CI
+      // tightening repaints the radar but a no-op beat stays byte-identical.
+      // absent on every non-rating axis → no contribution (back-compat digest).
+      a.chalBand && isNum(a.chalBand.lo) && isNum(a.chalBand.hi)
+        ? [a.chalBand.lo.toFixed(3), a.chalBand.hi.toFixed(3)] : null]),
   });
 }
 

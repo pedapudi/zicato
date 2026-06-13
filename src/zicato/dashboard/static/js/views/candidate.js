@@ -316,6 +316,9 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
     primaryGate, championScalar,
     settledScalar: hasSettled ? scalarByGen.get(String(genId)) : null,
     projected, entries,
+    // the BT rating rides off the primary gate; when present + fit, the radar's
+    // scalar vertex carries the credible-interval band (absent → no band).
+    rating: primaryGate && primaryGate.rating,
   });
 
   // the train→holdout GENERALIZATION triplet for THIS candidate — read off its
@@ -364,7 +367,7 @@ function buildGeneralizationModel(exp) {
 // A loss axis pair shares a padded local [lo,hi] so both points stay visible;
 // the `raw` parallel array carries the underlying numbers for the hover tooltip.
 // Returns null when fewer than 3 plottable axes exist (the radar needs ≥3).
-function buildRadarModel({ primaryGate, championScalar, settledScalar, projected, entries }) {
+export function buildRadarModel({ primaryGate, championScalar, settledScalar, projected, entries, rating }) {
   const axes = [];
   const raw = [];
   // a loss-type axis (lower = better) → inverse-normalised radius within a padded
@@ -385,6 +388,32 @@ function buildRadarModel({ primaryGate, championScalar, settledScalar, projected
     : (projected && svg.isNum(projected.scalar) ? projected.scalar : null);
   const live = !svg.isNum(settledScalar) && projected && svg.isNum(projected.scalar);
   lossAxis('scalar', championScalar, candScalar, 'loss');
+
+  // (1b) the BRADLEY–TERRY credible-interval BAND on the SCALAR axis vertex —
+  // the candidate's strength is not a point but an interval, so the radar's
+  // scalar vertex carries the CI as a radial band [chalLo, chalHi] in the SAME
+  // 0..1 radius space as the vertex. We map the θ̂ CI half-width onto the axis
+  // PROPORTIONALLY: the fractional uncertainty (ci half-width / |θ̂| spread) scales
+  // the band around the plotted candidate radius. Attached only when the rating
+  // is present AND the challenger CI fits AND a scalar axis was plotted; absent
+  // → no band (byte-identical to the pre-rating radar).
+  if (rating && rating.present && axes.length) {
+    const chall = rating.challenger;
+    const scAxis = axes[0]; // the scalar axis is plotted first.
+    if (scAxis && scAxis.label === 'scalar' && chall && svg.isNum(chall.theta)
+        && svg.isNum(chall.ci_lo) && svg.isNum(chall.ci_hi) && chall.ci_hi > chall.ci_lo) {
+      // fractional CI half-width relative to the θ̂ magnitude (a unitless
+      // uncertainty), clamped so a wild interval can't swamp the axis.
+      const half = (chall.ci_hi - chall.ci_lo) / 2;
+      const denom = Math.max(Math.abs(chall.theta), half, 1e-6);
+      const frac = Math.min(0.45, half / denom);
+      const r = scAxis.chal;
+      scAxis.chalBand = { lo: Math.max(0.05, r - frac), hi: Math.min(1, r + frac) };
+      raw[0] = Object.assign({}, raw[0], {
+        ciLo: chall.ci_lo, ciHi: chall.ci_hi, theta: chall.theta,
+      });
+    }
+  }
 
   // (2) pass-rate axis — higher = better, so it maps directly (no inverse). The
   // candidate's pass-rate is read off its own per-board pass_fail; the champion's
@@ -549,7 +578,13 @@ function candidateDigest(s) {
         // landing or a settle repaints the gate head, but a no-op heartbeat
         // stays byte-identical. null (neither side resolves) → pre-feature
         // digest (back-compat clean).
-        absoluteScalarsDigest(g)]
+        absoluteScalarsDigest(g),
+        // the BRADLEY–TERRY uncertainty pre-gate (rounded θ̂/CI/P + the duel
+        // counts + the next_duel pair + the ci_history P-trace, NO timestamps)
+        // folded in so a duel resolving / a CI tightening / P moving repaints the
+        // gate, but a no-op heartbeat stays byte-identical. null (no rating /
+        // present:false) contributes nothing → pre-feature digest (back-compat).
+        ratingDigest(g.rating)]
       : null),
     drill: s.entryParam || null,
     drillExp: s.exps && Array.isArray(s.exps.outcomes) ? s.exps.outcomes.map((o) => [o.kind, o.passed, o.judge_name, o.detail]) : null,
@@ -1354,6 +1389,277 @@ export function absoluteScalarsDigest(gate) {
   return [cs, ch, lv];
 }
 
+// ── the BRADLEY–TERRY uncertainty PRE-GATE (the marquee) ────────────────────
+//
+// Before the deterministic rule ladder fires, a confidence-thresholded run
+// resolves the winner by a Bradley–Terry strength estimate: each side carries a
+// posterior strength θ̂ with a credible interval, and the gate promotes only when
+// P(θ_child > θ_champion) clears the configured threshold. This block surfaces
+// that pre-gate as the operator's FIRST read — two θ̂ whiskers + the P-bar against
+// the threshold marker — so "why hasn't this promoted yet?" reads off the
+// evidence, not a bare "deferred". Every field comes from `gate.rating`
+// VERBATIM (build_rating_view): the keys are `present`/`credible`/`champion`/
+// `challenger` (each `{theta, se, ci_lo, ci_hi}|null`)/`p_stronger`/`threshold`/
+// `decision`/`ci_overlap`/`replicates_spent`/`n_duels`/`next_duel`/`ci_history`.
+//
+// Back-compat contract (NO Python edits): when the feature is OFF the block is
+// EXACTLY `{present:false}` — render NOTHING (byte-identical to today). Below the
+// credible-fit minimum (n_duels < MIN_CREDIBLE_DUELS) we render a "rating forms
+// after N duels" placeholder, never a faked estimate. A `deferred` decision
+// drives the replicationStrip (replicates-spent pips + the next closest-CI duel
+// + a CI-convergence sparkline); a schedule-exhausted deferral (no next_duel,
+// not credible) reads "inconclusive" — NEVER a faked crown.
+const MIN_CREDIBLE_DUELS = 3;       // build_rating_view's credible-fit floor.
+
+// One θ̂ whisker: the point estimate + its [ci_lo, ci_hi] credible interval drawn
+// on a SHARED [lo,hi] domain so the champion and challenger whiskers are directly
+// comparable. `side` is {theta, se, ci_lo, ci_hi}|null; null (unfit) → a faint
+// "—" rail so the two rows still line up. Returns a row Node.
+function ratingWhisker(label, side, dom, better) {
+  const W = 220, H = 26, padX = 4, axW = W - 2 * padX;
+  const X = (v) => padX + ((v - dom.lo) / (dom.span || 1)) * axW;
+  const fig = svgEl('svg', {
+    class: 'dn-bt-whisker', width: '100%', height: H, viewBox: `0 0 ${W} ${H}`,
+    preserveAspectRatio: 'none', role: 'img',
+    'aria-label': label + ' strength estimate',
+  });
+  const mid = H / 2;
+  // the rail.
+  fig.appendChild(svgEl('line', { x1: padX, y1: mid, x2: W - padX, y2: mid, class: 'dn-bt-rail' }));
+  if (side && svg.isNum(side.theta)) {
+    const hasCi = svg.isNum(side.ci_lo) && svg.isNum(side.ci_hi);
+    if (hasCi) {
+      const xlo = X(side.ci_lo), xhi = X(side.ci_hi);
+      fig.appendChild(svgEl('line', { x1: xlo, y1: mid, x2: xhi, y2: mid, class: 'dn-bt-ci ' + better }));
+      fig.appendChild(svgEl('line', { x1: xlo, y1: mid - 5, x2: xlo, y2: mid + 5, class: 'dn-bt-cap ' + better }));
+      fig.appendChild(svgEl('line', { x1: xhi, y1: mid - 5, x2: xhi, y2: mid + 5, class: 'dn-bt-cap ' + better }));
+    }
+    fig.appendChild(svgEl('circle', { cx: X(side.theta), cy: mid, r: 3.5, class: 'dn-bt-theta ' + better }));
+  } else {
+    const t = svgEl('text', { x: W / 2, y: mid + 3.5, class: 'dn-bt-unfit', 'text-anchor': 'middle' });
+    t.textContent = 'unfit';
+    fig.appendChild(t);
+  }
+  const valTxt = (side && svg.isNum(side.theta))
+    ? 'θ̂ ' + svg.fmt(side.theta, 2) + (svg.isNum(side.ci_lo) && svg.isNum(side.ci_hi)
+      ? ' [' + svg.fmt(side.ci_lo, 2) + ', ' + svg.fmt(side.ci_hi, 2) + ']' : '')
+    : 'not yet fit';
+  const row = el('div', { class: 'dn-bt-row' }, [
+    el('span', { class: 'dn-bt-rowlab', text: label }),
+    el('span', { class: 'dn-bt-rowfig' }, [fig]),
+    el('span', { class: 'dn-bt-rowval dn-mono dn-faint', text: valTxt }),
+  ]);
+  return row;
+}
+
+// The P(θ_child > θ_champion) bar against the threshold marker. `p` is the
+// posterior probability the challenger is stronger; `thr` the configured
+// promote_confidence_threshold. The fill earns its tone by DIRECTION (clears the
+// threshold → good, below → caution while still resolving). `p` null (CIs not yet
+// fit) → a faint "P forms once both intervals fit" rail. Returns a Node.
+function ratingProbBar(p, thr) {
+  const W = 260, H = 30, padX = 4, axW = W - 2 * padX;
+  const fig = svgEl('svg', {
+    class: 'dn-bt-prob', width: '100%', height: H, viewBox: `0 0 ${W} ${H}`,
+    preserveAspectRatio: 'none', role: 'img',
+    'aria-label': 'probability the challenger is stronger vs the promote threshold',
+  });
+  const top = 6, barH = 12;
+  fig.appendChild(svgEl('rect', { x: padX, y: top, width: axW, height: barH, class: 'dn-bt-prob-track' }));
+  const clears = svg.isNum(p) && svg.isNum(thr) ? p >= thr : null;
+  if (svg.isNum(p)) {
+    const w = Math.max(0, Math.min(1, p)) * axW;
+    fig.appendChild(svgEl('rect', { x: padX, y: top, width: w, height: barH,
+      class: 'dn-bt-prob-fill ' + (clears === false ? 'dn-caution-fill' : 'dn-good-fill') }));
+  }
+  if (svg.isNum(thr)) {
+    const tx = padX + Math.max(0, Math.min(1, thr)) * axW;
+    fig.appendChild(svgEl('line', { x1: tx, y1: top - 4, x2: tx, y2: top + barH + 4, class: 'dn-bt-prob-thr' }));
+    const tl = svgEl('text', { x: tx, y: top + barH + 14, class: 'dn-bt-prob-thrlab', 'text-anchor': 'middle' });
+    tl.textContent = 'thr ' + svg.fmt(thr, 2);
+    fig.appendChild(tl);
+  }
+  return el('div', { class: 'dn-bt-probwrap' }, [
+    el('div', { class: 'dn-bt-probhead' }, [
+      el('span', { class: 'dn-bt-problab', text: 'P(challenger stronger)' }),
+      el('span', { class: 'dn-bt-probval dn-mono', text: svg.isNum(p) ? svg.fmt(p, 2)
+        : '— · forms once both intervals fit' }),
+    ]),
+    fig,
+  ]);
+}
+
+// The replicationStrip — shown when the rating decision is `deferred`. It reads
+// the evidence the scheduler is still gathering: (1) replicates-spent pips in the
+// dt-rungstep treatment, (2) the next closest-CI duel the scheduler will run to
+// sharpen the estimate, and (3) a CI-convergence sparkline of P(stronger) over
+// the recorded driver trace (ci_history). When the schedule is EXHAUSTED (no
+// next_duel + not credible) it caps with an explicit "inconclusive" caption —
+// the gate never fakes a crown out of an unresolved duel. Returns a Node, or null
+// when there is nothing to strip (no replicates, no history, no next duel).
+function replicationStrip(rating) {
+  const spent = svg.isNum(rating.replicates_spent) ? rating.replicates_spent : 0;
+  const hist = Array.isArray(rating.ci_history) ? rating.ci_history : [];
+  const next = rating.next_duel && typeof rating.next_duel === 'object' ? rating.next_duel : null;
+  const exhausted = !next && !rating.credible;
+  const wrap = el('div', { class: 'dn-bt-replication' });
+  wrap.appendChild(subhead('Replication · sharpening the estimate'));
+
+  // (1) replicates-spent pips — dt-rungstep treatment. The pip count is the
+  // replicates spent; all read "done" (already run). A zero-spent live-
+  // reconstructed rating shows a faint "0 replicates spent" instead of an empty
+  // strip.
+  if (spent > 0) {
+    const pips = el('div', { class: 'dt-rungstep', role: 'img',
+      'aria-label': spent + ' replicate' + (spent === 1 ? '' : 's') + ' spent' });
+    for (let i = 0; i < spent; i++) {
+      pips.appendChild(el('span', { class: 'dt-rungstep-pip dt-rungstep-done', 'aria-hidden': 'true' }));
+    }
+    wrap.appendChild(el('div', { class: 'dn-bt-repl-row' }, [
+      el('span', { class: 'dn-bt-repl-lab dn-faint', text: 'replicates spent' }),
+      pips,
+      el('span', { class: 'dn-bt-repl-n dn-mono dn-faint', text: String(spent) }),
+    ]));
+  } else {
+    wrap.appendChild(el('div', { class: 'dn-bt-repl-row dn-faint', text: 'live-reconstructed · 0 replicates spent' }));
+  }
+
+  // (2) the next closest-CI duel.
+  if (next && (next.left != null || next.right != null)) {
+    wrap.appendChild(el('div', { class: 'dn-bt-repl-row dn-bt-nextduel' }, [
+      el('span', { class: 'dn-bt-repl-lab dn-faint', text: 'next duel' }),
+      el('span', { class: 'dn-mono dn-bt-duelpair', text: (next.left == null ? '?' : String(next.left))
+        + ' vs ' + (next.right == null ? '?' : String(next.right)) }),
+      el('span', { class: 'dn-faint', text: ' · closest-CI pair (sharpens P most)' }),
+    ]));
+  }
+
+  // (3) the CI-convergence sparkline of P(stronger) across the driver trace.
+  const pSeries = hist.map((h) => svg.isNum(h && h.p_stronger) ? h.p_stronger : NaN);
+  if (pSeries.filter((v) => svg.isNum(v)).length >= 2) {
+    wrap.appendChild(el('div', { class: 'dn-bt-repl-row dn-bt-convrow' }, [
+      el('span', { class: 'dn-bt-repl-lab dn-faint', text: 'P(stronger) over duels' }),
+      el('span', { class: 'dn-bt-convspark' }, [
+        svg.sparkline({ values: pSeries, width: 120, height: 24,
+          baseline: svg.isNum(rating.threshold) ? rating.threshold : undefined, minSpan: 0.1 }),
+      ]),
+    ]));
+  }
+
+  // schedule exhausted → an explicit inconclusive caption, NEVER a faked crown.
+  if (exhausted) {
+    wrap.appendChild(el('p', { class: 'dn-faint dn-bt-inconclusive',
+      text: 'schedule exhausted — the duels did not separate the two strengths. Inconclusive: held deferred (no faked crown).' }));
+  }
+  return wrap;
+}
+
+// Build the Bradley–Terry uncertainty pre-gate block. Returns null when the
+// feature is OFF (`rating` absent / `rating.present` falsy) so the gate panel is
+// BYTE-IDENTICAL to today (back-compat). Below the credible-fit minimum it
+// renders a "rating forms after N duels" placeholder instead of an estimate.
+export function ratingBlock(rating) {
+  if (!rating || !rating.present) return null;
+  const wrap = el('div', { class: 'dn-bt-rating' });
+  wrap.appendChild(subhead('Bradley–Terry uncertainty · resolve before the gate'));
+
+  const nDuels = svg.isNum(rating.n_duels) ? rating.n_duels : 0;
+  // below the credible-fit minimum: a placeholder, NOT a faked estimate.
+  if (!rating.credible && nDuels < MIN_CREDIBLE_DUELS) {
+    const need = MIN_CREDIBLE_DUELS - nDuels;
+    wrap.appendChild(el('div', { class: 'dn-bt-forming dt-proj' }, [
+      el('span', { class: 'dt-proj-badge', text: 'forming' }),
+      el('span', { class: 'dn-faint', text: ' rating forms after ' + MIN_CREDIBLE_DUELS
+        + ' duels · ' + nDuels + ' resolved' + (need > 0 ? ' (' + need + ' more)' : '') }),
+    ]));
+    // even while forming, the replication strip surfaces what's still being run.
+    if (normaliseRatingDecision(rating) === 'deferred') wrap.appendChild(replicationStrip(rating));
+    return wrap;
+  }
+
+  // the shared θ̂ domain spans both sides' intervals so the whiskers compare
+  // directly; padded so the caps stay off the edge.
+  const champ = rating.champion && typeof rating.champion === 'object' ? rating.champion : null;
+  const chall = rating.challenger && typeof rating.challenger === 'object' ? rating.challenger : null;
+  const pts = [];
+  for (const s of [champ, chall]) {
+    if (!s) continue;
+    for (const k of ['theta', 'ci_lo', 'ci_hi']) if (svg.isNum(s[k])) pts.push(s[k]);
+  }
+  let lo = pts.length ? Math.min(...pts) : 0;
+  let hi = pts.length ? Math.max(...pts) : 1;
+  const pad = (hi - lo) * 0.15 || 0.5;
+  lo -= pad; hi += pad;
+  const dom = { lo, hi, span: (hi - lo) || 1 };
+
+  // the challenger earns "good" iff its θ̂ exceeds the champion's; this is the
+  // direction-earned tone (no new hue).
+  const chalBetter = champ && chall && svg.isNum(champ.theta) && svg.isNum(chall.theta)
+    ? (chall.theta >= champ.theta ? 'dn-good' : 'dn-bad') : 'dn-flat';
+  wrap.appendChild(el('div', { class: 'dn-bt-whiskers' }, [
+    ratingWhisker('champion', champ, dom, 'dn-flat'),
+    ratingWhisker('challenger', chall, dom, chalBetter),
+  ]));
+
+  // the P(stronger) bar against the threshold.
+  wrap.appendChild(ratingProbBar(
+    svg.isNum(rating.p_stronger) ? rating.p_stronger : null,
+    svg.isNum(rating.threshold) ? rating.threshold : null));
+
+  // a one-line read of the rating's own verdict + the credible / overlap flags.
+  const dec = normaliseRatingDecision(rating);
+  const flags = [];
+  if (rating.ci_overlap) flags.push('CIs overlap');
+  if (!rating.credible) flags.push('not yet credible (< ' + MIN_CREDIBLE_DUELS + ' duels)');
+  wrap.appendChild(el('p', { class: 'dn-faint dn-bt-readout', text:
+    'rating ' + dec + ' · ' + nDuels + ' duel' + (nDuels === 1 ? '' : 's') + ' resolved'
+    + (flags.length ? ' · ' + flags.join(' · ') : '') }));
+
+  // a deferred rating drives the replication strip (the evidence still gathering).
+  if (dec === 'deferred') wrap.appendChild(replicationStrip(rating));
+  return wrap;
+}
+
+// Normalise the rating block's own decision to {promoted, deferred} — verbatim
+// from `rating.decision` (build_rating_view emits "promoted"/"deferred"). Unknown
+// / absent → "deferred" (the safe, never-faked-crown default).
+function normaliseRatingDecision(rating) {
+  const d = String((rating && rating.decision) || '').toLowerCase();
+  return d.includes('promot') ? 'promoted' : 'deferred';
+}
+
+// A content digest of the rating block — present + credible + decision + each
+// side's ROUNDED {theta, ci_lo, ci_hi} (no se: it does not drive the render) +
+// ROUNDED p_stronger/threshold + ci_overlap + n_duels + replicates_spent + the
+// next_duel pair + the ci_history P(stronger) trace (ROUNDED, NO timestamps).
+// null when absent / not present so it contributes NOTHING to the gate digest —
+// a non-BT round's digest is byte-identical to the pre-feature path. A no-op beat
+// re-emits identical numbers → equal digest → skipped; a duel resolving (n_duels
+// grows, a CI tightens, P moves past 2dp) flips it → repaint.
+export function ratingDigest(rating) {
+  if (!rating || !rating.present) return null;
+  const side = (s) => (s && typeof s === 'object') ? [
+    svg.isNum(s.theta) ? s.theta.toFixed(3) : null,
+    svg.isNum(s.ci_lo) ? s.ci_lo.toFixed(3) : null,
+    svg.isNum(s.ci_hi) ? s.ci_hi.toFixed(3) : null,
+  ] : null;
+  const next = rating.next_duel && typeof rating.next_duel === 'object'
+    ? [rating.next_duel.left == null ? null : String(rating.next_duel.left),
+       rating.next_duel.right == null ? null : String(rating.next_duel.right)] : null;
+  const hist = (Array.isArray(rating.ci_history) ? rating.ci_history : []).map((h) =>
+    svg.isNum(h && h.p_stronger) ? h.p_stronger.toFixed(3) : null);
+  return [
+    !!rating.credible, normaliseRatingDecision(rating),
+    side(rating.champion), side(rating.challenger),
+    svg.isNum(rating.p_stronger) ? rating.p_stronger.toFixed(3) : null,
+    svg.isNum(rating.threshold) ? rating.threshold.toFixed(3) : null,
+    !!rating.ci_overlap,
+    svg.isNum(rating.n_duels) ? rating.n_duels : 0,
+    svg.isNum(rating.replicates_spent) ? rating.replicates_spent : 0,
+    next, hist,
+  ];
+}
+
 // fix #1 — the stacked, non-overlapping gate panel:
 // (a) decision header, (b) the rules ladder (each rule its own row).
 // The old (c) champion-vs-challenger SCALAR-COMPONENTS comparison block was
@@ -1397,6 +1703,15 @@ export function gatePanel(gate) {
     ].filter(Boolean)),
   ].filter(Boolean)));
   if (gate.reason) card.appendChild(el('p', { class: 'dn-gate-reason', text: gate.reason }));
+
+  // (b0) the BRADLEY–TERRY uncertainty PRE-GATE (the marquee) — the operator's
+  // first read on a confidence-thresholded run: the two θ̂ whiskers + the
+  // P(challenger stronger) bar against the threshold, and (when deferred) the
+  // replication strip. Renders ABOVE the deterministic rule ladder because it
+  // resolves the winner BEFORE the rules apply. Absent / present:false (a
+  // pre-BT / disabled run) → null → the gate panel is byte-identical to today.
+  const rating = ratingBlock(gate.rating);
+  if (rating) card.appendChild(rating);
 
   const rules = Array.isArray(gate.rules) ? gate.rules : [];
   if (rules.length) {
