@@ -3066,6 +3066,87 @@ export function proposingDigest(fieldStatus) {
   }).join(',');
 }
 
+// ── the FIELD-DIVERSITY MATRIX — challenger × mutation-site ──────────
+//
+// The idea-overlap structure as a presence grid in the shipped dn-mtx grammar:
+// one COLUMN per challenger, one ROW per distinct mutation-site, a filled square
+// where that challenger touched that site. Coinciding columns ARE the same idea —
+// the visual the mean/max-Jaccard ribbon summarises numerically. `opts.membership`
+// is `[{generation_id, sites:[mutationId,…]}]` (the dashboard derives it). The
+// membership is NOT on the `diversity` block (only the scalars + the max pair), so
+// absent / <2 challengers / no sites → null → no matrix (byte-identical to today).
+// `opts.highlightPair` is the max_overlap_pair whose columns get the accent rail.
+export function diversityMatrix(opts) {
+  const o = opts || {};
+  const members = (Array.isArray(o.membership) ? o.membership : [])
+    .filter((m) => m && m.generation_id != null && Array.isArray(m.sites) && m.sites.length);
+  if (members.length < 2) return null;
+  const gens = members.map((m) => String(m.generation_id));
+  // the union of distinct sites (rows), stable-sorted so a no-op beat is identical.
+  const siteSet = new Set();
+  for (const m of members) for (const s of m.sites) if (s != null && s !== '') siteSet.add(String(s));
+  const sites = Array.from(siteSet).sort();
+  if (!sites.length) return null;
+  const touched = new Map();   // gid -> Set(siteId)
+  for (const m of members) touched.set(String(m.generation_id), new Set(m.sites.map(String)));
+  const pair = Array.isArray(o.highlightPair) ? o.highlightPair.map(String) : [];
+  const isPaired = (g) => pair.includes(g);
+  const onCompetitor = typeof o.onCompetitor === 'function' ? o.onCompetitor : null;
+
+  const table = el('table', { class: 'dn-mtx dn-divmtx' });
+  const hr = el('tr');
+  hr.appendChild(el('th', { class: 'dn-mtx-corner', text: 'site · challenger →' }));
+  for (const g of gens) {
+    const cell = el('th', { class: 'dn-mtx-gen' + (isPaired(g) ? ' dn-divmtx-paired' : '') }, [
+      onCompetitor
+        ? clickable(el('span', { class: 'dn-mtx-genlink', text: shortLabel(g, 14) }), () => onCompetitor(g))
+        : el('span', { class: 'dn-mtx-genlink', text: shortLabel(g, 14) }),
+    ]);
+    hr.appendChild(cell);
+  }
+  table.appendChild(el('thead', null, [hr]));
+  const tbody = el('tbody');
+  for (const s of sites) {
+    const tr = el('tr', { class: 'dn-mtx-row' });
+    tr.appendChild(el('th', { class: 'dn-mtx-site', scope: 'row' }, [
+      el('span', { class: 'dn-mtx-file', text: s }),
+    ]));
+    for (const g of gens) {
+      const on = touched.get(g).has(s);
+      const td = el('td', { class: 'dn-mtx-cell' + (on ? ' dn-mtx-on' : '') + (isPaired(g) ? ' dn-divmtx-paired' : ''),
+        'data-gen': g, 'data-site': s });
+      if (on) {
+        td.appendChild(svgEl('svg', { class: 'dn-mtx-mark', width: 16, height: 16, viewBox: '0 0 16 16', role: 'img' }, [
+          svgEl('rect', { x: 3, y: 3, width: 10, height: 10, rx: 2, class: 'dn-mtx-square' }),
+        ]));
+      } else {
+        td.appendChild(el('span', { class: 'dn-mtx-blank', 'aria-hidden': 'true', text: '·' }));
+      }
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  return el('div', { class: 'dn-divmtx-wrap' }, [
+    el('div', { class: 'dn-table-scroll' }, [table]),
+    el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;',
+      text: 'column = challenger · row = mutation site · ▪ = touched here · coinciding columns are the same idea (the overlap the ribbon scores)' }),
+  ]);
+}
+
+// Digest for the diversity matrix — the membership (gid → sorted site ids) + the
+// highlighted pair, no floats / no timestamps. Empty (<2 members) → a stable
+// sentinel so the absent state is byte-identical beat-over-beat.
+export function diversityMatrixDigest(opts) {
+  const o = opts || {};
+  const members = (Array.isArray(o.membership) ? o.membership : [])
+    .filter((m) => m && m.generation_id != null && Array.isArray(m.sites) && m.sites.length);
+  if (members.length < 2) return 'divmtx|none';
+  const pair = Array.isArray(o.highlightPair) ? o.highlightPair.map(String).slice().sort() : [];
+  return 'divmtx|' + members.map((m) => String(m.generation_id) + ':'
+    + m.sites.map(String).slice().sort().join('+')).join(',') + '|' + pair.join('~');
+}
+
 // ── the CHAMPION-SPINE ROUND TIMELINE — the epoch overview hero ──────
 //
 // The epoch is N evolve ROUNDS along a horizontal CHAMPION SPINE: one node per

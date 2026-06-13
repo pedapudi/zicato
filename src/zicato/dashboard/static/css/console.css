@@ -1195,6 +1195,34 @@
   /* the field-level deferred caption under the standings table. */
   .dt-standings-deferred { border-left: 2px solid var(--v2-caution); padding-left: 8px; }
 
+  /* ===  field-diversity ribbon + overlap matrix  ===
+     pairwise idea overlap of the minted field. One accent only; the meter earns
+     its tone BY DIRECTION (over the tolerance → caution, under → good). */
+  .dn-divribbon { padding: 10px 12px; }
+  .dn-divribbon-head { display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+  .dn-divstats { display: flex; gap: 18px; flex-wrap: wrap; }
+  .dn-div-meterwrap { margin: 4px 0 2px; max-width: 320px; }
+  .dn-div-meterhead { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .dn-div-meterlab { font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
+    text-transform: uppercase; letter-spacing: 0.04em; }
+  .dn-div-meterval { font-size: calc(12px * var(--dt-font-scale, 1)); color: var(--v2-ink); }
+  .dn-div-meter { display: block; }
+  .dn-div-track { fill: var(--v2-rule-soft); }
+  .dn-div-fill.dn-good-fill { fill: var(--v2-good); }
+  .dn-div-fill.dn-caution-fill { fill: var(--v2-caution); }
+  .dn-div-fill.dn-flat-fill { fill: var(--v2-flat); }
+  .dn-div-max { stroke: var(--v2-ink); stroke-width: 1.6; }
+  .dn-div-tol { stroke: var(--v2-ink); stroke-width: 1.5; stroke-dasharray: 2 2; }
+  .dn-div-tollab { fill: var(--v2-ink-soft); font: 9px var(--v2-mono); }
+  /* the overlap matrix — clones dn-mtx; the max-overlap pair gets the accent rail. */
+  .dn-divmtx { margin-top: 4px; }
+  .dn-divmtx-paired { border-top: 2px solid var(--v2-accent); }
+  .dn-divmtx-wrap { margin-top: 10px; }
+  /* the per-row diversity badge: soft-rejected rides the deferred pill, penalized a chip. */
+  .dn-pill.dn-div-softrej { margin-left: 6px; }
+  .dn-chip.dn-div-penalized { margin-left: 6px; }
+
   /* ===  proposer prediction-accuracy + calibration scorecard (DIAGNOSTIC)  === */
   /* the dossier's orthogonal read: did the PROPOSER call the movement? Reuses
      dn-board-table + the dn-good/dn-bad/dn-flat tone tokens — no new hue. */

@@ -434,7 +434,25 @@ def test_bundle_under_size_envelope(
     # counted bundle). ~16 KB of new diagnostic surface (back-compat: a seed / no-
     # claims candidate and an epoch with no scored predictions render byte-identical
     # to today). The envelope is raised to 1.176 MB to cover it with headroom.
-    assert total < 1_176_000, f"bundle is {total} bytes, exceeds 1_176_000 envelope"
+    #
+    # The FIELD-DIVERSITY ribbon + overlap matrix then adds the consumption-only
+    # idea-overlap surface under the proposed-field section (structure.js): a
+    # `diversitySection` ribbon — the distinct-ideas/field-size + mean/max stat
+    # strip, a dual mean/max pairwise-Jaccard `overlapMeter` whose fill earns its
+    # tone BY DIRECTION against the diversity tolerance, a soft-reject count riding
+    # the DEFERRED pill, and the max-overlap-pair hovercard — plus a per-standings-
+    # row `diversityBadge` (soft_rejected → deferred pill, penalized → caution chip)
+    # and `svg.diversityMatrix`/`diversityMatrixDigest` cloning the dn-mtx grid
+    # (challenger × mutation-site). All of it reads the additive `diversity` block +
+    # per-slot `diversity_status` VERBATIM (build_tournament_structure) and folds a
+    # ROUNDED, timestamp-free `diversityDigest` into structureDigest (a no-op beat is
+    # byte-identical). The overlap matrix degrades to nothing when per-challenger
+    # membership is absent (the diversity block carries only the field scalars + the
+    # max pair — membership is a noted Python followup). ~15 KB of new evidence
+    # surface (back-compat: a gauntlet / single-challenger / pre-feature field renders
+    # byte-identical to today). The envelope is raised to 1.19 MB to cover it with
+    # headroom.
+    assert total < 1_190_000, f"bundle is {total} bytes, exceeds 1_190_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

@@ -3,9 +3,9 @@
 // The match-ups page (views/gens.js) renders the gauntlet ladder for the
 // (width:100% + viewBox, no pan/zoom, token-themed, page-scale aware).
 
-import { el } from '../core/dom.js';
+import { el, svgEl } from '../core/dom.js';
 import * as svg from '../svg.js';
-import { section, empty, verdictPill, overrideChip, overrideDigest, overrideControlCell, pendingOverride, pendingOverrideDigest, clearPendingOverride } from '../ui.js';
+import { section, empty, stat, verdictPill, overrideChip, overrideDigest, overrideControlCell, pendingOverride, pendingOverrideDigest, clearPendingOverride } from '../ui.js';
 import { structureStatusLabel } from '../livestatus.js';
 import { attachHovercard } from '../hovercard.js';
 import { state } from '../core/state.js';
@@ -535,8 +535,39 @@ export function structureDigest(st) {
     // gauntlet field bars; ROUNDED so a no-op beat stays byte-identical but a
     // real champion-scalar move repaints (anti-flash).
     champ_agg: (st.partial_champion_agg && svg.isNum(st.partial_champion_agg.scalar)) ? st.partial_champion_agg.scalar.toFixed(3) : null,
+    // the FIELD-DIVERSITY block — ROUNDED overlap scalars + integer counts + the
+    // max-overlap pair + the per-slot diversity_status + the overlap-matrix
+    // membership digest. Folded so a real diversity move (a soft-reject landing,
+    // the overlap shifting, a slot's status changing) repaints the ribbon while a
+    // no-op beat stays byte-identical. Absent → null (back-compat — gauntlet /
+    // single-challenger / pre-feature digest is byte-identical to today).
+    diversity: diversityDigest(st),
     source: st.source,
   });
+}
+
+// The diversity fold for structureDigest: the `diversity` block's overlap
+// scalars (ROUNDED), the integer counts + max-overlap pair, the per-slot
+// diversity_status, and the overlap-matrix membership — NO floats beyond the
+// rounded overlaps, NO timestamps. null when the diversity block is absent.
+function diversityDigest(st) {
+  const d = (st && st.diversity && typeof st.diversity === 'object') ? st.diversity : null;
+  if (!d || !svg.isNum(d.field_size) || d.field_size < 2) return null;
+  const statuses = (Array.isArray(st.field_status) ? st.field_status : [])
+    .filter((f) => f && f.generation_id != null && (f.diversity_status === 'soft_rejected' || f.diversity_status === 'penalized'))
+    .map((f) => [String(f.generation_id), f.diversity_status])
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  return {
+    fs: d.field_size,
+    di: svg.isNum(d.distinct_ideas) ? d.distinct_ideas : null,
+    mean: svg.isNum(d.mean_overlap) ? d.mean_overlap.toFixed(3) : null,
+    max: svg.isNum(d.max_overlap) ? d.max_overlap.toFixed(3) : null,
+    pair: Array.isArray(d.max_overlap_pair) ? d.max_overlap_pair.map(String) : null,
+    tol: svg.isNum(d.tolerance) ? d.tolerance.toFixed(3) : null,
+    soft: svg.isNum(d.soft_rejected_count) ? d.soft_rejected_count : 0,
+    st: statuses,
+    mtx: svg.diversityMatrixDigest({ membership: diversityMembership(st), highlightPair: d.max_overlap_pair }),
+  };
 }
 
 // ── the structure render dispatch — DOM sections per structure ──────
@@ -552,7 +583,141 @@ export function renderStructure(st, ctx, epochId) {
   // outcomes are visible (e.g. "4 proposed · 0 applied — all rejected" with
   // per-challenger reasons). Absent field_status ⇒ no section (back-compat).
   const proposed = proposedFieldSection(st, ctx, epochId);
-  return proposed ? [proposed, ...nodes] : nodes;
+  // The FIELD-DIVERSITY ribbon rides directly UNDER the proposed-field section:
+  // the mean/max pairwise-Jaccard overlap of the minted field + the soft-reject
+  // count, with the overlap matrix beneath it. Absent (single-challenger / pre-
+  // feature / gauntlet) → renders nothing (byte-identical to today).
+  const diversity = diversitySection(st, ctx, epochId);
+  const lead = [proposed, diversity].filter(Boolean);
+  return lead.length ? [...lead, ...nodes] : nodes;
+}
+
+// ── the FIELD-DIVERSITY ribbon — mean/max pairwise-Jaccard + overlap matrix ──
+//
+// Reads the additive `diversity` block VERBATIM (build_tournament_structure →
+// _enrich_diversity / _compute_field_diversity): `{field_size, distinct_ideas,
+// mean_overlap, max_overlap, max_overlap_pair, tolerance, soft_rejected_count}`.
+// KEY-ABSENT on a gauntlet / single-challenger / pre-feature run → render NOTHING
+// (byte-identical to today). Higher overlap is WORSE (a field of N collapses to
+// fewer real experiments), so the meter earns its tone BY DIRECTION: at/above the
+// tolerance reads caution, below it reads good.
+function diversitySection(st, ctx, epochId) {
+  const d = (st && st.diversity && typeof st.diversity === 'object') ? st.diversity : null;
+  if (!d || !svg.isNum(d.field_size) || d.field_size < 2) return null;
+  const tol = svg.isNum(d.tolerance) ? d.tolerance : null;
+  const soft = svg.isNum(d.soft_rejected_count) ? d.soft_rejected_count : 0;
+  const meanO = svg.isNum(d.mean_overlap) ? d.mean_overlap : 0;
+  const maxO = svg.isNum(d.max_overlap) ? d.max_overlap : 0;
+  const distinct = svg.isNum(d.distinct_ideas) ? d.distinct_ideas : null;
+  const pair = Array.isArray(d.max_overlap_pair) ? d.max_overlap_pair.map(String) : null;
+
+  // the headline stat strip — distinct ideas / field size + soft-rejects.
+  const stats = el('div', { class: 'dn-divstats' }, [
+    (distinct != null) ? stat(distinct + ' / ' + d.field_size, 'distinct ideas') : null,
+    stat(svg.fmt(meanO, 2), 'mean overlap'),
+    stat(svg.fmt(maxO, 2), 'max overlap'),
+    soft > 0 ? stat(String(soft), 'soft-rejected') : null,
+  ].filter(Boolean));
+
+  // the dual mean/max overlap meter against the tolerance marker.
+  const meter = overlapMeter(meanO, maxO, tol);
+  if (pair && pair.length === 2) {
+    attachHovercard(meter, () => el('div', { class: 'dn-hc-body' }, [
+      el('div', { class: 'dn-hc-title', text: 'most-overlapping pair' }),
+      el('div', { class: 'dn-hc-row dn-mono', text: pair[0] + ' ⇄ ' + pair[1] }),
+      el('div', { class: 'dn-hc-row dn-faint', text: 'Jaccard ' + svg.fmt(maxO, 2)
+        + (tol != null ? ' · tolerance ' + svg.fmt(tol, 2) : ' · enforcement off') }),
+    ]));
+  }
+
+  // a soft-reject chip reuses the DEFERRED pill vocabulary (held, not promoted).
+  const softChip = soft > 0
+    ? (() => { const p = verdictPill('deferred'); p.textContent = soft + ' soft-rejected'; return p; })()
+    : null;
+
+  // the overlap matrix — challenger × mutation-site (the dn-mtx grammar). The
+  // per-challenger site membership is NOT on the diversity block, so the
+  // dashboard derives it from any membership the payload carries; absent →
+  // svg.diversityMatrix returns null → no matrix (byte-identical). FOLLOWUP:
+  // wire per-challenger mutation_ids onto the structure payload (Python).
+  const membership = diversityMembership(st);
+  const matrix = svg.diversityMatrix({
+    membership, highlightPair: pair,
+    onCompetitor: (gen) => { if (gen && ctx && ctx.navigate) ctx.navigate('candidate', { epochId, gen }); },
+  });
+
+  const cap = el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
+    'pairwise idea overlap (Jaccard) across the minted field — higher overlap means the field is converging on the same idea'
+    + (tol != null ? ' · soft-rejected above ' + svg.fmt(tol, 2) : ' · overlap enforcement off (diagnostic only)') });
+
+  const panel = el('div', { class: 'dn-panel dn-divribbon' }, [
+    el('div', { class: 'dn-divribbon-head' }, [stats, softChip].filter(Boolean)),
+    meter, cap,
+    matrix,
+  ].filter(Boolean));
+  return section('Field diversity', panel);
+}
+
+// The dual overlap meter: a single track with the MEAN-overlap fill + a MAX-
+// overlap notch, the tolerance drawn as the dashed promote-threshold marker. The
+// fill earns its tone BY DIRECTION — at/above the tolerance is caution (the field
+// is collapsing), below is good. No tolerance (enforcement off) → a neutral fill
+// (the overlap is diagnostic, not a gate). Returns a Node.
+function overlapMeter(mean, max, tol) {
+  const W = 260, H = 30, padX = 4, axW = W - 2 * padX;
+  const fig = svgEl('svg', {
+    class: 'dn-div-meter', width: '100%', height: H, viewBox: `0 0 ${W} ${H}`,
+    preserveAspectRatio: 'none', role: 'img',
+    'aria-label': 'mean and max pairwise idea overlap vs the diversity tolerance',
+  });
+  const top = 6, barH = 12;
+  fig.appendChild(svgEl('rect', { x: padX, y: top, width: axW, height: barH, class: 'dn-div-track' }));
+  const over = svg.isNum(tol) ? (mean >= tol) : null;
+  const mw = Math.max(0, Math.min(1, mean)) * axW;
+  fig.appendChild(svgEl('rect', { x: padX, y: top, width: mw, height: barH,
+    class: 'dn-div-fill ' + (over === true ? 'dn-caution-fill' : over === false ? 'dn-good-fill' : 'dn-flat-fill') }));
+  // the MAX-overlap notch.
+  const mx = padX + Math.max(0, Math.min(1, max)) * axW;
+  fig.appendChild(svgEl('line', { x1: mx, y1: top - 3, x2: mx, y2: top + barH + 3, class: 'dn-div-max' }));
+  if (svg.isNum(tol)) {
+    const tx = padX + Math.max(0, Math.min(1, tol)) * axW;
+    fig.appendChild(svgEl('line', { x1: tx, y1: top - 4, x2: tx, y2: top + barH + 4, class: 'dn-div-tol' }));
+    const tl = svgEl('text', { x: tx, y: top + barH + 14, class: 'dn-div-tollab', 'text-anchor': 'middle' });
+    tl.textContent = 'tol ' + svg.fmt(tol, 2);
+    fig.appendChild(tl);
+  }
+  return el('div', { class: 'dn-div-meterwrap' }, [
+    el('div', { class: 'dn-div-meterhead' }, [
+      el('span', { class: 'dn-div-meterlab', text: 'mean overlap' }),
+      el('span', { class: 'dn-div-meterval dn-mono', text: svg.fmt(mean, 2)
+        + ' · max ' + svg.fmt(max, 2) }),
+    ]),
+    fig,
+  ]);
+}
+
+// Derive the per-challenger mutation-site membership for the overlap matrix from
+// whatever the structure payload carries. The `diversity` block summarises the
+// field but does NOT carry per-challenger membership; a payload may still expose
+// it on `field_status[].mutation_ids` / `competitors[].mutation_ids` (a forward-
+// compatible additive field). Absent → [] → svg.diversityMatrix renders nothing.
+function diversityMembership(st) {
+  if (!st || typeof st !== 'object') return [];
+  const out = [];
+  const seen = new Set();
+  const take = (rec) => {
+    if (!rec || typeof rec !== 'object') return;
+    const gid = rec.generation_id;
+    if (gid == null || gid === '' || seen.has(String(gid))) return;
+    const sites = Array.isArray(rec.mutation_ids) ? rec.mutation_ids.filter((s) => s != null && s !== '').map(String)
+      : (Array.isArray(rec.mutation_sites) ? rec.mutation_sites.filter((s) => s != null && s !== '').map(String) : null);
+    if (!sites || !sites.length) return;
+    seen.add(String(gid));
+    out.push({ generation_id: String(gid), sites });
+  };
+  (Array.isArray(st.field_status) ? st.field_status : []).forEach(take);
+  (Array.isArray(st.competitors) ? st.competitors : []).forEach(take);
+  return out;
 }
 
 // Read the per-challenger proposing outcomes (the v5 `field_status`) off a
@@ -2231,6 +2396,11 @@ function standingsTable(st, ctx, epochId, live) {
   // reason, state}}. KEY-ABSENT on every gate-decided / single-challenger /
   // pre-feature run → no chip → byte-identical to today.
   const overrides = (st && st.override_status && typeof st.override_status === 'object') ? st.override_status : null;
+  // per-slot diversity status (field_status[].diversity_status ∈ applied /
+  // penalized / soft_rejected), keyed by generation_id for a per-row badge. Only
+  // attached for a real field with the diversity block (≥2 challengers) → no
+  // badge on a gauntlet / single-challenger / pre-feature run (byte-identical).
+  const divStatus = diversityStatusByGen(st);
   // the advanced SET at settle (supports MULTIPLE promoted / ties) — resolves the
   // DRAINED state for an optimistic stamp that never landed.
   const promotedSet = (st && Array.isArray(st.promoted_generation_ids))
@@ -2327,10 +2497,13 @@ function standingsTable(st, ctx, epochId, live) {
       gid: gidStr, epochId, tournamentId, structure,
       readOnly, settled, existingOverride: durable, onPost, onChange,
     }) : null;
+    // the per-row diversity badge — soft-rejected reuses the DEFERRED pill
+    // (held, not promoted); penalized reads as a caution chip. Absent → null.
+    const divBadge = diversityBadge(divStatus ? divStatus[gidStr] : null);
     tbody.appendChild(el('tr', { class: rowCls }, [
       el('td', { class: 'dn-mono', text: svg.isNum(s.rank) ? String(s.rank) : '—' }),
       el('td', { class: 'dn-mono', text: (s.generation_id || '—') + (status === 'champion' ? ' ' + CROWN.current : '') }),
-      el('td', null, [statusPill(status), ovChip].filter(Boolean)),
+      el('td', null, [statusPill(status), ovChip, divBadge].filter(Boolean)),
       scalarCell,
       ...(showWL ? [
         el('td', { class: 'dn-num dn-mono', text: svg.isNum(s.wins) ? String(s.wins) : '—' }),
@@ -2385,6 +2558,47 @@ function statusPill(status) {
   const pill = verdictPill(verdict);
   pill.textContent = s;
   return pill;
+}
+
+// {gid: diversity_status} off the field_status records, ONLY when the diversity
+// block is attached (a real ≥2-challenger field). Absent / single-challenger /
+// pre-feature → null → no per-row badge (byte-identical to today).
+function diversityStatusByGen(st) {
+  if (!st || !st.diversity || !Array.isArray(st.field_status)) return null;
+  const by = {};
+  let any = false;
+  for (const f of st.field_status) {
+    if (!f || typeof f !== 'object' || f.generation_id == null) continue;
+    const ds = f.diversity_status;
+    if (ds === 'soft_rejected' || ds === 'penalized') { by[String(f.generation_id)] = ds; any = true; }
+  }
+  return any ? by : null;
+}
+
+// The per-row diversity badge. `soft_rejected` reuses the DEFERRED pill (held,
+// not promoted — the field's most legible "this idea was cut for overlap"
+// signal); `penalized` is a softer caution chip. `applied` / absent → null (no
+// badge), so a clean diverse field is byte-identical to today.
+function diversityBadge(ds) {
+  if (ds === 'soft_rejected') {
+    const p = verdictPill('deferred');
+    p.textContent = 'soft-rejected';
+    p.setAttribute('class', (p.getAttribute('class') || '') + ' dn-div-softrej');
+    attachHovercard(p, () => el('div', { class: 'dn-hc-body' }, [
+      el('div', { class: 'dn-hc-title', text: 'diversity · soft-rejected' }),
+      el('div', { class: 'dn-hc-row dn-faint', text: 'idea overlap exceeded the diversity tolerance — held out of the field (not gate-rejected)' }),
+    ]));
+    return p;
+  }
+  if (ds === 'penalized') {
+    const c = el('span', { class: 'dn-chip dn-chip-live dn-div-penalized', text: 'div-penalized' });
+    attachHovercard(c, () => el('div', { class: 'dn-hc-body' }, [
+      el('div', { class: 'dn-hc-title', text: 'diversity · penalized' }),
+      el('div', { class: 'dn-hc-row dn-faint', text: 'idea overlap incurred a diversity penalty but the challenger still entered the field' }),
+    ]));
+    return c;
+  }
+  return null;
 }
 
 function linkGen(gen, ctx, epochId) {
