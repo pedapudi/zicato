@@ -87,6 +87,8 @@ export function invalidateLive() {
       || key.startsWith('/api/contract-diff/')
       || key.startsWith('/api/conversation/')
       || key.startsWith('/api/tournament-structure/')
+      || key.startsWith('/api/hypothesis-accuracy/')
+      || key.startsWith('/api/calibration-trend')
       || key.startsWith('/api/tournaments')) {
       _cache.delete(key);
     }
@@ -304,6 +306,22 @@ export function contractDiff(epochId) {
 // The promote-gate decomposition for one round.
 export function gate(epochId, championId, challengerId) {
   return cachedJson(`/api/round/${enc(epochId)}/${enc(championId)}/${enc(challengerId)}/gate`);
+}
+
+// The proposer's PREDICTION-ACCURACY scorecard for ONE generation — predicted
+// vs realised movements + the calibration fraction (build_hypothesis_accuracy).
+// DIAGNOSTIC: this never feeds the promote gate. Absent / malformed reads as a
+// 200 empty scorecard, so the dossier paints an honest "no claims" rather than
+// throwing.
+export function hypothesisAccuracy(epochId, genId) {
+  return cachedJson(`/api/hypothesis-accuracy/${enc(epochId)}/${enc(genId)}`);
+}
+// The per-generation calibration TREND across one epoch's lineage — the score
+// fraction over generations + a trend sign (build_calibration_trend). Scoped to
+// a NAMED epoch with `?epoch=<id>`, the current epoch when omitted. DIAGNOSTIC
+// ONLY — never feeds the gate. Failure / unknown epoch reads as null.
+export function calibrationTrend(epochId) {
+  return cachedJson(epochId != null ? `/api/calibration-trend?epoch=${enc(epochId)}` : '/api/calibration-trend');
 }
 
 // One entry's expectation outcomes + per-judge losses (keyed by board entry).

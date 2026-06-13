@@ -47,6 +47,13 @@ export async function render(host, ctx) {
   const trajByEpoch = new Map();
   rows.forEach((r, i) => trajByEpoch.set(r.epoch_id, epochTrajectoryValues(trajs[i])));
 
+  // The CURRENT epoch's proposer CALIBRATION TREND (DIAGNOSTIC) — the
+  // prediction-accuracy fraction over its lineage, surfaced beside the meta-loop
+  // ledger. Scoped to the current epoch; absent / no scored predictions degrades
+  // to an honest placeholder. NEVER feeds the gate. A null read (no current
+  // epoch) drops the panel — byte-identical to the pre-feature home.
+  const calib = current != null ? await D.calibrationTrend(current) : null;
+
   const digest = JSON.stringify({
     live, cur: current,
     rows: rows.map((r) => [r.epoch_id, r.generation_count || 0, r.promoted_count || 0,
@@ -56,6 +63,10 @@ export async function render(host, ctx) {
     // heartbeat (identical matrix) churns no DOM — the cross-epoch overview
     // is the heaviest figure on this page.
     ledger: svg.metaLoopLedgerDigest({ epochs: ledger, currentEpochId: current }),
+    // the proposer calibration trend (DIAGNOSTIC) is content-gated on its own
+    // builder digest so a no-op heartbeat (identical trend) churns no DOM — a
+    // new scored prediction flips it, a steady tick stays byte-identical.
+    calib: calib ? svg.calibrationTrendDigest(calib) : null,
     health: health ? (Array.isArray(health.findings) ? health.findings.length : 0) : -1,
   });
 
@@ -89,6 +100,27 @@ export async function render(host, ctx) {
       lcard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;',
         text: 'is the meta-loop making net progress across contracts · which lever moved each reset · is effort buying floor' }));
       nodes.push(section('Meta-loop ledger · cross-epoch', lcard));
+    }
+
+    // ── the proposer CALIBRATION TREND (DIAGNOSTIC) — a sibling of the ledger ──
+    // The prediction-accuracy fraction over the CURRENT epoch's lineage: is the
+    // proposer's calibration drifting? Reuses the sparkline/staircase grammar.
+    // EXPLICITLY captioned diagnostic — it never feeds the gate. Rendered only
+    // when there is a scored point to show (absent → byte-identical to today).
+    if (calib && Array.isArray(calib.points) && calib.points.some((p) => p && svg.isNum(p.score_fraction))) {
+      const ccard = el('div', { class: 'dn-panel dn-figpane dn-caltrend-pane' });
+      ccard.appendChild(svg.calibrationTrend({
+        points: calib.points, rolling_mean: calib.rolling_mean, trend_sign: calib.trend_sign,
+        responsive: true,
+        onGen: (gid) => ctx.navigate && current != null && ctx.navigate('candidate', { epochId: current, gen: gid }),
+      }));
+      const tsign = svg.isNum(calib.trend_sign) ? calib.trend_sign : 0;
+      const trendWord = tsign > 0 ? 'improving' : tsign < 0 ? 'regressing' : 'flat / too few';
+      const rm = svg.isNum(calib.rolling_mean) ? Math.round(calib.rolling_mean * 100) + '%' : '—';
+      ccard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;',
+        text: 'diagnostic — does not affect the gate · proposer calibration ' + trendWord
+          + ' · epoch mean ' + rm + ' of claims landed · higher = better-calibrated' }));
+      nodes.push(section('Calibration trend · proposer prediction accuracy (diagnostic)', ccard));
     }
 
     if (health) nodes.push(healthPanel(health));

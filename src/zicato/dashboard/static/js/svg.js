@@ -3785,3 +3785,121 @@ export function metaLoopLedgerDigest(opts) {
     ]),
   });
 }
+
+// ── the CALIBRATION TREND (DIAGNOSTIC) ───────────────────────────────────────
+//
+// The proposer's prediction-accuracy fraction over one epoch's lineage — does
+// its calibration drift as the epoch matures? Each generation is a point in the
+// 0..1 score-fraction band (higher = better-calibrated); a generation that made
+// NO falsifiable claim (score_fraction == null) is a hollow tick on the rolling-
+// mean baseline (it scored nothing, so it neither lifts nor drops the line). The
+// rolling mean is a dashed reference; the end dot earns good/bad by the trend
+// sign. This reuses the sparkline/staircase grammar (band + baseline + end dot)
+// and is DIAGNOSTIC — it NEVER feeds the gate (the caller captions it so).
+//
+// opts: { points:[{generation_id, score_fraction|null, total_claims, decision}],
+//         rolling_mean|null, trend_sign:-1|0|1, width, height, responsive,
+//         onGen(generation_id) }
+//
+// DEGRADES: 0 points → an honest placeholder; a single point → a centred dot.
+export function calibrationTrend(opts) {
+  const o = opts || {};
+  const pts = (Array.isArray(o.points) ? o.points : []).filter((p) => p && p.generation_id != null);
+  const W = o.width || 360;
+  const H = o.height || 64;
+  const padX = 8;
+  const padY = 8;
+  const svg = svgEl('svg', applyResponsive({
+    class: 'dn-caltrend', width: '100%', height: H,
+    viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'xMidYMid meet', role: 'img',
+    'aria-label': 'proposer calibration trend — prediction-accuracy fraction over generations (diagnostic)',
+  }, o, W, H, 'dn-caltrend-hero'));
+
+  if (pts.length === 0) {
+    const t = svgEl('text', { x: W / 2, y: H / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
+    t.textContent = 'no scored predictions yet';
+    svg.appendChild(t);
+    return svg;
+  }
+
+  // the fraction band is a FIXED 0..1 (a calibration fraction, not a free scale)
+  // so the line reads on an absolute "did the proposer call it" axis.
+  const x = scale([0, Math.max(1, pts.length - 1)], [padX, W - padX]);
+  const y = scale([0, 1], [H - padY, padY]);
+
+  // the 0..1 band backdrop + the 0.5 midline (the "half its calls landed" mark).
+  svg.appendChild(svgEl('rect', { x: padX, y: padY, width: W - 2 * padX, height: H - 2 * padY, class: 'dn-spark-band' }));
+  const midY = y(0.5);
+  svg.appendChild(svgEl('line', { x1: padX, x2: W - padX, y1: midY, y2: midY, class: 'dn-caltrend-mid' }));
+
+  // the rolling-mean dashed reference (the epoch's mean calibration).
+  if (isNum(o.rolling_mean)) {
+    const ry = y(Math.max(0, Math.min(1, o.rolling_mean)));
+    svg.appendChild(svgEl('line', { x1: padX, x2: W - padX, y1: ry, y2: ry, class: 'dn-caltrend-mean' }));
+  }
+
+  // the connecting line over the SCORED points only (a null-fraction gen lifts
+  // the pen — it scored nothing, so we don't draw a misleading drop to zero).
+  let d = '';
+  let penDown = false;
+  pts.forEach((p, i) => {
+    const f = p && isNum(p.score_fraction) ? p.score_fraction : null;
+    if (f == null) { penDown = false; return; }
+    d += `${penDown ? 'L' : 'M'}${x(i).toFixed(2)},${y(f).toFixed(2)} `;
+    penDown = true;
+  });
+  if (d) svg.appendChild(svgEl('path', { d: d.trim(), class: 'dn-spark-line', fill: 'none' }));
+
+  // the per-generation ticks: a scored gen is a solid dot, a no-claim gen is a
+  // hollow tick on the midline. The LAST scored dot earns good/bad by trend sign.
+  let lastScoredI = -1;
+  for (let i = pts.length - 1; i >= 0; i--) { if (isNum(pts[i].score_fraction)) { lastScoredI = i; break; } }
+  const onGen = typeof o.onGen === 'function' ? o.onGen : null;
+  pts.forEach((p, i) => {
+    const f = isNum(p.score_fraction) ? p.score_fraction : null;
+    const cx = x(i);
+    if (f == null) {
+      // a no-claim generation: a hollow tick on the midline (it scored nothing).
+      const node = hov(svgEl('circle', { cx, cy: midY, r: 1.8, class: 'dn-caltrend-noclaim',
+        style: onGen ? 'cursor:pointer;' : null }),
+        `${p.generation_id} · no falsifiable claim · ${p.decision || '—'}`);
+      if (onGen) node.addEventListener('click', () => onGen(String(p.generation_id)));
+      svg.appendChild(node);
+      return;
+    }
+    let cls = 'dn-caltrend-dot';
+    if (i === lastScoredI) {
+      const sign = isNum(o.trend_sign) ? o.trend_sign : 0;
+      cls += sign > 0 ? ' dn-good' : sign < 0 ? ' dn-bad' : '';
+    }
+    const r = (pts.length === 1 || i === lastScoredI) ? 2.6 : 2.0;
+    const node = hov(svgEl('circle', { cx, cy: y(f), r, class: cls,
+      style: onGen ? 'cursor:pointer;' : null }),
+      `${p.generation_id} · ${Math.round(f * 100)}% of ${p.total_claims} claim${p.total_claims === 1 ? '' : 's'} landed · ${p.decision || '—'}`);
+    if (onGen) node.addEventListener('click', () => onGen(String(p.generation_id)));
+    svg.appendChild(node);
+  });
+
+  return svg;
+}
+
+// The content DIGEST for the calibration trend — the home view gates its DOM
+// swap on this so a no-op SSE heartbeat (identical trend) churns nothing. Folds
+// the rounded rolling mean + trend sign + each point's (generation_id, ROUNDED
+// score_fraction, total_claims, decision). NO timestamps. Two trends that render
+// byte-identically MUST produce the same digest; a new scored generation (a
+// fraction moving past 2dp, a claim landing) flips it → repaint.
+export function calibrationTrendDigest(opts) {
+  const o = opts || {};
+  const pts = (Array.isArray(o.points) ? o.points : []).filter((p) => p && p.generation_id != null);
+  return JSON.stringify({
+    rm: isNum(o.rolling_mean) ? o.rolling_mean.toFixed(3) : null,
+    ts: isNum(o.trend_sign) ? o.trend_sign : 0,
+    p: pts.map((p) => [
+      String(p.generation_id),
+      isNum(p.score_fraction) ? p.score_fraction.toFixed(3) : null,
+      isNum(p.total_claims) ? p.total_claims : 0,
+      p.decision == null ? null : String(p.decision),
+    ]),
+  });
+}

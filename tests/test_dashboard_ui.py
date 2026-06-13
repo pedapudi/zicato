@@ -418,7 +418,23 @@ def test_bundle_under_size_envelope(
     # back-compat: no override / no read-only → byte-identical). ~8 KB of new
     # control surface. The envelope is nudged to 1.152 MB to cover it with a thin
     # margin (additions kept lean — only the control plane, no extra chrome).
-    assert total < 1_152_000, f"bundle is {total} bytes, exceeds 1_152_000 envelope"
+    #
+    # The HYPOTHESIS PREDICTION-ACCURACY + CALIBRATION diagnostic then adds two
+    # consumption-only surfaces: `buildPredictionScorecard` in the candidate
+    # dossier (candidate.js) — the proposer's predicted-vs-realised movements per
+    # claim with hit/miss/unresolved/unpredicted glyphs + the calibration fraction,
+    # consuming /api/hypothesis-accuracy/{epoch}/{gen}, with every hover-level
+    # detail in the hovercard singleton — and `svg.calibrationTrend` in the home
+    # meta-loop ledger region (home.js) — the score fraction over the epoch's
+    # lineage reusing the sparkline/staircase grammar, consuming
+    # /api/calibration-trend. Both carry the EXPLICIT 'diagnostic — does not affect
+    # the gate' caption and never couple to the gate; both fold a rounded, timestamp-
+    # free digest into the candidate/home digests (a no-op beat is byte-identical).
+    # Plus the two data.js readers + the scoped CSS (in console.css, not this
+    # counted bundle). ~16 KB of new diagnostic surface (back-compat: a seed / no-
+    # claims candidate and an epoch with no scored predictions render byte-identical
+    # to today). The envelope is raised to 1.176 MB to cover it with headroom.
+    assert total < 1_176_000, f"bundle is {total} bytes, exceeds 1_176_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

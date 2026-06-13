@@ -202,7 +202,13 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
   const mpts = exp && exp.hypothesis && Array.isArray(exp.hypothesis.mutation_points) ? exp.hypothesis.mutation_points.length
     : (exp && Array.isArray(exp.mutation_points) ? exp.mutation_points.length : null);
 
-  const pe = await D.perEntry(epochId, genId);
+  const [pe, scorecard] = await Promise.all([
+    D.perEntry(epochId, genId),
+    // the proposer's PREDICTION-ACCURACY scorecard (DIAGNOSTIC — never the
+    // gate): predicted-vs-realised movements + the calibration fraction. A
+    // baseline (seed) made no falsifiable claim, so we skip the read for it.
+    baseline ? Promise.resolve(null) : D.hypothesisAccuracy(epochId, genId),
+  ]);
   const entries = (pe && Array.isArray(pe.entries)) ? pe.entries : [];
   // per-generation mean continuous outcome (#18); null on the pre-score path.
   const meanScore = pe && svg.isNum(pe.mean_score) ? pe.mean_score : null;
@@ -333,7 +339,7 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
     primaryDelta, championId, championScalar, scalarByGen, progression,
     championLoss, championSigma, candidateSigma, deltaSigma, gateExplain,
     entryParam, exps, judges, drillRow, drillHeader, inflight, cached, cachedProvenance,
-    projected, radar, generalization,
+    projected, radar, generalization, scorecard,
   };
 }
 
@@ -551,6 +557,13 @@ function candidateDigest(s) {
       svg.isNum(s.generalization.gap) ? s.generalization.gap.toFixed(3) : null,
       svg.isNum(s.generalization.tolerance) ? s.generalization.tolerance.toFixed(3) : null,
     ] : null,
+    // the proposer PREDICTION-ACCURACY scorecard (DIAGNOSTIC) — the calibration
+    // fraction + each claim's predicted/observed direction + its hit/miss/band/
+    // unpredicted verdict, folded in so a claim resolving (a movement landing,
+    // the fraction moving) repaints, but a no-op heartbeat stays byte-identical.
+    // null (seed / no experiment / no claims) → contributes NOTHING → the dossier
+    // digest is byte-identical to the pre-feature path (back-compat clean).
+    scorecard: scorecardDigest(s.scorecard),
     // entries fold the continuous score + its precision/recall metrics (#18)
     // so a scored board repaints when its score/metrics move, but stays
     // byte-identical on a no-op heartbeat. A bool-only entry contributes
@@ -872,6 +885,16 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     gateSections.push(section('Promote gate', el('div', { class: 'dn-panel' }, [empty('No gate decomposition recorded for this candidate’s round.')])));
   } else {
     gateSections.push(section('Promote gate', el('div', { class: 'dn-panel' }, [empty('The seed candidate has no gate — it defines the loss floor that challengers must beat.')])));
+  }
+
+  // ── the PROPOSER PREDICTION-ACCURACY + CALIBRATION scorecard (DIAGNOSTIC) ──
+  // Beneath the gate ladder in the main column: the orthogonal read of whether
+  // the PROPOSER predicted what would happen (predicted vs realised movements +
+  // the calibration fraction). It NEVER couples to the gate — its own caption
+  // says so. Absent / no claims → null → the dossier is byte-identical to today.
+  const scorecardPanel = buildPredictionScorecard(s.scorecard);
+  if (scorecardPanel) {
+    gateSections.push(section('Prediction accuracy · did the proposer call it? (diagnostic)', scorecardPanel));
   }
 
   // (RIGHT) ── RADAR SILHOUETTE (the FINAL liked study opt 2's folded-in panel) ──
@@ -1749,6 +1772,171 @@ export function gatePanel(gate) {
   if (decomp) card.appendChild(decomp);
 
   return card;
+}
+
+// ── the PROPOSER PREDICTION-ACCURACY + CALIBRATION scorecard (DIAGNOSTIC) ──────
+//
+// The promote gate answers "did the candidate win?"; this answers a DIFFERENT,
+// orthogonal question — "did the PROPOSER predict what would happen?". It reads
+// the hypothesis-accuracy payload (build_hypothesis_accuracy): each falsifiable
+// movement the proposer claimed, joined against the realised movement, with the
+// STAMPED hit/miss verdict; plus the realised movements the proposer never
+// claimed (unpredicted). The headline is the calibration fraction (hits/total).
+//
+// It NEVER couples to the gate — a perfectly-calibrated proposer can still lose,
+// and a miscalibrated one can still win. The caption says so explicitly. Every
+// hover-level detail (from→to rate, signed error, the proposer's note) lives in
+// the hovercard singleton, OUTSIDE the gated render.
+//
+// Returns null when there is nothing to show (seed / no experiment / no claims),
+// so a candidate the proposer made no falsifiable claim about is byte-identical
+// to the pre-feature dossier (back-compat clean).
+
+// Map one claim to its single-glyph verdict (the dn-pred-glyph token + a tone):
+//   hit  ✓ (good)   — predicted direction matched the realised movement
+//   miss ✗ (bad)    — predicted, but the realised movement went the other way
+//   band ◌ (flat)   — predicted, but no realised movement was paired (unresolved)
+//   unp  ＋ (flat)   — a realised movement the proposer never predicted (context)
+function predictionVerdict(claim) {
+  if (claim && claim.unpredicted) return { kind: 'unp', glyph: '＋', tone: 'flat', label: 'unpredicted' };
+  if (claim && claim.hypothesis_match === true) return { kind: 'hit', glyph: '✓', tone: 'good', label: 'hit' };
+  if (claim && claim.hypothesis_match === false) return { kind: 'miss', glyph: '✗', tone: 'bad', label: 'miss' };
+  // predicted but never paired against a realised movement (no outcome yet).
+  return { kind: 'band', glyph: '◌', tone: 'flat', label: 'unresolved' };
+}
+
+function dirArrow(d) {
+  const s = String(d == null ? '' : d).toLowerCase();
+  if (s === 'up' || s === 'increase' || s === '+') return '↑';
+  if (s === 'down' || s === 'decrease' || s === '-') return '↓';
+  if (s === 'flat' || s === 'none' || s === 'same') return '→';
+  return '·';
+}
+
+export function buildPredictionScorecard(scorecard) {
+  if (!scorecard || typeof scorecard !== 'object') return null;
+  const claims = Array.isArray(scorecard.claims) ? scorecard.claims : [];
+  const score = (scorecard.score && typeof scorecard.score === 'object') ? scorecard.score : {};
+  const predicted = claims.filter((c) => c && !c.unpredicted);
+  // nothing the proposer claimed AND nothing realised-but-unclaimed → no card.
+  if (!claims.length) return null;
+
+  const card = el('div', { class: 'dn-panel dn-predcard' });
+
+  // ── headline: the calibration fraction (hits / total predicted claims) ──
+  const hits = svg.isNum(score.hits) ? score.hits : null;
+  const total = svg.isNum(score.total) ? score.total : null;
+  const frac = svg.isNum(score.fraction) ? score.fraction : null;
+  // the proposer earns "good" by calibrating well (≥ half its claims land); the
+  // tone is direction-earned, no new hue.
+  const headTone = frac == null ? 'dn-flat' : (frac >= 0.5 ? 'dn-good' : 'dn-bad');
+  const headValue = (hits != null && total != null)
+    ? hits + '/' + total + (frac != null ? ' · ' + Math.round(frac * 100) + '%' : '')
+    : '—';
+  card.appendChild(el('div', { class: 'dn-predcard-head' }, [
+    el('div', { class: 'dn-stat' }, [
+      el('span', { class: 'v dn-predcard-frac ' + headTone, text: headValue }),
+      el('span', { class: 'k', text: 'calibration · proposer claims that landed' }),
+    ]),
+    // the pass-rate claim rides beside the fraction as free text (it is NOT a
+    // stamped match, so it never enters hits/total) — predicted vs observed.
+    predRateChip(scorecard.pass_rate),
+  ].filter(Boolean)));
+
+  // ── the per-movement matrix: one row per claim, predicted → observed + glyph ──
+  const tbl = el('table', { class: 'dn-board-table dn-predtable' });
+  tbl.appendChild(el('thead', null, [el('tr', null, [
+    el('th', { text: 'movement' }),
+    el('th', { text: 'predicted' }),
+    el('th', { text: 'observed' }),
+    el('th', { class: 'dn-num', text: '' }),
+  ])]));
+  const body = el('tbody');
+  // predicted claims first (they carry the verdict), then unpredicted context.
+  const ordered = [...predicted, ...claims.filter((c) => c && c.unpredicted)];
+  for (const c of ordered) {
+    const v = predictionVerdict(c);
+    const pred = c.unpredicted
+      ? '—'
+      : dirArrow(c.predicted_direction) + (c.predicted_magnitude ? ' ' + String(c.predicted_magnitude) : '');
+    const obs = dirArrow(c.observed_direction)
+      + (svg.isNum(c.from_rate) && svg.isNum(c.to_rate)
+        ? ' ' + svg.fmt(c.from_rate, 2) + '→' + svg.fmt(c.to_rate, 2) : '');
+    const glyph = el('span', { class: 'dn-pred-glyph dn-' + v.tone, text: v.glyph,
+      'aria-label': v.label });
+    // hover-level detail (signed error · note · kind) lives in the hovercard
+    // singleton, OUTSIDE the gated render — the glyph node stays stable.
+    attachHovercard(glyph, () => el('div', { class: 'dn-hc-body' }, [
+      el('div', { class: 'dn-hc-title', text: (c.target || 'movement') + ' · ' + v.label }),
+      el('div', { class: 'dn-hc-row', text: 'kind · ' + (c.kind || '—') }),
+      c.unpredicted
+        ? el('div', { class: 'dn-hc-row dn-faint', text: 'realised movement the proposer did not claim' })
+        : el('div', { class: 'dn-hc-row', text: 'predicted · ' + (c.predicted_direction || '—')
+          + (c.predicted_magnitude ? ' (' + c.predicted_magnitude + ')' : '') }),
+      svg.isNum(c.signed_error)
+        ? el('div', { class: 'dn-hc-row', text: 'signed error · ' + svg.fmtSigned(c.signed_error, 3) }) : null,
+      c.note ? el('div', { class: 'dn-hc-row dn-faint', text: String(c.note) }) : null,
+    ].filter(Boolean)));
+    body.appendChild(el('tr', { class: 'dn-predrow' + (c.unpredicted ? ' dn-predrow-unp' : '') }, [
+      el('td', { class: 'dn-mono', text: c.target || '—' }),
+      el('td', { class: 'dn-faint', text: pred }),
+      el('td', { text: obs }),
+      el('td', { class: 'dn-num' }, [glyph]),
+    ]));
+  }
+  tbl.appendChild(body);
+  card.appendChild(tbl);
+
+  // ── the EXPLICIT diagnostic caption (the non-negotiable disclaimer) ──
+  card.appendChild(el('p', { class: 'dn-faint dn-predcard-cap', style: 'font-size:11px;margin:8px 0 0;',
+    text: 'diagnostic — does not affect the gate · ✓ hit · ✗ miss · ◌ unresolved · ＋ unpredicted (not scored)' }));
+  return card;
+}
+
+// The pass-rate claim chip: the proposer's free-text predicted Δ vs the realised
+// board-wide Δ. NOT a stamped match (no hits/total contribution) — surfaced for
+// context. Returns null when the proposer made no pass-rate claim.
+function predRateChip(pr) {
+  if (!pr || typeof pr !== 'object') return null;
+  const predicted = pr.predicted == null ? '' : String(pr.predicted);
+  const observed = svg.isNum(pr.observed) ? svg.fmtSigned(pr.observed, 2) : null;
+  if (!predicted && observed == null) return null;
+  return el('div', { class: 'dn-stat dn-predrate' }, [
+    el('span', { class: 'v', text: observed == null ? (predicted || '—') : observed }),
+    el('span', { class: 'k', text: 'pass-rate Δ · ' + (predicted ? 'claimed “' + clip(predicted, 24) + '”' : 'observed') }),
+  ]);
+}
+
+// A content digest of the prediction scorecard — the rounded calibration
+// fraction + hits/total + each claim's (target, kind, verdict, predicted/observed
+// direction, ROUNDED from/to rate) + the pass-rate pair. NO timestamps. null when
+// absent / no claims so it contributes NOTHING to the dossier digest (a candidate
+// with no falsifiable claim is byte-identical to the pre-feature path). A no-op
+// beat re-emits identical numbers → equal digest → skip; a movement landing (a
+// from/to rate appearing, a verdict flipping, the fraction moving past 2dp) flips
+// it → repaint. This is where the SSE-heartbeat flashing bug class lives.
+function scorecardDigest(scorecard) {
+  if (!scorecard || typeof scorecard !== 'object') return null;
+  const claims = Array.isArray(scorecard.claims) ? scorecard.claims : [];
+  if (!claims.length) return null;
+  const score = (scorecard.score && typeof scorecard.score === 'object') ? scorecard.score : {};
+  const pr = (scorecard.pass_rate && typeof scorecard.pass_rate === 'object') ? scorecard.pass_rate : {};
+  return [
+    svg.isNum(score.hits) ? score.hits : null,
+    svg.isNum(score.total) ? score.total : null,
+    svg.isNum(score.fraction) ? score.fraction.toFixed(3) : null,
+    claims.map((c) => [
+      c.target == null ? null : String(c.target),
+      c.kind == null ? null : String(c.kind),
+      predictionVerdict(c).kind,
+      c.predicted_direction == null ? null : String(c.predicted_direction),
+      c.observed_direction == null ? null : String(c.observed_direction),
+      svg.isNum(c.from_rate) ? c.from_rate.toFixed(3) : null,
+      svg.isNum(c.to_rate) ? c.to_rate.toFixed(3) : null,
+    ]),
+    pr.predicted == null ? null : String(pr.predicted),
+    svg.isNum(pr.observed) ? pr.observed.toFixed(3) : null,
+  ];
 }
 
 // Render the scalar-provenance decomposition for a gate. Returns null when no
