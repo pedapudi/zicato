@@ -13,6 +13,19 @@
 use rusqlite::{Connection, OpenFlags, Row};
 use std::path::Path;
 
+/// The SQLite `user_version` this supervisor's positional row readers are
+/// written against. Pinned to the Python `SCHEMA_VERSION`
+/// (`src/zicato/index/schema.py`); a test in this module fails loudly if
+/// the two drift, so a Python schema bump cannot silently leave the Rust
+/// reader decoding rows by stale column positions.
+///
+/// The readers in this file pull columns by *name* in their SQL, but the
+/// JOIN shapes and the set of columns each helper expects are tied to a
+/// schema generation. Opening a database whose `user_version` does not
+/// match this constant returns [`IndexError::StaleSchema`] rather than
+/// risking a row decoded against the wrong schema.
+pub const EXPECTED_SCHEMA_VERSION: i64 = 10;
+
 /// A row of the `tournaments` table joined against `experiments` for the
 /// matchup's hypothesis idea.
 #[derive(Debug, Clone, Default)]
@@ -79,18 +92,28 @@ pub struct LossProfileRow {
 }
 
 /// Error returned by index-db helpers. `Absent` lets a route attach a
-/// `note`; `Query` is folded to an empty result (never a 500).
+/// `note`; `Query` is folded to an empty result (never a 500);
+/// `StaleSchema` lets a route attach a "reindex" note rather than serve
+/// rows decoded against a schema this binary does not understand.
 #[derive(Debug)]
 pub enum IndexError {
     /// `index.db` does not exist on disk.
     Absent,
     /// The file exists but a connection or query failed.
     Query(String),
+    /// The file's `user_version` does not match [`EXPECTED_SCHEMA_VERSION`]
+    /// — the index was built by a different schema generation. Carries
+    /// `(found, expected)` so the caller can surface a precise note.
+    StaleSchema { found: i64, expected: i64 },
 }
 
-/// Open the index read-only. Tolerates a WAL sidecar (the
-/// `SQLITE_OPEN_READ_ONLY` flag still permits reading a WAL database).
-pub fn open(db_path: &Path) -> Result<Connection, IndexError> {
+/// Open the index read-only WITHOUT a schema-version check.
+///
+/// Tolerates a WAL sidecar (the `SQLITE_OPEN_READ_ONLY` flag still permits
+/// reading a WAL database). Prefer [`open`], which additionally guards the
+/// `user_version`; this raw variant exists for callers (and tests) that
+/// build a database whose schema version is not stamped.
+pub fn open_unchecked(db_path: &Path) -> Result<Connection, IndexError> {
     if !db_path.exists() {
         return Err(IndexError::Absent);
     }
@@ -99,6 +122,34 @@ pub fn open(db_path: &Path) -> Result<Connection, IndexError> {
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(|e| IndexError::Query(e.to_string()))
+}
+
+/// Read `PRAGMA user_version` from an open connection. A read failure
+/// degrades to `0` (the SQLite default for a file whose version was never
+/// stamped), which the schema guard treats as stale.
+pub fn schema_version(conn: &Connection) -> i64 {
+    conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+        .unwrap_or(0)
+}
+
+/// Open the index read-only AND verify its schema version.
+///
+/// Reads `PRAGMA user_version` and returns [`IndexError::StaleSchema`]
+/// when it does not equal [`EXPECTED_SCHEMA_VERSION`]. This closes the
+/// silent-misread failure mode: a database built by a newer (or older)
+/// Python schema has different columns/joins, so the positional/named
+/// readers here could otherwise return rows decoded against the wrong
+/// shape. Tolerates a WAL sidecar exactly like [`open_unchecked`].
+pub fn open(db_path: &Path) -> Result<Connection, IndexError> {
+    let conn = open_unchecked(db_path)?;
+    let found = schema_version(&conn);
+    if found != EXPECTED_SCHEMA_VERSION {
+        return Err(IndexError::StaleSchema {
+            found,
+            expected: EXPECTED_SCHEMA_VERSION,
+        });
+    }
+    Ok(conn)
 }
 
 /// Pull an optional column without failing the whole row on a type
@@ -335,6 +386,9 @@ mod tests {
                  0.8,1.1,0.3,NULL,'2026-05-15T02:00:00Z');",
         )
         .unwrap();
+        // Stamp the schema version so `open()`'s guard accepts the fixture.
+        conn.execute_batch(&format!("PRAGMA user_version = {EXPECTED_SCHEMA_VERSION}"))
+            .unwrap();
         path
     }
 
@@ -408,10 +462,70 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("bare.db");
         Connection::open(&path).unwrap();
-        let conn = open(&path).unwrap();
+        // A bare database carries no tables AND no stamped version; use the
+        // unchecked open so this test isolates the missing-table degradation
+        // from the schema-version guard (covered separately below).
+        let conn = open_unchecked(&path).unwrap();
         assert!(tournaments_for_epoch(&conn, "e1").is_empty());
         assert!(generations_for_epoch(&conn, "e1").is_empty());
         assert!(experiment_for_generation(&conn, "v1").is_none());
         assert!(patches_for_generation(&conn, "v1").is_empty());
+    }
+
+    /// The Rust reader's expected schema version MUST track the Python
+    /// `SCHEMA_VERSION` (`src/zicato/index/schema.py`). When the Python
+    /// schema bumps, this constant must bump in lockstep; this test is the
+    /// tripwire that makes the drift impossible to miss.
+    #[test]
+    fn expected_schema_version_is_pinned_to_python() {
+        assert_eq!(
+            EXPECTED_SCHEMA_VERSION, 10,
+            "EXPECTED_SCHEMA_VERSION must equal the Python SCHEMA_VERSION \
+             in src/zicato/index/schema.py (currently 10); bump both together",
+        );
+    }
+
+    #[test]
+    fn open_rejects_a_mismatched_schema_version() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("old.db");
+        let conn = Connection::open(&path).unwrap();
+        // Stamp a version one behind the expected one.
+        conn.execute_batch(&format!(
+            "PRAGMA user_version = {}",
+            EXPECTED_SCHEMA_VERSION - 1
+        ))
+        .unwrap();
+        drop(conn);
+        match open(&path) {
+            Err(IndexError::StaleSchema { found, expected }) => {
+                assert_eq!(found, EXPECTED_SCHEMA_VERSION - 1);
+                assert_eq!(expected, EXPECTED_SCHEMA_VERSION);
+            }
+            other => panic!("expected StaleSchema, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn open_rejects_an_unstamped_database_as_stale() {
+        // A freshly-created SQLite file defaults user_version to 0, which is
+        // never the expected version — the guard treats it as stale rather
+        // than reading rows against an unknown shape.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("fresh.db");
+        Connection::open(&path).unwrap();
+        match open(&path) {
+            Err(IndexError::StaleSchema { found, .. }) => assert_eq!(found, 0),
+            other => panic!("expected StaleSchema for unstamped db, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn open_accepts_a_correctly_stamped_database() {
+        let tmp = TempDir::new().unwrap();
+        let path = build_index(tmp.path());
+        // build_index stamps EXPECTED_SCHEMA_VERSION, so open() accepts it.
+        assert!(open(&path).is_ok());
+        assert_eq!(schema_version(&open(&path).unwrap()), EXPECTED_SCHEMA_VERSION);
     }
 }

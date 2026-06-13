@@ -209,6 +209,17 @@ pub fn build_bracket(paths: &WorkspacePaths) -> BracketView {
                 note: Some("index not built; run zicato reindex".to_string()),
             };
         }
+        Err(IndexError::StaleSchema { found, expected }) => {
+            warn!(found, expected, "index.db schema version mismatch; serving empty bracket");
+            return BracketView {
+                epoch_id,
+                champion_lineage: Vec::new(),
+                matchups: Vec::new(),
+                note: Some(format!(
+                    "index schema v{found} != expected v{expected}; run zicato reindex"
+                )),
+            };
+        }
         Err(IndexError::Query(e)) => {
             warn!(error = %e, "index.db open failed; serving empty bracket");
             return BracketView {
@@ -264,6 +275,17 @@ pub fn build_matchup_detail(paths: &WorkspacePaths, generation_id: &str) -> Matc
                 epoch_id,
                 generation_id: Some(generation_id.to_string()),
                 note: Some("index not built; run zicato reindex".to_string()),
+                ..Default::default()
+            };
+        }
+        Err(IndexError::StaleSchema { found, expected }) => {
+            warn!(found, expected, "index.db schema version mismatch; serving empty matchup");
+            return MatchupDetail {
+                epoch_id,
+                generation_id: Some(generation_id.to_string()),
+                note: Some(format!(
+                    "index schema v{found} != expected v{expected}; run zicato reindex"
+                )),
                 ..Default::default()
             };
         }

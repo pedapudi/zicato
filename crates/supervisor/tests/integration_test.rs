@@ -547,6 +547,13 @@ fn write_index_db(paths: &reader::WorkspacePaths) {
              'promoted',0.8,1.1,0.3,NULL,'2026-05-15T02:00:00Z');",
     )
     .unwrap();
+    // Stamp the schema version so the supervisor's schema guard accepts
+    // this fixture (it rejects an unstamped / mismatched index.db).
+    conn.execute_batch(&format!(
+        "PRAGMA user_version = {}",
+        zicato_supervisor::index_db::EXPECTED_SCHEMA_VERSION
+    ))
+    .unwrap();
 }
 
 #[tokio::test]
