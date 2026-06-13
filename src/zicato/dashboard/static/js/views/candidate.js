@@ -1704,6 +1704,17 @@ export function gatePanel(gate) {
   ].filter(Boolean)));
   if (gate.reason) card.appendChild(el('p', { class: 'dn-gate-reason', text: gate.reason }));
 
+  // the OVERRIDE PROVENANCE caption — 'gate said X · operator forced Y' — names
+  // the divergence in words (the rules' decision vs the operator's force). Present
+  // ONLY when gate.override is present; a gate-decided round → byte-identical.
+  if (gate.override && gate.override.present) {
+    const forcedAction = gate.override.action === 'promote' ? 'force-promoted' : 'force-rejected';
+    const gateSaid = normaliseDecision(gate) || 'deferred';
+    card.appendChild(el('p', { class: 'dn-gate-override-cap dn-faint', style: 'font-size:11px;margin:6px 0 0;',
+      text: 'gate said ' + gateSaid + ' · operator ' + forcedAction
+        + (gate.override.reason ? ' — ' + gate.override.reason : '') }));
+  }
+
   // (b0) the BRADLEY–TERRY uncertainty PRE-GATE (the marquee) — the operator's
   // first read on a confidence-thresholded run: the two θ̂ whiskers + the
   // P(challenger stronger) bar against the threshold, and (when deferred) the

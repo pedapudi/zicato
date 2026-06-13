@@ -400,7 +400,25 @@ def test_bundle_under_size_envelope(
     # back-compat: rating absent / present:false → the gate panel is byte-
     # identical to today. ~10.5 KB of real new evidence surface (JS + CSS). The
     # envelope is raised to 1.14 MB to cover it with headroom.
-    assert total < 1_140_000, f"bundle is {total} bytes, exceeds 1_140_000 envelope"
+    #
+    # The FIELD-TOURNAMENT OVERRIDE CONTROL PLANE then wires the operator's per-
+    # challenger force-promote/reject into the standings row for ALL structures:
+    # an `overrideControlCell` (ui.js) — CONFIRM-INLINE (arm → reason → POST, never
+    # one-click), an OPTIMISTIC 'queued' stamp held in a module pending registry
+    # (folded into structureDigest with NO timestamp so it repaints on a real
+    # override but is byte-identical on a no-op beat) and a DISABLED (not POST-and-
+    # fail) state when the workspace is read-only — a `postFieldOverride` helper
+    # (core/api.js) for the per-generation /api/control/{promote|reject}/{gid} route
+    # with the {reason, epoch, tournament_id, structure} body, the standings control
+    # column + DRAINED-state resolution + the 'gate said … · operator forced …'
+    # provenance caption (structure.js standings + candidate.js gate head), the
+    # swiss standings table so the control plane is consistent across every
+    # structure, and MULTIPLE-promoted/tie support. All reads ride on gate.override
+    # / override_status / promoted_generation_ids VERBATIM (no new backend field;
+    # back-compat: no override / no read-only → byte-identical). ~8 KB of new
+    # control surface. The envelope is nudged to 1.152 MB to cover it with a thin
+    # margin (additions kept lean — only the control plane, no extra chrome).
+    assert total < 1_152_000, f"bundle is {total} bytes, exceeds 1_152_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

@@ -529,6 +529,135 @@ export function overrideDigest(prov) {
   return o ? [o.kind, o.action, o.state, o.reason] : null;
 }
 
+// ---- the FIELD-OVERRIDE CONTROL PLANE (the operator action cell) ------
+//
+// The override CHIP renders the FACT of an override; this CONTROL creates one —
+// the per-challenger force-promote/reject the operator fires against the gate.
+// CONFIRM-INLINE (arm → reason → POST, never one-click) and OPTIMISTIC: a
+// 202-accepted POST stamps a local 'queued' override that survives the digest-
+// gated re-render via this registry (keyed by gid, NO timestamp, so it folds into
+// structureDigest cleanly — a queued override repaints, a no-op beat is stable).
+const _pendingOverrides = new Map(); // gid -> {action, reason, state:'queued'}
+
+// The optimistic prov for a gid (override_status shape), or null — flows straight
+// into overrideChip / overrideDigest like the durable readback.
+export function pendingOverride(gid) {
+  const p = _pendingOverrides.get(String(gid));
+  return p ? { action: p.action, reason: p.reason, state: 'queued' } : null;
+}
+
+// Mark a gid optimistically overridden (on a 202-accepted POST); returns the prov.
+export function markPendingOverride(gid, action, reason) {
+  const prov = { action: String(action), reason: (typeof reason === 'string' && reason) ? reason : null, state: 'queued' };
+  _pendingOverrides.set(String(gid), prov);
+  return prov;
+}
+
+// Drop a gid's optimistic stamp once the durable readback supersedes it.
+export function clearPendingOverride(gid) { _pendingOverrides.delete(String(gid)); }
+
+// Test-only: drop every optimistic stamp.
+export function _resetPendingOverrides() { _pendingOverrides.clear(); }
+
+// A stable digest fragment for the optimistic overrides over a set of gids —
+// folds into structureDigest (NO timestamp, sorted by gid; [] when none pending).
+export function pendingOverrideDigest(gids) {
+  const out = [];
+  for (const gid of (Array.isArray(gids) ? gids : [])) {
+    const p = _pendingOverrides.get(String(gid));
+    if (p) out.push([String(gid), p.action, p.reason]);
+  }
+  out.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  return out;
+}
+
+// Build the per-challenger override CONTROL cell (a stable wrapper for the
+// standings action column). `opts`: gid (required); epochId/tournamentId/
+// structure (ride into the POST body so the readback names the field round);
+// readOnly (a DISABLED affordance — visible, never POSTs); settled (the round
+// resolved — no re-arm); existingOverride (the durable readback prov — the
+// control is spent); onPost(action, gid, reason) → {ok, status} (on ok the cell
+// stamps the optimistic queued state + calls onChange); onChange (re-render hook).
+export function overrideControlCell(opts) {
+  const o = opts || {};
+  const gid = String(o.gid || '');
+  const cell = el('span', { class: 'dn-ovr-ctl', 'data-ovr-ctl': gid });
+  // an override already recorded (durable readback OR the local optimistic
+  // stamp) — the control is spent; show its state, no re-arm.
+  const recorded = o.existingOverride || pendingOverride(gid);
+  if (recorded) {
+    cell.appendChild(el('span', { class: 'dn-ovr-spent dn-faint', text: 'overridden' }));
+    return cell;
+  }
+  // a settled round takes no new override (the gate / field has resolved).
+  if (o.settled) {
+    cell.appendChild(el('span', { class: 'dn-ovr-na dn-faint', text: '—' }));
+    return cell;
+  }
+  // read-only: a DISABLED control (visible, never POSTs).
+  if (o.readOnly) {
+    const btn = el('button', { class: 'dn-ovr-arm', type: 'button', disabled: 'disabled',
+      title: 'read-only workspace — overrides are disabled' }, [el('span', { text: 'override' })]);
+    cell.appendChild(btn);
+    return cell;
+  }
+
+  // the live, two-step arm → reason → confirm flow. State lives on the wrapper
+  // so a re-render rebuilds the disarmed cell (the registry carries the only
+  // durable fact — the optimistic stamp).
+  const reasonInput = el('input', { class: 'dn-ovr-reason', type: 'text',
+    placeholder: 'reason (recorded)', 'aria-label': 'override reason' });
+  let armedAction = null; // 'promote' | 'reject' while armed
+
+  const fire = async (action) => {
+    const reason = String(reasonInput.value || '').trim();
+    let res = { ok: false, status: 0 };
+    try { res = await (o.onPost ? o.onPost(action, gid, reason) : { ok: false, status: 0 }); }
+    catch { res = { ok: false, status: 0 }; }
+    if (res && res.ok) {
+      markPendingOverride(gid, action, reason);
+      if (o.onChange) o.onChange();
+    } else if (res && res.status === 403) {
+      // a workspace that flipped read-only between paint and POST — flag it.
+      cell.setAttribute('data-ovr-error', 'read-only');
+      const err = el('span', { class: 'dn-ovr-err dn-faint', text: 'read-only' });
+      cell.appendChild(err);
+    } else {
+      cell.setAttribute('data-ovr-error', 'failed');
+      const err = el('span', { class: 'dn-ovr-err dn-faint', text: 'failed' });
+      cell.appendChild(err);
+    }
+  };
+
+  const disarm = () => { armedAction = null; cell.setAttribute('data-armed', '0'); paint(); };
+  const arm = () => { cell.setAttribute('data-armed', '1'); paint(); };
+
+  function paint() {
+    clearChildren(cell);
+    if (cell.getAttribute('data-armed') === '1') {
+      // the confirm row: promote ↑ / reject ✕ direction buttons + reason + cancel.
+      const confirmPromote = el('button', { class: 'dn-ovr-confirm dn-ovr-promote', type: 'button',
+        title: 'force-promote this challenger over the gate' }, [el('span', { text: 'promote ↑' })]);
+      confirmPromote.addEventListener('click', () => { armedAction = 'promote'; fire('promote'); });
+      const confirmReject = el('button', { class: 'dn-ovr-confirm dn-ovr-reject', type: 'button',
+        title: 'force-reject this challenger against the gate' }, [el('span', { text: 'reject ✕' })]);
+      confirmReject.addEventListener('click', () => { armedAction = 'reject'; fire('reject'); });
+      const cancel = el('button', { class: 'dn-ovr-cancel', type: 'button', title: 'cancel' }, [el('span', { text: '×' })]);
+      cancel.addEventListener('click', disarm);
+      cell.appendChild(el('span', { class: 'dn-ovr-confirmrow' }, [reasonInput, confirmPromote, confirmReject, cancel]));
+    } else {
+      const armBtn = el('button', { class: 'dn-ovr-arm', type: 'button', title: 'operator override (force promote / reject)' },
+        [el('span', { text: 'override' })]);
+      armBtn.addEventListener('click', arm);
+      cell.appendChild(armBtn);
+    }
+    void armedAction;
+  }
+  cell.setAttribute('data-armed', '0');
+  paint();
+  return cell;
+}
+
 export function stat(value, key) {
   return el('div', { class: 'dn-stat' }, [
     el('span', { class: 'v', text: value }),

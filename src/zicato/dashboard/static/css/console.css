@@ -697,6 +697,32 @@
     background: color-mix(in srgb, var(--v2-caution) 10%, transparent); }
   .dn-override.dn-override-drained { color: var(--v2-ink-faint); border-color: var(--v2-rule); }
 
+  /* the FIELD-OVERRIDE CONTROL cell — the operator's per-challenger force
+   * promote/reject. CONFIRM-INLINE: the bare "override" button ARMS a confirm
+   * row (a reason field + promote↑/reject✕ + cancel); only the explicit confirm
+   * POSTs. The accent is the sole structural highlight; the promote/reject
+   * confirm buttons earn their tone by DIRECTION (good/bad), never a new hue. */
+  .dn-ovr-ctl { display: inline-flex; align-items: center; gap: 6px; font-family: var(--v2-mono); }
+  .dn-ovr-col { white-space: nowrap; }
+  .dn-ovr-arm, .dn-ovr-confirm, .dn-ovr-cancel {
+    font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1));
+    padding: 2px 8px; border: 1px solid var(--v2-rule); border-radius: 4px;
+    background: transparent; color: var(--v2-ink-soft); cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s; }
+  .dn-ovr-arm { border-color: var(--v2-accent); color: var(--v2-accent); }
+  .dn-ovr-arm:hover { background: var(--v2-accent); color: var(--v2-paper); }
+  .dn-ovr-arm[disabled] { opacity: 0.42; cursor: default; pointer-events: none; border-color: var(--v2-rule); color: var(--v2-ink-faint); }
+  .dn-ovr-confirmrow { display: inline-flex; align-items: center; gap: 5px; }
+  .dn-ovr-reason { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1));
+    padding: 2px 6px; border: 1px solid var(--v2-rule); border-radius: 4px;
+    background: var(--v2-panel); color: var(--v2-ink); width: 14ch; }
+  .dn-ovr-confirm.dn-ovr-promote { border-color: var(--v2-good); color: var(--v2-good); }
+  .dn-ovr-confirm.dn-ovr-promote:hover { background: var(--v2-good); color: var(--v2-paper); }
+  .dn-ovr-confirm.dn-ovr-reject { border-color: var(--v2-bad); color: var(--v2-bad); }
+  .dn-ovr-confirm.dn-ovr-reject:hover { background: var(--v2-bad); color: var(--v2-paper); }
+  .dn-ovr-cancel { padding: 2px 6px; }
+  .dn-ovr-spent, .dn-ovr-na, .dn-ovr-err { font-size: calc(10.5px * var(--dt-font-scale, 1)); }
+
   .dn-good-t { color: var(--v2-good); }
   .dn-finding { margin-bottom: 9px; }
   /* the drill-down detail card wears the standard faint .dn-panel border like

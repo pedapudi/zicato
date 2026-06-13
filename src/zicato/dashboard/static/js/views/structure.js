@@ -5,9 +5,11 @@
 
 import { el } from '../core/dom.js';
 import * as svg from '../svg.js';
-import { section, empty, verdictPill, overrideChip, overrideDigest } from '../ui.js';
+import { section, empty, verdictPill, overrideChip, overrideDigest, overrideControlCell, pendingOverride, pendingOverrideDigest, clearPendingOverride } from '../ui.js';
 import { structureStatusLabel } from '../livestatus.js';
 import { attachHovercard } from '../hovercard.js';
+import { state } from '../core/state.js';
+import { postFieldOverride } from '../core/api.js';
 const CROWN = svg.CROWN;
 
 // A friendly label + key params for a structure.
@@ -515,6 +517,16 @@ export function structureDigest(st) {
       // beat stays byte-identical. null (none) → pre-override digest (back-compat).
       (st.override_status && typeof st.override_status === 'object')
         ? overrideDigest(st.override_status[String(s.generation_id)]) : null]),
+    // the OPTIMISTIC 'queued' override stamps (the operator's own, pre-readback)
+    // folded in by generation_id — NO timestamp — so a freshly-fired override
+    // repaints the standings (queued stamp + drained transition) but a no-op beat
+    // stays byte-identical. [] when none are pending → pre-control digest.
+    pending_overrides: pendingOverrideDigest((Array.isArray(st.standings) ? st.standings : []).map((s) => s.generation_id)),
+    // the advanced SET at settle (supports MULTIPLE promoted / ties) — folded so a
+    // settle that drains a queued override (gid not in the set) repaints. Sorted;
+    // absent → null (back-compat with pre-override-readback runs).
+    promoted: Array.isArray(st.promoted_generation_ids)
+      ? st.promoted_generation_ids.map((g) => String(g)).slice().sort() : null,
     // the proposing-step field — so the "Proposed field" section's gated
     // swap fires when a challenger is minted / applied / rejected, but stays
     // stable on a no-op heartbeat.
@@ -986,6 +998,12 @@ function renderSwiss(st, ctx, epochId) {
   // so the old standalone "Pairings · round by round" tables only duplicated the
   // pairings. Collapsed into this single section.
   nodes.push(section(model.live ? 'Swiss · LIVE — rounds, standings & champion-gate' : 'Swiss · rounds, standings & champion-gate', lCard));
+  // the Standings table rides BELOW the ladder so the per-challenger override
+  // CONTROL plane (force promote/reject + provenance) is consistent across EVERY
+  // structure, not only the bracket/racing/gauntlet ones. The ladder already
+  // lays out pairings; this table carries the actionable per-row controls.
+  const standings = standingsTable(st, ctx, epochId, !!(st && st.live));
+  if (standings) nodes.push(section('Standings', standings));
   return nodes;
 }
 
@@ -2187,6 +2205,19 @@ function renderGauntlet(st, ctx, epochId) {
 
 // ---- shared: the standings leaderboard table -----------------------
 
+// Resolve a standing's override prov: the DURABLE readback wins; else the
+// operator's optimistic queued stamp; else — on a SETTLED round whose queued
+// promote never landed in the advanced set — the DRAINED state (queued, never
+// fired). null when neither exists (back-compat clean).
+function resolveOverrideProv(gid, durable, pending, settled, promotedSet) {
+  if (durable) return durable;
+  if (!pending) return null;
+  if (settled && pending.action === 'promote' && promotedSet && !promotedSet.has(String(gid))) {
+    return { action: pending.action, reason: pending.reason, state: 'drained' };
+  }
+  return pending;
+}
+
 function standingsTable(st, ctx, epochId, live) {
   const standings = (st && Array.isArray(st.standings)) ? st.standings.slice() : [];
   if (!standings.length) return null;
@@ -2200,6 +2231,23 @@ function standingsTable(st, ctx, epochId, live) {
   // reason, state}}. KEY-ABSENT on every gate-decided / single-challenger /
   // pre-feature run → no chip → byte-identical to today.
   const overrides = (st && st.override_status && typeof st.override_status === 'object') ? st.override_status : null;
+  // the advanced SET at settle (supports MULTIPLE promoted / ties) — resolves the
+  // DRAINED state for an optimistic stamp that never landed.
+  const promotedSet = (st && Array.isArray(st.promoted_generation_ids))
+    ? new Set(st.promoted_generation_ids.map((g) => String(g))) : null;
+  // the CONTROL plane: a live field accepts operator overrides; a read-only
+  // workspace shows the control DISABLED (never POST-and-fail). The POST body
+  // names the field round so the readback can attribute it.
+  const settled = !live;
+  const readOnly = !!(state.health && state.health.read_only);
+  const tournamentId = (st && st.tournament_id != null) ? String(st.tournament_id) : null;
+  const bodyBase = {};
+  if (epochId != null) bodyBase.epoch = String(epochId);
+  if (tournamentId) bodyBase.tournament_id = tournamentId;
+  if (structure) bodyBase.structure = String(structure);
+  const onPost = (action, gid, reason) =>
+    postFieldOverride(action, gid, Object.assign({}, bodyBase, reason ? { reason } : {}));
+  const onChange = () => { if (state && typeof state._changed === 'function') state._changed(); };
   // Racing (successive-halving / best-arm) has NO head-to-head winner/loser —
   // each rung ranks survivors by SCALAR and cuts the worst; the promote/reject
   // is the gate, not a match record. So W/L are structurally always 0 for
@@ -2214,8 +2262,11 @@ function standingsTable(st, ctx, epochId, live) {
     el('th', { class: 'dn-num', text: 'scalar' }),
     ...(showWL ? [el('th', { class: 'dn-num', text: 'W' }), el('th', { class: 'dn-num', text: 'L' })] : []),
     el('th', { text: '' }),
+    el('th', { class: 'dn-ovr-col', text: 'override' }),
   ])]));
   const tbody = el('tbody');
+  // running tally for the field-level caption ('gate said X · operator forced Y')
+  const forced = { promote: 0, reject: 0, drained: 0 };
   for (const s of standings) {
     let raw = String(s.status || '').toLowerCase();
     // LIVE — the verdicts have not committed; a standing tagged champion /
@@ -2245,8 +2296,20 @@ function standingsTable(st, ctx, epochId, live) {
         ])
       : el('td', { class: 'dn-num dn-mono', text: svg.isNum(s.scalar) ? svg.fmt(s.scalar, 1) : '—' });
     // operator-override provenance rides BESIDE the status pill (overrideChip),
-    // never recoloring the verdict. Absent → null → byte-identical to today.
-    const ovProv = overrides ? overrides[String(s.generation_id)] : null;
+    // never recoloring the verdict — durable readback wins, else the optimistic
+    // queued stamp, else (settled never-landed promote) drained. Absent → null.
+    const gidStr = String(s.generation_id);
+    const durable = overrides ? overrides[gidStr] : null;
+    // once the durable readback carries this override, drop the optimistic stamp
+    // so they never double up (the readback is now authoritative).
+    if (durable) clearPendingOverride(gidStr);
+    const ovProv = resolveOverrideProv(gidStr, durable, pendingOverride(gidStr), settled, promotedSet);
+    if (ovProv) {
+      const a = String(ovProv.action || '');
+      if (String(ovProv.state || 'applied') === 'drained') forced.drained += 1;
+      else if (a === 'promote') forced.promote += 1;
+      else if (a === 'reject') forced.reject += 1;
+    }
     const ovChip = overrideChip(ovProv);
     if (ovChip && ovProv) {
       const act = ovProv.action === 'promote' ? 'force-promoted' : 'force-rejected';
@@ -2257,6 +2320,13 @@ function standingsTable(st, ctx, epochId, live) {
           : el('div', { class: 'dn-hc-row dn-faint', text: 'no reason recorded' }),
       ]));
     }
+    // the per-challenger override CONTROL cell (confirm-inline arm→reason→POST,
+    // optimistic queued stamp, disabled when read_only/settled/overridden).
+    // existingOverride = the durable readback only (the cell reads its own stamp).
+    const ctlCell = s.generation_id ? overrideControlCell({
+      gid: gidStr, epochId, tournamentId, structure,
+      readOnly, settled, existingOverride: durable, onPost, onChange,
+    }) : null;
     tbody.appendChild(el('tr', { class: rowCls }, [
       el('td', { class: 'dn-mono', text: svg.isNum(s.rank) ? String(s.rank) : '—' }),
       el('td', { class: 'dn-mono', text: (s.generation_id || '—') + (status === 'champion' ? ' ' + CROWN.current : '') }),
@@ -2273,9 +2343,11 @@ function standingsTable(st, ctx, epochId, live) {
         proj && frac != null ? el('span', { class: 'dt-proj-bar-lab', text: bd + '/' + bt }) : null,
         s.generation_id ? el('a', { class: 'dn-linkbtn', href: ctx.href('candidate', { epochId, gen: s.generation_id }), text: 'open →' }) : null,
       ].filter(Boolean)),
+      el('td', { class: 'dn-ovr-col' }, [ctlCell].filter(Boolean)),
     ]));
   }
   tbl.appendChild(tbody);
+  const caps = [];
   // a field-level DEFERRED caption — when at least one standing is held in
   // contention (the deferred pill state) and nothing has yet been crowned /
   // eliminated, surface WHY the field reads unsettled: the winner resolves once
@@ -2286,10 +2358,21 @@ function standingsTable(st, ctx, epochId, live) {
     return r === 'champion' || r === 'eliminated';
   });
   if (live && anyDeferred && !anyTerminal) {
-    const cap = el('p', { class: 'dn-faint dt-standings-deferred', style: 'font-size:11px;margin:8px 0 0;',
-      text: 'deferred — no winner committed yet · the standing resolves once the duels separate the strengths (held, not rejected)' });
-    return el('div', { class: 'dt-standings-wrap' }, [tbl, cap]);
+    caps.push(el('p', { class: 'dn-faint dt-standings-deferred', style: 'font-size:11px;margin:8px 0 0;',
+      text: 'deferred — no winner committed yet · the standing resolves once the duels separate the strengths (held, not rejected)' }));
   }
+  // the OVERRIDE PROVENANCE caption — 'gate said X · operator forced Y' — reads
+  // only when an override is present (durable/queued/drained); a clean gate-
+  // decided field stays byte-identical.
+  if (forced.promote || forced.reject || forced.drained) {
+    const verbs = [];
+    if (forced.promote) verbs.push('forced ' + forced.promote + (forced.promote > 1 ? ' promotions' : ' promotion'));
+    if (forced.reject) verbs.push('forced ' + forced.reject + (forced.reject > 1 ? ' rejections' : ' rejection'));
+    if (forced.drained) verbs.push(forced.drained + ' queued ' + (forced.drained > 1 ? 'overrides' : 'override') + ' drained (never fired)');
+    caps.push(el('p', { class: 'dn-faint dt-standings-override', style: 'font-size:11px;margin:6px 0 0;',
+      text: 'gate said settle on the standings · operator ' + verbs.join(' · ') }));
+  }
+  if (caps.length) return el('div', { class: 'dt-standings-wrap' }, [tbl, ...caps]);
   return tbl;
 }
 
