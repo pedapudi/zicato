@@ -61,6 +61,9 @@ pub struct AppState {
     /// The latest diff-containment scan result; `/statusz` surfaces it as a
     /// hard ALERT when any generation escaped its mutable surface.
     pub diff_findings: Arc<crate::diff_containment::DiffContainmentFindings>,
+    /// The latest promotion-gatekeeping scan result; `/statusz` surfaces it as
+    /// an ALERT when a recorded promotion contradicts its recorded scores.
+    pub promotion_gate_findings: Arc<crate::promotion_gate::PromotionGateFindings>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -170,6 +173,7 @@ fn build_statusz_view(s: &AppState) -> statusz::StatuszView {
         &s.action_log,
         audit_ledger,
         s.diff_findings.view(),
+        s.promotion_gate_findings.view(),
     )
 }
 

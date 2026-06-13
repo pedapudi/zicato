@@ -38,6 +38,16 @@ pub struct DiffContainmentConfig {
     pub findings: Arc<crate::diff_containment::DiffContainmentFindings>,
 }
 
+/// Promotion-gatekeeping configuration threaded into [`runs_loop`].
+///
+/// `enabled` gates the per-tick scan (off by default); `findings` is the
+/// shared store the scan writes its latest result into for `/statusz`.
+#[derive(Clone)]
+pub struct PromotionGateConfig {
+    pub enabled: bool,
+    pub findings: Arc<crate::promotion_gate::PromotionGateFindings>,
+}
+
 /// Record one watchdog escalation in the in-memory ring AND, when a
 /// tamper-evident ledger is configured, append it to the persisted
 /// hash-chained ledger too.
@@ -140,6 +150,56 @@ fn run_diff_containment_scan(
     }
     *previously_quarantined = current;
     diff.findings.record(view);
+}
+
+/// Run one promotion-gatekeeping scan and surface its findings.
+///
+/// READ-ONLY / ALARM-ONLY (v1): re-applies the gate's scalar rule to every
+/// recorded promotion in the current epoch and alarms when a promotion is not
+/// supported by the recorded scores. Records the latest scan into the shared
+/// store for `/statusz` and — when a ledger is configured — appends a hard
+/// alert per newly-observed contradiction. Never blocks a promotion. The alarm
+/// is de-duplicated against the prior scan's contradiction set (keyed by
+/// generation) so a standing contradiction alerts once.
+fn run_promotion_gate_scan(
+    paths: &WorkspacePaths,
+    gate: &PromotionGateConfig,
+    ledger: Option<&Arc<AuditLedger>>,
+    previously_flagged: &mut HashSet<(String, String)>,
+) {
+    let view = crate::promotion_gate::scan_current_epoch(paths);
+
+    let mut current: HashSet<(String, String)> = HashSet::new();
+    for c in &view.contradictions {
+        let key = (c.epoch_id.clone(), c.challenger_generation_id.clone());
+        current.insert(key.clone());
+        if !previously_flagged.contains(&key) {
+            warn!(
+                epoch_id = %c.epoch_id,
+                challenger = %c.challenger_generation_id,
+                champion = %c.champion_generation_id,
+                delta_scalar = c.delta_scalar,
+                "PROMOTION-GATE ALERT: {}",
+                c.detail,
+            );
+            if let Some(ledger) = ledger {
+                ledger.append(
+                    crate::ledger::RecordKind::PromotionContradiction,
+                    serde_json::json!({
+                        "epoch_id": c.epoch_id,
+                        "challenger_generation_id": c.challenger_generation_id,
+                        "champion_generation_id": c.champion_generation_id,
+                        "recorded_decision": c.recorded_decision,
+                        "delta_scalar": c.delta_scalar,
+                        "promote_margin": c.promote_margin,
+                        "detail": c.detail,
+                    }),
+                );
+            }
+        }
+    }
+    *previously_flagged = current;
+    gate.findings.record(view);
 }
 
 /// Thresholds for watchdog decisions.
@@ -841,6 +901,13 @@ async fn reap_dead_orchestrator_runs(
 ///    (the Python parent detects the dead worker, cleans up, and records
 ///    the run aborted).
 /// 2. **Run staleness** ([`decide_run`]) — `last_progress` not advancing.
+//
+// Each parameter is one independent collaborator the loop plumbs into the
+// pure decision helpers (paths, thresholds, interval, the action ring, the
+// optional ledger, and the two integrity-notary scan configs). Bundling them
+// would only rename the same set behind one struct, so the explicit signature
+// is clearer.
+#[allow(clippy::too_many_arguments)]
 pub async fn runs_loop(
     paths: WorkspacePaths,
     thresholds: Thresholds,
@@ -848,6 +915,7 @@ pub async fn runs_loop(
     log: Arc<WatchdogLog>,
     ledger: Option<Arc<AuditLedger>>,
     diff: DiffContainmentConfig,
+    promotion_gate: PromotionGateConfig,
     shutdown: Sender<()>,
 ) {
     let mut ticker = tokio::time::interval(interval);
@@ -861,6 +929,8 @@ pub async fn runs_loop(
     // Generations quarantined by the prior diff-containment scan, so a standing
     // violation alerts once rather than every tick.
     let mut quarantined: HashSet<(String, String)> = HashSet::new();
+    // Generations flagged by the prior promotion-gate scan (same de-dup).
+    let mut gate_flagged: HashSet<(String, String)> = HashSet::new();
     loop {
         tokio::select! {
             _ = ticker.tick() => {
@@ -878,6 +948,17 @@ pub async fn runs_loop(
                         &diff,
                         ledger.as_ref(),
                         &mut quarantined,
+                    );
+                }
+                // Promotion gatekeeping (alarm-only / read-only). Off by
+                // default; when enabled, re-applies the gate's scalar rule to
+                // recorded promotions and alarms on contradictions.
+                if promotion_gate.enabled {
+                    run_promotion_gate_scan(
+                        &paths,
+                        &promotion_gate,
+                        ledger.as_ref(),
+                        &mut gate_flagged,
                     );
                 }
                 // Protect the orchestrator pid (carried by the heartbeat)

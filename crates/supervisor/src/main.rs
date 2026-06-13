@@ -100,6 +100,17 @@ struct Cli {
     #[arg(long, default_value_t = false)]
     diff_containment: bool,
 
+    /// Enable promotion gatekeeping (INTEGRITY NOTARY record #3).
+    ///
+    /// When set, each watchdog tick re-applies the gate's scalar rule to every
+    /// recorded promotion in the current epoch and ALARMS when a promotion is
+    /// not supported by the recorded scores (a recorded decision contradicting
+    /// its own evidence). Alarm-only / read-only in v1: it surfaces on
+    /// `/statusz` and (when a ledger is configured) records a hard alert, but
+    /// never blocks a promotion. Off by default.
+    #[arg(long, default_value_t = false)]
+    promotion_gate: bool,
+
     /// Directory for the supervisor's tamper-evident audit ledger.
     ///
     /// When set, the supervisor opens (or creates) a persisted, append-only,
@@ -235,6 +246,13 @@ async fn main() -> std::process::ExitCode {
         info!("diff-containment attestation enabled (alarm-only)");
     }
 
+    // Promotion-gatekeeping findings store (INTEGRITY NOTARY record #3).
+    let promotion_gate_findings =
+        Arc::new(zicato_supervisor::promotion_gate::PromotionGateFindings::new());
+    if cli.promotion_gate {
+        info!("promotion gatekeeping enabled (alarm-only)");
+    }
+
     let interval = Duration::from_secs(cli.interval.max(1));
     let hb_paths = paths.clone();
     let hb_shutdown = shutdown_tx.clone();
@@ -248,7 +266,9 @@ async fn main() -> std::process::ExitCode {
     let run_log = action_log.clone();
     let run_ledger = ledger.clone();
     let run_diff = diff_findings.clone();
+    let run_gate = promotion_gate_findings.clone();
     let diff_enabled = cli.diff_containment;
+    let gate_enabled = cli.promotion_gate;
     tokio::spawn(async move {
         watchdog::runs_loop(
             run_paths,
@@ -259,6 +279,10 @@ async fn main() -> std::process::ExitCode {
             watchdog::DiffContainmentConfig {
                 enabled: diff_enabled,
                 findings: run_diff,
+            },
+            watchdog::PromotionGateConfig {
+                enabled: gate_enabled,
+                findings: run_gate,
             },
             run_shutdown,
         )
@@ -279,6 +303,7 @@ async fn main() -> std::process::ExitCode {
             fold_diagnostics: fold_diagnostics.clone(),
             ledger: ledger.clone(),
             diff_findings: diff_findings.clone(),
+            promotion_gate_findings: promotion_gate_findings.clone(),
         },
         watch_tx.clone(),
         shutdown_tx.clone(),

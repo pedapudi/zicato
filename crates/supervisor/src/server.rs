@@ -88,6 +88,9 @@ pub struct ServeOptions {
     /// (which fills it when `--diff-containment` is set). `/statusz` surfaces
     /// it; empty/not-scanned when the scan is disabled.
     pub diff_findings: Arc<crate::diff_containment::DiffContainmentFindings>,
+    /// The latest promotion-gatekeeping scan result, shared with the watchdog
+    /// loop (filled when `--promotion-gate` is set). `/statusz` surfaces it.
+    pub promotion_gate_findings: Arc<crate::promotion_gate::PromotionGateFindings>,
 }
 
 pub async fn serve(
@@ -119,6 +122,7 @@ pub async fn serve(
         fold_diagnostics: options.fold_diagnostics,
         ledger: options.ledger,
         diff_findings: options.diff_findings,
+        promotion_gate_findings: options.promotion_gate_findings,
     };
 
     let cors = CorsLayer::new()

@@ -35,6 +35,9 @@ fn serve_opts(read_only: bool) -> server::ServeOptions {
         diff_findings: Arc::new(
             zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
         ),
+        promotion_gate_findings: Arc::new(
+            zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
+        ),
     }
 }
 
@@ -1001,6 +1004,12 @@ async fn watchdog_sigterms_run_past_its_deadline() {
                     zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
                 ),
             },
+            watchdog::PromotionGateConfig {
+                enabled: false,
+                findings: Arc::new(
+                    zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
+                ),
+            },
             loop_shutdown,
         )
         .await
@@ -1049,6 +1058,12 @@ async fn watchdog_escalates_to_sigkill_when_run_ignores_sigterm() {
                     zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
                 ),
             },
+            watchdog::PromotionGateConfig {
+                enabled: false,
+                findings: Arc::new(
+                    zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
+                ),
+            },
             loop_shutdown,
         )
         .await
@@ -1083,6 +1098,12 @@ async fn watchdog_does_not_kill_run_when_deadline_disabled() {
                 enabled: false,
                 findings: Arc::new(
                     zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+                ),
+            },
+            watchdog::PromotionGateConfig {
+                enabled: false,
+                findings: Arc::new(
+                    zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
                 ),
             },
             loop_shutdown,
@@ -1135,6 +1156,12 @@ async fn watchdog_never_signals_orchestrator_or_init_pids() {
                 enabled: false,
                 findings: Arc::new(
                     zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+                ),
+            },
+            watchdog::PromotionGateConfig {
+                enabled: false,
+                findings: Arc::new(
+                    zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
                 ),
             },
             loop_shutdown,
@@ -1686,6 +1713,9 @@ async fn statusz_routes_reachable_with_no_dashboard() {
         diff_findings: Arc::new(
             zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
         ),
+        promotion_gate_findings: Arc::new(
+            zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
+        ),
     };
     let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);
@@ -1771,6 +1801,9 @@ async fn statusz_surfaces_recorded_watchdog_actions() {
         diff_findings: Arc::new(
             zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
         ),
+        promotion_gate_findings: Arc::new(
+            zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
+        ),
     };
     let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);
@@ -1854,6 +1887,9 @@ async fn audit_verify_reports_intact_chain_and_statusz_surfaces_it() {
         diff_findings: Arc::new(
             zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
         ),
+        promotion_gate_findings: Arc::new(
+            zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
+        ),
     };
     let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);
@@ -1912,6 +1948,9 @@ async fn audit_verify_detects_a_tampered_chain() {
         ledger: Some(ledger.clone()),
         diff_findings: Arc::new(
             zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+        ),
+        promotion_gate_findings: Arc::new(
+            zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
         ),
     };
     let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
@@ -2028,6 +2067,12 @@ async fn diff_containment_quarantines_an_out_of_bounds_child_end_to_end() {
                 enabled: true,
                 findings: loop_findings,
             },
+            watchdog::PromotionGateConfig {
+                enabled: false,
+                findings: Arc::new(
+                    zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
+                ),
+            },
             loop_shutdown,
         )
         .await
@@ -2046,6 +2091,9 @@ async fn diff_containment_quarantines_an_out_of_bounds_child_end_to_end() {
         fold_diagnostics: Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new()),
         ledger: None,
         diff_findings: findings.clone(),
+        promotion_gate_findings: Arc::new(
+            zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
+        ),
     };
     let (handle, server_shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);
@@ -2133,6 +2181,12 @@ async fn diff_containment_passes_an_in_bounds_child_end_to_end() {
                 enabled: true,
                 findings: loop_findings,
             },
+            watchdog::PromotionGateConfig {
+                enabled: false,
+                findings: Arc::new(
+                    zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
+                ),
+            },
             loop_shutdown,
         )
         .await
@@ -2148,4 +2202,91 @@ async fn diff_containment_passes_an_in_bounds_child_end_to_end() {
     );
 
     let _ = shutdown_tx.send(());
+}
+
+// ---- promotion gatekeeping (INTEGRITY NOTARY record #3) -----------------
+
+#[tokio::test]
+async fn promotion_gate_alarms_on_a_decision_that_contradicts_the_scores() {
+    let (_t, paths) = make_workspace();
+    // The shared index fixture records t2 as `promoted` with child_scalar 1.1
+    // vs parent 0.8 (delta +0.3) — the loss ROSE, so the promotion contradicts
+    // its own recorded scores. The marker scopes the scan to that epoch.
+    write_index_db(&paths);
+    std::fs::write(paths.current_epoch_marker(), "2026-05-15_e0").unwrap();
+
+    let findings =
+        Arc::new(zicato_supervisor::promotion_gate::PromotionGateFindings::new());
+    let (shutdown_tx, _) = broadcast::channel(4);
+    let loop_paths = paths.clone();
+    let loop_shutdown = shutdown_tx.clone();
+    let loop_findings = findings.clone();
+    tokio::spawn(async move {
+        watchdog::runs_loop(
+            loop_paths,
+            fast_thresholds(false),
+            Duration::from_millis(50),
+            Arc::new(WatchdogLog::new()),
+            None,
+            watchdog::DiffContainmentConfig {
+                enabled: false,
+                findings: Arc::new(
+                    zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+                ),
+            },
+            watchdog::PromotionGateConfig {
+                enabled: true,
+                findings: loop_findings,
+            },
+            loop_shutdown,
+        )
+        .await
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Serve /statusz over the same store and confirm the contradiction shows.
+    let opts = server::ServeOptions {
+        read_only: true,
+        dashboard_disabled: false,
+        heartbeat_stale_threshold_seconds: 30,
+        action_log: Arc::new(WatchdogLog::new()),
+        seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
+        fold_diagnostics: Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new()),
+        ledger: None,
+        diff_findings: Arc::new(
+            zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+        ),
+        promotion_gate_findings: findings.clone(),
+    };
+    let (handle, server_shutdown) = start_server_with(paths.clone(), opts).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let s: Value = client
+        .get(format!("{base}/statusz.json"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let pg = &s["promotion_gate"];
+    assert_eq!(pg["scanned"], true);
+    let contradictions = pg["contradictions"].as_array().unwrap();
+    assert_eq!(contradictions.len(), 1, "the unsupported promotion is flagged");
+    assert_eq!(contradictions[0]["challenger_generation_id"], "v2");
+    assert_eq!(contradictions[0]["champion_generation_id"], "v0");
+
+    let html = client
+        .get(format!("{base}/statusz"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(html.contains("DECISION CONTRADICTS SCORES"));
+
+    let _ = shutdown_tx.send(());
+    let _ = server_shutdown.send(());
 }

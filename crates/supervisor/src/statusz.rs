@@ -122,6 +122,8 @@ pub struct StatuszView {
     pub audit_ledger: AuditStatus,
     /// Latest diff-containment scan result (record #2).
     pub diff_containment: crate::diff_containment::DiffContainmentView,
+    /// Latest promotion-gatekeeping scan result (record #3).
+    pub promotion_gate: crate::promotion_gate::PromotionGateView,
 }
 
 /// The audit ledger's configured-ness and chain integrity, for `/statusz`.
@@ -257,6 +259,7 @@ pub fn build_statusz(
     action_log: &Arc<WatchdogLog>,
     audit_ledger: AuditStatus,
     diff_containment: crate::diff_containment::DiffContainmentView,
+    promotion_gate: crate::promotion_gate::PromotionGateView,
 ) -> StatuszView {
     let now = Utc::now();
 
@@ -305,6 +308,7 @@ pub fn build_statusz(
         fold_diagnostics,
         audit_ledger,
         diff_containment,
+        promotion_gate,
     }
 }
 
@@ -628,6 +632,58 @@ th{color:#888;font-weight:normal}\
         out.push_str("</table>");
     }
 
+    // Promotion gatekeeping: does each recorded promotion match its scores?
+    let pg = &v.promotion_gate;
+    out.push_str("<h2>promotion gate</h2><table>");
+    if !pg.scanned {
+        out.push_str(
+            "<tr><th>state</th><td class=\"dim\">not scanned \
+(pass --promotion-gate to enable the recompute)</td></tr>",
+        );
+    } else {
+        let n = pg.contradictions.len();
+        let (cls, label) = if n > 0 {
+            ("bad", "DECISION CONTRADICTS SCORES")
+        } else {
+            ("ok", "consistent")
+        };
+        out.push_str(&format!(
+            "<tr><th>state</th><td class=\"{cls}\">{label}</td></tr>"
+        ));
+        out.push_str(&format!(
+            "<tr><th>promotions checked</th><td>{}</td></tr>",
+            pg.promotions_checked
+        ));
+        if pg.skipped > 0 {
+            out.push_str(&format!(
+                "<tr><th>skipped</th><td class=\"dim\">{} (no scalar evidence)</td></tr>",
+                pg.skipped
+            ));
+        }
+        out.push_str(&format!(
+            "<tr><th>contradictions</th><td class=\"{}\">{}</td></tr>",
+            if n > 0 { "bad" } else { "ok" },
+            n
+        ));
+    }
+    out.push_str("</table>");
+    if !pg.contradictions.is_empty() {
+        out.push_str(
+            "<table><tr><th>challenger</th><th>champion</th>\
+<th>delta_scalar</th><th>detail</th></tr>",
+        );
+        for c in &pg.contradictions {
+            out.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td class=\"bad\">{:.6}</td><td class=\"bad\">{}</td></tr>",
+                esc(&c.challenger_generation_id),
+                esc(&c.champion_generation_id),
+                c.delta_scalar,
+                esc(&c.detail),
+            ));
+        }
+        out.push_str("</table>");
+    }
+
     out.push_str(&format!(
         "<p class=\"dim\">generated {}</p>",
         esc(&v.generated_at)
@@ -788,6 +844,7 @@ mod tests {
             fold_diagnostics: Default::default(),
             audit_ledger: Default::default(),
             diff_containment: Default::default(),
+            promotion_gate: Default::default(),
         };
         let html = render_html(&view);
         assert!(html.starts_with("<!doctype html>"));
@@ -823,6 +880,7 @@ mod tests {
             fold_diagnostics: Default::default(),
             audit_ledger: Default::default(),
             diff_containment: Default::default(),
+            promotion_gate: Default::default(),
         };
         let html = render_html(&view);
         assert!(html.contains("/tmp/&lt;evil&gt;"));
