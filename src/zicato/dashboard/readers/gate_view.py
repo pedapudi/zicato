@@ -625,6 +625,66 @@ def _representative_drift_provenance(
     return tokens[0]
 
 
+def _live_challenger_projection(
+    paths: WorkspacePaths,
+    epoch_id: str,
+    champion_id: str,
+    challenger_id: str,
+) -> dict[str, Any] | None:
+    """The challenger's live projected absolute, or ``None`` when not live.
+
+    A round is "live" iff there is an active tournament for this very
+    champion/challenger pair AND its ``projected`` standings map carries a
+    row for the challenger (the runner writes one the instant the first
+    board of the round settles — see
+    :func:`zicato.runtime.state.update_tournament_projected`). The row is a
+    pure read-back of the already-computed live aggregate; this reader does
+    no scoring of its own.
+
+    Returns ``{"challenger_scalar", "boards_done", "boards_total"}`` — the
+    challenger's projected absolute scalar so far and its board progress —
+    or ``None`` when no live projection exists (a settled round, a
+    different in-flight pair, or no active tournament). Never raises: any
+    malformed envelope degrades to ``None`` so the settled breakdown stands
+    on its own.
+    """
+    try:
+        from zicato.dashboard.readers.runtime_view import (  # noqa: PLC0415
+            read_active_tournament_dict,
+        )
+
+        active = read_active_tournament_dict(paths)
+    except Exception:  # noqa: BLE001 — the live overlay is best-effort
+        return None
+    if not isinstance(active, dict):
+        return None
+    # Only overlay when the active tournament IS this round (same epoch +
+    # same champion/challenger pair); otherwise a stale or unrelated live
+    # tournament must not bleed into a settled historical round.
+    if active.get("epoch_id") not in (None, epoch_id):
+        return None
+    if active.get("child_generation_id") != challenger_id:
+        return None
+    active_champion = active.get("parent_generation_id")
+    if active_champion not in (None, "", champion_id):
+        return None
+    projected = active.get("projected")
+    if not isinstance(projected, dict):
+        return None
+    row = projected.get(challenger_id)
+    if not isinstance(row, dict):
+        return None
+    scalar = row.get("scalar")
+    if not isinstance(scalar, int | float):
+        return None
+    out: dict[str, Any] = {"challenger_scalar": float(scalar)}
+    boards_done = row.get("boards_done")
+    boards_total = row.get("boards_total")
+    out["boards_done"] = int(boards_done) if isinstance(boards_done, int | float) else None
+    out["boards_total"] = int(boards_total) if isinstance(boards_total, int | float) else None
+    return out
+
+
 def build_gate_breakdown(
     paths: WorkspacePaths,
     epoch_id: str,
@@ -666,6 +726,17 @@ def build_gate_breakdown(
         "reason": "",
         "delta_scalar": None,
         "delta_pass_rate": None,
+        # Absolute scalars for each side (pure projection of the already-read
+        # aggregates), so the L3 view can show "47.58 → 57.70" without
+        # back-deriving the absolutes from the relative ``delta_scalar``. Both
+        # ``None`` until the corresponding aggregate is found on disk.
+        "champion_scalar": None,
+        "challenger_scalar": None,
+        # The challenger's LIVE projected standing while a round is in flight:
+        # ``{challenger_scalar, boards_done, boards_total}``. ``None`` on a
+        # settled round (no active tournament for this pair) so a historical
+        # breakdown is byte-identical to before this field existed.
+        "live": None,
         "rules": [],
         "scalar_components": {"champion": None, "challenger": None},
         # Scoring provenance decomposition (#19 phase 4): which transform /
@@ -711,6 +782,20 @@ def build_gate_breakdown(
             base["scalar_components"]["challenger"] = {
                 str(k): float(v) for k, v in cc.items() if isinstance(v, int | float)
             }
+
+    # Absolute scalars for both sides — pure projection of the aggregates
+    # already read above (the same values ``evaluate_gate`` compares). Present
+    # regardless of decision so the degraded (one-side-missing) path still
+    # surfaces whichever absolute it has.
+    if isinstance(parent_agg, dict) and isinstance(parent_agg.get("scalar"), int | float):
+        base["champion_scalar"] = float(parent_agg["scalar"])
+    if isinstance(child_agg, dict) and isinstance(child_agg.get("scalar"), int | float):
+        base["challenger_scalar"] = float(child_agg["scalar"])
+
+    # Live overlay: while this very round is in flight, surface the
+    # challenger's projected absolute + board progress. Default-absent
+    # (``None``) on a settled round so a historical breakdown is unchanged.
+    base["live"] = _live_challenger_projection(paths, epoch_id, champion_id, challenger_id)
 
     # ---- Build each rule. We assemble all four, then resolve their
     # ---- statuses against the authoritative gate verdict below.
