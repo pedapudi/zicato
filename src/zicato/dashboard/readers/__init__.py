@@ -63,6 +63,7 @@ from zicato.dashboard.readers.gate_view import (
     build_drift_movements,
     build_gate_breakdown,
     build_health_report,
+    build_rating_view,
     build_score_trajectory,
 )
 from zicato.dashboard.readers.judge_view import (
@@ -257,6 +258,7 @@ __all__ = [
     "build_epochs_summary",
     "build_expectation_outcomes_for_run",
     "build_gate_breakdown",
+    "build_rating_view",
     "build_health_report",
     "build_lineage_view",
     "build_matchup_detail",

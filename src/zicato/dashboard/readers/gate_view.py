@@ -751,6 +751,11 @@ def build_gate_breakdown(
             _representative_drift_provenance(paths, epoch_id, challenger_id),
         ),
         "primary_driver": None,
+        # Bradley--Terry uncertainty pre-gate block (#crown-on-evidence). Always
+        # present as a key; ``rating.present`` is ``False`` on a pre-BT / disabled
+        # run (no ``promote_confidence_threshold`` in the structure params), so a
+        # UI that does not know the field renders nothing new — back-compat clean.
+        "rating": build_rating_view(paths, epoch_id, champion_id, challenger_id),
     }
 
     # Echo the per-judge primary driver from the same source the L3
@@ -1038,3 +1043,203 @@ def build_gate_breakdown(
 
     base["rules"] = [regression_rule, scalar_rule, pass_rule, ns_rule]
     return base
+
+
+def _read_promote_confidence_threshold(paths: WorkspacePaths, epoch_id: str) -> float | None:
+    """Read the epoch's opt-in ``promote_confidence_threshold`` from disk.
+
+    The pre-gate threshold lives in the structure params, persisted under
+    ``scoring.json`` → ``tournament.params``. Returns ``None`` (no pre-gate)
+    when the epoch predates the field, the key is absent, or the value is out
+    of range — exactly the reader-side mirror of
+    :func:`zicato.selection.evidence_gate.read_promote_confidence_threshold`,
+    so a disabled run reports ``present=false``.
+    """
+    from zicato.selection.evidence_gate import (  # noqa: PLC0415
+        read_promote_confidence_threshold as _read_threshold,
+    )
+
+    raw = _read_json_value(paths.epochs / epoch_id / "scoring.json")
+    if not isinstance(raw, dict):
+        return None
+    tournament = raw.get("tournament")
+    if not isinstance(tournament, dict):
+        return None
+    params = tournament.get("params")
+    if not isinstance(params, dict):
+        return None
+    return _read_threshold(params)
+
+
+def _read_pair_duels_from_durable(
+    paths: WorkspacePaths,
+    epoch_id: str,
+    champion_id: str,
+    challenger_id: str,
+) -> list[Any]:
+    """Reconstruct the champion/challenger duel audit from the durable record.
+
+    The settled field-tournament snapshot persists each match with its
+    ``competitors`` + ``winner`` + ``delta_scalar`` (see
+    ``zicato.evolve.dashboard_projection._serialise_rounds``). Each match
+    between exactly the two named contestants is reconstructed into one
+    :class:`~zicato.selection.resolve.Duel` ``(winner, loser, |delta_scalar|)``,
+    which is the same per-pairing form the live audit feeds Bradley--Terry.
+    Returns ``[]`` when no durable record / no matching matches exist (the
+    reader then reports an uncredible fit rather than guessing).
+    """
+    from zicato.core.workspace import (  # noqa: PLC0415
+        field_tournaments_dir,
+    )
+    from zicato.selection.resolve import Duel  # noqa: PLC0415
+
+    pair = {champion_id, challenger_id}
+    duels: list[Any] = []
+    tdir = field_tournaments_dir(paths.root, epoch_id)
+    if not tdir.is_dir():
+        return duels
+    for record_path in sorted(tdir.glob("field-*.json")):
+        record = _read_json_value(record_path)
+        if not isinstance(record, dict):
+            continue
+        for rnd in record.get("rounds") or []:
+            if not isinstance(rnd, dict):
+                continue
+            for match in rnd.get("matches") or []:
+                if not isinstance(match, dict):
+                    continue
+                competitors = match.get("competitors")
+                if not isinstance(competitors, list) or set(competitors) != pair:
+                    continue
+                winner = match.get("winner")
+                delta = match.get("delta_scalar")
+                if not isinstance(winner, str) or winner not in pair:
+                    continue
+                loser = (pair - {winner}).pop()
+                margin = abs(float(delta)) if isinstance(delta, int | float) else 0.0
+                duels.append(Duel(winner=winner, loser=loser, margin=margin))
+    return duels
+
+
+def build_rating_view(
+    paths: WorkspacePaths,
+    epoch_id: str,
+    champion_id: str,
+    challenger_id: str,
+) -> dict[str, Any]:
+    """The Bradley--Terry ``gate.rating`` block for a champion/challenger pair.
+
+    Wires :mod:`zicato.selection.rating` into the gate breakdown. Shape:
+
+        {present, credible, champion/challenger {theta, se, ci_lo, ci_hi},
+         p_stronger, threshold, decision, ci_overlap, replicates_spent,
+         n_duels, next_duel, ci_history}
+
+    ``present`` is ``False`` on a pre-BT / disabled run — when the epoch carries
+    no ``promote_confidence_threshold`` in its structure params — so a
+    breakdown for a run that never opted in is byte-compatible with the
+    pre-rating shape (the key exists but every consumer keys off ``present``).
+
+    When the pre-gate WAS active, the block is reconstructed from on disk:
+
+    * the authoritative source is the dead-letter record
+      (``runtime/inconclusive/<challenger>.json``) when the duel went terminally
+      inconclusive — it carries the final ``rating`` block + ``ci_history`` the
+      driver computed;
+    * otherwise the duel audit is reconstructed from the durable field-
+      tournament matches and re-fitted here. The fit is only credible at
+      :data:`~zicato.selection.evidence_gate.MIN_CREDIBLE_DUELS` resolved duels
+      (the SE blows up below that), so a thin audit reports
+      ``credible=false`` with whatever CIs the fit produced.
+
+    ``next_duel`` is the closest-CI pairing a replicate would sharpen next
+    (``None`` when the duel is resolved or unfittable); ``ci_history`` is the
+    per-refit convergence trace (a single current point when reconstructed
+    live, the full driver trace when read from the dead-letter record).
+    """
+    from zicato.selection.dead_letter import read_inconclusive  # noqa: PLC0415
+    from zicato.selection.evidence_gate import (  # noqa: PLC0415
+        CI_Z,
+        MIN_CREDIBLE_DUELS,
+    )
+    from zicato.selection.rating import fit_bradley_terry, prob_stronger  # noqa: PLC0415
+    from zicato.selection.resolve import build_matrix  # noqa: PLC0415
+
+    absent = {"present": False}
+
+    threshold = _read_promote_confidence_threshold(paths, epoch_id)
+    if threshold is None or not challenger_id:
+        return absent
+
+    # Prefer the authoritative dead-letter record for an inconclusive duel — it
+    # carries the exact final block the driver computed (incl. the full
+    # ci_history), so the dashboard never disagrees with the run's own verdict.
+    dead_letter = read_inconclusive(paths.root, challenger_id)
+    if isinstance(dead_letter, dict):
+        rating = dead_letter.get("rating")
+        if isinstance(rating, dict) and rating.get("present"):
+            out = dict(rating)
+            out["next_duel"] = None  # terminal — nothing more to replicate
+            history = dead_letter.get("ci_history")
+            out["ci_history"] = history if isinstance(history, list) else []
+            return out
+
+    # Else reconstruct the duel audit from the durable record and re-fit.
+    duels = _read_pair_duels_from_durable(paths, epoch_id, champion_id, challenger_id)
+    # Resolved (non-tie) duels for THIS pair gate credibility.
+    pair_duels = [
+        (d.winner, d.loser)
+        for d in duels
+        if champion_id in (d.winner, d.loser) and challenger_id in (d.winner, d.loser)
+    ]
+    n_duels = len(pair_duels)
+
+    block: dict[str, Any] = {
+        "present": True,
+        "credible": False,
+        "champion": None,
+        "challenger": None,
+        "p_stronger": None,
+        "threshold": threshold,
+        "decision": "deferred",
+        "ci_overlap": False,
+        "replicates_spent": 0,
+        "n_duels": n_duels,
+        "next_duel": None,
+        "ci_history": [],
+    }
+
+    if not pair_duels:
+        return block
+
+    rating = fit_bradley_terry(pair_duels)
+
+    def _ci(gid: str) -> dict[str, Any] | None:
+        if gid not in rating:
+            return None
+        theta, se = rating[gid]
+        half = CI_Z * se
+        return {"theta": theta, "se": se, "ci_lo": theta - half, "ci_hi": theta + half}
+
+    champ_ci = _ci(champion_id)
+    chal_ci = _ci(challenger_id)
+    block["champion"] = champ_ci
+    block["challenger"] = chal_ci
+
+    if champ_ci is not None and chal_ci is not None:
+        p = prob_stronger(chal_ci["theta"], chal_ci["se"], champ_ci["theta"], champ_ci["se"])
+        overlap = champ_ci["ci_lo"] <= chal_ci["ci_hi"] and chal_ci["ci_lo"] <= champ_ci["ci_hi"]
+        block["p_stronger"] = p
+        block["ci_overlap"] = overlap
+        credible = n_duels >= MIN_CREDIBLE_DUELS
+        block["credible"] = credible
+        if credible:
+            block["decision"] = "promoted" if (p >= threshold and not overlap) else "deferred"
+            # The next duel a replicate would sharpen: the closest-CI pairing
+            # across the reconstructed field (None when already separated).
+            matrix = build_matrix(duels)
+            if overlap and matrix.ids:
+                block["next_duel"] = {"left": champion_id, "right": challenger_id}
+        block["ci_history"] = [{"p_stronger": p, "ci_overlap": overlap, "replicates_spent": 0}]
+
+    return block

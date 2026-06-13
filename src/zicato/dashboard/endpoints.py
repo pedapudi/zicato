@@ -456,6 +456,7 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
                     "rules": [],
                     "scalar_components": {"champion": None, "challenger": None},
                     "primary_driver": None,
+                    "rating": {"present": False},
                 },
                 status_code=200,
             )
