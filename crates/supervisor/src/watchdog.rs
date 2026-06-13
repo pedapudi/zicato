@@ -51,6 +51,16 @@ pub struct Thresholds {
     /// default; this disables it for a read-only observability supervisor
     /// attached to a run it should not police.
     pub run_deadline_kill_disabled: bool,
+    /// Hard ceiling (`--max-run-seconds`) on a single run's enforced
+    /// wall-clock window, measured from `started_at`. The deadline a run
+    /// record carries is **orchestrator-written and therefore untrusted**:
+    /// a far-future (or accidentally huge) deadline would silently disable
+    /// the very watchdog meant to bound the run. The deadline path clamps
+    /// the effective cutoff to `started_at + max_run_seconds`, so a run is
+    /// always killable no matter what deadline was written. The default is
+    /// generous (well above any normal per-board budget) so legitimate runs
+    /// are never clipped; it only fires on an implausible deadline.
+    pub max_run_seconds: Duration,
 }
 
 impl Default for Thresholds {
@@ -67,6 +77,10 @@ impl Default for Thresholds {
             grace: Duration::from_secs(5),
             run_kill_grace: Duration::from_secs(5),
             run_deadline_kill_disabled: false,
+            // 6h ceiling: a board entry that legitimately runs longer than
+            // this is extraordinary; an orchestrator-written deadline beyond
+            // it is treated as untrusted and clamped to started_at + 6h.
+            max_run_seconds: Duration::from_secs(6 * 3600),
         }
     }
 }
@@ -389,17 +403,47 @@ pub fn is_signalable_run_pid(pid: i32, protected: &HashSet<i32>) -> bool {
     true
 }
 
+/// The effective, **clamped** deadline the watchdog enforces for a run.
+///
+/// The deadline a run record carries is orchestrator-written and untrusted:
+/// a far-future value would disable the watchdog. When the run has a
+/// `started_at` we cap the enforced cutoff at `started_at + max_run_seconds`,
+/// so the run is always killable no matter what deadline was written. When
+/// `started_at` is absent there is no anchor to clamp against, so the
+/// written deadline is used as-is (the watchdog has nothing better).
+///
+/// Returns `None` only when the run carries no deadline at all.
+pub fn effective_deadline(
+    run: &crate::state::ActiveRun,
+    max_run_seconds: Duration,
+) -> Option<DateTime<Utc>> {
+    let written = run.deadline?;
+    let Some(started) = run.started_at else {
+        // No anchor → cannot clamp; honour the written deadline.
+        return Some(written);
+    };
+    let ceiling = chrono::Duration::from_std(max_run_seconds)
+        .map(|d| started + d)
+        // An absurd max_run_seconds that overflows chrono → no clamp.
+        .unwrap_or(written);
+    Some(written.min(ceiling))
+}
+
 /// Decide whether an active run has blown its per-board wall-clock budget.
 ///
-/// Pure function of `(active_run, now, grace)` so it is unit-testable
-/// independent of the tokio loop, mirroring [`decide_heartbeat`] /
-/// [`decide_run`].
+/// Pure function of `(active_run, now, grace, max_run_seconds)` so it is
+/// unit-testable independent of the tokio loop, mirroring
+/// [`decide_heartbeat`] / [`decide_run`].
 ///
-/// * before `deadline` → [`RunDeadlineAction::None`]
-/// * past `deadline` (within `grace`) → [`RunDeadlineAction::Sigterm`]
-/// * past `deadline + grace`, worker still alive → [`RunDeadlineAction::Sigkill`]
+/// The enforced deadline is the **clamped** [`effective_deadline`]
+/// (`min(written, started_at + max_run_seconds)`) — not the raw written
+/// deadline — so an untrusted far-future deadline cannot disable the kill.
 ///
-/// The grace window is measured from the deadline itself: once `deadline`
+/// * before the effective deadline → [`RunDeadlineAction::None`]
+/// * past it (within `grace`) → [`RunDeadlineAction::Sigterm`]
+/// * past it + `grace`, worker still alive → [`RunDeadlineAction::Sigkill`]
+///
+/// The grace window is measured from the effective deadline itself: once it
 /// passes the worker is asked to stop, and `grace` later — if it has not
 /// honoured SIGTERM — it is force-killed. A worker that exits during the
 /// grace window is no longer alive, so the result collapses back to
@@ -409,9 +453,10 @@ pub fn decide_run_deadline(
     run: &crate::state::ActiveRun,
     now: DateTime<Utc>,
     grace: Duration,
+    max_run_seconds: Duration,
     protected: &HashSet<i32>,
 ) -> RunDeadlineAction {
-    let Some(deadline) = run.deadline else {
+    let Some(deadline) = effective_deadline(run, max_run_seconds) else {
         return RunDeadlineAction::None;
     };
     if now <= deadline {
@@ -624,6 +669,7 @@ pub async fn runs_loop(
                             run,
                             now,
                             thresholds.run_kill_grace,
+                            thresholds.max_run_seconds,
                             &protected,
                         ) {
                             RunDeadlineAction::None => {}
@@ -1001,7 +1047,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            decide_run_deadline(&run, now, Duration::from_secs(5), &no_protected()),
+            decide_run_deadline(&run, now, Duration::from_secs(5), Duration::from_secs(6 * 3600), &no_protected()),
             RunDeadlineAction::None
         );
     }
@@ -1019,7 +1065,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            decide_run_deadline(&run, now, Duration::from_secs(5), &no_protected()),
+            decide_run_deadline(&run, now, Duration::from_secs(5), Duration::from_secs(6 * 3600), &no_protected()),
             RunDeadlineAction::Sigterm { pid }
         );
     }
@@ -1037,7 +1083,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            decide_run_deadline(&run, now, Duration::from_secs(5), &no_protected()),
+            decide_run_deadline(&run, now, Duration::from_secs(5), Duration::from_secs(6 * 3600), &no_protected()),
             RunDeadlineAction::Sigkill { pid }
         );
     }
@@ -1052,7 +1098,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            decide_run_deadline(&run, now, Duration::from_secs(5), &no_protected()),
+            decide_run_deadline(&run, now, Duration::from_secs(5), Duration::from_secs(6 * 3600), &no_protected()),
             RunDeadlineAction::None
         );
     }
@@ -1068,7 +1114,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            decide_run_deadline(&run, now, Duration::from_secs(5), &no_protected()),
+            decide_run_deadline(&run, now, Duration::from_secs(5), Duration::from_secs(6 * 3600), &no_protected()),
             RunDeadlineAction::None
         );
     }
@@ -1084,7 +1130,7 @@ mod tests {
                 ..Default::default()
             };
             assert_eq!(
-                decide_run_deadline(&run, now, Duration::from_secs(5), &no_protected()),
+                decide_run_deadline(&run, now, Duration::from_secs(5), Duration::from_secs(6 * 3600), &no_protected()),
                 RunDeadlineAction::None,
                 "must never signal pid {bad}",
             );
@@ -1108,7 +1154,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            decide_run_deadline(&run, now, Duration::from_secs(5), &protected),
+            decide_run_deadline(&run, now, Duration::from_secs(5), Duration::from_secs(6 * 3600), &protected),
             RunDeadlineAction::None
         );
     }
@@ -1133,7 +1179,7 @@ mod tests {
                 ..Default::default()
             };
             assert_eq!(
-                decide_run_deadline(&run, now, Duration::from_secs(5), &no_protected()),
+                decide_run_deadline(&run, now, Duration::from_secs(5), Duration::from_secs(6 * 3600), &no_protected()),
                 RunDeadlineAction::None,
                 "must not signal a recycled pid (start-time mismatch)",
             );
@@ -1155,7 +1201,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            decide_run_deadline(&run, now, Duration::from_secs(5), &no_protected()),
+            decide_run_deadline(&run, now, Duration::from_secs(5), Duration::from_secs(6 * 3600), &no_protected()),
             RunDeadlineAction::Sigterm { pid },
         );
     }
@@ -1173,7 +1219,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            decide_run_deadline(&run, now, Duration::from_secs(5), &no_protected()),
+            decide_run_deadline(&run, now, Duration::from_secs(5), Duration::from_secs(6 * 3600), &no_protected()),
             RunDeadlineAction::None
         );
     }
@@ -1188,8 +1234,112 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            decide_run_deadline(&run, now, Duration::from_secs(5), &no_protected()),
+            decide_run_deadline(&run, now, Duration::from_secs(5), Duration::from_secs(6 * 3600), &no_protected()),
             RunDeadlineAction::None
+        );
+    }
+
+    // ---- effective_deadline (untrusted-deadline clamp) -------------
+
+    #[test]
+    fn effective_deadline_clamps_a_far_future_deadline() {
+        // started_at = now - 10s, max_run = 60s → ceiling = now + 50s.
+        // A written deadline a year out must be clamped to the ceiling.
+        let now = Utc::now();
+        let run = ActiveRun {
+            run_id: "r1".into(),
+            started_at: Some(now - ChDuration::seconds(10)),
+            deadline: Some(now + ChDuration::days(365)),
+            ..Default::default()
+        };
+        let eff = effective_deadline(&run, Duration::from_secs(60)).unwrap();
+        let ceiling = (now - ChDuration::seconds(10)) + ChDuration::seconds(60);
+        assert_eq!(eff, ceiling);
+        assert!(eff < now + ChDuration::days(1), "must be clamped near now");
+    }
+
+    #[test]
+    fn effective_deadline_keeps_a_within_ceiling_deadline() {
+        // A reasonable deadline below the ceiling is returned unchanged.
+        let now = Utc::now();
+        let run = ActiveRun {
+            run_id: "r1".into(),
+            started_at: Some(now - ChDuration::seconds(10)),
+            deadline: Some(now + ChDuration::seconds(20)),
+            ..Default::default()
+        };
+        let eff = effective_deadline(&run, Duration::from_secs(600)).unwrap();
+        assert_eq!(eff, now + ChDuration::seconds(20));
+    }
+
+    #[test]
+    fn effective_deadline_without_started_at_uses_written() {
+        // No anchor to clamp against → the written deadline stands.
+        let now = Utc::now();
+        let run = ActiveRun {
+            run_id: "r1".into(),
+            started_at: None,
+            deadline: Some(now + ChDuration::days(365)),
+            ..Default::default()
+        };
+        let eff = effective_deadline(&run, Duration::from_secs(60)).unwrap();
+        assert_eq!(eff, now + ChDuration::days(365));
+    }
+
+    #[test]
+    fn far_future_deadline_is_still_killed_via_the_clamp() {
+        // The end-to-end intent: an orchestrator that writes a far-future
+        // deadline cannot disable its own watchdog. started_at well in the
+        // past + a small max_run_seconds puts the clamped cutoff behind now,
+        // so a live worker IS signalled despite the year-out written deadline.
+        let sleeper = Sleeper::spawn();
+        let pid = sleeper.pid();
+        let now = Utc::now();
+        let run = ActiveRun {
+            run_id: "r1".into(),
+            pid: Some(pid),
+            pid_start_time: signal::pid_start_time(pid),
+            started_at: Some(now - ChDuration::seconds(120)),
+            deadline: Some(now + ChDuration::days(365)), // untrusted, far future
+            ..Default::default()
+        };
+        // max_run = 60s → ceiling = now - 60s. The clamped cutoff is 60s in
+        // the past, well beyond the 5s grace, so the run is force-killed —
+        // proving the untrusted far-future deadline did NOT disable the kill.
+        assert_eq!(
+            decide_run_deadline(
+                &run,
+                now,
+                Duration::from_secs(5),
+                Duration::from_secs(60),
+                &no_protected()
+            ),
+            RunDeadlineAction::Sigkill { pid },
+        );
+    }
+
+    #[test]
+    fn within_ceiling_far_future_run_is_not_signalled() {
+        // Counterpart: when the clamped cutoff is still in the future the run
+        // is NOT killed — the clamp only bounds, it does not kill early.
+        let now = Utc::now();
+        let run = ActiveRun {
+            run_id: "r1".into(),
+            pid: Some(999_999),
+            started_at: Some(now), // just started
+            deadline: Some(now + ChDuration::days(365)),
+            ..Default::default()
+        };
+        // ceiling = now + 6h, still ahead of now → None.
+        assert_eq!(
+            decide_run_deadline(
+                &run,
+                now,
+                Duration::from_secs(5),
+                Duration::from_secs(6 * 3600),
+                &no_protected()
+            ),
+            RunDeadlineAction::None,
         );
     }
 

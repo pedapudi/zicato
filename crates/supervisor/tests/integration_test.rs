@@ -791,6 +791,7 @@ async fn watchdog_never_kills_orchestrator_on_stale_heartbeat() {
         grace: Duration::from_millis(200),
         run_kill_grace: Duration::from_millis(200),
         run_deadline_kill_disabled: false,
+        max_run_seconds: Duration::from_secs(6 * 3600),
     };
     let now = Utc::now();
     // 10s stale, far past the 2s "deep stale" boundary.
@@ -961,6 +962,9 @@ fn fast_thresholds(disable_deadline: bool) -> watchdog::Thresholds {
         grace: Duration::from_millis(300),
         run_kill_grace: Duration::from_millis(300),
         run_deadline_kill_disabled: disable_deadline,
+        // Generous ceiling: far above these tests' second-scale deadlines so
+        // the untrusted-deadline clamp never interferes with them.
+        max_run_seconds: Duration::from_secs(3600),
     }
 }
 
@@ -1140,7 +1144,13 @@ async fn watchdog_deadline_decision_is_pure_and_separate_from_staleness() {
     assert_eq!(decide_run(&run, now, &t), RunAction::Nothing);
     // Own pid is guarded -> None even though the deadline is blown.
     assert_eq!(
-        decide_run_deadline(&run, now, Duration::from_secs(5), &protected),
+        decide_run_deadline(
+            &run,
+            now,
+            Duration::from_secs(5),
+            Duration::from_secs(6 * 3600),
+            &protected
+        ),
         RunDeadlineAction::None,
     );
 }

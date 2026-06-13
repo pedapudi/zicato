@@ -77,6 +77,16 @@ struct Cli {
     #[arg(long, default_value_t = 5)]
     run_kill_grace: u64,
 
+    /// Hard ceiling (seconds) on a single run's enforced wall-clock window,
+    /// measured from its `started_at`. The orchestrator-written per-run
+    /// deadline is untrusted: a far-future value would disable the watchdog.
+    /// The deadline path clamps the enforced cutoff to
+    /// `started_at + max_run_seconds`, so a run is always killable. The
+    /// default (6h) is well above any normal per-board budget; it only fires
+    /// on an implausible deadline.
+    #[arg(long, default_value_t = 6 * 3600)]
+    max_run_seconds: u64,
+
     /// Log level (default: info)
     #[arg(long, default_value = "info")]
     log: String,
@@ -145,6 +155,7 @@ async fn main() -> std::process::ExitCode {
         grace: Duration::from_secs(5),
         run_kill_grace: Duration::from_secs(cli.run_kill_grace),
         run_deadline_kill_disabled: cli.run_deadline_kill_disabled,
+        max_run_seconds: Duration::from_secs(cli.max_run_seconds.max(1)),
     };
     if cli.run_deadline_kill_disabled {
         info!("per-run wall-clock deadline enforcement is disabled");
