@@ -165,6 +165,14 @@ def make_runtime_config(
     passthrough_raw = runtime_dict.get("worker_env_passthrough") or ()
     worker_env_passthrough = tuple(str(name) for name in passthrough_raw)
 
+    # Field-diversity overlap ceiling for the multi-challenger path: an
+    # opt-in runtime knob read from the same ``runtime`` block. Absent /
+    # null ⇒ ``None`` (enforcement off — today's behavior, byte-for-byte
+    # unchanged). ``RuntimeConfig.__post_init__`` re-validates the (0, 1]
+    # bound.
+    tolerance_raw = runtime_dict.get("diversity_tolerance")
+    diversity_tolerance = float(tolerance_raw) if tolerance_raw is not None else None
+
     # Defense in depth — also re-checked by the runner.
     assert_distinct_callables(harness, aux)
 
@@ -178,6 +186,7 @@ def make_runtime_config(
         judge_call_llm=judge,
         scrub_worker_env=scrub_worker_env,
         worker_env_passthrough=worker_env_passthrough,
+        diversity_tolerance=diversity_tolerance,
     )
 
 

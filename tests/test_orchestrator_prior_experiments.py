@@ -266,3 +266,192 @@ def test_same_ids_different_idea_is_not_a_duplicate(
     # Both applied — distinct ideas are kept even on the same target id.
     assert statuses.get("v1") == "applied"
     assert statuses.get("v2") == "applied"
+
+
+# ---------------------------------------------------------------------------
+# Opt-in field-diversity OVERLAP enforcement (diversity_tolerance)
+# ---------------------------------------------------------------------------
+
+
+def _set_runtime_diversity_tolerance(workspace: Path, tolerance: float) -> None:
+    """Stamp ``runtime.diversity_tolerance`` onto the workspace config.json.
+
+    The bootstrap writes a flat config.json with no ``runtime`` block, so the
+    factory reads ``diversity_tolerance`` as absent (enforcement off). This
+    injects an opt-in tolerance the way an operator would in their workspace
+    config, so ``evolve_once`` constructs a :class:`RuntimeConfig` with the
+    knob set.
+    """
+    cfg_path = workspace / "config.json"
+    cfg = json.loads(cfg_path.read_text())
+    runtime = dict(cfg.get("runtime", {}))
+    runtime["diversity_tolerance"] = tolerance
+    cfg["runtime"] = runtime
+    cfg_path.write_text(json.dumps(cfg))
+
+
+def test_overlap_soft_reject_fires_under_diversity_tolerance(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With ``diversity_tolerance`` set, a challenger whose mutation-id set
+    overlaps an ACCEPTED sibling beyond the ceiling is soft-rejected — even
+    when its core idea is DISTINCT (so the exact-duplicate guard does not
+    fire). This is the overlap enforcement firing on id-overlap alone.
+
+    Every challenger targets the same single marker (``greeting``), so each
+    pair's Jaccard overlap is ``1.0`` — well above a ``0.5`` tolerance. With
+    distinct core ideas only the FIRST is kept; the rest are overlap soft-
+    rejected, leaving a one-challenger field rather than three near-identical
+    experiments."""
+    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=3, rounds_n=1)
+    _set_runtime_diversity_tolerance(workspace, 0.5)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.5, "v2": 1.0, "v3": 0.5},
+        canned_pass_by_gen={"v0": True, "v1": True, "v2": True, "v3": True},
+    )
+
+    # Three DISTINCT ideas — the exact-duplicate guard never fires; only the
+    # id-overlap guard can reject here.
+    aux = _CapturingFieldLLM(
+        [
+            _response_with_core_idea("variant-A shorten the greeting"),
+            _response_with_core_idea("variant-B warm up the greeting"),
+            _response_with_core_idea("variant-C formalize the greeting"),
+        ]
+    )
+
+    from zicato.orchestrator import evolve_once
+    from zicato.runtime.state import read_active_tournament
+
+    asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=aux,
+        )
+    )
+
+    active = read_active_tournament(workspace)
+    assert active is not None
+    by_gen = {f["generation_id"]: f for f in active.field_status}
+
+    # The first challenger is kept and stamped applied; the next two overlap
+    # it (Jaccard 1.0 > 0.5) and are overlap soft-rejected.
+    assert by_gen["v1"]["status"] == "applied"
+    assert by_gen["v1"]["diversity_status"] == "applied"
+    for gid in ("v2", "v3"):
+        assert by_gen[gid]["status"] == "rejected"
+        assert by_gen[gid]["reason"] == "field_diversity_overlap"
+        assert by_gen[gid]["diversity_status"] == "soft_rejected"
+        assert by_gen[gid]["overlap"] == 1.0
+        assert by_gen[gid]["overlap_peer"] == "v1"
+
+    # Only the single distinct challenger ran — the field did not collapse
+    # into three near-identical experiments.
+    statuses = [f["status"] for f in active.field_status]
+    assert statuses.count("applied") == 1
+    assert statuses.count("rejected") == 2
+
+
+def test_overlap_enforcement_absent_is_byte_compatible(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With NO ``diversity_tolerance`` configured, three same-id distinct-idea
+    challengers ALL apply (no overlap guard) and no ``diversity_status`` key is
+    written onto any field-status record — the default-off path is byte-
+    compatible with today."""
+    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=3, rounds_n=1)
+    # Deliberately do NOT set diversity_tolerance.
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.5, "v2": 1.0, "v3": 0.5},
+        canned_pass_by_gen={"v0": True, "v1": True, "v2": True, "v3": True},
+    )
+
+    aux = _CapturingFieldLLM(
+        [
+            _response_with_core_idea("variant-A shorten the greeting"),
+            _response_with_core_idea("variant-B warm up the greeting"),
+            _response_with_core_idea("variant-C formalize the greeting"),
+        ]
+    )
+
+    from zicato.orchestrator import evolve_once
+    from zicato.runtime.state import read_active_tournament
+
+    asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=aux,
+        )
+    )
+
+    active = read_active_tournament(workspace)
+    assert active is not None
+    statuses = {f["generation_id"]: f["status"] for f in active.field_status}
+    # All three distinct same-id challengers apply — no overlap guard runs.
+    assert statuses.get("v1") == "applied"
+    assert statuses.get("v2") == "applied"
+    assert statuses.get("v3") == "applied"
+    # No per-slot diversity status is stamped when enforcement is off.
+    for f in active.field_status:
+        assert "diversity_status" not in f
+        assert "diversity_tolerance" not in f
+
+
+# ---------------------------------------------------------------------------
+# Pure helpers: Jaccard overlap + the field-diversity summary block
+# ---------------------------------------------------------------------------
+
+
+def test_jaccard_overlap_math() -> None:
+    from zicato.orchestrator import _jaccard, _max_overlap_with_accepted
+
+    assert _jaccard(frozenset(), frozenset()) == 0.0
+    assert _jaccard(frozenset({"a"}), frozenset({"b"})) == 0.0
+    assert _jaccard(frozenset({"a", "b"}), frozenset({"a", "b"})) == 1.0
+    # |{a}| / |{a,b,c}| = 1/3
+    assert _jaccard(frozenset({"a", "b"}), frozenset({"a", "c"})) == pytest.approx(1 / 3)
+
+    # Max overlap picks the most-overlapping accepted sibling and its index.
+    accepted = [frozenset({"a"}), frozenset({"a", "b", "c"})]
+    overlap, idx = _max_overlap_with_accepted(frozenset({"a", "b"}), accepted)
+    assert idx == 1  # {a,b} ∩ {a,b,c} = 2 / 3 > {a,b} ∩ {a} = 1/2
+    assert overlap == pytest.approx(2 / 3)
+    # No accepted siblings ⇒ zero overlap, sentinel index.
+    assert _max_overlap_with_accepted(frozenset({"a"}), []) == (0.0, -1)
+
+
+def test_compute_field_diversity_summary() -> None:
+    from zicato.orchestrator import _compute_field_diversity
+
+    sets = [
+        ("v1", frozenset({"a", "b"})),
+        ("v2", frozenset({"a", "b"})),  # identical to v1
+        ("v3", frozenset({"c"})),  # disjoint
+    ]
+    block = _compute_field_diversity(sets, tolerance=0.5, soft_rejected_count=1)
+    assert block["field_size"] == 3
+    assert block["distinct_ideas"] == 2  # {a,b} and {c}
+    assert block["max_overlap"] == 1.0
+    assert block["max_overlap_pair"] == ["v1", "v2"]
+    assert block["tolerance"] == 0.5
+    assert block["soft_rejected_count"] == 1
+    # mean over the three pairs: (1.0 + 0.0 + 0.0) / 3
+    assert block["mean_overlap"] == pytest.approx(1 / 3)
+
+    # A single-challenger field has no pairs: zero overlap, one idea.
+    solo = _compute_field_diversity([("v1", frozenset({"a"}))])
+    assert solo["field_size"] == 1
+    assert solo["distinct_ideas"] == 1
+    assert solo["mean_overlap"] == 0.0
+    assert solo["max_overlap"] == 0.0
+    assert solo["max_overlap_pair"] is None
+    assert solo["tolerance"] is None
+    assert solo["soft_rejected_count"] == 0

@@ -1389,6 +1389,105 @@ def _duplicates_inflight_sibling(
     return any(ids == s_ids and core == s_core for s_ids, s_core in sibling_signatures)
 
 
+def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:
+    """Jaccard overlap ``|a ∩ b| / |a ∪ b|`` of two mutation-id sets.
+
+    ``0.0`` when both sets are empty (two challengers that target nothing do
+    not collapse the field — there is nothing shared to collapse), and
+    otherwise the standard set-similarity ratio in ``[0, 1]``.
+    """
+    union = a | b
+    if not union:
+        return 0.0
+    return len(a & b) / len(union)
+
+
+def _max_overlap_with_accepted(
+    candidate: frozenset[str], accepted: list[frozenset[str]]
+) -> tuple[float, int]:
+    """The largest Jaccard overlap of ``candidate`` against the accepted set.
+
+    Returns ``(max_overlap, index)`` where ``index`` is the position of the
+    accepted sibling that overlaps the most (``-1`` when ``accepted`` is
+    empty). Used by the multi-challenger field-diversity enforcement to
+    decide whether a freshly-applied challenger overlaps an already-accepted
+    sibling beyond the operator's ``diversity_tolerance``.
+    """
+    best = 0.0
+    best_idx = -1
+    for idx, prior in enumerate(accepted):
+        score = _jaccard(candidate, prior)
+        if score > best:
+            best = score
+            best_idx = idx
+    return best, best_idx
+
+
+def _compute_field_diversity(
+    mutation_sets: list[tuple[str, frozenset[str]]],
+    *,
+    tolerance: float | None = None,
+    soft_rejected_count: int = 0,
+) -> dict[str, Any]:
+    """Summarize the field's idea diversity from per-challenger mutation sets.
+
+    ``mutation_sets`` is an ordered list of ``(generation_id, mutation_ids)``
+    pairs — one per challenger whose targeted-mutation-id set is known — and
+    the returned block reports the pairwise Jaccard overlap structure of the
+    field (FUNCTIONALITY-RECOMMENDATIONS.md §4.3): two challengers proposing
+    the same mutation-id set collapse a field of N into fewer than N real
+    experiments, so the block surfaces ``distinct_ideas`` (distinct mutation-
+    id sets) and the mean / max pairwise overlap that a soft-reject policy
+    keys off.
+
+    Keys
+    ----
+    field_size:
+        Number of challengers considered.
+    distinct_ideas:
+        Number of distinct (non-empty) mutation-id sets; an empty set never
+        counts as an idea (it cannot collapse the field).
+    mean_overlap / max_overlap:
+        Mean and max pairwise Jaccard overlap across all challenger pairs
+        (``0.0`` for a field of fewer than two challengers).
+    max_overlap_pair:
+        The ``[gid_a, gid_b]`` of the most-overlapping pair (``None`` when
+        there is no pair).
+    tolerance:
+        The configured ``diversity_tolerance`` (``None`` ⇒ enforcement off).
+    soft_rejected_count:
+        How many challengers the enforcement soft-rejected this field.
+
+    This is a pure summarizer over the supplied sets; it neither queries nor
+    enforces. The orchestrator feeds it the accepted field for the live
+    envelope; the dashboard reader feeds it the persisted patch records.
+    """
+    field_size = len(mutation_sets)
+    distinct = {ids for _gid, ids in mutation_sets if ids}
+    mean_overlap = 0.0
+    max_overlap = 0.0
+    max_pair: list[str] | None = None
+    pair_overlaps: list[float] = []
+    for i in range(field_size):
+        for j in range(i + 1, field_size):
+            score = _jaccard(mutation_sets[i][1], mutation_sets[j][1])
+            pair_overlaps.append(score)
+            if score > max_overlap:
+                max_overlap = score
+                max_pair = [mutation_sets[i][0], mutation_sets[j][0]]
+    if pair_overlaps:
+        mean_overlap = sum(pair_overlaps) / len(pair_overlaps)
+    return {
+        "field_size": field_size,
+        "distinct_ideas": len(distinct),
+        "mean_overlap": round(mean_overlap, 6),
+        "max_overlap": round(max_overlap, 6),
+        "max_overlap_pair": max_pair,
+        "tolerance": tolerance,
+        "soft_rejected_count": int(soft_rejected_count),
+    }
+
+
 async def _evolve_multi_challenger(
     *,
     workspace_root: Path,
@@ -1513,6 +1612,20 @@ async def _evolve_multi_challenger(
     # soft-rejected instead of collapsing the field (EXPERIMENT-MEMORY.md
     # §2.2). Localized to this loop; no change to the SelectionStrategy.
     sibling_signatures: list[tuple[frozenset[str], str]] = []
+    # Opt-in field-diversity OVERLAP enforcement (FUNCTIONALITY-
+    # RECOMMENDATIONS.md §4.3): when ``config.diversity_tolerance`` is set, a
+    # challenger whose targeted-mutation-id set overlaps an already-ACCEPTED
+    # sibling's by a Jaccard ratio strictly greater than the tolerance is
+    # soft-rejected (it would collapse a field of N into fewer real
+    # experiments). ``accepted_mutation_sets`` tracks the mutation-id set of
+    # each kept challenger in mint order so the overlap is measured against
+    # exactly the slate that will actually run. ``None`` ⇒ enforcement OFF,
+    # and every field-status record below stays byte-identical to today (no
+    # ``diversity_status`` key is emitted). Enforcement composes with — and
+    # runs AFTER — the exact-duplicate soft-reject above.
+    diversity_tolerance = getattr(config, "diversity_tolerance", None)
+    accepted_mutation_sets: list[frozenset[str]] = []
+    diversity_soft_rejected = 0
     # The LIVE field-status map, keyed by generation_id, rewritten as each
     # challenger slot enters ("proposing"), retries, and settles
     # ("applied"/"rejected"). The orchestrator publishes a "proposing"-phase
@@ -1591,6 +1704,13 @@ async def _evolve_multi_challenger(
                 "hypothesis": _trim_reason(hyp.core_idea),
                 "seed": offset + 2,
             }
+            # The per-slot diversity status is only stamped when overlap
+            # enforcement is active, so the default-off path's duplicate record
+            # is byte-identical to today.
+            if diversity_tolerance is not None:
+                dup_status["diversity_status"] = "soft_rejected"
+                dup_status["diversity_tolerance"] = diversity_tolerance
+                diversity_soft_rejected += 1
             field_status.append(dup_status)
             _publish_proposing(dup_status)
             log.info(
@@ -1601,9 +1721,60 @@ async def _evolve_multi_challenger(
                 tuple(hyp.modulating),
             )
             continue
+        # Opt-in overlap soft-reject: when a tolerance is configured, drop a
+        # challenger whose mutation-id set overlaps an accepted sibling beyond
+        # the ceiling. Skipped entirely (no key emitted) when tolerance is
+        # None, so the default path is byte-identical.
+        if challenger is not None and diversity_tolerance is not None:
+            cand_ids = frozenset(challenger.experiment.hypothesis.modulating)
+            overlap, peer_idx = _max_overlap_with_accepted(cand_ids, accepted_mutation_sets)
+            if cand_ids and overlap > diversity_tolerance:
+                hyp = challenger.experiment.hypothesis
+                peer_gid = applied[peer_idx].generation_id if 0 <= peer_idx < len(applied) else ""
+                overlap_status = {
+                    "generation_id": challenger.generation_id,
+                    "status": "rejected",
+                    "reason": "field_diversity_overlap",
+                    "diversity_status": "soft_rejected",
+                    "attempts": (int(status.get("attempts", 0)) if isinstance(status, dict) else 0),
+                    "attempt_reasons": [
+                        f"mutation-id overlap {overlap:.3f} with sibling "
+                        f"{peer_gid or '(accepted)'} exceeds diversity_tolerance "
+                        f"{diversity_tolerance:.3f}; soft-rejected to keep the field diverse"
+                    ],
+                    "hypothesis": _trim_reason(hyp.core_idea),
+                    "seed": offset + 2,
+                    "overlap": round(overlap, 6),
+                    "overlap_peer": peer_gid,
+                    "diversity_tolerance": diversity_tolerance,
+                }
+                field_status.append(overlap_status)
+                _publish_proposing(overlap_status)
+                diversity_soft_rejected += 1
+                log.info(
+                    "multi-challenger field: %s/%s overlaps sibling %s by %.3f "
+                    "(> tolerance %.3f); soft-rejected for field diversity",
+                    epoch_id,
+                    challenger.generation_id,
+                    peer_gid,
+                    overlap,
+                    diversity_tolerance,
+                )
+                continue
+        if challenger is not None and diversity_tolerance is not None and isinstance(status, dict):
+            # Enforcement active and the challenger is kept: stamp the slot
+            # ``applied`` so the per-slot diversity status is explicit. Only
+            # written when a tolerance is configured, so the default path's
+            # field-status records are untouched.
+            status = {
+                **status,
+                "diversity_status": "applied",
+                "diversity_tolerance": diversity_tolerance,
+            }
         field_status.append(status)
         if challenger is not None:
             applied.append(challenger)
+            accepted_mutation_sets.append(frozenset(challenger.experiment.hypothesis.modulating))
             hyp = challenger.experiment.hypothesis
             siblings.append(
                 PriorExperiment(
@@ -1618,6 +1789,16 @@ async def _evolve_multi_challenger(
                 )
             )
             sibling_signatures.append(_diversity_signature(challenger.experiment))
+
+    if diversity_tolerance is not None and diversity_soft_rejected:
+        log.info(
+            "multi-challenger field: %s soft-rejected %d challenger(s) for "
+            "field-diversity overlap (tolerance %.3f); %d kept",
+            epoch_id,
+            diversity_soft_rejected,
+            diversity_tolerance,
+            len(applied),
+        )
 
     if not applied:
         # The whole field failed to apply — nothing to run. Record a

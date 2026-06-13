@@ -73,6 +73,39 @@ def test_runtime_config_scrub_worker_env_opt_in(tmp_path: Path) -> None:
     assert cfg.worker_env_passthrough == ("CUSTOM_A", "CUSTOM_B")
 
 
+def test_runtime_config_diversity_tolerance_defaults_off(tmp_path: Path) -> None:
+    """Absent ``runtime.diversity_tolerance`` ⇒ ``None`` (enforcement off)."""
+    cfg = make_runtime_config(
+        {"runtime": {}},
+        workspace_root=tmp_path,
+        harness_call_llm=_stub_harness,
+        auxiliary_call_llm=_stub_aux,
+    )
+    assert cfg.diversity_tolerance is None
+
+
+def test_runtime_config_diversity_tolerance_opt_in(tmp_path: Path) -> None:
+    """``runtime.diversity_tolerance`` is read into the config as a float."""
+    cfg = make_runtime_config(
+        {"runtime": {"diversity_tolerance": 0.5}},
+        workspace_root=tmp_path,
+        harness_call_llm=_stub_harness,
+        auxiliary_call_llm=_stub_aux,
+    )
+    assert cfg.diversity_tolerance == 0.5
+
+
+def test_runtime_config_diversity_tolerance_out_of_range_raises(tmp_path: Path) -> None:
+    """An out-of-(0, 1] tolerance is rejected at construction."""
+    with pytest.raises(ValueError, match="diversity_tolerance"):
+        make_runtime_config(
+            {"runtime": {"diversity_tolerance": 1.5}},
+            workspace_root=tmp_path,
+            harness_call_llm=_stub_harness,
+            auxiliary_call_llm=_stub_aux,
+        )
+
+
 def test_runtime_config_parallelism_workspace_value_wins(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

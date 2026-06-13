@@ -93,6 +93,23 @@ class RuntimeConfig:
         receive (a target that reads a bespoke variable). Only consulted
         when :attr:`scrub_worker_env` is ``True``; each name is copied from
         the orchestrator's env only if present. Empty by default.
+    diversity_tolerance:
+        Optional field-diversity overlap ceiling for the multi-challenger
+        (non-gauntlet) path. ``None`` (the default) disables enforcement
+        entirely, so a field of N challengers runs byte-for-byte as it does
+        today (the only diversity guard is the pre-existing exact-duplicate
+        soft-reject). When SET to a fraction in ``(0, 1]``, a challenger
+        whose targeted-mutation-id set overlaps an already-accepted sibling's
+        by a Jaccard ratio STRICTLY GREATER than this tolerance is
+        *soft-rejected* — dropped from the run slate and recorded with a
+        ``diversity_status`` of ``"soft_rejected"`` — so two challengers that
+        touch essentially the same mutation points cannot collapse a field of
+        N into fewer real experiments. A small value (e.g. ``0.5``) rejects
+        heavily-overlapping siblings; ``1.0`` rejects nothing on this basis
+        (no overlap can exceed 1.0), which is functionally equivalent to off.
+        This is a RUNTIME tuning knob, NOT part of the frozen evaluation
+        contract — flipping it does not roll the epoch. Must be in ``(0, 1]``
+        when set.
 
     Construction-time validation
     ----------------------------
@@ -122,13 +139,20 @@ class RuntimeConfig:
     judge_call_llm: CallLLM | None = None
     scrub_worker_env: bool = False
     worker_env_passthrough: tuple[str, ...] = ()
+    diversity_tolerance: float | None = None
 
     def __post_init__(self) -> None:
-        """Validate the cheap scalar invariants (currently ``parallelism``)."""
+        """Validate the cheap scalar invariants (``parallelism`` + tolerance)."""
         if self.parallelism < 1:
             raise ValueError(
                 f"RuntimeConfig.parallelism must be >= 1, got {self.parallelism!r}; "
                 "use 1 for fully sequential board execution"
+            )
+        if self.diversity_tolerance is not None and not (0.0 < self.diversity_tolerance <= 1.0):
+            raise ValueError(
+                "RuntimeConfig.diversity_tolerance must be in (0, 1] or None, "
+                f"got {self.diversity_tolerance!r}; use None to disable "
+                "field-diversity enforcement"
             )
 
     def effective_judge_call_llm(self) -> CallLLM:

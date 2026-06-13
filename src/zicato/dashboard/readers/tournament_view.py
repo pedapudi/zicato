@@ -972,7 +972,8 @@ def build_tournament_structure(
     for resolver in (_structure_from_index, _structure_from_active, _structure_from_loss_files):
         result = resolver(paths, epoch_id, tournament_id)
         if result is not None:
-            return _enrich_field_status(paths, epoch_id, tournament_id, result)
+            enriched = _enrich_field_status(paths, epoch_id, tournament_id, result)
+            return _enrich_diversity(paths, epoch_id, enriched)
     return _empty_tournament_structure(epoch_id, tournament_id, "loss_files")
 
 
@@ -996,6 +997,139 @@ def _enrich_field_status(
     active = _structure_from_active(paths, epoch_id, tournament_id)
     if active is not None and active.get("field_status"):
         result["field_status"] = active["field_status"]
+    return result
+
+
+def _challenger_generation_ids(result: dict[str, Any]) -> list[str]:
+    """Ordered challenger generation ids for a resolved structure dict.
+
+    Prefers the ``competitors`` roles (champion vs challenger), falling back
+    to the ``field_status`` records when competitor roles are absent. The
+    order is the field's mint order (seed order) so the returned list is a
+    stable, deduplicated slate of the challengers that formed the field.
+    """
+    seen: set[str] = set()
+    ordered: list[str] = []
+
+    def _seed_key(c: dict[str, Any]) -> int:
+        seed = c.get("seed")
+        return seed if isinstance(seed, int) else 1 << 30
+
+    competitors = result.get("competitors")
+    if isinstance(competitors, list) and competitors:
+        ranked = sorted(
+            (c for c in competitors if isinstance(c, dict)),
+            key=_seed_key,
+        )
+        for c in ranked:
+            if str(c.get("role", "")) == "champion":
+                continue
+            gid = str(c.get("generation_id", ""))
+            if gid and gid not in seen:
+                seen.add(gid)
+                ordered.append(gid)
+        if ordered:
+            return ordered
+    field_status = result.get("field_status")
+    if isinstance(field_status, list):
+        for f in field_status:
+            if not isinstance(f, dict):
+                continue
+            gid = str(f.get("generation_id", ""))
+            if gid and gid not in seen:
+                seen.add(gid)
+                ordered.append(gid)
+    return ordered
+
+
+def _mutation_ids_for(conn: sqlite3.Connection, generation_id: str) -> frozenset[str]:
+    """The targeted-mutation-id SET a challenger declared, from the index.
+
+    Transposes the already-persisted ``patches`` rows (the same table
+    :func:`build_matchup_detail` reads) into the order-insensitive set of
+    ``mutation_id`` values a generation's patch set touched — the field-
+    diversity signature the orchestrator soft-rejects on. An unindexed /
+    patchless generation yields the empty set (it contributes no idea).
+    """
+    try:
+        rows = _query(
+            conn,
+            "SELECT mutation_id FROM patches WHERE generation_id = ?",
+            (generation_id,),
+        )
+    except sqlite3.Error:
+        return frozenset()
+    return frozenset(str(r["mutation_id"]) for r in rows if r["mutation_id"])
+
+
+def _enrich_diversity(
+    paths: WorkspacePaths, epoch_id: str, result: dict[str, Any]
+) -> dict[str, Any]:
+    """Attach a ``diversity`` block + per-slot ``diversity_status`` (additive).
+
+    A multi-challenger field of N collapses when two challengers propose the
+    same mutation-id set (FUNCTIONALITY-RECOMMENDATIONS.md §4.3), so this
+    surfaces the field's pairwise-overlap structure for the dashboard:
+    ``{field_size, distinct_ideas, mean_overlap, max_overlap,
+    max_overlap_pair, tolerance, soft_rejected_count}`` plus a
+    ``diversity_status`` (``applied`` | ``penalized`` | ``soft_rejected``) on
+    each ``field_status`` record.
+
+    KEY-ABSENT for single-challenger / pre-feature runs: the block is only
+    attached for a real field (two or more challengers whose mutation-id sets
+    resolve from the index), so a gauntlet structure, a pre-feature epoch, or
+    an index without a ``patches`` table is byte-compatible with today. The
+    ``tolerance`` is read back from any soft-rejected slot's record (the
+    orchestrator stamps it on enforcement); ``None`` when enforcement was off,
+    and ``soft_rejected_count`` is then ``0``.
+    """
+    challengers = _challenger_generation_ids(result)
+    if len(challengers) < 2:
+        return result
+    try:
+        conn = _open_index(paths.index_db)
+    except (_IndexAbsent, sqlite3.Error):
+        return result
+    try:
+        mutation_sets = [(gid, _mutation_ids_for(conn, gid)) for gid in challengers]
+    finally:
+        conn.close()
+    # No challenger resolved any mutation ids (patchless / unindexed field):
+    # there is no idea structure to summarise, so stay key-absent.
+    if not any(ids for _gid, ids in mutation_sets):
+        return result
+
+    field_status = result.get("field_status")
+    status_by_gen: dict[str, dict[str, Any]] = {}
+    if isinstance(field_status, list):
+        for f in field_status:
+            if isinstance(f, dict):
+                status_by_gen[str(f.get("generation_id", ""))] = f
+
+    # Per-slot diversity status: prefer the orchestrator-stamped value on the
+    # field-status record (enforcement on); otherwise default ``applied`` so
+    # the dashboard always has a status to render. ``soft_rejected_count`` and
+    # ``tolerance`` are read back from the stamped records.
+    soft_rejected = 0
+    tolerance: float | None = None
+    for f in field_status if isinstance(field_status, list) else []:
+        if not isinstance(f, dict):
+            continue
+        stamped = f.get("diversity_status")
+        if stamped == "soft_rejected":
+            soft_rejected += 1
+        if "diversity_status" not in f:
+            f["diversity_status"] = "applied"
+        tol = f.get("diversity_tolerance")
+        if tolerance is None and isinstance(tol, int | float):
+            tolerance = float(tol)
+
+    from zicato.orchestrator import _compute_field_diversity  # noqa: PLC0415
+
+    block = _compute_field_diversity(
+        mutation_sets, tolerance=tolerance, soft_rejected_count=soft_rejected
+    )
+    result["diversity"] = block
     return result
 
 
