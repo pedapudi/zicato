@@ -45,6 +45,7 @@ from zicato.runtime.control import (
 from zicato.runtime.control_consumer import (
     CONSUMER_SOURCE,
     block_while_paused,
+    claim_field_gate_overrides,
     claim_gate_override,
     claim_rubric_replacement,
     claim_skip_round,
@@ -159,6 +160,66 @@ def test_claim_gate_override_promote_wins_and_drains_reject(tmp_path: Path) -> N
     assert list_pending_commands(tmp_path) == []
     archived = {r["command"] for r in _archived(tmp_path)}
     assert archived == {CMD_PROMOTE_PREFIX, CMD_REJECT_PREFIX}
+
+
+# ---------------------------------------------------------------------------
+# Unit — field gate override (promote/reject across a whole field)
+# ---------------------------------------------------------------------------
+
+
+def test_claim_field_gate_overrides_absent_returns_empty(tmp_path: Path) -> None:
+    assert claim_field_gate_overrides(tmp_path, ["v1", "v2", "v3"]) == {}
+
+
+def test_claim_field_gate_overrides_promotes_a_non_winner(tmp_path: Path) -> None:
+    """An operator promotes a field candidate the structure did not crown."""
+    write_command(tmp_path, ControlCommand(name=CMD_PROMOTE_PREFIX, arg="v2"))
+    claimed = claim_field_gate_overrides(tmp_path, ["v1", "v2", "v3"])
+    assert set(claimed) == {"v2"}
+    assert claimed["v2"].decision == "promoted"
+    assert claimed["v2"].generation_id == "v2"
+    # Consumed + archived; nothing else in the field was touched.
+    assert list_pending_commands(tmp_path) == []
+    assert _archived(tmp_path)[0]["command"] == CMD_PROMOTE_PREFIX
+
+
+def test_claim_field_gate_overrides_two_candidates_promote(tmp_path: Path) -> None:
+    """A tie / multi-promote: two candidates overridden in one field round."""
+    write_command(tmp_path, ControlCommand(name=CMD_PROMOTE_PREFIX, arg="v1"))
+    write_command(tmp_path, ControlCommand(name=CMD_PROMOTE_PREFIX, arg="v3"))
+    claimed = claim_field_gate_overrides(tmp_path, ["v1", "v2", "v3"])
+    assert set(claimed) == {"v1", "v3"}
+    assert claimed["v1"].decision == "promoted"
+    assert claimed["v3"].decision == "promoted"
+    assert list_pending_commands(tmp_path) == []
+
+
+def test_claim_field_gate_overrides_mixed_promote_and_reject(tmp_path: Path) -> None:
+    """One candidate promoted, another rejected — both claimed in one pass."""
+    write_command(tmp_path, ControlCommand(name=CMD_PROMOTE_PREFIX, arg="v2"))
+    write_command(tmp_path, ControlCommand(name=CMD_REJECT_PREFIX, arg="v1"))
+    claimed = claim_field_gate_overrides(tmp_path, ["v1", "v2", "v3"])
+    assert claimed["v2"].decision == "promoted"
+    assert claimed["v1"].decision == "rejected"
+    assert "v3" not in claimed
+
+
+def test_claim_field_gate_overrides_ignores_outside_field(tmp_path: Path) -> None:
+    """An override for a generation NOT in the field is left pending."""
+    write_command(tmp_path, ControlCommand(name=CMD_PROMOTE_PREFIX, arg="v9"))
+    assert claim_field_gate_overrides(tmp_path, ["v1", "v2"]) == {}
+    pending = list_pending_commands(tmp_path)
+    assert [(c.name, c.arg) for c in pending] == [(CMD_PROMOTE_PREFIX, "v9")]
+
+
+def test_claim_field_gate_overrides_promote_wins_same_gen(tmp_path: Path) -> None:
+    """Promote beats a same-generation reject inside a field claim, too."""
+    write_command(tmp_path, ControlCommand(name=CMD_PROMOTE_PREFIX, arg="v2"))
+    write_command(tmp_path, ControlCommand(name=CMD_REJECT_PREFIX, arg="v2"))
+    claimed = claim_field_gate_overrides(tmp_path, ["v1", "v2"])
+    assert claimed["v2"].decision == "promoted"
+    # Both commands for v2 are drained — the reject cannot re-fire.
+    assert list_pending_commands(tmp_path) == []
 
 
 # ---------------------------------------------------------------------------

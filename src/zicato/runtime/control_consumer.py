@@ -260,25 +260,24 @@ def claim_skip_round(workspace_root: Path) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def claim_gate_override(workspace_root: Path, generation_id: str) -> GateOverride | None:
-    """Claim a promote/reject override TARGETING ``generation_id``, or ``None``.
+def _claim_override_for(
+    workspace_root: Path,
+    generation_id: str,
+    pending: list[ControlCommand],
+) -> GateOverride | None:
+    """Claim the promote/reject override TARGETING ``generation_id`` from ``pending``.
 
-    Called at the gate in ``evolve_once`` after the tournament settles. If an
-    operator queued ``promote/<generation_id>`` or ``reject/<generation_id>``
-    for the generation this round just evaluated, it is consumed (archived)
-    and returned so the caller can OVERRIDE the gate's verdict and record the
-    override explicitly in the OutcomeRecord / journal.
-
-    Only a command whose ``arg`` matches the in-flight ``generation_id`` is
-    claimed — a stale override aimed at a different generation is left
-    pending (it would mis-fire on the wrong round). When both a promote and a
-    reject target the same generation (an operator changed their mind), the
-    promote is honoured and the reject is also drained (archived) so it
-    cannot fire on a later round; this is deterministic and recorded.
+    The shared core of :func:`claim_gate_override` (gauntlet, one in-flight
+    generation) and :func:`claim_field_gate_overrides` (a field of several).
+    ``pending`` is the already-listed command set, so a multi-generation
+    field claim enumerates the control directory ONCE rather than per
+    candidate. The promote+reject tie-break and the drain-the-loser audit
+    write are identical for both callers, keeping the override semantics
+    uniform across structures.
     """
     promote_cmd: ControlCommand | None = None
     reject_cmd: ControlCommand | None = None
-    for cmd in list_pending_commands(workspace_root):
+    for cmd in pending:
         if cmd.arg != generation_id:
             continue
         if cmd.name == CMD_PROMOTE_PREFIX:
@@ -313,6 +312,59 @@ def claim_gate_override(workspace_root: Path, generation_id: str) -> GateOverrid
         )
 
     return GateOverride(decision=decision, generation_id=generation_id, reason=reason)
+
+
+def claim_gate_override(workspace_root: Path, generation_id: str) -> GateOverride | None:
+    """Claim a promote/reject override TARGETING ``generation_id``, or ``None``.
+
+    Called at the gate in ``evolve_once`` after the tournament settles. If an
+    operator queued ``promote/<generation_id>`` or ``reject/<generation_id>``
+    for the generation this round just evaluated, it is consumed (archived)
+    and returned so the caller can OVERRIDE the gate's verdict and record the
+    override explicitly in the OutcomeRecord / journal.
+
+    Only a command whose ``arg`` matches the in-flight ``generation_id`` is
+    claimed — a stale override aimed at a different generation is left
+    pending (it would mis-fire on the wrong round). When both a promote and a
+    reject target the same generation (an operator changed their mind), the
+    promote is honoured and the reject is also drained (archived) so it
+    cannot fire on a later round; this is deterministic and recorded.
+    """
+    return _claim_override_for(workspace_root, generation_id, list_pending_commands(workspace_root))
+
+
+def claim_field_gate_overrides(
+    workspace_root: Path, generation_ids: list[str]
+) -> dict[str, GateOverride]:
+    """Claim every promote/reject override targeting a candidate in the FIELD.
+
+    The field analogue of :func:`claim_gate_override`. A non-gauntlet
+    structure (racing / swiss / elim) resolves a WHOLE field of challengers
+    in one round, so the operator may have queued an override for ANY of
+    them — promoting a non-winner, rejecting the train leader, or advancing
+    several. This enumerates the control directory once and claims the
+    override (if any) for each generation in ``generation_ids``, returning a
+    ``{generation_id: GateOverride}`` map of just the candidates an operator
+    actually targeted.
+
+    Each candidate is resolved through the SAME per-generation claim core the
+    gauntlet uses (promote beats a same-generation reject; the loser is
+    drained and audited), so a field override is recorded identically to a
+    gauntlet one. An override aimed at a generation NOT in ``generation_ids``
+    is left pending — it cannot belong to this field, exactly as the gauntlet
+    leaves a non-matching override pending. Returns an empty map (the common
+    case) when no override targets any field candidate, leaving the
+    structure's own verdict untouched.
+    """
+    pending = list_pending_commands(workspace_root)
+    claimed: dict[str, GateOverride] = {}
+    for gid in generation_ids:
+        if gid in claimed:
+            continue
+        override = _claim_override_for(workspace_root, gid, pending)
+        if override is not None:
+            claimed[gid] = override
+    return claimed
 
 
 def drain_stale_gate_overrides(workspace_root: Path, *, reason: str) -> list[str]:
@@ -381,6 +433,7 @@ __all__ = [
     "block_while_paused",
     "claim_skip_round",
     "claim_gate_override",
+    "claim_field_gate_overrides",
     "claim_rubric_replacement",
     "drain_stale_gate_overrides",
 ]
