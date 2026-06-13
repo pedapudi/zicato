@@ -584,11 +584,22 @@ async def _run_single(
             return final_loss
 
         # --- 3. Spawn the worker subprocess. ---
+        # ``start_new_session=True`` runs the worker in its OWN session and
+        # process-group (it calls ``setsid`` before ``exec``), so the worker
+        # leads a group containing itself plus any grandchildren the inner
+        # harness spawns (shells, helper tools). The worker records that
+        # group's id (``pgid``) on its ActiveRun record, letting the
+        # supervisor GROUP-kill the whole tree by negating the pgid rather
+        # than leaking grandchildren when it kills the worker pid alone. It
+        # also detaches the worker from the orchestrator's controlling
+        # terminal so a Ctrl-C / SIGINT to the orchestrator's terminal group
+        # is not broadcast straight into every in-flight worker.
         proc = await asyncio.create_subprocess_exec(
             sys.executable,
             "-m",
             "zicato._tournament_worker",
             str(args_path),
+            start_new_session=True,
         )
 
         # --- 4. Wait, bounded by budget + GRACE. ---

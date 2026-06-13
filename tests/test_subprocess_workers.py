@@ -525,9 +525,13 @@ def test_worker_stamps_its_own_pid_into_active_runs(tmp_path: Path) -> None:
     run_id = f"{generation.id}--{entry.id}"
     run_path = active_run_path(workspace, run_id)
 
+    # Spawn with a fresh session/process-group, exactly as the runner does
+    # (``start_new_session=True``), so the worker leads its OWN group and the
+    # pgid it records is the worker's group, not the test runner's.
     proc = subprocess.Popen(  # noqa: S603
         [sys.executable, "-m", "zicato._tournament_worker", str(args_path)],
         env=_worker_env(),
+        start_new_session=True,
     )
     try:
         # Wait for the worker to write its active_runs file.
@@ -544,9 +548,55 @@ def test_worker_stamps_its_own_pid_into_active_runs(tmp_path: Path) -> None:
         assert record.run_id == run_id
         assert record.entry_id == entry.id
         assert record.deadline  # deadline = started_at + budget
+        # Containment metadata for the supervisor: the worker stamps its own
+        # process-group id (it leads its group, so pgid == pid here) and the
+        # ephemeral snapshot directory it was mounted on.
+        assert record.pgid == os.getpgid(proc.pid)
+        assert record.pgid == proc.pid  # the worker is its own group leader
+        assert record.snapshot_path == str(generation.snapshot_root)
     finally:
         proc.kill()
         proc.wait(timeout=10)
+
+
+def test_run_single_spawns_worker_in_new_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The runner spawns the worker with ``start_new_session=True``.
+
+    This is the producer side of the supervisor's group-containment: the
+    worker must lead its own session/process-group so its recorded ``pgid``
+    can be group-killed (worker + grandchildren), not just the worker pid.
+    """
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    generation = _generation(workspace)
+    entry = _entry()
+
+    captured: dict[str, object] = {}
+    real_create = asyncio.create_subprocess_exec
+
+    async def _spy_create(*args: object, **kwargs: object) -> object:
+        captured["start_new_session"] = kwargs.get("start_new_session")
+        return await real_create(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _spy_create)
+
+    loss = asyncio.run(
+        _run_single(
+            adapter=StubAdapter(),
+            generation=generation,
+            entry=entry,
+            weights=ScoringWeights(),
+            config=_config(workspace),
+            workspace_root=workspace,
+            epoch_id="e0",
+            side="parent",
+        )
+    )
+
+    assert isinstance(loss, LossProfile)
+    assert captured["start_new_session"] is True
 
 
 def _spawn_worker_blocking(args_path: Path) -> subprocess.CompletedProcess[bytes]:

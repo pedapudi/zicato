@@ -545,12 +545,27 @@ async def _run(args: dict[str, Any]) -> None:
     ):
         from zicato.runtime.lock import pid_start_time as _pid_start_time
 
+        # Record the worker's OWN process-group id so the supervisor can
+        # group-kill the worker plus any grandchildren the inner harness
+        # spawned (shells, helper tools), not just the worker pid. The
+        # runner spawns us with ``start_new_session=True`` so we lead our
+        # own group; ``os.getpgid`` is unavailable on a few platforms, so
+        # this is best-effort and leaves ``pgid=None`` (single-pid kill) on
+        # failure. Also record the ephemeral snapshot directory the runner
+        # mounted us on, so the supervisor can GC the orphaned ``ztw-snap-*``
+        # tree if the orchestrator dies mid-run.
+        try:
+            own_pgid: int | None = os.getpgid(os.getpid())
+        except OSError:
+            own_pgid = None
         state_mod.write_active_run(
             workspace_root,
             state_mod.ActiveRun(
                 run_id=run_id,
                 pid=os.getpid(),
                 pid_start_time=_pid_start_time(os.getpid()),
+                pgid=own_pgid,
+                snapshot_path=str(snapshot_root),
                 started_at=now.isoformat(),
                 last_progress=now.isoformat(),
                 wall_clock_budget_seconds=int(budget_s),
