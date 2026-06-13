@@ -120,6 +120,8 @@ pub struct StatuszView {
     pub fold_diagnostics: crate::fold_stats::FoldDiagnosticsView,
     /// Integrity status of the tamper-evident audit ledger.
     pub audit_ledger: AuditStatus,
+    /// Latest diff-containment scan result (record #2).
+    pub diff_containment: crate::diff_containment::DiffContainmentView,
 }
 
 /// The audit ledger's configured-ness and chain integrity, for `/statusz`.
@@ -241,6 +243,11 @@ fn heartbeat_status(
 /// rather than recomputed here so `/statusz` reports exactly the figure the
 /// watchdog is deciding on. `None` means seq is not being tracked (legacy
 /// heartbeat) and staleness falls back to the timestamp age.
+// A pure assembler: each parameter is one independent, already-computed input
+// surface (identity, thresholds, the two heartbeat ages, the fold/ledger/diff
+// diagnostics, the action ring). Bundling them into a struct would only move
+// the same fields behind one more name, so the explicit signature is clearer.
+#[allow(clippy::too_many_arguments)]
 pub fn build_statusz(
     paths: &WorkspacePaths,
     identity: &SupervisorIdentity,
@@ -249,6 +256,7 @@ pub fn build_statusz(
     fold_diagnostics: crate::fold_stats::FoldDiagnosticsView,
     action_log: &Arc<WatchdogLog>,
     audit_ledger: AuditStatus,
+    diff_containment: crate::diff_containment::DiffContainmentView,
 ) -> StatuszView {
     let now = Utc::now();
 
@@ -296,6 +304,7 @@ pub fn build_statusz(
         watchdog_actions: action_log.snapshot(),
         fold_diagnostics,
         audit_ledger,
+        diff_containment,
     }
 }
 
@@ -564,6 +573,61 @@ th{color:#888;font-weight:normal}\
     }
     out.push_str("</table>");
 
+    // Diff-containment: are mutations confined to the mutation sites?
+    let dc = &v.diff_containment;
+    out.push_str("<h2>diff containment</h2><table>");
+    if !dc.scanned {
+        out.push_str(
+            "<tr><th>state</th><td class=\"dim\">not scanned \
+(pass --diff-containment to enable the attestation)</td></tr>",
+        );
+    } else {
+        let quarantined = dc.quarantined.len();
+        let (cls, label) = if quarantined > 0 {
+            ("bad", "OUT-OF-BOUNDS MUTATIONS")
+        } else {
+            ("ok", "contained")
+        };
+        out.push_str(&format!(
+            "<tr><th>state</th><td class=\"{cls}\">{label}</td></tr>"
+        ));
+        out.push_str(&format!(
+            "<tr><th>pairs scanned</th><td>{}</td></tr>",
+            dc.pairs_scanned
+        ));
+        if dc.pairs_skipped > 0 {
+            out.push_str(&format!(
+                "<tr><th>pairs skipped</th><td class=\"dim\">{} (fail-open)</td></tr>",
+                dc.pairs_skipped
+            ));
+        }
+        out.push_str(&format!(
+            "<tr><th>quarantined</th><td class=\"{}\">{}</td></tr>",
+            if quarantined > 0 { "bad" } else { "ok" },
+            quarantined
+        ));
+    }
+    out.push_str("</table>");
+    // The offending generations + files, when any.
+    if !dc.quarantined.is_empty() {
+        out.push_str(
+            "<table><tr><th>generation</th><th>parent</th>\
+<th>file</th><th>diff</th></tr>",
+        );
+        for att in &dc.quarantined {
+            for vio in &att.violations {
+                out.push_str(&format!(
+                    "<tr><td>{}</td><td>{}</td><td class=\"bad\">{}</td><td class=\"bad\">{}</td></tr>",
+                    esc(&att.generation_id),
+                    esc(&att.parent_generation_id),
+                    esc(&vio.path),
+                    vio.kind.as_str(),
+                ));
+            }
+        }
+        out.push_str("</table>");
+    }
+
     out.push_str(&format!(
         "<p class=\"dim\">generated {}</p>",
         esc(&v.generated_at)
@@ -723,6 +787,7 @@ mod tests {
             }],
             fold_diagnostics: Default::default(),
             audit_ledger: Default::default(),
+            diff_containment: Default::default(),
         };
         let html = render_html(&view);
         assert!(html.starts_with("<!doctype html>"));
@@ -757,6 +822,7 @@ mod tests {
             watchdog_actions: vec![],
             fold_diagnostics: Default::default(),
             audit_ledger: Default::default(),
+            diff_containment: Default::default(),
         };
         let html = render_html(&view);
         assert!(html.contains("/tmp/&lt;evil&gt;"));

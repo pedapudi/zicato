@@ -6,6 +6,7 @@
 //! paths without spawning the executable.
 
 pub mod action_log;
+pub mod diff_containment;
 pub mod epoch;
 pub mod fold_stats;
 pub mod index_db;

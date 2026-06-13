@@ -84,6 +84,10 @@ pub struct ServeOptions {
     /// `/api/audit/verify` then report it as "not configured". Shared with
     /// the watchdog loops, which append their actions to it.
     pub ledger: Option<Arc<crate::ledger::AuditLedger>>,
+    /// The latest diff-containment scan result, shared with the watchdog loop
+    /// (which fills it when `--diff-containment` is set). `/statusz` surfaces
+    /// it; empty/not-scanned when the scan is disabled.
+    pub diff_findings: Arc<crate::diff_containment::DiffContainmentFindings>,
 }
 
 pub async fn serve(
@@ -114,6 +118,7 @@ pub async fn serve(
         seq_liveness: options.seq_liveness,
         fold_diagnostics: options.fold_diagnostics,
         ledger: options.ledger,
+        diff_findings: options.diff_findings,
     };
 
     let cors = CorsLayer::new()

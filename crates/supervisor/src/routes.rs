@@ -58,6 +58,9 @@ pub struct AppState {
     /// `None` → no ledger. `/api/audit/verify` walks its chain and `/statusz`
     /// surfaces a chain-break indicator.
     pub ledger: Option<Arc<crate::ledger::AuditLedger>>,
+    /// The latest diff-containment scan result; `/statusz` surfaces it as a
+    /// hard ALERT when any generation escaped its mutable surface.
+    pub diff_findings: Arc<crate::diff_containment::DiffContainmentFindings>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -166,6 +169,7 @@ fn build_statusz_view(s: &AppState) -> statusz::StatuszView {
         s.fold_diagnostics.view(),
         &s.action_log,
         audit_ledger,
+        s.diff_findings.view(),
     )
 }
 

@@ -87,6 +87,19 @@ struct Cli {
     #[arg(long, default_value_t = 6 * 3600)]
     max_run_seconds: u64,
 
+    /// Enable diff-containment attestation (INTEGRITY NOTARY record #2).
+    ///
+    /// When set, each watchdog tick independently recomputes the on-disk diff
+    /// of every materialised child generation snapshot against its parent and
+    /// ALARMS when a file OUTSIDE the registered mutable surface differs — a
+    /// mutation that escaped its sandbox. Alarm-only / read-only in v1: it
+    /// writes a quarantine finding into the epoch health dir and surfaces a
+    /// hard ALERT on `/statusz`, but never blocks a promotion. Off by default
+    /// (the scan is purely additive — absent, the supervisor behaves exactly
+    /// as before).
+    #[arg(long, default_value_t = false)]
+    diff_containment: bool,
+
     /// Directory for the supervisor's tamper-evident audit ledger.
     ///
     /// When set, the supervisor opens (or creates) a persisted, append-only,
@@ -211,6 +224,17 @@ async fn main() -> std::process::ExitCode {
         led
     });
 
+    // Diff-containment findings store (INTEGRITY NOTARY record #2). The runs
+    // loop scans materialised generations and records the latest result here;
+    // `/statusz` surfaces it. Shared regardless of the flag (the loop only
+    // writes into it when `--diff-containment` is set, so it stays empty/
+    // not-scanned otherwise).
+    let diff_findings =
+        Arc::new(zicato_supervisor::diff_containment::DiffContainmentFindings::new());
+    if cli.diff_containment {
+        info!("diff-containment attestation enabled (alarm-only)");
+    }
+
     let interval = Duration::from_secs(cli.interval.max(1));
     let hb_paths = paths.clone();
     let hb_shutdown = shutdown_tx.clone();
@@ -223,6 +247,8 @@ async fn main() -> std::process::ExitCode {
     let run_shutdown = shutdown_tx.clone();
     let run_log = action_log.clone();
     let run_ledger = ledger.clone();
+    let run_diff = diff_findings.clone();
+    let diff_enabled = cli.diff_containment;
     tokio::spawn(async move {
         watchdog::runs_loop(
             run_paths,
@@ -230,6 +256,10 @@ async fn main() -> std::process::ExitCode {
             interval,
             run_log,
             run_ledger,
+            watchdog::DiffContainmentConfig {
+                enabled: diff_enabled,
+                findings: run_diff,
+            },
             run_shutdown,
         )
         .await
@@ -248,6 +278,7 @@ async fn main() -> std::process::ExitCode {
             seq_liveness: seq_liveness.clone(),
             fold_diagnostics: fold_diagnostics.clone(),
             ledger: ledger.clone(),
+            diff_findings: diff_findings.clone(),
         },
         watch_tx.clone(),
         shutdown_tx.clone(),

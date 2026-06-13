@@ -26,6 +26,18 @@ use std::time::Duration;
 use tokio::sync::broadcast::Sender;
 use tracing::{info, warn};
 
+/// Diff-containment configuration threaded into [`runs_loop`].
+///
+/// `enabled` gates the per-tick scan (off by default → the loop behaves
+/// exactly as before); `findings` is the shared store the scan writes its
+/// latest result into for `/statusz`. Bundled into a struct so the loop's
+/// signature stays readable as the integrity-notary surface grows.
+#[derive(Clone)]
+pub struct DiffContainmentConfig {
+    pub enabled: bool,
+    pub findings: Arc<crate::diff_containment::DiffContainmentFindings>,
+}
+
 /// Record one watchdog escalation in the in-memory ring AND, when a
 /// tamper-evident ledger is configured, append it to the persisted
 /// hash-chained ledger too.
@@ -78,6 +90,56 @@ fn observe_transitions(
     if let (Some(epoch_id), Some(contract_hash)) = (epoch.epoch_id, epoch.contract_hash) {
         observer.observe_contract(ledger, &epoch_id, &contract_hash);
     }
+}
+
+/// Run one diff-containment scan over the workspace and surface its findings.
+///
+/// READ-ONLY / ALARM-ONLY (v1): scans every materialised child generation,
+/// records the latest scan into the shared findings store for `/statusz`,
+/// writes a quarantine finding into the epoch health dir for each violating
+/// pair, and — when a ledger is configured — appends a hard alert record per
+/// quarantined generation. Never blocks a promotion, never writes the
+/// orchestrator's trees. De-duplicated against the previous scan's quarantine
+/// set so a standing violation is alerted ONCE (until it clears and recurs),
+/// not on every tick.
+fn run_diff_containment_scan(
+    paths: &WorkspacePaths,
+    diff: &DiffContainmentConfig,
+    ledger: Option<&Arc<AuditLedger>>,
+    previously_quarantined: &mut HashSet<(String, String)>,
+) {
+    let view = crate::diff_containment::scan_workspace(paths);
+
+    // Persist a quarantine finding for each violating pair, and alert the
+    // ledger only for generations not already quarantined in the prior scan.
+    let mut current: HashSet<(String, String)> = HashSet::new();
+    for att in &view.quarantined {
+        let key = (att.epoch_id.clone(), att.generation_id.clone());
+        current.insert(key.clone());
+        crate::diff_containment::write_quarantine_finding(paths, att);
+        if !previously_quarantined.contains(&key) {
+            warn!(
+                epoch_id = %att.epoch_id,
+                generation_id = %att.generation_id,
+                parent = %att.parent_generation_id,
+                violations = att.violations.len(),
+                "DIFF-CONTAINMENT ALERT: generation mutated files outside its mutable surface",
+            );
+            if let Some(ledger) = ledger {
+                ledger.append(
+                    crate::ledger::RecordKind::DiffContainmentAlert,
+                    serde_json::json!({
+                        "epoch_id": att.epoch_id,
+                        "generation_id": att.generation_id,
+                        "parent_generation_id": att.parent_generation_id,
+                        "violations": att.violations,
+                    }),
+                );
+            }
+        }
+    }
+    *previously_quarantined = current;
+    diff.findings.record(view);
 }
 
 /// Thresholds for watchdog decisions.
@@ -785,6 +847,7 @@ pub async fn runs_loop(
     interval: Duration,
     log: Arc<WatchdogLog>,
     ledger: Option<Arc<AuditLedger>>,
+    diff: DiffContainmentConfig,
     shutdown: Sender<()>,
 ) {
     let mut ticker = tokio::time::interval(interval);
@@ -795,6 +858,9 @@ pub async fn runs_loop(
     // them into the tamper-evident chain. Stateful across ticks; a no-op when
     // no ledger is configured.
     let mut transitions = crate::ledger::TransitionObserver::new();
+    // Generations quarantined by the prior diff-containment scan, so a standing
+    // violation alerts once rather than every tick.
+    let mut quarantined: HashSet<(String, String)> = HashSet::new();
     loop {
         tokio::select! {
             _ = ticker.tick() => {
@@ -802,6 +868,17 @@ pub async fn runs_loop(
                 // the audit ledger (alarm-only / read-only — never blocks).
                 if let Some(ledger) = ledger.as_ref() {
                     observe_transitions(&paths, ledger, &mut transitions);
+                }
+                // Diff-containment attestation (alarm-only / read-only). Off by
+                // default; when enabled, scans materialised generations and
+                // surfaces out-of-bounds mutations.
+                if diff.enabled {
+                    run_diff_containment_scan(
+                        &paths,
+                        &diff,
+                        ledger.as_ref(),
+                        &mut quarantined,
+                    );
                 }
                 // Protect the orchestrator pid (carried by the heartbeat)
                 // from ever being treated as a run worker. The watchdog

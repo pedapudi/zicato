@@ -32,6 +32,9 @@ fn serve_opts(read_only: bool) -> server::ServeOptions {
         seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
         fold_diagnostics: Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new()),
         ledger: None,
+        diff_findings: Arc::new(
+            zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+        ),
     }
 }
 
@@ -992,6 +995,12 @@ async fn watchdog_sigterms_run_past_its_deadline() {
             Duration::from_millis(50),
             Arc::new(WatchdogLog::new()),
             None,
+            watchdog::DiffContainmentConfig {
+                enabled: false,
+                findings: Arc::new(
+                    zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+                ),
+            },
             loop_shutdown,
         )
         .await
@@ -1034,6 +1043,12 @@ async fn watchdog_escalates_to_sigkill_when_run_ignores_sigterm() {
             Duration::from_millis(50),
             Arc::new(WatchdogLog::new()),
             None,
+            watchdog::DiffContainmentConfig {
+                enabled: false,
+                findings: Arc::new(
+                    zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+                ),
+            },
             loop_shutdown,
         )
         .await
@@ -1064,6 +1079,12 @@ async fn watchdog_does_not_kill_run_when_deadline_disabled() {
             Duration::from_millis(50),
             Arc::new(WatchdogLog::new()),
             None,
+            watchdog::DiffContainmentConfig {
+                enabled: false,
+                findings: Arc::new(
+                    zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+                ),
+            },
             loop_shutdown,
         )
         .await
@@ -1110,6 +1131,12 @@ async fn watchdog_never_signals_orchestrator_or_init_pids() {
             Duration::from_millis(50),
             Arc::new(WatchdogLog::new()),
             None,
+            watchdog::DiffContainmentConfig {
+                enabled: false,
+                findings: Arc::new(
+                    zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+                ),
+            },
             loop_shutdown,
         )
         .await
@@ -1656,6 +1683,9 @@ async fn statusz_routes_reachable_with_no_dashboard() {
         seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
         fold_diagnostics: Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new()),
         ledger: None,
+        diff_findings: Arc::new(
+            zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+        ),
     };
     let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);
@@ -1738,6 +1768,9 @@ async fn statusz_surfaces_recorded_watchdog_actions() {
         seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
         fold_diagnostics: Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new()),
         ledger: None,
+        diff_findings: Arc::new(
+            zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+        ),
     };
     let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);
@@ -1818,6 +1851,9 @@ async fn audit_verify_reports_intact_chain_and_statusz_surfaces_it() {
         seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
         fold_diagnostics: Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new()),
         ledger: Some(ledger.clone()),
+        diff_findings: Arc::new(
+            zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+        ),
     };
     let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);
@@ -1874,6 +1910,9 @@ async fn audit_verify_detects_a_tampered_chain() {
         seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
         fold_diagnostics: Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new()),
         ledger: Some(ledger.clone()),
+        diff_findings: Arc::new(
+            zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+        ),
     };
     let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);
@@ -1911,4 +1950,202 @@ async fn audit_verify_detects_a_tampered_chain() {
     assert!(html.contains("CHAIN BREAK"));
 
     let _ = shutdown.send(());
+}
+
+// ---- diff containment (INTEGRITY NOTARY record #2) ----------------------
+
+/// Materialise a generation snapshot under epochs/{e}/generations/{g}/.
+fn write_gen_snapshot(
+    paths: &reader::WorkspacePaths,
+    epoch: &str,
+    gen: &str,
+    parent: Option<&str>,
+    files: &[(&str, &[u8])],
+) {
+    let gen_dir = paths
+        .epochs
+        .join(epoch)
+        .join("generations")
+        .join(gen);
+    std::fs::create_dir_all(&gen_dir).unwrap();
+    if let Some(parent) = parent {
+        std::fs::write(
+            gen_dir.join("experiment.json"),
+            serde_json::json!({"parent_generation_id": parent}).to_string(),
+        )
+        .unwrap();
+    }
+    for (rel, contents) in files {
+        let p = gen_dir.join("snapshot").join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, contents).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn diff_containment_quarantines_an_out_of_bounds_child_end_to_end() {
+    let (_t, paths) = make_workspace();
+    // Harness: the only mutable tree is "agent".
+    std::fs::write(
+        paths.workspace.join("config.json"),
+        serde_json::json!({"adk_entrypoint": "m:a", "mutable_trees": ["/reg/agent"]})
+            .to_string(),
+    )
+    .unwrap();
+    std::fs::write(paths.current_epoch_marker(), "e1").unwrap();
+    // v0 parent + v1 child; v1 tampers with an out-of-bounds support file.
+    write_gen_snapshot(
+        &paths,
+        "e1",
+        "v0",
+        None,
+        &[("agent/main.py", b"x=1\n"), ("support/lib.py", b"shared\n")],
+    );
+    write_gen_snapshot(
+        &paths,
+        "e1",
+        "v1",
+        Some("v0"),
+        &[("agent/main.py", b"x=2\n"), ("support/lib.py", b"TAMPERED\n")],
+    );
+
+    // A shared findings store the loop fills and the server reads.
+    let findings =
+        Arc::new(zicato_supervisor::diff_containment::DiffContainmentFindings::new());
+
+    let (shutdown_tx, _) = broadcast::channel(4);
+    let loop_paths = paths.clone();
+    let loop_shutdown = shutdown_tx.clone();
+    let loop_findings = findings.clone();
+    tokio::spawn(async move {
+        watchdog::runs_loop(
+            loop_paths,
+            fast_thresholds(false),
+            Duration::from_millis(50),
+            Arc::new(WatchdogLog::new()),
+            None,
+            watchdog::DiffContainmentConfig {
+                enabled: true,
+                findings: loop_findings,
+            },
+            loop_shutdown,
+        )
+        .await
+    });
+
+    // Give the loop a few ticks to scan.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // The shared store now holds the quarantine; serve /statusz over it.
+    let opts = server::ServeOptions {
+        read_only: true,
+        dashboard_disabled: false,
+        heartbeat_stale_threshold_seconds: 30,
+        action_log: Arc::new(WatchdogLog::new()),
+        seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
+        fold_diagnostics: Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new()),
+        ledger: None,
+        diff_findings: findings.clone(),
+    };
+    let (handle, server_shutdown) = start_server_with(paths.clone(), opts).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let s: Value = client
+        .get(format!("{base}/statusz.json"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let dc = &s["diff_containment"];
+    assert_eq!(dc["scanned"], true);
+    let quarantined = dc["quarantined"].as_array().unwrap();
+    assert_eq!(quarantined.len(), 1, "the out-of-bounds child is quarantined");
+    assert_eq!(quarantined[0]["generation_id"], "v1");
+    assert_eq!(
+        quarantined[0]["violations"][0]["path"], "support/lib.py",
+        "the out-of-bounds file is named"
+    );
+
+    // The terse HTML raises the hard ALERT.
+    let html = client
+        .get(format!("{base}/statusz"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(html.contains("OUT-OF-BOUNDS MUTATIONS"));
+
+    // A durable quarantine finding was written into the epoch health dir.
+    let finding = paths
+        .epoch_health_dir("e1")
+        .join("diff_containment_v1.json");
+    assert!(finding.exists(), "a quarantine finding must be persisted");
+
+    let _ = shutdown_tx.send(());
+    let _ = server_shutdown.send(());
+}
+
+#[tokio::test]
+async fn diff_containment_passes_an_in_bounds_child_end_to_end() {
+    let (_t, paths) = make_workspace();
+    std::fs::write(
+        paths.workspace.join("config.json"),
+        serde_json::json!({"adk_entrypoint": "m:a", "mutable_trees": ["/reg/agent"]})
+            .to_string(),
+    )
+    .unwrap();
+    std::fs::write(paths.current_epoch_marker(), "e1").unwrap();
+    write_gen_snapshot(
+        &paths,
+        "e1",
+        "v0",
+        None,
+        &[("agent/main.py", b"x=1\n"), ("support/lib.py", b"shared\n")],
+    );
+    // v1 only edits the mutable agent tree — fully contained.
+    write_gen_snapshot(
+        &paths,
+        "e1",
+        "v1",
+        Some("v0"),
+        &[("agent/main.py", b"x=2\n"), ("support/lib.py", b"shared\n")],
+    );
+
+    let findings =
+        Arc::new(zicato_supervisor::diff_containment::DiffContainmentFindings::new());
+    let (shutdown_tx, _) = broadcast::channel(4);
+    let loop_paths = paths.clone();
+    let loop_shutdown = shutdown_tx.clone();
+    let loop_findings = findings.clone();
+    tokio::spawn(async move {
+        watchdog::runs_loop(
+            loop_paths,
+            fast_thresholds(false),
+            Duration::from_millis(50),
+            Arc::new(WatchdogLog::new()),
+            None,
+            watchdog::DiffContainmentConfig {
+                enabled: true,
+                findings: loop_findings,
+            },
+            loop_shutdown,
+        )
+        .await
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let view = findings.view();
+    assert!(view.scanned);
+    assert_eq!(view.pairs_scanned, 1);
+    assert!(
+        view.quarantined.is_empty(),
+        "an in-bounds child must not be quarantined"
+    );
+
+    let _ = shutdown_tx.send(());
 }
