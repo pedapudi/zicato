@@ -12,6 +12,7 @@ Coverage:
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from zicato.runtime.paths import active_run_path, heartbeat_path, kill_request_path
@@ -233,6 +234,68 @@ def test_active_run_round_trip(tmp_path: Path) -> None:
     write_active_run(tmp_path, run)
     [back] = list_active_runs(tmp_path)
     assert back == run
+
+
+def test_active_run_defaults_pgid_and_snapshot_path_to_none() -> None:
+    """A run built without the containment fields leaves them ``None``."""
+    run = _sample_run("run_a")
+    assert run.pgid is None
+    assert run.snapshot_path is None
+
+
+def test_active_run_round_trips_pgid_and_snapshot_path(tmp_path: Path) -> None:
+    """When set, ``pgid`` / ``snapshot_path`` survive write→read unchanged."""
+    run = replace(
+        _sample_run("run_pg"),
+        pgid=4242,
+        snapshot_path="/tmp/ztw-snap-run_pg-abcd/snapshot",
+    )
+    write_active_run(tmp_path, run)
+    [back] = list_active_runs(tmp_path)
+    assert back == run
+    assert back.pgid == 4242
+    assert back.snapshot_path == "/tmp/ztw-snap-run_pg-abcd/snapshot"
+
+
+def test_active_run_from_dict_tolerates_absent_containment_fields() -> None:
+    """A legacy on-disk record (no ``pgid`` / ``snapshot_path`` keys) reads back.
+
+    Back-compat: a record written before these fields existed must still
+    deserialise, with the new fields defaulting to ``None``.
+    """
+    legacy = _sample_run("legacy").to_dict()
+    del legacy["pgid"]
+    del legacy["snapshot_path"]
+    back = ActiveRun.from_dict(legacy)
+    assert back.pgid is None
+    assert back.snapshot_path is None
+    assert back.run_id == "legacy"
+
+
+def test_active_run_to_dict_keeps_containment_keys_present() -> None:
+    """The serialised shape always carries the keys (value ``None`` when unset).
+
+    Additive: the keys are present so the supervisor reader can index them
+    unconditionally; an unset field is an explicit ``null``, not a missing
+    key.
+    """
+    payload = _sample_run("run_a").to_dict()
+    assert payload["pgid"] is None
+    assert payload["snapshot_path"] is None
+
+
+def test_touch_active_run_progress_preserves_containment_fields(tmp_path: Path) -> None:
+    """Bumping ``last_progress`` must not drop ``pgid`` / ``snapshot_path``."""
+    run = replace(
+        _sample_run("run_hb"),
+        pgid=7777,
+        snapshot_path="/tmp/ztw-snap-run_hb-zzzz/snapshot",
+    )
+    write_active_run(tmp_path, run)
+    touch_active_run_progress(tmp_path, "run_hb")
+    [back] = list_active_runs(tmp_path)
+    assert back.pgid == 7777
+    assert back.snapshot_path == "/tmp/ztw-snap-run_hb-zzzz/snapshot"
 
 
 # ---------------------------------------------------------------------------

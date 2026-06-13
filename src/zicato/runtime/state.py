@@ -282,6 +282,23 @@ class ActiveRun:
         harmonograf at this path.
     entry_id, generation_id, epoch_id:
         Lineage coordinates of the run.
+    pgid:
+        OS process-group id of the run's own worker process. The worker
+        is spawned in its OWN session/process-group (``start_new_session``),
+        so the supervisor can GROUP-kill the worker AND any grandchildren
+        the inner harness spawned (shells, helper tools) by negating this
+        id, rather than leaking them when it kills the worker pid alone.
+        ``None`` for a legacy record written before this field existed (or
+        on a platform without process groups); the supervisor then falls
+        back to the single-pid kill.
+    snapshot_path:
+        Absolute path-as-string to the run's ephemeral snapshot working
+        copy (the ``ztw-snap-*`` temp directory the runner copytrees the
+        code snapshot into for this run). The runner discards it on a
+        clean run-end, but if the ORCHESTRATOR dies mid-run the directory
+        is orphaned; recording it here lets the supervisor GC the
+        leftover ``ztw-snap-*`` tree after an orchestrator death. ``None``
+        for a legacy record, or a run that mounted no ephemeral snapshot.
     """
 
     run_id: str
@@ -295,12 +312,16 @@ class ActiveRun:
     generation_id: str
     epoch_id: str
     pid_start_time: float | None = None
+    pgid: int | None = None
+    snapshot_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
             "pid": self.pid,
             "pid_start_time": self.pid_start_time,
+            "pgid": self.pgid,
+            "snapshot_path": self.snapshot_path,
             "started_at": self.started_at,
             "last_progress": self.last_progress,
             "wall_clock_budget_seconds": self.wall_clock_budget_seconds,
@@ -314,6 +335,8 @@ class ActiveRun:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> ActiveRun:
         raw_start = d.get("pid_start_time")
+        raw_pgid = d.get("pgid")
+        raw_snapshot = d.get("snapshot_path")
         return cls(
             run_id=str(d["run_id"]),
             pid=int(d["pid"]),
@@ -326,6 +349,8 @@ class ActiveRun:
             generation_id=str(d["generation_id"]),
             epoch_id=str(d["epoch_id"]),
             pid_start_time=float(raw_start) if raw_start is not None else None,
+            pgid=int(raw_pgid) if raw_pgid is not None else None,
+            snapshot_path=str(raw_snapshot) if raw_snapshot is not None else None,
         )
 
 
