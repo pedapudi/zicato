@@ -510,8 +510,12 @@ async def evolve_once(
         next_id = resume_plan.resume_generation_id
     else:
         next_id = _next_generation_id(workspace_root, resolved_epoch_id)
+    from zicato.runtime import progress_log  # noqa: PLC0415
+
     _beat(
         beater,
+        workspace_root=workspace_root,
+        progress=progress_log.PROPOSE,
         epoch_id=resolved_epoch_id,
         generation_id=next_id,
         round_index=round_index,
@@ -725,6 +729,8 @@ async def evolve_once(
         )
         _beat(
             beater,
+            workspace_root=workspace_root,
+            progress=progress_log.REJECT,
             epoch_id=resolved_epoch_id,
             generation_id=next_id,
             round_index=round_index,
@@ -750,6 +756,8 @@ async def evolve_once(
     _ingest_experiment_into_index(workspace_root, resolved_epoch_id, next_id)
     _beat(
         beater,
+        workspace_root=workspace_root,
+        progress=progress_log.TOURNAMENT_START,
         epoch_id=resolved_epoch_id,
         generation_id=next_id,
         round_index=round_index,
@@ -836,6 +844,16 @@ async def evolve_once(
     # Cache gen_score.json for future fast-mode runs.
     _cache_gen_score(workspace_root, resolved_epoch_id, parent_id, tournament_result.parent_agg)
     _cache_gen_score(workspace_root, resolved_epoch_id, next_id, tournament_result.child_agg)
+
+    # Progress transition: the tournament settled (a verdict is resolvable).
+    # Advances the orchestrator liveness seq on genuine progress — never on
+    # a timer — so a slow tournament reads as "between transitions", not
+    # stalled. Best-effort; a write failure must not abort the round.
+    with best_effort(
+        "progress-log tournament-settle",
+        on_error=lambda exc: log.debug("progress-log tournament-settle skipped: %s", exc),
+    ):
+        progress_log.append_progress(workspace_root, progress_log.TOURNAMENT_SETTLE)
 
     # --- 10b. Route the duel's verdict through the SelectionStrategy ---
     # The structure owns scheduling/advance/stopping; the gate is reused
@@ -1018,6 +1036,10 @@ async def evolve_once(
 
     _beat(
         beater,
+        workspace_root=workspace_root,
+        progress=(
+            progress_log.PROMOTE if bookkeeping_decision == "promoted" else progress_log.REJECT
+        ),
         epoch_id=resolved_epoch_id,
         generation_id=next_id,
         round_index=round_index,
@@ -1175,8 +1197,12 @@ async def _propose_and_apply_challenger(
         ):
             on_status(record)
 
+    from zicato.runtime import progress_log  # noqa: PLC0415
+
     _beat(
         beater,
+        workspace_root=workspace_root,
+        progress=progress_log.PROPOSE,
         epoch_id=epoch_id,
         generation_id=next_id,
         round_index=round_index,
@@ -1749,6 +1775,17 @@ async def _evolve_multi_challenger(
         entries=_field_entries(competitors_meta),
     )
 
+    # Progress transition: the field tournament started executing. One
+    # round-level append (NOT per matchup) so the liveness seq advances on
+    # genuine progress. Best-effort — never abort the round on a log write.
+    from zicato.runtime import progress_log  # noqa: PLC0415
+
+    with best_effort(
+        "progress-log field tournament-start",
+        on_error=lambda exc: log.debug("progress-log field tournament-start skipped: %s", exc),
+    ):
+        progress_log.append_progress(workspace_root, progress_log.TOURNAMENT_START)
+
     # OPEN the durable field-tournament envelope NOW, before the bracket
     # resolves (issue #16). The runtime ``active_tournament`` envelope above
     # is ephemeral (cleared on crash, overwritten next round); only the
@@ -2167,8 +2204,20 @@ async def _evolve_multi_challenger(
     await _regenerate_epoch_report(workspace_root, epoch_id, auxiliary_call_llm, auxiliary_model)
 
     bookkeeping_decision = "promoted" if promoted_id is not None else "rejected"
+    # Progress transition: the field tournament settled — record the
+    # crowning (TOURNAMENT_SETTLE) then the terminal verdict so the
+    # liveness seq lands on a PROMOTE/REJECT at the round's true end.
+    with best_effort(
+        "progress-log field tournament-settle",
+        on_error=lambda exc: log.debug("progress-log field tournament-settle skipped: %s", exc),
+    ):
+        progress_log.append_progress(workspace_root, progress_log.TOURNAMENT_SETTLE)
     _beat(
         beater,
+        workspace_root=workspace_root,
+        progress=(
+            progress_log.PROMOTE if bookkeeping_decision == "promoted" else progress_log.REJECT
+        ),
         epoch_id=epoch_id,
         generation_id=promoted_id or applied[0].generation_id,
         round_index=round_index,

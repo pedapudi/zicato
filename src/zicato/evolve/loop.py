@@ -60,6 +60,35 @@ CallLLM = Callable[[str, str, str], Awaitable[str]]
 _DEGENERATE_HEALTH_STOP_THRESHOLD = 2
 
 
+def _append_progress_seq(workspace_root: Path, transition: str) -> int | None:
+    """Append a loop-level progress transition; return its ``seq`` or ``None``.
+
+    RUNTIME-V2 Phase 4. The loop appends genuine loop transitions
+    (:data:`progress_log.LOOP_START` / :data:`~progress_log.ROUND_START` /
+    the terminal :data:`~progress_log.SETTLED` / :data:`~progress_log.STOPPED`)
+    so the heartbeat's ``seq`` advances on real progress, never on the
+    timer. Returns the new tail ``seq`` to stamp onto the heartbeat, or
+    ``None`` on a write failure — passing ``None`` to
+    :meth:`HeartbeatBeater.update` leaves the prior ``seq`` unchanged, so a
+    log hiccup never regresses or fabricates the cursor. Best-effort: a
+    progress-log failure must never abort the loop.
+    """
+    seq: int | None = None
+
+    def _remember(value: int) -> None:
+        nonlocal seq
+        seq = value
+
+    with best_effort(
+        "progress-log append",
+        on_error=lambda exc: log.debug("progress-log append skipped: %s", exc),
+    ):
+        from zicato.runtime import progress_log  # noqa: PLC0415
+
+        _remember(progress_log.append_progress(workspace_root, transition))
+    return seq
+
+
 def _budget_aborted_outcome(parent_generation_id: str, budget_s: int) -> EvolveRoundOutcome:
     """Build the synthetic outcome for a round cut short by the total budget.
 
@@ -365,6 +394,18 @@ async def evolve_n_rounds(
     resume_plan: ResumePlan | None = (
         None if _prepared_plan.classification == "clean" else _prepared_plan
     )
+    # RUNTIME-V2 Phase 4: the orchestrator progress event log is the TRUE
+    # liveness signal (its monotonic ``seq`` advances only on a genuine
+    # transition, never on the heartbeat timer). Clear any prior invocation's
+    # log so this one's ``seq`` starts from 1 — a stale tail must never read
+    # as live progress. Best-effort: a clear failure must not block the run.
+    from zicato.runtime import progress_log  # noqa: PLC0415
+
+    with best_effort(
+        "progress-log clear",
+        on_error=lambda exc: log.debug("progress-log clear skipped: %s", exc),
+    ):
+        progress_log.clear_log(workspace_root)
     beater = HeartbeatBeater(workspace_root, instance_id, interval_s=2.0)
     # Resolve the harmonograf console URL once up front so the supervisor
     # / dashboard can surface a "watch live" link from the heartbeat for
@@ -396,9 +437,14 @@ async def evolve_n_rounds(
         # Read it off the emitter — empty when no meta-loop session is in
         # scope. See docs/design/HARMONOGRAF.md §2b/§4.
         meta_session = getattr(meta_loop_emitter, "session_id", "") or ""
+        # First genuine transition: the loop booted (epoch resolved, lock
+        # held). Stamp its seq so a reader sees a live, advancing cursor
+        # from the very first beat. Best-effort.
+        loop_start_seq = _append_progress_seq(workspace_root, progress_log.LOOP_START)
         beater.update(
             epoch_id=epoch_id or "",
             phase="evolve_n_rounds:start",
+            seq=loop_start_seq,
             harmonograf_url=harmonograf_url,
             harmonograf_meta_session=meta_session,
         )
@@ -457,10 +503,12 @@ async def evolve_n_rounds(
                     epoch_name=epoch_name,
                 )
 
+            round_start_seq = _append_progress_seq(workspace_root, progress_log.ROUND_START)
             beater.update(
                 epoch_id=epoch_id or "",
                 round_index=round_idx,
                 round_started_at=_orch._now_iso(),
+                seq=round_start_seq,
                 phase=f"evolve_once:round_{round_idx}",
             )
             beater.bump_now()
@@ -575,8 +623,18 @@ async def evolve_n_rounds(
                 )
                 stop_reason = health_policy.reason
                 break
+        # Terminal progress marker — a clean, orchestrator-produced end.
+        # A reader distinguishes this SETTLED/STOPPED tail from a STALLED
+        # one (seq frozen mid-flight, no terminal event). ``budget_stopped``
+        # (a budget / circuit-breaker cut) is STILL a clean end, marked
+        # STOPPED to distinguish it from a fully-completed SETTLED run.
+        terminal_seq = _append_progress_seq(
+            workspace_root,
+            progress_log.STOPPED if budget_stopped else progress_log.SETTLED,
+        )
         beater.update(
-            phase="evolve_n_rounds:budget_exhausted" if budget_stopped else "evolve_n_rounds:done"
+            phase="evolve_n_rounds:budget_exhausted" if budget_stopped else "evolve_n_rounds:done",
+            seq=terminal_seq,
         )
         beater.bump_now()
     finally:
