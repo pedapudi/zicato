@@ -44,6 +44,35 @@ def test_runtime_config_seed_passes_through(tmp_path: Path) -> None:
     assert cfg.seed == 1234
 
 
+def test_runtime_config_scrub_worker_env_defaults_off(tmp_path: Path) -> None:
+    """Absent ``runtime.scrub_worker_env`` ⇒ off (today's full-inheritance)."""
+    cfg = make_runtime_config(
+        {"runtime": {}},
+        workspace_root=tmp_path,
+        harness_call_llm=_stub_harness,
+        auxiliary_call_llm=_stub_aux,
+    )
+    assert cfg.scrub_worker_env is False
+    assert cfg.worker_env_passthrough == ()
+
+
+def test_runtime_config_scrub_worker_env_opt_in(tmp_path: Path) -> None:
+    """``runtime.scrub_worker_env`` + passthrough list are read into the config."""
+    cfg = make_runtime_config(
+        {
+            "runtime": {
+                "scrub_worker_env": True,
+                "worker_env_passthrough": ["CUSTOM_A", "CUSTOM_B"],
+            }
+        },
+        workspace_root=tmp_path,
+        harness_call_llm=_stub_harness,
+        auxiliary_call_llm=_stub_aux,
+    )
+    assert cfg.scrub_worker_env is True
+    assert cfg.worker_env_passthrough == ("CUSTOM_A", "CUSTOM_B")
+
+
 def test_runtime_config_parallelism_workspace_value_wins(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -33,6 +33,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -578,6 +579,7 @@ def test_run_single_spawns_worker_in_new_session(
 
     async def _spy_create(*args: object, **kwargs: object) -> object:
         captured["start_new_session"] = kwargs.get("start_new_session")
+        captured["env"] = kwargs.get("env")
         return await real_create(*args, **kwargs)
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _spy_create)
@@ -597,6 +599,59 @@ def test_run_single_spawns_worker_in_new_session(
 
     assert isinstance(loss, LossProfile)
     assert captured["start_new_session"] is True
+    # Default: the worker inherits the orchestrator's full env (env=None) —
+    # byte-for-byte today's behavior. The scrub is strictly opt-in.
+    assert captured["env"] is None
+
+
+def test_run_single_scrubs_worker_env_when_opted_in(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``scrub_worker_env=True`` spawns the worker with a minimal explicit env.
+
+    The scrubbed env must (a) be an explicit dict, not full inheritance, and
+    (b) drop a credential variable that no model role named, while keeping the
+    process-essential PATH. This is the producer side of denying a mutated
+    worker read-access to every credential in the orchestrator's process env.
+    """
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    generation = _generation(workspace)
+    entry = _entry()
+
+    # A stray secret in the orchestrator's env that no model role references.
+    monkeypatch.setenv("LEAKY_UNRELATED_SECRET", "sk-should-not-cross")
+    monkeypatch.setenv("PATH", "/usr/bin")
+
+    config = replace(_config(workspace), scrub_worker_env=True)
+
+    captured: dict[str, object] = {}
+    real_create = asyncio.create_subprocess_exec
+
+    async def _spy_create(*args: object, **kwargs: object) -> object:
+        captured["env"] = kwargs.get("env")
+        return await real_create(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _spy_create)
+
+    loss = asyncio.run(
+        _run_single(
+            adapter=StubAdapter(),
+            generation=generation,
+            entry=entry,
+            weights=ScoringWeights(),
+            config=config,
+            workspace_root=workspace,
+            epoch_id="e0",
+            side="parent",
+        )
+    )
+
+    assert isinstance(loss, LossProfile)
+    env = captured["env"]
+    assert isinstance(env, dict)  # explicit env, not full inheritance
+    assert env.get("PATH") == "/usr/bin"  # essential floor preserved
+    assert "LEAKY_UNRELATED_SECRET" not in env  # the scrub denied it
 
 
 def _spawn_worker_blocking(args_path: Path) -> subprocess.CompletedProcess[bytes]:

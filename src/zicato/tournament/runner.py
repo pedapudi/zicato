@@ -231,6 +231,7 @@ from zicato.tournament.worker_transport import (  # noqa: F401
     _role_worker_spec,
     _run_id_for,
     _runtime_state,
+    _scrubbed_worker_env,
     _stamp_disable_drift,
     _stamp_judge_only,
     _telemetry_helpers,
@@ -594,12 +595,25 @@ async def _run_single(
         # also detaches the worker from the orchestrator's controlling
         # terminal so a Ctrl-C / SIGINT to the orchestrator's terminal group
         # is not broadcast straight into every in-flight worker.
+        # Compose the worker's environment. By default ``env=None`` inherits
+        # the orchestrator's full environment — today's behavior, byte-for-
+        # byte unchanged. When the operator opts into ``scrub_worker_env`` the
+        # worker instead gets a MINIMAL explicit env (process-essential keys +
+        # the api_key_env names the configured roles need + any passthrough),
+        # so a mutated worker cannot read every credential in the process env.
+        worker_env: dict[str, str] | None = None
+        if config.scrub_worker_env:
+            worker_env = _scrubbed_worker_env(
+                models=_models,
+                extra_env_keys=tuple(config.worker_env_passthrough),
+            )
         proc = await asyncio.create_subprocess_exec(
             sys.executable,
             "-m",
             "zicato._tournament_worker",
             str(args_path),
             start_new_session=True,
+            env=worker_env,
         )
 
         # --- 4. Wait, bounded by budget + GRACE. ---

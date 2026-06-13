@@ -157,6 +157,14 @@ def make_runtime_config(
 
         parallelism = load_config().runtime.parallelism
 
+    # Worker env-scrub: opt-in containment read from the same ``runtime``
+    # block. Absent ⇒ off (full env inheritance — today's behavior, byte-for-
+    # byte unchanged). ``worker_env_passthrough`` is an optional list of extra
+    # env-var names a scrubbed worker should still receive.
+    scrub_worker_env = bool(runtime_dict.get("scrub_worker_env", False))
+    passthrough_raw = runtime_dict.get("worker_env_passthrough") or ()
+    worker_env_passthrough = tuple(str(name) for name in passthrough_raw)
+
     # Defense in depth — also re-checked by the runner.
     assert_distinct_callables(harness, aux)
 
@@ -168,6 +176,8 @@ def make_runtime_config(
         seed=seed,
         parallelism=parallelism,
         judge_call_llm=judge,
+        scrub_worker_env=scrub_worker_env,
+        worker_env_passthrough=worker_env_passthrough,
     )
 
 

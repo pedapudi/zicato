@@ -32,8 +32,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import shutil
 import tempfile
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC
 from pathlib import Path
@@ -423,6 +425,86 @@ def _role_worker_spec(
     return {"dotted": _callable_dotted_path(fallback_callable)}
 
 
+#: Process-essential environment variables a scrubbed worker still needs to
+#: start a Python interpreter, find tools, resolve a home/temp dir, and keep
+#: byte-for-byte-stable text output (locale). Deliberately small: this is the
+#: floor a worker needs to run at all, NOT a convenience passthrough. Each is
+#: copied from the orchestrator's env ONLY if present (an unset key is simply
+#: omitted), so the scrub never invents a value.
+_WORKER_ESSENTIAL_ENV_KEYS: tuple[str, ...] = (
+    # Tool/interpreter discovery + working dirs.
+    "PATH",
+    "HOME",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    # Python import path (the worker imports zicato + any dotted-path role).
+    "PYTHONPATH",
+    "PYTHONHOME",
+    "VIRTUAL_ENV",
+    # Deterministic text handling — locale changes can shift formatting and
+    # default codecs, which would otherwise perturb run output.
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    # Windows interpreter bootstrap (no-op on POSIX, where the key is unset).
+    "SYSTEMROOT",
+    "SYSTEMDRIVE",
+)
+
+
+def _api_key_env_names(models: Any) -> list[str]:
+    """Collect the ``api_key_env`` NAMEs every configured model role needs.
+
+    A model-spec role resolves its credential by reading
+    ``os.environ[api_key_env]`` in the worker (see
+    :func:`zicato.models_config.resolve_text_call_llm`). When the worker env
+    is scrubbed we must keep exactly those named variables so a configured run
+    can still authenticate. Returns the env-var NAMES (never secret values),
+    de-duplicated and order-stable. An unconfigured / dotted-path role
+    contributes nothing here — it carries no ``api_key_env``.
+    """
+    from zicato.models_config import MODEL_ROLES  # noqa: PLC0415
+
+    names: list[str] = []
+    for role in MODEL_ROLES:
+        spec = models.role(role)
+        env_name = getattr(spec, "api_key_env", None)
+        if env_name and env_name not in names:
+            names.append(env_name)
+    return names
+
+
+def _scrubbed_worker_env(
+    *,
+    models: Any,
+    extra_env_keys: tuple[str, ...] = (),
+    base_env: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Compose a MINIMAL explicit env for a worker subprocess.
+
+    Instead of inheriting the orchestrator's full environment (which holds
+    every credential in the process env — a mutated worker could read all of
+    them), the worker is given only:
+
+    * the process-essential keys in :data:`_WORKER_ESSENTIAL_ENV_KEYS`,
+    * the ``api_key_env`` NAMEs every configured model role legitimately needs
+      to authenticate (:func:`_api_key_env_names`), and
+    * any operator-named ``extra_env_keys`` (an escape hatch for a target that
+      reads a bespoke variable; opt-in, named explicitly).
+
+    Each key is copied from ``base_env`` (default :data:`os.environ`) ONLY if
+    present — an unset key is omitted, never invented. The returned dict is a
+    fresh copy safe to hand to ``create_subprocess_exec(env=...)``.
+    """
+    source: Mapping[str, str] = os.environ if base_env is None else base_env
+    wanted: list[str] = list(_WORKER_ESSENTIAL_ENV_KEYS)
+    for name in (*_api_key_env_names(models), *extra_env_keys):
+        if name and name not in wanted:
+            wanted.append(name)
+    return {key: source[key] for key in wanted if key in source}
+
+
 def _adapter_spec(adapter: Any) -> dict[str, Any]:
     """Serialise a harness adapter into a JSON-friendly spec dict.
 
@@ -717,8 +799,10 @@ __all__ = [
     "_PARENT_BUDGET_GRACE_S",
     "_SIGTERM_TO_SIGKILL_GRACE_S",
     "_SUPERVISOR_KILL_WAIT_S",
+    "_WORKER_ESSENTIAL_ENV_KEYS",
     "_aborted_loss_profile",
     "_adapter_spec",
+    "_api_key_env_names",
     "_callable_dotted_path",
     "_discard_ephemeral_snapshot",
     "_drift_kind_wire",
@@ -733,6 +817,7 @@ __all__ = [
     "_role_worker_spec",
     "_run_id_for",
     "_runtime_state",
+    "_scrubbed_worker_env",
     "_stamp_disable_drift",
     "_stamp_judge_only",
     "_telemetry_helpers",

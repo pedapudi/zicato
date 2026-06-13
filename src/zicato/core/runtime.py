@@ -79,6 +79,20 @@ class RuntimeConfig:
         a modest default (``4``) is a safe starting point; operators
         raise it only when the endpoint can absorb more in-flight calls.
         Must be ``>= 1``.
+    scrub_worker_env:
+        When ``True``, each tournament worker is spawned with a MINIMAL
+        explicit environment — the process-essential keys plus the
+        ``api_key_env`` names the configured model roles need (and any
+        :attr:`worker_env_passthrough` keys) — instead of inheriting the
+        orchestrator's full environment. This denies a mutated worker
+        read-access to every credential in the orchestrator's process env.
+        Defaults to ``False`` (full inheritance — today's behavior), so a
+        run is byte-for-byte unchanged unless an operator opts in.
+    worker_env_passthrough:
+        Extra environment-variable NAMES a scrubbed worker should still
+        receive (a target that reads a bespoke variable). Only consulted
+        when :attr:`scrub_worker_env` is ``True``; each name is copied from
+        the orchestrator's env only if present. Empty by default.
 
     Construction-time validation
     ----------------------------
@@ -106,6 +120,8 @@ class RuntimeConfig:
     seed: int | None = None
     parallelism: int = 4
     judge_call_llm: CallLLM | None = None
+    scrub_worker_env: bool = False
+    worker_env_passthrough: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         """Validate the cheap scalar invariants (currently ``parallelism``)."""
