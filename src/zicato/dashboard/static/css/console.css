@@ -1064,6 +1064,9 @@
   .dn-gate-head { display: flex; flex-direction: column; gap: 10px; }
   .dn-gate-decision { display: flex; align-items: center; gap: 10px; }
   .dn-gate-deltas { gap: 28px; }
+  /* the absolute-scalar endpoints (champion/challenger scalar) sit left of the
+     Δ chips; same chip gap so the head reads as one row of stats. */
+  .dn-gate-absolutes { gap: 28px; }
   .dn-gate-reason { font-size: calc(12px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); margin: 10px 0 4px; line-height: 1.45; max-width: 88ch; }
   .dn-rules { list-style: none; margin: 4px 0 8px; padding: 0; display: flex; flex-direction: column; gap: 0; }
   .dn-rule { display: grid; grid-template-columns: 14px minmax(150px, 220px) 110px 1fr; align-items: baseline;

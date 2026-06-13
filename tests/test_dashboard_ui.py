@@ -374,7 +374,18 @@ def test_bundle_under_size_envelope(
     # the candidate/structure digests (no timestamp leak). ~0.4 KB of new
     # primitive + two consumers (back-compat: absent override → byte-identical
     # to today). The envelope is raised to 1.111 MB to cover it with headroom.
-    assert total < 1_111_000, f"bundle is {total} bytes, exceeds 1_111_000 envelope"
+    #
+    # The ABSOLUTE SCALARS IN THE GATE HEAD then surface the gate's absolute
+    # champion_scalar / challenger_scalar (and, mid-flight, the live projected
+    # challenger scalar + boards_done/total) as paired dn-stat chips LEFT of the
+    # existing Δ chips in candidate.js gatePanel — reusing the shipped `projStat`
+    # treatment for the in-flight side and folding the rounded, timestamp-free
+    # endpoints into candidateDigest. This closes the "Δ without its endpoints"
+    # projection gap from data that already rides on the gate object (no new
+    # backend field). ~3.6 KB of new surface incl. the prior wave's accrued
+    # spend (back-compat: a gate with no resolved scalars renders byte-identical
+    # to today). The envelope is raised to 1.124 MB to cover it with headroom.
+    assert total < 1_124_000, f"bundle is {total} bytes, exceeds 1_124_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

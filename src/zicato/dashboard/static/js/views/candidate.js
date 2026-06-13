@@ -543,7 +543,13 @@ function candidateDigest(s) {
         // operator-override provenance folded in (kind+action+state+reason, NO
         // timestamp) so an override appearing/changing repaints the gate while a
         // no-op beat stays byte-identical. null (none) → pre-override digest.
-        overrideDigest(g.override)]
+        overrideDigest(g.override),
+        // the ABSOLUTE-scalar endpoints (champion/challenger scalar + the live
+        // projected challenger + integer board counts) folded in so a board
+        // landing or a settle repaints the gate head, but a no-op heartbeat
+        // stays byte-identical. null (neither side resolves) → pre-feature
+        // digest (back-compat clean).
+        absoluteScalarsDigest(g)]
       : null),
     drill: s.entryParam || null,
     drillExp: s.exps && Array.isArray(s.exps.outcomes) ? s.exps.outcomes.map((o) => [o.kind, o.passed, o.judge_name, o.detail]) : null,
@@ -1298,6 +1304,56 @@ function allMatchupsPanel(mine, genId, championId, ctx, epochId) {
   return card;
 }
 
+// The ABSOLUTE-SCALAR endpoints the gate Δ is measured between, surfaced as a
+// pair of `dn-stat` chips LEFT of the Δ chips in the gate head. The champion
+// side is the SETTLED floor (`champion_scalar`); the challenger side is its
+// absolute `challenger_scalar` when SETTLED, or — while boards are still
+// streaming in for THIS pair — the LIVE PROJECTED scalar in the projStat
+// treatment (proj badge + boards_done/total bar) so an in-flight endpoint is
+// visibly NOT a settled one. Closes the "Δ without endpoints" gap with no new
+// backend data: `champion_scalar`/`challenger_scalar` and `live` already ride on
+// the gate object. Returns null when NEITHER side resolves (absent → the gate
+// head renders byte-identical to today). All floats fmt'd 2dp.
+export function absoluteScalars(gate) {
+  if (!gate) return null;
+  const champ = svg.isNum(gate.champion_scalar)
+    ? stat(svg.fmt(gate.champion_scalar, 2), 'champion scalar') : null;
+  // Prefer the LIVE projected challenger scalar (mid-flight) over the settled
+  // absolute; `gate.live` is non-null ONLY while this pair is still streaming.
+  const live = gate.live;
+  let chall = null;
+  if (live && svg.isNum(live.challenger_scalar)) {
+    chall = projStat(svg.fmt(live.challenger_scalar, 2), 'challenger scalar', {
+      boards_done: live.boards_done, boards_total: live.boards_total,
+    });
+  } else if (svg.isNum(gate.challenger_scalar)) {
+    chall = stat(svg.fmt(gate.challenger_scalar, 2), 'challenger scalar');
+  }
+  if (!champ && !chall) return null;
+  return el('div', { class: 'dn-row dn-gate-absolutes' }, [champ, chall].filter(Boolean));
+}
+
+// A content digest of the absolute-scalar endpoints: champion_scalar +
+// challenger_scalar (rounded 2dp, NO timestamp) + the live projection
+// (rounded scalar + INTEGER board counts). null when neither side resolves so
+// it contributes NOTHING to the gate digest (back-compat: byte-identical to the
+// pre-feature path). A no-op heartbeat re-emits the same numbers → equal digest
+// → skipped; a board landing (boards_done grows) or a settle (champion/
+// challenger scalar moving) flips it → repaint.
+export function absoluteScalarsDigest(gate) {
+  if (!gate) return null;
+  const cs = svg.isNum(gate.champion_scalar) ? gate.champion_scalar.toFixed(2) : null;
+  const ch = svg.isNum(gate.challenger_scalar) ? gate.challenger_scalar.toFixed(2) : null;
+  const live = gate.live;
+  const lv = live && svg.isNum(live.challenger_scalar) ? [
+    live.challenger_scalar.toFixed(2),
+    live.boards_done == null ? '?' : live.boards_done,
+    live.boards_total == null ? '?' : live.boards_total,
+  ] : null;
+  if (cs == null && ch == null && lv == null) return null;
+  return [cs, ch, lv];
+}
+
 // fix #1 — the stacked, non-overlapping gate panel:
 // (a) decision header, (b) the rules ladder (each rule its own row).
 // The old (c) champion-vs-challenger SCALAR-COMPONENTS comparison block was
@@ -1305,7 +1361,7 @@ function allMatchupsPanel(mine, genId, championId, ctx, epochId) {
 // redundant with the RADAR SILHOUETTE (which now compares candidate vs champion
 // across the same scalar / pass-rate / per-judge axes). The deciding-rule detail
 // the components used to carry now reads off the gate-rule ladder + the radar.
-function gatePanel(gate) {
+export function gatePanel(gate) {
   const card = el('div', { class: 'dn-panel dn-gate' });
   // Class B: a gate with no resolved decision is still pending, not rejected.
   // The backend emits decision:"deferred" verbatim until BOTH aggregates
@@ -1327,6 +1383,13 @@ function gatePanel(gate) {
   }
   card.appendChild(el('div', { class: 'dn-gate-head' }, [
     el('div', { class: 'dn-gate-decision' }, [verdictPill(decision), ovChip].filter(Boolean)),
+    // ABSOLUTE scalars sit LEFT of the Δ chips — the settled champion floor and
+    // the candidate's absolute scalar (or, mid-flight, its PROJECTED scalar in
+    // the projStat treatment) so the operator reads the two ENDPOINTS the Δ is
+    // taken between, not just the gap. Each side is absent-tolerant: a pre-#19 /
+    // unresolved aggregate (champion_scalar/challenger_scalar = null) drops its
+    // chip; absent everything → byte-identical to today (no abs block at all).
+    absoluteScalars(gate),
     el('div', { class: 'dn-row dn-gate-deltas' }, [
       svg.isNum(gate.delta_scalar) ? stat(svg.fmtSigned(gate.delta_scalar, 2), 'Δ scalar (loss)') : null,
       svg.isNum(gate.delta_pass_rate) ? stat(svg.fmtSigned(gate.delta_pass_rate, 2), 'Δ pass rate') : null,
