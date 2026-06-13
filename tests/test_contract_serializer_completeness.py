@@ -102,6 +102,7 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         "default_judge_weight": 2.5,
         "plan_revision_weight": 0.9,
         "runtime_weight": 0.3,
+        "diff_complexity_weight": 0.2,
         "promote_margin": 0.05,
         "pass_rate_monotonicity": False,
         "pass_rate_monotonicity_scope": "aggregate",

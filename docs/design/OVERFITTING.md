@@ -16,8 +16,10 @@
 > double_elim / racing) via `orchestrator._evolve_multi_challenger` +
 > `runner.confirm_crowning_holdout`, so a crowning under any structure is
 > Ladder-mediated on the holdout. §12 now carries per-lever **SHIPPED /
-> FUTURE** status tags (only **#4** diff-complexity regularization and
-> **#7** the random-baseline check remain unbuilt); treat the
+> FUTURE** status tags (**#4** diff-complexity regularization has since
+> shipped its loss-term half — `ScoringWeights.diff_complexity_weight`,
+> default-off; only the complexity-ceiling half and **#7** the
+> random-baseline check remain unbuilt); treat the
 > *mechanism → verdict* analysis as the design rationale and those tags
 > as the as-built status. The proposer **outcome-marginal failure-mode
 > channel** (§11.5) is the most recent addition.
@@ -603,14 +605,24 @@ edits. *Tradeoff:* less precise steering → possibly more rounds to a fix.
 **Independently shippable — no prerequisite — so ship it first** as the
 cheapest, most direct strike at adversarial Goodhart.
 
-**#4 — Diff/complexity regularization in the gate or loss. (FUTURE — not built.)**
-*What:* `λ · complexity(diff)` added to the challenger scalar, or a
-complexity ceiling that rejects oversized diffs. *Where:* `scoring.py`
-(loss term) / `gate.py` (ceiling), with `complexity` counting mutation
-points + chars changed + new branches. *Cost:* a new weight to calibrate.
-*Tradeoff:* may suppress a legitimately large beneficial refactor; pair
-with the proposer-brief mutation budget (`SELECTION.md` §9 lever 4) rather
-than duplicating it.
+**#4 — Diff/complexity regularization in the gate or loss. (SHIPPED — loss term.)**
+*What:* `λ · complexity(diff)` added to the challenger scalar, with
+`complexity = added + removed + patches` over the challenger's patch
+records. *Where:* `ScoringWeights.diff_complexity_weight` (default `0.0`)
+folds a `diff_complexity` component into the built-in scalar
+(`scoring/builtins.py::builtin_scalar` + `tournament/scoring.py`), surfaced
+through the existing `scalar_components` mechanism and a
+`diff_size:{champion,challenger}:{added,removed,patches}` gate evidence line
+(`tournament/gate.py::diff_size_evidence`); the diff size comes from
+`scoring/diff_complexity.py::diff_size` (the lifted best-of-N `_diff_size`
+proxy). DEFAULT-OFF and byte-identical at `0.0` — the term is exactly absent
+and the contract canonicalizer omits the field at the default so no existing
+epoch rolls. The orchestrator threads the challenger's diff size on the full
+A/B promotion path only (the champion side pays no parsimony cost). The
+complexity-ceiling half (reject oversized diffs in `gate.py`) is still future.
+*Cost:* a new weight to calibrate. *Tradeoff:* may suppress a legitimately
+large beneficial refactor; pair with the proposer-brief mutation budget
+(`SELECTION.md` §9 lever 4) rather than duplicating it.
 
 **#5 — A `generalization_gap` loop-health detector. (SHIPPED.)**
 *What:* track `train_loss` vs `holdout_loss` across the lineage; fire
