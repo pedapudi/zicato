@@ -100,6 +100,25 @@ def progress_log_path(workspace_root: Path) -> Path:
     return runtime_dir(workspace_root) / "progress.events.jsonl"
 
 
+def inconclusive_dir(workspace_root: Path) -> Path:
+    """Return the dead-letter directory for inconclusive crowning duels.
+
+    The Bradley--Terry promotion pre-gate (opt-in) records here any crowning
+    duel whose rating CIs never separated after its replicate budget was spent
+    — a terminal ``"inconclusive"`` verdict. One JSON file per generation
+    (:func:`inconclusive_record_path`) captures the unresolved duel + its final
+    CIs so nothing is silently dropped. The directory is created lazily by the
+    writer; an absent directory simply means no inconclusive duel was ever
+    recorded (the default for every run that did not opt into the pre-gate).
+    """
+    return runtime_dir(workspace_root) / "inconclusive"
+
+
+def inconclusive_record_path(workspace_root: Path, generation_id: str) -> Path:
+    """Return the dead-letter path for one inconclusive challenger generation."""
+    return inconclusive_dir(workspace_root) / f"{generation_id}.json"
+
+
 def control_dir(workspace_root: Path) -> Path:
     """Return the directory operator commands are dropped into."""
     return runtime_dir(workspace_root) / "control"
@@ -164,6 +183,8 @@ __all__ = [
     "active_tournament_path",
     "active_tournament_log_path",
     "progress_log_path",
+    "inconclusive_dir",
+    "inconclusive_record_path",
     "control_dir",
     "control_log_dir",
     "control_command_path",
