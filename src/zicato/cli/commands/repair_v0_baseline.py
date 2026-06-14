@@ -36,41 +36,40 @@ import click
 
 from zicato.core.workspace import epoch_dir, generation_dir
 from zicato.epoch.journal import write_seed_experiment
+from zicato.workspace import WorkspaceLayout, list_epoch_ids
 
 
-def _epochs_root(workspace_root: Path) -> Path:
-    """Resolve the ``epochs/`` directory under ``workspace_root``.
+def _normalised_layout(workspace_root: Path) -> WorkspaceLayout:
+    """A :class:`WorkspaceLayout` over the descent-normalised inner root.
 
     Reuses :func:`zicato.core.workspace.epoch_dir`'s normalisation (it
     descends into ``.zicato/`` when the caller passes the outer project
-    dir) by querying it for a sentinel epoch id and stripping the
-    trailing component. Avoids reaching for the private normaliser.
+    dir) by querying it for a sentinel epoch id and stripping the two
+    trailing components (``epochs/<id>``) back to the inner root. Avoids
+    reaching for the private normaliser while keeping the resolved
+    ``epochs/`` path identical to the prior hand-walk.
     """
-    return epoch_dir(workspace_root, "_sentinel_").parent
+    return WorkspaceLayout.from_root(epoch_dir(workspace_root, "_sentinel_").parent.parent)
 
 
 def _iter_v0_targets(workspace_root: Path, epoch_filter: str | None) -> list[str]:
     """Enumerate epoch ids whose v0 generation directory exists on disk.
 
-    Walks ``epochs/`` directly rather than going through
-    :func:`zicato.epoch.lifecycle.list_epochs` so a workspace whose
-    ``config.json`` is malformed or pre-schema still surfaces. The
-    repair command's whole point is to fix workspaces in the wild;
-    insisting on a strictly-valid config to even *find* them is
+    Discovers epochs through the canonical enumeration authority
+    (:func:`zicato.workspace.list_epoch_ids`) rather than
+    :func:`zicato.epoch.lifecycle.list_epochs`, so a workspace whose
+    ``config.json`` is malformed or pre-schema still surfaces — the
+    enumeration walks the ``epochs/`` subdirectories and an unreadable
+    config only drops the epoch's ordering timestamp, never the epoch
+    itself. The repair command's whole point is to fix workspaces in the
+    wild; insisting on a strictly-valid config to even *find* them is
     backwards.
 
     When ``epoch_filter`` is given we restrict to that single epoch
     (and still verify that its v0 directory exists — a typo'd filter
     argument yields an empty target list rather than a stack trace).
     """
-    epochs_root = _epochs_root(workspace_root)
-    if not epochs_root.exists():
-        return []
-    candidates: list[str] = []
-    for child in sorted(epochs_root.iterdir()):
-        if not child.is_dir():
-            continue
-        candidates.append(child.name)
+    candidates = list_epoch_ids(_normalised_layout(workspace_root))
     if epoch_filter is not None:
         candidates = [eid for eid in candidates if eid == epoch_filter]
     out: list[str] = []
