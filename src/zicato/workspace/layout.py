@@ -103,6 +103,33 @@ class WorkspaceLayout:
         """One epoch's per-component contract sub-hashes (``contract_components.json``)."""
         return self.epoch_dir(epoch_id) / "contract_components.json"
 
+    def ladder_state(self, epoch_id: str) -> Path:
+        """One epoch's persisted Ladder governor state (``ladder_state.json``)."""
+        return self.epoch_dir(epoch_id) / "ladder_state.json"
+
+    def current_generation_marker(self, epoch_id: str) -> Path:
+        """One epoch's promoted-lineage-head marker (``current_generation``)."""
+        return self.epoch_dir(epoch_id) / "current_generation"
+
+    def roll_seed_marker(self, epoch_id: str) -> Path:
+        """One epoch's cross-epoch v0-seed marker (``v0_seed_from``).
+
+        Written when an epoch is opened by a contract-roll: it records the
+        absolute path to the predecessor epoch's promoted-head snapshot, so
+        the new epoch's ``v0`` is seeded from there rather than the
+        registered source. Absent for a fresh (non-rolled) epoch.
+        """
+        return self.epoch_dir(epoch_id) / "v0_seed_from"
+
+    def field_tournament(self, epoch_id: str, first_challenger_id: str) -> Path:
+        """One round's durable field-tournament snapshot JSON.
+
+        See :meth:`field_tournaments_dir`. ``first_challenger_id`` keys the
+        snapshot on the round's first applied challenger so a multi-round
+        epoch keeps one file per round (``field-{first_challenger}.json``).
+        """
+        return self.field_tournaments_dir(epoch_id) / f"field-{first_challenger_id}.json"
+
     def health_dir(self, epoch_id: str) -> Path:
         """One epoch's loop-health snapshot directory (``health/``)."""
         return self.epoch_dir(epoch_id) / "health"
@@ -132,6 +159,10 @@ class WorkspaceLayout:
     def patches_dir(self, epoch_id: str, generation_id: str) -> Path:
         """One generation's per-patch JSON directory (``patches/``)."""
         return self.generation_dir(epoch_id, generation_id) / "patches"
+
+    def patch_json(self, epoch_id: str, generation_id: str, patch_id: str) -> Path:
+        """One patch's JSON file inside a generation's ``patches/`` directory."""
+        return self.patches_dir(epoch_id, generation_id) / f"{patch_id}.json"
 
     def runs_dir(self, epoch_id: str, generation_id: str) -> Path:
         """One generation's ``runs/`` directory (one sub-dir per board entry)."""

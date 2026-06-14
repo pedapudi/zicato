@@ -50,6 +50,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from zicato.workspace.layout import WorkspaceLayout
+
 
 def _normalise_workspace_root(workspace_root: Path) -> Path:
     """Resolve ``workspace_root`` to the inner ``.zicato/`` dir when needed.
@@ -78,22 +80,26 @@ def _normalise_workspace_root(workspace_root: Path) -> Path:
     return root
 
 
-def _epoch_root(workspace_root: Path, epoch_id: str) -> Path:
-    return _normalise_workspace_root(workspace_root) / "epochs" / epoch_id
+def _layout(workspace_root: Path) -> WorkspaceLayout:
+    """Build a :class:`WorkspaceLayout` over the descent-normalised root.
 
-
-def _generation_root(workspace_root: Path, epoch_id: str, generation_id: str) -> Path:
-    return _epoch_root(workspace_root, epoch_id) / "generations" / generation_id
+    The outer→inner descent (:func:`_normalise_workspace_root`) is the one
+    I/O step this module owns; every *leaf* path join is then delegated to
+    the shared :class:`WorkspaceLayout` so there is a single definition of
+    the ``.zicato/`` filename layout (read AND write). The descent must run
+    first because the layout itself does no probing.
+    """
+    return WorkspaceLayout.from_root(_normalise_workspace_root(workspace_root))
 
 
 def epoch_dir(workspace_root: Path, epoch_id: str) -> Path:
     """Return the directory holding one epoch's artifacts."""
-    return _epoch_root(workspace_root, epoch_id)
+    return _layout(workspace_root).epoch_dir(epoch_id)
 
 
 def generation_dir(workspace_root: Path, epoch_id: str, generation_id: str) -> Path:
     """Return the directory holding one generation's artifacts."""
-    return _generation_root(workspace_root, epoch_id, generation_id)
+    return _layout(workspace_root).generation_dir(epoch_id, generation_id)
 
 
 def run_dir(
@@ -107,7 +113,7 @@ def run_dir(
     A run is one ``(epoch, generation, board_entry)`` triple; its
     directory holds the events JSONL and the reducer's loss profile.
     """
-    return _generation_root(workspace_root, epoch_id, generation_id) / "runs" / entry_id
+    return _layout(workspace_root).run_dir(epoch_id, generation_id, entry_id)
 
 
 def events_jsonl_path(
@@ -117,7 +123,7 @@ def events_jsonl_path(
     entry_id: str,
 ) -> Path:
     """Path to the goldfive event JSONL for one run."""
-    return run_dir(workspace_root, epoch_id, generation_id, entry_id) / "events.jsonl"
+    return _layout(workspace_root).events(epoch_id, generation_id, entry_id)
 
 
 def loss_profile_path(
@@ -127,12 +133,12 @@ def loss_profile_path(
     entry_id: str,
 ) -> Path:
     """Path to the reducer's ``loss.json`` output for one run."""
-    return run_dir(workspace_root, epoch_id, generation_id, entry_id) / "loss.json"
+    return _layout(workspace_root).loss(epoch_id, generation_id, entry_id)
 
 
 def experiment_json_path(workspace_root: Path, epoch_id: str, generation_id: str) -> Path:
     """Path to a generation's ``experiment.json`` (hypothesis + outcome)."""
-    return _generation_root(workspace_root, epoch_id, generation_id) / "experiment.json"
+    return _layout(workspace_root).experiment(epoch_id, generation_id)
 
 
 def patches_dir(workspace_root: Path, epoch_id: str, generation_id: str) -> Path:
@@ -142,7 +148,7 @@ def patches_dir(workspace_root: Path, epoch_id: str, generation_id: str) -> Path
     layout. The directory is created lazily by writers; readers tolerate
     its absence (an experiment with zero patches has no directory).
     """
-    return _generation_root(workspace_root, epoch_id, generation_id) / "patches"
+    return _layout(workspace_root).patches_dir(epoch_id, generation_id)
 
 
 def patch_json_path(
@@ -152,7 +158,7 @@ def patch_json_path(
     patch_id: str,
 ) -> Path:
     """Path to one patch JSON file inside a generation's patches directory."""
-    return patches_dir(workspace_root, epoch_id, generation_id) / f"{patch_id}.json"
+    return _layout(workspace_root).patch_json(epoch_id, generation_id, patch_id)
 
 
 def mutations_json_path(workspace_root: Path, epoch_id: str) -> Path:
@@ -166,7 +172,7 @@ def mutations_json_path(workspace_root: Path, epoch_id: str) -> Path:
     generation directory) and is overwritten every round — it always
     reflects the most recent enumeration.
     """
-    return _epoch_root(workspace_root, epoch_id) / "mutations.json"
+    return _layout(workspace_root).mutations(epoch_id)
 
 
 def ladder_state_path(workspace_root: Path, epoch_id: str) -> Path:
@@ -179,27 +185,27 @@ def ladder_state_path(workspace_root: Path, epoch_id: str) -> Path:
     epoch directory (not a generation directory) because the budget is a
     per-epoch resource, exactly like ``mutations.json``.
     """
-    return _epoch_root(workspace_root, epoch_id) / "ladder_state.json"
+    return _layout(workspace_root).ladder_state(epoch_id)
 
 
 def journal_path(workspace_root: Path, epoch_id: str) -> Path:
     """Path to an epoch's running narrative journal."""
-    return _epoch_root(workspace_root, epoch_id) / "journal.md"
+    return _layout(workspace_root).journal(epoch_id)
 
 
 def analysis_path(workspace_root: Path, epoch_id: str) -> Path:
     """Path to an epoch's at-close analysis writeup."""
-    return _epoch_root(workspace_root, epoch_id) / "analysis.md"
+    return _layout(workspace_root).analysis_md(epoch_id)
 
 
 def lineage_path(workspace_root: Path) -> Path:
     """Path to the workspace-level cross-cutting lineage DAG."""
-    return _normalise_workspace_root(workspace_root) / "lineage.json"
+    return _layout(workspace_root).lineage_path
 
 
 def brief_path(workspace_root: Path, epoch_id: str) -> Path:
     """Path to the operator-edited proposer brief for one epoch (``brief.md``)."""
-    return _epoch_root(workspace_root, epoch_id) / "brief.md"
+    return _layout(workspace_root).brief(epoch_id)
 
 
 def rubric_path(workspace_root: Path, epoch_id: str) -> Path:
@@ -214,7 +220,7 @@ def rubric_path(workspace_root: Path, epoch_id: str) -> Path:
 
 def board_path(workspace_root: Path, epoch_id: str) -> Path:
     """Path to one epoch's frozen board JSONL."""
-    return _epoch_root(workspace_root, epoch_id) / "board.jsonl"
+    return _layout(workspace_root).board(epoch_id)
 
 
 def field_tournaments_dir(workspace_root: Path, epoch_id: str) -> Path:
@@ -235,7 +241,7 @@ def field_tournaments_dir(workspace_root: Path, epoch_id: str) -> Path:
     directory is created lazily by the writer; readers tolerate its
     absence (a pure-gauntlet epoch never writes one).
     """
-    return _epoch_root(workspace_root, epoch_id) / "tournaments"
+    return _layout(workspace_root).field_tournaments_dir(epoch_id)
 
 
 def field_tournament_path(workspace_root: Path, epoch_id: str, first_challenger_id: str) -> Path:
@@ -246,12 +252,12 @@ def field_tournament_path(workspace_root: Path, epoch_id: str, first_challenger_
     ``active_tournament`` tournament id is minted from — so the snapshot
     is idempotent across rebuilds and unique per round.
     """
-    return field_tournaments_dir(workspace_root, epoch_id) / f"field-{first_challenger_id}.json"
+    return _layout(workspace_root).field_tournament(epoch_id, first_challenger_id)
 
 
 def scoring_path(workspace_root: Path, epoch_id: str) -> Path:
     """Path to one epoch's frozen scoring-weights JSON."""
-    return _epoch_root(workspace_root, epoch_id) / "scoring.json"
+    return _layout(workspace_root).scoring(epoch_id)
 
 
 def assert_distinct_callables(

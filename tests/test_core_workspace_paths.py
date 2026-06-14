@@ -33,13 +33,23 @@ from zicato.core.workspace import (
     board_path,
     brief_path,
     epoch_dir,
+    events_jsonl_path,
+    experiment_json_path,
+    field_tournament_path,
+    field_tournaments_dir,
     generation_dir,
     journal_path,
+    ladder_state_path,
     lineage_path,
+    loss_profile_path,
     mutations_json_path,
+    patch_json_path,
+    patches_dir,
     rubric_path,
+    run_dir,
     scoring_path,
 )
+from zicato.workspace import WorkspaceLayout
 
 
 def test_epoch_dir_inner_form(tmp_path: Path) -> None:
@@ -108,3 +118,57 @@ def test_lineage_path_descends(tmp_path: Path) -> None:
     (inner / "epochs").mkdir(parents=True)
     assert lineage_path(tmp_path) == inner / "lineage.json"
     assert lineage_path(inner) == inner / "lineage.json"
+
+
+def test_core_helpers_agree_with_workspace_layout(tmp_path: Path) -> None:
+    """The ``core.workspace`` write-path helpers route through ``WorkspaceLayout``.
+
+    The descent-normalised root and the layout share ONE definition of the
+    leaf filename joins (read AND write). Pin that every ``core.workspace``
+    helper produces exactly the path the layout resolves for the same
+    coordinate — so a future divergence in either authority is caught here.
+    The inner form (no descent) is used so the comparison is a pure path
+    identity, not a descent test (that family is pinned above).
+    """
+    inner = tmp_path / ".zicato"
+    layout = WorkspaceLayout.from_root(inner)
+
+    assert epoch_dir(inner, "e0") == layout.epoch_dir("e0")
+    assert generation_dir(inner, "e0", "v1") == layout.generation_dir("e0", "v1")
+    assert run_dir(inner, "e0", "v1", "t1") == layout.run_dir("e0", "v1", "t1")
+    assert events_jsonl_path(inner, "e0", "v1", "t1") == layout.events("e0", "v1", "t1")
+    assert loss_profile_path(inner, "e0", "v1", "t1") == layout.loss("e0", "v1", "t1")
+    assert experiment_json_path(inner, "e0", "v1") == layout.experiment("e0", "v1")
+    assert patches_dir(inner, "e0", "v1") == layout.patches_dir("e0", "v1")
+    assert patch_json_path(inner, "e0", "v1", "p3") == layout.patch_json("e0", "v1", "p3")
+    assert mutations_json_path(inner, "e0") == layout.mutations("e0")
+    assert ladder_state_path(inner, "e0") == layout.ladder_state("e0")
+    assert journal_path(inner, "e0") == layout.journal("e0")
+    assert analysis_path(inner, "e0") == layout.analysis_md("e0")
+    assert lineage_path(inner) == layout.lineage_path
+    assert brief_path(inner, "e0") == layout.brief("e0")
+    assert board_path(inner, "e0") == layout.board("e0")
+    assert scoring_path(inner, "e0") == layout.scoring("e0")
+    assert field_tournaments_dir(inner, "e0") == layout.field_tournaments_dir("e0")
+    assert field_tournament_path(inner, "e0", "v2") == layout.field_tournament("e0", "v2")
+
+
+def test_workspace_layout_write_markers(tmp_path: Path) -> None:
+    """The write-path marker methods added to ``WorkspaceLayout`` resolve correctly.
+
+    ``current_generation`` (promoted-head marker), ``v0_seed_from`` (the
+    cross-epoch roll seed marker), ``ladder_state.json``, the per-patch JSON
+    file, and one round's field-tournament snapshot — the write-path leaf
+    joins that previously lived as inline string joins in the orchestrator
+    and epoching modules.
+    """
+    root = tmp_path / ".zicato"
+    layout = WorkspaceLayout.from_root(root)
+    edir = root / "epochs" / "e0"
+    assert layout.current_generation_marker("e0") == edir / "current_generation"
+    assert layout.roll_seed_marker("e0") == edir / "v0_seed_from"
+    assert layout.ladder_state("e0") == edir / "ladder_state.json"
+    assert layout.patch_json("e0", "v1", "p3") == (
+        edir / "generations" / "v1" / "patches" / "p3.json"
+    )
+    assert layout.field_tournament("e0", "v2") == edir / "tournaments" / "field-v2.json"
