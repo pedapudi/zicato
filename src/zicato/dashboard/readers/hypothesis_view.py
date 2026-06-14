@@ -34,6 +34,7 @@ from zicato.dashboard.readers.paths import (
     _natural_key,
     _read_json_value,
     _resolve_epoch_id,
+    layout_of,
 )
 
 # Plateau band: a realised movement whose magnitude is within this of zero
@@ -305,7 +306,7 @@ def build_hypothesis_accuracy(
         "score": {"hits": 0, "total": 0, "fraction": None, "brier": None},
         "pass_rate": {"predicted": "", "observed": None},
     }
-    exp_path = paths.epochs / epoch_id / "generations" / generation_id / "experiment.json"
+    exp_path = layout_of(paths).experiment(epoch_id, generation_id)
     experiment = _read_json_value(exp_path)
     if not isinstance(experiment, dict):
         return empty
@@ -383,7 +384,7 @@ def build_calibration_trend(paths: WorkspacePaths, epoch_id: str | None = None) 
     if resolved is None:
         return empty
 
-    gens_dir = paths.epochs / resolved / "generations"
+    gens_dir = layout_of(paths).generations_dir(resolved)
     if not gens_dir.is_dir():
         return empty
 

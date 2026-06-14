@@ -19,9 +19,11 @@ from zicato.dashboard.readers.paths import (
     WorkspacePaths,
     _read_json_value,
     _resolve_epoch_id,
+    layout_of,
     read_current_epoch,
 )
 from zicato.dashboard.readers.runtime_view import read_active_tournament_dict
+from zicato.workspace import read_gen_score
 
 
 def _champion_lineage(generations: list[dict[str, Any]]) -> list[str]:
@@ -274,10 +276,10 @@ def build_bracket(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[st
         # so the API agrees with the configured single_elim/swiss/racing rather
         # than mislabelling the epoch gauntlet.
         if epoch_structure == "gauntlet":
-            epoch_dir = paths.epochs / epoch_id
-            block = _tournament_block_from_scoring(_read_json_value(epoch_dir / "scoring.json"))
+            layout = layout_of(paths)
+            block = _tournament_block_from_scoring(_read_json_value(layout.scoring(epoch_id)))
             if block is None:
-                cfg = _read_json_value(epoch_dir / "config.json")
+                cfg = _read_json_value(layout.epoch_config(epoch_id))
                 block = _tournament_block_from_scoring(
                     cfg.get("scoring") if isinstance(cfg, dict) else None
                 )
@@ -545,7 +547,7 @@ def _read_run_loss_files(
     yet yields ``{}``.
     """
     out: dict[str, dict[str, Any]] = {}
-    runs_dir = paths.epochs / epoch_id / "generations" / generation_id / "runs"
+    runs_dir = layout_of(paths).runs_dir(epoch_id, generation_id)
     if not runs_dir.is_dir():
         return out
     for run_dir in sorted(runs_dir.iterdir()):
@@ -587,10 +589,7 @@ def _read_gen_score(paths: WorkspacePaths, epoch_id: str, generation_id: str) ->
     ``pass_rate`` / ``scalar_components`` / ...), or ``{}`` when the
     file is absent or malformed.
     """
-    score = _read_json_value(
-        paths.epochs / epoch_id / "generations" / generation_id / "gen_score.json"
-    )
-    return score if isinstance(score, dict) else {}
+    return read_gen_score(layout_of(paths), epoch_id, generation_id)
 
 
 def _grid_won_by(

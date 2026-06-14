@@ -20,6 +20,7 @@ from zicato.dashboard.readers.paths import (
     _preview,
     _read_json_value,
     _utc_now,
+    layout_of,
     read_current_epoch,
 )
 from zicato.dashboard.readers.run_log import (
@@ -202,7 +203,7 @@ def build_per_entry_for_generation(
     # Resolve the parent_generation_id from the child's experiment.json
     # so we can compose the FK. The reader is best-effort: a missing
     # / malformed file falls back to the generation-scoped query.
-    exp_path = paths.epochs / epoch_id / "generations" / generation_id / "experiment.json"
+    exp_path = layout_of(paths).experiment(epoch_id, generation_id)
     parent_gen_id: str | None = None
     raw_exp = _read_json_value(exp_path)
     if isinstance(raw_exp, dict):
@@ -448,9 +449,7 @@ def _load_run_loss(
     :func:`build_run_header` to project structured fields without
     requiring an indexed workspace.
     """
-    loss_path = (
-        paths.epochs / epoch_id / "generations" / generation_id / "runs" / entry_id / "loss.json"
-    )
+    loss_path = layout_of(paths).loss(epoch_id, generation_id, entry_id)
     try:
         loss = json.loads(loss_path.read_text(encoding="utf-8"))
     except (FileNotFoundError, OSError, json.JSONDecodeError, ValueError):
@@ -671,15 +670,15 @@ def build_workspace_identity(paths: WorkspacePaths) -> dict[str, Any]:
 
     epoch_id = read_current_epoch(paths)
     if epoch_id is not None:
-        epoch_dir = paths.epochs / epoch_id
-        board_path = str(epoch_dir / "board.jsonl")
-        brief_path_candidate = epoch_dir / "brief.md"
+        layout = layout_of(paths)
+        board_path = str(layout.board(epoch_id))
+        brief_path_candidate = layout.brief(epoch_id)
         if not brief_path_candidate.exists():
-            legacy = epoch_dir / "rubric.md"
+            legacy = layout.legacy_rubric(epoch_id)
             brief_path = str(legacy) if legacy.exists() else str(brief_path_candidate)
         else:
             brief_path = str(brief_path_candidate)
-        scoring_path = str(epoch_dir / "scoring.json")
+        scoring_path = str(layout.scoring(epoch_id))
     else:
         board_path = None
         brief_path = None
@@ -900,9 +899,10 @@ def build_search_results(paths: WorkspacePaths, query: str) -> dict[str, Any]:
     epoch_id = read_current_epoch(paths)
 
     # --- entries: walk the current epoch's board.jsonl ---------------
+    layout = layout_of(paths)
     entry_hits: list[dict[str, Any]] = []
     if epoch_id:
-        board_path = paths.epochs / epoch_id / "board.jsonl"
+        board_path = layout.board(epoch_id)
         board = _parse_board(board_path)
         if board:
             for entry in board:
@@ -917,7 +917,7 @@ def build_search_results(paths: WorkspacePaths, query: str) -> dict[str, Any]:
     # --- judges: board + index union ---------------------------------
     judge_names: set[str] = set()
     if epoch_id:
-        judge_names |= _collect_judge_names_from_board_file(paths.epochs / epoch_id / "board.jsonl")
+        judge_names |= _collect_judge_names_from_board_file(layout.board(epoch_id))
     judge_names |= _collect_judge_names_from_index(paths.index_db)
     judge_hits: list[dict[str, Any]] = [{"name": n} for n in judge_names if q_lower in n.lower()]
     judge_hits = _sort_by_match_quality(judge_hits, "name", q_lower)

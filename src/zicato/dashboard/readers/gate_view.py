@@ -17,6 +17,7 @@ from zicato.dashboard.readers.paths import (
     WorkspacePaths,
     _read_json_value,
     _resolve_epoch_id,
+    layout_of,
     read_current_epoch,
 )
 from zicato.dashboard.readers.tournament_view import (
@@ -364,7 +365,7 @@ def _read_epoch_scoring_weights(paths: WorkspacePaths, epoch_id: str) -> Any:
     """
     from zicato.core import ScoringWeights  # noqa: PLC0415
 
-    raw = _read_json_value(paths.epochs / epoch_id / "scoring.json")
+    raw = _read_json_value(layout_of(paths).scoring(epoch_id))
     if not isinstance(raw, dict):
         return ScoringWeights()
 
@@ -703,9 +704,7 @@ def _build_override_block(
     absent: dict[str, Any] = {"present": False, "action": None, "reason": None}
     if not challenger_id:
         return absent
-    exp = _read_json_value(
-        paths.epochs / epoch_id / "generations" / challenger_id / "experiment.json"
-    )
+    exp = _read_json_value(layout_of(paths).experiment(epoch_id, challenger_id))
     if not isinstance(exp, dict):
         return absent
     outcome = exp.get("outcome")
@@ -1100,7 +1099,7 @@ def _read_promote_confidence_threshold(paths: WorkspacePaths, epoch_id: str) -> 
         read_promote_confidence_threshold as _read_threshold,
     )
 
-    raw = _read_json_value(paths.epochs / epoch_id / "scoring.json")
+    raw = _read_json_value(layout_of(paths).scoring(epoch_id))
     if not isinstance(raw, dict):
         return None
     tournament = raw.get("tournament")
