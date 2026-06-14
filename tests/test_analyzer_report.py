@@ -1479,3 +1479,128 @@ def test_restamp_is_noop_on_non_masthead_format(tmp_path: Path) -> None:
     md_path.write_text(original, encoding="utf-8")
     assert restamp_persisted_report(ws, epoch) is False
     assert md_path.read_text(encoding="utf-8") == original
+
+
+# ---------------------------------------------------------------------------
+# Workspace-seam: generation ordering + per-generation content parity
+# ---------------------------------------------------------------------------
+
+
+def test_generation_ordering_is_numeric_aware_and_content_preserved(tmp_path: Path) -> None:
+    """The analyzer orders generations numeric-aware (the canonical layer's
+    authority), not lexically, and every per-generation fact is intact.
+
+    Bug-mirror shape: generation ``v10`` sorts BEFORE ``v2`` lexically but
+    AFTER it numerically — the order the analyzer must present. A
+    sibling epoch with NO generations confirms the empty case degrades to
+    an empty view (never an exception). This is the
+    ``read_experiments`` (``natural_key``) ordering the analyzer now routes
+    through the workspace seam.
+    """
+    ws = tmp_path / ".zicato"
+    epoch = "2026-06-14_order"
+    edir = ws / "epochs" / epoch
+    edir.mkdir(parents=True)
+    _write(
+        edir / "config.json",
+        {
+            "id": epoch,
+            "name": "Ordering Probe",
+            "created_at": "2026-06-14T00:00:00Z",
+            "contract_hash": "feedface00000001",
+            "closed": False,
+        },
+    )
+
+    # Created out of lexical order: v0, v1, v2, v10. Each carries a distinct
+    # scalar delta + its own per-patch + per-run loss so a mis-ordered or
+    # mis-joined read would corrupt a checkable number.
+    gen_specs = [
+        ("v0", "", 0.0),
+        ("v1", "v0", -0.10),
+        ("v2", "v1", -0.05),
+        ("v10", "v2", 0.07),
+    ]
+    for gid, parent, delta in gen_specs:
+        exp: dict[str, object] = {
+            "id": f"exp-{gid}",
+            "epoch_id": epoch,
+            "generation_id": gid,
+            "parent_generation_id": parent,
+            "proposed_at": f"2026-06-14T{int(gid[1:]):02d}:00:00Z",
+            "hypothesis": {"core_idea": f"idea-{gid}", "modulating": []},
+        }
+        if parent:
+            exp["patch_ids"] = [f"p-{gid}"]
+            exp["outcome"] = {
+                "tournament_decision": "promoted",
+                "scalar_score_delta": delta,
+                "pass_rate_delta": 0.0,
+                "drift_loss_delta": 0.0,
+                "drift_movements": [],
+            }
+        _write(edir / "generations" / gid / "experiment.json", exp)
+        if parent:
+            _write(
+                edir / "generations" / gid / "patches" / f"p-{gid}.json",
+                {"id": f"p-{gid}", "mutation_id": f"m-{gid}", "op": "replace", "rationale": gid},
+            )
+        # A per-run loss with a per-judge attribution unique to this gen so a
+        # mis-joined runs/ read would surface the wrong total.
+        _write(
+            edir / "generations" / gid / "runs" / "t1" / "loss.json",
+            {
+                "entry_id": "t1",
+                "per_judge_loss": [{"judge_name": f"judge-{gid}", "weighted_loss": 1.0}],
+            },
+        )
+
+    data = gather_epoch_report_data(ws, epoch)
+
+    # Numeric-aware order: v10 follows v2, not the lexical v0,v1,v10,v2.
+    assert [g.generation_id for g in data.generations] == ["v0", "v1", "v2", "v10"]
+
+    # Per-generation content joined to the right directory: each patch +
+    # per-judge total must belong to its own generation.
+    by_id = {g.generation_id: g for g in data.generations}
+    assert by_id["v10"].patches == ({"mutation_id": "m-v10", "op": "replace", "rationale": "v10"},)
+    assert by_id["v2"].per_judge_loss_totals == (("judge-v2", 1.0),)
+    assert by_id["v10"].per_judge_loss_totals == (("judge-v10", 1.0),)
+
+    # Cumulative scalar walks the (numeric-aware) lineage: 0 -> -0.10 -> -0.15 -> -0.08.
+    cum = {g.generation_id: g.cumulative_scalar for g in data.generations}
+    assert cum["v10"] == pytest.approx(-0.08)
+
+    # A sibling epoch with no generations degrades to an empty view.
+    empty_epoch = "2026-06-14_empty"
+    eedir = ws / "epochs" / empty_epoch
+    eedir.mkdir(parents=True)
+    _write(eedir / "config.json", {"id": empty_epoch, "name": "Empty", "closed": True})
+    empty = gather_epoch_report_data(ws, empty_epoch)
+    assert empty.generations == ()
+    assert empty.epoch_name == "Empty"
+
+
+def test_gather_orders_generations_identically_via_inner_and_outer_root(tmp_path: Path) -> None:
+    """The numeric-aware generation order is identical whether the caller
+    passes the inner ``.zicato`` root or the outer project dir — the seam's
+    normalisation preserves the historical outer-dir acceptance."""
+    ws = tmp_path / ".zicato"
+    epoch = "2026-06-14_dual"
+    edir = ws / "epochs" / epoch
+    edir.mkdir(parents=True)
+    _write(
+        edir / "config.json",
+        {"id": epoch, "name": "Dual", "created_at": "2026-06-14T00:00:00Z"},
+    )
+    for gid, parent in [("v0", ""), ("v2", "v0"), ("v10", "v2")]:
+        _write(
+            edir / "generations" / gid / "experiment.json",
+            {"generation_id": gid, "parent_generation_id": parent, "hypothesis": {}},
+        )
+    inner = gather_epoch_report_data(ws, epoch)
+    outer = gather_epoch_report_data(ws.parent, epoch)
+    assert [g.generation_id for g in inner.generations] == ["v0", "v2", "v10"]
+    assert [g.generation_id for g in outer.generations] == [
+        g.generation_id for g in inner.generations
+    ]
