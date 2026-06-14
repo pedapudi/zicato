@@ -642,7 +642,7 @@ def build_epoch_view(paths: WorkspacePaths, epoch_id: str | None = None) -> dict
     if epoch_id is None:
         return {"epoch_id": None}
 
-    epoch_dir = paths.epochs / epoch_id
+    epoch_dir = layout_of(paths).epoch_dir(epoch_id)
     view: dict[str, Any] = {"epoch_id": epoch_id}
 
     cfg = _read_json_value(epoch_dir / "config.json")
@@ -774,7 +774,7 @@ def read_epoch_analysis_html(paths: WorkspacePaths, epoch_id: str) -> str | None
     Used by the ``GET /api/epoch/{id}/analysis.html`` endpoint so the
     dashboard can embed or link the self-contained analysis report.
     """
-    path = paths.epochs / epoch_id / "analysis.html"
+    path = layout_of(paths).analysis_html(epoch_id)
     try:
         return path.read_text(encoding="utf-8")
     except (FileNotFoundError, OSError):
