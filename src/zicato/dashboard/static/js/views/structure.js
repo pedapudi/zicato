@@ -103,9 +103,40 @@ export function inflightForEntryGen(runs, entryId, genId) {
   });
 }
 
+// Terminal tokens a run's `status` / `state` field may carry once it has ended.
+const RUN_TERMINAL_STATUS = new Set([
+  'done', 'complete', 'completed', 'finished', 'pass', 'fail', 'failed',
+  'error', 'timeout', 'cached', 'skipped',
+]);
+
+// Is this run record TERMINAL (ended)? True on an explicit terminal flag/status
+// or when every task/board has landed — keyed to COMPLETION, not the wall-clock
+// budget (the "1/1 tasks completed but 0%" bug: the bar read elapsed/budget and
+// ignored the completed work).
+export function runIsTerminal(r) {
+  if (!r || typeof r !== 'object') return false;
+  if (r.completed === true || r.terminal === true || r.done === true) return true;
+  const tok = String(r.status != null ? r.status : (r.state != null ? r.state : '')).trim().toLowerCase();
+  if (tok && RUN_TERMINAL_STATUS.has(tok)) return true;
+  // all tasks landed (e.g. the "1/1 tasks completed" case).
+  if (svg.isNum(r.tasks_total) && r.tasks_total > 0) {
+    const td = svg.isNum(r.tasks_completed) ? r.tasks_completed
+      : (svg.isNum(r.tasks_done) ? r.tasks_done : null);
+    if (td != null && td >= r.tasks_total) return true;
+  }
+  // all boards scored.
+  if (svg.isNum(r.boards_total) && r.boards_total > 0
+      && svg.isNum(r.boards_done) && r.boards_done >= r.boards_total) return true;
+  return false;
+}
+
 // A normalised 0..1 progress ratio for an in-flight run (some payloads send
-// 0..100 — clamp + normalise; fall back to elapsed/budget).
+// 0..100 — clamp + normalise; fall back to elapsed/budget). A run that has
+// reached a TERMINAL state reads a FULL 100% — its work is done regardless of
+// how much of its wall-clock budget elapsed (so a completed run never shows the
+// stale low time-fraction).
 export function runProgressRatio(r) {
+  if (runIsTerminal(r)) return 1;
   let p = r && (r.progress != null ? r.progress : r.fraction);
   if (!svg.isNum(p)) {
     if (r && svg.isNum(r.elapsed_seconds) && svg.isNum(r.budget_seconds) && r.budget_seconds > 0) {

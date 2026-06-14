@@ -561,32 +561,26 @@ export function mountShell(root) {
   // activeTournament). The run badge carries the structure + phase label and an
   // in-flight board-unit count; it is hidden when idle/done.
   _statusTextEl = el('span', { class: 'dt-status-text', text: 'connecting…' });
-  // The FOUR-STATE run pill (RUNTIME-V2 Phase 4): LIVE / STALLED / SETTLED /
-  // DEAD, keyed on the orchestrator progress seq (not a heartbeat timestamp).
-  // Reuses the `dt-status` dot vocabulary — `dt-run-state` carries a
-  // `dt-rs-<state>` modifier the CSS maps onto the existing console states
-  // (ink + --v2-caution + good/bad-by-direction); no new hue.
+  // ONE consolidated LIVENESS pill — the three competing "live" signals (the
+  // bare four-state word, a separate run-badge phase label, a separate "last
+  // seen Ns ago" affordance) fold into a single `dt-run-state` pill reading
+  // `● <STATE> · <structure · phase> · <N units>` (or `· last seen Ns ago` when
+  // frozen). The four-state word keeps its `dt-rs-<state>` CSS modifier.
   _runStateTextEl = el('span', { class: 'dt-rs-text', text: '' });
+  _runLabelEl = el('span', { class: 'dt-run-label', text: '' });
+  _runCountEl = el('span', { class: 'dt-run-count', text: '' });
+  _staleEl = el('span', { class: 'dt-status-stale', text: '' });
   _runStateEl = el('span', { class: 'dt-run-state', 'aria-live': 'polite' }, [
     el('span', { class: 'dt-rs-dot dt-status-dot', 'aria-hidden': 'true' }),
     _runStateTextEl,
+    _runLabelEl,
+    _runCountEl,
+    _staleEl,
   ]);
-  _runLabelEl = el('span', { class: 'dt-run-label', text: '' });
-  _runCountEl = el('span', { class: 'dt-run-count', text: '' });
-  // The stale affordance: when a heartbeat exists but is FROZEN (older than
-  // the staleness window), the run is no longer live — surface "last seen Ns
-  // ago" / "stale" rather than silently freezing the live chrome.
-  _staleEl = el('span', { class: 'dt-status-stale', 'aria-live': 'polite', text: '' });
   _statusEl = el('span', { class: 'dt-status' }, [
     el('span', { class: 'dt-status-dot' }),
     _statusTextEl,
     _runStateEl,
-    el('span', { class: 'dt-run-badge', 'aria-live': 'polite' }, [
-      el('span', { class: 'dt-run-pulse', 'aria-hidden': 'true' }),
-      _runLabelEl,
-      _runCountEl,
-    ]),
-    _staleEl,
   ]);
 
   // top-left UP control — navigates UP the selection hierarchy (the parent
@@ -979,17 +973,21 @@ function renderStatus() {
     patchClass(_runStateEl, 'dt-rs-on', !!word);
   }
 
-  if (_runLabelEl) patchText(_runLabelEl, status.running ? status.label : '');
+  // THE PHASE rides INSIDE the pill after the state word ("LIVE · racing · rung
+  // 0"); shown only while alive (LIVE / STALLED) so a settled/dead pill carries
+  // no stale phase. The leading "· " is the in-pill separator.
+  if (_runLabelEl) {
+    patchText(_runLabelEl, status.alive && status.label ? ('· ' + status.label) : '');
+  }
   if (_runCountEl) {
     const n = status.inFlight;
-    patchText(_runCountEl, status.running && n > 0 ? ('· ' + n + (n === 1 ? ' unit' : ' units')) : '');
+    patchText(_runCountEl, status.alive && n > 0 ? ('· ' + n + (n === 1 ? ' unit' : ' units')) : '');
   }
-  // The stale affordance: surface "last seen Ns ago" when a heartbeat exists
-  // but has frozen (so the run is NOT live) — never a silent freeze. Cleared
-  // while live or when no heartbeat exists at all.
+  // "· last seen Ns ago" inside the pill when the heartbeat has frozen (not
+  // alive) — never a silent freeze; cleared while alive / when no heartbeat.
   if (_staleEl) {
-    patchText(_staleEl, (!status.running && status.heartbeatStale)
-      ? staleLabel(status.heartbeatAgeMs) : '');
+    patchText(_staleEl, (!status.alive && status.heartbeatStale)
+      ? ('· ' + staleLabel(status.heartbeatAgeMs)) : '');
   }
 }
 
@@ -1039,7 +1037,10 @@ function refreshLive() {
     activeRuns: state.activeRuns,
     activeTournament: state.activeTournament,
   });
-  if (_heroHost) patchClass(_heroHost, 'dt-hero-live', !!status.running);
+  // The hero host follows the SAME orchestrator-alive gate as the hero itself
+  // (LIVE or STALLED) — NOT the narrower `running` — so the panel does not
+  // flicker out when `running` momentarily drops during a long reasoning call.
+  if (_heroHost) patchClass(_heroHost, 'dt-hero-live', !!status.alive);
 }
 
 // Enable/disable the back control: it is inert at the environment root (no

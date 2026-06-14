@@ -278,8 +278,21 @@ export function deriveLiveStatus(
     runState = RUN_STATE.DEAD;
   }
 
+  // ORCHESTRATOR-ALIVE — the hero-visibility gate. True while the run is LIVE or
+  // STALLED (the orchestrator is still pulsing, whether or not the seq is
+  // advancing); false once it SETTLES (terminal) or goes DEAD (no fresh pulse).
+  // This is deliberately BROADER than `running`: `running` drops the instant the
+  // heartbeat `phase` reads a non-active token and no run is in flight (which
+  // happens momentarily between transitions / during a long reasoning call),
+  // which made the hero FLICKER. Keying the hero on the live PULSE — not on the
+  // advancing seq — holds it steady through a long call. STALLED already means
+  // "alive, no progress", so a STALLED run keeps the hero (with its STALLED
+  // chrome) instead of blinking the whole panel out.
+  const alive = runState === RUN_STATE.LIVE || runState === RUN_STATE.STALLED;
+
   return {
     running,
+    alive,
     structure,
     phase: phase != null ? String(phase) : null,
     inFlight,

@@ -496,10 +496,15 @@ function transcriptColumn(sel, conv, championId, side) {
     if (!annBySeq.has(k)) annBySeq.set(k, []);
     annBySeq.get(k).push(a);
   }
+  // DEDUP CONSECUTIVE IDENTICAL TURNS. goldfive emits the goal twice — on
+  // `runStarted.goalSummary` and again on `goalDerived` (the LiteralGoalDeriver
+  // echoes the same string) — so the goal reads twice; collapse the literal
+  // duplicate (see dedupConsecutiveTurns).
+  const shown = dedupConsecutiveTurns(turns);
   // `data-node` tags the scroller with its stable side so a content-growth
   // repaint can capture + restore each column's scroll position by side.
   const scroller = el('div', { class: 'dn-transcript dn-xscript-scroll', 'data-node': 'xscript-scroll-' + (side || 'left') });
-  for (const t of turns) {
+  for (const t of shown) {
     const turn = el('div', { class: 'dn-turn dn-turn-' + (t.role || 'agent') }, [
       el('div', { class: 'dn-turn-head dn-faint dn-mono' }, [
         el('span', { text: t.agent || t.role || 'turn' }),
@@ -517,6 +522,34 @@ function transcriptColumn(sel, conv, championId, side) {
   }
   col.appendChild(scroller);
   return col;
+}
+
+// Drop a turn that EXACTLY repeats the one immediately before it — same role,
+// identical non-empty text, neither carrying its own tool calls — folding the
+// literal goal duplicate (runStarted then goalDerived) to ONE read. Genuinely-
+// distinct turns (different text, a tool call, an empty turn) are kept, and only
+// CONSECUTIVE duplicates fold (a later echo across intervening turns is kept).
+export function dedupConsecutiveTurns(turns) {
+  const list = Array.isArray(turns) ? turns : [];
+  const out = [];
+  for (const t of list) {
+    const prev = out[out.length - 1];
+    if (prev && isDuplicateTurn(prev, t)) continue;
+    out.push(t);
+  }
+  return out;
+}
+
+function isDuplicateTurn(a, b) {
+  if (!a || !b) return false;
+  const aText = (a.text || '').trim();
+  const bText = (b.text || '').trim();
+  if (aText === '' || aText !== bText) return false;
+  if ((a.role || '') !== (b.role || '')) return false;
+  const aTools = Array.isArray(a.tool_calls) && a.tool_calls.length;
+  const bTools = Array.isArray(b.tool_calls) && b.tool_calls.length;
+  if (aTools || bTools) return false;
+  return true;
 }
 
 // Resolve one side's transcript by the DETERMINISTIC (epoch, gen, entry)

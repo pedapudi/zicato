@@ -667,7 +667,11 @@
   .dn-fleet-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .dn-fleet-id { font-family: var(--v2-mono); font-size: calc(12.5px * var(--dt-font-scale, 1)); color: var(--v2-ink); }
   .dn-fleet-goal { font-size: calc(12px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); margin: 5px 0 6px; line-height: 1.35;
-    max-height: 3.4em; overflow: hidden; }
+    /* The objective wraps to its FULL text — never clipped mid-sentence. (It was
+       previously hard-clipped at max-height:3.4em + overflow:hidden, which cut
+       a long goal mid-word.) `overflow-wrap` keeps an unbroken long token from
+       overrunning the card. */
+    overflow-wrap: anywhere; }
   .dn-fleet-spark { margin: 3px 0 6px; }
   .dn-fleet-stats { display: flex; gap: 16px; }
   .dn-mini { display: flex; flex-direction: column; }
@@ -1757,22 +1761,18 @@
   /* A frozen heartbeat (stale, not live): a dim, hollow dot + a muted
      "last seen Ns ago" note — never the live accent, never a silent freeze. */
   .dt-status.dt-stale .dt-status-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--v2-flat); }
-  .dt-status-stale { color: var(--v2-ink-faint); font-size: calc(10px * var(--dt-font-scale, 1)); margin-left: 6px;
-    font-style: italic; white-space: nowrap; }
+  /* The stale affordance + the phase label + the in-flight count all ride
+   * INSIDE the one liveness pill (.dt-run-state) below — no longer standalone
+   * badges. They reset the pill's uppercase/tracked treatment so the phase reads
+   * naturally ("· racing · rung 0", "· last seen 30s ago") and collapse to
+   * nothing when empty. */
+  .dt-status-stale { color: var(--v2-ink-faint); font-style: italic; white-space: nowrap;
+    text-transform: none; letter-spacing: normal; }
   .dt-status-stale:empty { display: none; }
-
-  /* The RUN badge — surfaces an ACTIVE run for ANY tournament structure
-   * (racing / swiss / elim / gauntlet). Hidden when idle/done; shown with the
-   * structure+phase label + an in-flight board-unit count when running. */
-  .dt-run-badge { display: none; align-items: center; gap: 5px; margin-left: 6px;
-    padding: 1px 7px; border-radius: 9px; border: 1px solid var(--v2-rule);
-    background: var(--v2-panel); color: var(--v2-ink-soft); font-size: calc(10px * var(--dt-font-scale, 1));
-    letter-spacing: 0.02em; white-space: nowrap; }
-  .dt-status.dt-running .dt-run-badge { display: inline-flex; }
-  .dt-run-pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--v2-good); flex: 0 0 auto;
-    box-shadow: 0 0 0 0 var(--v2-good-soft); animation: dt-run-pulse 1.6s ease-out infinite; }
-  .dt-run-label { color: var(--v2-good); text-transform: lowercase; }
-  .dt-run-count { color: var(--v2-ink-faint); }
+  .dt-run-label { color: var(--v2-good); text-transform: lowercase; letter-spacing: normal; white-space: nowrap; }
+  .dt-run-label:empty { display: none; }
+  .dt-run-count { color: var(--v2-ink-faint); text-transform: none; letter-spacing: normal; white-space: nowrap; }
+  .dt-run-count:empty { display: none; }
   @keyframes dt-run-pulse {
     0%   { box-shadow: 0 0 0 0 var(--v2-good); opacity: 1; }
     70%  { box-shadow: 0 0 0 5px transparent; opacity: 0.7; }

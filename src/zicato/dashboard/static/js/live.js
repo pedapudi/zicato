@@ -34,6 +34,7 @@ import {
   proposingTracker, proposingDigest, CROWN,
 } from './svg.js';
 import { fieldStatus as readFieldStatus } from './data.js';
+import { runStateLabel } from './livestatus.js';
 import {
   racingModel, swissModel, elimModel, gauntletModel, gauntletModelDigest, normalizeStructure,
   buildLiveRacingModel, buildLiveSwissModel, buildLiveElimModel, buildLiveModel,
@@ -532,9 +533,14 @@ export class LiveController {
     // (liveProgress.stepIndex/stepCount) — never the 0-indexed raw phase string —
     // so the header and the stepper can never contradict ("rung 0" vs "rung 2 of
     // 2" was the bug: the title read the phase string, the subline read topology).
+    // The pill carries the SAME four-state liveness word the chrome reads
+    // (LIVE / STALLED), keyed off the derived run-state — NOT a hard-coded
+    // "LIVE". This is the hero's single liveness read; the phase rides in
+    // `_meta` beside it (so the two never duplicate a bare "LIVE").
+    this._pillText = el('span', { class: 'dt-live-hero-pilltext', text: 'LIVE' });
     this._pill = el('span', { class: 'dt-live-hero-pill' }, [
       el('span', { class: 'dt-live-hero-dot', 'aria-hidden': 'true' }),
-      el('span', { class: 'dt-live-hero-pilltext', text: 'LIVE' }),
+      this._pillText,
     ]);
     this._meta = el('span', { class: 'dt-live-hero-meta', text: '' });
     const head = el('div', { class: 'dt-live-hero-head' }, [this._pill, this._meta]);
@@ -575,15 +581,21 @@ export class LiveController {
   // (so the shell can toggle the hero's visibility class).
   update({ status, heartbeat, activeRuns, activeTournament } = {}) {
     const running = !!(status && status.running);
-    patchClass(this.node, 'dt-live-on', running);
+    // VISIBILITY gates on the orchestrator being ALIVE (a fresh heartbeat pulse:
+    // LIVE or STALLED), NOT on `running` — `running` drops the instant the phase
+    // reads a non-active token with no run in flight (mid-transition / a long
+    // reasoning call), which FLICKERED the hero. Falls back to `running` when a
+    // caller supplies no `alive` (the structure fixtures).
+    const alive = !!(status && (status.alive != null ? status.alive : status.running));
+    patchClass(this.node, 'dt-live-on', alive);
 
     // ── the activity ticker: diff the snapshot, append the new events ──
     const snap = liveSnapshot({ status, heartbeat, activeRuns, activeTournament });
     const { events, seq } = deriveActivity(this._prevSnap, snap, this._seq);
     this._seq = seq;
     if (events.length) this.ticker.push(events);
-    this._prevSnap = running ? snap : null;
-    if (!running) { this._funnelDigest = null; this._matchesDigest = null; this._metaKey = null; this._stepDigest = null; return false; }
+    this._prevSnap = alive ? snap : null;
+    if (!alive) { this._funnelDigest = null; this._matchesDigest = null; this._metaKey = null; this._stepDigest = null; return false; }
 
     // ── tournament-level progress: the ONE rung-number source of truth ──
     // liveProgress reads the live TOPOLOGY (resolved rungs + the active rung),
@@ -597,9 +609,15 @@ export class LiveController {
     const inFlight = status && isNum(status.inFlight) ? status.inFlight : (Array.isArray(activeRuns) ? activeRuns.length : 0);
     const structure = (status && status.structure) || (activeTournament && activeTournament.structure) || null;
     const meta = this._metaLine(prog, structure, inFlight);
-    const metaKey = meta.join('|');
+    // the four-state liveness word for the pill (LIVE / STALLED), defaulting to
+    // LIVE when a caller supplies no runState. Folded into the meta digest so a
+    // steady tick writes ZERO DOM and a real transition flips word + line.
+    const pillWord = (status && status.runState && runStateLabel(status.runState))
+      ? runStateLabel(status.runState) : 'LIVE';
+    const metaKey = pillWord + ' ' + meta.join('|');
     if (metaKey !== this._metaKey) {
       this._metaKey = metaKey;
+      if (this._pillText) patchText(this._pillText, pillWord);
       patchText(this._meta, meta.length ? meta.join(' · ') : '');
     }
 
@@ -655,7 +673,12 @@ export class LiveController {
   _updateMatches(activeTournament, heartbeat, activeRuns) {
     const at = (activeTournament && typeof activeTournament === 'object') ? activeTournament : null;
     let blocks = [];
-    if (structureEligible(at, heartbeat)) {
+    // Show the in-flight matches when the structure is drawable+running AND
+    // corroborated by the epoch gate OR by genuine active runs (ground truth,
+    // bumped by per-run beaters) — so a fresh epoch roll that briefly desyncs
+    // the heartbeat epoch tag never blanks "what's running" while runs are live.
+    if (structureEligible(at, heartbeat)
+        || (structureDrawableRunning(at) && tournamentHasActiveRuns(at, activeRuns))) {
       const epochGens = (Array.isArray(at.competitors) ? at.competitors : [])
         .map((c) => c && c.generation_id).filter((g) => g != null).map(String);
       const model = buildLiveModel(at, heartbeat, activeRuns, epochGens.length ? epochGens : null);
@@ -866,14 +889,46 @@ function clear(node) { while (node && node.firstChild) node.removeChild(node.fir
 // gauntlet returns null there and falls through to the proposing tracker /
 // generic summary). The eligibility gate itself is structure + running + epoch.
 function structureEligible(at, heartbeat) {
+  if (!structureDrawableRunning(at)) return false;
+  return liveBelongsToEpoch(at, heartbeat);
+}
+
+// The structure + phase half of the gate, WITHOUT the epoch scope: a tournament
+// structure we draw, in a running (non-settled) phase. The "what's running"
+// panel pairs this with active-runs corroboration so a present in-flight run can
+// stand in for a transiently-lagging epoch tag.
+function structureDrawableRunning(at) {
   if (!at || typeof at !== 'object') return false;
   const s = String(at.structure);
   if (s !== 'racing' && s !== 'swiss' && s !== 'single_elim' && s !== 'double_elim' && s !== 'gauntlet') return false;
   const phase = String(at.phase == null ? '' : at.phase).trim().toLowerCase();
   const running = phase === 'running' || (phase !== '' && phase !== 'idle'
     && phase !== 'complete' && phase !== 'completed' && phase !== 'done');
-  if (!running) return false;
-  return liveBelongsToEpoch(at, heartbeat);
+  return running;
+}
+
+// Are there in-flight runs that BELONG to this tournament? A run belongs when
+// its generation_id matches a competitor, or — when no roster is published — any
+// present run corroborates. A run whose epoch_id is KNOWN-and-different from the
+// tournament's is excluded, so a foreign run never lights up a stale tournament.
+function tournamentHasActiveRuns(at, activeRuns) {
+  const runs = Array.isArray(activeRuns) ? activeRuns : [];
+  if (!runs.length || !at || typeof at !== 'object') return false;
+  const tEpoch = (at.epoch_id != null && String(at.epoch_id) !== '') ? String(at.epoch_id) : null;
+  const compIds = new Set(
+    (Array.isArray(at.competitors) ? at.competitors : [])
+      .map((c) => c && c.generation_id).filter((g) => g != null).map(String),
+  );
+  for (const r of runs) {
+    if (!r || typeof r !== 'object') continue;
+    // drop a run whose epoch is KNOWN-and-different from the tournament's.
+    const rEpoch = (r.epoch_id != null && String(r.epoch_id) !== '') ? String(r.epoch_id) : null;
+    if (tEpoch != null && rEpoch != null && rEpoch !== tEpoch) continue;
+    if (!compIds.size) return true; // no roster to match against → trust the run.
+    const gen = r.generation_id != null ? r.generation_id : r.gen;
+    if (gen != null && compIds.has(String(gen))) return true;
+  }
+  return false;
 }
 
 // The active-tournament belongs to the current run iff its epoch matches the

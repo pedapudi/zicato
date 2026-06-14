@@ -460,7 +460,22 @@ def test_bundle_under_size_envelope(
     # middle slot. A small stable decorate-sort-undecorate + its rationale comment
     # (back-compat: a single-epoch / lineage-complete workspace renders byte-identical).
     # The envelope is raised to 1.191 MB to cover it with headroom.
-    assert total < 1_191_000, f"bundle is {total} bytes, exceeds 1_191_000 envelope"
+    #
+    # The EVIDENCE-COCKPIT LIVENESS / TRANSCRIPT fixes then add six bug fixes across
+    # the live surfaces: (1) the three redundant chrome "live" signals consolidate
+    # into ONE `dt-run-state` pill carrying the phase + count + stale affordance
+    # (shell.js); (2) a derived `alive` (LIVE/STALLED) verdict in livestatus.js gates
+    # the hero so it no longer flickers out when `running` momentarily drops during a
+    # long call (live.js + shell.js); (4) the "what's running" panel shows in-flight
+    # matches via active-runs corroboration when a fresh epoch roll desyncs the
+    # heartbeat epoch tag — `structureDrawableRunning` + `tournamentHasActiveRuns`
+    # (live.js); (5) `runIsTerminal`/`runProgressRatio` read 100% for a completed run
+    # keyed to task/board completion not the wall-clock budget (structure.js); (6)
+    # `dedupConsecutiveTurns` folds the duplicated goal turn in the transcript
+    # (board.js). All digest-gated (a no-op beat stays byte-identical) + back-compat
+    # (a seq-less / non-terminal / single-goal payload renders as today). The envelope
+    # is raised to 1.20 MB to cover the new spine with headroom.
+    assert total < 1_200_000, f"bundle is {total} bytes, exceeds 1_200_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
