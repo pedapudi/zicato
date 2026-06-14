@@ -32,30 +32,28 @@ Reading source files
 --------------------
 The index reuses zicato's own readers wherever they exist
 (:func:`zicato.epoch.lineage.load_lineage`,
-:func:`zicato.epoch.lifecycle.list_epochs`,
 :func:`zicato.epoch.journal.read_experiment`,
-:func:`zicato.telemetry.reducer.read_loss_profile`) so the index never
-re-derives a parse that a canonical module already owns. The only
-bespoke parsing here is the events-JSONL drift tally, and even that
-mirrors the reducer's normalisation helpers.
+:func:`zicato.telemetry.reducer.read_loss_profile`), and routes epoch
+enumeration / ordering through the canonical workspace-read layer
+(:func:`zicato.workspace.iter_epochs`), so the index never re-derives a
+parse — or an epoch ordering — that a canonical module already owns. The
+index is a pure projection of the canonical files: ``metric_counts`` is
+derived solely from each run's ``loss.json`` (via
+:meth:`zicato.core.loss.LossProfile.unified_metrics`); it never
+independently re-tallies a run's events JSONL.
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
-from collections import Counter
 from collections.abc import Iterable
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from zicato.core import normalize_wire_drift_kind, normalize_wire_severity
 from zicato.core.types import Experiment, LossProfile
-from zicato.core.workspace import (
-    events_jsonl_path,
-    loss_profile_path,
-)
+from zicato.core.workspace import loss_profile_path
 from zicato.index.schema import apply_schema
 
 
@@ -129,70 +127,6 @@ def _tournament_id_for_run(
     if not parent:
         return None
     return f"{epoch_id}:{parent}->{generation_id}"
-
-
-# ---------------------------------------------------------------------------
-# events.jsonl drift tally
-# ---------------------------------------------------------------------------
-
-
-def _drift_counts_from_events(events_path: Path) -> Counter[tuple[str, str]]:
-    """Tally ``(drift_kind, severity)`` pairs from a run's events JSONL.
-
-    A best-effort plain-JSON walk: every line is parsed as a dict and
-    any ``DriftDetected`` payload contributes one to its
-    ``(kind, severity)`` bucket. We deliberately do NOT route through
-    goldfive's strict proto replay here — the index must build in a
-    stripped-down environment, and the reducer already owns the
-    proto-strict path for scoring. The kind / severity normalisation
-    mirrors :mod:`zicato.telemetry.reducer` so the index agrees with
-    the loss profile.
-
-    Goldfive's persistence sink serialises events with
-    ``MessageToJson``, which renders payload keys in camelCase
-    (``driftDetected``); zicato's own dict-fallback writer uses
-    snake_case (``drift_detected``). We accept either so the index
-    builds regardless of which writer produced the JSONL.
-
-    Returns an empty counter when the file is absent or unreadable;
-    the index tolerates runs whose events file was never written.
-    """
-    tally: Counter[tuple[str, str]] = Counter()
-    if not events_path.exists():
-        return tally
-    try:
-        text = events_path.read_text(encoding="utf-8")
-    except OSError:
-        return tally
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            evt = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(evt, dict):
-            continue
-        payload = evt.get("drift_detected")
-        if not isinstance(payload, dict):
-            payload = evt.get("driftDetected")
-        if not isinstance(payload, dict):
-            continue
-        kind = _normalize_drift_kind(payload.get("kind", ""))
-        sev = _normalize_severity(payload.get("severity", ""))
-        if kind is None or sev is None:
-            continue
-        tally[(kind, sev)] += 1
-    return tally
-
-
-# Wire-form drift-kind / severity normalisation is shared with the loss
-# reducer via ``zicato.core.drift_kinds`` so the analytical index agrees
-# with the loss profile (same parse-time contract for both). These
-# module-local aliases keep the ingest call surface stable.
-_normalize_drift_kind = normalize_wire_drift_kind
-_normalize_severity = normalize_wire_severity
 
 
 def _namespace_of(metric_name: str) -> str:
@@ -810,32 +744,6 @@ def _load_loss_profile(path: Path) -> LossProfile | None:
         return None
 
 
-def _heal_loss_profile(path: Path, profile: LossProfile) -> None:
-    """Persist a drift-recovered ``profile`` back to its ``loss.json``.
-
-    Called when an incomplete (drift-less) loss profile had its
-    ``drift_counts`` recovered from the run's events JSONL. Writing the
-    healed profile back makes the canonical file authoritative again: the
-    next ingest reads the recovered drift directly from loss.json instead
-    of re-tallying events, so the index becomes a pure projection of the
-    file. Only the recovered metric *surface* is restored — the scalar
-    fields (drift_loss, pass_fail, runtime_ms, ...) are unchanged because
-    ``profile`` was produced by ``dataclasses.replace`` of the on-disk
-    profile with the events-derived ``drift_counts`` only.
-
-    Best-effort and idempotent: a read-only file or any write failure is
-    swallowed so the ingest still populates the DB row from the in-memory
-    fold (matching the pre-heal behaviour). The reducer owns the
-    serialisation so the healed file round-trips byte-for-byte.
-    """
-    from zicato.telemetry.reducer import write_loss_profile  # noqa: PLC0415
-
-    try:
-        write_loss_profile(profile, path)
-    except OSError:
-        return
-
-
 def _iter_generation_dirs(workspace_root: Path, epoch_id: str) -> Iterable[str]:
     """Yield generation ids that have a directory on disk under ``epoch_id``.
 
@@ -906,44 +814,20 @@ def _ingest_run_into(
 
     Returns ``True`` when a ``loss.json`` was found and ingested,
     ``False`` when the run directory has no loss profile yet (a run
-    that started but whose reducer has not run). Drift counts from the
-    events JSONL are folded into the loss profile's metric surface so
-    ``metric_counts`` reflects both sources.
+    that started but whose reducer has not run).
+
+    ``metric_counts`` is a pure projection of the run's ``loss.json``
+    (via :meth:`LossProfile.unified_metrics`): the reducer owns the
+    canonical metric surface, so the index never independently re-tallies
+    the run's events JSONL. A loss profile written by an older reducer
+    with an empty metric surface simply yields no metric_counts rows —
+    correct-by-construction rather than reconstructed from a second
+    source that could disagree with the file.
     """
     lpath = loss_profile_path(workspace_root, epoch_id, generation_id, entry_id)
     profile = _load_loss_profile(lpath)
     if profile is None:
         return False
-
-    # The loss profile already carries metric_counts (drift + cost +
-    # output + schema). When it was written by an older reducer that
-    # left metric_counts empty, fold the events-JSONL drift tally in so
-    # the index still reflects drift signal. We only synthesise when the
-    # profile itself has no drift surface — otherwise the reducer's view
-    # is authoritative and re-adding events would double-count.
-    #
-    # When we do recover drift from events, we also HEAL the canonical
-    # loss.json: writing the recovered drift_counts back so the file is
-    # no longer an incomplete projection of its own events. After the
-    # heal the guard below no longer fires for this run, so a subsequent
-    # reindex is a pure projection of loss.json (it no longer needs the
-    # events file to surface the drift). We only fill the raw drift_counts
-    # the events captured — we do NOT rescore (no weights/BoardEntry here),
-    # so drift_loss / the scalar / per-judge fields stay byte-identical.
-    if not profile.drift_counts and not profile.metric_counts:
-        epath = events_jsonl_path(workspace_root, epoch_id, generation_id, entry_id)
-        tally = _drift_counts_from_events(epath)
-        if tally:
-            from dataclasses import replace  # noqa: PLC0415
-
-            from zicato.core.types import DriftCount  # noqa: PLC0415
-
-            synthesised = tuple(
-                DriftCount(kind=kind, severity=sev, count=count)  # type: ignore[arg-type]
-                for (kind, sev), count in sorted(tally.items())
-            )
-            profile = replace(profile, drift_counts=synthesised)
-            _heal_loss_profile(lpath, profile)
 
     # Resolve the tournament round this run belongs to from the child
     # generation's experiment.json. Returns ``None`` for v0 seed runs
@@ -1153,14 +1037,20 @@ def _fold_elo(conn: sqlite3.Connection) -> None:
 def _rebuild_all(conn: sqlite3.Connection, workspace_root: Path) -> None:
     """Walk the whole workspace, populating every table.
 
-    Epochs come from :func:`zicato.epoch.lifecycle.list_epochs` (which
-    reads each ``config.json``). Generation lineage comes from
-    :func:`zicato.epoch.lineage.load_lineage`. Generation directories
+    Epoch enumeration + ordering come from the canonical workspace-read
+    layer (:func:`zicato.workspace.iter_epochs`), whose timestamp-first /
+    numeric-aware authority is the single definition of epoch order — the
+    same one the dashboard uses — so the index never disagrees with the
+    rest of the system about which epoch precedes which. Each epoch's
+    typed ``config.json`` is then read via
+    :func:`zicato.epoch.lifecycle.load_epoch`. Generation lineage comes
+    from :func:`zicato.epoch.lineage.load_lineage`. Generation directories
     and run directories are additionally walked so a generation / run
     whose telemetry landed before lineage was updated is still indexed.
     """
-    from zicato.epoch.lifecycle import list_epochs  # noqa: PLC0415
+    from zicato.epoch.lifecycle import load_epoch  # noqa: PLC0415
     from zicato.epoch.lineage import load_lineage  # noqa: PLC0415
+    from zicato.workspace import WorkspaceLayout, iter_epochs  # noqa: PLC0415
 
     lineage = load_lineage(workspace_root)
     lineage_by_epoch: dict[str, dict[str, Any]] = {}
@@ -1169,12 +1059,23 @@ def _rebuild_all(conn: sqlite3.Connection, workspace_root: Path) -> None:
         if isinstance(eid, str):
             lineage_by_epoch[eid] = entry
 
-    epoch_configs = list_epochs(workspace_root)
-    # Index every epoch that has a config.json, plus any epoch that
-    # appears only in lineage.json (a thin auto-created lineage entry).
+    # Enumerate the ``epochs/`` directory through the canonical layer so the
+    # walk order is the workspace's one timestamp-first authority. Each
+    # directory-bearing epoch with a readable ``config.json`` is indexed
+    # here; a directory whose config is missing / unreadable is left to the
+    # lineage-only pass below (it is a thin auto-created entry), preserving
+    # the exact set of epochs the prior ``list_epochs``-driven walk indexed.
+    layout = WorkspaceLayout.from_root(workspace_root)
     seen_epochs: set[str] = set()
-    for cfg in epoch_configs:
-        seen_epochs.add(cfg.id)
+    for epoch in iter_epochs(layout):
+        try:
+            cfg = load_epoch(workspace_root, epoch.id)
+        except (OSError, json.JSONDecodeError, KeyError, TypeError):
+            # No readable config.json — defer to the lineage-only pass so a
+            # thin epoch still gets a row (matching the prior behaviour, where
+            # ``list_epochs`` skipped unreadable configs the same way).
+            continue
+        seen_epochs.add(epoch.id)
         _upsert_epoch(
             conn,
             epoch_id=cfg.id,
@@ -1278,9 +1179,10 @@ def ingest_run(
 ) -> None:
     """Incrementally upsert one run's index rows.
 
-    Reads the run's ``loss.json`` (and, for older profiles with no
-    metric surface, its ``events.jsonl`` drift tally) and upserts the
-    ``runs``, ``loss_profiles``, and ``metric_counts`` rows for it.
+    Reads the run's ``loss.json`` and upserts the ``runs``,
+    ``loss_profiles``, and ``metric_counts`` rows for it. ``metric_counts``
+    is a pure projection of the loss profile's metric surface — the index
+    never independently re-tallies the run's events JSONL.
 
     This is the live-dual-write entry point: the orchestrator calls it
     the moment a run's loss profile lands (R9-4), so the index tracks
