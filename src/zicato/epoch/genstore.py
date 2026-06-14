@@ -68,6 +68,7 @@ from typing import Protocol, runtime_checkable
 from zicato.core.types import Patch
 from zicato.core.workspace import generation_dir
 from zicato.epoch.snapshot_scope import copytree_ignore, is_artifact
+from zicato.workspace import WorkspaceLayout
 
 
 @dataclass(frozen=True, slots=True)
@@ -314,7 +315,7 @@ class DirectoryGenerationStore:
         orchestrator's ``_next_generation_id`` and the index's directory
         walk use. Sorted lexicographically for a deterministic order.
         """
-        gens_root = self._workspace_root / "epochs" / epoch_id / "generations"
+        gens_root = WorkspaceLayout.from_root(self._workspace_root).generations_dir(epoch_id)
         if not gens_root.is_dir():
             return []
         return sorted(child.name for child in gens_root.iterdir() if child.is_dir())

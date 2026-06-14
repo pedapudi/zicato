@@ -93,6 +93,7 @@ from zicato.runtime.control_consumer import (
 from zicato.runtime.heartbeat import HeartbeatBeater
 from zicato.runtime.resume import ResumePlan
 from zicato.util import best_effort
+from zicato.workspace import WorkspaceLayout
 
 if TYPE_CHECKING:
     # Annotation-only — the proposer module is imported lazily inside
@@ -2914,7 +2915,7 @@ def _round_n_from_generation_id(generation_id: str) -> int | None:
 
 
 def _current_generation_marker(workspace_root: Path, epoch_id: str) -> Path:
-    return workspace_root / "epochs" / epoch_id / "current_generation"
+    return WorkspaceLayout.from_root(workspace_root).current_generation_marker(epoch_id)
 
 
 def _resolve_current_generation(workspace_root: Path, epoch_id: str) -> str:
@@ -2931,7 +2932,7 @@ def _resolve_current_generation(workspace_root: Path, epoch_id: str) -> str:
         text = marker.read_text(encoding="utf-8").strip()
         if text:
             return text
-    gens_root = workspace_root / "epochs" / epoch_id / "generations"
+    gens_root = WorkspaceLayout.from_root(workspace_root).generations_dir(epoch_id)
     if not gens_root.exists():
         raise FileNotFoundError(f"no generations under {gens_root}; the epoch has no baseline yet")
     candidates = [p.name for p in gens_root.iterdir() if p.is_dir()]

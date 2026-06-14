@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from zicato.util import best_effort
+from zicato.workspace import WorkspaceLayout
 
 log = logging.getLogger("zicato.orchestrator")
 
@@ -43,7 +44,7 @@ CallLLM = Callable[[str, str, str], Awaitable[str]]
 #: file is written by :func:`ensure_epoch_for_contract` and consumed by
 #: :func:`_ensure_baseline_snapshot`.
 def _roll_seed_marker(workspace_root: Path, epoch_id: str) -> Path:
-    return workspace_root / "epochs" / epoch_id / "v0_seed_from"
+    return WorkspaceLayout.from_root(workspace_root).roll_seed_marker(epoch_id)
 
 
 def _component_diff_label(prev_components: dict[str, str], cur_components: dict[str, str]) -> str:
@@ -71,7 +72,7 @@ def _stored_component_hashes(workspace_root: Path, epoch_id: str) -> dict[str, s
     for legacy epochs (returns an empty dict — the caller falls back to
     a generic message).
     """
-    path = workspace_root / "epochs" / epoch_id / "contract_components.json"
+    path = WorkspaceLayout.from_root(workspace_root).contract_components(epoch_id)
     if not path.exists():
         return {}
     try:
@@ -87,7 +88,7 @@ def _write_component_hashes(
     workspace_root: Path, epoch_id: str, components: dict[str, str]
 ) -> None:
     """Persist an epoch's per-component contract sub-hashes."""
-    path = workspace_root / "epochs" / epoch_id / "contract_components.json"
+    path = WorkspaceLayout.from_root(workspace_root).contract_components(epoch_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(components, indent=2, sort_keys=True) + "\n",
