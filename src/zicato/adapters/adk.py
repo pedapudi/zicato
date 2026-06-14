@@ -248,12 +248,42 @@ def _goldfive_runtime() -> Any:
 
 
 # ---------------------------------------------------------------------------
-# call_llm-backed ADK model — kills the unused google.genai client flood
+# call_llm-backed ADK model — the LAST-RESORT text-only shim.
+#
+# This whole section builds the TEXT-ONLY fallback for the inner ADK agents'
+# own task turns. It is the LAST of three parallel ADK-model paths and the
+# wrong one for any function-calling target:
+#
+#   1. ``models_config.build_adk_model``      — the canonical builder: a real
+#      (typically function-calling ``LiteLlm``) ``BaseLlm`` from a configured
+#      ``{model, endpoint, api_key_env}`` spec. PREFERRED. Injected by
+#      :func:`rebind_tree_models_to_adk_model` when ``models.harness`` is set.
+#   2. ADK's own ``LLMRegistry`` native resolution — a bare ``"openai/<model>"``
+#      / ``LiteLlm``-resolvable string an author hardcoded keeps native
+#      tool/function calling; :func:`_resolves_to_native_function_calling`
+#      detects it and the shim LEAVES IT ALONE.
+#   3. THIS shim (:func:`rebind_tree_models_to_call_llm`) — fires ONLY on a
+#      bare string that resolves to a ``google.genai``-backed client
+#      (``gemini-*`` / ``gemma-*``) or is wholly unresolvable. It exists to
+#      stop the genai-client GC flood (below) for an UNCONFIGURED / misconfigured
+#      target — and it is TEXT-ONLY: it carries NO ``function_declarations``,
+#      so any agent rebound to it loses native tool/function calling and a
+#      tool-driven tree degenerates to a single text turn. Hence last-resort.
 # ---------------------------------------------------------------------------
 
 
 def _build_call_llm_adk_model_class() -> type:
-    """Build the ``BaseLlm`` subclass that drives generation via a call_llm.
+    """Build the LAST-RESORT, TEXT-ONLY ``BaseLlm`` shim driven by a call_llm.
+
+    LIMITATION (load-bearing): this shim is **text-only**. Its
+    :meth:`generate_content_async` flattens the request to a ``(system, user)``
+    text pair and never reads ``llm_request.config.tools`` — so the model it
+    yields carries NO ``function_declarations`` and CANNOT make tool/function
+    calls. Rebinding a function-calling agent to it silently strips its tools
+    and reduces a tool-driven tree to a single text turn. It is therefore the
+    LAST resort, used only when neither a configured inner model (path 1) nor a
+    native ``LiteLlm``-resolvable string (path 2) is available; see the section
+    banner above and :func:`rebind_tree_models_to_call_llm`.
 
     The harness threads its ``(system, user, model) -> str`` callable into
     every ``goldfive.run`` invocation, and goldfive's *steering* (goal
@@ -318,6 +348,12 @@ def _build_call_llm_adk_model_class() -> type:
             stream: bool = False,
         ) -> AsyncGenerator[Any, None]:
             del stream  # the harness call_llm is non-streaming text-in/out
+            # TEXT-ONLY by construction: we read only the system + user TEXT and
+            # deliberately ignore ``llm_request.config.tools`` (the agent's
+            # ``function_declarations``). The reply is a single text part with no
+            # ``function_call`` — so an agent on this shim CANNOT call its tools.
+            # That is the no-tools limitation that makes this a last resort; the
+            # configured-inner-model path keeps tools (see the section banner).
             config = getattr(llm_request, "config", None)
             system = ""
             if config is not None:
@@ -422,15 +458,19 @@ def _resolves_to_native_function_calling(model_str: str) -> bool:
 
 
 def rebind_tree_models_to_call_llm(root: Any, call_llm: Any) -> int:
-    """Rebind *unresolvable* string-model ``LlmAgent`` nodes to ``call_llm``.
+    """LAST-RESORT: rebind only *unresolvable* string models to the text shim.
 
-    Walks the agent tree (root + ``sub_agents`` / ``inner_agent`` /
-    ``AgentTool.agent`` edges). For each agent whose ``model`` is a bare string
-    that does NOT resolve to a real function-calling model, replaces it with a
-    :class:`BaseLlm` backed by ``call_llm`` so ADK's ``canonical_model``
-    returns it directly and NEVER resolves the string through
-    ``LLMRegistry.new_llm`` (which would build the unused, flood-causing
-    google.genai client).
+    The third and last ADK-model path (see the section banner): used only when
+    no configured inner model (:func:`rebind_tree_models_to_adk_model`) and no
+    natively-resolvable ``LiteLlm`` string is available. Walks the agent tree
+    (root + ``sub_agents`` / ``inner_agent`` / ``AgentTool.agent`` edges). For
+    each agent whose ``model`` is a bare string that does NOT resolve to a real
+    function-calling model, replaces it with the TEXT-ONLY :class:`BaseLlm`
+    shim backed by ``call_llm`` so ADK's ``canonical_model`` returns it
+    directly and NEVER resolves the string through ``LLMRegistry.new_llm``
+    (which would build the unused, flood-causing google.genai client). Because
+    the shim carries no tools, every rebound agent loses native tool/function
+    calling — which is why this only fires when no tool-preserving path exists.
 
     Two kinds of agent are deliberately LEFT UNTOUCHED:
 

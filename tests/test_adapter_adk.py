@@ -1738,3 +1738,198 @@ async def test_judge_only_steerer_emits_drift_but_never_refines() -> None:
         "control DefaultSteerer must reach planner.refine on a CRITICAL drift "
         "(proves the judge-only assertion bites)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Inner-model resolution + the tool-calling regression
+#
+# The bug this section guards: an ADK function-calling target was
+# unconditionally rebound to the TEXT-ONLY ``call_llm`` shim, which strips the
+# tool ``function_declarations``, so a tool-driven tree degenerated to a single
+# text turn and wrote no files. These tests pin the three properties that would
+# have caught it, all DETERMINISTIC (no live LLM):
+#
+#   (a) a provider-string model resolves to a function-calling ``LiteLlm`` AND
+#       the shim's guard leaves it alone;
+#   (b) THE REGRESSION: under the config-driven inner-model rebind, an agent
+#       carrying a ``FunctionTool`` keeps function-calling — ADK puts the tool's
+#       ``function_declarations`` into the captured ``LlmRequest.config.tools``;
+#       the text shim, by contrast, drops them (yields text, never a call);
+#   (c) the ``adk`` extra actually supplies ``litellm`` (the native path's
+#       precondition).
+# ---------------------------------------------------------------------------
+
+
+def test_litellm_is_provided_by_the_adk_extra() -> None:
+    """(c) The ``adk`` extra supplies ``litellm`` — the native path precondition.
+
+    The function-calling path (a configured ``LiteLlm`` inner model, and the
+    shim guard that recognises ``openai/<model>`` strings) only exists when
+    ADK's ``LiteLlm`` is importable, which the ``adk`` extra provides via
+    ``google-adk[extensions]``. A failure here means the extra regressed and
+    every native tool-calling target would silently fall back to the text shim.
+    """
+    from google.adk.models.lite_llm import LiteLlm
+
+    assert LiteLlm.__name__ == "LiteLlm"
+
+
+def test_provider_string_resolves_to_litellm_and_guard_leaves_it_alone() -> None:
+    """(a) ``openai/<model>`` resolves to ``LiteLlm`` and the shim skips it.
+
+    Two halves of the same guard:
+
+    * :func:`_resolves_to_native_function_calling` classifies the
+      provider-style string as a real function-calling ``LiteLlm`` (the
+      classifier resolves the model *class* without instantiating it, so it
+      never builds a genai client); while bare ``gemma-*`` / ``gemini-*`` and
+      unresolvable strings classify ``False`` (they route to the shim).
+    * :func:`rebind_tree_models_to_call_llm` therefore LEAVES the
+      ``openai/<model>`` agent untouched — rebinding it to the text-only shim
+      would strip its native tool/function calling.
+
+    Skipped without ``litellm``: the provider string is then unresolvable, so
+    the shim fallback (rebind) is the correct behaviour.
+    """
+    pytest.importorskip("litellm")
+
+    from zicato.adapters.adk import _resolves_to_native_function_calling
+
+    # The classifier: provider string -> LiteLlm (True); genai-backed /
+    # unresolvable -> False (shim fallback).
+    assert _resolves_to_native_function_calling("openai/gpt-4o-mini") is True
+    assert _resolves_to_native_function_calling("gemma-3-12b-it") is False
+    assert _resolves_to_native_function_calling("gemini-2.0-flash") is False
+    assert _resolves_to_native_function_calling("not-a-real-model-xyz") is False
+
+    # The guard: the shim leaves the LiteLlm-resolvable agent's string in place.
+    agent = LlmAgent(name="solo", instruction="s", model="openai/gpt-4o-mini")
+
+    async def call_llm(system: str, user: str, model: str) -> str:
+        return "ok"
+
+    assert rebind_tree_models_to_call_llm(agent, call_llm) == 0
+    assert agent.model == "openai/gpt-4o-mini"
+
+
+def _weather_tool() -> Any:
+    """Build a deterministic ADK ``FunctionTool`` for the regression test.
+
+    A trivial typed function so ADK derives a ``function_declaration`` for it;
+    the body never runs (the fake model answers with text before any tool
+    dispatch). Returns the wrapped tool the agent declares under ``tools=``.
+    """
+    from google.adk.tools import FunctionTool
+
+    def lookup_weather(city: str) -> dict[str, str]:
+        """Return the weather for a city.
+
+        Args:
+            city: the city to look up.
+        """
+        return {"city": city, "weather": "sunny"}
+
+    return FunctionTool(lookup_weather)
+
+
+@pytest.mark.asyncio
+async def test_inner_model_rebind_preserves_tool_function_declarations() -> None:
+    """(b) REGRESSION: the config-driven inner-model rebind keeps tool-calling.
+
+    Under :func:`rebind_tree_models_to_adk_model` (the path taken when a
+    ``models.harness`` inner model is configured), an agent that declares a
+    ``FunctionTool`` must still be driven WITH its tools: ADK assembles the
+    ``LlmRequest`` with the tool's ``function_declarations`` on
+    ``config.tools``. We capture that request via a fake ``BaseLlm`` (the
+    configured inner model) and assert the declaration reaches it.
+
+    This is exactly what the bug stripped: rebinding the same agent to the
+    text-only ``call_llm`` shim drops the tools — proven by the contrast half,
+    where the shim, handed the SAME tool-carrying request, yields a single text
+    part and NEVER a ``function_call``.
+    """
+    from google.adk.models.llm_request import LlmRequest
+    from google.adk.runners import InMemoryRunner
+    from google.genai import types as genai_types
+
+    from zicato.adapters.adk import (
+        rebind_tree_models_to_adk_model,
+        rebind_tree_models_to_call_llm,
+    )
+    from zicato.testing.adk_fake import TextTurn, make_fake_adk_model
+
+    # --- config-driven inner model: tools must survive. ---
+    tool = _weather_tool()
+    agent = LlmAgent(
+        name="weatherbot",
+        instruction="help the user",
+        model="gemma-3-12b-it",  # a bare string the bug would have shimmed
+        tools=[tool],
+    )
+    # A FakeADKModel records every LlmRequest it is driven with; it stands in
+    # for the configured LiteLlm inner model (a function-calling BaseLlm).
+    configured = make_fake_adk_model([TextTurn("Paris is sunny.")], model="configured-endpoint")
+    rebound = rebind_tree_models_to_adk_model(agent, configured)
+    assert rebound == 1
+    assert agent.model is configured  # the inner model overrode the bare string
+
+    runner = InMemoryRunner(agent, app_name="zicato-inner-model-test")
+    await runner.session_service.create_session(
+        app_name="zicato-inner-model-test", user_id="u", session_id="s"
+    )
+    message = genai_types.Content(role="user", parts=[genai_types.Part(text="weather in Paris?")])
+    async for _event in runner.run_async(user_id="u", session_id="s", new_message=message):
+        pass
+
+    # ADK drove the configured model at least once and assembled the request
+    # WITH the tool's function declarations on config.tools.
+    assert configured.invocations, "the configured inner model must be driven"
+    captured: Any = configured.invocations[0]
+    config = getattr(captured, "config", None)
+    declared_names: list[str] = []
+    for adk_tool in getattr(config, "tools", None) or ():
+        for decl in getattr(adk_tool, "function_declarations", None) or ():
+            declared_names.append(decl.name)
+    assert "lookup_weather" in declared_names, (
+        "the inner-model rebind must preserve native tool-calling — the tool's "
+        f"function_declaration must reach the model; saw {declared_names!r}"
+    )
+
+    # --- contrast: the text-only shim DROPS the tools. ---
+    shim_agent = LlmAgent(
+        name="weatherbot2",
+        instruction="help the user",
+        model="gemma-3-12b-it",
+        tools=[_weather_tool()],
+    )
+
+    async def call_llm(system: str, user: str, model: str) -> str:
+        return "I cannot call tools; here is plain text."
+
+    assert rebind_tree_models_to_call_llm(shim_agent, call_llm) == 1
+    shim = shim_agent.model
+
+    # Hand the shim a request that DOES carry tools, exactly as ADK would, and
+    # confirm it answers with text and never a function_call — tools dropped.
+    tool_config = genai_types.GenerateContentConfig(
+        system_instruction="help the user",
+        tools=[
+            genai_types.Tool(
+                function_declarations=[
+                    genai_types.FunctionDeclaration(name="lookup_weather", description="weather")
+                ]
+            )
+        ],
+    )
+    shim_request = LlmRequest(
+        contents=[genai_types.Content(role="user", parts=[genai_types.Part(text="weather?")])],
+        config=tool_config,
+    )
+    responses = [resp async for resp in shim.generate_content_async(shim_request)]
+    shim_parts = responses[0].content.parts
+    assert not any(
+        getattr(p, "function_call", None) is not None for p in shim_parts
+    ), "the text-only shim must NOT emit a function_call (it drops the tools)"
+    assert any(
+        getattr(p, "text", None) for p in shim_parts
+    ), "the text-only shim yields a single text part"
