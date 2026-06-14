@@ -56,7 +56,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-adk = ["google-adk", "goldfive[adk]"]
+adk = ["google-adk[extensions]", "goldfive[adk]"]
 # The standalone dashboard service: a Starlette/ASGI app served by
 # uvicorn, with a watchdog-backed file watcher for the SSE stream.
 dashboard = [

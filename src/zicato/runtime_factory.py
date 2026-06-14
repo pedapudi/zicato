@@ -173,6 +173,24 @@ def make_runtime_config(
     tolerance_raw = runtime_dict.get("diversity_tolerance")
     diversity_tolerance = float(tolerance_raw) if tolerance_raw is not None else None
 
+    # Inner ADK agent model: when ``models.harness`` is a *model spec* (a
+    # model string, optionally + endpoint/api_key_env), build the ADK model
+    # object so the adapter can rebind the target's agents to it with native
+    # tool/function calling intact (the config-driven alternative to a bare
+    # string + the text-only shim). A dotted ``call_llm`` harness role, or an
+    # endpoint-less spec that yields a bare string, leaves ``inner_model`` None
+    # — the adapter then uses its guarded shim rebind, exactly as before.
+    inner_model: Any = None
+    if not models.harness.is_empty and models.harness.model:
+        from zicato.models_config import build_adk_model  # noqa: PLC0415
+
+        try:
+            built = build_adk_model(models.harness, role="harness")
+        except ValueError:
+            built = None  # ADK/litellm unavailable — fall back to the shim path.
+        if built is not None and not isinstance(built, str):
+            inner_model = built
+
     # Defense in depth — also re-checked by the runner.
     assert_distinct_callables(harness, aux)
 
@@ -187,6 +205,7 @@ def make_runtime_config(
         scrub_worker_env=scrub_worker_env,
         worker_env_passthrough=worker_env_passthrough,
         diversity_tolerance=diversity_tolerance,
+        inner_model=inner_model,
     )
 
 

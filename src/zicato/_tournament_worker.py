@@ -134,6 +134,35 @@ def _resolve_role_call_llm(spec: Any, *, role: str) -> Any:
     raise ValueError(f"{role} role spec has neither 'dotted' nor 'models_role': {spec!r}")
 
 
+def _resolve_inner_model_from_role(spec: Any) -> Any:
+    """Build the inner ADK agent model from the harness role worker spec.
+
+    Mirrors :mod:`zicato.runtime_factory`'s inner-model construction inside the
+    fresh worker interpreter: when the harness role is a ``models_role`` *model
+    spec* (model + endpoint/api_key_env), build the ADK model object (a
+    ``LiteLlm``) so the adapter rebinds the target's agents to it with native
+    tool/function calling. Returns ``None`` for a dotted call_llm role or an
+    endpoint-less spec that yields a bare string — the adapter then falls back
+    to its guarded shim rebind, exactly as before. ``api_key_env`` is read from
+    the worker's OWN ``os.environ`` (secrets never crossed the boundary).
+    """
+    if not isinstance(spec, dict):
+        return None
+    raw_role = spec.get("models_role")
+    if not isinstance(raw_role, dict):
+        return None
+    from zicato.models_config import build_adk_model, role_spec_from_dict  # noqa: PLC0415
+
+    role_spec = role_spec_from_dict(raw_role)
+    if not role_spec.model:
+        return None
+    try:
+        built = build_adk_model(role_spec, role="harness")
+    except ValueError:
+        return None
+    return built if not isinstance(built, str) else None
+
+
 def _load_args(args_path: Path) -> dict[str, Any]:
     """Read and minimally validate the worker's JSON args file.
 
@@ -512,6 +541,9 @@ async def _run(args: dict[str, Any]) -> None:
     # workspace ``models`` block, re-resolved here (reading any api_key_env
     # from the worker's OWN os.environ — secrets never crossed the boundary).
     harness_call_llm = _resolve_role_call_llm(args["harness_role"], role="harness")
+    # Inner ADK agent model: when the harness role is a model spec, the agents
+    # run on the configured endpoint (function-calling) instead of the shim.
+    inner_model = _resolve_inner_model_from_role(args["harness_role"])
     auxiliary_call_llm = _resolve_role_call_llm(args["auxiliary_role"], role="auxiliary")
     # The judge role falls back to ``None`` when unconfigured, so
     # ``RuntimeConfig.effective_judge_call_llm`` resolves to the auxiliary.
@@ -526,6 +558,7 @@ async def _run(args: dict[str, Any]) -> None:
         auxiliary_call_llm=auxiliary_call_llm,
         seed=args.get("seed"),
         judge_call_llm=judge_call_llm,
+        inner_model=inner_model,
     )
 
     weights = _weights_from_args(args)

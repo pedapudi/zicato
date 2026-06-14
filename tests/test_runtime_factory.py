@@ -317,6 +317,51 @@ def test_explicit_callable_kwarg_beats_models_block(
     assert cfg.harness_call_llm is _stub_aux
 
 
+def test_models_harness_endpoint_spec_builds_inner_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A ``models.harness`` *model spec* with an endpoint builds the inner ADK
+    model so the adapter can rebind the target's agents to it (function-calling
+    against the configured endpoint), not the text-only shim."""
+    pytest.importorskip("litellm")
+    from google.adk.models.lite_llm import LiteLlm
+
+    _install_models_callables(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-dummy")
+    cfg = make_runtime_config(
+        {
+            "models": {
+                "harness": {
+                    "model": "openai/gemma-4-26B-A4B-it-FP8",
+                    "endpoint": "http://kossel.lan:8080/v1",
+                    "api_key_env": "OPENAI_API_KEY",
+                },
+                "auxiliary": {"call_llm": "fake_models_mod:aux_fn"},
+            }
+        },
+        workspace_root=tmp_path,
+    )
+    assert isinstance(cfg.inner_model, LiteLlm)
+
+
+def test_dotted_harness_role_leaves_inner_model_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A dotted ``call_llm`` harness role configures no inner model — the
+    adapter falls back to its guarded shim rebind (today's behaviour)."""
+    _install_models_callables(monkeypatch)
+    cfg = make_runtime_config(
+        {
+            "models": {
+                "harness": {"call_llm": "fake_models_mod:harness_fn"},
+                "auxiliary": {"call_llm": "fake_models_mod:aux_fn"},
+            }
+        },
+        workspace_root=tmp_path,
+    )
+    assert cfg.inner_model is None
+
+
 def test_models_judge_role_resolves_and_overrides_auxiliary(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

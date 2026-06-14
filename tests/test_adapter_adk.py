@@ -506,6 +506,59 @@ def test_rebind_leaves_author_supplied_basellm_untouched() -> None:
     assert agent.model is fake_model
 
 
+def test_rebind_to_adk_model_replaces_string_models() -> None:
+    """The config-driven path injects the configured model into every
+    string-model agent (the inner-model override) — keeping native tools."""
+    from zicato.adapters.adk import rebind_tree_models_to_adk_model
+    from zicato.testing.adk_fake import TextTurn, make_fake_adk_model
+
+    configured = make_fake_adk_model([TextTurn("hi")], model="configured-endpoint")
+    leaf = LlmAgent(name="leaf", instruction="l", model="openai/gpt-4o-mini")
+    coordinator = LlmAgent(
+        name="coordinator", instruction="c", model="gemma-3-12b-it", sub_agents=[leaf]
+    )
+
+    rebound = rebind_tree_models_to_adk_model(coordinator, configured)
+    assert rebound == 2
+    assert coordinator.model is configured
+    assert leaf.model is configured
+
+
+def test_rebind_to_adk_model_leaves_author_basellm_and_noops_on_none() -> None:
+    """Author-supplied BaseLlm models are not overridden; a falsy model is a
+    no-op so the caller can fall through to the shim path."""
+    from zicato.adapters.adk import rebind_tree_models_to_adk_model
+    from zicato.testing.adk_fake import TextTurn, make_fake_adk_model
+
+    author = make_fake_adk_model([TextTurn("a")], model="author")
+    configured = make_fake_adk_model([TextTurn("c")], model="configured")
+    agent = LlmAgent(name="solo", instruction="s", model=author)
+
+    assert rebind_tree_models_to_adk_model(agent, configured) == 0
+    assert agent.model is author
+    assert rebind_tree_models_to_adk_model(agent, None) == 0
+
+
+def test_rebind_leaves_litellm_resolvable_string_untouched() -> None:
+    """A provider-style ``openai/<model>`` string resolves to a real
+    function-calling ``LiteLlm`` and must NOT be rebound to the text-only
+    call_llm shim — doing so would strip native tool/function calling and
+    reduce a tool-calling tree to a single text turn.
+
+    Skipped when litellm is unavailable: without it the provider string is
+    unresolvable, so the shim fallback (rebind) is correct and expected.
+    """
+    pytest.importorskip("litellm")
+
+    agent = LlmAgent(name="solo", instruction="s", model="openai/gpt-4o-mini")
+
+    async def call_llm(system: str, user: str, model: str) -> str:
+        return "ok"
+
+    assert rebind_tree_models_to_call_llm(agent, call_llm) == 0
+    assert agent.model == "openai/gpt-4o-mini"
+
+
 @pytest.mark.asyncio
 async def test_run_rebinds_every_tree_model_to_basellm(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path

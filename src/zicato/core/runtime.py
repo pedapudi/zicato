@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Runtime config
@@ -140,6 +141,16 @@ class RuntimeConfig:
     scrub_worker_env: bool = False
     worker_env_passthrough: tuple[str, ...] = ()
     diversity_tolerance: float | None = None
+    #: The ADK model object (a ``BaseLlm``, typically a ``LiteLlm``) the inner
+    #: ADK agents run on, built from a ``models.harness`` *model spec* (model +
+    #: endpoint + api_key_env) via :func:`zicato.models_config.build_adk_model`.
+    #: When set, the ADK adapter rebinds the target's string-model agents to it
+    #: so they reach the configured endpoint with native tool/function calling
+    #: intact — the config-driven alternative to a bare model string + the
+    #: text-only ``call_llm`` shim. ``None`` (the default) ⇒ no inner model was
+    #: configured; the adapter falls back to its guarded shim rebind. Typed
+    #: ``Any`` so :mod:`zicato.core` carries no import dependency on ADK.
+    inner_model: Any = None
 
     def __post_init__(self) -> None:
         """Validate the cheap scalar invariants (``parallelism`` + tolerance)."""
