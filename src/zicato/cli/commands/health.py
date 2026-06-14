@@ -25,7 +25,11 @@ from typing import Any
 import click
 
 from zicato.core.types import BoardEntry, LossProfile
-from zicato.core.workspace import epoch_dir, loss_profile_path
+from zicato.core.workspace import (
+    experiment_json_path,
+    generations_dir,
+    loss_profile_path,
+)
 from zicato.health.diagnostics import LoopHealth, assess_loop_health
 
 #: ANSI-ish colour names click understands, keyed by finding severity.
@@ -57,7 +61,7 @@ def _generation_ids(workspace_dir: Path, epoch_id: str) -> list[str]:
     numeric ones in lexical order so adapters that name generations
     differently still surface.
     """
-    gens_root = epoch_dir(workspace_dir, epoch_id) / "generations"
+    gens_root = generations_dir(workspace_dir, epoch_id)
     if not gens_root.exists():
         return []
     numeric: list[tuple[int, str]] = []
@@ -116,9 +120,7 @@ def _load_experiments(
     """
     out: list[dict[str, Any]] = []
     for generation_id in generation_ids:
-        path = (
-            epoch_dir(workspace_dir, epoch_id) / "generations" / generation_id / "experiment.json"
-        )
+        path = experiment_json_path(workspace_dir, epoch_id, generation_id)
         if not path.exists():
             continue
         try:

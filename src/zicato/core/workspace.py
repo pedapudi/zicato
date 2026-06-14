@@ -97,6 +97,17 @@ def epoch_dir(workspace_root: Path, epoch_id: str) -> Path:
     return _layout(workspace_root).epoch_dir(epoch_id)
 
 
+def generations_dir(workspace_root: Path, epoch_id: str) -> Path:
+    """Return the ``generations/`` directory under one epoch.
+
+    The parent of every per-generation directory. Callers that enumerate
+    an epoch's generations (the health CLI, the analysis pass, the
+    repair tools) resolve this single join rather than re-spelling
+    ``epoch_dir(...) / "generations"``.
+    """
+    return _layout(workspace_root).generations_dir(epoch_id)
+
+
 def generation_dir(workspace_root: Path, epoch_id: str, generation_id: str) -> Path:
     """Return the directory holding one generation's artifacts."""
     return _layout(workspace_root).generation_dir(epoch_id, generation_id)
@@ -297,6 +308,7 @@ def assert_distinct_callables(
 
 __all__ = [
     "epoch_dir",
+    "generations_dir",
     "generation_dir",
     "run_dir",
     "events_jsonl_path",

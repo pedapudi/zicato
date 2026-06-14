@@ -42,6 +42,7 @@ from zicato.telemetry.reducer import (
     read_loss_profile,
     write_loss_profile,
 )
+from zicato.workspace import WorkspaceLayout
 from zicato.workspace_loader import _scoring_weights_from_dict
 
 
@@ -129,7 +130,7 @@ def _iter_runs(workspace_root: Path) -> list[tuple[str, str, str]]:
     A workspace with no ``epochs/`` root yields the empty list — the
     command then exits cleanly rather than raising.
     """
-    epochs_root = workspace_root / "epochs"
+    epochs_root = WorkspaceLayout.from_root(workspace_root).epochs_dir
     if not epochs_root.is_dir():
         return []
     out: list[tuple[str, str, str]] = []
