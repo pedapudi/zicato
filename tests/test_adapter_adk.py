@@ -45,6 +45,7 @@ from zicato.adapters.adk import (  # noqa: E402
     _goldfive_runtime,
     _outcome_transcript,
     _split_entrypoint,
+    rebind_tree_models_to_call_llm,
 )
 from zicato.adapters.base import HarnessAdapter, RunnableHarness  # noqa: E402
 from zicato.core import BoardEntry, RunResult, RuntimeConfig  # noqa: E402
@@ -401,6 +402,161 @@ async def test_run_single_turn_forwards_sinks_and_callable(
     # the harness_call_llm — NOT the auxiliary — is forwarded.
     assert seen["call_llm"] is config.harness_call_llm
     assert seen["call_llm"] is not config.auxiliary_call_llm
+
+
+# ---------------------------------------------------------------------------
+# call_llm rebind — string-model agents must NOT keep a bare model string,
+# or ADK resolves it and constructs an unused google.genai client whose
+# teardown floods the log with AttributeError('_async_httpx_client').
+# ---------------------------------------------------------------------------
+
+
+def _write_multi_agent_harness(root: Path, module_name: str = "demo_tree") -> Path:
+    """Write an inner harness with a root + two string-model sub_agents.
+
+    Mirrors the real target's multi-agent shape (a coordinator with
+    sub-agents) so the rebind walker is exercised over ``sub_agents`` edges,
+    not just a single root. Every agent declares a BARE MODEL STRING — the
+    exact pre-fix state that makes ADK build a genai client per turn.
+    """
+    pkg_dir = root / module_name
+    pkg_dir.mkdir()
+    (pkg_dir / "__init__.py").write_text("")
+    (pkg_dir / "agent.py").write_text(
+        textwrap.dedent(
+            """\
+            from google.adk.agents import LlmAgent
+
+            leaf_a = LlmAgent(name="leaf_a", instruction="a", model="gemma-3-12b-it")
+            leaf_b = LlmAgent(name="leaf_b", instruction="b", model="gemma-3-12b-it")
+            agent = LlmAgent(
+                name="coordinator",
+                instruction="coordinate",
+                model="gemma-3-12b-it",
+                sub_agents=[leaf_a, leaf_b],
+            )
+            """
+        )
+    )
+    return pkg_dir
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_tree_modules() -> Any:
+    """Drop any ``demo_tree*`` modules between tests so reloads are clean."""
+    yield
+    for name in list(sys.modules):
+        if name.startswith("demo_tree"):
+            sys.modules.pop(name, None)
+
+
+def test_rebind_replaces_string_models_with_call_llm_backed_basellm() -> None:
+    """Every string-model agent in the tree becomes a call_llm-backed BaseLlm.
+
+    This is the core of the fix: ADK's ``canonical_model`` short-circuits on
+    a ``BaseLlm`` model and therefore NEVER resolves a bare model string
+    through ``LLMRegistry.new_llm`` (which builds the unused, flood-causing
+    google.genai client). We assert the post-rebind invariant the production
+    run depends on.
+    """
+    from google.adk.models import BaseLlm
+
+    leaf_a = LlmAgent(name="leaf_a", instruction="a", model="gemma-3-12b-it")
+    leaf_b = LlmAgent(name="leaf_b", instruction="b", model="gemma-3-12b-it")
+    coordinator = LlmAgent(
+        name="coordinator",
+        instruction="c",
+        model="gemma-3-12b-it",
+        sub_agents=[leaf_a, leaf_b],
+    )
+
+    async def call_llm(system: str, user: str, model: str) -> str:
+        return "ok"
+
+    rebound = rebind_tree_models_to_call_llm(coordinator, call_llm)
+
+    assert rebound == 3
+    for agent in (coordinator, leaf_a, leaf_b):
+        assert isinstance(agent.model, BaseLlm), agent.name
+        # canonical_model returns the BaseLlm directly — no LLMRegistry /
+        # genai client construction can happen for this agent.
+        assert agent.canonical_model is agent.model
+        # The original model string label is preserved for observability.
+        assert agent.model.model == "gemma-3-12b-it"
+
+
+def test_rebind_is_noop_without_call_llm() -> None:
+    """No harness call_llm ⇒ the model-string live path is left unchanged."""
+    agent = LlmAgent(name="solo", instruction="s", model="gemma-3-12b-it")
+    assert rebind_tree_models_to_call_llm(agent, None) == 0
+    assert agent.model == "gemma-3-12b-it"
+
+
+def test_rebind_leaves_author_supplied_basellm_untouched() -> None:
+    """An agent whose model is already a BaseLlm is not rebound."""
+    from zicato.testing.adk_fake import TextTurn, make_fake_adk_model
+
+    fake_model = make_fake_adk_model([TextTurn("hi")], model="author-model")
+    agent = LlmAgent(name="solo", instruction="s", model=fake_model)
+
+    async def call_llm(system: str, user: str, model: str) -> str:
+        return "ok"
+
+    assert rebind_tree_models_to_call_llm(agent, call_llm) == 0
+    assert agent.model is fake_model
+
+
+@pytest.mark.asyncio
+async def test_run_rebinds_every_tree_model_to_basellm(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """After ``ADKRunnableHarness.run``, NO agent in the tree is a bare string.
+
+    Drives the public ``run`` path (with ``goldfive.run`` stubbed so no real
+    model turns fire) and asserts that every ``LlmAgent.model`` reachable
+    from the root — root + ``sub_agents`` — is a call_llm-backed
+    :class:`BaseLlm`. Pre-fix this assertion FAILS: the models stay bare
+    ``"gemma-3-12b-it"`` strings, which is exactly what makes ADK construct
+    the unused genai client that floods the log on teardown.
+    """
+    from google.adk.models import BaseLlm
+
+    _write_multi_agent_harness(tmp_path)
+    adapter = ADKHarnessAdapter(
+        entrypoint="demo_tree.agent:agent",
+        mutable_trees=[tmp_path / "demo_tree"],
+    )
+    runnable = adapter.load(tmp_path)
+
+    # Sanity: the freshly loaded tree starts as bare model strings.
+    root_agent = runnable._agent
+    assert isinstance(root_agent.model, str)
+    assert all(isinstance(sub.model, str) for sub in root_agent.sub_agents)
+
+    import goldfive
+
+    async def fake_goldfive_run(agent: Any, user_input: str, **kwargs: Any) -> _FakeOutcome:
+        return _FakeOutcome({"t1": "reply"})
+
+    monkeypatch.setattr(goldfive, "run", fake_goldfive_run)
+
+    entry = BoardEntry(
+        id="entry-tree",
+        kind="single_turn",
+        wall_clock_budget_seconds=10,
+        input="hello",
+    )
+    entry.validate()
+    config = _runtime_config(tmp_path)
+
+    await runnable.run(entry, sinks=[], config=config)
+
+    # The fix: every agent's model is now a call_llm-backed BaseLlm, so ADK
+    # never resolves a string to a genai client.
+    assert isinstance(root_agent.model, BaseLlm)
+    for sub in root_agent.sub_agents:
+        assert isinstance(sub.model, BaseLlm), sub.name
+        assert sub.canonical_model is sub.model
 
 
 # ---------------------------------------------------------------------------

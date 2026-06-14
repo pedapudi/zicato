@@ -114,7 +114,7 @@ import logging
 import sys
 import time
 import uuid
-from collections.abc import Iterable
+from collections.abc import AsyncGenerator, Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -245,6 +245,186 @@ def _goldfive_runtime() -> Any:
     timeout_ms = load_config().runtime.harness_call_timeout_ms
     agent = dataclasses.replace(runtime.agent, call_timeout_ms=timeout_ms)
     return dataclasses.replace(runtime, agent=agent)
+
+
+# ---------------------------------------------------------------------------
+# call_llm-backed ADK model — kills the unused google.genai client flood
+# ---------------------------------------------------------------------------
+
+
+def _build_call_llm_adk_model_class() -> type:
+    """Build the ``BaseLlm`` subclass that drives generation via a call_llm.
+
+    The harness threads its ``(system, user, model) -> str`` callable into
+    every ``goldfive.run`` invocation, and goldfive's *steering* (goal
+    derive / planner refine / judges) runs on it. But the wrapped ADK
+    ``LlmAgent``s' OWN task turns still run on each agent's declared
+    ``model`` field — a bare model string in live runs. ADK resolves that
+    string through ``LLMRegistry.new_llm`` and constructs a
+    :class:`google.genai.Client`'s ``BaseApiClient`` for it. When no Google
+    API key is present (the vLLM / call_llm path never needs one), that
+    constructor raises ``ValueError('No API key')`` *before* it sets
+    ``_async_httpx_client`` — leaving a partial client whose ``__del__``
+    schedules ``aclose()``, which then raises
+    ``AttributeError('_async_httpx_client')`` on GC. With one such client
+    per turn this floods the log with hundreds of "Task exception was never
+    retrieved" tracebacks. The client is never used for real generation.
+
+    The fix is to give each ``LlmAgent`` a real ``BaseLlm`` backed by the
+    harness ``call_llm`` so ADK's ``canonical_model`` returns it directly
+    (it short-circuits on ``isinstance(self.model, BaseLlm)``), never
+    touching ``LLMRegistry.new_llm`` / the genai client. This is the inverse
+    of goldfive's :func:`goldfive._llm_detect.make_default_adk_call_llm`
+    (which wraps a ``BaseLlm`` *into* a call_llm); here we wrap a call_llm
+    *into* a ``BaseLlm``.
+
+    Defined as a factory so the ADK / genai symbols are imported only when a
+    rebind actually happens — keeping this module importable without the
+    optional ``google-adk`` extra.
+    """
+    from google.adk.models import BaseLlm  # noqa: PLC0415
+    from google.adk.models.llm_request import LlmRequest  # noqa: PLC0415
+    from google.adk.models.llm_response import LlmResponse  # noqa: PLC0415
+    from google.genai import types as genai_types  # noqa: PLC0415
+
+    class _CallLlmADKModel(BaseLlm):
+        """A :class:`BaseLlm` whose generation routes through a call_llm.
+
+        Implements the single abstract method
+        :meth:`generate_content_async` by flattening the ADK
+        :class:`LlmRequest` into the ``(system, user)`` text pair the
+        harness ``call_llm`` expects, awaiting it, and yielding a single
+        text :class:`LlmResponse`. ``model`` preserves the original
+        model-string label purely for observability; the actual generation
+        is the call_llm's, which is already model-bound.
+
+        The system instruction is read from
+        ``llm_request.config.system_instruction`` and the user text is the
+        concatenation of every text part across the request's ``contents``
+        (mirroring how ADK assembles a turn). This is the symmetric reverse
+        of goldfive's forward adapter, which puts ``system`` on
+        ``config.system_instruction`` and ``user`` on a single user
+        ``Content`` — so a round-trip through both is lossless for the
+        text-only turns the harness drives.
+        """
+
+        # ``call_llm`` is the harness callable; declared as a pydantic
+        # field (BaseLlm is a pydantic BaseModel) so assignment validates.
+        call_llm: Any = None
+
+        async def generate_content_async(
+            self,
+            llm_request: LlmRequest,
+            stream: bool = False,
+        ) -> AsyncGenerator[Any, None]:
+            del stream  # the harness call_llm is non-streaming text-in/out
+            config = getattr(llm_request, "config", None)
+            system = ""
+            if config is not None:
+                raw_system = getattr(config, "system_instruction", None)
+                if isinstance(raw_system, str):
+                    system = raw_system
+                elif raw_system is not None:
+                    # Some ADK shapes carry a Content/list here; flatten its
+                    # text parts defensively rather than str()-ing the object.
+                    system = _flatten_request_text([raw_system])
+            user = _flatten_request_text(getattr(llm_request, "contents", None) or ())
+            reply = await self.call_llm(system, user, self.model)
+            yield LlmResponse(
+                content=genai_types.Content(
+                    role="model",
+                    parts=[genai_types.Part(text=str(reply))],
+                )
+            )
+
+    return _CallLlmADKModel
+
+
+def _flatten_request_text(contents: Iterable[Any]) -> str:
+    """Concatenate every text part across an ADK request's ``contents``.
+
+    Walks each ``Content``-shaped item's ``parts`` and joins the non-empty
+    ``part.text`` values with newlines, in order. Tolerant of bare strings
+    and shapes missing ``parts`` so a malformed request degrades to an empty
+    (or best-effort) user string rather than raising inside the model.
+    """
+    chunks: list[str] = []
+    for content in contents:
+        if isinstance(content, str):
+            if content:
+                chunks.append(content)
+            continue
+        parts = getattr(content, "parts", None) or ()
+        for part in parts:
+            text = getattr(part, "text", None)
+            if text:
+                chunks.append(str(text))
+    return "\n".join(chunks)
+
+
+def _iter_agent_tree(root: Any) -> Iterable[Any]:
+    """Yield ``root`` and every agent reachable through the ADK tree edges.
+
+    Follows the same edges goldfive's own ADK adapter walks —
+    ``sub_agents`` (the native agent tree), ``inner_agent`` (overlay
+    wrappers), and ``AgentTool.agent`` (tool-wrapped agents reachable via an
+    agent's ``tools``) — so every ``LlmAgent`` that ADK could drive a turn
+    on is visited exactly once. Cycle-safe via an id-based visited set.
+    """
+    seen: set[int] = set()
+    stack: list[Any] = [root]
+    while stack:
+        node = stack.pop()
+        if node is None or id(node) in seen:
+            continue
+        seen.add(id(node))
+        yield node
+        for sub in getattr(node, "sub_agents", None) or ():
+            stack.append(sub)
+        inner = getattr(node, "inner_agent", None)
+        if inner is not None:
+            stack.append(inner)
+        for tool in getattr(node, "tools", None) or ():
+            tool_agent = getattr(tool, "agent", None)
+            if tool_agent is not None:
+                stack.append(tool_agent)
+
+
+def rebind_tree_models_to_call_llm(root: Any, call_llm: Any) -> int:
+    """Rebind every string-model ``LlmAgent`` in ``root``'s tree to ``call_llm``.
+
+    Walks the agent tree (root + ``sub_agents`` / ``inner_agent`` /
+    ``AgentTool.agent`` edges) and, for each agent whose ``model`` is a bare
+    string (or empty), replaces it with a :class:`BaseLlm` backed by
+    ``call_llm`` so ADK's ``canonical_model`` returns it directly and NEVER
+    resolves the string through ``LLMRegistry.new_llm`` (which would build
+    the unused, flood-causing google.genai client). Agents whose ``model``
+    is already a ``BaseLlm`` are left untouched — an author who wired a real
+    model object owns it.
+
+    Returns the number of agents rebound. A no-op (returns 0) when
+    ``call_llm`` is falsy: the model-string live path without a harness
+    callable keeps its original behaviour unchanged. Idempotent — a
+    second pass finds every model already a ``BaseLlm`` and rebinds none.
+    """
+    if not call_llm:
+        return 0
+    from google.adk.models import BaseLlm  # noqa: PLC0415
+
+    model_cls = _build_call_llm_adk_model_class()
+    rebound = 0
+    for agent in _iter_agent_tree(root):
+        # Only ``LlmAgent``-shaped nodes carry a ``model``; a plain
+        # ``BaseAgent`` (or an overlay wrapper) simply has no such field.
+        if not hasattr(agent, "model"):
+            continue
+        current = agent.model
+        if isinstance(current, BaseLlm):
+            continue  # author-supplied model object — leave it.
+        label = current if isinstance(current, str) and current else "call-llm"
+        agent.model = model_cls(model=label, call_llm=call_llm)
+        rebound += 1
+    return rebound
 
 
 # ---------------------------------------------------------------------------
@@ -563,6 +743,20 @@ class ADKRunnableHarness:
         run_id = uuid.uuid4().hex
         budget_s = float(entry.wall_clock_budget_seconds)
         started_at = time.monotonic()
+
+        # Rebind every string-model LlmAgent in the loaded tree to a
+        # BaseLlm backed by the harness call_llm BEFORE any goldfive.run
+        # dispatch. Without this, ADK resolves each agent's bare model
+        # string (a "gemma-*" id in live runs) through LLMRegistry.new_llm
+        # and constructs an unused google.genai client that raises on GC
+        # teardown — flooding the log with hundreds of
+        # AttributeError('_async_httpx_client') tracebacks. goldfive's
+        # call_llm already does all real generation; routing the agents'
+        # own turns through it too is behaviour-preserving (the call_llm IS
+        # the live endpoint) and removes the dead client. Guarded on a
+        # supplied call_llm and idempotent (a re-run finds every model
+        # already a BaseLlm), so the no-call_llm path is untouched.
+        rebind_tree_models_to_call_llm(self._agent, config.harness_call_llm)
 
         async def _drive() -> RunResult:
             if entry.kind == "single_turn":
@@ -1065,4 +1259,5 @@ def _coerce_to_list(points: Iterable[MutationPoint]) -> list[MutationPoint]:
 __all__ = [
     "ADKHarnessAdapter",
     "ADKRunnableHarness",
+    "rebind_tree_models_to_call_llm",
 ]
