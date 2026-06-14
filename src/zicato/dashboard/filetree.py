@@ -40,6 +40,7 @@ import re
 from dataclasses import asdict
 from typing import Any
 
+from zicato.dashboard.readers.paths import list_epoch_ids
 from zicato.dashboard.state_reader import WorkspacePaths
 from zicato.epoch.genstore import GenerationStore, default_generation_store
 
@@ -64,18 +65,6 @@ def _store(paths: WorkspacePaths) -> GenerationStore:
     return default_generation_store(paths.root)
 
 
-def _list_epoch_ids(paths: WorkspacePaths) -> list[str]:
-    """Return every epoch id under the workspace, sorted.
-
-    Walks ``epochs/`` directly — epoch directories exist for both
-    storage backends (the git backend only changes where *generation
-    source trees* live, not the per-epoch record directories).
-    """
-    if not paths.epochs.is_dir():
-        return []
-    return sorted(d.name for d in paths.epochs.iterdir() if d.is_dir())
-
-
 def build_file_index(paths: WorkspacePaths) -> dict[str, Any]:
     """Return the top-level Files-view index: epochs → generations.
 
@@ -86,7 +75,11 @@ def build_file_index(paths: WorkspacePaths) -> dict[str, Any]:
     """
     store = _store(paths)
     epochs: list[dict[str, Any]] = []
-    for epoch_id in _list_epoch_ids(paths):
+    # Epoch enumeration + ordering routes through the single authority
+    # (timestamp-first), the same one every other epoch-list response uses.
+    # The git backend only changes where generation *source trees* live, not
+    # the per-epoch record directories this walks.
+    for epoch_id in list_epoch_ids(paths):
         generations: list[dict[str, Any]] = []
         for generation_id in store.list_generations(epoch_id):
             try:

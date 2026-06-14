@@ -334,6 +334,68 @@ def test_list_epochs_skips_directories_without_config(
     assert len(epochs) == 1
 
 
+def _write_epoch_config(workspace: Path, epoch_id: str, created_at: str) -> None:
+    """Materialize a minimal ``epochs/<id>/config.json`` directly on disk.
+
+    Bypasses ``new_epoch`` so the test can pin both the id and the
+    ``created_at`` stamp — the two inputs to the canonical sort key.
+    """
+    edir = workspace / "epochs" / epoch_id
+    edir.mkdir(parents=True)
+    (edir / "config.json").write_text(
+        json.dumps(
+            {
+                "id": epoch_id,
+                "name": epoch_id,
+                "created_at": created_at,
+                "board_path": "board.jsonl",
+                "brief_path": "brief.md",
+                "contract_hash": "deadbeef",
+                "closed": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_list_epochs_uses_canonical_numeric_tiebreaker(workspace: Path) -> None:
+    """``list_epochs`` orders by the canonical timestamp-first key, breaking
+    ties by the *numeric-aware* id key — not the old lexical ``c.id`` sort.
+
+    With a shared ``created_at`` the tiebreaker decides the order. Lexical
+    order would place ``e10`` before ``e2`` (string ``"1" < "2"``); the
+    canonical ``natural_key`` places ``e2`` before ``e10``. This is the
+    ordering bug the workspace enumeration layer was introduced to fix, and
+    the parity REINDEX-DUMP fixture is single-epoch so it cannot catch a
+    multi-epoch tiebreak regression on its own.
+    """
+    from zicato.workspace import WorkspaceLayout, list_epoch_ids
+
+    shared = "2026-05-15T00:00:00+00:00"
+    # Insert in an order that is neither the lexical nor the natural order,
+    # so a passing assertion can't be an accident of disk-walk order.
+    for eid in ("e10", "e2", "e1"):
+        _write_epoch_config(workspace, eid, shared)
+
+    ids = [c.id for c in list_epochs(workspace)]
+    assert ids == ["e1", "e2", "e10"]  # numeric-aware, NOT lexical e1/e10/e2
+
+    # Byte-identical to the single enumeration authority — that exact
+    # agreement is the entire point of routing through it.
+    layout = WorkspaceLayout.from_root(workspace)
+    assert ids == list_epoch_ids(layout)
+
+
+def test_list_epochs_orders_by_timestamp_over_id(workspace: Path) -> None:
+    """The canonical key is timestamp-FIRST: a later-stamped epoch sorts
+    after an earlier-stamped one regardless of how their ids compare.
+    """
+    _write_epoch_config(workspace, "zzz", "2026-05-15T00:00:00+00:00")
+    _write_epoch_config(workspace, "aaa", "2026-05-16T00:00:00+00:00")
+    ids = [c.id for c in list_epochs(workspace)]
+    assert ids == ["zzz", "aaa"]
+
+
 def test_switch_epoch_updates_marker(workspace: Path, board_file: Path, brief_file: Path) -> None:
     weights = ScoringWeights()
     a = new_epoch(workspace, "alpha", board_file, brief_file, weights)

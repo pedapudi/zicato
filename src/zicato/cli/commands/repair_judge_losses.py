@@ -42,7 +42,7 @@ from zicato.telemetry.reducer import (
     read_loss_profile,
     write_loss_profile,
 )
-from zicato.workspace import WorkspaceLayout
+from zicato.workspace import WorkspaceLayout, list_epoch_ids
 from zicato.workspace_loader import _scoring_weights_from_dict
 
 
@@ -125,25 +125,25 @@ def _load_scoring_for_epoch(workspace_root: Path, epoch_id: str) -> ScoringWeigh
 def _iter_runs(workspace_root: Path) -> list[tuple[str, str, str]]:
     """Enumerate every ``(epoch_id, generation_id, entry_id)`` on disk.
 
-    The walk mirrors the analytical index's own walk so the repair
-    sees the same set of runs the analyzer / dashboard render against.
-    A workspace with no ``epochs/`` root yields the empty list — the
-    command then exits cleanly rather than raising.
+    Epochs are enumerated + ordered by the single canonical authority
+    (:func:`zicato.workspace.list_epoch_ids`, timestamp-first); the
+    per-epoch generation / run sub-walks and the leaf path math route
+    through :class:`WorkspaceLayout`. A workspace with no ``epochs/``
+    root yields the empty list — the command then exits cleanly rather
+    than raising.
     """
-    epochs_root = WorkspaceLayout.from_root(workspace_root).epochs_dir
-    if not epochs_root.is_dir():
-        return []
+    layout = WorkspaceLayout.from_root(workspace_root)
     out: list[tuple[str, str, str]] = []
-    for epoch_dir in sorted(p for p in epochs_root.iterdir() if p.is_dir()):
-        gens_root = epoch_dir / "generations"
+    for epoch_id in list_epoch_ids(layout):
+        gens_root = layout.generations_dir(epoch_id)
         if not gens_root.is_dir():
             continue
         for gen_dir in sorted(p for p in gens_root.iterdir() if p.is_dir()):
-            runs_root = gen_dir / "runs"
+            runs_root = layout.runs_dir(epoch_id, gen_dir.name)
             if not runs_root.is_dir():
                 continue
             for run_dir_path in sorted(p for p in runs_root.iterdir() if p.is_dir()):
-                out.append((epoch_dir.name, gen_dir.name, run_dir_path.name))
+                out.append((epoch_id, gen_dir.name, run_dir_path.name))
     return out
 
 
