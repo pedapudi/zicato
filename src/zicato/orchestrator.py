@@ -3260,7 +3260,7 @@ def _health_round_report_path(workspace_root: Path, epoch_id: str, round_n: int)
     round number derived from the child generation id (``vN``); a
     non-``vN`` id (defensive) falls back to ``0``.
     """
-    return workspace_root / "epochs" / epoch_id / "health" / f"round_{round_n}.json"
+    return WorkspaceLayout.from_root(workspace_root).health_dir(epoch_id) / f"round_{round_n}.json"
 
 
 def _collect_epoch_health_inputs(
@@ -3289,7 +3289,7 @@ def _collect_epoch_health_inputs(
     losses_by_generation: dict[str, list[Any]] = {}
     experiments: list[Any] = []
 
-    gens_root = workspace_root / "epochs" / epoch_id / "generations"
+    gens_root = WorkspaceLayout.from_root(workspace_root).generations_dir(epoch_id)
     if not gens_root.exists():
         return losses_by_generation, experiments
 

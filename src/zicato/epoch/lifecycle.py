@@ -57,6 +57,7 @@ from zicato.epoch._storage import (
     epoch_config_key,
     scoring_key,
 )
+from zicato.workspace import WorkspaceLayout
 
 if TYPE_CHECKING:
     from zicato.board.builder import Board
@@ -275,7 +276,7 @@ def list_epochs(workspace_root: Path) -> list[EpochConfig]:
     the right tool for discovering which epochs exist. Each epoch's
     ``config.json`` is then read back through the storage seam.
     """
-    epochs_root = workspace_root / "epochs"
+    epochs_root = WorkspaceLayout.from_root(workspace_root).epochs_dir
     if not epochs_root.exists():
         return []
     backend = backend_for(workspace_root)

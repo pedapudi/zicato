@@ -75,6 +75,7 @@ from zicato.runtime.paths import (
     active_tournament_path,
     heartbeat_path,
 )
+from zicato.workspace import WorkspaceLayout
 
 if TYPE_CHECKING:
     from zicato.core.types import Experiment
@@ -125,7 +126,7 @@ class ResumePlan:
 
 
 def _generations_root(workspace_root: Path, epoch_id: str) -> Path:
-    return workspace_root / "epochs" / epoch_id / "generations"
+    return WorkspaceLayout.from_root(workspace_root).generations_dir(epoch_id)
 
 
 def _latest_generation_id(workspace_root: Path, epoch_id: str) -> str | None:
