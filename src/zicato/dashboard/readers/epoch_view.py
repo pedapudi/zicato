@@ -12,6 +12,7 @@ from zicato.dashboard.readers.lineage_view import (
 )
 from zicato.dashboard.readers.paths import (
     WorkspacePaths,
+    _epoch_sort_key,
     _is_finite,
     _natural_key,
     _preview,
@@ -217,7 +218,7 @@ def build_epochs_summary(paths: WorkspacePaths) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     if not paths.epochs.is_dir():
         return out
-    for epoch_dir in sorted(paths.epochs.iterdir(), key=lambda p: _natural_key(p.name)):
+    for epoch_dir in sorted(paths.epochs.iterdir(), key=_epoch_sort_key):
         if not epoch_dir.is_dir():
             continue
         goal = _distill_brief_goal(_read_epoch_brief(epoch_dir))

@@ -28,6 +28,7 @@ from zicato.dashboard.server import create_app
 from zicato.dashboard.state_reader import (
     WorkspacePaths,
     build_epoch_view,
+    build_epochs_summary,
     build_per_entry_for_generation,
     build_per_judge_comparison,
     build_per_judge_for_generation,
@@ -496,3 +497,62 @@ def test_endpoint_rejects_unsafe_ids(phase1_client: TestClient) -> None:
     # Starlette may match the path with the dot segments; the handler
     # itself returns an empty payload for an unsafe id.
     assert r.status_code in (200, 404)
+
+
+# ---------------------------------------------------------------------------
+# Epoch DISPLAY ordering — fleet cards + sidebar + Overview table must be in
+# chronological (created_at) order, NOT directory-name order.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def timestamp_ordered_workspace(tmp_path: Path) -> Path:
+    """A workspace whose epoch NAME order diverges from created_at order.
+
+    Mirrors the live bug: an epoch named ``e2`` sorts FIRST alphabetically
+    ('e' < 't') but was created LAST, while two ``t1_live*`` epochs sort
+    after it by name yet precede it chronologically. Correct display order
+    is by ``created_at`` — so ``e2`` (newest) comes LAST, not first.
+    """
+    ws = tmp_path / ".zicato"
+    (ws / "epochs").mkdir(parents=True)
+    _write(ws / "current_epoch", "e2")
+
+    # (dir-name, created_at) — name order: e2, t1_live, t1_live2
+    #                          time order: t1_live, t1_live2, e2
+    for eid, created_at, goal in (
+        ("t1_live", "2026-06-01T00:00:00Z", "First live tournament epoch."),
+        ("t1_live2", "2026-06-02T00:00:00Z", "Second live tournament epoch."),
+        ("e2", "2026-06-03T00:00:00Z", "Newest epoch — created last."),
+    ):
+        epoch_dir = ws / "epochs" / eid
+        _write(epoch_dir / "brief.md", f"# brief\n\n## Goal\n\n{goal}\n")
+        _write_json(
+            epoch_dir / "config.json",
+            {"contract_hash": "h", "closed": False, "goal": goal, "created_at": created_at},
+        )
+    return ws
+
+
+def test_workspace_view_orders_epochs_by_timestamp_not_name(
+    timestamp_ordered_workspace: Path,
+) -> None:
+    """Fleet cards + sidebar tree (both fed by build_workspace_view) order
+    epochs chronologically. Against the old name-sort the alphabetically
+    first ``e2`` led; it must now trail as the newest epoch.
+    """
+    view = build_workspace_view(WorkspacePaths(timestamp_ordered_workspace))
+    chronological = ["t1_live", "t1_live2", "e2"]
+    assert [r["epoch_id"] for r in view["epochs"]] == chronological
+    # The flat sparkline is appended in the same iteration and must agree.
+    assert [s["epoch_id"] for s in view["sparkline"]] == chronological
+
+
+def test_epochs_summary_orders_epochs_by_timestamp_not_name(
+    timestamp_ordered_workspace: Path,
+) -> None:
+    """The Overview epochs table (build_epochs_summary) orders chronologically,
+    so the newest-but-alphabetically-first ``e2`` lands last.
+    """
+    summary = build_epochs_summary(WorkspacePaths(timestamp_ordered_workspace))
+    assert [r["epoch_id"] for r in summary] == ["t1_live", "t1_live2", "e2"]

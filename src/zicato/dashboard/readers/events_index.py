@@ -24,6 +24,7 @@ from zicato.dashboard.readers.lineage_view import (
 )
 from zicato.dashboard.readers.paths import (
     WorkspacePaths,
+    _epoch_sort_key,
     _is_finite,
     _natural_key,
     _read_json_value,
@@ -399,7 +400,7 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
         conn = None
 
     try:
-        for epoch_dir in sorted(paths.epochs.iterdir(), key=lambda p: _natural_key(p.name)):
+        for epoch_dir in sorted(paths.epochs.iterdir(), key=_epoch_sort_key):
             if not epoch_dir.is_dir():
                 continue
             epoch_id = epoch_dir.name
