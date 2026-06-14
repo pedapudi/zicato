@@ -24,13 +24,14 @@ from zicato.dashboard.readers.lineage_view import (
 )
 from zicato.dashboard.readers.paths import (
     WorkspacePaths,
-    _epoch_sort_key,
     _is_finite,
     _natural_key,
     _read_json_value,
+    layout_of,
     list_epoch_ids,
     read_current_epoch,
 )
+from zicato.workspace import iter_epochs
 
 # ---------------------------------------------------------------------------
 # Run-directory discovery — for the conversation / matchup endpoints
@@ -177,16 +178,15 @@ def find_run_events_path(paths: WorkspacePaths, run_id: str) -> Path | None:
         if isinstance(events, str) and events and Path(events).exists():
             return Path(events)
 
-    if paths.epochs.is_dir():
-        for epoch_dir in paths.epochs.iterdir():
-            gens = epoch_dir / "generations"
-            if not gens.is_dir():
-                continue
-            for gen_dir in gens.iterdir():
-                run_dir = gen_dir / "runs" / run_id
-                events = run_dir / "events.jsonl"
-                if events.exists():
-                    return events
+    for epoch in iter_epochs(layout_of(paths)):
+        gens = epoch.directory / "generations"
+        if not gens.is_dir():
+            continue
+        for gen_dir in gens.iterdir():
+            run_dir = gen_dir / "runs" / run_id
+            events = run_dir / "events.jsonl"
+            if events.exists():
+                return events
 
     # Fall back to the run-id → events.jsonl index (matches the canonical
     # board-run layout, where the run directory is named by entry id).
@@ -219,10 +219,10 @@ def find_generation_entry_events(
     must NOT fabricate some other entry's transcript. Returns ``None`` when
     no such file exists.
     """
-    if not paths.epochs.is_dir():
-        return None
-    for epoch_dir in paths.epochs.iterdir():
-        events = epoch_dir / "generations" / generation_id / "runs" / entry_id / "events.jsonl"
+    for epoch in iter_epochs(layout_of(paths)):
+        events = (
+            epoch.directory / "generations" / generation_id / "runs" / entry_id / "events.jsonl"
+        )
         if events.exists():
             return events
     return None
@@ -268,13 +268,14 @@ def resolve_transcript_events(
     # Locate this entry's run directory. Prefer the requested epoch; a
     # generation id is unique workspace-wide, so fall back to any epoch that
     # carries it (covers a mis-scoped epoch_id from the caller).
+    layout = layout_of(paths)
     run_dir: Path | None = None
-    primary = paths.epochs / epoch_id / "generations" / generation_id / "runs" / entry_id
+    primary = layout.run_dir(epoch_id, generation_id, entry_id)
     if primary.is_dir() or (primary / "events.jsonl").exists():
         run_dir = primary
     else:
-        for epoch_d in paths.epochs.iterdir():
-            cand = epoch_d / "generations" / generation_id / "runs" / entry_id
+        for epoch in iter_epochs(layout):
+            cand = epoch.directory / "generations" / generation_id / "runs" / entry_id
             if cand.is_dir() or (cand / "events.jsonl").exists():
                 run_dir = cand
                 break
@@ -320,11 +321,8 @@ def find_generation_run(
     directory's name (the convention zicato uses for board-entry runs).
     Returns ``None`` when no events file is found.
     """
-    if not paths.epochs.is_dir():
-        return None
-    for epoch_dir in paths.epochs.iterdir():
-        gen_dir = epoch_dir / "generations" / generation_id
-        runs_dir = gen_dir / "runs"
+    for epoch in iter_epochs(layout_of(paths)):
+        runs_dir = epoch.directory / "generations" / generation_id / "runs"
         if not runs_dir.is_dir():
             continue
         # Exact directory match on the entry id is the common layout.
@@ -401,10 +399,9 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
         conn = None
 
     try:
-        for epoch_dir in sorted(paths.epochs.iterdir(), key=_epoch_sort_key):
-            if not epoch_dir.is_dir():
-                continue
-            epoch_id = epoch_dir.name
+        for epoch in iter_epochs(layout_of(paths)):
+            epoch_dir = epoch.directory
+            epoch_id = epoch.id
 
             cfg = _read_json_value(epoch_dir / "config.json")
             closed = False
@@ -536,7 +533,7 @@ def _read_contract_components(paths: WorkspacePaths, epoch_id: str) -> dict[str,
     diff caller can render a "no breakdown available" state for legacy
     epochs.
     """
-    path = paths.epochs / epoch_id / "contract_components.json"
+    path = layout_of(paths).contract_components(epoch_id)
     raw = _read_json_value(path)
     if not isinstance(raw, dict):
         return {}
@@ -651,9 +648,7 @@ def _epoch_structure(paths: WorkspacePaths, epoch_id: str) -> str:
     key) degrades to ``"gauntlet"`` — the data model's default and the
     same fallback :func:`_tournament_block_from_scoring` applies.
     """
-    block = _tournament_block_from_scoring(
-        _read_json_value(paths.epochs / epoch_id / "scoring.json")
-    )
+    block = _tournament_block_from_scoring(_read_json_value(layout_of(paths).scoring(epoch_id)))
     if isinstance(block, dict):
         return _normalize_structure(block.get("structure"))
     return "gauntlet"
@@ -717,11 +712,12 @@ def build_meta_loop_ledger(paths: WorkspacePaths) -> dict[str, Any]:
     except (_IndexAbsent, sqlite3.Error):
         conn = None
 
+    layout = layout_of(paths)
     try:
         prev_hashes: dict[str, str] = {}
         prev_structure: str | None = None
         for idx, epoch_id in enumerate(epoch_ids):
-            epoch_dir = paths.epochs / epoch_id
+            epoch_dir = layout.epoch_dir(epoch_id)
 
             cfg = _read_json_value(epoch_dir / "config.json")
             closed = bool(
