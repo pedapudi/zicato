@@ -452,7 +452,15 @@ def test_bundle_under_size_envelope(
     # surface (back-compat: a gauntlet / single-challenger / pre-feature field renders
     # byte-identical to today). The envelope is raised to 1.19 MB to cover it with
     # headroom.
-    assert total < 1_190_000, f"bundle is {total} bytes, exceeds 1_190_000 envelope"
+    #
+    # The SIDEBAR-ORDER fix then re-sorts buildTreeModel's assembled epoch list
+    # (shell.js) to the timestamp-ordered /api/workspace.epochs order, so the sidebar
+    # tree lists epochs chronologically like the fleet cards — a ZERO-generation epoch
+    # (absent from /api/lineage, previously appended last) now lands in its correct
+    # middle slot. A small stable decorate-sort-undecorate + its rationale comment
+    # (back-compat: a single-epoch / lineage-complete workspace renders byte-identical).
+    # The envelope is raised to 1.191 MB to cover it with headroom.
+    assert total < 1_191_000, f"bundle is {total} bytes, exceeds 1_191_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

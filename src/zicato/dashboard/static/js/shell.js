@@ -781,6 +781,26 @@ export async function buildTreeModel(route) {
     for (const e of epochs) e.current = e.id === fallbackCurrentId;
   }
 
+  // CANONICAL CHRONOLOGICAL ORDER. The UNION above lists `epochs` in
+  // first-appearance order across the sparse feeds, which DISAGREES with the
+  // fleet (painted from the timestamp-ordered /api/workspace.epochs): a
+  // ZERO-generation epoch never appears in /api/lineage, so step (2) APPENDS it
+  // LAST regardless of when it was minted. Re-sort to the ws order so sidebar ==
+  // fleet == chronological. Stable decorate-sort-undecorate: epochs in ws.epochs
+  // sort by ws index; epochs ABSENT from ws.epochs (a routed epoch missing from a
+  // stale digest) sort AFTER, keeping insertion order (Infinity rank, original
+  // index the deterministic tiebreaker throughout).
+  const wsOrder = new Map();
+  if (ws && Array.isArray(ws.epochs)) {
+    ws.epochs.forEach((e, i) => { if (e && e.epoch_id != null) wsOrder.set(String(e.epoch_id), i); });
+  }
+  if (wsOrder.size) {
+    epochs
+      .map((e, i) => ({ e, i, rank: wsOrder.has(String(e.id)) ? wsOrder.get(String(e.id)) : Infinity }))
+      .sort((a, b) => (a.rank - b.rank) || (a.i - b.i))
+      .forEach((d, i) => { epochs[i] = d.e; });
+  }
+
   // Generations + boards: the workspace can carry MORE THAN ONE epoch, so we
   // resolve EACH epoch node's bundle from /api/lineage filtered by THAT node's
   // epoch_id (never the single current-epoch assumption that left the
