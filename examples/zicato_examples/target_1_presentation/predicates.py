@@ -211,19 +211,25 @@ def addressed_picky_feedback(result: Any) -> bool:
     the board exists to verify, rather than the old weak "contains the
     word 'revised'" heuristic:
 
-    (a) **Uses the GIVEN Q3 numbers.** The persona reveals a small,
-        concrete metrics set (:data:`Q3_METRICS`) when the agent asks for
-        it; a passing reply must actually USE at least TWO of those
+    (a) **Uses the GIVEN Q3 numbers.** The persona provides a small,
+        concrete metrics set (:data:`Q3_METRICS`) UP FRONT in its opening
+        message; a passing reply must actually USE at least TWO of those
         figures. This is what makes the no-fabrication path satisfiable —
-        the agent asks, gets the numbers, and reports back a concrete
-        deck WITHOUT inventing values beyond the given set. The bar is
-        two (not three) figures because the graded artifact is the
-        agent's final conversational reply (``conversation_end``), which
-        typically *summarises* the deck rather than reprinting every
-        slide — demanding three lands the entry in the all-fail band
-        (observed: 0/19 passes) without measuring anything more. Two
-        given figures present + a revision signal is enough to separate an
-        agent that asked-then-built from one that fabricated or stalled.
+        the agent is handed the numbers and reports back a concrete
+        deck WITHOUT inventing values beyond the given set. (The persona
+        used to withhold the figures until asked, but this one-shot
+        topic→deck agent has no clarifying-question step, so it could
+        never elicit them and always fabricated → a constant critical
+        failure with no score gradient; seeding the data up front makes
+        the entry reachable and turns it into a framing/feedback test the
+        agent can actually climb.) The bar is two (not three) figures
+        because the graded artifact is the agent's final conversational
+        reply (``conversation_end``), which typically *summarises* the
+        deck rather than reprinting every slide — demanding three lands
+        the entry in the all-fail band (observed: 0/19 passes) without
+        measuring anything more. Two given figures present + a revision
+        signal is enough to separate an agent that used the data and
+        revised from one that fabricated or stalled.
         Numbers are matched in any reasonable surface form (``$4.2M`` /
         ``4,200,000`` / ``4.2m`` all count) via
         :func:`_normalise_numbers` / :func:`_number_keys`.
