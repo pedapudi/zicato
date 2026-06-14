@@ -301,6 +301,74 @@ def _scan_brace_objects(text: str) -> list[str]:
     return objects
 
 
+def _scan_brace_objects_anchored(text: str) -> list[str]:
+    """Yield balanced ``{ … }`` spans, re-anchoring string-state at each ``{``.
+
+    A more forgiving sibling of :func:`_scan_brace_objects`. Where that
+    matcher tracks one continuous string/brace state across the *whole*
+    buffer, this one restarts the state machine afresh at every ``{`` it
+    finds, then scans forward for the matching close. That difference is
+    what makes it resilient to a reasoning preamble that corrupts the
+    continuous matcher:
+
+    * a **lone double-quote** in prose (``the board says "be terse``) flips
+      the continuous matcher into ``in_string`` and it never recovers, so
+      the real JSON's braces look like string contents and no span is found;
+    * a **stray ``{`` or ``}``** in prose (a half-written dict, a closing
+      brace from an abandoned thought) shifts the continuous matcher's depth
+      so the real object's span boundaries land in the wrong place and the
+      recovered substring fails to parse.
+
+    By anchoring at each ``{`` with a clean slate, the scan over the *real*
+    JSON object is immune to whatever malformed quoting or bracing preceded
+    it. Within a span the usual JSON string/escape rules still apply, so a
+    brace inside a legitimate string value is counted correctly. Spans are
+    returned in document order; once a span closes, scanning resumes after
+    its close so nested objects are not re-emitted. An anchor whose object
+    never closes (a genuinely dangling ``{``) yields nothing and the scan
+    advances one character — so unbalanced garbage is still rejected.
+    """
+
+    objects: list[str] = []
+    n = len(text)
+    i = 0
+    while i < n:
+        if text[i] != "{":
+            i += 1
+            continue
+        depth = 0
+        in_string = False
+        escaped = False
+        closed_at = -1
+        for j in range(i, n):
+            ch = text[j]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    closed_at = j
+                    break
+        if closed_at != -1:
+            objects.append(text[i : closed_at + 1])
+            i = closed_at + 1
+        else:
+            # Dangling open brace with no matching close — advance past it so
+            # a later, well-formed object can still be anchored.
+            i += 1
+    return objects
+
+
 def _looks_like_experiment(obj: dict[str, Any]) -> bool:
     """True when a parsed object carries both experiment top-level keys.
 
@@ -336,6 +404,16 @@ def extract_json_object(text: str) -> str | None:
        not miscount) and return the first that parses; an object that is
        shaped like an experiment (``hypothesis`` + ``patches``) is
        preferred over any other valid JSON object found earlier.
+    5. **Anchored-brace recovery** — a last resort for reasoning output
+       whose preamble corrupts the continuous brace matcher: a *lone* quote
+       or a *stray* brace in the chain-of-thought leaves fallback 4's
+       string/depth state machine mis-aligned over the real object. This
+       step restarts the matcher afresh at every ``{`` (see
+       :func:`_scan_brace_objects_anchored`), so the scan of the genuine
+       JSON object is immune to malformed quoting/bracing earlier in the
+       buffer. Same experiment-shaped preference as fallback 4. A
+       genuinely dangling ``{`` still yields nothing, so unbalanced garbage
+       is rejected exactly as before.
 
     Returns the recovered JSON-object *string* (ready for
     :func:`json.loads`), or ``None`` when no candidate parses to a dict.
@@ -409,6 +487,26 @@ def extract_json_object(text: str) -> str | None:
             return candidate
     if brace_candidates:
         return brace_candidates[0]
+
+    # Fallback 5 — anchored-brace recovery. Reasoning preambles routinely
+    # carry a lone quote or a stray brace that corrupts fallback 4's
+    # continuous string/depth matcher, hiding the real object. Re-anchoring
+    # the matcher at each ``{`` (fresh string-state) makes the scan of the
+    # genuine JSON immune to that upstream corruption. Only reached when the
+    # continuous scan found nothing, so well-behaved input never gets here.
+    anchored_candidates: list[str] = []
+    for candidate in _scan_brace_objects_anchored(search_space):
+        try:
+            obj = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            anchored_candidates.append(candidate)
+    for candidate in anchored_candidates:
+        if _looks_like_experiment(json.loads(candidate)):
+            return candidate
+    if anchored_candidates:
+        return anchored_candidates[0]
 
     return None
 

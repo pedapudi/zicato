@@ -20,6 +20,7 @@ zicato helper uses)::
         pause_epoch                   # flag file
         skip_round                    # flag file
         kill_runs/{run_id}            # one file per kill target
+        kill_requests/{run_id}        # parent->supervisor escalation request
         promote/{generation_id}       # one file per promote target
         reject/{generation_id}        # one file per reject target
         rubric_replacement.txt        # full rubric text payload
@@ -75,8 +76,47 @@ def active_run_path(workspace_root: Path, run_id: str) -> Path:
 
 
 def active_tournament_path(workspace_root: Path) -> Path:
-    """Return the path to the current-tournament JSON file."""
+    """Return the path to the LEGACY current-tournament snapshot file.
+
+    Retained for the compat reader + resume cleanup. The live producer
+    writes the event log (see :func:`active_tournament_log_path`); this
+    snapshot is only read when no log exists.
+    """
     return runtime_dir(workspace_root) / "active_tournament.json"
+
+
+def active_tournament_log_path(workspace_root: Path) -> Path:
+    """Return the path to the active-tournament EVENT LOG (RUNTIME-V2 §3)."""
+    return runtime_dir(workspace_root) / "active_tournament.events.jsonl"
+
+
+def progress_log_path(workspace_root: Path) -> Path:
+    """Return the path to the orchestrator progress EVENT LOG (RUNTIME-V2 §4).
+
+    The single-writer append-only JSONL whose monotonic ``seq`` is the
+    true orchestrator-produced liveness signal (advances only on a genuine
+    transition, never on the heartbeat timer).
+    """
+    return runtime_dir(workspace_root) / "progress.events.jsonl"
+
+
+def inconclusive_dir(workspace_root: Path) -> Path:
+    """Return the dead-letter directory for inconclusive crowning duels.
+
+    The Bradley--Terry promotion pre-gate (opt-in) records here any crowning
+    duel whose rating CIs never separated after its replicate budget was spent
+    — a terminal ``"inconclusive"`` verdict. One JSON file per generation
+    (:func:`inconclusive_record_path`) captures the unresolved duel + its final
+    CIs so nothing is silently dropped. The directory is created lazily by the
+    writer; an absent directory simply means no inconclusive duel was ever
+    recorded (the default for every run that did not opt into the pre-gate).
+    """
+    return runtime_dir(workspace_root) / "inconclusive"
+
+
+def inconclusive_record_path(workspace_root: Path, generation_id: str) -> Path:
+    """Return the dead-letter path for one inconclusive challenger generation."""
+    return inconclusive_dir(workspace_root) / f"{generation_id}.json"
 
 
 def control_dir(workspace_root: Path) -> Path:
@@ -100,6 +140,26 @@ def control_command_path(workspace_root: Path, command: str) -> Path:
     return control_dir(workspace_root) / command
 
 
+#: Subdirectory of ``control/`` holding parent→supervisor kill-escalation
+#: requests. Distinct from the operator's ``kill_runs/`` channel (which the
+#: orchestrator consumes): a ``kill_requests/{run_id}`` marker is written by
+#: the *Python parent* when a worker overran its budget, asking the *Rust
+#: supervisor* to run the single SIGTERM→grace→SIGKILL escalator on that
+#: worker's pid. Consolidating escalation in the supervisor removes the
+#: parent↔supervisor race over the same worker pid.
+KILL_REQUESTS_DIRNAME = "kill_requests"
+
+
+def kill_requests_dir(workspace_root: Path) -> Path:
+    """Return the directory holding parent→supervisor kill-escalation requests."""
+    return control_dir(workspace_root) / KILL_REQUESTS_DIRNAME
+
+
+def kill_request_path(workspace_root: Path, run_id: str) -> Path:
+    """Return the path to one run's parent→supervisor kill-request marker."""
+    return kill_requests_dir(workspace_root) / run_id
+
+
 def ensure_runtime_dirs(workspace_root: Path) -> None:
     """Create the runtime directory tree (idempotent).
 
@@ -121,8 +181,15 @@ __all__ = [
     "active_runs_dir",
     "active_run_path",
     "active_tournament_path",
+    "active_tournament_log_path",
+    "progress_log_path",
+    "inconclusive_dir",
+    "inconclusive_record_path",
     "control_dir",
     "control_log_dir",
     "control_command_path",
+    "KILL_REQUESTS_DIRNAME",
+    "kill_requests_dir",
+    "kill_request_path",
     "ensure_runtime_dirs",
 ]

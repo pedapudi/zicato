@@ -67,8 +67,41 @@ def lock_key() -> str:
 
 
 def active_tournament_key() -> str:
-    """Storage key for the active-tournament record."""
+    """Storage key for the legacy active-tournament SNAPSHOT record.
+
+    Retained only for the compat reader: an ``active_tournament.json``
+    snapshot written by a pre-RUNTIME-V2 producer (or a hand-edited
+    file) is still read when no event log is present. The live producer
+    no longer writes it — see :func:`active_tournament_log_key`.
+    """
     return f"{RUNTIME_NS}/active_tournament.json"
+
+
+def active_tournament_log_key() -> str:
+    """Storage key for the active-tournament EVENT LOG (RUNTIME-V2 Phase 3).
+
+    The single-writer, append-only JSONL log that replaces the mutable
+    ``active_tournament.json`` snapshot. The orchestrator/runner appends
+    one typed event per state transition (a full-envelope ``Snapshot``
+    plus ``EntryUpdate`` / ``PartialAggregate`` / ``ProjectedUpdate``
+    deltas); a reader folds the log into the live view. Single-writer
+    append-only removes the snapshot's read-modify-write race.
+    """
+    return f"{RUNTIME_NS}/active_tournament.events.jsonl"
+
+
+def progress_log_key() -> str:
+    """Storage key for the ORCHESTRATOR progress EVENT LOG (RUNTIME-V2 Phase 4).
+
+    A single-writer, append-only JSONL log the evolve loop appends one
+    typed event to on each genuine orchestrator transition (round start,
+    propose, apply, tournament start/settle, gate, promote/reject). Its
+    monotonic ``seq`` is the TRUE liveness signal: it advances only on real
+    progress, never on a timer, so a wedged loop whose heartbeat thread
+    keeps stamping ``now()`` no longer reads as alive. The tail ``seq`` is
+    stamped into ``heartbeat.json`` and the dashboard SSE frames.
+    """
+    return f"{RUNTIME_NS}/progress.events.jsonl"
 
 
 def active_runs_prefix() -> str:
@@ -101,15 +134,30 @@ def control_log_prefix() -> str:
     return f"{RUNTIME_NS}/control_log"
 
 
+def kill_request_key(run_id: str) -> str:
+    """Storage key for one run's parent→supervisor kill-request marker.
+
+    Lives under ``control/kill_requests/{run_id}`` (no ``.json`` suffix —
+    the supervisor matches on the bare run id). Distinct from the
+    operator's ``kill_runs/{run_id}`` channel: this one asks the Rust
+    supervisor to run the single SIGTERM→grace→SIGKILL escalator on the
+    worker pid, so the Python parent never signals the worker itself.
+    """
+    return f"{control_prefix()}/kill_requests/{run_id}"
+
+
 __all__ = [
     "RUNTIME_NS",
     "backend_for",
     "heartbeat_key",
     "lock_key",
     "active_tournament_key",
+    "active_tournament_log_key",
+    "progress_log_key",
     "active_runs_prefix",
     "active_run_key",
     "control_prefix",
     "control_command_key",
     "control_log_prefix",
+    "kill_request_key",
 ]

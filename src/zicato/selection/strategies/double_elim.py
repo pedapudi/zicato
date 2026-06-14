@@ -27,6 +27,15 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from zicato.core.types import TournamentDecision
+from zicato.selection.standings_ext import (
+    apply_uncertainty_guard,
+    rating_order,
+    read_rating,
+    read_resolver,
+    read_uncertainty_threshold,
+    resolver_leader,
+)
 from zicato.selection.strategy import (
     Contestant,
     MatchRecord,
@@ -80,6 +89,13 @@ class DoubleEliminationStrategy(SelectionStrategy):
         self._gf_scheduled = False
         self._gf_result: MatchupResult | None = None
         self._gf_match_id = "GF"
+        # Opt-in rating / resolver / uncertainty-guard knobs (absent ⇒
+        # today's scalar behaviour, byte-identical). They only re-order the
+        # INTERNAL standings / grand-final-challenger pick and add a
+        # promotion-blocking defer — never the gate.
+        self._rating = read_rating(self.params)
+        self._resolver = read_resolver(self.params)
+        self._uncertainty_threshold = read_uncertainty_threshold(self.params)
 
     def field_size(self) -> int:
         return max(1, _param_int(self.params, "field_size", 2))
@@ -183,6 +199,7 @@ class DoubleEliminationStrategy(SelectionStrategy):
             wb_s = self._scalars.get(self._wb_survivor.generation_id, float("inf"))
             lb_s = self._scalars.get(self._lb_survivor.generation_id, float("inf"))
             challenger = self._lb_survivor if lb_s < wb_s else self._wb_survivor
+        challenger = self._pick_finalist(challenger)
         self._gf_scheduled = True
         self._gf_challenger = challenger
         return (
@@ -195,6 +212,25 @@ class DoubleEliminationStrategy(SelectionStrategy):
                 bracket_slot="GF",
             ),
         )
+
+    def _pick_finalist(self, default_challenger: Contestant) -> Contestant:
+        """The challenger to face the champion in the grand final.
+
+        Default (no ``resolver``): the lower-scalar of the WB / LB
+        survivors, exactly as today. When a ``resolver`` knob is set, the
+        proposed challenger comes from the resolver over the duel matrix
+        (Smith-prune + Ranked Pairs, or Copeland); if the resolver names the
+        champion, an unknown id, or yields nothing, fall back to the default.
+        The resolver only re-orders the INTERNAL pick — the unchanged
+        champion gate still decides promotion.
+        """
+        if self._resolver is None or self._champion is None:
+            return default_challenger
+        proposed = resolver_leader(self._audit, self._resolver)
+        if proposed is None or proposed == self._champion.generation_id:
+            return default_challenger
+        by_id = {c.generation_id: c for c in self._challengers}
+        return by_id.get(proposed, default_challenger)
 
     def _flush_round(self, label: str) -> None:
         if self._round_matches:
@@ -271,19 +307,30 @@ class DoubleEliminationStrategy(SelectionStrategy):
         if self._gf_result is None:
             return SelectionDecision(
                 promoted_generation_id=None,
-                decision="rejected",
+                decision=TournamentDecision.REJECTED,
                 reason="no grand finalist cleared the champion gate",
                 matchups=audit,
                 standings=self._standings(None),
             )
         outcome = self._gf_result.outcome
-        promoted = outcome.decision == "promoted"
         challenger = getattr(self, "_gf_challenger", None)
+        decision: str = outcome.decision
+        reason: str = outcome.reason
+        if challenger is not None and self._champion is not None:
+            decision, reason, _deferred = apply_uncertainty_guard(
+                outcome.decision,
+                outcome.reason,
+                audit=self._audit,
+                parent_id=self._champion.generation_id,
+                child_id=challenger.generation_id,
+                threshold=self._uncertainty_threshold,
+            )
+        promoted = decision == "promoted"
         promoted_id = challenger.generation_id if (promoted and challenger) else None
         return SelectionDecision(
             promoted_generation_id=promoted_id,
-            decision=outcome.decision,
-            reason=outcome.reason,
+            decision=decision,  # type: ignore[arg-type]
+            reason=reason,
             matchups=audit,
             crowning_matchup_id=self._gf_match_id,
             standings=self._standings(promoted_id),
@@ -322,7 +369,7 @@ class DoubleEliminationStrategy(SelectionStrategy):
                     role=role,  # type: ignore[arg-type]
                 )
             )
-        rows.sort(key=lambda s: (s.scalar, s.generation_id))
+        self._sort_standings(rows)
         return tuple(
             Standing(
                 generation_id=s.generation_id,
@@ -335,6 +382,24 @@ class DoubleEliminationStrategy(SelectionStrategy):
             )
             for i, s in enumerate(rows)
         )
+
+    def _sort_standings(self, rows: list[Standing]) -> None:
+        """Order standings by scalar (default), or theta-rank when selected.
+
+        Default ``rating`` (absent): sort by ``(scalar, id)`` — byte-identical
+        to today. When ``rating="bradley_terry"``, order by fitted strength
+        (best-first), with any contestant the audit has not yet rated keeping
+        the scalar order among themselves AFTER the rated ones.
+        """
+        if self._rating != "bradley_terry":
+            rows.sort(key=lambda s: (s.scalar, s.generation_id))
+            return
+        order = rating_order(self._audit)
+        if not order:
+            rows.sort(key=lambda s: (s.scalar, s.generation_id))
+            return
+        rank = {gid: i for i, gid in enumerate(order)}
+        rows.sort(key=lambda s: (rank.get(s.generation_id, len(order)), s.scalar, s.generation_id))
 
     def rounds(self) -> tuple[RoundRecord, ...]:
         recs = list(self._records)

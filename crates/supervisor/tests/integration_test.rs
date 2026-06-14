@@ -29,6 +29,16 @@ fn serve_opts(read_only: bool) -> server::ServeOptions {
         dashboard_disabled: false,
         heartbeat_stale_threshold_seconds: 30,
         action_log: Arc::new(WatchdogLog::new()),
+        seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
+        fold_diagnostics: Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new()),
+        ledger: None,
+        diff_findings: Arc::new(
+            zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+        ),
+        promotion_gate_findings: Arc::new(
+            zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
+        ),
+        divergence_findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
     }
 }
 
@@ -547,6 +557,13 @@ fn write_index_db(paths: &reader::WorkspacePaths) {
              'promoted',0.8,1.1,0.3,NULL,'2026-05-15T02:00:00Z');",
     )
     .unwrap();
+    // Stamp the schema version so the supervisor's schema guard accepts
+    // this fixture (it rejects an unstamped / mismatched index.db).
+    conn.execute_batch(&format!(
+        "PRAGMA user_version = {}",
+        zicato_supervisor::index_db::EXPECTED_SCHEMA_VERSION
+    ))
+    .unwrap();
 }
 
 #[tokio::test]
@@ -768,7 +785,12 @@ async fn watchdog_escalates_to_sigkill_when_sigterm_ignored() {
 }
 
 #[tokio::test]
-async fn watchdog_kill_decision_fires_when_heartbeat_stale() {
+async fn watchdog_never_kills_orchestrator_on_stale_heartbeat() {
+    // A deeply-stale orchestrator heartbeat must NEVER produce a kill — the
+    // watchdog escalates the warning (`Stale`) and leaves the restart
+    // decision to an out-of-band process supervisor (RUNTIME.md §3.2,
+    // ROBUSTNESS.md §2.4). The `HeartbeatAction` enum has no `Kill`
+    // variant by construction.
     use zicato_supervisor::watchdog::{decide_heartbeat, HeartbeatAction, Thresholds};
     let thresholds = Thresholds {
         heartbeat_stale_warn: Duration::from_secs(1),
@@ -778,15 +800,21 @@ async fn watchdog_kill_decision_fires_when_heartbeat_stale() {
         grace: Duration::from_millis(200),
         run_kill_grace: Duration::from_millis(200),
         run_deadline_kill_disabled: false,
+        max_run_seconds: Duration::from_secs(6 * 3600),
     };
     let now = Utc::now();
+    // 10s stale, far past the 2s "deep stale" boundary.
     let hb = state::Heartbeat {
         pid: Some(424242),
         last_heartbeat: Some(now - ChDuration::seconds(10)),
         ..Default::default()
     };
     let action = decide_heartbeat(Some(&hb), now, &thresholds);
-    assert_eq!(action, HeartbeatAction::Kill { pid: 424242 });
+    assert_eq!(
+        action,
+        HeartbeatAction::Stale,
+        "stale orchestrator heartbeat must warn, never kill",
+    );
 }
 
 #[tokio::test]
@@ -943,6 +971,9 @@ fn fast_thresholds(disable_deadline: bool) -> watchdog::Thresholds {
         grace: Duration::from_millis(300),
         run_kill_grace: Duration::from_millis(300),
         run_deadline_kill_disabled: disable_deadline,
+        // Generous ceiling: far above these tests' second-scale deadlines so
+        // the untrusted-deadline clamp never interferes with them.
+        max_run_seconds: Duration::from_secs(3600),
     }
 }
 
@@ -967,6 +998,22 @@ async fn watchdog_sigterms_run_past_its_deadline() {
             fast_thresholds(false),
             Duration::from_millis(50),
             Arc::new(WatchdogLog::new()),
+            None,
+            watchdog::DiffContainmentConfig {
+                enabled: false,
+                findings: Arc::new(
+                    zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+                ),
+            },
+            watchdog::PromotionGateConfig {
+                enabled: false,
+                findings: Arc::new(zicato_supervisor::promotion_gate::PromotionGateFindings::new()),
+            },
+            watchdog::DivergenceConfig {
+                enabled: false,
+                findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
+                stuck_age_seconds: 3600,
+            },
             loop_shutdown,
         )
         .await
@@ -1008,6 +1055,22 @@ async fn watchdog_escalates_to_sigkill_when_run_ignores_sigterm() {
             fast_thresholds(false),
             Duration::from_millis(50),
             Arc::new(WatchdogLog::new()),
+            None,
+            watchdog::DiffContainmentConfig {
+                enabled: false,
+                findings: Arc::new(
+                    zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+                ),
+            },
+            watchdog::PromotionGateConfig {
+                enabled: false,
+                findings: Arc::new(zicato_supervisor::promotion_gate::PromotionGateFindings::new()),
+            },
+            watchdog::DivergenceConfig {
+                enabled: false,
+                findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
+                stuck_age_seconds: 3600,
+            },
             loop_shutdown,
         )
         .await
@@ -1037,6 +1100,22 @@ async fn watchdog_does_not_kill_run_when_deadline_disabled() {
             fast_thresholds(true), // --run-deadline-kill-disabled
             Duration::from_millis(50),
             Arc::new(WatchdogLog::new()),
+            None,
+            watchdog::DiffContainmentConfig {
+                enabled: false,
+                findings: Arc::new(
+                    zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+                ),
+            },
+            watchdog::PromotionGateConfig {
+                enabled: false,
+                findings: Arc::new(zicato_supervisor::promotion_gate::PromotionGateFindings::new()),
+            },
+            watchdog::DivergenceConfig {
+                enabled: false,
+                findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
+                stuck_age_seconds: 3600,
+            },
             loop_shutdown,
         )
         .await
@@ -1082,6 +1161,22 @@ async fn watchdog_never_signals_orchestrator_or_init_pids() {
             fast_thresholds(false),
             Duration::from_millis(50),
             Arc::new(WatchdogLog::new()),
+            None,
+            watchdog::DiffContainmentConfig {
+                enabled: false,
+                findings: Arc::new(
+                    zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+                ),
+            },
+            watchdog::PromotionGateConfig {
+                enabled: false,
+                findings: Arc::new(zicato_supervisor::promotion_gate::PromotionGateFindings::new()),
+            },
+            watchdog::DivergenceConfig {
+                enabled: false,
+                findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
+                stuck_age_seconds: 3600,
+            },
             loop_shutdown,
         )
         .await
@@ -1122,7 +1217,13 @@ async fn watchdog_deadline_decision_is_pure_and_separate_from_staleness() {
     assert_eq!(decide_run(&run, now, &t), RunAction::Nothing);
     // Own pid is guarded -> None even though the deadline is blown.
     assert_eq!(
-        decide_run_deadline(&run, now, Duration::from_secs(5), &protected),
+        decide_run_deadline(
+            &run,
+            now,
+            Duration::from_secs(5),
+            Duration::from_secs(6 * 3600),
+            &protected
+        ),
         RunDeadlineAction::None,
     );
 }
@@ -1519,6 +1620,67 @@ async fn statusz_json_carries_identity_and_per_run_deadlines() {
 }
 
 #[tokio::test]
+async fn statusz_surfaces_fold_diagnostics_from_a_torn_log() {
+    // Write an active-tournament event log with two torn (un-parseable)
+    // lines and a seq gap. Hitting the canonical fold path
+    // (/api/active-tournament) accumulates the counters, which /statusz then
+    // surfaces — closing the Rust-drops-vs-Python-raises visibility gap.
+    let (_t, paths) = make_workspace();
+    write_statusz_state(&paths);
+    let log = [
+        r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"t1","entries":[]}}"#,
+        r#"{"seq":2,"ts":"t","type":"EntryUp"#, // torn mid-line
+        r#"garbage line"#,                      // not json
+        r#"{"seq":5,"ts":"t","type":"PartialAggregate","payload":{}}"#, // seq gap 1 -> 5 (over good lines)
+    ]
+    .join("\n");
+    std::fs::write(paths.active_tournament_log(), log).unwrap();
+
+    let (handle, shutdown) = start_server(paths.clone(), false).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    // Drive the fold path twice so the cumulative counters accumulate.
+    for _ in 0..2 {
+        let r = client
+            .get(format!("{base}/api/active-tournament"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 200);
+    }
+
+    let r: Value = client
+        .get(format!("{base}/statusz.json"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let fd = &r["fold_diagnostics"];
+    // Two torn lines per fold * two folds = 4 cumulative parse failures.
+    assert_eq!(fd["parse_failures"].as_u64().unwrap(), 4);
+    // One seq gap per fold (1 -> 5 across the dropped lines) * two folds = 2.
+    assert_eq!(fd["seq_gaps"].as_u64().unwrap(), 2);
+    assert_eq!(fd["folds"].as_u64().unwrap(), 2);
+
+    // The HTML surface renders the same counters.
+    let html = client
+        .get(format!("{base}/statusz"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(html.contains("fold diagnostics"));
+    assert!(html.contains("torn writes"));
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
 async fn statusz_html_serves_non_empty_page() {
     let (_t, paths) = make_workspace();
     write_statusz_state(&paths);
@@ -1558,6 +1720,16 @@ async fn statusz_routes_reachable_with_no_dashboard() {
         dashboard_disabled: true, // --no-dashboard
         heartbeat_stale_threshold_seconds: 30,
         action_log: Arc::new(WatchdogLog::new()),
+        seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
+        fold_diagnostics: Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new()),
+        ledger: None,
+        diff_findings: Arc::new(
+            zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+        ),
+        promotion_gate_findings: Arc::new(
+            zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
+        ),
+        divergence_findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
     };
     let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);
@@ -1637,6 +1809,16 @@ async fn statusz_surfaces_recorded_watchdog_actions() {
         dashboard_disabled: false,
         heartbeat_stale_threshold_seconds: 30,
         action_log: action_log.clone(),
+        seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
+        fold_diagnostics: Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new()),
+        ledger: None,
+        diff_findings: Arc::new(
+            zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+        ),
+        promotion_gate_findings: Arc::new(
+            zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
+        ),
+        divergence_findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
     };
     let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);
@@ -1658,4 +1840,598 @@ async fn statusz_surfaces_recorded_watchdog_actions() {
     assert_eq!(actions[0]["outcome"], "killed_forcefully");
 
     let _ = shutdown.send(());
+}
+
+// ---- audit ledger (INTEGRITY NOTARY record #1) --------------------------
+
+#[tokio::test]
+async fn audit_verify_reports_not_configured_without_a_ledger() {
+    // No --ledger-dir → the verify endpoint reports the ledger absent and
+    // /statusz shows it not-configured, exactly as a pre-ledger supervisor.
+    let (_t, paths) = make_workspace();
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let v: Value = client
+        .get(format!("{base}/api/audit/verify"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(v["configured"], false);
+
+    let s: Value = client
+        .get(format!("{base}/statusz.json"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(s["audit_ledger"]["configured"], false);
+    assert_eq!(s["audit_ledger"]["intact"], true);
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn audit_verify_reports_intact_chain_and_statusz_surfaces_it() {
+    use zicato_supervisor::ledger::{AuditLedger, RecordKind};
+    let (tmp, paths) = make_workspace();
+    // The ledger lives OUTSIDE the orchestrator's mutable trees — a
+    // supervisor-owned dir alongside the workspace.
+    let ledger_dir = tmp.path().join("super-runtime");
+    let ledger = Arc::new(AuditLedger::open(&ledger_dir));
+    ledger.append(RecordKind::SupervisorStart, serde_json::json!({"v": 1}));
+    ledger.append(
+        RecordKind::WatchdogAction,
+        serde_json::json!({"pid": 4242, "outcome": "killed_forcefully"}),
+    );
+
+    let opts = server::ServeOptions {
+        read_only: true,
+        dashboard_disabled: false,
+        heartbeat_stale_threshold_seconds: 30,
+        action_log: Arc::new(WatchdogLog::new()),
+        seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
+        fold_diagnostics: Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new()),
+        ledger: Some(ledger.clone()),
+        diff_findings: Arc::new(
+            zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+        ),
+        promotion_gate_findings: Arc::new(
+            zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
+        ),
+        divergence_findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
+    };
+    let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let v: Value = client
+        .get(format!("{base}/api/audit/verify"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(v["configured"], true);
+    assert_eq!(v["intact"], true);
+    assert_eq!(v["records"].as_u64().unwrap(), 2);
+
+    let s: Value = client
+        .get(format!("{base}/statusz.json"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(s["audit_ledger"]["configured"], true);
+    assert_eq!(s["audit_ledger"]["intact"], true);
+    assert_eq!(s["audit_ledger"]["records"].as_u64().unwrap(), 2);
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn audit_verify_detects_a_tampered_chain() {
+    use zicato_supervisor::ledger::{AuditLedger, RecordKind};
+    let (tmp, paths) = make_workspace();
+    let ledger_dir = tmp.path().join("super-runtime");
+    let ledger = Arc::new(AuditLedger::open(&ledger_dir));
+    ledger.append(RecordKind::SupervisorStart, serde_json::json!({}));
+    ledger.append(RecordKind::WatchdogAction, serde_json::json!({"pid": 7}));
+    // Tamper with the persisted ledger out of band: edit the second record's
+    // payload while leaving its digest, which the hash-chain must catch.
+    let path = ledger.path().to_path_buf();
+    let text = std::fs::read_to_string(&path).unwrap();
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    lines[1] = lines[1].replace("\"pid\":7", "\"pid\":13");
+    std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+
+    let opts = server::ServeOptions {
+        read_only: true,
+        dashboard_disabled: false,
+        heartbeat_stale_threshold_seconds: 30,
+        action_log: Arc::new(WatchdogLog::new()),
+        seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
+        fold_diagnostics: Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new()),
+        ledger: Some(ledger.clone()),
+        diff_findings: Arc::new(
+            zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+        ),
+        promotion_gate_findings: Arc::new(
+            zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
+        ),
+        divergence_findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
+    };
+    let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let v: Value = client
+        .get(format!("{base}/api/audit/verify"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(v["intact"], false);
+    assert_eq!(v["first_break_seq"].as_u64().unwrap(), 1);
+
+    let s: Value = client
+        .get(format!("{base}/statusz.json"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(s["audit_ledger"]["intact"], false);
+    // The terse HTML surfaces the break loudly.
+    let html = client
+        .get(format!("{base}/statusz"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(html.contains("CHAIN BREAK"));
+
+    let _ = shutdown.send(());
+}
+
+// ---- diff containment (INTEGRITY NOTARY record #2) ----------------------
+
+/// Materialise a generation snapshot under epochs/{e}/generations/{g}/.
+fn write_gen_snapshot(
+    paths: &reader::WorkspacePaths,
+    epoch: &str,
+    gen: &str,
+    parent: Option<&str>,
+    files: &[(&str, &[u8])],
+) {
+    let gen_dir = paths.epochs.join(epoch).join("generations").join(gen);
+    std::fs::create_dir_all(&gen_dir).unwrap();
+    if let Some(parent) = parent {
+        std::fs::write(
+            gen_dir.join("experiment.json"),
+            serde_json::json!({"parent_generation_id": parent}).to_string(),
+        )
+        .unwrap();
+    }
+    for (rel, contents) in files {
+        let p = gen_dir.join("snapshot").join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, contents).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn diff_containment_quarantines_an_out_of_bounds_child_end_to_end() {
+    let (_t, paths) = make_workspace();
+    // Harness: the only mutable tree is "agent".
+    std::fs::write(
+        paths.workspace.join("config.json"),
+        serde_json::json!({"adk_entrypoint": "m:a", "mutable_trees": ["/reg/agent"]}).to_string(),
+    )
+    .unwrap();
+    std::fs::write(paths.current_epoch_marker(), "e1").unwrap();
+    // v0 parent + v1 child; v1 tampers with an out-of-bounds support file.
+    write_gen_snapshot(
+        &paths,
+        "e1",
+        "v0",
+        None,
+        &[("agent/main.py", b"x=1\n"), ("support/lib.py", b"shared\n")],
+    );
+    write_gen_snapshot(
+        &paths,
+        "e1",
+        "v1",
+        Some("v0"),
+        &[
+            ("agent/main.py", b"x=2\n"),
+            ("support/lib.py", b"TAMPERED\n"),
+        ],
+    );
+
+    // A shared findings store the loop fills and the server reads.
+    let findings = Arc::new(zicato_supervisor::diff_containment::DiffContainmentFindings::new());
+
+    let (shutdown_tx, _) = broadcast::channel(4);
+    let loop_paths = paths.clone();
+    let loop_shutdown = shutdown_tx.clone();
+    let loop_findings = findings.clone();
+    tokio::spawn(async move {
+        watchdog::runs_loop(
+            loop_paths,
+            fast_thresholds(false),
+            Duration::from_millis(50),
+            Arc::new(WatchdogLog::new()),
+            None,
+            watchdog::DiffContainmentConfig {
+                enabled: true,
+                findings: loop_findings,
+            },
+            watchdog::PromotionGateConfig {
+                enabled: false,
+                findings: Arc::new(zicato_supervisor::promotion_gate::PromotionGateFindings::new()),
+            },
+            watchdog::DivergenceConfig {
+                enabled: false,
+                findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
+                stuck_age_seconds: 3600,
+            },
+            loop_shutdown,
+        )
+        .await
+    });
+
+    // Give the loop a few ticks to scan.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // The shared store now holds the quarantine; serve /statusz over it.
+    let opts = server::ServeOptions {
+        read_only: true,
+        dashboard_disabled: false,
+        heartbeat_stale_threshold_seconds: 30,
+        action_log: Arc::new(WatchdogLog::new()),
+        seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
+        fold_diagnostics: Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new()),
+        ledger: None,
+        diff_findings: findings.clone(),
+        promotion_gate_findings: Arc::new(
+            zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
+        ),
+        divergence_findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
+    };
+    let (handle, server_shutdown) = start_server_with(paths.clone(), opts).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let s: Value = client
+        .get(format!("{base}/statusz.json"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let dc = &s["diff_containment"];
+    assert_eq!(dc["scanned"], true);
+    let quarantined = dc["quarantined"].as_array().unwrap();
+    assert_eq!(
+        quarantined.len(),
+        1,
+        "the out-of-bounds child is quarantined"
+    );
+    assert_eq!(quarantined[0]["generation_id"], "v1");
+    assert_eq!(
+        quarantined[0]["violations"][0]["path"], "support/lib.py",
+        "the out-of-bounds file is named"
+    );
+
+    // The terse HTML raises the hard ALERT.
+    let html = client
+        .get(format!("{base}/statusz"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(html.contains("OUT-OF-BOUNDS MUTATIONS"));
+
+    // A durable quarantine finding was written into the epoch health dir.
+    let finding = paths
+        .epoch_health_dir("e1")
+        .join("diff_containment_v1.json");
+    assert!(finding.exists(), "a quarantine finding must be persisted");
+
+    let _ = shutdown_tx.send(());
+    let _ = server_shutdown.send(());
+}
+
+#[tokio::test]
+async fn diff_containment_passes_an_in_bounds_child_end_to_end() {
+    let (_t, paths) = make_workspace();
+    std::fs::write(
+        paths.workspace.join("config.json"),
+        serde_json::json!({"adk_entrypoint": "m:a", "mutable_trees": ["/reg/agent"]}).to_string(),
+    )
+    .unwrap();
+    std::fs::write(paths.current_epoch_marker(), "e1").unwrap();
+    write_gen_snapshot(
+        &paths,
+        "e1",
+        "v0",
+        None,
+        &[("agent/main.py", b"x=1\n"), ("support/lib.py", b"shared\n")],
+    );
+    // v1 only edits the mutable agent tree — fully contained.
+    write_gen_snapshot(
+        &paths,
+        "e1",
+        "v1",
+        Some("v0"),
+        &[("agent/main.py", b"x=2\n"), ("support/lib.py", b"shared\n")],
+    );
+
+    let findings = Arc::new(zicato_supervisor::diff_containment::DiffContainmentFindings::new());
+    let (shutdown_tx, _) = broadcast::channel(4);
+    let loop_paths = paths.clone();
+    let loop_shutdown = shutdown_tx.clone();
+    let loop_findings = findings.clone();
+    tokio::spawn(async move {
+        watchdog::runs_loop(
+            loop_paths,
+            fast_thresholds(false),
+            Duration::from_millis(50),
+            Arc::new(WatchdogLog::new()),
+            None,
+            watchdog::DiffContainmentConfig {
+                enabled: true,
+                findings: loop_findings,
+            },
+            watchdog::PromotionGateConfig {
+                enabled: false,
+                findings: Arc::new(zicato_supervisor::promotion_gate::PromotionGateFindings::new()),
+            },
+            watchdog::DivergenceConfig {
+                enabled: false,
+                findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
+                stuck_age_seconds: 3600,
+            },
+            loop_shutdown,
+        )
+        .await
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let view = findings.view();
+    assert!(view.scanned);
+    assert_eq!(view.pairs_scanned, 1);
+    assert!(
+        view.quarantined.is_empty(),
+        "an in-bounds child must not be quarantined"
+    );
+
+    let _ = shutdown_tx.send(());
+}
+
+// ---- promotion gatekeeping (INTEGRITY NOTARY record #3) -----------------
+
+#[tokio::test]
+async fn promotion_gate_alarms_on_a_decision_that_contradicts_the_scores() {
+    let (_t, paths) = make_workspace();
+    // The shared index fixture records t2 as `promoted` with child_scalar 1.1
+    // vs parent 0.8 (delta +0.3) — the loss ROSE, so the promotion contradicts
+    // its own recorded scores. The marker scopes the scan to that epoch.
+    write_index_db(&paths);
+    std::fs::write(paths.current_epoch_marker(), "2026-05-15_e0").unwrap();
+
+    let findings = Arc::new(zicato_supervisor::promotion_gate::PromotionGateFindings::new());
+    let (shutdown_tx, _) = broadcast::channel(4);
+    let loop_paths = paths.clone();
+    let loop_shutdown = shutdown_tx.clone();
+    let loop_findings = findings.clone();
+    tokio::spawn(async move {
+        watchdog::runs_loop(
+            loop_paths,
+            fast_thresholds(false),
+            Duration::from_millis(50),
+            Arc::new(WatchdogLog::new()),
+            None,
+            watchdog::DiffContainmentConfig {
+                enabled: false,
+                findings: Arc::new(
+                    zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+                ),
+            },
+            watchdog::PromotionGateConfig {
+                enabled: true,
+                findings: loop_findings,
+            },
+            watchdog::DivergenceConfig {
+                enabled: false,
+                findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
+                stuck_age_seconds: 3600,
+            },
+            loop_shutdown,
+        )
+        .await
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Serve /statusz over the same store and confirm the contradiction shows.
+    let opts = server::ServeOptions {
+        read_only: true,
+        dashboard_disabled: false,
+        heartbeat_stale_threshold_seconds: 30,
+        action_log: Arc::new(WatchdogLog::new()),
+        seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
+        fold_diagnostics: Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new()),
+        ledger: None,
+        diff_findings: Arc::new(
+            zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+        ),
+        promotion_gate_findings: findings.clone(),
+        divergence_findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
+    };
+    let (handle, server_shutdown) = start_server_with(paths.clone(), opts).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let s: Value = client
+        .get(format!("{base}/statusz.json"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let pg = &s["promotion_gate"];
+    assert_eq!(pg["scanned"], true);
+    let contradictions = pg["contradictions"].as_array().unwrap();
+    assert_eq!(
+        contradictions.len(),
+        1,
+        "the unsupported promotion is flagged"
+    );
+    assert_eq!(contradictions[0]["challenger_generation_id"], "v2");
+    assert_eq!(contradictions[0]["champion_generation_id"], "v0");
+
+    let html = client
+        .get(format!("{base}/statusz"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(html.contains("DECISION CONTRADICTS SCORES"));
+
+    let _ = shutdown_tx.send(());
+    let _ = server_shutdown.send(());
+}
+
+// ---- index-vs-canonical divergence audit (INTEGRITY NOTARY record #4) ---
+
+#[tokio::test]
+async fn divergence_audit_flags_a_promoted_mismatch_end_to_end() {
+    let (_t, paths) = make_workspace();
+    // The shared index fixture marks v2 promoted=1. Make the CANONICAL side
+    // disagree: v2's experiment.json records a `rejected` outcome. The audit
+    // must flag the promoted divergence.
+    write_index_db(&paths);
+    std::fs::write(paths.current_epoch_marker(), "2026-05-15_e0").unwrap();
+    // Epoch config contract_hash matching the index's (the fixture's epochs
+    // table is absent, so no contract-hash finding — isolate the promoted one).
+    let gen_dir = paths
+        .epochs
+        .join("2026-05-15_e0")
+        .join("generations")
+        .join("v2");
+    std::fs::create_dir_all(&gen_dir).unwrap();
+    std::fs::write(
+        gen_dir.join("experiment.json"),
+        serde_json::json!({"parent_generation_id": "v0", "outcome": {"decision": "rejected"}})
+            .to_string(),
+    )
+    .unwrap();
+
+    let findings = Arc::new(zicato_supervisor::divergence::DivergenceFindings::new());
+    let (shutdown_tx, _) = broadcast::channel(4);
+    let loop_paths = paths.clone();
+    let loop_shutdown = shutdown_tx.clone();
+    let loop_findings = findings.clone();
+    tokio::spawn(async move {
+        watchdog::runs_loop(
+            loop_paths,
+            fast_thresholds(false),
+            Duration::from_millis(50),
+            Arc::new(WatchdogLog::new()),
+            None,
+            watchdog::DiffContainmentConfig {
+                enabled: false,
+                findings: Arc::new(
+                    zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+                ),
+            },
+            watchdog::PromotionGateConfig {
+                enabled: false,
+                findings: Arc::new(zicato_supervisor::promotion_gate::PromotionGateFindings::new()),
+            },
+            watchdog::DivergenceConfig {
+                enabled: true,
+                findings: loop_findings,
+                stuck_age_seconds: 3600,
+            },
+            loop_shutdown,
+        )
+        .await
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let opts = server::ServeOptions {
+        read_only: true,
+        dashboard_disabled: false,
+        heartbeat_stale_threshold_seconds: 30,
+        action_log: Arc::new(WatchdogLog::new()),
+        seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
+        fold_diagnostics: Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new()),
+        ledger: None,
+        diff_findings: Arc::new(
+            zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+        ),
+        promotion_gate_findings: Arc::new(
+            zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
+        ),
+        divergence_findings: findings.clone(),
+    };
+    let (handle, server_shutdown) = start_server_with(paths.clone(), opts).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let s: Value = client
+        .get(format!("{base}/statusz.json"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let dv = &s["divergence"];
+    assert_eq!(dv["scanned"], true);
+    let codes: Vec<&str> = dv["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["code"].as_str().unwrap())
+        .collect();
+    assert!(
+        codes.contains(&"promoted_divergence"),
+        "expected a promoted_divergence finding, got {codes:?}",
+    );
+
+    let html = client
+        .get(format!("{base}/statusz"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(html.contains("DIVERGENCE"));
+
+    let _ = shutdown_tx.send(());
+    let _ = server_shutdown.send(());
 }

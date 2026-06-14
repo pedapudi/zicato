@@ -28,6 +28,7 @@ import math
 from collections.abc import Sequence
 from typing import Any
 
+from zicato.core.types import TournamentDecision
 from zicato.selection.strategy import (
     Contestant,
     MatchRecord,
@@ -281,7 +282,7 @@ class RacingStrategy(SelectionStrategy):
         if self._final_result is None or self._survivor is None:
             return SelectionDecision(
                 promoted_generation_id=None,
-                decision="rejected",
+                decision=TournamentDecision.REJECTED,
                 reason="no racing survivor cleared the full-board champion gate",
                 matchups=audit,
                 standings=self._standings(None),

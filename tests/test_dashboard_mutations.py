@@ -95,7 +95,10 @@ def populated_workspace(request: pytest.FixtureRequest, tmp_path: Path) -> Path:
         (ws / "config.json").write_text('{"storage_backend": "git"}', encoding="utf-8")
         store: DirectoryGenerationStore | GitGenerationStore = GitGenerationStore(ws)
     else:
-        (ws / "config.json").write_text("{}", encoding="utf-8")
+        # Pin the directory backend explicitly: the dashboard endpoint reads
+        # through ``default_generation_store``, which now defaults to git, so
+        # the directory variant must declare the backend it seeded under.
+        (ws / "config.json").write_text('{"storage_backend": "directory"}', encoding="utf-8")
         store = DirectoryGenerationStore(ws)
 
     tree = _mutable_tree(tmp_path / "src", instr="original instruction")

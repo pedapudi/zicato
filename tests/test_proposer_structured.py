@@ -448,6 +448,121 @@ def test_extract_prefers_experiment_shaped_object() -> None:
     assert "hypothesis" in parsed and "patches" in parsed
 
 
+# ---------------------------------------------------------------------------
+# Robust JSON salvage (Part B) — reasoning-model output whose chain-of-thought
+# precedes the JSON envelope. These pin the failure modes seen live against
+# reasoning models (deepseek-r1, qwen-thinking, gpt-oss, gemma): a <think>
+# wrapper, a fenced-and-thought variant, a plain reasoning preamble before a
+# bare object, and — the genuinely tricky ones — a preamble that corrupts a
+# naive brace matcher with a lone quote or a stray brace.
+# ---------------------------------------------------------------------------
+
+
+def test_extract_salvages_reasoning_think_block_then_envelope() -> None:
+    """``<think>… long reasoning …</think>\\n{envelope}`` parses to the envelope."""
+    payload = json.dumps(_valid_payload())
+    messy = (
+        "<think>\n"
+        "The board shows off_topic dominating the loss. I should tighten the\n"
+        "router system prompt to cut the chatty preamble. Let me predict a\n"
+        "medium decrease in off_topic drift and a small pass-rate gain.\n"
+        "</think>\n" + payload
+    )
+    recovered = extract_json_object(messy)
+    assert recovered is not None
+    assert json.loads(recovered) == json.loads(payload)
+    exp = _parse(messy)
+    assert exp.hypothesis.core_idea == "tighten router"
+
+
+def test_extract_salvages_fenced_envelope_after_think_block() -> None:
+    """A ``<think>`` block followed by a ```json``` fence both get peeled."""
+    payload = json.dumps(_valid_payload())
+    messy = (
+        "<think>deliberating about the off_topic regression and the fix</think>\n"
+        "```json\n" + payload + "\n```"
+    )
+    recovered = extract_json_object(messy)
+    assert recovered is not None
+    assert json.loads(recovered) == json.loads(payload)
+    exp = _parse(messy)
+    assert exp.hypothesis.core_idea == "tighten router"
+
+
+def test_extract_salvages_reasoning_preamble_then_bare_json() -> None:
+    """A tag-less reasoning preamble before a bare object is recovered."""
+    payload = json.dumps(_valid_payload())
+    messy = (
+        "Let me reason step by step. The board wants less off_topic drift, so\n"
+        "tightening the router prompt is the highest-leverage edit this round.\n"
+        "Here is the experiment:\n\n" + payload
+    )
+    recovered = extract_json_object(messy)
+    assert recovered is not None
+    assert json.loads(recovered) == json.loads(payload)
+    exp = _parse(messy)
+    assert exp.hypothesis.core_idea == "tighten router"
+
+
+def test_extract_salvages_reasoning_preamble_with_stray_quote() -> None:
+    """A lone quote in the reasoning must not swallow the real object.
+
+    Regression for the live failure: a reasoning preamble that opens a quote
+    it never closes (``the board says "be terse``) flips the continuous brace
+    matcher into a permanent in-string state, hiding the real JSON. The
+    anchored-brace fallback restarts the matcher at the genuine object's ``{``.
+    """
+    payload = json.dumps(_valid_payload())
+    messy = (
+        "<think>\n"
+        'The board says "be terse and on-topic. I will tighten the router.\n'
+        "Final answer:\n" + payload
+    )
+    recovered = extract_json_object(messy)
+    assert recovered is not None
+    assert json.loads(recovered) == json.loads(payload)
+    exp = _parse(messy)
+    assert exp.hypothesis.core_idea == "tighten router"
+
+
+def test_extract_salvages_reasoning_preamble_with_stray_brace() -> None:
+    """A stray ``{``/``}`` in the reasoning must not mis-bound the real object.
+
+    Regression for the live failure: a half-written dict in the chain of
+    thought (``a config like { ...``) shifts the continuous matcher's depth so
+    the recovered span straddles prose and JSON and fails to parse. The
+    anchored fallback re-anchors at each ``{`` with a clean depth count.
+    """
+    payload = json.dumps(_valid_payload())
+    messy = (
+        "I considered a config like { router: tighten ... but settled on a\n"
+        "direct prompt edit instead. Final:\n" + payload
+    )
+    recovered = extract_json_object(messy)
+    assert recovered is not None
+    assert json.loads(recovered) == json.loads(payload)
+    exp = _parse(messy)
+    assert exp.hypothesis.core_idea == "tighten router"
+
+
+def test_extract_does_not_mangle_literal_think_in_string_value() -> None:
+    """A clean object whose STRING value contains ``<think>`` is untouched.
+
+    The reasoning-wrapper strip must only remove genuine reasoning blocks,
+    never corrupt a clean JSON object whose content legitimately mentions the
+    substring ``<think>`` (or stray braces) inside a string literal.
+    """
+    payload = _valid_payload()
+    payload["patches"][0]["new_content"] = (
+        "When unsure, emit <think>…</think> then answer. Use {placeholder} too."
+    )
+    clean = json.dumps(payload)
+    # Clean input: the historical clean path returns it verbatim, untouched.
+    assert extract_json_object(clean) == clean
+    exp = _parse(clean)
+    assert exp.patches[0].new_content == payload["patches"][0]["new_content"]
+
+
 def test_extract_returns_none_for_empty() -> None:
     assert extract_json_object("") is None
     assert extract_json_object("   \n\t ") is None

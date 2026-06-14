@@ -17,6 +17,15 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from zicato.core.types import TournamentDecision
+from zicato.selection.standings_ext import (
+    apply_uncertainty_guard,
+    rating_order,
+    read_rating,
+    read_resolver,
+    read_uncertainty_threshold,
+    resolver_leader,
+)
 from zicato.selection.strategy import (
     Contestant,
     MatchRecord,
@@ -60,6 +69,13 @@ class SingleEliminationStrategy(SelectionStrategy):
         self._final_scheduled = False
         self._final_result: MatchupResult | None = None
         self._final_match_id = ""
+        # Opt-in rating / resolver / uncertainty-guard knobs (absent ⇒
+        # today's scalar behaviour, byte-identical). They only re-order the
+        # INTERNAL standings / survivor pick and add a promotion-blocking
+        # defer — never the gate.
+        self._rating = read_rating(self.params)
+        self._resolver = read_resolver(self.params)
+        self._uncertainty_threshold = read_uncertainty_threshold(self.params)
 
     def field_size(self) -> int:
         return max(1, _param_int(self.params, "field_size", 2))
@@ -148,6 +164,7 @@ class SingleEliminationStrategy(SelectionStrategy):
     def _maybe_final(self) -> Sequence[Matchup]:
         if self._final_scheduled or self._survivor is None:
             return ()
+        self._survivor = self._pick_finalist(self._survivor)
         self._final_scheduled = True
         self._final_match_id = "final"
         return (
@@ -160,6 +177,25 @@ class SingleEliminationStrategy(SelectionStrategy):
                 bracket_slot="final",
             ),
         )
+
+    def _pick_finalist(self, bracket_survivor: Contestant) -> Contestant:
+        """The challenger to face the champion in the final.
+
+        Default (no ``resolver``): the bracket survivor, exactly as today.
+        When a ``resolver`` knob is set, the proposed finalist comes from the
+        resolver over the duel matrix (Smith-prune + Ranked Pairs, or
+        Copeland); if the resolver names the champion, an unknown id, or
+        yields nothing, fall back to the bracket survivor. The resolver only
+        re-orders the INTERNAL pick — the unchanged champion gate still
+        decides promotion.
+        """
+        if self._resolver is None or self._champion is None:
+            return bracket_survivor
+        proposed = resolver_leader(self._audit, self._resolver)
+        if proposed is None or proposed == self._champion.generation_id:
+            return bracket_survivor
+        by_id = {c.generation_id: c for c in self._challengers}
+        return by_id.get(proposed, bracket_survivor)
 
     # -- result folding ----------------------------------------------------
 
@@ -209,18 +245,26 @@ class SingleEliminationStrategy(SelectionStrategy):
         if self._final_result is None or self._survivor is None or self._champion is None:
             return SelectionDecision(
                 promoted_generation_id=None,
-                decision="rejected",
+                decision=TournamentDecision.REJECTED,
                 reason="no finalist cleared the champion gate",
                 matchups=all_matchups,
                 standings=self._standings(None),
             )
         outcome = self._final_result.outcome
-        promoted = outcome.decision == "promoted"
+        decision, reason, _deferred = apply_uncertainty_guard(
+            outcome.decision,
+            outcome.reason,
+            audit=self._audit,
+            parent_id=self._champion.generation_id,
+            child_id=self._survivor.generation_id,
+            threshold=self._uncertainty_threshold,
+        )
+        promoted = decision == "promoted"
         promoted_id = self._survivor.generation_id if promoted else None
         return SelectionDecision(
             promoted_generation_id=promoted_id,
-            decision=outcome.decision,
-            reason=outcome.reason,
+            decision=decision,  # type: ignore[arg-type]
+            reason=reason,
             matchups=all_matchups,
             crowning_matchup_id=self._final_match_id,
             standings=self._standings(promoted_id),
@@ -261,7 +305,7 @@ class SingleEliminationStrategy(SelectionStrategy):
                     role=role,  # type: ignore[arg-type]
                 )
             )
-        entries.sort(key=lambda s: (s.scalar, s.generation_id))
+        self._sort_standings(entries)
         return tuple(
             Standing(
                 generation_id=s.generation_id,
@@ -273,6 +317,26 @@ class SingleEliminationStrategy(SelectionStrategy):
                 role=s.role,
             )
             for i, s in enumerate(entries)
+        )
+
+    def _sort_standings(self, entries: list[Standing]) -> None:
+        """Order standings by scalar (default), or theta-rank when selected.
+
+        Default ``rating`` (absent): sort by ``(scalar, id)`` — byte-identical
+        to today. When ``rating="bradley_terry"``, order by fitted strength
+        (best-first), with any contestant the audit has not yet rated keeping
+        the scalar order among themselves AFTER the rated ones.
+        """
+        if self._rating != "bradley_terry":
+            entries.sort(key=lambda s: (s.scalar, s.generation_id))
+            return
+        order = rating_order(self._audit)
+        if not order:
+            entries.sort(key=lambda s: (s.scalar, s.generation_id))
+            return
+        rank = {gid: i for i, gid in enumerate(order)}
+        entries.sort(
+            key=lambda s: (rank.get(s.generation_id, len(order)), s.scalar, s.generation_id)
         )
 
     def rounds(self) -> tuple[RoundRecord, ...]:

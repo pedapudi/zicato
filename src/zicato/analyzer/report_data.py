@@ -43,12 +43,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from zicato.core.workspace import (
-    board_path,
-    epoch_dir,
-    journal_path,
-    mutations_json_path,
-    scoring_path,
+from zicato.core.workspace import _normalise_workspace_root
+from zicato.workspace import (
+    WorkspaceLayout,
+    read_epoch_config,
+    read_experiments,
+    read_gen_score,
+    read_loss,
 )
 
 # Soft caps so the data view (and therefore the prompt) stays bounded.
@@ -197,14 +198,14 @@ def _read_text(path: Path, limit: int) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _load_epoch_config(workspace_root: Path, epoch_id: str) -> dict[str, Any]:
+def _load_epoch_config(layout: WorkspaceLayout, epoch_id: str) -> dict[str, Any]:
     """Read ``config.json`` for the epoch into a plain dict (best-effort)."""
-    cfg = _read_json(epoch_dir(workspace_root, epoch_id) / "config.json")
+    cfg = read_epoch_config(layout, epoch_id)
     return cfg if isinstance(cfg, dict) else {}
 
 
 def _load_board(
-    workspace_root: Path, epoch_id: str
+    layout: WorkspaceLayout, epoch_id: str
 ) -> tuple[tuple[BoardEntryView, ...], tuple[str, ...]]:
     """Reduce ``board.jsonl`` to entry views + the disable_drift list.
 
@@ -213,7 +214,7 @@ def _load_board(
     back to a tolerant JSONL re-read so the report still surfaces the
     entry ids and kinds. Either path yields the same view shape.
     """
-    bpath = board_path(workspace_root, epoch_id)
+    bpath = layout.board(epoch_id)
     if not bpath.exists():
         return (), ()
     try:
@@ -283,15 +284,15 @@ def _load_board_tolerant(bpath: Path) -> tuple[BoardEntryView, ...]:
     return tuple(views)
 
 
-def _load_scoring(workspace_root: Path, epoch_id: str) -> dict[str, Any]:
+def _load_scoring(layout: WorkspaceLayout, epoch_id: str) -> dict[str, Any]:
     """Read ``scoring.json`` into a plain dict (best-effort)."""
-    raw = _read_json(scoring_path(workspace_root, epoch_id))
+    raw = _read_json(layout.scoring(epoch_id))
     return raw if isinstance(raw, dict) else {}
 
 
-def _load_mutation_surface(workspace_root: Path, epoch_id: str) -> tuple[dict[str, Any], ...]:
+def _load_mutation_surface(layout: WorkspaceLayout, epoch_id: str) -> tuple[dict[str, Any], ...]:
     """Read ``mutations.json`` — the most-recent enumerated surface."""
-    raw = _read_json(mutations_json_path(workspace_root, epoch_id))
+    raw = _read_json(layout.mutations(epoch_id))
     if not isinstance(raw, list):
         return ()
     out: list[dict[str, Any]] = []
@@ -299,24 +300,6 @@ def _load_mutation_surface(workspace_root: Path, epoch_id: str) -> tuple[dict[st
         if isinstance(m, dict):
             out.append(m)
     return tuple(out)
-
-
-def _experiment_dirs(workspace_root: Path, epoch_id: str) -> list[Path]:
-    """Return generation directories sorted by lineage (numeric) order."""
-    gens_root = epoch_dir(workspace_root, epoch_id) / "generations"
-    if not gens_root.exists():
-        return []
-    dirs = [d for d in gens_root.iterdir() if d.is_dir()]
-
-    def _sort_key(d: Path) -> tuple[int, str]:
-        # Generation ids are conventionally ``v{N}``; sort numerically
-        # when possible so v2 < v10, lexicographically otherwise.
-        name = d.name
-        if name.startswith("v") and name[1:].isdigit():
-            return (int(name[1:]), name)
-        return (1_000_000, name)
-
-    return sorted(dirs, key=_sort_key)
 
 
 def _str_movements(raw: Any) -> tuple[dict[str, str], ...]:
@@ -329,25 +312,29 @@ def _str_movements(raw: Any) -> tuple[dict[str, str], ...]:
 
 
 def _load_one_generation(
-    gen_dir: Path,
+    layout: WorkspaceLayout,
+    epoch_id: str,
+    gen_id_dir: str,
+    exp_raw: dict[str, Any],
 ) -> GenerationView | None:
-    """Reduce one generation directory to a :class:`GenerationView`.
+    """Reduce one generation's experiment dict to a :class:`GenerationView`.
 
-    Returns ``None`` only when the directory carries no readable
-    ``experiment.json`` at all — a generation with an experiment but no
-    outcome yields a view with ``decision="pending"``.
+    ``exp_raw`` is the generation's already-read ``experiment.json`` (the
+    canonical enumeration only yields generations whose experiment parsed
+    cleanly). ``gen_id_dir`` is the generation directory name — the
+    fallback id when ``experiment.json`` carries none. The per-generation
+    cached aggregate, patches, and run-level loss totals are read off the
+    layout. Always returns a view (never ``None`` for a present
+    experiment); a generation with an experiment but no outcome yields a
+    view with ``decision="pending"``.
     """
-    exp_raw = _read_json(gen_dir / "experiment.json")
-    if not isinstance(exp_raw, dict):
-        return None
-
     hyp = exp_raw.get("hypothesis")
     hyp = hyp if isinstance(hyp, dict) else {}
     outcome = exp_raw.get("outcome")
     outcome = outcome if isinstance(outcome, dict) else None
 
     parent = str(exp_raw.get("parent_generation_id", "") or "")
-    gen_id = str(exp_raw.get("generation_id", gen_dir.name))
+    gen_id = str(exp_raw.get("generation_id", gen_id_dir))
     is_baseline = not parent or parent == gen_id
 
     if outcome is not None:
@@ -365,10 +352,9 @@ def _load_one_generation(
         drift_movements = ()
         metric_movements = ()
 
-    patches = _load_patches(gen_dir, exp_raw)
-    gen_score = _read_json(gen_dir / "gen_score.json")
-    gen_score = gen_score if isinstance(gen_score, dict) else {}
-    per_judge_totals = _load_per_judge_totals(gen_dir)
+    patches = _load_patches(layout, epoch_id, gen_id_dir, exp_raw)
+    gen_score = read_gen_score(layout, epoch_id, gen_id_dir)
+    per_judge_totals = _load_per_judge_totals(layout, epoch_id, gen_id_dir)
 
     return GenerationView(
         generation_id=gen_id,
@@ -394,7 +380,9 @@ def _load_one_generation(
     )
 
 
-def _load_per_judge_totals(gen_dir: Path) -> tuple[tuple[str, float], ...]:
+def _load_per_judge_totals(
+    layout: WorkspaceLayout, epoch_id: str, generation_id: str
+) -> tuple[tuple[str, float], ...]:
     """Sum ``per_judge_loss`` across every ``loss.json`` under one generation.
 
     Walks ``runs/*/loss.json`` directly and pulls the ``per_judge_loss``
@@ -406,15 +394,14 @@ def _load_per_judge_totals(gen_dir: Path) -> tuple[tuple[str, float], ...]:
     Returns the empty tuple when no judge fired (or no runs landed) —
     a no-custom-judge board produces no rows under this section.
     """
-    runs_root = gen_dir / "runs"
+    runs_root = layout.runs_dir(epoch_id, generation_id)
     if not runs_root.is_dir():
         return ()
     totals: dict[str, float] = {}
     for entry_dir in sorted(runs_root.iterdir()):
         if not entry_dir.is_dir():
             continue
-        loss_path = entry_dir / "loss.json"
-        raw = _read_json(loss_path)
+        raw = read_loss(layout, epoch_id, generation_id, entry_dir.name)
         if not isinstance(raw, dict):
             continue
         per_judge = raw.get("per_judge_loss")
@@ -433,7 +420,12 @@ def _load_per_judge_totals(gen_dir: Path) -> tuple[tuple[str, float], ...]:
     return tuple(sorted(totals.items()))
 
 
-def _load_patches(gen_dir: Path, exp_raw: dict[str, Any]) -> tuple[dict[str, str], ...]:
+def _load_patches(
+    layout: WorkspaceLayout,
+    epoch_id: str,
+    generation_id: str,
+    exp_raw: dict[str, Any],
+) -> tuple[dict[str, str], ...]:
     """Resolve a generation's patches from inline or per-patch storage.
 
     The journal writer persists patches one-file-each under
@@ -450,8 +442,9 @@ def _load_patches(gen_dir: Path, exp_raw: dict[str, Any]) -> tuple[dict[str, str
         return tuple(out)
     patch_ids = exp_raw.get("patch_ids")
     if isinstance(patch_ids, list):
+        patches_dir = layout.patches_dir(epoch_id, generation_id)
         for pid in patch_ids:
-            p = _read_json(gen_dir / "patches" / f"{pid}.json")
+            p = _read_json(patches_dir / f"{pid}.json")
             if isinstance(p, dict):
                 out.append(_patch_view(p))
     return tuple(out)
@@ -547,17 +540,23 @@ def gather_epoch_report_data(workspace_root: Path, epoch_id: str) -> EpochReport
     raises on a partially-written workspace — the report generator is a
     best-effort, regenerated-each-round caller.
     """
-    cfg = _load_epoch_config(workspace_root, epoch_id)
-    board_entries, disable_drift = _load_board(workspace_root, epoch_id)
-    scoring = _load_scoring(workspace_root, epoch_id)
-    mutation_surface = _load_mutation_surface(workspace_root, epoch_id)
+    # The analyzer accepts either the inner ``.zicato`` root or the outer
+    # project dir (a historical caller passed the latter); normalise to
+    # the inner form once, then route every read through the canonical
+    # workspace layer so enumeration + ordering share one authority.
+    layout = WorkspaceLayout.from_root(_normalise_workspace_root(Path(workspace_root)))
 
-    brief_text = _read_text(epoch_dir(workspace_root, epoch_id) / "brief.md", _MAX_BRIEF_CHARS)
-    journal_text = _read_text(journal_path(workspace_root, epoch_id), _MAX_JOURNAL_CHARS)
+    cfg = _load_epoch_config(layout, epoch_id)
+    board_entries, disable_drift = _load_board(layout, epoch_id)
+    scoring = _load_scoring(layout, epoch_id)
+    mutation_surface = _load_mutation_surface(layout, epoch_id)
+
+    brief_text = _read_text(layout.brief(epoch_id), _MAX_BRIEF_CHARS)
+    journal_text = _read_text(layout.journal(epoch_id), _MAX_JOURNAL_CHARS)
 
     raw_generations: list[GenerationView] = []
-    for gen_dir in _experiment_dirs(workspace_root, epoch_id):
-        view = _load_one_generation(gen_dir)
+    for gen_id_dir, exp_raw in read_experiments(layout, epoch_id):
+        view = _load_one_generation(layout, epoch_id, gen_id_dir, exp_raw)
         if view is not None:
             raw_generations.append(view)
     generations = _cumulate_scalar(raw_generations)

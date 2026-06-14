@@ -89,3 +89,23 @@ export async function postControl(action, body) {
   try { payload = await res.json(); } catch { /* empty body */ }
   return { ok: res.ok, status: res.status, payload };
 }
+
+// POST a per-challenger FIELD override — the operator force-promote/reject that
+// rides BESIDE the gate verdict. The route carries the generation_id as a PATH
+// param (POST /api/control/{promote|reject}/{generation_id}) and an extended
+// JSON body {reason, epoch, tournament_id, structure} the readback uses to name
+// which field round / structure the override targeted (the gauntlet path reads
+// only `reason`; the extra keys are inert there). Read-only workspaces answer
+// 403 — surfaced to the caller so the cell can flag the rejection rather than
+// silently failing. `action` ∈ "promote" | "reject"; `gid` is the challenger.
+export async function postFieldOverride(action, gid, body) {
+  const path = '/api/control/' + encodeURIComponent(action) + '/' + encodeURIComponent(gid);
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  let payload = null;
+  try { payload = await res.json(); } catch { /* empty body */ }
+  return { ok: res.ok, status: res.status, payload };
+}

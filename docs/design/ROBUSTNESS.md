@@ -664,7 +664,7 @@ Operator sees: evolve exits with a clear error; existing state
 The layers ship in order: the cheapest first, the most invasive
 last.
 
-### 4.1 Shipped today: L1 + L2 + L4 + L5 + atomic writes (L6)
+### 4.1 Shipped today: L1 + L2 + L3 + L4 + L5 + atomic writes (L6)
 
 What's in the shipped build:
 
@@ -676,6 +676,14 @@ What's in the shipped build:
   §5 follow-up — not yet threaded through those call sites.
 - L2 structured cancellation cleanup in the runner and per-entry
   adapter calls.
+- **L3 subprocess tournament workers.** Every board-entry run executes
+  in its own `python -m zicato._tournament_worker` process
+  (`src/zicato/_tournament_worker.py`, spawned by
+  `src/zicato/tournament/runner.py`) over an ephemeral copy of the
+  generation snapshot, under a hard per-run wall-clock budget. This is
+  the load-bearing layer (§2.3) — it is what lets the watchdog hard-kill
+  an *uncooperative* inner harness (a GIL-holding loop) at a per-run
+  boundary instead of taking the whole orchestrator.
 - L5 consecutive-reject early stop (`evolve --max-consecutive-rejections`,
   default 3).
 - L6 atomic writes for the runtime state files **and** `experiment.json`
@@ -687,15 +695,10 @@ What's in the shipped build:
 - The `.zicato/runtime/` state files and the dashboard service that
   reads them.
 
-### 4.2 Planned: L3 + the resume protocol
+### 4.2 Planned: the resume protocol
 
 What is **not yet** in the build:
 
-- **L3 subprocess workers** and the `zicato _worker` subcommand. Until
-  this lands, pathological *uncooperative* inner-harness code (a
-  GIL-holding loop) cannot be hard-killed at a per-run boundary — the
-  watchdog would have to take the whole orchestrator. This is the one
-  remaining gap versus the full six-layer model.
 - The **resume protocol** on orchestrator restart (the markers exist;
   reading them to resume does not).
 - `zicato status` / `zicato kill` CLI commands (the dashboard's kill
@@ -703,10 +706,13 @@ What is **not yet** in the build:
 - The richer L5 signals (hypothesis match-rate decay, same-drift-kinds
   detection) beyond the consecutive-reject counter.
 
-Until L3 + resume land, the shipped story is the **cooperative-correctness
-floor plus an external watchdog**: inner harnesses that respect
-`CancelledError` are fully covered; an adversarial inner harness is
-contained only by terminating the orchestrator process.
+With L3 shipped, the floor is the **full six-layer model**: an
+uncooperative inner harness is hard-killed at the per-run worker
+boundary, and inner harnesses that respect `CancelledError` are covered
+cooperatively at L1/L2 first. What remains is *resume*: a mid-tournament
+kill currently loses in-flight work to re-runs (the unit cache makes the
+re-runs cheap), and the resume protocol that would read the existing
+markers to skip completed work is still to come.
 
 ### 4.3 Shipped: the dashboard (observability)
 

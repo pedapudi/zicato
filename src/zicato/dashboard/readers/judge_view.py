@@ -1,0 +1,999 @@
+"""judge_view — extracted from zicato.dashboard.state_reader (pure move)."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+from zicato.dashboard.readers import gate_view as _gate_view
+from zicato.dashboard.readers._sqlite import _opt_json
+from zicato.dashboard.readers.epoch_view import (
+    _parse_board,
+    build_epoch_view,
+    build_epochs_summary,
+)
+from zicato.dashboard.readers.lineage_view import build_lineage_view
+from zicato.dashboard.readers.paths import (
+    WorkspacePaths,
+    _iso,
+    _preview,
+    _read_json_value,
+    _utc_now,
+    layout_of,
+    read_current_epoch,
+)
+from zicato.dashboard.readers.run_log import (
+    RUN_LOG_DEFAULT_LIMIT,
+    build_run_log,
+)
+from zicato.dashboard.readers.runtime_view import (
+    read_active_runs_view,
+    read_active_tournament_dict,
+    read_heartbeat_dict,
+    read_lock_dict,
+)
+from zicato.dashboard.readers.tournament_view import (
+    _champion_lineage,
+    _opt_metrics,
+    _opt_score,
+    _read_gen_score,
+    _tournament_id_for,
+    build_bracket,
+)
+
+
+def build_per_judge_trend(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
+    """Per-judge × generation matrix for one epoch.
+
+    Returns ``{epoch_id, generations, judges: [{judge_name,
+    by_generation: {gen_id: weighted_loss}}]}``. ``generations`` is the
+    spine in lineage order (the promoted lineage when available, else
+    every generation in directory order). The ``by_generation`` map is
+    populated from :func:`zicato.index.query.judge_loss_trend` per judge.
+
+    Best-effort: a never-indexed workspace yields empty
+    ``generations`` / ``judges`` lists with a ``note``.
+    """
+    from zicato.index.query import judge_loss_trend  # noqa: PLC0415
+
+    # Discover the set of judges seen in this epoch by walking the
+    # generations directly. The trend query is per-judge so we need a
+    # judge list before we can call it.
+    judges: set[str] = set()
+    try:
+        import sqlite3 as _sql  # noqa: PLC0415
+
+        conn = _sql.connect(str(paths.index_db))
+        conn.row_factory = _sql.Row
+        try:
+            rows = conn.execute(
+                "SELECT DISTINCT jl.judge_name "
+                "FROM judge_losses AS jl "
+                "JOIN runs AS r ON r.run_id = jl.run_id "
+                "WHERE r.epoch_id = ? "
+                "ORDER BY jl.judge_name",
+                (epoch_id,),
+            ).fetchall()
+            for r in rows:
+                if isinstance(r["judge_name"], str):
+                    judges.add(r["judge_name"])
+        except _sql.Error:
+            pass
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        return {
+            "epoch_id": epoch_id,
+            "generations": [],
+            "judges": [],
+            "note": "index not built; run zicato reindex",
+        }
+
+    # Resolve the spine — the promoted lineage when available, else
+    # every generation in directory order. The L1 heatmap renders only
+    # promoted-spine generations so the columns stay narrow.
+    lineage_view = build_lineage_view(paths)
+    epoch_gens = [g for g in lineage_view.get("generations", []) if g.get("epoch_id") == epoch_id]
+    spine = _champion_lineage(epoch_gens)
+    if not spine:
+        spine = [g["generation_id"] for g in epoch_gens]
+
+    judge_rows: list[dict[str, Any]] = []
+    for judge_name in sorted(judges):
+        try:
+            rows = judge_loss_trend(paths.index_db, epoch_id, judge_name)
+        except Exception:  # noqa: BLE001
+            rows = []
+        by_gen: dict[str, float] = {}
+        for r in rows:
+            gid = r["generation_id"]
+            val = r["total_weighted_loss"]
+            if isinstance(gid, str) and isinstance(val, int | float):
+                by_gen[gid] = float(val)
+        judge_rows.append(
+            {
+                "judge_name": judge_name,
+                "by_generation": by_gen,
+            }
+        )
+
+    return {
+        "epoch_id": epoch_id,
+        "generations": spine,
+        "judges": judge_rows,
+    }
+
+
+def build_per_judge_for_generation(
+    paths: WorkspacePaths, epoch_id: str, generation_id: str
+) -> dict[str, Any]:
+    """Per-judge table for one generation.
+
+    Returns ``{epoch_id, generation_id, judges: [{judge_name,
+    weighted_loss, raw_loss, run_count, weight}]}`` keyed off
+    :func:`zicato.index.query.judge_losses_for_generation`. A never-
+    indexed workspace yields empty ``judges`` with a ``note``.
+    """
+    from zicato.index.query import judge_losses_for_generation  # noqa: PLC0415
+
+    try:
+        rows = judge_losses_for_generation(paths.index_db, epoch_id, generation_id)
+    except Exception:  # noqa: BLE001
+        return {
+            "epoch_id": epoch_id,
+            "generation_id": generation_id,
+            "judges": [],
+            "note": "index not built; run zicato reindex",
+        }
+    judges = [
+        {
+            "judge_name": r["judge_name"],
+            "weighted_loss": (
+                float(r["total_weighted_loss"])
+                if isinstance(r["total_weighted_loss"], int | float)
+                else None
+            ),
+            "raw_loss": (
+                float(r["total_raw_loss"]) if isinstance(r["total_raw_loss"], int | float) else None
+            ),
+            "run_count": int(r["run_count"]) if isinstance(r["run_count"], int) else None,
+            "weight": float(r["weight"]) if isinstance(r["weight"], int | float) else None,
+        }
+        for r in rows
+    ]
+    return {
+        "epoch_id": epoch_id,
+        "generation_id": generation_id,
+        "judges": judges,
+    }
+
+
+def build_per_entry_for_generation(
+    paths: WorkspacePaths,
+    epoch_id: str,
+    generation_id: str,
+) -> dict[str, Any]:
+    """Per-entry breakdown of one generation, scoped via tournament_id FK.
+
+    Returns ``{epoch_id, generation_id, tournament_id, entries:
+    [{entry_id, run_id, drift_loss, pass_fail, runtime_ms,
+    wall_clock_budget_exceeded, match_id, rung}]}``. The tournament id is
+    composed via :func:`_tournament_id_for` from the child generation's
+    ``parent_generation_id`` field (its ``experiment.json``); a v0 seed
+    with no parent yields ``tournament_id: None`` and the fallback walks
+    :func:`zicato.index.query.loss_profiles_for_generation` directly.
+
+    ``match_id`` is the per-board-run tournament-provenance tag — the
+    matchup id this run executed within (e.g. ``"rung0_m2"``,
+    ``"racing-final"``) — and ``rung`` is the coarser label derived from
+    it (e.g. ``"rung 0"``, ``"final"``) via
+    :func:`zicato.selection.strategy.rung_for_match_id`. Both are ``None``
+    for an untagged run: a gauntlet duel (which never carries a
+    ``match_id``) or a legacy run persisted before the tag existed —
+    additive, never an error.
+
+    A never-indexed workspace yields empty ``entries`` with a ``note``.
+    """
+    from zicato.index.query import (  # noqa: PLC0415
+        loss_profiles_for_generation,
+        loss_profiles_for_tournament,
+    )
+
+    # Resolve the parent_generation_id from the child's experiment.json
+    # so we can compose the FK. The reader is best-effort: a missing
+    # / malformed file falls back to the generation-scoped query.
+    exp_path = layout_of(paths).experiment(epoch_id, generation_id)
+    parent_gen_id: str | None = None
+    raw_exp = _read_json_value(exp_path)
+    if isinstance(raw_exp, dict):
+        raw_parent = raw_exp.get("parent_generation_id")
+        if isinstance(raw_parent, str) and raw_parent:
+            parent_gen_id = raw_parent
+
+    tournament_id: str | None = None
+    rows: list[Any] = []
+    if parent_gen_id is not None:
+        tournament_id = _tournament_id_for(epoch_id, parent_gen_id, generation_id)
+        try:
+            rows = loss_profiles_for_tournament(paths.index_db, tournament_id)
+        except Exception:  # noqa: BLE001
+            rows = []
+    if not rows:
+        # Either the FK lookup found nothing (v1 index without
+        # backfill) or there is no parent. Walk the generation-scoped
+        # query so a completed-but-orphaned tournament still surfaces.
+        try:
+            rows = loss_profiles_for_generation(paths.index_db, epoch_id, generation_id)
+        except Exception:  # noqa: BLE001
+            rows = []
+
+    from zicato.selection.strategy import rung_for_match_id  # noqa: PLC0415
+
+    def _row_keys(row: Any) -> Any:
+        try:
+            return row.keys()
+        except AttributeError:
+            return ()
+
+    def _match_id_of(row: Any) -> str | None:
+        # ``match_id`` lands in schema v4. A stale index opened before
+        # the migration ran would not carry the column; tolerate its
+        # absence (and a NULL value) so an old index loads, not errors.
+        if "match_id" not in _row_keys(row):
+            return None
+        value = row["match_id"]
+        return value if isinstance(value, str) and value else None
+
+    def _opt_str(row: Any, key: str) -> str | None:
+        # Tolerant read for the cached-champion provenance columns (``cached`` /
+        # ``source_epoch`` / ``source_run``), additive in a later schema. A
+        # stale index without the column loads unchanged (absence -> None).
+        if key not in _row_keys(row):
+            return None
+        value = row[key]
+        return value if isinstance(value, str) and value else None
+
+    def _opt_bool(row: Any, key: str) -> bool:
+        if key not in _row_keys(row):
+            return False
+        return bool(row[key]) if row[key] is not None else False
+
+    def _score_metrics_of(row: Any) -> tuple[float | None, dict[str, float] | None]:
+        # The continuous per-entry outcome + its precision/recall
+        # decomposition (#18) live in the raw ``loss_json`` blob the index
+        # stores verbatim, NOT in a dedicated column — so a stale index
+        # without new columns still surfaces the score. Absent / malformed
+        # blob -> (None, None), which renders by the bool pass bit exactly
+        # as before.
+        if "loss_json" not in _row_keys(row):
+            return None, None
+        lj = _opt_json(row["loss_json"])
+        if not isinstance(lj, dict):
+            return None, None
+        return _opt_score(lj.get("score")), _opt_metrics(lj.get("metrics"))
+
+    entries = []
+    for r in rows:
+        match_id = _match_id_of(r)
+        entry_score, entry_metrics = _score_metrics_of(r)
+        entries.append(
+            {
+                "entry_id": r["entry_id"],
+                "run_id": r["run_id"],
+                "generation_id": r["generation_id"],
+                "drift_loss": (
+                    float(r["drift_loss"]) if isinstance(r["drift_loss"], int | float) else None
+                ),
+                "pass_fail": r["pass_fail"],
+                # Continuous per-entry outcome + precision/recall (#18),
+                # parsed from the row's loss_json blob. ``None`` for a
+                # pre-score entry (renders by pass_fail as before).
+                "score": entry_score,
+                "metrics": entry_metrics,
+                "runtime_ms": (int(r["runtime_ms"]) if isinstance(r["runtime_ms"], int) else None),
+                "wall_clock_budget_exceeded": bool(r["wall_clock_budget_exceeded"])
+                if r["wall_clock_budget_exceeded"] is not None
+                else None,
+                # Per-board-run tournament provenance (additive). ``None``
+                # for an untagged run (gauntlet duel / legacy run).
+                "match_id": match_id,
+                "rung": rung_for_match_id(match_id),
+                # Cached-champion provenance (additive). When the champion was
+                # reused in fast mode this row's scalar comes from a PRIOR
+                # epoch/run rather than a re-execution this round; the epoch's
+                # OWN loss.json / index materializes the provenance so this read
+                # stays epoch-local. ``cached`` False / ``source_*`` None for a
+                # freshly-executed run.
+                "cached": _opt_bool(r, "cached"),
+                "source_epoch": _opt_str(r, "source_epoch"),
+                "source_run": _opt_str(r, "source_run"),
+            }
+        )
+
+    # Per-generation mean continuous outcome (#18), read from the cached
+    # gen_score.json — never recomputed. ``None`` when the aggregate
+    # predates the field, so the candidate view degrades to its pass-rate
+    # summary. Folded alongside the per-entry scores so the dossier can
+    # show a single board-level score number.
+    gen_mean_score = _opt_score(_read_gen_score(paths, epoch_id, generation_id).get("mean_score"))
+
+    return {
+        "epoch_id": epoch_id,
+        "generation_id": generation_id,
+        "tournament_id": tournament_id,
+        "mean_score": gen_mean_score,
+        "entries": entries,
+    }
+
+
+def build_per_judge_comparison(
+    paths: WorkspacePaths,
+    epoch_id: str,
+    champion_id: str,
+    challenger_id: str,
+) -> dict[str, Any]:
+    """Per-judge Δ between two generations.
+
+    Returns ``{epoch_id, champion, challenger, judges: [{judge_name,
+    champion_weighted_loss, challenger_weighted_loss, delta}],
+    primary_driver}``. ``primary_driver`` is the judge_name with the
+    largest absolute delta; ``None`` when no judge fired on either side.
+
+    A never-indexed workspace yields empty ``judges`` with a ``note``.
+    """
+    from zicato.index.query import judge_losses_for_generation  # noqa: PLC0415
+
+    try:
+        champ_rows = judge_losses_for_generation(paths.index_db, epoch_id, champion_id)
+        chal_rows = judge_losses_for_generation(paths.index_db, epoch_id, challenger_id)
+    except Exception:  # noqa: BLE001
+        return {
+            "epoch_id": epoch_id,
+            "champion": champion_id,
+            "challenger": challenger_id,
+            "judges": [],
+            "primary_driver": None,
+            "note": "index not built; run zicato reindex",
+        }
+
+    by_judge: dict[str, dict[str, float | None]] = {}
+    for r in champ_rows:
+        name = r["judge_name"]
+        if not isinstance(name, str):
+            continue
+        v = r["total_weighted_loss"]
+        by_judge.setdefault(name, {"champion": None, "challenger": None})["champion"] = (
+            float(v) if isinstance(v, int | float) else None
+        )
+    for r in chal_rows:
+        name = r["judge_name"]
+        if not isinstance(name, str):
+            continue
+        v = r["total_weighted_loss"]
+        by_judge.setdefault(name, {"champion": None, "challenger": None})["challenger"] = (
+            float(v) if isinstance(v, int | float) else None
+        )
+
+    judges: list[dict[str, Any]] = []
+    primary_driver: str | None = None
+    primary_abs: float = -1.0
+    for name in sorted(by_judge):
+        sides = by_judge[name]
+        champ_v = sides.get("champion")
+        chal_v = sides.get("challenger")
+        delta: float | None = None
+        if isinstance(champ_v, int | float) and isinstance(chal_v, int | float):
+            delta = float(chal_v) - float(champ_v)
+        elif isinstance(chal_v, int | float):
+            delta = float(chal_v)
+        elif isinstance(champ_v, int | float):
+            delta = -float(champ_v)
+        judges.append(
+            {
+                "judge_name": name,
+                "champion_weighted_loss": champ_v,
+                "challenger_weighted_loss": chal_v,
+                "delta": delta,
+            }
+        )
+        if delta is not None and abs(delta) > primary_abs:
+            primary_abs = abs(delta)
+            primary_driver = name
+
+    return {
+        "epoch_id": epoch_id,
+        "champion": champion_id,
+        "challenger": challenger_id,
+        "judges": judges,
+        "primary_driver": primary_driver,
+    }
+
+
+def build_per_judge_for_run(paths: WorkspacePaths, run_id: str) -> dict[str, Any]:
+    """Per-judge breakdown for one run.
+
+    Returns ``{run_id, judges: [{judge_name, weighted_loss, raw_loss,
+    weight}]}``. A never-indexed workspace yields empty ``judges``.
+    """
+    from zicato.index.query import judge_losses_for_run  # noqa: PLC0415
+
+    try:
+        rows = judge_losses_for_run(paths.index_db, run_id)
+    except Exception:  # noqa: BLE001
+        return {"run_id": run_id, "judges": [], "note": "index not built; run zicato reindex"}
+    judges = [
+        {
+            "judge_name": r["judge_name"],
+            "weighted_loss": (
+                float(r["weighted_loss"]) if isinstance(r["weighted_loss"], int | float) else None
+            ),
+            "raw_loss": (float(r["raw_loss"]) if isinstance(r["raw_loss"], int | float) else None),
+            "weight": float(r["weight"]) if isinstance(r["weight"], int | float) else None,
+        }
+        for r in rows
+    ]
+    return {"run_id": run_id, "judges": judges}
+
+
+def _load_run_loss(
+    paths: WorkspacePaths,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+) -> dict[str, Any] | None:
+    """Read a board-entry run's ``loss.json`` defensively.
+
+    Returns the parsed dict or ``None`` when the file is absent or
+    unreadable. Used by :func:`build_expectation_outcomes_for_run` and
+    :func:`build_run_header` to project structured fields without
+    requiring an indexed workspace.
+    """
+    loss_path = layout_of(paths).loss(epoch_id, generation_id, entry_id)
+    try:
+        loss = json.loads(loss_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError, ValueError):
+        return None
+    return loss if isinstance(loss, dict) else None
+
+
+def build_expectation_outcomes_for_run(
+    paths: WorkspacePaths,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+) -> dict[str, Any]:
+    """Structured expectation outcomes for a single run (L4).
+
+    The reducer stamps a single ``expectation_result`` on each run's
+    ``loss.json`` — a dict shaped ``{kind, passed, detail}`` (see
+    :class:`zicato.core.types.ExpectationResult`). This reader projects
+    it into a list-shaped payload so the L4 view can render a uniform
+    table regardless of whether the entry carried zero, one, or
+    (forward-compat) several expectations.
+
+    Returns ``{epoch_id, generation_id, entry_id, outcomes: [...]}``
+    where each outcome has the fields:
+
+    * ``kind`` — the matcher discriminant (``predicate``, ``regex``,
+      ``expected_text``, ``json_schema``, ``rubric``, or a custom
+      kind-like string the reducer happened to stamp).
+    * ``passed`` — ``True`` / ``False`` / ``None`` (the matcher could
+      not produce a verdict).
+    * ``detail`` — human-readable explanation (regex match position,
+      judge rationale, predicate return). Empty string when the
+      matcher had nothing to say.
+    * ``judge_name`` — the rubric's judge identity when ``kind`` is
+      ``rubric``; ``None`` otherwise.
+    * ``score`` — the rubric's numeric score when present; ``None``
+      otherwise.
+
+    An entry with no expectation (``expectation_result`` is ``None``)
+    or no on-disk ``loss.json`` yields an empty ``outcomes`` list — the
+    L4 view shows ``(no expectations recorded for this run)``.
+    """
+    empty: dict[str, Any] = {
+        "epoch_id": epoch_id,
+        "generation_id": generation_id,
+        "entry_id": entry_id,
+        "outcomes": [],
+    }
+    loss = _load_run_loss(paths, epoch_id, generation_id, entry_id)
+    if loss is None:
+        return empty
+    raw = loss.get("expectation_result")
+    if raw is None:
+        return empty
+
+    # The reducer stamps a single dict today; we normalise to a list to
+    # keep the wire shape stable when multi-expectation entries land.
+    if isinstance(raw, dict):
+        items: list[Any] = [raw]
+    elif isinstance(raw, list):
+        items = list(raw)
+    else:
+        return empty
+
+    outcomes: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("kind")
+        kind_str = str(kind) if isinstance(kind, str) else None
+        passed_raw = item.get("passed")
+        if isinstance(passed_raw, bool):
+            passed: bool | None = passed_raw
+        else:
+            passed = None
+        detail = item.get("detail")
+        detail_str = detail if isinstance(detail, str) else ""
+        judge_raw = item.get("judge_name")
+        judge_name = judge_raw if isinstance(judge_raw, str) and judge_raw else None
+        score_raw = item.get("score")
+        score: float | None
+        if isinstance(score_raw, int | float) and not isinstance(score_raw, bool):
+            score = float(score_raw)
+        else:
+            score = None
+        outcomes.append(
+            {
+                "kind": kind_str,
+                "passed": passed,
+                "detail": detail_str,
+                "judge_name": judge_name,
+                "score": score,
+            }
+        )
+    return {
+        "epoch_id": epoch_id,
+        "generation_id": generation_id,
+        "entry_id": entry_id,
+        "outcomes": outcomes,
+    }
+
+
+def build_run_header(
+    paths: WorkspacePaths,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+) -> dict[str, Any]:
+    """Per-run header metrics (L4).
+
+    Projects the numeric / verdict header fields from a board-entry
+    run's ``loss.json``. The L4 page already shows ``drift_loss`` and
+    ``pass_fail`` from the per-entry table; this reader surfaces the
+    remaining header fields the previous placeholder promised:
+
+    * ``runtime_ms`` — total wall-clock duration in ms.
+    * ``tokens_spent`` — LLM token cost as recorded by the harness.
+    * ``output_chars`` — characters in the run's final output.
+    * ``turns_completed`` — conversational turns executed (multi-turn
+      only; ``None`` for single-turn).
+    * ``plan_revisions`` — count of plan-revision events observed.
+    * ``wall_clock_budget_exceeded`` — ``True`` iff the run was force-
+      aborted by its budget.
+
+    Plus the headline verdict numbers so the frontend can render the
+    full strip from one payload:
+
+    * ``drift_loss``, ``pass_fail``, ``run_id``.
+
+    Also surfaces the ADK session id persisted in ``loss.json`` by the
+    reducer, so the L4 header can deep-link into harmonograf at the
+    run's execution trace without a second roundtrip to ``events.jsonl``:
+
+    * ``adk_session_id`` — the goldfive/ADK session id for this run.
+
+    Every field defaults to ``None`` when ``loss.json`` is absent or
+    missing the key; the response shape is stable so the L4 renderer
+    never branches on whether the file exists.
+    """
+    keys = (
+        "drift_loss",
+        "pass_fail",
+        "runtime_ms",
+        "tokens_spent",
+        "output_chars",
+        "turns_completed",
+        "plan_revisions",
+        "wall_clock_budget_exceeded",
+        "run_id",
+        "adk_session_id",
+    )
+    header: dict[str, Any] = {
+        "epoch_id": epoch_id,
+        "generation_id": generation_id,
+        "entry_id": entry_id,
+    }
+    for k in keys:
+        header[k] = None
+    loss = _load_run_loss(paths, epoch_id, generation_id, entry_id)
+    if loss is None:
+        return header
+    for k in keys:
+        v = loss.get(k)
+        # Pass scalars (numeric / bool / str) and ``None`` through;
+        # discard nested dicts / lists which are not header material.
+        if v is None or isinstance(v, int | float | str | bool):
+            header[k] = v
+    return header
+
+
+def build_workspace_identity(paths: WorkspacePaths) -> dict[str, Any]:
+    """Structured workspace identity block — Phase 1's L0 env object.
+
+    Replaces the bare ``str(paths.root)`` previously surfaced as
+    ``state.workspace``. Returns an object with the fields the L0 view's
+    environment-configuration table renders:
+
+    * ``root`` — absolute path to the ``.zicato`` directory.
+    * ``adk_entrypoint`` — the adapter's entrypoint (e.g.
+      ``mod:agent``) when ``config.json`` carries one, else ``None``.
+    * ``source_roots`` — every ``mutable_trees`` entry from
+      ``config.json`` (empty list when absent).
+    * ``board_path`` / ``brief_path`` / ``scoring_path`` — absolute
+      paths to the current epoch's contract files when an epoch is
+      live, else ``None``.
+    * ``mutation_point_count`` — the count of mutation points the
+      enumerator finds across ``source_roots``. ``0`` when the
+      enumerator fails or there are no source roots — never raises.
+    * ``instance_id`` — heartbeat's ``instance_id`` when present,
+      else ``"default"`` (the runtime's seed default).
+    * ``created_at`` — heartbeat's ``started_at`` when present, else
+      ``None`` (the workspace is too young to have a heartbeat).
+    """
+    cfg = _read_json_value(paths.root / "config.json")
+    adapter = cfg.get("adapter") if isinstance(cfg, dict) else None
+    adapter = adapter if isinstance(adapter, dict) else {}
+
+    entrypoint = adapter.get("entrypoint")
+    if not isinstance(entrypoint, str) or not entrypoint:
+        if isinstance(cfg, dict):
+            for key in ("adk_entrypoint", "entrypoint"):
+                val = cfg.get(key)
+                if isinstance(val, str) and val:
+                    entrypoint = val
+                    break
+            else:
+                entrypoint = None
+        else:
+            entrypoint = None
+
+    raw_trees = adapter.get("mutable_trees")
+    if not isinstance(raw_trees, list) and isinstance(cfg, dict):
+        raw_trees = cfg.get("mutable_trees")
+    if isinstance(raw_trees, list):
+        source_roots = [t for t in raw_trees if isinstance(t, str)]
+    else:
+        source_roots = []
+
+    epoch_id = read_current_epoch(paths)
+    if epoch_id is not None:
+        layout = layout_of(paths)
+        board_path = str(layout.board(epoch_id))
+        brief_path_candidate = layout.brief(epoch_id)
+        if not brief_path_candidate.exists():
+            legacy = layout.legacy_rubric(epoch_id)
+            brief_path = str(legacy) if legacy.exists() else str(brief_path_candidate)
+        else:
+            brief_path = str(brief_path_candidate)
+        scoring_path = str(layout.scoring(epoch_id))
+    else:
+        board_path = None
+        brief_path = None
+        scoring_path = None
+
+    # Mutation point enumeration — best-effort so a malformed source
+    # tree never bubbles up to the dashboard endpoint as a 500. The
+    # enumerator walks every source root for ``# zicato:mutable`` markers
+    # plus a goldfive manifest if one exists.
+    mutation_point_count = 0
+    if source_roots:
+        try:
+            from zicato.mutation.enumerator import enumerate_mutations  # noqa: PLC0415
+
+            mutation_point_count = len(enumerate_mutations([Path(r) for r in source_roots]))
+        except Exception:  # noqa: BLE001 — best-effort
+            mutation_point_count = 0
+
+    hb = read_heartbeat_dict(paths)
+    instance_id = "default"
+    created_at: str | None = None
+    if isinstance(hb, dict):
+        raw_iid = hb.get("instance_id")
+        if isinstance(raw_iid, str) and raw_iid:
+            instance_id = raw_iid
+        raw_started = hb.get("started_at")
+        if isinstance(raw_started, str) and raw_started:
+            created_at = raw_started
+
+    return {
+        "root": str(paths.root),
+        "adk_entrypoint": entrypoint,
+        "source_roots": source_roots,
+        "board_path": board_path,
+        "brief_path": brief_path,
+        "scoring_path": scoring_path,
+        "mutation_point_count": mutation_point_count,
+        "instance_id": instance_id,
+        "created_at": created_at,
+    }
+
+
+def build_environment(
+    paths: WorkspacePaths, run_log_limit: int = RUN_LOG_DEFAULT_LIMIT
+) -> dict[str, Any]:
+    """One coalesced snapshot of the whole instantiated zicato environment.
+
+    ``GET /api/environment`` returns this. It folds together every
+    cross-view feed the dashboard needs — the epoch contract, the live
+    and resolved tournaments, the generation lineage, active runs, loop
+    health, the heartbeat, and the run-log tail — so the front-end can
+    refresh the entire environment view with ONE request per change
+    instead of fanning out to six endpoints many times a second.
+
+    ``epochs`` is a lightweight per-epoch summary list -- ``{epoch_id,
+    goal}`` -- so the Overview's epochs table can show what each epoch
+    is trying to accomplish without a per-epoch ``/api/epoch`` fetch.
+
+    ``workspace`` is now a structured identity block (see
+    :func:`build_workspace_identity`) so the L0 view can render
+    entrypoint / source roots / contract paths / mutation-point count
+    without a second fetch. The legacy callers that expected a plain
+    string still find the root path on ``workspace.root``.
+
+    Every component degrades independently: a missing or unreadable
+    input becomes an empty / ``None`` value, never an exception, so this
+    function — like every reader here — cannot 500 an endpoint.
+    """
+    # ``health`` here is the dashboard *service* identity (version /
+    # port / build) and is supplied by the /api/health route handler,
+    # not this reader — it is intentionally absent from the environment
+    # payload. ``heartbeat`` is the orchestrator's runtime heartbeat.
+    return {
+        "workspace": build_workspace_identity(paths),
+        "epoch_id": read_current_epoch(paths),
+        "epoch": build_epoch_view(paths),
+        "epochs": build_epochs_summary(paths),
+        "active_tournament": read_active_tournament_dict(paths),
+        "tournaments": build_bracket(paths),
+        "generations": build_lineage_view(paths),
+        "score_trajectory": _gate_view.build_score_trajectory(paths),
+        "active_runs": read_active_runs_view(paths),
+        "health_report": _gate_view.build_health_report(paths),
+        "heartbeat": read_heartbeat_dict(paths),
+        "lock": read_lock_dict(paths),
+        "run_log": build_run_log(paths, run_log_limit),
+        "generated_at": _iso(_utc_now()),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Sidebar search — entries / judges / patches / mutations
+# ---------------------------------------------------------------------------
+#
+# The sidebar exposes an always-visible search bar (no per-page navigation
+# away from the current view). ``build_search_results`` walks the live
+# workspace for substring + exact matches across four categories:
+#
+#   * entries   — id substring against the current epoch's ``board.jsonl``
+#   * judges    — name substring against in-board judges + index judge_losses
+#   * patches   — mutation_id / rationale substring against the index
+#   * mutations — mutation_id substring against the index's patches table
+#
+# Each category is independently capped at :data:`SEARCH_LIMIT_PER_CATEGORY`
+# results. Exact matches are sorted before substring matches so a query
+# that names an id outright surfaces it first. Empty / whitespace queries
+# short-circuit to empty result sets so the caller cannot tax the index
+# with a degenerate scan.
+
+#: Per-category cap on the number of results returned. The sidebar UI is
+#: narrow; ten matches per category is enough to surface the obvious
+#: targets without overwhelming the panel.
+SEARCH_LIMIT_PER_CATEGORY = 10
+
+
+def _empty_search_result() -> dict[str, Any]:
+    return {
+        "entries": [],
+        "judges": [],
+        "patches": [],
+        "mutations": [],
+    }
+
+
+def _collect_judge_names_from_board_file(path: Path) -> set[str]:
+    """Walk a raw ``board.jsonl`` and union every judge name."""
+    names: set[str] = set()
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError):
+        return names
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        if obj.get("board_meta") is True:
+            continue
+        judges = obj.get("judges")
+        if not isinstance(judges, list):
+            continue
+        for j in judges:
+            if not isinstance(j, dict):
+                continue
+            name = j.get("name")
+            if isinstance(name, str) and name:
+                names.add(name)
+    return names
+
+
+def _collect_judge_names_from_index(db_path: Path) -> set[str]:
+    """Union of distinct ``judge_name`` values in the analytical index."""
+    names: set[str] = set()
+    if not db_path.is_file():
+        return names
+    try:
+        import sqlite3  # noqa: PLC0415
+
+        conn = sqlite3.connect(str(db_path))
+        try:
+            cur = conn.execute("SELECT DISTINCT judge_name FROM judge_losses")
+            for row in cur.fetchall():
+                if isinstance(row[0], str) and row[0]:
+                    names.add(row[0])
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 — best-effort; missing table is OK
+        return names
+    return names
+
+
+def _sort_by_match_quality(
+    items: list[dict[str, Any]], key: str, q_lower: str
+) -> list[dict[str, Any]]:
+    """Sort exact matches (case-insensitive) before substring matches.
+
+    Each item carries a ``match_kind`` field set to ``"exact"`` when the
+    item's ``key`` equals the query case-insensitively, ``"substring"``
+    otherwise. Ties within a kind are sorted by the matched field.
+    """
+
+    def _rank(item: dict[str, Any]) -> tuple[int, str]:
+        val = str(item.get(key, "") or "")
+        is_exact = val.lower() == q_lower
+        item["match_kind"] = "exact" if is_exact else "substring"
+        return (0 if is_exact else 1, val.lower())
+
+    items.sort(key=_rank)
+    return items
+
+
+def build_search_results(paths: WorkspacePaths, query: str) -> dict[str, Any]:
+    """Search entries / judges / patches / mutations for substring matches.
+
+    Returns a dict keyed by category, each value a list of small match
+    records carrying enough fields to build a navigation link client-side.
+    Every category is independently capped at
+    :data:`SEARCH_LIMIT_PER_CATEGORY`; exact (case-insensitive) matches
+    sort before substring matches.
+
+    The current epoch (as recorded by ``current_epoch``) bounds the entry
+    + judge scans. Patch + mutation scans cover every epoch in the index
+    so an operator can locate a historical mutation across the workspace.
+    A degenerate query (empty / whitespace) short-circuits to empty
+    results so the caller cannot accidentally fan out a wide scan.
+    """
+    q = (query or "").strip()
+    if not q:
+        return _empty_search_result()
+    q_lower = q.lower()
+
+    result = _empty_search_result()
+    epoch_id = read_current_epoch(paths)
+
+    # --- entries: walk the current epoch's board.jsonl ---------------
+    layout = layout_of(paths)
+    entry_hits: list[dict[str, Any]] = []
+    if epoch_id:
+        board_path = layout.board(epoch_id)
+        board = _parse_board(board_path)
+        if board:
+            for entry in board:
+                eid = entry.get("id")
+                if not isinstance(eid, str) or not eid:
+                    continue
+                if q_lower in eid.lower():
+                    entry_hits.append({"id": eid})
+    entry_hits = _sort_by_match_quality(entry_hits, "id", q_lower)
+    result["entries"] = entry_hits[:SEARCH_LIMIT_PER_CATEGORY]
+
+    # --- judges: board + index union ---------------------------------
+    judge_names: set[str] = set()
+    if epoch_id:
+        judge_names |= _collect_judge_names_from_board_file(layout.board(epoch_id))
+    judge_names |= _collect_judge_names_from_index(paths.index_db)
+    judge_hits: list[dict[str, Any]] = [{"name": n} for n in judge_names if q_lower in n.lower()]
+    judge_hits = _sort_by_match_quality(judge_hits, "name", q_lower)
+    result["judges"] = judge_hits[:SEARCH_LIMIT_PER_CATEGORY]
+
+    # --- patches + mutations: index scan ------------------------------
+    # Both share the same patches table; one scan populates both, since
+    # a mutation_id hit also implies the patch is interesting and a
+    # rationale-only hit is a patch-only match.
+    if paths.index_db.is_file():
+        import sqlite3  # noqa: PLC0415
+
+        try:
+            conn = sqlite3.connect(str(paths.index_db))
+            try:
+                conn.row_factory = sqlite3.Row
+                # The LIKE patterns mirror the substring semantics the
+                # frontend describes to operators. SQLite's LIKE is
+                # case-insensitive for ASCII by default — the typical
+                # case for mutation ids + rationale text.
+                like = f"%{q}%"
+                rows = conn.execute(
+                    "SELECT patch_id, epoch_id, generation_id, mutation_id, "
+                    "       op, rationale FROM patches "
+                    "WHERE mutation_id LIKE ? OR rationale LIKE ? "
+                    "ORDER BY epoch_id ASC, generation_id ASC",
+                    (like, like),
+                ).fetchall()
+            finally:
+                conn.close()
+        except Exception:  # noqa: BLE001 — best-effort
+            rows = []
+
+        patch_hits: list[dict[str, Any]] = []
+        mutation_hits: list[dict[str, Any]] = []
+        seen_mutations: set[tuple[str, str, str]] = set()
+        for row in rows:
+            patch_id = row["patch_id"]
+            ep_id = row["epoch_id"]
+            gen_id = row["generation_id"]
+            mut_id = row["mutation_id"]
+            rationale = row["rationale"] or ""
+            snippet = _preview(rationale) if rationale else ""
+            patch_hits.append(
+                {
+                    "patch_id": patch_id,
+                    "epoch_id": ep_id,
+                    "generation_id": gen_id,
+                    "mutation_id": mut_id,
+                    "rationale_snippet": snippet,
+                }
+            )
+            # A mutation row is interesting only when the substring
+            # actually hits the mutation_id (a rationale-only match
+            # belongs in patches but not in mutations).
+            if isinstance(mut_id, str) and mut_id and q_lower in mut_id.lower():
+                key = (mut_id, ep_id or "", gen_id or "")
+                if key in seen_mutations:
+                    continue
+                seen_mutations.add(key)
+                mutation_hits.append(
+                    {
+                        "mutation_id": mut_id,
+                        "epoch_id": ep_id,
+                        "generation_id": gen_id,
+                        "patch_id": patch_id,
+                    }
+                )
+
+        # Patch records are sorted by mutation_id quality (the most
+        # operator-meaningful field); rationale-only hits fall to
+        # the substring bucket regardless of whether the mutation_id
+        # matches verbatim.
+        patch_hits = _sort_by_match_quality(patch_hits, "mutation_id", q_lower)
+        mutation_hits = _sort_by_match_quality(mutation_hits, "mutation_id", q_lower)
+        result["patches"] = patch_hits[:SEARCH_LIMIT_PER_CATEGORY]
+        result["mutations"] = mutation_hits[:SEARCH_LIMIT_PER_CATEGORY]
+
+    return result

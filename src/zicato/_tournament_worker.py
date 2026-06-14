@@ -63,6 +63,7 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core import (
+    BUDGET_ABORT_CAUSE,
     BoardEntry,
     LossProfile,
     RunResult,
@@ -71,6 +72,7 @@ from zicato.core import (
     validate_board_entry,
 )
 from zicato.import_path import import_dotted_path
+from zicato.util import best_effort
 
 log = logging.getLogger("zicato._tournament_worker")
 
@@ -130,6 +132,35 @@ def _resolve_role_call_llm(spec: Any, *, role: str) -> Any:
 
         return resolve_text_call_llm(role_spec_from_dict(raw_role), role=role)
     raise ValueError(f"{role} role spec has neither 'dotted' nor 'models_role': {spec!r}")
+
+
+def _resolve_inner_model_from_role(spec: Any) -> Any:
+    """Build the inner ADK agent model from the harness role worker spec.
+
+    Mirrors :mod:`zicato.runtime_factory`'s inner-model construction inside the
+    fresh worker interpreter: when the harness role is a ``models_role`` *model
+    spec* (model + endpoint/api_key_env), build the ADK model object (a
+    ``LiteLlm``) so the adapter rebinds the target's agents to it with native
+    tool/function calling. Returns ``None`` for a dotted call_llm role or an
+    endpoint-less spec that yields a bare string — the adapter then falls back
+    to its guarded shim rebind, exactly as before. ``api_key_env`` is read from
+    the worker's OWN ``os.environ`` (secrets never crossed the boundary).
+    """
+    if not isinstance(spec, dict):
+        return None
+    raw_role = spec.get("models_role")
+    if not isinstance(raw_role, dict):
+        return None
+    from zicato.models_config import build_adk_model, role_spec_from_dict  # noqa: PLC0415
+
+    role_spec = role_spec_from_dict(raw_role)
+    if not role_spec.model:
+        return None
+    try:
+        built = build_adk_model(role_spec, role="harness")
+    except ValueError:
+        return None
+    return built if not isinstance(built, str) else None
 
 
 def _load_args(args_path: Path) -> dict[str, Any]:
@@ -249,7 +280,10 @@ def _build_sinks(
     sinks: list[Any] = [tracker]
 
     if harmonograf_url:
-        try:
+        with best_effort(
+            "worker harmonograf sink attach",
+            on_error=lambda exc: log.warning("worker could not attach harmonograf sink: %s", exc),
+        ):
             from zicato.telemetry.sink import _make_harmonograf_sink  # noqa: PLC0415
 
             # ``harmonograf_grpc`` carries the native gRPC dial target the
@@ -260,18 +294,17 @@ def _build_sinks(
             extra = _make_harmonograf_sink(harmonograf_url, grpc_target=harmonograf_grpc or None)
             if extra is not None:
                 sinks.append(extra)
-        except Exception as exc:  # noqa: BLE001 — harmonograf is additive only
-            log.warning("worker could not attach harmonograf sink: %s", exc)
     return sinks, tracker
 
 
 async def _close_sinks(sinks: list[Any]) -> None:
     """Best-effort close of every sink so the JSONL is flushed to disk."""
     for s in sinks:
-        try:
+        with best_effort(
+            "worker sink close",
+            on_error=lambda exc: log.debug("worker sink close failed: %s", exc),
+        ):
             await s.close()
-        except Exception as exc:  # noqa: BLE001 — never fail a run on sink close
-            log.debug("worker sink close failed: %s", exc)
 
 
 async def _emit_worker_abort(
@@ -314,11 +347,14 @@ async def _emit_worker_abort(
     seq = int(getattr(tracker, "max_sequence", -1)) + 1
     if seq <= 0:
         seq = 1
-    try:
+    with best_effort(
+        "worker run_aborted emit",
+        on_error=lambda exc: log.warning(
+            "worker could not emit run_aborted on budget cancel: %s", exc
+        ),
+    ):
         evt = run_aborted_event(run_id=run_id, sequence=seq, reason=reason)
         await emit(sinks, evt)
-    except Exception as exc:  # noqa: BLE001 — emit must never fail the worker
-        log.warning("worker could not emit run_aborted on budget cancel: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -505,6 +541,9 @@ async def _run(args: dict[str, Any]) -> None:
     # workspace ``models`` block, re-resolved here (reading any api_key_env
     # from the worker's OWN os.environ — secrets never crossed the boundary).
     harness_call_llm = _resolve_role_call_llm(args["harness_role"], role="harness")
+    # Inner ADK agent model: when the harness role is a model spec, the agents
+    # run on the configured endpoint (function-calling) instead of the shim.
+    inner_model = _resolve_inner_model_from_role(args["harness_role"])
     auxiliary_call_llm = _resolve_role_call_llm(args["auxiliary_role"], role="auxiliary")
     # The judge role falls back to ``None`` when unconfigured, so
     # ``RuntimeConfig.effective_judge_call_llm`` resolves to the auxiliary.
@@ -519,6 +558,7 @@ async def _run(args: dict[str, Any]) -> None:
         auxiliary_call_llm=auxiliary_call_llm,
         seed=args.get("seed"),
         judge_call_llm=judge_call_llm,
+        inner_model=inner_model,
     )
 
     weights = _weights_from_args(args)
@@ -530,12 +570,35 @@ async def _run(args: dict[str, Any]) -> None:
     # SIGKILL exactly this run by this pid.
     now = datetime.now(UTC)
     deadline = now + timedelta(seconds=int(budget_s))
-    try:
+    with best_effort(
+        "worker active_run write",
+        on_error=lambda exc: log.warning(
+            "worker could not write active_run for %s: %s", run_id, exc
+        ),
+    ):
+        from zicato.runtime.lock import pid_start_time as _pid_start_time
+
+        # Record the worker's OWN process-group id so the supervisor can
+        # group-kill the worker plus any grandchildren the inner harness
+        # spawned (shells, helper tools), not just the worker pid. The
+        # runner spawns us with ``start_new_session=True`` so we lead our
+        # own group; ``os.getpgid`` is unavailable on a few platforms, so
+        # this is best-effort and leaves ``pgid=None`` (single-pid kill) on
+        # failure. Also record the ephemeral snapshot directory the runner
+        # mounted us on, so the supervisor can GC the orphaned ``ztw-snap-*``
+        # tree if the orchestrator dies mid-run.
+        try:
+            own_pgid: int | None = os.getpgid(os.getpid())
+        except OSError:
+            own_pgid = None
         state_mod.write_active_run(
             workspace_root,
             state_mod.ActiveRun(
                 run_id=run_id,
                 pid=os.getpid(),
+                pid_start_time=_pid_start_time(os.getpid()),
+                pgid=own_pgid,
+                snapshot_path=str(snapshot_root),
                 started_at=now.isoformat(),
                 last_progress=now.isoformat(),
                 wall_clock_budget_seconds=int(budget_s),
@@ -546,8 +609,6 @@ async def _run(args: dict[str, Any]) -> None:
                 epoch_id=epoch_id,
             ),
         )
-    except Exception as exc:  # noqa: BLE001 — state write is best-effort
-        log.warning("worker could not write active_run for %s: %s", run_id, exc)
 
     # --- Start the per-run heartbeat thread. ---
     # The thread bumps ``last_progress`` on the active-runs record every
@@ -559,10 +620,13 @@ async def _run(args: dict[str, Any]) -> None:
     from zicato.runtime.heartbeat import RunHeartbeatBeater  # noqa: PLC0415
 
     run_hb = RunHeartbeatBeater(workspace_root, run_id)
-    try:
+    with best_effort(
+        "worker run heartbeat start",
+        on_error=lambda exc: log.warning(
+            "worker could not start run heartbeat for %s: %s", run_id, exc
+        ),
+    ):
         run_hb.start()
-    except Exception as exc:  # noqa: BLE001 — heartbeat is best-effort
-        log.warning("worker could not start run heartbeat for %s: %s", run_id, exc)
 
     sinks, tracker = _build_sinks(events_path, harmonograf_url, harmonograf_grpc)
     adapter = _build_adapter(args["adapter"])
@@ -605,10 +669,13 @@ async def _run(args: dict[str, Any]) -> None:
     finally:
         # Stop the heartbeat thread before closing sinks so the thread
         # does not try to bump a run record that is about to be removed.
-        try:
+        with best_effort(
+            "worker run heartbeat stop",
+            on_error=lambda exc: log.debug(
+                "worker could not stop run heartbeat for %s: %s", run_id, exc
+            ),
+        ):
             run_hb.stop()
-        except Exception as exc:  # noqa: BLE001 — cleanup is best-effort
-            log.debug("worker could not stop run heartbeat for %s: %s", run_id, exc)
         # Terminal-event invariant: when the cooperative wait_for
         # cancelled the inner goldfive task, goldfive could not reach
         # its own ``_emit_run_aborted`` path (CancelledError propagated
@@ -627,7 +694,10 @@ async def _run(args: dict[str, Any]) -> None:
         # (e.g. the sink raised) the events file still lacks a terminal
         # frame on disk. Append one directly so the invariant holds.
         if budget_exceeded:
-            try:
+            with best_effort(
+                "worker terminal-event fallback",
+                on_error=lambda exc: log.debug("worker terminal-event fallback failed: %s", exc),
+            ):
                 from zicato.telemetry.terminal_event import (  # noqa: PLC0415
                     ensure_run_aborted_event,
                 )
@@ -636,8 +706,6 @@ async def _run(args: dict[str, Any]) -> None:
                     events_path,
                     reason=TERMINAL_REASON_WALL_CLOCK,
                 )
-            except Exception as exc:  # noqa: BLE001 — never fail the run on this
-                log.debug("worker terminal-event fallback failed: %s", exc)
 
     expectation_result = await _evaluate_expectation(entry, run_result, config)
 
@@ -663,6 +731,17 @@ async def _run(args: dict[str, Any]) -> None:
         weights,
         run_not_completed=run_not_completed,
     )
+    # Stamp the abort provenance so loop-health + the cache layer can tell a
+    # genuine wall-clock-budget exhaustion (the worker's own cooperative
+    # ``asyncio.wait_for`` fired) from an infra abort (a parent/supervisor
+    # kill or crash, which the parent stamps). A cooperative budget abort IS
+    # cache-eligible (re-running re-hits the same budget); the parent's
+    # ``is_infra_abort_cause`` reads this field to decide. A genuinely
+    # completed run leaves the field unset (``None``).
+    if budget_exceeded:
+        from dataclasses import replace as _replace  # noqa: PLC0415
+
+        loss = _replace(loss, abort_cause=BUDGET_ABORT_CAUSE)
     reducer_mod.write_loss_profile(loss, loss_path)
 
     _write_result(
@@ -676,91 +755,36 @@ async def _run(args: dict[str, Any]) -> None:
 
     # Clean exit — remove our own active-runs file. If the worker had
     # instead been SIGKILLed, this never runs and the parent removes it.
-    try:
+    with best_effort(
+        "worker active_run remove",
+        on_error=lambda exc: log.debug(
+            "worker could not remove active_run for %s: %s", run_id, exc
+        ),
+    ):
         state_mod.remove_active_run(workspace_root, run_id)
-    except Exception as exc:  # noqa: BLE001 — cleanup is best-effort
-        log.debug("worker could not remove active_run for %s: %s", run_id, exc)
 
 
 def _weights_from_args(args: dict[str, Any]) -> ScoringWeights:
     """Reconstruct :class:`ScoringWeights` from the serialised args.
 
-    The args file carries the scalar-and-mapping subset of
-    :class:`ScoringWeights` under the ``weights`` key. A missing key
-    falls back to the dataclass default — so a caller that does not care
-    about scoring weights (a stub-adapter test) can omit the block
-    entirely and still get a usable run.
+    The args file carries the serialised :class:`ScoringWeights` under the
+    ``weights`` key. A missing key falls back to the dataclass default — so a
+    caller that does not care about scoring weights (a stub-adapter test) can
+    omit the block entirely and still get a usable run.
 
-    The symmetric writer is :func:`zicato.tournament.runner._weights_spec`;
-    the two must stay field-for-field in lock-step. A field carried by the
-    writer but not read here (or vice versa) is silently reset to its default
-    in the subprocess — the defect class this reader's ``pass_rate_monotonicity_scope``
-    handling guards against (issue #17).
+    Thin delegator to :meth:`ScoringWeights.from_json` — the inverse of the
+    SINGLE field-enumerating serde the runner serialises with
+    (:func:`zicato.tournament.runner._weights_spec` → :meth:`ScoringWeights.to_json`).
+    Because both sides now share ONE ``dataclasses.fields()``-driven serde, a
+    field can no longer be carried by the writer but dropped here (or vice
+    versa) — the silent worker-scores-under-defaults desync class
+    (``per_judge_weights`` / ``pass_rate_monotonicity_scope`` /
+    ``drift_kind_aggregation``) that two hand-aligned field lists kept
+    re-introducing. ``from_json`` coerces every field to its declared type and
+    re-runs ``ScoringWeights.__post_init__``, so a malformed transform / scope
+    token in the args file fails fast or coerces, exactly as before.
     """
-    raw = args.get("weights") or {}
-    if not isinstance(raw, dict):
-        return ScoringWeights()
-    defaults = ScoringWeights()
-    # The monotonicity scope is a closed Literal — coerce an unknown token
-    # back to the default so a malformed args file can never desync the
-    # worker's gate-view from the parent's. Valid tokens pass through.
-    raw_scope = raw.get("pass_rate_monotonicity_scope", defaults.pass_rate_monotonicity_scope)
-    scope = (
-        raw_scope
-        if raw_scope in ("per_entry", "aggregate")
-        else defaults.pass_rate_monotonicity_scope
-    )
-    return ScoringWeights(
-        drift_weight=float(raw.get("drift_weight", defaults.drift_weight)),
-        pass_weight=float(raw.get("pass_weight", defaults.pass_weight)),
-        severity_weights=dict(raw.get("severity_weights", defaults.severity_weights)),
-        per_kind_weights=dict(raw.get("per_kind_weights", defaults.per_kind_weights)),
-        per_judge_weights=dict(raw.get("per_judge_weights", defaults.per_judge_weights)),
-        default_judge_weight=float(raw.get("default_judge_weight", defaults.default_judge_weight)),
-        plan_revision_weight=float(raw.get("plan_revision_weight", defaults.plan_revision_weight)),
-        runtime_weight=float(raw.get("runtime_weight", defaults.runtime_weight)),
-        promote_margin=float(raw.get("promote_margin", defaults.promote_margin)),
-        pass_rate_monotonicity=bool(
-            raw.get("pass_rate_monotonicity", defaults.pass_rate_monotonicity)
-        ),
-        pass_rate_monotonicity_scope=scope,
-        regression_gate_enabled=bool(
-            raw.get("regression_gate_enabled", defaults.regression_gate_enabled)
-        ),
-        regression_test_command=tuple(
-            raw.get("regression_test_command", defaults.regression_test_command)
-        ),
-        regression_timeout_s=int(raw.get("regression_timeout_s", defaults.regression_timeout_s)),
-        namespace_weights=dict(raw.get("namespace_weights", defaults.namespace_weights)),
-        namespace_monotonicity=dict(
-            raw.get("namespace_monotonicity", defaults.namespace_monotonicity)
-        ),
-        # Declarative scoring transforms (issue #19 phase 2). Symmetric with
-        # the writer in ``runner._weights_spec``: ``drift_kind_aggregation``
-        # drives Seam 1 which runs HERE in the worker, so it must survive the
-        # boundary or the worker would score drift with neutral defaults while
-        # the orchestrator shows transformed (the per_judge_weights desync
-        # class). An absent key falls back to the neutral default; ``None``
-        # for ``pass_transform`` is preserved (it means "no transform").
-        # ``ScoringWeights.__post_init__`` re-validates the reconstructed
-        # specs, so a corrupt args file fails fast here too.
-        pass_transform=(
-            raw["pass_transform"]
-            if isinstance(raw.get("pass_transform"), dict)
-            else defaults.pass_transform
-        ),
-        drift_kind_aggregation=dict(
-            raw.get("drift_kind_aggregation", defaults.drift_kind_aggregation)
-        ),
-        # Dotted-spec scoring plugins (issue #19 phase 3). Symmetric with the
-        # writer in ``runner._weights_spec``. ``drift_reducer`` drives Seam 1
-        # which runs HERE in the worker, so it MUST survive the boundary or the
-        # worker would score drift with no plugin while the orchestrator believed
-        # otherwise (the per_judge_weights desync class). A non-string / absent
-        # value reads back as the neutral (no-plugin) default.
-        drift_reducer=str(raw.get("drift_reducer", defaults.drift_reducer) or ""),
-        scalar_fn=str(raw.get("scalar_fn", defaults.scalar_fn) or ""),
-    )
+    return ScoringWeights.from_json(args.get("weights"))
 
 
 def main(argv: list[str] | None = None) -> int:

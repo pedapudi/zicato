@@ -57,6 +57,7 @@ from zicato.epoch._storage import (
     epoch_config_key,
     scoring_key,
 )
+from zicato.workspace import WorkspaceLayout, list_epoch_ids
 
 if TYPE_CHECKING:
     from zicato.board.builder import Board
@@ -262,29 +263,27 @@ def load_epoch(workspace_root: Path, epoch_id: str) -> EpochConfig:
 
 
 def list_epochs(workspace_root: Path) -> list[EpochConfig]:
-    """Enumerate every epoch known to the workspace, sorted by ``created_at``.
+    """Enumerate every epoch known to the workspace, in canonical order.
 
     Directories under ``epochs/`` without a readable ``config.json`` are
     skipped silently — they are presumed to be in-progress writes from a
     crashed ``epoch new`` and the operator can clean them up by hand.
 
-    Epoch *ids* are discovered by a directory walk of ``epochs/`` — the
-    storage backend's :meth:`~zicato.storage.StorageBackend.list_keys`
-    is a non-recursive *record* listing and deliberately does not
-    descend into the per-epoch subdirectories, so the directory walk is
-    the right tool for discovering which epochs exist. Each epoch's
-    ``config.json`` is then read back through the storage seam.
+    Epoch *ids* are discovered and ordered by the single enumeration
+    authority (:func:`zicato.workspace.list_epoch_ids`) rather than a local
+    directory walk + re-sort, so the order here is the canonical
+    timestamp-first one (recorded ``created_at`` with the numeric-aware id as
+    tiebreaker) — identical to every other epoch enumeration. Each id's
+    ``config.json`` is then read back through the storage seam; an id whose
+    config is unreadable / malformed is dropped, preserving the prior
+    skip-the-in-progress-write behavior.
     """
-    epochs_root = workspace_root / "epochs"
-    if not epochs_root.exists():
-        return []
+    layout = WorkspaceLayout.from_root(workspace_root)
     backend = backend_for(workspace_root)
     out: list[EpochConfig] = []
-    for child in sorted(epochs_root.iterdir()):
-        if not child.is_dir():
-            continue
+    for epoch_id in list_epoch_ids(layout):
         try:
-            raw = backend.read_json(epoch_config_key(child.name))
+            raw = backend.read_json(epoch_config_key(epoch_id))
         except (OSError, json.JSONDecodeError):
             continue
         if raw is None:
@@ -293,7 +292,6 @@ def list_epochs(workspace_root: Path) -> list[EpochConfig]:
             out.append(_config_from_dict(raw))
         except (KeyError, TypeError):
             continue
-    out.sort(key=lambda c: (c.created_at, c.id))
     return out
 
 

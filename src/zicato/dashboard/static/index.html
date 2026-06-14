@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-ui="variant-T">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -16,7 +16,7 @@
   <link rel="apple-touch-icon" sizes="180x180" href="brand/apple-touch-icon-180.png" />
   <!-- Variant T (Console IV) is the sole shipping UI. It mounts into
        `#variant-root` and loads its own scoped stylesheet
-       (css/variants/T/console4.css) from app_T.js, so no global design-
+       (css/console.css) from app_T.js, so no global design-
        language sheets are needed here. The retired v1 (phase0 shell) and
        v2 (Notebook/Bench) UIs are preserved at the git tag
        `dashboard-v1-v2-archive-2026-06-02`; see
@@ -36,7 +36,6 @@
        param both resolve to Variant T. -->
   <script>
     (function selectDashboardEntry() {
-      document.documentElement.setAttribute('data-ui', 'variant-T');
       var e = document.createElement('script');
       e.type = 'module';
       e.src = 'app_T.js';

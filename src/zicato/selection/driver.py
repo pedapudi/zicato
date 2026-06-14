@@ -14,7 +14,15 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass, field, replace
+from typing import Any
 
+from zicato.selection.evidence_gate import (
+    EvidenceVerdict,
+    closest_ci_duel,
+    evidence_verdict,
+    rating_block,
+)
 from zicato.selection.strategy import (
     Contestant,
     Matchup,
@@ -32,6 +40,24 @@ RequestField = Callable[[int], Awaitable[tuple[Contestant, Sequence[Contestant]]
 #: the unchanged ``evaluate_gate``).
 RunMatchup = Callable[[Matchup], Awaitable[MatchupResult]]
 
+#: ``replicate_duel(left_id, right_id)`` runs ONE extra duel between an
+#: already-seeded pair, to a :class:`MatchupResult`. Used only by the opt-in
+#: Bradley--Terry pre-gate's defer→replicate loop: when a crowning promote is
+#: not yet decisive, the driver spends a replicate on the closest-CI duel
+#: through this callable, refits, and rechecks. ``None`` (the default) disables
+#: the loop entirely — the pre-gate then defers/inconclusive on its current
+#: evidence without scheduling any new duel.
+ReplicateDuel = Callable[[str, str], Awaitable[MatchupResult]]
+
+#: ``on_inconclusive(resolution)`` is called once, at the moment the pre-gate
+#: reaches the terminal ``inconclusive`` state, with the full
+#: :class:`EvidenceResolution` (verdict + CI history). The orchestrator wires
+#: this to the dead-letter writer (:mod:`zicato.selection.dead_letter`) so the
+#: unresolved duel is recorded; ``None`` (the default) drops it on the floor,
+#: which is fine for the driver's own unit tests. Best-effort by contract — a
+#: write failure must not abort the resolution.
+OnInconclusive = Callable[["EvidenceResolution"], None]
+
 #: ``on_progress(strategy)`` is called once the strategy is seeded and
 #: again each time a batch of pending matchups has been scheduled — i.e.
 #: whenever the strategy's live (in-flight) view may have changed. The
@@ -43,12 +69,52 @@ RunMatchup = Callable[[Matchup], Awaitable[MatchupResult]]
 ProgressHook = Callable[[SelectionStrategy], None]
 
 
+@dataclass(frozen=True, slots=True)
+class EvidencePreGate:
+    """Opt-in Bradley--Terry promotion pre-gate config for the driver.
+
+    Passed to :func:`resolve_tournament` only when the operator set
+    ``params["promote_confidence_threshold"]`` (resolved by the orchestrator via
+    :func:`zicato.selection.evidence_gate.read_promote_confidence_threshold`).
+    When ``None`` (the default), the driver's behaviour is byte-identical to
+    today — no pre-gate, no replication, no dead-letter.
+
+    Fields
+    ------
+    threshold:
+        The probability bar ``P(theta_child > theta_champion)`` must reach.
+    replicate_budget:
+        How many extra closest-CI replicates the defer→replicate loop may spend
+        before going terminal (``inconclusive``).
+    """
+
+    threshold: float
+    replicate_budget: int
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceResolution:
+    """The pre-gate's terminal output (returned alongside the decision).
+
+    ``verdict`` is the final :class:`EvidenceVerdict`; ``ci_history`` is the
+    per-refit ``p_stronger`` / ``ci_overlap`` trace the defer→replicate loop
+    produced (one entry per check, oldest first), so the journal / dashboard can
+    show the duel converging — or terminally failing to.
+    """
+
+    verdict: EvidenceVerdict
+    ci_history: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+
+
 async def resolve_tournament(
     strategy: SelectionStrategy,
     *,
     request_field: RequestField,
     run_matchup: RunMatchup,
     on_progress: ProgressHook | None = None,
+    pre_gate: EvidencePreGate | None = None,
+    replicate_duel: ReplicateDuel | None = None,
+    on_inconclusive: OnInconclusive | None = None,
 ) -> SelectionDecision:
     """Drive ``strategy`` from a fresh field to a crowned decision.
 
@@ -66,6 +132,15 @@ async def resolve_tournament(
     publish the live structure WHILE the round runs. It is a no-op when
     omitted, preserving the historical signature for the driver's unit
     tests.
+
+    ``pre_gate`` (optional, opt-in) runs the Bradley--Terry "crown on
+    evidence" pre-gate AFTER the strategy resolves a ``"promoted"`` decision:
+    the crowning win is held unless the fitted rating clears the confidence
+    threshold AND the CIs separate. While it defers and ``replicate_duel`` is
+    supplied with budget remaining, the driver spends a replicate on the
+    closest-CI duel, refits, and rechecks (the defer→replicate loop). With
+    ``pre_gate`` ``None`` the resolution is byte-identical to today — no
+    pre-gate is consulted and the strategy's decision is returned verbatim.
 
     Each batch runs under the caller's concurrency (the same semaphore the
     runner already uses, applied inside ``run_matchup``); the driver only
@@ -85,7 +160,166 @@ async def resolve_tournament(
         results = await asyncio.gather(*(run_matchup(m) for m in batch))
         for result in results:
             strategy.record_result(result)
-    return strategy.champion()
+
+    decision = strategy.champion()
+    if pre_gate is None:
+        return decision
+    return await _apply_pre_gate(
+        decision,
+        champion=champion,
+        pre_gate=pre_gate,
+        replicate_duel=replicate_duel,
+        on_inconclusive=on_inconclusive,
+    )
 
 
-__all__ = ["resolve_tournament", "RequestField", "RunMatchup", "ProgressHook"]
+async def _apply_pre_gate(
+    decision: SelectionDecision,
+    *,
+    champion: Contestant,
+    pre_gate: EvidencePreGate,
+    replicate_duel: ReplicateDuel | None,
+    on_inconclusive: OnInconclusive | None,
+) -> SelectionDecision:
+    """Run the Bradley--Terry pre-gate (+ defer→replicate loop) over a decision.
+
+    Only a ``"promoted"`` decision with an identified crowning challenger is
+    eligible — a reject / defer / no-promotion passes straight through (the
+    pre-gate can only hold a promotion, never force one). The crowning pair is
+    ``(champion, promoted_generation_id)``; its evidence is the whole accumulated
+    duel audit (``decision.matchups``), which the loop extends in place by
+    replicating the closest-CI duel and re-fitting.
+
+    The loop has two phases that share one replicate budget:
+
+    * **Bootstrap.** A structure like the gauntlet produces a single crowning
+      duel — below :data:`~zicato.selection.evidence_gate.MIN_CREDIBLE_DUELS`,
+      so there is no trustworthy fit yet. When a ``replicate_duel`` runner is
+      supplied with budget remaining, the loop replicates the crowning pair up
+      to the credibility floor before judging. With no runner / no budget it
+      passes the gate verdict through unchanged (no fit to override it — safe).
+    * **Refine.** Once credible, the verdict gates: ``promoted`` (CIs cleared)
+      terminates with the crown; ``deferred`` spends another closest-CI
+      replicate and refits; budget exhausted with overlapping CIs terminates
+      ``inconclusive``.
+
+    Returns a decision with the pre-gate's verdict folded in: ``promoted``
+    (cleared on evidence) or a terminal hold — ``deferred`` (the closed enum's
+    token for "kept for analysis, lineage head unchanged") on an inconclusive
+    duel. The accumulated audit (including any replicate duels) is stamped on
+    ``matchups`` so the journal records the full evidence trail; on an
+    inconclusive terminal the ``on_inconclusive`` callback receives the full
+    :class:`EvidenceResolution` so the orchestrator can write the dead-letter
+    record.
+    """
+    promoted_id = decision.promoted_generation_id
+    if decision.decision != "promoted" or promoted_id is None:
+        return decision
+
+    parent_id = champion.generation_id
+    audit: list[MatchupResult] = list(decision.matchups)
+    ci_history: list[dict[str, Any]] = []
+    replicates_spent = 0
+
+    while True:
+        verdict = evidence_verdict(
+            "promoted",
+            decision.reason,
+            audit=audit,
+            parent_id=parent_id,
+            child_id=promoted_id,
+            threshold=pre_gate.threshold,
+            replicate_budget=pre_gate.replicate_budget,
+            replicates_spent=replicates_spent,
+        )
+        ci_history.append(
+            {
+                "p_stronger": verdict.p_stronger,
+                "ci_overlap": verdict.ci_overlap,
+                "replicates_spent": replicates_spent,
+            }
+        )
+
+        # A credible, already-decisive verdict (promoted) terminates here.
+        if verdict.credible and verdict.decision != "deferred":
+            return _finalize(decision, verdict, audit, ci_history, promoted_id, on_inconclusive)
+
+        # Either not yet credible (bootstrap toward the floor) or credibly
+        # deferred (refine toward separation): both want one more replicate.
+        # Without a runner or budget, or a closest-CI duel to spend on, we
+        # cannot gather more evidence.
+        has_budget = replicate_duel is not None and replicates_spent < pre_gate.replicate_budget
+        candidate = (
+            closest_ci_duel(audit, restrict_to=(parent_id, promoted_id)) if has_budget else None
+        )
+        if replicate_duel is None or candidate is None:
+            if not verdict.credible:
+                # Never reached the credibility floor → no trustworthy fit to
+                # override the gate; the strategy's promotion stands verbatim.
+                return decision
+            # Credible but unresolved with no way to spend more budget ⇒ the
+            # hold is terminal: a dead-letter inconclusive, not a dangling defer.
+            terminal = replace(verdict, decision="inconclusive")
+            return _finalize(decision, terminal, audit, ci_history, promoted_id, on_inconclusive)
+
+        extra = await replicate_duel(candidate.left_id, candidate.right_id)
+        audit.append(extra)
+        replicates_spent += 1
+
+
+def _finalize(
+    decision: SelectionDecision,
+    verdict: EvidenceVerdict,
+    audit: list[MatchupResult],
+    ci_history: list[dict[str, Any]],
+    promoted_id: str,
+    on_inconclusive: OnInconclusive | None,
+) -> SelectionDecision:
+    """Fold a terminal pre-gate verdict into the crowned decision.
+
+    A ``promoted`` verdict keeps the crown; ``inconclusive`` maps to the
+    closed enum's ``DEFERRED`` token (the experiment is kept for analysis, the
+    lineage head unchanged) and fires ``on_inconclusive`` so the caller records
+    the dead-letter entry. A ``credible=False`` pass-through keeps the original
+    decision verbatim (no fit to override it).
+    """
+    from zicato.core import TournamentDecision  # noqa: PLC0415
+
+    if not verdict.credible:
+        # No trustworthy fit ⇒ the strategy's decision stands unchanged.
+        return decision
+
+    resolution = EvidenceResolution(verdict=verdict, ci_history=tuple(ci_history))
+
+    if verdict.decision == "promoted":
+        return replace(
+            decision,
+            promoted_generation_id=promoted_id,
+            decision=TournamentDecision.PROMOTED,
+            reason=verdict.reason,
+            matchups=tuple(audit),
+        )
+
+    # Inconclusive terminal: lineage head unchanged, recorded to dead-letter.
+    if on_inconclusive is not None:
+        on_inconclusive(resolution)
+    return replace(
+        decision,
+        promoted_generation_id=None,
+        decision=TournamentDecision.DEFERRED,
+        reason=verdict.reason,
+        matchups=tuple(audit),
+    )
+
+
+__all__ = [
+    "resolve_tournament",
+    "RequestField",
+    "RunMatchup",
+    "ReplicateDuel",
+    "OnInconclusive",
+    "ProgressHook",
+    "EvidencePreGate",
+    "EvidenceResolution",
+    "rating_block",
+]

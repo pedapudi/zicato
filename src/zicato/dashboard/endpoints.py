@@ -450,9 +450,13 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
                     "reason": "",
                     "delta_scalar": None,
                     "delta_pass_rate": None,
+                    "champion_scalar": None,
+                    "challenger_scalar": None,
+                    "live": None,
                     "rules": [],
                     "scalar_components": {"champion": None, "challenger": None},
                     "primary_driver": None,
+                    "rating": {"present": False},
                 },
                 status_code=200,
             )
@@ -495,6 +499,45 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
                 }
             )
         return JSONResponse(state_reader.build_drift_movements(paths, generation_id))
+
+    async def api_hypothesis_accuracy(request: Request) -> JSONResponse:
+        """Per-experiment hypothesis prediction-accuracy scorecard.
+
+        ``GET /api/hypothesis-accuracy/{epoch_id}/{generation_id}``. Joins
+        the proposer's falsifiable movement claims against the realised
+        movements and lifts the STAMPED ``hypothesis_match`` verdict
+        verbatim (never recomputed — it cannot disagree with the HTML
+        report). A malformed coordinate degrades to an empty scorecard
+        (HTTP 200), matching every other coordinate handler.
+        """
+        epoch_id = request.path_params["epoch_id"]
+        generation_id = request.path_params["generation_id"]
+        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id):
+            return JSONResponse(
+                {
+                    "epoch_id": epoch_id,
+                    "generation_id": generation_id,
+                    "claims": [],
+                    "score": {"hits": 0, "total": 0, "fraction": None, "brier": None},
+                    "pass_rate": {"predicted": "", "observed": None},
+                },
+                status_code=200,
+            )
+        return JSONResponse(state_reader.build_hypothesis_accuracy(paths, epoch_id, generation_id))
+
+    async def api_calibration_trend(request: Request) -> JSONResponse:
+        """Per-generation calibration trend over the lineage (DIAGNOSTIC).
+
+        ``GET /api/calibration-trend[?epoch=<id>]``. The score fraction per
+        generation in lineage order with rolling aggregates. Optional
+        ``?epoch=<id>`` scopes to a non-current epoch; omitted ⇒ current.
+        Explicitly diagnostic — it never feeds the gate.
+        """
+        try:
+            epoch_id = _epoch_query(request)
+            return JSONResponse(state_reader.build_calibration_trend(paths, epoch_id))
+        except (_BadEpoch, ValueError):
+            return JSONResponse({"error": "unknown epoch"}, status_code=404)
 
     # -- file-tree / file-browser endpoints --------------------------
 
@@ -869,6 +912,37 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
             return reason if isinstance(reason, str) else ""
         return ""
 
+    async def _read_override_body(request: Request) -> dict[str, str]:
+        """Read a promote/reject override's structured request body.
+
+        The dashboard's field promote/reject button POSTs a JSON body with
+        the override's provenance: ``{reason, epoch, tournament_id,
+        structure}`` (all optional — an empty body / a bare ``touch`` yields
+        no keys). Only string values are kept; the on-disk control file
+        records exactly the keys the operator supplied so the readback can
+        reconstruct WHICH field round, structure, and tournament the override
+        targeted. A non-JSON / non-object body yields an empty dict, so a
+        legacy reason-only POST still works.
+        """
+        try:
+            body = await request.body()
+        except Exception:
+            return {}
+        if not body:
+            return {}
+        try:
+            parsed = json.loads(body)
+        except json.JSONDecodeError:
+            return {}
+        if not isinstance(parsed, dict):
+            return {}
+        out: dict[str, str] = {}
+        for key in ("reason", "epoch", "tournament_id", "structure"):
+            val = parsed.get(key)
+            if isinstance(val, str) and val:
+                out[key] = val
+        return out
+
     def _control_path(*parts: str) -> Path:
         return paths.control_dir.joinpath(*parts)
 
@@ -917,8 +991,13 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         generation_id = request.path_params["generation_id"]
         if not _is_safe_id(generation_id):
             return PlainTextResponse("invalid generation_id", status_code=400)
+        # Carry the override's provenance (epoch / tournament_id / structure /
+        # reason) onto the control file additively — the consumer only reads
+        # ``reason``, so the extra keys are inert for the gauntlet path but let
+        # a FIELD override's readback name which round/structure it targeted.
+        extra = await _read_override_body(request)
         path = _control_path("promote", generation_id)
-        payload = {"generation_id": generation_id, "ts": _now_iso()}
+        payload = {"generation_id": generation_id, "ts": _now_iso(), **extra}
         _atomic_write(path, json.dumps(payload).encode())
         return JSONResponse(payload, status_code=202)
 
@@ -929,8 +1008,9 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         generation_id = request.path_params["generation_id"]
         if not _is_safe_id(generation_id):
             return PlainTextResponse("invalid generation_id", status_code=400)
+        extra = await _read_override_body(request)
         path = _control_path("reject", generation_id)
-        payload = {"generation_id": generation_id, "ts": _now_iso()}
+        payload = {"generation_id": generation_id, "ts": _now_iso(), **extra}
         _atomic_write(path, json.dumps(payload).encode())
         return JSONResponse(payload, status_code=202)
 
@@ -978,6 +1058,8 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         "api_search": api_search,
         "api_score_trajectory": api_score_trajectory,
         "api_drift_movements": api_drift_movements,
+        "api_hypothesis_accuracy": api_hypothesis_accuracy,
+        "api_calibration_trend": api_calibration_trend,
         "api_files": api_files,
         "api_files_tree": api_files_tree,
         "api_files_content": api_files_content,

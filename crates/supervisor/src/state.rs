@@ -43,6 +43,16 @@ pub struct Heartbeat {
     pub generation_id: Option<String>,
     #[serde(default)]
     pub round: Option<u64>,
+    /// The orchestrator's progress cursor (RUNTIME-V2 Phase 4): the tail
+    /// `seq` of the progress event log, stamped here only at a genuine
+    /// transition. The periodic heartbeat-timer bump RE-WRITES the same
+    /// value, so `seq` advances iff the loop actually made progress — it
+    /// does not move on the timer alone. That makes seq-change age a truer
+    /// liveness signal than the heartbeat timestamp (which a healthy timer
+    /// keeps fresh even when the loop is wedged). Absent in heartbeats
+    /// written before Phase 4 → the watchdog falls back to timestamp age.
+    #[serde(default)]
+    pub seq: Option<u64>,
 }
 
 /// `.zicato/runtime/active_runs/{run_id}.json`
@@ -57,6 +67,36 @@ pub struct ActiveRun {
     pub run_id: String,
     #[serde(default)]
     pub pid: Option<i32>,
+    /// The worker process's start time (Linux `/proc/<pid>/stat` field 22),
+    /// recorded by the worker when it writes this record. Paired with `pid`
+    /// it defeats pid reuse: the watchdog only signals a pid whose start
+    /// time still matches, so a recycled pid (the worker died and the kernel
+    /// reissued its number to an unrelated process) is never mis-targeted.
+    /// Absent for legacy writers → the watchdog degrades to bare liveness.
+    /// Carried as `f64` to match the Python writer (which serializes the
+    /// `/proc` tick count as a float, e.g. `116371304.0`); the values are
+    /// integer-valued so equality comparison is exact.
+    #[serde(default)]
+    pub pid_start_time: Option<f64>,
+    /// OS process-group id of the run's own worker. The worker is spawned in
+    /// its own session/process-group (`start_new_session`), so it is the
+    /// group leader and `pgid == pid`. Recording it lets the watchdog
+    /// GROUP-kill the worker AND any grandchildren the inner harness spawned
+    /// (shells, helper tools) by negating this id, rather than leaking them
+    /// when it kills the leader pid alone. `None` for a legacy record (or a
+    /// platform without process groups) → the watchdog falls back to the
+    /// single-pid kill.
+    #[serde(default)]
+    pub pgid: Option<i32>,
+    /// Absolute path to the run's ephemeral snapshot working copy (the
+    /// `ztw-snap-*` temp directory the runner copytrees the code snapshot
+    /// into for this run). Discarded by the runner on a clean run-end, but
+    /// orphaned if the orchestrator dies mid-run; recording it here lets the
+    /// supervisor GC the leftover `ztw-snap-*` tree after a confirmed
+    /// orchestrator death. `None` for a legacy record or a run that mounted
+    /// no ephemeral snapshot.
+    #[serde(default)]
+    pub snapshot_path: Option<String>,
     #[serde(default)]
     pub entry_id: Option<String>,
     #[serde(default)]

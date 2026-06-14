@@ -395,6 +395,168 @@ def test_gate_missing_aggregate_degrades_to_unknown(tmp_path: Path) -> None:
     rules = {r["id"]: r for r in result["rules"]}
     assert rules["scalar_margin"]["status"] == "unknown"
     assert all(r["fired"] is False for r in result["rules"])
+    # The present side's absolute scalar still surfaces; the missing side is
+    # None, and a settled round carries no live overlay.
+    assert result["champion_scalar"] == pytest.approx(0.5)
+    assert result["challenger_scalar"] is None
+    assert result["live"] is None
+
+
+# ---------------------------------------------------------------------------
+# Absolute scalars + live projected-standing overlay (additive projection).
+# ---------------------------------------------------------------------------
+
+
+def test_gate_emits_absolute_scalars_settled_round(tmp_path: Path) -> None:
+    """A settled round carries both absolute scalars and no live overlay."""
+    champion = _gen_score(
+        scalar=47.58,
+        pass_rate=1.0,
+        per_entry={"e1": {"drift_loss": 47.58, "pass_fail": True}},
+        namespace_aggregates={"drift:": 47.58},
+    )
+    challenger = _gen_score(
+        scalar=57.70,
+        pass_rate=1.0,
+        per_entry={"e1": {"drift_loss": 57.70, "pass_fail": True}},
+        namespace_aggregates={"drift:": 57.70},
+    )
+    ws = _make_workspace(
+        tmp_path,
+        champion=champion,
+        challenger=challenger,
+        scoring={"promote_margin": 0.01},
+    )
+    result = build_gate_breakdown(WorkspacePaths(ws), EPOCH_ID, "v0", "v1")
+
+    assert result["champion_scalar"] == pytest.approx(47.58)
+    assert result["challenger_scalar"] == pytest.approx(57.70)
+    # No active tournament on disk -> no live overlay.
+    assert result["live"] is None
+
+
+def test_gate_overlays_live_projected_challenger(tmp_path: Path) -> None:
+    """While THIS round is in flight, the gate block carries the challenger's
+    live projected absolute + board progress from the active tournament."""
+    from zicato.runtime.state import ActiveTournament, write_active_tournament
+
+    champion = _gen_score(
+        scalar=10.0,
+        pass_rate=1.0,
+        per_entry={"e1": {"drift_loss": 10.0, "pass_fail": True}},
+    )
+    challenger = _gen_score(
+        scalar=12.0,  # settled-so-far value on disk
+        pass_rate=1.0,
+        per_entry={"e1": {"drift_loss": 12.0, "pass_fail": True}},
+    )
+    ws = _make_workspace(
+        tmp_path,
+        champion=champion,
+        challenger=challenger,
+        scoring={"promote_margin": 0.01},
+    )
+    write_active_tournament(
+        ws,
+        ActiveTournament(
+            tournament_id="t-live",
+            parent_generation_id="v0",
+            child_generation_id="v1",
+            epoch_id=EPOCH_ID,
+            started_at="2026-05-28T00:30:00Z",
+            phase="running",
+            projected={
+                "v1": {
+                    "scalar": 9.8,
+                    "boards_done": 6,
+                    "boards_total": 8,
+                    "pass_rate": 1.0,
+                },
+            },
+        ),
+    )
+    result = build_gate_breakdown(WorkspacePaths(ws), EPOCH_ID, "v0", "v1")
+
+    # The settled absolutes are still the on-disk aggregates…
+    assert result["champion_scalar"] == pytest.approx(10.0)
+    assert result["challenger_scalar"] == pytest.approx(12.0)
+    # …and the live overlay carries the PROJECTED challenger absolute + boards.
+    assert result["live"] == {
+        "challenger_scalar": pytest.approx(9.8),
+        "boards_done": 6,
+        "boards_total": 8,
+    }
+
+
+def test_gate_live_overlay_ignores_unrelated_tournament(tmp_path: Path) -> None:
+    """An active tournament for a DIFFERENT challenger never bleeds its
+    projected standing into a settled historical round's breakdown."""
+    from zicato.runtime.state import ActiveTournament, write_active_tournament
+
+    champion = _gen_score(
+        scalar=10.0,
+        pass_rate=1.0,
+        per_entry={"e1": {"drift_loss": 10.0, "pass_fail": True}},
+    )
+    challenger = _gen_score(
+        scalar=12.0,
+        pass_rate=1.0,
+        per_entry={"e1": {"drift_loss": 12.0, "pass_fail": True}},
+    )
+    ws = _make_workspace(
+        tmp_path,
+        champion=champion,
+        challenger=challenger,
+        scoring={"promote_margin": 0.01},
+    )
+    # A live tournament, but for a different challenger (v2) — the historical
+    # v0->v1 breakdown must not pick up v2's projection.
+    write_active_tournament(
+        ws,
+        ActiveTournament(
+            tournament_id="t-live",
+            parent_generation_id="v1",
+            child_generation_id="v2",
+            epoch_id=EPOCH_ID,
+            started_at="2026-05-28T00:30:00Z",
+            phase="running",
+            projected={"v2": {"scalar": 5.0, "boards_done": 3, "boards_total": 8}},
+        ),
+    )
+    result = build_gate_breakdown(WorkspacePaths(ws), EPOCH_ID, "v0", "v1")
+    assert result["live"] is None
+
+
+def test_gate_endpoint_carries_scalars_and_live_keys(tmp_path: Path, static_dir: Path) -> None:
+    """The HTTP gate route always carries the additive scalar + live keys."""
+    champion = _gen_score(
+        scalar=0.50,
+        pass_rate=1.0,
+        per_entry={"e1": {"drift_loss": 0.5, "pass_fail": True}},
+    )
+    challenger = _gen_score(
+        scalar=0.30,
+        pass_rate=1.0,
+        per_entry={"e1": {"drift_loss": 0.3, "pass_fail": True}},
+    )
+    ws = _make_workspace(
+        tmp_path,
+        champion=champion,
+        challenger=challenger,
+        scoring={"promote_margin": 0.01},
+    )
+    with _client(ws, static_dir) as client:
+        r = client.get(f"/api/round/{EPOCH_ID}/v0/v1/gate")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["champion_scalar"] == pytest.approx(0.50)
+        assert body["challenger_scalar"] == pytest.approx(0.30)
+        assert body["live"] is None
+        # The unsafe-id degrade path keeps the same shape.
+        bad = client.get(f"/api/round/{EPOCH_ID}/bad%20id/v1/gate").json()
+        assert bad["champion_scalar"] is None
+        assert bad["challenger_scalar"] is None
+        assert bad["live"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -558,3 +720,81 @@ def test_gate_breakdown_decomposition_backcompat_none(tmp_path: Path) -> None:
     # Both sides still classify as built-in (quiet), present=False per seam.
     assert decomp["champion"]["scalar"]["present"] is False
     assert decomp["champion"]["scalar"]["kind"] == "builtin"
+
+
+# ---------------------------------------------------------------------------
+# Operator override block (gate.override).
+# ---------------------------------------------------------------------------
+
+
+def _write_experiment_outcome(ws: Path, generation_id: str, outcome: dict[str, object]) -> None:
+    """Write a challenger's experiment.json with an ``outcome`` block."""
+    path = ws / "epochs" / EPOCH_ID / "generations" / generation_id / "experiment.json"
+    _write_json(path, {"outcome": outcome})
+
+
+def test_gate_override_block_absent_without_override(tmp_path: Path) -> None:
+    """A gate-decided pair reports override.present=False (back-compat clean)."""
+    champion = _gen_score(
+        scalar=0.50, pass_rate=1.0, per_entry={"e1": {"drift_loss": 0.5, "pass_fail": True}}
+    )
+    challenger = _gen_score(
+        scalar=0.30, pass_rate=1.0, per_entry={"e1": {"drift_loss": 0.3, "pass_fail": True}}
+    )
+    ws = _make_workspace(
+        tmp_path, champion=champion, challenger=challenger, scoring={"promote_margin": 0.01}
+    )
+    result = build_gate_breakdown(WorkspacePaths(ws), EPOCH_ID, "v0", "v1")
+    assert result["override"] == {"present": False, "action": None, "reason": None}
+
+
+def test_gate_override_block_promote(tmp_path: Path) -> None:
+    """A force-promoted challenger surfaces override.present=True + action."""
+    champion = _gen_score(
+        scalar=0.50, pass_rate=1.0, per_entry={"e1": {"drift_loss": 0.5, "pass_fail": True}}
+    )
+    challenger = _gen_score(
+        scalar=0.80, pass_rate=1.0, per_entry={"e1": {"drift_loss": 0.8, "pass_fail": True}}
+    )
+    ws = _make_workspace(
+        tmp_path, champion=champion, challenger=challenger, scoring={"promote_margin": 0.01}
+    )
+    _write_experiment_outcome(
+        ws,
+        "v1",
+        {
+            "tournament_decision": "promoted",
+            "operator_override": True,
+            "operator_override_reason": "prefer the diverse idea",
+        },
+    )
+    result = build_gate_breakdown(WorkspacePaths(ws), EPOCH_ID, "v0", "v1")
+    assert result["override"]["present"] is True
+    assert result["override"]["action"] == "promote"
+    assert result["override"]["reason"] == "prefer the diverse idea"
+
+
+def test_gate_override_block_reject(tmp_path: Path) -> None:
+    """A force-rejected challenger surfaces override.action == reject."""
+    champion = _gen_score(
+        scalar=0.50, pass_rate=1.0, per_entry={"e1": {"drift_loss": 0.5, "pass_fail": True}}
+    )
+    challenger = _gen_score(
+        scalar=0.30, pass_rate=1.0, per_entry={"e1": {"drift_loss": 0.3, "pass_fail": True}}
+    )
+    ws = _make_workspace(
+        tmp_path, champion=champion, challenger=challenger, scoring={"promote_margin": 0.01}
+    )
+    _write_experiment_outcome(
+        ws,
+        "v1",
+        {
+            "tournament_decision": "rejected",
+            "operator_override": True,
+            "operator_override_reason": "regression risk",
+        },
+    )
+    result = build_gate_breakdown(WorkspacePaths(ws), EPOCH_ID, "v0", "v1")
+    assert result["override"]["present"] is True
+    assert result["override"]["action"] == "reject"
+    assert result["override"]["reason"] == "regression risk"

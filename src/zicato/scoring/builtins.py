@@ -102,6 +102,7 @@ def builtin_scalar(
     drift_loss_mean: float,
     namespace_aggregates: Mapping[str, float],
     weights: ScoringWeights,
+    diff_size: Mapping[str, int] | None = None,
 ) -> float:
     """The built-in per-generation scalar formula (Seam 2).
 
@@ -130,6 +131,17 @@ def builtin_scalar(
     equals ``pass_rate`` byte-for-byte on an all-bool board — so this stays
     back-compat-neutral on binary boards while tracking graded quality on
     scored boards.
+
+    ``diff_size`` is the OPT-IN parsimony / MDL term (OVERFITTING.md §5 / §12
+    #4). It is the challenger's ``{added, removed, patches}`` diff size, or
+    ``None`` for a side with no challenger experiment. The
+    ``diff_complexity`` component is appended LAST — in a fixed position after
+    every namespace — and ONLY when ``weights.diff_complexity_weight > 0.0``
+    AND ``diff_size`` is not ``None``; otherwise the term is EXACTLY absent (no
+    key, no addition), so the default ``diff_complexity_weight == 0.0`` leaves
+    the scalar byte-identical to the pre-feature formula. Appending last (after
+    the float-order-sensitive namespace accumulation) keeps every other term's
+    contribution bit-for-bit unchanged.
     """
     drift_component = weights.drift_weight * drift_loss_mean
     pass_component = weights.pass_weight * (1.0 - mean_score)
@@ -142,10 +154,43 @@ def builtin_scalar(
             continue
         component_name = ns[:-1] if ns.endswith(":") else ns
         scalar_components[component_name] = value
+    # Parsimony / MDL term, appended LAST and only when opted in. The guard is
+    # the byte-identical-when-off contract: at the 0.0 default (or with no diff
+    # size) the key is never written, so `sum(...)` is unchanged.
+    diff_component = diff_complexity_component(weights, diff_size)
+    if diff_component is not None:
+        scalar_components["diff_complexity"] = diff_component
     return sum(scalar_components.values())
+
+
+def diff_complexity_component(
+    weights: ScoringWeights,
+    diff_size: Mapping[str, int] | None,
+) -> float | None:
+    """Return the diff-complexity scalar contribution, or ``None`` when absent.
+
+    The single seam both :func:`builtin_scalar` and
+    :func:`zicato.tournament.scoring.aggregate_generation_score` read so the
+    appended scalar term and the surfaced ``scalar_components`` entry can NEVER
+    disagree:
+
+    * ``weights.diff_complexity_weight <= 0.0`` (the default ``0.0``) OR
+      ``diff_size is None`` ⇒ ``None`` — the term is exactly absent (no
+      component key, nothing added to the scalar), the byte-identical-when-off
+      contract.
+    * otherwise ⇒ ``diff_complexity_weight * complexity(diff_size)``, where
+      ``complexity = added + removed + patches`` (see
+      :func:`zicato.scoring.diff_complexity.diff_complexity`).
+    """
+    if weights.diff_complexity_weight <= 0.0 or diff_size is None:
+        return None
+    from zicato.scoring.diff_complexity import diff_complexity  # noqa: PLC0415
+
+    return weights.diff_complexity_weight * diff_complexity(diff_size)
 
 
 __all__ = [
     "builtin_drift_loss",
     "builtin_scalar",
+    "diff_complexity_component",
 ]

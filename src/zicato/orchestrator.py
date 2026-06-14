@@ -28,10 +28,9 @@ Two public entry points:
 from __future__ import annotations
 
 import asyncio
-import datetime as _dt
 import json
 import logging
-import time
+import time  # noqa: F401  — kept as the ``orch.time`` clock seam (see __all__)
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -42,13 +41,59 @@ from zicato.core.types import (
     Generation,
     OutcomeRecord,
     PriorExperiment,
+    TournamentDecision,
 )
 from zicato.core.workspace import (
     experiment_json_path,
     generation_dir,
 )
+from zicato.evolve.dashboard_projection import (
+    _clear_active_tournament,
+    _field_entries,
+    _mark_run_terminal,
+    _overlay_projected_live_progress,
+    _overlay_projected_standings,
+    _persist_field_tournament,
+    _publish_active_tournament,
+    _serialise_rounds,
+    _serialise_standings,
+    _settle_active_tournament,
+)
+from zicato.evolve.epoching import (
+    _component_diff_label,
+    _create_epoch_from_contract,
+    _promoted_head_snapshot,
+    _roll_seed_marker,
+    _stored_component_hashes,
+    _write_component_hashes,
+    ensure_epoch_for_contract,
+)
+from zicato.evolve.lifecycle_services import (
+    _beat,
+    _build_meta_loop_emitter_safe,
+    _EnvVarRestorer,
+    _LaunchedHandle,
+    _NoopShutdownHandle,
+    _now_iso,
+    _resolve_harmonograf_url,
+    _resolve_or_launch_harmonograf,
+)
+from zicato.evolve.round import (
+    build_post_apply_validator,
+    check_patch_manifest_and_forbidden,
+)
+from zicato.runtime.control_consumer import (
+    GateOverride,
+    block_while_paused,
+    claim_field_gate_overrides,
+    claim_gate_override,
+    claim_rubric_replacement,
+    claim_skip_round,
+)
 from zicato.runtime.heartbeat import HeartbeatBeater
-from zicato.runtime.lock import acquire_workspace_lock, release_workspace_lock
+from zicato.runtime.resume import ResumePlan
+from zicato.util import best_effort
+from zicato.workspace import WorkspaceLayout
 
 if TYPE_CHECKING:
     # Annotation-only — the proposer module is imported lazily inside
@@ -141,282 +186,9 @@ def _declared_custom_judge_names(board: list[Any], weights: Any) -> frozenset[st
 # ---------------------------------------------------------------------------
 # Contract-hash auto-epoching
 # ---------------------------------------------------------------------------
-
-
-#: Internal sentinel: workspace-level state file recording, for each
-#: epoch, where its v0 baseline should be seeded from when the epoch is
-#: a contract-roll of a predecessor. Keyed by epoch id; value is the
-#: absolute path to the previous epoch's promoted-head snapshot. The
-#: file is written by :func:`ensure_epoch_for_contract` and consumed by
-#: :func:`_ensure_baseline_snapshot`.
-def _roll_seed_marker(workspace_root: Path, epoch_id: str) -> Path:
-    return workspace_root / "epochs" / epoch_id / "v0_seed_from"
-
-
-def _component_diff_label(prev_components: dict[str, str], cur_components: dict[str, str]) -> str:
-    """Return a human-readable label naming which contract components moved.
-
-    Compares the per-component sub-hashes; returns a comma-joined list
-    of the component names that differ (``board``, ``brief``,
-    ``scoring``, ``entrypoint``, ``mutable_trees``). Falls back to a
-    generic ``"contract"`` when no per-component breakdown is available
-    (e.g. a legacy epoch with no stored components).
-    """
-    if not prev_components:
-        return "contract"
-    changed = [
-        name for name, cur_hash in cur_components.items() if prev_components.get(name) != cur_hash
-    ]
-    return ", ".join(changed) if changed else "contract"
-
-
-def _stored_component_hashes(workspace_root: Path, epoch_id: str) -> dict[str, str]:
-    """Return the per-component sub-hashes recorded for an epoch.
-
-    The breakdown is written next to ``config.json`` as
-    ``contract_components.json`` at epoch creation / roll time. Absent
-    for legacy epochs (returns an empty dict — the caller falls back to
-    a generic message).
-    """
-    path = workspace_root / "epochs" / epoch_id / "contract_components.json"
-    if not path.exists():
-        return {}
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    if not isinstance(raw, dict):
-        return {}
-    return {str(k): str(v) for k, v in raw.items()}
-
-
-def _write_component_hashes(
-    workspace_root: Path, epoch_id: str, components: dict[str, str]
-) -> None:
-    """Persist an epoch's per-component contract sub-hashes."""
-    path = workspace_root / "epochs" / epoch_id / "contract_components.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(components, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-
-
-async def ensure_epoch_for_contract(
-    workspace_root: Path,
-    *,
-    auto_epoch: bool,
-    aux_call_llm: CallLLM,
-    epoch_name: str | None = None,
-) -> str:
-    """Resolve the epoch ``evolve`` should run against, auto-rolling on drift.
-
-    The "evaluation contract" is the board + proposer brief + scoring +
-    the registered inner-harness identity (entrypoint + mutable trees).
-    A change to any of those means generations on either side are no
-    longer comparable, so the epoch must roll. This function is the
-    roll-at-evolve-time hook: it is called before the orchestrator
-    resolves an epoch.
-
-    Logic:
-
-    1. Compute the current contract hash via
-       :func:`zicato.epoch.contract.compute_contract_hash`.
-    2. ``cur = current_epoch_id(workspace_root)``.
-    3. If ``cur`` is ``None``:
-
-       * ``auto_epoch`` True  — create epoch ``e0`` from the contract,
-         return it.
-       * ``auto_epoch`` False — raise (tell the operator to
-         ``zicato epoch new``).
-    4. Load ``cur``'s :class:`EpochConfig`.
-
-       * If ``cur.contract_hash == ""`` (legacy epoch) OR ``== `` the
-         current hash: return ``cur`` (continue, no roll).
-       * Else (the contract changed):
-
-         * ``auto_epoch`` True  — close ``cur`` (generating
-           ``analysis.md``), create a NEW epoch carrying the new
-           contract, baselined from ``cur``'s promoted head, auto-named
-           ``e{N+1}``; echo a clear message; return the new id.
-         * ``auto_epoch`` False — raise a clear error: the contract
-           drifted from the current epoch; revert the files or run
-           ``zicato epoch new``.
-
-    ``epoch_name`` overrides the default ``e{N}`` auto-name for any
-    epoch this function creates (the first epoch on a fresh workspace,
-    or the new epoch after a roll). When ``None``, the ``e{N}`` scheme
-    is used.
-
-    Returns the epoch id ``evolve`` should use.
-    """
-    from zicato.epoch.contract import (  # noqa: PLC0415
-        compute_component_hashes,
-        compute_contract_hash,
-        resolve_contract_inputs,
-    )
-    from zicato.epoch.lifecycle import (  # noqa: PLC0415
-        current_epoch_id,
-        list_epochs,
-        load_epoch,
-    )
-
-    inputs = resolve_contract_inputs(workspace_root)
-    current_hash = compute_contract_hash(inputs)
-    current_components = compute_component_hashes(inputs)
-
-    cur = current_epoch_id(workspace_root)
-    if cur is None:
-        if not auto_epoch:
-            raise FileNotFoundError(
-                f"no current_epoch marker under {workspace_root}; "
-                "run `zicato epoch new <name> ...` or drop --no-auto-epoch "
-                "so `zicato evolve` can create the first epoch"
-            )
-        new_id = _create_epoch_from_contract(
-            workspace_root,
-            inputs=inputs,
-            name=epoch_name or "e0",
-            aux_call_llm=aux_call_llm,
-        )
-        _write_component_hashes(workspace_root, new_id, current_components)
-        return new_id
-
-    cfg = load_epoch(workspace_root, cur)
-    if cfg.contract_hash == "" or cfg.contract_hash == current_hash:
-        # Legacy epoch (empty hash → treated as always-matching) or the
-        # contract is unchanged. Either way: no roll.
-        return cur
-
-    # The contract drifted from the current epoch.
-    if not auto_epoch:
-        drifted = _component_diff_label(
-            _stored_component_hashes(workspace_root, cur), current_components
-        )
-        raise RuntimeError(
-            f"evaluation contract has drifted from the current epoch "
-            f"{cur!r} (changed: {drifted}); either revert the contract "
-            "files or run `zicato epoch new` to start a new epoch. "
-            "(Remove --no-auto-epoch to let `zicato evolve` roll the "
-            "epoch automatically.)"
-        )
-
-    # Auto-roll: close the drifted epoch, open a fresh one carrying the
-    # new contract, baselined from the closed epoch's promoted head.
-    # close_epoch_async is awaited (we are already inside an event loop;
-    # the sync close_epoch would nest asyncio.run and raise).
-    from zicato.epoch.lifecycle import close_epoch_async  # noqa: PLC0415
-
-    await close_epoch_async(workspace_root, cur, aux_call_llm=aux_call_llm)
-
-    # The comprehensive report is regenerated every round, so the copy on disk
-    # is frozen at the last mid-run pass — masthead still reading "in progress"
-    # with pre-close counts. Now that the epoch is marked closed, re-stamp that
-    # (deterministic) masthead so the persisted analysis.md/.html reflect the
-    # final closed state. Cheap, no LLM; the narrative is left untouched.
-    try:
-        from zicato.analyzer import restamp_persisted_report  # noqa: PLC0415
-
-        restamp_persisted_report(workspace_root, cur)
-    except Exception as exc:  # noqa: BLE001 — best-effort, never block the roll
-        log.debug("post-close report re-stamp skipped: %s", exc)
-
-    next_n = len(list_epochs(workspace_root))
-    new_id = _create_epoch_from_contract(
-        workspace_root,
-        inputs=inputs,
-        name=epoch_name or f"e{next_n}",
-        aux_call_llm=aux_call_llm,
-    )
-    _write_component_hashes(workspace_root, new_id, current_components)
-
-    # Record where the new epoch's v0 should be seeded from: the
-    # promoted head of the epoch we just closed. `_ensure_baseline_snapshot`
-    # reads this marker on the first evolve round of the new epoch.
-    prev_head_snapshot = _promoted_head_snapshot(workspace_root, cur)
-    if prev_head_snapshot is not None:
-        _roll_seed_marker(workspace_root, new_id).write_text(
-            str(prev_head_snapshot) + "\n", encoding="utf-8"
-        )
-
-    changed = _component_diff_label(
-        _stored_component_hashes(workspace_root, cur), current_components
-    )
-    log.info("contract changed (%s) — rolled %s -> %s", changed, cur, new_id)
-    print(f"contract changed ({changed}) — rolled {cur} -> {new_id}")
-    # The auto-roll path has no operator interaction surface, so the
-    # epoch's ``goal`` field lands empty. Nudge the operator to fill it
-    # in later via the dedicated subcommand.
-    log.warning(
-        "epoch %s opened by auto-roll with no goal recorded; "
-        'run `zicato epoch set-goal --epoch %s --goal "..."` to fill it in.',
-        new_id,
-        new_id,
-    )
-    print(
-        f"NOTE: epoch {new_id} opened by auto-roll with no goal recorded; "
-        f'run `zicato epoch set-goal --epoch {new_id} --goal "..."` to fill it in.'
-    )
-    return new_id
-
-
-def _create_epoch_from_contract(
-    workspace_root: Path,
-    *,
-    inputs: Any,
-    name: str,
-    aux_call_llm: CallLLM,
-) -> str:
-    """Create an epoch from resolved contract inputs; return its id.
-
-    A thin wrapper over :func:`zicato.epoch.lifecycle.new_epoch` that
-    loads the scoring weights from the live ``scoring.json`` and carries
-    the registered inner-harness identity into the contract hash.
-    """
-    from zicato.epoch.lifecycle import new_epoch  # noqa: PLC0415
-    from zicato.workspace_loader import _scoring_weights_from_dict  # noqa: PLC0415
-
-    if inputs.scoring_path.exists():
-        weights = _scoring_weights_from_dict(
-            json.loads(inputs.scoring_path.read_text(encoding="utf-8"))
-        )
-    else:
-        from zicato.core.types import ScoringWeights  # noqa: PLC0415
-
-        weights = ScoringWeights()
-
-    cfg = new_epoch(
-        workspace_root=workspace_root,
-        name=name,
-        board_source=inputs.board_path,
-        brief_source=inputs.brief_path,
-        weights=weights,
-        auto_close_previous=False,  # ensure_epoch_for_contract closes explicitly
-        aux_call_llm=aux_call_llm,
-        entrypoint=inputs.entrypoint,
-        mutable_trees=tuple(inputs.mutable_trees),
-        proposer_path=inputs.proposer_path,
-    )
-    return cfg.id
-
-
-def _promoted_head_snapshot(workspace_root: Path, epoch_id: str) -> Path | None:
-    """Return the snapshot dir of an epoch's last promoted generation.
-
-    Reads the epoch's ``current_generation`` marker (the promoted head)
-    and returns that generation's ``snapshot/`` directory. Returns
-    ``None`` when the epoch has no promoted generation beyond a seed
-    that was never run, or when the snapshot directory is absent — the
-    caller then falls back to seeding from the registered mutable trees.
-    """
-    try:
-        head = _resolve_current_generation(workspace_root, epoch_id)
-    except FileNotFoundError:
-        return None
-    snap = _snapshot_root(workspace_root, epoch_id, head)
-    if not snap.exists() or not any(snap.iterdir()):
-        return None
-    return snap
+# The roll-at-evolve-time decision and its helpers live in
+# ``zicato.evolve.epoching``; re-exported above so callers (and the test
+# suite's ``orch.ensure_epoch_for_contract`` monkeypatch) keep working.
 
 
 # ---------------------------------------------------------------------------
@@ -437,8 +209,20 @@ async def evolve_once(
     round_index: int = 0,
     total_rounds: int = 0,
     meta_loop_emitter: Any = None,
+    resume_plan: ResumePlan | None = None,
 ) -> EvolveRoundOutcome:
     """Run ONE evolve round against the current epoch.
+
+    ``resume_plan`` — when supplied by :func:`evolve_n_rounds` for the
+    FIRST round of a resumed invocation — carries the conservative
+    crash-resume decision (``runtime/resume.py``). When it
+    ``resumes_in_place`` for the generation this round would mint, the
+    propose + apply step is skipped and the persisted
+    ``experiment.json`` + patches are reused: the snapshot is re-derived
+    from those same patches (idempotent) and the tournament cache-HITs
+    every board unit that already has a ``loss.json`` on disk, so only
+    the entries that did not finish are re-run. ``None`` (the default, and
+    every round after the first) is byte-identical to a cold start.
 
     ``beater`` — when supplied by :func:`evolve_n_rounds` — receives a
     :meth:`HeartbeatBeater.update` call at every phase transition
@@ -496,10 +280,6 @@ async def evolve_once(
     )
     from zicato.epoch.lifecycle import current_epoch_id  # noqa: PLC0415
     from zicato.mutation.enumerator import enumerate_mutations  # noqa: PLC0415
-    from zicato.mutation.validator import (  # noqa: PLC0415
-        check_forbidden_ids,
-        validate_post_apply,
-    )
     from zicato.patterns.detectors import (  # noqa: PLC0415
         ALL_DETECTORS,
         DetectorInput,
@@ -528,6 +308,25 @@ async def evolve_once(
             )
     else:
         resolved_epoch_id = epoch_id
+
+    # --- 0. Operator skip_round (control protocol, RUNTIME-V2 Phase 2) ---
+    # A clean safe point — the epoch is resolved but nothing has been
+    # proposed and no tournament write is in flight. A pending skip_round
+    # flag aborts this round cleanly, exactly like a wall-clock budget cut:
+    # the round produces a synthetic aborted outcome (no proposer call, no
+    # tournament) and the loop moves on. The flag is consumed (archived to
+    # control_log/) so it fires once. The common case (no skip queued)
+    # returns ``None`` and the round runs normally.
+    _skip_reason = claim_skip_round(workspace_root)
+    if _skip_reason is not None:
+        parent_for_skip = _safe_resolve_parent(workspace_root, resolved_epoch_id)
+        log.warning(
+            "evolve: round %d skipped by operator (skip_round); reason=%s",
+            round_index,
+            _skip_reason or "(none)",
+        )
+        return _skipped_round_outcome(parent_for_skip, _skip_reason)
+
     board, disable_drift, judge_only = workspace_loader.load_current_board_with_meta(workspace_root)
     weights = workspace_loader.load_current_scoring(workspace_root)
     brief = workspace_loader.load_current_brief(workspace_root)
@@ -546,6 +345,16 @@ async def evolve_once(
     # resolved from. ``None`` (the default / skill-only proposer) yields the
     # single-shot built-in unchanged.
     proposer_agent = build_proposer_agent(proposer_spec, proposer_path=_epoch_cfg.proposer_path)
+    # Proposer-quality levers (FUNCTIONALITY-RECOMMENDATIONS.md §4.1): when the
+    # contract opts in (``proposer_quality.best_of_n > 1``), interpose a
+    # best-of-N + self-critique wrapper around the resolved agent. With the
+    # default (``best_of_n == 1``) the wrapper returns the agent UNCHANGED, so
+    # the propose path is byte-identical to before this lever existed. The
+    # critic sees ONLY the same restricted proposer context (never the
+    # holdout), so best-of-N stays inside the overfitting-visibility envelope.
+    from zicato.proposer.best_of_n import wrap_with_proposer_quality  # noqa: PLC0415
+
+    proposer_agent = wrap_with_proposer_quality(proposer_agent, weights.proposer_quality)
     # Custom judges declared on the board / per_judge_weights are valid
     # ``drift:<judge_name>`` metric targets in a proposer hypothesis even
     # though they are not built-in goldfive drift kinds.
@@ -690,9 +499,26 @@ async def evolve_once(
         )
 
     # --- 6. Propose ---
-    next_id = _next_generation_id(workspace_root, resolved_epoch_id)
+    # When resuming an interrupted round in place (runtime/resume.py), reuse
+    # the SAME generation id the prior run minted — its directory still
+    # exists, so ``_next_generation_id`` would otherwise skip past it to a
+    # fresh vN+1 and orphan the completed loss.json units. Every other path
+    # (cold start, discarded partial, post-resume rounds) picks the next
+    # fresh id exactly as before.
+    if (
+        resume_plan is not None
+        and resume_plan.resumes_in_place
+        and resume_plan.resume_generation_id is not None
+    ):
+        next_id = resume_plan.resume_generation_id
+    else:
+        next_id = _next_generation_id(workspace_root, resolved_epoch_id)
+    from zicato.runtime import progress_log  # noqa: PLC0415
+
     _beat(
         beater,
+        workspace_root=workspace_root,
+        progress=progress_log.PROPOSE,
         epoch_id=resolved_epoch_id,
         generation_id=next_id,
         round_index=round_index,
@@ -720,36 +546,20 @@ async def evolve_once(
     # and runs :func:`validate_post_apply`. ``last_child_snapshot``
     # captures the child tree of the last attempt — when the proposer
     # returns successfully it is the validated tree the tournament
-    # mounts; no second apply is needed.
+    # mounts; no second apply is needed. The hook itself is the shared
+    # ``build_post_apply_validator`` (``zicato.evolve.round``) the field
+    # path also uses — the previously-inlined closure was byte-identical.
     last_child_snapshot: dict[str, Path] = {}
-
-    async def _validate_experiment_post_apply(candidate: Experiment) -> list[str]:
-        _beat(
-            beater,
-            epoch_id=resolved_epoch_id,
-            generation_id=next_id,
-            round_index=round_index,
-            phase=f"applying:round_{round_index}:{next_id}",
-        )
-        # derive_generation is the generation-level transaction boundary:
-        # it copies the parent tree, applies the patch set all-or-nothing,
-        # and clears any stale child tree from a prior attempt — so a
-        # retry re-derives cleanly. See docs/design/STORAGE.md §4-§5.
-        # apply_patches now runs its own post-apply syntax gate and raises
-        # ValueError when a patch left a touched ``.py`` file unparseable;
-        # surface that as a retryable post-apply finding rather than letting
-        # it crash the evolve loop (issue #11).
-        try:
-            child = genstore.derive_generation(
-                epoch_id=resolved_epoch_id,
-                parent_generation_id=parent_id,
-                child_generation_id=next_id,
-                patches=list(candidate.patches),
-            )
-        except ValueError as exc:
-            return [f"derive_generation rejected the patch set: {exc}"]
-        last_child_snapshot["path"] = child
-        return validate_post_apply(child, list(candidate.patches), mutations)
+    _validate_experiment_post_apply = build_post_apply_validator(
+        genstore=genstore,
+        epoch_id=resolved_epoch_id,
+        parent_id=parent_id,
+        next_id=next_id,
+        mutations=mutations,
+        beater=beater,
+        round_index=round_index,
+        last_child_snapshot=last_child_snapshot,
+    )
 
     # Experiment memory: the settled cross-round digest for this epoch.
     # Best-effort — a missing / stale index yields an empty list and the
@@ -759,63 +569,96 @@ async def evolve_once(
     prior = _load_prior_experiments(workspace_root, resolved_epoch_id)
 
     proposer_validation_failed: ProposerError | None = None
-    try:
-        experiment = await proposer_agent.propose(
-            ProposerContext(
-                epoch_id=resolved_epoch_id,
-                parent_generation_id=parent_id,
-                new_generation_id=next_id,
-                patterns=tuple(patterns),
-                mutations=tuple(mutations),
-                brief_text=brief.text,
-                current_loss_summary=loss_summary,
-                aux_call_llm=auxiliary_call_llm,
-                model=str(workspace_config.get("auxiliary_model", "")),
-                max_retries=max_proposer_retries,
-                forbidden_ids=brief.forbidden_ids,
-                workspace_root=workspace_root,
-                validate_experiment=_validate_experiment_post_apply,
-                meta_loop_emitter=meta_loop_emitter,
-                custom_judge_names=custom_judge_names,
-                prior_experiments=tuple(prior),
-                restrict_visibility=weights.overfitting.restrict_proposer_visibility,
-                failure_profile=failure_profile,
+    # --- 6r. Conservative crash-resume short-circuit (gauntlet path) ---
+    # When the prior evolve was interrupted mid-tournament on THIS exact
+    # generation, runtime/resume.py validated that the persisted
+    # experiment + patches + snapshot are self-consistent and at least one
+    # board unit completed. Reuse the persisted experiment verbatim rather
+    # than re-proposing (the proposer is non-deterministic — a fresh
+    # proposal would invalidate the on-disk loss.json cache). We still run
+    # the SAME validate/derive hook once, so the snapshot is re-derived
+    # from those same patches (idempotent) before the tournament; the unit
+    # cache then HITs every entry that already has a loss.json. ``None``
+    # (the common cold-start case) leaves the propose path untouched.
+    resumed_experiment: Experiment | None = None
+    if (
+        resume_plan is not None
+        and resume_plan.resumes_in_place
+        and resume_plan.resume_generation_id == next_id
+        and resume_plan.resume_experiment is not None
+    ):
+        candidate = replace(resume_plan.resume_experiment, round_index=round_index)
+        # Re-derive the child snapshot from the persisted patches so the
+        # tournament mounts the same tree the interrupted run scored. The
+        # hook clears any stale child tree and re-applies all-or-nothing.
+        resume_errors = await _validate_experiment_post_apply(candidate)
+        if resume_errors:
+            # The persisted patches no longer re-derive cleanly (e.g. the
+            # parent tree changed underneath them). Fall back to the
+            # conservative default: re-propose fresh, exactly as a cold
+            # start would — never score against a tree we cannot rebuild.
+            log.warning(
+                "resume: persisted patches for %s failed re-validation (%s); "
+                "discarding and re-proposing fresh",
+                next_id,
+                "; ".join(resume_errors),
             )
-        )
-    except ProposerError as exc:
-        # The proposer exhausted its bounded retries without producing a
-        # patch set that survives post-apply validation (or parsing).
-        # Fall through to the rejected-outcome path rather than crashing
-        # the round — the round still produces a clean ``rejected``
-        # journal entry, and the loop continues.
-        proposer_validation_failed = exc
-        experiment = None
+        else:
+            log.info("resume: reusing persisted experiment for %s (no re-propose)", next_id)
+            resumed_experiment = candidate
+
+    if resumed_experiment is not None:
+        # Skip the proposer entirely; the validate/derive hook above
+        # already populated ``last_child_snapshot``. Fall through to the
+        # shared step-7+ path below with the persisted experiment.
+        experiment = resumed_experiment
     else:
-        # Stamp the EVOLVE round that minted this generation onto the experiment
-        # so it persists into experiment.json — the dashboard's round-timeline /
-        # champion-spine attributes each generation to its birth round from this
-        # stamp (the canonical value the loop already threads as round_index).
-        # The guard is redundant at runtime (the `else` means propose succeeded,
-        # so experiment is non-None) but narrows the union type for the checker.
-        if experiment is not None:
-            experiment = replace(experiment, round_index=round_index)
+        try:
+            experiment = await proposer_agent.propose(
+                ProposerContext(
+                    epoch_id=resolved_epoch_id,
+                    parent_generation_id=parent_id,
+                    new_generation_id=next_id,
+                    patterns=tuple(patterns),
+                    mutations=tuple(mutations),
+                    brief_text=brief.text,
+                    current_loss_summary=loss_summary,
+                    aux_call_llm=auxiliary_call_llm,
+                    model=str(workspace_config.get("auxiliary_model", "")),
+                    max_retries=max_proposer_retries,
+                    forbidden_ids=brief.forbidden_ids,
+                    workspace_root=workspace_root,
+                    validate_experiment=_validate_experiment_post_apply,
+                    meta_loop_emitter=meta_loop_emitter,
+                    custom_judge_names=custom_judge_names,
+                    prior_experiments=tuple(prior),
+                    restrict_visibility=weights.overfitting.restrict_proposer_visibility,
+                    failure_profile=failure_profile,
+                )
+            )
+        except ProposerError as exc:
+            # The proposer exhausted its bounded retries without producing
+            # a patch set that survives post-apply validation (or parsing).
+            # Fall through to the rejected-outcome path rather than crashing
+            # the round — the round still produces a clean ``rejected``
+            # journal entry, and the loop continues.
+            proposer_validation_failed = exc
+            experiment = None
+        else:
+            # Stamp the EVOLVE round that minted this generation onto the
+            # experiment so it persists into experiment.json — the
+            # dashboard's round-timeline / champion-spine attributes each
+            # generation to its birth round from this stamp (the canonical
+            # value the loop already threads as round_index). The guard is
+            # redundant at runtime (the `else` means propose succeeded, so
+            # experiment is non-None) but narrows the union type for the
+            # checker.
+            if experiment is not None:
+                experiment = replace(experiment, round_index=round_index)
 
     # --- 7. Validate patch set against the manifest ---
     if experiment is not None:
-        mutations_by_id = {m.id: m for m in mutations}
-        for patch in experiment.patches:
-            if patch.mutation_id not in mutations_by_id:
-                raise RuntimeError(
-                    f"proposer-emitted patch {patch.id!r} targets unknown "
-                    f"mutation_id {patch.mutation_id!r}"
-                )
-        forbidden_violations = check_forbidden_ids(
-            list(experiment.patches), list(brief.forbidden_ids)
-        )
-        if forbidden_violations:
-            raise RuntimeError(
-                "proposer-emitted patches violate forbidden_ids: " + "; ".join(forbidden_violations)
-            )
+        check_patch_manifest_and_forbidden(experiment, mutations, brief.forbidden_ids)
 
     # --- 8 + 9. Apply + post-apply validation ---
     # The proposer's validation hook already applied the (final,
@@ -860,7 +703,7 @@ async def evolve_once(
             pass_rate_delta=0.0,
             drift_loss_delta=0.0,
             scalar_score_delta=0.0,
-            tournament_decision="rejected",
+            tournament_decision=TournamentDecision.REJECTED,
             rejection_reason=rejection_reason,
         )
         finalised = update_experiment_outcome(
@@ -889,6 +732,8 @@ async def evolve_once(
         )
         _beat(
             beater,
+            workspace_root=workspace_root,
+            progress=progress_log.REJECT,
             epoch_id=resolved_epoch_id,
             generation_id=next_id,
             round_index=round_index,
@@ -914,6 +759,8 @@ async def evolve_once(
     _ingest_experiment_into_index(workspace_root, resolved_epoch_id, next_id)
     _beat(
         beater,
+        workspace_root=workspace_root,
+        progress=progress_log.TOURNAMENT_START,
         epoch_id=resolved_epoch_id,
         generation_id=next_id,
         round_index=round_index,
@@ -948,6 +795,18 @@ async def evolve_once(
                 exc,
             )
             parent_historical = None
+    # Diff-complexity (parsimony / MDL) input, OVERFITTING.md §5 / §12 #4. The
+    # challenger's diff size from its patch records, threaded into the
+    # CHALLENGER aggregate only. Folds a ``diff_complexity`` component into the
+    # challenger's scalar ONLY when ``weights.diff_complexity_weight > 0``;
+    # ``aggregate_generation_score`` treats it as exactly absent at the default,
+    # so computing it here is harmless for a contract that does not opt in. Fast
+    # mode compares against a cached whole-board champion aggregate and does not
+    # re-derive the challenger scalar through this path, so the term applies on
+    # the full A/B path (where the gate actually re-scores the challenger).
+    from zicato.scoring.diff_complexity import diff_size as _diff_size  # noqa: PLC0415
+
+    child_diff_size = _diff_size(experiment)
     if fast_mode and parent_historical is not None:
         tournament_result = await run_fast_mode(
             adapter=adapter,
@@ -975,13 +834,46 @@ async def evolve_once(
             epoch_id=resolved_epoch_id,
             disable_drift=disable_drift,
             judge_only=judge_only,
+            # ``--mode full`` (not fast_mode) re-samples both sides for noise,
+            # so force-fresh the champion too. The fast-mode seeding fallback
+            # (no cached parent aggregate this round) cache-reads the immutable
+            # champion (default) — reusing its prior-round / seed-scoring units
+            # instead of re-running it every round (§2 item 3).
+            #
+            # A conservative crash-resume (``resumed_experiment is not None``)
+            # is the OTHER cache-read case: the interrupted round's completed
+            # champion units are on disk and MUST be reused, or resume is no
+            # longer nearly free. So a resumed round suppresses the full-mode
+            # champion re-sample and cache-reads the champion regardless of
+            # mode — the union of the §2-item-3 win and the resume protocol.
+            champion_force_fresh=(not fast_mode) and resumed_experiment is None,
             round_index=round_index,
             total_rounds=total_rounds,
+            # Conservative crash-resume: read the per-unit loss.json cache
+            # so an interrupted round's completed board units are HITS and
+            # only the unfinished entries re-run. A cold start keeps the
+            # historical force-fresh full A/B evaluation byte-for-byte.
+            force_fresh=resumed_experiment is None,
+            # Opt-in parsimony / MDL term: the challenger's diff size. A no-op
+            # at the default ``diff_complexity_weight == 0.0`` (the term is
+            # exactly absent), so this is byte-identical for contracts that do
+            # not opt in.
+            child_diff_size=child_diff_size,
         )
 
     # Cache gen_score.json for future fast-mode runs.
     _cache_gen_score(workspace_root, resolved_epoch_id, parent_id, tournament_result.parent_agg)
     _cache_gen_score(workspace_root, resolved_epoch_id, next_id, tournament_result.child_agg)
+
+    # Progress transition: the tournament settled (a verdict is resolvable).
+    # Advances the orchestrator liveness seq on genuine progress — never on
+    # a timer — so a slow tournament reads as "between transitions", not
+    # stalled. Best-effort; a write failure must not abort the round.
+    with best_effort(
+        "progress-log tournament-settle",
+        on_error=lambda exc: log.debug("progress-log tournament-settle skipped: %s", exc),
+    ):
+        progress_log.append_progress(workspace_root, progress_log.TOURNAMENT_SETTLE)
 
     # --- 10b. Route the duel's verdict through the SelectionStrategy ---
     # The structure owns scheduling/advance/stopping; the gate is reused
@@ -996,8 +888,40 @@ async def evolve_once(
         tournament_spec, parent_id, next_id, child_snapshot, tournament_result
     )
 
-    # --- 11. Persist outcome ---
+    # --- 10c. Operator gate override (control protocol, RUNTIME-V2 Phase 2) ---
+    # The gate has settled but the outcome is not yet persisted — the safe
+    # point at which an operator's force-promote / force-reject of THIS
+    # generation can override the verdict. A matching command is claimed +
+    # archived to control_log/; the override is recorded explicitly on the
+    # OutcomeRecord below (never a silent flip). No pending override (the
+    # common case) leaves the gate's decision untouched.
     decision = selection_decision.decision
+    override_reason = selection_decision.reason
+    operator_override = False
+    operator_override_reason = ""
+    gate_override = claim_gate_override(workspace_root, next_id)
+    if gate_override is not None:
+        log.warning(
+            "evolve: operator override — generation %s force-%s "
+            "(gate said %r); recording as an explicit override. reason=%s",
+            next_id,
+            gate_override.decision,
+            decision,
+            gate_override.reason,
+        )
+        decision = gate_override.decision
+        operator_override = True
+        operator_override_reason = gate_override.reason
+        # The rejection_reason field carries the override note on a forced
+        # reject so the journal one-liner is legible; a forced promote clears
+        # it (a promotion has no rejection reason).
+        override_reason = (
+            f"operator override: {gate_override.reason}"
+            if gate_override.decision == "rejected"
+            else ""
+        )
+
+    # --- 11. Persist outcome ---
     # "deferred" → treat as a non-promotion for evolve loop bookkeeping.
     bookkeeping_decision = "promoted" if decision == "promoted" else "rejected"
     parent_scalar = float(tournament_result.parent_agg.get("scalar", 0.0))
@@ -1013,7 +937,13 @@ async def evolve_once(
         ),
         scalar_score_delta=tournament_result.outcome.delta_scalar,
         tournament_decision=decision,
-        rejection_reason=selection_decision.reason,
+        rejection_reason=override_reason,
+        # Operator override (control protocol, RUNTIME-V2 Phase 2): when an
+        # operator force-promoted / force-rejected THIS generation, ``decision``
+        # above is the forced verdict and these two fields make that explicit
+        # in the journal/index so the override is never silent.
+        operator_override=operator_override,
+        operator_override_reason=operator_override_reason,
         # Record the structure the duel was decided under so the journal /
         # index carry it; gauntlet leaves the remaining fields at their
         # back-compat defaults (no bracket path to describe).
@@ -1095,7 +1025,10 @@ async def evolve_once(
     # proposer (via :func:`zicato.analyzer.load_latest_insights`) reads.
     # The round number is derived from the newly-proposed generation
     # id (``v{N}``) so the insight file lines up with the lineage.
-    try:
+    with best_effort(
+        "decision telemetry analyzer",
+        on_error=lambda exc: log.debug("decision telemetry analyzer skipped: %s", exc),
+    ):
         from zicato.analyzer import analyze_epoch_telemetry  # noqa: PLC0415
 
         analyzer_round = _round_n_from_generation_id(next_id)
@@ -1112,8 +1045,6 @@ async def evolve_once(
             mutation_ids=[m.id for m in mutations],
             meta_loop_emitter=meta_loop_emitter,
         )
-    except Exception as exc:  # noqa: BLE001 — analyser is best-effort
-        log.debug("decision telemetry analyzer skipped: %s", exc)
 
     # --- 16. Best-effort epoch analysis report regeneration ---
     await _regenerate_epoch_report(
@@ -1125,6 +1056,10 @@ async def evolve_once(
 
     _beat(
         beater,
+        workspace_root=workspace_root,
+        progress=(
+            progress_log.PROMOTE if bookkeeping_decision == "promoted" else progress_log.REJECT
+        ),
         epoch_id=resolved_epoch_id,
         generation_id=next_id,
         round_index=round_index,
@@ -1266,10 +1201,6 @@ async def _propose_and_apply_challenger(
     """
     from zicato.epoch import append_to_lineage, write_experiment  # noqa: PLC0415
     from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
-    from zicato.mutation.validator import (  # noqa: PLC0415
-        check_forbidden_ids,
-        validate_post_apply,
-    )
     from zicato.proposer.agent import ProposerContext  # noqa: PLC0415
     from zicato.proposer.proposer import ProposerError  # noqa: PLC0415
 
@@ -1280,13 +1211,18 @@ async def _propose_and_apply_challenger(
         """Best-effort live publish of one challenger's proposal record."""
         if on_status is None:
             return
-        try:
+        with best_effort(
+            "proposal-status publish",
+            on_error=lambda exc: log.debug("proposal-status publish skipped: %s", exc),
+        ):
             on_status(record)
-        except Exception as exc:  # noqa: BLE001 — live status is best-effort
-            log.debug("proposal-status publish skipped: %s", exc)
+
+    from zicato.runtime import progress_log  # noqa: PLC0415
 
     _beat(
         beater,
+        workspace_root=workspace_root,
+        progress=progress_log.PROPOSE,
         epoch_id=epoch_id,
         generation_id=next_id,
         round_index=round_index,
@@ -1307,29 +1243,19 @@ async def _propose_and_apply_challenger(
         }
     )
 
-    async def _validate(candidate: Experiment) -> list[str]:
-        _beat(
-            beater,
-            epoch_id=epoch_id,
-            generation_id=next_id,
-            round_index=round_index,
-            phase=f"applying:round_{round_index}:{next_id}",
-        )
-        # apply_patches runs a post-apply syntax gate and raises ValueError
-        # when a patch left a touched ``.py`` file unparseable; surface that
-        # as a retryable post-apply finding rather than crashing the round
-        # (issue #11).
-        try:
-            child = genstore.derive_generation(
-                epoch_id=epoch_id,
-                parent_generation_id=parent_id,
-                child_generation_id=next_id,
-                patches=list(candidate.patches),
-            )
-        except ValueError as exc:
-            return [f"derive_generation rejected the patch set: {exc}"]
-        last_child_snapshot["path"] = child
-        return validate_post_apply(child, list(candidate.patches), mutations)
+    # The post-apply validation hook — the SAME shared
+    # ``build_post_apply_validator`` (``zicato.evolve.round``) the gauntlet
+    # path uses; the previously-inlined closure was byte-identical.
+    _validate = build_post_apply_validator(
+        genstore=genstore,
+        epoch_id=epoch_id,
+        parent_id=parent_id,
+        next_id=next_id,
+        mutations=mutations,
+        beater=beater,
+        round_index=round_index,
+        last_child_snapshot=last_child_snapshot,
+    )
 
     try:
         experiment = await proposer_agent.propose(
@@ -1380,18 +1306,7 @@ async def _propose_and_apply_challenger(
         _emit_status(rejected)
         return None, rejected
 
-    mutations_by_id = {m.id: m for m in mutations}
-    for patch in experiment.patches:
-        if patch.mutation_id not in mutations_by_id:
-            raise RuntimeError(
-                f"proposer-emitted patch {patch.id!r} targets unknown "
-                f"mutation_id {patch.mutation_id!r}"
-            )
-    forbidden_violations = check_forbidden_ids(list(experiment.patches), list(brief.forbidden_ids))
-    if forbidden_violations:
-        raise RuntimeError(
-            "proposer-emitted patches violate forbidden_ids: " + "; ".join(forbidden_violations)
-        )
+    check_patch_manifest_and_forbidden(experiment, mutations, brief.forbidden_ids)
 
     child_snapshot = last_child_snapshot["path"]
     # Stamp the EVOLVE round that minted this challenger onto the experiment
@@ -1458,6 +1373,141 @@ async def _propose_and_apply_challenger(
     )
 
 
+def _diversity_signature(experiment: Experiment) -> tuple[frozenset[str], str]:
+    """The field-diversity signature of a challenger: (modulating set, core idea).
+
+    Two siblings in the same field COLLAPSE the field when they propose the
+    same mutation (EXPERIMENT-MEMORY.md §2.2): a field of N becomes fewer than
+    N distinct experiments, wasting tournament compute on duplicates. The
+    signature is the *declared* targeted mutation-point id-SET (order-
+    insensitive) joined with a whitespace/-case-normalized core idea, so a
+    duplicate is detected by what the hypothesis TOUCHES and SAYS, not by
+    incidental ordering or capitalisation.
+    """
+    ids = frozenset(experiment.hypothesis.modulating)
+    core = " ".join(experiment.hypothesis.core_idea.split()).casefold()
+    return ids, core
+
+
+def _duplicates_inflight_sibling(
+    experiment: Experiment, sibling_signatures: list[tuple[frozenset[str], str]]
+) -> bool:
+    """Whether a challenger duplicates an already-minted in-flight sibling.
+
+    The field-diversity constraint (FUNCTIONALITY-RECOMMENDATIONS.md §4.3): a
+    challenger whose ``modulating`` id-set AND core idea both match a sibling
+    already minted THIS round is a duplicate that collapses the field, so the
+    caller soft-rejects it. A challenger that touches the same ids but with a
+    genuinely different idea (or the same idea on different ids) is NOT a
+    duplicate — it is a legitimately distinct experiment and is kept. An empty
+    ``modulating`` set never collapses the field (there is nothing to
+    duplicate), so it is never rejected on this basis.
+    """
+    ids, core = _diversity_signature(experiment)
+    if not ids:
+        return False
+    return any(ids == s_ids and core == s_core for s_ids, s_core in sibling_signatures)
+
+
+def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:
+    """Jaccard overlap ``|a ∩ b| / |a ∪ b|`` of two mutation-id sets.
+
+    ``0.0`` when both sets are empty (two challengers that target nothing do
+    not collapse the field — there is nothing shared to collapse), and
+    otherwise the standard set-similarity ratio in ``[0, 1]``.
+    """
+    union = a | b
+    if not union:
+        return 0.0
+    return len(a & b) / len(union)
+
+
+def _max_overlap_with_accepted(
+    candidate: frozenset[str], accepted: list[frozenset[str]]
+) -> tuple[float, int]:
+    """The largest Jaccard overlap of ``candidate`` against the accepted set.
+
+    Returns ``(max_overlap, index)`` where ``index`` is the position of the
+    accepted sibling that overlaps the most (``-1`` when ``accepted`` is
+    empty). Used by the multi-challenger field-diversity enforcement to
+    decide whether a freshly-applied challenger overlaps an already-accepted
+    sibling beyond the operator's ``diversity_tolerance``.
+    """
+    best = 0.0
+    best_idx = -1
+    for idx, prior in enumerate(accepted):
+        score = _jaccard(candidate, prior)
+        if score > best:
+            best = score
+            best_idx = idx
+    return best, best_idx
+
+
+def _compute_field_diversity(
+    mutation_sets: list[tuple[str, frozenset[str]]],
+    *,
+    tolerance: float | None = None,
+    soft_rejected_count: int = 0,
+) -> dict[str, Any]:
+    """Summarize the field's idea diversity from per-challenger mutation sets.
+
+    ``mutation_sets`` is an ordered list of ``(generation_id, mutation_ids)``
+    pairs — one per challenger whose targeted-mutation-id set is known — and
+    the returned block reports the pairwise Jaccard overlap structure of the
+    field (FUNCTIONALITY-RECOMMENDATIONS.md §4.3): two challengers proposing
+    the same mutation-id set collapse a field of N into fewer than N real
+    experiments, so the block surfaces ``distinct_ideas`` (distinct mutation-
+    id sets) and the mean / max pairwise overlap that a soft-reject policy
+    keys off.
+
+    Keys
+    ----
+    field_size:
+        Number of challengers considered.
+    distinct_ideas:
+        Number of distinct (non-empty) mutation-id sets; an empty set never
+        counts as an idea (it cannot collapse the field).
+    mean_overlap / max_overlap:
+        Mean and max pairwise Jaccard overlap across all challenger pairs
+        (``0.0`` for a field of fewer than two challengers).
+    max_overlap_pair:
+        The ``[gid_a, gid_b]`` of the most-overlapping pair (``None`` when
+        there is no pair).
+    tolerance:
+        The configured ``diversity_tolerance`` (``None`` ⇒ enforcement off).
+    soft_rejected_count:
+        How many challengers the enforcement soft-rejected this field.
+
+    This is a pure summarizer over the supplied sets; it neither queries nor
+    enforces. The orchestrator feeds it the accepted field for the live
+    envelope; the dashboard reader feeds it the persisted patch records.
+    """
+    field_size = len(mutation_sets)
+    distinct = {ids for _gid, ids in mutation_sets if ids}
+    mean_overlap = 0.0
+    max_overlap = 0.0
+    max_pair: list[str] | None = None
+    pair_overlaps: list[float] = []
+    for i in range(field_size):
+        for j in range(i + 1, field_size):
+            score = _jaccard(mutation_sets[i][1], mutation_sets[j][1])
+            pair_overlaps.append(score)
+            if score > max_overlap:
+                max_overlap = score
+                max_pair = [mutation_sets[i][0], mutation_sets[j][0]]
+    if pair_overlaps:
+        mean_overlap = sum(pair_overlaps) / len(pair_overlaps)
+    return {
+        "field_size": field_size,
+        "distinct_ideas": len(distinct),
+        "mean_overlap": round(mean_overlap, 6),
+        "max_overlap": round(max_overlap, 6),
+        "max_overlap_pair": max_pair,
+        "tolerance": tolerance,
+        "soft_rejected_count": int(soft_rejected_count),
+    }
+
+
 async def _evolve_multi_challenger(
     *,
     workspace_root: Path,
@@ -1517,7 +1567,17 @@ async def _evolve_multi_challenger(
         append_to_lineage,
         update_experiment_outcome,
     )
-    from zicato.selection import resolve_tournament  # noqa: PLC0415
+    from zicato.selection import EvidencePreGate, resolve_tournament  # noqa: PLC0415
+    from zicato.selection.dead_letter import (  # noqa: PLC0415
+        InconclusiveRecord,
+        record_inconclusive,
+    )
+    from zicato.selection.driver import EvidenceResolution  # noqa: PLC0415
+    from zicato.selection.evidence_gate import (  # noqa: PLC0415
+        rating_block,
+        read_promote_confidence_threshold,
+        read_replicate_budget,
+    )
     from zicato.selection.strategy import (  # noqa: PLC0415
         Contestant,
         Matchup,
@@ -1566,6 +1626,26 @@ async def _evolve_multi_challenger(
     # challenger whose proposer failed contributes no sibling.
     prior = tuple(_load_prior_experiments(workspace_root, epoch_id))
     siblings: list[PriorExperiment] = []
+    # Field-diversity constraint (FUNCTIONALITY-RECOMMENDATIONS.md §4.3): the
+    # signatures of the siblings already minted this round, so a later
+    # challenger that duplicates one (same modulating id-set + core idea) is
+    # soft-rejected instead of collapsing the field (EXPERIMENT-MEMORY.md
+    # §2.2). Localized to this loop; no change to the SelectionStrategy.
+    sibling_signatures: list[tuple[frozenset[str], str]] = []
+    # Opt-in field-diversity OVERLAP enforcement (FUNCTIONALITY-
+    # RECOMMENDATIONS.md §4.3): when ``config.diversity_tolerance`` is set, a
+    # challenger whose targeted-mutation-id set overlaps an already-ACCEPTED
+    # sibling's by a Jaccard ratio strictly greater than the tolerance is
+    # soft-rejected (it would collapse a field of N into fewer real
+    # experiments). ``accepted_mutation_sets`` tracks the mutation-id set of
+    # each kept challenger in mint order so the overlap is measured against
+    # exactly the slate that will actually run. ``None`` ⇒ enforcement OFF,
+    # and every field-status record below stays byte-identical to today (no
+    # ``diversity_status`` key is emitted). Enforcement composes with — and
+    # runs AFTER — the exact-duplicate soft-reject above.
+    diversity_tolerance = getattr(config, "diversity_tolerance", None)
+    accepted_mutation_sets: list[frozenset[str]] = []
+    diversity_soft_rejected = 0
     # The LIVE field-status map, keyed by generation_id, rewritten as each
     # challenger slot enters ("proposing"), retries, and settles
     # ("applied"/"rejected"). The orchestrator publishes a "proposing"-phase
@@ -1575,6 +1655,8 @@ async def _evolve_multi_challenger(
     # of what happens during proposal phase is opaque" pain.)
     live_status: dict[str, dict[str, Any]] = {}
     proposing_tournament_id = f"tourn_{epoch_id}_{base_id}"
+
+    from zicato.runtime.state import TournamentPhase  # noqa: PLC0415
 
     def _publish_proposing(record: dict[str, Any]) -> None:
         live_status[str(record.get("generation_id", ""))] = dict(record)
@@ -1590,7 +1672,7 @@ async def _evolve_multi_challenger(
             round_index=round_index,
             total_rounds=total_rounds,
             field_status=ordered,
-            phase="proposing",
+            phase=TournamentPhase.PROPOSING,
             entries=_field_entries(champion_only),
         )
 
@@ -1621,9 +1703,98 @@ async def _evolve_multi_challenger(
             failure_profile=failure_profile,
             on_status=_publish_proposing,
         )
+        if challenger is not None and _duplicates_inflight_sibling(
+            challenger.experiment, sibling_signatures
+        ):
+            # Field-diversity soft-reject: this challenger duplicates an
+            # already-minted sibling (same modulating id-set + core idea), so
+            # it would collapse the field. Drop it from the run slate and
+            # record a legible rejected field-status — the SelectionStrategy
+            # still resolves over the distinct challengers that remain.
+            hyp = challenger.experiment.hypothesis
+            dup_status = {
+                "generation_id": challenger.generation_id,
+                "status": "rejected",
+                "reason": "field_diversity_duplicate",
+                "attempts": int(status.get("attempts", 0)) if isinstance(status, dict) else 0,
+                "attempt_reasons": [
+                    "duplicates an in-flight sibling (same modulating ids + core idea); "
+                    "soft-rejected to keep the field diverse"
+                ],
+                "hypothesis": _trim_reason(hyp.core_idea),
+                "seed": offset + 2,
+            }
+            # The per-slot diversity status is only stamped when overlap
+            # enforcement is active, so the default-off path's duplicate record
+            # is byte-identical to today.
+            if diversity_tolerance is not None:
+                dup_status["diversity_status"] = "soft_rejected"
+                dup_status["diversity_tolerance"] = diversity_tolerance
+                diversity_soft_rejected += 1
+            field_status.append(dup_status)
+            _publish_proposing(dup_status)
+            log.info(
+                "multi-challenger field: %s/%s duplicates an in-flight sibling "
+                "(modulating=%s); soft-rejected for field diversity",
+                epoch_id,
+                challenger.generation_id,
+                tuple(hyp.modulating),
+            )
+            continue
+        # Opt-in overlap soft-reject: when a tolerance is configured, drop a
+        # challenger whose mutation-id set overlaps an accepted sibling beyond
+        # the ceiling. Skipped entirely (no key emitted) when tolerance is
+        # None, so the default path is byte-identical.
+        if challenger is not None and diversity_tolerance is not None:
+            cand_ids = frozenset(challenger.experiment.hypothesis.modulating)
+            overlap, peer_idx = _max_overlap_with_accepted(cand_ids, accepted_mutation_sets)
+            if cand_ids and overlap > diversity_tolerance:
+                hyp = challenger.experiment.hypothesis
+                peer_gid = applied[peer_idx].generation_id if 0 <= peer_idx < len(applied) else ""
+                overlap_status = {
+                    "generation_id": challenger.generation_id,
+                    "status": "rejected",
+                    "reason": "field_diversity_overlap",
+                    "diversity_status": "soft_rejected",
+                    "attempts": (int(status.get("attempts", 0)) if isinstance(status, dict) else 0),
+                    "attempt_reasons": [
+                        f"mutation-id overlap {overlap:.3f} with sibling "
+                        f"{peer_gid or '(accepted)'} exceeds diversity_tolerance "
+                        f"{diversity_tolerance:.3f}; soft-rejected to keep the field diverse"
+                    ],
+                    "hypothesis": _trim_reason(hyp.core_idea),
+                    "seed": offset + 2,
+                    "overlap": round(overlap, 6),
+                    "overlap_peer": peer_gid,
+                    "diversity_tolerance": diversity_tolerance,
+                }
+                field_status.append(overlap_status)
+                _publish_proposing(overlap_status)
+                diversity_soft_rejected += 1
+                log.info(
+                    "multi-challenger field: %s/%s overlaps sibling %s by %.3f "
+                    "(> tolerance %.3f); soft-rejected for field diversity",
+                    epoch_id,
+                    challenger.generation_id,
+                    peer_gid,
+                    overlap,
+                    diversity_tolerance,
+                )
+                continue
+        if challenger is not None and diversity_tolerance is not None and isinstance(status, dict):
+            # Enforcement active and the challenger is kept: stamp the slot
+            # ``applied`` so the per-slot diversity status is explicit. Only
+            # written when a tolerance is configured, so the default path's
+            # field-status records are untouched.
+            status = {
+                **status,
+                "diversity_status": "applied",
+                "diversity_tolerance": diversity_tolerance,
+            }
         field_status.append(status)
         if challenger is not None:
             applied.append(challenger)
+            accepted_mutation_sets.append(frozenset(challenger.experiment.hypothesis.modulating))
             hyp = challenger.experiment.hypothesis
             siblings.append(
                 PriorExperiment(
@@ -1637,6 +1808,17 @@ async def _evolve_multi_challenger(
                     same_contract=True,
                 )
             )
+            sibling_signatures.append(_diversity_signature(challenger.experiment))
+
+    if diversity_tolerance is not None and diversity_soft_rejected:
+        log.info(
+            "multi-challenger field: %s soft-rejected %d challenger(s) for "
+            "field-diversity overlap (tolerance %.3f); %d kept",
+            epoch_id,
+            diversity_soft_rejected,
+            diversity_tolerance,
+            len(applied),
+        )
 
     if not applied:
         # The whole field failed to apply — nothing to run. Record a
@@ -1656,7 +1838,7 @@ async def _evolve_multi_challenger(
             round_index=round_index,
             total_rounds=total_rounds,
             field_status=field_status,
-            phase="proposing",
+            phase=TournamentPhase.PROPOSING,
             entries=_field_entries(champion_only),
         )
         return EvolveRoundOutcome(
@@ -1710,6 +1892,17 @@ async def _evolve_multi_challenger(
     champion_cached_units = 0
     champion_fresh_units = 0
 
+    # --- Cross-matchup concurrency cap. A non-gauntlet structure schedules
+    # SEVERAL matchups of a round concurrently (the driver fans the batch out
+    # under one ``asyncio.gather``). Without a shared gate each matchup would
+    # mint its own ``Semaphore(parallelism)``, so N concurrent matchups could
+    # run ``N × parallelism`` board units at once — overshooting the operator's
+    # parallelism intent and the LLM endpoint's concurrency. One semaphore,
+    # created here per round and handed to every ``run_matchup``, makes the
+    # whole round draw from ONE global cap. Sized exactly as a single
+    # matchup's would be, so a round with one matchup is unchanged.
+    round_unit_semaphore = asyncio.Semaphore(max(1, int(config.parallelism)))
+
     # --- run_matchup: one duel via the board-unit runner + unchanged gate.
     async def _run_matchup(m: Matchup) -> MatchupResult:
         _beat(
@@ -1746,6 +1939,10 @@ async def _evolve_multi_challenger(
             # the run uncapped, byte-identical to today; a racing rung may pin
             # it to bound a full-board grind (see Matchup.matchup_budget_seconds).
             matchup_budget_seconds=m.matchup_budget_seconds,
+            # One shared semaphore across every matchup of this round, so all
+            # concurrently-scheduled matchups draw from ONE global concurrency
+            # cap rather than each minting its own ``Semaphore(parallelism)``.
+            unit_semaphore=round_unit_semaphore,
         )
         # Attribute the CHAMPION's cached-vs-fresh board-unit tally for
         # this matchup (if the champion played in it). ``nonlocal`` so the
@@ -1788,6 +1985,17 @@ async def _evolve_multi_challenger(
         field_status=field_status,
         entries=_field_entries(competitors_meta),
     )
+
+    # Progress transition: the field tournament started executing. One
+    # round-level append (NOT per matchup) so the liveness seq advances on
+    # genuine progress. Best-effort — never abort the round on a log write.
+    from zicato.runtime import progress_log  # noqa: PLC0415
+
+    with best_effort(
+        "progress-log field tournament-start",
+        on_error=lambda exc: log.debug("progress-log field tournament-start skipped: %s", exc),
+    ):
+        progress_log.append_progress(workspace_root, progress_log.TOURNAMENT_START)
 
     # OPEN the durable field-tournament envelope NOW, before the bracket
     # resolves (issue #16). The runtime ``active_tournament`` envelope above
@@ -1858,6 +2066,67 @@ async def _evolve_multi_challenger(
             entries=_field_entries(competitors_meta, live_standings),
         )
 
+    # --- Opt-in Bradley--Terry promotion pre-gate (crown on evidence). When
+    # ``promote_confidence_threshold`` is set in the structure params, the
+    # driver holds a crowning promote until the fitted rating clears the
+    # confidence bar AND the CIs separate, spending closest-CI replicates in
+    # between (the defer→replicate loop). Unset ⇒ ``pre_gate`` stays ``None``
+    # and the resolution is byte-identical to today.
+    pre_gate: EvidencePreGate | None = None
+    replicate_duel = None
+    on_inconclusive = None
+    bt_threshold = read_promote_confidence_threshold(tournament_spec.params)
+    if bt_threshold is not None:
+        pre_gate = EvidencePreGate(
+            threshold=bt_threshold,
+            replicate_budget=read_replicate_budget(tournament_spec.params),
+        )
+
+        async def _replicate_duel(left_id: str, right_id: str) -> MatchupResult:
+            # One extra crowning-pair duel for the pre-gate's evidence loop,
+            # routed through the SAME board-unit runner + gate every other duel
+            # uses (so a replicate is scored identically to the original duel).
+            return await _run_matchup(
+                Matchup(
+                    matchup_id=f"bt-replicate:{left_id}:{right_id}",
+                    left=Contestant(generation_id=left_id, role="champion"),
+                    right=Contestant(generation_id=right_id, role="challenger"),
+                )
+            )
+
+        replicate_duel = _replicate_duel
+
+        def _on_inconclusive(resolution: EvidenceResolution) -> None:
+            # Record the unresolved crowning duel to the dead-letter queue so
+            # nothing is silently dropped. Best-effort: a write failure must
+            # not abort the round.
+            verdict = resolution.verdict
+            challenger_id = (
+                verdict.challenger.generation_id
+                if verdict.challenger is not None
+                else first_challenger_id
+            )
+            champion_id = (
+                verdict.champion.generation_id if verdict.champion is not None else parent_id
+            )
+            with best_effort(
+                "dead-letter inconclusive record",
+                on_error=lambda exc: log.debug("dead-letter record skipped: %s", exc),
+            ):
+                record_inconclusive(
+                    workspace_root,
+                    InconclusiveRecord(
+                        generation_id=challenger_id,
+                        champion_id=champion_id,
+                        epoch_id=epoch_id,
+                        rating=rating_block(verdict),
+                        ci_history=resolution.ci_history,
+                        reason=verdict.reason,
+                    ),
+                )
+
+        on_inconclusive = _on_inconclusive
+
     # --- Drive the strategy to a crowned decision.
     try:
         decision = await resolve_tournament(
@@ -1865,6 +2134,9 @@ async def _evolve_multi_challenger(
             request_field=_request_field,
             run_matchup=_run_matchup,
             on_progress=_publish_live_structure,
+            pre_gate=pre_gate,
+            replicate_duel=replicate_duel,
+            on_inconclusive=on_inconclusive,
         )
     except Exception:
         # A failure mid-resolution leaves no settled bracket — clear the
@@ -1944,27 +2216,112 @@ async def _evolve_multi_challenger(
             promoted_id = None
             crowning_reason_override = crowning_outcome.reason
 
+    # --- Operator gate override (control protocol) for the FIELD ---------
+    # The structure has settled (train bracket + holdout confirmation) but
+    # nothing is persisted yet — the safe point at which an operator's
+    # force-promote / force-reject of ANY field candidate overrides the
+    # verdict. Unlike the gauntlet (one in-flight generation), a field round
+    # resolves a whole slate, so an override may target a non-winner, the
+    # crowned leader, or SEVERAL candidates (a tie / a multi-promote). Each
+    # matching command is claimed + archived; the result drives a
+    # ``promoted_ids`` SET (multi-promotion) whose default — no override — is
+    # the single crowned id, so the single-promotion path is byte-identical.
+    #
+    # ``promoted_ids`` is the multi-promotion set; ``promoted_id`` stays the
+    # PRIMARY head that advances ``current_generation`` (the crowned leader,
+    # or the lowest-scalar operator-promoted candidate when the leader was
+    # demoted). Every member of the set is marked promoted in lineage; only
+    # the primary head moves the champion pointer, keeping the single-head
+    # invariant the downstream guards rely on.
+    field_candidate_ids = [c.generation_id for c in applied]
+    field_overrides: dict[str, GateOverride] = claim_field_gate_overrides(
+        workspace_root, field_candidate_ids
+    )
+    promoted_ids: set[str] = {promoted_id} if promoted_id is not None else set()
+    override_provenance: dict[str, dict[str, Any]] = {}
+    if field_overrides:
+        for gid, ov in field_overrides.items():
+            override_provenance[gid] = _field_override_provenance(workspace_root, ov)
+            if ov.decision == "promoted":
+                promoted_ids.add(gid)
+                log.warning(
+                    "evolve: operator field override — generation %s force-promoted "
+                    "(structure %s); recording as an explicit override. reason=%s",
+                    gid,
+                    tournament_spec.structure,
+                    ov.reason,
+                )
+            else:  # "rejected"
+                promoted_ids.discard(gid)
+                log.warning(
+                    "evolve: operator field override — generation %s force-rejected "
+                    "(structure %s); recording as an explicit override. reason=%s",
+                    gid,
+                    tournament_spec.structure,
+                    ov.reason,
+                )
+        # Re-resolve the PRIMARY head after the overrides mutated the set.
+        # Prefer the originally-crowned leader if it survived; otherwise the
+        # lowest-scalar promoted candidate is the deterministic new head
+        # (mirrors the gate's lower-scalar-wins convention). The set is empty
+        # only when every leader was force-rejected ⇒ the champion stands.
+        if promoted_id is not None and promoted_id in promoted_ids:
+            pass  # leader survived — primary head unchanged
+        elif promoted_ids:
+            promoted_id = min(
+                promoted_ids,
+                key=lambda g: (
+                    float((_first_aggregate_for(g, decision) or {}).get("scalar", 0.0)),
+                    g,
+                ),
+            )
+        else:
+            promoted_id = None
+
     # The EFFECTIVE crowning verdict — what the workspace will actually
     # commit. The strategy's ``decision`` reflects the TRAIN-slice bracket
     # only; the holdout confirmation above can DEMOTE a train winner (sets
-    # ``promoted_id = None``). The durable bracket + the live envelope must
-    # describe the post-confirmation truth, NOT the pre-confirmation train
-    # decision — otherwise a settled bracket would assert ``promoted`` /
-    # ``promoted_generation_id`` for a generation the champion pointer +
-    # lineage never advance to (issue #20). A holdout flip rewrites the
-    # decision to ``rejected`` with the holdout cause and no promoted id, so
-    # every queryable store agrees the champion stood.
+    # ``promoted_id = None``), and an operator override can promote a
+    # non-winner or reject the leader. The durable bracket + the live envelope
+    # must describe the post-confirmation/post-override truth, NOT the
+    # pre-confirmation train decision — otherwise a settled bracket would
+    # assert ``promoted`` / ``promoted_generation_id`` for a generation the
+    # champion pointer + lineage never advance to (issue #20). A flip rewrites
+    # the decision to ``rejected`` with the cause and no promoted id, so every
+    # queryable store agrees the champion stood.
+    # When an operator override fired, the reason carries the override note so
+    # the settled bracket / journal one-liner is legible — never a silent flip.
+    override_decision_reason: str | None = None
+    if field_overrides:
+        head_ov = field_overrides.get(promoted_id) if promoted_id is not None else None
+        if head_ov is not None and head_ov.decision == "promoted":
+            override_decision_reason = f"operator override: {head_ov.reason}"
+        elif promoted_id is None:
+            # The leader was force-rejected and no candidate was promoted in
+            # its place — the champion stands under the operator's reject.
+            rej = next(
+                (o for o in field_overrides.values() if o.decision == "rejected"),
+                None,
+            )
+            if rej is not None:
+                override_decision_reason = f"operator override: {rej.reason}"
+
     effective_decision = decision
-    if promoted_id != decision.promoted_generation_id:
+    _decision_reason = (
+        override_decision_reason
+        if override_decision_reason is not None
+        else (crowning_reason_override if crowning_reason_override is not None else decision.reason)
+    )
+    if promoted_id != decision.promoted_generation_id or _decision_reason != decision.reason:
         effective_decision = replace(
             decision,
             promoted_generation_id=promoted_id,
-            decision="promoted" if promoted_id is not None else "rejected",
-            reason=(
-                crowning_reason_override
-                if crowning_reason_override is not None
-                else decision.reason
+            decision=(
+                TournamentDecision.PROMOTED
+                if promoted_id is not None
+                else TournamentDecision.REJECTED
             ),
+            reason=_decision_reason,
         )
 
     # Settle the live envelope with the resolved rounds + standings so the
@@ -2012,6 +2369,10 @@ async def _evolve_multi_challenger(
         field_status=field_status or [],
         decision=effective_decision,
         state="settled",
+        # Operator override readback (additive — omitted when no override
+        # fired, so a gate-decided field round's record is byte-identical).
+        override_status=override_provenance or None,
+        promoted_generation_ids=(sorted(promoted_ids) if len(promoted_ids) > 1 else None),
     )
 
     rank_by_id = {s.generation_id: s.rank for s in decision.standings}
@@ -2059,11 +2420,16 @@ async def _evolve_multi_challenger(
     child_scalar_crown = parent_scalar
     for challenger in applied:
         gid = challenger.generation_id
-        is_crowned = gid == promoted_id
+        # A generation is crowned if it is in the (possibly multi-element)
+        # promoted set. With no operator override the set is exactly
+        # ``{promoted_id}`` (or empty), so this is ``gid == promoted_id`` —
+        # byte-identical to the single-promotion path.
+        is_crowned = gid in promoted_ids
+        gid_override = field_overrides.get(gid)
         gen_decision = "promoted" if is_crowned else "rejected"
         agg = _first_aggregate_for(gid, decision)
         gen_scalar = float(agg.get("scalar", 0.0)) if agg else 0.0
-        if is_crowned:
+        if gid == promoted_id:
             child_scalar_crown = gen_scalar
         # The crowning challenger (the survivor that reached the final
         # champion-gate duel) carries the Ladder/holdout evidence block + the
@@ -2095,6 +2461,14 @@ async def _evolve_multi_challenger(
             rejection_reason = "" if is_crowned else decision.reason
             holdout_block = None
             gen_fields = _generalization_fields_from_scalars(gen_scalar, None)
+        # An operator override on THIS generation makes its verdict explicit
+        # (the reject reason carries the override note; a forced promote clears
+        # it). Only stamped when an override fired, so a no-override field round
+        # records each generation's OutcomeRecord byte-identically.
+        operator_override = gid_override is not None
+        operator_override_reason = gid_override.reason if gid_override is not None else ""
+        if gid_override is not None:
+            rejection_reason = f"operator override: {gid_override.reason}" if not is_crowned else ""
         outcome_record = OutcomeRecord(
             ran_at=_now_iso(),
             drift_movements=(),
@@ -2103,6 +2477,8 @@ async def _evolve_multi_challenger(
             scalar_score_delta=gen_scalar - parent_scalar,
             tournament_decision=gen_decision,  # type: ignore[arg-type]
             rejection_reason=rejection_reason,
+            operator_override=operator_override,
+            operator_override_reason=operator_override_reason,
             structure=tournament_spec.structure,
             final_rank=rank_by_id.get(gid),
             match_record=tuple(matches_by_gen.get(gid, ())),
@@ -2141,12 +2517,15 @@ async def _evolve_multi_challenger(
             "refusing to advance the champion to a generation with no snapshot"
         )
 
-    # --- Lineage: the crowned generation on the spine (promoted), every
-    # other challenger recorded as a dead branch (rejected child of the
-    # champion). current_generation advances only on a promotion.
+    # --- Lineage: every PROMOTED generation on the spine (promoted=True),
+    # every other challenger recorded as a dead branch (rejected child of the
+    # champion). With no operator override the promoted set is the single
+    # crowned id (or empty), so this is byte-identical to single-promotion;
+    # an operator multi-promote marks each advanced candidate promoted while
+    # current_generation still advances only to the PRIMARY head below.
     for challenger in applied:
         gid = challenger.generation_id
-        is_crowned = gid == promoted_id
+        is_crowned = gid in promoted_ids
         gen_record = Generation(
             id=gid,
             epoch_id=epoch_id,
@@ -2184,7 +2563,10 @@ async def _evolve_multi_challenger(
     if health_critical:
         _warn_loop_no_signal(epoch_id, round_n, health_summary)
 
-    try:
+    with best_effort(
+        "decision telemetry analyzer",
+        on_error=lambda exc: log.debug("decision telemetry analyzer skipped: %s", exc),
+    ):
         from zicato.analyzer import analyze_epoch_telemetry  # noqa: PLC0415
 
         await analyze_epoch_telemetry(
@@ -2196,14 +2578,24 @@ async def _evolve_multi_challenger(
             mutation_ids=[m.id for m in mutations],
             meta_loop_emitter=meta_loop_emitter,
         )
-    except Exception as exc:  # noqa: BLE001 — analyser is best-effort
-        log.debug("decision telemetry analyzer skipped: %s", exc)
 
     await _regenerate_epoch_report(workspace_root, epoch_id, auxiliary_call_llm, auxiliary_model)
 
     bookkeeping_decision = "promoted" if promoted_id is not None else "rejected"
+    # Progress transition: the field tournament settled — record the
+    # crowning (TOURNAMENT_SETTLE) then the terminal verdict so the
+    # liveness seq lands on a PROMOTE/REJECT at the round's true end.
+    with best_effort(
+        "progress-log field tournament-settle",
+        on_error=lambda exc: log.debug("progress-log field tournament-settle skipped: %s", exc),
+    ):
+        progress_log.append_progress(workspace_root, progress_log.TOURNAMENT_SETTLE)
     _beat(
         beater,
+        workspace_root=workspace_root,
+        progress=(
+            progress_log.PROMOTE if bookkeeping_decision == "promoted" else progress_log.REJECT
+        ),
         epoch_id=epoch_id,
         generation_id=promoted_id or applied[0].generation_id,
         round_index=round_index,
@@ -2258,6 +2650,27 @@ async def _evolve_multi_challenger(
     )
 
 
+def _field_override_provenance(workspace_root: Path, override: GateOverride) -> dict[str, Any]:
+    """Build a per-generation override-status readback record.
+
+    Surfaced on the durable field-tournament record so the dashboard's
+    structure reader can render WHICH candidate an operator force-promoted /
+    force-rejected, why, and when — the override is never silent. Shape:
+    ``{action, ts, reason, state}`` where ``action`` is ``"promote"`` /
+    ``"reject"``, ``state`` is ``"applied"`` (the override fired this round),
+    and ``ts`` is the consume time. ``workspace_root`` is accepted so a future
+    revision can fold in the consumed control-log sidecar without changing the
+    callers.
+    """
+    del workspace_root  # reserved for a future control-log cross-reference
+    return {
+        "action": "promote" if override.decision == "promoted" else "reject",
+        "ts": _now_iso(),
+        "reason": override.reason,
+        "state": "applied",
+    }
+
+
 def _resolve_round_champion_mode(
     champion_cached_units: int,
     champion_fresh_units: int,
@@ -2308,603 +2721,9 @@ def _first_aggregate_for(gid: str, decision: Any) -> dict[str, Any] | None:
     return None
 
 
-def _publish_active_tournament(
-    workspace_root: Path,
-    *,
-    tournament_id: str,
-    epoch_id: str,
-    structure: str,
-    structure_params: dict[str, Any],
-    competitors: list[dict[str, Any]],
-    round_index: int,
-    total_rounds: int,
-    field_status: list[dict[str, Any]] | None = None,
-    phase: str = "running",
-    rounds: list[dict[str, Any]] | None = None,
-    standings: list[dict[str, Any]] | None = None,
-    entries: list[Any] | None = None,
-) -> None:
-    """Best-effort: publish the live ActiveTournament envelope.
-
-    Populates the structure envelope (``structure`` / ``structure_params``
-    / ``competitors``) per the data-model doc so the dashboard can render
-    a non-gauntlet field while it runs. ``parent_generation_id`` /
-    ``child_generation_id`` are left empty for non-gauntlet structures
-    (the data model's documented convention); ``competitors`` is the
-    authoritative field.
-
-    ``rounds`` / ``standings`` carry the live (in-flight) structure when
-    supplied — the settled rounds PLUS the current scheduled round (its
-    matches with ``winner: null`` + ``pending: true``) and the
-    standings-so-far, both serialised through the SAME
-    :func:`_serialise_rounds` / :func:`_serialise_standings` path the
-    settle + durable-record producers use, so the dashboard's
-    bracket/ladder/funnel renderers work identically live and post-run.
-    Omitting them (e.g. the all-rejected publish, which has no field to
-    seed) leaves the envelope's ``rounds`` / ``standings`` empty.
-
-    ``entries`` is the per-entry funnel field
-    (:class:`~zicato.runtime.state.ActiveTournamentEntry`). The gauntlet
-    A/B path seeds it directly; the multi-challenger / racing path builds
-    it via :func:`_field_entries` so the dashboard's per-entry funnel rung
-    is non-empty live, not just after the run settles. When omitted (e.g.
-    the all-rejected publish) it falls back to an empty list, matching the
-    pre-existing behaviour.
-
-    Never raises — a live-state write failure must not abort the round.
-    """
-    try:
-        from zicato.runtime.state import (  # noqa: PLC0415
-            ActiveTournament,
-            read_active_tournament,
-            write_active_tournament,
-        )
-
-        # PRESERVE the runner-written live fields across a republish. The
-        # runner rewrites ``projected`` / ``partial_*_agg`` per settled board
-        # via its OWN read-modify-write; this full envelope republish (one per
-        # scheduled batch) would otherwise clobber them back to empty, killing
-        # the live projected standing. Carry them forward from the on-disk
-        # record so the two writers compose instead of racing to zero.
-        prior = read_active_tournament(workspace_root)
-        projected = dict(prior.projected) if prior is not None else {}
-        partial_champion = dict(prior.partial_champion_agg) if prior is not None else {}
-        partial_challenger = dict(prior.partial_challenger_agg) if prior is not None else {}
-
-        write_active_tournament(
-            workspace_root,
-            ActiveTournament(
-                tournament_id=tournament_id,
-                parent_generation_id="",
-                child_generation_id="",
-                epoch_id=epoch_id,
-                started_at=_now_iso(),
-                phase=phase,
-                round_index=round_index,
-                total_rounds=total_rounds,
-                structure=structure,
-                structure_params=dict(structure_params),
-                competitors=[dict(c) for c in competitors],
-                field_status=[dict(f) for f in (field_status or [])],
-                rounds=[dict(r) for r in (rounds or [])],
-                standings=[dict(s) for s in (standings or [])],
-                entries=list(entries or []),
-                projected=projected,
-                partial_champion_agg=partial_champion,
-                partial_challenger_agg=partial_challenger,
-            ),
-        )
-    except Exception as exc:  # noqa: BLE001 — live state is best-effort
-        log.debug("active-tournament publish skipped: %s", exc)
-
-
-def _field_entries(
-    competitors: list[dict[str, Any]],
-    standings: list[dict[str, Any]] | None = None,
-) -> list[Any]:
-    """Build the per-competitor funnel ``entries`` for a non-gauntlet field.
-
-    The gauntlet A/B path seeds :attr:`ActiveTournament.entries` with one
-    :class:`~zicato.runtime.state.ActiveTournamentEntry` per board entry
-    per side; the dashboard funnel groups by ``side`` to draw rungs. The
-    racing / multi-challenger live-publish path historically left
-    ``entries`` empty, so the live funnel could not render the per-entry
-    rung field for a field tournament until the run settled. This helper
-    closes that gap by emitting one row per competitor, mirroring the A/B
-    shape: ``side`` carries the competitor's role (``champion`` /
-    ``challenger``) — the data-model §2.3 convention for non-gauntlet
-    structures — and ``entry_id`` carries its generation id.
-
-    When live ``standings`` are supplied each row's ``status`` and
-    ``loss_summary`` are derived from the matching standing (status maps
-    alive/competing → ``running``, eliminated/champion → ``completed``; the
-    Copeland ``scalar`` rides in ``loss_summary`` so the funnel can colour
-    a rung by relative loss). Absent standings (the pre-schedule publish)
-    every row is ``queued`` with an empty loss summary.
-    """
-    from zicato.runtime.state import ActiveTournamentEntry  # noqa: PLC0415
-
-    by_gen: dict[str, dict[str, Any]] = {}
-    for s in standings or []:
-        gid = str(s.get("generation_id", ""))
-        if gid:
-            by_gen[gid] = s
-
-    entries: list[Any] = []
-    for c in competitors:
-        gid = str(c.get("generation_id", ""))
-        role = str(c.get("role", "") or "")
-        standing = by_gen.get(gid)
-        if standing is None:
-            status = "queued"
-            loss_summary: dict[str, float] = {}
-        else:
-            raw_status = str(standing.get("status", "") or "")
-            status = "completed" if raw_status in ("eliminated", "champion") else "running"
-            scalar = standing.get("scalar")
-            loss_summary = {"scalar": float(scalar)} if isinstance(scalar, int | float) else {}
-            # An IN-FLIGHT competitor carries a live PROJECTED scalar (the
-            # runner's running aggregate over boards-so-far). Surface it +
-            # the boards progress on the funnel entry so the rung can render
-            # the "projected" treatment (dashed, ~prefix, scored sub-bar)
-            # before a settled scalar lands.
-            if standing.get("in_flight"):
-                proj = standing.get("projected_scalar")
-                if isinstance(proj, int | float):
-                    loss_summary["projected_scalar"] = float(proj)
-                loss_summary["in_flight"] = 1.0
-                bd = standing.get("boards_done")
-                bt = standing.get("boards_total")
-                if isinstance(bd, int | float):
-                    loss_summary["boards_done"] = float(bd)
-                if isinstance(bt, int | float):
-                    loss_summary["boards_total"] = float(bt)
-        entries.append(
-            ActiveTournamentEntry(
-                entry_id=gid,
-                # Non-gauntlet structures carry the competitor role as the
-                # ``side`` key (data-model §2.3); the funnel groups on it.
-                side=role or gid,
-                status=status,
-                loss_summary=loss_summary,
-            )
-        )
-    return entries
-
-
-def _serialise_rounds(rounds: Any) -> list[dict[str, Any]]:
-    """Project a sequence of :class:`RoundRecord` to the dashboard shape.
-
-    The single canonical serialisation of the round-by-round pairings
-    (data-model §2.4), shared by ALL THREE producers so they carry
-    byte-identical shapes and the dashboard renderers work identically:
-
-    * the LIVE ``active_tournament`` envelope (``strategy.live_rounds()``
-      — settled rounds plus the in-flight round whose matches carry
-      ``winner: null`` + ``pending: true``);
-    * the SETTLED envelope at run end (``strategy.rounds()``);
-    * the DURABLE field-tournament snapshot (``strategy.rounds()``).
-
-    ``winner`` is emitted as ``None`` (the contract's ``winner: null``)
-    for a match that has not crowned a side — every ``pending`` match, and
-    any settled match the strategy left with an empty ``winner`` (a racing
-    rung, which cuts rather than crowns).
-    """
-    return [
-        {
-            "stage_index": r.stage_index,
-            "label": r.label,
-            "matches": [
-                {
-                    "match_id": m.match_id,
-                    "competitors": list(m.competitors),
-                    "winner": (m.winner or None),
-                    "decision": m.decision,
-                    "delta_scalar": m.delta_scalar,
-                    "bracket_slot": m.bracket_slot,
-                    "bye": m.bye,
-                    "survivors": list(m.survivors),
-                    "cut": list(m.cut),
-                    "board_fraction": m.board_fraction,
-                    "pending": m.pending,
-                    "live_progress": {
-                        str(gid): dict(lane) for gid, lane in (m.live_progress or {}).items()
-                    },
-                }
-                for m in r.matches
-            ],
-        }
-        for r in rounds
-    ]
-
-
-def _overlay_projected_live_progress(
-    rounds: list[dict[str, Any]],
-    workspace_root: Path,
-) -> None:
-    """Fold the runner's per-board ``projected`` into the rung ``live_progress``.
-
-    The racing strategy publishes the in-flight rung's per-lane
-    ``live_progress`` TOPOLOGY (which lanes are racing, each lane's
-    ``boards_total`` = the rung's board-slice size, the ``inflight`` flag,
-    and the lane's last-known running scalar vs the champion). The runner's
-    :class:`_IncrementalScorer` writes the live per-board ``projected`` map
-    (``{generation_id: {scalar, boards_done, boards_total, pass_rate}}``)
-    onto :attr:`ActiveTournament.projected` as each board unit settles. This
-    overlays the latter onto the former IN PLACE so each rung lane carries
-    one authoritative progress row the dashboard consumes directly:
-
-    * ``boards_done`` — from the runner's projected row (the strategy can't
-      know mid-duel board progress).
-    * ``projected_scalar`` / ``projected`` — refreshed from the runner's
-      LIVE running aggregate when present (more current than the strategy's
-      last-rung scalar). The strategy's seeded scalar (a prior rung's
-      result) stays as the fallback when no live projected row exists yet.
-    * ``boards_total`` — kept from the strategy's authoritative rung-slice
-      size; only filled from the projected row when the strategy left it
-      unknown (whole-board fallback construction).
-
-    The separation of concerns is preserved: the STRATEGY owns the
-    ``live_progress`` topology (it is written into the serialised rounds),
-    the SCORER owns the ``projected`` scalars (read here from the on-disk
-    state). Best-effort — a missing / unreadable projected map leaves the
-    strategy-published ``live_progress`` untouched. Mutates ``rounds`` in
-    place; a no-op for any round whose matches carry no ``live_progress``
-    (every non-racing structure, and a racing rung before it is scheduled).
-    """
-    has_progress = any(m.get("live_progress") for r in rounds for m in (r.get("matches") or []))
-    if not has_progress:
-        return
-    try:
-        from zicato.runtime.state import read_active_tournament  # noqa: PLC0415
-
-        active = read_active_tournament(workspace_root)
-    except Exception:  # noqa: BLE001 — overlay is best-effort
-        active = None
-    projected = dict(active.projected) if active is not None else {}
-    if not projected:
-        return
-    for r in rounds:
-        for m in r.get("matches") or []:
-            lanes = m.get("live_progress")
-            if not lanes:
-                continue
-            for gid, lane in lanes.items():
-                proj = projected.get(str(gid))
-                if not isinstance(proj, dict):
-                    continue
-                if "boards_done" in proj:
-                    lane["boards_done"] = int(proj["boards_done"])
-                if "boards_total" in proj and "boards_total" not in lane:
-                    lane["boards_total"] = int(proj["boards_total"])
-                if "scalar" in proj:
-                    lane["projected_scalar"] = float(proj["scalar"])
-                    lane["projected"] = True
-
-
-def _serialise_standings(standings: Any) -> list[dict[str, Any]]:
-    """Project a sequence of :class:`Standing` to the dashboard shape.
-
-    The single canonical serialisation of the Copeland standings
-    (data-model §2.5), shared by the live envelope
-    (``strategy.live_standings()``), the settled envelope, and the durable
-    field-tournament snapshot (both ``decision.standings``). The live
-    ``status`` is emitted raw (alive / eliminated / champion / competing);
-    the dashboard maps display labels.
-    """
-    return [
-        {
-            "generation_id": s.generation_id,
-            "rank": s.rank,
-            "scalar": s.scalar,
-            "wins": s.wins,
-            "losses": s.losses,
-            "status": s.status,
-            "role": s.role,
-        }
-        for s in standings
-    ]
-
-
-def _overlay_projected_standings(
-    standings: list[dict[str, Any]],
-    rounds: list[dict[str, Any]],
-    workspace_root: Path,
-    structure: str,
-) -> list[dict[str, Any]]:
-    """Fold the runner's live PROJECTED standing onto the standings rows.
-
-    Reads :attr:`ActiveTournament.projected` (the runner's per-board
-    ``{generation_id: {scalar, boards_done, boards_total, pass_rate}}`` map)
-    and overlays it onto the matching standing rows for the competitors that
-    are IN FLIGHT — i.e. those appearing in a still-pending match of the
-    current live round. Each touched row gains ``projected_scalar``,
-    ``in_flight=True``, ``boards_done`` and ``boards_total``; settled rows
-    are left untouched (no ``in_flight`` key, original scalar).
-
-    Per-structure ranking rule (substitute the projected scalar into the
-    EXISTING sort key for the in-flight competitor ONLY):
-
-    * ``single_elim`` / ``double_elim`` / ``racing`` — scalar rank. The
-      projected scalar replaces the row's (still-zero) scalar in the sort
-      key, so an in-flight leader bubbles up live; settled rows keep their
-      real scalar.
-    * ``swiss`` — Copeland points are NEVER projected (a half-finished duel
-      has no win). The points-based rank is preserved exactly; the projected
-      scalar only nudges the MEAN-SCALAR TIEBREAK among rows on equal points,
-      and the pairing is marked in-flight visually. Never re-ranks on points.
-    * ``gauntlet`` — not routed here (no multi-competitor standings).
-
-    Best-effort: a missing / unreadable projected map yields the input
-    standings unchanged.
-    """
-    if not standings:
-        return standings
-    try:
-        from zicato.runtime.state import read_active_tournament  # noqa: PLC0415
-
-        active = read_active_tournament(workspace_root)
-    except Exception:  # noqa: BLE001 — overlay is best-effort
-        active = None
-    projected = dict(active.projected) if active is not None else {}
-    if not projected:
-        return standings
-
-    # The IN-FLIGHT competitor set: every generation in a pending (unresolved)
-    # match of the live rounds. A row is only projected when its competitor is
-    # actually running right now — a stale projected row for a competitor whose
-    # match already settled must not override its real scalar.
-    in_flight: set[str] = set()
-    for r in rounds:
-        for m in r.get("matches", []) or []:
-            if not m.get("pending"):
-                continue
-            for g in m.get("competitors", []) or []:
-                if g:
-                    in_flight.add(str(g))
-
-    out: list[dict[str, Any]] = []
-    for s in standings:
-        row = dict(s)
-        gid = str(row.get("generation_id", ""))
-        proj = projected.get(gid)
-        if gid and gid in in_flight and isinstance(proj, dict) and "scalar" in proj:
-            row["in_flight"] = True
-            row["projected_scalar"] = float(proj["scalar"])
-            if "boards_done" in proj:
-                row["boards_done"] = int(proj["boards_done"])
-            if "boards_total" in proj:
-                row["boards_total"] = int(proj["boards_total"])
-        out.append(row)
-
-    def _scalar_key(row: dict[str, Any]) -> float:
-        # In-flight rows sort on the projected scalar (lower is better);
-        # settled rows keep their real scalar.
-        if row.get("in_flight") and isinstance(row.get("projected_scalar"), int | float):
-            return float(row["projected_scalar"])
-        sc = row.get("scalar")
-        return float(sc) if isinstance(sc, int | float) else float("inf")
-
-    if structure in ("single_elim", "double_elim", "racing"):
-        out.sort(key=_scalar_key)
-        for i, row in enumerate(out, start=1):
-            row["rank"] = i
-    elif structure == "swiss":
-        # Points-rank is authoritative; the projected scalar only breaks ties
-        # among rows on EQUAL wins (the mean-scalar tiebreak). Never re-rank on
-        # points — a half-finished duel has crowned no winner.
-        def _swiss_key(row: dict[str, Any]) -> tuple[int, float]:
-            wins = row.get("wins")
-            w = int(wins) if isinstance(wins, int) else 0
-            return (-w, _scalar_key(row))
-
-        out.sort(key=_swiss_key)
-        for i, row in enumerate(out, start=1):
-            row["rank"] = i
-    # Any other structure: overlay the markers but leave the published order.
-    return out
-
-
-def _persist_field_tournament(
-    workspace_root: Path,
-    *,
-    field_tournament_id: str,
-    first_challenger_id: str,
-    epoch_id: str,
-    structure: str,
-    structure_params: dict[str, Any],
-    competitors: list[dict[str, Any]],
-    rounds: list[dict[str, Any]],
-    standings: list[dict[str, Any]],
-    field_status: list[dict[str, Any]],
-    decision: Any,
-    state: str = "settled",
-) -> None:
-    """Best-effort: durably persist a FIELD-level structure record.
-
-    Writes the round's field record — round pairings, Copeland
-    standings, competitors, proposing field-status, the crowning verdict —
-    to its durable ``tournaments/field-*.json`` snapshot AND dual-writes it
-    into the analytical index as ONE field-level ``tournaments`` row. The
-    snapshot is the canonical source (so ``zicato reindex`` re-derives the
-    row); the dual-write puts the swiss / elim ladder in the index.
-
-    ``state`` carries the explicit ``in_progress`` → ``settled`` lifecycle
-    (issue #16): the orchestrator OPENS the envelope at round start
-    (``state="in_progress"``, ``decision=None``, empty rounds/standings —
-    just the competitor field + proposing status so the round is visible to
-    every queryable store mid-flight) and FINALISES it at settle
-    (``state="settled"`` with the resolved bracket + crowning verdict). The
-    record is keyed on the field-level ``tournament_id`` so the settle write
-    upserts the same row the open write created — idempotent, crash-safe,
-    and safe to re-open on resume (the in_progress record is simply
-    overwritten by the next open or the settle).
-
-    A no-op for a degenerate two-competitor (gauntlet) field — the
-    per-challenger row already covers it. Never raises: a durable-state
-    write failure must not abort the round.
-    """
-    if len(competitors) < 3:
-        return
-    crowning_delta: float | None = None
-    for r in reversed(rounds):
-        matches = r.get("matches") or []
-        if matches:
-            crowning_delta = matches[-1].get("delta_scalar")
-            break
-    champion_id = next(
-        (c.get("generation_id") for c in competitors if str(c.get("role", "")) == "champion"),
-        "",
-    )
-    # ``decision`` is None while the round is still in flight (the envelope
-    # is opened before the bracket resolves); the crowning fields stay empty
-    # until settle. getattr tolerates the None case alongside the settled
-    # TournamentDecision so the open + settle writes share one code path.
-    record: dict[str, Any] = {
-        "tournament_id": field_tournament_id,
-        "epoch_id": epoch_id,
-        "structure": structure,
-        "structure_params": dict(structure_params),
-        "competitors": [dict(c) for c in competitors],
-        "rounds": rounds,
-        "standings": standings,
-        "field_status": [dict(f) for f in field_status],
-        "promoted_generation_id": getattr(decision, "promoted_generation_id", "") or "",
-        "champion_generation_id": champion_id or "",
-        "decision": getattr(decision, "decision", "") or "",
-        "reason": getattr(decision, "reason", "") or "",
-        "delta_scalar": crowning_delta,
-        "state": state,
-        "ran_at": _now_iso(),
-    }
-    try:
-        from zicato.core.workspace import field_tournament_path  # noqa: PLC0415
-
-        path = field_tournament_path(workspace_root, epoch_id, first_challenger_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(record, indent=2), encoding="utf-8")
-    except Exception as exc:  # noqa: BLE001 — durable snapshot is best-effort
-        log.debug("field-tournament snapshot skipped: %s", exc)
-        return
-    try:
-        from zicato.index.ingest import ingest_field_tournament  # noqa: PLC0415
-
-        ingest_field_tournament(workspace_root, _index_db_path(workspace_root), record)
-    except ImportError:
-        log.debug("zicato.index.ingest unavailable; skipping field-tournament dual-write")
-    except Exception as exc:  # noqa: BLE001 — index write is best-effort
-        log.debug("field-tournament index dual-write skipped: %s", exc)
-
-
-def _settle_active_tournament(
-    workspace_root: Path,
-    *,
-    tournament_id: str,
-    epoch_id: str,
-    structure: str,
-    structure_params: dict[str, Any],
-    competitors: list[dict[str, Any]],
-    strategy: Any,
-    decision: Any,
-    round_index: int,
-    total_rounds: int,
-    field_status: list[dict[str, Any]] | None = None,
-) -> None:
-    """Best-effort: rewrite the live envelope with the settled bracket.
-
-    Serializes the strategy's ``rounds()`` (data-model §2.4) and the
-    decision's ``standings`` (§2.5) so the dashboard's structure reader
-    sees the final bracket / leaderboard. Never raises.
-    """
-    try:
-        from zicato.runtime.state import (  # noqa: PLC0415
-            ActiveTournament,
-            write_active_tournament,
-        )
-
-        rounds = _serialise_rounds(strategy.rounds())
-        standings = _serialise_standings(decision.standings)
-        write_active_tournament(
-            workspace_root,
-            ActiveTournament(
-                tournament_id=tournament_id,
-                parent_generation_id="",
-                child_generation_id=decision.promoted_generation_id or "",
-                epoch_id=epoch_id,
-                started_at=_now_iso(),
-                phase="completed",
-                round_index=round_index,
-                total_rounds=total_rounds,
-                structure=structure,
-                structure_params=dict(structure_params),
-                competitors=[dict(c) for c in competitors],
-                rounds=rounds,
-                standings=standings,
-                field_status=[dict(f) for f in (field_status or [])],
-                # Seed the per-competitor funnel field from the SETTLED
-                # standings so the retained completed envelope (the
-                # dashboard's only live source for a non-gauntlet field
-                # until the next round) carries the per-entry rung, not an
-                # empty list. Mirrors the live-publish path.
-                entries=_field_entries(competitors, standings),
-            ),
-        )
-    except Exception as exc:  # noqa: BLE001 — live state is best-effort
-        log.debug("active-tournament settle skipped: %s", exc)
-
-
-def _clear_active_tournament(workspace_root: Path) -> None:
-    """Best-effort: clear the live ActiveTournament record. Never raises."""
-    try:
-        from zicato.runtime.state import clear_active_tournament  # noqa: PLC0415
-
-        clear_active_tournament(workspace_root)
-    except Exception as exc:  # noqa: BLE001 — live state is best-effort
-        log.debug("active-tournament clear skipped: %s", exc)
-
-
-def _mark_run_terminal(workspace_root: Path) -> None:
-    """Best-effort: mark a cleanly-ended run terminal so it never reads LIVE.
-
-    A normally-ended evolve loop already stamps a terminal heartbeat phase
-    (``evolve_n_rounds:done``), which the dashboard treats as idle. But the
-    runtime ``active_tournament.json`` envelope can linger with
-    ``phase="running"`` (e.g. a mid-resolution structure whose settle write
-    never ran) — and a frontend reading the heartbeat as fresh would then
-    show a "LIVE" tournament on a closed epoch. As a defensive measure on
-    clean shutdown we flip any lingering ``phase="running"`` envelope to a
-    terminal ``"stopped"`` phase, so a normally-ended run does not read as
-    live even before the heartbeat freshness window elapses. A SIGKILLed run
-    cannot self-clean — that case is covered by the frontend freshness gate.
-    Never raises: a teardown-time live-state write failure must not mask the
-    real shutdown reason.
-    """
-    try:
-        from zicato.runtime.state import (  # noqa: PLC0415
-            read_active_tournament,
-            write_active_tournament,
-        )
-
-        current = read_active_tournament(workspace_root)
-        if current is None:
-            return
-        if str(current.phase).strip().lower() == "running":
-            write_active_tournament(workspace_root, replace(current, phase="stopped"))
-    except Exception as exc:  # noqa: BLE001 — terminal-state write is best-effort
-        log.debug("terminal active-tournament mark skipped: %s", exc)
-
-
 # ---------------------------------------------------------------------------
-# evolve_n_rounds
+# Round-decision + outcome helpers shared by the evolve pipelines
 # ---------------------------------------------------------------------------
-
-
-#: Default threshold for the loop-health circuit breaker: this many
-#: consecutive rounds with a CRITICAL loop-health finding stops the
-#: evolve loop early. Two is deliberately tight — one CRITICAL round
-#: could be a transient (e.g. a single degenerate tournament), but two
-#: in a row means the loop is genuinely producing no signal.
-_DEGENERATE_HEALTH_STOP_THRESHOLD = 2
 
 
 def _gauntlet_decision_from_result(
@@ -3007,349 +2826,27 @@ def _rejected_proposer_experiment(
     )
 
 
-def _budget_aborted_outcome(parent_generation_id: str, budget_s: int) -> EvolveRoundOutcome:
-    """Build the synthetic outcome for a round cut short by the total budget.
+def _skipped_round_outcome(parent_generation_id: str, reason: str) -> EvolveRoundOutcome:
+    """Build the synthetic outcome for a round cut short by ``skip_round``.
 
-    Used when a single round's work is cancelled by
-    :func:`asyncio.wait_for` because finishing it would push the whole
-    ``evolve_n_rounds`` invocation past ``max_wall_clock_seconds``. The
-    round never produced a real tournament decision, so we fabricate a
-    rejection-style outcome whose ``rejection_reason`` is the symbolic
-    ``"wall_clock_budget"`` string — the same token the per-entry
-    budget uses for its aborts — so journal readers and the CLI can
-    recognise it.
+    Used when an operator queues the control protocol's ``skip_round`` flag
+    (RUNTIME-V2.md Phase 2). The round never proposed or ran a tournament,
+    so — exactly like :func:`_budget_aborted_outcome` — we fabricate a
+    rejection-style outcome. The ``rejection_reason`` is the symbolic
+    ``"skip_round"`` token (plus the operator's reason when given) so journal
+    readers and the CLI recognise an operator skip distinctly from a budget
+    cut or a real gate rejection.
     """
+    suffix = f": {reason}" if reason else ""
     return EvolveRoundOutcome(
         parent_generation_id=parent_generation_id,
         proposed_generation_id="",
         tournament_decision="rejected",
-        rejection_reason=f"wall_clock_budget: evolve total budget of {budget_s}s exceeded",
+        rejection_reason=f"skip_round: operator skipped the round{suffix}",
         parent_scalar=0.0,
         child_scalar=0.0,
         delta_scalar=0.0,
     )
-
-
-async def evolve_n_rounds(
-    *,
-    rounds: int,
-    workspace_root: Path,
-    epoch_id: str | None = None,
-    harness_call_llm: CallLLM,
-    auxiliary_call_llm: CallLLM,
-    instance_id: str = "default",
-    fast_mode: bool = False,
-    max_consecutive_rejections: int = 3,
-    max_proposer_retries: int = 2,
-    auto_epoch: bool = True,
-    epoch_name: str | None = None,
-    stop_on_degenerate_health: bool = True,
-    max_wall_clock_seconds: int | None = None,
-    stop_reason_out: list[str] | None = None,
-) -> list[EvolveRoundOutcome]:
-    """Loop :func:`evolve_once` up to ``rounds`` times.
-
-    Stops early on ``max_consecutive_rejections`` rejected rounds in a
-    row — that's a strong signal the proposer is stuck and the
-    operator probably wants to inspect the proposer brief / patterns
-    before spending more LLM calls. A successful promotion resets the
-    consecutive-rejection counter.
-
-    A second circuit breaker watches loop *health*: when
-    ``stop_on_degenerate_health`` is true (the default), the loop stops
-    early once :data:`_DEGENERATE_HEALTH_STOP_THRESHOLD` consecutive
-    rounds report a CRITICAL loop-health finding (e.g. degenerate
-    scoring — the tournament can no longer tell a real improvement from
-    noise). Same spirit as the consecutive-rejection breaker: there is
-    no point spending more LLM calls on a loop that is producing no
-    usable signal. A round whose health is not CRITICAL resets the
-    counter. Pass ``stop_on_degenerate_health=False`` to opt out and run
-    every requested round regardless of health.
-
-    A third early-exit is the **total wall-clock budget**: when
-    ``max_wall_clock_seconds`` is set (``None``, the default, leaves the
-    loop unbounded — the historical behaviour), the orchestrator records
-    a monotonic start time and enforces the ceiling two ways:
-
-    * **Between rounds** — before starting round N+1, if the elapsed
-      time has already reached the budget, the loop stops cleanly with
-      a logged message and returns the outcomes gathered so far. This
-      mirrors the consecutive-reject breaker's shape exactly.
-    * **Within a round** — each round's work is wrapped in
-      :func:`asyncio.wait_for` with a timeout equal to the *remaining*
-      budget, so a single long round cannot blow the total. A round
-      that would exceed the ceiling is cancelled; it is recorded as an
-      aborted round (a synthetic :class:`EvolveRoundOutcome` carrying a
-      ``"wall_clock_budget"`` rejection reason) and the loop stops.
-
-    The total budget is enforced *in addition to* — not instead of —
-    each board entry's own ``wall_clock_budget_seconds``; both apply.
-    Note the within-round cancellation is a Layer-1 ``asyncio.wait_for``
-    guard (see ``docs/design/ROBUSTNESS.md``): it only pre-empts
-    *cooperative* async work. A round wedged in a blocking call or a
-    CPU-bound loop is not hard-killed here — that requires the
-    subprocess-worker layer (L3). This is the same contract the
-    per-entry budget relies on.
-
-    Contract-hash auto-epoching runs ONCE, before the round loop: when
-    ``epoch_id`` is ``None`` and ``auto_epoch`` is true, the orchestrator
-    resolves (and, if the contract drifted, auto-rolls) the epoch via
-    :func:`ensure_epoch_for_contract`. The resolved id is then pinned
-    for every round of this invocation so the loop never re-rolls
-    mid-flight. When ``epoch_id`` is passed explicitly, auto-rolling is
-    skipped entirely — an explicit target always wins.
-
-    The list of :class:`EvolveRoundOutcome` returned has one entry per
-    round attempted (which may be fewer than ``rounds`` if any
-    early-stop fired).
-
-    ``stop_reason_out`` is an optional caller-supplied list the function
-    appends a single symbolic terminal-reason string to before
-    returning, so a caller (the CLI) can render a summary that
-    distinguishes the terminal states without re-deriving them from the
-    outcomes. One of: ``"completed"`` (all rounds ran),
-    ``"consecutive_rejections"``, ``"degenerate_health"``,
-    ``"wall_clock_budget_between_rounds"`` (the total budget was already
-    spent before the next round started), or
-    ``"wall_clock_budget_mid_round"`` (a round was cancelled because
-    finishing it would overrun the total budget). Callers that do not
-    pass the list see no behavioural change.
-    """
-
-    def _set_stop_reason(reason: str) -> None:
-        if stop_reason_out is not None:
-            stop_reason_out.append(reason)
-
-    if rounds <= 0:
-        _set_stop_reason("completed")
-        return []
-
-    # Contract-hash auto-epoching — resolve the epoch ONCE up front.
-    # An explicit --epoch wins and skips auto-rolling entirely.
-    if epoch_id is None:
-        epoch_id = await ensure_epoch_for_contract(
-            workspace_root,
-            auto_epoch=auto_epoch,
-            aux_call_llm=auxiliary_call_llm,
-            epoch_name=epoch_name,
-        )
-    if max_consecutive_rejections <= 0:
-        # 0 / negative effectively disables early-stop — protect against
-        # nonsense values by treating them as "never stop early".
-        max_consecutive_rejections = rounds + 1
-
-    # Workspace lock + heartbeat lifecycle. The lock keeps two concurrent
-    # orchestrators from corrupting the same workspace; the beater writes
-    # ``heartbeat.json`` so the supervisor binary can detect a wedge.
-    lock = acquire_workspace_lock(workspace_root, instance_id)
-    beater = HeartbeatBeater(workspace_root, instance_id, interval_s=2.0)
-    # Resolve the harmonograf console URL once up front so the supervisor
-    # / dashboard can surface a "watch live" link from the heartbeat for
-    # the whole invocation. When no URL is configured (the default after
-    # #202) the supervisor auto-launches an in-process harmonograf bound
-    # to a free localhost port; the handle is shut down in the finally
-    # block. The auto-launched URL is also pushed into ZICATO_HARMONOGRAF_URL
-    # so per-board-run workers attach their per-run sinks to the same
-    # server without any further plumbing.
-    harmonograf_url, harmonograf_handle = _resolve_or_launch_harmonograf(workspace_root)
-    # Meta-loop goldfive emitter. One per evolve invocation, stable
-    # session id derived from the start ISO — the proposer + analyzer
-    # call sites take it through ``evolve_once`` so their LLM calls
-    # land as paired envelopes on the same harmonograf timeline workers
-    # already feed. Constructed best-effort; a degraded install (no
-    # goldfive proto stubs) returns an emitter with an empty sink list
-    # and every emit is a no-op. The emitter is closed in the same
-    # ``finally`` block that tears the harmonograf supervisor down.
-    evolve_started_at_iso = _now_iso()
-    meta_loop_emitter = _build_meta_loop_emitter_safe(
-        workspace_root, harmonograf_url, evolve_started_at_iso
-    )
-    outcomes: list[EvolveRoundOutcome] = []
-    try:
-        await beater.start()
-        # The meta-loop session id is surfaced on the heartbeat so the
-        # dashboard can deep-link the top-bar "execution" entry into the
-        # zicato-level harmonograf session (the proposer + judge timeline).
-        # Read it off the emitter — empty when no meta-loop session is in
-        # scope. See docs/design/HARMONOGRAF.md §2b/§4.
-        meta_session = getattr(meta_loop_emitter, "session_id", "") or ""
-        beater.update(
-            epoch_id=epoch_id or "",
-            phase="evolve_n_rounds:start",
-            harmonograf_url=harmonograf_url,
-            harmonograf_meta_session=meta_session,
-        )
-        beater.bump_now()
-        consecutive_rejections = 0
-        consecutive_critical_health = 0
-        # Total wall-clock budget — a monotonic clock so a wall-clock
-        # adjustment mid-run can't move the deadline. ``None`` leaves
-        # the loop unbounded (the historical behaviour).
-        budget_start = time.monotonic()
-        budget_stopped = False
-        stop_reason = "completed"
-        for round_idx in range(rounds):
-            # Between-rounds budget check — before spending the next
-            # round's LLM calls, bail if the total budget is spent.
-            # Same shape as the consecutive-reject breaker above.
-            if max_wall_clock_seconds is not None:
-                elapsed = time.monotonic() - budget_start
-                if elapsed >= max_wall_clock_seconds:
-                    log.warning(
-                        "evolve_n_rounds: evolve total wall-clock budget of %ds "
-                        "reached after %d rounds (round %d/%d)",
-                        max_wall_clock_seconds,
-                        round_idx,
-                        round_idx,
-                        rounds,
-                    )
-                    budget_stopped = True
-                    stop_reason = "wall_clock_budget_between_rounds"
-                    break
-            beater.update(
-                epoch_id=epoch_id or "",
-                round_index=round_idx,
-                round_started_at=_now_iso(),
-                phase=f"evolve_once:round_{round_idx}",
-            )
-            beater.bump_now()
-
-            async def _run_round(_round_idx: int = round_idx) -> EvolveRoundOutcome:
-                return await evolve_once(
-                    workspace_root=workspace_root,
-                    epoch_id=epoch_id,
-                    harness_call_llm=harness_call_llm,
-                    auxiliary_call_llm=auxiliary_call_llm,
-                    instance_id=instance_id,
-                    fast_mode=fast_mode,
-                    max_proposer_retries=max_proposer_retries,
-                    beater=beater,
-                    round_index=_round_idx,
-                    total_rounds=rounds,
-                    meta_loop_emitter=meta_loop_emitter,
-                )
-
-            if max_wall_clock_seconds is None:
-                # Unbounded — run the round with no within-round ceiling.
-                outcome = await _run_round()
-            else:
-                remaining = max_wall_clock_seconds - (time.monotonic() - budget_start)
-                # ``remaining`` is > 0 here (the between-rounds check
-                # above already returned for an exhausted budget), but
-                # clamp defensively against a tiny / negative slice.
-                remaining = max(remaining, 0.001)
-                try:
-                    # Layer-1 asyncio.wait_for guard: a round that would
-                    # push past the total budget is cancelled. This only
-                    # pre-empts cooperative async work — a round wedged
-                    # in a blocking call or CPU-bound loop is not
-                    # hard-killed here; that needs the L3 subprocess
-                    # worker. Same caveat as the per-entry budget. See
-                    # docs/design/ROBUSTNESS.md.
-                    outcome = await asyncio.wait_for(_run_round(), timeout=remaining)
-                except TimeoutError:
-                    # asyncio.wait_for raises the builtin TimeoutError
-                    # (asyncio.TimeoutError is an alias of it on 3.11+).
-                    parent_id = _safe_resolve_parent(workspace_root, epoch_id)
-                    outcome = _budget_aborted_outcome(parent_id, max_wall_clock_seconds)
-                    outcomes.append(outcome)
-                    log.warning(
-                        "evolve_n_rounds: round %d aborted — evolve total wall-clock "
-                        "budget of %ds exceeded mid-round; stopping (round %d/%d)",
-                        round_idx,
-                        max_wall_clock_seconds,
-                        round_idx + 1,
-                        rounds,
-                    )
-                    budget_stopped = True
-                    stop_reason = "wall_clock_budget_mid_round"
-                    break
-            outcomes.append(outcome)
-            beater.update(
-                epoch_id=epoch_id or "",
-                generation_id=outcome.proposed_generation_id,
-                round_index=round_idx,
-                phase=f"after_round_{round_idx}:{outcome.tournament_decision}",
-            )
-            beater.bump_now()
-            # Best-effort progressive analysis.html refresh so file://
-            # readers (and the dashboard's static fallback) see the
-            # latest lineage immediately after each round.
-            try:
-                from zicato.epoch.analysis import (  # noqa: PLC0415
-                    regenerate_in_progress_html,
-                )
-                from zicato.epoch.lifecycle import current_epoch_id  # noqa: PLC0415
-
-                eid = epoch_id or current_epoch_id(workspace_root)
-                if eid:
-                    regenerate_in_progress_html(workspace_root, eid)
-            except Exception as exc:  # noqa: BLE001 — HTML refresh is non-critical
-                log.debug("progressive analysis.html refresh skipped: %s", exc)
-            if outcome.tournament_decision == "promoted":
-                consecutive_rejections = 0
-            else:
-                consecutive_rejections += 1
-                if consecutive_rejections >= max_consecutive_rejections:
-                    log.warning(
-                        "evolve_n_rounds: stopping after %d consecutive rejections (round %d/%d)",
-                        consecutive_rejections,
-                        round_idx + 1,
-                        rounds,
-                    )
-                    stop_reason = "consecutive_rejections"
-                    break
-            # Loop-health circuit breaker — stop early when the loop has
-            # produced no usable signal for too many rounds running.
-            if stop_on_degenerate_health and outcome.health_critical:
-                consecutive_critical_health += 1
-                if consecutive_critical_health >= _DEGENERATE_HEALTH_STOP_THRESHOLD:
-                    log.warning(
-                        "evolve_n_rounds: stopping after %d consecutive rounds with a "
-                        "CRITICAL loop-health finding (round %d/%d) — the loop is "
-                        "producing no usable signal; inspect the scoring weights / "
-                        "proposer brief before resuming. (Pass "
-                        "stop_on_degenerate_health=False to opt out.)",
-                        consecutive_critical_health,
-                        round_idx + 1,
-                        rounds,
-                    )
-                    stop_reason = "degenerate_health"
-                    break
-            else:
-                consecutive_critical_health = 0
-        beater.update(
-            phase="evolve_n_rounds:budget_exhausted" if budget_stopped else "evolve_n_rounds:done"
-        )
-        beater.bump_now()
-    finally:
-        # Defensive terminal-state write (issue: a dead/closed run reading
-        # LIVE). A cleanly-ended loop stamps a terminal heartbeat phase
-        # above; here we ALSO flip any lingering active-tournament envelope
-        # out of ``phase="running"`` so a normally-ended run never reads as a
-        # live tournament — even inside the heartbeat freshness window. Runs
-        # on BOTH the clean and the error/interrupt path (a SIGKILL still
-        # can't self-clean, which the frontend freshness gate covers).
-        _mark_run_terminal(workspace_root)
-        await beater.stop()
-        release_workspace_lock(lock)
-        # Flush + close the meta-loop emitter BEFORE the harmonograf
-        # supervisor is stopped — a sink that needs to push a final
-        # buffer to the gRPC console wants the server still up.
-        if meta_loop_emitter is not None:
-            try:
-                await meta_loop_emitter.close()
-            except Exception as exc:  # noqa: BLE001 — never raise from teardown
-                log.debug("meta-loop emitter close raised: %s", exc)
-        # Shut down the auto-launched harmonograf server (no-op on the
-        # opt-out / failure-isolation paths). MUST run unconditionally
-        # so a crashed evolve still tears the embedded server down.
-        try:
-            harmonograf_handle.shutdown()
-        except Exception as exc:  # noqa: BLE001 — never raise from teardown
-            log.debug("harmonograf shutdown raised: %s", exc)
-    _set_stop_reason(stop_reason)
-    return outcomes
 
 
 # ---------------------------------------------------------------------------
@@ -3401,248 +2898,6 @@ def _generalization_fields_from_scalars(
     }
 
 
-def _now_iso() -> str:
-    return _dt.datetime.now(_dt.UTC).replace(microsecond=0).isoformat()
-
-
-def _resolve_harmonograf_url(workspace_root: Path) -> str:
-    """Resolve the harmonograf console URL for this run, or ``""``.
-
-    Delegates to :func:`zicato.telemetry.sink.resolve_harmonograf_url`,
-    feeding it the workspace ``config.json`` so both the
-    ``ZICATO_HARMONOGRAF_URL`` environment variable and the
-    ``harmonograf_url`` config key are honoured. Best-effort: any
-    failure resolving the config falls back to the empty string so a
-    broken config never blocks an evolve run.
-
-    Note this resolves only the *configured* URL — it does NOT trigger
-    auto-launch. :func:`_resolve_or_launch_harmonograf` is the variant
-    the evolve loop uses, which falls back to spawning an in-process
-    server when the configured URL is empty.
-    """
-    try:
-        from zicato import workspace_loader  # noqa: PLC0415
-        from zicato.telemetry.sink import resolve_harmonograf_url  # noqa: PLC0415
-
-        try:
-            cfg = workspace_loader.load_workspace_config(workspace_root)
-        except Exception:  # noqa: BLE001 — config is optional here
-            cfg = None
-        return resolve_harmonograf_url(cfg)
-    except Exception as exc:  # noqa: BLE001 — never block a run on this
-        log.debug("harmonograf url resolution skipped: %s", exc)
-        return ""
-
-
-def _resolve_or_launch_harmonograf(
-    workspace_root: Path,
-) -> tuple[str, Any]:
-    """Return ``(url, handle)`` for the harmonograf console this evolve uses.
-
-    Auto-launch semantics (the post-#202 default):
-
-    * If the operator pinned ``ZICATO_HARMONOGRAF_URL`` (or the
-      workspace-config ``harmonograf_url`` key), use that URL verbatim
-      and return a no-op handle — opt-out lets a long-lived shared
-      harmonograf collect traffic from multiple zicato invocations.
-    * Otherwise launch an in-process harmonograf server bound to a free
-      localhost port (see :mod:`zicato.telemetry.harmonograf_supervisor`)
-      and return its URL + a real handle whose ``shutdown()`` the
-      caller MUST invoke at evolve teardown.
-
-    On any auto-launch failure (missing dep, port-bind error, startup
-    timeout), the supervisor logs a warning and returns a no-op handle
-    with ``url=""``. The orchestrator treats that as "JSONL-only
-    telemetry" exactly as it did before #202 — the live console is
-    additive, never load-bearing.
-
-    Side effect: when auto-launch succeeds, the resolved URL is also
-    written into ``os.environ["ZICATO_HARMONOGRAF_URL"]`` so the
-    tournament runner and worker subprocesses (which re-resolve via
-    :func:`zicato.telemetry.sink.resolve_harmonograf_url`) attach their
-    own per-run sinks to the same server without any further plumbing.
-    The orchestrator restores the pre-launch env var value on shutdown
-    via :class:`_EnvVarRestorer` — a nested evolve invocation that
-    inherits a parent's auto-launched URL won't clobber it.
-    """
-    configured = _resolve_harmonograf_url(workspace_root)
-    if configured:
-        # Opt-out: external harmonograf in use. No auto-launch, no
-        # env-var manipulation, no shutdown needed.
-        log.debug("harmonograf auto-launch skipped: external URL configured (%s)", configured)
-        return configured, _NoopShutdownHandle()
-
-    # Route through the per-workspace ensure-helper so an evolve and a
-    # concurrently-open standalone dashboard share ONE harmonograf server
-    # bound to the workspace's sqlite db (the ``server.json`` record is the
-    # single-server-per-workspace contract — see
-    # ``harmonograf_supervisor.ensure_workspace_harmonograf``). When the
-    # helper REUSES an existing server (a standalone dashboard already
-    # launched one), evolve does NOT own its lifecycle — it leaves it
-    # running; when evolve LAUNCHED it, the handle's shutdown stops it.
-    try:
-        from zicato.telemetry.harmonograf_supervisor import (  # noqa: PLC0415
-            ensure_workspace_harmonograf,
-        )
-    except Exception as exc:  # noqa: BLE001 — supervisor import is best-effort
-        log.warning("harmonograf auto-launch skipped: supervisor module unavailable (%s)", exc)
-        return "", _NoopShutdownHandle()
-
-    handle = ensure_workspace_harmonograf(workspace_root)
-    if not handle.web_url:
-        # Helper's own failure-isolation path already logged a warning.
-        return "", _NoopShutdownHandle()
-
-    # Make the resolved URL discoverable to the tournament runner and the
-    # worker subprocesses, both of which re-resolve the env var via
-    # load_config()/resolve_harmonograf_url(). The restorer is captured on
-    # the handle so shutdown unsets / restores the environment cleanly.
-    restorers: list[_EnvVarRestorer] = []
-    url_restorer = _EnvVarRestorer("ZICATO_HARMONOGRAF_URL")
-    url_restorer.set(handle.web_url)
-    restorers.append(url_restorer)
-
-    # The server binds TWO ports: the web URL above (for browser deep-
-    # links) and a native gRPC port the per-run sinks must dial. Export the
-    # gRPC target distinctly so the sink builders dial the gRPC port
-    # instead of stripping the web URL and dialing the web port (which
-    # would silently drop telemetry).
-    grpc_target = getattr(handle, "grpc_target", "") or ""
-    if grpc_target:
-        grpc_restorer = _EnvVarRestorer("ZICATO_HARMONOGRAF_GRPC")
-        grpc_restorer.set(grpc_target)
-        restorers.append(grpc_restorer)
-
-    return handle.web_url, _LaunchedHandle(handle, restorers)
-
-
-def _build_meta_loop_emitter_safe(
-    workspace_root: Path,
-    harmonograf_url: str,
-    evolve_started_at_iso: str,
-) -> Any:
-    """Build the meta-loop emitter; never raise.
-
-    The factory itself is best-effort — a missing goldfive proto stub
-    or a permission error on the JSONL parent directory must not block
-    an evolve invocation. Return ``None`` on any unexpected error so
-    the orchestrator simply skips meta-loop emits (every call site is
-    ``None``-tolerant).
-    """
-    try:
-        from zicato.telemetry.meta_loop import (  # noqa: PLC0415
-            build_meta_loop_emitter,
-        )
-
-        return build_meta_loop_emitter(
-            workspace_root,
-            harmonograf_url=harmonograf_url,
-            evolve_started_at_iso=evolve_started_at_iso,
-        )
-    except Exception as exc:  # noqa: BLE001 — meta-loop telemetry is additive
-        log.warning(
-            "meta-loop emitter build failed (%s); evolve continues without "
-            "proposer / analyzer telemetry envelopes",
-            exc,
-        )
-        return None
-
-
-class _NoopShutdownHandle:
-    """Tiny stand-in for the auto-launch handle when no launch happened.
-
-    Used in two places: when the operator pinned an external URL (opt-
-    out) and when the supervisor refused to launch (degraded install).
-    Mirrors the ``shutdown()`` contract of the real handle so the
-    orchestrator's ``finally`` block can call it unconditionally.
-    """
-
-    url: str = ""
-
-    def shutdown(self) -> None:
-        return None
-
-
-class _LaunchedHandle:
-    """Composite handle: server lifecycle plus env-var restoration.
-
-    Holds a list of :class:`_EnvVarRestorer` — one for the web URL
-    (``ZICATO_HARMONOGRAF_URL``) and, on the auto-launch path, one for the
-    native gRPC target (``ZICATO_HARMONOGRAF_GRPC``) — so shutdown returns
-    both env vars to their pre-launch state.
-    """
-
-    def __init__(self, inner: Any, restorers: list[_EnvVarRestorer]) -> None:
-        self._inner = inner
-        self._restorers = list(restorers)
-        # ``inner`` may be a ``HarmonografHandle`` (``.url``) or a
-        # ``WorkspaceHarmonografHandle`` (``.web_url``); accept either.
-        self.url = getattr(inner, "url", None) or getattr(inner, "web_url", "")
-
-    def shutdown(self) -> None:
-        # Restore env BEFORE stopping the server so a concurrent
-        # tournament-runner re-resolve does not pick up the auto-launched
-        # URL after the server is gone.
-        for restorer in self._restorers:
-            try:
-                restorer.restore()
-            except Exception as exc:  # noqa: BLE001 — restoration is best-effort
-                log.debug("env restoration during harmonograf shutdown failed: %s", exc)
-        try:
-            self._inner.shutdown()
-        except Exception as exc:  # noqa: BLE001 — never raise from teardown
-            log.debug("harmonograf shutdown raised: %s", exc)
-
-
-class _EnvVarRestorer:
-    """RAII-style snapshot+restore for a single environment variable.
-
-    Captures the variable's prior value on construction (or its absence)
-    so :meth:`restore` returns the environment to the exact state the
-    process started in. Idempotent — re-calling :meth:`restore` is a
-    no-op.
-    """
-
-    def __init__(self, name: str) -> None:
-        import os  # noqa: PLC0415
-
-        self._os = os
-        self._name = name
-        self._had = name in os.environ
-        self._prior = os.environ.get(name)
-        self._restored = False
-
-    def set(self, value: str) -> None:
-        self._os.environ[self._name] = value
-
-    def restore(self) -> None:
-        if self._restored:
-            return
-        self._restored = True
-        if self._had and self._prior is not None:
-            self._os.environ[self._name] = self._prior
-        else:
-            self._os.environ.pop(self._name, None)
-
-
-def _beat(beater: HeartbeatBeater | None, **fields: Any) -> None:
-    """Push a heartbeat phase/coordinate update and flush it immediately.
-
-    A no-op when ``beater`` is ``None`` (a standalone ``evolve_once``
-    call with no heartbeat lifecycle). Every update is followed by a
-    :meth:`HeartbeatBeater.bump_now` so the dashboard sees the new phase
-    without waiting for the next periodic bump. Best-effort: a failure
-    to write the heartbeat must never abort the evolve round.
-    """
-    if beater is None:
-        return
-    try:
-        beater.update(**fields)
-        beater.bump_now()
-    except Exception as exc:  # noqa: BLE001 — heartbeat is non-critical
-        log.debug("heartbeat update skipped: %s", exc)
-
-
 def _round_n_from_generation_id(generation_id: str) -> int | None:
     """Map a ``vN`` generation id back to ``N`` for the analyzer's filename.
 
@@ -3660,7 +2915,7 @@ def _round_n_from_generation_id(generation_id: str) -> int | None:
 
 
 def _current_generation_marker(workspace_root: Path, epoch_id: str) -> Path:
-    return workspace_root / "epochs" / epoch_id / "current_generation"
+    return WorkspaceLayout.from_root(workspace_root).current_generation_marker(epoch_id)
 
 
 def _resolve_current_generation(workspace_root: Path, epoch_id: str) -> str:
@@ -3677,7 +2932,7 @@ def _resolve_current_generation(workspace_root: Path, epoch_id: str) -> str:
         text = marker.read_text(encoding="utf-8").strip()
         if text:
             return text
-    gens_root = workspace_root / "epochs" / epoch_id / "generations"
+    gens_root = WorkspaceLayout.from_root(workspace_root).generations_dir(epoch_id)
     if not gens_root.exists():
         raise FileNotFoundError(f"no generations under {gens_root}; the epoch has no baseline yet")
     candidates = [p.name for p in gens_root.iterdir() if p.is_dir()]
@@ -3879,7 +3134,10 @@ async def _regenerate_epoch_report(
     separate artifact from the per-round ``insights/round_{N}.md``
     proposer-feedback files.
     """
-    try:
+    with best_effort(
+        "epoch analysis report regeneration",
+        on_error=lambda exc: log.debug("epoch analysis report regeneration skipped: %s", exc),
+    ):
         from zicato.analyzer import generate_epoch_report  # noqa: PLC0415
 
         await generate_epoch_report(
@@ -3888,8 +3146,6 @@ async def _regenerate_epoch_report(
             auxiliary_call_llm,
             model=auxiliary_model,
         )
-    except Exception as exc:  # noqa: BLE001 — report is best-effort
-        log.debug("epoch analysis report regeneration skipped: %s", exc)
 
 
 def _cache_gen_score(
@@ -4004,7 +3260,7 @@ def _health_round_report_path(workspace_root: Path, epoch_id: str, round_n: int)
     round number derived from the child generation id (``vN``); a
     non-``vN`` id (defensive) falls back to ``0``.
     """
-    return workspace_root / "epochs" / epoch_id / "health" / f"round_{round_n}.json"
+    return WorkspaceLayout.from_root(workspace_root).health_dir(epoch_id) / f"round_{round_n}.json"
 
 
 def _collect_epoch_health_inputs(
@@ -4033,7 +3289,7 @@ def _collect_epoch_health_inputs(
     losses_by_generation: dict[str, list[Any]] = {}
     experiments: list[Any] = []
 
-    gens_root = workspace_root / "epochs" / epoch_id / "generations"
+    gens_root = WorkspaceLayout.from_root(workspace_root).generations_dir(epoch_id)
     if not gens_root.exists():
         return losses_by_generation, experiments
 
@@ -4138,12 +3394,15 @@ def _assess_and_persist_loop_health(
 
     summary, has_critical = _summarise_loop_health(health)
 
-    try:
+    with best_effort(
+        "loop-health report write",
+        on_error=lambda exc: log.debug(
+            "loop-health report write skipped for %s round %d: %s", epoch_id, round_n, exc
+        ),
+    ):
         report_path = _health_round_report_path(workspace_root, epoch_id, round_n)
         report_path.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write_text(report_path, _loop_health_to_json(health, epoch_id, round_n))
-    except Exception as exc:  # noqa: BLE001 — report write is best-effort
-        log.debug("loop-health report write skipped for %s round %d: %s", epoch_id, round_n, exc)
 
     return summary, has_critical
 
@@ -4248,13 +3507,15 @@ def _warn_loop_no_signal(epoch_id: str, round_n: int, summary: str) -> None:
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
-    """Atomically write ``text`` to ``path`` (``.tmp`` + :func:`os.replace`)."""
-    import os as _os  # noqa: PLC0415
+    """Atomically write ``text`` to ``path`` (``.tmp`` + :func:`os.replace`).
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    _os.replace(tmp, path)
+    Delegates to the single atomic-write definition in
+    :mod:`zicato.storage._atomic` so there is one ``.tmp`` + ``fsync`` +
+    rename implementation in the codebase.
+    """
+    from zicato.storage._atomic import atomic_write_text as _atomic_write_text_impl  # noqa: PLC0415
+
+    _atomic_write_text_impl(path, text)
 
 
 def _dump_mutations_snapshot(
@@ -4281,7 +3542,10 @@ def _dump_mutations_snapshot(
 
     from zicato.core.workspace import mutations_json_path  # noqa: PLC0415
 
-    try:
+    with best_effort(
+        "mutations.json snapshot",
+        on_error=lambda exc: log.debug("mutations.json snapshot skipped: %s", exc),
+    ):
         payload: list[dict[str, Any]] = []
         for point in mutations:
             raw = _dataclasses.asdict(point)
@@ -4304,8 +3568,6 @@ def _dump_mutations_snapshot(
             encoding="utf-8",
         )
         _os.replace(tmp, target)
-    except Exception as exc:  # noqa: BLE001 — snapshot write is best-effort
-        log.debug("mutations.json snapshot skipped: %s", exc)
 
 
 def _ensure_baseline_snapshot(
@@ -4610,9 +3872,52 @@ def _load_historical_aggregate(
 # Public exports
 # ---------------------------------------------------------------------------
 
+# The N-round loop lives in ``zicato.evolve.loop``; imported HERE (at the
+# bottom, after ``EvolveRoundOutcome`` and every collaborator the loop
+# resolves through this module are defined) so the loop module's lazy
+# back-reference to the orchestrator never sees a half-built module.
+# Re-exported so ``from zicato.orchestrator import evolve_n_rounds`` — and
+# the test suite's ``orch.evolve_n_rounds`` monkeypatch — keep resolving.
+from zicato.evolve.loop import evolve_n_rounds  # noqa: E402
 
 __all__ = [
     "EvolveRoundOutcome",
+    # Re-export shims for lifecycle services moved to
+    # ``zicato.evolve.lifecycle_services`` — listed here so the import is
+    # recognised as a re-export (and so callers' ``from zicato.orchestrator
+    # import _NoopShutdownHandle`` keeps resolving). These four are not used
+    # inside this module; the rest of the moved names are.
+    "_EnvVarRestorer",
+    "_LaunchedHandle",
+    "_NoopShutdownHandle",
+    "_now_iso",
+    "_resolve_harmonograf_url",
+    # Re-export shims for the contract-hash auto-epoching helpers moved to
+    # ``zicato.evolve.epoching``. These five are not used inside this
+    # module (only ``ensure_epoch_for_contract`` and ``_roll_seed_marker``
+    # are); listed so the import is recognised as a re-export and callers'
+    # ``from zicato.orchestrator import _create_epoch_from_contract`` keep
+    # resolving.
+    "_component_diff_label",
+    "_create_epoch_from_contract",
+    "_promoted_head_snapshot",
+    "_stored_component_hashes",
+    "_write_component_hashes",
+    "ensure_epoch_for_contract",
+    # Collaborators the N-round loop (``zicato.evolve.loop``) resolves
+    # through THIS module object at call time so the test suite's
+    # monkeypatches keep biting. Some are no longer referenced in the
+    # orchestrator body (the loop moved out); others (``claim_skip_round``,
+    # ``_safe_resolve_parent``) are still used here too. All must stay
+    # attributes of this module and reachable as exports for the loop's
+    # ``_orch.<name>`` access.
+    "_build_meta_loop_emitter_safe",
+    "_mark_run_terminal",
+    "_resolve_or_launch_harmonograf",
+    "_safe_resolve_parent",
+    "block_while_paused",
+    "claim_rubric_replacement",
+    "claim_skip_round",
     "evolve_once",
     "evolve_n_rounds",
 ]

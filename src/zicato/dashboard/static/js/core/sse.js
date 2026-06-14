@@ -14,6 +14,15 @@
 // change out into a wave of per-endpoint polls. Because applyEnvironment
 // only mutates state and the render layer patches keyed nodes, a delta
 // never rebuilds a panel's innerHTML: no flash.
+//
+// THE SEQ NO-OP-SKIP GATE (RUNTIME-V2 Phase 4). Every `state_change` /
+// `snapshot` frame carries a top-level progress `seq` + `terminal` — the
+// orchestrator's TRUE liveness cursor (advances only on a genuine
+// transition, never on the heartbeat timer). A `state_change` whose seq
+// does NOT advance (a coalesced beat re-emitting the same seq) writes ZERO
+// DOM: we skip the refresh. A backwards seq = the log was cleared on a
+// fresh boot (rollover) ⇒ we force a refresh + reset. A frame with NO seq
+// (a pre-RUNTIME-V2 server) DEGRADES to the legacy always-refresh path.
 
 import { state } from './state.js';
 import { loadEnvironment, loadMatchupDetail, pollLogTailAppend } from './api.js';
@@ -67,10 +76,39 @@ export function connectSSE() {
     state._changed();
   });
   _sse.addEventListener('snapshot', (ev) => {
-    try { state.applySnapshot(JSON.parse(ev.data)); }
-    catch (err) { console.warn('bad snapshot event:', err); }
+    try {
+      const frame = JSON.parse(ev.data);
+      // Frame is `{ type, data, seq, terminal }`; older servers send the
+      // bare snapshot. A snapshot is a full re-seed (always applied); the
+      // cursor only informs the run-state pill + later skips.
+      if (frame && typeof frame === 'object' && 'seq' in frame) {
+        state.noteProgress(frame.seq, frame.terminal);
+      }
+      const payload = (frame && typeof frame === 'object' && frame.data != null)
+        ? frame.data : frame;
+      state.applySnapshot(payload);
+    } catch (err) { console.warn('bad snapshot event:', err); }
   });
-  _sse.addEventListener('state_change', () => {
+  _sse.addEventListener('state_change', (ev) => {
+    // THE SEQ NO-OP-SKIP GATE. Refresh ONLY on a genuine seq advance (or a
+    // rollover = restarted log); a repeat seq (a coalesced no-op beat)
+    // writes ZERO DOM — no fetch, no state touched. A frame with no seq
+    // (pre-RUNTIME-V2) degrades to the legacy always-refresh path. The
+    // run-state pill stays current off the heartbeat frame's own
+    // `_changed()` pulse, so STALLED/SETTLED still paint without this fetch.
+    let frame = null;
+    try { frame = ev && ev.data != null ? JSON.parse(ev.data) : null; }
+    catch { frame = null; }
+    if (frame && typeof frame === 'object' && 'seq' in frame) {
+      const verdict = state.noteProgress(frame.seq, frame.terminal);
+      if (verdict.advanced || verdict.rollover) {
+        // A genuine advance nudges the chrome ahead of the debounced fetch
+        // (digest-gated, so a no-op still writes zero DOM).
+        state._changed();
+        refreshAfterEvent();
+      }
+      return;
+    }
     refreshAfterEvent();
   });
   _sse.addEventListener('run_log', () => {

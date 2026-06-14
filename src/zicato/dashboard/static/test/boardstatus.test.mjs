@@ -12,9 +12,9 @@ import { installDom, test, run, assert, assertEqual, assertDeep } from './harnes
 
 installDom();
 
-const bs = await import('../js/variants/T/views/boardstatus.js');
-const ui = await import('../js/variants/T/ui.js');
-const hovercard = await import('../js/variants/T/hovercard.js');
+const bs = await import('../js/views/boardstatus.js');
+const ui = await import('../js/ui.js');
+const hovercard = await import('../js/hovercard.js');
 
 function allByClass(host, cls) {
   return host.querySelectorAll('[class]').filter((n) =>

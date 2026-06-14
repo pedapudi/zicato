@@ -293,9 +293,11 @@ def build_adk_model(spec: RoleSpec, *, role: str) -> Any:
         from google.adk.models.lite_llm import LiteLlm
     except ImportError as exc:
         raise ValueError(
-            f"models.{role}: the model spec needs the optional 'adk' extra "
-            "(install zicato with the adk extra) to build a LiteLlm; use the "
-            "call_llm dotted-path form instead if ADK is unavailable"
+            f"models.{role}: building a LiteLlm needs the 'litellm' package, "
+            "which the 'adk' extra supplies via google-adk[extensions]; run "
+            "`uv sync --all-extras` (or reinstall zicato with the adk extra) "
+            "to pull it in. Alternatively use the call_llm dotted-path form "
+            "instead of an endpoint model spec."
         ) from exc
     kwargs: dict[str, Any] = {"model": spec.model}
     if spec.endpoint:

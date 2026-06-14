@@ -114,7 +114,7 @@ import logging
 import sys
 import time
 import uuid
-from collections.abc import Iterable
+from collections.abc import AsyncGenerator, Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -245,6 +245,314 @@ def _goldfive_runtime() -> Any:
     timeout_ms = load_config().runtime.harness_call_timeout_ms
     agent = dataclasses.replace(runtime.agent, call_timeout_ms=timeout_ms)
     return dataclasses.replace(runtime, agent=agent)
+
+
+# ---------------------------------------------------------------------------
+# call_llm-backed ADK model — the LAST-RESORT text-only shim.
+#
+# This whole section builds the TEXT-ONLY fallback for the inner ADK agents'
+# own task turns. It is the LAST of three parallel ADK-model paths and the
+# wrong one for any function-calling target:
+#
+#   1. ``models_config.build_adk_model``      — the canonical builder: a real
+#      (typically function-calling ``LiteLlm``) ``BaseLlm`` from a configured
+#      ``{model, endpoint, api_key_env}`` spec. PREFERRED. Injected by
+#      :func:`rebind_tree_models_to_adk_model` when ``models.harness`` is set.
+#   2. ADK's own ``LLMRegistry`` native resolution — a bare ``"openai/<model>"``
+#      / ``LiteLlm``-resolvable string an author hardcoded keeps native
+#      tool/function calling; :func:`_resolves_to_native_function_calling`
+#      detects it and the shim LEAVES IT ALONE.
+#   3. THIS shim (:func:`rebind_tree_models_to_call_llm`) — fires ONLY on a
+#      bare string that resolves to a ``google.genai``-backed client
+#      (``gemini-*`` / ``gemma-*``) or is wholly unresolvable. It exists to
+#      stop the genai-client GC flood (below) for an UNCONFIGURED / misconfigured
+#      target — and it is TEXT-ONLY: it carries NO ``function_declarations``,
+#      so any agent rebound to it loses native tool/function calling and a
+#      tool-driven tree degenerates to a single text turn. Hence last-resort.
+# ---------------------------------------------------------------------------
+
+
+def _build_call_llm_adk_model_class() -> type:
+    """Build the LAST-RESORT, TEXT-ONLY ``BaseLlm`` shim driven by a call_llm.
+
+    LIMITATION (load-bearing): this shim is **text-only**. Its
+    :meth:`generate_content_async` flattens the request to a ``(system, user)``
+    text pair and never reads ``llm_request.config.tools`` — so the model it
+    yields carries NO ``function_declarations`` and CANNOT make tool/function
+    calls. Rebinding a function-calling agent to it silently strips its tools
+    and reduces a tool-driven tree to a single text turn. It is therefore the
+    LAST resort, used only when neither a configured inner model (path 1) nor a
+    native ``LiteLlm``-resolvable string (path 2) is available; see the section
+    banner above and :func:`rebind_tree_models_to_call_llm`.
+
+    The harness threads its ``(system, user, model) -> str`` callable into
+    every ``goldfive.run`` invocation, and goldfive's *steering* (goal
+    derive / planner refine / judges) runs on it. But the wrapped ADK
+    ``LlmAgent``s' OWN task turns still run on each agent's declared
+    ``model`` field — a bare model string in live runs. ADK resolves that
+    string through ``LLMRegistry.new_llm`` and constructs a
+    :class:`google.genai.Client`'s ``BaseApiClient`` for it. When no Google
+    API key is present (the vLLM / call_llm path never needs one), that
+    constructor raises ``ValueError('No API key')`` *before* it sets
+    ``_async_httpx_client`` — leaving a partial client whose ``__del__``
+    schedules ``aclose()``, which then raises
+    ``AttributeError('_async_httpx_client')`` on GC. With one such client
+    per turn this floods the log with hundreds of "Task exception was never
+    retrieved" tracebacks. The client is never used for real generation.
+
+    The fix is to give each ``LlmAgent`` a real ``BaseLlm`` backed by the
+    harness ``call_llm`` so ADK's ``canonical_model`` returns it directly
+    (it short-circuits on ``isinstance(self.model, BaseLlm)``), never
+    touching ``LLMRegistry.new_llm`` / the genai client. This is the inverse
+    of goldfive's :func:`goldfive._llm_detect.make_default_adk_call_llm`
+    (which wraps a ``BaseLlm`` *into* a call_llm); here we wrap a call_llm
+    *into* a ``BaseLlm``.
+
+    Defined as a factory so the ADK / genai symbols are imported only when a
+    rebind actually happens — keeping this module importable without the
+    optional ``google-adk`` extra.
+    """
+    from google.adk.models import BaseLlm  # noqa: PLC0415
+    from google.adk.models.llm_request import LlmRequest  # noqa: PLC0415
+    from google.adk.models.llm_response import LlmResponse  # noqa: PLC0415
+    from google.genai import types as genai_types  # noqa: PLC0415
+
+    class _CallLlmADKModel(BaseLlm):
+        """A :class:`BaseLlm` whose generation routes through a call_llm.
+
+        Implements the single abstract method
+        :meth:`generate_content_async` by flattening the ADK
+        :class:`LlmRequest` into the ``(system, user)`` text pair the
+        harness ``call_llm`` expects, awaiting it, and yielding a single
+        text :class:`LlmResponse`. ``model`` preserves the original
+        model-string label purely for observability; the actual generation
+        is the call_llm's, which is already model-bound.
+
+        The system instruction is read from
+        ``llm_request.config.system_instruction`` and the user text is the
+        concatenation of every text part across the request's ``contents``
+        (mirroring how ADK assembles a turn). This is the symmetric reverse
+        of goldfive's forward adapter, which puts ``system`` on
+        ``config.system_instruction`` and ``user`` on a single user
+        ``Content`` — so a round-trip through both is lossless for the
+        text-only turns the harness drives.
+        """
+
+        # ``call_llm`` is the harness callable; declared as a pydantic
+        # field (BaseLlm is a pydantic BaseModel) so assignment validates.
+        call_llm: Any = None
+
+        async def generate_content_async(
+            self,
+            llm_request: LlmRequest,
+            stream: bool = False,
+        ) -> AsyncGenerator[Any, None]:
+            del stream  # the harness call_llm is non-streaming text-in/out
+            # TEXT-ONLY by construction: we read only the system + user TEXT and
+            # deliberately ignore ``llm_request.config.tools`` (the agent's
+            # ``function_declarations``). The reply is a single text part with no
+            # ``function_call`` — so an agent on this shim CANNOT call its tools.
+            # That is the no-tools limitation that makes this a last resort; the
+            # configured-inner-model path keeps tools (see the section banner).
+            config = getattr(llm_request, "config", None)
+            system = ""
+            if config is not None:
+                raw_system = getattr(config, "system_instruction", None)
+                if isinstance(raw_system, str):
+                    system = raw_system
+                elif raw_system is not None:
+                    # Some ADK shapes carry a Content/list here; flatten its
+                    # text parts defensively rather than str()-ing the object.
+                    system = _flatten_request_text([raw_system])
+            user = _flatten_request_text(getattr(llm_request, "contents", None) or ())
+            reply = await self.call_llm(system, user, self.model)
+            yield LlmResponse(
+                content=genai_types.Content(
+                    role="model",
+                    parts=[genai_types.Part(text=str(reply))],
+                )
+            )
+
+    return _CallLlmADKModel
+
+
+def _flatten_request_text(contents: Iterable[Any]) -> str:
+    """Concatenate every text part across an ADK request's ``contents``.
+
+    Walks each ``Content``-shaped item's ``parts`` and joins the non-empty
+    ``part.text`` values with newlines, in order. Tolerant of bare strings
+    and shapes missing ``parts`` so a malformed request degrades to an empty
+    (or best-effort) user string rather than raising inside the model.
+    """
+    chunks: list[str] = []
+    for content in contents:
+        if isinstance(content, str):
+            if content:
+                chunks.append(content)
+            continue
+        parts = getattr(content, "parts", None) or ()
+        for part in parts:
+            text = getattr(part, "text", None)
+            if text:
+                chunks.append(str(text))
+    return "\n".join(chunks)
+
+
+def _iter_agent_tree(root: Any) -> Iterable[Any]:
+    """Yield ``root`` and every agent reachable through the ADK tree edges.
+
+    Follows the same edges goldfive's own ADK adapter walks —
+    ``sub_agents`` (the native agent tree), ``inner_agent`` (overlay
+    wrappers), and ``AgentTool.agent`` (tool-wrapped agents reachable via an
+    agent's ``tools``) — so every ``LlmAgent`` that ADK could drive a turn
+    on is visited exactly once. Cycle-safe via an id-based visited set.
+    """
+    seen: set[int] = set()
+    stack: list[Any] = [root]
+    while stack:
+        node = stack.pop()
+        if node is None or id(node) in seen:
+            continue
+        seen.add(id(node))
+        yield node
+        for sub in getattr(node, "sub_agents", None) or ():
+            stack.append(sub)
+        inner = getattr(node, "inner_agent", None)
+        if inner is not None:
+            stack.append(inner)
+        for tool in getattr(node, "tools", None) or ():
+            tool_agent = getattr(tool, "agent", None)
+            if tool_agent is not None:
+                stack.append(tool_agent)
+
+
+def _resolves_to_native_function_calling(model_str: str) -> bool:
+    """True if ``model_str`` resolves to a real function-calling ``BaseLlm``.
+
+    Uses :meth:`LLMRegistry.resolve`, which returns the model *class* without
+    instantiating it — so this classifier never constructs (and therefore
+    never floods on the garbage-collection of) a ``google.genai`` client.
+
+    A provider-style identifier such as ``"openai/<model>"`` resolves to ADK's
+    :class:`LiteLlm`, which carries native tool/function calling against an
+    OpenAI-compatible endpoint (e.g. a local vLLM). Those agents must NOT be
+    rebound to the text-only ``call_llm`` shim — doing so silently strips
+    function calls and reduces a tool-calling tree to a single text turn.
+
+    Bare ``gemini-*`` / ``gemma-*`` strings resolve to the ``google.genai``
+    backed clients (``Gemini`` / ``Gemma``) — the unused-client flood source
+    the shim exists to avoid — and unresolvable strings raise; both return
+    ``False`` so the caller routes them through the shim as a last resort.
+    Returns ``False`` if ADK / litellm is unavailable (no native path exists).
+    """
+    try:
+        from google.adk.models.lite_llm import LiteLlm  # noqa: PLC0415
+        from google.adk.models.registry import LLMRegistry  # noqa: PLC0415
+    except ImportError:
+        return False
+    try:
+        cls = LLMRegistry.resolve(model_str)
+    except Exception:  # noqa: BLE001 — unresolvable string → shim fallback
+        return False
+    return issubclass(cls, LiteLlm)
+
+
+def rebind_tree_models_to_call_llm(root: Any, call_llm: Any) -> int:
+    """LAST-RESORT: rebind only *unresolvable* string models to the text shim.
+
+    The third and last ADK-model path (see the section banner): used only when
+    no configured inner model (:func:`rebind_tree_models_to_adk_model`) and no
+    natively-resolvable ``LiteLlm`` string is available. Walks the agent tree
+    (root + ``sub_agents`` / ``inner_agent`` / ``AgentTool.agent`` edges). For
+    each agent whose ``model`` is a bare string that does NOT resolve to a real
+    function-calling model, replaces it with the TEXT-ONLY :class:`BaseLlm`
+    shim backed by ``call_llm`` so ADK's ``canonical_model`` returns it
+    directly and NEVER resolves the string through ``LLMRegistry.new_llm``
+    (which would build the unused, flood-causing google.genai client). Because
+    the shim carries no tools, every rebound agent loses native tool/function
+    calling — which is why this only fires when no tool-preserving path exists.
+
+    Two kinds of agent are deliberately LEFT UNTOUCHED:
+
+    * an agent whose ``model`` is already a :class:`BaseLlm` — an author who
+      wired a real model object owns it; and
+    * an agent whose ``model`` string resolves to a function-calling
+      :class:`LiteLlm` (e.g. ``"openai/<model>"`` against a local endpoint) —
+      rebinding it to the text-only ``call_llm`` shim would strip native
+      tool/function calling and reduce a tool-calling tree to a single text
+      turn (see :func:`_resolves_to_native_function_calling`).
+
+    Any agent that IS rebound has its native tool-calling disabled (the shim is
+    text-only); a single ``warning`` names them so a degraded target is loud
+    rather than silently inert.
+
+    Returns the number of agents rebound. A no-op (returns 0) when ``call_llm``
+    is falsy. Idempotent — a second pass finds every model already a
+    ``BaseLlm`` (or LiteLlm-resolvable) and rebinds none.
+    """
+    if not call_llm:
+        return 0
+    from google.adk.models import BaseLlm  # noqa: PLC0415
+
+    model_cls = _build_call_llm_adk_model_class()
+    rebound_names: list[str] = []
+    for agent in _iter_agent_tree(root):
+        # Only ``LlmAgent``-shaped nodes carry a ``model``; a plain
+        # ``BaseAgent`` (or an overlay wrapper) simply has no such field.
+        if not hasattr(agent, "model"):
+            continue
+        current = agent.model
+        if isinstance(current, BaseLlm):
+            continue  # author-supplied model object — leave it.
+        if isinstance(current, str) and current and _resolves_to_native_function_calling(current):
+            continue  # real LiteLlm endpoint model — keep native tool-calling.
+        label = current if isinstance(current, str) and current else "call-llm"
+        agent.model = model_cls(model=label, call_llm=call_llm)
+        rebound_names.append(getattr(agent, "name", "?"))
+    if rebound_names:
+        log.warning(
+            "ADK rebind: %d agent(s) %s had no resolvable function-calling "
+            "model; routing their turns through the harness call_llm "
+            "(TEXT-ONLY — native tool/function calling is DISABLED for them). "
+            "Configure a LiteLlm endpoint model (e.g. 'openai/<model>' with an "
+            "endpoint + the 'adk' extra) to restore tool-calling.",
+            len(rebound_names),
+            rebound_names,
+        )
+    return len(rebound_names)
+
+
+def rebind_tree_models_to_adk_model(root: Any, model: Any) -> int:
+    """Rebind every string-model ``LlmAgent`` in ``root``'s tree to ``model``.
+
+    The config-driven counterpart to :func:`rebind_tree_models_to_call_llm`:
+    when the workspace configures an inner agent model (a ``models.harness``
+    model spec built into a :class:`BaseLlm` — typically a function-calling
+    :class:`LiteLlm` pointed at the live endpoint), the adapter injects that
+    object into every string-model agent. The configured model is the source
+    of truth for the inner harness, so it overrides whatever bare model string
+    the target hardcoded (e.g. the example target's ``"openai/gpt-4o-mini"``
+    default) — unlike the shim path, this keeps native tool/function calling.
+
+    Agents whose ``model`` is already a :class:`BaseLlm` are left untouched —
+    an author who wired a real model object owns it. The same ``model``
+    instance is shared across the tree (a ``BaseLlm`` is stateless per call,
+    exactly as a normal multi-agent ADK app shares one model). Returns the
+    number of agents rebound; a no-op (returns 0) when ``model`` is falsy.
+    """
+    if model is None:
+        return 0
+    from google.adk.models import BaseLlm  # noqa: PLC0415
+
+    rebound = 0
+    for agent in _iter_agent_tree(root):
+        if not hasattr(agent, "model"):
+            continue
+        if isinstance(agent.model, BaseLlm):
+            continue  # author-supplied model object — leave it.
+        agent.model = model
+        rebound += 1
+    return rebound
 
 
 # ---------------------------------------------------------------------------
@@ -563,6 +871,30 @@ class ADKRunnableHarness:
         run_id = uuid.uuid4().hex
         budget_s = float(entry.wall_clock_budget_seconds)
         started_at = time.monotonic()
+
+        # Bind the loaded tree's string-model agents to a working model BEFORE
+        # any goldfive.run dispatch. Two paths, config-driven first:
+        #
+        # 1. A configured inner model (config.inner_model — a BaseLlm/LiteLlm
+        #    built from a models.harness spec) is injected into every
+        #    string-model agent. This is the preferred, idiomatic path: the
+        #    agents reach the live endpoint with native tool/function calling
+        #    intact, overriding the target's hardcoded default model string.
+        # 2. Otherwise, fall back to the guarded call_llm shim rebind: only the
+        #    UNRESOLVABLE bare strings (a "gemma-*"/"gemini-*" id that would
+        #    resolve to an unused google.genai client and flood the log with
+        #    AttributeError('_async_httpx_client') tracebacks on GC) are routed
+        #    through the harness call_llm. A string that resolves to a real
+        #    LiteLlm is left for ADK so native tool-calling survives; routing it
+        #    through the text-only shim would reduce a tool-calling tree to a
+        #    single text turn (the presentation target writes no files then).
+        #
+        # See rebind_tree_models_to_adk_model / rebind_tree_models_to_call_llm /
+        # _resolves_to_native_function_calling. Both are idempotent.
+        if getattr(config, "inner_model", None) is not None:
+            rebind_tree_models_to_adk_model(self._agent, config.inner_model)
+        else:
+            rebind_tree_models_to_call_llm(self._agent, config.harness_call_llm)
 
         async def _drive() -> RunResult:
             if entry.kind == "single_turn":
@@ -1065,4 +1397,6 @@ def _coerce_to_list(points: Iterable[MutationPoint]) -> list[MutationPoint]:
 __all__ = [
     "ADKHarnessAdapter",
     "ADKRunnableHarness",
+    "rebind_tree_models_to_adk_model",
+    "rebind_tree_models_to_call_llm",
 ]

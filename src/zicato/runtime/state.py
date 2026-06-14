@@ -25,8 +25,8 @@ implementation — a caller cannot tell the difference.
 
 from __future__ import annotations
 
-import datetime as _dt
 from dataclasses import dataclass, field, replace
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -36,19 +36,65 @@ from zicato.runtime._storage import (
     active_tournament_key,
     backend_for,
     heartbeat_key,
+    kill_request_key,
 )
 from zicato.runtime.paths import ensure_runtime_dirs
 
+# RUNTIME-V2 Phase 3: the active-tournament live state is an event log, not a
+# mutable snapshot. The public helpers below keep their signatures but delegate
+# to :mod:`zicato.runtime.tournament_log` (imported lazily inside each, since
+# that module folds back through ``ActiveTournament`` / the merge helpers here
+# and a top-level import would cycle).
+# Single second-precision UTC stamper, shared via :mod:`zicato.util.iso_time`.
+# Kept under this module's historical name so tests can monkeypatch
+# ``zicato.runtime.state._utc_now_iso`` and in-module writers stay unchanged.
+from zicato.util.iso_time import now_iso as _utc_now_iso
 
-def _utc_now_iso() -> str:
-    """Return current UTC time as an ISO-8601 string with seconds precision.
 
-    Uses ``timespec='seconds'`` so the strings diff cleanly in journals
-    and don't carry microsecond noise the dashboard would have to trim.
-    The trailing ``Z`` is the explicit UTC marker convention every other
-    zicato writer uses.
+class RunStatus(StrEnum):
+    """The lifecycle state of one :class:`ActiveTournamentEntry` row.
+
+    * :attr:`QUEUED` (``"queued"``) — seeded before the run kicks off.
+    * :attr:`RUNNING` (``"running"``) — the run is in flight.
+    * :attr:`COMPLETED` (``"completed"``) — the run settled normally.
+    * :attr:`ABORTED` (``"aborted"``) — the run was cut short.
+    * :attr:`CACHED` (``"cached"``) — no run was executed; a cached
+      per-entry scalar was reused.
+
+    A :class:`~enum.StrEnum`, so a member equals its wire token and
+    serialises identically to the bare string the field stored before —
+    the on-disk JSON is byte-identical. A value loaded from disk as a
+    bare ``str`` still compares equal.
     """
-    return _dt.datetime.now(_dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    ABORTED = "aborted"
+    CACHED = "cached"
+
+
+class TournamentPhase(StrEnum):
+    """The lifecycle phase of an :class:`ActiveTournament` envelope.
+
+    * :attr:`PROPOSING` (``"proposing"``) — the proposer is generating the
+      challenger; no duel has begun.
+    * :attr:`RUNNING` (``"running"``) — the tournament is executing.
+    * :attr:`COMPLETED` (``"completed"``) — the tournament settled.
+    * :attr:`STOPPED` (``"stopped"``) — a lingering envelope flipped to a
+      terminal state on shutdown.
+
+    A :class:`~enum.StrEnum`, so a member equals its wire token and
+    serialises identically to the bare string. This names only the closed
+    :class:`ActiveTournament` lifecycle tokens; the free-form
+    ``evolve_n_rounds:*`` heartbeat-phase labels are a separate slot and
+    stay bare strings.
+    """
+
+    PROPOSING = "proposing"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    STOPPED = "stopped"
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +138,21 @@ class Heartbeat:
         ISO-8601 UTC timestamp of when the current round began. Lets the
         supervisor compute elapsed-in-round without re-reading any other
         state file.
+    seq:
+        The orchestrator's TRUE liveness cursor (RUNTIME-V2 Phase 4): the
+        tail ``seq`` of the progress event log
+        (:mod:`zicato.runtime.progress_log`) at the last genuine
+        transition. Unlike ``last_heartbeat`` — which the beater thread
+        bumps on a timer regardless of progress — this advances ONLY when
+        the evolve loop appends a real transition (round start, propose,
+        apply, tournament start/settle, gate, promote/reject). A watchdog
+        keyed on ``seq`` advancing avoids the timestamp signal's
+        false-positive (a slow LLM call ages the stamp) and false-negative
+        (a wedged loop whose beater keeps stamping ``now()`` reads alive).
+        Defaults to ``0``; a heartbeat written before this field existed
+        reads back as ``0`` (the safe "no progress recorded" default),
+        indistinguishable from a workspace whose orchestrator never wrote a
+        progress log.
     harmonograf_url:
         Server address of the harmonograf console this run is streaming
         telemetry to, when configured (via ``ZICATO_HARMONOGRAF_URL`` or
@@ -120,6 +181,7 @@ class Heartbeat:
     phase: str = ""
     round_index: int = 0
     round_started_at: str = ""
+    seq: int = 0
     harmonograf_url: str = ""
     harmonograf_meta_session: str = ""
 
@@ -135,6 +197,7 @@ class Heartbeat:
             "phase": self.phase,
             "round_index": self.round_index,
             "round_started_at": self.round_started_at,
+            "seq": self.seq,
             "harmonograf_url": self.harmonograf_url,
             "harmonograf_meta_session": self.harmonograf_meta_session,
         }
@@ -152,6 +215,9 @@ class Heartbeat:
             phase=str(d.get("phase", "")),
             round_index=int(d.get("round_index", 0)),
             round_started_at=str(d.get("round_started_at", "")),
+            # Absent seq reads back as 0 — the safe back-compat default for
+            # a heartbeat written before RUNTIME-V2 Phase 4 (no progress log).
+            seq=int(d.get("seq", 0)),
             harmonograf_url=str(d.get("harmonograf_url", "")),
             harmonograf_meta_session=str(d.get("harmonograf_meta_session", "")),
         )
@@ -216,6 +282,23 @@ class ActiveRun:
         harmonograf at this path.
     entry_id, generation_id, epoch_id:
         Lineage coordinates of the run.
+    pgid:
+        OS process-group id of the run's own worker process. The worker
+        is spawned in its OWN session/process-group (``start_new_session``),
+        so the supervisor can GROUP-kill the worker AND any grandchildren
+        the inner harness spawned (shells, helper tools) by negating this
+        id, rather than leaking them when it kills the worker pid alone.
+        ``None`` for a legacy record written before this field existed (or
+        on a platform without process groups); the supervisor then falls
+        back to the single-pid kill.
+    snapshot_path:
+        Absolute path-as-string to the run's ephemeral snapshot working
+        copy (the ``ztw-snap-*`` temp directory the runner copytrees the
+        code snapshot into for this run). The runner discards it on a
+        clean run-end, but if the ORCHESTRATOR dies mid-run the directory
+        is orphaned; recording it here lets the supervisor GC the
+        leftover ``ztw-snap-*`` tree after an orchestrator death. ``None``
+        for a legacy record, or a run that mounted no ephemeral snapshot.
     """
 
     run_id: str
@@ -228,11 +311,17 @@ class ActiveRun:
     entry_id: str
     generation_id: str
     epoch_id: str
+    pid_start_time: float | None = None
+    pgid: int | None = None
+    snapshot_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
             "pid": self.pid,
+            "pid_start_time": self.pid_start_time,
+            "pgid": self.pgid,
+            "snapshot_path": self.snapshot_path,
             "started_at": self.started_at,
             "last_progress": self.last_progress,
             "wall_clock_budget_seconds": self.wall_clock_budget_seconds,
@@ -245,6 +334,9 @@ class ActiveRun:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> ActiveRun:
+        raw_start = d.get("pid_start_time")
+        raw_pgid = d.get("pgid")
+        raw_snapshot = d.get("snapshot_path")
         return cls(
             run_id=str(d["run_id"]),
             pid=int(d["pid"]),
@@ -256,6 +348,9 @@ class ActiveRun:
             entry_id=str(d["entry_id"]),
             generation_id=str(d["generation_id"]),
             epoch_id=str(d["epoch_id"]),
+            pid_start_time=float(raw_start) if raw_start is not None else None,
+            pgid=int(raw_pgid) if raw_pgid is not None else None,
+            snapshot_path=str(raw_snapshot) if raw_snapshot is not None else None,
         )
 
 
@@ -289,6 +384,36 @@ def write_active_run(workspace_root: Path, run: ActiveRun) -> None:
 def remove_active_run(workspace_root: Path, run_id: str) -> None:
     """Delete one run's state file. Idempotent if already gone."""
     backend_for(workspace_root).delete(active_run_key(run_id))
+
+
+def request_worker_kill(workspace_root: Path, run_id: str) -> None:
+    """Ask the supervisor to escalate-kill a run's worker (parent→supervisor).
+
+    Writes a ``control/kill_requests/{run_id}`` marker. The Rust
+    supervisor — the single SIGTERM→grace→SIGKILL escalator — reads it,
+    runs the escalation on the worker's pid, and clears the marker. The
+    Python parent therefore never signals the worker itself, so there is
+    no parent↔supervisor race over the same pid.
+
+    Best-effort and idempotent: re-requesting an already-pending kill
+    just rewrites the same marker. The payload carries the run id and a
+    timestamp for the supervisor's audit log.
+    """
+    ensure_runtime_dirs(workspace_root)
+    backend_for(workspace_root).write_json(
+        kill_request_key(run_id),
+        {"run_id": run_id, "requested_at": _utc_now_iso()},
+    )
+
+
+def clear_worker_kill_request(workspace_root: Path, run_id: str) -> None:
+    """Remove a run's kill-request marker. Idempotent if already gone.
+
+    The supervisor clears the marker once it has escalated; the parent
+    also clears it on cleanup so a marker never outlives its run (a
+    recycled run id must not inherit a stale request).
+    """
+    backend_for(workspace_root).delete(kill_request_key(run_id))
 
 
 def touch_active_run_progress(workspace_root: Path, run_id: str) -> None:
@@ -628,45 +753,58 @@ class ActiveTournament:
         )
 
 
-def read_active_tournament(workspace_root: Path) -> ActiveTournament | None:
-    """Read the active-tournament JSON or return ``None`` if absent."""
+def read_active_tournament_snapshot(workspace_root: Path) -> ActiveTournament | None:
+    """Read the LEGACY ``active_tournament.json`` snapshot, or ``None``.
+
+    The compat reader the event-log fold falls back to when no log
+    exists (a pre-RUNTIME-V2 producer or a hand-edited snapshot). The
+    live producer no longer writes this file — use
+    :func:`read_active_tournament`, which folds the event log.
+    """
     raw = backend_for(workspace_root).read_json(active_tournament_key())
     if raw is None:
         return None
     return ActiveTournament.from_dict(raw)
 
 
-def write_active_tournament(workspace_root: Path, t: ActiveTournament) -> None:
-    """Atomically write the active-tournament JSON."""
-    ensure_runtime_dirs(workspace_root)
-    backend_for(workspace_root).write_json(active_tournament_key(), t.to_dict())
+def read_active_tournament(workspace_root: Path) -> ActiveTournament | None:
+    """Read the live active tournament by FOLDING the event log, or ``None``.
 
-
-def update_tournament_entry(workspace_root: Path, entry_id: str, side: str, **updates: Any) -> None:
-    """Update one entry inside the active tournament.
-
-    Reads the current tournament JSON, replaces the entry matching the
-    ``(entry_id, side)`` pair with the per-field overrides supplied as
-    keyword arguments, and atomically writes the result. If no
-    tournament file exists, the call is a no-op (rather than an error) —
-    the orchestrator may not have initialized one yet.
-
-    Each board entry appears TWICE in :attr:`ActiveTournament.entries` —
-    once with ``side="parent"`` and once with ``side="child"``. Matching
-    on ``entry_id`` alone would land a parent-side transition on the
-    child row (or both rows), so the ``side`` is part of the key. Only
-    the FIRST row matching the pair is updated; if two rows somehow
-    still share the same ``(entry_id, side)`` the later duplicates are
-    left untouched rather than crashing — the call stays a benign no-op
-    on a malformed tournament file.
-
-    Special-cased fields are passed through :class:`dataclasses.replace`
-    so unknown keyword names raise :class:`TypeError` — the call site
-    catches typos immediately.
+    RUNTIME-V2 Phase 3: the live state is an append-only single-writer
+    event log (:mod:`zicato.runtime.tournament_log`); this folds it into
+    the same :class:`ActiveTournament` the old snapshot held. Falls back
+    to the legacy snapshot when no log exists.
     """
-    current = read_active_tournament(workspace_root)
-    if current is None:
-        return
+    from zicato.runtime import tournament_log  # noqa: PLC0415
+
+    return tournament_log.fold_active_tournament(workspace_root)
+
+
+def write_active_tournament(workspace_root: Path, t: ActiveTournament) -> None:
+    """Publish a full-envelope ``Snapshot`` to the active-tournament log.
+
+    RUNTIME-V2 Phase 3: an authoritative whole-envelope publish appends a
+    ``Snapshot`` event (one atomic append) rather than overwriting the
+    mutable snapshot file. The fold restarts from the latest ``Snapshot``,
+    so a republish supersedes the prior state exactly as an overwrite did.
+    """
+    from zicato.runtime import tournament_log  # noqa: PLC0415
+
+    tournament_log.append_snapshot(workspace_root, t.to_dict())
+
+
+def _apply_entry_update(
+    current: ActiveTournament, entry_id: str, side: str, updates: dict[str, Any]
+) -> ActiveTournament:
+    """Return ``current`` with the first ``(entry_id, side)`` row overridden.
+
+    The pure fold step behind :func:`update_tournament_entry`: only the
+    FIRST row matching the ``(entry_id, side)`` pair is replaced (each
+    board entry appears once per side, so the ``side`` is part of the
+    key); later duplicates are left untouched. Unknown override names
+    raise :class:`TypeError` via :func:`dataclasses.replace`, catching a
+    producer typo at the call site.
+    """
     new_entries: list[ActiveTournamentEntry] = []
     updated = False
     for e in current.entries:
@@ -675,8 +813,30 @@ def update_tournament_entry(workspace_root: Path, entry_id: str, side: str, **up
             updated = True
         else:
             new_entries.append(e)
-    new = replace(current, entries=new_entries)
-    write_active_tournament(workspace_root, new)
+    return replace(current, entries=new_entries)
+
+
+def update_tournament_entry(workspace_root: Path, entry_id: str, side: str, **updates: Any) -> None:
+    """Append an ``EntryUpdate`` for one ``(entry_id, side)`` row.
+
+    RUNTIME-V2 Phase 3: one atomic append, never a read-modify-write of a
+    shared mutable file — so this writer and the runner's concurrent
+    aggregate/projection writers cannot lose each other's updates. The
+    fold applies the override to the first row matching the
+    ``(entry_id, side)`` pair (see :func:`_apply_entry_update`); a typo in
+    an override name surfaces there, when the log is folded.
+
+    Validate the override names eagerly (against the row dataclass) so an
+    unknown keyword still raises at the CALL site, preserving the
+    fail-fast contract the snapshot writer had via ``replace``.
+    """
+    valid = set(ActiveTournamentEntry.__dataclass_fields__)
+    unknown = set(updates) - valid
+    if unknown:
+        raise TypeError(f"update_tournament_entry got unexpected field(s): {sorted(unknown)}")
+    from zicato.runtime import tournament_log  # noqa: PLC0415
+
+    tournament_log.append_entry_update(workspace_root, entry_id, side, updates)
 
 
 def update_tournament_partial_aggregate(
@@ -685,32 +845,24 @@ def update_tournament_partial_aggregate(
     champion_agg: dict[str, Any] | None = None,
     challenger_agg: dict[str, Any] | None = None,
 ) -> None:
-    """Rewrite the active tournament's running partial-aggregate dicts.
+    """Append a ``PartialAggregate`` delta for the running aggregate(s).
 
     Called by the runner the instant a board unit settles, so a reader
     (the dashboard) sees a real server-side ``scalar`` accumulate as the
     tournament runs — rather than 0.00 until the whole round ends.
 
-    Reads the current tournament JSON, replaces only the
+    RUNTIME-V2 Phase 3: one atomic append carrying only the side(s)
+    supplied; the fold replaces the matching
     :attr:`ActiveTournament.partial_champion_agg` /
-    :attr:`ActiveTournament.partial_challenger_agg` fields with whichever
-    side(s) were supplied, and atomically writes the result. The
-    per-entry status rows are untouched — this writer and
-    :func:`update_tournament_entry` only ever read-modify-write the same
-    file from the single orchestrator process, so the two never race.
-    If no tournament file exists, the call is a no-op.
+    :attr:`ActiveTournament.partial_challenger_agg` field(s). No
+    read-modify-write, so this and :func:`update_tournament_entry` cannot
+    race to lose an update.
     """
-    current = read_active_tournament(workspace_root)
-    if current is None:
-        return
-    updates: dict[str, Any] = {}
-    if champion_agg is not None:
-        updates["partial_champion_agg"] = dict(champion_agg)
-    if challenger_agg is not None:
-        updates["partial_challenger_agg"] = dict(challenger_agg)
-    if not updates:
-        return
-    write_active_tournament(workspace_root, replace(current, **updates))
+    from zicato.runtime import tournament_log  # noqa: PLC0415
+
+    tournament_log.append_partial_aggregate(
+        workspace_root, champion_agg=champion_agg, challenger_agg=challenger_agg
+    )
 
 
 def update_tournament_projected(
@@ -760,30 +912,20 @@ def update_tournament_projected(
     most-progressed duel — never regresses to a less-progressed last writer.
     Per-challenger lanes are keyed by challenger id (one writer each) so
     they take the projected scalar directly.
+
+    RUNTIME-V2 Phase 3: this is now ONE atomic append of a
+    ``ProjectedUpdate`` delta; the ``projected`` merge AND the
+    ``live_progress`` fold (via :func:`_fold_projected_into_live_progress`)
+    run in the READER's fold, so concurrent duels appending their
+    projection rows cannot lose each other's updates. The merge semantics
+    (champion-max-progress, the rounding gate) are identical — they share
+    :func:`_fold_one_lane` with the fold.
     """
     if not projected:
         return
-    current = read_active_tournament(workspace_root)
-    if current is None:
-        return
-    merged = {str(k): dict(v) for k, v in current.projected.items()}
-    for gid, row in projected.items():
-        if isinstance(row, dict):
-            merged[str(gid)] = dict(row)
-    rounds, rounds_changed = _fold_projected_into_live_progress(
-        current.rounds,
-        projected,
-        champion_ids=_champion_ids(current.competitors),
-    )
-    if not rounds_changed:
-        # The merge of ``projected`` may still differ (it always takes the
-        # latest row); but if neither the projected map nor any rounded lane
-        # value moved, the write is a no-op the dashboard would digest-gate
-        # away anyway. We still persist the merged projected map (cheap,
-        # additive) so the standings overlay reads the latest scalar.
-        write_active_tournament(workspace_root, replace(current, projected=merged))
-        return
-    write_active_tournament(workspace_root, replace(current, projected=merged, rounds=rounds))
+    from zicato.runtime import tournament_log  # noqa: PLC0415
+
+    tournament_log.append_projected_update(workspace_root, projected)
 
 
 def _champion_ids(competitors: list[dict[str, Any]]) -> set[str]:
@@ -884,11 +1026,20 @@ def _fold_one_lane(lane: dict[str, Any], proj: dict[str, Any], *, is_champion: b
 
 
 def clear_active_tournament(workspace_root: Path) -> None:
-    """Remove the active-tournament JSON. Idempotent."""
-    backend_for(workspace_root).delete(active_tournament_key())
+    """Clear the active tournament (the event log + legacy snapshot). Idempotent.
+
+    RUNTIME-V2 Phase 3: removes the event log so a folded read returns
+    ``None``; also drops any legacy ``active_tournament.json`` snapshot so
+    the compat reader cannot resurrect a stale tournament.
+    """
+    from zicato.runtime import tournament_log  # noqa: PLC0415
+
+    tournament_log.clear_log(workspace_root)
 
 
 __all__ = [
+    "RunStatus",
+    "TournamentPhase",
     "Heartbeat",
     "ActiveRun",
     "ActiveTournamentEntry",
@@ -898,8 +1049,11 @@ __all__ = [
     "list_active_runs",
     "write_active_run",
     "remove_active_run",
+    "request_worker_kill",
+    "clear_worker_kill_request",
     "touch_active_run_progress",
     "read_active_tournament",
+    "read_active_tournament_snapshot",
     "write_active_tournament",
     "update_tournament_entry",
     "update_tournament_partial_aggregate",

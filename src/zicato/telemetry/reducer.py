@@ -66,6 +66,8 @@ from zicato.core import (
     LossProfile,
     MetricCount,
     ScoringWeights,
+    normalize_wire_drift_kind,
+    normalize_wire_severity,
 )
 from zicato.scoring import DriftContext, builtin_drift_loss, resolve_drift_loss
 
@@ -131,42 +133,14 @@ _DRIFT_SEVERITY_INT_TO_STR: dict[int, str] = {
 }
 
 
-def _normalize_drift_kind_str(raw: str) -> str | None:
-    """Normalise a wire-form drift-kind string to the lowercase canonical form.
-
-    Handles three shapes:
-      * Bare lowercase already (``"off_topic"``) — returned as-is.
-      * Uppercase enum name (``"DRIFT_KIND_OFF_TOPIC"``) — stripped + lowered.
-      * Unknown / ``"DRIFT_KIND_UNSPECIFIED"`` / empty — returned as ``None``.
-    """
-    if not raw:
-        return None
-    if raw.startswith("DRIFT_KIND_"):
-        suffix = raw[len("DRIFT_KIND_") :].lower()
-        if suffix in ("unspecified", ""):
-            return None
-        return suffix
-    # Treat as already-canonical lowercase. The aggregation step counts
-    # whatever string we hand back; the kind set on zicato side is
-    # validated separately.
-    return raw.lower()
-
-
-def _normalize_severity_str(raw: str) -> str | None:
-    """Map a wire-form severity string to ``"info"`` / ``"warning"`` / ``"critical"``."""
-    if not raw:
-        return None
-    if raw.startswith("DRIFT_SEVERITY_"):
-        suffix = raw[len("DRIFT_SEVERITY_") :].lower()
-        if suffix == "unspecified":
-            return None
-        if suffix in ("info", "warning", "critical"):
-            return suffix
-        return None
-    lo = raw.lower()
-    if lo in ("info", "warning", "critical"):
-        return lo
-    return None
+# Wire-form drift-kind / severity normalisation lives in
+# ``zicato.core.drift_kinds`` (the single source of truth shared with the
+# index ingest path, so the analytical index agrees with the loss
+# profile). These module-local names are retained as the reducer's stable
+# call surface. The reducer always passes ``str(...)``; the shared impl's
+# ``Any`` guard is a no-op on that path, so behaviour is unchanged.
+_normalize_drift_kind_str = normalize_wire_drift_kind
+_normalize_severity_str = normalize_wire_severity
 
 
 def _load_events_as_dicts(events_jsonl_path: Path) -> list[dict[str, Any]]:
@@ -1319,6 +1293,7 @@ def read_loss_profile(path: Path) -> LossProfile:
         scoring_provenance=(
             str(d["scoring_provenance"]) if d.get("scoring_provenance") is not None else None
         ),
+        abort_cause=(str(d["abort_cause"]) if d.get("abort_cause") is not None else None),
     )
 
 

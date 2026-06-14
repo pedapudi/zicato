@@ -4,6 +4,17 @@
 > should be regenerated whenever the CLI changes. The live `--help` output
 > is the source of truth; if this document and the binary ever disagree,
 > trust `zicato --help` / `zicato help <command>`.
+>
+> *Last reconciled against the live `--help` on 2026-06-10.* Verified the
+> full command set (`init`, `evolve`, and the advanced/debugging group:
+> `analyze-telemetry`, `board`, `builder`, `dashboard`, `epoch`, `health`,
+> `help`, `mutations`, `propose`, `regenerate-report`, `register`,
+> `reindex`, `reindex-generations`, `repair-epoch-goals`,
+> `repair-judge-losses`, `repair-tournament-fk`, `repair-v0-baseline`,
+> `tournament`) and every option/default below by running
+> `uv run zicato <command> --help`. No phantom commands exist (there is no
+> `epochs` or `workspace` command — the group is `epoch`, singular), and
+> every `repair-*` / `reindex-*` name is the full, un-truncated id.
 
 `zicato` is a self-improving harness for multi-agent systems. It wraps an
 inner multi-agent harness in an **evolve loop**: it proposes a small change,

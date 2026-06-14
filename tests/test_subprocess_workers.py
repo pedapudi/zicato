@@ -33,6 +33,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -448,6 +449,57 @@ def test_drift_kind_aggregation_survives_worker_serialize_deserialize() -> None:
     assert not math.isnan(weighted)
 
 
+def test_scoring_weights_unified_serde_round_trips_every_field() -> None:
+    """ONE serde for both sides: ``ScoringWeights.to_json`` /
+    ``from_json`` (and the runner/worker delegators that wrap them) round-trip
+    EVERY field — so adding a field can no longer silently desync the worker
+    into scoring under defaults (the documented ``per_judge_weights`` desync).
+
+    Replaces the former hand-aligned ``_weights_spec`` / ``_weights_from_args``
+    field-list pair with one ``dataclasses.fields()``-driven serde. This walks
+    the FULL transport — ``_weights_spec`` → JSON → ``_weights_from_args`` —
+    over a weights instance with a non-default value on every field (reusing
+    the contract-completeness guard table), asserting the reconstruction is
+    field-identical including ``per_judge_weights``.
+    """
+    from dataclasses import fields
+
+    from tests.test_contract_serializer_completeness import _all_fields_nondefault
+    from zicato._tournament_worker import _weights_from_args
+    from zicato.tournament.runner import _weights_spec
+
+    weights = _all_fields_nondefault(ScoringWeights)
+    # No field on the instance equals its default — a genuine non-default value
+    # everywhere, so a dropped field would be observable.
+    base = ScoringWeights()
+    for f in fields(ScoringWeights):
+        assert getattr(weights, f.name) != getattr(base, f.name)
+
+    # The exact worker transport: runner serialises, JSON round-trips (the args
+    # file is JSON), worker deserialises.
+    spec = _weights_spec(weights)
+    round_tripped = _weights_from_args({"weights": json.loads(json.dumps(spec))})
+
+    # Field-identical — the single serde dropped nothing, including the
+    # historically-desynced fields.
+    assert round_tripped == weights
+    assert round_tripped.per_judge_weights == weights.per_judge_weights
+    assert round_tripped.per_judge_weights  # non-empty, a real per-judge map
+    assert round_tripped.default_judge_weight == weights.default_judge_weight
+
+    # The direct method form is the same single serde.
+    assert ScoringWeights.from_json(weights.to_json()) == weights
+
+    # Tolerance: a partial / absent payload falls back to defaults per field,
+    # so a stub-adapter test that omits the weights block still gets a usable
+    # default-weighted instance (back-compat with the old reader).
+    assert _weights_from_args({}) == ScoringWeights()
+    assert ScoringWeights.from_json(None) == ScoringWeights()
+    assert ScoringWeights.from_json({"per_judge_weights": {"q": 5.0}}).per_judge_weights == {
+        "q": 5.0
+    }
+
+
 def test_worker_stamps_its_own_pid_into_active_runs(tmp_path: Path) -> None:
     """The active_runs file the worker writes carries the WORKER's pid.
 
@@ -474,9 +526,13 @@ def test_worker_stamps_its_own_pid_into_active_runs(tmp_path: Path) -> None:
     run_id = f"{generation.id}--{entry.id}"
     run_path = active_run_path(workspace, run_id)
 
+    # Spawn with a fresh session/process-group, exactly as the runner does
+    # (``start_new_session=True``), so the worker leads its OWN group and the
+    # pgid it records is the worker's group, not the test runner's.
     proc = subprocess.Popen(  # noqa: S603
         [sys.executable, "-m", "zicato._tournament_worker", str(args_path)],
         env=_worker_env(),
+        start_new_session=True,
     )
     try:
         # Wait for the worker to write its active_runs file.
@@ -493,9 +549,109 @@ def test_worker_stamps_its_own_pid_into_active_runs(tmp_path: Path) -> None:
         assert record.run_id == run_id
         assert record.entry_id == entry.id
         assert record.deadline  # deadline = started_at + budget
+        # Containment metadata for the supervisor: the worker stamps its own
+        # process-group id (it leads its group, so pgid == pid here) and the
+        # ephemeral snapshot directory it was mounted on.
+        assert record.pgid == os.getpgid(proc.pid)
+        assert record.pgid == proc.pid  # the worker is its own group leader
+        assert record.snapshot_path == str(generation.snapshot_root)
     finally:
         proc.kill()
         proc.wait(timeout=10)
+
+
+def test_run_single_spawns_worker_in_new_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The runner spawns the worker with ``start_new_session=True``.
+
+    This is the producer side of the supervisor's group-containment: the
+    worker must lead its own session/process-group so its recorded ``pgid``
+    can be group-killed (worker + grandchildren), not just the worker pid.
+    """
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    generation = _generation(workspace)
+    entry = _entry()
+
+    captured: dict[str, object] = {}
+    real_create = asyncio.create_subprocess_exec
+
+    async def _spy_create(*args: object, **kwargs: object) -> object:
+        captured["start_new_session"] = kwargs.get("start_new_session")
+        captured["env"] = kwargs.get("env")
+        return await real_create(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _spy_create)
+
+    loss = asyncio.run(
+        _run_single(
+            adapter=StubAdapter(),
+            generation=generation,
+            entry=entry,
+            weights=ScoringWeights(),
+            config=_config(workspace),
+            workspace_root=workspace,
+            epoch_id="e0",
+            side="parent",
+        )
+    )
+
+    assert isinstance(loss, LossProfile)
+    assert captured["start_new_session"] is True
+    # Default: the worker inherits the orchestrator's full env (env=None) —
+    # byte-for-byte today's behavior. The scrub is strictly opt-in.
+    assert captured["env"] is None
+
+
+def test_run_single_scrubs_worker_env_when_opted_in(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``scrub_worker_env=True`` spawns the worker with a minimal explicit env.
+
+    The scrubbed env must (a) be an explicit dict, not full inheritance, and
+    (b) drop a credential variable that no model role named, while keeping the
+    process-essential PATH. This is the producer side of denying a mutated
+    worker read-access to every credential in the orchestrator's process env.
+    """
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    generation = _generation(workspace)
+    entry = _entry()
+
+    # A stray secret in the orchestrator's env that no model role references.
+    monkeypatch.setenv("LEAKY_UNRELATED_SECRET", "sk-should-not-cross")
+    monkeypatch.setenv("PATH", "/usr/bin")
+
+    config = replace(_config(workspace), scrub_worker_env=True)
+
+    captured: dict[str, object] = {}
+    real_create = asyncio.create_subprocess_exec
+
+    async def _spy_create(*args: object, **kwargs: object) -> object:
+        captured["env"] = kwargs.get("env")
+        return await real_create(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _spy_create)
+
+    loss = asyncio.run(
+        _run_single(
+            adapter=StubAdapter(),
+            generation=generation,
+            entry=entry,
+            weights=ScoringWeights(),
+            config=config,
+            workspace_root=workspace,
+            epoch_id="e0",
+            side="parent",
+        )
+    )
+
+    assert isinstance(loss, LossProfile)
+    env = captured["env"]
+    assert isinstance(env, dict)  # explicit env, not full inheritance
+    assert env.get("PATH") == "/usr/bin"  # essential floor preserved
+    assert "LEAKY_UNRELATED_SECRET" not in env  # the scrub denied it
 
 
 def _spawn_worker_blocking(args_path: Path) -> subprocess.CompletedProcess[bytes]:
@@ -516,8 +672,16 @@ def _spawn_worker_blocking(args_path: Path) -> subprocess.CompletedProcess[bytes
 def test_parent_kills_worker_that_blocks_past_budget_plus_grace(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A worker wedged past budget+GRACE is terminated by the parent; _run_single
-    returns an aborted LossProfile and never raises."""
+    """A worker wedged past budget+GRACE is reaped; _run_single returns an
+    aborted LossProfile and never raises.
+
+    The single SIGTERM→grace→SIGKILL escalator lives in the supervisor:
+    the parent writes a kill-request marker and waits for the supervisor to
+    reap the worker. No supervisor is attached in this test, so the
+    parent's LAST-RESORT fallback escalation fires after
+    ``_SUPERVISOR_KILL_WAIT_S`` — shrunk here so the fallback is exercised
+    fast.
+    """
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
     generation = _generation(workspace)
@@ -525,8 +689,11 @@ def test_parent_kills_worker_that_blocks_past_budget_plus_grace(
     # a blocking sleep so its OWN cooperative budget cannot fire.
     entry = _entry(budget_s=1)
 
-    # Shrink the parent's grace margins so the test is fast.
+    # Shrink the parent's grace margins so the test is fast. With no
+    # supervisor present, the parent waits _SUPERVISOR_KILL_WAIT_S before its
+    # last-resort escalation — shrink that too so the fallback fires quickly.
     monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", 0.3)
+    monkeypatch.setattr(runner_mod, "_SUPERVISOR_KILL_WAIT_S", 0.5)
     monkeypatch.setattr(runner_mod, "_SIGTERM_TO_SIGKILL_GRACE_S", 0.3)
 
     started = time.monotonic()
@@ -549,10 +716,19 @@ def test_parent_kills_worker_that_blocks_past_budget_plus_grace(
     assert loss.wall_clock_budget_exceeded is True
     assert loss.entry_id == entry.id
     assert loss.drift_loss > 0.0
-    # The parent fired at budget(1) + grace(0.3) = ~1.3s, not 3600s.
+    # The parent stamped the abort cause so loop-health can tell its OWN kill
+    # of a wedged worker apart from a budget exhaustion or a supervisor kill.
+    assert loss.abort_cause == "parent_kill"
+    # The parent reaped at budget(1) + grace(0.3) + supervisor-wait(0.5) +
+    # escalation(0.3) ≈ 2.1s, not 3600s.
     assert elapsed < 30.0
-    # The parent cleaned up the worker's active_runs file.
+    # The parent cleaned up the worker's active_runs file...
     assert not active_run_path(workspace, f"{generation.id}--{entry.id}").exists()
+    # ...and its own kill-request marker (a recycled run id must not inherit
+    # a stale request the supervisor would act on).
+    from zicato.runtime.paths import kill_request_path
+
+    assert not kill_request_path(workspace, f"{generation.id}--{entry.id}").exists()
     # The per-run ephemeral snapshot working copy is discarded even on
     # the abort path — _run_single's finally block runs unconditionally.
     run_id = f"{generation.id}--{entry.id}"
@@ -578,6 +754,7 @@ def test_tournament_continues_after_a_budget_killed_run(
     generation = _generation(workspace)
 
     monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", 0.3)
+    monkeypatch.setattr(runner_mod, "_SUPERVISOR_KILL_WAIT_S", 0.5)
     monkeypatch.setattr(runner_mod, "_SIGTERM_TO_SIGKILL_GRACE_S", 0.3)
 
     losses: dict[str, LossProfile] = {}
@@ -601,6 +778,87 @@ def test_tournament_continues_after_a_budget_killed_run(
     # The wedged entry aborted; the next entry still produced a profile.
     assert losses["entry_wedged"].wall_clock_budget_exceeded is True
     assert losses["entry_ok"].entry_id == "entry_ok"
+
+
+def test_parent_delegates_kill_to_supervisor_via_request_marker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """On an over-budget worker the parent REQUESTS a kill (control marker) and
+    waits for the supervisor to reap it — it does NOT self-escalate.
+
+    This is the §3 consolidation: the single SIGTERM→grace→SIGKILL
+    escalator lives in the supervisor. Here a fake supervisor task watches
+    for the ``kill_requests/{run_id}`` marker and SIGKILLs the worker,
+    standing in for the Rust ``runs_loop``. The parent's last-resort
+    ``_terminate_worker`` must NOT fire, proving the kill went through the
+    request channel rather than the parent racing the supervisor.
+    """
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    generation = _generation(workspace)
+    entry = _entry(budget_s=1)
+    run_id = f"{generation.id}--{entry.id}"
+
+    monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", 0.3)
+    # Generous supervisor-wait: the fake supervisor reaps well within it, so
+    # the parent's last-resort fallback should never be reached.
+    monkeypatch.setattr(runner_mod, "_SUPERVISOR_KILL_WAIT_S", 10.0)
+
+    # Trip a flag if the parent's last-resort escalation ever fires.
+    fallback_fired = {"value": False}
+    real_terminate = runner_mod._terminate_worker
+
+    async def _spy_terminate(proc: object) -> None:
+        fallback_fired["value"] = True
+        await real_terminate(proc)
+
+    monkeypatch.setattr(runner_mod, "_terminate_worker", _spy_terminate)
+
+    from zicato.runtime.paths import kill_request_path
+    from zicato.runtime.state import list_active_runs
+
+    async def _fake_supervisor() -> None:
+        """Stand in for the Rust runs_loop: on a kill-request, SIGKILL the pid."""
+        marker = kill_request_path(workspace, run_id)
+        while True:
+            await asyncio.sleep(0.05)
+            if not marker.exists():
+                continue
+            # Resolve the worker pid from its active_runs record and kill it,
+            # exactly as the supervisor's escalator does.
+            for run in list_active_runs(workspace):
+                if run.run_id == run_id and run.pid:
+                    try:
+                        os.kill(run.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+            return
+
+    async def _drive() -> LossProfile:
+        sup = asyncio.create_task(_fake_supervisor())
+        try:
+            return await _run_single(
+                adapter=SleepingAdapter(),
+                generation=generation,
+                entry=entry,
+                weights=ScoringWeights(),
+                config=_config(workspace),
+                workspace_root=workspace,
+                epoch_id="e0",
+                side="parent",
+            )
+        finally:
+            sup.cancel()
+
+    loss = asyncio.run(_drive())
+
+    assert isinstance(loss, LossProfile)
+    assert loss.wall_clock_budget_exceeded is True
+    # The supervisor reaped the worker, so the parent's last-resort
+    # escalation never ran — no parent↔supervisor race over the pid.
+    assert fallback_fired["value"] is False
+    # The kill-request marker was cleaned up on the run's finally block.
+    assert not kill_request_path(workspace, run_id).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -662,6 +920,9 @@ def test_run_single_handles_externally_killed_worker(
     assert isinstance(loss, LossProfile)
     assert loss.wall_clock_budget_exceeded is True
     assert loss.entry_id == entry.id
+    # A supervisor SIGKILL leaves the worker gone with no result file —
+    # distinguished from a parent kill by the abort cause.
+    assert loss.abort_cause == "gone_no_result"
     # The parent cleaned up the active_runs file the killed worker left.
     assert not active_run_path(workspace, run_id).exists()
 
@@ -750,6 +1011,13 @@ def test_worker_cooperative_budget_produces_clean_aborted_result(
 
     loss = read_loss_profile(Path(result["loss_profile_path"]))
     assert loss.wall_clock_budget_exceeded is True
+    # A genuine cooperative-budget exhaustion is the ONE cache-eligible abort
+    # cause; the worker stamps it so the cache layer reuses it (re-running
+    # re-hits the same budget) rather than treating it as an infra abort.
+    from zicato.core import BUDGET_ABORT_CAUSE, is_infra_abort_cause  # noqa: PLC0415
+
+    assert loss.abort_cause == BUDGET_ABORT_CAUSE
+    assert is_infra_abort_cause(loss.abort_cause) is False
 
 
 # ---------------------------------------------------------------------------

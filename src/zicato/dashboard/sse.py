@@ -59,6 +59,30 @@ _KEEPALIVE_S = 15.0
 _COALESCE_WINDOW_S = 0.25
 
 
+def _progress_signal(paths: WorkspacePaths) -> tuple[int, bool]:
+    """Read the orchestrator progress cursor: ``(seq, terminal)``.
+
+    RUNTIME-V2 Phase 4. ``seq`` is the TRUE liveness signal — the tail of
+    the progress event log (:mod:`zicato.runtime.progress_log`), which
+    advances only on a genuine orchestrator transition, never on the
+    heartbeat timer. ``terminal`` is ``True`` iff the tail event marks a
+    cleanly-ended loop (SETTLED / STOPPED), so a consumer can tell a
+    settled run from a stalled one (``seq`` frozen mid-flight). Stamped
+    onto every SSE frame so the front-end can digest-gate on real progress
+    rather than on a possibly-stale ``last_heartbeat`` timestamp.
+
+    Best-effort: any read failure (a never-run workspace, a transient
+    torn read) degrades to ``(0, False)`` — the safe "no progress
+    recorded" default — and never raises into the SSE hot path.
+    """
+    try:
+        from zicato.runtime import progress_log  # noqa: PLC0415
+
+        return progress_log.tail_seq(paths.root), progress_log.tail_is_terminal(paths.root)
+    except Exception:
+        return 0, False
+
+
 def _classify(path: Path, paths: WorkspacePaths) -> str:
     """Map a changed path to a ``state_change`` ``kind``.
 
@@ -70,8 +94,13 @@ def _classify(path: Path, paths: WorkspacePaths) -> str:
             return "heartbeat"
         if path == paths.lock:
             return "lock"
-        if path == paths.active_tournament:
+        if path == paths.active_tournament or path == paths.active_tournament_log:
             return "active_tournament"
+        if path == paths.progress_log:
+            # The orchestrator progress event log (RUNTIME-V2 Phase 4): a
+            # write is a genuine transition, so surface it as a distinct
+            # change region carrying the advanced liveness ``seq``.
+            return "progress"
         if path == paths.lineage:
             return "lineage"
         if path == paths.current_epoch_marker:
@@ -215,6 +244,11 @@ class ChangeBroker:
             return
         # `kind` carries a single region for back-compat with a client
         # that reads only one; `kinds` carries the whole coalesced set.
+        # `seq` / `terminal` carry the orchestrator's TRUE liveness cursor
+        # (RUNTIME-V2 Phase 4) so a consumer can digest-gate on genuine
+        # progress and tell a SETTLED run from a STALLED one — additive,
+        # an old client that reads only `kind`/`kinds` is unaffected.
+        seq, terminal = _progress_signal(self.paths)
         self._emit(
             {
                 "event": "state_change",
@@ -222,6 +256,8 @@ class ChangeBroker:
                     "type": "state_change",
                     "kind": kinds[0] if len(kinds) == 1 else "multiple",
                     "kinds": kinds,
+                    "seq": seq,
+                    "terminal": terminal,
                     "ts": _now_iso(),
                 },
             }
@@ -335,7 +371,17 @@ async def sse_event_stream(broker: ChangeBroker, paths: WorkspacePaths) -> Async
     queue = broker.subscribe()
     try:
         snapshot = build_snapshot(paths)
-        yield _format_sse("snapshot", {"type": "snapshot", "data": snapshot})
+        # Stamp the orchestrator progress cursor on the opening snapshot
+        # frame too (RUNTIME-V2 Phase 4), so a freshly-connected client
+        # has the true liveness ``seq`` + terminal marker before any
+        # ``state_change`` arrives. The heartbeat inside ``snapshot`` also
+        # carries ``seq``; this top-level pair mirrors the ``state_change``
+        # frame so the consumer reads one consistent shape.
+        seq, terminal = _progress_signal(paths)
+        yield _format_sse(
+            "snapshot",
+            {"type": "snapshot", "data": snapshot, "seq": seq, "terminal": terminal},
+        )
         last_ping = time.monotonic()
         while True:
             timeout = max(0.0, _KEEPALIVE_S - (time.monotonic() - last_ping))

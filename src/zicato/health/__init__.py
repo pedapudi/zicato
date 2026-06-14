@@ -32,13 +32,26 @@ from zicato.health.diagnostics import (
     detect_stalled_loop,
 )
 
+# Loop-health also surfaces how many *never-abort* best-effort side effects
+# degraded during a run. The :func:`zicato.util.best_effort` context manager
+# tallies every swallowed failure; the count is re-exported here so the
+# loop-health-facing tooling reads it alongside the pure detectors. (The
+# tally is process-local and never persisted, so it does not enter any
+# :class:`LoopHealth` report.)
+from zicato.util.best_effort import (
+    best_effort_failures,
+    reset_best_effort_failures,
+)
+
 __all__ = [
     "HealthFinding",
     "LoopHealth",
     "assess_loop_health",
+    "best_effort_failures",
     "detect_degenerate_scoring",
     "detect_flat_drift_signal",
     "detect_no_expectations",
     "detect_non_differentiating_entry",
     "detect_stalled_loop",
+    "reset_best_effort_failures",
 ]

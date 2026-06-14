@@ -73,6 +73,28 @@ pub struct ServeOptions {
     pub heartbeat_stale_threshold_seconds: u64,
     /// Shared in-memory ring buffer of recent watchdog escalations.
     pub action_log: Arc<WatchdogLog>,
+    /// Heartbeat seq-liveness tracker shared with the watchdog loop so
+    /// `/statusz` reports the same seq-change age the watchdog decides on.
+    pub seq_liveness: Arc<std::sync::Mutex<crate::watchdog::SeqLiveness>>,
+    /// Cumulative torn-write / non-monotonic-seq counters over the canonical
+    /// active-tournament JSONL fold; `/statusz` surfaces it.
+    pub fold_diagnostics: Arc<crate::fold_stats::FoldDiagnostics>,
+    /// The tamper-evident audit ledger, when one is configured
+    /// (`--ledger-dir`). `None` → no ledger; `/statusz` and
+    /// `/api/audit/verify` then report it as "not configured". Shared with
+    /// the watchdog loops, which append their actions to it.
+    pub ledger: Option<Arc<crate::ledger::AuditLedger>>,
+    /// The latest diff-containment scan result, shared with the watchdog loop
+    /// (which fills it when `--diff-containment` is set). `/statusz` surfaces
+    /// it; empty/not-scanned when the scan is disabled.
+    pub diff_findings: Arc<crate::diff_containment::DiffContainmentFindings>,
+    /// The latest promotion-gatekeeping scan result, shared with the watchdog
+    /// loop (filled when `--promotion-gate` is set). `/statusz` surfaces it.
+    pub promotion_gate_findings: Arc<crate::promotion_gate::PromotionGateFindings>,
+    /// The latest index-vs-canonical divergence-audit result, shared with the
+    /// watchdog loop (filled when `--divergence-audit` is set). `/statusz`
+    /// surfaces it.
+    pub divergence_findings: Arc<crate::divergence::DivergenceFindings>,
 }
 
 pub async fn serve(
@@ -100,6 +122,12 @@ pub async fn serve(
         dashboard_disabled: options.dashboard_disabled,
         heartbeat_stale_threshold_seconds: options.heartbeat_stale_threshold_seconds,
         action_log: options.action_log,
+        seq_liveness: options.seq_liveness,
+        fold_diagnostics: options.fold_diagnostics,
+        ledger: options.ledger,
+        diff_findings: options.diff_findings,
+        promotion_gate_findings: options.promotion_gate_findings,
+        divergence_findings: options.divergence_findings,
     };
 
     let cors = CorsLayer::new()

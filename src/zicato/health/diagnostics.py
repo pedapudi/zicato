@@ -53,12 +53,12 @@ HealthConfig field                Environment variable        Default
 
 from __future__ import annotations
 
-import datetime as _dt
 from dataclasses import dataclass, field
 from typing import Any
 
 from zicato.config import HealthConfig, load_config
 from zicato.core.types import BoardEntry, LossProfile
+from zicato.util.iso_time import now_iso as _utcnow_iso
 
 # ---------------------------------------------------------------------------
 # Tunable thresholds
@@ -739,11 +739,6 @@ def detect_refresh_cadence(
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
-
-
-def _utcnow_iso() -> str:
-    """Return the current UTC time as an ISO-8601 string with ``Z`` suffix."""
-    return _dt.datetime.now(_dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def assess_loop_health(

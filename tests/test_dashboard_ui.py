@@ -332,7 +332,150 @@ def test_bundle_under_size_envelope(
     # scoped decomposition CSS — ~3 KB of new surface (back-compat: a pre-#19 /
     # built-in round renders nothing new). The envelope is raised to 1.080 MB to
     # cover it with headroom.
-    assert total < 1_080_000, f"bundle is {total} bytes, exceeds 1_080_000 envelope"
+    #
+    # The IN-FLIGHT ROUND surface (#16 second half) then makes a NEW round that
+    # is still proposing/applying its field show as its OWN round on the
+    # champion-spine timeline (an `appendInflightRound` overlay derived from the
+    # live envelope's `field_status`) instead of being folded under the prior
+    # settled round, with a LIVE badge + an incrementing "N proposed · M applied"
+    # banner + per-challenger proposing/applied/rejected chip states — the round
+    # model + the round-timeline renderer + the wiring through the epoch / round
+    # views + the scoped in-flight CSS, ~6 KB of new surface (back-compat: an
+    # epoch with no live proposing round renders byte-identically). The envelope
+    # is raised to 1.092 MB to cover it with headroom.
+    #
+    # The FEATURE-WAVE INTEGRATION then lands every dashboard surface on one
+    # branch at once: the double-elim demotion line-routing (#34) and the
+    # in-flight LIVE-badge / status-chip round timeline (#31) both grew the
+    # shared svg.js + Variant-T view modules, and their union sits ~1.7 KB above
+    # the prior 1.092 MB line (no shared widget was duplicated — both renderers
+    # coexist; the frontend suite asserts both behaviours). The envelope is
+    # raised to 1.10 MB to cover the combined surface with headroom.
+    #
+    # The SEQ-DRIVEN LIVENESS + PRINCIPLED RENDER GATE (the evidence-cockpit
+    # render-discipline backbone) then keys liveness on the orchestrator
+    # progress `seq` now carried on the SSE frames + the heartbeat, instead of
+    # a heartbeat timestamp: a progress cursor on AppState (noteProgress —
+    # advance / no-op / rollover), a seq no-op-skip gate in core/sse.js (a
+    # non-advancing state_change writes ZERO DOM), a four-state run verdict in
+    # livestatus.js (LIVE / STALLED / SETTLED / DEAD) with the legacy
+    # timestamp degrade when no seq is present, and the chrome `dt-run-state`
+    # pill in shell.js — ~10 KB of new spine (back-compat: a seq-less frame is
+    # byte-identical to the prior always-refresh path). The envelope is raised
+    # to 1.11 MB to cover it with headroom.
+    #
+    # The UNIFIED DECISION-STATE TAXONOMY + overrideChip primitive (the
+    # evidence-cockpit foundation BT/field-override consume) then threads the
+    # dormant `deferred` verdict end-to-end and adds `overrideChip`/
+    # `overrideDigest` in ui.js — a SIBLING to verdictPill that layers operator-
+    # override provenance (forced↑ / forced✕ / queued / drained) BESIDE the gate
+    # verdict / standings status pill WITHOUT recoloring it — wired into
+    # gatePanel (candidate.js) + standingsTable (structure.js) and folded into
+    # the candidate/structure digests (no timestamp leak). ~0.4 KB of new
+    # primitive + two consumers (back-compat: absent override → byte-identical
+    # to today). The envelope is raised to 1.111 MB to cover it with headroom.
+    #
+    # The ABSOLUTE SCALARS IN THE GATE HEAD then surface the gate's absolute
+    # champion_scalar / challenger_scalar (and, mid-flight, the live projected
+    # challenger scalar + boards_done/total) as paired dn-stat chips LEFT of the
+    # existing Δ chips in candidate.js gatePanel — reusing the shipped `projStat`
+    # treatment for the in-flight side and folding the rounded, timestamp-free
+    # endpoints into candidateDigest. This closes the "Δ without its endpoints"
+    # projection gap from data that already rides on the gate object (no new
+    # backend field). ~3.6 KB of new surface incl. the prior wave's accrued
+    # spend (back-compat: a gate with no resolved scalars renders byte-identical
+    # to today). The envelope is raised to 1.124 MB to cover it with headroom.
+    #
+    # The BRADLEY–TERRY UNCERTAINTY GATE (the evidence-cockpit marquee) then
+    # mounts `ratingBlock`/`replicationStrip`/`ratingDigest` into candidate.js
+    # gatePanel: the champion/challenger θ̂ whiskers with credible-interval caps,
+    # the P(challenger stronger) bar against the configured threshold marker, and
+    # — when the rating is deferred — the replication strip (replicates-spent
+    # dt-rungstep pips + the next closest-CI duel + a CI-convergence sparkline,
+    # capped with an explicit "inconclusive" caption when the schedule exhausts).
+    # It overlays the challenger's CI band on the radar scalar vertex
+    # (buildRadarModel → `chalBand`, drawn by svg.radarSilhouette) and threads a
+    # field-level "deferred" caption under the structure.js standings table. All
+    # of it reads gate.rating VERBATIM (build_rating_view) + its own CSS block;
+    # back-compat: rating absent / present:false → the gate panel is byte-
+    # identical to today. ~10.5 KB of real new evidence surface (JS + CSS). The
+    # envelope is raised to 1.14 MB to cover it with headroom.
+    #
+    # The FIELD-TOURNAMENT OVERRIDE CONTROL PLANE then wires the operator's per-
+    # challenger force-promote/reject into the standings row for ALL structures:
+    # an `overrideControlCell` (ui.js) — CONFIRM-INLINE (arm → reason → POST, never
+    # one-click), an OPTIMISTIC 'queued' stamp held in a module pending registry
+    # (folded into structureDigest with NO timestamp so it repaints on a real
+    # override but is byte-identical on a no-op beat) and a DISABLED (not POST-and-
+    # fail) state when the workspace is read-only — a `postFieldOverride` helper
+    # (core/api.js) for the per-generation /api/control/{promote|reject}/{gid} route
+    # with the {reason, epoch, tournament_id, structure} body, the standings control
+    # column + DRAINED-state resolution + the 'gate said … · operator forced …'
+    # provenance caption (structure.js standings + candidate.js gate head), the
+    # swiss standings table so the control plane is consistent across every
+    # structure, and MULTIPLE-promoted/tie support. All reads ride on gate.override
+    # / override_status / promoted_generation_ids VERBATIM (no new backend field;
+    # back-compat: no override / no read-only → byte-identical). ~8 KB of new
+    # control surface. The envelope is nudged to 1.152 MB to cover it with a thin
+    # margin (additions kept lean — only the control plane, no extra chrome).
+    #
+    # The HYPOTHESIS PREDICTION-ACCURACY + CALIBRATION diagnostic then adds two
+    # consumption-only surfaces: `buildPredictionScorecard` in the candidate
+    # dossier (candidate.js) — the proposer's predicted-vs-realised movements per
+    # claim with hit/miss/unresolved/unpredicted glyphs + the calibration fraction,
+    # consuming /api/hypothesis-accuracy/{epoch}/{gen}, with every hover-level
+    # detail in the hovercard singleton — and `svg.calibrationTrend` in the home
+    # meta-loop ledger region (home.js) — the score fraction over the epoch's
+    # lineage reusing the sparkline/staircase grammar, consuming
+    # /api/calibration-trend. Both carry the EXPLICIT 'diagnostic — does not affect
+    # the gate' caption and never couple to the gate; both fold a rounded, timestamp-
+    # free digest into the candidate/home digests (a no-op beat is byte-identical).
+    # Plus the two data.js readers + the scoped CSS (in console.css, not this
+    # counted bundle). ~16 KB of new diagnostic surface (back-compat: a seed / no-
+    # claims candidate and an epoch with no scored predictions render byte-identical
+    # to today). The envelope is raised to 1.176 MB to cover it with headroom.
+    #
+    # The FIELD-DIVERSITY ribbon + overlap matrix then adds the consumption-only
+    # idea-overlap surface under the proposed-field section (structure.js): a
+    # `diversitySection` ribbon — the distinct-ideas/field-size + mean/max stat
+    # strip, a dual mean/max pairwise-Jaccard `overlapMeter` whose fill earns its
+    # tone BY DIRECTION against the diversity tolerance, a soft-reject count riding
+    # the DEFERRED pill, and the max-overlap-pair hovercard — plus a per-standings-
+    # row `diversityBadge` (soft_rejected → deferred pill, penalized → caution chip)
+    # and `svg.diversityMatrix`/`diversityMatrixDigest` cloning the dn-mtx grid
+    # (challenger × mutation-site). All of it reads the additive `diversity` block +
+    # per-slot `diversity_status` VERBATIM (build_tournament_structure) and folds a
+    # ROUNDED, timestamp-free `diversityDigest` into structureDigest (a no-op beat is
+    # byte-identical). The overlap matrix degrades to nothing when per-challenger
+    # membership is absent (the diversity block carries only the field scalars + the
+    # max pair — membership is a noted Python followup). ~15 KB of new evidence
+    # surface (back-compat: a gauntlet / single-challenger / pre-feature field renders
+    # byte-identical to today). The envelope is raised to 1.19 MB to cover it with
+    # headroom.
+    #
+    # The SIDEBAR-ORDER fix then re-sorts buildTreeModel's assembled epoch list
+    # (shell.js) to the timestamp-ordered /api/workspace.epochs order, so the sidebar
+    # tree lists epochs chronologically like the fleet cards — a ZERO-generation epoch
+    # (absent from /api/lineage, previously appended last) now lands in its correct
+    # middle slot. A small stable decorate-sort-undecorate + its rationale comment
+    # (back-compat: a single-epoch / lineage-complete workspace renders byte-identical).
+    # The envelope is raised to 1.191 MB to cover it with headroom.
+    #
+    # The EVIDENCE-COCKPIT LIVENESS / TRANSCRIPT fixes then add six bug fixes across
+    # the live surfaces: (1) the three redundant chrome "live" signals consolidate
+    # into ONE `dt-run-state` pill carrying the phase + count + stale affordance
+    # (shell.js); (2) a derived `alive` (LIVE/STALLED) verdict in livestatus.js gates
+    # the hero so it no longer flickers out when `running` momentarily drops during a
+    # long call (live.js + shell.js); (4) the "what's running" panel shows in-flight
+    # matches via active-runs corroboration when a fresh epoch roll desyncs the
+    # heartbeat epoch tag — `structureDrawableRunning` + `tournamentHasActiveRuns`
+    # (live.js); (5) `runIsTerminal`/`runProgressRatio` read 100% for a completed run
+    # keyed to task/board completion not the wall-clock budget (structure.js); (6)
+    # `dedupConsecutiveTurns` folds the duplicated goal turn in the transcript
+    # (board.js). All digest-gated (a no-op beat stays byte-identical) + back-compat
+    # (a seq-less / non-terminal / single-goal payload renders as today). The envelope
+    # is raised to 1.20 MB to cover the new spine with headroom.
+    assert total < 1_200_000, f"bundle is {total} bytes, exceeds 1_200_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

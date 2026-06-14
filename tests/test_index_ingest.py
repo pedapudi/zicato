@@ -31,7 +31,7 @@ from zicato.index.query import (
     runs_for_generation,
     tournaments_for_epoch,
 )
-from zicato.telemetry.reducer import write_loss_profile
+from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
 from zicato.testing.fixtures import (
     make_drift_count,
     make_experiment,
@@ -102,6 +102,22 @@ def _build_workspace(tmp_path: Path) -> tuple[Path, str]:
     return ws, eid_a
 
 
+def _dump_index(db: Path) -> str:
+    """Serialise the whole SQLite index to a deterministic SQL dump.
+
+    Used to assert that two rebuilds produce byte-identical indexes.
+    ``iterdump`` emits schema + data as SQL text; two equal dumps mean
+    two equal databases (row-for-row).
+    """
+    import sqlite3
+
+    conn = sqlite3.connect(db)
+    try:
+        return "\n".join(conn.iterdump())
+    finally:
+        conn.close()
+
+
 def _seed_lineage(ws: Path, epoch_id: str) -> None:
     """Register a v0 (promoted seed) and v1 (promoted child) in lineage."""
     g0 = Generation(
@@ -153,9 +169,11 @@ def test_rebuild_index_expected_row_counts(tmp_path: Path) -> None:
     assert counts["experiments"] == 1
     assert counts["patches"] == 1
     assert counts["tournaments"] == 1
-    # Each run has 2 off_topic/warning drift events folded into one
-    # drift:off_topic metric row.
-    assert counts["metric_counts"] == 4
+    # metric_counts is a pure projection of loss.json's metric surface. The
+    # ``_build_workspace`` runs write loss.json with NO drift / metric
+    # surface (and the index no longer re-tallies events.jsonl), so they
+    # contribute zero metric_counts rows.
+    assert counts["metric_counts"] == 0
 
 
 def test_rebuild_index_custom_db_path(tmp_path: Path) -> None:
@@ -238,17 +256,79 @@ def test_rebuild_index_tournament_records_fast_champion_eval_mode(tmp_path: Path
     assert t["champion_run_ref"] == f"epochs/{eid}/generations/v0"
 
 
-def test_rebuild_index_metric_counts_from_drift_events(tmp_path: Path) -> None:
-    ws, eid = _build_workspace(tmp_path)
+def test_rebuild_index_metric_counts_are_pure_projection_of_loss_json(
+    tmp_path: Path,
+) -> None:
+    # metric_counts is a PURE projection of loss.json's metric surface —
+    # NOT re-derived from events.jsonl. A run whose loss.json carries a
+    # drift surface yields exactly those rows; an events.jsonl that
+    # disagrees (or a loss.json with no surface) is ignored.
+    ws = tmp_path / ".zicato"
+    board = tmp_path / "board.jsonl"
+    board.write_text(
+        '{"id": "e1", "kind": "single_turn", "wall_clock_budget_seconds": 60, "input": "hi"}\n',
+        encoding="utf-8",
+    )
+    rubric = tmp_path / "rubric.md"
+    rubric.write_text("# r\n", encoding="utf-8")
+    cfg = new_epoch(ws, "alpha", board, rubric, ScoringWeights())
+    eid = cfg.id
+    _seed_lineage(ws, eid)
+
+    # loss.json carries a drift surface of off_topic/warning x2.
+    profile = make_loss_profile(
+        run_id="run_drift",
+        entry_id="e1",
+        generation_id="v0",
+        epoch_id=eid,
+        drift_counts=(make_drift_count("off_topic", "warning", 2),),
+    )
+    write_loss_profile(profile, loss_profile_path(ws, eid, "v0", "e1"))
+    # An events.jsonl with DIFFERENT drift, to prove it is never consulted.
+    make_synthetic_events_jsonl(
+        events_jsonl_path(ws, eid, "v0", "e1"),
+        drift_events=[("tool_error", "critical")],
+    )
+
     db = rebuild_index(ws)
-    run_id = f"run_{eid}_v0_e1"
-    metrics = metric_counts_for_run(db, run_id)
-    drift_rows = [m for m in metrics if m["namespace"] == "drift"]
+    rows = metric_counts_for_run(db, "run_drift")
+
+    # The indexed metric_counts equal exactly the loss.json drift surface.
+    expected = {
+        (mc.name, mc.severity, mc.count)
+        for mc in read_loss_profile(loss_profile_path(ws, eid, "v0", "e1")).unified_metrics()
+    }
+    actual = {(m["name"], m["severity"], m["count"]) for m in rows}
+    assert actual == expected
+    drift_rows = [m for m in rows if m["namespace"] == "drift"]
     assert len(drift_rows) == 1
     assert drift_rows[0]["name"] == "drift:off_topic"
     assert drift_rows[0]["severity"] == "warning"
-    # Two synthetic off_topic/warning events were folded into the count.
     assert drift_rows[0]["count"] == pytest.approx(2.0)
+    # The events-only tool_error drift is NOT indexed — events are ignored.
+    assert all(m["name"] != "drift:tool_error" for m in rows)
+
+
+def test_rebuild_index_no_metric_surface_yields_no_metric_counts(
+    tmp_path: Path,
+) -> None:
+    # A loss.json with no drift / metric surface yields zero metric_counts
+    # rows even when an events.jsonl with drift sits beside it — the index
+    # is a pure projection and never re-tallies events.
+    ws, eid = _build_workspace(tmp_path)
+    db = rebuild_index(ws)
+    run_id = f"run_{eid}_v0_e1"
+    assert metric_counts_for_run(db, run_id) == []
+
+
+def test_rebuild_index_dump_is_idempotent(tmp_path: Path) -> None:
+    # Determinism guard: two rebuilds of the same workspace produce a
+    # byte-identical SQL dump (every projection is stable across runs).
+    ws, _ = _build_workspace(tmp_path)
+    db = rebuild_index(ws)
+    first = _dump_index(db)
+    rebuild_index(ws)
+    assert _dump_index(db) == first
 
 
 def test_rebuild_index_metric_counts_from_loss_profile_surface(

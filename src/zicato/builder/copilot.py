@@ -22,11 +22,13 @@ How the model is resolved (from ``builder.json``)
   the agent's ``model=`` directly — the escape hatch for a fully custom
   model object / factory; else
 * the agent's ``model=`` is built from ``agent.model`` (the common case: a
-  model string ADK understands). When ``agent.endpoint`` /
-  ``agent.api_key_env`` are also set, the model is built through ADK's
+  model string ADK understands) via the SINGLE ADK-model-from-spec builder
+  :func:`zicato.models_config.build_adk_model`. When ``agent.endpoint`` /
+  ``agent.api_key_env`` are also set, that builder routes through ADK's
   ``LiteLlm`` so a custom endpoint / API-key env var is honoured; with
   neither, the bare model string is handed to ``LlmAgent`` (ADK resolves
-  it to its native provider).
+  it to its native provider). This module no longer constructs ``LiteLlm``
+  itself — the one construction site is ``build_adk_model``.
 
 The streaming SSE schema (B2 consumes this)
 ------------------------------------------
@@ -230,20 +232,23 @@ def _resolve_model(config: BuilderConfig, workspace_root: Path | None = None) ->
         return import_dotted_path(agent_cfg.call_llm, label="builder agent.call_llm")
     if not agent_cfg.model:
         raise ValueError("builder.json agent.model is empty; chat is disabled")
-    if agent_cfg.endpoint or agent_cfg.api_key_env:
-        import os
+    # The model-spec branch shares THE single ADK-model-from-spec builder
+    # (:func:`zicato.models_config.build_adk_model`) so ``builder.json``'s
+    # ``agent`` and the unified ``models.*`` roles reach a provider through one
+    # code path: ``endpoint`` / ``api_key_env`` set ⇒ a ``LiteLlm`` honouring a
+    # custom base URL + API-key env var; neither set ⇒ the bare model string
+    # handed back for ADK to resolve natively. Behaviour is identical to the
+    # former inline construction; the duplication is gone.
+    from zicato.models_config import RoleSpec, build_adk_model
 
-        from google.adk.models.lite_llm import LiteLlm
-
-        kwargs: dict[str, Any] = {"model": agent_cfg.model}
-        if agent_cfg.endpoint:
-            kwargs["api_base"] = agent_cfg.endpoint
-        if agent_cfg.api_key_env:
-            key = os.environ.get(agent_cfg.api_key_env)
-            if key:
-                kwargs["api_key"] = key
-        return LiteLlm(**kwargs)
-    return agent_cfg.model
+    return build_adk_model(
+        RoleSpec(
+            model=agent_cfg.model,
+            endpoint=agent_cfg.endpoint,
+            api_key_env=agent_cfg.api_key_env,
+        ),
+        role="builder",
+    )
 
 
 def build_copilot_agent(

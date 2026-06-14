@@ -38,11 +38,47 @@ from tests.test_orchestrator import (
     _harness_call_llm,
     _install_stub_adapter_factory,
     _make_aux_responder,
-    _valid_proposer_response,
 )
 from zicato.core import BoardEntry, DriftCount, ExpectationResult, LossProfile
 from zicato.core.types import OverfittingConfig, ScoringWeights, TournamentStructure
 from zicato.epoch.lifecycle import new_epoch
+
+
+def _distinct_field_responses(n: int) -> list[str]:
+    """``n`` distinct schema-valid proposer responses for an ``n``-wide field.
+
+    Each carries a unique ``core_idea`` (and replacement word) so the
+    field-diversity constraint (FUNCTIONALITY-RECOMMENDATIONS.md §4.3) keeps
+    every challenger — a genuinely diverse field of ``n`` distinct
+    experiments, which is what these holdout structure tests intend. Two
+    byte-identical proposals would, correctly, collapse to one.
+    """
+    return [
+        json.dumps(
+            {
+                "hypothesis": {
+                    "core_idea": f"swap the greeting string (variant {i})",
+                    "modulating": ["greeting"],
+                    "why": "exercising the multi-challenger holdout path",
+                    "expected_drift_movements": [
+                        {"kind": "off_topic", "direction": "decrease", "magnitude": "small"}
+                    ],
+                    "expected_pass_rate_delta": "+0.0 to +0.1",
+                    "risks": "harmless",
+                },
+                "patches": [
+                    {
+                        "mutation_id": "greeting",
+                        "op": "replace",
+                        "new_content": f'"word{i}"',
+                        "rationale": "different greeting word",
+                    }
+                ],
+            }
+        )
+        for i in range(n)
+    ]
+
 
 # Structures under test + their minimal params (small fields keep the bracket
 # shallow so the synthetic field resolves in one pass).
@@ -175,6 +211,10 @@ def _bootstrap(
             {
                 "instance_id": "test",
                 "created_at": "2026-06-04T00:00:00Z",
+                # Hand-built directory-backend snapshot layout below; pin the
+                # directory backend so the git default does not look for git
+                # tags this fixture never writes.
+                "storage_backend": "directory",
                 "adapter": {"kind": "stub"},
             }
         )
@@ -290,9 +330,7 @@ def test_holdout_confirms_a_true_win_and_persists_records(
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(
-                [_valid_proposer_response(), _valid_proposer_response()]
-            ),
+            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
         )
     )
 
@@ -351,9 +389,7 @@ def test_holdout_regression_flips_a_bracket_leaders_win_to_reject(
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(
-                [_valid_proposer_response(), _valid_proposer_response()]
-            ),
+            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
         )
     )
 
@@ -403,9 +439,7 @@ def test_per_epoch_ladder_budget_is_shared_and_decremented(
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(
-                [_valid_proposer_response(), _valid_proposer_response()]
-            ),
+            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
         )
     )
 
@@ -458,9 +492,7 @@ def test_empty_holdout_degrades_to_whole_board(
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(
-                [_valid_proposer_response(), _valid_proposer_response()]
-            ),
+            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
         )
     )
 
@@ -508,9 +540,7 @@ def test_settled_promotion_agrees_with_champion_and_lineage(
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(
-                [_valid_proposer_response(), _valid_proposer_response()]
-            ),
+            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
         )
     )
 
@@ -559,9 +589,7 @@ def test_holdout_flip_persists_a_rejected_bracket_not_a_phantom_promotion(
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(
-                [_valid_proposer_response(), _valid_proposer_response()]
-            ),
+            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
         )
     )
 
@@ -611,8 +639,6 @@ def test_crowning_invariant_raises_when_champion_pointer_cannot_advance(
                 workspace_root=workspace,
                 epoch_id=epoch_id,
                 harness_call_llm=_harness_call_llm,
-                auxiliary_call_llm=_make_aux_responder(
-                    [_valid_proposer_response(), _valid_proposer_response()]
-                ),
+                auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
             )
         )

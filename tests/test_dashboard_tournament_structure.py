@@ -516,3 +516,231 @@ def test_tournaments_with_no_rows_and_no_config_stay_gauntlet(tmp_path: Path) ->
 
     out = build_bracket(WorkspacePaths(ws), EPOCH)
     assert out["structure"] == "gauntlet"
+
+
+# ---------------------------------------------------------------------------
+# build_tournament_structure — the additive field-diversity block
+# ---------------------------------------------------------------------------
+
+FIELD_TOURN = f"{EPOCH}:field:v1"
+
+
+def _build_field_index_with_patches(
+    path: Path,
+    *,
+    field_status: list[dict[str, object]],
+    patches: dict[str, list[str]],
+) -> None:
+    """A field index: a multi-challenger ``tournaments`` row + ``patches`` rows.
+
+    ``patches`` maps generation_id -> list of mutation_ids the challenger
+    targeted, so ``build_tournament_structure`` can transpose them into the
+    per-challenger mutation-id sets the diversity block summarises.
+    """
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE tournaments(tournament_id TEXT PRIMARY KEY, epoch_id TEXT,
+            parent_generation_id TEXT, child_generation_id TEXT, decision TEXT,
+            parent_scalar REAL, child_scalar REAL, delta_scalar REAL,
+            rejection_reason TEXT, ran_at TEXT,
+            structure TEXT, structure_params_json TEXT, competitors_json TEXT,
+            rounds_json TEXT, standings_json TEXT, field_status_json TEXT);
+        CREATE TABLE patches(patch_id TEXT PRIMARY KEY, epoch_id TEXT,
+            generation_id TEXT, mutation_id TEXT, op TEXT, rationale TEXT);
+        """
+    )
+    competitors: list[dict[str, object]] = [{"generation_id": "v0", "seed": 1, "role": "champion"}]
+    for i, f in enumerate(field_status):
+        competitors.append(
+            {
+                "generation_id": f["generation_id"],
+                "seed": int(f.get("seed", i + 2)),  # type: ignore[arg-type]
+                "role": "challenger",
+            }
+        )
+    conn.execute(
+        "INSERT INTO tournaments VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            FIELD_TOURN,
+            EPOCH,
+            "v0",
+            "v1",
+            "promoted",
+            0.5,
+            0.4,
+            -0.1,
+            None,
+            "2026-06-01T00:30:00Z",
+            "swiss",
+            json.dumps({"field_size": len(field_status)}),
+            json.dumps(competitors),
+            json.dumps([]),
+            json.dumps([]),
+            json.dumps(field_status),
+        ),
+    )
+    rows = []
+    for gid, mutation_ids in patches.items():
+        for k, mid in enumerate(mutation_ids):
+            rows.append((f"{gid}_p{k}", EPOCH, gid, mid, "replace", "r"))
+    conn.executemany("INSERT INTO patches VALUES(?,?,?,?,?,?)", rows)
+    conn.commit()
+    conn.close()
+
+
+def test_structure_reader_emits_diversity_block_for_a_field(tmp_path: Path) -> None:
+    """A multi-challenger field surfaces the additive ``diversity`` block,
+    computed from the persisted ``patches`` mutation-id sets, plus a per-slot
+    ``diversity_status`` on every field-status record."""
+    ws = tmp_path / ".zicato"
+    (ws / "runtime").mkdir(parents=True)
+    (ws / "current_epoch").write_text(EPOCH, encoding="utf-8")
+    field_status = [
+        {
+            "generation_id": "v1",
+            "status": "applied",
+            "reason": "",
+            "seed": 2,
+            "diversity_status": "applied",
+            "diversity_tolerance": 0.5,
+        },
+        {
+            "generation_id": "v2",
+            "status": "rejected",
+            "reason": "field_diversity_overlap",
+            "seed": 3,
+            "diversity_status": "soft_rejected",
+            "diversity_tolerance": 0.5,
+        },
+        {
+            "generation_id": "v3",
+            "status": "applied",
+            "reason": "",
+            "seed": 4,
+            "diversity_status": "applied",
+            "diversity_tolerance": 0.5,
+        },
+    ]
+    _build_field_index_with_patches(
+        ws / "index.db",
+        field_status=field_status,
+        patches={
+            "v1": ["greeting", "tone"],
+            "v2": ["greeting", "tone"],  # identical set to v1 (overlap 1.0)
+            "v3": ["closing"],  # disjoint
+        },
+    )
+
+    st = build_tournament_structure(WorkspacePaths(ws), EPOCH, FIELD_TOURN)
+    block = st["diversity"]
+    assert block["field_size"] == 3
+    assert block["distinct_ideas"] == 2  # {greeting,tone} and {closing}
+    assert block["max_overlap"] == 1.0
+    assert block["max_overlap_pair"] == ["v1", "v2"]
+    assert block["tolerance"] == 0.5
+    assert block["soft_rejected_count"] == 1
+    # Per-slot diversity status is present on every field-status record.
+    by_gen = {f["generation_id"]: f["diversity_status"] for f in st["field_status"]}
+    assert by_gen == {"v1": "applied", "v2": "soft_rejected", "v3": "applied"}
+
+
+def test_structure_reader_no_diversity_block_for_single_challenger(swiss_workspace: Path) -> None:
+    """A single-challenger (gauntlet-shaped) structure carries NO ``diversity``
+    key — the block is reserved for real multi-challenger fields."""
+    st = build_tournament_structure(WorkspacePaths(swiss_workspace), EPOCH, SWISS_TOURN)
+    assert "diversity" not in st
+
+
+# ---------------------------------------------------------------------------
+# build_tournament_structure — the operator-override readback
+# ---------------------------------------------------------------------------
+
+
+def _write_durable_field_record(
+    ws: Path,
+    *,
+    override_status: dict[str, dict[str, object]] | None,
+    promoted_generation_ids: list[str] | None,
+) -> None:
+    """Write a durable ``tournaments/field-v1.json`` for the override readback."""
+    record: dict[str, object] = {
+        "tournament_id": f"{EPOCH}:field:v1",
+        "epoch_id": EPOCH,
+        "structure": "swiss",
+        "competitors": [
+            {"generation_id": "v0", "seed": 1, "role": "champion"},
+            {"generation_id": "v1", "seed": 2, "role": "challenger"},
+            {"generation_id": "v2", "seed": 3, "role": "challenger"},
+        ],
+        "rounds": [],
+        "standings": [],
+        "field_status": [],
+        "decision": "promoted",
+        "state": "settled",
+    }
+    if override_status is not None:
+        record["override_status"] = override_status
+    if promoted_generation_ids is not None:
+        record["promoted_generation_ids"] = promoted_generation_ids
+    path = ws / "epochs" / EPOCH / "tournaments" / "field-v1.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+
+def test_structure_reader_surfaces_override_status(tmp_path: Path) -> None:
+    """A field round with an operator override surfaces ``override_status`` +
+    ``promoted_generation_ids`` lifted from the durable field record."""
+    ws = tmp_path / ".zicato"
+    (ws / "runtime").mkdir(parents=True)
+    (ws / "current_epoch").write_text(EPOCH, encoding="utf-8")
+    field_status = [
+        {"generation_id": "v1", "status": "applied", "reason": "", "seed": 2},
+        {"generation_id": "v2", "status": "applied", "reason": "", "seed": 3},
+    ]
+    _build_field_index_with_patches(
+        ws / "index.db",
+        field_status=field_status,
+        patches={"v1": ["greeting"], "v2": ["closing"]},
+    )
+    _write_durable_field_record(
+        ws,
+        override_status={
+            "v2": {
+                "action": "promote",
+                "ts": "2026-06-01T00:31:00Z",
+                "reason": "prefer the diverse idea",
+                "state": "applied",
+            }
+        },
+        promoted_generation_ids=["v1", "v2"],
+    )
+
+    st = build_tournament_structure(WorkspacePaths(ws), EPOCH, FIELD_TOURN)
+    assert st["override_status"]["v2"]["action"] == "promote"
+    assert st["override_status"]["v2"]["reason"] == "prefer the diverse idea"
+    assert st["override_status"]["v2"]["state"] == "applied"
+    assert sorted(st["promoted_generation_ids"]) == ["v1", "v2"]
+
+
+def test_structure_reader_no_override_key_without_override(tmp_path: Path) -> None:
+    """A gate-decided field round carries NO ``override_status`` key — the
+    readback is key-absent when no override fired (back-compat clean)."""
+    ws = tmp_path / ".zicato"
+    (ws / "runtime").mkdir(parents=True)
+    (ws / "current_epoch").write_text(EPOCH, encoding="utf-8")
+    field_status = [
+        {"generation_id": "v1", "status": "applied", "reason": "", "seed": 2},
+        {"generation_id": "v2", "status": "applied", "reason": "", "seed": 3},
+    ]
+    _build_field_index_with_patches(
+        ws / "index.db",
+        field_status=field_status,
+        patches={"v1": ["greeting"], "v2": ["closing"]},
+    )
+    # A durable record with NO override keys (the common gate-decided case).
+    _write_durable_field_record(ws, override_status=None, promoted_generation_ids=None)
+
+    st = build_tournament_structure(WorkspacePaths(ws), EPOCH, FIELD_TOURN)
+    assert "override_status" not in st
+    assert "promoted_generation_ids" not in st

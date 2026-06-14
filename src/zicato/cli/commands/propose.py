@@ -43,6 +43,7 @@ from zicato.core.workspace import (
     epoch_dir,
     experiment_json_path,
     generation_dir,
+    generations_dir,
 )
 from zicato.epoch.journal import write_experiment
 from zicato.proposer.brief import load_brief
@@ -111,7 +112,7 @@ def _list_generations(workspace_dir: Path, epoch_id: str) -> list[str]:
     surface them than silently drop them.
     """
 
-    gen_dir = workspace_dir / "epochs" / epoch_id / "generations"
+    gen_dir = generations_dir(workspace_dir, epoch_id)
     if not gen_dir.exists():
         return []
     entries = [p.name for p in gen_dir.iterdir() if p.is_dir()]

@@ -134,6 +134,10 @@ def tournament_cmd(
                 epoch_id=resolved_epoch_id,
                 disable_drift=disable_drift,
                 judge_only=judge_only,
+                # ``--mode full`` re-samples BOTH sides for noise (it bypasses
+                # the cache by design); force-fresh the champion too rather
+                # than reusing its cached per-board units.
+                champion_force_fresh=True,
             )
         )
     else:

@@ -391,7 +391,7 @@ Session path: `/#/session/<adk_session_id>`. No harmonograf-side change
 is required — the integration is complete.
 
 **Zicato-level (meta-loop) surface.** Beyond the per-run links, the top
-bar (`variants/T/shell.js`) carries a single liveness-gated `execution ↗`
+bar (`js/shell.js`) carries a single liveness-gated `execution ↗`
 deep-link into the **meta-loop** session — zicato's own proposer + judge
 timeline (the operator's "Gantt view of zicato itself"). The backend
 surfaces its session id on the heartbeat as `harmonograf_meta_session`

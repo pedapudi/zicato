@@ -55,9 +55,21 @@ pub struct HeartbeatStatus {
     pub orchestrator_pid: Option<i32>,
     /// The last heartbeat timestamp (RFC-3339), when present.
     pub last_heartbeat: Option<String>,
-    /// Age of the last heartbeat in whole seconds.
+    /// Age of the last heartbeat TIMESTAMP in whole seconds. A periodic
+    /// timer keeps this fresh even when the orchestrator loop is wedged, so
+    /// it is the weaker of the two liveness signals — see `seq_age_seconds`.
     pub age_seconds: Option<i64>,
-    /// `true` when the age exceeds the staleness threshold.
+    /// The orchestrator's progress cursor (`seq`) from the heartbeat, when
+    /// present. Advances only on genuine loop progress (RUNTIME-V2 Phase 4).
+    pub seq: Option<u64>,
+    /// Age in whole seconds since `seq` last *changed*, when the watchdog is
+    /// tracking it. This is the stronger liveness signal: it keeps growing
+    /// when the loop is wedged even though the timestamp stays fresh. `None`
+    /// for a heartbeat that carries no `seq` (pre-Phase-4 writer), in which
+    /// case staleness is judged from `age_seconds` (the timestamp).
+    pub seq_age_seconds: Option<u64>,
+    /// `true` when the age exceeds the staleness threshold. Computed from
+    /// `seq_age_seconds` when seq is tracked, else from the timestamp age.
     pub stale: bool,
     /// The staleness threshold the watchdog is using (seconds).
     pub stale_threshold_seconds: u64,
@@ -103,6 +115,46 @@ pub struct StatuszView {
     /// Recent watchdog escalations from the in-memory ring buffer,
     /// newest last.
     pub watchdog_actions: Vec<Action>,
+    /// Cumulative torn-write / non-monotonic-seq counters over the canonical
+    /// active-tournament JSONL fold (process lifetime).
+    pub fold_diagnostics: crate::fold_stats::FoldDiagnosticsView,
+    /// Integrity status of the tamper-evident audit ledger.
+    pub audit_ledger: AuditStatus,
+    /// Latest diff-containment scan result (record #2).
+    pub diff_containment: crate::diff_containment::DiffContainmentView,
+    /// Latest promotion-gatekeeping scan result (record #3).
+    pub promotion_gate: crate::promotion_gate::PromotionGateView,
+    /// Latest index-vs-canonical divergence-audit result (record #4).
+    pub divergence: crate::divergence::DivergenceView,
+}
+
+/// The audit ledger's configured-ness and chain integrity, for `/statusz`.
+#[derive(Debug, Clone, Serialize)]
+pub struct AuditStatus {
+    /// `true` when a ledger is configured (`--ledger-dir`).
+    pub configured: bool,
+    /// `true` when the chain verified intact (always `true` when not
+    /// configured — there is no chain to break).
+    pub intact: bool,
+    /// Number of records in the chain (`0` when not configured).
+    pub records: u64,
+    /// The seq of the first broken record, when the chain is broken.
+    pub first_break_seq: Option<u64>,
+    /// A human-readable reason for the first break, when the chain is broken.
+    pub break_reason: Option<String>,
+}
+
+impl Default for AuditStatus {
+    fn default() -> Self {
+        // The not-configured baseline: no chain, trivially intact.
+        Self {
+            configured: false,
+            intact: true,
+            records: 0,
+            first_break_seq: None,
+            break_reason: None,
+        }
+    }
 }
 
 /// Inputs the supervisor knows about itself, threaded in from `AppState`.
@@ -139,20 +191,35 @@ fn run_deadline_status(run: &ActiveRun, now: DateTime<Utc>) -> RunDeadlineStatus
 }
 
 /// Heartbeat freshness, pure and `now`-injected.
+///
+/// `seq_age_seconds` is the seq-change age computed by the watchdog's
+/// stateful tracker (threaded in by the caller); when present it — not the
+/// timestamp age — decides staleness, because the periodic timer keeps the
+/// timestamp fresh even on a wedged loop. When absent (legacy heartbeat with
+/// no `seq`), staleness falls back to the timestamp age, exactly as before.
 fn heartbeat_status(
     hb: Option<&Heartbeat>,
     now: DateTime<Utc>,
     stale_threshold_seconds: u64,
+    seq_age_seconds: Option<u64>,
 ) -> HeartbeatStatus {
     match hb.and_then(|h| h.last_heartbeat.map(|ts| (h, ts))) {
         Some((h, last)) => {
             let age = (now - last).num_seconds();
+            // Prefer the seq-change age for the staleness verdict; fall back
+            // to the timestamp age when seq is not being tracked.
+            let stale = match seq_age_seconds {
+                Some(seq_age) => seq_age >= stale_threshold_seconds,
+                None => age.max(0) as u64 >= stale_threshold_seconds,
+            };
             HeartbeatStatus {
                 present: true,
                 orchestrator_pid: h.pid,
                 last_heartbeat: Some(last.to_rfc3339()),
                 age_seconds: Some(age),
-                stale: age.max(0) as u64 >= stale_threshold_seconds,
+                seq: h.seq,
+                seq_age_seconds,
+                stale,
                 stale_threshold_seconds,
                 phase: h.phase.clone(),
                 orchestrator_uptime_seconds: h.started_at.map(|s| (now - s).num_seconds().max(0)),
@@ -163,6 +230,8 @@ fn heartbeat_status(
             orchestrator_pid: hb.and_then(|h| h.pid),
             last_heartbeat: None,
             age_seconds: None,
+            seq: hb.and_then(|h| h.seq),
+            seq_age_seconds,
             stale: false,
             stale_threshold_seconds,
             phase: hb.and_then(|h| h.phase.clone()),
@@ -172,16 +241,38 @@ fn heartbeat_status(
 }
 
 /// Assemble the full `/statusz` view from disk + the action log.
+///
+/// `seq_age_seconds` is the watchdog's seq-change age for the current
+/// heartbeat (a read-only snapshot of its stateful tracker). Threaded in
+/// rather than recomputed here so `/statusz` reports exactly the figure the
+/// watchdog is deciding on. `None` means seq is not being tracked (legacy
+/// heartbeat) and staleness falls back to the timestamp age.
+// A pure assembler: each parameter is one independent, already-computed input
+// surface (identity, thresholds, the two heartbeat ages, the fold/ledger/diff
+// diagnostics, the action ring). Bundling them into a struct would only move
+// the same fields behind one more name, so the explicit signature is clearer.
+#[allow(clippy::too_many_arguments)]
 pub fn build_statusz(
     paths: &WorkspacePaths,
     identity: &SupervisorIdentity,
     heartbeat_stale_threshold_seconds: u64,
+    seq_age_seconds: Option<u64>,
+    fold_diagnostics: crate::fold_stats::FoldDiagnosticsView,
     action_log: &Arc<WatchdogLog>,
+    audit_ledger: AuditStatus,
+    diff_containment: crate::diff_containment::DiffContainmentView,
+    promotion_gate: crate::promotion_gate::PromotionGateView,
+    divergence: crate::divergence::DivergenceView,
 ) -> StatuszView {
     let now = Utc::now();
 
     let hb = reader::read_heartbeat(paths);
-    let heartbeat = heartbeat_status(hb.as_ref(), now, heartbeat_stale_threshold_seconds);
+    let heartbeat = heartbeat_status(
+        hb.as_ref(),
+        now,
+        heartbeat_stale_threshold_seconds,
+        seq_age_seconds,
+    );
 
     let runs: Vec<RunDeadlineStatus> = reader::read_active_runs(paths)
         .iter()
@@ -217,6 +308,11 @@ pub fn build_statusz(
         runs_over_deadline,
         summary,
         watchdog_actions: action_log.snapshot(),
+        fold_diagnostics,
+        audit_ledger,
+        diff_containment,
+        promotion_gate,
+        divergence,
     }
 }
 
@@ -323,10 +419,27 @@ th{color:#888;font-weight:normal}\
             "<tr><th>state</th><td class=\"{cls}\">{label}</td></tr>"
         ));
         out.push_str(&format!(
-            "<tr><th>age</th><td>{} (threshold {}s)</td></tr>",
+            "<tr><th>timestamp age</th><td>{}</td></tr>",
             h.age_seconds.map(hms).unwrap_or_else(|| "?".into()),
-            h.stale_threshold_seconds
         ));
+        // The seq-change age is the authoritative liveness signal when the
+        // orchestrator publishes a `seq` cursor; surface both so an operator
+        // can see a wedged loop (fresh timestamp, growing seq age).
+        if let Some(seq) = h.seq {
+            out.push_str(&format!("<tr><th>seq</th><td>{seq}</td></tr>"));
+        }
+        match h.seq_age_seconds {
+            Some(seq_age) => out.push_str(&format!(
+                "<tr><th>seq age</th><td>{} (threshold {}s)</td></tr>",
+                hms(seq_age as i64),
+                h.stale_threshold_seconds,
+            )),
+            None => out.push_str(&format!(
+                "<tr><th>seq age</th><td class=\"dim\">untracked \
+(no seq; staleness from timestamp, threshold {}s)</td></tr>",
+                h.stale_threshold_seconds,
+            )),
+        }
         out.push_str(&format!(
             "<tr><th>last</th><td>{}</td></tr>",
             esc(h.last_heartbeat.as_deref().unwrap_or("-"))
@@ -413,6 +526,207 @@ th{color:#888;font-weight:normal}\
         out.push_str("</table>");
     }
 
+    // Fold diagnostics: torn-write / non-monotonic-seq counters over the
+    // canonical active-tournament JSONL fold (process lifetime).
+    let fd = &v.fold_diagnostics;
+    out.push_str("<h2>fold diagnostics</h2><table>");
+    let pf_cls = if fd.parse_failures > 0 { "bad" } else { "ok" };
+    let sg_cls = if fd.seq_gaps > 0 { "warn" } else { "ok" };
+    out.push_str(&format!(
+        "<tr><th>torn writes (parse failures)</th><td class=\"{pf_cls}\">{}</td></tr>",
+        fd.parse_failures
+    ));
+    out.push_str(&format!(
+        "<tr><th>non-monotonic seq (gaps)</th><td class=\"{sg_cls}\">{}</td></tr>",
+        fd.seq_gaps
+    ));
+    out.push_str(&format!(
+        "<tr><th>folds observed</th><td class=\"dim\">{}</td></tr>",
+        fd.folds
+    ));
+    out.push_str("</table>");
+
+    // Audit ledger: the tamper-evident hash-chain's integrity.
+    let al = &v.audit_ledger;
+    out.push_str("<h2>audit ledger</h2><table>");
+    if !al.configured {
+        out.push_str(
+            "<tr><th>state</th><td class=\"dim\">not configured \
+(pass --ledger-dir to enable the tamper-evident ledger)</td></tr>",
+        );
+    } else {
+        let (cls, label) = if al.intact {
+            ("ok", "INTACT")
+        } else {
+            ("bad", "CHAIN BREAK")
+        };
+        out.push_str(&format!(
+            "<tr><th>chain</th><td class=\"{cls}\">{label}</td></tr>"
+        ));
+        out.push_str(&format!("<tr><th>records</th><td>{}</td></tr>", al.records));
+        if let Some(seq) = al.first_break_seq {
+            out.push_str(&format!(
+                "<tr><th>first break</th><td class=\"bad\">seq {seq}</td></tr>"
+            ));
+        }
+        if let Some(reason) = &al.break_reason {
+            out.push_str(&format!(
+                "<tr><th>reason</th><td class=\"bad\">{}</td></tr>",
+                esc(reason)
+            ));
+        }
+    }
+    out.push_str("</table>");
+
+    // Diff-containment: are mutations confined to the mutation sites?
+    let dc = &v.diff_containment;
+    out.push_str("<h2>diff containment</h2><table>");
+    if !dc.scanned {
+        out.push_str(
+            "<tr><th>state</th><td class=\"dim\">not scanned \
+(pass --diff-containment to enable the attestation)</td></tr>",
+        );
+    } else {
+        let quarantined = dc.quarantined.len();
+        let (cls, label) = if quarantined > 0 {
+            ("bad", "OUT-OF-BOUNDS MUTATIONS")
+        } else {
+            ("ok", "contained")
+        };
+        out.push_str(&format!(
+            "<tr><th>state</th><td class=\"{cls}\">{label}</td></tr>"
+        ));
+        out.push_str(&format!(
+            "<tr><th>pairs scanned</th><td>{}</td></tr>",
+            dc.pairs_scanned
+        ));
+        if dc.pairs_skipped > 0 {
+            out.push_str(&format!(
+                "<tr><th>pairs skipped</th><td class=\"dim\">{} (fail-open)</td></tr>",
+                dc.pairs_skipped
+            ));
+        }
+        out.push_str(&format!(
+            "<tr><th>quarantined</th><td class=\"{}\">{}</td></tr>",
+            if quarantined > 0 { "bad" } else { "ok" },
+            quarantined
+        ));
+    }
+    out.push_str("</table>");
+    // The offending generations + files, when any.
+    if !dc.quarantined.is_empty() {
+        out.push_str(
+            "<table><tr><th>generation</th><th>parent</th>\
+<th>file</th><th>diff</th></tr>",
+        );
+        for att in &dc.quarantined {
+            for vio in &att.violations {
+                out.push_str(&format!(
+                    "<tr><td>{}</td><td>{}</td><td class=\"bad\">{}</td><td class=\"bad\">{}</td></tr>",
+                    esc(&att.generation_id),
+                    esc(&att.parent_generation_id),
+                    esc(&vio.path),
+                    vio.kind.as_str(),
+                ));
+            }
+        }
+        out.push_str("</table>");
+    }
+
+    // Promotion gatekeeping: does each recorded promotion match its scores?
+    let pg = &v.promotion_gate;
+    out.push_str("<h2>promotion gate</h2><table>");
+    if !pg.scanned {
+        out.push_str(
+            "<tr><th>state</th><td class=\"dim\">not scanned \
+(pass --promotion-gate to enable the recompute)</td></tr>",
+        );
+    } else {
+        let n = pg.contradictions.len();
+        let (cls, label) = if n > 0 {
+            ("bad", "DECISION CONTRADICTS SCORES")
+        } else {
+            ("ok", "consistent")
+        };
+        out.push_str(&format!(
+            "<tr><th>state</th><td class=\"{cls}\">{label}</td></tr>"
+        ));
+        out.push_str(&format!(
+            "<tr><th>promotions checked</th><td>{}</td></tr>",
+            pg.promotions_checked
+        ));
+        if pg.skipped > 0 {
+            out.push_str(&format!(
+                "<tr><th>skipped</th><td class=\"dim\">{} (no scalar evidence)</td></tr>",
+                pg.skipped
+            ));
+        }
+        out.push_str(&format!(
+            "<tr><th>contradictions</th><td class=\"{}\">{}</td></tr>",
+            if n > 0 { "bad" } else { "ok" },
+            n
+        ));
+    }
+    out.push_str("</table>");
+    if !pg.contradictions.is_empty() {
+        out.push_str(
+            "<table><tr><th>challenger</th><th>champion</th>\
+<th>delta_scalar</th><th>detail</th></tr>",
+        );
+        for c in &pg.contradictions {
+            out.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td class=\"bad\">{:.6}</td><td class=\"bad\">{}</td></tr>",
+                esc(&c.challenger_generation_id),
+                esc(&c.champion_generation_id),
+                c.delta_scalar,
+                esc(&c.detail),
+            ));
+        }
+        out.push_str("</table>");
+    }
+
+    // Index-vs-canonical divergence audit.
+    let dv = &v.divergence;
+    out.push_str("<h2>index divergence</h2><table>");
+    if !dv.scanned {
+        out.push_str(
+            "<tr><th>state</th><td class=\"dim\">not scanned \
+(pass --divergence-audit to enable the auditor)</td></tr>",
+        );
+    } else {
+        let n = dv.findings.len();
+        let (cls, label) = if n > 0 {
+            ("bad", "DIVERGENCE")
+        } else {
+            ("ok", "consistent")
+        };
+        out.push_str(&format!(
+            "<tr><th>state</th><td class=\"{cls}\">{label}</td></tr>"
+        ));
+        out.push_str(&format!(
+            "<tr><th>generations checked</th><td>{}</td></tr>",
+            dv.generations_checked
+        ));
+        out.push_str(&format!(
+            "<tr><th>findings</th><td class=\"{}\">{}</td></tr>",
+            if n > 0 { "bad" } else { "ok" },
+            n
+        ));
+    }
+    out.push_str("</table>");
+    if !dv.findings.is_empty() {
+        out.push_str("<table><tr><th>code</th><th>generation</th><th>detail</th></tr>");
+        for f in &dv.findings {
+            out.push_str(&format!(
+                "<tr><td class=\"bad\">{}</td><td>{}</td><td class=\"bad\">{}</td></tr>",
+                f.code,
+                esc(f.generation_id.as_deref().unwrap_or("-")),
+                esc(&f.detail),
+            ));
+        }
+        out.push_str("</table>");
+    }
+
     out.push_str(&format!(
         "<p class=\"dim\">generated {}</p>",
         esc(&v.generated_at)
@@ -483,7 +797,8 @@ mod tests {
             last_heartbeat: Some(now - ChDuration::seconds(120)),
             ..Default::default()
         };
-        let st = heartbeat_status(Some(&hb), now, 90);
+        // No seq tracked → staleness falls back to the timestamp age.
+        let st = heartbeat_status(Some(&hb), now, 90, None);
         assert!(st.present);
         assert!(st.stale);
         assert_eq!(st.orchestrator_pid, Some(10015));
@@ -497,15 +812,51 @@ mod tests {
             last_heartbeat: Some(now - ChDuration::seconds(3)),
             ..Default::default()
         };
-        let st = heartbeat_status(Some(&hb), now, 90);
+        let st = heartbeat_status(Some(&hb), now, 90, None);
         assert!(!st.stale);
     }
 
     #[test]
     fn missing_heartbeat_is_not_present() {
-        let st = heartbeat_status(None, Utc::now(), 90);
+        let st = heartbeat_status(None, Utc::now(), 90, None);
         assert!(!st.present);
         assert!(!st.stale);
+    }
+
+    #[test]
+    fn seq_age_drives_staleness_when_tracked() {
+        // A FRESH timestamp but a stale seq-change age (the loop is wedged
+        // while the periodic timer keeps the timestamp current) must read
+        // STALE — the seq age is authoritative when tracked.
+        let now = Utc::now();
+        let hb = Heartbeat {
+            pid: Some(10015),
+            last_heartbeat: Some(now - ChDuration::seconds(2)),
+            seq: Some(7),
+            ..Default::default()
+        };
+        let st = heartbeat_status(Some(&hb), now, 90, Some(120));
+        assert!(st.stale, "stale seq age must mark the heartbeat stale");
+        assert_eq!(st.seq, Some(7));
+        assert_eq!(st.seq_age_seconds, Some(120));
+        // The fresh timestamp age is still surfaced alongside.
+        assert!(st.age_seconds.unwrap() < 10);
+    }
+
+    #[test]
+    fn fresh_seq_age_is_not_stale_even_with_old_timestamp() {
+        // The complementary case: a stale TIMESTAMP but a fresh seq-change
+        // age means the loop just advanced — not stale.
+        let now = Utc::now();
+        let hb = Heartbeat {
+            pid: Some(10015),
+            last_heartbeat: Some(now - ChDuration::seconds(300)),
+            seq: Some(42),
+            ..Default::default()
+        };
+        let st = heartbeat_status(Some(&hb), now, 90, Some(1));
+        assert!(!st.stale);
+        assert_eq!(st.seq_age_seconds, Some(1));
     }
 
     #[test]
@@ -522,7 +873,7 @@ mod tests {
                 dashboard_disabled: true,
                 pid: 1234,
             },
-            heartbeat: heartbeat_status(None, Utc::now(), 90),
+            heartbeat: heartbeat_status(None, Utc::now(), 90, None),
             runs: vec![],
             runs_over_deadline: 0,
             summary: "no active runs".into(),
@@ -533,6 +884,11 @@ mod tests {
                 run_id: Some("r-late".into()),
                 outcome: Outcome::KilledForcefully,
             }],
+            fold_diagnostics: Default::default(),
+            audit_ledger: Default::default(),
+            diff_containment: Default::default(),
+            promotion_gate: Default::default(),
+            divergence: Default::default(),
         };
         let html = render_html(&view);
         assert!(html.starts_with("<!doctype html>"));
@@ -560,11 +916,16 @@ mod tests {
                 dashboard_disabled: false,
                 pid: 1,
             },
-            heartbeat: heartbeat_status(None, Utc::now(), 90),
+            heartbeat: heartbeat_status(None, Utc::now(), 90, None),
             runs: vec![],
             runs_over_deadline: 0,
             summary: "no active runs".into(),
             watchdog_actions: vec![],
+            fold_diagnostics: Default::default(),
+            audit_ledger: Default::default(),
+            diff_containment: Default::default(),
+            promotion_gate: Default::default(),
+            divergence: Default::default(),
         };
         let html = render_html(&view);
         assert!(html.contains("/tmp/&lt;evil&gt;"));

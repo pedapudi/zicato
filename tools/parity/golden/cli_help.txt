@@ -1,0 +1,679 @@
+===== zicato --help =====
+Usage: zicato [OPTIONS] COMMAND [ARGS]...
+
+  zicato — a self-improving harness for multi-agent systems.
+
+  zicato wraps an inner multi-agent harness in an evolve loop: it proposes a
+  small change, runs a scored tournament between the parent and the child, and
+  keeps the winner — round after round.
+
+  The whole tool, for most operators, is two commands:
+    1. zicato init    — scaffold a ./.zicato/ workspace (once).
+    2. zicato evolve  — the single entry point to the loop.
+
+  `evolve` is self-orchestrating. It resolves the evaluation contract (board +
+  proposer brief + scoring + the registered inner-harness identity), and if that
+  contract has drifted from the current epoch it closes the old epoch and opens
+  a fresh one before running. It then proposes, runs the tournament, promotes or
+  rejects, and repeats — so you never run `register`, `propose`, `tournament`,
+  `reindex`, or `epoch` by hand.
+
+  Those commands still exist, grouped below as advanced / debugging commands,
+  for inspecting a workspace or driving a single step manually.
+
+  `evolve` also launches the live dashboard and prints its URL.
+
+  Run `zicato evolve --help` for the full set of loop options, or `zicato help
+  <command>` for any single command.
+
+Options:
+  --version  Show the version and exit.
+  --help     Show this message and exit.
+
+Happy path — start here (just these two):
+  init    Scaffold a fresh .zicato/ workspace (run once per project).
+  evolve  Resolve the contract, auto-open an epoch on any change, and run the
+          loop.
+
+Advanced commands — off the happy path (inspection & debugging):
+  analyze-telemetry     Advanced: (re)run the decision-telemetry analyzer for an
+                        epoch.
+  board                 Advanced: inspect / hand-edit a per-epoch board.jsonl.
+  builder               Advanced: launch the dashboard focused on the tournament
+                        builder.
+  dashboard             Advanced: serve the dashboard for an existing workspace
+                        (evolve auto-spawns it).
+  epoch                 Advanced: inspect / force epochs (evolve auto-epochs for
+                        you).
+  health                Advanced: report whether the evolve loop has real
+                        optimization signal.
+  help                  Show help for zicato, or for one COMMAND.
+  mutations             Advanced: audit the mutable surface the proposer may
+                        change.
+  propose               Advanced: generate one Experiment for the next
+                        generation.
+  regenerate-report     Advanced: re-render `epochs/{id}/analysis.md` against
+                        the current on-disk data.
+  register              Advanced: record the adapter entrypoint, mutable trees,
+                        and contract paths.
+  reindex               Advanced: rebuild the SQLite analytical index from
+                        workspace files.
+  reindex-generations   Advanced: reconcile the index `generations` table
+                        against disk (parent + promoted).
+  repair-epoch-goals    Advanced: backfill the goal field on epochs that predate
+                        the field.
+  repair-judge-losses   Advanced: backfill per_judge_loss into existing
+                        loss.json files.
+  repair-tournament-fk  Advanced: backfill tournament_id on runs / loss_profiles
+                        + parent_epoch_id on epochs.
+  repair-v0-baseline    Advanced: backfill the synthetic v0 experiment.json into
+                        every epoch.
+  tournament            Advanced: run a tournament between two generations in
+                        isolation.
+
+  Happy path (this is the whole tool for most operators):
+    zicato init                       # once: scaffold ./.zicato/
+    zicato evolve \
+        --harness-call-llm  my_pkg.llms:harness \
+        --auxiliary-call-llm my_pkg.llms:aux \
+        --rounds 4                    # propose -> tournament -> promote, x4
+
+  How `evolve` decides on an epoch:
+    evolve resolves the evaluation contract (board + proposer brief +
+    scoring + the registered inner-harness identity), hashes it, and
+    compares that hash to the current epoch. On any change it closes the
+    old epoch and opens a fresh one before running -- you never run
+    `epoch` / `register` / `propose` / `tournament` by hand. Pass
+    --no-auto-epoch to make a drifted contract an error instead.
+
+  Advanced commands (off the happy path -- inspection & debugging):
+    Use these to look inside a workspace or drive one step manually.
+    `evolve` already orchestrates register / propose / tournament /
+    reindex / epoch internally; reach for them only when debugging.
+
+  First time? Run:
+    zicato init && zicato evolve --help
+
+===== zicato analyze-telemetry --help =====
+Usage: zicato analyze-telemetry [OPTIONS]
+
+  Advanced: run the decision-telemetry analyzer for the current epoch.
+
+  Off the happy path — `zicato evolve` runs the analyzer per round. Use this to
+  (re)generate an insight for an epoch out of band.
+
+Options:
+  --workspace PATH  Path to the zicato workspace directory.  [default: .zicato]
+  --epoch TEXT      Epoch id. Defaults to the workspace's 'current_epoch' file
+                    contents.
+  --round INTEGER   Round number for the output filename. Omit to write
+                    insights/latest.md instead of insights/round_{N:04d}.md.
+  --help            Show this message and exit.
+
+===== zicato board --help =====
+Usage: zicato board [OPTIONS] COMMAND [ARGS]...
+
+  Advanced: manage the per-epoch board.jsonl file.
+
+  Off the happy path. The board is part of the evaluation contract, and `zicato
+  evolve` rolls the epoch when the live board changes — use this group only to
+  inspect or hand-edit a frozen board.
+
+Options:
+  --help  Show this message and exit.
+
+Commands:
+  add     Append one validated board entry from a JSON file.
+  list    List the entries in the current epoch's board.
+  remove  Remove a board entry by id from the current epoch.
+
+===== zicato board add --help =====
+Usage: zicato board add [OPTIONS] ENTRY_PATH
+
+  Append a single board entry from a JSON file to the current epoch.
+
+Options:
+  --workspace TEXT  Path to the zicato workspace root.  [default: .zicato]
+  --help            Show this message and exit.
+
+===== zicato board list --help =====
+Usage: zicato board list [OPTIONS]
+
+  List the entries in the current epoch's board.
+
+Options:
+  --workspace TEXT  Path to the zicato workspace root.  [default: .zicato]
+  --help            Show this message and exit.
+
+===== zicato board remove --help =====
+Usage: zicato board remove [OPTIONS] ENTRY_ID
+
+  Remove an entry by id from the current epoch's board.
+
+Options:
+  --workspace TEXT  Path to the zicato workspace root.  [default: .zicato]
+  --help            Show this message and exit.
+
+===== zicato builder --help =====
+Usage: zicato builder [OPTIONS]
+
+  Launch the dashboard focused on the tournament builder.
+
+  Boots the same dashboard service ``zicato dashboard`` runs, against the given
+  workspace, and prints the builder deep-link so the browser opens on the
+  builder rather than the environment overview. The server runs in the
+  foreground until interrupted (Ctrl-C).
+
+  The bind address is fixed at the loopback ``127.0.0.1`` — the dashboard is a
+  local inspection surface, never exposed on a routable interface (the same rule
+  ``zicato dashboard`` / ``zicato evolve`` honour).
+
+Options:
+  --workspace PATH                Path to the zicato workspace root to serve.
+                                  [default: .zicato]
+  --dashboard-port INTEGER RANGE  Port for the dashboard HTTP server.  [default:
+                                  7892; 1<=x<=65535]
+  --help                          Show this message and exit.
+
+===== zicato dashboard --help =====
+Usage: zicato dashboard [OPTIONS]
+
+  Serve the dashboard for an existing workspace over HTTP.
+
+  Point this at any workspace — a completed epoch for a post-mortem, or a
+  workspace some other ``zicato evolve`` is currently driving — and open the
+  printed URL in a browser. The server runs in the foreground until interrupted
+  (Ctrl-C).
+
+Options:
+  --workspace PATH      Path to the zicato workspace root to serve.  [default:
+                        .zicato]
+  --host TEXT           Host/bind address for the dashboard HTTP server.
+                        [default: 127.0.0.1]
+  --port INTEGER RANGE  Port for the dashboard HTTP server.  [default: 7892;
+                        1<=x<=65535]
+  --help                Show this message and exit.
+
+===== zicato epoch --help =====
+Usage: zicato epoch [OPTIONS] COMMAND [ARGS]...
+
+  Advanced: manage zicato epochs — the unit of evaluation contract.
+
+  Off the happy path. `zicato evolve` opens, closes, and rolls epochs on its own
+  whenever the evaluation contract changes (contract-hash auto-epoching). Use
+  this group only to inspect epochs (`epoch list`) or to force an epoch boundary
+  by hand.
+
+Options:
+  --help  Show this message and exit.
+
+Commands:
+  close     Close an epoch and write its analysis.md.
+  list      List every epoch in the workspace.
+  new       Create a new epoch and make it current.
+  set-goal  Set or overwrite the goal field on an existing epoch.
+  switch    Point the current-epoch marker at EPOCH_ID.
+
+===== zicato epoch close --help =====
+Usage: zicato epoch close [OPTIONS] [EPOCH_ID]
+
+  Advanced: close an epoch and (best-effort) generate analysis.md.
+
+  Off the happy path — `zicato evolve` closes epochs on its own when the
+  contract rolls. When EPOCH_ID is omitted, the current epoch is closed. The
+  analysis pass runs only if an auxiliary LLM has been configured — until then
+  this writes a stub analysis.md that the operator can regenerate later.
+
+Options:
+  --workspace TEXT  Path to the zicato workspace directory.  [default: .zicato]
+  --help            Show this message and exit.
+
+===== zicato epoch list --help =====
+Usage: zicato epoch list [OPTIONS]
+
+  List every epoch in the workspace as a markdown table.
+
+Options:
+  --workspace TEXT  Path to the zicato workspace directory.  [default: .zicato]
+  --help            Show this message and exit.
+
+===== zicato epoch new --help =====
+Usage: zicato epoch new [OPTIONS] NAME
+
+  Advanced: create a new epoch and make it current.
+
+  Off the happy path — `zicato evolve` auto-opens epochs. Run this by hand only
+  to force an epoch boundary.
+
+  If a previous epoch is still open it is auto-closed first; the auto close
+  emits a stub analysis.md (no auxiliary LLM is wired through the CLI yet — see
+  module docstring).
+
+  The supplied contract files are both frozen into the epoch directory AND
+  published as the workspace's live contract (recorded in config.json under
+  `contract`), so a subsequent `zicato evolve` resolves the same contract and
+  continues this epoch rather than failing to find the board or spuriously
+  rolling.
+
+Options:
+  --workspace TEXT        Path to the zicato workspace directory.  [default:
+                          .zicato]
+  --board FILE            Path to a board.jsonl. Frozen into the epoch and
+                          adopted as the workspace's live contract board.
+                          [required]
+  --brief, --rubric FILE  Path to a proposer brief (brief.md). Frozen into the
+                          epoch and adopted as the workspace's live contract
+                          brief. ``--rubric`` is accepted as a legacy alias.
+                          [required]
+  --scoring FILE          Path to scoring.json; defaults applied if absent. When
+                          given, frozen into the epoch and adopted as the live
+                          contract scoring.
+  --goal TEXT             Free-form statement of *why* this epoch exists (the
+                          intent the operator is testing). Persisted into
+                          config.json and surfaced in the analyzer report
+                          header. When omitted and stdin is a TTY, the operator
+                          is prompted for one line; in non-TTY contexts the goal
+                          defaults to the empty string.
+  --help                  Show this message and exit.
+
+===== zicato epoch set-goal --help =====
+Usage: zicato epoch set-goal [OPTIONS]
+
+  Set the goal on an existing epoch and re-ingest its index row.
+
+  Designed for the contract-hash auto-roll case: when ``zicato evolve`` opens a
+  new epoch mid-run there is no opportunity to prompt the operator, so the goal
+  lands as an empty string + a warning that recommends running this command
+  later.
+
+  Idempotent — writes the supplied goal into ``config.json`` and refreshes the
+  ``epochs.goal`` index column. The rest of the index is left alone (use
+  ``zicato reindex`` for a full rebuild).
+
+Options:
+  --epoch TEXT      The epoch id to mutate.  [required]
+  --goal TEXT       The free-form goal text to write into the epoch's
+                    config.json.  [required]
+  --workspace TEXT  Path to the zicato workspace directory.  [default: .zicato]
+  --help            Show this message and exit.
+
+===== zicato epoch switch --help =====
+Usage: zicato epoch switch [OPTIONS] EPOCH_ID
+
+  Advanced: point the workspace's current_epoch marker at EPOCH_ID.
+
+Options:
+  --workspace TEXT  Path to the zicato workspace directory.  [default: .zicato]
+  --help            Show this message and exit.
+
+===== zicato evolve --help =====
+Usage: zicato evolve [OPTIONS]
+
+  Run the self-improvement loop — the single happy-path entry point.
+
+  `evolve` is self-orchestrating: it resolves the evaluation contract, auto-
+  opens an epoch when that contract has changed, then proposes / runs the
+  tournament / promotes for --rounds rounds. You do not run `register`,
+  `propose`, `tournament`, `reindex`, or `epoch` by hand — evolve drives them.
+
+  By default, contract-hash auto-epoching is ON: when the evaluation contract
+  (board / proposer brief / scoring / inner-harness identity) has drifted,
+  evolve closes the current epoch and opens a fresh one before running. Pass
+  --no-auto-epoch for the strict behaviour (error on drift instead of rolling).
+  --epoch skips auto-epoching entirely and pins an explicit epoch.
+
+  The dashboard is launched automatically and its URL is printed.
+
+Options:
+  --workspace PATH                Path to the zicato workspace root (the
+                                  directory `zicato init` made).  [default:
+                                  .zicato]
+  --epoch TEXT                    Epoch id. Defaults to the workspace's current
+                                  epoch.
+  --rounds INTEGER RANGE          Number of evolve rounds to attempt.  [default:
+                                  1; x>=1]
+  --mode [full|fast]              fast (default) = cache-first: every
+                                  (generation, entry, replicate) board unit is
+                                  evaluated at most once and reused across all
+                                  pairings/rounds/structures; only cache misses
+                                  run. full = bypass the cache and force a fresh
+                                  evaluation of every unit (noise re-sampling /
+                                  debugging).  [default: fast]
+  --harness-call-llm TEXT         Dotted import path of the harness call_llm
+                                  (e.g. mymodule:harness).  [required]
+  --auxiliary-call-llm TEXT       Dotted import path of the auxiliary call_llm
+                                  (e.g. mymodule:aux).  [required]
+  --max-consecutive-rejections INTEGER RANGE
+                                  Stop early when this many rounds in a row are
+                                  rejected.  [default: 3; x>=1]
+  --max-wall-clock-seconds INTEGER RANGE
+                                  Total wall-clock budget for this whole evolve
+                                  invocation, in seconds. The loop stops cleanly
+                                  between rounds once the budget is spent, and a
+                                  single round that would overrun it is
+                                  cancelled and recorded as aborted. Unset (the
+                                  default) leaves the loop unbounded. Applies on
+                                  top of each board entry's own
+                                  wall_clock_budget_seconds. Env var:
+                                  ZICATO_MAX_WALL_CLOCK_SECONDS.  [x>=1]
+  --tournament-structure [gauntlet|single_elim|double_elim|swiss|racing]
+                                  Set the per-epoch tournament structure. This
+                                  is a CONTRACT-MUTATING convenience: it writes
+                                  {structure, params} into the live scoring.json
+                                  before the contract hash is computed, so it
+                                  participates in the hash and auto-rolls the
+                                  epoch if it differs from the current one —
+                                  exactly equivalent to editing scoring.json by
+                                  hand. Unset (the default) reads whatever
+                                  scoring.json says (gauntlet when absent).
+  --tournament-param KEY=VALUE    Set one tournament params key (repeatable).
+                                  VALUE is parsed as JSON when possible, else
+                                  taken as a string. Only applied when
+                                  --tournament-structure is also passed.
+  --no-auto-epoch                 Disable contract-hash auto-epoching. With this
+                                  flag, evolve errors out (instead of rolling
+                                  the epoch) when the evaluation contract has
+                                  drifted from the current epoch.
+  --epoch-name TEXT               Name for an auto-created epoch (default: the
+                                  e{N} scheme). Ignored when --epoch is passed
+                                  or no new epoch is created.
+  --no-dashboard                  Do not spawn the dashboard service (and the
+                                  watchdog supervisor that guards it). evolve
+                                  still runs the loop.
+  --dashboard-port INTEGER RANGE  Port for the dashboard HTTP server (bound on
+                                  127.0.0.1).  [default: 7892; 1<=x<=65535]
+  --help                          Show this message and exit.
+
+  Happy-path invocation:
+    zicato evolve \
+        --harness-call-llm  my_pkg.llms:harness \
+        --auxiliary-call-llm my_pkg.llms:aux \
+        --rounds 4
+
+  Auto-epoching:
+    By default evolve rolls the epoch whenever the evaluation
+    contract (board + proposer brief + scoring + inner-harness
+    identity) has drifted. Pass --no-auto-epoch to error on drift
+    instead, or --epoch ID to pin an epoch and skip the check.
+
+===== zicato health --help =====
+Usage: zicato health [OPTIONS]
+
+  Report on the evolve loop's optimization signal for the current epoch.
+
+  Detects toothless evaluations — flat scoring, dead board entries, inert drift,
+  a stalled proposer — and prints them as findings. Exits non-zero when any
+  critical finding is present.
+
+Options:
+  --workspace PATH  Path to the zicato workspace directory.  [default: .zicato]
+  --epoch TEXT      Epoch id. Defaults to the workspace's 'current_epoch' file
+                    contents.
+  --help            Show this message and exit.
+
+===== zicato help --help =====
+Usage: zicato help [OPTIONS] [COMMAND]
+
+  Show help for zicato, or for one COMMAND.
+
+  ``zicato help`` is an explicit alias for ``zicato --help`` so the bare verb
+  works the way a new operator expects. ``zicato help evolve`` is equivalent to
+  ``zicato evolve --help``.
+
+===== zicato init --help =====
+Usage: zicato init [OPTIONS]
+
+  Scaffold a fresh .zicato/ workspace — step one of the happy path.
+
+  This is the first of the two commands you run. It creates the workspace
+  directory if it doesn't exist, writes an empty lineage DAG (lineage.json:
+  {"nodes": [], "edges": []}), and writes config.json containing {instance_id,
+  created_at}. Run it once per project; then point `zicato evolve` at the same
+  workspace.
+
+  Refuses to overwrite an existing workspace unless --force is passed (--force
+  only rewrites config.json / lineage.json — it does not delete epoch artifacts
+  living alongside).
+
+  Example:
+    zicato init --workspace .zicato --instance-id my-project
+
+Options:
+  --workspace DIRECTORY  Workspace directory to create.  [default: .zicato]
+  --instance-id TEXT     Logical instance identifier recorded in config.json.
+                         [default: default]
+  --force                Overwrite config.json / lineage.json if the workspace
+                         already exists.
+  --help                 Show this message and exit.
+
+===== zicato mutations --help =====
+Usage: zicato mutations [OPTIONS]
+
+  Advanced: list the mutable spans in the registered inner harness.
+
+  Off the happy path — `zicato evolve` enumerates these itself. Use this to
+  audit what the proposer is allowed to change.
+
+Options:
+  --workspace PATH         Path to the zicato workspace directory.  [default:
+                           .zicato]
+  --id TEXT                Filter mutation points by id glob (e.g.
+                           'researcher_*').
+  --kind [span|file|code]  Restrict the listing to one mutation kind.
+  --show [preview|full]    Truncate content previews (preview) or dump full
+                           content (full).  [default: preview]
+  --format [table|json]    Output format.  [default: table]
+  --help                   Show this message and exit.
+
+===== zicato propose --help =====
+Usage: zicato propose [OPTIONS]
+
+  Advanced: generate one Experiment for the next generation.
+
+  Off the happy path — `zicato evolve` proposes on every round. Run this by hand
+  only to produce and inspect a single experiment without running the
+  tournament.
+
+Options:
+  --workspace PATH             Path to the zicato workspace directory.
+                               [default: .zicato]
+  --epoch TEXT                 Epoch id. Defaults to the workspace's
+                               'current_epoch' file contents.
+  --patterns-from PATH         Path to a Patterns JSON file. If absent,
+                               detectors are run fresh.
+  --max-retries INTEGER RANGE  How many times to ask the proposer to fix a
+                               malformed response.  [default: 2; 0<=x<=10]
+  --help                       Show this message and exit.
+
+===== zicato regenerate-report --help =====
+Usage: zicato regenerate-report [OPTIONS]
+
+  Advanced: re-render an epoch's analysis.md from the current files.
+
+  Off the happy path — `zicato evolve` regenerates the report after every round.
+  Use this to repair an existing epoch whose report was written by a buggy older
+  orchestrator (e.g. the workspace-root mis-rooting bug where the data sections
+  rendered empty even though the per-generation files were on disk).
+
+  The command is idempotent and read-only against everything except
+  `analysis.md` / `analysis.html`. Pass `--no-llm` to skip the prose
+  regeneration entirely; the deterministic figures + tables (the parts repaired
+  by this backfill) are re-rendered regardless.
+
+Options:
+  --workspace PATH  Path to the zicato workspace root (either the project dir or
+                    the .zicato/ dir).  [default: .zicato]
+  --epoch TEXT      Epoch id. Defaults to the workspace's current_epoch marker.
+  --no-llm          Skip the auxiliary-LLM prose pass and substitute
+                    placeholders. The deterministic data sections (figures,
+                    tables, scores) are still re-rendered.
+  --help            Show this message and exit.
+
+===== zicato register --help =====
+Usage: zicato register [OPTIONS]
+
+  Advanced: record the adapter entrypoint, mutable trees, and contract paths.
+
+  Off the happy path — `zicato evolve` resolves the contract itself. Run
+  `register` by hand only to pin the contract source paths up front, or to point
+  the workspace at a different agent / brief.
+
+  Merges into the existing config.json rather than replacing it, so any keys
+  `zicato init` wrote (instance_id, created_at) are preserved.
+
+  The canonical contract source paths (board / proposer brief / scoring) default
+  to the conventional location alongside the workspace. They are stored under
+  the `contract` key and read back by contract-hash auto-epoching on every
+  `evolve`.
+
+  `--proposer-path` is optional and stored under the same `contract` key as
+  `contract.proposer_path` (absolutised). It is itself a contract input —
+  configuring a proposer dir, or editing one of its skills, rolls the epoch on
+  the next `evolve`. Omitting the flag leaves the key unset, which resolves to
+  the built-in default proposer.
+
+Options:
+  --workspace DIRECTORY  Workspace directory to update.  [default: .zicato]
+  --adk TEXT             Adapter entrypoint in 'module.path:agent_symbol' form.
+                         [required]
+  --mutable-tree PATH    Source root the proposer is allowed to mutate
+                         (repeatable).
+  --board PATH           Canonical board.jsonl path (default:
+                         <workspace_parent>/board.jsonl).
+  --brief PATH           Canonical proposer-brief path (default:
+                         <workspace_parent>/brief.md).
+  --scoring PATH         Canonical scoring.json path (default:
+                         <workspace_parent>/scoring.json).
+  --proposer-path PATH   Proposer dir (proposers/<name>/ — skills + optional
+                         agent.py). Absent ⇒ the built-in default proposer. Part
+                         of the contract: configuring it (or editing a skill)
+                         rolls the epoch.
+  --help                 Show this message and exit.
+
+===== zicato reindex --help =====
+Usage: zicato reindex [OPTIONS]
+
+  Advanced: rebuild the SQLite analytical index from workspace files.
+
+  Off the happy path — `zicato evolve` keeps the index current. Drops index.db
+  and re-derives every row from the canonical files under the workspace. Prints
+  a summary of how many epochs, generations, and runs were indexed.
+
+Options:
+  --workspace TEXT  Path to the zicato workspace directory.  [default: .zicato]
+  --help            Show this message and exit.
+
+===== zicato reindex-generations --help =====
+Usage: zicato reindex-generations [OPTIONS]
+
+  Advanced: reconcile only the `generations` table from disk.
+
+  Off the happy path. Targeted repair for workspaces whose `generations` rows
+  were written by a buggy live dual-write (parent_generation_id NULL, promoted
+  clamped to 0 on every row except the seed). Walks lineage.json + every
+  experiment.json and rewrites only the parent_generation_id and promoted flag
+  of each `generations` row. The rest of the index is left alone — use `zicato
+  reindex` for a full rebuild.
+
+  Idempotent. Read-only against workspace files.
+
+Options:
+  --workspace TEXT  Path to the zicato workspace directory.  [default: .zicato]
+  --help            Show this message and exit.
+
+===== zicato repair-epoch-goals --help =====
+Usage: zicato repair-epoch-goals [OPTIONS]
+
+  Walk every epoch on disk and add an empty goal where missing.
+
+  Targeted migration helper for workspaces whose per-epoch ``config.json`` files
+  were written before the ``goal`` field landed. Defaults missing goals to the
+  empty string (which renders as "no goal recorded" in the analyzer), and
+  refreshes the ``epochs.goal`` column in the index database to match.
+
+  Read-only against epochs that already have a goal value (including a
+  deliberately-empty one). Idempotent: running it twice writes the same bytes.
+  The index is created with the current schema if it does not exist yet.
+
+  For populating the goal on an individual epoch with a real value, see ``zicato
+  epoch set-goal``.
+
+Options:
+  --workspace TEXT  Path to the zicato workspace directory.  [default: .zicato]
+  --help            Show this message and exit.
+
+===== zicato repair-judge-losses --help =====
+Usage: zicato repair-judge-losses [OPTIONS]
+
+  Advanced: backfill per_judge_loss into existing runs.
+
+  Off the happy path. Walks every run on disk, re-derives the per-judge
+  weighted-loss attribution from the run's drift_counts (and, for runs whose
+  profile predated drift_counts entirely, from the events JSONL), and rewrites
+  loss.json with the populated `per_judge_loss` field. Idempotent: re-running
+  produces the same files. By default each rewritten run is re-ingested into the
+  analytical index so `judge_losses` rows land immediately.
+
+Options:
+  --workspace TEXT            Path to the zicato workspace directory.  [default:
+                              .zicato]
+  --reingest / --no-reingest  Re-ingest each rewritten run into index.db so the
+                              judge_losses table is populated without a full
+                              `zicato reindex`.  [default: reingest]
+  --help                      Show this message and exit.
+
+===== zicato repair-tournament-fk --help =====
+Usage: zicato repair-tournament-fk [OPTIONS]
+
+  Advanced: backfill schema-v2 cross-cutting FKs on an existing index.
+
+  Off the happy path. Schema v2 added a ``tournament_id`` column to ``runs`` and
+  ``loss_profiles`` plus a ``parent_epoch_id`` column on ``epochs``. New writes
+  populate them automatically; this command repairs rows that were ingested
+  under the v1 schema by walking every epoch in ``lineage.json`` and every
+  ``experiment.json`` on disk and rewriting the FK columns from those sources.
+
+  Idempotent: cells that already carry the correct value are skipped, so a re-
+  run against a healthy index is a no-op. Read-only against the workspace files
+  — only the SQLite index is mutated.
+
+  Folded into one command because the two backfills share the same walk and
+  operators always want both columns repaired together.
+
+Options:
+  --workspace TEXT  Path to the zicato workspace directory.  [default: .zicato]
+  --help            Show this message and exit.
+
+===== zicato repair-v0-baseline --help =====
+Usage: zicato repair-v0-baseline [OPTIONS]
+
+  Advanced: backfill the synthetic v0 ``experiment.json`` marker.
+
+  Walks every epoch under the workspace (or the one named by ``--epoch``) and,
+  for each that has a ``generations/v0/`` directory without an
+  ``experiment.json``, writes a synthetic seed marker. The marker is idempotent:
+  workspaces created by a fresh ``zicato evolve`` already carry it and the
+  command leaves them alone.
+
+Options:
+  --workspace TEXT  Path to the zicato workspace directory.  [default: .zicato]
+  --epoch TEXT      Restrict the backfill to a single epoch id (default: every
+                    epoch).
+  --help            Show this message and exit.
+
+===== zicato tournament --help =====
+Usage: zicato tournament [OPTIONS] PARENT CHILD
+
+  Advanced: run a tournament between PARENT and CHILD generations.
+
+  Off the happy path — `zicato evolve` runs the tournament every round. Use this
+  only to re-score a specific generation pair.
+
+Options:
+  --workspace TEXT    Path to the zicato workspace root.  [default: .zicato]
+  --epoch TEXT        Epoch id. Defaults to the workspace's current epoch.
+  --mode [full|fast]  full = run both generations; fast = child vs parent's
+                      historical aggregate.  [default: full]
+  --skip-regression   Skip the regression-suite gate even when enabled in
+                      scoring.
+  --help              Show this message and exit.

@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from zicato.core.types import TournamentDecision
 from zicato.selection.strategy import (
     Contestant,
     MatchRecord,
@@ -79,7 +80,7 @@ class GauntletStrategy(SelectionStrategy):
             # No duel ran (degenerate); the champion stands.
             return SelectionDecision(
                 promoted_generation_id=None,
-                decision="rejected",
+                decision=TournamentDecision.REJECTED,
                 reason="no challenger duel ran",
             )
         outcome = self._result.outcome

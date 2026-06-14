@@ -44,6 +44,8 @@ from zicato.runtime.lock import (
     WorkspaceLockHeld,
     acquire_workspace_lock,
     is_pid_alive,
+    is_same_process,
+    pid_start_time,
     release_workspace_lock,
 )
 from zicato.runtime.paths import (
@@ -57,6 +59,11 @@ from zicato.runtime.paths import (
     heartbeat_path,
     lock_path,
     runtime_dir,
+)
+from zicato.runtime.resume import (
+    ResumePlan,
+    clear_runtime_state,
+    prepare_resume,
 )
 from zicato.runtime.state import (
     ActiveRun,
@@ -121,6 +128,12 @@ __all__ = [
     "WorkspaceLockHeld",
     "WorkspaceLock",
     "is_pid_alive",
+    "pid_start_time",
+    "is_same_process",
     "acquire_workspace_lock",
     "release_workspace_lock",
+    # resume
+    "ResumePlan",
+    "clear_runtime_state",
+    "prepare_resume",
 ]

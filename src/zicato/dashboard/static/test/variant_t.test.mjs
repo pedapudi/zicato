@@ -23,14 +23,14 @@ import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent } fro
 
 installDom();
 
-const router = await import('../js/variants/T/router.js');
-const svg = await import('../js/variants/T/svg.js');
-const ui = await import('../js/variants/T/ui.js');
-const shell = await import('../js/variants/T/shell.js');
-const data = await import('../js/variants/T/data.js');
-const tree = await import('../js/variants/T/tree.js');
-const compare = await import('../js/variants/T/compare.js');
-const livestatus = await import('../js/variants/T/livestatus.js');
+const router = await import('../js/router.js');
+const svg = await import('../js/svg.js');
+const ui = await import('../js/ui.js');
+const shell = await import('../js/shell.js');
+const data = await import('../js/data.js');
+const tree = await import('../js/tree.js');
+const compare = await import('../js/compare.js');
+const livestatus = await import('../js/livestatus.js');
 const coreState = await import('../js/core/state.js');
 const { bus } = await import('../js/core/bus.js');
 const { svgEl } = await import('../js/core/dom.js');
@@ -180,7 +180,7 @@ function allByClass(host, cls) {
 // read the scoped stylesheet text (for CSS-contract assertions).
 async function readCssAsync() {
   const fs = await import('node:fs');
-  return fs.readFileSync(new URL('../css/variants/T/console4.css', import.meta.url), 'utf8');
+  return fs.readFileSync(new URL('../css/console.css', import.meta.url), 'utf8');
 }
 const _cssCache = await readCssAsync();
 function readCss() { return _cssCache; }
@@ -265,7 +265,7 @@ test('tree sidebar: renders Environment → Epoch → {Generations, Boards, Muta
 
 test('candidate view: navigating to a SECOND generation works (multi-candidate nav)', async () => {
   freshState(); installFetch();
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
   await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
@@ -279,7 +279,7 @@ test('candidate view: navigating to a SECOND generation works (multi-candidate n
 
 test('candidate view: the promote gate is ON the candidate page, stacked, no overlap', async () => {
   freshState(); installFetch();
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
   const gate = allByClass(host, 'dn-gate')[0];
@@ -296,7 +296,7 @@ test('candidate view: the promote gate is ON the candidate page, stacked, no ove
 
 test('#19 candidate gate: the scalar decomposition names the transform that shaped each side', async () => {
   freshState(); installFetch();
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
   // the decomposition block rendered (the v0/v1 gate fixture carries transforms).
@@ -325,7 +325,7 @@ test('#19 candidate gate: a FAIL-OPEN plugin is flagged prominently (banner + ca
                     drift: { present: true, kind: 'builtin', source: 'built-in formula', transforms: [], fail_open: false, fallback_reason: null } } },
   };
   installFixtureMap(F);
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
   // The fail-open caution banner is FIRST-CLASS — present + names the failure.
@@ -345,7 +345,7 @@ test('#19 candidate gate: a pre-#19 / built-in round renders NO decomposition (b
   const { scalar_decomposition: _drop, ...noProv } = FIXTURE[`/api/round/${EPOCH_ID}/v0/v1/gate`];
   F[`/api/round/${EPOCH_ID}/v0/v1/gate`] = noProv;
   installFixtureMap(F);
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
   // the gate still renders, but the provenance block is absent (nothing new).
@@ -356,7 +356,7 @@ test('#19 candidate gate: a pre-#19 / built-in round renders NO decomposition (b
 
 test('#19 candidate digest: a no-op heartbeat over a gate WITH provenance churns NO DOM', async () => {
   freshState(); installFetch();   // the BASE fixture carries the v1 decomposition.
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
   await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
@@ -373,7 +373,7 @@ test('#19 candidate digest: a no-op heartbeat over a gate WITH provenance churns
 
 test('candidate view: the RADAR SILHOUETTE is folded in (candidate vs champion across the gate axes); scalar-bars GONE', async () => {
   freshState(); installFetch();
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
   // the radar silhouette renders (svg.radarSilhouette → .dn-radar) inside its pane.
@@ -392,7 +392,7 @@ test('candidate view: the RADAR SILHOUETTE is folded in (candidate vs champion a
 // each per-judge (gate scalar_components) — so the silhouette names its axes.
 test('candidate view: the radar silhouette names its axes (scalar / pass-rate / per-component), NOT numeric 1–9 indices', async () => {
   freshState(); installFetch();
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
   const radar = svgsByClass(host, 'dn-radar')[0];
@@ -422,7 +422,7 @@ test('candidate view: the radar silhouette names its axes (scalar / pass-rate / 
 // silhouette RIGHT), with the lifecycle spine above and generalization below.
 test('candidate view: the dossier reads as one organized layout — coordinated grid (per-board + gate | radar), spine above, generalization below', async () => {
   freshState(); installFetch();
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
   // the coordinated grid exists with a main (per-board + gate) + side (radar) column.
@@ -484,7 +484,7 @@ test('candidate view (RACING): an in-flight candidate ghosts a PROJECTED radar +
   coreState.state.heartbeat = { phase: 'tournament:running', epoch_id: EPOCH_ID, last_heartbeat: new Date().toISOString() };
   coreState.state.activeRuns = [{ generation_id: 'v3', entry_id: 'picky_stakeholder_emulated', run_id: 'run_v3_picky' }];
   try {
-    const candidate = await import('../js/variants/T/views/candidate.js');
+    const candidate = await import('../js/views/candidate.js');
     const host = document.createElement('div');
     await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v3' });
     // the radar still renders (the projected silhouette), GHOSTED via dn-proj.
@@ -513,7 +513,7 @@ test('candidate view (RACING): an in-flight candidate ghosts a PROJECTED radar +
 
 test('candidate view: the lifecycle PATCH node is clickable → the per-candidate diff route', async () => {
   freshState(); installFetch();
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   let navTo = null;
   const ctx = { navigate: (v, p) => { navTo = { v, p }; }, href: router.href };
@@ -526,7 +526,7 @@ test('candidate view: the lifecycle PATCH node is clickable → the per-candidat
 
 test('diff view: the per-candidate side-by-side diff renders REAL strings (not "[object Object]")', async () => {
   freshState(); installFetch();
-  const diff = await import('../js/variants/T/views/diff.js');
+  const diff = await import('../js/views/diff.js');
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
   await diff.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
@@ -542,7 +542,7 @@ test('diff view: the per-candidate side-by-side diff renders REAL strings (not "
 
 test('candidate view: v0 shows ALL its match-ups (v0→v1 AND v0→v2), not just one', async () => {
   freshState(); installFetch();
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v0' });
   const txt = host.textContent;
@@ -554,7 +554,7 @@ test('candidate view: v0 shows ALL its match-ups (v0→v1 AND v0→v2), not just
 
 test('candidate view: "compare with…" SPLITS the detail into TWO candidates side by side', async () => {
   freshState(); installFetch();
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
 
   // single candidate first — the compare affordance is present, no split yet.
   const host = document.createElement('div');
@@ -589,7 +589,7 @@ function dagViewBoxWidths(host) {
 
 test('candidate COMPARE view: BOTH lifecycle DAGs share the SAME (narrow, 560) viewBox width', async () => {
   freshState(); installFetch();
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
   await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' }, { params: { epochId: EPOCH_ID, gen: 'v1' }, cmp: 'v2' });
@@ -602,7 +602,7 @@ test('candidate COMPARE view: BOTH lifecycle DAGs share the SAME (narrow, 560) v
 
 test('candidate SINGLE view: the lone lifecycle DAG uses the WIDE (900) viewBox width', async () => {
   freshState(); installFetch();
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
   await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
@@ -629,7 +629,7 @@ test('board view: reachable from the tree and selecting a run shows the transcri
   assert(navTo && navTo.v === 'board' && navTo.p.entry === 'waffles_single', 'the tree Boards leaf routes to the per-board view by entry id');
 
   freshState(); installFetch();
-  const board = await import('../js/variants/T/views/board.js');
+  const board = await import('../js/views/board.js');
   const bhost = document.createElement('div');
   await board.render(bhost, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v1' });
   assert(bhost.textContent.includes('Board · waffles_single'), 'the per-board heading (still the board view)');
@@ -642,7 +642,7 @@ test('board view: reachable from the tree and selecting a run shows the transcri
 
 test('board view: a candidate row links INLINE (to board+gen), never to a separate run page', async () => {
   freshState(); installFetch();
-  const board = await import('../js/variants/T/views/board.js');
+  const board = await import('../js/views/board.js');
   const host = document.createElement('div');
   await board.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single' });
   const runLink = allByClass(host, 'dn-board-run')[0];
@@ -691,7 +691,7 @@ test('board view: a REUSED champion run (no own transcript) falls back to the ge
     },
     ['/api/conversation/run_v0_waffles'],
   );
-  const board = await import('../js/variants/T/views/board.js');
+  const board = await import('../js/views/board.js');
   const bhost = document.createElement('div');
   await board.render(bhost, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v1' });
   const cols = allByClass(bhost, 'dn-xscript-col');
@@ -713,7 +713,7 @@ test('board view: a GENUINELY-absent champion transcript still shows the honest 
     {},
     ['/api/conversation/run_v0_waffles', `/api/run/${EPOCH_ID}/v0/waffles_single/transcript`],
   );
-  const board = await import('../js/variants/T/views/board.js');
+  const board = await import('../js/views/board.js');
   const bhost = document.createElement('div');
   await board.render(bhost, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v1' });
   const cols = allByClass(bhost, 'dn-xscript-col');
@@ -753,7 +753,7 @@ test('board view: BOTH sides resolve by (epoch, gen, entry) PRIMARY even when th
     // Both run_id-keyed lookups are suppressed — the run_id-first path would 404.
     ['/api/conversation/run_v1_waffles', '/api/conversation/run_v0_waffles'],
   );
-  const board = await import('../js/variants/T/views/board.js');
+  const board = await import('../js/views/board.js');
   const bhost = document.createElement('div');
   await board.render(bhost, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v1' });
   const cols = allByClass(bhost, 'dn-xscript-col');
@@ -768,7 +768,7 @@ test('board view: BOTH sides resolve by (epoch, gen, entry) PRIMARY even when th
 
 test('board view: the per-pane transcript host split (live-beat scroll fix) is preserved', async () => {
   freshState(); installFetch();
-  const board = await import('../js/variants/T/views/board.js');
+  const board = await import('../js/views/board.js');
   const bhost = document.createElement('div');
   await board.render(bhost, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v1' });
   // The two persistent sub-hosts (upper + transcript) must exist — the digest
@@ -827,7 +827,7 @@ test('board view (LIVE): a RUNNING candidate with no scored row resolves a PARTI
   FIXTURE['/api/lineage'].generations.push({ generation_id: 'v3', epoch_id: EPOCH_ID, parent_generation_id: 'v0', promoted: false });
   coreState.state.activeRuns = [{ generation_id: 'v3', entry_id: 'waffles_single', run_id: 'run_v3_live', progress: 0.4, epoch_id: EPOCH_ID }];
 
-  const board = await import('../js/variants/T/views/board.js');
+  const board = await import('../js/views/board.js');
   const ctx = { navigate() {}, href: router.href };
 
   // FIRST: render WITHOUT a selection — the running candidate is a SELECTABLE
@@ -866,7 +866,7 @@ test('board view (LIVE): the transcript host repaints on a NEW TURN but NOT on a
   FIXTURE['/api/lineage'].generations.push({ generation_id: 'v3', epoch_id: EPOCH_ID, parent_generation_id: 'v0', promoted: false });
   coreState.state.activeRuns = [{ generation_id: 'v3', entry_id: 'waffles_single', run_id: 'run_v3_live', progress: 0.4, epoch_id: EPOCH_ID }];
 
-  const board = await import('../js/variants/T/views/board.js');
+  const board = await import('../js/views/board.js');
   const bhost = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
   const params = { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v3' };
@@ -922,7 +922,7 @@ for (const structure of ['swiss', 'single_elim']) {
     installFixtureMap(F);
     coreState.state.activeRuns = [{ generation_id: 'v9', entry_id: 'waffles_single', run_id: 'run_v9_live', progress: 0.3, epoch_id: EPOCH_ID }];
 
-    const board = await import('../js/variants/T/views/board.js');
+    const board = await import('../js/views/board.js');
     const bhost = document.createElement('div');
     await board.render(bhost, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v9' });
 
@@ -938,8 +938,8 @@ for (const structure of ['swiss', 'single_elim']) {
 
 test('de-dup: the trellis lives in the Boards view; the epoch overview has the heatmap only', async () => {
   freshState(); installFetch();
-  const epoch = await import('../js/variants/T/views/epoch.js');
-  const boards = await import('../js/variants/T/views/boards.js');
+  const epoch = await import('../js/views/epoch.js');
+  const boards = await import('../js/views/boards.js');
   const ctx = { navigate() {}, href: router.href };
 
   const ehost = document.createElement('div');
@@ -1384,7 +1384,7 @@ test('compare primitives: comparePicker reflects the value; splitFrame yields tw
 
 test('candidate view: digest-gated — identical data does NOT rebuild the DOM (heartbeat no-op)', async () => {
   freshState(); installFetch();
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
   await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
@@ -1521,13 +1521,13 @@ test('under-render: a NEW candidate folded into AppState repaints the tree (no h
 // compact MATCH CARDS on the generations page, and a DENSITY picker.
 // ====================================================================
 
-const rounds = await import('../js/variants/T/views/rounds.js');
+const rounds = await import('../js/views/rounds.js');
 
 // ---- (a) the epoch view leads with the CHAMPION-SPINE ROUND TIMELINE ----
 
 test('epoch view: leads with the CHAMPION-SPINE ROUND TIMELINE (one episode per round), NOT the old reel/bumps', async () => {
   freshState(); installFetch();
-  const epoch = await import('../js/variants/T/views/epoch.js');
+  const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
   await epoch.render(host, ctx, { epochId: EPOCH_ID });
@@ -1545,6 +1545,110 @@ test('epoch view: leads with the CHAMPION-SPINE ROUND TIMELINE (one episode per 
   assert(host.textContent.includes('loss floor'), 'the spine annotates the loss floor');
   // the heatmap stays on the epoch view (carried forward).
   assert(allByClass(host, 'dn-heatmap')[0], 'the board×generation heatmap is still present on the epoch view');
+});
+
+// ---- (a2) the IN-FLIGHT round on the EPOCH VIEW (issue #16) ----------
+// A multi-round gauntlet epoch where round 0 has SETTLED (v0 → v1 promoted) and
+// round 1 is now PROPOSING its field (v5/v6/v7 via the live envelope, not yet in
+// the journal/lineage). The epoch view must surface round 1 as its OWN in-flight
+// round with a LIVE badge + an incrementing "N proposed · M applied" banner —
+// NOT fold v5/v6/v7 under round 0.
+
+const INFLIGHT_EPOCH = '2026-06-09_inflight';
+function installInflightFetch(fieldStatus) {
+  const gens = [
+    { generation_id: 'v0', epoch_id: INFLIGHT_EPOCH, parent_generation_id: '', promoted: false, round_index: 0 },
+    { generation_id: 'v1', epoch_id: INFLIGHT_EPOCH, parent_generation_id: 'v0', promoted: true, round_index: 0 },
+  ];
+  const F = {
+    '/api/epoch': { epoch_id: INFLIGHT_EPOCH, closed: false, goal: 'In-flight round.',
+      tournament: { structure: 'gauntlet', params: { field_size: 3 } },
+      experiments: gens.map((g) => ({ generation_id: g.generation_id, parent_generation_id: g.parent_generation_id,
+        round_index: g.round_index, outcome: { decision: g.promoted ? 'promoted' : 'rejected' } })),
+      board: [{ id: 'b1', kind: 'single_turn' }] },
+    '/api/lineage': { generations: gens },
+    '/api/tournaments': { epoch_id: INFLIGHT_EPOCH, champion_lineage: ['v0', 'v1'],
+      matchups: [{ champion: 'v0', challenger: 'v1', decision: 'promoted', delta_scalar: -20, ran_at: 'a' }],
+      tournaments: [] },
+    '/api/score-trajectory': { points: [{ generation_id: 'v0', scalar: 100 }, { generation_id: 'v1', scalar: 80 }] },
+    // the LIVE active-tournament envelope for round 1, still proposing.
+    '/api/active-tournament': { epoch_id: INFLIGHT_EPOCH, structure: 'gauntlet', phase: 'proposing',
+      round_index: 1, total_rounds: 2, structure_params: { field_size: 3 },
+      competitors: [{ generation_id: 'v1', seed: 1, role: 'champion' }],
+      field_status: fieldStatus, projected: {} },
+  };
+  for (const g of gens) F[`/api/generation/${INFLIGHT_EPOCH}/${g.generation_id}/per-entry`] = { entries: [{ entry_id: 'b1', drift_loss: 50 }] };
+  globalThis.fetch = async (path) => {
+    const v = lookupFixture(F, path);
+    return v !== undefined ? { ok: true, json: async () => v } : { ok: false, status: 404, json: async () => ({ error: 'nf: ' + path }) };
+  };
+}
+
+test('epoch view (issue #16): a round still PROPOSING shows as its OWN in-flight round (not folded under round 0) + a LIVE proposed/applied banner', async () => {
+  freshState();
+  installInflightFetch([
+    { generation_id: 'v5', status: 'applied' },
+    { generation_id: 'v6', status: 'applied' },
+    { generation_id: 'v7', status: 'proposing' },
+  ]);
+  // the live signals the epoch view reads to decide a run is active for this epoch.
+  coreState.state.activeTournament = { epoch_id: INFLIGHT_EPOCH, structure: 'gauntlet', phase: 'proposing', round_index: 1 };
+  coreState.state.heartbeat = { phase: 'proposing:round_1:v7', epoch_id: INFLIGHT_EPOCH, last_heartbeat: new Date().toISOString() };
+  coreState.state.activeRuns = [];
+
+  const epoch = await import('../js/views/epoch.js');
+  const host = document.createElement('div');
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: INFLIGHT_EPOCH });
+
+  // TWO episodes now: the settled round 0 + the in-flight round 1.
+  const episodes = allByClass(host, 'dn-roundtl-ep');
+  assertEqual(episodes.length, 2, 'the settled round 0 + the in-flight round 1 (NOT one folded round)');
+  // the in-flight round wears a LIVE badge.
+  assert(allByClass(host, 'dn-roundtl-eplive').length >= 1, 'the in-flight round wears a LIVE badge');
+  // the incrementing banner reads 3 proposed · 2 applied · 1 proposing.
+  assert(/3 proposed/.test(host.textContent), 'the live banner reads the in-flight proposed count (3)');
+  assert(/2 applied/.test(host.textContent), 'the live banner reads the in-flight applied count (2)');
+  // round 0 keeps ONLY its settled field — v5/v6/v7 are NOT mis-attributed to it.
+  const round0 = episodes[0];
+  assert(!/v5|v6|v7/.test(round0.textContent), 'the SETTLED round 0 does NOT show the new round’s proposed gens (no mis-attribution)');
+  // the in-flight round carries the freshly-proposed field.
+  const round1 = episodes[1];
+  assert(/v5/.test(round1.textContent) && /v6/.test(round1.textContent) && /v7/.test(round1.textContent),
+    'the in-flight round 1 shows the freshly-proposed field v5/v6/v7');
+
+  coreState.state.activeTournament = null; coreState.state.heartbeat = null; coreState.state.activeRuns = [];
+});
+
+test('epoch view (issue #16): the banner INCREMENTS as the field mints (applied count climbs) + a no-op beat does NOT churn the round DOM', async () => {
+  freshState();
+  installInflightFetch([{ generation_id: 'v5', status: 'applied' }, { generation_id: 'v6', status: 'proposing' }]);
+  coreState.state.activeTournament = { epoch_id: INFLIGHT_EPOCH, structure: 'gauntlet', phase: 'proposing', round_index: 1 };
+  coreState.state.heartbeat = { phase: 'proposing:round_1:v6', epoch_id: INFLIGHT_EPOCH, last_heartbeat: new Date().toISOString() };
+  coreState.state.activeRuns = [];
+  const epoch = await import('../js/views/epoch.js');
+  const host = document.createElement('div');
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: INFLIGHT_EPOCH });
+  assert(/2 proposed/.test(host.textContent) && /1 applied/.test(host.textContent), 'early: 2 proposed · 1 applied');
+  const tl1 = allByClass(host, 'dn-roundtl')[0];
+
+  // a NO-OP heartbeat (same field_status) → the round timeline node is preserved
+  // (digest-gated, no rebuild, no flash).
+  freshState();
+  installInflightFetch([{ generation_id: 'v5', status: 'applied' }, { generation_id: 'v6', status: 'proposing' }]);
+  coreState.state.activeTournament = { epoch_id: INFLIGHT_EPOCH, structure: 'gauntlet', phase: 'proposing', round_index: 1 };
+  coreState.state.heartbeat = { phase: 'proposing:round_1:v6', epoch_id: INFLIGHT_EPOCH, last_heartbeat: new Date().toISOString() };
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: INFLIGHT_EPOCH });
+  assert(allByClass(host, 'dn-roundtl')[0] === tl1, 'a no-op heartbeat preserves the timeline node (digest-gated, zero rebuild)');
+
+  // now v6 APPLIES → the banner increments to 2 applied + the DOM repaints.
+  freshState();
+  installInflightFetch([{ generation_id: 'v5', status: 'applied' }, { generation_id: 'v6', status: 'applied' }]);
+  coreState.state.activeTournament = { epoch_id: INFLIGHT_EPOCH, structure: 'gauntlet', phase: 'proposing', round_index: 1 };
+  coreState.state.heartbeat = { phase: 'proposing:round_1:v6', epoch_id: INFLIGHT_EPOCH, last_heartbeat: new Date().toISOString() };
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: INFLIGHT_EPOCH });
+  assert(/2 proposed/.test(host.textContent) && /2 applied/.test(host.textContent), 'after v6 applies: 2 proposed · 2 applied (the banner incremented)');
+
+  coreState.state.activeTournament = null; coreState.state.heartbeat = null; coreState.state.activeRuns = [];
 });
 
 // ---- (b) the timeline stays fit-to-width under a MANY-round fixture ----
@@ -1623,7 +1727,7 @@ test('round timeline: fit-to-width — a fixed-width viewBox; many-round spine n
 
 test('epoch view: the round timeline fits to width with ~11 rounds (one episode per round, no overflow)', async () => {
   freshState(); installManyFetch(11);
-  const epoch = await import('../js/variants/T/views/epoch.js');
+  const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: MANY_EPOCH });
   const episodes = allByClass(host, 'dn-roundtl-ep');
@@ -1653,7 +1757,7 @@ test('epoch view: the proposer brief KEEPS its expanded state across a data-chan
     const v = lookupFixture(F, path);
     return v !== undefined ? { ok: true, json: async () => v } : { ok: false, status: 404, json: async () => ({}) };
   };
-  const epoch = await import('../js/variants/T/views/epoch.js');
+  const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
 
@@ -1678,7 +1782,7 @@ test('epoch view: the proposer brief KEEPS its expanded state across a data-chan
 
 test('generations view: the FIELD renders as the structure-flow graphic (duelFlow lanes) — NO dt-match-card / dt-champ-banner boxes', async () => {
   freshState(); installFetch();
-  const gens = await import('../js/variants/T/views/gens.js');
+  const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
 
@@ -1712,7 +1816,7 @@ test('generations view: the FIELD renders as the structure-flow graphic (duelFlo
 
 test('match cards: do NOT render on the environment / workspace (home) view', async () => {
   freshState(); installFetch();
-  const home = await import('../js/variants/T/views/home.js');
+  const home = await import('../js/views/home.js');
   const host = document.createElement('div');
   await home.render(host, { navigate() {}, href: router.href }, {});
   assert(host.textContent.includes('Environment'), 'the home/environment view rendered');
@@ -1762,8 +1866,8 @@ test('density removed: no picker, no density APIs; cozy is the permanent baselin
 // density picker scales visual-element SIZE (not only spacing).
 // ====================================================================
 
-const dag = await import('../js/variants/T/dag.js');
-const hovercard = await import('../js/variants/T/hovercard.js');
+const dag = await import('../js/dag.js');
+const hovercard = await import('../js/hovercard.js');
 
 // Drive the hovercard like a browser would: fire `mouseenter` on a wired node,
 // read the live card text, then fire `mouseleave` to hide it. Returns the text
@@ -1803,7 +1907,7 @@ function hasScrollWrapperAncestor(node, host) {
 
 test('fit-to-width: the lifecycle DAG renders as a responsive SVG (width:100% + viewBox), with NO horizontal-scroll wrapper around the figure', async () => {
   freshState(); installFetch();
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
 
@@ -1835,7 +1939,7 @@ test('fit-to-width: the Tufte sankey renders as a responsive SVG (width:100% + v
 
 test('fit-to-width: the epoch heatmap is a responsive SVG and its panel does NOT scroll horizontally', async () => {
   freshState(); installFetch();
-  const epoch = await import('../js/variants/T/views/epoch.js');
+  const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
   const hm = svgsByClass(host, 'dn-heatmap')[0];
@@ -1848,7 +1952,7 @@ test('fit-to-width: the epoch heatmap is a responsive SVG and its panel does NOT
 
 test('contained: the publication view’s wide tables carry their OWN contained overflow — the panel itself does not scroll horizontally', async () => {
   freshState(); installFetch();
-  const publication = await import('../js/variants/T/views/publication.js');
+  const publication = await import('../js/views/publication.js');
   const host = document.createElement('div');
   await publication.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
 
@@ -2306,7 +2410,7 @@ test('layout: the detail pane + compare grid are FLUID — not clamped to a narr
   // the detail host fills the width (width:100%), so the two compare panes
   // each take HALF the FULL content width — not half of a narrow column.
   const css = await import('node:fs').then((fs) =>
-    fs.readFileSync(new URL('../css/variants/T/console4.css', import.meta.url), 'utf8'));
+    fs.readFileSync(new URL('../css/console.css', import.meta.url), 'utf8'));
 
   // the OLD narrow caps are gone (1160 on the detail pane, 1320 on the viewhost).
   assert(!/\.dt-viewhost\s*\{[^}]*max-width:\s*1160px/.test(css.replace(/\n/g, ' ')),
@@ -2327,7 +2431,7 @@ test('layout: the detail pane + compare grid are FLUID — not clamped to a narr
   // narrow centred column): render a compare view and confirm the split frame
   // is NOT single-column and carries two sides.
   freshState(); installFetch();
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
   await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' }, { params: { epochId: EPOCH_ID, gen: 'v1' }, cmp: 'v2' });
@@ -2343,7 +2447,7 @@ test('layout: the detail pane + compare grid are FLUID — not clamped to a narr
 // gauntlet-only, so the non-gauntlet renderers are exercised here).
 // ====================================================================
 
-const STRUCT = await import('../js/variants/T/views/structure.js');
+const STRUCT = await import('../js/views/structure.js');
 
 // mock single-elim structure payload (§3.2 shape)
 const SE_STRUCT = {
@@ -2437,7 +2541,7 @@ test('structure helpers: label + non-gauntlet detection', () => {
 test('structure: single-elim renders a fit-to-width bracket-as-FLOW (elimFlow lanes + standings)', async () => {
   freshState();
   installFixtureMap(structFixture('single_elim', SE_STRUCT, 'tourn_e0_se'));
-  const gens = await import('../js/variants/T/views/gens.js');
+  const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
 
@@ -2472,7 +2576,7 @@ test('structure: double-elim renders the bracket-as-FLOW with the losers’ band
     { match_id: 'LB-R0-0', competitors: ['v0', 'v2'], winner: 'v0', decision: 'rejected', delta_scalar: 0.02, bracket_slot: 'LB-R0-0', bye: false },
   ] });
   installFixtureMap(structFixture('double_elim', DE, 'tourn_e0_de'));
-  const gens = await import('../js/variants/T/views/gens.js');
+  const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
   assert(host.textContent.includes('Double elimination'), 'the pill names double-elim');
@@ -2489,7 +2593,7 @@ test('structure: double-elim renders the bracket-as-FLOW with the losers’ band
 test('structure: swiss renders the standings LADDER hero + per-round pairings', async () => {
   freshState();
   installFixtureMap(structFixture('swiss', SWISS_STRUCT, 'tourn_e0_sw'));
-  const gens = await import('../js/variants/T/views/gens.js');
+  const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
   assert(host.textContent.includes('Swiss'), 'the pill names swiss');
@@ -2518,7 +2622,7 @@ test('structure: the "Proposed field" section renders applied ✓ / rejected ✗
     { generation_id: 'v2', status: 'rejected', reason: 'proposer returned invalid JSON', seed: 3 },
   ];
   installFixtureMap(structFixture('swiss', payload, 'tourn_e0_sw'));
-  const gens = await import('../js/variants/T/views/gens.js');
+  const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
   // the Proposed field tracker rendered with the headline counts.
@@ -2535,7 +2639,7 @@ test('structure: the "Proposed field" section renders applied ✓ / rejected ✗
   assert(okRows[0].textContent.includes('✓') && okRows[0].textContent.includes('v1'), 'the applied row shows ✓ + v1');
   assert(badRows[0].textContent.includes('✗') && badRows[0].textContent.includes('v2'), 'the rejected row shows ✗ + v2');
   // the rejection reason is reachable via the hovercard (attached to the row).
-  const hc = await import('../js/variants/T/hovercard.js');
+  const hc = await import('../js/hovercard.js');
   hc.show(badRows[0], 'x'); // prime the card surface (the row carries a hovercard binding)
   assert(svg.proposingTracker, 'the shared proposingTracker renderer is exported for reuse');
 });
@@ -2637,7 +2741,7 @@ test('structure: a completed field where ALL challengers rejected reads "0 appli
     { generation_id: 'v4', status: 'rejected', reason: 'empty response', seed: 5 },
   ];
   installFixtureMap(structFixture('swiss', payload, 'tourn_e0_sw'));
-  const gens = await import('../js/variants/T/views/gens.js');
+  const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
   const head = allByClass(host, 'dn-prop-head')[0];
@@ -2654,7 +2758,7 @@ test('structure: an absent field_status renders NO "Proposed field" section (bac
   freshState();
   // SWISS_STRUCT carries no field_status → no tracker section.
   installFixtureMap(structFixture('swiss', SWISS_STRUCT, 'tourn_e0_sw'));
-  const gens = await import('../js/variants/T/views/gens.js');
+  const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
   assertEqual(allByClass(host, 'dn-prop-tracker').length, 0, 'no proposing tracker when field_status is absent');
@@ -2671,7 +2775,7 @@ test('structure: a COMPLETED, all-applied field renders NO "Proposed field" sect
     { generation_id: 'v2', status: 'applied', reason: '', seed: 3 },
   ];
   installFixtureMap(structFixture('swiss', payload, 'tourn_e0_sw'));
-  const gens = await import('../js/variants/T/views/gens.js');
+  const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
   assertEqual(allByClass(host, 'dn-prop-tracker').length, 0, 'no Proposed-field section when completed + all applied');
@@ -2708,7 +2812,7 @@ test('data.fieldStatus / fieldStatusSummary: normalize + roll up the proposing f
 test('structure: racing renders a fit-to-width survival funnel with cuts + board fractions', async () => {
   freshState();
   installFixtureMap(structFixture('racing', RACING_STRUCT, 'tourn_e0_rc'));
-  const gens = await import('../js/variants/T/views/gens.js');
+  const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
   assert(host.textContent.includes('Racing'), 'the pill names racing');
@@ -2797,7 +2901,7 @@ async function renderRacingView(view, params, { live }) {
     coreState.state.activeRuns = [];
   }
   try {
-    const mod = await import(`../js/variants/T/views/${view}.js`);
+    const mod = await import(`../js/views/${view}.js`);
     const host = document.createElement('div');
     await mod.render(host, { navigate() {}, href: router.href }, params);
     return host;
@@ -2876,12 +2980,51 @@ test('REGRESSION (view-divergence): the EPOCH racing model CONVERGES (digest-equ
   assert(m && m.hasRungs && m.rungs.length >= 2, 'the shared racing model carries the rungs');
 });
 
+// ---- REGRESSION (round-N "stuck on seeding"): when the NEXT round has only
+// begun PROPOSING — an empty live envelope (non-terminal phase, rounds:[]) —
+// the resolver must PRESERVE the just-SETTLED prior round's bracket rather than
+// let the empty envelope overwrite it with a "being seeded" ladder. The live
+// envelope is adopted only when it carries real content, OR when there is no
+// settled record (the first round's own proposing).
+test('REGRESSION (stuck-on-seeding): an EMPTY live proposing envelope does NOT overwrite a SETTLED prior round; with no record it still shows live', () => {
+  const liveProposing = {
+    epoch_id: EPOCH_ID, structure: 'racing', phase: 'proposing',
+    structure_params: { board_fraction: 0.5, eta: 2, field_size: 4 },
+    competitors: [
+      { generation_id: 'v0', seed: 1, role: 'champion' },
+      { generation_id: 'v5', seed: 2, role: 'challenger' },
+    ],
+    rounds: [], standings: [], field_status: [],
+  };
+  const settled = STRUCT.normalizeStructure({
+    structure: 'racing', source: 'record',
+    competitors: [{ generation_id: 'v0', seed: 1 }, { generation_id: 'v1', seed: 2 }],
+    rounds: [{ stage_index: 0, label: 'Rung 0', matches: [{ match_id: 'rung0_m0', competitors: ['v0', 'v1'], survivors: ['v1'], cut: [] }] }],
+    standings: [{ generation_id: 'v1', rank: 1, scalar: 1.0 }],
+  }, false);
+
+  const withRecord = STRUCT.resolveNonGauntletSt({
+    structure: 'racing', bracket: {}, epochId: EPOCH_ID,
+    liveRaw: liveProposing, heartbeat: { phase: 'proposing', epoch_id: EPOCH_ID },
+    activeRuns: [], completedRecord: settled,
+  });
+  assert(withRecord.source !== 'live', `the empty live envelope is rejected; settled round preserved (got source=${withRecord.source})`);
+  assert(withRecord.st && (withRecord.st.rounds || []).some((r) => (r.matches || []).length), 'the preserved record carries the settled match');
+
+  const firstRound = STRUCT.resolveNonGauntletSt({
+    structure: 'racing', bracket: {}, epochId: EPOCH_ID,
+    liveRaw: liveProposing, heartbeat: { phase: 'proposing', epoch_id: EPOCH_ID },
+    activeRuns: [], completedRecord: null,
+  });
+  assert(firstRound.source === 'live', `first-round proposing still shows the live being-seeded state (got source=${firstRound.source})`);
+});
+
 test('REGRESSION (view-divergence): the EPOCH swiss + single_elim overviews build a NON-EMPTY model SETTLED (resolver completed-record fallback)', async () => {
   // SWISS settled: the per-tournament record carries the rounds; the epoch
   // overview must build the swiss bump/bars from it (not an empty strip).
   freshState();
   installFixtureMap(structFixture('swiss', SWISS_STRUCT, 'tourn_e0_sw'));
-  const epochMod = await import('../js/variants/T/views/epoch.js');
+  const epochMod = await import('../js/views/epoch.js');
   let host = document.createElement('div');
   await epochMod.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
   assert(svgsByClass(host, 'dn-swissover')[0], 'SETTLED swiss: the epoch overview builds the swiss bump/bars figure from the record');
@@ -2902,7 +3045,7 @@ test('REGRESSION (view-divergence): the CANDIDATE racing dossier builds field pa
   coreState.state.heartbeat = { phase: 'tournament:round_0:running', epoch_id: EPOCH_ID, last_heartbeat: new Date().toISOString() };
   coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'run_v1' }];
   try {
-    const candMod = await import('../js/variants/T/views/candidate.js');
+    const candMod = await import('../js/views/candidate.js');
     const host = document.createElement('div');
     // view the surviving racer v1 — its dossier swaps to the field-relative panels.
     await candMod.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
@@ -2964,7 +3107,7 @@ function radarStructFixture(structure, payload, tournamentId) {
 async function assertRadarRendersFor(structure, payload, tournamentId) {
   freshState();
   installFixtureMap(radarStructFixture(structure, payload, tournamentId));
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
   const radar = svgsByClass(host, 'dn-radar')[0];
@@ -2981,7 +3124,7 @@ async function assertRadarRendersFor(structure, payload, tournamentId) {
 test('candidate dossier: the RADAR is UNIVERSAL — it renders for gauntlet', async () => {
   // gauntlet uses the base FIXTURE (v0/v1 gate carries scalar_components already).
   freshState(); installFetch();
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
   assert(svgsByClass(host, 'dn-radar')[0], 'the radar renders in the gauntlet candidate dossier');
@@ -3030,7 +3173,7 @@ test('candidate dossier: the RADAR is UNIVERSAL — a SETTLED racer shows the ra
     ],
     scalar_components: { champion: { drift: 53.0, schema: 1.4 }, challenger: { drift: 39.0, schema: 1.0 } } };
   installFixtureMap(F);
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
   // the per-candidate radar renders + is plottable (≥3 named axes).
@@ -3051,7 +3194,7 @@ test('candidate dossier: the RADAR is UNIVERSAL — a SETTLED racer shows the ra
 test('candidate dossier: a no-op heartbeat over a NON-GAUNTLET (swiss) dossier WITH a radar churns NO DOM (digest-gated, anti-flash)', async () => {
   freshState();
   installFixtureMap(radarStructFixture('swiss', SWISS_STRUCT, 'tourn_e0_sw'));
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
   await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
@@ -3077,7 +3220,7 @@ test('structure: a missing structure payload degrades gracefully (no throw, hone
     '/api/tournaments': { epoch_id: EPOCH_ID, structure: 'swiss', champion_lineage: [], matchups: [], tournaments: [] },
   };
   installFixtureMap(F);
-  const gens = await import('../js/variants/T/views/gens.js');
+  const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
   assert(host.textContent.includes('Swiss'), 'the structure pill still names swiss');
@@ -3087,7 +3230,7 @@ test('structure: a missing structure payload degrades gracefully (no throw, hone
 test('structure: the epoch view shows the structure pill from the epoch tournament block', async () => {
   freshState();
   installFixtureMap(structFixture('swiss', SWISS_STRUCT, 'tourn_e0_sw'));
-  const epoch = await import('../js/variants/T/views/epoch.js');
+  const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
   assert(allByClass(host, 'dt-structure-pill').length >= 1, 'the epoch header carries a structure pill');
@@ -3099,7 +3242,7 @@ test('structure: the epoch view shows the structure pill from the epoch tourname
 test('epoch timeline (swiss): the round episode embeds the standings BUMP chart + ranked Copeland bar + gate verdict — "not a gauntlet" is GONE', async () => {
   freshState();
   installFixtureMap(structFixture('swiss', SWISS_STRUCT, 'tourn_e0_sw'));
-  const epoch = await import('../js/variants/T/views/epoch.js');
+  const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
 
@@ -3130,7 +3273,7 @@ test('epoch timeline (swiss): the round episode embeds the standings BUMP chart 
 test('epoch timeline (single-elim): the elim episode embeds the GENERATIONS-ACROSS-ROUNDS FLOW (elim parity), NOT the mini-bracket', async () => {
   freshState();
   installFixtureMap(structFixture('single_elim', SE_STRUCT, 'tourn_e0_se'));
-  const epoch = await import('../js/variants/T/views/epoch.js');
+  const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
 
@@ -3156,7 +3299,7 @@ test('epoch timeline (no data): the timeline renders an honest empty — NEVER t
     '/api/tournaments': { epoch_id: EPOCH_ID, structure: 'swiss', champion_lineage: [], matchups: [], tournaments: [] },
   };
   installFixtureMap(F);
-  const epoch = await import('../js/variants/T/views/epoch.js');
+  const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
 
@@ -3171,7 +3314,7 @@ test('structure: the data layer exposes tournamentStructure() + invalidates its 
   assertEqual(typeof data.tournamentStructure, 'function', 'data.tournamentStructure() exists');
   // the live-invalidation set includes the new prefix.
   const css = '';  // (no css needed) — assert the source carries the prefix.
-  const src = await import('node:fs').then((fs) => fs.readFileSync(new URL('../js/variants/T/data.js', import.meta.url), 'utf8'));
+  const src = await import('node:fs').then((fs) => fs.readFileSync(new URL('../js/data.js', import.meta.url), 'utf8'));
   assert(src.includes('/api/tournament-structure/'), 'invalidateLive() busts the tournament-structure prefix');
 });
 
@@ -3179,7 +3322,7 @@ test('structure: the data layer exposes tournamentStructure() + invalidates its 
 
 test('gauntlet (default): the match-ups page renders the FIELD as the duel-flow graphic + integrated champion header (no structure pill)', async () => {
   freshState(); installFetch();  // the default gauntlet fixture (no tournament block)
-  const gens = await import('../js/variants/T/views/gens.js');
+  const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
   assertEqual(allByClass(host, 'dt-champ-banner').length, 0, 'NO boxed champion banner remains');
@@ -3468,7 +3611,7 @@ test('live-status: the chrome RUN badge lights for a live racing run and the sta
 test('board view: an entry mid-run with NO completed results renders its in-flight candidates (not empty)', async () => {
   freshState(); installFetch();
   // no completed per-entry rows for this fresh entry, but two runs are live on it.
-  const board = await import('../js/variants/T/views/board.js');
+  const board = await import('../js/views/board.js');
   coreState.state.activeRuns = [
     { generation_id: 'v3', entry_id: 'waffles_single', run_id: 'run_v3_waffles', progress: 0.65 },
     { generation_id: 'v4', entry_id: 'waffles_single', run_id: 'run_v4_waffles', progress: 0.1 },
@@ -3496,7 +3639,7 @@ test('board view: the inflightForEntry filter matches entry_id and tolerates alt
     { generation_id: 'v3', entry: 'e1', run_id: 'r3' },
     { generation_id: 'v4', entry_id: 'e2', run_id: 'r4' },
   ];
-  const b = await import('../js/variants/T/views/board.js');
+  const b = await import('../js/views/board.js');
   assertEqual(b.inflightForEntry(runs, 'e1').length, 3, 'all three e1 runs match across entry_id / board_entry_id / entry keys');
   assertEqual(b.inflightForEntry(runs, 'nope').length, 0, 'no match for an unknown entry');
   assertEqual(b.inflightForEntry(null, 'e1').length, 0, 'a null active-runs feed yields no in-flight runs');
@@ -3507,7 +3650,7 @@ test('board view: the inflightForEntry filter matches entry_id and tolerates alt
 test('board view: an entry WITH completed results still renders the per-candidate breakdown (regression)', async () => {
   freshState(); installFetch();
   coreState.state.activeRuns = [];   // nothing live — pure completed view.
-  const board = await import('../js/variants/T/views/board.js');
+  const board = await import('../js/views/board.js');
   const host = document.createElement('div');
   await board.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single' });
   assert(host.textContent.includes('Board · waffles_single'), 'the completed-results board view still renders');
@@ -3532,7 +3675,7 @@ test('board view: an entry WITH completed results still renders the per-candidat
 test('epoch timeline: a NON-gauntlet (racing) epoch leads with the round timeline (one renderer for all structures, no separate strip)', async () => {
   freshState();
   installFixtureMap(structFixture('racing', RACING_STRUCT, 'tourn_e0_rc'));
-  const epoch = await import('../js/variants/T/views/epoch.js');
+  const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
 
@@ -3552,7 +3695,7 @@ test('epoch timeline: a NON-gauntlet (racing) epoch leads with the round timelin
 
 test('epoch timeline: a GAUNTLET epoch renders the round timeline (a single episode for --rounds 1), NOT the old reel', async () => {
   freshState(); installFetch();   // the default gauntlet fixture (no tournament block)
-  const epoch = await import('../js/variants/T/views/epoch.js');
+  const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
   assert(allByClass(host, 'dn-roundtl')[0], 'the gauntlet epoch renders the round timeline');
@@ -3603,7 +3746,7 @@ test('live tournament: during a racing RUN the match-ups ladder fills from /api/
   coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1', progress: 0.5 }];
   coreState.state.activeTournament = { structure: 'racing', phase: 'running' };
 
-  const gens = await import('../js/variants/T/views/gens.js');
+  const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
 
@@ -3845,7 +3988,7 @@ test('live racing (e2e): the match-ups page fills progressively from the publish
   ];
   coreState.state.activeTournament = { structure: 'racing', phase: 'running' };
 
-  const gens = await import('../js/variants/T/views/gens.js');
+  const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
 
@@ -4566,7 +4709,7 @@ test('racing reconstruct: the LIVE /api/active-tournament path still renders the
   coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1', progress: 0.5 }];
   coreState.state.activeTournament = { structure: 'racing', phase: 'running' };
 
-  const gens = await import('../js/variants/T/views/gens.js');
+  const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: RC_EPOCH });
 
@@ -4602,7 +4745,7 @@ test('racing reconstruct: the match-ups page rebuilds the full ladder from the p
   coreState.state.activeRuns = [];
   coreState.state.activeTournament = null;
 
-  const gens = await import('../js/variants/T/views/gens.js');
+  const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: RC_EPOCH });
 
@@ -4718,7 +4861,7 @@ test('mutations route: a CELL pins mutId + gen; the SITE pins mutId only (round-
 
 test('mutation surface: clicking a CELL renders exactly ONE generation’s side-by-side diff for that site (not all)', async () => {
   freshState(); installFetch();
-  const mutations = await import('../js/variants/T/views/mutations.js');
+  const mutations = await import('../js/views/mutations.js');
 
   // oversight_policy was patched by BOTH v1 and v2 with DIFFERENT content.
   // Pin the v2 CELL → only v2's diff appears (not v1's).
@@ -4752,7 +4895,7 @@ test('mutation surface: clicking a CELL renders exactly ONE generation’s side-
 
 test('mutation surface: clicking the SITE row label renders ALL generations that patched the site, stacked', async () => {
   freshState(); installFetch();
-  const mutations = await import('../js/variants/T/views/mutations.js');
+  const mutations = await import('../js/views/mutations.js');
 
   // pin the SITE (no gen) → BOTH v1 and v2 diffs for oversight_policy stack.
   const host = document.createElement('div');
@@ -5183,7 +5326,7 @@ test('survival funnel: the racing epoch strip renders the funnel (stages narrow 
   coreState.state.activeRuns = [];
   coreState.state.activeTournament = null;
 
-  const epoch = await import('../js/variants/T/views/epoch.js');
+  const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: RC_EPOCH });
 
@@ -5221,7 +5364,7 @@ test('survival funnel: a competitor is clickable → its candidate page', async 
   coreState.state.activeRuns = [];
   coreState.state.activeTournament = null;
 
-  const epoch = await import('../js/variants/T/views/epoch.js');
+  const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   let navTo = null;
   const ctx = { navigate: (v, p) => { navTo = { v, p }; }, href: router.href };
@@ -5248,7 +5391,7 @@ test('survival funnel: a LIVE racing run shows the in-progress funnel (pending s
   coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1', progress: 0.5 }];
   coreState.state.activeTournament = { structure: 'racing', phase: 'running' };
 
-  const epoch = await import('../js/variants/T/views/epoch.js');
+  const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: RC_EPOCH });
 
@@ -5288,7 +5431,7 @@ test('survival funnel: with NO rung records the strip degrades to the static "fi
   coreState.state.activeRuns = [];
   coreState.state.activeTournament = null;
 
-  const epoch = await import('../js/variants/T/views/epoch.js');
+  const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: RC_EPOCH });
 
@@ -5303,7 +5446,7 @@ test('survival funnel: with NO rung records the strip degrades to the static "fi
 // (e) a gauntlet epoch's timeline has no embedded funnel (the funnel is racing-specific).
 test('survival funnel: a GAUNTLET epoch renders the round timeline with NO embedded funnel', async () => {
   freshState(); installFetch();  // the default gauntlet fixture (no tournament block)
-  const epoch = await import('../js/variants/T/views/epoch.js');
+  const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
   assert(allByClass(host, 'dn-roundtl')[0], 'the gauntlet epoch renders the round timeline');
@@ -5725,7 +5868,7 @@ test('hovercard: the target is keyboard-accessible (focusable + aria-describedby
 
 test('lifecycle DAG (integration): the candidate view feeds the champion comparison + gate-rule explanation into the DAG — "smaller-looking" rejected v1 explains worse-than-champion', async () => {
   freshState(); installFetch();
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   // v1 is the rejected challenger vs champion v0; gate fired the scalar-margin
   // rule with Δ +75.71 (needs ≤ -0.01).
@@ -5802,7 +5945,7 @@ test('lifecycle RUNG-PROGRESSION strip: a racing candidate page renders the stri
     { entry_id: 'q3_metrics_outline', run_id: 'r2', drift_loss: 63.5, pass_fail: 0, match_id: 'racing-final', rung: 'final' },
   ] };
   installFixtureMap(F);
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: RC_EPOCH, gen: 'v3' });
   assert(allByClass(host, 'dn-rungprog-strip')[0], 'the racing candidate page renders the rung-progression strip');
@@ -6063,7 +6206,7 @@ test('up button: the upper-left control reads "up" (not "back"), labels itself "
 //   (f) the live engine's derivations (progress, activity diff, ticker).
 // ====================================================================
 
-const live = await import('../js/variants/T/live.js');
+const live = await import('../js/live.js');
 
 // the LIVE racing active-tournament topology used to drive the hero: rung 0 has
 // cut v2/v3 and carried v0/v1; rung 1 is still racing (no cut yet); v0 is the
@@ -6590,7 +6733,7 @@ test('live: an idle racing epoch still renders the static completed funnel/summa
   });
   coreState.state.heartbeat = { phase: 'idle' };
   coreState.state.activeRuns = []; coreState.state.activeTournament = null;
-  const epoch = await import('../js/variants/T/views/epoch.js');
+  const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: RC_EPOCH });
   // the static completed funnel still renders (idle view unchanged) + names v0.
@@ -6663,7 +6806,7 @@ test('live engine: the ActivityTicker is append-only, newest-on-top, capped, and
 
 test('board view (a): clicking "show inline" reveals the transcript and the button reads "showing"', async () => {
   freshState(); installFetch();
-  const board = await import('../js/variants/T/views/board.js');
+  const board = await import('../js/views/board.js');
 
   // collapsed: no gen selected — the row button reads "show inline →" and its
   // href carries the gen (clicking it OPENS that candidate's transcript).
@@ -6689,7 +6832,7 @@ test('board view (a): clicking "show inline" reveals the transcript and the butt
 
 test('board view (b): clicking the "showing" button again hides the transcript + clears the selection/route', async () => {
   freshState(); installFetch();
-  const board = await import('../js/variants/T/views/board.js');
+  const board = await import('../js/views/board.js');
 
   // open on v1.
   const host = document.createElement('div');
@@ -6815,7 +6958,7 @@ test('epoch view (cross-epoch): viewing e1 shows ONLY e1 gens — no leaked e0 c
   coreState.state.activeRuns = [];
   coreState.state.activeTournament = null;
 
-  const epoch = await import('../js/variants/T/views/epoch.js');
+  const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: TWO_EP_NEW });
 
@@ -6853,7 +6996,7 @@ test('epoch view (cross-epoch): viewing e0 is unchanged — its full field {v0..
   coreState.state.activeRuns = [];
   coreState.state.activeTournament = null;
 
-  const epoch = await import('../js/variants/T/views/epoch.js');
+  const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: TWO_EP_OLD });
 
@@ -6884,7 +7027,7 @@ test('epoch view (cross-epoch): a PROPOSING e1 shows the honest empty state — 
   coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'waffles_single', run_id: 'r1' }];
   coreState.state.activeTournament = { structure: 'racing', phase: 'running' };
 
-  const epoch = await import('../js/variants/T/views/epoch.js');
+  const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: TWO_EP_NEW });
 
@@ -6967,7 +7110,7 @@ test('survival funnel (no-collide): the benchmark line + the rung headers + the 
 
 test('board view (live): an in-flight-only beat does NOT tear down the inline transcript (no scroll reset), but the in-flight/dot-plot portion DOES update', async () => {
   freshState(); installFetch();
-  const board = await import('../js/variants/T/views/board.js');
+  const board = await import('../js/views/board.js');
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
 
@@ -7002,7 +7145,7 @@ test('board view (live): an in-flight-only beat does NOT tear down the inline tr
 
 test('board view (live): the transcript pane DOES re-render when the selected gen changes', async () => {
   freshState(); installFetch();
-  const board = await import('../js/variants/T/views/board.js');
+  const board = await import('../js/views/board.js');
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
 
@@ -7082,7 +7225,7 @@ function scopeFixture() {
 test('Tier1 (cross-epoch): candidate view scopes to the viewed epoch (only e1 gens; correct champion)', async () => {
   freshState();
   installFixtureMap(scopeFixture());
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: SC_NEW, gen: 'v1' });
   assert(host.textContent.includes('Candidate v1'), 'e1 v1 rendered');
@@ -7095,7 +7238,7 @@ test('Tier1 (cross-epoch): candidate view scopes to the viewed epoch (only e1 ge
 test('Tier2 (Class B): an UNSCORED e1 candidate (promoted:null) renders PENDING, not dead-branch', async () => {
   freshState();
   installFixtureMap(scopeFixture());
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: SC_NEW, gen: 'v1' });
   // the verdict pill reads pending (racing…), never rejected.
@@ -7109,7 +7252,7 @@ test('Tier2 (Class B): an UNSCORED e1 candidate (promoted:null) renders PENDING,
 test('Tier1 (cross-epoch): gens view scopes to the viewed epoch; pending candidate in the roster', async () => {
   freshState();
   installFixtureMap(scopeFixture());
-  const gens = await import('../js/variants/T/views/gens.js');
+  const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: SC_NEW });
   assert(host.textContent.includes(`Generations · ${SC_NEW}`), 'the gens page heads with e1');
@@ -7123,7 +7266,7 @@ test('Tier1 (cross-epoch): gens view scopes to the viewed epoch; pending candida
 test('Tier1 (cross-epoch): switching the epoch param changes the data (e0 ↔ e1)', async () => {
   freshState();
   installFixtureMap(scopeFixture());
-  const gens = await import('../js/variants/T/views/gens.js');
+  const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
   await gens.render(host, ctx, { epochId: SC_OLD });
@@ -7137,7 +7280,7 @@ test('Tier1 (cross-epoch): switching the epoch param changes the data (e0 ↔ e1
 test('Tier1 (cross-epoch): boards view scopes to the viewed epoch (no e0 candidate columns)', async () => {
   freshState();
   installFixtureMap(scopeFixture());
-  const boards = await import('../js/variants/T/views/boards.js');
+  const boards = await import('../js/views/boards.js');
   const host = document.createElement('div');
   await boards.render(host, { navigate() {}, href: router.href }, { epochId: SC_NEW });
   assert(host.textContent.includes(`Boards · ${SC_NEW}`), 'the boards page heads with e1');
@@ -7148,7 +7291,7 @@ test('Tier1 (cross-epoch): boards view scopes to the viewed epoch (no e0 candida
 test('Tier1 (cross-epoch): board (per-entry) view scopes to the viewed epoch', async () => {
   freshState();
   installFixtureMap(scopeFixture());
-  const board = await import('../js/variants/T/views/board.js');
+  const board = await import('../js/views/board.js');
   const host = document.createElement('div');
   await board.render(host, { navigate() {}, href: router.href }, { epochId: SC_NEW, entry: 'waffles_single' });
   assert(host.textContent.includes('Board · waffles_single'), 'the board entry view rendered for e1');
@@ -7159,7 +7302,7 @@ test('Tier1 (cross-epoch): board (per-entry) view scopes to the viewed epoch', a
 test('Tier1 (cross-epoch): publication view scopes lineage/figures to the viewed epoch', async () => {
   freshState();
   installFixtureMap(scopeFixture());
-  const publication = await import('../js/variants/T/views/publication.js');
+  const publication = await import('../js/views/publication.js');
   const host = document.createElement('div');
   await publication.render(host, { navigate() {}, href: router.href }, { epochId: SC_NEW });
   // the aggregate-scores table lists e1's own gens only; v2 belongs to e0.
@@ -7191,7 +7334,7 @@ test('Tier1 (header scoping): the epoch view H1 + STATE pill read the ROUTED epo
   F['/api/epoch'] = F[`/api/epoch?epoch=${SC_NEW}`];
   installFixtureMap(F);
 
-  const epoch = await import('../js/variants/T/views/epoch.js');
+  const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   // route AT e0 (the NON-current epoch) while e1 is current.
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: SC_OLD });
@@ -7239,7 +7382,7 @@ test('Tier2 (Class B): the tree tags an unscored child PENDING, not rejected', (
 // ---- per-board dot-plot: tournament-context label + click → run drill-down ─
 
 test('candidate: tournamentContext derives rung/round/matchup labels (racing/gauntlet/swiss)', async () => {
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const tc = candidate.tournamentContext;
   // racing: pre-formatted rung wins; raw rungN_* match_id → "rung N".
   assertEqual(tc({ match_id: 'rung0_m2', rung: 'rung 0' }), 'rung 0', 'pre-formatted rung string is reused');
@@ -7350,7 +7493,7 @@ test('svg.heatmap: higher-contrast theme-aware cell scale — wider range, monot
 
 test('candidate view: per-board dumbbell click → board drill-down for THAT run; duplicate rungs disambiguated', async () => {
   freshState(); installFetch();
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   // same entry raced in TWO rungs (different match_id + rung) → two rows.
   const path = `/api/generation/${EPOCH_ID}/v1/per-entry`;
   const saved = FIXTURE[path];
@@ -7385,7 +7528,7 @@ test('candidate view: per-board dumbbell click → board drill-down for THAT run
 // board row carries a real per-board champion value to draw the ○.
 test('candidate view: the per-board figure renders the champion○ → candidate● DUMBBELL (paired per row, not a single-series dot-plot)', async () => {
   freshState(); installFetch();
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
   // the dumbbell SVG is present + responsive (width-filling); the OLD single-series
@@ -7431,7 +7574,7 @@ test('candidate view: the per-board figure renders the champion○ → candidate
 // experiment carries holdout data, and is cleanly ABSENT when there's none.
 test('candidate view (Task B): the train→holdout generalization slope RENDERS for a holdout-bearing candidate (slope + gap + verdict)', async () => {
   freshState(); installFetch();
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   // give v1's experiment a holdout triplet within tolerance (gap 0.02 ≤ tol 0.05).
   const saved = FIXTURE['/api/epoch'];
   FIXTURE['/api/epoch'] = {
@@ -7465,7 +7608,7 @@ test('candidate view (Task B): the train→holdout generalization slope RENDERS 
 
 test('candidate view (Task B): the generalization slope is ABSENT when the candidate has NO holdout data (cleanly gated)', async () => {
   freshState(); installFetch();
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   // the default v1 experiment carries NO train/holdout/gap fields → no panel.
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
@@ -7478,7 +7621,7 @@ test('candidate view (Task B): the generalization slope is ABSENT when the candi
 // tone + the "> tol" / memorization caption (the other verdict branch).
 test('candidate view (Task B): an over-tolerance holdout gap reads the over-tolerance (memorization) verdict', async () => {
   freshState(); installFetch();
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const saved = FIXTURE['/api/epoch'];
   FIXTURE['/api/epoch'] = {
     ...saved,
@@ -7557,7 +7700,7 @@ function sparkPointCount(card) {
 
 test('fleet cards: two epochs with DIFFERENT real trajectories render DIFFERENT sparklines (per-epoch, keyed on epoch_id)', async () => {
   freshState(); installFleetFetch();
-  const home = await import('../js/variants/T/views/home.js');
+  const home = await import('../js/views/home.js');
   const host = document.createElement('div');
   await home.render(host, { navigate() {}, href: router.href }, {});
 
@@ -7580,7 +7723,7 @@ test('fleet cards: NO fabricated [best×1.18, best×1.06, best] fallback — an 
   const F = JSON.parse(JSON.stringify(FLEET_FIXTURE));
   F[`/api/score-trajectory?epoch=${FLEET_E1}`] = { epoch_id: FLEET_E1, points: [{ generation_id: 'v0', scalar: 56.2 }] };
   installFleetFetch(F);
-  const home = await import('../js/variants/T/views/home.js');
+  const home = await import('../js/views/home.js');
   const host = document.createElement('div');
   await home.render(host, { navigate() {}, href: router.href }, {});
 
@@ -7601,7 +7744,7 @@ test('fleet cards: NO fabricated [best×1.18, best×1.06, best] fallback — an 
 
 test('fleet cards: existing rendering preserved — stats, epoch links, current-epoch highlight (full-width cross-epoch trajectory removed)', async () => {
   freshState(); installFleetFetch();
-  const home = await import('../js/variants/T/views/home.js');
+  const home = await import('../js/views/home.js');
   const host = document.createElement('div');
   await home.render(host, { navigate() {}, href: router.href }, {});
 
@@ -7622,7 +7765,7 @@ test('fleet cards: existing rendering preserved — stats, epoch links, current-
 
 test('fleet cards: digest-gated — identical workspace + trajectories do NOT rebuild the DOM (heartbeat no-op)', async () => {
   freshState(); installFleetFetch();
-  const home = await import('../js/variants/T/views/home.js');
+  const home = await import('../js/views/home.js');
   const host = document.createElement('div');
   await home.render(host, { navigate() {}, href: router.href }, {});
   const digest1 = host.getAttribute('data-t-digest');
@@ -7708,7 +7851,7 @@ test('gens (cross-epoch): a NON-active epoch’s Match-ups renders the COMPLETED
   coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1', progress: 0.3 }];
   coreState.state.activeTournament = { epoch_id: TWO_EP_NEW, structure: 'racing', phase: 'running' };
 
-  const gens = await import('../js/variants/T/views/gens.js');
+  const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: TWO_EP_OLD });
 
@@ -7750,7 +7893,7 @@ test('gens (cross-epoch): the ACTIVE epoch’s Match-ups still shows the live pr
   coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1', progress: 0.5 }];
   coreState.state.activeTournament = { epoch_id: TWO_EP_NEW, structure: 'racing', phase: 'running' };
 
-  const gens = await import('../js/variants/T/views/gens.js');
+  const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: TWO_EP_NEW });
 
@@ -7839,7 +7982,7 @@ test('brand mono: --v2-brand-mono is a FIXED monospace, distinct from the swappa
   }
   // the wordmark <text> pins to the fixed brand mono (not the swappable mono).
   const fsmod = await import('node:fs');
-  const src = fsmod.readFileSync(new URL('../js/variants/T/shell.js', import.meta.url), 'utf8');
+  const src = fsmod.readFileSync(new URL('../js/shell.js', import.meta.url), 'utf8');
   assert(/var\(--v2-brand-mono\)/.test(src), 'the wordmark text font-family is var(--v2-brand-mono)');
 });
 
@@ -7967,7 +8110,7 @@ function liveUxFixture() {
 test('candidate page (LIVE): in-flight board runs for THIS candidate show "N running" with progress; foreign-epoch runs ignored; structure-aware pending label', async () => {
   freshState();
   installFixtureMap(liveUxFixture());
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   // a CURRENT-epoch run in flight on v1 (swiss).
   coreState.state.setHeartbeat({ phase: 'tournament:round_0', generation_id: 'v1', epoch_id: LIVE_UX_EPOCH });
   coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b1', run_id: 'rr1', progress: 0.5, epoch_id: LIVE_UX_EPOCH }];
@@ -7998,7 +8141,7 @@ test('candidate page (LIVE): in-flight board runs for THIS candidate show "N run
 test('board trellis (LIVE): in-flight cells light up from state.activeRuns (current epoch); a no-op beat does NOT rebuild; foreign epoch ignored', async () => {
   freshState();
   installFixtureMap(liveUxFixture());
-  const boards = await import('../js/variants/T/views/boards.js');
+  const boards = await import('../js/views/boards.js');
   coreState.state.setHeartbeat({ phase: 'tournament:round_0', generation_id: 'v1', epoch_id: LIVE_UX_EPOCH });
   coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b1', run_id: 'rr1', progress: 0.4, epoch_id: LIVE_UX_EPOCH }];
   coreState.state.activeTournament = { epoch_id: LIVE_UX_EPOCH, structure: 'swiss', phase: 'running' };
@@ -8053,7 +8196,7 @@ test('Match-ups (LIVE swiss): active-round pairings show in-flight board progres
   coreState.state.activeRuns = [{ generation_id: 'v2', entry_id: 'b0', run_id: 'rr', progress: 1, epoch_id: LIVE_UX_EPOCH }];
   coreState.state.activeTournament = F['/api/active-tournament'];
 
-  const gens = await import('../js/variants/T/views/gens.js');
+  const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: LIVE_UX_EPOCH });
   assert(allByClass(host, 'dt-live-pill')[0], 'the live pill is shown');
@@ -8207,7 +8350,7 @@ test('candidate match-ups: a candidate running its first round populates from th
     competitors: [{ generation_id: 'v0', role: 'champion' }, { generation_id: 'v1', role: 'challenger' }],
   };
 
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: CM_EPOCH, gen: 'v1' });
   assert(!/did not run in any tournament round/i.test(host.textContent),
@@ -8275,7 +8418,7 @@ test('cached champion: per-entry cached/source_epoch surfaces a "cached · from 
     ] },
   };
   installFixtureMap(F);
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: CC_EPOCH, gen: 'v0' });
   assert(/cached/i.test(host.textContent), 'a cached champion shows a "cached" badge');
@@ -8288,7 +8431,7 @@ test('cached champion: per-entry cached/source_epoch surfaces a "cached · from 
 // ---- Task 4: objective falls back to the brief H1 title ----
 
 test('epoch objective: falls back to the brief H1 title (stripping "Epoch eN — ") when no explicit goal', async () => {
-  const epoch = await import('../js/variants/T/views/epoch.js');
+  const epoch = await import('../js/views/epoch.js');
   // explicit goal wins.
   assertEqual(epoch.objectiveText({ goal: 'crisper slides', brief: '# Epoch e3 — Tighten oversight\n' }), 'crisper slides');
   // no goal → the brief H1 title, prefix stripped.
@@ -8328,7 +8471,7 @@ test('epoch overview: "field of N" counts champion + applied challengers, EXCLUD
     [`/api/generation/${FN_EPOCH}/v9/per-entry`]: { entries: [] },
   };
   installFixtureMap(F);
-  const epoch = await import('../js/variants/T/views/epoch.js');
+  const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: FN_EPOCH });
   // the real field is the challenger fan {v1, v2} (v0 is the carried champion on
@@ -8690,6 +8833,141 @@ test('round model: degrades to a SINGLE round 0 when neither round_index nor fie
   assertDeep([...new Set(allChallengers)].sort(), ['v1', 'v2'], 'every challenger appears in the round model');
 });
 
+// ---- the IN-FLIGHT round (issue #16): a NEW round proposing/applying its
+// field — not yet in the journal/lineage NOR a settled tournament record —
+// surfaces as its OWN round, NOT folded under the prior settled round, and its
+// proposed/applied counts increment as the field mints. -------------------
+
+test('round model (issue #16): a NEW round still PROPOSING surfaces as its own in-flight round (not folded under the settled prior round)', () => {
+  // round 0 SETTLED: v0 → field {v1,v2}, v2 promoted. round 1 PROPOSING: the
+  // live envelope mints v5/v6/v7 (round_index 1) — none in the journal/lineage
+  // yet (gens carry only the settled v0/v1/v2).
+  const gens = [
+    { id: 'v0', parent: null, promoted: true, round_index: 0 },
+    { id: 'v1', parent: 'v0', promoted: false, round_index: 0 },
+    { id: 'v2', parent: 'v0', promoted: true, round_index: 0 },
+  ];
+  const scalarBy = new Map([['v0', 100], ['v1', 110], ['v2', 80]]);
+  const inflight = {
+    epoch_id: 'e0', structure: 'gauntlet', phase: 'proposing', round_index: 1,
+    competitors: [{ generation_id: 'v2', seed: 1, role: 'champion' }],
+    field_status: [
+      { generation_id: 'v5', status: 'applied' },
+      { generation_id: 'v6', status: 'applied' },
+      { generation_id: 'v7', status: 'proposing' },
+    ],
+  };
+  const model = rounds.epochRoundModel({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v2', inflight });
+  assertEqual(model.length, 2, 'the settled round 0 + the in-flight round 1 (NOT one folded round)');
+  const r1 = model[1];
+  assertEqual(r1.round_index, 1, 'the in-flight round takes round_index 1 (the NEW round, not 0)');
+  assert(r1.inflight === true, 'the new round is flagged in-flight');
+  assertEqual(r1.source, 'inflight', 'its source is the live envelope, not a settled record');
+  assertEqual(r1.champion.id, 'v2', 'the in-flight round carries the prior round’s promoted v2 as its champion (spine continues)');
+  assertDeep(r1.challengers.map((c) => c.id).sort(), ['v5', 'v6', 'v7'], 'the in-flight round holds the freshly-proposed field v5/v6/v7');
+  // the settled round 0 is unchanged — v5/v6/v7 are NOT mis-attributed to it.
+  assertDeep(model[0].challengers.map((c) => c.id).sort(), ['v1', 'v2'], 'round 0 keeps ONLY its settled field {v1,v2} — the new round’s gens are not folded in');
+  assert(!model[0].inflight, 'the settled round 0 is not flagged in-flight');
+  // the gate is pending (still proposing — not yet decided).
+  assertEqual(r1.gateOutcome.kind, 'pending', 'the in-flight round’s gate is pending (the field has not raced)');
+});
+
+test('round model (issue #16): the in-flight round carries per-challenger field_status so the proposed/applied banner can increment', () => {
+  const gens = [{ id: 'v0', parent: null, promoted: true, round_index: 0 }, { id: 'v1', parent: 'v0', promoted: true, round_index: 0 }];
+  const scalarBy = new Map([['v0', 100], ['v1', 80]]);
+  const base = { epoch_id: 'e0', structure: 'gauntlet', phase: 'proposing', round_index: 1, competitors: [{ generation_id: 'v1', seed: 1, role: 'champion' }] };
+  // EARLY: only v5 proposed (proposing). LATER: v5 applied, v6 proposing.
+  const early = rounds.epochRoundModel({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1',
+    inflight: { ...base, field_status: [{ generation_id: 'v5', status: 'proposing' }] } });
+  const later = rounds.epochRoundModel({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1',
+    inflight: { ...base, field_status: [{ generation_id: 'v5', status: 'applied' }, { generation_id: 'v6', status: 'proposing' }] } });
+  const eR = early[early.length - 1];
+  const lR = later[later.length - 1];
+  // proposed count goes 1 → 2, applied 0 → 1 as the field mints.
+  assertEqual(eR.challengers.length, 1, 'early: 1 proposed');
+  assertEqual(eR.challengers.filter((c) => c.status === 'applied').length, 0, 'early: 0 applied');
+  assertEqual(lR.challengers.length, 2, 'later: 2 proposed');
+  assertEqual(lR.challengers.filter((c) => c.status === 'applied').length, 1, 'later: 1 applied (v5)');
+  // the digest re-stamps on the proposing→applied transition (so the gated swap
+  // repaints), but is byte-IDENTICAL on a no-op re-derive (anti-flash).
+  assert(rounds.roundModelDigest(early) !== rounds.roundModelDigest(later),
+    'a field-status change (proposing → applied + a new slot) re-stamps the round digest');
+  const earlyAgain = rounds.epochRoundModel({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1',
+    inflight: { ...base, field_status: [{ generation_id: 'v5', status: 'proposing' }] } });
+  assertEqual(rounds.roundModelDigest(early), rounds.roundModelDigest(earlyAgain),
+    'a no-op re-derive (same field_status) yields a byte-identical digest — no repaint on an idle beat');
+});
+
+test('round model (issue #16): a SETTLED / done / idle envelope does NOT spawn a phantom in-flight round', () => {
+  const gens = [{ id: 'v0', parent: null, promoted: true, round_index: 0 }, { id: 'v1', parent: 'v0', promoted: true, round_index: 0 }];
+  const scalarBy = new Map([['v0', 100], ['v1', 80]]);
+  const base = { epoch_id: 'e0', structure: 'gauntlet', round_index: 1, competitors: [{ generation_id: 'v1' }],
+    field_status: [{ generation_id: 'v5', status: 'applied' }] };
+  for (const phase of ['done', 'complete', 'completed', 'idle', 'tournament:round_1:v5', '']) {
+    const model = rounds.epochRoundModel({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1',
+      inflight: { ...base, phase } });
+    assert(!model.some((r) => r.inflight), `phase="${phase}" must NOT spawn an in-flight round (it is terminal/settled)`);
+  }
+  // and no envelope at all → no in-flight round (the pre-feature path).
+  const none = rounds.epochRoundModel({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1' });
+  assert(!none.some((r) => r.inflight), 'no live envelope → no in-flight round');
+});
+
+test('round model (issue #16): once the new round SETTLES into a recorded round, the in-flight overlay defers (no duplicate)', () => {
+  // v5 has now landed in the journal (round_index 1) AND the live envelope still
+  // names it — the settled source owns it; the overlay must NOT duplicate it.
+  const gens = [
+    { id: 'v0', parent: null, promoted: true, round_index: 0 },
+    { id: 'v1', parent: 'v0', promoted: true, round_index: 0 },
+    { id: 'v5', parent: 'v1', promoted: false, round_index: 1 },
+  ];
+  const scalarBy = new Map([['v0', 100], ['v1', 80], ['v5', 85]]);
+  const inflight = { epoch_id: 'e0', structure: 'gauntlet', phase: 'proposing', round_index: 1,
+    competitors: [{ generation_id: 'v1' }], field_status: [{ generation_id: 'v5', status: 'applied' }] };
+  const model = rounds.epochRoundModel({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1', inflight });
+  assertEqual(model.length, 2, 'round 0 + the now-recorded round 1 (no phantom duplicate)');
+  const r1 = model[model.length - 1];
+  assert(!r1.inflight, 'the recorded round 1 is NOT re-flagged in-flight — the settled source is authoritative');
+  assertDeep(r1.challengers.map((c) => c.id), ['v5'], 'v5 appears exactly ONCE (in the recorded round)');
+});
+
+test('round model (issue #16): round 0’s OWN proposing overlays the forming field IN PLACE (no phantom duplicate round)', () => {
+  // only the seed v0 exists; round 0 is proposing its first field v1/v2 live.
+  const gens = [{ id: 'v0', parent: null, promoted: false, round_index: null }];
+  const scalarBy = new Map([['v0', 100]]);
+  const inflight = { epoch_id: 'e0', structure: 'gauntlet', phase: 'proposing', round_index: 0,
+    competitors: [{ generation_id: 'v0' }],
+    field_status: [{ generation_id: 'v1', status: 'applied' }, { generation_id: 'v2', status: 'proposing' }] };
+  const model = rounds.epochRoundModel({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v0', inflight });
+  assertEqual(model.length, 1, 'round 0’s own proposing stays ONE round (overlaid in place, not duplicated)');
+  const r0 = model[0];
+  assert(r0.inflight === true, 'round 0 is flagged in-flight while it proposes its first field');
+  assertEqual(r0.champion.id, 'v0', 'round 0’s champion is the seed v0');
+  assertDeep(r0.challengers.map((c) => c.id).sort(), ['v1', 'v2'], 'the forming field v1/v2 is overlaid onto round 0');
+});
+
+test('round timeline (issue #16): the in-flight round renders with a LIVE badge + a "N proposed · M applied" banner', () => {
+  const node = svg.roundTimeline({ rounds: [
+    { round_index: 0, champion: { id: 'v0', scalar: 100 }, structure: 'gauntlet',
+      challengers: [{ id: 'v1', scalar: 90, promoted: true }], gateOutcome: { kind: 'promoted', gen: 'v1' } },
+    { round_index: 1, champion: { id: 'v1', scalar: 90 }, structure: 'gauntlet', inflight: true,
+      challengers: [
+        { id: 'v5', scalar: null, promoted: false, status: 'applied' },
+        { id: 'v6', scalar: null, promoted: false, status: 'applied' },
+        { id: 'v7', scalar: null, promoted: false, status: 'proposing' },
+      ], gateOutcome: { kind: 'pending', gen: null } },
+  ], onRound() {}, onCompetitor() {} });
+  assertEqual(allByClass(node, 'dn-roundtl-ep').length, 2, 'two episodes — the settled round 0 + the in-flight round 1');
+  assert(allByClass(node, 'dn-roundtl-eplive').length >= 1, 'the in-flight round wears a LIVE badge');
+  assert(allByClass(node, 'dn-roundtl-gate-live').length >= 1, 'the in-flight gate reads as live (proposing)');
+  // the incrementing banner: 3 proposed · 2 applied · 1 proposing.
+  assert(/3 proposed/.test(node.textContent), 'the banner reads the proposed count (3)');
+  assert(/2 applied/.test(node.textContent), 'the banner reads the applied count (2)');
+  assert(/1 proposing/.test(node.textContent), 'the banner reads the still-proposing count (1)');
+  // the proposing chip is dimmed (its own status class), distinct from applied.
+  assert(allByClass(node, 'dn-roundtl-chip-proposing').length === 1, 'the still-proposing slot is marked proposing');
+});
+
 // ---- (2) the SPINE TIMELINE renders one episode per round ----------
 
 test('round timeline: renders one episode per round with the champion-loss annotation + gate outcome', () => {
@@ -8746,7 +9024,7 @@ test('round timeline: the per-round structure figure is embedded via the figureF
 test('elim parity: a single-elim epoch episode leads with elimFlow (NOT the mini-bracket)', async () => {
   freshState();
   installFixtureMap(structFixture('single_elim', SE_STRUCT, 'tourn_e0_se'));
-  const epoch = await import('../js/variants/T/views/epoch.js');
+  const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
   assert(svgsByClass(host, 'dn-elimflow')[0], 'the elim episode embeds the generations-across-rounds flow (elimFlow)');
@@ -8766,7 +9044,7 @@ test('round drill-down: the route carries a round param + renders ONE round’s 
 
   freshState();
   installFixtureMap(structFixture('single_elim', SE_STRUCT, 'tourn_e0_se'));
-  const gens = await import('../js/variants/T/views/gens.js');
+  const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, round: '0' });
   // the round drill heads with the round + renders that round's full tournament
@@ -8782,7 +9060,7 @@ test('round drill-down: the route carries a round param + renders ONE round’s 
 test('round drill-down: an out-of-range round reads an honest empty', async () => {
   freshState();
   installFixtureMap(structFixture('single_elim', SE_STRUCT, 'tourn_e0_se'));
-  const gens = await import('../js/variants/T/views/gens.js');
+  const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, round: '7' });
   assert(/No round 7/i.test(host.textContent), 'an out-of-range round reads an honest empty');
@@ -8824,7 +9102,7 @@ test('tree: groups generations by round when round_index is present (Round 0 / R
 });
 
 test('round model: reads the CANONICAL per-round champion (id + cached/re-run eval mode) from the tournament record, not the reconstructed spine', async () => {
-  const rounds = await import('../js/variants/T/views/rounds.js');
+  const rounds = await import('../js/views/rounds.js');
   const gens = [
     { id: 'v0', parent: null, promoted: false, round_index: 0 },
     { id: 'v1', parent: 'v0', promoted: false, round_index: 0 },
@@ -9021,7 +9299,7 @@ test('reignModel: succession order, last champion flagged current', () => {
 
 test('candidate: the reign ribbon (reignGantt) shows ONLY for a generation that became champion', async () => {
   freshState(); installFetch();
-  const cand = await import('../js/variants/T/views/candidate.js');
+  const cand = await import('../js/views/candidate.js');
   // v0 is the seed champion (round 0) → it has a reign → the ribbon shows.
   const hostChamp = document.createElement('div');
   await cand.render(hostChamp, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v0' });
@@ -9038,7 +9316,7 @@ test('candidate: the reign ribbon (reignGantt) shows ONLY for a generation that 
 
 test('epoch view: the round timeline leads with the loss-floor WATERFALL headline figure', async () => {
   freshState(); installFetch();
-  const epoch = await import('../js/variants/T/views/epoch.js');
+  const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
   assert(svgsByClass(host, 'dn-waterfall')[0], 'the epoch round-timeline section carries the loss-floor waterfall');
@@ -9049,7 +9327,7 @@ test('epoch view: the round timeline leads with the loss-floor WATERFALL headlin
 // ---- GUARD: the figures the operator LIKES still render unchanged ----
 
 test('liked figures untouched: heatmap / valueDotPlot / lifecycleDag still render their own marks', async () => {
-  const dag = await import('../js/variants/T/dag.js');
+  const dag = await import('../js/dag.js');
   // heatmap
   const hm = svg.heatmap({
     rows: [{ id: 'b1', label: 'b1' }], cols: [{ id: 'v1', label: 'v1' }],
@@ -9162,10 +9440,10 @@ test('responsive: opts.responsive (and opts.fitWidth) turns every structure buil
   }
 });
 
-test('responsive: each builder’s *-hero class is defined in console4.css with width:100% + height:auto + aspect-ratio + a max cap', () => {
+test('responsive: each builder’s *-hero class is defined in console.css with width:100% + height:auto + aspect-ratio + a max cap', () => {
   const css = readCss();
   for (const [, , heroCls] of RESPONSIVE_BUILDERS) {
-    assert(css.includes('.' + heroCls), `console4.css defines .${heroCls}`);
+    assert(css.includes('.' + heroCls), `console.css defines .${heroCls}`);
   }
   // the additive block carries the cross-cutting box behaviour.
   assert(/\.dn-scalartrack-hero[\s\S]{0,400}width:\s*100%/.test(css)
@@ -9337,7 +9615,7 @@ function scoredFixture() {
 
 test('#18 candidate dossier: a scored entry shows the 0–1 score bar + P/R; the mean-score caption reads', async () => {
   freshState(); installFixtureMap(scoredFixture());
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
   const dot = svgsByClass(host, 'dn-dumbbell')[0];
@@ -9358,7 +9636,7 @@ test('#18 candidate dossier: a scored entry shows the 0–1 score bar + P/R; the
 
 test('#18 candidate dossier: a BOOL-ONLY board keeps its ✓/✗ — no score column when nothing scored', async () => {
   freshState(); installFetch();   // the BASE fixture: no score / metrics anywhere.
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
   const dot = svgsByClass(host, 'dn-dumbbell')[0];
@@ -9381,7 +9659,7 @@ test('#18 candidate dossier: a BOOL-ONLY board keeps its ✓/✗ — no score co
 
 test('#18 candidate digest: a no-op heartbeat over a SCORED dossier churns NO DOM', async () => {
   freshState(); installFixtureMap(scoredFixture());
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
   await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
@@ -9398,7 +9676,7 @@ test('#18 candidate digest: a CHANGED score repaints (the score is folded into t
   freshState();
   const F = scoredFixture();
   installFixtureMap(F);
-  const candidate = await import('../js/variants/T/views/candidate.js');
+  const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
   await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
@@ -9417,7 +9695,7 @@ test('#18 candidate digest: a CHANGED score repaints (the score is folded into t
 
 test('#18 board view: a scored board adds a score + P/R column; reads the score + decomposition', async () => {
   freshState(); installFixtureMap(scoredFixture());
-  const board = await import('../js/variants/T/views/board.js');
+  const board = await import('../js/views/board.js');
   const host = document.createElement('div');
   await board.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single' });
   assert(host.textContent.includes('Board · waffles_single'), 'the board view rendered');
@@ -9432,7 +9710,7 @@ test('#18 board view: a scored board adds a score + P/R column; reads the score 
 
 test('#18 board view: a BOOL-ONLY board (no scores) keeps the pre-score columns — no score column', async () => {
   freshState(); installFetch();   // base fixture — no scores anywhere.
-  const board = await import('../js/variants/T/views/board.js');
+  const board = await import('../js/views/board.js');
   const host = document.createElement('div');
   await board.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single' });
   // no score column → no dn-score-cell / dn-pr-cell rendered; the predicate

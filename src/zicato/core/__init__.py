@@ -14,8 +14,14 @@ goldfive drift-kind strings are in ``zicato/core/drift_kinds.py``.
 
 from __future__ import annotations
 
-from zicato.core.drift_kinds import GOLDFIVE_DRIFT_KINDS, validate_drift_kind
+from zicato.core.drift_kinds import (
+    GOLDFIVE_DRIFT_KINDS,
+    normalize_wire_drift_kind,
+    normalize_wire_severity,
+    validate_drift_kind,
+)
 from zicato.core.types import (
+    BUDGET_ABORT_CAUSE,
     BoardEntry,
     BoardEntryKind,
     CallLLM,
@@ -53,8 +59,10 @@ from zicato.core.types import (
     RuntimeConfig,
     ScoringWeights,
     ScriptedTurn,
+    Side,
     TournamentDecision,
     UserPersona,
+    is_infra_abort_cause,
     validate_board_entry,
 )
 from zicato.core.workspace import (
@@ -76,6 +84,8 @@ from zicato.core.workspace import (
 __all__ = [
     # drift-kind registry
     "GOLDFIVE_DRIFT_KINDS",
+    "normalize_wire_drift_kind",
+    "normalize_wire_severity",
     "validate_drift_kind",
     # mutation surface
     "MutationKind",
@@ -101,6 +111,8 @@ __all__ = [
     "JudgeLoss",
     "ExpectationResult",
     "LossProfile",
+    "BUDGET_ABORT_CAUSE",
+    "is_infra_abort_cause",
     # run record / lineage
     "RunRecord",
     "RunResult",
@@ -113,6 +125,7 @@ __all__ = [
     "DriftMovementActual",
     "MetricMovementActual",
     "TournamentDecision",
+    "Side",
     "OutcomeRecord",
     "Experiment",
     # epoch / generation

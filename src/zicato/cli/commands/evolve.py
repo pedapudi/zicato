@@ -76,16 +76,28 @@ def _resolve_supervisor_binary(config: IntegrationConfig | None = None) -> Path 
        :class:`~zicato.config.IntegrationConfig`, sourced from the
        ``ZICATO_SUPERVISOR_BINARY`` environment variable (useful for
        tests that point at a sentinel script).
-    2. The binary bundled inside the installed package at
-       ``zicato/_bin/zicato-supervisor``. The hatchling build hook
-       (``hatch_build.py``) compiles the crate and stages it there, so
-       this resolves for every wheel install — checkout or not.
+    2. The fresher of two checkout/install candidates:
+
+       * the binary bundled inside the installed package at
+         ``zicato/_bin/zicato-supervisor`` (the hatchling build hook in
+         ``hatch_build.py`` compiles the crate and stages it there, so
+         this exists for every wheel install), and
+       * the Cargo workspace's release build at
+         ``<repo>/target/release/zicato-supervisor`` (a development
+         checkout that ran ``cargo build --release``).
+
+       In a development checkout BOTH can exist, and the bundled
+       ``_bin`` copy is easily stale relative to a just-rebuilt
+       ``target/release``. So when the dev-checkout release build
+       exists we prefer it whenever the bundled copy is absent OR the
+       release build is at least as new (by mtime); otherwise we use the
+       bundled copy. An installed wheel has no ``target/release`` and so
+       always gets the bundled binary, exactly as before.
     3. The system ``PATH`` (``zicato-supervisor`` installed globally).
-    4. Last resort, for a development checkout only: the Cargo
-       workspace's release build at ``<repo>/target/release/``. A bare
-       checkout that has never run ``python -m build`` has no bundled
-       ``_bin/`` binary, so this lets ``cargo build --release`` alone
-       suffice during development.
+    4. The dev-checkout release build, as a last resort even when it is
+       *older* than nothing else resolved — a bare checkout that has
+       never run ``python -m build`` has no bundled ``_bin/`` binary, so
+       this lets ``cargo build --release`` alone suffice.
 
     Parameters
     ----------
@@ -107,14 +119,37 @@ def _resolve_supervisor_binary(config: IntegrationConfig | None = None) -> Path 
         if candidate.exists() and os.access(candidate, os.X_OK):
             return candidate
 
-    # 2. Binary bundled inside the installed package. zicato/__file__
-    #    -> zicato/_bin/zicato-supervisor. This is the path the build
-    #    hook stages into the wheel and works for any install.
+    # Compute both checkout/install candidates up front.
+    #
+    # Bundled: zicato/__file__ -> zicato/_bin/zicato-supervisor. This is
+    # the path the build hook stages into the wheel.
     import zicato  # noqa: PLC0415
 
     pkg_root = Path(zicato.__file__).resolve().parent
     bundled = pkg_root / "_bin" / "zicato-supervisor"
-    if bundled.exists() and os.access(bundled, os.X_OK):
+
+    # Dev checkout: this file is installed at
+    # <repo>/src/zicato/cli/commands/evolve.py; the Cargo workspace
+    # builds every crate into <repo>/target/release/. Four parents from
+    # this file reach src/zicato/, a fifth reaches the repo root.
+    here = Path(__file__).resolve()
+    repo_root = here.parents[4]
+    dev_checkout = repo_root / "target" / "release" / "zicato-supervisor"
+
+    def _usable(path: Path) -> bool:
+        return path.exists() and os.access(path, os.X_OK)
+
+    bundled_ok = _usable(bundled)
+    dev_ok = _usable(dev_checkout)
+
+    # 2. Prefer the dev-checkout release build over the bundled copy
+    #    when it exists and is at least as new — in a source checkout the
+    #    bundled ``_bin`` binary is easily stale. An installed wheel has
+    #    no ``target/release`` (``dev_ok`` is False) and so falls through
+    #    to the bundled binary unchanged.
+    if dev_ok and (not bundled_ok or dev_checkout.stat().st_mtime >= bundled.stat().st_mtime):
+        return dev_checkout
+    if bundled_ok:
         return bundled
 
     # 3. The system PATH.
@@ -122,16 +157,11 @@ def _resolve_supervisor_binary(config: IntegrationConfig | None = None) -> Path 
     if on_path:
         return Path(on_path)
 
-    # 4. Development-checkout last resort. This file is installed at
-    #    <repo>/src/zicato/cli/commands/evolve.py; the Cargo workspace
-    #    builds every crate into <repo>/target/release/. Four parents
-    #    from this file reach src/zicato/, a fifth reaches the repo
-    #    root. This branch only fires for an editable/source checkout
-    #    that built the crate but never ran the wheel build hook.
-    here = Path(__file__).resolve()
-    repo_root = here.parents[4]
-    dev_checkout = repo_root / "target" / "release" / "zicato-supervisor"
-    if dev_checkout.exists() and os.access(dev_checkout, os.X_OK):
+    # 4. Development-checkout last resort. This only differs from step 2
+    #    when the bundled copy was present but unusable; in practice it
+    #    catches a bare checkout that built the crate but never ran the
+    #    wheel build hook.
+    if dev_ok:
         return dev_checkout
 
     return None

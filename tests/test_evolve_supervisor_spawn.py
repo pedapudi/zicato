@@ -70,6 +70,130 @@ def test_resolve_supervisor_binary_returns_none_when_missing(
         assert result.is_absolute()
 
 
+def _make_exec(path: Path, mtime: float) -> Path:
+    """Create an executable sentinel file at ``path`` with a fixed mtime."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/usr/bin/env bash\nsleep 30\n")
+    path.chmod(0o755)
+    os.utime(path, (mtime, mtime))
+    return path
+
+
+def _fake_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    bundled_mtime: float | None,
+    dev_mtime: float | None,
+) -> tuple[Path, Path]:
+    """Redirect the bundled (``_bin``) and dev-checkout (``target/release``)
+    candidate paths into ``tmp_path`` and optionally create them.
+
+    The resolver derives the bundled path from ``zicato.__file__`` and the
+    dev-checkout path from the ``evolve`` module's ``__file__`` (five parents
+    up to the repo root). We fake both ``__file__`` values to point inside
+    ``tmp_path`` so the test never touches the real built binaries.
+
+    ``*_mtime`` of ``None`` means "do not create that candidate" (simulating
+    e.g. an installed wheel with no ``target/release``).
+    """
+    import zicato
+    import zicato.cli.commands.evolve as ev
+
+    # Bundled lives at <pkg_root>/_bin/zicato-supervisor; make zicato.__file__
+    # resolve to <pkg_root>/__init__.py.
+    pkg_root = tmp_path / "site" / "zicato"
+    pkg_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(zicato, "__file__", str(pkg_root / "__init__.py"))
+    bundled = pkg_root / "_bin" / "zicato-supervisor"
+
+    # Dev checkout lives at <repo>/target/release/zicato-supervisor; the
+    # module __file__ is <repo>/src/zicato/cli/commands/evolve.py, i.e. five
+    # parents below the repo root.
+    repo_root = tmp_path / "checkout"
+    module_file = repo_root / "src" / "zicato" / "cli" / "commands" / "evolve.py"
+    module_file.parent.mkdir(parents=True, exist_ok=True)
+    module_file.write_text("")
+    monkeypatch.setattr(ev, "__file__", str(module_file))
+    dev = repo_root / "target" / "release" / "zicato-supervisor"
+
+    if bundled_mtime is not None:
+        _make_exec(bundled, bundled_mtime)
+    if dev_mtime is not None:
+        _make_exec(dev, dev_mtime)
+
+    # No env override, and an empty PATH so a system zicato-supervisor never
+    # leaks into the resolution under test.
+    monkeypatch.delenv("ZICATO_SUPERVISOR_BINARY", raising=False)
+    monkeypatch.setenv("PATH", str(tmp_path / "empty-path"))
+    return bundled, dev
+
+
+def test_resolve_prefers_dev_checkout_when_newer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """In a dev checkout with BOTH present, the fresher ``target/release``
+    build wins over a stale bundled ``_bin`` copy.
+
+    This is the regression guard for the stale-supervisor bug: the old
+    resolution order returned the bundled binary unconditionally, so this
+    case would have returned ``bundled`` instead.
+    """
+    bundled, dev = _fake_checkout(monkeypatch, tmp_path, bundled_mtime=1000.0, dev_mtime=2000.0)
+    assert _resolve_supervisor_binary() == dev
+
+
+def test_resolve_uses_bundled_when_newer_than_dev(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When the bundled copy is strictly newer than ``target/release`` the
+    bundled binary is used (the dev build is the stale one)."""
+    bundled, dev = _fake_checkout(monkeypatch, tmp_path, bundled_mtime=3000.0, dev_mtime=1000.0)
+    assert _resolve_supervisor_binary() == bundled
+
+
+def test_resolve_installed_wheel_uses_bundled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An installed wheel has no ``target/release``; the bundled binary is
+    returned, exactly as before the fix."""
+    bundled, _dev = _fake_checkout(monkeypatch, tmp_path, bundled_mtime=1000.0, dev_mtime=None)
+    assert _resolve_supervisor_binary() == bundled
+
+
+def test_resolve_bundled_only_dev_absent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Bundled-only present (dev build never compiled) -> bundled wins."""
+    bundled, _dev = _fake_checkout(monkeypatch, tmp_path, bundled_mtime=5000.0, dev_mtime=None)
+    assert _resolve_supervisor_binary() == bundled
+
+
+def test_resolve_dev_only_bundled_absent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Bare checkout: ``cargo build --release`` only, no bundled ``_bin``
+    -> the dev-checkout build is used."""
+    _bundled, dev = _fake_checkout(monkeypatch, tmp_path, bundled_mtime=None, dev_mtime=1234.0)
+    assert _resolve_supervisor_binary() == dev
+
+
+def test_resolve_env_override_beats_dev_checkout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An explicit ``ZICATO_SUPERVISOR_BINARY`` short-circuits everything,
+    even a present-and-newer dev-checkout build."""
+    _bundled, _dev = _fake_checkout(monkeypatch, tmp_path, bundled_mtime=1000.0, dev_mtime=9000.0)
+    override = _make_exec(tmp_path / "override" / "zicato-supervisor", 4242.0)
+    monkeypatch.setenv("ZICATO_SUPERVISOR_BINARY", str(override))
+    assert _resolve_supervisor_binary() == override
+
+
+def test_resolve_equal_mtime_prefers_dev_checkout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A tie on mtime resolves to the dev-checkout build (``>=``), so a
+    freshly-rebuilt checkout never loses to an equally-stamped bundle."""
+    _bundled, dev = _fake_checkout(monkeypatch, tmp_path, bundled_mtime=2000.0, dev_mtime=2000.0)
+    assert _resolve_supervisor_binary() == dev
+
+
 def test_maybe_spawn_supervisor_disabled() -> None:
     """``disabled=True`` returns ``None`` and does not spawn."""
     proc = asyncio.run(_maybe_spawn_supervisor(Path("/tmp"), disabled=True))

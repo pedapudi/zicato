@@ -17,9 +17,9 @@
 //   3. paints the dashboard into #variant-root,
 //   4. reuses the shared data layer (core/{api,sse,state}) untouched.
 //
-// Everything visual lives under js/variants/T/** + css/variants/T/**.
+// Everything visual lives under js/** + css/**.
 
-import { mountShell } from './js/variants/T/shell.js';
+import { mountShell } from './js/shell.js';
 
 function ensureRoot() {
   let root = document.getElementById('variant-root');
@@ -37,13 +37,13 @@ function ensureStylesheet() {
   const link = document.createElement('link');
   link.id = id;
   link.rel = 'stylesheet';
-  link.href = new URL('./css/variants/T/console4.css', import.meta.url).href;
+  link.href = new URL('./css/console.css', import.meta.url).href;
   document.head.appendChild(link);
 }
 
 // FONTS — a SPLIT loading strategy:
 //   * The two self-hosted monos — iA Writer Mono + JetBrains Mono — stay SELF-
-//     HOSTED woff2 under static/fonts/ via @font-face in console4.css (JetBrains
+//     HOSTED woff2 under static/fonts/ via @font-face in console.css (JetBrains
 //     Mono still backs the fixed brand mono), so the brand never touches a CDN.
 //   * The TYPEFACE PICKER's finalized 12 faces (4 per mode) read families that
 //     are NOT self-hosted. They load from the ONLY permitted external dependency:

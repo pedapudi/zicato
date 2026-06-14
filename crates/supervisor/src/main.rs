@@ -77,6 +77,72 @@ struct Cli {
     #[arg(long, default_value_t = 5)]
     run_kill_grace: u64,
 
+    /// Hard ceiling (seconds) on a single run's enforced wall-clock window,
+    /// measured from its `started_at`. The orchestrator-written per-run
+    /// deadline is untrusted: a far-future value would disable the watchdog.
+    /// The deadline path clamps the enforced cutoff to
+    /// `started_at + max_run_seconds`, so a run is always killable. The
+    /// default (6h) is well above any normal per-board budget; it only fires
+    /// on an implausible deadline.
+    #[arg(long, default_value_t = 6 * 3600)]
+    max_run_seconds: u64,
+
+    /// Enable diff-containment attestation (INTEGRITY NOTARY record #2).
+    ///
+    /// When set, each watchdog tick independently recomputes the on-disk diff
+    /// of every materialised child generation snapshot against its parent and
+    /// ALARMS when a file OUTSIDE the registered mutable surface differs — a
+    /// mutation that escaped its sandbox. Alarm-only / read-only in v1: it
+    /// writes a quarantine finding into the epoch health dir and surfaces a
+    /// hard ALERT on `/statusz`, but never blocks a promotion. Off by default
+    /// (the scan is purely additive — absent, the supervisor behaves exactly
+    /// as before).
+    #[arg(long, default_value_t = false)]
+    diff_containment: bool,
+
+    /// Enable promotion gatekeeping (INTEGRITY NOTARY record #3).
+    ///
+    /// When set, each watchdog tick re-applies the gate's scalar rule to every
+    /// recorded promotion in the current epoch and ALARMS when a promotion is
+    /// not supported by the recorded scores (a recorded decision contradicting
+    /// its own evidence). Alarm-only / read-only in v1: it surfaces on
+    /// `/statusz` and (when a ledger is configured) records a hard alert, but
+    /// never blocks a promotion. Off by default.
+    #[arg(long, default_value_t = false)]
+    promotion_gate: bool,
+
+    /// Enable the index-vs-canonical divergence auditor (INTEGRITY NOTARY
+    /// record #4).
+    ///
+    /// When set, each watchdog tick joins the canonical lineage / epoch config
+    /// against the SQLite index and flags promoted / parent / decision
+    /// divergence, contract-hash mismatch / malformed hashes, and a stuck
+    /// in-flight generation (dead worker, never resolved past the age
+    /// threshold). Read-only: it only reports (on `/statusz` and, when a
+    /// ledger is configured, the ledger). Off by default.
+    #[arg(long, default_value_t = false)]
+    divergence_audit: bool,
+
+    /// Age (seconds) past which a divergence-audit stuck in-flight generation
+    /// (dead worker, unresolved) is reported. Only consulted with
+    /// `--divergence-audit`.
+    #[arg(long, default_value_t = 3600)]
+    divergence_stuck_age_seconds: i64,
+
+    /// Directory for the supervisor's tamper-evident audit ledger.
+    ///
+    /// When set, the supervisor opens (or creates) a persisted, append-only,
+    /// hash-chained `audit_ledger.jsonl` under this directory and records its
+    /// watchdog actions and observed promote/reject/contract-change
+    /// transitions into it. The directory should live OUTSIDE the
+    /// orchestrator's mutable trees (the supervisor's OWN runtime dir) so the
+    /// orchestrator cannot rewrite the ledger it is being audited against.
+    /// Absent (the default) → no ledger is written and the supervisor behaves
+    /// exactly as before. `/statusz` and `/api/audit/verify` surface the
+    /// chain's integrity when a ledger is configured.
+    #[arg(long)]
+    ledger_dir: Option<PathBuf>,
+
     /// Log level (default: info)
     #[arg(long, default_value = "info")]
     log: String,
@@ -145,6 +211,7 @@ async fn main() -> std::process::ExitCode {
         grace: Duration::from_secs(5),
         run_kill_grace: Duration::from_secs(cli.run_kill_grace),
         run_deadline_kill_disabled: cli.run_deadline_kill_disabled,
+        max_run_seconds: Duration::from_secs(cli.max_run_seconds.max(1)),
     };
     if cli.run_deadline_kill_disabled {
         info!("per-run wall-clock deadline enforcement is disabled");
@@ -157,18 +224,101 @@ async fn main() -> std::process::ExitCode {
     // escalations here, and `/statusz` reads them back.
     let action_log = Arc::new(WatchdogLog::new());
 
+    // Shared heartbeat seq-liveness tracker: the heartbeat loop advances it
+    // each tick; `/statusz` reads (does not advance) it to report the same
+    // seq-change age the watchdog is deciding on.
+    let seq_liveness = Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new()));
+
+    // Cumulative torn-write / non-monotonic-seq counters over the canonical
+    // active-tournament JSONL fold; the fold path accumulates, `/statusz`
+    // surfaces.
+    let fold_diagnostics = Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new());
+
+    // Tamper-evident audit ledger (INTEGRITY NOTARY). Opt-in: only created
+    // when `--ledger-dir` is set, so the default supervisor behaves exactly
+    // as before. When present, the watchdog loops record their actions into
+    // it and `/statusz` + `/api/audit/verify` surface the chain's integrity.
+    let ledger = cli.ledger_dir.as_ref().map(|dir| {
+        let led = Arc::new(zicato_supervisor::ledger::AuditLedger::open(dir));
+        info!(path=?led.path(), "tamper-evident audit ledger enabled");
+        // Mark the supervisor's start as the first record of this session so
+        // the chain has a fresh anchor an operator can correlate to a restart.
+        led.append(
+            zicato_supervisor::ledger::RecordKind::SupervisorStart,
+            serde_json::json!({
+                "build": zicato_supervisor::server::build_id(),
+                "workspace": paths.workspace.display().to_string(),
+            }),
+        );
+        led
+    });
+
+    // Diff-containment findings store (INTEGRITY NOTARY record #2). The runs
+    // loop scans materialised generations and records the latest result here;
+    // `/statusz` surfaces it. Shared regardless of the flag (the loop only
+    // writes into it when `--diff-containment` is set, so it stays empty/
+    // not-scanned otherwise).
+    let diff_findings =
+        Arc::new(zicato_supervisor::diff_containment::DiffContainmentFindings::new());
+    if cli.diff_containment {
+        info!("diff-containment attestation enabled (alarm-only)");
+    }
+
+    // Promotion-gatekeeping findings store (INTEGRITY NOTARY record #3).
+    let promotion_gate_findings =
+        Arc::new(zicato_supervisor::promotion_gate::PromotionGateFindings::new());
+    if cli.promotion_gate {
+        info!("promotion gatekeeping enabled (alarm-only)");
+    }
+
+    // Divergence-audit findings store (INTEGRITY NOTARY record #4).
+    let divergence_findings = Arc::new(zicato_supervisor::divergence::DivergenceFindings::new());
+    if cli.divergence_audit {
+        info!("index-vs-canonical divergence auditor enabled (read-only)");
+    }
+
     let interval = Duration::from_secs(cli.interval.max(1));
     let hb_paths = paths.clone();
     let hb_shutdown = shutdown_tx.clone();
     let hb_log = action_log.clone();
+    let hb_seq = seq_liveness.clone();
     tokio::spawn(async move {
-        watchdog::heartbeat_loop(hb_paths, thresholds, interval, hb_log, hb_shutdown).await
+        watchdog::heartbeat_loop(hb_paths, thresholds, interval, hb_log, hb_seq, hb_shutdown).await
     });
     let run_paths = paths.clone();
     let run_shutdown = shutdown_tx.clone();
     let run_log = action_log.clone();
+    let run_ledger = ledger.clone();
+    let run_diff = diff_findings.clone();
+    let run_gate = promotion_gate_findings.clone();
+    let run_divergence = divergence_findings.clone();
+    let diff_enabled = cli.diff_containment;
+    let gate_enabled = cli.promotion_gate;
+    let divergence_enabled = cli.divergence_audit;
+    let divergence_stuck_age = cli.divergence_stuck_age_seconds;
     tokio::spawn(async move {
-        watchdog::runs_loop(run_paths, thresholds, interval, run_log, run_shutdown).await
+        watchdog::runs_loop(
+            run_paths,
+            thresholds,
+            interval,
+            run_log,
+            run_ledger,
+            watchdog::DiffContainmentConfig {
+                enabled: diff_enabled,
+                findings: run_diff,
+            },
+            watchdog::PromotionGateConfig {
+                enabled: gate_enabled,
+                findings: run_gate,
+            },
+            watchdog::DivergenceConfig {
+                enabled: divergence_enabled,
+                findings: run_divergence,
+                stuck_age_seconds: divergence_stuck_age,
+            },
+            run_shutdown,
+        )
+        .await
     });
 
     // HTTP server.
@@ -181,6 +331,12 @@ async fn main() -> std::process::ExitCode {
             dashboard_disabled: cli.no_dashboard,
             heartbeat_stale_threshold_seconds: cli.heartbeat_stale_warn,
             action_log: action_log.clone(),
+            seq_liveness: seq_liveness.clone(),
+            fold_diagnostics: fold_diagnostics.clone(),
+            ledger: ledger.clone(),
+            diff_findings: diff_findings.clone(),
+            promotion_gate_findings: promotion_gate_findings.clone(),
+            divergence_findings: divergence_findings.clone(),
         },
         watch_tx.clone(),
         shutdown_tx.clone(),

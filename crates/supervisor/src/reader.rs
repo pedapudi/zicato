@@ -42,12 +42,30 @@ impl WorkspacePaths {
         self.runtime.join("active_runs")
     }
 
+    /// The LEGACY active-tournament snapshot. Retained for the compat
+    /// reader; the live producer now writes the event log below.
     pub fn active_tournament(&self) -> PathBuf {
         self.runtime.join("active_tournament.json")
     }
 
+    /// The active-tournament EVENT LOG (RUNTIME-V2 Phase 3): an
+    /// append-only JSONL the orchestrator/runner publish live state onto.
+    /// `read_active_tournament` folds it into the live view.
+    pub fn active_tournament_log(&self) -> PathBuf {
+        self.runtime.join("active_tournament.events.jsonl")
+    }
+
     pub fn control_dir(&self) -> PathBuf {
         self.runtime.join("control")
+    }
+
+    /// Directory holding parent→supervisor kill-escalation requests. The
+    /// Python parent writes `control/kill_requests/{run_id}` when a worker
+    /// overran its budget; this supervisor is the single SIGTERM→grace→
+    /// SIGKILL escalator that acts on them. Distinct from the operator's
+    /// `control/kill_runs/` channel (consumed by the orchestrator).
+    pub fn kill_requests_dir(&self) -> PathBuf {
+        self.control_dir().join("kill_requests")
     }
 
     pub fn current_epoch_marker(&self) -> PathBuf {
@@ -107,8 +125,162 @@ pub fn read_lock(paths: &WorkspacePaths) -> Option<Lock> {
     read_json(&paths.lock())
 }
 
+/// Fold the active-tournament EVENT LOG (RUNTIME-V2 Phase 3) into the
+/// live view, or fall back to the legacy snapshot when no log exists.
+///
+/// The log is single-writer append-only JSONL: a full-envelope `Snapshot`
+/// event (the authoritative base/reset) plus `EntryUpdate` /
+/// `PartialAggregate` / `ProjectedUpdate` deltas. We fold from the LAST
+/// `Snapshot` forward, applying the deltas that affect this view's
+/// (coarse) fields — entry transitions + the partial aggregate — so the
+/// supervisor's tournament panel matches what the mutable snapshot held.
+/// Best-effort: a missing/empty/malformed log yields the snapshot
+/// fallback (or `None`).
 pub fn read_active_tournament(paths: &WorkspacePaths) -> Option<ActiveTournament> {
-    read_json(&paths.active_tournament())
+    read_active_tournament_with_stats(paths).0
+}
+
+/// `read_active_tournament`, additionally returning the [`FoldStats`]
+/// gathered while folding the event log (torn-write parse failures +
+/// non-monotonic-`seq` gaps). The supervisor accumulates these into the
+/// shared [`crate::fold_stats::FoldDiagnostics`] for `/statusz`; callers
+/// that do not care can use the thin [`read_active_tournament`] wrapper.
+///
+/// On the compat path (no event log, falling back to the legacy snapshot)
+/// the stats are zero — there is no JSONL to tear.
+pub fn read_active_tournament_with_stats(
+    paths: &WorkspacePaths,
+) -> (Option<ActiveTournament>, crate::fold_stats::FoldStats) {
+    match fold_active_tournament_value_with_stats(&paths.active_tournament_log()) {
+        (Some(value), stats) => (serde_json::from_value(value).ok(), stats),
+        // No event log → the compat path: a pre-RUNTIME-V2 snapshot file.
+        (None, stats) => (read_json(&paths.active_tournament()), stats),
+    }
+}
+
+/// Replay the event log into the folded envelope JSON `Value` (or `None`
+/// when the log is absent/empty, so the caller can fall back to the
+/// snapshot), tallying torn-write parse failures and non-monotonic-`seq`
+/// gaps over the canonical fold.
+///
+/// Operates on raw JSON so the coarse `ActiveTournament` struct need not
+/// model every delta field — the fold matches `(entry_id, side)` on the raw
+/// rows exactly as the Python writer did. The lenient behavior is preserved
+/// exactly — a bad line is still skipped, a republished snapshot still
+/// resets the fold — but each skipped/torn line now increments
+/// `parse_failures` and each `seq` that is not exactly one past its
+/// predecessor increments `seq_gaps`, so the conditions the fold otherwise
+/// hides become visible on `/statusz`.
+fn fold_active_tournament_value_with_stats(
+    log_path: &Path,
+) -> (Option<serde_json::Value>, crate::fold_stats::FoldStats) {
+    let mut stats = crate::fold_stats::FoldStats::default();
+    let text = match std::fs::read_to_string(log_path) {
+        Ok(t) => t,
+        Err(_) => return (None, stats),
+    };
+    // Each line is one event record: {seq, ts, type, payload}. Parse every
+    // non-blank line; count (not silently drop) the ones that fail.
+    let mut events: Vec<serde_json::Value> = Vec::new();
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        match serde_json::from_str::<serde_json::Value>(line) {
+            Ok(v) => events.push(v),
+            Err(_) => stats.parse_failures += 1,
+        }
+    }
+
+    // Count non-monotonic seq across the successfully-parsed events: each
+    // event's `seq` should be exactly one past the previous one. A gap or a
+    // backwards step (lost events / out-of-order republish) is tallied. The
+    // first event of the log is never a gap. Events without a `seq` field do
+    // not advance the cursor (they cannot be judged monotonic).
+    let mut prev_seq: Option<i64> = None;
+    for ev in &events {
+        if let Some(seq) = ev.get("seq").and_then(|s| s.as_i64()) {
+            if let Some(prev) = prev_seq {
+                if seq != prev + 1 {
+                    stats.seq_gaps += 1;
+                }
+            }
+            prev_seq = Some(seq);
+        }
+    }
+
+    if events.is_empty() {
+        return (None, stats);
+    }
+    // Fold from the last Snapshot (a Snapshot is the authoritative reset).
+    let base_idx = match events
+        .iter()
+        .rposition(|e| e.get("type").and_then(|t| t.as_str()) == Some("Snapshot"))
+    {
+        Some(i) => i,
+        None => return (None, stats),
+    };
+    let mut current = match events[base_idx].get("payload") {
+        Some(p) => p.clone(),
+        None => return (None, stats),
+    };
+    for ev in &events[base_idx + 1..] {
+        let ty = ev.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        let payload = match ev.get("payload") {
+            Some(p) => p,
+            None => continue,
+        };
+        match ty {
+            "Snapshot" => current = payload.clone(),
+            "EntryUpdate" => apply_entry_update(&mut current, payload),
+            "PartialAggregate" => apply_partial_aggregate(&mut current, payload),
+            // ProjectedUpdate folds into the structure envelope the coarse
+            // supervisor view does not model; the Python dashboard renders
+            // it. Ignored here (the snapshot view did not surface it either).
+            _ => {}
+        }
+    }
+    (Some(current), stats)
+}
+
+/// Apply one `EntryUpdate` delta: override the first `entries` row whose
+/// `(entry_id, side)` matches, mirroring the Python fold.
+fn apply_entry_update(current: &mut serde_json::Value, payload: &serde_json::Value) {
+    let entry_id = payload.get("entry_id").and_then(|v| v.as_str());
+    let side = payload.get("side").and_then(|v| v.as_str());
+    let updates = match payload.get("updates").and_then(|u| u.as_object()) {
+        Some(u) => u,
+        None => return,
+    };
+    let entries = match current.get_mut("entries").and_then(|e| e.as_array_mut()) {
+        Some(e) => e,
+        None => return,
+    };
+    for row in entries.iter_mut() {
+        let row_obj = match row.as_object_mut() {
+            Some(o) => o,
+            None => continue,
+        };
+        let matches = row_obj.get("entry_id").and_then(|v| v.as_str()) == entry_id
+            && row_obj.get("side").and_then(|v| v.as_str()) == side;
+        if matches {
+            for (k, v) in updates {
+                row_obj.insert(k.clone(), v.clone());
+            }
+            return; // only the first matching row, as in the Python fold.
+        }
+    }
+}
+
+/// Apply one `PartialAggregate` delta: replace the side(s) supplied.
+fn apply_partial_aggregate(current: &mut serde_json::Value, payload: &serde_json::Value) {
+    let obj = match current.as_object_mut() {
+        Some(o) => o,
+        None => return,
+    };
+    if let Some(champ) = payload.get("champion_agg") {
+        obj.insert("partial_champion_agg".to_string(), champ.clone());
+    }
+    if let Some(chal) = payload.get("challenger_agg") {
+        obj.insert("partial_challenger_agg".to_string(), chal.clone());
+    }
 }
 
 pub fn read_lineage(paths: &WorkspacePaths) -> Option<Lineage> {
@@ -347,6 +519,49 @@ pub fn read_active_runs(paths: &WorkspacePaths) -> Vec<ActiveRun> {
     out
 }
 
+/// Read the set of run ids with a pending parent→supervisor kill request.
+///
+/// Each `control/kill_requests/{run_id}` marker (file basename = run id,
+/// no extension) means the Python parent asked this supervisor to
+/// escalate-kill that run's worker. A missing directory is the common
+/// case (no kills requested) and yields an empty set, never an error.
+pub fn read_kill_requests(paths: &WorkspacePaths) -> std::collections::HashSet<String> {
+    let dir = paths.kill_requests_dir();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return std::collections::HashSet::new()
+        }
+        Err(e) => {
+            warn!(?dir, error=%e, "failed to list kill_requests");
+            return std::collections::HashSet::new();
+        }
+    };
+    let mut out = std::collections::HashSet::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        // Skip any partial-write temp file the atomic writer may leave.
+        if path.extension().and_then(|s| s.to_str()) == Some("tmp") {
+            continue;
+        }
+        if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+            out.insert(name.to_string());
+        }
+    }
+    out
+}
+
+/// Remove a consumed kill-request marker. Best-effort: a vanished marker
+/// (the parent's cleanup beat us, or a double tick) is not an error.
+pub fn clear_kill_request(paths: &WorkspacePaths, run_id: &str) {
+    let path = paths.kill_requests_dir().join(run_id);
+    if let Err(e) = std::fs::remove_file(&path) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            warn!(?path, error=%e, "failed to clear kill_request marker");
+        }
+    }
+}
+
 /// An `active_runs/{run_id}.json` enriched with a computed deadline
 /// fraction for the dashboard's per-entry progress bars.
 ///
@@ -491,6 +706,114 @@ mod tests {
     }
 
     #[test]
+    fn active_run_parses_python_pid_start_time_float() {
+        // Cross-language contract: the Python worker serializes the pid
+        // start time as a JSON float (the /proc tick count, e.g.
+        // `116371304.0`). The Rust `ActiveRun.pid_start_time` must accept
+        // that shape; a record without the field stays `None` (legacy).
+        let (_t, p) = make_ws();
+        let dir = p.active_runs_dir();
+        std::fs::write(
+            dir.join("withstart.json"),
+            r#"{"run_id":"withstart","pid":42,"pid_start_time":116371304.0}"#,
+        )
+        .unwrap();
+        std::fs::write(dir.join("legacy.json"), r#"{"run_id":"legacy","pid":7}"#).unwrap();
+        let runs = read_active_runs(&p);
+        assert_eq!(runs.len(), 2);
+        // legacy (no field) → None
+        assert_eq!(runs[0].run_id, "legacy");
+        assert_eq!(runs[0].pid_start_time, None);
+        // withstart → the float parses through intact
+        assert_eq!(runs[1].run_id, "withstart");
+        assert_eq!(runs[1].pid_start_time, Some(116_371_304.0));
+    }
+
+    #[test]
+    fn kill_requests_missing_dir_is_empty() {
+        let (_t, p) = make_ws();
+        assert!(read_kill_requests(&p).is_empty());
+    }
+
+    #[test]
+    fn kill_requests_are_collected_by_run_id() {
+        let (_t, p) = make_ws();
+        let dir = p.kill_requests_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        // Markers are named by bare run id (no extension); a partial-write
+        // .tmp file is ignored.
+        std::fs::write(dir.join("run_a"), r#"{"run_id":"run_a"}"#).unwrap();
+        std::fs::write(dir.join("run_b"), r#"{"run_id":"run_b"}"#).unwrap();
+        std::fs::write(dir.join("run_c.tmp"), "partial").unwrap();
+        let reqs = read_kill_requests(&p);
+        assert_eq!(reqs.len(), 2);
+        assert!(reqs.contains("run_a"));
+        assert!(reqs.contains("run_b"));
+        assert!(!reqs.contains("run_c.tmp"));
+    }
+
+    #[test]
+    fn clear_kill_request_removes_the_marker() {
+        let (_t, p) = make_ws();
+        let dir = p.kill_requests_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("run_a"), r#"{"run_id":"run_a"}"#).unwrap();
+        assert!(read_kill_requests(&p).contains("run_a"));
+        clear_kill_request(&p, "run_a");
+        assert!(!read_kill_requests(&p).contains("run_a"));
+        // Clearing a vanished marker is a no-op, not an error.
+        clear_kill_request(&p, "run_a");
+    }
+
+    #[test]
+    fn folds_the_active_tournament_event_log() {
+        // RUNTIME-V2 Phase 3: the live producer writes an append-only event
+        // log, not the mutable snapshot. The reader folds it: a base
+        // Snapshot + an EntryUpdate delta + a PartialAggregate delta.
+        let (_t, p) = make_ws();
+        let log = [
+            r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"t1","entries":[{"entry_id":"b0","side":"child","status":"queued"},{"entry_id":"b0","side":"parent","status":"queued"}]}}"#,
+            r#"{"seq":2,"ts":"t","type":"EntryUpdate","payload":{"entry_id":"b0","side":"child","updates":{"status":"running"}}}"#,
+            r#"{"seq":3,"ts":"t","type":"PartialAggregate","payload":{"challenger_agg":{"scalar":0.5}}}"#,
+        ]
+        .join("\n");
+        std::fs::write(p.active_tournament_log(), log).unwrap();
+
+        let at = read_active_tournament(&p).expect("the folded tournament");
+        assert_eq!(at.tournament_id.as_deref(), Some("t1"));
+        // The EntryUpdate landed on the child row only.
+        let child = at.entries.iter().find(|e| e.entry_id == "b0").unwrap();
+        assert_eq!(child.status.as_deref(), Some("running"));
+    }
+
+    #[test]
+    fn last_snapshot_event_resets_the_fold() {
+        // A later Snapshot supersedes the earlier base (a republish).
+        let (_t, p) = make_ws();
+        let log = [
+            r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"old","entries":[]}}"#,
+            r#"{"seq":2,"ts":"t","type":"Snapshot","payload":{"tournament_id":"new","entries":[]}}"#,
+        ]
+        .join("\n");
+        std::fs::write(p.active_tournament_log(), log).unwrap();
+        let at = read_active_tournament(&p).expect("the folded tournament");
+        assert_eq!(at.tournament_id.as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn falls_back_to_the_legacy_snapshot_when_no_log() {
+        // The compat path: no event log → the pre-RUNTIME-V2 snapshot file.
+        let (_t, p) = make_ws();
+        std::fs::write(
+            p.active_tournament(),
+            r#"{"tournament_id":"legacy","entries":[]}"#,
+        )
+        .unwrap();
+        let at = read_active_tournament(&p).expect("the compat snapshot");
+        assert_eq!(at.tournament_id.as_deref(), Some("legacy"));
+    }
+
+    #[test]
     fn snapshot_assembles_full_payload() {
         let (_t, p) = make_ws();
         std::fs::write(p.heartbeat(), r#"{"pid":1,"phase":"running"}"#).unwrap();
@@ -512,5 +835,81 @@ mod tests {
             Some("t1")
         );
         assert_eq!(snap.epoch_id.as_deref(), Some("2026-05-14_test"));
+    }
+
+    // ---- fold diagnostics (torn writes + non-monotonic seq) --------
+
+    #[test]
+    fn clean_log_reports_zero_fold_diagnostics() {
+        let (_t, p) = make_ws();
+        let log = [
+            r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"t1","entries":[]}}"#,
+            r#"{"seq":2,"ts":"t","type":"EntryUpdate","payload":{"entry_id":"b0","side":"child","updates":{"status":"running"}}}"#,
+            r#"{"seq":3,"ts":"t","type":"PartialAggregate","payload":{"challenger_agg":{"scalar":0.5}}}"#,
+        ]
+        .join("\n");
+        std::fs::write(p.active_tournament_log(), log).unwrap();
+        let (at, stats) = read_active_tournament_with_stats(&p);
+        assert!(at.is_some());
+        assert_eq!(stats.parse_failures, 0);
+        assert_eq!(stats.seq_gaps, 0);
+    }
+
+    #[test]
+    fn torn_write_lines_are_counted_not_just_dropped() {
+        // Two corrupt (un-parseable) lines interleaved with good events. The
+        // fold still succeeds on the good lines (lenient), but the torn
+        // writes are now COUNTED rather than silently dropped.
+        let (_t, p) = make_ws();
+        let log = [
+            r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"t1","entries":[]}}"#,
+            r#"{"seq":2,"ts":"t","type":"EntryUp"#, // torn mid-line
+            r#"not json at all"#,                   // garbage
+            r#"{"seq":3,"ts":"t","type":"PartialAggregate","payload":{"challenger_agg":{"scalar":0.9}}}"#,
+        ]
+        .join("\n");
+        std::fs::write(p.active_tournament_log(), log).unwrap();
+        let (at, stats) = read_active_tournament_with_stats(&p);
+        // The good Snapshot still folds through.
+        assert_eq!(
+            at.expect("good lines still fold").tournament_id.as_deref(),
+            Some("t1")
+        );
+        assert_eq!(stats.parse_failures, 2);
+        // seq jumped 1 -> 3 across the two dropped lines: one gap.
+        assert_eq!(stats.seq_gaps, 1);
+    }
+
+    #[test]
+    fn non_monotonic_seq_is_counted() {
+        // seq goes 1, 2, 5, 3 — a forward gap (2->5) and a backward step
+        // (5->3) are each a non-monotonic event: two gaps.
+        let (_t, p) = make_ws();
+        let log = [
+            r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"t1","entries":[]}}"#,
+            r#"{"seq":2,"ts":"t","type":"PartialAggregate","payload":{}}"#,
+            r#"{"seq":5,"ts":"t","type":"PartialAggregate","payload":{}}"#,
+            r#"{"seq":3,"ts":"t","type":"PartialAggregate","payload":{}}"#,
+        ]
+        .join("\n");
+        std::fs::write(p.active_tournament_log(), log).unwrap();
+        let (_at, stats) = read_active_tournament_with_stats(&p);
+        assert_eq!(stats.parse_failures, 0);
+        assert_eq!(stats.seq_gaps, 2);
+    }
+
+    #[test]
+    fn compat_snapshot_path_reports_zero_stats() {
+        // No event log → legacy snapshot fallback. There is no JSONL to
+        // tear, so both counters are zero.
+        let (_t, p) = make_ws();
+        std::fs::write(
+            p.active_tournament(),
+            r#"{"tournament_id":"legacy","entries":[]}"#,
+        )
+        .unwrap();
+        let (at, stats) = read_active_tournament_with_stats(&p);
+        assert_eq!(at.unwrap().tournament_id.as_deref(), Some("legacy"));
+        assert_eq!(stats, crate::fold_stats::FoldStats::default());
     }
 }

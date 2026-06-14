@@ -527,20 +527,43 @@ def render_failure_mode_profile(summary: OutcomeMarginalSummary) -> str:
     return "\n".join(lines)
 
 
+def _band_prediction_accuracy(accuracy: float) -> str:
+    """Coarsen a hypothesis prediction-accuracy fraction to a calibration band.
+
+    Returns ``low`` / ``medium`` / ``high`` over the same thirds split as
+    :func:`_band_quality`, WITHOUT the approximate representative value — the
+    accuracy is a calibration meta-signal, not a per-entry board number, but
+    it is banded anyway so no exact round-over-round value leaks (the same
+    memorization-resistance discipline as the rest of the restricted memory;
+    OVERFITTING.md §11.4 / FUNCTIONALITY-RECOMMENDATIONS.md §4.2).
+    """
+    if accuracy < 1.0 / 3.0:
+        return "low"
+    if accuracy < 2.0 / 3.0:
+        return "medium"
+    return "high"
+
+
 def _render_prior_experiment_line(pe: PriorExperiment, *, restrict: bool = False) -> str:
     """Render one prior experiment as a two-line compact entry.
 
     The first line carries the verdict, Δscalar (omitted for an in-flight
-    sibling or a cross-contract entry whose number does not transfer), and
-    the bracketed targeted mutation-point ids (plus the symbolic rejection
-    reason for a rejected entry); the second line is the indented core
-    idea. See ``docs/design/EXPERIMENT-MEMORY.md`` §3.5.
+    sibling or a cross-contract entry whose number does not transfer), the
+    bracketed targeted mutation-point ids (plus the symbolic rejection
+    reason for a rejected entry), and — when the experiment was graded — the
+    proposer's hypothesis prediction-accuracy as an advisory ``prediction``
+    calibration band; the second line is the indented core idea. See
+    ``docs/design/EXPERIMENT-MEMORY.md`` §3.5 and
+    ``docs/design/FUNCTIONALITY-RECOMMENDATIONS.md`` §4.2.
 
     When ``restrict`` is ``True``, the fine-grained ``Δscalar`` number is
     coarsened to an ``improved`` / ``flat`` / ``regressed`` bucket
     (OVERFITTING.md §11.4) so the proposer cannot read the board's exact
     response surface round-over-round. When ``False`` the precise number
-    renders verbatim, byte-for-byte as before this lever existed.
+    renders verbatim, byte-for-byte as before this lever existed. The
+    prediction-accuracy is ALWAYS banded to ``low``/``medium``/``high``
+    regardless of ``restrict`` — it is a calibration meta-signal, never an
+    exact board number, so it carries no per-entry surface to leak.
     """
     ids = ", ".join(pe.modulating) if pe.modulating else "—"
     verdict = pe.decision.upper().replace("_", "-")
@@ -559,6 +582,11 @@ def _render_prior_experiment_line(pe: PriorExperiment, *, restrict: bool = False
         head = f"- {pe.generation_id} {verdict}  [{ids}]"
     if pe.decision == "rejected" and pe.rejection_reason:
         head = f"{head}  ({pe.rejection_reason})"
+    # Advisory hypothesis prediction-accuracy (diagnostic, never gates) —
+    # banded so the proposer reads its own calibration ("did my last
+    # predictions hold?") without an exact, climbable number.
+    if pe.prediction_accuracy is not None:
+        head = f"{head}  prediction:{_band_prediction_accuracy(pe.prediction_accuracy)}"
     return f"{head}\n    {pe.core_idea}"
 
 

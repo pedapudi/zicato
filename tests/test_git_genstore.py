@@ -208,7 +208,9 @@ def test_default_generation_store_selects_git_off_config(tmp_path: Path) -> None
     assert isinstance(store, GitGenerationStore)
 
 
-def test_default_generation_store_defaults_to_directory(tmp_path: Path) -> None:
+def test_default_generation_store_selects_directory_off_config(tmp_path: Path) -> None:
+    # ``storage_backend: "directory"`` stays selectable — flipping the
+    # default to git did not remove the directory backend.
     from zicato.epoch.genstore import DirectoryGenerationStore
 
     ws = tmp_path / "ws"
@@ -217,21 +219,19 @@ def test_default_generation_store_defaults_to_directory(tmp_path: Path) -> None:
     assert isinstance(default_generation_store(ws), DirectoryGenerationStore)
 
 
-def test_default_generation_store_no_config_is_directory(tmp_path: Path) -> None:
-    from zicato.epoch.genstore import DirectoryGenerationStore
+def test_default_generation_store_no_config_is_git(tmp_path: Path) -> None:
+    # No config ⇒ the git default (removes the per-run/per-generation copytree).
+    assert isinstance(default_generation_store(tmp_path / "ws"), GitGenerationStore)
 
-    assert isinstance(default_generation_store(tmp_path / "ws"), DirectoryGenerationStore)
 
-
-def test_default_generation_store_malformed_config_is_directory(
+def test_default_generation_store_malformed_config_is_git(
     tmp_path: Path,
 ) -> None:
-    from zicato.epoch.genstore import DirectoryGenerationStore
-
+    # A malformed config falls back to the git default, not a hard error.
     ws = tmp_path / "ws"
     ws.mkdir()
     (ws / "config.json").write_text("{not json", encoding="utf-8")
-    assert isinstance(default_generation_store(ws), DirectoryGenerationStore)
+    assert isinstance(default_generation_store(ws), GitGenerationStore)
 
 
 # ---------------------------------------------------------------------------
@@ -266,3 +266,60 @@ def test_retry_after_failed_derive_succeeds(tmp_path: Path) -> None:
     # The retry with a good patch succeeds.
     store.derive_generation("e1", "v0", "v1", [_patch("p1", '"""ok"""')])
     assert store.has_generation("e1", "v1") is True
+
+
+# ---------------------------------------------------------------------------
+# contract-roll seed: seed a v0 from a previous generation's *worktree*
+# ---------------------------------------------------------------------------
+
+
+def test_seed_from_a_worktrees_children_skips_git_admin(tmp_path: Path) -> None:
+    """A contract roll seeds the next epoch's v0 from the previous epoch's
+    promoted-head *worktree*, handing ``seed_generation`` the result of
+    ``sorted(worktree.iterdir())`` — which includes the worktree's ``.git``
+    pointer file and the repo ``.gitignore``. Those git-admin entries must
+    be skipped, not copied into the new generation (copying the ``.git``
+    pointer makes ``git add`` resolve it as a foreign repo and abort).
+    """
+    store = GitGenerationStore(tmp_path / "ws")
+    store.seed_generation("e0", "v0", [_mutable_tree(tmp_path / "src", instr="rolled")])
+
+    worktree = store.snapshot_root("e0", "v0")
+    children = sorted(worktree.iterdir())
+    # The worktree really does expose the git-admin entries we must skip.
+    names = {c.name for c in children}
+    assert ".git" in names
+    assert ".gitignore" in names
+
+    # The roll: seed e1/v0 from those children. Must not raise.
+    store.seed_generation("e1", "v0", children)
+    assert store.has_generation("e1", "v0") is True
+
+    # The seeded tree carries the source content, and NO git-admin files.
+    tree_paths = {e.path for e in store.list_tree("e1", "v0")}
+    assert "agent/prompts.py" in tree_paths
+    assert not any(p == ".git" or p.startswith(".git/") for p in tree_paths), tree_paths
+
+    # And a child still derives cleanly off the rolled seed.
+    store.derive_generation("e1", "v0", "v1", [_patch("p1", '"""after-roll"""')])
+    assert "after-roll" in store.read_file("e1", "v1", "agent/prompts.py").decode("utf-8")
+
+
+def test_derive_an_unchanged_child_is_a_real_generation(tmp_path: Path) -> None:
+    """A patch that leaves the tree byte-identical to the parent (a proposer
+    can propose a value that already holds) is still a legitimate
+    generation — the directory backend records it, so the git backend must
+    too rather than aborting with "nothing to commit".
+    """
+    store = GitGenerationStore(tmp_path / "ws")
+    store.seed_generation("e1", "v0", [_mutable_tree(tmp_path / "src", instr="same")])
+
+    # Replace the marker with the SAME content it already holds.
+    store.derive_generation("e1", "v0", "v1", [_patch("p1", '"""same"""')])
+
+    assert store.has_generation("e1", "v1") is True
+    assert sorted(store.list_generations("e1")) == ["v0", "v1"]
+    # v1 commit parents v0 even though the tree is unchanged.
+    v0 = _git(store.repo_path, "rev-parse", "epoch/e1/v0").strip()
+    v1_parent = _git(store.repo_path, "rev-parse", "epoch/e1/v1^").strip()
+    assert v1_parent == v0

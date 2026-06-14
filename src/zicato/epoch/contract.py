@@ -377,13 +377,28 @@ _SCORING_PLUGIN_SPEC_FIELDS: frozenset[str] = frozenset(
     {"scalar_fn", "drift_reducer", "outcome_summarizer_spec"}
 )
 
+#: ``ScoringWeights`` fields that are OMITTED from the canonical scoring dict
+#: when they hold their dataclass default. A field listed here was added AFTER
+#: the parity goldens were captured; emitting it unconditionally would inject a
+#: new key into the scoring hash and roll EVERY existing epoch (and turn the
+#: CONTRACT-HASH parity gate red) the moment the field exists. Omitting it at
+#: the default keeps an unset contract byte-identical to one that predates the
+#: field, while a NON-default value still appears in the canonical form and
+#: rolls the epoch — exactly like any other weight change. Only purely-additive,
+#: default-off fields belong here.
+_SCORING_OMIT_AT_DEFAULT_FIELDS: frozenset[str] = frozenset({"diff_complexity_weight"})
+
 
 def _scoring_to_canon(weights: object) -> dict[str, object]:
     """Reduce a :class:`ScoringWeights` to a plain JSON-shaped dict.
 
     Every public field is included so the canonical form is complete
     and independent of which fields the operator spelled out in their
-    ``scoring.json``.
+    ``scoring.json`` — EXCEPT the purely-additive, default-off fields in
+    :data:`_SCORING_OMIT_AT_DEFAULT_FIELDS`, which are omitted while they hold
+    their default so a contract that predates the field hashes identically (an
+    opt-in field cannot retroactively roll every existing epoch). A
+    non-default value reintroduces the key and rolls the epoch normally.
 
     The dotted-spec GRADING-plugin fields (:data:`_SCORING_PLUGIN_SPEC_FIELDS`)
     are NOT folded in as bare strings: each is expanded to
@@ -392,11 +407,23 @@ def _scoring_to_canon(weights: object) -> dict[str, object]:
     SAME mechanism the board predicates / judges use (see
     :func:`_canon_dotted_spec`).
     """
-    from dataclasses import fields, is_dataclass
+    from dataclasses import MISSING, fields, is_dataclass
 
     out: dict[str, object] = {}
     for f in fields(weights):  # type: ignore[arg-type]
         value = getattr(weights, f.name)
+        if f.name in _SCORING_OMIT_AT_DEFAULT_FIELDS:
+            # Resolve the field's default (plain default, or default_factory)
+            # and skip the key entirely while the value matches it, so the
+            # canonical form is byte-identical to a pre-field contract.
+            if f.default is not MISSING:
+                default_value: object = f.default
+            elif f.default_factory is not MISSING:
+                default_value = f.default_factory()
+            else:
+                default_value = object()  # no default ⇒ never matches; always emit
+            if value == default_value:
+                continue
         if f.name in _SCORING_PLUGIN_SPEC_FIELDS:
             out[f.name] = _canon_dotted_spec(value if isinstance(value, str) else "")
         elif is_dataclass(value) and not isinstance(value, type):

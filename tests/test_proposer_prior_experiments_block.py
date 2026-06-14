@@ -100,6 +100,61 @@ def test_cross_contract_entry_renders_without_delta() -> None:
     assert "Δscalar" not in block
 
 
+def test_prediction_accuracy_renders_as_banded_calibration() -> None:
+    """A graded prior experiment surfaces its hypothesis prediction-accuracy
+    as a banded ``prediction:<low|medium|high>`` calibration meta-signal
+    (FUNCTIONALITY-RECOMMENDATIONS.md §4.2)."""
+    high = PriorExperiment(
+        generation_id="v5",
+        epoch_id="e1",
+        core_idea="A well-calibrated win.",
+        modulating=("coordinator.routing",),
+        decision="promoted",
+        rejection_reason="",
+        scalar_score_delta=0.12,
+        prediction_accuracy=1.0,
+    )
+    low = PriorExperiment(
+        generation_id="v6",
+        epoch_id="e1",
+        core_idea="A miscalibrated rejection.",
+        modulating=("writer.tools",),
+        decision="rejected",
+        rejection_reason="regressed",
+        scalar_score_delta=-0.2,
+        prediction_accuracy=0.0,
+    )
+    block = render_prior_experiments_block([high, low])
+    assert "prediction:high" in block
+    assert "prediction:low" in block
+
+
+def test_prediction_accuracy_omitted_when_none() -> None:
+    """An ungraded entry (prediction_accuracy is None) renders no prediction
+    band — exactly as before this signal existed."""
+    block = render_prior_experiments_block([_promoted()])  # prediction_accuracy defaults to None
+    assert "prediction:" not in block
+
+
+def test_prediction_band_is_always_coarsened_even_unrestricted() -> None:
+    """The prediction band is a calibration meta-signal, never an exact
+    number — it is banded to low/medium/high regardless of ``restrict``."""
+    pe = PriorExperiment(
+        generation_id="v5",
+        epoch_id="e1",
+        core_idea="x",
+        modulating=("a",),
+        decision="promoted",
+        rejection_reason="",
+        scalar_score_delta=0.5,
+        prediction_accuracy=0.5,
+    )
+    block = render_prior_experiments_block([pe], restrict=False)
+    assert "prediction:medium" in block
+    # No exact accuracy fraction leaks.
+    assert "0.5" not in block.split("prediction:")[1].split("\n")[0]
+
+
 def test_section_omitted_when_prior_empty() -> None:
     prompt = render_user_prompt(
         current_loss_summary="loss=2.3",

@@ -1,0 +1,1386 @@
+{
+  "bracket::e0": {
+    "champion_lineage": [],
+    "epoch_id": "e0",
+    "matchups": [],
+    "structure": "gauntlet",
+    "structure_params": {},
+    "tournaments": []
+  },
+  "bracket::e1": {
+    "champion_lineage": [],
+    "epoch_id": "e1",
+    "matchups": [],
+    "note": "index not built; run zicato reindex"
+  },
+  "bracket::e2": {
+    "champion_lineage": [],
+    "epoch_id": "e2",
+    "matchups": [],
+    "structure": "gauntlet",
+    "structure_params": {},
+    "tournaments": []
+  },
+  "calibration_trend::e0": {
+    "epoch_id": "e0",
+    "latest_fraction": null,
+    "n_scored": 0,
+    "points": [
+      {
+        "decision": "promoted",
+        "epoch_id": "e0",
+        "generation_id": "v0",
+        "round_index": null,
+        "score_fraction": null,
+        "total_claims": 0
+      }
+    ],
+    "rolling_mean": null,
+    "trend_sign": 0
+  },
+  "calibration_trend::e1": {
+    "epoch_id": "e1",
+    "latest_fraction": null,
+    "n_scored": 0,
+    "points": [
+      {
+        "decision": "promoted",
+        "epoch_id": "e1",
+        "generation_id": "v0",
+        "round_index": null,
+        "score_fraction": null,
+        "total_claims": 0
+      },
+      {
+        "decision": "rejected",
+        "epoch_id": "e1",
+        "generation_id": "v1",
+        "round_index": null,
+        "score_fraction": null,
+        "total_claims": 0
+      }
+    ],
+    "rolling_mean": null,
+    "trend_sign": 0
+  },
+  "calibration_trend::e2": {
+    "epoch_id": "e2",
+    "latest_fraction": null,
+    "n_scored": 0,
+    "points": [],
+    "rolling_mean": null,
+    "trend_sign": 0
+  },
+  "contract_diff::e0": {
+    "any_changed": true,
+    "components": [
+      {
+        "changed": true,
+        "current_hash": "board-2",
+        "name": "board",
+        "previous_hash": "board-1"
+      },
+      {
+        "changed": true,
+        "current_hash": "brief-e0",
+        "name": "brief",
+        "previous_hash": "brief-e2"
+      },
+      {
+        "changed": false,
+        "current_hash": "scoring-const",
+        "name": "scoring",
+        "previous_hash": "scoring-const"
+      },
+      {
+        "changed": false,
+        "current_hash": "entry-const",
+        "name": "entrypoint",
+        "previous_hash": "entry-const"
+      },
+      {
+        "changed": false,
+        "current_hash": "trees-const",
+        "name": "mutable_trees",
+        "previous_hash": "trees-const"
+      }
+    ],
+    "epoch_id": "e0",
+    "predecessor_epoch_id": "e2"
+  },
+  "contract_diff::e1": {
+    "any_changed": false,
+    "components": [
+      {
+        "changed": false,
+        "current_hash": "board-0",
+        "name": "board",
+        "previous_hash": null
+      },
+      {
+        "changed": false,
+        "current_hash": "brief-e1",
+        "name": "brief",
+        "previous_hash": null
+      },
+      {
+        "changed": false,
+        "current_hash": "scoring-const",
+        "name": "scoring",
+        "previous_hash": null
+      },
+      {
+        "changed": false,
+        "current_hash": "entry-const",
+        "name": "entrypoint",
+        "previous_hash": null
+      },
+      {
+        "changed": false,
+        "current_hash": "trees-const",
+        "name": "mutable_trees",
+        "previous_hash": null
+      }
+    ],
+    "epoch_id": "e1",
+    "predecessor_epoch_id": null
+  },
+  "contract_diff::e2": {
+    "any_changed": true,
+    "components": [
+      {
+        "changed": true,
+        "current_hash": "board-1",
+        "name": "board",
+        "previous_hash": "board-0"
+      },
+      {
+        "changed": true,
+        "current_hash": "brief-e2",
+        "name": "brief",
+        "previous_hash": "brief-e1"
+      },
+      {
+        "changed": false,
+        "current_hash": "scoring-const",
+        "name": "scoring",
+        "previous_hash": "scoring-const"
+      },
+      {
+        "changed": false,
+        "current_hash": "entry-const",
+        "name": "entrypoint",
+        "previous_hash": "entry-const"
+      },
+      {
+        "changed": false,
+        "current_hash": "trees-const",
+        "name": "mutable_trees",
+        "previous_hash": "trees-const"
+      }
+    ],
+    "epoch_id": "e2",
+    "predecessor_epoch_id": "e1"
+  },
+  "drift_movements::e0::v0": {
+    "challenger": "v0",
+    "champion": null,
+    "epoch_id": "e0",
+    "generation_id": "v0",
+    "movements": [],
+    "note": "no tournament found for this generation"
+  },
+  "drift_movements::e1::v0": {
+    "challenger": "v0",
+    "champion": null,
+    "epoch_id": "e0",
+    "generation_id": "v0",
+    "movements": [],
+    "note": "no tournament found for this generation"
+  },
+  "drift_movements::e1::v1": {
+    "challenger": "v1",
+    "champion": null,
+    "epoch_id": "e0",
+    "generation_id": "v1",
+    "movements": [],
+    "note": "no tournament found for this generation"
+  },
+  "environment": {
+    "active_runs": [],
+    "active_tournament": null,
+    "epoch": {
+      "analysis_html_available": false,
+      "analysis_html_inline": "",
+      "analysis_md": "",
+      "board": [
+        {
+          "budget_s": null,
+          "expectation_kind": "rubric",
+          "id": "t1",
+          "input_preview": "Say hello.",
+          "kind": "single_turn",
+          "tags": [
+            "smoke"
+          ],
+          "weight": 1.0
+        },
+        {
+          "budget_s": null,
+          "expectation_kind": "predicate",
+          "id": "t2",
+          "input_preview": "Say goodbye.",
+          "kind": "single_turn",
+          "tags": [],
+          "weight": 2.0
+        }
+      ],
+      "board_split": {
+        "configured": false,
+        "enabled": false,
+        "entries": [
+          {
+            "entry_id": "t1",
+            "slice": "train",
+            "weight": 1.0
+          },
+          {
+            "entry_id": "t2",
+            "slice": "train",
+            "weight": 2.0
+          }
+        ],
+        "holdout_count": 0,
+        "holdout_fraction": 0.0,
+        "holdout_tags": [],
+        "total": 2,
+        "train_count": 2
+      },
+      "brief": "# Brief e0\n\n## Goal\n\nName sorts first, created last — the bug mirror.\n",
+      "closed": false,
+      "contract_hash": "hash-e0",
+      "created_at": "2026-03-01T00:00:00Z",
+      "delta_scalar_summary": {
+        "champion_spine": null,
+        "gross": -0.05
+      },
+      "epoch_id": "e0",
+      "experiments": [
+        {
+          "generation_id": "v0",
+          "hypothesis": {
+            "summary": "hyp e0 v0"
+          },
+          "outcome": {
+            "decision": "promoted",
+            "scalar_score_delta": -0.05
+          },
+          "parent_generation_id": null,
+          "patches": {},
+          "proposed_at": "2026-03-01T00:00:00Z"
+        }
+      ],
+      "goal": "Name sorts first, created last — the bug mirror.",
+      "harness": {
+        "entrypoint": "pkg.module:agent",
+        "mutable_trees": [
+          "src/pkg"
+        ]
+      },
+      "holdout": null,
+      "journal": "",
+      "mutations": [],
+      "scoring": {
+        "drift_weight": 1.0,
+        "pass_weight": 1.0,
+        "tournament": {
+          "params": {},
+          "structure": "gauntlet"
+        }
+      },
+      "tournament": {
+        "params": {},
+        "structure": "gauntlet"
+      }
+    },
+    "epoch_id": "e0",
+    "epochs": [
+      {
+        "epoch_id": "e1",
+        "goal": "First epoch chronologically."
+      },
+      {
+        "epoch_id": "e2",
+        "goal": "Empty epoch — no generations."
+      },
+      {
+        "epoch_id": "e0",
+        "goal": "Name sorts first, created last — the bug mirror."
+      }
+    ],
+    "generated_at": "<masked>",
+    "generations": {
+      "generations": [
+        {
+          "created_at": "2026-01-01T00:00:00Z",
+          "epoch_id": "e1",
+          "generation_id": "v0",
+          "parent_generation_id": null,
+          "promoted": true
+        },
+        {
+          "created_at": "2026-01-01T00:00:00Z",
+          "epoch_id": "e1",
+          "generation_id": "v1",
+          "parent_generation_id": "v0",
+          "promoted": false
+        },
+        {
+          "created_at": "2026-03-01T00:00:00Z",
+          "epoch_id": "e0",
+          "generation_id": "v0",
+          "parent_generation_id": null,
+          "promoted": true
+        }
+      ]
+    },
+    "health_report": {
+      "epoch_id": "e0",
+      "findings": [],
+      "healthy": true
+    },
+    "heartbeat": null,
+    "lock": null,
+    "run_log": {
+      "cursor": null,
+      "events": [],
+      "events_path": null
+    },
+    "score_trajectory": {
+      "epoch_id": "e0",
+      "note": "index not built; run zicato reindex",
+      "points": [
+        {
+          "created_at": "2026-03-01T00:00:00Z",
+          "entry_count": 0,
+          "generation_id": "v0",
+          "parent_generation_id": null,
+          "promoted": true,
+          "scalar": null
+        }
+      ]
+    },
+    "tournaments": {
+      "champion_lineage": [],
+      "epoch_id": "e0",
+      "matchups": [],
+      "note": "index not built; run zicato reindex"
+    },
+    "workspace": {
+      "adk_entrypoint": "pkg.module:agent",
+      "board_path": "<ws>/epochs/e0/board.jsonl",
+      "brief_path": "<ws>/epochs/e0/brief.md",
+      "created_at": null,
+      "instance_id": "default",
+      "mutation_point_count": 0,
+      "root": "<ws>",
+      "scoring_path": "<ws>/epochs/e0/scoring.json",
+      "source_roots": [
+        "src/pkg"
+      ]
+    }
+  },
+  "epoch_view::e0": {
+    "analysis_html_available": false,
+    "analysis_html_inline": "",
+    "analysis_md": "",
+    "board": [
+      {
+        "budget_s": null,
+        "expectation_kind": "rubric",
+        "id": "t1",
+        "input_preview": "Say hello.",
+        "kind": "single_turn",
+        "tags": [
+          "smoke"
+        ],
+        "weight": 1.0
+      },
+      {
+        "budget_s": null,
+        "expectation_kind": "predicate",
+        "id": "t2",
+        "input_preview": "Say goodbye.",
+        "kind": "single_turn",
+        "tags": [],
+        "weight": 2.0
+      }
+    ],
+    "board_split": {
+      "configured": false,
+      "enabled": false,
+      "entries": [
+        {
+          "entry_id": "t1",
+          "slice": "train",
+          "weight": 1.0
+        },
+        {
+          "entry_id": "t2",
+          "slice": "train",
+          "weight": 2.0
+        }
+      ],
+      "holdout_count": 0,
+      "holdout_fraction": 0.0,
+      "holdout_tags": [],
+      "total": 2,
+      "train_count": 2
+    },
+    "brief": "# Brief e0\n\n## Goal\n\nName sorts first, created last — the bug mirror.\n",
+    "closed": false,
+    "contract_hash": "hash-e0",
+    "created_at": "2026-03-01T00:00:00Z",
+    "delta_scalar_summary": {
+      "champion_spine": null,
+      "gross": -0.05
+    },
+    "epoch_id": "e0",
+    "experiments": [
+      {
+        "generation_id": "v0",
+        "hypothesis": {
+          "summary": "hyp e0 v0"
+        },
+        "outcome": {
+          "decision": "promoted",
+          "scalar_score_delta": -0.05
+        },
+        "parent_generation_id": null,
+        "patches": {},
+        "proposed_at": "2026-03-01T00:00:00Z"
+      }
+    ],
+    "goal": "Name sorts first, created last — the bug mirror.",
+    "harness": {
+      "entrypoint": "pkg.module:agent",
+      "mutable_trees": [
+        "src/pkg"
+      ]
+    },
+    "holdout": null,
+    "journal": "",
+    "mutations": [],
+    "scoring": {
+      "drift_weight": 1.0,
+      "pass_weight": 1.0,
+      "tournament": {
+        "params": {},
+        "structure": "gauntlet"
+      }
+    },
+    "tournament": {
+      "params": {},
+      "structure": "gauntlet"
+    }
+  },
+  "epoch_view::e1": {
+    "analysis_html_available": false,
+    "analysis_html_inline": "",
+    "analysis_md": "",
+    "board": [
+      {
+        "budget_s": null,
+        "expectation_kind": "rubric",
+        "id": "t1",
+        "input_preview": "Say hello.",
+        "kind": "single_turn",
+        "tags": [
+          "smoke"
+        ],
+        "weight": 1.0
+      },
+      {
+        "budget_s": null,
+        "expectation_kind": "predicate",
+        "id": "t2",
+        "input_preview": "Say goodbye.",
+        "kind": "single_turn",
+        "tags": [],
+        "weight": 2.0
+      }
+    ],
+    "board_split": {
+      "configured": false,
+      "enabled": false,
+      "entries": [
+        {
+          "entry_id": "t1",
+          "slice": "train",
+          "weight": 1.0
+        },
+        {
+          "entry_id": "t2",
+          "slice": "train",
+          "weight": 2.0
+        }
+      ],
+      "holdout_count": 0,
+      "holdout_fraction": 0.0,
+      "holdout_tags": [],
+      "total": 2,
+      "train_count": 2
+    },
+    "brief": "# Brief e1\n\n## Goal\n\nFirst epoch chronologically.\n",
+    "closed": true,
+    "contract_hash": "hash-e1",
+    "created_at": "2026-01-01T00:00:00Z",
+    "delta_scalar_summary": {
+      "champion_spine": null,
+      "gross": -0.030000000000000002
+    },
+    "epoch_id": "e1",
+    "experiments": [
+      {
+        "generation_id": "v0",
+        "hypothesis": {
+          "summary": "hyp e1 v0"
+        },
+        "outcome": {
+          "decision": "promoted",
+          "scalar_score_delta": -0.05
+        },
+        "parent_generation_id": null,
+        "patches": {},
+        "proposed_at": "2026-01-01T00:00:00Z"
+      },
+      {
+        "generation_id": "v1",
+        "hypothesis": {
+          "summary": "hyp e1 v1"
+        },
+        "outcome": {
+          "decision": "rejected",
+          "scalar_score_delta": 0.02
+        },
+        "parent_generation_id": "v0",
+        "patches": {},
+        "proposed_at": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "goal": "First epoch chronologically.",
+    "harness": {
+      "entrypoint": "pkg.module:agent",
+      "mutable_trees": [
+        "src/pkg"
+      ]
+    },
+    "holdout": null,
+    "journal": "",
+    "mutations": [],
+    "scoring": {
+      "drift_weight": 1.0,
+      "pass_weight": 1.0,
+      "tournament": {
+        "params": {},
+        "structure": "gauntlet"
+      }
+    },
+    "tournament": {
+      "params": {},
+      "structure": "gauntlet"
+    }
+  },
+  "epoch_view::e2": {
+    "analysis_html_available": false,
+    "analysis_html_inline": "",
+    "analysis_md": "",
+    "board": [
+      {
+        "budget_s": null,
+        "expectation_kind": "rubric",
+        "id": "t1",
+        "input_preview": "Say hello.",
+        "kind": "single_turn",
+        "tags": [
+          "smoke"
+        ],
+        "weight": 1.0
+      },
+      {
+        "budget_s": null,
+        "expectation_kind": "predicate",
+        "id": "t2",
+        "input_preview": "Say goodbye.",
+        "kind": "single_turn",
+        "tags": [],
+        "weight": 2.0
+      }
+    ],
+    "board_split": {
+      "configured": false,
+      "enabled": false,
+      "entries": [
+        {
+          "entry_id": "t1",
+          "slice": "train",
+          "weight": 1.0
+        },
+        {
+          "entry_id": "t2",
+          "slice": "train",
+          "weight": 2.0
+        }
+      ],
+      "holdout_count": 0,
+      "holdout_fraction": 0.0,
+      "holdout_tags": [],
+      "total": 2,
+      "train_count": 2
+    },
+    "brief": "# Brief e2\n\n## Goal\n\nEmpty epoch — no generations.\n",
+    "closed": true,
+    "contract_hash": "hash-e2",
+    "created_at": "2026-02-01T00:00:00Z",
+    "delta_scalar_summary": {
+      "champion_spine": null,
+      "gross": null
+    },
+    "epoch_id": "e2",
+    "experiments": [],
+    "goal": "Empty epoch — no generations.",
+    "harness": {
+      "entrypoint": "pkg.module:agent",
+      "mutable_trees": [
+        "src/pkg"
+      ]
+    },
+    "holdout": null,
+    "journal": "",
+    "mutations": [],
+    "scoring": {
+      "drift_weight": 1.0,
+      "pass_weight": 1.0,
+      "tournament": {
+        "params": {},
+        "structure": "gauntlet"
+      }
+    },
+    "tournament": {
+      "params": {},
+      "structure": "gauntlet"
+    }
+  },
+  "epochs_summary": [
+    {
+      "epoch_id": "e1",
+      "goal": "First epoch chronologically."
+    },
+    {
+      "epoch_id": "e2",
+      "goal": "Empty epoch — no generations."
+    },
+    {
+      "epoch_id": "e0",
+      "goal": "Name sorts first, created last — the bug mirror."
+    }
+  ],
+  "gate_breakdown::e1::v0::v1": {
+    "challenger": "v1",
+    "challenger_scalar": 0.49,
+    "champion": "v0",
+    "champion_scalar": 0.5,
+    "decision": "promoted",
+    "delta_pass_rate": 0.0,
+    "delta_scalar": -0.010000000000000009,
+    "epoch_id": "e1",
+    "live": null,
+    "override": {
+      "action": null,
+      "present": false,
+      "reason": null
+    },
+    "primary_driver": null,
+    "rating": {
+      "present": false
+    },
+    "reason": "",
+    "rules": [
+      {
+        "detail": "disabled",
+        "fired": false,
+        "id": "regression_suite",
+        "label": "Regression suite",
+        "status": "skipped"
+      },
+      {
+        "detail": "0.50 → 0.49 (-0.01; needs ≤ -0.01)",
+        "fired": false,
+        "id": "scalar_margin",
+        "label": "Scalar margin",
+        "status": "pass"
+      },
+      {
+        "detail": "all preserved",
+        "fired": false,
+        "id": "pass_rate_monotonicity",
+        "label": "Pass-rate monotonicity",
+        "status": "pass"
+      },
+      {
+        "detail": "namespace aggregates not recorded",
+        "fired": false,
+        "id": "namespace_monotonicity",
+        "label": "Namespace monotonicity",
+        "status": "unknown"
+      }
+    ],
+    "scalar_components": {
+      "challenger": null,
+      "champion": null
+    },
+    "scalar_decomposition": {
+      "challenger": {
+        "drift": {
+          "fail_open": false,
+          "fallback_reason": null,
+          "kind": "builtin",
+          "present": false,
+          "raw": null,
+          "source": "built-in formula",
+          "transforms": []
+        },
+        "scalar": {
+          "fail_open": false,
+          "fallback_reason": null,
+          "kind": "builtin",
+          "present": false,
+          "raw": null,
+          "source": "built-in formula",
+          "transforms": []
+        }
+      },
+      "champion": {
+        "drift": {
+          "fail_open": false,
+          "fallback_reason": null,
+          "kind": "builtin",
+          "present": false,
+          "raw": null,
+          "source": "built-in formula",
+          "transforms": []
+        },
+        "scalar": {
+          "fail_open": false,
+          "fallback_reason": null,
+          "kind": "builtin",
+          "present": false,
+          "raw": null,
+          "source": "built-in formula",
+          "transforms": []
+        }
+      },
+      "fail_open": false,
+      "present": false
+    }
+  },
+  "health_report": {
+    "epoch_id": "e0",
+    "findings": [],
+    "healthy": true
+  },
+  "hypothesis_accuracy::e0::v0": {
+    "claims": [],
+    "epoch_id": "e0",
+    "generation_id": "v0",
+    "pass_rate": {
+      "observed": null,
+      "predicted": ""
+    },
+    "score": {
+      "brier": null,
+      "fraction": null,
+      "hits": 0,
+      "total": 0
+    }
+  },
+  "hypothesis_accuracy::e1::v0": {
+    "claims": [],
+    "epoch_id": "e1",
+    "generation_id": "v0",
+    "pass_rate": {
+      "observed": null,
+      "predicted": ""
+    },
+    "score": {
+      "brier": null,
+      "fraction": null,
+      "hits": 0,
+      "total": 0
+    }
+  },
+  "hypothesis_accuracy::e1::v1": {
+    "claims": [],
+    "epoch_id": "e1",
+    "generation_id": "v1",
+    "pass_rate": {
+      "observed": null,
+      "predicted": ""
+    },
+    "score": {
+      "brier": null,
+      "fraction": null,
+      "hits": 0,
+      "total": 0
+    }
+  },
+  "lineage_view": {
+    "generations": [
+      {
+        "created_at": "2026-01-01T00:00:00Z",
+        "epoch_id": "e1",
+        "generation_id": "v0",
+        "parent_generation_id": null,
+        "promoted": true
+      },
+      {
+        "created_at": "2026-01-01T00:00:00Z",
+        "epoch_id": "e1",
+        "generation_id": "v1",
+        "parent_generation_id": "v0",
+        "promoted": false
+      },
+      {
+        "created_at": "2026-03-01T00:00:00Z",
+        "epoch_id": "e0",
+        "generation_id": "v0",
+        "parent_generation_id": null,
+        "promoted": true
+      }
+    ]
+  },
+  "matchup_detail::e0::v0": {
+    "ab_grid": [],
+    "champion": null,
+    "child_scalar": null,
+    "decision": null,
+    "delta_scalar": null,
+    "epoch_id": "e0",
+    "generation_id": "v0",
+    "parent_scalar": null,
+    "patches": [],
+    "ran_at": null,
+    "rejection_reason": null
+  },
+  "matchup_detail::e1::v0": {
+    "ab_grid": [],
+    "champion": null,
+    "child_scalar": null,
+    "decision": null,
+    "delta_scalar": null,
+    "epoch_id": "e0",
+    "generation_id": "v0",
+    "parent_scalar": null,
+    "patches": [],
+    "ran_at": null,
+    "rejection_reason": null
+  },
+  "matchup_detail::e1::v1": {
+    "ab_grid": [],
+    "champion": null,
+    "child_scalar": null,
+    "decision": null,
+    "delta_scalar": null,
+    "epoch_id": "e0",
+    "generation_id": "v1",
+    "parent_scalar": null,
+    "patches": [],
+    "ran_at": null,
+    "rejection_reason": null
+  },
+  "matchup_grid::e1::v0::v1": {
+    "challenger": "v1",
+    "champion": "v0",
+    "entry_grid": [
+      {
+        "child_drift_loss": 0.31,
+        "child_metrics": null,
+        "child_pass": true,
+        "child_score": 0.9,
+        "delta": 0.010000000000000009,
+        "entry_id": "t1",
+        "parent_drift_loss": 0.3,
+        "parent_metrics": null,
+        "parent_pass": true,
+        "parent_score": 0.9,
+        "verdict": "regressed",
+        "won_by": "v0"
+      },
+      {
+        "child_drift_loss": 0.31,
+        "child_metrics": null,
+        "child_pass": true,
+        "child_score": 0.9,
+        "delta": 0.010000000000000009,
+        "entry_id": "t2",
+        "parent_drift_loss": 0.3,
+        "parent_metrics": null,
+        "parent_pass": true,
+        "parent_score": 0.9,
+        "verdict": "regressed",
+        "won_by": "v0"
+      }
+    ],
+    "epoch_id": "e1",
+    "scalar": {
+      "child": 0.49,
+      "delta": -0.010000000000000009,
+      "parent": 0.5
+    },
+    "source": "loss_files"
+  },
+  "meta_loop_ledger": {
+    "current_epoch_id": "e0",
+    "epochs": [
+      {
+        "champion_gen": null,
+        "champion_index": null,
+        "changed_components": {
+          "board": false,
+          "brief": false,
+          "entrypoint": false,
+          "mutable_trees": false,
+          "proposer": false,
+          "scoring": false,
+          "structure": false
+        },
+        "changed_list": [],
+        "closed": true,
+        "epoch_id": "e1",
+        "floor": null,
+        "generation_count": 2,
+        "open": false,
+        "soft": false,
+        "structure": "gauntlet"
+      },
+      {
+        "champion_gen": null,
+        "champion_index": null,
+        "changed_components": {
+          "board": true,
+          "brief": true,
+          "entrypoint": false,
+          "mutable_trees": false,
+          "proposer": false,
+          "scoring": false,
+          "structure": false
+        },
+        "changed_list": [
+          "board",
+          "brief"
+        ],
+        "closed": true,
+        "epoch_id": "e2",
+        "floor": null,
+        "generation_count": 0,
+        "open": false,
+        "soft": false,
+        "structure": "gauntlet"
+      },
+      {
+        "champion_gen": null,
+        "champion_index": null,
+        "changed_components": {
+          "board": true,
+          "brief": true,
+          "entrypoint": false,
+          "mutable_trees": false,
+          "proposer": false,
+          "scoring": false,
+          "structure": false
+        },
+        "changed_list": [
+          "board",
+          "brief"
+        ],
+        "closed": false,
+        "epoch_id": "e0",
+        "floor": null,
+        "generation_count": 1,
+        "open": true,
+        "soft": false,
+        "structure": "gauntlet"
+      }
+    ]
+  },
+  "per_entry_for_generation::e0::v0": {
+    "entries": [],
+    "epoch_id": "e0",
+    "generation_id": "v0",
+    "mean_score": null,
+    "tournament_id": null
+  },
+  "per_entry_for_generation::e1::v0": {
+    "entries": [],
+    "epoch_id": "e1",
+    "generation_id": "v0",
+    "mean_score": null,
+    "tournament_id": null
+  },
+  "per_entry_for_generation::e1::v1": {
+    "entries": [],
+    "epoch_id": "e1",
+    "generation_id": "v1",
+    "mean_score": null,
+    "tournament_id": "e1:v0->v1"
+  },
+  "per_judge_for_generation::e0::v0": {
+    "epoch_id": "e0",
+    "generation_id": "v0",
+    "judges": [],
+    "note": "index not built; run zicato reindex"
+  },
+  "per_judge_for_generation::e1::v0": {
+    "epoch_id": "e1",
+    "generation_id": "v0",
+    "judges": [],
+    "note": "index not built; run zicato reindex"
+  },
+  "per_judge_for_generation::e1::v1": {
+    "epoch_id": "e1",
+    "generation_id": "v1",
+    "judges": [],
+    "note": "index not built; run zicato reindex"
+  },
+  "per_judge_trend::e0": {
+    "epoch_id": "e0",
+    "generations": [
+      "v0"
+    ],
+    "judges": []
+  },
+  "per_judge_trend::e1": {
+    "epoch_id": "e1",
+    "generations": [
+      "v0"
+    ],
+    "judges": []
+  },
+  "per_judge_trend::e2": {
+    "epoch_id": "e2",
+    "generations": [],
+    "judges": []
+  },
+  "run_log": {
+    "cursor": null,
+    "events": [],
+    "events_path": null
+  },
+  "score_trajectory::e0": {
+    "epoch_id": "e0",
+    "points": [
+      {
+        "created_at": "2026-03-01T00:00:00Z",
+        "entry_count": 0,
+        "generation_id": "v0",
+        "parent_generation_id": null,
+        "promoted": true,
+        "scalar": null
+      }
+    ]
+  },
+  "score_trajectory::e1": {
+    "epoch_id": "e1",
+    "note": "index not built; run zicato reindex",
+    "points": [
+      {
+        "created_at": "2026-01-01T00:00:00Z",
+        "entry_count": 0,
+        "generation_id": "v0",
+        "parent_generation_id": null,
+        "promoted": true,
+        "scalar": null
+      },
+      {
+        "created_at": "2026-01-01T00:00:00Z",
+        "entry_count": 0,
+        "generation_id": "v1",
+        "parent_generation_id": "v0",
+        "promoted": false,
+        "scalar": null
+      }
+    ]
+  },
+  "score_trajectory::e2": {
+    "epoch_id": "e2",
+    "points": []
+  },
+  "search_empty": {
+    "entries": [],
+    "judges": [],
+    "mutations": [],
+    "patches": []
+  },
+  "search_hello": {
+    "entries": [],
+    "judges": [],
+    "mutations": [],
+    "patches": []
+  },
+  "snapshot": {
+    "active_runs": [],
+    "active_tournament": null,
+    "epoch": {
+      "analysis_html_available": false,
+      "analysis_html_inline": "",
+      "analysis_md": "",
+      "board": [
+        {
+          "budget_s": null,
+          "expectation_kind": "rubric",
+          "id": "t1",
+          "input_preview": "Say hello.",
+          "kind": "single_turn",
+          "tags": [
+            "smoke"
+          ],
+          "weight": 1.0
+        },
+        {
+          "budget_s": null,
+          "expectation_kind": "predicate",
+          "id": "t2",
+          "input_preview": "Say goodbye.",
+          "kind": "single_turn",
+          "tags": [],
+          "weight": 2.0
+        }
+      ],
+      "board_split": {
+        "configured": false,
+        "enabled": false,
+        "entries": [
+          {
+            "entry_id": "t1",
+            "slice": "train",
+            "weight": 1.0
+          },
+          {
+            "entry_id": "t2",
+            "slice": "train",
+            "weight": 2.0
+          }
+        ],
+        "holdout_count": 0,
+        "holdout_fraction": 0.0,
+        "holdout_tags": [],
+        "total": 2,
+        "train_count": 2
+      },
+      "brief": "# Brief e0\n\n## Goal\n\nName sorts first, created last — the bug mirror.\n",
+      "closed": false,
+      "contract_hash": "hash-e0",
+      "created_at": "2026-03-01T00:00:00Z",
+      "delta_scalar_summary": {
+        "champion_spine": null,
+        "gross": -0.05
+      },
+      "epoch_id": "e0",
+      "experiments": [
+        {
+          "generation_id": "v0",
+          "hypothesis": {
+            "summary": "hyp e0 v0"
+          },
+          "outcome": {
+            "decision": "promoted",
+            "scalar_score_delta": -0.05
+          },
+          "parent_generation_id": null,
+          "patches": {},
+          "proposed_at": "2026-03-01T00:00:00Z"
+        }
+      ],
+      "goal": "Name sorts first, created last — the bug mirror.",
+      "harness": {
+        "entrypoint": "pkg.module:agent",
+        "mutable_trees": [
+          "src/pkg"
+        ]
+      },
+      "holdout": null,
+      "journal": "",
+      "mutations": [],
+      "scoring": {
+        "drift_weight": 1.0,
+        "pass_weight": 1.0,
+        "tournament": {
+          "params": {},
+          "structure": "gauntlet"
+        }
+      },
+      "tournament": {
+        "params": {},
+        "structure": "gauntlet"
+      }
+    },
+    "epoch_id": "e0",
+    "generated_at": "<masked>",
+    "heartbeat": null,
+    "lineage": null,
+    "lock": null
+  },
+  "tournament_structure::e0": {
+    "competitors": [],
+    "epoch_id": "e0",
+    "field_status": [],
+    "rounds": [],
+    "source": "loss_files",
+    "standings": [],
+    "structure": "gauntlet",
+    "structure_params": {},
+    "tournament_id": "v1"
+  },
+  "tournament_structure::e1": {
+    "competitors": [],
+    "epoch_id": "e1",
+    "field_status": [],
+    "rounds": [],
+    "source": "loss_files",
+    "standings": [],
+    "structure": "gauntlet",
+    "structure_params": {},
+    "tournament_id": "v1"
+  },
+  "tournament_structure::e2": {
+    "competitors": [],
+    "epoch_id": "e2",
+    "field_status": [],
+    "rounds": [],
+    "source": "loss_files",
+    "standings": [],
+    "structure": "gauntlet",
+    "structure_params": {},
+    "tournament_id": "v1"
+  },
+  "workspace_view": {
+    "current_epoch_id": "e0",
+    "epochs": [
+      {
+        "best_generation_id": null,
+        "best_scalar": null,
+        "closed": true,
+        "epoch_id": "e1",
+        "generation_count": 2,
+        "goal": "First epoch chronologically.",
+        "parent_epoch_id": null,
+        "promoted_count": 0
+      },
+      {
+        "best_generation_id": null,
+        "best_scalar": null,
+        "closed": true,
+        "epoch_id": "e2",
+        "generation_count": 0,
+        "goal": "Empty epoch — no generations.",
+        "parent_epoch_id": null,
+        "promoted_count": 0
+      },
+      {
+        "best_generation_id": null,
+        "best_scalar": null,
+        "closed": false,
+        "epoch_id": "e0",
+        "generation_count": 1,
+        "goal": "Name sorts first, created last — the bug mirror.",
+        "parent_epoch_id": null,
+        "promoted_count": 0
+      }
+    ],
+    "ledger": [
+      {
+        "champion_gen": null,
+        "champion_index": null,
+        "changed_components": {
+          "board": false,
+          "brief": false,
+          "entrypoint": false,
+          "mutable_trees": false,
+          "proposer": false,
+          "scoring": false,
+          "structure": false
+        },
+        "changed_list": [],
+        "closed": true,
+        "epoch_id": "e1",
+        "floor": null,
+        "generation_count": 2,
+        "open": false,
+        "soft": false,
+        "structure": "gauntlet"
+      },
+      {
+        "champion_gen": null,
+        "champion_index": null,
+        "changed_components": {
+          "board": true,
+          "brief": true,
+          "entrypoint": false,
+          "mutable_trees": false,
+          "proposer": false,
+          "scoring": false,
+          "structure": false
+        },
+        "changed_list": [
+          "board",
+          "brief"
+        ],
+        "closed": true,
+        "epoch_id": "e2",
+        "floor": null,
+        "generation_count": 0,
+        "open": false,
+        "soft": false,
+        "structure": "gauntlet"
+      },
+      {
+        "champion_gen": null,
+        "champion_index": null,
+        "changed_components": {
+          "board": true,
+          "brief": true,
+          "entrypoint": false,
+          "mutable_trees": false,
+          "proposer": false,
+          "scoring": false,
+          "structure": false
+        },
+        "changed_list": [
+          "board",
+          "brief"
+        ],
+        "closed": false,
+        "epoch_id": "e0",
+        "floor": null,
+        "generation_count": 1,
+        "open": true,
+        "soft": false,
+        "structure": "gauntlet"
+      }
+    ],
+    "sparkline": [
+      {
+        "epoch_id": "e1",
+        "scalar": null
+      },
+      {
+        "epoch_id": "e2",
+        "scalar": null
+      },
+      {
+        "epoch_id": "e0",
+        "scalar": null
+      }
+    ]
+  }
+}

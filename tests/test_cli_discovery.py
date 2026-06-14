@@ -45,10 +45,16 @@ def _make_isolated_commands_pkg(
     monkeypatch.setattr(commands_pkg, "__path__", [str(pkg_dir)])
 
     # Evict any previously-imported synthetic modules so a second test
-    # gets a fresh import.
+    # gets a fresh import. Route the eviction through ``monkeypatch`` so the
+    # entries are RESTORED at teardown: a raw ``sys.modules.pop`` also evicts
+    # the REAL ``zicato.cli.commands.*`` submodules (``evolve``/``epoch``/…)
+    # and never puts them back, leaving a later test that holds a stale
+    # function reference reading stale module globals (a cross-test-isolation
+    # leak). ``monkeypatch.delitem`` evicts for the test and reinstates the
+    # original module object afterwards.
     for name in list(sys.modules):
         if name.startswith("zicato.cli.commands.") and not name.endswith((".init", ".register")):
-            sys.modules.pop(name, None)
+            monkeypatch.delitem(sys.modules, name, raising=False)
     return pkg_dir
 
 

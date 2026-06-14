@@ -26,17 +26,12 @@ Design rules:
 from __future__ import annotations
 
 import asyncio
-import datetime as _dt
 import os
 from dataclasses import replace
 from pathlib import Path
 
 from zicato.runtime.state import Heartbeat, write_heartbeat
-
-
-def _utc_now_iso() -> str:
-    """Return current UTC time as an ISO-8601 string with seconds precision."""
-    return _dt.datetime.now(_dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+from zicato.util.iso_time import now_iso as _utc_now_iso
 
 
 class HeartbeatBeater:
@@ -133,6 +128,7 @@ class HeartbeatBeater:
         phase: str | None = None,
         round_index: int | None = None,
         round_started_at: str | None = None,
+        seq: int | None = None,
         harmonograf_url: str | None = None,
         harmonograf_meta_session: str | None = None,
     ) -> None:
@@ -142,6 +138,14 @@ class HeartbeatBeater:
         The next bump (or an in-flight one) will write the updated
         fields. The change does NOT immediately flush — callers who
         need an immediate write should call :meth:`bump_now`.
+
+        ``seq`` is the orchestrator's progress cursor (RUNTIME-V2
+        Phase 4): the loop stamps the tail ``seq`` of the progress event
+        log here at each genuine transition. Crucially, the periodic
+        timer bump RE-WRITES the same ``seq`` (it carries the snapshot
+        forward), so ``seq`` only ever moves when a transition calls
+        :meth:`update` with a fresh value — it never advances on the
+        timer alone. That is what makes it the true liveness signal.
         """
         # Build the replace() call as a single typed pipe of overrides
         # so mypy can verify each kwarg against Heartbeat's field types.
@@ -156,6 +160,8 @@ class HeartbeatBeater:
             snapshot = replace(snapshot, round_index=round_index)
         if round_started_at is not None:
             snapshot = replace(snapshot, round_started_at=round_started_at)
+        if seq is not None:
+            snapshot = replace(snapshot, seq=seq)
         if harmonograf_url is not None:
             snapshot = replace(snapshot, harmonograf_url=harmonograf_url)
         if harmonograf_meta_session is not None:

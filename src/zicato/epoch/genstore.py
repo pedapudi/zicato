@@ -36,18 +36,25 @@ other half of why §4 keeps this seam separate.
 
 Backends
 --------
-* :class:`DirectoryGenerationStore` — the shipped, default backend. A
-  generation is a ``generations/{id}/snapshot/`` directory; deriving a
-  child is a ``copytree`` of the parent plus an all-or-nothing patch
-  apply. This IS the pre-seam directory-snapshot mechanism, byte-for-
-  byte — the seam formalises it, it does not change the bytes.
-* :class:`~zicato.epoch.git_genstore.GitGenerationStore` — the git
-  backend (``docs/design/STORAGE.md`` §7), selected by the
-  ``storage_backend: "git"`` config knob (see
-  :func:`default_generation_store`). It implements this same protocol,
-  checking out a ``git worktree`` per generation. The operator-facing
-  git CLI (``zicato repo`` / ``log`` / ``diff`` / ``show`` / ``bisect``
-  / ``blame``, ``workspace migrate-to-git``) is still on the roadmap.
+* :class:`~zicato.epoch.git_genstore.GitGenerationStore` — the **default**
+  backend (``docs/design/STORAGE.md`` §7). A generation is a commit on an
+  epoch branch, materialised for a run as a content-addressed
+  ``git worktree``. Because the object store dedups unchanged blobs across
+  a lineage, and the worktree checkout *is* the isolated per-run tree, the
+  git backend removes both the per-generation and the per-run ``copytree``
+  the directory backend pays. It is the default unless the
+  ``storage_backend`` config knob selects otherwise (see
+  :func:`default_generation_store`). The operator-facing git CLI
+  (``zicato repo`` / ``log`` / ``diff`` / ``show`` / ``bisect`` /
+  ``blame``, ``workspace migrate-to-git``) is still on the roadmap.
+* :class:`DirectoryGenerationStore` — the directory-snapshot backend,
+  selected by ``storage_backend: "directory"``. A generation is a
+  ``generations/{id}/snapshot/`` directory; deriving a child is a
+  ``copytree`` of the parent plus an all-or-nothing patch apply. This IS
+  the pre-seam directory-snapshot mechanism, byte-for-byte. It remains a
+  fully supported, config-selectable backend for environments where a
+  private git repo is unwanted; the git default simply removes the copy
+  cost for the common case.
 """
 
 from __future__ import annotations
@@ -61,6 +68,7 @@ from typing import Protocol, runtime_checkable
 from zicato.core.types import Patch
 from zicato.core.workspace import generation_dir
 from zicato.epoch.snapshot_scope import copytree_ignore, is_artifact
+from zicato.workspace import WorkspaceLayout
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,7 +315,7 @@ class DirectoryGenerationStore:
         orchestrator's ``_next_generation_id`` and the index's directory
         walk use. Sorted lexicographically for a deterministic order.
         """
-        gens_root = self._workspace_root / "epochs" / epoch_id / "generations"
+        gens_root = WorkspaceLayout.from_root(self._workspace_root).generations_dir(epoch_id)
         if not gens_root.is_dir():
             return []
         return sorted(child.name for child in gens_root.iterdir() if child.is_dir())
@@ -478,8 +486,16 @@ class DirectoryGenerationStore:
 
 
 #: Workspace ``config.json`` key selecting the generation-store backend.
-#: ``"directory"`` (the default / fallback) or ``"git"``.
+#: ``"git"`` (the default) or ``"directory"``.
 STORAGE_BACKEND_KEY = "storage_backend"
+
+#: The backend selected when the knob is absent or empty. ``"git"``: the
+#: content-addressed worktree backend dedups blobs across a lineage and
+#: its worktree checkout *is* the isolated per-run tree, so it removes
+#: both the per-generation and per-run ``copytree`` the directory backend
+#: pays. ``"directory"`` stays selectable for environments that do not
+#: want a private git repo.
+DEFAULT_STORAGE_BACKEND = "git"
 
 
 def _read_storage_backend_knob(workspace_root: Path) -> str:
@@ -487,34 +503,36 @@ def _read_storage_backend_knob(workspace_root: Path) -> str:
 
     Best-effort: a missing or malformed ``config.json`` (a workspace not
     yet ``zicato init``-ed, or one predating the knob) yields the
-    ``"directory"`` default. The generation store must never fail to
-    construct just because the config is absent.
+    :data:`DEFAULT_STORAGE_BACKEND` default. The generation store must
+    never fail to construct just because the config is absent.
     """
     config_path = Path(workspace_root) / "config.json"
     if not config_path.is_file():
-        return "directory"
+        return DEFAULT_STORAGE_BACKEND
     try:
         import json  # noqa: PLC0415
 
         loaded = json.loads(config_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return "directory"
+        return DEFAULT_STORAGE_BACKEND
     if not isinstance(loaded, dict):
-        return "directory"
-    value = loaded.get(STORAGE_BACKEND_KEY, "directory")
-    return str(value).strip().lower() or "directory"
+        return DEFAULT_STORAGE_BACKEND
+    value = loaded.get(STORAGE_BACKEND_KEY, DEFAULT_STORAGE_BACKEND)
+    return str(value).strip().lower() or DEFAULT_STORAGE_BACKEND
 
 
 def default_generation_store(workspace_root: Path) -> GenerationStore:
     """Return the canonical :class:`GenerationStore` for a workspace.
 
     The backend is selected off the workspace ``config.json``'s
-    :data:`STORAGE_BACKEND_KEY` knob:
+    :data:`STORAGE_BACKEND_KEY` knob, defaulting to
+    :data:`DEFAULT_STORAGE_BACKEND` (``"git"``):
 
-    * ``"git"`` → :class:`~zicato.epoch.git_genstore.GitGenerationStore`,
-      the content-addressed git backend (``docs/design/STORAGE.md`` §7).
-    * anything else, or no config → :class:`DirectoryGenerationStore`,
-      the directory-snapshot default and always-available fallback.
+    * ``"git"`` (the default, including for a missing/blank knob) →
+      :class:`~zicato.epoch.git_genstore.GitGenerationStore`, the
+      content-addressed git backend (``docs/design/STORAGE.md`` §7).
+    * ``"directory"`` → :class:`DirectoryGenerationStore`, the
+      directory-snapshot backend, always available as the no-git fallback.
 
     This function is the single seam where that choice is made — the
     generation-store mirror of :func:`zicato.storage.factory.default_backend`.
@@ -533,5 +551,6 @@ __all__ = [
     "TreeEntry",
     "PatchRecord",
     "STORAGE_BACKEND_KEY",
+    "DEFAULT_STORAGE_BACKEND",
     "default_generation_store",
 ]

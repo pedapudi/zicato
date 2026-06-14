@@ -275,6 +275,79 @@ at three cadences and cost points**, so: one engine, three surfaces.
 - `epoch/contract.py` — applying a recommendation is a contract edit → rolls the
   epoch (so reflection sits at authoring / epoch-boundary time by construction).
 
+## UI — the Instrument lens
+
+**Where it lives.** The console (Variant T) is **candidate-centric**: it is
+organized around the *time axis of evolution* — lineage over rounds, decisions,
+the question *"what did the loop decide?"*. Reflection is **instrument-centric**:
+a cross-section through the **measurement instrument** at one contract — the
+same data viewed perpendicular. **Turn the camera 90°.** So it is a **dedicated
+top-level "Instrument" lens** in the console — a peer to the epoch / tournament /
+lineage views, **not nested inside them** and **not a standalone app**. It
+reuses the console idiom wholesale: the transcript reader, the board heatmap,
+per-judge trends, the [theme system](CONSOLE-DESIGN-LANGUAGE.md), and the
+digest-gated / SSE render discipline. The **same components** embed in the
+[builder](TOURNAMENT-BUILDER.md) as its **"Validate" step**. So the UI inherits
+the engine's "one engine, three surfaces" shape:
+
+- **console Instrument lens** — monitoring a *sealed* contract: read-only
+  recommendations, the deep `reflect` reports, and the continuous passive tier
+  surfaced inline.
+- **builder Validate panel** — *authoring-time*: the operator runs `reflect` on
+  the **draft** and applies a recommended edit before sealing.
+
+The console answers *"what did the loop decide?"*; the Instrument lens adds
+*"can I trust **how** it decided?"*
+
+**Components.** The emotional core is the **transcript x-ray** — clicking any
+statistic lands you in the *actual conversation the judge graded*, the
+disagreement lit up. Everything else is the map that leads there.
+
+- **Bill of health (landing)** — a top-line verdict over **the four pillars** as
+  a **gauge quadrant**: *Reliability* (noise floor + P(gate decision flips)),
+  *Discrimination* (% entries that differentiate + coverage), *Validity*
+  (aggregate judge F1 + # coherence divergences), *Calibration* (margin-to-noise
+  + loss-term balance). The golden-spiral mark doubles as a convergence motif.
+- **Transcript x-ray (centerpiece)** — split view: the conversation with the
+  judge's **claimed span** highlighted, beside the independent meta-judge's
+  adjudication rationale and a **confirm / deny** toggle. Fixed colour grammar:
+  **TP** a quiet-green seam, **FP** a red mark where nothing happened, **FN** the
+  highlighted span the judge slept through.
+- **Judge audit** — per judge: the **2×2 confusion matrix** (TP/FP/FN/TN) with
+  `precision` / `recall` / `f1` / `fpr`, a **self-consistency κ** gauge, a strip
+  of **evidence chips** for the FP/FN piles (each clicks into the x-ray), and the
+  **cross-judge redundancy / conflict graph**. Untested judges are greyed
+  *"never fired."*
+- **Coherence scatter** — runs plotted by **|scalar move| vs adjudicated
+  severity**; the diagonal is trustworthy, the **off-diagonal outliers glow**
+  (penalized-but-clean, failed-but-flat-loss) and click into the x-ray.
+- **Reliability noise-cloud** — a **violin** of the replicated scalars with
+  `promote_margin` drawn across it: a margin **inside** the cloud reads as
+  *"promoting on noise."* The **decision-flip count** sits alongside.
+- **Loss decomposition** — a **waterfall** of each term's contribution to the
+  scalar (dead terms greyed, dominating terms oversized) with a reweight
+  **preview** — preview only; the fit stays a non-goal.
+- **Discrimination & coverage** — the **board heatmap** idiom (flat rows
+  flagged) beside a **coverage map** of the exercised drift-kinds vs what the
+  judges watch.
+- **Live process** — an instrument-themed live hero: the **corpus grid**
+  (entry × candidate × replicate cells) filling in, then an **adjudication
+  phase** — the *same* digest-gated render discipline as the tournament live
+  hero.
+
+**Outcome → action loop.** Findings are **first-class**: evidence-linked,
+ranked, each carrying its **proposed contract edit** and a **"send to builder"**
+affordance. Console = read-only recommendations *carried* to the builder;
+builder Validate panel = **apply to the draft inline**. The human stays at the
+contract boundary — the UI never auto-edits, exactly as the engine never does.
+
+**Design-language fit.** Leans the console's **"Technical" register** with
+calibration-bench restraint: confusion matrices, ROC sweeps, and the noise-cloud
+rendered with the console's quiet precision, **not clutter**. The
+spiral-as-convergence motif, the theme system, and the digest-gated / SSE
+machinery carry over unchanged. **Reflection is a new grammar on the existing
+design language, not a new language.**
+
 ## MVP sequencing
 
 1. **Judge audit on champion runs** — pure "debug judges," no labels, just real

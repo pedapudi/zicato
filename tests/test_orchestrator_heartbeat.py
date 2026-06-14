@@ -53,6 +53,10 @@ def _bootstrap_workspace(tmp_path: Path) -> tuple[Path, str]:
             {
                 "instance_id": "test",
                 "created_at": "2026-05-14T00:00:00Z",
+                # Hand-built directory-backend snapshot layout below; pin the
+                # directory backend so the git default does not look for git
+                # tags this fixture never writes.
+                "storage_backend": "directory",
                 "adapter": {"kind": "stub"},
             }
         )
@@ -254,6 +258,73 @@ def test_evolve_n_rounds_writes_heartbeat_and_releases_lock(
     assert not lock_path(workspace).exists()
     fresh = acquire_workspace_lock(workspace, "follow-up", steal_stale=False)
     assert fresh.instance_id == "follow-up"
+
+
+def test_evolve_n_rounds_advances_progress_seq_and_marks_terminal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """RUNTIME-V2 Phase 4: the loop advances the progress seq on genuine
+    transitions and stamps a terminal marker + heartbeat seq on a clean end.
+    """
+    from zicato.runtime import progress_log
+    from zicato.runtime.paths import progress_log_path
+
+    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
+        canned_pass_by_gen={"v0": True, "v1": True},
+    )
+
+    from zicato.orchestrator import evolve_n_rounds
+
+    outcomes = asyncio.run(
+        evolve_n_rounds(
+            rounds=1,
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+            instance_id="seq-test",
+        )
+    )
+    assert len(outcomes) == 1
+
+    # The progress log was written and its seq advanced past the first
+    # transition — genuine progress was recorded (not just timer beats).
+    assert progress_log_path(workspace).exists()
+    tail_seq = progress_log.tail_seq(workspace)
+    assert tail_seq >= 4  # LOOP_START, ROUND_START, PROPOSE, TOURNAMENT_*, ...
+
+    # The clean end stamped a terminal marker (SETTLED), distinguishable
+    # from a stalled run (a mid-flight progress tail).
+    assert progress_log.tail_is_terminal(workspace)
+    last = progress_log.tail(workspace)
+    assert last is not None
+    assert last.type == progress_log.SETTLED
+
+    # The heartbeat carries the same tail seq as its liveness cursor.
+    hb = read_heartbeat(workspace)
+    assert hb is not None
+    assert hb.seq == tail_seq
+
+    # A second invocation clears the prior log so its seq restarts from 1
+    # (a stale tail must never read as live progress).
+    asyncio.run(
+        evolve_n_rounds(
+            rounds=1,
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+            instance_id="seq-test",
+        )
+    )
+    # The fresh log's first event is seq 1 (the LOOP_START of the new run).
+    events = progress_log._log(workspace).read()
+    assert events[0].seq == 1
+    assert events[0].type == progress_log.LOOP_START
 
 
 def test_evolve_n_rounds_refuses_when_workspace_locked(

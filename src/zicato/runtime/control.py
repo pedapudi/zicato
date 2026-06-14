@@ -35,7 +35,6 @@ the corresponding path. Two flavors:
 
 from __future__ import annotations
 
-import datetime as _dt
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -49,6 +48,7 @@ from zicato.runtime.paths import (
     control_log_dir,
     ensure_runtime_dirs,
 )
+from zicato.util.iso_time import now_iso as _utc_now_iso
 
 # ---------------------------------------------------------------------------
 # Command name constants
@@ -114,11 +114,6 @@ class ControlCommand:
     arg: str = ""
     payload: str = ""
     file_path: Path = field(default_factory=Path)
-
-
-def _utc_now_iso() -> str:
-    """Return current UTC time as an ISO-8601 string with seconds precision."""
-    return _dt.datetime.now(_dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _audit_log_name(consumed_at: str, name: str, arg: str) -> str:
@@ -248,7 +243,12 @@ def write_command(workspace_root: Path, cmd: ControlCommand) -> Path:
             f"control command {cmd.name!r} requires a non-empty arg "
             "(e.g. run_id for kill_runs, generation_id for promote/reject)"
         )
-    backend.write_text(control_command_key(f"{cmd.name}/{cmd.arg}"), "")
+    # A targeted command's body is empty by default (the arg in the filename
+    # is the whole command). A promote/reject MAY carry a JSON ``payload`` body
+    # with the override's provenance ({reason, epoch, tournament_id,
+    # structure}); the consumer reads only ``reason`` from it, so an empty
+    # payload reproduces today's empty-file behaviour byte-for-byte.
+    backend.write_text(control_command_key(f"{cmd.name}/{cmd.arg}"), cmd.payload)
     return cdir / cmd.name / cmd.arg
 
 

@@ -42,7 +42,11 @@ epoch's :class:`~zicato.core.ScoringWeights`. The dict carries:
   ``(1 - mean_score)`` term — equal to the historical
   ``(1 - pass_rate)`` term on an all-bool board), and one entry per namespace whose weight
   is non-zero — minus the ``"drift:"`` namespace, which the drift
-  component already covers to avoid double-counting.
+  component already covers to avoid double-counting. When the opt-in
+  diff-complexity term is active (``diff_complexity_weight > 0`` AND a
+  ``diff_size`` was threaded for the candidate) a final ``"diff_complexity"``
+  entry is appended; at the default weight ``0.0`` the key is absent and the
+  scalar is byte-identical.
 
 The aggregation is intentionally cheap and deterministic; it does NOT
 re-derive ``drift_loss`` from raw drift counts (that derivation lives
@@ -60,6 +64,7 @@ from typing import Any
 
 from zicato.core import LossProfile, ScoringWeights
 from zicato.scoring import ScalarContext, builtin_scalar, resolve_scalar
+from zicato.scoring.builtins import diff_complexity_component
 
 
 def entry_score(loss: LossProfile) -> float | None:
@@ -240,6 +245,7 @@ def _per_judge_loss_aggregate(losses: list[LossProfile]) -> dict[str, float]:
 def aggregate_generation_score(
     losses: list[LossProfile],
     weights: ScoringWeights,
+    diff_size: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """Aggregate per-entry losses into a per-generation summary dict.
 
@@ -247,6 +253,16 @@ def aggregate_generation_score(
     ``drift_loss_mean=0.0``, ``pass_rate=1.0``, both counts zero, and
     ``scalar=0.0`` — equivalent to "nothing to compare", which the gate
     treats as a tie (no improvement).
+
+    ``diff_size`` is the OPT-IN parsimony / MDL input: the candidate
+    generation's ``{added, removed, patches}`` diff size (see
+    :func:`zicato.scoring.diff_complexity.diff_size`). ``None`` (the default)
+    or a contract whose :attr:`~zicato.core.types.ScoringWeights.diff_complexity_weight`
+    is ``0.0`` leaves the result BYTE-IDENTICAL — the ``diff_complexity``
+    component is never written and the scalar is unchanged. The runner threads
+    it only for the CHALLENGER side; the champion side passes ``None`` so the
+    term measures the challenger's diff, exactly as the gate compares it against
+    a champion baseline that pays no parsimony cost.
     """
     per_entry: dict[str, dict[str, Any]] = {}
     drift_total = 0.0
@@ -325,6 +341,16 @@ def aggregate_generation_score(
         component_name = ns[:-1] if ns.endswith(":") else ns
         scalar_components[component_name] = value
 
+    # Parsimony / MDL term (OVERFITTING.md §5 / §12 #4), appended LAST and only
+    # when opted in. The component value comes from the SAME seam
+    # :func:`builtin_scalar` uses, so the surfaced component and the appended
+    # scalar term can never disagree. ``None`` (default weight 0.0 / no diff
+    # size) ⇒ the key is never written, so ``scalar_components`` and the scalar
+    # are byte-identical to the pre-feature path.
+    diff_component = diff_complexity_component(weights, diff_size)
+    if diff_component is not None:
+        scalar_components["diff_complexity"] = diff_component
+
     # Seam 2 (issue #19 phase 1): synthesise the scalar through the scoring
     # dispatcher. The built-in formula (drift + pass + non-drift namespaces)
     # is byte-identical to ``sum(scalar_components.values())`` — the golden
@@ -345,11 +371,13 @@ def aggregate_generation_score(
                 drift_loss_mean=drift_loss_mean,
                 namespace_aggregates=namespace_aggregates,
                 weights=weights,
+                diff_size=diff_size,
             ),
+            diff_size=diff_size,
         )
     )
 
-    return {
+    agg: dict[str, Any] = {
         "drift_loss_mean": drift_loss_mean,
         "pass_rate": pass_rate,
         # The uniform continuous outcome the scalar's pass component and
@@ -368,6 +396,15 @@ def aggregate_generation_score(
         # that don't read it are unaffected.
         "scalar_provenance": scalar_provenance,
     }
+    # Echo the candidate diff size onto the aggregate ONLY when the
+    # diff-complexity term is actually active, so the gate / dashboard can
+    # surface ``diff_size:challenger:{added,removed,patches}`` evidence. At the
+    # default weight (or with no diff size) the key is ABSENT, so the returned
+    # dict — and therefore the serialised ``gen_score.json`` golden — is
+    # byte-identical to the pre-feature aggregate.
+    if diff_component is not None and diff_size is not None:
+        agg["diff_size"] = dict(diff_size)
+    return agg
 
 
 __all__ = [

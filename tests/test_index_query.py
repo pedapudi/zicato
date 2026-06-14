@@ -31,6 +31,7 @@ from zicato.index.query import (
 from zicato.index.schema import SCHEMA_VERSION
 from zicato.telemetry.reducer import write_loss_profile
 from zicato.testing.fixtures import (
+    make_drift_count,
     make_experiment,
     make_loss_profile,
     make_outcome_record,
@@ -79,12 +80,16 @@ def _build_indexed_workspace(tmp_path: Path) -> tuple[Path, Path, str]:
     write_experiment(ws, eid, "v1", exp)
 
     for gid in ("v0", "v1"):
+        # The drift surface lives in loss.json (the canonical metric
+        # source the index projects from); the events.jsonl alongside it is
+        # written too but is never re-tallied by the index.
         profile = make_loss_profile(
             run_id=f"run_{gid}_e1",
             entry_id="e1",
             generation_id=gid,
             epoch_id=eid,
             drift_loss=1.5,
+            drift_counts=(make_drift_count("off_topic", "info", 1),),
         )
         write_loss_profile(profile, loss_profile_path(ws, eid, gid, "e1"))
         make_synthetic_events_jsonl(

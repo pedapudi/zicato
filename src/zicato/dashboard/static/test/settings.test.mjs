@@ -89,8 +89,8 @@ function installFetch() {
   };
 }
 
-const router = await import('../js/variants/T/router.js');
-const settings = await import('../js/variants/T/views/settings.js');
+const router = await import('../js/router.js');
+const settings = await import('../js/views/settings.js');
 
 function byClass(root, cls) { return root.querySelectorAll('[class]').filter((n) => n.classList.contains(cls)); }
 function firstClass(root, cls) { return byClass(root, cls)[0] || null; }
@@ -195,7 +195,7 @@ test('settings: the Appearance section is EDITABLE and shares the top-bar theme 
 
   // choosing a swatch option drives the SHARED store (applyTheme persists it to
   // the same localStorage key the top-bar dropdown reads — one source).
-  const ui = await import('../js/variants/T/ui.js');
+  const ui = await import('../js/ui.js');
   const dracula = byClass(body, 'dt-cd-option').find((o) => o.getAttribute('data-theme') === 'dracula');
   assert(dracula, 'the dropdown has a dracula option');
   dracula.dispatchEvent(makeEvent('click'));
@@ -216,7 +216,7 @@ test('settings: the Appearance section is EDITABLE and shares the top-bar theme 
 test('settings: editing appearance updates the SAME store the top-bar reads (round-trip)', async () => {
   installFetch();
   globalThis.window.localStorage.clear();
-  const ui = await import('../js/variants/T/ui.js');
+  const ui = await import('../js/ui.js');
   // a value set the "top-bar way" (persistType) is reflected by the settings
   // picker's initial selected option — one source of truth, both directions.
   // (persistType normalises a finalized id; here we use an explicit one.)
@@ -240,7 +240,7 @@ test('settings: editing appearance updates the SAME store the top-bar reads (rou
 test('settings: the Settings typeface picker still APPLIES + PERSISTS (the sole live picker)', async () => {
   installFetch();
   globalThis.window.localStorage.clear();
-  const ui = await import('../js/variants/T/ui.js');
+  const ui = await import('../js/ui.js');
   // a stable app root the picker's applyTypeface can stamp (applyTypeface falls
   // back to the shell's `_root` when no root is passed — mountShell sets it, but
   // here we drive the picker directly and assert via the persisted store).
@@ -432,7 +432,7 @@ test('settings: the EDITABLE builder is NO LONGER embedded — only a LAUNCHER (
 // small 1.15 (the default floor), medium 1.3, large 1.45.
 
 test('ui: font-size model — normalise + read/persist round-trip + scale values', async () => {
-  const ui = await import('../js/variants/T/ui.js');
+  const ui = await import('../js/ui.js');
   globalThis.window.localStorage.clear();
   // default is small; unknown / nullish values normalise to small.
   assertEqual(ui.DEFAULT_FONTSIZE, 'small', 'the default font size is small');
@@ -458,8 +458,8 @@ test('ui: font-size model — normalise + read/persist round-trip + scale values
 });
 
 test('shell: applyFontSize stamps --dt-font-scale + data-t-fontsize per size + persists', async () => {
-  const ui = await import('../js/variants/T/ui.js');
-  const shell = await import('../js/variants/T/shell.js');
+  const ui = await import('../js/ui.js');
+  const shell = await import('../js/shell.js');
   globalThis.window.localStorage.clear();
   const root = globalThis.document.createElement('div');
   const expect = { small: 1.15, medium: 1.3, large: 1.45 };
@@ -479,7 +479,7 @@ test('shell: applyFontSize stamps --dt-font-scale + data-t-fontsize per size + p
 test('settings: the typeface popover carries the S/M/L text-size control + applies via the shared store', async () => {
   installFetch();
   globalThis.window.localStorage.clear();
-  const ui = await import('../js/variants/T/ui.js');
+  const ui = await import('../js/ui.js');
   const host = globalThis.document.createElement('div');
   await settings.render(host, ctx, { section: 'appearance' });
   await tick();

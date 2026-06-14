@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -192,7 +192,7 @@ def generations_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
         db_path,
         "generations",
         ["epoch_id", "generation_id", "parent_generation_id", "promoted", "created_at"],
-        ["round_index"],
+        ["round_index", "elo", "elo_games"],
         "WHERE epoch_id = ? ORDER BY created_at, generation_id",
         (epoch_id,),
     )
@@ -451,6 +451,90 @@ def _modulating_from_hypothesis_json(raw: Any) -> tuple[str, ...]:
     return tuple(str(m) for m in mod)
 
 
+def _metric_ranges_for_epoch(db_path: Path, epoch_id: str) -> dict[str, float]:
+    """Observed per-metric value range across an epoch, for magnitude buckets.
+
+    Mirrors :func:`zicato.tournament.detail._metric_ranges` (the max absolute
+    per-run metric value the index has seen) but goes through this module's
+    missing-index-tolerant :func:`_select`, so a never-indexed workspace
+    yields an empty mapping rather than raising. The range normalises a
+    realised movement into a small/medium/large magnitude bucket when grading
+    a hypothesis's prediction accuracy; an empty mapping degrades the bucketer
+    to the raw absolute movement, which is fine for the advisory, banded
+    experiment-memory signal.
+    """
+    rows = _select(
+        db_path,
+        "SELECT mc.name AS name, mc.count AS count FROM metric_counts mc "
+        "JOIN runs r ON r.run_id = mc.run_id WHERE r.epoch_id = ?",
+        (epoch_id,),
+    )
+    ranges: dict[str, float] = {}
+    for row in rows:
+        name = str(row["name"] or "")
+        if not name:
+            continue
+        try:
+            value = abs(float(row["count"]))
+        except (TypeError, ValueError):
+            continue
+        ranges[name] = max(ranges.get(name, 0.0), value)
+    return ranges
+
+
+def _prediction_accuracy_for_row(row: sqlite3.Row, ranges: Mapping[str, float]) -> float | None:
+    """Score one settled experiment's hypothesis predictions against actuals.
+
+    The advisory hypothesis prediction-accuracy signal of
+    FUNCTIONALITY-RECOMMENDATIONS.md §4.2: decode the row's ``hypothesis_json``
+    (the proposer's ``expected_*`` movements) and ``outcome_json`` (the
+    realised movements) and grade them with the SAME match semantics as
+    :func:`zicato.tournament.detail.hypothesis_ledger`, via the shared
+    :func:`~zicato.tournament.detail.grade_hypothesis_predictions` core.
+
+    Returns ``matches / predictions`` in ``[0, 1]``, or ``None`` when the
+    experiment made no graded predictions or its JSON columns are absent /
+    malformed. Best-effort: any decode failure degrades to ``None`` (never
+    raises) so a single bad row can't break the digest. This is DIAGNOSTIC
+    ONLY — it never gates promotion; the reader folds it into the
+    experiment-memory entry as advisory calibration.
+    """
+    # Lazy import: the index reader stays independent of the (heavier)
+    # tournament-detail analytics module unless an actual grade is needed.
+    from zicato.tournament.detail import grade_hypothesis_predictions  # noqa: PLC0415
+
+    hypothesis_json = _loads_json_obj(_row_value(row, "hypothesis_json"))
+    outcome_json = _loads_json_obj(_row_value(row, "outcome_json"))
+    if hypothesis_json is None or outcome_json is None:
+        return None
+    try:
+        matches, predictions = grade_hypothesis_predictions(hypothesis_json, outcome_json, ranges)
+    except Exception:  # noqa: BLE001 — advisory diagnostic, never fatal
+        return None
+    if predictions <= 0:
+        return None
+    return matches / predictions
+
+
+def _loads_json_obj(raw: Any) -> dict[str, Any] | None:
+    """Decode a JSON-object column to a dict; ``None`` on any failure."""
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        decoded = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    return decoded if isinstance(decoded, dict) else None
+
+
+def _row_value(row: sqlite3.Row, key: str) -> Any:
+    """Best-effort ``row[key]`` that tolerates a column the SELECT omitted."""
+    try:
+        return row[key]
+    except (IndexError, KeyError):
+        return None
+
+
 def prior_experiments_for_epoch(
     db_path: Path,
     epoch_id: str,
@@ -488,6 +572,12 @@ def prior_experiments_for_epoch(
 
     rows = experiments_for_epoch(db_path, epoch_id)
 
+    # Hypothesis prediction-accuracy (FUNCTIONALITY-RECOMMENDATIONS.md §4.2):
+    # the magnitude buckets need the epoch's per-metric value ranges. Computed
+    # ONCE here (best-effort — an empty mapping just degrades the bucketer to
+    # the raw absolute movement). DIAGNOSTIC only; never gates promotion.
+    ranges = _metric_ranges_for_epoch(db_path, epoch_id)
+
     promoted: list[PriorExperiment] = []
     rejected: list[PriorExperiment] = []
     deferred: list[PriorExperiment] = []
@@ -508,6 +598,7 @@ def prior_experiments_for_epoch(
             rejection_reason=str(row["rejection_reason"] or ""),
             scalar_score_delta=None if delta is None else float(delta),
             same_contract=True,
+            prediction_accuracy=_prediction_accuracy_for_row(row, ranges),
         )
         if decision == "promoted":
             promoted.append(entry)
@@ -573,6 +664,32 @@ def tournaments_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
     )
 
 
+def elo_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
+    """Return each generation's folded Elo rating under ``epoch_id``.
+
+    The read side of the Elo analytics fold (``index/elo.py``;
+    FUNCTIONALITY-RECOMMENDATIONS.md §5): one row per generation carrying
+    ``generation_id``, ``parent_generation_id``, ``elo`` (its folded
+    rating across the lineage's settled match ledger), and ``elo_games``
+    (how many settled duels contributed to it), oldest first.
+
+    Elo is **read-only / for visibility** — it never gates promotion. The
+    ``elo`` / ``elo_games`` columns are v9 additions: a legacy index opened
+    read-only without the migration still loads each row with both fields
+    present-but-null (``elo IS NULL`` = rating not yet computed; run
+    ``zicato reindex`` to derive them). A never-indexed workspace yields
+    ``[]``.
+    """
+    return _select_optional_columns(
+        db_path,
+        "generations",
+        ["epoch_id", "generation_id", "parent_generation_id", "created_at"],
+        ["elo", "elo_games"],
+        "WHERE epoch_id = ? ORDER BY created_at, generation_id",
+        (epoch_id,),
+    )
+
+
 def index_counts(db_path: Path) -> dict[str, int]:
     """Return a per-table row-count summary of the index.
 
@@ -623,5 +740,6 @@ __all__ = [
     "experiments_for_epoch",
     "prior_experiments_for_epoch",
     "tournaments_for_epoch",
+    "elo_for_epoch",
     "index_counts",
 ]

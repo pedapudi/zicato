@@ -44,6 +44,7 @@ from zicato.core.types import (
 from zicato.core.workspace import (
     analysis_path,
     epoch_dir,
+    generations_dir,
     journal_path,
 )
 from zicato.epoch.lineage import load_lineage
@@ -122,7 +123,7 @@ def _collect_experiments(workspace_root: Path, epoch_id: str) -> list[dict[str, 
     fail to parse are skipped silently — they predate the experiment
     schema we want to summarise.
     """
-    gens_root = epoch_dir(workspace_root, epoch_id) / "generations"
+    gens_root = generations_dir(workspace_root, epoch_id)
     if not gens_root.exists():
         return []
     out: list[dict[str, Any]] = []

@@ -73,6 +73,34 @@ def atomic_write_json(path: Path, data: Any) -> None:
     atomic_write_text(path, text)
 
 
+def atomic_claim(src: Path, dst: Path) -> bool:
+    """Atomically move ``src`` onto ``dst``, claiming it exactly once.
+
+    Returns ``True`` if this caller moved the file, ``False`` if ``src``
+    was already gone (another caller claimed it, or it never existed).
+
+    This is the *claim-once* primitive behind
+    :class:`~zicato.runtime.channel.CommandQueue`. Unlike
+    :func:`atomic_write_text`, the source must already exist and the move
+    is the synchronisation point: :func:`os.rename` of a given source path
+    succeeds for **exactly one** racing caller — every other concurrent
+    caller observes the source already renamed away and gets a
+    :class:`FileNotFoundError`, which is reported here as ``False``. That
+    is what lets many consumers poll the same queue and have each pending
+    command fire for one and only one of them.
+
+    The parent directory of ``dst`` is created if needed. ``dst`` must be
+    on the same filesystem as ``src`` (it always is here — both live under
+    the same workspace) so the rename is atomic rather than a copy+unlink.
+    """
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.rename(src, dst)
+    except FileNotFoundError:
+        return False
+    return True
+
+
 def read_json(path: Path) -> Any | None:
     """Read JSON from ``path``; return ``None`` if the file is absent.
 
@@ -92,6 +120,7 @@ def read_json(path: Path) -> Any | None:
 
 
 __all__ = [
+    "atomic_claim",
     "atomic_write_json",
     "atomic_write_text",
     "read_json",

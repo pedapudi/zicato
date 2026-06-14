@@ -12,21 +12,24 @@ Coverage:
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
-from zicato.runtime.paths import active_run_path, heartbeat_path
+from zicato.runtime.paths import active_run_path, heartbeat_path, kill_request_path
 from zicato.runtime.state import (
     ActiveRun,
     ActiveTournament,
     ActiveTournamentEntry,
     Heartbeat,
     clear_active_tournament,
+    clear_worker_kill_request,
     drift_count_snapshot_from_profile,
     list_active_runs,
     loss_summary_from_profile,
     read_active_tournament,
     read_heartbeat,
     remove_active_run,
+    request_worker_kill,
     touch_active_run_progress,
     update_tournament_entry,
     update_tournament_partial_aggregate,
@@ -96,6 +99,44 @@ def test_heartbeat_defaults_round_trip(tmp_path: Path) -> None:
     assert got is not None
     assert got.epoch_id == ""
     assert got.round_index == 0
+    # seq defaults to 0 (the safe "no progress recorded" sentinel).
+    assert got.seq == 0
+
+
+def test_heartbeat_seq_round_trip(tmp_path: Path) -> None:
+    """The RUNTIME-V2 Phase 4 ``seq`` liveness cursor round-trips through disk."""
+    hb = Heartbeat(
+        pid=12345,
+        instance_id="default",
+        started_at="2026-05-14T10:00:00Z",
+        last_heartbeat="2026-05-14T10:00:05Z",
+        seq=7,
+    )
+    write_heartbeat(tmp_path, hb)
+    got = read_heartbeat(tmp_path)
+    assert got == hb
+    assert got is not None
+    assert got.seq == 7
+    # The on-disk JSON carries the key explicitly.
+    assert hb.to_dict()["seq"] == 7
+
+
+def test_heartbeat_seq_back_compat(tmp_path: Path) -> None:
+    """A heartbeat JSON written before ``seq`` existed loads with seq == 0."""
+    legacy = {
+        "pid": 7,
+        "instance_id": "old",
+        "started_at": "2026-05-14T00:00:00Z",
+        "last_heartbeat": "2026-05-14T00:00:00Z",
+        "epoch_id": "e0",
+        "generation_id": "v0",
+        "phase": "proposer",
+        "round_index": 0,
+        "round_started_at": "",
+    }
+    hb = Heartbeat.from_dict(legacy)
+    # Absent seq reads back as 0, not a KeyError — the safe back-compat default.
+    assert hb.seq == 0
 
 
 def test_heartbeat_atomic_write_leaves_no_tmp(tmp_path: Path) -> None:
@@ -193,6 +234,99 @@ def test_active_run_round_trip(tmp_path: Path) -> None:
     write_active_run(tmp_path, run)
     [back] = list_active_runs(tmp_path)
     assert back == run
+
+
+def test_active_run_defaults_pgid_and_snapshot_path_to_none() -> None:
+    """A run built without the containment fields leaves them ``None``."""
+    run = _sample_run("run_a")
+    assert run.pgid is None
+    assert run.snapshot_path is None
+
+
+def test_active_run_round_trips_pgid_and_snapshot_path(tmp_path: Path) -> None:
+    """When set, ``pgid`` / ``snapshot_path`` survive write→read unchanged."""
+    run = replace(
+        _sample_run("run_pg"),
+        pgid=4242,
+        snapshot_path="/tmp/ztw-snap-run_pg-abcd/snapshot",
+    )
+    write_active_run(tmp_path, run)
+    [back] = list_active_runs(tmp_path)
+    assert back == run
+    assert back.pgid == 4242
+    assert back.snapshot_path == "/tmp/ztw-snap-run_pg-abcd/snapshot"
+
+
+def test_active_run_from_dict_tolerates_absent_containment_fields() -> None:
+    """A legacy on-disk record (no ``pgid`` / ``snapshot_path`` keys) reads back.
+
+    Back-compat: a record written before these fields existed must still
+    deserialise, with the new fields defaulting to ``None``.
+    """
+    legacy = _sample_run("legacy").to_dict()
+    del legacy["pgid"]
+    del legacy["snapshot_path"]
+    back = ActiveRun.from_dict(legacy)
+    assert back.pgid is None
+    assert back.snapshot_path is None
+    assert back.run_id == "legacy"
+
+
+def test_active_run_to_dict_keeps_containment_keys_present() -> None:
+    """The serialised shape always carries the keys (value ``None`` when unset).
+
+    Additive: the keys are present so the supervisor reader can index them
+    unconditionally; an unset field is an explicit ``null``, not a missing
+    key.
+    """
+    payload = _sample_run("run_a").to_dict()
+    assert payload["pgid"] is None
+    assert payload["snapshot_path"] is None
+
+
+def test_touch_active_run_progress_preserves_containment_fields(tmp_path: Path) -> None:
+    """Bumping ``last_progress`` must not drop ``pgid`` / ``snapshot_path``."""
+    run = replace(
+        _sample_run("run_hb"),
+        pgid=7777,
+        snapshot_path="/tmp/ztw-snap-run_hb-zzzz/snapshot",
+    )
+    write_active_run(tmp_path, run)
+    touch_active_run_progress(tmp_path, "run_hb")
+    [back] = list_active_runs(tmp_path)
+    assert back.pgid == 7777
+    assert back.snapshot_path == "/tmp/ztw-snap-run_hb-zzzz/snapshot"
+
+
+# ---------------------------------------------------------------------------
+# Parent→supervisor kill-request markers
+# ---------------------------------------------------------------------------
+
+
+def test_request_worker_kill_writes_marker(tmp_path: Path) -> None:
+    marker = kill_request_path(tmp_path, "run_a")
+    assert not marker.exists()
+    request_worker_kill(tmp_path, "run_a")
+    assert marker.exists()
+    # The payload carries the run id and a request timestamp for the
+    # supervisor's audit log.
+    body = json.loads(marker.read_text(encoding="utf-8"))
+    assert body["run_id"] == "run_a"
+    assert body["requested_at"]
+
+
+def test_request_worker_kill_is_idempotent(tmp_path: Path) -> None:
+    request_worker_kill(tmp_path, "run_a")
+    request_worker_kill(tmp_path, "run_a")  # re-request just rewrites
+    assert kill_request_path(tmp_path, "run_a").exists()
+
+
+def test_clear_worker_kill_request_removes_marker_idempotently(tmp_path: Path) -> None:
+    request_worker_kill(tmp_path, "run_a")
+    clear_worker_kill_request(tmp_path, "run_a")
+    assert not kill_request_path(tmp_path, "run_a").exists()
+    # Clearing a vanished marker is a no-op, not an error.
+    clear_worker_kill_request(tmp_path, "run_a")
 
 
 # ---------------------------------------------------------------------------
