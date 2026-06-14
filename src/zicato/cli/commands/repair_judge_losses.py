@@ -24,10 +24,12 @@ landed had the original reducer run produced the field.
 from __future__ import annotations
 
 import json
+from collections import Counter
 from pathlib import Path
 
 import click
 
+from zicato.core import normalize_wire_drift_kind, normalize_wire_severity
 from zicato.core.types import DriftCount, ScoringWeights
 from zicato.core.workspace import (
     events_jsonl_path,
@@ -41,6 +43,59 @@ from zicato.telemetry.reducer import (
     write_loss_profile,
 )
 from zicato.workspace_loader import _scoring_weights_from_dict
+
+
+def _drift_counts_from_events(events_path: Path) -> Counter[tuple[str, str]]:
+    """Tally ``(drift_kind, severity)`` pairs from a run's events JSONL.
+
+    A best-effort plain-JSON walk: every line is parsed as a dict and any
+    ``DriftDetected`` payload contributes one to its ``(kind, severity)``
+    bucket. We deliberately do NOT route through goldfive's strict proto
+    replay here — the repair must work in a stripped-down environment, and
+    the reducer already owns the proto-strict path for scoring. The kind /
+    severity normalisation mirrors :mod:`zicato.telemetry.reducer` so this
+    repair agrees with the loss profile.
+
+    Goldfive's persistence sink serialises events with ``MessageToJson``,
+    which renders payload keys in camelCase (``driftDetected``); zicato's
+    own dict-fallback writer uses snake_case (``drift_detected``). We accept
+    either so the repair walks the JSONL regardless of which writer
+    produced it.
+
+    Returns an empty counter when the file is absent or unreadable. This
+    helper backs the per-judge repair's fallback for loss profiles whose
+    own ``drift_counts`` predate the metric surface; the analytical index
+    itself no longer re-tallies events (it is a pure projection of
+    ``loss.json`` — see :mod:`zicato.index.ingest`).
+    """
+    tally: Counter[tuple[str, str]] = Counter()
+    if not events_path.exists():
+        return tally
+    try:
+        text = events_path.read_text(encoding="utf-8")
+    except OSError:
+        return tally
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            evt = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(evt, dict):
+            continue
+        payload = evt.get("drift_detected")
+        if not isinstance(payload, dict):
+            payload = evt.get("driftDetected")
+        if not isinstance(payload, dict):
+            continue
+        kind = normalize_wire_drift_kind(payload.get("kind", ""))
+        sev = normalize_wire_severity(payload.get("severity", ""))
+        if kind is None or sev is None:
+            continue
+        tally[(kind, sev)] += 1
+    return tally
 
 
 def _load_scoring_for_epoch(workspace_root: Path, epoch_id: str) -> ScoringWeights:
@@ -130,10 +185,9 @@ def _rederive_per_judge_loss(
         # Fall back to re-tallying events.jsonl so a run whose loss
         # profile was written without drift_counts (an older reducer
         # crash, or a hand-rolled fixture) still surfaces per-judge
-        # attribution. We reuse the analytical index's tolerant event
-        # walker rather than the strict proto-replay path.
-        from zicato.index.ingest import _drift_counts_from_events  # noqa: PLC0415
-
+        # attribution. This repair owns its own tolerant event walker
+        # (the analytical index no longer re-tallies events — it is a
+        # pure projection of loss.json).
         epath = events_jsonl_path(workspace_root, epoch_id, generation_id, entry_id)
         tally = _drift_counts_from_events(epath)
         if tally:
