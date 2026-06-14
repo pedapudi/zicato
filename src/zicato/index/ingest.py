@@ -1037,14 +1037,20 @@ def _fold_elo(conn: sqlite3.Connection) -> None:
 def _rebuild_all(conn: sqlite3.Connection, workspace_root: Path) -> None:
     """Walk the whole workspace, populating every table.
 
-    Epochs come from :func:`zicato.epoch.lifecycle.list_epochs` (which
-    reads each ``config.json``). Generation lineage comes from
-    :func:`zicato.epoch.lineage.load_lineage`. Generation directories
+    Epoch enumeration + ordering come from the canonical workspace-read
+    layer (:func:`zicato.workspace.iter_epochs`), whose timestamp-first /
+    numeric-aware authority is the single definition of epoch order — the
+    same one the dashboard uses — so the index never disagrees with the
+    rest of the system about which epoch precedes which. Each epoch's
+    typed ``config.json`` is then read via
+    :func:`zicato.epoch.lifecycle.load_epoch`. Generation lineage comes
+    from :func:`zicato.epoch.lineage.load_lineage`. Generation directories
     and run directories are additionally walked so a generation / run
     whose telemetry landed before lineage was updated is still indexed.
     """
-    from zicato.epoch.lifecycle import list_epochs  # noqa: PLC0415
+    from zicato.epoch.lifecycle import load_epoch  # noqa: PLC0415
     from zicato.epoch.lineage import load_lineage  # noqa: PLC0415
+    from zicato.workspace import WorkspaceLayout, iter_epochs  # noqa: PLC0415
 
     lineage = load_lineage(workspace_root)
     lineage_by_epoch: dict[str, dict[str, Any]] = {}
@@ -1053,12 +1059,23 @@ def _rebuild_all(conn: sqlite3.Connection, workspace_root: Path) -> None:
         if isinstance(eid, str):
             lineage_by_epoch[eid] = entry
 
-    epoch_configs = list_epochs(workspace_root)
-    # Index every epoch that has a config.json, plus any epoch that
-    # appears only in lineage.json (a thin auto-created lineage entry).
+    # Enumerate the ``epochs/`` directory through the canonical layer so the
+    # walk order is the workspace's one timestamp-first authority. Each
+    # directory-bearing epoch with a readable ``config.json`` is indexed
+    # here; a directory whose config is missing / unreadable is left to the
+    # lineage-only pass below (it is a thin auto-created entry), preserving
+    # the exact set of epochs the prior ``list_epochs``-driven walk indexed.
+    layout = WorkspaceLayout.from_root(workspace_root)
     seen_epochs: set[str] = set()
-    for cfg in epoch_configs:
-        seen_epochs.add(cfg.id)
+    for epoch in iter_epochs(layout):
+        try:
+            cfg = load_epoch(workspace_root, epoch.id)
+        except (OSError, json.JSONDecodeError, KeyError, TypeError):
+            # No readable config.json — defer to the lineage-only pass so a
+            # thin epoch still gets a row (matching the prior behaviour, where
+            # ``list_epochs`` skipped unreadable configs the same way).
+            continue
+        seen_epochs.add(epoch.id)
         _upsert_epoch(
             conn,
             epoch_id=cfg.id,
