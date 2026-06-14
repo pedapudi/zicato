@@ -47,6 +47,10 @@ ORDER_ENFORCED = frozenset(
         "epochs_summary",
         "workspace_view",
         "lineage_view",
+        # Migrated off name order onto the single ordering authority: the
+        # events_index enumerations (build_meta_loop_ledger :705 +
+        # build_contract_diff :579) now order by canonical timestamp-first.
+        "meta_loop_ledger",
     }
 )
 

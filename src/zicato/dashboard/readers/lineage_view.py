@@ -7,11 +7,12 @@ from typing import Any
 
 from zicato.dashboard.readers.paths import (
     WorkspacePaths,
-    _epoch_created_at,
     _iso,
     _natural_key,
     _read_json_value,
+    layout_of,
 )
+from zicato.workspace import iter_epochs
 
 # ---------------------------------------------------------------------------
 # Lineage view (directory-derived)
@@ -63,15 +64,16 @@ def build_lineage_view(paths: WorkspacePaths) -> dict[str, Any]:
 
     generations: list[dict[str, Any]] = []
     epoch_created: dict[str, str] = {}
-    if paths.epochs.is_dir():
-        for epoch_dir in sorted(paths.epochs.iterdir(), key=lambda p: _natural_key(p.name)):
-            if not epoch_dir.is_dir():
-                continue
-            epoch_id = epoch_dir.name
-            epoch_created[epoch_id] = _epoch_created_at(epoch_dir)
-            gens_dir = epoch_dir / "generations"
-            if not gens_dir.is_dir():
-                continue
+    # Enumerate epochs through the single ordering authority (canonical
+    # timestamp-first). The node list is re-sorted by its own key below, so
+    # this enumeration order is not load-bearing for the OUTPUT — but routing
+    # it through ``iter_epochs`` keeps the workspace walk in one place and
+    # reuses the cached ``created_at`` each typed ``Epoch`` already carries.
+    for epoch in iter_epochs(layout_of(paths)):
+        epoch_id = epoch.id
+        epoch_created[epoch_id] = epoch.created_at
+        gens_dir = epoch.directory / "generations"
+        if gens_dir.is_dir():
             for gen_dir in sorted(gens_dir.iterdir(), key=lambda p: _natural_key(p.name)):
                 if not gen_dir.is_dir():
                     continue

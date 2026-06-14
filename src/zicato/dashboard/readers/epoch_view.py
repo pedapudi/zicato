@@ -12,13 +12,14 @@ from zicato.dashboard.readers.lineage_view import (
 )
 from zicato.dashboard.readers.paths import (
     WorkspacePaths,
-    _epoch_sort_key,
     _is_finite,
     _natural_key,
     _preview,
     _read_json_value,
     _resolve_epoch_id,
+    layout_of,
 )
+from zicato.workspace import iter_epochs
 
 # ---------------------------------------------------------------------------
 # Epoch view
@@ -210,19 +211,15 @@ def build_epochs_summary(paths: WorkspacePaths) -> list[dict[str, Any]]:
 
     ``goal`` is a one-line summary distilled from that epoch's proposer
     brief (its ``## Goal`` section), or ``None`` when the brief is
-    absent or carries no goal. Epochs are listed in directory-name order
-    so the Overview's epochs table can annotate each row with what the
-    epoch is trying to accomplish without a per-epoch ``/api/epoch``
-    fetch.
+    absent or carries no goal. Epochs are listed in the canonical
+    timestamp-first order (the single ordering authority) so the Overview's
+    epochs table can annotate each row with what the epoch is trying to
+    accomplish without a per-epoch ``/api/epoch`` fetch.
     """
     out: list[dict[str, Any]] = []
-    if not paths.epochs.is_dir():
-        return out
-    for epoch_dir in sorted(paths.epochs.iterdir(), key=_epoch_sort_key):
-        if not epoch_dir.is_dir():
-            continue
-        goal = _distill_brief_goal(_read_epoch_brief(epoch_dir))
-        out.append({"epoch_id": epoch_dir.name, "goal": goal})
+    for epoch in iter_epochs(layout_of(paths)):
+        goal = _distill_brief_goal(_read_epoch_brief(epoch.directory))
+        out.append({"epoch_id": epoch.id, "goal": goal})
     return out
 
 

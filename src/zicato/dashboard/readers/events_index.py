@@ -28,6 +28,7 @@ from zicato.dashboard.readers.paths import (
     _is_finite,
     _natural_key,
     _read_json_value,
+    list_epoch_ids,
     read_current_epoch,
 )
 
@@ -572,15 +573,16 @@ def build_contract_diff(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
     """
     cur = _read_contract_components(paths, epoch_id)
 
-    # Resolve predecessor: epoch directory immediately before ``epoch_id``
-    # in sort order.
+    # Resolve predecessor: the epoch immediately before ``epoch_id`` in the
+    # CANONICAL (timestamp-first) order — the same single authority every
+    # epoch-list view orders by, so the contract diff attributes against the
+    # true chronological predecessor rather than the lexically-prior id.
     predecessor: str | None = None
-    if paths.epochs.is_dir():
-        ids = sorted((d.name for d in paths.epochs.iterdir() if d.is_dir()), key=_natural_key)
-        if epoch_id in ids:
-            idx = ids.index(epoch_id)
-            if idx > 0:
-                predecessor = ids[idx - 1]
+    ids = list_epoch_ids(paths)
+    if epoch_id in ids:
+        idx = ids.index(epoch_id)
+        if idx > 0:
+            predecessor = ids[idx - 1]
 
     prev: dict[str, str] = {}
     if predecessor is not None:
@@ -660,7 +662,7 @@ def _epoch_structure(paths: WorkspacePaths, epoch_id: str) -> str:
 def build_meta_loop_ledger(paths: WorkspacePaths) -> dict[str, Any]:
     """The cross-epoch COMPOSED META-LOOP LEDGER matrix (study opt 7).
 
-    One ordered row per epoch (directory / lineage order) carrying the
+    One ordered row per epoch (canonical timestamp-first order) carrying the
     three braided signals the composed ledger renders:
 
     * ``floor``            — the held loss FLOOR: the lowest finite
@@ -702,7 +704,12 @@ def build_meta_loop_ledger(paths: WorkspacePaths) -> dict[str, Any]:
     if not paths.epochs.is_dir():
         return {"current_epoch_id": current, "epochs": rows}
 
-    epoch_ids = sorted((d.name for d in paths.epochs.iterdir() if d.is_dir()), key=_natural_key)
+    # CANONICAL (timestamp-first) order — the single epoch-ordering authority.
+    # The ledger is surfaced as ``build_workspace_view``'s ``ledger`` field
+    # alongside its timestamp-ordered ``epochs`` rows, so the two MUST agree;
+    # and the per-row predecessor change-map is only meaningful against the
+    # true chronological predecessor.
+    epoch_ids = list_epoch_ids(paths)
 
     conn: sqlite3.Connection | None
     try:

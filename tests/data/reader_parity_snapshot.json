@@ -72,56 +72,19 @@
     "trend_sign": 0
   },
   "contract_diff::e0": {
-    "any_changed": false,
-    "components": [
-      {
-        "changed": false,
-        "current_hash": "board-2",
-        "name": "board",
-        "previous_hash": null
-      },
-      {
-        "changed": false,
-        "current_hash": "brief-e0",
-        "name": "brief",
-        "previous_hash": null
-      },
-      {
-        "changed": false,
-        "current_hash": "scoring-const",
-        "name": "scoring",
-        "previous_hash": null
-      },
-      {
-        "changed": false,
-        "current_hash": "entry-const",
-        "name": "entrypoint",
-        "previous_hash": null
-      },
-      {
-        "changed": false,
-        "current_hash": "trees-const",
-        "name": "mutable_trees",
-        "previous_hash": null
-      }
-    ],
-    "epoch_id": "e0",
-    "predecessor_epoch_id": null
-  },
-  "contract_diff::e1": {
     "any_changed": true,
     "components": [
       {
         "changed": true,
-        "current_hash": "board-0",
+        "current_hash": "board-2",
         "name": "board",
-        "previous_hash": "board-2"
+        "previous_hash": "board-1"
       },
       {
         "changed": true,
-        "current_hash": "brief-e1",
+        "current_hash": "brief-e0",
         "name": "brief",
-        "previous_hash": "brief-e0"
+        "previous_hash": "brief-e2"
       },
       {
         "changed": false,
@@ -142,8 +105,45 @@
         "previous_hash": "trees-const"
       }
     ],
+    "epoch_id": "e0",
+    "predecessor_epoch_id": "e2"
+  },
+  "contract_diff::e1": {
+    "any_changed": false,
+    "components": [
+      {
+        "changed": false,
+        "current_hash": "board-0",
+        "name": "board",
+        "previous_hash": null
+      },
+      {
+        "changed": false,
+        "current_hash": "brief-e1",
+        "name": "brief",
+        "previous_hash": null
+      },
+      {
+        "changed": false,
+        "current_hash": "scoring-const",
+        "name": "scoring",
+        "previous_hash": null
+      },
+      {
+        "changed": false,
+        "current_hash": "entry-const",
+        "name": "entrypoint",
+        "previous_hash": null
+      },
+      {
+        "changed": false,
+        "current_hash": "trees-const",
+        "name": "mutable_trees",
+        "previous_hash": null
+      }
+    ],
     "epoch_id": "e1",
-    "predecessor_epoch_id": "e0"
+    "predecessor_epoch_id": null
   },
   "contract_diff::e2": {
     "any_changed": true,
@@ -955,30 +955,6 @@
           "structure": false
         },
         "changed_list": [],
-        "closed": false,
-        "epoch_id": "e0",
-        "floor": null,
-        "generation_count": 1,
-        "open": true,
-        "soft": false,
-        "structure": "gauntlet"
-      },
-      {
-        "champion_gen": null,
-        "champion_index": null,
-        "changed_components": {
-          "board": true,
-          "brief": true,
-          "entrypoint": false,
-          "mutable_trees": false,
-          "proposer": false,
-          "scoring": false,
-          "structure": false
-        },
-        "changed_list": [
-          "board",
-          "brief"
-        ],
         "closed": true,
         "epoch_id": "e1",
         "floor": null,
@@ -1008,6 +984,30 @@
         "floor": null,
         "generation_count": 0,
         "open": false,
+        "soft": false,
+        "structure": "gauntlet"
+      },
+      {
+        "champion_gen": null,
+        "champion_index": null,
+        "changed_components": {
+          "board": true,
+          "brief": true,
+          "entrypoint": false,
+          "mutable_trees": false,
+          "proposer": false,
+          "scoring": false,
+          "structure": false
+        },
+        "changed_list": [
+          "board",
+          "brief"
+        ],
+        "closed": false,
+        "epoch_id": "e0",
+        "floor": null,
+        "generation_count": 1,
+        "open": true,
         "soft": false,
         "structure": "gauntlet"
       }
@@ -1311,30 +1311,6 @@
           "structure": false
         },
         "changed_list": [],
-        "closed": false,
-        "epoch_id": "e0",
-        "floor": null,
-        "generation_count": 1,
-        "open": true,
-        "soft": false,
-        "structure": "gauntlet"
-      },
-      {
-        "champion_gen": null,
-        "champion_index": null,
-        "changed_components": {
-          "board": true,
-          "brief": true,
-          "entrypoint": false,
-          "mutable_trees": false,
-          "proposer": false,
-          "scoring": false,
-          "structure": false
-        },
-        "changed_list": [
-          "board",
-          "brief"
-        ],
         "closed": true,
         "epoch_id": "e1",
         "floor": null,
@@ -1364,6 +1340,30 @@
         "floor": null,
         "generation_count": 0,
         "open": false,
+        "soft": false,
+        "structure": "gauntlet"
+      },
+      {
+        "champion_gen": null,
+        "champion_index": null,
+        "changed_components": {
+          "board": true,
+          "brief": true,
+          "entrypoint": false,
+          "mutable_trees": false,
+          "proposer": false,
+          "scoring": false,
+          "structure": false
+        },
+        "changed_list": [
+          "board",
+          "brief"
+        ],
+        "closed": false,
+        "epoch_id": "e0",
+        "floor": null,
+        "generation_count": 1,
+        "open": true,
         "soft": false,
         "structure": "gauntlet"
       }
