@@ -415,7 +415,10 @@ pub fn write_quarantine_finding(paths: &WorkspacePaths, att: &Attestation) {
         }
     };
     let tmp = path.with_extension("json.tmp");
-    if std::fs::write(&tmp, &bytes).and_then(|_| std::fs::rename(&tmp, &path)).is_err() {
+    if std::fs::write(&tmp, &bytes)
+        .and_then(|_| std::fs::rename(&tmp, &path))
+        .is_err()
+    {
         warn!(?path, "failed to write quarantine finding");
     }
 }
@@ -475,7 +478,14 @@ mod tests {
         write(&parent, "support/lib.py", b"shared\n");
         write(&child, "agent/main.py", b"x = 2\n");
         write(&child, "support/lib.py", b"TAMPERED\n"); // out-of-bounds change
-        let att = attest("e1", "v1", "v0", &parent, &child, &["/reg/agent".to_string()]);
+        let att = attest(
+            "e1",
+            "v1",
+            "v0",
+            &parent,
+            &child,
+            &["/reg/agent".to_string()],
+        );
         assert!(!att.contained);
         assert_eq!(att.violations.len(), 1);
         assert_eq!(att.violations[0].path, "support/lib.py");
@@ -491,7 +501,14 @@ mod tests {
         write(&parent, "support/old.py", b"old\n"); // deleted out of bounds
         write(&child, "agent/main.py", b"x = 1\n");
         write(&child, "support/new.py", b"new\n"); // added out of bounds
-        let att = attest("e1", "v1", "v0", &parent, &child, &["/reg/agent".to_string()]);
+        let att = attest(
+            "e1",
+            "v1",
+            "v0",
+            &parent,
+            &child,
+            &["/reg/agent".to_string()],
+        );
         assert!(!att.contained);
         let kinds: BTreeMap<&str, DiffKind> = att
             .violations
@@ -511,7 +528,14 @@ mod tests {
         write(&parent, "support/b.py", b"b\n");
         write(&child, "agent/a.py", b"a\n");
         write(&child, "support/b.py", b"b\n");
-        let att = attest("e1", "v1", "v0", &parent, &child, &["/reg/agent".to_string()]);
+        let att = attest(
+            "e1",
+            "v1",
+            "v0",
+            &parent,
+            &child,
+            &["/reg/agent".to_string()],
+        );
         assert!(att.contained);
     }
 
@@ -536,7 +560,14 @@ mod tests {
         let parent = tmp.path().join("does-not-exist");
         let child = tmp.path().join("c");
         write(&child, "agent/a.py", b"a\n");
-        let att = attest("e1", "v1", "v0", &parent, &child, &["/reg/agent".to_string()]);
+        let att = attest(
+            "e1",
+            "v1",
+            "v0",
+            &parent,
+            &child,
+            &["/reg/agent".to_string()],
+        );
         assert!(att.contained, "a skip is not a violation");
         assert!(att.violations.is_empty());
         assert!(att.skipped_reason.is_some());
@@ -551,7 +582,14 @@ mod tests {
         let child = tmp.path().join("c");
         write(&parent, "vendor/deep/nested/x.py", b"v1\n");
         write(&child, "vendor/deep/nested/x.py", b"v2\n");
-        let att = attest("e1", "v1", "v0", &parent, &child, &["/reg/agent".to_string()]);
+        let att = attest(
+            "e1",
+            "v1",
+            "v0",
+            &parent,
+            &child,
+            &["/reg/agent".to_string()],
+        );
         assert!(!att.contained);
         assert_eq!(att.violations[0].path, "vendor/deep/nested/x.py");
     }
@@ -576,7 +614,12 @@ mod tests {
         (tmp, p)
     }
 
-    fn write_gen_snapshot(p: &WorkspacePaths, gen: &str, parent: Option<&str>, files: &[(&str, &[u8])]) {
+    fn write_gen_snapshot(
+        p: &WorkspacePaths,
+        gen: &str,
+        parent: Option<&str>,
+        files: &[(&str, &[u8])],
+    ) {
         let gen_dir = p.epochs.join("e1").join("generations").join(gen);
         std::fs::create_dir_all(&gen_dir).unwrap();
         if let Some(parent) = parent {
@@ -607,7 +650,10 @@ mod tests {
             &p,
             "v1",
             Some("v0"),
-            &[("agent/main.py", b"x=2\n"), ("support/lib.py", b"TAMPERED\n")],
+            &[
+                ("agent/main.py", b"x=2\n"),
+                ("support/lib.py", b"TAMPERED\n"),
+            ],
         );
         let view = scan_workspace(&p);
         assert!(view.scanned);
@@ -634,7 +680,10 @@ mod tests {
         );
         let view = scan_workspace(&p);
         assert_eq!(view.pairs_scanned, 1);
-        assert!(view.quarantined.is_empty(), "in-bounds child must not quarantine");
+        assert!(
+            view.quarantined.is_empty(),
+            "in-bounds child must not quarantine"
+        );
     }
 
     #[test]
@@ -663,9 +712,7 @@ mod tests {
             skipped_reason: None,
         };
         write_quarantine_finding(&p, &att);
-        let finding = p
-            .epoch_health_dir("e1")
-            .join("diff_containment_v1.json");
+        let finding = p.epoch_health_dir("e1").join("diff_containment_v1.json");
         assert!(finding.exists(), "quarantine finding must be written");
         let body: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&finding).unwrap()).unwrap();

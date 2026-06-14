@@ -272,8 +272,7 @@ async fn main() -> std::process::ExitCode {
     }
 
     // Divergence-audit findings store (INTEGRITY NOTARY record #4).
-    let divergence_findings =
-        Arc::new(zicato_supervisor::divergence::DivergenceFindings::new());
+    let divergence_findings = Arc::new(zicato_supervisor::divergence::DivergenceFindings::new());
     if cli.divergence_audit {
         info!("index-vs-canonical divergence auditor enabled (read-only)");
     }

@@ -38,8 +38,7 @@ use std::sync::Mutex;
 use tracing::warn;
 
 /// The all-zero digest the genesis record links back to.
-pub const GENESIS_PREV: &str =
-    "0000000000000000000000000000000000000000000000000000000000000000";
+pub const GENESIS_PREV: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
 /// The append-only ledger file's basename inside the ledger directory.
 pub const LEDGER_FILE: &str = "audit_ledger.jsonl";
@@ -429,7 +428,9 @@ impl TransitionObserver {
         if self.recorded_contract.get(epoch_id).map(String::as_str) == Some(contract_hash) {
             return false;
         }
-        let previous = self.recorded_contract.insert(epoch_id.to_string(), contract_hash.to_string());
+        let previous = self
+            .recorded_contract
+            .insert(epoch_id.to_string(), contract_hash.to_string());
         ledger.append(
             RecordKind::ContractChange,
             serde_json::json!({
@@ -481,7 +482,9 @@ mod tests {
     fn chain_links_each_record_to_the_prior_digest() {
         let (_t, dir) = ledger_dir();
         let led = AuditLedger::open(&dir);
-        let d0 = led.append(RecordKind::SupervisorStart, serde_json::json!({})).unwrap();
+        let d0 = led
+            .append(RecordKind::SupervisorStart, serde_json::json!({}))
+            .unwrap();
         let d1 = led
             .append(RecordKind::WatchdogAction, serde_json::json!({"pid": 7}))
             .unwrap();
@@ -520,7 +523,10 @@ mod tests {
         let led = AuditLedger::open(&dir);
         led.append(RecordKind::SupervisorStart, serde_json::json!({}));
         led.append(RecordKind::WatchdogAction, serde_json::json!({"pid": 1}));
-        led.append(RecordKind::DecisionObserved, serde_json::json!({"d": "promote"}));
+        led.append(
+            RecordKind::DecisionObserved,
+            serde_json::json!({"d": "promote"}),
+        );
         // Remove the middle record: seq jumps 0 -> 2 and the prev link breaks.
         let text = std::fs::read_to_string(led.path()).unwrap();
         let lines: Vec<&str> = text.lines().collect();
@@ -592,7 +598,10 @@ mod tests {
         // A fresh open (simulating a supervisor restart) must continue the
         // chain at the next seq, linking to the persisted tail digest.
         let led2 = AuditLedger::open(&dir);
-        led2.append(RecordKind::DecisionObserved, serde_json::json!({"d": "reject"}));
+        led2.append(
+            RecordKind::DecisionObserved,
+            serde_json::json!({"d": "reject"}),
+        );
         let report = led2.verify();
         assert!(report.intact, "reopened chain must stay intact: {report:?}");
         assert_eq!(report.records, 3);

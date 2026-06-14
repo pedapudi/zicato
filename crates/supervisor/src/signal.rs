@@ -444,6 +444,9 @@ mod tests {
         );
         let _ = leader.wait();
         // The leader pid is gone.
-        assert!(!is_alive(leader_pid), "leader must be dead after group kill");
+        assert!(
+            !is_alive(leader_pid),
+            "leader must be dead after group kill"
+        );
     }
 }

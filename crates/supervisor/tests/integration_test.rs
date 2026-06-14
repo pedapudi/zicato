@@ -38,9 +38,7 @@ fn serve_opts(read_only: bool) -> server::ServeOptions {
         promotion_gate_findings: Arc::new(
             zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
         ),
-        divergence_findings: Arc::new(
-            zicato_supervisor::divergence::DivergenceFindings::new(),
-        ),
+        divergence_findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
     }
 }
 
@@ -1009,15 +1007,11 @@ async fn watchdog_sigterms_run_past_its_deadline() {
             },
             watchdog::PromotionGateConfig {
                 enabled: false,
-                findings: Arc::new(
-                    zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
-                ),
+                findings: Arc::new(zicato_supervisor::promotion_gate::PromotionGateFindings::new()),
             },
             watchdog::DivergenceConfig {
                 enabled: false,
-                findings: Arc::new(
-                    zicato_supervisor::divergence::DivergenceFindings::new(),
-                ),
+                findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
                 stuck_age_seconds: 3600,
             },
             loop_shutdown,
@@ -1070,15 +1064,11 @@ async fn watchdog_escalates_to_sigkill_when_run_ignores_sigterm() {
             },
             watchdog::PromotionGateConfig {
                 enabled: false,
-                findings: Arc::new(
-                    zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
-                ),
+                findings: Arc::new(zicato_supervisor::promotion_gate::PromotionGateFindings::new()),
             },
             watchdog::DivergenceConfig {
                 enabled: false,
-                findings: Arc::new(
-                    zicato_supervisor::divergence::DivergenceFindings::new(),
-                ),
+                findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
                 stuck_age_seconds: 3600,
             },
             loop_shutdown,
@@ -1119,15 +1109,11 @@ async fn watchdog_does_not_kill_run_when_deadline_disabled() {
             },
             watchdog::PromotionGateConfig {
                 enabled: false,
-                findings: Arc::new(
-                    zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
-                ),
+                findings: Arc::new(zicato_supervisor::promotion_gate::PromotionGateFindings::new()),
             },
             watchdog::DivergenceConfig {
                 enabled: false,
-                findings: Arc::new(
-                    zicato_supervisor::divergence::DivergenceFindings::new(),
-                ),
+                findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
                 stuck_age_seconds: 3600,
             },
             loop_shutdown,
@@ -1184,15 +1170,11 @@ async fn watchdog_never_signals_orchestrator_or_init_pids() {
             },
             watchdog::PromotionGateConfig {
                 enabled: false,
-                findings: Arc::new(
-                    zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
-                ),
+                findings: Arc::new(zicato_supervisor::promotion_gate::PromotionGateFindings::new()),
             },
             watchdog::DivergenceConfig {
                 enabled: false,
-                findings: Arc::new(
-                    zicato_supervisor::divergence::DivergenceFindings::new(),
-                ),
+                findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
                 stuck_age_seconds: 3600,
             },
             loop_shutdown,
@@ -1747,9 +1729,7 @@ async fn statusz_routes_reachable_with_no_dashboard() {
         promotion_gate_findings: Arc::new(
             zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
         ),
-        divergence_findings: Arc::new(
-            zicato_supervisor::divergence::DivergenceFindings::new(),
-        ),
+        divergence_findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
     };
     let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);
@@ -1838,9 +1818,7 @@ async fn statusz_surfaces_recorded_watchdog_actions() {
         promotion_gate_findings: Arc::new(
             zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
         ),
-        divergence_findings: Arc::new(
-            zicato_supervisor::divergence::DivergenceFindings::new(),
-        ),
+        divergence_findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
     };
     let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);
@@ -1927,9 +1905,7 @@ async fn audit_verify_reports_intact_chain_and_statusz_surfaces_it() {
         promotion_gate_findings: Arc::new(
             zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
         ),
-        divergence_findings: Arc::new(
-            zicato_supervisor::divergence::DivergenceFindings::new(),
-        ),
+        divergence_findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
     };
     let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);
@@ -1992,9 +1968,7 @@ async fn audit_verify_detects_a_tampered_chain() {
         promotion_gate_findings: Arc::new(
             zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
         ),
-        divergence_findings: Arc::new(
-            zicato_supervisor::divergence::DivergenceFindings::new(),
-        ),
+        divergence_findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
     };
     let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);
@@ -2044,11 +2018,7 @@ fn write_gen_snapshot(
     parent: Option<&str>,
     files: &[(&str, &[u8])],
 ) {
-    let gen_dir = paths
-        .epochs
-        .join(epoch)
-        .join("generations")
-        .join(gen);
+    let gen_dir = paths.epochs.join(epoch).join("generations").join(gen);
     std::fs::create_dir_all(&gen_dir).unwrap();
     if let Some(parent) = parent {
         std::fs::write(
@@ -2070,8 +2040,7 @@ async fn diff_containment_quarantines_an_out_of_bounds_child_end_to_end() {
     // Harness: the only mutable tree is "agent".
     std::fs::write(
         paths.workspace.join("config.json"),
-        serde_json::json!({"adk_entrypoint": "m:a", "mutable_trees": ["/reg/agent"]})
-            .to_string(),
+        serde_json::json!({"adk_entrypoint": "m:a", "mutable_trees": ["/reg/agent"]}).to_string(),
     )
     .unwrap();
     std::fs::write(paths.current_epoch_marker(), "e1").unwrap();
@@ -2088,12 +2057,14 @@ async fn diff_containment_quarantines_an_out_of_bounds_child_end_to_end() {
         "e1",
         "v1",
         Some("v0"),
-        &[("agent/main.py", b"x=2\n"), ("support/lib.py", b"TAMPERED\n")],
+        &[
+            ("agent/main.py", b"x=2\n"),
+            ("support/lib.py", b"TAMPERED\n"),
+        ],
     );
 
     // A shared findings store the loop fills and the server reads.
-    let findings =
-        Arc::new(zicato_supervisor::diff_containment::DiffContainmentFindings::new());
+    let findings = Arc::new(zicato_supervisor::diff_containment::DiffContainmentFindings::new());
 
     let (shutdown_tx, _) = broadcast::channel(4);
     let loop_paths = paths.clone();
@@ -2112,15 +2083,11 @@ async fn diff_containment_quarantines_an_out_of_bounds_child_end_to_end() {
             },
             watchdog::PromotionGateConfig {
                 enabled: false,
-                findings: Arc::new(
-                    zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
-                ),
+                findings: Arc::new(zicato_supervisor::promotion_gate::PromotionGateFindings::new()),
             },
             watchdog::DivergenceConfig {
                 enabled: false,
-                findings: Arc::new(
-                    zicato_supervisor::divergence::DivergenceFindings::new(),
-                ),
+                findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
                 stuck_age_seconds: 3600,
             },
             loop_shutdown,
@@ -2144,9 +2111,7 @@ async fn diff_containment_quarantines_an_out_of_bounds_child_end_to_end() {
         promotion_gate_findings: Arc::new(
             zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
         ),
-        divergence_findings: Arc::new(
-            zicato_supervisor::divergence::DivergenceFindings::new(),
-        ),
+        divergence_findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
     };
     let (handle, server_shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);
@@ -2163,7 +2128,11 @@ async fn diff_containment_quarantines_an_out_of_bounds_child_end_to_end() {
     let dc = &s["diff_containment"];
     assert_eq!(dc["scanned"], true);
     let quarantined = dc["quarantined"].as_array().unwrap();
-    assert_eq!(quarantined.len(), 1, "the out-of-bounds child is quarantined");
+    assert_eq!(
+        quarantined.len(),
+        1,
+        "the out-of-bounds child is quarantined"
+    );
     assert_eq!(quarantined[0]["generation_id"], "v1");
     assert_eq!(
         quarantined[0]["violations"][0]["path"], "support/lib.py",
@@ -2196,8 +2165,7 @@ async fn diff_containment_passes_an_in_bounds_child_end_to_end() {
     let (_t, paths) = make_workspace();
     std::fs::write(
         paths.workspace.join("config.json"),
-        serde_json::json!({"adk_entrypoint": "m:a", "mutable_trees": ["/reg/agent"]})
-            .to_string(),
+        serde_json::json!({"adk_entrypoint": "m:a", "mutable_trees": ["/reg/agent"]}).to_string(),
     )
     .unwrap();
     std::fs::write(paths.current_epoch_marker(), "e1").unwrap();
@@ -2217,8 +2185,7 @@ async fn diff_containment_passes_an_in_bounds_child_end_to_end() {
         &[("agent/main.py", b"x=2\n"), ("support/lib.py", b"shared\n")],
     );
 
-    let findings =
-        Arc::new(zicato_supervisor::diff_containment::DiffContainmentFindings::new());
+    let findings = Arc::new(zicato_supervisor::diff_containment::DiffContainmentFindings::new());
     let (shutdown_tx, _) = broadcast::channel(4);
     let loop_paths = paths.clone();
     let loop_shutdown = shutdown_tx.clone();
@@ -2236,15 +2203,11 @@ async fn diff_containment_passes_an_in_bounds_child_end_to_end() {
             },
             watchdog::PromotionGateConfig {
                 enabled: false,
-                findings: Arc::new(
-                    zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
-                ),
+                findings: Arc::new(zicato_supervisor::promotion_gate::PromotionGateFindings::new()),
             },
             watchdog::DivergenceConfig {
                 enabled: false,
-                findings: Arc::new(
-                    zicato_supervisor::divergence::DivergenceFindings::new(),
-                ),
+                findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
                 stuck_age_seconds: 3600,
             },
             loop_shutdown,
@@ -2275,8 +2238,7 @@ async fn promotion_gate_alarms_on_a_decision_that_contradicts_the_scores() {
     write_index_db(&paths);
     std::fs::write(paths.current_epoch_marker(), "2026-05-15_e0").unwrap();
 
-    let findings =
-        Arc::new(zicato_supervisor::promotion_gate::PromotionGateFindings::new());
+    let findings = Arc::new(zicato_supervisor::promotion_gate::PromotionGateFindings::new());
     let (shutdown_tx, _) = broadcast::channel(4);
     let loop_paths = paths.clone();
     let loop_shutdown = shutdown_tx.clone();
@@ -2300,9 +2262,7 @@ async fn promotion_gate_alarms_on_a_decision_that_contradicts_the_scores() {
             },
             watchdog::DivergenceConfig {
                 enabled: false,
-                findings: Arc::new(
-                    zicato_supervisor::divergence::DivergenceFindings::new(),
-                ),
+                findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
                 stuck_age_seconds: 3600,
             },
             loop_shutdown,
@@ -2324,9 +2284,7 @@ async fn promotion_gate_alarms_on_a_decision_that_contradicts_the_scores() {
             zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
         ),
         promotion_gate_findings: findings.clone(),
-        divergence_findings: Arc::new(
-            zicato_supervisor::divergence::DivergenceFindings::new(),
-        ),
+        divergence_findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
     };
     let (handle, server_shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);
@@ -2343,7 +2301,11 @@ async fn promotion_gate_alarms_on_a_decision_that_contradicts_the_scores() {
     let pg = &s["promotion_gate"];
     assert_eq!(pg["scanned"], true);
     let contradictions = pg["contradictions"].as_array().unwrap();
-    assert_eq!(contradictions.len(), 1, "the unsupported promotion is flagged");
+    assert_eq!(
+        contradictions.len(),
+        1,
+        "the unsupported promotion is flagged"
+    );
     assert_eq!(contradictions[0]["challenger_generation_id"], "v2");
     assert_eq!(contradictions[0]["champion_generation_id"], "v0");
 
@@ -2406,9 +2368,7 @@ async fn divergence_audit_flags_a_promoted_mismatch_end_to_end() {
             },
             watchdog::PromotionGateConfig {
                 enabled: false,
-                findings: Arc::new(
-                    zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
-                ),
+                findings: Arc::new(zicato_supervisor::promotion_gate::PromotionGateFindings::new()),
             },
             watchdog::DivergenceConfig {
                 enabled: true,

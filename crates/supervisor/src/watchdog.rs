@@ -227,8 +227,7 @@ fn run_divergence_audit(
     ledger: Option<&Arc<AuditLedger>>,
     previously_seen: &mut HashSet<(String, Option<String>)>,
 ) {
-    let view =
-        crate::divergence::audit(paths, Utc::now(), divergence.stuck_age_seconds);
+    let view = crate::divergence::audit(paths, Utc::now(), divergence.stuck_age_seconds);
 
     let mut current: HashSet<(String, Option<String>)> = HashSet::new();
     for f in &view.findings {
@@ -937,9 +936,7 @@ async fn reap_dead_orchestrator_runs(
 
         // 3. Finalize the state file the dead orchestrator's reaper can no
         //    longer remove. Best-effort: a vanished file is not an error.
-        let run_file = paths
-            .active_runs_dir()
-            .join(format!("{}.json", run.run_id));
+        let run_file = paths.active_runs_dir().join(format!("{}.json", run.run_id));
         if let Err(e) = std::fs::remove_file(&run_file) {
             if e.kind() != std::io::ErrorKind::NotFound {
                 warn!(?run_file, error=%e, "failed to finalize reaped run state file");
@@ -1544,7 +1541,13 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            decide_run_deadline(&run, now, Duration::from_secs(5), Duration::from_secs(6 * 3600), &no_protected()),
+            decide_run_deadline(
+                &run,
+                now,
+                Duration::from_secs(5),
+                Duration::from_secs(6 * 3600),
+                &no_protected()
+            ),
             RunDeadlineAction::None
         );
     }
@@ -1562,7 +1565,13 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            decide_run_deadline(&run, now, Duration::from_secs(5), Duration::from_secs(6 * 3600), &no_protected()),
+            decide_run_deadline(
+                &run,
+                now,
+                Duration::from_secs(5),
+                Duration::from_secs(6 * 3600),
+                &no_protected()
+            ),
             RunDeadlineAction::Sigterm { pid }
         );
     }
@@ -1580,7 +1589,13 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            decide_run_deadline(&run, now, Duration::from_secs(5), Duration::from_secs(6 * 3600), &no_protected()),
+            decide_run_deadline(
+                &run,
+                now,
+                Duration::from_secs(5),
+                Duration::from_secs(6 * 3600),
+                &no_protected()
+            ),
             RunDeadlineAction::Sigkill { pid }
         );
     }
@@ -1595,7 +1610,13 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            decide_run_deadline(&run, now, Duration::from_secs(5), Duration::from_secs(6 * 3600), &no_protected()),
+            decide_run_deadline(
+                &run,
+                now,
+                Duration::from_secs(5),
+                Duration::from_secs(6 * 3600),
+                &no_protected()
+            ),
             RunDeadlineAction::None
         );
     }
@@ -1611,7 +1632,13 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            decide_run_deadline(&run, now, Duration::from_secs(5), Duration::from_secs(6 * 3600), &no_protected()),
+            decide_run_deadline(
+                &run,
+                now,
+                Duration::from_secs(5),
+                Duration::from_secs(6 * 3600),
+                &no_protected()
+            ),
             RunDeadlineAction::None
         );
     }
@@ -1627,7 +1654,13 @@ mod tests {
                 ..Default::default()
             };
             assert_eq!(
-                decide_run_deadline(&run, now, Duration::from_secs(5), Duration::from_secs(6 * 3600), &no_protected()),
+                decide_run_deadline(
+                    &run,
+                    now,
+                    Duration::from_secs(5),
+                    Duration::from_secs(6 * 3600),
+                    &no_protected()
+                ),
                 RunDeadlineAction::None,
                 "must never signal pid {bad}",
             );
@@ -1651,7 +1684,13 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            decide_run_deadline(&run, now, Duration::from_secs(5), Duration::from_secs(6 * 3600), &protected),
+            decide_run_deadline(
+                &run,
+                now,
+                Duration::from_secs(5),
+                Duration::from_secs(6 * 3600),
+                &protected
+            ),
             RunDeadlineAction::None
         );
     }
@@ -1676,7 +1715,13 @@ mod tests {
                 ..Default::default()
             };
             assert_eq!(
-                decide_run_deadline(&run, now, Duration::from_secs(5), Duration::from_secs(6 * 3600), &no_protected()),
+                decide_run_deadline(
+                    &run,
+                    now,
+                    Duration::from_secs(5),
+                    Duration::from_secs(6 * 3600),
+                    &no_protected()
+                ),
                 RunDeadlineAction::None,
                 "must not signal a recycled pid (start-time mismatch)",
             );
@@ -1698,7 +1743,13 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            decide_run_deadline(&run, now, Duration::from_secs(5), Duration::from_secs(6 * 3600), &no_protected()),
+            decide_run_deadline(
+                &run,
+                now,
+                Duration::from_secs(5),
+                Duration::from_secs(6 * 3600),
+                &no_protected()
+            ),
             RunDeadlineAction::Sigterm { pid },
         );
     }
@@ -1716,7 +1767,13 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            decide_run_deadline(&run, now, Duration::from_secs(5), Duration::from_secs(6 * 3600), &no_protected()),
+            decide_run_deadline(
+                &run,
+                now,
+                Duration::from_secs(5),
+                Duration::from_secs(6 * 3600),
+                &no_protected()
+            ),
             RunDeadlineAction::None
         );
     }
@@ -1731,7 +1788,13 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            decide_run_deadline(&run, now, Duration::from_secs(5), Duration::from_secs(6 * 3600), &no_protected()),
+            decide_run_deadline(
+                &run,
+                now,
+                Duration::from_secs(5),
+                Duration::from_secs(6 * 3600),
+                &no_protected()
+            ),
             RunDeadlineAction::None
         );
     }
@@ -2256,10 +2319,7 @@ mod tests {
         // still answers kill(pid, 0) (the real watchdog never parents these
         // workers, so this is a test artifact only).
         sleeper.reap();
-        assert!(
-            !signal::is_alive(pid),
-            "the orphaned worker must be killed",
-        );
+        assert!(!signal::is_alive(pid), "the orphaned worker must be killed",);
         // Snapshot tree GC'd.
         assert!(!snap_root.exists(), "the ztw-snap-* root must be reaped");
         // State file finalized.
@@ -2356,7 +2416,10 @@ mod tests {
         )
         .await;
 
-        assert!(!run_file.exists(), "state finalized even with no worker/snapshot");
+        assert!(
+            !run_file.exists(),
+            "state finalized even with no worker/snapshot"
+        );
         // No escalation was recorded (no live, signalable pid).
         assert!(log.is_empty());
     }

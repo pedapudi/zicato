@@ -100,7 +100,9 @@ pub fn reapable_snapshot_root(snapshot_path: &str, temp_dir: &Path) -> Option<Pa
     // Canonicalize when the path still exists so symlinked temp dirs compare
     // equal; fall back to the lexical path (a path whose target was already
     // partially removed must still be reapable).
-    let resolved = candidate.canonicalize().unwrap_or_else(|_| candidate.to_path_buf());
+    let resolved = candidate
+        .canonicalize()
+        .unwrap_or_else(|_| candidate.to_path_buf());
 
     // Walk ancestors (self first) for the first `ztw-snap-*` directory.
     let snap_root = resolved
@@ -311,8 +313,10 @@ mod tests {
     fn reaps_a_real_ephemeral_snapshot_tree() {
         // Build a ztw-snap-* tree under the SYSTEM temp dir (what the guard
         // checks against) and confirm reaping removes the whole root.
-        let parent =
-            tempfile::Builder::new().prefix(SNAPSHOT_PREFIX).tempdir().unwrap();
+        let parent = tempfile::Builder::new()
+            .prefix(SNAPSHOT_PREFIX)
+            .tempdir()
+            .unwrap();
         let working_copy = parent.path().join("snapshot");
         std::fs::create_dir_all(working_copy.join("src")).unwrap();
         std::fs::write(working_copy.join("src/a.py"), b"x = 1\n").unwrap();
@@ -320,7 +324,10 @@ mod tests {
         assert!(root.exists());
 
         let run = run_with_snapshot(Some(working_copy.to_str().unwrap()));
-        assert!(reap_orphaned_snapshot(&run), "should report the tree reaped");
+        assert!(
+            reap_orphaned_snapshot(&run),
+            "should report the tree reaped"
+        );
         assert!(!root.exists(), "the ztw-snap-* root must be removed");
         // Defuse the TempDir guard's own drop (the dir is already gone).
         std::mem::forget(parent);

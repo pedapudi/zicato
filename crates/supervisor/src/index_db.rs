@@ -225,9 +225,7 @@ pub fn epoch_contract_hash(conn: &Connection, epoch_id: &str) -> Option<String> 
     let mut stmt = conn
         .prepare("SELECT contract_hash FROM epochs WHERE epoch_id = ?1 LIMIT 1")
         .ok()?;
-    let mut rows = stmt
-        .query_map([epoch_id], |row| Ok(opt_str(row, 0)))
-        .ok()?;
+    let mut rows = stmt.query_map([epoch_id], |row| Ok(opt_str(row, 0))).ok()?;
     rows.next().and_then(|r| r.ok()).flatten()
 }
 
@@ -556,6 +554,9 @@ mod tests {
         let path = build_index(tmp.path());
         // build_index stamps EXPECTED_SCHEMA_VERSION, so open() accepts it.
         assert!(open(&path).is_ok());
-        assert_eq!(schema_version(&open(&path).unwrap()), EXPECTED_SCHEMA_VERSION);
+        assert_eq!(
+            schema_version(&open(&path).unwrap()),
+            EXPECTED_SCHEMA_VERSION
+        );
     }
 }

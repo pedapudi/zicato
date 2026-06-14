@@ -298,11 +298,7 @@ mod tests {
     }
 
     /// Build an index with an `epochs` row and the given generation rows.
-    fn write_index(
-        p: &WorkspacePaths,
-        contract_hash: &str,
-        gens: &[(&str, Option<&str>, i64)],
-    ) {
+    fn write_index(p: &WorkspacePaths, contract_hash: &str, gens: &[(&str, Option<&str>, i64)]) {
         let conn = Connection::open(p.index_db()).unwrap();
         conn.execute_batch(
             "CREATE TABLE epochs(epoch_id TEXT PRIMARY KEY, contract_hash TEXT, \
@@ -358,7 +354,10 @@ mod tests {
         let (_t, p) = ws();
         let view = audit(&p, Utc::now(), DEFAULT_STUCK_AGE_SECONDS);
         assert!(view.scanned);
-        assert!(view.findings.is_empty(), "no index → nothing to cross-check");
+        assert!(
+            view.findings.is_empty(),
+            "no index → nothing to cross-check"
+        );
     }
 
     #[test]
@@ -368,7 +367,10 @@ mod tests {
         write_canonical_gen(&p, "v1", Some("v0"), "promoted");
         write_index(&p, HASH_A, &[("v1", Some("v0"), 1)]);
         let view = audit(&p, Utc::now(), DEFAULT_STUCK_AGE_SECONDS);
-        assert!(view.findings.is_empty(), "agreement → no findings: {view:?}");
+        assert!(
+            view.findings.is_empty(),
+            "agreement → no findings: {view:?}"
+        );
         assert_eq!(view.generations_checked, 1);
     }
 

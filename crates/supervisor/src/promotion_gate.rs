@@ -323,7 +323,10 @@ mod tests {
         let mut bad = promote_row(None);
         bad.child_scalar = Some(0.8);
         bad.parent_scalar = Some(0.5);
-        assert!(matches!(check_row(&bad, 0.01), RowVerdict::Contradiction(_)));
+        assert!(matches!(
+            check_row(&bad, 0.01),
+            RowVerdict::Contradiction(_)
+        ));
     }
 
     #[test]

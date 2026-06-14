@@ -563,10 +563,7 @@ th{color:#888;font-weight:normal}\
         out.push_str(&format!(
             "<tr><th>chain</th><td class=\"{cls}\">{label}</td></tr>"
         ));
-        out.push_str(&format!(
-            "<tr><th>records</th><td>{}</td></tr>",
-            al.records
-        ));
+        out.push_str(&format!("<tr><th>records</th><td>{}</td></tr>", al.records));
         if let Some(seq) = al.first_break_seq {
             out.push_str(&format!(
                 "<tr><th>first break</th><td class=\"bad\">seq {seq}</td></tr>"
@@ -718,9 +715,7 @@ th{color:#888;font-weight:normal}\
     }
     out.push_str("</table>");
     if !dv.findings.is_empty() {
-        out.push_str(
-            "<table><tr><th>code</th><th>generation</th><th>detail</th></tr>",
-        );
+        out.push_str("<table><tr><th>code</th><th>generation</th><th>detail</th></tr>");
         for f in &dv.findings {
             out.push_str(&format!(
                 "<tr><td class=\"bad\">{}</td><td>{}</td><td class=\"bad\">{}</td></tr>",

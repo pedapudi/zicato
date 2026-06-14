@@ -210,7 +210,10 @@ pub fn build_bracket(paths: &WorkspacePaths) -> BracketView {
             };
         }
         Err(IndexError::StaleSchema { found, expected }) => {
-            warn!(found, expected, "index.db schema version mismatch; serving empty bracket");
+            warn!(
+                found,
+                expected, "index.db schema version mismatch; serving empty bracket"
+            );
             return BracketView {
                 epoch_id,
                 champion_lineage: Vec::new(),
@@ -279,7 +282,10 @@ pub fn build_matchup_detail(paths: &WorkspacePaths, generation_id: &str) -> Matc
             };
         }
         Err(IndexError::StaleSchema { found, expected }) => {
-            warn!(found, expected, "index.db schema version mismatch; serving empty matchup");
+            warn!(
+                found,
+                expected, "index.db schema version mismatch; serving empty matchup"
+            );
             return MatchupDetail {
                 epoch_id,
                 generation_id: Some(generation_id.to_string()),
