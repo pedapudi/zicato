@@ -740,7 +740,17 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
 
             assert current is not None
             if text:
-                current.text = _clip((current.text + "\n\n" + text) if current.text else text)
+                # Dedup exact-duplicate segments before appending. goldfive emits
+                # the user's prompt TWICE for a trivially-derived goal — once as
+                # ``run_started.goal_summary`` (the raw request) and again as
+                # ``goal_derived.goals[*].summary`` (the framework's derived
+                # goal, identical text for a single-task board). Both map to a
+                # user turn and merge into one, so the prompt rendered twice.
+                # Skipping an incoming segment already present keeps the prompt
+                # (and any other accidental identical adjacency) shown once.
+                segments = current.text.split("\n\n") if current.text else []
+                if text not in segments:
+                    current.text = _clip((current.text + "\n\n" + text) if current.text else text)
                 current.kind = kind
             if tool_call is not None:
                 current.tool_calls.append(tool_call)

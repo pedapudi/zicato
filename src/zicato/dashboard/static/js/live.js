@@ -614,7 +614,7 @@ export class LiveController {
     // steady tick writes ZERO DOM and a real transition flips word + line.
     const pillWord = (status && status.runState && runStateLabel(status.runState))
       ? runStateLabel(status.runState) : 'LIVE';
-    const metaKey = pillWord + ' ' + meta.join('|');
+    const metaKey = pillWord + ' ' + meta.join('|');
     if (metaKey !== this._metaKey) {
       this._metaKey = metaKey;
       if (this._pillText) patchText(this._pillText, pillWord);
@@ -683,6 +683,19 @@ export class LiveController {
         .map((c) => c && c.generation_id).filter((g) => g != null).map(String);
       const model = buildLiveModel(at, heartbeat, activeRuns, epochGens.length ? epochGens : null);
       blocks = liveMatchBlocks(model) || [];
+    }
+    // FALLBACK — the published rounds can ALL be settled between rungs/rounds
+    // (every match carries a winner/survivors/cut) while runs are STILL in
+    // flight: liveMatchBlocks then returns [] yet "N units running" + the activity
+    // ticker read live (they consume activeRuns, not the settled rounds). Rather
+    // than falsely show "no matches in flight…", synthesize ONE honest block from
+    // the in-flight runs that genuinely BELONG to this tournament. The belonging
+    // guard mirrors tournamentHasActiveRuns' epoch+roster check verbatim, so a
+    // known-foreign-epoch run never lights up a stale tournament (the FIX 4 gate).
+    if (!blocks.length && structureDrawableRunning(at)
+        && tournamentHasActiveRuns(at, activeRuns)) {
+      const fb = runningEntriesFallbackBlock(at, activeRuns);
+      if (fb) blocks = [fb];
     }
     const digest = liveMatchBlocksDigest(blocks);
     if (digest === this._matchesDigest && this._matchesBody.firstChild) return; // no real change → no DOM.
@@ -929,6 +942,58 @@ function tournamentHasActiveRuns(at, activeRuns) {
     if (gen != null && compIds.has(String(gen))) return true;
   }
   return false;
+}
+
+// Synthesize ONE honest "running" block from the in-flight runs that BELONG to
+// this tournament — the fallback the "what's running" panel shows when the
+// published rounds are ALL settled (liveMatchBlocks → []) but runs are still in
+// flight (the between-rounds gap). The belonging filter is the SAME epoch+roster
+// guard as tournamentHasActiveRuns: a run whose epoch is KNOWN-and-different is
+// dropped, and (when a roster is published) only a run whose generation matches a
+// competitor is kept — so a foreign-epoch run never lights up a stale tournament.
+// The block matches the shape liveMatchGroupedBlocks renders + that
+// liveMatchBlocksDigest covers (so a steady beat over the same fallback stays a
+// no-op): {kind, structure, match_id, label, entries:[{id, outcome:'pending', …}]}.
+function runningEntriesFallbackBlock(at, activeRuns) {
+  const runs = Array.isArray(activeRuns) ? activeRuns : [];
+  if (!runs.length || !at || typeof at !== 'object') return null;
+  const tEpoch = (at.epoch_id != null && String(at.epoch_id) !== '') ? String(at.epoch_id) : null;
+  const compIds = new Set(
+    (Array.isArray(at.competitors) ? at.competitors : [])
+      .map((c) => c && c.generation_id).filter((g) => g != null).map(String),
+  );
+  const entries = [];
+  const seen = new Set();
+  for (const r of runs) {
+    if (!r || typeof r !== 'object') continue;
+    // drop a run whose epoch is KNOWN-and-different from the tournament's.
+    const rEpoch = (r.epoch_id != null && String(r.epoch_id) !== '') ? String(r.epoch_id) : null;
+    if (tEpoch != null && rEpoch != null && rEpoch !== tEpoch) continue;
+    const gen = r.generation_id != null ? r.generation_id : (r.gen != null ? r.gen : r.entry_id);
+    // with a published roster, only a run whose generation matches a competitor
+    // belongs; with no roster to match against, trust the (non-foreign) run.
+    if (compIds.size && !(gen != null && compIds.has(String(gen)))) continue;
+    const id = gen != null ? String(gen) : null;
+    if (id == null || seen.has(id)) continue;
+    seen.add(id);
+    // per-board progress (when the run carries it) drives the bar + the digest
+    // bucket; a bare running run reads as in-flight (no ratio) — still honest.
+    const done = isNum(r.boards_done) ? r.boards_done : (isNum(r.done) ? r.done : null);
+    const total = isNum(r.boards_total) ? r.boards_total : (isNum(r.total) && r.total > 0 ? r.total : null);
+    const ratio = (total != null && total > 0)
+      ? Math.max(0, Math.min(1, (done == null ? 0 : done) / total))
+      : (isNum(r.progress) ? Math.max(0, Math.min(1, r.progress)) : null);
+    entries.push({
+      id, outcome: 'pending', inflight: 1,
+      ratio, done, total, boards_done: done, boards_total: total,
+    });
+  }
+  if (!entries.length) return null;
+  return {
+    kind: 'rung', structure: String(at.structure || ''), match_id: 'running',
+    label: 'running' + (entries.length ? ` · ${entries.length} in flight` : ''),
+    entries,
+  };
 }
 
 // The active-tournament belongs to the current run iff its epoch matches the

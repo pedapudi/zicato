@@ -713,9 +713,15 @@ function overlapMeter(mean, max, tol) {
   if (svg.isNum(tol)) {
     const tx = padX + Math.max(0, Math.min(1, tol)) * axW;
     fig.appendChild(svgEl('line', { x1: tx, y1: top - 4, x2: tx, y2: top + barH + 4, class: 'dn-div-tol' }));
-    const tl = svgEl('text', { x: tx, y: top + barH + 14, class: 'dn-div-tollab', 'text-anchor': 'middle' });
-    tl.textContent = 'tol ' + svg.fmt(tol, 2);
-    fig.appendChild(tl);
+    // The tolerance marker rides at tx, but a near-1.0 tolerance pushes its
+    // middle-anchored label past the right viewBox edge (W is fixed, the bar is
+    // preserveAspectRatio:'none') and it CLIPS — same mechanism as the BT gate's
+    // ratingProbBar. svg.edgeText keeps the FULL label inside [padX, W-padX] by
+    // clamping x near an edge; the common mid-bar case stays middle@tx.
+    fig.appendChild(svg.edgeText({
+      text: 'tol ' + svg.fmt(tol, 2), x: tx, y: top + barH + 14,
+      anchor: 'middle', viewW: W, pad: padX, cls: 'dn-div-tollab',
+    }));
   }
   return el('div', { class: 'dn-div-meterwrap' }, [
     el('div', { class: 'dn-div-meterhead' }, [

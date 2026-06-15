@@ -1001,7 +1001,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
 // panel (the study's facetGeneralize, shrunk). A 2-point slope train→holdout
 // with the gap called out; caution when within tolerance, bad when it exceeds.
 // viewBox kept small (240×104); the dn-genpane host caps the max width.
-function generalizationPanel(g) {
+export function generalizationPanel(g) {
   const card = el('div', { class: 'dn-panel dn-figpane dn-genpane' });
   const train = svg.isNum(g.train) ? g.train : null;
   const holdout = svg.isNum(g.holdout) ? g.holdout : null;
@@ -1033,7 +1033,12 @@ function generalizationPanel(g) {
     fig.appendChild(svgEl('circle', { cx: xT, cy: Y(train), r: 4, class: 'dn-gen-train' }));
     fig.appendChild(svgEl('circle', { cx: xH, cy: Y(holdout), r: 4, class: 'dn-gen-holdout ' + tone }));
     fig.appendChild(txt(xT - 10, Y(train) + 3.5, 'dn-gen-val dn-gen-train-t', 'end', svg.fmt(train, 3)));
-    fig.appendChild(txt(xH + 10, Y(holdout) + 3.5, 'dn-gen-val ' + tone, 'start', svg.fmt(holdout, 3)));
+    // RIGHT-anchor the holdout value at the box's right margin (W-4) so a long
+    // 3-dp value (e.g. "-123.456") grows LEFTWARD toward — but never past — the
+    // edge instead of clipping the W=240 viewBox; short values still sit just
+    // right of the holdout dot (mirrors the train label's leftward grow). Routed
+    // through the shared svg.edgeText primitive (clamp x + flip near an edge).
+    fig.appendChild(svg.edgeText({ text: svg.fmt(holdout, 3), x: W - 4, y: Y(holdout) + 3.5, anchor: 'end', viewW: W, pad: 4, cls: 'dn-gen-val ' + tone }));
     card.appendChild(fig);
   } else if (gap != null) {
     card.appendChild(el('div', { class: 'dn-gen-gaponly ' + tone, text: `generalization gap ${svg.fmtSigned(gap, 3)}` + (tol != null ? ` (tol ${svg.fmt(tol, 2)})` : '') }));
@@ -1080,13 +1085,15 @@ function perBoardDumbbell(opts) {
   const labelW = svg.isNum(o.labelWidth) ? o.labelWidth : 200;
   const top = 18;          // headroom above the first row
   const glyphW = 16;       // right-edge pass/fail/timeout glyph gutter
-  const deltaW = 40;       // the Δ value column, just left of the glyph
+  const deltaW = 54;       // the Δ value column, just left of the glyph — wide
+                           // enough for a two-digit, signed, 2dp Δ ("−48.00")
+                           // so it never collides with the score readout.
   // CONTINUOUS-SCORE column (#18): a 0→1 mini-bar + score readout, only
   // reserved when AT LEAST ONE row carries a score; a wholly bool-only
   // dumbbell keeps the pre-score geometry (zero-width score column) so its
   // layout is byte-identical to today.
   const anyScored = rows.some((r) => r && svg.isNum(r.score));
-  const scoreW = anyScored ? 84 : 0;
+  const scoreW = anyScored ? 92 : 0;
   const footH = 16;        // the faint aggregate-tick caption band at the foot
   const h = Math.max(rh + top + footH, top + rows.length * rh + footH);
   const svgNode = svgEl('svg', {
@@ -1159,13 +1166,17 @@ function perBoardDumbbell(opts) {
     // Only drawn for a scored row — a bool-only row leaves this column empty
     // and relies on the ✓/✗ glyph at the edge exactly as before.
     if (scoreW > 0 && svg.isNum(r.score)) {
-      const sbx = x1 + 8;                 // bar left, just past the value axis
-      const sbw = scoreW - 14;            // bar width within the score column
+      const sbx = x1 + 6;                 // bar left, just past the value axis
+      const sbw = 44;                     // FIXED bar width — the readout sits to
+                                          // its right, both INSIDE the score column
       const sf = Math.max(0, Math.min(1, r.score));
       const barY = cy - 3;
       g.appendChild(svgEl('rect', { x: sbx, y: barY, width: sbw, height: 6, rx: 2, class: 'dn-score-track' }));
       g.appendChild(svgEl('rect', { x: sbx, y: barY, width: Math.max(1, sbw * sf), height: 6, rx: 2, class: 'dn-score-fill ' + dirCls }));
-      const sv = svgEl('text', { x: sbx + sbw + 2, y: cy + 3, class: 'dn-score-val', 'text-anchor': 'start' });
+      // the readout is RIGHT-anchored at the score column's right edge so it
+      // stays WITHIN the column instead of spilling into the Δ column to its
+      // right (that overlap rendered the colliding "1.0048.00").
+      const sv = svgEl('text', { x: x1 + scoreW - 4, y: cy + 3, class: 'dn-score-val', 'text-anchor': 'end' });
       sv.textContent = svg.fmt(r.score, 2);
       g.appendChild(sv);
       const pr = prText(r.metrics);
@@ -1460,9 +1471,14 @@ const MIN_CREDIBLE_DUELS = 3;       // build_rating_view's credible-fit floor.
 function ratingWhisker(label, side, dom, better) {
   const W = 220, H = 26, padX = 4, axW = W - 2 * padX;
   const X = (v) => padX + ((v - dom.lo) / (dom.span || 1)) * axW;
+  // pin the box aspect (== the viewBox aspect) inline so the
+  // `preserveAspectRatio:'none'` scale stays UNIFORM (no shear): without it the
+  // flexible grid column stretches X past the fixed `height`, squashing the
+  // round θ̂ <circle> + CI end-caps into horizontal ellipses. Mirrors the house
+  // aspect-lock mechanism (svg.js applyResponsive) — no measurement, leak-free.
   const fig = svgEl('svg', {
-    class: 'dn-bt-whisker', width: '100%', height: H, viewBox: `0 0 ${W} ${H}`,
-    preserveAspectRatio: 'none', role: 'img',
+    class: 'dn-bt-whisker', width: '100%', viewBox: `0 0 ${W} ${H}`,
+    preserveAspectRatio: 'none', role: 'img', style: `aspect-ratio: ${W} / ${H};`,
     'aria-label': label + ' strength estimate',
   });
   const mid = H / 2;
@@ -1517,9 +1533,16 @@ function ratingProbBar(p, thr) {
   if (svg.isNum(thr)) {
     const tx = padX + Math.max(0, Math.min(1, thr)) * axW;
     fig.appendChild(svgEl('line', { x1: tx, y1: top - 4, x2: tx, y2: top + barH + 4, class: 'dn-bt-prob-thr' }));
-    const tl = svgEl('text', { x: tx, y: top + barH + 14, class: 'dn-bt-prob-thrlab', 'text-anchor': 'middle' });
-    tl.textContent = 'thr ' + svg.fmt(thr, 2);
-    fig.appendChild(tl);
+    // anchor/clamp the label inside the box: a middle-anchored label near the
+    // right edge (the common 0.90-0.95 threshold sits at tx ~= 243 in a W=260,
+    // preserveAspectRatio:'none' box) clips past the viewBox. Within EDGE of the
+    // edge, end-anchor it just inside the right padding so it grows leftward off
+    // the threshold mark; otherwise keep it centred on the mark (the common case).
+    fig.appendChild(svg.edgeText({
+      text: 'thr ' + svg.fmt(thr, 2),
+      x: tx, y: top + barH + 14, anchor: 'middle',
+      fontPx: 9, viewW: W, pad: padX, cls: 'dn-bt-prob-thrlab',
+    }));
   }
   return el('div', { class: 'dn-bt-probwrap' }, [
     el('div', { class: 'dn-bt-probhead' }, [

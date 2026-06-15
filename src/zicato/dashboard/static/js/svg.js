@@ -83,6 +83,107 @@ function shortLabel(s, n) {
   return str.length > max ? str.slice(0, max - 1) + '…' : str;
 }
 
+// MIDDLE-truncate to the same char budget as shortLabel, but keep the
+// distinguishing TAIL as well as the head — ids that share a long common prefix
+// (epoch-2026-06-13-a vs …-b) would otherwise head-truncate to an IDENTICAL
+// visible stub. Byte-identical to shortLabel for any string at/under the cap
+// (the normal short-id case), so it only ever diverges where the prefix would
+// have collided. The '…' eats one slot; the rest is split head-heavy (the head
+// carries the family, the tail the discriminator).
+function midLabel(s, n) {
+  const max = isNum(n) ? n : 12;
+  const str = s == null ? '' : String(s);
+  if (str.length <= max) return str;
+  if (max <= 1) return '…';
+  const budget = max - 1;
+  const head = Math.ceil(budget / 2);
+  const tail = budget - head;
+  return str.slice(0, head) + '…' + (tail > 0 ? str.slice(str.length - tail) : '');
+}
+
+// ── shared text-fitting primitives (the ONE home for "size text to its box") ──
+//
+// The recurring dashboard clip/collision family — left-/start-anchored text whose
+// extent is a GUESSED `shortLabel` char-cap that exceeds its column/gutter and is
+// then clipped by `preserveAspectRatio` — came from every figure re-implementing
+// the same fit math by hand (one bug, ~30 times). These centralise it so a figure
+// cannot re-introduce the clip:
+//   * CHAR_EM / textPx — the ONE mono char-width model (≈0.6 em/char, the CSS mono
+//     face) every figure MEASURES from, instead of re-guessing a char cap.
+//   * fitLabel — truncate (head, or `mid` to keep the discriminating tail) to a
+//     PIXEL budget rather than a raw char count.
+//   * edgeText — build a <text> whose full rendered extent is kept inside its box
+//     by clamping x + flipping the anchor inward near an edge (no truncation).
+//   * fitInto — fitLabel THEN edgeText: the common "fit this column AND never clip
+//     the viewBox" case in one call.
+// Exported so the figure builders + the node harness share one implementation.
+export const CHAR_EM = 0.6;            // mono advance width ≈ 0.6 em/char
+const DEFAULT_FONT_PX = 11;
+
+// Estimated rendered width (px) of `s` at `fontPx` in the figures' mono face.
+export function textPx(s, fontPx) {
+  const str = s == null ? '' : String(s);
+  const fpx = isNum(fontPx) ? fontPx : DEFAULT_FONT_PX;
+  return str.length * fpx * CHAR_EM;
+}
+
+// Truncate `s` so its rendered width ≤ maxPx at fontPx, keeping an ellipsis.
+// `opts.mid` middle-truncates (keeps the discriminating tail — the [[midLabel]]
+// rule). Returns '' when not even one char + ellipsis fits, so a caller can drop
+// the label entirely on a too-narrow band.
+export function fitLabel(s, maxPx, fontPx, opts) {
+  const str = s == null ? '' : String(s);
+  const fpx = isNum(fontPx) ? fontPx : DEFAULT_FONT_PX;
+  const per = fpx * CHAR_EM;
+  if (!isNum(maxPx) || maxPx <= 0 || per <= 0) return '';
+  const budget = Math.floor(maxPx / per);
+  if (str.length <= budget) return str;
+  if (budget < 1) return '';
+  return (opts && opts.mid) ? midLabel(str, budget) : shortLabel(str, budget);
+}
+
+// Build a <text> placed near (x,y) with `anchor`, keeping its FULL rendered extent
+// inside [pad, viewW-pad]: clamp x, and FLIP the anchor inward when the natural
+// side would overrun the edge. Does NOT truncate — call fitLabel first (or use
+// fitInto) when the text must also fit a column. `attrs` is merged onto the el;
+// `cls` sets the class.
+export function edgeText(o) {
+  o = o || {};
+  const fpx = isNum(o.fontPx) ? o.fontPx : DEFAULT_FONT_PX;
+  const W = isNum(o.viewW) ? o.viewW : 0;
+  const pad = isNum(o.pad) ? o.pad : 4;
+  const lo = pad;
+  const hi = Math.max(pad, W - pad);
+  const text = o.text == null ? '' : String(o.text);
+  const w = textPx(text, fpx);
+  let x = isNum(o.x) ? o.x : 0;
+  let anchor = o.anchor || 'start';
+  if (anchor === 'middle') {
+    const half = w / 2;
+    x = (lo + half > hi - half) ? (lo + hi) / 2 : Math.min(Math.max(x, lo + half), hi - half);
+  } else if (anchor === 'end') {
+    if (x - w < lo) { anchor = 'start'; x = Math.max(Math.min(x, hi - w), lo); }
+    else { x = Math.min(x, hi); }
+  } else {                                   // 'start'
+    if (x + w > hi) { anchor = 'end'; x = Math.min(Math.max(x, lo + w), hi); }
+    else { x = Math.max(x, lo); }
+  }
+  const attrs = Object.assign({}, o.attrs || {}, { x, y: o.y, 'text-anchor': anchor });
+  if (o.cls) attrs.class = o.cls;
+  const t = svgEl('text', attrs);
+  t.textContent = text;
+  return t;
+}
+
+// The common compound case: truncate to a column width (`maxPx`) AND keep the
+// (possibly-truncated) text inside the viewBox. One call replaces the bespoke
+// "shortLabel(id,N) then hand-clamp x" pattern.
+export function fitInto(o) {
+  o = o || {};
+  const fitted = fitLabel(o.text, o.maxPx, o.fontPx, { mid: !!o.mid });
+  return edgeText(Object.assign({}, o, { text: fitted }));
+}
+
 // ── responsive (aspect-locked, full-width hero) sizing ───────────────
 //
 // The SHARED contract every structure builder honours, mirroring the reference
@@ -468,8 +569,20 @@ export function heatmap(opts) {
   const cw = o.cellW || 24;
   const ch = o.cellH || 15;
   const labelW = o.labelWidth || 128;
-  const headH = o.headHeight || 44;
-  const w = labelW + cols.length * cw + 6;
+  // Column headers draw rotated -45° (text-anchor:start), so each one rises
+  // UP-AND-RIGHT from its anchor at (cx, headH-6). For long labels — the LAST
+  // column most of all — that rotated run overruns the top/right of the viewBox
+  // and `xMinYMin meet` clips it. Size the top reserve (headH) and a right pad
+  // to the rotated extent of the longest rendered column label so the header
+  // never escapes the viewBox. (~0.71·len ≈ cos(45°); ~6px/char is a
+  // conservative width for the small dn-hm-col glyphs; the cap matches the
+  // shortLabel(c.label) default of 12.) Short labels keep the old 44/6 reserve.
+  const hdrCap = 12;
+  const maxColChars = cols.reduce((m, c) => Math.max(m, Math.min(hdrCap, String(c.label == null ? '' : c.label).length)), 0);
+  const rotExtent = Math.ceil(0.7071 * maxColChars * 6);
+  const headH = Math.max(o.headHeight || 44, rotExtent + 8);
+  const rightPad = rotExtent + 6;
+  const w = labelW + cols.length * cw + rightPad;
   const h = headH + rows.length * ch + 6;
   // FIT-TO-WIDTH: width:100% + a viewBox so the matrix scales DOWN to its pane
   // (no fixed pixel width that overflows, no horizontal-scroll wrapper). The
@@ -726,7 +839,16 @@ export function valueBars(opts) {
     svg.appendChild(lbl);
     const bx = x(Math.abs(d.value));
     svg.appendChild(hov(svgEl('rect', { x: x0, y: cy - 4, width: Math.max(1, bx - x0), height: 8, rx: 1, class: 'dn-vbar' }), `${d.label}: ${fmt(d.value)}`));
-    const vt = svgEl('text', { x: bx + 4, y: cy + 3, class: 'dn-vbar-val' });
+    // The worst-judge bar always reaches the plot end (w-36); a left-anchored
+    // value there overruns the 36px right gutter and clips the viewBox. When the
+    // bar end lands in the right ~15% of the plot, right-anchor the value and
+    // inset it just inside the bar end so it grows leftward and stays on-canvas.
+    // Shorter bars keep the value to the RIGHT of the bar, as before.
+    const plotEnd = w - 36;
+    const inset = bx >= plotEnd - 0.15 * (plotEnd - x0);
+    const vt = inset
+      ? svgEl('text', { x: bx - 4, y: cy + 3, class: 'dn-vbar-val', 'text-anchor': 'end', 'data-inset': '1' })
+      : svgEl('text', { x: bx + 4, y: cy + 3, class: 'dn-vbar-val' });
     vt.textContent = fmt(d.value, 1);
     svg.appendChild(vt);
   });
@@ -803,8 +925,20 @@ export function pairedSlopegraph(opts) {
     const rl = rightLabels[i];
     if (isNum(s.b)) {
       if (Math.abs(rl - y(s.b)) > 1.5) g.appendChild(svgEl('line', { x1: rightX, y1: y(s.b), x2: rightX + 4, y2: rl, class: 'dn-leader' }));
-      const tx = svgEl('text', { x: rightX + 8, y: rl + 3, class: 'dn-pslope-label', 'text-anchor': 'start' });
-      tx.textContent = `${fmt(s.b, 1)}  ${shortLabel(s.label, 14)}`;
+      // RIGHT label is start-anchored at rightX+8 and grows RIGHTWARD; a 14-char
+      // label + a large-magnitude value overruns the right gutter and clips the
+      // viewBox. Measure the run (10px mono ⇒ ~0.6em/char) and clamp the start x
+      // inward so the whole text ends at or before w−edge. A no-op for short
+      // labels (the common case): x stays at rightX+8.
+      const rtext = `${fmt(s.b, 1)}  ${shortLabel(s.label, 14)}`;
+      const rW = rtext.length * 6;
+      const rEdge = 4;
+      const rx0 = rightX + 8;
+      const rx = Math.min(rx0, w - rEdge - rW);
+      const rAttr = { x: rx, y: rl + 3, class: 'dn-pslope-label', 'text-anchor': 'start' };
+      if (rx < rx0 - 0.01) rAttr['data-clamped'] = '1';
+      const tx = svgEl('text', rAttr);
+      tx.textContent = rtext;
       g.appendChild(tx);
     }
     clickable(g, o.onClick && (() => o.onClick(s)));
@@ -913,8 +1047,14 @@ export function survivalFunnel(opts) {
     // rung shows the survivors riding the band (the cut peel off below).
     const survRunners = pending ? comps.slice() : surv;
     survRunners.forEach((sid, i) => {
+      // spread the survivors down the band's inner span (2*hOut-16). In a NARROW
+      // band (hOut<8, e.g. a wide entering field narrowing to 2-3 survivors) that
+      // span goes ≤0, so floor the PER-LANE step to a legible row pitch (11px text)
+      // — never stack runners on ~the same y. Wide bands keep their natural spread
+      // (span/(n-1) already exceeds the pitch), so this is a no-op for normal data.
+      const laneStep = Math.max(12, (2 * hOut - 16) / Math.max(1, survRunners.length - 1));
       const cy = survRunners.length === 1 ? midY
-        : midY - hOut + 8 + (i * (Math.max(1, 2 * hOut - 16)) / Math.max(1, survRunners.length - 1));
+        : midY - hOut + 8 + i * laneStep;
       const lane = prog ? prog[String(sid)] : null;
       funnelRunner(svg, o, sid, rung, j, x0 + 8, cy, pending ? 'racing' : 'survives', lane, stageW - 16);
     });
@@ -931,6 +1071,11 @@ export function survivalFunnel(opts) {
         const f = (elbowX - x0) / stageW;
         const edgeYAtElbow = midY + hIn + (hOut - hIn) * f;
         const labelX = elbowX + 12;
+        // bound the cut name + ` ✕` to the stage band: it is anchored at labelX and
+        // must stay LEFT of the band's right edge x1, never bleeding into the stage
+        // gap or the next band. Cap the id from the px budget (x1 − labelX) at ~6.2px
+        // per glyph, reserving two glyphs for the ` ✕` suffix (≥3 so a name shows).
+        const cutCap = Math.max(3, Math.floor((x1 - labelX) / 6.2) - 2);
         // a dead-end branch that drops from the band's lower edge and then a SHORT
         // stub that stops just LEFT of the label — the connector must lead INTO
         // the cut name, never run through it (it used to extend the full stage
@@ -939,7 +1084,7 @@ export function survivalFunnel(opts) {
           d: `M${elbowX},${edgeYAtElbow} V${branchY} H${labelX - 4}`,
           class: 'dn-funnel-deadedge', fill: 'none',
         }));
-        funnelRunner(svg, o, sid, rung, j, labelX, branchY, 'cut');
+        funnelRunner(svg, o, sid, rung, j, labelX, branchY, 'cut', null, null, cutCap);
       });
     }
   });
@@ -967,10 +1112,17 @@ export function survivalFunnel(opts) {
   })();
   const flowH = bandHalf(lastLeave);
   const lastX = stageX(rungs.length - 1) + stageW;
-  svg.appendChild(svgEl('polygon', {
-    points: `${lastX},${midY - flowH} ${gx},${midY - 11} ${gx},${midY + 11} ${lastX},${midY + flowH}`,
-    class: 'dn-funnel-band dn-funnel-gateflow' + (crowned ? ' dn-good' : ''),
-  }));
+  // suppress the gate-flow when the last rung settled with EVERY lane cut and no
+  // champion seated (lastLeave===0 && !crowned): bandHalf(0) floors to 6, which
+  // would otherwise draw a thin converging sliver into a gate with no runner
+  // feeding it. A pending/live last rung carries the full field (lastLeave>0),
+  // and a crowned gate (empty survivors but seated champion) still flows.
+  if (!(lastLeave === 0 && !crowned)) {
+    svg.appendChild(svgEl('polygon', {
+      points: `${lastX},${midY - flowH} ${gx},${midY - 11} ${gx},${midY + 11} ${lastX},${midY + flowH}`,
+      class: 'dn-funnel-band dn-funnel-gateflow' + (crowned ? ' dn-good' : ''),
+    }));
+  }
   const gHead = svgEl('text', { x: gx + gateW / 2, y: headY, class: 'dn-funnel-head', 'text-anchor': 'middle' });
   gHead.textContent = 'champion-gate';
   svg.appendChild(gHead);
@@ -1014,7 +1166,7 @@ export function survivalFunnel(opts) {
 // its `lane` ({inflight, done, total, partialDelta}) so the runner reads
 // "racing · k/N boards" + a partial Δ and grows an in-flight progress bar
 // (`barW` is the band-bounded bar width); `lane` is null for settled/non-live.
-function funnelRunner(svg, o, sid, rung, j, x, cy, verdict, lane, barW) {
+function funnelRunner(svg, o, sid, rung, j, x, cy, verdict, lane, barW, cap) {
   // partial Δ-vs-champion (live) falls back to the committed rung Δ.
   const partial = lane && isNum(lane.partialDelta) ? lane.partialDelta : null;
   const delta = (rung.deltas && isNum(rung.deltas[sid])) ? rung.deltas[sid] : partial;
@@ -1038,7 +1190,7 @@ function funnelRunner(svg, o, sid, rung, j, x, cy, verdict, lane, barW) {
     + ` · ${projected ? 'projected' : verdict}`;
   const g = svgEl('g', { class: 'dn-funnel-runner', tabindex: o.onCompetitor ? '0' : null });
   const t = hov(svgEl('text', { x, y: cy + 3, class: cls }), tip);
-  t.textContent = shortLabel(sid, lane ? 8 : 13) + glyph + laneSuffix + projSuffix;
+  t.textContent = shortLabel(sid, lane ? 8 : (cap || 13)) + glyph + laneSuffix + projSuffix;
   g.appendChild(t);
   // a thin SCORED board-progress sub-bar under a live lane (boards done / total).
   // A projected lane draws it in the projected (dashed/amber) treatment; a plain
@@ -1135,7 +1287,10 @@ export function swissLadder(opts) {
       const t = hov(svgEl('text', { x: x + 6, y: cy + 3, class: cls }),
         `${a} vs ${b}${decided ? ' → ' + p.winner : ''}${isNum(p.delta) ? ` · Δ ${fmtSigned(p.delta, 2)}` : ''}`);
       const aCls = aWon ? ' ↑' : '';
-      t.textContent = shortLabel(a, 6) + ' v ' + shortLabel(b, 6) + (decided ? '' : progText.replace(' · pairing', ''));
+      // the primary label is ALWAYS just the `a v b` pairing — the status suffix
+      // (winner / running N/M / queued) rides the cy+13 sub-line below, so a long
+      // in-flight suffix can't overrun the ~colW round column into the next round.
+      t.textContent = fitLabel(a, 6 * 11 * CHAR_EM, 11) + ' v ' + fitLabel(b, 6 * 11 * CHAR_EM, 11);
       g.appendChild(t);
       if (decided) {
         const sub = svgEl('text', { x: x + 6, y: cy + 13, class: 'dn-swissladder-win dn-good' });
@@ -1146,6 +1301,16 @@ export function swissLadder(opts) {
         const frac = (isNum(p.total) && p.total > 0) ? Math.min(1, (p.done || 0) / p.total) : 0.5;
         g.appendChild(svgEl('rect', { x: x + 6, y: cy + 7, width: barW, height: 2, rx: 1, class: 'dn-swissladder-bar-bg' }));
         g.appendChild(svgEl('rect', { x: x + 6, y: cy + 7, width: Math.max(1, barW * frac), height: 2, rx: 1, class: 'dn-swissladder-bar dn-swissladder-bar-live' }));
+        // status moves onto the sub-line (same cy+13 baseline the decided branch
+        // uses), reusing the primary label's class so the live/racing color carries.
+        const sub = svgEl('text', { x: x + 6, y: cy + 13, class: cls });
+        sub.textContent = progText.replace(/^ · /, '');
+        g.appendChild(sub);
+      } else if (queued) {
+        // queued pairings carry their status on the sub-line too (no overrun).
+        const sub = svgEl('text', { x: x + 6, y: cy + 13, class: cls });
+        sub.textContent = progText.replace(/^ · /, '');
+        g.appendChild(sub);
       }
       { const open = p.winner || p.a || p.b;
         clickable(g, (o.onCompetitor && open) && (() => o.onCompetitor(String(open)))); }
@@ -1179,7 +1344,15 @@ export function swissLadder(opts) {
     const g = svgEl('g', { class: 'dn-swissladder-stand' + (proj ? ' dn-proj' : ''), tabindex: o.onCompetitor ? '0' : null });
     const lab = hov(svgEl('text', { x: sx + 6, y: cy + 3, class: 'dn-swissladder-standlab' + (emph ? ' dn-good' : (isFormer ? ' dn-faint' : '')) + (proj ? ' dn-proj' : '') }),
       `${sid} · ${isNum(s.points) ? fmt(s.points, 1) : '?'} pts · ${s.wins || 0}W ${s.draws || 0}D ${s.losses || 0}L${isFormer ? ' · former champion' : ''}${proj ? ` · projected scalar ~${fmt(s.projected_scalar, 2)} (boards streaming; points not projected)` : ''}`);
-    lab.textContent = `${i + 1}. ${shortLabel(sid, 9)}` + (isChamp ? ' ' + CROWN.current : (isFormer || isLeader ? ' ' + CROWN.former : '')) + (proj ? ' ~proj' : '');
+    // H7: this name shares its row with the right-anchored points value
+    // (end-anchored at sx+standW-6). A two-digit rank, the crown, and the
+    // ` ~proj` tag each eat horizontal budget; shrink the id cap by what those
+    // decorations consume (floored at 4 so ids stay distinguishable) so the
+    // name can never reach the points gutter. The common single-digit,
+    // undecorated row keeps the full 9-char cap — no regression.
+    const hasCrown = isChamp || isFormer || isLeader;
+    const idCap = Math.max(4, 9 - (i + 1 >= 10 ? 1 : 0) - (hasCrown ? 2 : 0) - (proj ? 6 : 0));
+    lab.textContent = `${i + 1}. ${fitLabel(sid, idCap * 11 * CHAR_EM, 11)}` + (isChamp ? ' ' + CROWN.current : (isFormer || isLeader ? ' ' + CROWN.former : '')) + (proj ? ' ~proj' : '');
     g.appendChild(lab);
     const pts = svgEl('text', { x: sx + standW - 6, y: cy + 3, 'text-anchor': 'end', class: 'dn-swissladder-pts' + (emph ? ' dn-good' : '') });
     pts.textContent = isNum(s.points) ? fmt(s.points, s.points % 1 ? 1 : 0) : '—';
@@ -1204,10 +1377,20 @@ export function swissLadder(opts) {
   gateHead.textContent = 'champion-gate';
   svg.appendChild(gateHead);
   const cy = rowY(0);
+  const x1 = sx + standW;
   if (leaderId) {
-    const x1 = sx + standW;
+    // the committed feeding edge — a flat run from the standings column to the
+    // gate. The gate row never changes y, so the path is a single horizontal
+    // stroke; the earlier `V${cy}` mid-elbow was a no-op and is dropped.
+    svg.appendChild(svgEl('path', { d: `M${x1},${cy} H${gx}`, class: 'dn-swissladder-edge' + (crowned ? ' dn-swissladder-edge-champ' : ''), fill: 'none' }));
+  } else if (rounds.length) {
+    // ORPHAN-GATE GUARD: rounds exist but no leader is committed yet (live — the
+    // standings column is empty, or leaderId hasn't resolved). The gate box still
+    // renders, so feed it a STUB edge from the standings column to the midpoint —
+    // it signals "feeds from standings, no committed leader" without drawing a
+    // full connection the data hasn't earned.
     const mx = (x1 + gx) / 2;
-    svg.appendChild(svgEl('path', { d: `M${x1},${cy} H${mx} V${cy} H${gx}`, class: 'dn-swissladder-edge' + (crowned ? ' dn-swissladder-edge-champ' : ''), fill: 'none' }));
+    svg.appendChild(svgEl('path', { d: `M${x1},${cy} H${mx}`, class: 'dn-swissladder-edge dn-swissladder-edge-stub', fill: 'none' }));
   }
   const clickId = champId || leaderId;
   const gateG = svgEl('g', { class: 'dn-swissladder-gate', tabindex: (clickId && o.onCompetitor) ? '0' : null });
@@ -1320,6 +1503,29 @@ export function elimFlow(opts) {
         else if (winner) g.lostAt.add(ci);   // a decided loss in THIS column
       }
     }
+  });
+  // ROBUSTNESS: a published round can carry DEGENERATE/duplicate matches — the
+  // backend has been observed emitting the SAME match twice in one column (an
+  // identical bracket_slot + competitor pair, e.g. LB-R1-0 listed twice). Left
+  // alone, each duplicate draws its OWN convergence elbow + node STACKED on the
+  // first, so one match reads as two overlapping convergences. Dedupe each column
+  // by a stable match key (slot + sorted competitors — the match_id is already
+  // folded into `slot`), keeping the MOST-DECIDED instance (a settled winner beats
+  // a still-pending duplicate). Genuinely distinct matches that merely share a
+  // column (different competitors, or a different slot) keep distinct keys, so
+  // normal / non-duplicated data is byte-identical (no reassignment when nothing
+  // collapses).
+  matchesByCol.forEach((matches, ci) => {
+    if (matches.length < 2) return;
+    const byKey = new Map();
+    for (const m of matches) {
+      const key = String(m.slot) + '|' + m.comps.map(String).slice().sort().join('/');
+      const prev = byKey.get(key);
+      // keep the more-decided of a duplicate pair: a settled (non-pending) match
+      // wins over a pending one; otherwise the first-seen instance stays.
+      if (!prev || (prev.pending && !m.pending)) byKey.set(key, m);
+    }
+    if (byKey.size !== matches.length) matchesByCol[ci] = [...byKey.values()];
   });
   const isDouble = anyLB;
   // ELIMINATION vs DROP (double-elim correctness): a generation is ELIMINATED at
@@ -1440,11 +1646,29 @@ export function elimFlow(opts) {
     }
   }
 
-  // round-axis headers (R0 · R1 · … · champion-gate).
+  // round-axis headers (e.g. WB R0 · LB R1 · Grand final · champion-gate).
+  // A label that already fits is kept VERBATIM ("Semifinal", "Final",
+  // "LB Round 1", "Grand final", "Rung 1"). Only the double-elim strategy's
+  // GENERIC, over-long, round-INDISTINCT bracket-side labels — "Winners'
+  // bracket" / "Losers' bracket" (15–16 chars, identical across every round of
+  // that side) — get compacted to a tight side+round token ("WB R0" / "LB R1")
+  // derived from the column's bracket_slot, since shortLabel() otherwise cut
+  // them to an unreadable, ambiguous "Winners' br…".
+  const colLabel = (r) => {
+    const lab = String(r.label || '');
+    if (/winners.*bracket/i.test(lab) || /losers.*bracket/i.test(lab)) {
+      for (const m of (Array.isArray(r.matches) ? r.matches : [])) {
+        const sm = String((m && m.bracket_slot) || '').match(/^(WB|LB)-R(\d+)/i);
+        if (sm) return sm[1].toUpperCase() + ' R' + sm[2];
+      }
+      return /losers/i.test(lab) ? 'LB' : 'WB';
+    }
+    return shortLabel(lab || `R${isNum(r.round_index) ? r.round_index : ''}`, 12);
+  };
   rounds.forEach((r, ci) => {
     const hx = colX(ci);
     const head = svgEl('text', { x: hx, y: top - 12, class: 'dn-elimflow-col', 'text-anchor': 'middle' });
-    head.textContent = shortLabel(r.label || `R${ci}`, 12);
+    head.textContent = colLabel(r);
     svg.appendChild(head);
   });
   const gateHead = svgEl('text', { x: gateX, y: top - 12, class: 'dn-elimflow-col', 'text-anchor': 'middle' });
@@ -1513,13 +1737,32 @@ export function elimFlow(opts) {
       // whenever the lane CONTINUES: it advanced, it is racing, OR it dropped to
       // the losers' bracket. Without the drop case the dropped lane's WB dot was
       // orphaned from its LB entry, so the bracket "couldn't tell what connects".
-      if (advanced || pending || dropped) {
+      // A lane ELIMINATED at this column TERMINATES here (its ✕) — it must draw
+      // NO forward segment, even when it ALSO won a different match in the SAME
+      // column during a degenerate / live multi-match round (champion-vs-field
+      // seeding can put one gen in two col-0 matches: a win AND a loss). Without
+      // this guard the won-match marked the lane `advanced`, so a green segment
+      // left the eliminated dot and ran to a column with no dot — the dangling
+      // "disconnected" line. Elimination wins.
+      if (!eliminated && (advanced || pending || dropped)) {
         const nextCi = cols.find((c) => c > ci);
         // a lane reaches the GATE from the last column only when it WON / is still
         // racing there (advanced or pending) — never on a drop (a dropped lane
         // always has a later played column, so it never falls through to here).
-        const toX = (nextCi != null) ? colX(nextCi)
-          : ((advanced || pending) && ci === nCols - 1 ? gateX : null);
+        //
+        // LIVE-INITIALIZATION GAP: mid-tournament a lane can ADVANCE from a
+        // non-final column while its NEXT match is not yet seeded into the
+        // bracket (nextCi null, not at the final column). Previously that drew
+        // NO segment, orphaning the dot so the lane read as "disconnected". We
+        // instead draw a short DASHED stub into the next column slot — "advanced,
+        // awaiting its next match" — so the lane always connects forward.
+        const continues = advanced || pending;
+        const atFinal = ci === nCols - 1;
+        let toX = null;
+        let awaiting = false;
+        if (nextCi != null) toX = colX(nextCi);
+        else if (continues && atFinal) toX = gateX;
+        else if (continues && !atFinal) { toX = colX(ci + 1); awaiting = true; }
         // a DROP into an LB column (double-elim) routes as a rounded orthogonal
         // PIPE through the RESERVED CHANNEL below the whole lane stack — it leaves
         // the WB-loss dot, drops to its OWN channel lane, runs across there (never
@@ -1539,8 +1782,10 @@ export function elimFlow(opts) {
             class: 'dn-elimflow-seg dn-elimflow-seg-drop dn-elimflow-bad', fill: 'none',
           }));
         } else if (toX != null) {
+          // an `awaiting` stub (advanced, next match not yet seeded) reads as
+          // pending/dashed — it is not a confirmed advance.
           const segCls = 'dn-elimflow-seg ' + (dropped ? 'dn-elimflow-seg-drop dn-elimflow-bad'
-            : pending ? 'dn-elimflow-seg-pending' : 'dn-elimflow-good');
+            : (pending || awaiting) ? 'dn-elimflow-seg-pending' : 'dn-elimflow-good');
           lane.appendChild(svgEl('line', { x1: x, y1: y, x2: toX, y2: y, class: segCls }));
         }
       }
@@ -1632,23 +1877,35 @@ export function swissOverview(opts) {
   const ttl = svgEl('text', { x: 2, y: 14, class: 'dn-swissover-title' });
   ttl.textContent = 'standings by round' + (live ? ' · LIVE' : '');
   svg.appendChild(ttl);
-  const X = scale([0, Math.max(1, nR - 1)], [padL, w - padR]);
+  // A SINGLE round (nR < 2) has no horizontal travel: scale() would pin the lone
+  // column to padL (the left gutter), stacking every start/end dot + name + rank
+  // label on one x. Center the lone column in the plot band instead so the dot
+  // sits mid-figure with its name label in the left gutter and its rank label in
+  // the right gutter. colX() routes both the axis and the bump points through it.
+  const single = nR < 2;
+  const Xscale = scale([0, Math.max(1, nR - 1)], [padL, w - padR]);
+  const cX = padL + (w - padR - padL) / 2;
+  const colX = (j) => (single ? cX : Xscale(j));
   const Y = scale([1, Math.max(2, nC)], [bumpTop, bumpTop + (nC - 1) * rowH]);
   labels.forEach((lab, j) => {
-    const x = X(j);
-    const tk = svgEl('text', { x, y: bumpTop - 8, class: 'dn-swissover-round', 'text-anchor': j === 0 ? 'start' : (j === labels.length - 1 ? 'end' : 'middle') });
+    const x = colX(j);
+    const tk = svgEl('text', { x, y: bumpTop - 8, class: 'dn-swissover-round', 'text-anchor': single ? 'middle' : (j === 0 ? 'start' : (j === labels.length - 1 ? 'end' : 'middle')) });
     // compact axis ticks — "Swiss round 2" → "R2", "Champion gate" → "Gate" —
-    // so the labels never truncate to an ambiguous "Swiss r…".
+    // so the labels never truncate to an ambiguous "Swiss r…". A custom round
+    // label (neither "round N" nor "gate", e.g. "Tiebreak"/"Tiebreaker") has no
+    // canonical short form, so it keeps shortLabel's natural cap (12) — at 10px
+    // mono with these middle ticks centered, a 12-char label still clears the
+    // column gap — rather than clipping to an ambiguous "Tiebrea…".
     const ls = String(lab);
     const rm = ls.match(/(\d+)/);
-    tk.textContent = /gate/i.test(ls) ? 'Gate' : (/round/i.test(ls) && rm ? 'R' + rm[1] : shortLabel(ls, 8));
+    tk.textContent = /gate/i.test(ls) ? 'Gate' : (/round/i.test(ls) && rm ? 'R' + rm[1] : shortLabel(ls, 12));
     svg.appendChild(tk);
     svg.appendChild(svgEl('line', { x1: x, x2: x, y1: bumpTop - 4, y2: bumpTop + (nC - 1) * rowH + 4, class: 'dn-swissover-grid' }));
   });
   // one polyline per competitor; champion emphasised.
   series.forEach((s) => {
     const pts = [];
-    s.ranks.forEach((r, j) => { if (isNum(r)) pts.push([X(j), Y(r)]); });
+    s.ranks.forEach((r, j) => { if (isNum(r)) pts.push([colX(j), Y(r)]); });
     if (!pts.length) return;
     // The CURRENT champion's line is emphasised (bold + ♛); the displaced
     // incumbent reads dim with a "former" mark so the two never look alike.
@@ -1660,13 +1917,15 @@ export function swissOverview(opts) {
       `${s.id}${champ ? ' · new champion' : (former ? ' · former champion' : '')} · finishes rank ${s.ranks[s.ranks.length - 1] || '?'}`),
       o.onCompetitor && (() => o.onCompetitor(s.id)));
     svg.appendChild(path);
-    // end-dots (start + final rank) + left name label + right rank label.
+    // end-dots (start + final rank) + left name label + right rank label. With a
+    // single point (one round) the start and end coincide → draw ONE dot, never a
+    // doubled-up pair on the same x.
     const [x0, y0] = pts[0];
     const [xn, yn] = pts[pts.length - 1];
     const dotCls = 'dn-swissover-dot' + (champ ? ' dn-swissover-dot-champ' : '');
     const r = champ ? 3.4 : 2.6;
     svg.appendChild(svgEl('circle', { cx: x0, cy: y0, r, class: dotCls }));
-    svg.appendChild(svgEl('circle', { cx: xn, cy: yn, r, class: dotCls }));
+    if (pts.length > 1) svg.appendChild(svgEl('circle', { cx: xn, cy: yn, r, class: dotCls }));
     const lL = svgEl('text', { x: x0 - 6, y: y0 + 3, class: 'dn-swissover-name' + (champ ? ' dn-swissover-name-champ' : (former ? ' dn-swissover-name-former' : '')), 'text-anchor': 'end' });
     lL.textContent = shortLabel(s.id, 11) + (champ ? ' ' + CROWN.current : (former ? ' ' + CROWN.former : ''));
     svg.appendChild(lL);
@@ -1746,7 +2005,7 @@ export function duelFlow(opts) {
   const padTop = 34;
   const padBottom = 22;
   const laneGap = 26;
-  const nameW = 60;                              // left gutter for challenger labels
+  const nameW = 78;                              // left gutter: fits shortLabel(id,9)+glyph (~66px) inside the viewBox
   const gateW = 124;
   const plotLeft = nameW + 18;                   // start of the measured band
   const fieldRight = w - gateW - 28;             // end of the improvement zone (before the gate)
@@ -1782,8 +2041,16 @@ export function duelFlow(opts) {
   const deltas = challengers.map((c) => c.delta).filter(isNum).map(Math.abs);
   const maxAbs = Math.max(1e-9, ...deltas);
   // Reserve a margin at each band edge so the OUTBOARD Δ label never collides
-  // with the name gutter (left) or the gate (right) even at the max |Δ|.
-  const labelPad = 32;
+  // with the name gutter (left) or the gate (right) even at the max |Δ|. The
+  // rightmost IMPROVING lane (Δ<0) rides toward the gate, so its label can be a
+  // 3+-integer-digit signed value (e.g. -128.4); size the reserve to the widest
+  // such formatted-Δ label (10px mono ≈ 6px/char + a small margin) so it never
+  // overruns toward the gate box. Floored at 32 so normal magnitudes are
+  // unchanged. (The format here mirrors the per-lane draw site below.)
+  const dWidth = (d) => textPx(fmtSigned(d, Math.abs(d) < 0.1 ? 2 : 1), 10);
+  const maxImproveLabelW = Math.max(0, ...challengers
+    .map((c) => c.delta).filter((d) => isNum(d) && d < 0).map(dWidth));
+  const labelPad = Math.max(32, maxImproveLabelW + 6);
   const offsetOf = (d) => {
     if (!isNum(d) || d === 0) return 0;
     const frac = Math.min(1, Math.abs(d) / maxAbs);
@@ -1999,7 +2266,10 @@ export function racingScalarTrack(opts) {
   svg.appendChild(svgEl('line', { x1: padL, y1: axisY, x2: W - padR, y2: axisY, class: 'dn-scalartrack-axis' }));
   if (!mini) {
     const cap = svgEl('text', { x: padL, y: top - 18, class: 'dn-scalartrack-cap' });
-    cap.textContent = `${shortLabel(rung.label || `Rung ${focus}`, 14)} — scalar, lower is better`;
+    // cap wide enough for a full multi-word rung label (e.g. "Quarterfinal gauntlet");
+    // the caption is left-anchored at x=padL with ~470px of axis room, so a long
+    // label keeps its distinguishing word instead of clipping at 14.
+    cap.textContent = `${shortLabel(rung.label || `Rung ${focus}`, 30)} — scalar, lower is better`;
     svg.appendChild(cap);
   }
   // axis end ticks.
@@ -2056,9 +2326,18 @@ export function racingScalarTrack(opts) {
     // the staggered id label, lifted off the axis by tier.
     const ly = axisY - m.r - 4 - (m.tier || 0) * tierH;
     if ((m.tier || 0) > 0) g.appendChild(svgEl('line', { x1: m.x, y1: axisY - m.r - 1, x2: m.x, y2: ly + 2, class: 'dn-scalartrack-tier ' + verdictCls }));
-    const lab = svgEl('text', { x: m.x, y: ly, class: 'dn-scalartrack-name ' + verdictCls + (m.projected ? ' dn-proj' : ''), 'text-anchor': 'middle' });
     const projSuffix = m.projected && isNum(m.lane.projected_scalar) ? ' ~' + fmt(m.lane.projected_scalar, 1) + ' proj' : '';
-    lab.textContent = shortLabel(m.id, mini ? 6 : 9) + projSuffix;
+    const labText = shortLabel(m.id, mini ? 6 : 9) + projSuffix;
+    // data-marker labels are middle-anchored at m.x; a far marker (sitting at padL
+    // or W−padR) would clip half its label past the viewBox edge — axis/bench labels
+    // are edge-anchored and safe, data markers are not. Measure the label (9px mono
+    // ⇒ ~0.6em/char, the same face elimRadial clamps against) and pull its x inboard
+    // so the whole label stays in [edge, W−edge]. A no-op for any marker that fits.
+    const labW = labText.length * (mini ? 5 : 5.4);
+    const labEdge = mini ? 2 : 3;
+    const labX = Math.max(labEdge + labW / 2, Math.min(m.x, W - labEdge - labW / 2));
+    const lab = svgEl('text', { x: labX, y: ly, class: 'dn-scalartrack-name ' + verdictCls + (m.projected ? ' dn-proj' : ''), 'text-anchor': 'middle' });
+    lab.textContent = labText;
     g.appendChild(lab);
     // a live/projected progress sub-bar UNDER the axis (boards done / total).
     if (m.lane && (m.lane.inflight || m.lane.done || m.projected)) {
@@ -2203,8 +2482,14 @@ export function gauntletFieldBars(opts) {
     const cx = X(champScalar);
     svg.appendChild(hov(svgEl('line', { x1: cx, y1: bandTop, x2: cx, y2: bandBot, class: 'dn-fieldbars-standard' }),
       champId ? `champion ${champId} · standard ${fmt(champScalar, 3)}` : `champion standard ${fmt(champScalar, 3)}`));
-    const ct = svgEl('text', { x: cx, y: bandTop - 4, class: 'dn-fieldbars-axis', 'text-anchor': 'middle' });
-    ct.textContent = mini ? 'champ' : (champId ? shortLabel(champId, 10) + ' standard' : 'champ standard');
+    // the centered standard label clips when the champion is the field best/worst
+    // (cx near padL / W-padR). Measure its real width (9.5px mono ⇒ ~0.6em/char)
+    // and clamp the centered x to the plot band — a no-op for a mid-field champion.
+    const ctText = mini ? 'champ' : (champId ? shortLabel(champId, 10) + ' standard' : 'champ standard');
+    const ctHalf = ctText.length * (mini ? 3 : 2.85);
+    const ctx = Math.max(padL + ctHalf, Math.min(cx, W - padR - ctHalf));
+    const ct = svgEl('text', { x: ctx, y: bandTop - 4, class: 'dn-fieldbars-axis', 'text-anchor': 'middle' });
+    ct.textContent = ctText;
     svg.appendChild(ct);
   }
   // the PROMOTE GATE threshold (champ − margin) — a dashed accent line.
@@ -2248,9 +2533,15 @@ export function gauntletFieldBars(opts) {
     const lbl = svgEl('text', { x: padL - 6, y: cy + 3, class: 'dn-fieldbars-name ' + cls + (row.projected ? ' dn-proj' : ''), 'text-anchor': 'end' });
     lbl.textContent = shortLabel(id, mini ? 7 : 11) + glyph;
     g.appendChild(lbl);
-    // the scalar value just past the marker (settled / projected).
+    // the scalar value just past the marker (settled / projected). A worst-end
+    // challenger lands its dot near the band's right edge (W − padR); a start-
+    // anchored value there (`12.345`, ~42px) overruns the W viewBox, so when dx
+    // sits in the right ~15% of the band we flip the value INBOARD (end-anchored
+    // at dx − gap, growing leftward). Mid-band values are unchanged.
     if (!mini && isNum(row.v)) {
-      const vt = svgEl('text', { x: dx + (row.survivor ? 8 : 7), y: cy + 3, class: 'dn-fieldbars-val ' + cls + (row.projected ? ' dn-proj' : ''), 'text-anchor': 'start' });
+      const vgap = row.survivor ? 8 : 7;
+      const nearRight = dx >= (W - padR) - 0.15 * (W - padR - padL);
+      const vt = svgEl('text', { x: dx + (nearRight ? -vgap : vgap), y: cy + 3, class: 'dn-fieldbars-val ' + cls + (row.projected ? ' dn-proj' : ''), 'text-anchor': nearRight ? 'end' : 'start' });
       vt.textContent = (row.projected ? '~' : '') + fmt(row.v, 3);
       g.appendChild(vt);
     }
@@ -2467,18 +2758,31 @@ export function elimRadial(opts) {
       lane.appendChild(svgEl('line', { x1: sx, y1: sy, x2: ex, y2: ey, class: 'dn-elimradial-seg dn-elimradial-pending' + (proj ? ' dn-proj' : '') }));
     }
 
-    // the outer spoke label, anchored & nudged by quadrant so it never clips.
-    const [lx, ly] = pol(rr(0) + (mini ? 4 : 7), a);
+    // the outer spoke label. The radial origin + per-quadrant vertical nudge set
+    // where the text STARTS; but `text-anchor:start/end` then grows the text
+    // HORIZONTALLY, and for cardinal-E/W spokes (|cos a|≈1) the origin already
+    // sits at cx ± (R-ish) so the run spills past the box. labelPad is a RADIAL
+    // gutter — it never bounds horizontal extent — so measure the label's real
+    // width and clamp its x inward to keep the whole [x0,x1] span in the viewBox.
+    const [lx0, ly] = pol(rr(0) + (mini ? 4 : 7), a);
     const ca = Math.cos(a); const sa = Math.sin(a);
     const anchor = ca < -0.3 ? 'end' : (ca > 0.3 ? 'start' : 'middle');
     const ldy = sa < -0.3 ? -2 : (sa > 0.3 ? 9 : 3);
     const lblCls = 'dn-elimradial-name ' + (eliminated ? 'dn-bad' : isChamp ? 'dn-good' : isFormer ? 'dn-elimradial-former' : 'dn-good') + (proj ? ' dn-proj' : '');
+    const lblText = shortLabel(g.id, mini ? 5 : 8) + (isChamp ? ' ' + CROWN.current : isFormer ? ' ' + CROWN.former : '') + (proj ? ' ~' : '');
+    // the name is 9px mono ⇒ ~0.6em/char; clamp x so the start/end/middle run
+    // never crosses [edge, W-edge]. A no-op for any spoke that already fits.
+    const lblW = lblText.length * (mini ? 5 : 5.4);
+    const edge = mini ? 2 : 3;
+    const lx = anchor === 'start' ? Math.min(lx0, W - edge - lblW)
+      : anchor === 'end' ? Math.max(lx0, edge + lblW)
+      : Math.max(edge + lblW / 2, Math.min(lx0, W - edge - lblW / 2));
     const tip = `${g.id}`
       + (isChamp ? ` · champion ${CROWN.current}` : isFormer ? ' · former champion' : eliminated ? ` · eliminated at ${colsSorted[g.eliminatedAt] ? (colsSorted[g.eliminatedAt].label || 'R' + g.eliminatedAt) : 'R' + g.eliminatedAt}` : pendingSpoke ? ' · racing' : ' · advanced')
       + (proj ? ` · projected scalar ~${fmt(proj.scalar, 2)} (boards streaming)` : '')
       + (isDouble ? ` · ${g.side === 'LB' ? "losers' bracket ●○" : "winners' bracket ●●"}` : '');
     const lbl = hov(svgEl('text', { x: lx, y: ly + ldy, class: lblCls, 'text-anchor': anchor }), tip);
-    lbl.textContent = shortLabel(g.id, mini ? 5 : 8) + (isChamp ? ' ' + CROWN.current : isFormer ? ' ' + CROWN.former : '') + (proj ? ' ~' : '');
+    lbl.textContent = lblText;
     lane.appendChild(lbl);
     clickable(lane, o.onCompetitor && (() => o.onCompetitor(g.id)));
     svg.appendChild(lane);
@@ -2493,10 +2797,13 @@ export function elimRadial(opts) {
       const a = angleOf.get(g.id);
       if (a == null) return;
       // a short rim arc just outside the play area, hugging the rim (not a chord).
-      const aDeg = (a * 180 / Math.PI) + 90;
-      const fromDeg = aDeg - 18;
+      // anchor the START at the SOURCE WB node's angle — the equator-mirror of
+      // the LB node (WB on the upper arc, LB on the lower arc are reflections
+      // across the horizontal equator), so in pol()'s convention that source
+      // angle is just -a. (Was a constant aDeg-18, a bare rim point with no node.)
+      const fromA = -a;
       const stagger = transferR + li * (mini ? 2 : 4); li++;
-      const [fx, fy] = pol(stagger, (fromDeg - 90) * Math.PI / 180);
+      const [fx, fy] = pol(stagger, fromA);
       const [tx, ty] = pol(stagger, a);
       const large = 0;
       svg.appendChild(svgEl('path', {
@@ -2618,8 +2925,24 @@ export function radarSilhouette(opts) {
     // name at top/bottom does not run across its neighbours); others stay
     // horizontal and rely on truncation + the quadrant anchor.
     const rotate = near && full.length > labelMax;
+    const shown = shortLabel(full, labelMax);
+    // HORIZONTAL (non-rotated) right/left-quadrant labels: clamp x so the
+    // estimated text extent stays inside the viewBox. The full-size non-legend
+    // radar (W=360, cx=180, R=128) drops a start-anchored East-spoke label at
+    // lx≈326; a labelMax-char name (~0.6em mono ≈ 5.7px/char) would run past W.
+    // Pull the start in (right quadrant) / push it out (left quadrant) just
+    // enough to fit, but never across the chart centre cx (so the label stays in
+    // its own quadrant). Rotated near-vertical labels follow the spoke and are
+    // bounded by labelPad already.
+    let tx = lx;
+    if (!rotate && anchor !== 'middle') {
+      const estW = shown.length * 5.7;          // 9.5px mono ≈ 0.6em/char
+      const edgePad = 4;
+      if (anchor === 'start' && tx + estW > W - edgePad) tx = Math.max(cx, W - edgePad - estW);
+      else if (anchor === 'end' && tx - estW < edgePad) tx = Math.min(cx, edgePad + estW);
+    }
     const t = svgEl('text', {
-      x: lx, y: ly + 3, class: 'dn-radar-axislab',
+      x: tx, y: ly + 3, class: 'dn-radar-axislab',
       'text-anchor': rotate ? (dy < 0 ? 'start' : 'end') : anchor,
     });
     if (rotate) {
@@ -2627,7 +2950,7 @@ export function radarSilhouette(opts) {
       const deg = Math.atan2(dy, dx) * 180 / Math.PI + (dy < 0 ? 90 : -90);
       t.setAttribute('transform', `rotate(${deg.toFixed(1)} ${lx.toFixed(1)} ${(ly + 3).toFixed(1)})`);
     }
-    t.textContent = shortLabel(full, labelMax);
+    t.textContent = shown;
     hov(t, full);
     svg.appendChild(t);
   });
@@ -3221,7 +3544,7 @@ export function roundTimeline(opts) {
     }, [
       svgEl('circle', { cx, cy: spineY, r: 8, class: 'dn-roundtl-disc' }),
       svgEl('text', { x: cx, y: spineY + 3.5, class: 'dn-roundtl-glyph', 'text-anchor': 'middle' }, [CROWN.current]),
-      svgEl('text', { x: cx, y: spineY - 16, class: 'dn-roundtl-champid', 'text-anchor': 'middle' }, [shortLabel(champId, 10)]),
+      svgEl('text', { x: cx, y: spineY - 16, class: 'dn-roundtl-champid', 'text-anchor': 'middle' }, [fitLabel(champId, 10 * 12 * CHAR_EM, 12, { mid: true })]),
       svgEl('text', { x: cx, y: spineY + 26, class: 'dn-roundtl-loss', 'text-anchor': 'middle' },
         [isNum(r.champion && r.champion.scalar) ? fmt(r.champion.scalar, 1) : '·']),
       svgEl('text', { x: cx, y: spineY + 38, class: 'dn-roundtl-rord', 'text-anchor': 'middle' }, ['r' + r.round_index]),
@@ -3429,8 +3752,11 @@ export function waterfall(opts) {
     rord.textContent = 'r' + s.round_index;
     g.appendChild(rord);
     // the winning-mutation glyph (the promoted gen) — a crown over a promoting step.
+    // an IMPROVED step lifts the crown well clear of the floor label (which sits at
+    // yTo − 6, also centred on cx) so the ♛ never overprints the number; a
+    // regressed/flat step drops it below the station (yTo + 14).
     if (!held && s.gen != null && yTo != null) {
-      const cr = svgEl('text', { x: cx, y: y(s.to) - (isNum(s.from) && isNum(s.to) && s.to < s.from ? 8 : -14), class: 'dn-waterfall-crown', 'text-anchor': 'middle' });
+      const cr = svgEl('text', { x: cx, y: y(s.to) - (isNum(s.from) && isNum(s.to) && s.to < s.from ? 18 : -14), class: 'dn-waterfall-crown', 'text-anchor': 'middle' });
       cr.textContent = CROWN.current;
       g.appendChild(cr);
     }
@@ -3490,7 +3816,7 @@ export function reignGantt(opts) {
     const current = !!r.current;
     const g = svgEl('g', { class: 'dn-reigngantt-row', tabindex: o.onCompetitor ? '0' : null });
     const lbl = svgEl('text', { x: padL - 8, y: cy + 3, class: 'dn-reigngantt-name' + (current ? ' dn-reigngantt-current' : ' dn-reigngantt-former'), 'text-anchor': 'end' });
-    lbl.textContent = shortLabel(String(r.id), 12) + ' ' + (current ? CROWN.current : CROWN.former);
+    lbl.textContent = fitLabel(String(r.id), 12 * 10.5 * CHAR_EM, 10.5, { mid: true }) + ' ' + (current ? CROWN.current : CROWN.former);
     g.appendChild(lbl);
     const span = Math.max(4, x1 - x0);
     g.appendChild(hov(svgEl('rect', {
@@ -3761,7 +4087,13 @@ export function metaLoopLedger(opts) {
       stroke: 'var(--v2-rule)', 'stroke-width': 1, 'stroke-dasharray': open ? '5 4' : null,
     }), `${e.epoch_id} · ${e.generation_count || 0} gen · floor ${fmt(e.floor, 3)}`
       + ` · ${e.structure || 'gauntlet'}` + (open ? ' · OPEN' : '')));
-    g.appendChild(txt(b.x0 + 8, bandTop + 18, shortLabel(String(e.epoch_id), 14),
+    // band-id is the band's PRIMARY label — like its width-gated siblings
+    // (bandsub > 84 / champlbl > 104 below) it must NOT spill into the
+    // neighbour band. Rather than hide it on a narrow band, shrink the
+    // char-cap ∝ band width (≈6.5px/glyph; 8px left pad + 8px breathing
+    // room): wide bands clamp to the full 14, narrow bands truncate in place.
+    const idCap = Math.max(6, Math.min(14, Math.floor((b.w - 16) / 6.5)));
+    g.appendChild(txt(b.x0 + 8, bandTop + 18, midLabel(String(e.epoch_id), idCap),
       { class: 'dn-metaledger-bandid', 'text-anchor': 'start' }));
     if (b.w > 84) {
       g.appendChild(txt(b.x0 + 8, bandTop + 34, e.structure || 'gauntlet',
@@ -3833,8 +4165,17 @@ export function metaLoopLedger(opts) {
           { class: soft ? 'dn-metaledger-cellmark-soft' : 'dn-metaledger-cellmark', 'text-anchor': 'middle' }));
       }
     });
-    svg.appendChild(txt(b.xc, hsBot + 14, shortLabel(String(e.epoch_id), 14),
-      { class: 'dn-metaledger-colid', 'text-anchor': 'middle' }));
+    // colid is middle-anchored at b.xc, so a full 14-char id (~92px) overprints
+    // its neighbour once a band narrows below that. Same width-discipline as the
+    // band's siblings (bandsub b.w>84 / champlbl b.w>104): shrink the cap ∝ b.w
+    // (~6.6px/char, less a hair of intra-band margin) and DROP it when even ~2
+    // chars won't fit. A wide band (single epoch, ≤~6 equal-effort epochs) keeps
+    // cap≥14 — identical to the prior shortLabel(...,14).
+    const colidCap = Math.min(14, Math.floor((b.w - 4) / 6.6));
+    if (colidCap >= 2) {
+      svg.appendChild(txt(b.xc, hsBot + 14, midLabel(String(e.epoch_id), colidCap),
+        { class: 'dn-metaledger-colid', 'text-anchor': 'middle' }));
+    }
   });
 
   return svg;
@@ -3921,14 +4262,37 @@ export function calibrationTrend(opts) {
 
   // the connecting line over the SCORED points only (a null-fraction gen lifts
   // the pen — it scored nothing, so we don't draw a misleading drop to zero).
+  // A faint dashed BRIDGE re-connects scored points ACROSS the null gaps the
+  // solid pen lifted over, so SPARSE scoring (scored→null→scored) reads as a
+  // trend rather than nothing: with every scored gen isolated the solid line is
+  // all move-tos (invisible), and the bridge is the only thing that draws. On
+  // DENSE data no gap is ever bridged → the bridge string stays empty and the
+  // figure is byte-identical to before. The bridge is drawn UNDER the solid
+  // line so adjacent-scored runs keep their crisp solid stroke on top.
   let d = '';
+  let bridge = '';
   let penDown = false;
+  let prevScored = null; // { i, f } of the last scored gen, for gap-bridging
   pts.forEach((p, i) => {
     const f = p && isNum(p.score_fraction) ? p.score_fraction : null;
     if (f == null) { penDown = false; return; }
+    if (!penDown && prevScored) {
+      // the pen lifted since the last scored gen (≥1 null between) — span it.
+      bridge += `M${x(prevScored.i).toFixed(2)},${y(prevScored.f).toFixed(2)} `
+        + `L${x(i).toFixed(2)},${y(f).toFixed(2)} `;
+    }
     d += `${penDown ? 'L' : 'M'}${x(i).toFixed(2)},${y(f).toFixed(2)} `;
     penDown = true;
+    prevScored = { i, f };
   });
+  if (bridge) svg.appendChild(svgEl('path', {
+    d: bridge.trim(), class: 'dn-caltrend-bridge', fill: 'none',
+    // mirror the faint-dashed reference grammar inline (no CSS edit needed) and
+    // keep a class distinct from dn-caltrend-mean so the rolling-mean reference
+    // stays the single dn-caltrend-mean element.
+    stroke: 'var(--v2-ink-soft)', 'stroke-width': '1', 'stroke-dasharray': '4 3',
+    'vector-effect': 'non-scaling-stroke', opacity: '0.55',
+  }));
   if (d) svg.appendChild(svgEl('path', { d: d.trim(), class: 'dn-spark-line', fill: 'none' }));
 
   // the per-generation ticks: a scored gen is a solid dot, a no-claim gen is a

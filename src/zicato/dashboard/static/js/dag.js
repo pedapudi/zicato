@@ -57,12 +57,21 @@ function rectNode(layer, cx, cy, w, h, label, sub, cls) {
 // per run (rung label when present, the loss value, a pass/fail/timeout dot).
 // Clicking a row drills into THAT run's transcript (o.onRun(entry, run) or, as
 // a fallback, o.onEntry(entry)). CSS keeps it hidden until the node opens.
-function perRunStack(e, x, cy, o) {
+function perRunStack(e, x, cy, o, maxRight) {
   const runs = Array.isArray(e.runs) ? e.runs : [];
   const rowH = 13;
-  const panelW = 150;
   const sparkH = 18;
   const pad = 6;
+  // CLAMP the panel WIDTH so it never crosses the Σ node to its right: in the
+  // narrow compare-split (width 560) the disc-anchored panel at X.board+r+6
+  // (~276) ran the fixed 150px panel to ~426, overlapping Σ (X.agg~370) + the
+  // Σ→GATE edge. `maxRight` is the Σ node x — keep the panel's right edge a pad
+  // short of it. The clamp ONLY ever shrinks (Math.min with the default 150), so
+  // the wide width-900 layout (where the panel already clears Σ) is unchanged;
+  // a floor keeps the sparkline + right-anchored loss readout legible.
+  const panelW = isNum(maxRight)
+    ? Math.max(64, Math.min(150, maxRight - pad - x))
+    : 150;
   const h = sparkH + pad + runs.length * rowH + pad;
   const top = cy - h / 2;
   const g = svgEl('g', { class: 'ezn-board-runs', 'data-cz': 'lc-board-runs' });
@@ -135,6 +144,12 @@ export function rungProgression(spec) {
   const step = n > 1 ? usable / (n - 1) : 0;
   const midY = 30;
   const xOf = (i) => padX + (n > 1 ? i * step : usable / 2);
+  // step-proportional label cap: a long swiss/elim run (n≥7) in the narrow
+  // compare width shrinks `step` until middle-anchored 14-char labels (and their
+  // Δ sublabels) collide with their neighbours. Tighten the clip ∝ step (~6px per
+  // glyph at the label font), floored at 4 and bounded ABOVE by the prior cap of
+  // 14 — so every wide/few-stage figure (step ≥ 84px) renders byte-identically.
+  const labelCap = Math.min(14, Math.max(4, Math.floor(step / 6)));
 
   // connecting spine.
   if (n > 1) {
@@ -148,9 +163,9 @@ export function rungProgression(spec) {
       : v.includes('decid') || v.includes('live') ? 'ezn-running' : 'ezn-neutral';
     const g = svgEl('g', { class: 'ezn-rungprog-stage ' + cls, 'data-cz': 'lc-rungprog-stage', 'data-kind': st.kind || 'rung' });
     g.appendChild(svgEl('circle', { cx: x, cy: midY, r: 7, class: 'ezn-rungprog-dot' }));
-    g.appendChild(svgEl('text', { x, y: 14, class: 'ezn-rungprog-label', 'text-anchor': 'middle' }, [clip(st.label || ('rung ' + i), 14)]));
+    g.appendChild(svgEl('text', { x, y: 14, class: 'ezn-rungprog-label', 'text-anchor': 'middle' }, [clip(st.label || ('rung ' + i), labelCap)]));
     const sub = isNum(st.delta) ? (st.delta >= 0 ? '+' : '') + fmt(st.delta, 1) + ' Δ' : (st.verdict || '');
-    g.appendChild(svgEl('text', { x, y: midY + 20, class: 'ezn-rungprog-sub', 'text-anchor': 'middle' }, [clip(sub, 14)]));
+    g.appendChild(svgEl('text', { x, y: midY + 20, class: 'ezn-rungprog-sub', 'text-anchor': 'middle' }, [clip(sub, labelCap)]));
     if (st.verdict) attachHovercard(g, (st.label || 'rung') + ' — ' + st.verdict + (isNum(st.delta) ? ' (Δ ' + fmt(st.delta, 2) + ')' : ''));
     svg.appendChild(g);
   });
@@ -365,8 +380,10 @@ export function lifecycleDag(spec) {
         // the EXPANSION: a small per-run stack (a sparkline + one row per run,
         // labelled by rung when present) revealed on hover/focus/click. It is
         // appended to THIS node group so it inherits the node's position; CSS
-        // hides it until :hover / :focus-within / .ezn-board-open.
-        children.push(perRunStack(e, X.board + r + 6, y, o));
+        // hides it until :hover / :focus-within / .ezn-board-open. Pass X.agg
+        // (the Σ node x) as the right boundary so the panel is clamped to stop
+        // short of Σ in the narrow compare-split instead of overlapping it.
+        children.push(perRunStack(e, X.board + r + 6, y, o, X.agg));
       }
       const g = svgEl('g', {
         class: 'ezn-node ezn-board-node ' + cls + (raced ? ' ezn-board-raced' : '') + (raced ? ' ezn-board-expandable' : ''), 'data-cz': 'lc-board-node',

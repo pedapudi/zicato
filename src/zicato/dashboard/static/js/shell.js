@@ -72,7 +72,7 @@ let _viewHost = null;
 let _treeHost = null;
 let _crumbHost = null;
 let _statusEl = null;
-let _statusTextEl = null;     // the connection word (live/connecting/offline)
+let _statusTextEl = null;     // the connection word (connected/connecting/offline)
 let _runStateEl = null;       // the four-state run pill (LIVE/STALLED/SETTLED/DEAD)
 let _runStateTextEl = null;   // the run-state WORD inside the pill
 let _runLabelEl = null;       // the structure+phase run label
@@ -935,7 +935,11 @@ function renderCrumbs(route) {
 // leaves the derived verdict unchanged writes ZERO DOM (no flash).
 function renderStatus() {
   if (!_statusEl) return;
-  const conn = state.connected ? 'live' : state.connecting ? 'connecting…' : 'offline';
+  // The CONNECTION word is the SSE/transport status — distinct from the run-state
+  // pill's LIVE/STALLED/SETTLED/DEAD verdict that rides right after it. It must
+  // NOT also say "live" (two adjacent "live" markers read as a redundant bug);
+  // "connected" names the transport without colliding with the run pill.
+  const conn = state.connected ? 'connected' : state.connecting ? 'connecting…' : 'offline';
   const status = deriveLiveStatus({
     heartbeat: state.heartbeat,
     activeRuns: state.activeRuns,

@@ -146,6 +146,78 @@ def test_agent_messages_and_turn_ordering(tmp_path: Path) -> None:
     assert seqs == sorted(seqs)
 
 
+def test_run_started_and_goal_derived_prompt_not_duplicated(tmp_path: Path) -> None:
+    """The user prompt renders ONCE when run_started + goal_derived repeat it.
+
+    goldfive emits the prompt twice for a trivially-derived goal: once as
+    ``run_started.goal_summary`` (the raw request) and again as
+    ``goal_derived.goals[*].summary`` (the framework's derived goal, identical
+    text for a single-task board). Both map to a user turn and merge into one,
+    so the prompt used to render twice (separated by a blank line). The merge
+    must dedup the identical segment.
+    """
+
+    prompt = "Outline a deck on quarterly metrics for Q3."
+    lines = [
+        _camel(
+            "runStarted",
+            {"goalSummary": prompt},
+            runId="r1",
+            sequence="0",
+            emittedAt="2026-05-16T00:00:00Z",
+        ),
+        _camel(
+            "goalDerived",
+            {"goals": [{"summary": prompt}]},
+            runId="r1",
+            sequence="1",
+            emittedAt="2026-05-16T00:00:01Z",
+        ),
+        _camel(
+            "runCompleted",
+            {"outcomeSummary": "done"},
+            runId="r1",
+            sequence="2",
+            emittedAt="2026-05-16T00:00:02Z",
+        ),
+    ]
+    t = reconstruct_transcript(_write(tmp_path, lines))
+
+    # run_started + goal_derived collapse into ONE user turn carrying the
+    # prompt exactly once — not "<prompt>\n\n<prompt>".
+    assert [turn.role for turn in t.turns] == ["user", "system"]
+    user = t.turns[0]
+    assert user.text == prompt
+    assert user.text.count(prompt) == 1
+
+
+def test_distinct_goal_derived_text_still_appended(tmp_path: Path) -> None:
+    """The dedup is exact-segment only — a genuinely different derived goal
+    still joins the user turn (no over-eager collapse of distinct content)."""
+
+    lines = [
+        _camel(
+            "runStarted",
+            {"goalSummary": "Outline a deck on Q3 metrics."},
+            runId="r1",
+            sequence="0",
+            emittedAt="2026-05-16T00:00:00Z",
+        ),
+        _camel(
+            "goalDerived",
+            {"goals": [{"summary": "Also include a revenue chart."}]},
+            runId="r1",
+            sequence="1",
+            emittedAt="2026-05-16T00:00:01Z",
+        ),
+    ]
+    t = reconstruct_transcript(_write(tmp_path, lines))
+
+    user = t.turns[0]
+    assert "Outline a deck on Q3 metrics." in user.text
+    assert "Also include a revenue chart." in user.text
+
+
 def test_conversation_started_without_sequence_sorts_first(tmp_path: Path) -> None:
     # goldfive's persistence sink emits ``conversation_started`` OUTSIDE
     # the per-run sequence stream: the event carries only an

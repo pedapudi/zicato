@@ -475,7 +475,23 @@ def test_bundle_under_size_envelope(
     # (board.js). All digest-gated (a no-op beat stays byte-identical) + back-compat
     # (a seq-less / non-terminal / single-goal payload renders as today). The envelope
     # is raised to 1.20 MB to cover the new spine with headroom.
-    assert total < 1_200_000, f"bundle is {total} bytes, exceeds 1_200_000 envelope"
+    #
+    # The SVG-RENDER-FAMILY structural fix then lands two things: (a) the shared
+    # text-fitting PRIMITIVES in svg.js — `textPx` (one mono char-width model),
+    # `fitLabel` (truncate to a PIXEL budget, head or mid), `edgeText` (a <text>
+    # kept inside its box by clamping x + flipping the anchor near an edge) and
+    # `fitInto` (the two together) — the ONE home for "size text to its box",
+    # replacing the per-figure char-cap-then-hand-clamp math that was the root of
+    # the recurring clip/collision class; and (b) the family of correctness fixes
+    # routed onto them across ~18 figure builders + the views — label-clip /
+    # adjacent-collision / disconnected-line / degenerate-cardinality guards, plus
+    # the elimFlow eliminated-lane + duplicate-slot dedup, the live "what's
+    # running" in-flight fallback, and the chrome connection/run-state
+    # disambiguation. Net additive surface (back-compat: every figure renders
+    # byte-identical for normal data; the primitives only change OUT-of-box cases).
+    # ~28 KB of real new render-discipline code. The envelope is raised to 1.24 MB
+    # to cover it with headroom.
+    assert total < 1_240_000, f"bundle is {total} bytes, exceeds 1_240_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
