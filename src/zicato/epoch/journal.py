@@ -312,8 +312,9 @@ def write_seed_experiment(
     Marker shape:
       * ``id``: ``"exp_{epoch}_{generation}"`` — same convention as a
         proposer experiment.
-      * ``parent_generation_id``: ``""`` — the seed has no parent within
-        the epoch (cross-epoch lineage lives in ``lineage.json``).
+      * ``parent_generation_id``: ``None`` — the seed has no parent within
+        the epoch (cross-epoch lineage lives in ``lineage.json``). Written
+        as JSON ``null``; a legacy on-disk ``""`` reads back as ``None``.
       * ``hypothesis.core_idea``: ``"baseline seed"`` — terse and stable.
       * ``outcome``: ``None`` — the seed never ran a tournament round, so
         no realised deltas exist. Loaders detect this and render the
@@ -336,7 +337,7 @@ def write_seed_experiment(
         id=f"exp_{epoch_id}_{generation_id}",
         epoch_id=epoch_id,
         generation_id=generation_id,
-        parent_generation_id="",
+        parent_generation_id=None,
         proposed_at=proposed_at,
         hypothesis=HypothesisSpec(
             core_idea="baseline seed",
@@ -497,11 +498,16 @@ def read_experiment(
 
     raw_round = body.get("round_index")
     round_index = raw_round if isinstance(raw_round, int) and not isinstance(raw_round, bool) else 0
+    # "Absent" is ``None`` (the seed has no in-epoch parent). New writes
+    # emit JSON ``null``; a legacy on-disk ``""`` is normalised to ``None``
+    # here so existing workspaces load uniformly.
+    raw_parent = body.get("parent_generation_id")
+    parent_generation_id = str(raw_parent) if raw_parent else None
     return Experiment(
         id=str(body.get("id", "")),
         epoch_id=str(body.get("epoch_id", epoch_id)),
         generation_id=str(body.get("generation_id", generation_id)),
-        parent_generation_id=str(body.get("parent_generation_id", "")),
+        parent_generation_id=parent_generation_id,
         proposed_at=str(body.get("proposed_at", "")),
         hypothesis=hypothesis,
         patches=tuple(patches),

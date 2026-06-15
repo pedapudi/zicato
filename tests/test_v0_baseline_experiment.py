@@ -3,8 +3,9 @@
 Coverage:
 
 * :func:`zicato.epoch.journal.write_seed_experiment` writes a minimal
-  experiment for v0 with ``parent_generation_id=""``, ``outcome=None``,
-  and is idempotent on a second call.
+  experiment for v0 with ``parent_generation_id=None`` (the seed has no
+  in-epoch parent), ``outcome=None``, and is idempotent on a second call.
+  A legacy on-disk ``""`` still reads back as ``None``.
 * :func:`zicato.orchestrator._ensure_baseline_snapshot` invokes the
   seed writer so a freshly-materialised v0 carries the marker.
 * :func:`zicato.analyzer.report_data.gather_epoch_report_data` returns
@@ -164,10 +165,17 @@ def test_write_seed_experiment_writes_minimal_marker(tmp_path: Path) -> None:
     assert body["generation_id"] == "v0"
     assert body["epoch_id"] == epoch
     assert body["id"] == f"exp_{epoch}_v0"
-    assert body["parent_generation_id"] == ""
+    # The seed has no in-epoch parent: written as JSON null, not "".
+    assert body["parent_generation_id"] is None
     assert body["outcome"] is None
     assert body["hypothesis"]["core_idea"] == "baseline seed"
     assert body["proposed_at"] == "2026-05-20T00:00:00Z"
+
+    # And the round-tripped Experiment carries None, not "".
+    from zicato.epoch.journal import read_experiment  # noqa: PLC0415
+
+    exp = read_experiment(ws, epoch, "v0")
+    assert exp.parent_generation_id is None
 
 
 def test_write_seed_experiment_is_idempotent(tmp_path: Path) -> None:
@@ -184,6 +192,36 @@ def test_write_seed_experiment_is_idempotent(tmp_path: Path) -> None:
     # Second call: should leave the tampered text in place.
     assert write_seed_experiment(ws, epoch, "v0") is False
     assert exp_path.read_text() == tampered
+
+
+def test_read_experiment_normalises_legacy_empty_parent(tmp_path: Path) -> None:
+    """A legacy on-disk ``parent_generation_id: ""`` reads back as ``None``.
+
+    Pre-migration workspaces wrote the seed's parent as an empty string;
+    the reader must normalise that to ``None`` so the in-memory shape is
+    uniform regardless of when the file was written.
+    """
+    from zicato.epoch.journal import read_experiment  # noqa: PLC0415
+
+    ws, epoch = _bootstrap_workspace_without_v0_marker(tmp_path)
+    # Hand-write a v0 experiment.json carrying the legacy empty-string
+    # sentinel (the shape pre-migration writers produced).
+    _write_json(
+        ws / "epochs" / epoch / "generations" / "v0" / "experiment.json",
+        {
+            "id": f"exp_{epoch}_v0",
+            "epoch_id": epoch,
+            "generation_id": "v0",
+            "parent_generation_id": "",
+            "proposed_at": "2026-05-20T00:00:00Z",
+            "hypothesis": {"core_idea": "baseline seed", "modulating": [], "why": ""},
+            "patch_ids": [],
+            "outcome": None,
+        },
+    )
+
+    exp = read_experiment(ws, epoch, "v0")
+    assert exp.parent_generation_id is None
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +245,8 @@ def test_gather_returns_v0_when_marker_present(tmp_path: Path) -> None:
     assert post_ids == ["v0", "v1", "v2"]
     v0_view = next(g for g in post.generations if g.generation_id == "v0")
     assert v0_view.is_baseline is True
+    # The seed marker now stores a null parent; the analyzer report view
+    # normalises that back to "" so its downstream wire form is unchanged.
     assert v0_view.parent_generation_id == ""
     assert v0_view.decision == "baseline"  # outcome is None for the seed
     # The v0 gen_score is still picked up.
@@ -335,7 +375,7 @@ def test_ensure_baseline_snapshot_writes_v0_marker(tmp_path: Path) -> None:
     assert exp_path.exists()
     body = json.loads(exp_path.read_text())
     assert body["generation_id"] == "v0"
-    assert body["parent_generation_id"] == ""
+    assert body["parent_generation_id"] is None
     assert body["outcome"] is None
     assert body["hypothesis"]["core_idea"] == "baseline seed"
     # proposed_at is the synthetic generation's created_at — non-empty.

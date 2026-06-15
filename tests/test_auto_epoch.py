@@ -245,7 +245,12 @@ def test_contract_change_message_names_component(tmp_path: Path) -> None:
 
 
 def test_legacy_epoch_treated_as_matching(tmp_path: Path) -> None:
-    """An epoch with contract_hash == "" must not trigger a spurious roll."""
+    """A legacy on-disk contract_hash "" must not trigger a spurious roll.
+
+    The reader normalises the legacy empty string to ``None``; the
+    epoching "never rolls" rule is an ``is None`` check, so a pre-feature
+    epoch is treated as always-matching.
+    """
     workspace, files = _bootstrap(tmp_path)
     from zicato.core.types import ScoringWeights
     from zicato.epoch.lifecycle import new_epoch

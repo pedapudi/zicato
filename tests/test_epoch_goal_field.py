@@ -109,6 +109,48 @@ def test_epoch_config_serializes_and_deserializes_goal() -> None:
     assert restored_legacy.goal == ""
 
 
+def test_epoch_config_contract_hash_absent_is_none() -> None:
+    """``contract_hash`` is ``None`` (not "") when absent or legacy-empty.
+
+    "Absent" must be ``None`` so the "legacy never rolls" rule can be an
+    explicit ``is None`` check — a corrupted/empty stored hash must NOT
+    read as legacy.
+    """
+    # A real hash round-trips verbatim.
+    cfg = EpochConfig(
+        id="2026-05-27_x",
+        name="x",
+        created_at="2026-05-27T00:00:00+00:00",
+        board_path=Path("/board.jsonl"),
+        brief_path=Path("/brief.md"),
+        scoring=ScoringWeights(),
+        contract_hash="feedface00000001",
+    )
+    restored = _config_from_dict(json.loads(json.dumps(_config_to_dict(cfg))))
+    assert restored.contract_hash == "feedface00000001"
+
+    # Default (never set) ⇒ None, written as JSON null.
+    default_cfg = EpochConfig(
+        id="2026-05-27_y",
+        name="y",
+        created_at="2026-05-27T00:00:00+00:00",
+        board_path=Path("/board.jsonl"),
+        brief_path=Path("/brief.md"),
+        scoring=ScoringWeights(),
+    )
+    payload = _config_to_dict(default_cfg)
+    assert payload["contract_hash"] is None
+    assert _config_from_dict(json.loads(json.dumps(payload))).contract_hash is None
+
+    # Back-compat: a config missing the key, or carrying a legacy empty
+    # string, both normalise to None.
+    base = _config_to_dict(cfg)
+    legacy_missing = {k: v for k, v in base.items() if k != "contract_hash"}
+    assert _config_from_dict(legacy_missing).contract_hash is None
+    legacy_empty = dict(base, contract_hash="")
+    assert _config_from_dict(legacy_empty).contract_hash is None
+
+
 # ---------------------------------------------------------------------------
 # 2. lifecycle writer round-trips goal
 # ---------------------------------------------------------------------------

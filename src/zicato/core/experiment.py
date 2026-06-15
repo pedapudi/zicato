@@ -390,7 +390,10 @@ class Experiment:
     epoch_id, generation_id:
         The lineage coordinates of THIS experiment's child generation.
     parent_generation_id:
-        The lineage head this experiment is challenging.
+        The lineage head this experiment is challenging, or ``None`` when
+        there is no in-epoch parent (the ``v0`` seed marker — cross-epoch
+        lineage lives in ``lineage.json``). A legacy on-disk ``""`` is
+        normalised to ``None`` on read.
     proposed_at:
         ISO-8601 UTC timestamp when the proposer emitted the hypothesis.
     hypothesis:
@@ -412,7 +415,7 @@ class Experiment:
     id: str
     epoch_id: str
     generation_id: str
-    parent_generation_id: str
+    parent_generation_id: str | None
     proposed_at: str
     hypothesis: HypothesisSpec
     patches: tuple[Patch, ...]
