@@ -11,7 +11,7 @@ generation that is missing one.
 The marker carries:
 
 * ``id``: ``"exp_{epoch}_v0"``
-* ``parent_generation_id``: ``""`` (cross-epoch lineage lives in
+* ``parent_generation_id``: ``null`` (cross-epoch lineage lives in
   ``lineage.json``; within the epoch the seed has no parent)
 * ``hypothesis.core_idea``: ``"baseline seed"``
 * ``outcome``: ``null`` (the seed never ran a tournament round)

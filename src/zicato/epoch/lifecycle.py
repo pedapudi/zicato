@@ -176,6 +176,8 @@ def _config_to_dict(cfg: EpochConfig) -> dict[str, Any]:
         "scoring": _scoring_to_dict(cfg.scoring),
         "closed": cfg.closed,
         "closed_at": cfg.closed_at,
+        # ``None`` ⇒ pre-hash (legacy) epoch, written as null. Newly
+        # created epochs always carry a real computed hash.
         "contract_hash": cfg.contract_hash,
         "goal": cfg.goal,
         # ``None`` ⇒ built-in default proposer. Written as null so an
@@ -185,9 +187,11 @@ def _config_to_dict(cfg: EpochConfig) -> dict[str, Any]:
 
 
 def _config_from_dict(d: dict[str, Any]) -> EpochConfig:
-    # ``contract_hash`` defaults to "" so epochs written before
+    # ``contract_hash`` defaults to ``None`` so epochs written before
     # contract-hash auto-epoching landed load cleanly — see
-    # :class:`zicato.core.types.EpochConfig` and the contract module.
+    # :class:`zicato.core.types.EpochConfig` and the contract module. A
+    # legacy on-disk ``""`` is normalised to ``None`` (absent ⇒ legacy,
+    # "never rolls"); only ``is None`` reads as legacy downstream.
     #
     # ``brief_path`` is the current key; ``rubric_path`` is the
     # pre-rename name, still accepted so an epoch ``config.json`` written
@@ -209,7 +213,7 @@ def _config_from_dict(d: dict[str, Any]) -> EpochConfig:
         scoring=_scoring_from_dict(d.get("scoring", {})),
         closed=bool(d.get("closed", False)),
         closed_at=d.get("closed_at", ""),
-        contract_hash=str(d.get("contract_hash", "")),
+        contract_hash=(str(raw_hash) if (raw_hash := d.get("contract_hash")) else None),
         goal=str(d.get("goal", "")),
         proposer_path=Path(raw_proposer) if raw_proposer else None,
     )

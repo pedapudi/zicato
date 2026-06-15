@@ -149,13 +149,18 @@ def _namespace_of(metric_name: str) -> str:
 def _upsert_epoch(
     conn: sqlite3.Connection,
     epoch_id: str,
-    contract_hash: str,
+    contract_hash: str | None,
     created_at: str,
     closed: bool,
     goal: str = "",
     parent_epoch_id: str | None = None,
 ) -> None:
     """Upsert one ``epochs`` row.
+
+    ``contract_hash`` is the descriptive hash from the epoch's
+    ``config.json``; ``None`` (a pre-hash / legacy epoch) projects to the
+    column's empty-string form so the index wire shape is unchanged. The
+    index column is purely derived — it does not feed the canonicalizer.
 
     ``goal`` is the operator's free-form statement of why this epoch
     exists, written to the per-epoch ``config.json``. Empty string for
@@ -181,7 +186,7 @@ def _upsert_epoch(
         "closed = excluded.closed, "
         "goal = excluded.goal, "
         "parent_epoch_id = COALESCE(excluded.parent_epoch_id, epochs.parent_epoch_id)",
-        (epoch_id, contract_hash, created_at, 1 if closed else 0, goal, parent_epoch_id),
+        (epoch_id, contract_hash or "", created_at, 1 if closed else 0, goal, parent_epoch_id),
     )
 
 
@@ -1282,7 +1287,7 @@ def _upsert_owning_epoch_generation(
     being absent (a thin row with empty metadata is still written so a
     later ``rebuild_index`` or ``ingest_*`` call fills it in).
     """
-    contract_hash = ""
+    contract_hash: str | None = None
     created_at = ""
     closed = False
     goal = ""

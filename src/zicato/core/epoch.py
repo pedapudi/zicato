@@ -54,11 +54,14 @@ class EpochConfig:
         :mod:`zicato.epoch.contract`. The orchestrator recomputes this
         on every ``evolve`` and auto-rolls the epoch when the live
         contract drifts from the stored value.
-        The default is the empty string. An empty ``contract_hash``
-        means "epoch created before contract-hash auto-epoching landed"
-        — such legacy epochs are treated as *always matching* so the
-        orchestrator never spuriously rolls a workspace that predates
-        the feature.
+        The default is ``None``. A ``None`` ``contract_hash`` means
+        "epoch created before contract-hash auto-epoching landed" — such
+        legacy epochs are treated as *always matching* so the
+        orchestrator never spuriously rolls a workspace that predates the
+        feature (the "legacy never rolls" rule is an explicit ``is None``
+        check, NOT ``== ""``: a corrupted/empty stored hash must not read
+        as legacy). A legacy on-disk ``""`` is normalised to ``None`` on
+        read.
     goal:
         Free-form operator-supplied statement of *why* this epoch
         exists — the intent the operator is testing (e.g. "shift the
@@ -86,7 +89,7 @@ class EpochConfig:
     scoring: ScoringWeights
     closed: bool = False
     closed_at: str = ""
-    contract_hash: str = ""
+    contract_hash: str | None = None
     goal: str = ""
     # Location of the proposer dir frozen for this epoch, or ``None`` for
     # the built-in default proposer. Folded into the contract hash; missing

@@ -125,7 +125,7 @@ async def ensure_epoch_for_contract(
          ``zicato epoch new``).
     4. Load ``cur``'s :class:`EpochConfig`.
 
-       * If ``cur.contract_hash == ""`` (legacy epoch) OR ``== `` the
+       * If ``cur.contract_hash is None`` (legacy epoch) OR ``== `` the
          current hash: return ``cur`` (continue, no roll).
        * Else (the contract changed):
 
@@ -177,9 +177,11 @@ async def ensure_epoch_for_contract(
         return new_id
 
     cfg = load_epoch(workspace_root, cur)
-    if cfg.contract_hash == "" or cfg.contract_hash == current_hash:
-        # Legacy epoch (empty hash → treated as always-matching) or the
-        # contract is unchanged. Either way: no roll.
+    if cfg.contract_hash is None or cfg.contract_hash == current_hash:
+        # Legacy epoch (``None`` stored hash → treated as always-matching)
+        # or the contract is unchanged. Either way: no roll. The check is
+        # ``is None``, NOT ``== ""``: a corrupted/empty real hash must roll
+        # rather than silently read as legacy.
         return cur
 
     # The contract drifted from the current epoch.
