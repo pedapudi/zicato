@@ -313,7 +313,11 @@ def test_field_diversity_soft_reject_persists_rejected_outcome(
         outcome is not None
     ), "a soft-rejected challenger must persist a terminal outcome, not None"
     assert outcome["tournament_decision"] == "rejected"
-    assert "field_diversity" in (outcome.get("rejection_reason") or ""), outcome
+    reason = outcome.get("rejection_reason") or ""
+    assert "field_diversity" in reason, outcome
+    # the reason DOCUMENTS the why, not just the bare code — the explanation
+    # rides the persisted rejection_reason.
+    assert "duplicates an in-flight sibling" in reason, reason
 
 
 def test_swiss_field_rejects_when_no_challenger_beats_champion(

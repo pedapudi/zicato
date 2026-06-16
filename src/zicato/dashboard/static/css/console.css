@@ -2377,6 +2377,14 @@
   .dn-elimflow-convnode { fill: var(--v2-ink-soft); vector-effect: non-scaling-stroke; }
   .dn-elimflow-convnode.dn-elimflow-good { fill: var(--v2-good); }
   .dn-elimflow-convnode.dn-elimflow-pending { fill: var(--v2-ink-faint); }
+  /* a DECIDING (undecided / in-flight) match node — the bracket's primary
+   * in-flight signal now that a pending lane draws no gate-bound leg. A soft
+   * pulse in the projected/live tone; suppressed under reduced motion. */
+  .dn-elimflow-convnode.dn-elimflow-deciding { fill: var(--v2-projected);
+    animation: dn-elim-deciding 1.4s ease-in-out infinite; }
+  @keyframes dn-elim-deciding { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  @media (prefers-reduced-motion: reduce) {
+    .dn-elimflow-convnode.dn-elimflow-deciding { animation: none; opacity: 1; } }
 
   /* ---- the GAUNTLET DUEL FLOW (the field as Δ-vs-champion lanes) ----
    * Each challenger a lane vs the crowned champion-gate; a dot below the Δ=0

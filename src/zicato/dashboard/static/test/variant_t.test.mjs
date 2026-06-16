@@ -4891,6 +4891,27 @@ test('mutation surface: clicking a CELL renders exactly ONE generation’s side-
   assert(anyCellHrefHasGen, 'at least one cell link carries the trailing /<gen> (one-generation affordance)');
 });
 
+test('mutation surface: generation columns order by CREATION order (v0,v1,v2,…,v10,v11), not lexically (v0,v1,v10,v2)', async () => {
+  freshState();
+  installFixtureMap({
+    '/api/epoch': { epoch_id: EPOCH_ID, closed: false, goal: 'g' },
+    // the API returns the generations in LEXICAL string order — the view must
+    // re-sort them to creation (numeric vN) order for the columns.
+    [`/api/mutations/${EPOCH_ID}`]: {
+      generations: ['v0', 'v1', 'v10', 'v11', 'v2'],
+      mutations: [
+        { mutation_id: 'm', kind: 'prompt', file: 'a.py', role: 'r', line_start: 1, line_end: 2, patched_generation_ids: ['v10'] },
+      ],
+    },
+  });
+  const mutations = await import('../js/views/mutations.js');
+  const host = document.createElement('div');
+  await mutations.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+  const cols = allByClass(host, 'dn-mtx-gen').map((th) => th.textContent.trim());
+  assertEqual(cols.join(','), 'v0,v1,v2,v10,v11',
+    `generation columns in creation order, not lexical (got ${JSON.stringify(cols)})`);
+});
+
 // ---- BUG 1 (b): clicking the SITE row label renders ALL generations ----
 
 test('mutation surface: clicking the SITE row label renders ALL generations that patched the site, stacked', async () => {
@@ -8749,6 +8770,33 @@ test('Task 3 — a LIVE elim flow draws in-flight legs as DASHED (pending conven
     gateState: model.gateState, live: true,
   });
   assert(allByClass(flow, 'dn-elimflow-seg-pending').length >= 1, 'an in-flight (pending) leg is drawn with the pending (dashed) class');
+});
+
+test('Task 3 — elimFlow: an UNDECIDED match draws a "deciding" node + a SHORT in-flight stub, NOT a premature leg to the champion-gate', () => {
+  // a just-seeded WB-R0 head-to-head, undecided (no winner): v12 vs v13. In a
+  // double-elim only the WINNER advances toward the gate and the loser drops to
+  // the losers' bracket — so NEITHER lane may draw a full leg to the gate yet.
+  // The in-flight signal is the "deciding" match node + a short dashed stub
+  // (mirroring elimRadial's one-ring pending spoke).
+  const winners = [
+    { round_index: 0, label: 'Round 1', matches: [
+      { competitors: ['v12', 'v13'], winner: null, pending: true, bracket_slot: 'WB-R0-0' },
+    ] },
+  ];
+  const flow = svg.elimFlow({ winners, championId: 'v3', benchmarkId: 'v3', live: true });
+  // the undecided match node reads "deciding" — the figure's in-flight signal.
+  assert(allByClass(flow, 'dn-elimflow-deciding').length >= 1, 'an undecided match node is marked deciding');
+  // NO committed (good) advance is drawn while the match is undecided.
+  const segs = allByClass(flow, 'dn-elimflow-seg');
+  const good = segs.filter((s) => (s.getAttribute('class') || '').includes('dn-elimflow-good'));
+  assertEqual(good.length, 0, 'an undecided match draws no committed advance (no good segment)');
+  // each pending leg is a SHORT stub, not a full leg to the gate.
+  const stubs = allByClass(flow, 'dn-elimflow-seg-pending');
+  assert(stubs.length >= 1, 'an undecided lane draws a short in-flight stub');
+  for (const s of stubs) {
+    const len = Math.abs(parseFloat(s.getAttribute('x2')) - parseFloat(s.getAttribute('x1')));
+    assert(len < 60, `the in-flight stub is SHORT (${len.toFixed(1)}px), not a full gate-bound leg`);
+  }
 });
 
 test('Task 3 — elimFlow: the over-long "Winners\'/Losers\' bracket" round labels compact to "WB R0"/"LB R0" (no "Winners\' br…" truncation); meaningful short labels are KEPT', () => {

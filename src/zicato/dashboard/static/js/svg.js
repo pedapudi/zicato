@@ -1704,8 +1704,11 @@ export function elimFlow(opts) {
       const tip = `${m.slot ? m.slot + ': ' : ''}${m.comps.join(' vs ')}`
         + (m.winner ? ` → ${m.winner} ↑` : m.pending ? (projMatch ? ' · projected (boards streaming)' : ' · racing') : '')
         + (m.delta != null ? ` · Δ ${fmtSigned(m.delta, 2)}` : '') + projTip;
-      const node = svgEl('circle', { cx: x, cy: ymid, r: m.pending ? 2.6 : 3,
-        class: 'dn-elimflow-convnode' + (m.pending ? ' dn-elimflow-pending' : m.winner ? ' dn-elimflow-good' : '') + (projMatch ? ' dn-proj' : '') });
+      // an UNDECIDED (pending) match is the figure's primary in-flight signal:
+      // the convergence node reads as "deciding" — slightly larger + a soft pulse
+      // (reduced-motion-safe) — since the lanes no longer draw a leg to the gate.
+      const node = svgEl('circle', { cx: x, cy: ymid, r: m.pending ? 3.2 : 3,
+        class: 'dn-elimflow-convnode' + (m.pending ? ' dn-elimflow-deciding' : m.winner ? ' dn-elimflow-good' : '') + (projMatch ? ' dn-proj' : '') });
       svg.appendChild(hov(node, tip));
     }
   });
@@ -1756,13 +1759,22 @@ export function elimFlow(opts) {
         // NO segment, orphaning the dot so the lane read as "disconnected". We
         // instead draw a short DASHED stub into the next column slot — "advanced,
         // awaiting its next match" — so the lane always connects forward.
-        const continues = advanced || pending;
+        // FORWARD-EDGE COMMITMENT: a lane earns an edge TOWARD the outcome (the
+        // next round / the champion-gate) only once it has actually ADVANCED
+        // (won its match). A still-undecided (pending) head-to-head is committed
+        // NOWHERE — drawing a leg to the gate would imply BOTH competitors of one
+        // match advance, which is nonsense in a double-elim (one wins, one drops
+        // to the losers' bracket). So, mirroring elimRadial's pending spoke, a
+        // pending lane draws only a SHORT dashed "racing this match" stub; the
+        // real forward edge appears when the match resolves.
         const atFinal = ci === nCols - 1;
         let toX = null;
         let awaiting = false;
-        if (nextCi != null) toX = colX(nextCi);
-        else if (continues && atFinal) toX = gateX;
-        else if (continues && !atFinal) { toX = colX(ci + 1); awaiting = true; }
+        if (nextCi != null) toX = colX(nextCi);            // a DECIDED later column (advance / drop)
+        else if (advanced && atFinal) toX = gateX;          // a WON lane reaches the champion-gate
+        else if (advanced) { toX = colX(ci + 1); awaiting = true; }  // won; next match not yet seeded
+        // UNDECIDED (pending): a short dashed in-flight stub only — committed nowhere yet.
+        else if (pending) toX = Math.min(x + Math.max(18, colW * 0.4), gateX - 6);
         // a DROP into an LB column (double-elim) routes as a rounded orthogonal
         // PIPE through the RESERVED CHANNEL below the whole lane stack — it leaves
         // the WB-loss dot, drops to its OWN channel lane, runs across there (never

@@ -43,7 +43,12 @@ export async function render(host, ctx, params) {
   const epochId = routeEpoch || ep.epoch_id;
 
   const mut = await D.mutations(epochId);
-  const gens = (mut && Array.isArray(mut.generations)) ? mut.generations : [];
+  // Generation columns in CREATION order (v0, v1, … v9, v10, v11), not the
+  // lexical string order (v0, v1, v10, v11, … v2, v3) the raw id list sorts to —
+  // the numeric vN suffix IS the mint order.
+  const genNum = (g) => { const m = /(\d+)\s*$/.exec(String(g || '')); return m ? parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER; };
+  const gens = ((mut && Array.isArray(mut.generations)) ? mut.generations : [])
+    .slice().sort((a, b) => genNum(a) - genNum(b) || String(a).localeCompare(String(b)));
   const sites = (mut && Array.isArray(mut.mutations)) ? mut.mutations : [];
 
   const patchedBySite = new Map();

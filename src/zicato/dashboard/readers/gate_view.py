@@ -895,6 +895,19 @@ def build_gate_breakdown(
                 "fired": False,
             },
         ]
+        # No aggregates ⇒ this challenger never ran a tournament (e.g. it was
+        # soft-rejected for field diversity during proposing). Surface its
+        # PERSISTED rejection so the gate panel documents WHY it was cut — the
+        # full "field_diversity_overlap: overlap 0.667 with v9 …" reason — instead
+        # of a bare "deferred" with no explanation.
+        exp = _read_json_value(layout_of(paths).experiment(epoch_id, challenger_id))
+        if isinstance(exp, dict):
+            exp_outcome = exp.get("outcome")
+            if isinstance(exp_outcome, dict):
+                exp_reason = str(exp_outcome.get("rejection_reason", "") or "")
+                if str(exp_outcome.get("tournament_decision", "")) == "rejected" and exp_reason:
+                    base["decision"] = "rejected"
+                    base["reason"] = exp_reason
         return base
 
     # Both aggregates present — run the real gate.

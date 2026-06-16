@@ -867,7 +867,7 @@ function bracketCaption(model) {
     + (model.benchmarkId ? ' · ' + CROWN.former + ' = displaced incumbent' : '')
     + (model.losers && model.losers.length ? ' · the losers’ bracket re-converges as a second band (double-elim)' : '')
     + gateNote
-    + (model.live ? ' · LIVE — in-flight legs are dashed' : '') });
+    + (model.live ? ' · LIVE — an undecided match pulses at its pairing; once it resolves the winner advances and the loser drops to the losers’ bracket' : '') });
 }
 
 function renderBracket(st, ctx, epochId, structure) {
