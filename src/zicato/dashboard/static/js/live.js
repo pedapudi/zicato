@@ -253,7 +253,16 @@ export function deriveActivity(prev, next, seq) {
 }
 
 function humanPhase(p) {
-  return String(p || '').replace(/:/g, ' · ').replace(/_/g, ' ');
+  // The heartbeat phase counts EVOLVE-LOOP rounds (the env › epoch › round ›
+  // generation hierarchy), which are DISTINCT from the in-tournament BRACKET
+  // rounds (WB R0 / LB R1 / GF) shown in the bracket figure. In this flat
+  // activity context — with no epoch node to nest under — spell the evolve round
+  // as "epoch round N" so the two never read as the same "round".
+  return String(p || '')
+    .replace(/(^|:)after_round_(\d+)/g, '$1after epoch round $2')
+    .replace(/(^|:)round_(\d+)/g, '$1epoch round $2')
+    .replace(/:/g, ' · ')
+    .replace(/_/g, ' ');
 }
 function label(s) { return s == null ? '—' : String(s); }
 

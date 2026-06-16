@@ -1676,6 +1676,31 @@ async def _evolve_multi_challenger(
             entries=_field_entries(champion_only),
         )
 
+    def _persist_soft_reject(generation_id: str, reason: str) -> None:
+        # A field-diversity soft-reject drops the challenger from the run slate
+        # during proposing. Persist a terminal REJECTED outcome onto its
+        # ``experiment.json`` (written at proposal with ``outcome=None``) so the
+        # canonical generation record — and the round-grouped lineage tree that
+        # reads it — show "rejected" consistently with the live proposed-field
+        # hero, instead of a stale "pending". Best-effort: a missing / locked
+        # record must never abort proposing the rest of the field.
+        with best_effort(f"persist soft-reject outcome for {generation_id}"):
+            update_experiment_outcome(
+                workspace_root,
+                epoch_id,
+                generation_id,
+                OutcomeRecord(
+                    ran_at=_now_iso(),
+                    drift_movements=(),
+                    pass_rate_delta=0.0,
+                    drift_loss_delta=0.0,
+                    scalar_score_delta=0.0,
+                    tournament_decision=TournamentDecision.REJECTED,
+                    rejection_reason=reason,
+                ),
+            )
+            _ingest_experiment_into_index(workspace_root, epoch_id, generation_id)
+
     for offset in range(field_n):
         next_id = f"v{base_n + offset}" if base_n is not None else base_id
         # Seed mirrors competitors_meta: champion is seed 1, challengers
@@ -1740,6 +1765,7 @@ async def _evolve_multi_challenger(
                 challenger.generation_id,
                 tuple(hyp.modulating),
             )
+            _persist_soft_reject(challenger.generation_id, "field_diversity_duplicate")
             continue
         # Opt-in overlap soft-reject: when a tolerance is configured, drop a
         # challenger whose mutation-id set overlaps an accepted sibling beyond
@@ -1780,6 +1806,7 @@ async def _evolve_multi_challenger(
                     overlap,
                     diversity_tolerance,
                 )
+                _persist_soft_reject(challenger.generation_id, "field_diversity_overlap")
                 continue
         if challenger is not None and diversity_tolerance is not None and isinstance(status, dict):
             # Enforcement active and the challenger is kept: stamp the slot

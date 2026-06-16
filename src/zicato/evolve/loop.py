@@ -52,6 +52,35 @@ log = logging.getLogger("zicato.orchestrator")
 CallLLM = Callable[[str, str, str], Awaitable[str]]
 
 
+def _epoch_round_base(workspace_root: Path, epoch_id: str | None) -> int:
+    """The next ``round_index`` for ``epoch_id`` — one past its highest
+    already-persisted round.
+
+    Re-running ``evolve`` on an EXISTING (un-rolled) epoch must CONTINUE that
+    epoch's round numbering rather than restart at 0. The loop counter is
+    invocation-local (``range(rounds)``), but ``round_index`` is persisted on
+    each generation and the dashboard groups generations by it — so a restart
+    collides the new field with the prior invocation's rounds in one bucket
+    (the "v9 lands in Round 0 next to v1–v4" bug). Returns
+    ``max(persisted round_index) + 1``, or ``0`` for a fresh / unreadable epoch
+    (the historical behaviour for a brand-new epoch, where the first round is 0).
+    """
+    if not epoch_id:
+        return 0
+    from zicato.workspace import WorkspaceLayout, read_experiments  # noqa: PLC0415
+
+    best = -1
+    try:
+        layout = WorkspaceLayout.from_root(workspace_root)
+        for _gid, exp in read_experiments(layout, epoch_id):
+            ri = exp.get("round_index")
+            if isinstance(ri, int) and ri > best:
+                best = ri
+    except Exception:  # noqa: BLE001 — a missing / locked workspace ⇒ base 0
+        return 0
+    return best + 1
+
+
 #: Default threshold for the loop-health circuit breaker: this many
 #: consecutive rounds with a CRITICAL loop-health finding stops the
 #: evolve loop early. Two is deliberately tight — one CRITICAL round
@@ -460,6 +489,13 @@ async def evolve_n_rounds(
         budget = WallClockBudgetPolicy(max_wall_clock_seconds)
         budget_stopped = False
         stop_reason = "completed"
+        # The CUMULATIVE round index for the pinned epoch. The loop counter
+        # ``round_idx`` is invocation-local (0..rounds-1, used only for the
+        # "round X of N" budget messages); the PERSISTED ``round_index`` CONTINUES
+        # the epoch's existing numbering so a re-run of evolve on the same epoch
+        # does not collide its new field with a prior invocation's rounds.
+        # Recomputed below if a rubric replacement rolls the epoch mid-loop.
+        epoch_round_index = _epoch_round_base(workspace_root, epoch_id)
         for round_idx in range(rounds):
             # Between-rounds budget check — before spending the next
             # round's LLM calls, bail if the total budget is spent.
@@ -502,14 +538,19 @@ async def evolve_n_rounds(
                     aux_call_llm=auxiliary_call_llm,
                     epoch_name=epoch_name,
                 )
+                # The rubric replacement rolled the epoch (a contract edit) — the
+                # new epoch is fresh, so restart its round numbering from its own
+                # base (0 for a brand-new epoch) rather than continuing the prior
+                # epoch's count.
+                epoch_round_index = _epoch_round_base(workspace_root, epoch_id)
 
             round_start_seq = _append_progress_seq(workspace_root, progress_log.ROUND_START)
             beater.update(
                 epoch_id=epoch_id or "",
-                round_index=round_idx,
+                round_index=epoch_round_index,
                 round_started_at=_orch._now_iso(),
                 seq=round_start_seq,
-                phase=f"evolve_once:round_{round_idx}",
+                phase=f"evolve_once:round_{epoch_round_index}",
             )
             beater.bump_now()
 
@@ -519,7 +560,7 @@ async def evolve_n_rounds(
             resume_plan = None
 
             async def _run_round(
-                _round_idx: int = round_idx,
+                _round_idx: int = epoch_round_index,
                 _resume_plan: ResumePlan | None = round_resume_plan,
                 # Bind the epoch as a default arg so a rubric_replacement that
                 # rolled ``epoch_id`` earlier this iteration is captured by
@@ -578,8 +619,8 @@ async def evolve_n_rounds(
             beater.update(
                 epoch_id=epoch_id or "",
                 generation_id=outcome.proposed_generation_id,
-                round_index=round_idx,
-                phase=f"after_round_{round_idx}:{outcome.tournament_decision}",
+                round_index=epoch_round_index,
+                phase=f"after_round_{epoch_round_index}:{outcome.tournament_decision}",
             )
             beater.bump_now()
             # Best-effort progressive analysis.html refresh so file://
@@ -623,6 +664,9 @@ async def evolve_n_rounds(
                 )
                 stop_reason = health_policy.reason
                 break
+            # Advance the cumulative epoch round index for the next iteration
+            # (the break paths above skip this — the loop is ending anyway).
+            epoch_round_index += 1
         # Terminal progress marker — a clean, orchestrator-produced end.
         # A reader distinguishes this SETTLED/STOPPED tail from a STALLED
         # one (seq frozen mid-flight, no terminal event). ``budget_stopped``

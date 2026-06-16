@@ -271,6 +271,51 @@ def test_swiss_field_runs_end_to_end_and_promotes(
     assert journal.count("swap the greeting string") >= 2
 
 
+def test_field_diversity_soft_reject_persists_rejected_outcome(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A challenger soft-rejected for field diversity (a duplicate of an
+    in-flight sibling) gets a TERMINAL rejected outcome persisted to its
+    ``experiment.json`` — so the round-grouped lineage tree reads "rejected",
+    consistent with the live proposed-field hero, instead of a stale "pending"
+    (``outcome=None``). Regression for the dashboard tree/hero status mismatch.
+    """
+    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2, rounds_n=1)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 0.5, "v2": 1.5},
+        canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
+    )
+
+    from zicato.orchestrator import evolve_once
+
+    # BOTH challengers are byte-identical (same core_idea + modulating id-set):
+    # the second duplicates the first in-flight sibling and is soft-rejected to
+    # keep the field diverse.
+    dup = _distinct_proposer_response("swap the greeting string", "howdy")
+    asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder([dup, dup]),
+        )
+    )
+
+    gens = workspace / "epochs" / epoch_id / "generations"
+    # v2 (the duplicate) was soft-rejected; its experiment.json now carries a
+    # terminal REJECTED outcome (pre-fix it stayed null → the tree showed
+    # "pending" while the live hero showed "rejected").
+    v2_exp = json.loads((gens / "v2" / "experiment.json").read_text())
+    outcome = v2_exp.get("outcome")
+    assert (
+        outcome is not None
+    ), "a soft-rejected challenger must persist a terminal outcome, not None"
+    assert outcome["tournament_decision"] == "rejected"
+    assert "field_diversity" in (outcome.get("rejection_reason") or ""), outcome
+
+
 def test_swiss_field_rejects_when_no_challenger_beats_champion(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
