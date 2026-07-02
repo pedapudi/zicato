@@ -345,12 +345,12 @@ async def evolve_once(
     # resolved from. ``None`` (the default / skill-only proposer) yields the
     # single-shot built-in unchanged.
     proposer_agent = build_proposer_agent(proposer_spec, proposer_path=_epoch_cfg.proposer_path)
-    # Proposer-quality levers (FUNCTIONALITY-RECOMMENDATIONS.md §4.1): when the
-    # contract opts in (``proposer_quality.best_of_n > 1``), interpose a
-    # best-of-N + self-critique wrapper around the resolved agent. With the
-    # default (``best_of_n == 1``) the wrapper returns the agent UNCHANGED, so
-    # the propose path is byte-identical to before this lever existed. The
-    # critic sees ONLY the same restricted proposer context (never the
+    # Proposer-quality levers (FUNCTIONALITY-RECOMMENDATIONS.md §4.1): with
+    # ``proposer_quality.best_of_n > 1`` — the DEFAULT is 3 — interpose a
+    # best-of-N + self-critique wrapper around the resolved agent. A contract
+    # that pins ``best_of_n: 1`` (scripted/deterministic proposers do) gets
+    # the agent back UNCHANGED — the historical single-sample propose path.
+    # The critic sees ONLY the same restricted proposer context (never the
     # holdout), so best-of-N stays inside the overfitting-visibility envelope.
     from zicato.proposer.best_of_n import wrap_with_proposer_quality  # noqa: PLC0415
 

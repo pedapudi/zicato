@@ -97,9 +97,11 @@ class Matchup:
     right: Contestant
     board_subset: tuple[str, ...] | None = None  # None = full board; racing slices
     replicates: int = 1           # paired runs averaged before scoring (>=1).
-                                  # 1 = the gauntlet's exact single-run path;
-                                  # brackets default >=2 because REPLICATION,
-                                  # not bracket shape, is the noise lever.
+                                  # UNPINNED default 2 for gauntlet/brackets/
+                                  # swiss (REPLICATION, not bracket shape, is
+                                  # the noise lever); 1 = the historical
+                                  # single-run path deterministic contracts
+                                  # pin (racing pins 1 — intrinsic slices).
     round_index: int = 0          # bracket round / swiss round / racing rung
     bracket_slot: str = ""        # e.g. "WB-R1-0"; empty for non-bracket structures
     matchup_budget_seconds: float | None = None  # opt-in per-duel wall-clock cap
@@ -232,15 +234,18 @@ one-line scheduling / advance / stopping summary, then the notes.
 >
 > | structure | `field_size` | `replicates` | extra |
 > |---|---|---|---|
-> | `gauntlet` | `1` (fixed) | `1` | — |
+> | `gauntlet` | `1` (fixed) | `2` | — |
 > | `single_elim` | `2` | `2` | — |
 > | `double_elim` | `2` | `2` | — |
 > | `swiss` | `2` | `2` | `rounds_n=4` |
 > | `racing` | `2` | `1` | `eta=2`, `board_fraction=0.25`, `rung0_board_size=0`, `matchup_budget_seconds`/`final_rung_budget_seconds` (opt-in) |
 >
 > `replicates` defaults are exactly that — DEFAULTS, not floors: an operator
-> may set any `>= 1`. `racing` defaults to `1` because it replicates
-> intrinsically via escalating board slices.
+> may set any `>= 1`. The base default is `2` (the noise-aware posture: a
+> duel decided by one paired run is decided by one noise draw); `racing`
+> pins `1` because it replicates intrinsically via escalating board slices.
+> Deterministic contracts pin `"replicates": 1` for the historical
+> single-run duel.
 >
 > Each strategy declares its own `_default_replicates` ClassVar, and the
 > registry derives `STRUCTURE_DEFAULT_REPLICATES` (and
@@ -251,7 +256,7 @@ one-line scheduling / advance / stopping summary, then the notes.
 > the map reads, so the map and the live strategy can never disagree. The
 > builder cost estimator reads `default_replicates_for` rather than assuming a
 > flat `1`, so the cost meter matches the schedule a structure actually runs
-> (swiss / single-elim / double-elim default to `2`, gauntlet / racing to
+> (gauntlet / swiss / single-elim / double-elim default to `2`, racing to
 > `1`) — see §4.0 and [`TOURNAMENT-BUILDER.md §4`](TOURNAMENT-BUILDER.md#4-the-consequence-forward-principle).
 
 ### 3.1 `gauntlet` (default — current behaviour, exactly)

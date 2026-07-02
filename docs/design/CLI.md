@@ -74,7 +74,10 @@ zicato evolve \
 Scaffold a fresh `.zicato/` workspace (run once per project). Creates the
 workspace directory if it doesn't exist, writes an empty lineage DAG
 (`lineage.json`: `{"nodes": [], "edges": []}`), and writes `config.json`
-containing `{instance_id, created_at}`. Refuses to overwrite an existing
+containing `{instance_id, created_at}`. Also scaffolds the operator's live
+`scoring.json` (next to the workspace, only when absent) with the full
+recommended contract — racing field 4, replicates 2, the evidence gate
+enabled explicitly. Refuses to overwrite an existing
 workspace unless `--force` is passed (`--force` only rewrites `config.json` /
 `lineage.json`; it does not delete epoch artifacts living alongside).
 
@@ -148,7 +151,7 @@ changes — use this group only to inspect or hand-edit a frozen board.
 zicato board COMMAND [ARGS]...
 ```
 
-Commands: `add`, `list`, `remove`.
+Commands: `add`, `audit`, `list`, `remove`.
 
 #### `zicato board add`
 
@@ -161,6 +164,29 @@ zicato board add [OPTIONS] ENTRY_PATH
 | Option | Default | Meaning |
 |---|---|---|
 | `--workspace TEXT` | `.zicato` | Path to the zicato workspace root. |
+
+#### `zicato board audit`
+
+Measure the evaluation's A/A noise floor and record it on the epoch.
+
+Runs the current champion against ITSELF `--runs` times (fresh draws through
+the same board-unit workers every duel uses) and reports the `delta_scalar`
+spread — the smallest difference the board can actually resolve. The measured
+floor is persisted onto the epoch record (`config.json`'s `noise_floor`
+field) so `zicato evolve` can warn when `promote_margin` is below it while
+the evidence gate is off.
+
+```
+zicato board audit [OPTIONS]
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--workspace TEXT` | `.zicato` | Path to the zicato workspace root. |
+| `--epoch TEXT` | current epoch | Epoch to audit. |
+| `--runs INTEGER RANGE` | `5` (>=2) | How many independent A/A draws of the champion to take. |
+| `--harness-call-llm TEXT` | required | Dotted import path of the harness call_llm (e.g. `mymodule:harness`). |
+| `--auxiliary-call-llm TEXT` | required | Dotted import path of the auxiliary call_llm (e.g. `mymodule:aux`). |
 
 #### `zicato board list`
 

@@ -72,9 +72,11 @@ class Matchup:
         ids to evaluate on a board slice.
     replicates:
         How many paired board runs to average before scoring (``>= 1``).
-        ``1`` is the gauntlet's exact single-run path; bracket structures
-        default to ``>= 2`` because replication, not bracket shape, is the
-        noise lever.
+        The unpinned default is ``2`` for gauntlet / bracket / Swiss
+        structures (replication, not bracket shape, is the noise lever);
+        ``1`` is the historical single-run path a deterministic contract
+        pins explicitly (racing also pins ``1`` — its replication is
+        intrinsic to the escalating board slices).
     stage_index:
         The bracket round / Swiss round / racing rung this matchup belongs
         to — the WITHIN-tournament stage, a different axis from a generation's
