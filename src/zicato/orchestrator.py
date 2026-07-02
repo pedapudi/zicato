@@ -888,6 +888,34 @@ async def evolve_once(
         tournament_spec, parent_id, next_id, child_snapshot, tournament_result
     )
 
+    # --- 10b'. Evidence-gate confirmation of the crowning promote ---------
+    # The noise-aware default: a train-promote (post holdout confirmation —
+    # the gate outcome above is already Ladder-mediated) is confirmed by the
+    # SAME Bradley--Terry defer→replicate→inconclusive adjudication the
+    # multi-challenger driver runs, before anything is persisted. CIs that
+    # never separate within the replicate budget leave the champion standing
+    # (a DEFERRED outcome + a dead-letter record). Turned off only by an
+    # explicit ``"promote_confidence_threshold": null`` / ``0`` in the
+    # structure params.
+    selection_decision, gate_evidence = await _confirm_gauntlet_promotion(
+        selection_decision,
+        tournament_spec=tournament_spec,
+        adapter=adapter,
+        parent_gen=parent_gen,
+        child_gen=child_gen,
+        train_board=train_board,
+        weights=weights,
+        config=config,
+        workspace_root=workspace_root,
+        epoch_id=resolved_epoch_id,
+        disable_drift=disable_drift,
+        judge_only=judge_only,
+        fast_mode=fast_mode,
+        round_index=round_index,
+        total_rounds=total_rounds,
+        beater=beater,
+    )
+
     # --- 10c. Operator gate override (control protocol, RUNTIME-V2 Phase 2) ---
     # The gate has settled but the outcome is not yet persisted — the safe
     # point at which an operator's force-promote / force-reject of THIS
@@ -964,6 +992,10 @@ async def evolve_once(
         train_loss=_gen_fields["train_loss"],
         holdout_loss=_gen_fields["holdout_loss"],
         generalization_gap=_gen_fields["generalization_gap"],
+        # Evidence-gate resolution for the crowning duel (rating CIs +
+        # ci_history), or ``None`` when the pre-gate is off / passed through
+        # without a credible terminal.
+        evidence=gate_evidence,
     )
     finalised = update_experiment_outcome(
         workspace_root, resolved_epoch_id, next_id, outcome_record
@@ -2822,6 +2854,156 @@ def _gauntlet_decision_from_result(
     )
     strategy.record_result(result)
     return strategy.champion()
+
+
+async def _confirm_gauntlet_promotion(
+    selection_decision: Any,
+    *,
+    tournament_spec: Any,
+    adapter: Any,
+    parent_gen: Generation,
+    child_gen: Generation,
+    train_board: list[Any],
+    weights: Any,
+    config: Any,
+    workspace_root: Path,
+    epoch_id: str,
+    disable_drift: tuple[Any, ...],
+    judge_only: bool,
+    fast_mode: bool,
+    round_index: int,
+    total_rounds: int,
+    beater: HeartbeatBeater | None,
+) -> tuple[Any, dict[str, Any] | None]:
+    """Confirm a gauntlet train-promote through the Bradley--Terry pre-gate.
+
+    The gauntlet analogue of the multi-challenger driver's pre-gate wiring
+    (see ``_evolve_multi_challenger``): after the single crowning duel
+    resolves a ``promoted`` verdict, the SAME defer→replicate→inconclusive
+    adjudication (:func:`zicato.selection.driver.confirm_promotion_with_evidence`)
+    must hold the promotion until the fitted rating clears the confidence
+    threshold AND the CIs separate. While the verdict defers, one extra
+    crowning-pair duel per replicate is spent through the SAME board-unit
+    runner + gate every other duel uses (``run_matchup`` on the train slice,
+    mirroring the multi-challenger ``_replicate_duel``); CIs that never
+    separate within the budget go terminally ``inconclusive`` — the champion
+    stands and the duel is recorded to the dead-letter queue, exactly as the
+    multi-challenger path records it.
+
+    Consulted only when ``promote_confidence_threshold`` resolves to a
+    threshold (the noise-aware default; an explicit ``null`` / ``0`` in the
+    structure params turns it off) AND the crowning verdict is a promotion —
+    a reject / defer passes through unchanged (the pre-gate can only hold a
+    promotion, never force one).
+
+    Returns ``(decision, evidence_block)``: the (possibly held) decision and
+    the JSON-shaped evidence block (rating CIs + ``ci_history``) to journal
+    on the round's :class:`OutcomeRecord`, or ``None`` when the pre-gate was
+    off / passed through without a credible terminal.
+    """
+    from zicato.selection.dead_letter import (  # noqa: PLC0415
+        InconclusiveRecord,
+        record_inconclusive,
+    )
+    from zicato.selection.driver import (  # noqa: PLC0415
+        EvidencePreGate,
+        EvidenceResolution,
+        confirm_promotion_with_evidence,
+    )
+    from zicato.selection.evidence_gate import (  # noqa: PLC0415
+        rating_block,
+        read_promote_confidence_threshold,
+        read_replicate_budget,
+    )
+    from zicato.selection.strategy import Contestant, MatchupResult  # noqa: PLC0415
+    from zicato.tournament.runner import run_matchup  # noqa: PLC0415
+
+    threshold = read_promote_confidence_threshold(tournament_spec.params)
+    if threshold is None or selection_decision.decision != "promoted":
+        return selection_decision, None
+
+    pre_gate = EvidencePreGate(
+        threshold=threshold,
+        replicate_budget=read_replicate_budget(tournament_spec.params),
+    )
+    generations = {parent_gen.id: parent_gen, child_gen.id: child_gen}
+
+    async def _replicate_duel(left_id: str, right_id: str) -> MatchupResult:
+        # One extra crowning-pair duel for the pre-gate's evidence loop,
+        # routed through the SAME board-unit runner + gate every other duel
+        # uses. ``fast=fast_mode`` mirrors the multi-challenger replicate:
+        # full mode re-samples both sides fresh (a genuine new noise draw);
+        # fast mode cache-reads already-persisted units.
+        _beat(
+            beater,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            generation_id=right_id,
+            round_index=round_index,
+            phase=f"tournament:round_{round_index}:bt-replicate:{left_id}:{right_id}",
+        )
+        result = await run_matchup(
+            adapter=adapter,
+            left_gen=generations[left_id],
+            right_gen=generations[right_id],
+            # Replicates score on the TRAIN slice only, exactly like the
+            # multi-challenger structures' internal matchups — the holdout is
+            # confirmation-only and was already consulted by the crowning
+            # duel's Ladder-mediated gate.
+            board=train_board,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            disable_drift=disable_drift,
+            judge_only=judge_only,
+            fast=fast_mode,
+            round_index=round_index,
+            total_rounds=total_rounds,
+            match_id=f"bt-replicate:{left_id}:{right_id}",
+        )
+        return MatchupResult(
+            matchup_id=f"bt-replicate:{left_id}:{right_id}",
+            left_id=left_id,
+            right_id=right_id,
+            left_agg=result.parent_agg,
+            right_agg=result.child_agg,
+            outcome=result.outcome,
+        )
+
+    def _on_inconclusive(resolution: EvidenceResolution) -> None:
+        # Record the unresolved crowning duel to the dead-letter queue so
+        # nothing is silently dropped — the same record the multi-challenger
+        # path writes. Best-effort: a write failure must not abort the round.
+        verdict = resolution.verdict
+        with best_effort(
+            "dead-letter inconclusive record",
+            on_error=lambda exc: log.debug("dead-letter record skipped: %s", exc),
+        ):
+            record_inconclusive(
+                workspace_root,
+                InconclusiveRecord(
+                    generation_id=child_gen.id,
+                    champion_id=parent_gen.id,
+                    epoch_id=epoch_id,
+                    rating=rating_block(verdict),
+                    ci_history=resolution.ci_history,
+                    reason=verdict.reason,
+                ),
+            )
+
+    decision, resolution = await confirm_promotion_with_evidence(
+        selection_decision,
+        champion=Contestant(generation_id=parent_gen.id, role="champion"),
+        pre_gate=pre_gate,
+        replicate_duel=_replicate_duel,
+        on_inconclusive=_on_inconclusive,
+    )
+    evidence: dict[str, Any] | None = None
+    if resolution is not None:
+        evidence = dict(rating_block(resolution.verdict))
+        evidence["ci_history"] = [dict(h) for h in resolution.ci_history]
+    return decision, evidence
 
 
 def _rejected_proposer_experiment(

@@ -290,6 +290,11 @@ def _outcome_from_dict(d: dict[str, Any] | None) -> OutcomeRecord | None:
         # control consumer was wired.
         operator_override=bool(d.get("operator_override", False)),
         operator_override_reason=str(d.get("operator_override_reason", "")),
+        # Evidence-gate resolution (rating block + ci_history). Stored
+        # verbatim as a plain JSON dict; ``None`` / absent when the pre-gate
+        # never reached a credible terminal (gate off, plain reject, or the
+        # fit never cleared the credibility floor) and on older journals.
+        evidence=d.get("evidence"),
     )
 
 

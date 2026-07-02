@@ -297,6 +297,16 @@ class OutcomeRecord:
     # dashboard's ``reason`` field), or a synthesised note. Empty unless
     # :attr:`operator_override` is ``True``.
     operator_override_reason: str = ""
+    # Evidence-gate (Bradley--Terry pre-gate) resolution for THIS round's
+    # crowning duel: the ``gate.rating`` block (both CIs, ``p_stronger``,
+    # ``threshold``, ``ci_overlap``, ``replicates_spent``, ``n_duels``,
+    # the terminal ``decision``) plus the per-refit ``ci_history`` trace the
+    # defer→replicate loop produced. ``None`` when the pre-gate never reached
+    # a credible terminal — the gate is off, the decision was a plain reject,
+    # or the fit never cleared the credibility floor — so older journals and
+    # gate-off rounds deserialize unchanged. RUNTIME evidence, not a contract
+    # input.
+    evidence: dict[str, Any] | None = None
 
 
 #: Hard cap on the number of settled prior experiments surfaced to the
