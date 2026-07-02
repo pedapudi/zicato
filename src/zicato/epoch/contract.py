@@ -413,6 +413,12 @@ _SCORING_OMIT_AT_DEFAULT_FIELDS: frozenset[str] = frozenset(
         # retroactive roll) and a non-default value rolls the epoch.
         "screen_entries",
         "screen_veto_only",
+        # Opt-in process-exemplar channel (PROCESS-EXEMPLARS.md). Lives on
+        # the nested ``ProposerQualityConfig`` like the screen knobs and is
+        # omitted at its 0 default (no retroactive roll); a non-zero cap
+        # rolls the epoch — a proposer shown redacted process windows
+        # proposes under a different rule.
+        "process_exemplars",
     }
 )
 

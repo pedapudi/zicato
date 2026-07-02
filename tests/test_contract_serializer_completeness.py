@@ -97,6 +97,7 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         "critique_enabled": False,
         "screen_entries": 3,
         "screen_veto_only": True,
+        "process_exemplars": 2,
     },
     "ExperimentMemoryConfig": {
         "cross_epoch": True,

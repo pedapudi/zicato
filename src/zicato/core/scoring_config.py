@@ -296,18 +296,43 @@ class ProposerQualityConfig:
         counts advise the selection as a late tiebreak. Inert while
         ``screen_entries == 0``. Omitted-at-default from the contract
         canonical form, exactly like ``screen_entries``.
+    process_exemplars:
+        Opt-in drift-anchored process-exemplar channel
+        (``docs/design/PROCESS-EXEMPLARS.md``). When ``> 0``, each round
+        the orchestrator extracts (best-effort) up to this many
+        mechanically-REDACTED event windows from the champion's
+        TRAIN-slice ``events.jsonl`` files — one per detected pattern,
+        ±3 events around an anchor drift — and splices them into the
+        proposer prompt after the failure-mode profile, so the proposer
+        can see HOW a detected failure unfolds (the wandering plan step,
+        the looping tool call) without ever learning WHICH board entry
+        it unfolded on (no entry ids, no task text, no model outputs —
+        the doc's §3 redaction rules are enforced in code, never by an
+        LLM). ``0`` (default) is OFF — no extraction runs and the
+        proposer prompt is byte-identical. Unlike ``screen_entries``
+        this knob is NOT set by the scaffold: the screen is
+        evaluation-side, while exemplars widen the proposer-visibility
+        channel (OVERFITTING.md §11), so the operator opts in
+        deliberately under the doc's §5 harm-detection runbook. Omitted
+        from the contract canonical form at its 0 default so existing
+        epochs never roll retroactively; a non-zero cap rolls the epoch,
+        which is correct — a proposer shown process windows proposes
+        under a different rule. Must be ``>= 0``.
     """
 
     best_of_n: int = 3
     critique_enabled: bool = True
     screen_entries: int = 0
     screen_veto_only: bool = False
+    process_exemplars: int = 0
 
     def __post_init__(self) -> None:
         if self.best_of_n < 1:
             raise ValueError(f"best_of_n must be >= 1, got {self.best_of_n!r}")
         if self.screen_entries < 0:
             raise ValueError(f"screen_entries must be >= 0, got {self.screen_entries!r}")
+        if self.process_exemplars < 0:
+            raise ValueError(f"process_exemplars must be >= 0, got {self.process_exemplars!r}")
 
     @classmethod
     def defaults(cls) -> ProposerQualityConfig:
