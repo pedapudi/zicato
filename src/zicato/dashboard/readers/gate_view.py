@@ -17,6 +17,8 @@ from zicato.dashboard.readers.paths import (
     WorkspacePaths,
     _read_json_value,
     _resolve_epoch_id,
+    coerce_float,
+    coerce_numeric_dict,
     layout_of,
     read_current_epoch,
 )
@@ -822,25 +824,19 @@ def build_gate_breakdown(
             for jrow in comparison.get("judges", []):
                 if isinstance(jrow, dict) and jrow.get("judge_name") == driver_name:
                     d = jrow.get("delta")
-                    driver_delta = float(d) if isinstance(d, int | float) else None
+                    driver_delta = coerce_float(d)
                     break
             base["primary_driver"] = {"judge": driver_name, "delta": driver_delta}
     except Exception:  # noqa: BLE001 — the driver echo is best-effort
         base["primary_driver"] = None
 
     # Surface the scalar components for both sides regardless of decision.
-    if isinstance(parent_agg, dict):
-        pc = parent_agg.get("scalar_components")
-        if isinstance(pc, dict):
-            base["scalar_components"]["champion"] = {
-                str(k): float(v) for k, v in pc.items() if isinstance(v, int | float)
-            }
-    if isinstance(child_agg, dict):
-        cc = child_agg.get("scalar_components")
-        if isinstance(cc, dict):
-            base["scalar_components"]["challenger"] = {
-                str(k): float(v) for k, v in cc.items() if isinstance(v, int | float)
-            }
+    if isinstance(parent_agg, dict) and isinstance(parent_agg.get("scalar_components"), dict):
+        base["scalar_components"]["champion"] = coerce_numeric_dict(parent_agg["scalar_components"])
+    if isinstance(child_agg, dict) and isinstance(child_agg.get("scalar_components"), dict):
+        base["scalar_components"]["challenger"] = coerce_numeric_dict(
+            child_agg["scalar_components"]
+        )
 
     # Absolute scalars for both sides — pure projection of the aggregates
     # already read above (the same values ``evaluate_gate`` compares). Present

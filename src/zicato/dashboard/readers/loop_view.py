@@ -34,6 +34,7 @@ from zicato.dashboard.readers.paths import (
     _parse_iso,
     _read_json_value,
     _utc_now,
+    coerce_float,
 )
 
 
@@ -58,9 +59,7 @@ def _epoch_noise_floor(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any] |
         "generation_id": str(raw.get("generation_id", "")),
         "runs": raw.get("runs") if isinstance(raw.get("runs"), int) else None,
         "max_abs_delta": float(raw["max_abs_delta"]),
-        "delta_std": (
-            float(raw["delta_std"]) if isinstance(raw.get("delta_std"), int | float) else None
-        ),
+        "delta_std": (coerce_float(raw.get("delta_std"))),
         "measured_at": str(raw.get("measured_at", "")),
     }
 

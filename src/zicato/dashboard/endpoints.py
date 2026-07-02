@@ -115,12 +115,10 @@ class _BadEpoch(Exception):
 # ---------------------------------------------------------------------------
 
 
-def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) -> dict[str, Any]:
-    """Build every route handler bound to one workspace.
-
-    Returns a dict of ``name -> handler`` the app wires onto routes.
-    ``started`` is a ``time.monotonic()`` reference for the health uptime.
-    """
+def _make_state_endpoints(
+    paths: WorkspacePaths, *, read_only: bool, started: float
+) -> dict[str, Any]:
+    """Health / consolidated-state surface."""
     import time
 
     async def api_health(_request: Request) -> JSONResponse:
@@ -147,6 +145,36 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         limit = state_reader.clamp_run_log_limit(_int_query(request, "run-log-limit"))
         return JSONResponse(state_reader.build_environment(paths, run_log_limit=limit))
 
+    async def api_workspace(_request: Request) -> JSONResponse:
+        """L0 (workspace-level) cross-epoch summary for the new shell."""
+        return JSONResponse(state_reader.build_workspace_view(paths))
+
+    async def api_health_report(_request: Request) -> JSONResponse:
+        return JSONResponse(state_reader.build_health_report(paths))
+
+    async def api_search(request: Request) -> JSONResponse:
+        """Sidebar search across entries / judges / patches / mutations.
+
+        The ``?q=`` parameter is the substring to match. An empty or
+        whitespace-only query short-circuits to empty result sets so the
+        callers cannot trigger a wide scan with a degenerate query.
+        """
+        q = request.query_params.get("q", "")
+        return JSONResponse(state_reader.build_search_results(paths, q))
+
+    return {
+        "api_health": api_health,
+        "api_state": api_state,
+        "api_environment": api_environment,
+        "api_workspace": api_workspace,
+        "api_health_report": api_health_report,
+        "api_search": api_search,
+    }
+
+
+def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
+    """Epoch surface — contract, lineage feed, trajectories, journal/analysis."""
+
     async def api_epoch(request: Request) -> JSONResponse:
         # Optional ``?epoch=<id>`` scopes the contract to a NON-current epoch
         # (the dashboard's cross-epoch view); omitted ⇒ current (byte-identical).
@@ -164,10 +192,6 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
             return JSONResponse(state_reader.build_lineage_view(paths, epoch_id))
         except (_BadEpoch, ValueError):
             return JSONResponse({"error": "unknown epoch"}, status_code=404)
-
-    async def api_workspace(_request: Request) -> JSONResponse:
-        """L0 (workspace-level) cross-epoch summary for the new shell."""
-        return JSONResponse(state_reader.build_workspace_view(paths))
 
     async def api_per_judge_trend(request: Request) -> JSONResponse:
         """Per-judge × generation matrix for an epoch (L1 heatmap)."""
@@ -261,6 +285,166 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
                 status_code=200,
             )
         return JSONResponse(state_reader.build_round_timeline(paths, epoch_id))
+
+    async def api_contract_diff(request: Request) -> JSONResponse:
+        """L1 (epoch-level) contract diff vs predecessor epoch."""
+        epoch_id = request.path_params["epoch_id"]
+        if not _is_safe_id(epoch_id):
+            return JSONResponse(
+                {
+                    "epoch_id": epoch_id,
+                    "predecessor_epoch_id": None,
+                    "components": [],
+                    "any_changed": False,
+                }
+            )
+        return JSONResponse(state_reader.build_contract_diff(paths, epoch_id))
+
+    async def api_score_trajectory(request: Request) -> JSONResponse:
+        # The environment-wide evolution curve — scalar per generation.
+        # Optional ``?epoch=<id>`` scopes to a non-current epoch.
+        try:
+            epoch_id = _epoch_query(request)
+            return JSONResponse(state_reader.build_score_trajectory(paths, epoch_id))
+        except (_BadEpoch, ValueError):
+            return JSONResponse({"error": "unknown epoch"}, status_code=404)
+
+    async def api_calibration_trend(request: Request) -> JSONResponse:
+        """Per-generation calibration trend over the lineage (DIAGNOSTIC).
+
+        ``GET /api/calibration-trend[?epoch=<id>]``. The score fraction per
+        generation in lineage order with rolling aggregates. Optional
+        ``?epoch=<id>`` scopes to a non-current epoch; omitted ⇒ current.
+        Explicitly diagnostic — it never feeds the gate.
+        """
+        try:
+            epoch_id = _epoch_query(request)
+            return JSONResponse(state_reader.build_calibration_trend(paths, epoch_id))
+        except (_BadEpoch, ValueError):
+            return JSONResponse({"error": "unknown epoch"}, status_code=404)
+
+    # -- file-tree / file-browser endpoints --------------------------
+
+    async def api_epoch_journal(request: Request) -> JSONResponse:
+        """Return the journal.md text for one epoch as ``{ epoch_id, journal }``."""
+        epoch_id = request.path_params["epoch_id"]
+        if not _is_safe_id(epoch_id):
+            return JSONResponse({"error": "invalid epoch id"}, status_code=400)
+        path = paths.epochs / epoch_id / "journal.md"
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (FileNotFoundError, OSError):
+            text = ""
+        return JSONResponse({"epoch_id": epoch_id, "journal": text})
+
+    async def api_epoch_journal_md(request: Request) -> Response:
+        """Serve the raw ``journal.md`` markdown for one epoch.
+
+        The Epoch view's "View raw journal" link points at this endpoint so
+        a fresh tab renders the human-readable markdown directly — not the
+        JSON envelope ``api_epoch_journal`` wraps it in (which is hard to
+        skim). Served as ``text/markdown`` with UTF-8 charset; browsers
+        that do not have a registered markdown handler treat it as
+        ``text/plain`` and render the prose unchanged. Returns 404 when
+        the file is absent so the link's failure mode is unambiguous.
+        """
+        epoch_id = request.path_params["epoch_id"]
+        if not _is_safe_id(epoch_id):
+            return PlainTextResponse("invalid epoch id", status_code=400)
+        path = paths.epochs / epoch_id / "journal.md"
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (FileNotFoundError, OSError):
+            return PlainTextResponse(
+                f"journal.md not found for epoch {epoch_id}",
+                status_code=404,
+            )
+        return Response(
+            content=text,
+            media_type="text/markdown; charset=utf-8",
+        )
+
+    async def api_epoch_analysis(request: Request) -> JSONResponse:
+        """Return the analysis report for one epoch.
+
+        Returns ``{ epoch_id, analysis_md, analysis_html_inline,
+        analysis_html_available }``. ``analysis_html_inline`` is the
+        paper-styled HTML fragment (self-contained inline CSS, inline
+        SVG figures) the dashboard can drop directly into the Epoch
+        view's Analysis section — same renderer as the standalone
+        ``analysis.html`` so both surfaces look like a paper. The raw
+        markdown ``analysis_md`` is still returned for backward
+        compatibility with older frontends that did their own minimal
+        rendering.
+        """
+        epoch_id = request.path_params["epoch_id"]
+        if not _is_safe_id(epoch_id):
+            return JSONResponse({"error": "invalid epoch id"}, status_code=400)
+        analysis_md_path = paths.epochs / epoch_id / "analysis.md"
+        analysis_html_path = paths.epochs / epoch_id / "analysis.html"
+        try:
+            analysis_md = analysis_md_path.read_text(encoding="utf-8")
+        except (FileNotFoundError, OSError):
+            analysis_md = ""
+
+        analysis_html_inline = ""
+        if analysis_md.strip():
+            try:
+                from zicato.analyzer.report import render_report_html_fragment
+                from zicato.analyzer.report_data import gather_epoch_report_data
+
+                data = gather_epoch_report_data(paths.root, epoch_id)
+                analysis_html_inline = render_report_html_fragment(epoch_id, analysis_md, data=data)
+            except Exception:  # noqa: BLE001 — fragment is best-effort
+                analysis_html_inline = ""
+
+        return JSONResponse(
+            {
+                "epoch_id": epoch_id,
+                "analysis_md": analysis_md,
+                "analysis_html_inline": analysis_html_inline,
+                "analysis_html_available": analysis_html_path.is_file(),
+            }
+        )
+
+    async def api_epoch_analysis_html(request: Request) -> Response:
+        """Serve the raw ``analysis.html`` for an epoch.
+
+        Returns the self-contained HTML document so the frontend can
+        open it in a new tab or embed it. Returns 404 when absent.
+        """
+        from starlette.responses import HTMLResponse
+
+        epoch_id = request.path_params["epoch_id"]
+        if not _is_safe_id(epoch_id):
+            return PlainTextResponse("invalid epoch id", status_code=400)
+        html = state_reader.read_epoch_analysis_html(paths, epoch_id)
+        if html is None:
+            return PlainTextResponse("analysis.html not found for this epoch", status_code=404)
+        return HTMLResponse(html)
+
+    # -- conversation endpoints --------------------------------------
+
+    return {
+        "api_epoch": api_epoch,
+        "api_lineage": api_lineage,
+        "api_per_judge_trend": api_per_judge_trend,
+        "api_epoch_trajectory": api_epoch_trajectory,
+        "api_epoch_cost": api_epoch_cost,
+        "api_epoch_racing_field": api_epoch_racing_field,
+        "api_epoch_round_timeline": api_epoch_round_timeline,
+        "api_contract_diff": api_contract_diff,
+        "api_score_trajectory": api_score_trajectory,
+        "api_calibration_trend": api_calibration_trend,
+        "api_epoch_journal": api_epoch_journal,
+        "api_epoch_journal_md": api_epoch_journal_md,
+        "api_epoch_analysis": api_epoch_analysis,
+        "api_epoch_analysis_html": api_epoch_analysis_html,
+    }
+
+
+def _make_judge_run_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
+    """Per-judge / per-entry / per-run drill-down surface."""
 
     async def api_per_judge_for_generation(request: Request) -> JSONResponse:
         """Per-judge breakdown for one generation (L2)."""
@@ -409,26 +593,53 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
             )
         return JSONResponse(state_reader.build_run_header(paths, epoch_id, generation_id, entry_id))
 
-    async def api_contract_diff(request: Request) -> JSONResponse:
-        """L1 (epoch-level) contract diff vs predecessor epoch."""
-        epoch_id = request.path_params["epoch_id"]
-        if not _is_safe_id(epoch_id):
-            return JSONResponse(
-                {
-                    "epoch_id": epoch_id,
-                    "predecessor_epoch_id": None,
-                    "components": [],
-                    "any_changed": False,
-                }
-            )
-        return JSONResponse(state_reader.build_contract_diff(paths, epoch_id))
-
     async def api_run_log(request: Request) -> JSONResponse:
         limit = state_reader.clamp_run_log_limit(_int_query(request, "limit"))
         # ``?after=<cursor>`` requests only events past a cursor so the
         # dashboard appends to its log tail instead of re-rendering it.
         after = _int_query(request, "after")
         return JSONResponse(state_reader.build_run_log(paths, limit, after=after))
+
+    async def api_hypothesis_accuracy(request: Request) -> JSONResponse:
+        """Per-experiment hypothesis prediction-accuracy scorecard.
+
+        ``GET /api/hypothesis-accuracy/{epoch_id}/{generation_id}``. Joins
+        the proposer's falsifiable movement claims against the realised
+        movements and lifts the STAMPED ``hypothesis_match`` verdict
+        verbatim (never recomputed — it cannot disagree with the HTML
+        report). A malformed coordinate degrades to an empty scorecard
+        (HTTP 200), matching every other coordinate handler.
+        """
+        epoch_id = request.path_params["epoch_id"]
+        generation_id = request.path_params["generation_id"]
+        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id):
+            return JSONResponse(
+                {
+                    "epoch_id": epoch_id,
+                    "generation_id": generation_id,
+                    "claims": [],
+                    "score": {"hits": 0, "total": 0, "fraction": None, "brier": None},
+                    "pass_rate": {"predicted": "", "observed": None},
+                },
+                status_code=200,
+            )
+        return JSONResponse(state_reader.build_hypothesis_accuracy(paths, epoch_id, generation_id))
+
+    return {
+        "api_per_judge_for_generation": api_per_judge_for_generation,
+        "api_per_entry_for_generation": api_per_entry_for_generation,
+        "api_per_judge_comparison": api_per_judge_comparison,
+        "api_per_judge_for_run": api_per_judge_for_run,
+        "api_per_judge_for_run_by_entry": api_per_judge_for_run_by_entry,
+        "api_run_expectations": api_run_expectations,
+        "api_run_header": api_run_header,
+        "api_run_log": api_run_log,
+        "api_hypothesis_accuracy": api_hypothesis_accuracy,
+    }
+
+
+def _make_live_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
+    """Live-runtime surface — heartbeat / active runs / active tournament / pipeline."""
 
     async def api_active_runs(_request: Request) -> JSONResponse:
         return JSONResponse(state_reader.read_active_runs_view(paths))
@@ -446,6 +657,17 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         inference the stepper renders — see ``build_round_pipeline``.
         """
         return JSONResponse(state_reader.build_round_pipeline(paths))
+
+    return {
+        "api_active_runs": api_active_runs,
+        "api_active_tournament": api_active_tournament,
+        "api_heartbeat": api_heartbeat,
+        "api_live_pipeline": api_live_pipeline,
+    }
+
+
+def _make_tournament_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
+    """Tournament surface — bracket, structure, matchups, gate."""
 
     async def api_tournaments(request: Request) -> JSONResponse:
         try:
@@ -565,28 +787,6 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
             state_reader.build_gate_breakdown(paths, epoch_id, champion_id, challenger_id)
         )
 
-    async def api_health_report(_request: Request) -> JSONResponse:
-        return JSONResponse(state_reader.build_health_report(paths))
-
-    async def api_search(request: Request) -> JSONResponse:
-        """Sidebar search across entries / judges / patches / mutations.
-
-        The ``?q=`` parameter is the substring to match. An empty or
-        whitespace-only query short-circuits to empty result sets so the
-        callers cannot trigger a wide scan with a degenerate query.
-        """
-        q = request.query_params.get("q", "")
-        return JSONResponse(state_reader.build_search_results(paths, q))
-
-    async def api_score_trajectory(request: Request) -> JSONResponse:
-        # The environment-wide evolution curve — scalar per generation.
-        # Optional ``?epoch=<id>`` scopes to a non-current epoch.
-        try:
-            epoch_id = _epoch_query(request)
-            return JSONResponse(state_reader.build_score_trajectory(paths, epoch_id))
-        except (_BadEpoch, ValueError):
-            return JSONResponse({"error": "unknown epoch"}, status_code=404)
-
     async def api_drift_movements(request: Request) -> JSONResponse:
         generation_id = request.path_params["generation_id"]
         if not _is_safe_id(generation_id):
@@ -601,46 +801,18 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
             )
         return JSONResponse(state_reader.build_drift_movements(paths, generation_id))
 
-    async def api_hypothesis_accuracy(request: Request) -> JSONResponse:
-        """Per-experiment hypothesis prediction-accuracy scorecard.
+    return {
+        "api_tournaments": api_tournaments,
+        "api_tournament_structure": api_tournament_structure,
+        "api_tournament_detail": api_tournament_detail,
+        "api_matchup_grid": api_matchup_grid,
+        "api_gate": api_gate,
+        "api_drift_movements": api_drift_movements,
+    }
 
-        ``GET /api/hypothesis-accuracy/{epoch_id}/{generation_id}``. Joins
-        the proposer's falsifiable movement claims against the realised
-        movements and lifts the STAMPED ``hypothesis_match`` verdict
-        verbatim (never recomputed — it cannot disagree with the HTML
-        report). A malformed coordinate degrades to an empty scorecard
-        (HTTP 200), matching every other coordinate handler.
-        """
-        epoch_id = request.path_params["epoch_id"]
-        generation_id = request.path_params["generation_id"]
-        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id):
-            return JSONResponse(
-                {
-                    "epoch_id": epoch_id,
-                    "generation_id": generation_id,
-                    "claims": [],
-                    "score": {"hits": 0, "total": 0, "fraction": None, "brier": None},
-                    "pass_rate": {"predicted": "", "observed": None},
-                },
-                status_code=200,
-            )
-        return JSONResponse(state_reader.build_hypothesis_accuracy(paths, epoch_id, generation_id))
 
-    async def api_calibration_trend(request: Request) -> JSONResponse:
-        """Per-generation calibration trend over the lineage (DIAGNOSTIC).
-
-        ``GET /api/calibration-trend[?epoch=<id>]``. The score fraction per
-        generation in lineage order with rolling aggregates. Optional
-        ``?epoch=<id>`` scopes to a non-current epoch; omitted ⇒ current.
-        Explicitly diagnostic — it never feeds the gate.
-        """
-        try:
-            epoch_id = _epoch_query(request)
-            return JSONResponse(state_reader.build_calibration_trend(paths, epoch_id))
-        except (_BadEpoch, ValueError):
-            return JSONResponse({"error": "unknown epoch"}, status_code=404)
-
-    # -- file-tree / file-browser endpoints --------------------------
+def _make_files_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
+    """File-tree / mutation-site browser surface."""
 
     async def api_files(_request: Request) -> JSONResponse:
         from zicato.dashboard import filetree
@@ -721,105 +893,19 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
 
     # -- epoch drill-down endpoints (journal / analysis) ---------
 
-    async def api_epoch_journal(request: Request) -> JSONResponse:
-        """Return the journal.md text for one epoch as ``{ epoch_id, journal }``."""
-        epoch_id = request.path_params["epoch_id"]
-        if not _is_safe_id(epoch_id):
-            return JSONResponse({"error": "invalid epoch id"}, status_code=400)
-        path = paths.epochs / epoch_id / "journal.md"
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (FileNotFoundError, OSError):
-            text = ""
-        return JSONResponse({"epoch_id": epoch_id, "journal": text})
+    return {
+        "api_files": api_files,
+        "api_files_tree": api_files_tree,
+        "api_files_content": api_files_content,
+        "api_files_patches": api_files_patches,
+        "api_files_diff": api_files_diff,
+        "api_mutations": api_mutations,
+        "api_mutation_detail": api_mutation_detail,
+    }
 
-    async def api_epoch_journal_md(request: Request) -> Response:
-        """Serve the raw ``journal.md`` markdown for one epoch.
 
-        The Epoch view's "View raw journal" link points at this endpoint so
-        a fresh tab renders the human-readable markdown directly — not the
-        JSON envelope ``api_epoch_journal`` wraps it in (which is hard to
-        skim). Served as ``text/markdown`` with UTF-8 charset; browsers
-        that do not have a registered markdown handler treat it as
-        ``text/plain`` and render the prose unchanged. Returns 404 when
-        the file is absent so the link's failure mode is unambiguous.
-        """
-        epoch_id = request.path_params["epoch_id"]
-        if not _is_safe_id(epoch_id):
-            return PlainTextResponse("invalid epoch id", status_code=400)
-        path = paths.epochs / epoch_id / "journal.md"
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (FileNotFoundError, OSError):
-            return PlainTextResponse(
-                f"journal.md not found for epoch {epoch_id}",
-                status_code=404,
-            )
-        return Response(
-            content=text,
-            media_type="text/markdown; charset=utf-8",
-        )
-
-    async def api_epoch_analysis(request: Request) -> JSONResponse:
-        """Return the analysis report for one epoch.
-
-        Returns ``{ epoch_id, analysis_md, analysis_html_inline,
-        analysis_html_available }``. ``analysis_html_inline`` is the
-        paper-styled HTML fragment (self-contained inline CSS, inline
-        SVG figures) the dashboard can drop directly into the Epoch
-        view's Analysis section — same renderer as the standalone
-        ``analysis.html`` so both surfaces look like a paper. The raw
-        markdown ``analysis_md`` is still returned for backward
-        compatibility with older frontends that did their own minimal
-        rendering.
-        """
-        epoch_id = request.path_params["epoch_id"]
-        if not _is_safe_id(epoch_id):
-            return JSONResponse({"error": "invalid epoch id"}, status_code=400)
-        analysis_md_path = paths.epochs / epoch_id / "analysis.md"
-        analysis_html_path = paths.epochs / epoch_id / "analysis.html"
-        try:
-            analysis_md = analysis_md_path.read_text(encoding="utf-8")
-        except (FileNotFoundError, OSError):
-            analysis_md = ""
-
-        analysis_html_inline = ""
-        if analysis_md.strip():
-            try:
-                from zicato.analyzer.report import render_report_html_fragment
-                from zicato.analyzer.report_data import gather_epoch_report_data
-
-                data = gather_epoch_report_data(paths.root, epoch_id)
-                analysis_html_inline = render_report_html_fragment(epoch_id, analysis_md, data=data)
-            except Exception:  # noqa: BLE001 — fragment is best-effort
-                analysis_html_inline = ""
-
-        return JSONResponse(
-            {
-                "epoch_id": epoch_id,
-                "analysis_md": analysis_md,
-                "analysis_html_inline": analysis_html_inline,
-                "analysis_html_available": analysis_html_path.is_file(),
-            }
-        )
-
-    async def api_epoch_analysis_html(request: Request) -> Response:
-        """Serve the raw ``analysis.html`` for an epoch.
-
-        Returns the self-contained HTML document so the frontend can
-        open it in a new tab or embed it. Returns 404 when absent.
-        """
-        from starlette.responses import HTMLResponse
-
-        epoch_id = request.path_params["epoch_id"]
-        if not _is_safe_id(epoch_id):
-            return PlainTextResponse("invalid epoch id", status_code=400)
-        html = state_reader.read_epoch_analysis_html(paths, epoch_id)
-        if html is None:
-            return PlainTextResponse("analysis.html not found for this epoch", status_code=404)
-        return HTMLResponse(html)
-
-    # -- conversation endpoints --------------------------------------
+def _make_conversation_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
+    """Conversation / transcript surface."""
 
     async def api_conversation(request: Request) -> Response:
         run_id = request.path_params["run_id"]
@@ -992,6 +1078,16 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
 
     # -- control endpoints (POST) ------------------------------------
 
+    return {
+        "api_conversation": api_conversation,
+        "api_matchup_conversations": api_matchup_conversations,
+        "api_run_transcript": api_run_transcript,
+    }
+
+
+def _make_control_endpoints(paths: WorkspacePaths, *, read_only: bool) -> dict[str, Any]:
+    """Control surface (POST) — the file-based control-channel protocol."""
+
     def _forbidden_if_read_only() -> JSONResponse | None:
         if read_only:
             return JSONResponse({"error": "dashboard is read-only"}, status_code=403)
@@ -1053,15 +1149,24 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         tmp.write_bytes(data)
         tmp.replace(path)
 
-    async def control_pause(request: Request) -> Response:
-        forbidden = _forbidden_if_read_only()
-        if forbidden is not None:
-            return forbidden
-        reason = await _read_reason(request)
-        path = _control_path("pause_epoch")
-        payload = {"reason": reason, "ts": _now_iso()}
-        _atomic_write(path, json.dumps(payload).encode())
-        return JSONResponse({"accepted": True, "path": str(path)}, status_code=202)
+    def _flag_control(flag_name: str) -> Any:
+        """A reason-stamped control-flag writer (pause_epoch / skip_round).
+
+        The two flag handlers were byte-identical apart from the flag file
+        they write — collapsed into this one factory.
+        """
+
+        async def handler(request: Request) -> Response:
+            forbidden = _forbidden_if_read_only()
+            if forbidden is not None:
+                return forbidden
+            reason = await _read_reason(request)
+            path = _control_path(flag_name)
+            payload = {"reason": reason, "ts": _now_iso()}
+            _atomic_write(path, json.dumps(payload).encode())
+            return JSONResponse({"accepted": True, "path": str(path)}, status_code=202)
+
+        return handler
 
     async def control_resume(_request: Request) -> Response:
         """Clear the ``pause_epoch`` flag — the dashboard's resume gesture.
@@ -1089,16 +1194,6 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
             {"accepted": True, "removed": removed, "path": str(path), "ts": _now_iso()},
             status_code=202,
         )
-
-    async def control_skip_round(request: Request) -> Response:
-        forbidden = _forbidden_if_read_only()
-        if forbidden is not None:
-            return forbidden
-        reason = await _read_reason(request)
-        path = _control_path("skip_round")
-        payload = {"reason": reason, "ts": _now_iso()}
-        _atomic_write(path, json.dumps(payload).encode())
-        return JSONResponse({"accepted": True, "path": str(path)}, status_code=202)
 
     async def control_kill(request: Request) -> Response:
         forbidden = _forbidden_if_read_only()
@@ -1158,63 +1253,34 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         )
 
     return {
-        "api_health": api_health,
-        "api_state": api_state,
-        "api_environment": api_environment,
-        "api_epoch": api_epoch,
-        "api_lineage": api_lineage,
-        "api_workspace": api_workspace,
-        "api_contract_diff": api_contract_diff,
-        "api_per_judge_trend": api_per_judge_trend,
-        "api_epoch_trajectory": api_epoch_trajectory,
-        "api_epoch_cost": api_epoch_cost,
-        "api_epoch_racing_field": api_epoch_racing_field,
-        "api_epoch_round_timeline": api_epoch_round_timeline,
-        "api_per_judge_for_generation": api_per_judge_for_generation,
-        "api_per_entry_for_generation": api_per_entry_for_generation,
-        "api_per_judge_comparison": api_per_judge_comparison,
-        "api_per_judge_for_run": api_per_judge_for_run,
-        "api_per_judge_for_run_by_entry": api_per_judge_for_run_by_entry,
-        "api_run_expectations": api_run_expectations,
-        "api_run_header": api_run_header,
-        "api_run_log": api_run_log,
-        "api_active_runs": api_active_runs,
-        "api_active_tournament": api_active_tournament,
-        "api_heartbeat": api_heartbeat,
-        "api_live_pipeline": api_live_pipeline,
-        "api_tournaments": api_tournaments,
-        "api_tournament_structure": api_tournament_structure,
-        "api_tournament_detail": api_tournament_detail,
-        "api_matchup_grid": api_matchup_grid,
-        "api_gate": api_gate,
-        "api_health_report": api_health_report,
-        "api_search": api_search,
-        "api_score_trajectory": api_score_trajectory,
-        "api_drift_movements": api_drift_movements,
-        "api_hypothesis_accuracy": api_hypothesis_accuracy,
-        "api_calibration_trend": api_calibration_trend,
-        "api_files": api_files,
-        "api_files_tree": api_files_tree,
-        "api_files_content": api_files_content,
-        "api_files_patches": api_files_patches,
-        "api_files_diff": api_files_diff,
-        "api_mutations": api_mutations,
-        "api_mutation_detail": api_mutation_detail,
-        "api_epoch_journal": api_epoch_journal,
-        "api_epoch_journal_md": api_epoch_journal_md,
-        "api_epoch_analysis": api_epoch_analysis,
-        "api_epoch_analysis_html": api_epoch_analysis_html,
-        "api_conversation": api_conversation,
-        "api_matchup_conversations": api_matchup_conversations,
-        "api_run_transcript": api_run_transcript,
-        "control_pause": control_pause,
+        "control_pause": _flag_control("pause_epoch"),
         "control_resume": control_resume,
-        "control_skip_round": control_skip_round,
+        "control_skip_round": _flag_control("skip_round"),
         "control_kill": control_kill,
         "control_promote": control_promote,
         "control_reject": control_reject,
         "control_brief": control_brief,
     }
+
+
+def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) -> dict[str, Any]:
+    """Build every route handler bound to one workspace.
+
+    Returns a dict of ``name -> handler`` the app wires onto routes,
+    composed from the per-surface factories above (state / epoch /
+    judge-run / live / tournament / files / conversation / control).
+    ``started`` is a ``time.monotonic()`` reference for the health uptime.
+    """
+    handlers: dict[str, Any] = {}
+    handlers.update(_make_state_endpoints(paths, read_only=read_only, started=started))
+    handlers.update(_make_epoch_endpoints(paths))
+    handlers.update(_make_judge_run_endpoints(paths))
+    handlers.update(_make_live_endpoints(paths))
+    handlers.update(_make_tournament_endpoints(paths))
+    handlers.update(_make_files_endpoints(paths))
+    handlers.update(_make_conversation_endpoints(paths))
+    handlers.update(_make_control_endpoints(paths, read_only=read_only))
+    return handlers
 
 
 def _dashboard_version() -> str:

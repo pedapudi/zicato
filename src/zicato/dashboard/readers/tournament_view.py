@@ -20,6 +20,7 @@ from zicato.dashboard.readers.paths import (
     _opt_bool,
     _read_json_value,
     _resolve_epoch_id,
+    coerce_float,
     layout_of,
     read_current_epoch,
 )
@@ -212,7 +213,7 @@ def build_bracket(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[st
             sc = base.get("scalar")
             return {
                 "id": base["id"],
-                "scalar": float(sc) if isinstance(sc, (int | float)) else None,
+                "scalar": coerce_float(sc),
                 "eval_mode": base.get("eval_mode") or "full",
                 "run_ref": base.get("run_ref"),
             }
@@ -564,7 +565,7 @@ def _read_run_loss_files(
         prov = loss.get("scoring_provenance")
         cell: dict[str, Any] = {
             "entry_id": entry_id,
-            "drift_loss": drift if isinstance(drift, int | float) else None,
+            "drift_loss": coerce_float(drift),
             "pass_fail": _opt_bool(loss.get("pass_fail")),
             # Continuous per-entry outcome + its optional precision/recall
             # decomposition (#18). ``None`` for a pre-score loss.json.
@@ -695,17 +696,14 @@ def build_matchup_grid(
 
     parent_score = _read_gen_score(paths, epoch_id, champion_id) if champion_id else {}
     child_score = _read_gen_score(paths, epoch_id, challenger_id)
-    parent_scalar = parent_score.get("scalar")
-    child_scalar = child_score.get("scalar")
-    if isinstance(parent_scalar, int | float) or isinstance(child_scalar, int | float):
-        p_scalar = parent_scalar if isinstance(parent_scalar, int | float) else None
-        c_scalar = child_scalar if isinstance(child_scalar, int | float) else None
+    p_scalar, c_scalar, pair_delta = _scalar_pair(
+        parent_score.get("scalar"), child_score.get("scalar")
+    )
+    if p_scalar is not None or c_scalar is not None:
         scalar: dict[str, Any] = {
             "parent": p_scalar,
             "child": c_scalar,
-            "delta": (
-                c_scalar - p_scalar if p_scalar is not None and c_scalar is not None else None
-            ),
+            "delta": pair_delta,
         }
         # Per-generation mean continuous outcome (#18), read straight from
         # the cached gen_score.json — never recomputed. ``None`` when the
@@ -756,18 +754,52 @@ def _is_field_tournament_id(tournament_id: str | None) -> bool:
     return ":field:" in str(tournament_id or "")
 
 
-def _empty_tournament_structure(epoch_id: str, tournament_id: str, source: str) -> dict[str, Any]:
+def _structure_envelope(
+    epoch_id: str,
+    tournament_id: str,
+    source: str,
+    *,
+    structure: Any = "gauntlet",
+    structure_params: Any = None,
+    competitors: Any = None,
+    rounds: Any = None,
+    standings: Any = None,
+    field_status: Any = None,
+) -> dict[str, Any]:
+    """THE one tournament-structure envelope builder.
+
+    Every resolver (index / active / loss-files) projects its raw fields
+    through here so the payload shape — and the type-guarded degrades —
+    live in exactly one place.
+    """
     return {
         "epoch_id": epoch_id,
         "tournament_id": tournament_id,
-        "structure": "gauntlet",
-        "structure_params": {},
-        "competitors": [],
-        "rounds": [],
-        "standings": [],
-        "field_status": [],
+        "structure": _normalize_structure(structure),
+        "structure_params": structure_params if isinstance(structure_params, dict) else {},
+        "competitors": competitors if isinstance(competitors, list) else [],
+        "rounds": rounds if isinstance(rounds, list) else [],
+        "standings": standings if isinstance(standings, list) else [],
+        "field_status": field_status if isinstance(field_status, list) else [],
         "source": source,
     }
+
+
+def _empty_tournament_structure(epoch_id: str, tournament_id: str, source: str) -> dict[str, Any]:
+    return _structure_envelope(epoch_id, tournament_id, source)
+
+
+def _scalar_pair(
+    parent_raw: Any, child_raw: Any
+) -> tuple[float | None, float | None, float | None]:
+    """Normalize a champion/challenger scalar pair -> ``(parent, child, delta)``.
+
+    ``delta`` (child - parent) only when both sides carry a real number.
+    """
+    parent = coerce_float(parent_raw)
+    child = coerce_float(child_raw)
+    delta = child - parent if parent is not None and child is not None else None
+    return parent, child, delta
 
 
 def _structure_from_index(
@@ -820,17 +852,17 @@ def _structure_from_index(
         # offer something richer.
         if rounds is None and standings is None and competitors is None:
             return None
-        return {
-            "epoch_id": epoch_id,
-            "tournament_id": tournament_id,
-            "structure": _normalize_structure(r["structure"]),
-            "structure_params": params if isinstance(params, dict) else {},
-            "competitors": competitors if isinstance(competitors, list) else [],
-            "rounds": rounds if isinstance(rounds, list) else [],
-            "standings": standings if isinstance(standings, list) else [],
-            "field_status": field_status if isinstance(field_status, list) else [],
-            "source": "index",
-        }
+        return _structure_envelope(
+            epoch_id,
+            tournament_id,
+            "index",
+            structure=r["structure"],
+            structure_params=params,
+            competitors=competitors,
+            rounds=rounds,
+            standings=standings,
+            field_status=field_status,
+        )
     finally:
         conn.close()
 
@@ -850,22 +882,17 @@ def _structure_from_active(
         return None
     if epoch_id and active.get("epoch_id") not in (None, epoch_id):
         return None
-    params = active.get("structure_params")
-    competitors = active.get("competitors")
-    rounds = active.get("rounds")
-    standings = active.get("standings")
-    field_status = active.get("field_status")
-    return {
-        "epoch_id": active.get("epoch_id") or epoch_id,
-        "tournament_id": tournament_id,
-        "structure": _normalize_structure(active.get("structure")),
-        "structure_params": params if isinstance(params, dict) else {},
-        "competitors": competitors if isinstance(competitors, list) else [],
-        "rounds": rounds if isinstance(rounds, list) else [],
-        "standings": standings if isinstance(standings, list) else [],
-        "field_status": field_status if isinstance(field_status, list) else [],
-        "source": "active",
-    }
+    return _structure_envelope(
+        active.get("epoch_id") or epoch_id,
+        tournament_id,
+        "active",
+        structure=active.get("structure"),
+        structure_params=active.get("structure_params"),
+        competitors=active.get("competitors"),
+        rounds=active.get("rounds"),
+        standings=active.get("standings"),
+        field_status=active.get("field_status"),
+    )
 
 
 def _structure_from_loss_files(
@@ -887,14 +914,8 @@ def _structure_from_loss_files(
         return None
     parent_score = _read_gen_score(paths, epoch_id, champion) if champion else {}
     child_score = _read_gen_score(paths, epoch_id, challenger)
-    parent_scalar = parent_score.get("scalar")
-    child_scalar = child_score.get("scalar")
-    parent_scalar = parent_scalar if isinstance(parent_scalar, int | float) else None
-    child_scalar = child_scalar if isinstance(child_scalar, int | float) else None
-    delta = (
-        child_scalar - parent_scalar
-        if parent_scalar is not None and child_scalar is not None
-        else None
+    parent_scalar, child_scalar, delta = _scalar_pair(
+        parent_score.get("scalar"), child_score.get("scalar")
     )
     competitors: list[dict[str, Any]] = []
     standings: list[dict[str, Any]] = []

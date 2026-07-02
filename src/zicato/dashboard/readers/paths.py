@@ -230,6 +230,30 @@ def _parse_iso(value: Any) -> _dt.datetime | None:
     return dt
 
 
+def coerce_float(value: Any) -> float | None:
+    """``float(value)`` for a real number, else ``None``.
+
+    THE one numeric payload coercer (bools excluded — a stray ``True`` is
+    not a scalar). Replaces the dozens of inline
+    ``float(x) if isinstance(x, int | float) else None`` copies.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value)
+
+
+def coerce_numeric_dict(value: Any) -> dict[str, float]:
+    """A ``{str: float}`` projection of a raw mapping (non-numeric dropped)."""
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, float] = {}
+    for k, v in value.items():
+        f = coerce_float(v)
+        if f is not None:
+            out[str(k)] = f
+    return out
+
+
 def _opt_bool(value: Any) -> bool | None:
     """Coerce a stored pass/fail flag to a JSON boolean (or ``None``).
 

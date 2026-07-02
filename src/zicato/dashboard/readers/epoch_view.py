@@ -18,6 +18,7 @@ from zicato.dashboard.readers.paths import (
     _preview,
     _read_json_value,
     _resolve_epoch_id,
+    coerce_float,
     layout_of,
 )
 from zicato.workspace import iter_epochs
@@ -90,7 +91,7 @@ def _parse_board(path: Path) -> list[dict[str, Any]] | None:
                 "kind": obj.get("kind"),
                 "input_preview": _board_input_preview(obj),
                 "expectation_kind": expectation_kind if isinstance(expectation_kind, str) else None,
-                "budget_s": float(budget) if isinstance(budget, int | float) else None,
+                "budget_s": coerce_float(budget),
                 "weight": float(obj["weight"])
                 if isinstance(obj.get("weight"), int | float)
                 else None,

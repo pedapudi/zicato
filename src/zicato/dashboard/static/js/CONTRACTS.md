@@ -330,7 +330,7 @@ identity if a `key` is supplied.
   append-only activity-log drawer; the route shell (nav rail active
   state); the rebrand. Owns the footer.
 
-## 8. Routes (core/router.js)
+## 8. Routes (js/router.js)
 
 Hash routes; `#/overview` is default. Each is deep-linkable:
 - `#/overview`

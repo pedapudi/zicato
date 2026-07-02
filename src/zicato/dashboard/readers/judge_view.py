@@ -21,6 +21,7 @@ from zicato.dashboard.readers.paths import (
     _preview,
     _read_json_value,
     _utc_now,
+    coerce_float,
     layout_of,
     read_current_epoch,
 )
@@ -150,16 +151,10 @@ def build_per_judge_for_generation(
     judges = [
         {
             "judge_name": r["judge_name"],
-            "weighted_loss": (
-                float(r["total_weighted_loss"])
-                if isinstance(r["total_weighted_loss"], int | float)
-                else None
-            ),
-            "raw_loss": (
-                float(r["total_raw_loss"]) if isinstance(r["total_raw_loss"], int | float) else None
-            ),
+            "weighted_loss": (coerce_float(r["total_weighted_loss"])),
+            "raw_loss": (coerce_float(r["total_raw_loss"])),
             "run_count": int(r["run_count"]) if isinstance(r["run_count"], int) else None,
-            "weight": float(r["weight"]) if isinstance(r["weight"], int | float) else None,
+            "weight": coerce_float(r["weight"]),
         }
         for r in rows
     ]
@@ -283,9 +278,7 @@ def build_per_entry_for_generation(
                 "entry_id": r["entry_id"],
                 "run_id": r["run_id"],
                 "generation_id": r["generation_id"],
-                "drift_loss": (
-                    float(r["drift_loss"]) if isinstance(r["drift_loss"], int | float) else None
-                ),
+                "drift_loss": (coerce_float(r["drift_loss"])),
                 "pass_fail": _opt_bool(r["pass_fail"]),
                 # Continuous per-entry outcome + precision/recall (#18),
                 # parsed from the row's loss_json blob. ``None`` for a
@@ -365,7 +358,7 @@ def build_per_judge_comparison(
             continue
         v = r["total_weighted_loss"]
         by_judge.setdefault(name, {"champion": None, "challenger": None})["champion"] = (
-            float(v) if isinstance(v, int | float) else None
+            coerce_float(v)
         )
     for r in chal_rows:
         name = r["judge_name"]
@@ -373,7 +366,7 @@ def build_per_judge_comparison(
             continue
         v = r["total_weighted_loss"]
         by_judge.setdefault(name, {"champion": None, "challenger": None})["challenger"] = (
-            float(v) if isinstance(v, int | float) else None
+            coerce_float(v)
         )
 
     judges: list[dict[str, Any]] = []
@@ -426,11 +419,9 @@ def build_per_judge_for_run(paths: WorkspacePaths, run_id: str) -> dict[str, Any
     judges = [
         {
             "judge_name": r["judge_name"],
-            "weighted_loss": (
-                float(r["weighted_loss"]) if isinstance(r["weighted_loss"], int | float) else None
-            ),
-            "raw_loss": (float(r["raw_loss"]) if isinstance(r["raw_loss"], int | float) else None),
-            "weight": float(r["weight"]) if isinstance(r["weight"], int | float) else None,
+            "weighted_loss": (coerce_float(r["weighted_loss"])),
+            "raw_loss": (coerce_float(r["raw_loss"])),
+            "weight": coerce_float(r["weight"]),
         }
         for r in rows
     ]
