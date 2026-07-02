@@ -59,9 +59,11 @@ Backends
 
 from __future__ import annotations
 
+import logging
 import shutil
-from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+import tempfile
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -69,6 +71,25 @@ from zicato.core.types import Patch
 from zicato.core.workspace import generation_dir
 from zicato.epoch.snapshot_scope import copytree_ignore, is_artifact
 from zicato.workspace import WorkspaceLayout
+
+log = logging.getLogger(__name__)
+
+#: Filename prefix for a run's ephemeral checkout parent directory. The
+#: parent lives in the system temp dir (``tempfile.mkdtemp``) so it never
+#: sits inside the workspace tree — nothing under it can be mistaken for
+#: a canonical generation snapshot — and it is removed when the run ends.
+#: The Rust supervisor's crash-GC (``crates/supervisor/src/reap.rs``,
+#: ``SNAPSHOT_PREFIX``) reaps orphaned parents by exactly this prefix +
+#: temp-dir placement, so both properties are load-bearing: every
+#: backend's :meth:`GenerationStore.checkout_ephemeral` MUST place its
+#: per-run tree under a ``ztw-snap-*`` mkdtemp parent in the temp dir.
+EPHEMERAL_SNAPSHOT_PREFIX = "ztw-snap-"
+
+#: Basename of the per-run scratch directory inside the ephemeral
+#: checkout parent. The worker exports it to the harness under test via
+#: :data:`zicato.epoch.snapshot_scope.SCRATCH_DIR_ENV` so run output is
+#: routed OUTSIDE the source tree.
+EPHEMERAL_SCRATCH_DIRNAME = "run-scratch"
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +139,95 @@ class PatchRecord:
 
     generation_id: str
     patches: tuple[Patch, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class EphemeralCheckout:
+    """One run's throwaway working copy of a generation source tree.
+
+    Returned by :meth:`GenerationStore.checkout_ephemeral`. The shape is
+    a triple rather than a bare ``(working_dir, cleanup)`` pair because
+    the per-run scratch directory is part of the same contract: run
+    output must be routed OUTSIDE the source tree (the
+    :data:`~zicato.epoch.snapshot_scope.SCRATCH_DIR_ENV` contract), the
+    scratch directory's placement is backend-owned (it shares the
+    checkout's crash-reapable ``ztw-snap-*`` parent so one cleanup — or
+    the supervisor's reaper — removes both), and under a shared-tree
+    backend design it could not be derived from ``working_dir`` at all.
+
+    Attributes
+    ----------
+    working_dir:
+        The isolated per-run source tree the worker mounts as the inner
+        harness's root. Its basename matches the canonical
+        :meth:`GenerationStore.snapshot_root`'s basename so any path the
+        agent derives from ``__file__`` looks the same as it would under
+        the canonical tree.
+    scratch_dir:
+        The per-run scratch directory the worker exports via
+        :data:`~zicato.epoch.snapshot_scope.SCRATCH_DIR_ENV`. A sibling
+        of ``working_dir`` under the same ``ztw-snap-*`` parent.
+    cleanup:
+        Idempotent, best-effort teardown removing the whole checkout
+        (working dir AND scratch dir). Callers invoke it from a
+        ``finally`` block; a cleanup failure must never turn a finished
+        run into a crash. Crash-safety does not depend on it — the
+        supervisor's reaper GCs orphaned ``ztw-snap-*`` parents.
+    """
+
+    working_dir: Path
+    scratch_dir: Path
+    cleanup: Callable[[], None] = field(compare=False)
+
+
+def discard_ephemeral_parent(parent: Path) -> None:
+    """Best-effort removal of one ephemeral checkout's ``ztw-snap-*`` parent.
+
+    The shared cleanup mechanism behind every backend's
+    :attr:`EphemeralCheckout.cleanup`: removes the whole mkdtemp parent
+    (working dir and scratch dir together) so no empty temp directory is
+    left behind. Idempotent, and never raises — a cleanup failure must
+    not turn a finished run into a crash.
+    """
+    try:
+        shutil.rmtree(parent, ignore_errors=True)
+    except OSError as exc:  # ignore_errors already swallows most
+        log.debug("ephemeral checkout cleanup skipped for %s: %s", parent, exc)
+
+
+def copy_checkout_ephemeral(source_root: Path, run_id: str) -> EphemeralCheckout:
+    """Materialise an ephemeral checkout by copying ``source_root``.
+
+    The ``copytree``-based mechanism — the directory backend's
+    :meth:`~DirectoryGenerationStore.checkout_ephemeral` and the
+    runner's fallback for a store-unmanaged generation (an ad-hoc caller
+    whose :class:`~zicato.core.epoch.Generation` points at an arbitrary
+    tree). This IS the historical per-run ephemeral-snapshot behaviour,
+    byte-for-byte:
+
+    * a single :func:`tempfile.mkdtemp` parent named
+      ``ztw-snap-{run_id}-*`` in the OS temp dir, deliberately OUTSIDE
+      the workspace tree (and exactly the shape the Rust supervisor's
+      ``reapable_snapshot_root`` guard reaps after a crash);
+    * the copy goes *into a child of the parent keeping the source
+      tree's own basename*, so any path the agent derives from
+      ``__file__`` looks the same as it would under the canonical
+      snapshot;
+    * the copy is filtered through the shared snapshot-scope ignore so
+      run artifacts are never carried in;
+    * a sibling ``run-scratch`` directory under the same parent, so one
+      cleanup removes both.
+    """
+    parent = Path(tempfile.mkdtemp(prefix=f"{EPHEMERAL_SNAPSHOT_PREFIX}{run_id}-"))
+    working_dir = parent / Path(source_root).name
+    shutil.copytree(source_root, working_dir, ignore=copytree_ignore())
+    scratch_dir = parent / EPHEMERAL_SCRATCH_DIRNAME
+    scratch_dir.mkdir()
+
+    def _cleanup() -> None:
+        discard_ephemeral_parent(parent)
+
+    return EphemeralCheckout(working_dir=working_dir, scratch_dir=scratch_dir, cleanup=_cleanup)
 
 
 @runtime_checkable
@@ -201,6 +311,44 @@ class GenerationStore(Protocol):
         ValueError
             When the patch set fails validation — no child tree is left
             behind.
+        """
+        ...
+
+    def checkout_ephemeral(
+        self,
+        epoch_id: str,
+        generation_id: str,
+        run_id: str,
+    ) -> EphemeralCheckout:
+        """Materialise an ISOLATED per-run working copy of a generation.
+
+        A tournament worker is never pointed at the canonical source
+        tree (:meth:`snapshot_root`): the canonical tree is what
+        :meth:`derive_generation` derives every child from, so any
+        runtime write into it would accumulate across the whole lineage.
+        Instead each run mounts a throwaway checkout this method
+        materialises — a stray write that lands next to the agent's own
+        code pollutes only the checkout, which is discarded when the run
+        ends.
+
+        Contract (every backend):
+
+        * the checkout lives under a fresh ``ztw-snap-{run_id}-*``
+          parent in the OS temp dir (:data:`EPHEMERAL_SNAPSHOT_PREFIX`),
+          the shape the supervisor's crash-reaper GCs;
+        * ``working_dir``'s basename equals the canonical
+          :meth:`snapshot_root`'s basename (``__file__``-derived paths
+          look identical);
+        * a per-run ``scratch_dir`` sibling is created for the
+          :data:`~zicato.epoch.snapshot_scope.SCRATCH_DIR_ENV` contract;
+        * concurrent checkouts of the SAME generation are mutually
+          isolated;
+        * ``cleanup()`` is idempotent and best-effort.
+
+        Raises :class:`FileNotFoundError` when the generation has no
+        materialised source tree, and :class:`OSError` when the checkout
+        could not be materialised (callers degrade that to an aborted
+        run, never a crashed tournament).
         """
         ...
 
@@ -408,6 +556,29 @@ class DirectoryGenerationStore:
         )
         return child_root
 
+    def checkout_ephemeral(
+        self,
+        epoch_id: str,
+        generation_id: str,
+        run_id: str,
+    ) -> EphemeralCheckout:
+        """Copy the canonical snapshot into a fresh per-run temp checkout.
+
+        Exactly the historical per-run ephemeral-snapshot mechanism (a
+        ``ztw-snap-{run_id}-*`` mkdtemp parent OUTSIDE the workspace, a
+        basename-preserving artifact-filtered ``copytree``, a sibling
+        ``run-scratch`` dir), moved behind the store seam — see
+        :func:`copy_checkout_ephemeral`. Code snapshots are KB-sized, so
+        a copy per run is cheap.
+        """
+        source = self.snapshot_root(epoch_id, generation_id)
+        if not source.is_dir():
+            raise FileNotFoundError(
+                f"checkout_ephemeral: generation {epoch_id}/{generation_id} "
+                f"has no source tree at {source}"
+            )
+        return copy_checkout_ephemeral(source, run_id)
+
     # ------------------------------------------------------------------
     # Read surface — the dashboard file-tree / file-browser API.
     # ------------------------------------------------------------------
@@ -548,9 +719,14 @@ def default_generation_store(workspace_root: Path) -> GenerationStore:
 __all__ = [
     "GenerationStore",
     "DirectoryGenerationStore",
+    "EphemeralCheckout",
     "TreeEntry",
     "PatchRecord",
+    "EPHEMERAL_SCRATCH_DIRNAME",
+    "EPHEMERAL_SNAPSHOT_PREFIX",
     "STORAGE_BACKEND_KEY",
     "DEFAULT_STORAGE_BACKEND",
+    "copy_checkout_ephemeral",
     "default_generation_store",
+    "discard_ephemeral_parent",
 ]

@@ -60,27 +60,24 @@ mode up to ``P`` (challenger-only). The real-world ceiling on
 ``parallelism`` is almost always the LLM endpoint's own concurrency
 limit — size it against ``2 * parallelism`` for full mode.
 
-Per-run ephemeral working copies
---------------------------------
-The canonical generation snapshot
-(``epochs/{id}/generations/vN/snapshot/``) is treated as **immutable
-code**: it is the tree ``derive_generation`` copies forward to seed the
-next generation, so anything written into it accumulates across every
-generation and would eventually exhaust the disk. A target agent,
-however, may legitimately write near its own code — runtime ``output/``,
-scratch files, caches — and a meta-harness must be robust to that. So
-:func:`_run_single` never points a worker at the canonical snapshot
-directly. Instead it makes a per-run **ephemeral working copy** of the
-snapshot (a cheap, KB-sized ``copytree`` — code snapshots are small),
-points the worker at THAT copy, and discards it once the run finishes —
-on a clean exit, an abort, or a crash. Every runtime write the agent
-makes therefore lands in the throwaway per-run directory; the canonical
-snapshot stays code-only and small and ``derive_generation``'s
-``copytree`` stays cheap. The run's telemetry (``events.jsonl`` /
-``loss.json``) is unaffected — it is keyed on the workspace's
-``runs/{entry_id}/`` layout, not on the working copy. This is the same
-isolation a per-run ``git worktree`` would later give for free; a
-code-only ``copytree`` per run is the correct interim mechanism.
+Per-run ephemeral checkouts
+---------------------------
+The canonical generation source tree is treated as **immutable code**:
+it is what ``derive_generation`` derives the next generation from, so
+anything written into it accumulates across every generation and would
+eventually exhaust the disk. A target agent, however, may legitimately
+write near its own code — runtime ``output/``, scratch files, caches —
+and a meta-harness must be robust to that. So :func:`_run_single` never
+points a worker at the canonical tree directly. Instead it asks the
+workspace's :class:`~zicato.epoch.genstore.GenerationStore` for a
+per-run **ephemeral checkout** (the directory backend copies the
+KB-sized snapshot; the git backend checks out a per-run ``git
+worktree``), points the worker at THAT, and discards it once the run
+finishes — on a clean exit, an abort, or a crash. Every runtime write
+the agent makes therefore lands in the throwaway per-run directory; the
+canonical tree stays code-only and small. The run's telemetry
+(``events.jsonl`` / ``loss.json``) is unaffected — it is keyed on the
+workspace's ``runs/{entry_id}/`` layout, not on the working copy.
 
 * :func:`run_fast_mode` — autoresearch-style inline keep/discard.
   Only the child is run; comparison is against a previously-computed
@@ -149,6 +146,7 @@ from zicato.core import (
     ScoringWeights,
     Side,
 )
+from zicato.epoch.genstore import EphemeralCheckout
 from zicato.tournament.gate import GateOutcome, evaluate_gate
 
 # ``_load_ladder_state`` / ``_losses_for`` / ``_save_ladder_state`` are
@@ -220,14 +218,14 @@ from zicato.tournament.worker_transport import (  # noqa: F401
     _aborted_loss_profile,
     _adapter_spec,
     _callable_dotted_path,
-    _discard_ephemeral_snapshot,
+    _checkout_run_snapshot,
+    _discard_run_snapshot,
     _drift_kind_wire,
     _entry_replicate_index,
     _entry_to_dict,
     _index_db_path,
     _ingest_run_into_index,
     _load_worker_result,
-    _make_ephemeral_snapshot,
     _now_iso_utc,
     _resolve_harmonograf_grpc,
     _resolve_harmonograf_url,
@@ -434,13 +432,15 @@ async def _run_single(
 
     Sequencing:
 
-    1. Make a per-run **ephemeral working copy** of the generation's
-       code snapshot (a cheap ``copytree`` into a system-temp directory)
-       and point the worker at THAT, never at the canonical
-       ``generations/vN/snapshot/``. Any runtime write the agent makes
-       near its own code lands in the throwaway copy, so the canonical
-       snapshot stays code-only and ``derive_generation`` does not carry
-       runtime output forward. See :func:`_make_ephemeral_snapshot`.
+    1. Make a per-run **ephemeral checkout** of the generation's code
+       snapshot (materialised by the workspace's generation store into a
+       system-temp directory — a ``copytree`` under the directory
+       backend, a per-run ``git worktree`` under the git backend) and
+       point the worker at THAT, never at the canonical source tree. Any
+       runtime write the agent makes near its own code lands in the
+       throwaway checkout, so the canonical tree stays code-only and
+       ``derive_generation`` does not carry runtime output forward. See
+       :func:`_checkout_run_snapshot`.
     2. Serialise the run's inputs (entry, adapter spec, call_llm dotted
        paths, scoring weights, sink/loss/result paths, and the ephemeral
        ``snapshot_root``) to a temp args file.
@@ -513,9 +513,9 @@ async def _run_single(
     args_path = Path(args_name)
     result_path = Path(args_name[: -len(".json")] + ".result.json")
     spawn_started = time.monotonic()
-    # The per-run ephemeral snapshot working copy; assigned once the
-    # copytree below succeeds, discarded in this function's ``finally``.
-    ephemeral_snapshot: Path | None = None
+    # The per-run ephemeral snapshot checkout; assigned once the store
+    # checkout below succeeds, discarded in this function's ``finally``.
+    checkout: EphemeralCheckout | None = None
 
     # The run's final LossProfile — assigned on every exit path (clean
     # finish OR abort) so the ``finally`` block can fold the loss summary
@@ -525,15 +525,21 @@ async def _run_single(
 
     try:
         try:
-            # --- 1. Per-run ephemeral working copy of the code
-            # snapshot. The worker is pointed at this copy, never at the
-            # canonical ``generations/vN/snapshot/``, so any runtime
-            # write the agent makes near its own code lands here and is
-            # discarded with the copy — the canonical snapshot stays
-            # code-only and small.
-            ephemeral_snapshot, scratch_dir = _make_ephemeral_snapshot(
-                generation.snapshot_root, run_id
+            # --- 1. Per-run ephemeral checkout of the code snapshot,
+            # materialised by the workspace's generation store (a
+            # copytree under the directory backend, a per-run git
+            # worktree under the git backend). The worker is pointed at
+            # this checkout, never at the canonical source tree, so any
+            # runtime write the agent makes near its own code lands here
+            # and is discarded with the checkout — the canonical tree
+            # stays code-only and small.
+            checkout = _checkout_run_snapshot(
+                workspace_root=workspace_root,
+                epoch_id=epoch_id,
+                generation=generation,
+                run_id=run_id,
             )
+            ephemeral_snapshot, scratch_dir = checkout.working_dir, checkout.scratch_dir
             # The unified ``models`` block (runtime infra, NOT the contract)
             # is the source of truth for how each role reaches a provider in
             # the worker. For a configured role we pass its secret-free spec
@@ -799,13 +805,13 @@ async def _run_single(
         final_loss = loss
         return final_loss
     finally:
-        # --- 7. Cleanup. Discard the per-run ephemeral snapshot working
-        # copy (every runtime write the agent made is inside it — it
+        # --- 7. Cleanup. Discard the per-run ephemeral snapshot
+        # checkout (every runtime write the agent made is inside it — it
         # must not survive the run); remove the temp args/result files;
         # if the worker was killed before it could remove its own
         # active_runs file, the parent removes it here. This block runs
         # on every exit path — clean finish, abort, or crash.
-        _discard_ephemeral_snapshot(ephemeral_snapshot)
+        _discard_run_snapshot(checkout)
         for tmp in (args_path, result_path):
             try:
                 if tmp.exists():

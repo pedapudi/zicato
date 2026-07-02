@@ -75,13 +75,21 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import tempfile
 from collections.abc import Iterable, Sequence
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from zicato.core.types import Patch
-from zicato.epoch.genstore import PatchRecord, TreeEntry
+from zicato.epoch.genstore import (
+    EPHEMERAL_SCRATCH_DIRNAME,
+    EPHEMERAL_SNAPSHOT_PREFIX,
+    EphemeralCheckout,
+    PatchRecord,
+    TreeEntry,
+    discard_ephemeral_parent,
+)
 from zicato.epoch.snapshot_scope import gitignore_lines, is_artifact
 
 #: Sentinel line separating the human commit subject from the machine
@@ -292,6 +300,105 @@ class GitGenerationStore:
         self._git("worktree", "prune")
         self._git("worktree", "add", "--detach", "--force", str(wt), tag)
         return wt
+
+    def checkout_ephemeral(
+        self,
+        epoch_id: str,
+        generation_id: str,
+        run_id: str,
+    ) -> EphemeralCheckout:
+        """Check the generation's tag out into a fresh PER-RUN ``git worktree``.
+
+        Design decision — per-run worktree vs shared worktree
+        ------------------------------------------------------
+        Two candidate designs were benchmarked (2026-07-01, tmpfs-free
+        local disk, ``git worktree add --detach`` from a tag, 16
+        threads):
+
+        * **(a) per-run ``git worktree add --detach``** (CHOSEN) — one
+          isolated checkout per run. Cost on a 60-file/~120 KB tree:
+          16 concurrent adds total 14–22 ms (per-add mean 7.6–10.5 ms,
+          max 20 ms under contention; 6.4 ms serial). On a
+          500-file/~2 MB tree: 16 concurrent adds total ~41 ms (per-add
+          mean ~28 ms, max 36 ms; 19 ms serial). git's internal repo
+          lock serialises the ref/administrative step only, so 16-way
+          contention costs under 1.5× a serial add — and the add is
+          3–18× FASTER than the ``shutil.copytree`` the directory
+          backend pays for the same tree (16 concurrent copies: ~70 ms
+          / ~525 ms respectively).
+        * **(b) shared per-generation worktree + per-run scratch
+          discipline** — zero per-run cost, but concurrent sibling runs
+          of the SAME generation share one tree, so a stray write that
+          ignores the scratch dir contaminates every concurrent
+          sibling's measurement AND persists into the shared worktree
+          for the rest of the epoch (a contract roll seeds the next
+          epoch's ``v0`` from the promoted head's worktree, so a
+          non-artifact stray file would even cross epochs). Lineage
+          itself is immune under git — children derive from the COMMIT,
+          not the worktree — but measurement isolation is exactly what
+          the ephemeral snapshot exists for.
+
+        At ≤ ~30 ms per run against runs that take seconds-to-minutes,
+        (a)'s isolation-parity with the shipped behaviour wins outright;
+        (b)'s only advantage is a cost that is already negligible.
+
+        Mechanics: the worktree is created INSIDE a ``ztw-snap-{run_id}-*``
+        mkdtemp parent under the OS temp dir — the exact shape the
+        supervisor's crash-reaper (``reap.rs::reapable_snapshot_root``)
+        GCs — named with the generation id so the basename matches the
+        shared worktree :meth:`snapshot_root` returns. A per-run
+        ``run-scratch`` sibling preserves the
+        :data:`~zicato.epoch.snapshot_scope.SCRATCH_DIR_ENV` contract.
+
+        The checkout is immediately DETACHED from the repo: the
+        worktree's ``.git`` pointer file is unlinked and the registration
+        pruned right after the add, leaving the run a plain throwaway
+        tree. That gives byte parity with the directory backend's view
+        (whose ``copytree`` filter skips ``.git``), keeps the worker from
+        reaching back into the private repo through the pointer, and
+        means NO cleanup path depends on git state — the run-end cleanup
+        (and the supervisor's crash-reaper) just remove the ``ztw-snap-*``
+        parent. ``git worktree add`` holds an "initializing" lock on the
+        new registration until it finishes, so a concurrent sibling's
+        prune can never race a half-created checkout; a registration
+        orphaned by a crash between add and prune is collected by the
+        prune-before-add here and in :meth:`_materialise_worktree`.
+        """
+        if not self.has_generation(epoch_id, generation_id):
+            raise FileNotFoundError(
+                f"checkout_ephemeral: generation {epoch_id}/{generation_id} "
+                f"has no commit in the generation repo"
+            )
+        parent = Path(tempfile.mkdtemp(prefix=f"{EPHEMERAL_SNAPSHOT_PREFIX}{run_id}-"))
+        # Keep the shared worktree's basename (the generation id) so any
+        # path the agent derives from ``__file__`` looks the same as it
+        # would under the canonical checkout.
+        working_dir = parent / self._worktree_path(epoch_id, generation_id).name
+        tag = self._generation_tag(epoch_id, generation_id)
+        try:
+            # Prune stale registrations from crashed runs first, then
+            # check out. git serialises concurrent adds on its own repo
+            # lock; the measured contention is milliseconds (docstring).
+            self._git("worktree", "prune")
+            self._git("worktree", "add", "--detach", "--force", str(working_dir), tag)
+            # Detach the checkout into a plain tree (see docstring).
+            (working_dir / ".git").unlink(missing_ok=True)
+            self._git("worktree", "prune")
+        except GitCommandError as exc:
+            discard_ephemeral_parent(parent)
+            # OSError so callers' degrade-to-aborted-run handling (which
+            # already covers the directory backend's copytree failures)
+            # applies unchanged.
+            raise OSError(
+                f"checkout_ephemeral: worktree add failed for " f"{epoch_id}/{generation_id}: {exc}"
+            ) from exc
+        scratch_dir = parent / EPHEMERAL_SCRATCH_DIRNAME
+        scratch_dir.mkdir()
+
+        def _cleanup() -> None:
+            discard_ephemeral_parent(parent)
+
+        return EphemeralCheckout(working_dir=working_dir, scratch_dir=scratch_dir, cleanup=_cleanup)
 
     def has_generation(self, epoch_id: str, generation_id: str) -> bool:
         """Return ``True`` iff a generation commit/tag exists for the coordinate."""
