@@ -765,6 +765,51 @@ test('validateContract twin: margin at/below a measured floor with the evidence 
   assert(!unknown.find((w) => w.code === 'margin_below_noise_floor'), 'no measured floor, no rule');
 });
 
+// ── estimateCost: the honest-meter twins (evidence gate, best-of-N aux,
+//    placebo) — mirror the Python estimator's numbers exactly ───────────
+
+test('estimateCost twin: the evidence-gate crowning-confirm budget is priced (budget × 2 × board)', () => {
+  // Gate off: no line.
+  const off = builder.estimateCost('gauntlet', { field_size: 1, replicates: 1 }, 10, 0, { best_of_n: 1 });
+  assert(!off.breakdown.find((l) => l.label.includes('crowning-confirm')), 'no confirm line with the gate off');
+  // The scaffold gate: 32 × 2 × 10 = 640, added to the headline, largest term.
+  const on = builder.estimateCost('gauntlet', {
+    field_size: 1, replicates: 1,
+    promote_confidence_threshold: 0.8, promote_confidence_replicates: 32,
+  }, 10, 0, { best_of_n: 1 });
+  const confirm = on.breakdown.find((l) => l.label.includes('crowning-confirm'));
+  assert(confirm, 'the confirm line renders');
+  assertEqual(confirm.runs, 640, '32 × 2 × 10 = 640 (the py estimator value)');
+  assert(/crowning/.test(confirm.detail), 'the detail says it applies per confirmed crowning');
+  assertEqual(on.board_runs_per_round, off.board_runs_per_round + 640, 'the headline includes it');
+  // Unset budget defaults to 3 (the gate module default).
+  const def = builder.estimateCost('gauntlet', { field_size: 1, replicates: 1, promote_confidence_threshold: 0.8 }, 10, 0, { best_of_n: 1 });
+  assertEqual(def.breakdown.find((l) => l.label.includes('crowning-confirm')).runs, 60, 'unset budget → 3 × 2 × 10');
+});
+
+test('estimateCost twin: best-of-N propose calls are listed as auxiliary and EXCLUDED from the headline', () => {
+  const est = builder.estimateCost('gauntlet', { field_size: 1, replicates: 1 }, 10, 0, { best_of_n: 3 });
+  const aux = est.breakdown.find((l) => l.label === 'best-of-N propose calls');
+  assert(aux, 'the auxiliary line renders when best_of_n > 1');
+  assertEqual(aux.runs, 3, 'proposes 1 × best_of_n 3');
+  assert(/auxiliary/.test(aux.detail), 'labelled as auxiliary LLM calls');
+  assertEqual(est.board_runs_per_round, 10, 'the board-runs headline excludes the calls');
+  // A wide field proposes field_size challengers.
+  const wide = builder.estimateCost('racing', { field_size: 4 }, 10, 0, { best_of_n: 3 });
+  assertEqual(wide.breakdown.find((l) => l.label === 'best-of-N propose calls').runs, 12, '4 × 3');
+});
+
+test('estimateCost twin: the placebo cadence adds an amortized per-round line', () => {
+  const off = builder.estimateCost('gauntlet', { field_size: 1, replicates: 2 }, 10, 0, { best_of_n: 1 }, {});
+  assert(!off.breakdown.find((l) => l.label.includes('placebo')), 'no placebo line at cadence 0');
+  const on = builder.estimateCost('gauntlet', { field_size: 1, replicates: 2 }, 10, 0, { best_of_n: 1 },
+    { random_baseline_every_n: 4 });
+  const placebo = on.breakdown.find((l) => l.label.includes('placebo'));
+  assert(placebo, 'the placebo line renders');
+  assertEqual(placebo.runs, 5, 'ceil(2 × 10 / 4) = 5 (the py estimator value)');
+  assertEqual(on.board_runs_per_round, off.board_runs_per_round + 5, 'the headline includes it');
+});
+
 test('estimateCost: the per-structure default-replicates twin matches the Python map for every structure', () => {
   // The JS default-replicates map is the twin of the Python
   // STRUCTURE_DEFAULT_REPLICATES (derived from each strategy's

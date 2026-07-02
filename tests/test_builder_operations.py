@@ -846,3 +846,130 @@ def test_set_experiment_memory() -> None:
     assert ops.set_experiment_memory(draft, cross_epoch=True).changed == {}
     serialized = json.loads(json.dumps(draft.to_dict()))
     assert serialized["scoring"]["experiment_memory"]["cross_epoch"] is True
+
+
+# ---------------------------------------------------------------------------
+# Honest cost meter — the evidence-gate confirm budget, the best-of-N
+# auxiliary line, and the placebo cadence
+# ---------------------------------------------------------------------------
+
+
+def test_cost_evidence_gate_confirm_budget_is_priced() -> None:
+    draft = TournamentDraft()
+    draft.entries = _board(10)
+    _no_holdout(draft)
+    ops.set_structure(draft, "gauntlet")
+    ops.set_param(draft, "field_size", 1)
+    ops.set_param(draft, "replicates", 1)
+
+    # Gate off: no crowning-confirm line.
+    est_off = ops.estimate_cost(draft)
+    assert not any("crowning-confirm" in line.label for line in est_off.breakdown)
+
+    # The recommended-scaffold gate: threshold 0.8, budget 32. Each
+    # replicate is a FRESH board sweep for BOTH contestants:
+    # 32 × 2 × 10 = 640 — the largest term by far (duels are 10).
+    ops.set_param(draft, "promote_confidence_threshold", 0.8)
+    ops.set_param(draft, "promote_confidence_replicates", 32)
+    est = ops.estimate_cost(draft)
+    confirm = [line for line in est.breakdown if "crowning-confirm" in line.label]
+    assert len(confirm) == 1
+    assert confirm[0].runs == 32 * 2 * 10
+    assert "per" in confirm[0].detail and "crowning" in confirm[0].detail
+    assert est.board_runs_per_round == est_off.board_runs_per_round + 640
+    # It IS the largest line on the meter.
+    assert confirm[0].runs == max(line.runs for line in est.breakdown)
+
+    # Unset budget defaults to the evidence gate's own default (3).
+    ops.set_param(draft, "promote_confidence_replicates", None)
+    est_default = ops.estimate_cost(draft)
+    confirm_default = next(
+        line for line in est_default.breakdown if "crowning-confirm" in line.label
+    )
+    assert confirm_default.runs == 3 * 2 * 10
+
+
+def test_cost_best_of_n_auxiliary_line_excluded_from_headline() -> None:
+    draft = TournamentDraft()
+    draft.entries = _board(10)
+    _no_holdout(draft)
+    ops.set_structure(draft, "gauntlet")
+    ops.set_param(draft, "field_size", 1)
+    ops.set_param(draft, "replicates", 1)
+
+    # Default best_of_n is 3: the auxiliary line appears (1 × 3 calls)…
+    est = ops.estimate_cost(draft)
+    aux = [line for line in est.breakdown if line.label == "best-of-N propose calls"]
+    assert len(aux) == 1
+    assert aux[0].runs == 1 * 3
+    assert "auxiliary" in aux[0].detail
+    # …but the headline counts only board runs (1 × 1 × 10 = 10).
+    assert est.board_runs_per_round == 10
+
+    # best_of_n 1 (the historical single sample): no line.
+    ops.set_proposer_quality(draft, best_of_n=1)
+    est1 = ops.estimate_cost(draft)
+    assert not any(line.label == "best-of-N propose calls" for line in est1.breakdown)
+
+    # A wider structure proposes field_size challengers: 4 × 3 = 12 calls.
+    ops.set_proposer_quality(draft, best_of_n=3)
+    ops.set_structure(draft, "racing")
+    ops.set_param(draft, "field_size", 4)
+    est4 = ops.estimate_cost(draft)
+    aux4 = next(line for line in est4.breakdown if line.label == "best-of-N propose calls")
+    assert aux4.runs == 4 * 3
+
+
+def test_cost_placebo_cadence_amortized() -> None:
+    draft = TournamentDraft()
+    draft.entries = _board(10)
+    _no_holdout(draft)
+    ops.set_structure(draft, "gauntlet")
+    ops.set_param(draft, "field_size", 1)
+    ops.set_param(draft, "replicates", 2)
+
+    est_off = ops.estimate_cost(draft)
+    assert not any("placebo" in line.label for line in est_off.breakdown)
+
+    # Every 4th round fields one extra no-op challenger: a full duel of
+    # replicates 2 × board 10 = 20 runs, amortized to ceil(20/4) = 5.
+    ops.set_holdout(draft, random_baseline_every_n=4)
+    est = ops.estimate_cost(draft)
+    placebo = [line for line in est.breakdown if "placebo" in line.label]
+    assert len(placebo) == 1
+    assert placebo[0].runs == 5
+    assert est.board_runs_per_round == est_off.board_runs_per_round + 5
+
+
+def test_cost_all_honest_terms_compose_with_the_screen_line() -> None:
+    """The full recommended-scaffold shape: screen + best-of-N + evidence
+    gate + placebo all on at once — every line present, and the headline is
+    exactly the sum of the board-run lines (the auxiliary line excluded)."""
+    draft = TournamentDraft()
+    draft.entries = _board(10)
+    _no_holdout(draft)
+    ops.set_structure(draft, "racing")
+    ops.set_param(draft, "field_size", 4)
+    ops.set_param(draft, "eta", 2)
+    ops.set_param(draft, "board_fraction", 0.4)
+    ops.set_param(draft, "replicates", 2)
+    ops.set_param(draft, "promote_confidence_threshold", 0.8)
+    ops.set_param(draft, "promote_confidence_replicates", 32)
+    ops.set_screening(draft, entries=2)
+    ops.set_holdout(draft, random_baseline_every_n=5)
+
+    est = ops.estimate_cost(draft)
+    labels = [line.label for line in est.breakdown]
+    assert any("candidate-screen" in label for label in labels)
+    assert "best-of-N propose calls" in labels
+    assert any("crowning-confirm" in label for label in labels)
+    assert any("placebo" in label for label in labels)
+
+    board_run_total = sum(
+        line.runs for line in est.breakdown if line.label != "best-of-N propose calls"
+    )
+    assert est.board_runs_per_round == board_run_total
+    # The evidence budget dominates: 32 × 2 × 10 = 640 of the total.
+    confirm = next(line for line in est.breakdown if "crowning-confirm" in line.label)
+    assert confirm.runs == 640
+    assert confirm.runs > est.board_runs_per_round / 2

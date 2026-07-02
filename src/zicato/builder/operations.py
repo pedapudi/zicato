@@ -74,7 +74,10 @@ class CostLine:
     label:
         Human-readable term name (e.g. ``"per-duel runs"``).
     runs:
-        Board-runs this term contributes.
+        Runs this term contributes. Board-runs for every term except the
+        clearly-labelled auxiliary lines (``best-of-N propose calls``),
+        which count LLM calls and are excluded from the board-runs
+        headline — the label + detail say so.
     detail:
         Short arithmetic explanation (e.g. ``"field_size 2 × replicates 1"``).
     """
@@ -794,6 +797,24 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
     Every structure adds a ``holdout_confirm`` term: the winning
     challenger is re-scored on the ``holdout`` slice.
 
+    HONEST-METER terms beyond the base schedule (each only when the
+    contract opts in):
+
+    * ``candidate-screen runs`` — the pre-tournament tryout panel
+      (``proposes × best_of_n × panel``).
+    * ``best-of-N propose calls`` — ``proposes × best_of_n`` AUXILIARY
+      LLM calls per round. NOT board runs, so the line is labelled
+      auxiliary and EXCLUDED from the board-runs headline — but it is
+      real money and belongs on the meter.
+    * ``crowning-confirm runs`` — the evidence gate's defer→replicate
+      budget: each replicate is a FRESH board sweep for BOTH crowning
+      contestants, so ``budget × 2 × board``. Spent per CONFIRMED
+      crowning (an upper bound per round); with the scaffold's
+      32-replicate budget this is typically the LARGEST term.
+    * ``placebo-baseline runs`` — the ``random_baseline_every_n``
+      control arm: one extra no-op challenger every N rounds, amortized
+      to ``ceil(replicates × board / N)`` per round.
+
     The estimate is deliberately a coarse upper-ish bound for the
     cost-meter — the exact schedule is the selection strategy's; this
     surfaces the order of magnitude before the operator commits.
@@ -878,8 +899,8 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
     # proposes once per round, a wider structure proposes field_size
     # challengers. The panel can never exceed the train board.
     quality = draft.scoring.proposer_quality
+    proposes = 1 if (structure == "gauntlet" or field_size <= 1) else field_size
     if quality.screen_entries > 0 and quality.best_of_n > 1:
-        proposes = 1 if (structure == "gauntlet" or field_size <= 1) else field_size
         panel = min(quality.screen_entries, board_size)
         screen_runs = proposes * quality.best_of_n * panel
         if screen_runs:
@@ -891,6 +912,63 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
                 )
             )
             per_round += screen_runs
+
+    # Best-of-N propose multiplier: each propose-step samples best_of_n
+    # candidate experiments — auxiliary LLM CALLS, not board runs, so the
+    # line is labelled and EXCLUDED from the board-runs headline. Real
+    # spend the operator should still see priced.
+    if quality.best_of_n > 1:
+        propose_calls = proposes * quality.best_of_n
+        lines.append(
+            CostLine(
+                "best-of-N propose calls",
+                propose_calls,
+                f"proposes {proposes} × best_of_n {quality.best_of_n} — auxiliary "
+                "LLM calls, not board runs (excluded from the headline)",
+            )
+        )
+
+    # The evidence gate's crowning-confirm budget: when the contract sets
+    # promote_confidence_threshold, the defer→replicate loop may spend up
+    # to `promote_confidence_replicates` FRESH board sweeps for BOTH
+    # crowning contestants chasing CI separation — budget × 2 × board.
+    # Spent per CONFIRMED crowning (so per-round it is an upper bound);
+    # with the recommended scaffold's 32-replicate budget this is
+    # typically the LARGEST term on the meter.
+    from zicato.selection.evidence_gate import (  # noqa: PLC0415
+        read_promote_confidence_threshold,
+        read_replicate_budget,
+    )
+
+    if read_promote_confidence_threshold(params) is not None:
+        budget = read_replicate_budget(params)
+        confirm_runs = budget * 2 * board_size
+        if confirm_runs:
+            lines.append(
+                CostLine(
+                    "crowning-confirm runs (evidence gate)",
+                    confirm_runs,
+                    f"budget {budget} × 2 contestants × board {board_size} — per "
+                    "confirmed crowning (upper bound)",
+                )
+            )
+            per_round += confirm_runs
+
+    # The placebo control arm: one extra no-op challenger every N rounds
+    # (a full duel across the train board), amortized to per-round runs.
+    baseline_n = draft.scoring.overfitting.random_baseline_every_n
+    if baseline_n > 0:
+        placebo_runs = math.ceil(replicates * board_size / baseline_n)
+        if placebo_runs:
+            lines.append(
+                CostLine(
+                    "placebo-baseline runs (amortized)",
+                    placebo_runs,
+                    f"1 no-op challenger every {baseline_n} rounds × replicates "
+                    f"{replicates} × board {board_size}",
+                )
+            )
+            per_round += placebo_runs
 
     return CostEstimate(
         structure=structure,

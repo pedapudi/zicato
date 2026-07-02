@@ -113,7 +113,7 @@ export function costMeter(cost) {
   wrap.appendChild(el('div', { class: 'dn-bld-cost-bars' }, breakdown.map((line) => el('div', {
     class: 'dn-bld-cost-bar', title: `${line.label}: ${line.runs} · ${line.detail || ''}`,
   }, [
-    el('span', { class: 'dn-bld-cost-barfill', style: `width:${Math.round((line.runs / total) * 100)}%` }),
+    el('span', { class: 'dn-bld-cost-barfill', style: `width:${Math.min(100, Math.round((line.runs / total) * 100))}%` }),
     el('span', { class: 'dn-bld-cost-barlab', text: `${line.label} · ${line.runs}` }),
   ]))));
   return wrap;

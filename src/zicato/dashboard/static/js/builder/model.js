@@ -254,7 +254,14 @@ function costLine(label, runs, detail) { return { label, runs, detail }; }
 // `proposerQuality` (optional) is the contract's proposer_quality block —
 // when it opts into candidate screening (screen_entries > 0, best_of_n > 1)
 // the screen's tryout runs are added, mirroring the Python term exactly.
-export function estimateCost(structure, params, trainCount, holdoutCount, proposerQuality) {
+// `overfitting` (optional) supplies random_baseline_every_n for the placebo
+// term. The HONEST-METER terms mirror the Python estimator one-for-one:
+// the candidate screen, the best-of-N propose calls (AUXILIARY LLM calls —
+// listed but excluded from the board-runs headline), the evidence gate's
+// crowning-confirm budget (budget × 2 × board when the threshold is set —
+// per confirmed crowning, typically the largest term under the scaffold's
+// 32-replicate budget), and the amortized placebo baseline.
+export function estimateCost(structure, params, trainCount, holdoutCount, proposerQuality, overfitting) {
   const boardSize = Math.max(0, trainCount || 0);
   const holdoutSize = Math.max(0, holdoutCount || 0);
   // Default `replicates` to the STRUCTURE's own default (swiss / elim default
@@ -304,14 +311,51 @@ export function estimateCost(structure, params, trainCount, holdoutCount, propos
   const pq = proposerQuality || {};
   const screenEntries = Math.max(0, Number(pq.screen_entries) || 0);
   const bestOfN = Math.max(1, Number(pq.best_of_n) || 1);
+  const proposes = (structure === 'gauntlet' || fieldSize <= 1) ? 1 : fieldSize;
   if (screenEntries > 0 && bestOfN > 1) {
-    const proposes = (structure === 'gauntlet' || fieldSize <= 1) ? 1 : fieldSize;
     const panel = Math.min(screenEntries, boardSize);
     const screenRuns = proposes * bestOfN * panel;
     if (screenRuns) {
       lines.push(costLine('candidate-screen runs', screenRuns,
         `proposes ${proposes} × best_of_n ${bestOfN} × panel ${panel}`));
       perRound += screenRuns;
+    }
+  }
+
+  // Best-of-N propose multiplier — auxiliary LLM CALLS, not board runs:
+  // listed on the meter (real spend) but EXCLUDED from the headline.
+  if (bestOfN > 1) {
+    lines.push(costLine('best-of-N propose calls', proposes * bestOfN,
+      `proposes ${proposes} × best_of_n ${bestOfN} — auxiliary LLM calls, not board runs (excluded from the headline)`));
+  }
+
+  // The evidence gate's crowning-confirm budget: budget × 2 contestants ×
+  // board FRESH sweeps chasing CI separation — per CONFIRMED crowning (an
+  // upper bound per round). Only when the threshold is set (the gate is
+  // opt-in; a threshold outside (0,1) reads as unset, mirroring
+  // read_promote_confidence_threshold).
+  const thr = Number(params && params.promote_confidence_threshold);
+  if (isFinite(thr) && thr > 0 && thr < 1) {
+    const rawBudget = Number(params && params.promote_confidence_replicates);
+    const budget = (isFinite(rawBudget) && rawBudget >= 0) ? Math.round(rawBudget) : 3;
+    const confirmRuns = budget * 2 * boardSize;
+    if (confirmRuns) {
+      lines.push(costLine('crowning-confirm runs (evidence gate)', confirmRuns,
+        `budget ${budget} × 2 contestants × board ${boardSize} — per confirmed crowning (upper bound)`));
+      perRound += confirmRuns;
+    }
+  }
+
+  // The placebo control arm: one extra no-op challenger every N rounds,
+  // amortized to per-round board runs.
+  const of = overfitting || {};
+  const baselineN = Math.max(0, Math.round(Number(of.random_baseline_every_n) || 0));
+  if (baselineN > 0) {
+    const placeboRuns = Math.ceil((replicates * boardSize) / baselineN);
+    if (placeboRuns) {
+      lines.push(costLine('placebo-baseline runs (amortized)', placeboRuns,
+        `1 no-op challenger every ${baselineN} rounds × replicates ${replicates} × board ${boardSize}`));
+      perRound += placeboRuns;
     }
   }
   return { board_runs_per_round: perRound, breakdown: lines };
