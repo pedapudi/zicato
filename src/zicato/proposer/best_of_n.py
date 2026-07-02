@@ -41,28 +41,16 @@ from typing import Any
 
 from zicato.core.types import Experiment, ProposerQualityConfig
 from zicato.proposer.agent import ProposerAgent, ProposerContext
+
+# EDIT_CLASS_HINTS moved to :mod:`zicato.proposer.hints` (its canonical home,
+# alongside the failure-mode-conditioned FAILURE_MODE_HINTS and the pure
+# slot→hint mapping); re-exported here so every existing import keeps working.
+from zicato.proposer.hints import EDIT_CLASS_HINTS, hint_for_slot
 from zicato.proposer.prompts import render_user_prompt
 from zicato.proposer.proposer import ProposerError
 from zicato.scoring.diff_complexity import diff_char_size as _diff_size
 
 log = logging.getLogger("zicato.proposer.best_of_n")
-
-#: Per-slot edit-class steering for the best-of-N slate — the intra-slate
-#: DIVERSITY lever. Slot ``i`` of the slate gets ``EDIT_CLASS_HINTS[i %
-#: len]`` stamped on its :class:`ProposerContext` (``sample_hint``), so the
-#: N samples explore genuinely different edit strategies instead of the
-#: LLM's sampling re-rolling one idea three times. Static instruction
-#: strings only — no board identity, no per-entry data — so the hints
-#: compose with the restricted-visibility envelope untouched.
-EDIT_CLASS_HINTS: tuple[str, ...] = (
-    "For THIS candidate, prefer the smallest grounded fix: the minimal, "
-    "most surgical edit that directly addresses an observed failure mode.",
-    "For THIS candidate, prefer a structurally different mechanism than "
-    "the most recent attempts in the experiment memory — do not re-roll a "
-    "variation of the last hypothesis; change the approach, not the dial.",
-    "For THIS candidate, target the highest-loss failure mode head-on, "
-    "even if the edit is larger — go after the biggest observed cost.",
-)
 
 #: The recent-lineage hypothesis prediction-accuracy bar above which the
 #: candidate selection prefers hypotheses that carry concrete expected
@@ -280,12 +268,15 @@ class BestOfNProposerAgent:
         last_error: ProposerError | None = None
         for sample in range(n):
             # Intra-slate diversity: each slot carries a DISTINCT edit-class
-            # hint (rotating through EDIT_CLASS_HINTS) on its context, so the
-            # N samples explore different edit strategies rather than
-            # re-rolling one idea. The hint is a static instruction string —
-            # no board identity — so the restricted-visibility envelope is
-            # untouched.
-            slot_ctx = replace(ctx, sample_hint=EDIT_CLASS_HINTS[sample % len(EDIT_CLASS_HINTS)])
+            # hint on its context, so the N samples explore different edit
+            # strategies rather than re-rolling one idea. The pure mapping
+            # (zicato.proposer.hints.hint_for_slot) conditions slots 0..N-2
+            # on the profile's DOMINANT failure mode and keeps the LAST slot
+            # exploratory; with no profile signal it is the historical
+            # EDIT_CLASS_HINTS rotation, byte-identical. Hints are static
+            # instruction strings — no board identity — so the
+            # restricted-visibility envelope is untouched.
+            slot_ctx = replace(ctx, sample_hint=hint_for_slot(sample, n, ctx.failure_profile))
             try:
                 candidates.append(await self.inner.propose(slot_ctx))
             except ProposerError as exc:
