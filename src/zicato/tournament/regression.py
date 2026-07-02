@@ -140,6 +140,37 @@ def _resolve_test_root(snapshot_root: Path) -> Path | None:
     return None
 
 
+def _classify_completed_run(output: str, exit_code: int, elapsed_s: float) -> RegressionResult:
+    """Map a finished pytest run's stdout + exit code onto a result.
+
+    Pure parse/classification seam — no subprocess, no clock. The
+    subprocess-facing :func:`run_regression_suite` delegates here after
+    ``communicate()`` returns, and tests can drive the summary /
+    exit-code / failed-id mapping directly with canned output instead of
+    booting a real ``pytest`` child per case.
+    """
+    failed = _parse_failed_tests(output)
+
+    if exit_code == 0:
+        return RegressionResult(
+            passed=True,
+            failed_tests=(),
+            summary="all tests passed",
+            elapsed_s=elapsed_s,
+        )
+
+    if failed:
+        summary = f"{len(failed)} tests failed"
+    else:
+        summary = f"pytest exit code {exit_code}"
+    return RegressionResult(
+        passed=False,
+        failed_tests=failed,
+        summary=summary,
+        elapsed_s=elapsed_s,
+    )
+
+
 async def run_regression_suite(
     snapshot_root: Path,
     *,
@@ -202,27 +233,8 @@ async def run_regression_suite(
 
     elapsed = time.monotonic() - started
     output = stdout_bytes.decode("utf-8", errors="replace")
-    failed = _parse_failed_tests(output)
     exit_code = proc.returncode if proc.returncode is not None else -1
-
-    if exit_code == 0:
-        return RegressionResult(
-            passed=True,
-            failed_tests=(),
-            summary="all tests passed",
-            elapsed_s=elapsed,
-        )
-
-    if failed:
-        summary = f"{len(failed)} tests failed"
-    else:
-        summary = f"pytest exit code {exit_code}"
-    return RegressionResult(
-        passed=False,
-        failed_tests=failed,
-        summary=summary,
-        elapsed_s=elapsed,
-    )
+    return _classify_completed_run(output, exit_code, elapsed)
 
 
 __all__ = ["RegressionResult", "run_regression_suite"]
