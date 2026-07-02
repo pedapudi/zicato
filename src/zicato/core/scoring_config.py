@@ -260,14 +260,44 @@ class ProposerQualityConfig:
         falls back to the deterministic built-in heuristic (smallest diff
         that targets an observed failure mode) — no extra LLM call. With
         ``best_of_n == 1`` this flag is inert (no critique ever runs).
+    screen_entries:
+        Opt-in pre-tournament candidate screening (tryouts). When ``> 0``
+        AND ``best_of_n > 1``, each best-of-N slate candidate is RUN on a
+        small rotating panel of this many TRAIN board entries before the
+        selection pass — VETO-FIRST semantics: the screen only
+        disqualifies catastrophic regressions (a confirmed pass-flip on a
+        champion-passing entry, or a budget abort); it never ranks, and
+        the critic/heuristic still chooses among the survivors. ``0``
+        (default) is OFF — the orchestrator does not even construct a
+        screen callable, so the propose path is byte-identical. With
+        ``best_of_n == 1`` the knob is inert (there is no slate to
+        screen). Like ``random_baseline_every_n``, the field is omitted
+        from the contract canonical form at its default so existing
+        epochs never roll retroactively; a non-zero value rolls the
+        epoch, which is correct — a proposer whose slate is screened
+        selects differently. Must be ``>= 0``. See
+        :mod:`zicato.epoch.screen`.
+    screen_veto_only:
+        When ``True``, the screen's measurements feed NOTHING but the
+        veto: the critic prompt carries no ``## Screen measurements``
+        block and the deterministic heuristic ignores the panel scalar
+        tiebreak — the screen can only disqualify, never nudge the
+        ordering. ``False`` (default) lets the survivors' banded panel
+        counts advise the selection as a late tiebreak. Inert while
+        ``screen_entries == 0``. Omitted-at-default from the contract
+        canonical form, exactly like ``screen_entries``.
     """
 
     best_of_n: int = 3
     critique_enabled: bool = True
+    screen_entries: int = 0
+    screen_veto_only: bool = False
 
     def __post_init__(self) -> None:
         if self.best_of_n < 1:
             raise ValueError(f"best_of_n must be >= 1, got {self.best_of_n!r}")
+        if self.screen_entries < 0:
+            raise ValueError(f"screen_entries must be >= 0, got {self.screen_entries!r}")
 
     @classmethod
     def defaults(cls) -> ProposerQualityConfig:
@@ -817,4 +847,15 @@ def recommended_scaffold_weights() -> ScoringWeights:
                 "promote_confidence_replicates": 32,
             },
         ),
+        # Pre-tournament candidate screening (tryouts), enabled EXPLICITLY
+        # like the evidence gate: each best-of-N slate candidate runs on a
+        # 2-entry rotating train panel before selection, and a candidate
+        # with a confirmed catastrophic regression (a pass-flip on a
+        # champion-passing entry, or a budget abort) is vetoed before it
+        # can reach the tournament. Veto-first: the screen never ranks —
+        # the critic still chooses among the survivors. The in-code
+        # default stays OFF (``screen_entries=0``); the scaffold is where
+        # an operator sees and prices the extra
+        # proposes × best_of_n × screen_entries panel runs.
+        proposer_quality=ProposerQualityConfig(screen_entries=2),
     )

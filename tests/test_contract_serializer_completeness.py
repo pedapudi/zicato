@@ -95,6 +95,8 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
     "ProposerQualityConfig": {
         "best_of_n": 4,
         "critique_enabled": False,
+        "screen_entries": 3,
+        "screen_veto_only": True,
     },
     "ExperimentMemoryConfig": {
         "cross_epoch": True,

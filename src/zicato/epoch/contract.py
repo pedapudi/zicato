@@ -406,6 +406,13 @@ _SCORING_OMIT_AT_DEFAULT_FIELDS: frozenset[str] = frozenset(
         # under a stricter rule and rolls the epoch, which is correct.
         "block_on_containment_violation",
         "block_on_gate_contradiction",
+        # Opt-in pre-tournament candidate screening (tryouts). Both live on
+        # the nested ``ProposerQualityConfig`` — the canonicalizer recurses
+        # through this same field-name set (the ``random_baseline_every_n``
+        # precedent), so each is omitted at its default (0 / False; no
+        # retroactive roll) and a non-default value rolls the epoch.
+        "screen_entries",
+        "screen_veto_only",
     }
 )
 

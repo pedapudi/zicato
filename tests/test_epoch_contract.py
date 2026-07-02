@@ -268,6 +268,51 @@ def test_hash_stable_when_outcome_summarizer_spec_omitted(tmp_path: Path) -> Non
     assert h_omitted == h_explicit_default
 
 
+def test_hash_stable_when_screening_fields_at_default(tmp_path: Path) -> None:
+    # Candidate screening (screen_entries / screen_veto_only on the nested
+    # proposer_quality block) is omit-at-default like random_baseline_every_n:
+    # a contract that predates the fields hashes byte-identically to one that
+    # spells out the OFF defaults — no retroactive roll for existing epochs.
+    base = _write_contract(tmp_path)
+    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0}))
+    h_omitted = compute_contract_hash(base)
+    base.scoring_path.write_text(
+        json.dumps(
+            {
+                "drift_weight": 1.0,
+                "proposer_quality": {"screen_entries": 0, "screen_veto_only": False},
+            }
+        )
+    )
+    h_explicit_default = compute_contract_hash(base)
+    assert h_omitted == h_explicit_default
+
+
+def test_hash_changes_when_screening_opted_in(tmp_path: Path) -> None:
+    # Opting into screening selects champions under a different rule (a
+    # vetoed candidate never reaches the tournament), so a non-zero
+    # screen_entries — or flipping screen_veto_only — rolls the epoch,
+    # exactly like retuning any other contract weight.
+    base = _write_contract(tmp_path)
+    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0}))
+    h_default = compute_contract_hash(base)
+    base.scoring_path.write_text(
+        json.dumps({"drift_weight": 1.0, "proposer_quality": {"screen_entries": 2}})
+    )
+    h_on = compute_contract_hash(base)
+    base.scoring_path.write_text(
+        json.dumps(
+            {
+                "drift_weight": 1.0,
+                "proposer_quality": {"screen_entries": 2, "screen_veto_only": True},
+            }
+        )
+    )
+    h_veto_only = compute_contract_hash(base)
+    assert h_default != h_on
+    assert h_on != h_veto_only
+
+
 def test_hash_changes_on_ladder_knob_edit(tmp_path: Path) -> None:
     # The Ladder sub-config (OVERFITTING.md §12 #2) folds into the scoring
     # contract through OverfittingConfig — bumping a Ladder knob rolls the

@@ -35,6 +35,12 @@ def test_recommended_scaffold_weights_shape() -> None:
     # Noise-aware dataclass defaults ride along.
     assert w.proposer_quality.best_of_n == 3
     assert w.overfitting.min_board_size_for_split == 6
+    # Candidate screening is enabled EXPLICITLY (2-entry rotating train
+    # panel per slate candidate) — like the evidence gate, the in-code
+    # default is OFF, so the scaffold is where an operator sees and
+    # prices it.
+    assert w.proposer_quality.screen_entries == 2
+    assert w.proposer_quality.screen_veto_only is False
 
 
 def test_init_writes_full_effective_scoring_scaffold(tmp_path: Path) -> None:
@@ -62,6 +68,7 @@ def test_init_writes_full_effective_scoring_scaffold(tmp_path: Path) -> None:
     assert params["promote_confidence_threshold"] == 0.8
     assert params["promote_confidence_replicates"] == 32
     assert raw["proposer_quality"]["best_of_n"] == 3
+    assert raw["proposer_quality"]["screen_entries"] == 2
     assert raw["overfitting"]["min_board_size_for_split"] == 6
 
     # The generated file round-trips to exactly the recommended weights.
