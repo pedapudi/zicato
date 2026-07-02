@@ -1,6 +1,6 @@
 """Tests for the loop-communication readers + endpoints.
 
-``zicato.dashboard.readers.loop_view`` wraps the tournament-detail
+``zicato.query.loop_view`` wraps the tournament-detail
 queries (:func:`optimization_trajectory` / :func:`tournament_cost`) with
 the dashboard's best-effort degrade discipline AND the uncertainty-honest
 verdict: a "plateaued" flag whose trailing-window movement sits below the
@@ -25,14 +25,14 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from zicato.dashboard.readers.loop_view import _project_pipeline
 from zicato.dashboard.server import create_app
-from zicato.dashboard.state_reader import (
+from zicato.query import (
     WorkspacePaths,
     build_optimization_trajectory,
     build_round_pipeline,
     build_tournament_cost,
 )
+from zicato.query.loop_view import _project_pipeline
 
 EPOCH = "2026-06_e0"
 

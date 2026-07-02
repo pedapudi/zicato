@@ -20,7 +20,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from zicato.dashboard.server import create_app
-from zicato.dashboard.state_reader import (
+from zicato.query import (
     WorkspacePaths,
     build_racing_field,
     build_round_timeline,

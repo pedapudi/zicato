@@ -6,7 +6,7 @@ reads off a workspace root. It exists so leaf filename joins
 in ONE place instead of being re-spelled at dozens of dashboard call sites.
 
 ``root`` is the inner ``.zicato`` directory itself — the same convention as
-:class:`zicato.dashboard.readers.paths.WorkspacePaths` (``runtime/`` and
+:class:`zicato.query.paths.WorkspacePaths` (``runtime/`` and
 ``epochs/`` hang directly off it). Unlike
 :mod:`zicato.core.workspace`, this layout does **no** outer→inner descent:
 the dashboard always passes the inner root, so the prior path math never

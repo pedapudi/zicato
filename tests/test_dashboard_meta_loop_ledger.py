@@ -25,7 +25,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from zicato.dashboard.state_reader import (
+from zicato.query import (
     WorkspacePaths,
     build_meta_loop_ledger,
     build_workspace_view,

@@ -1,4 +1,4 @@
-"""events_index — extracted from zicato.dashboard.state_reader (pure move)."""
+"""events_index — extracted from the former dashboard state_reader monolith (pure move)."""
 
 from __future__ import annotations
 
@@ -7,22 +7,22 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from zicato.dashboard.readers._sqlite import (
+from zicato.query._sqlite import (
     _IndexAbsent,
     _open_index,
 )
-from zicato.dashboard.readers.decisions import (
+from zicato.query.decisions import (
     experiment_decision,
     promoted_tristate,
 )
-from zicato.dashboard.readers.epoch_view import (
+from zicato.query.epoch_view import (
     _distill_brief_goal,
     _normalize_structure,
     _read_epoch_brief,
     _tournament_block_from_scoring,
 )
-from zicato.dashboard.readers.gate_view import _mean_drift_loss_per_generation
-from zicato.dashboard.readers.paths import (
+from zicato.query.gate_view import _mean_drift_loss_per_generation
+from zicato.query.paths import (
     WorkspacePaths,
     _is_finite,
     _natural_key,

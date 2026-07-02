@@ -1,4 +1,4 @@
-"""gate_view — extracted from zicato.dashboard.state_reader (pure move)."""
+"""gate_view — extracted from the former dashboard state_reader monolith (pure move)."""
 
 from __future__ import annotations
 
@@ -6,14 +6,14 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from zicato.dashboard.readers._sqlite import (
+from zicato.query._sqlite import (
     _IndexAbsent,
     _open_index,
     _query,
 )
-from zicato.dashboard.readers.judge_view import build_per_judge_comparison
-from zicato.dashboard.readers.lineage_view import build_lineage_view
-from zicato.dashboard.readers.paths import (
+from zicato.query.judge_view import build_per_judge_comparison
+from zicato.query.lineage_view import build_lineage_view
+from zicato.query.paths import (
     WorkspacePaths,
     _read_json_value,
     _resolve_epoch_id,
@@ -22,7 +22,7 @@ from zicato.dashboard.readers.paths import (
     layout_of,
     read_current_epoch,
 )
-from zicato.dashboard.readers.tournament_view import (
+from zicato.query.tournament_view import (
     _read_gen_score,
     _read_run_loss_files,
 )
@@ -652,7 +652,7 @@ def _live_challenger_projection(
     on its own.
     """
     try:
-        from zicato.dashboard.readers.runtime_view import (  # noqa: PLC0415
+        from zicato.query.runtime_view import (  # noqa: PLC0415
             read_active_tournament_dict,
         )
 

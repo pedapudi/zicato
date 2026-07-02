@@ -34,7 +34,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
-from zicato.dashboard.state_reader import WorkspacePaths, build_snapshot
+from zicato.query import WorkspacePaths, build_snapshot
 
 try:  # watchdog is the preferred backend; the poll loop is the fallback.
     from watchdog.events import FileSystemEvent, FileSystemEventHandler

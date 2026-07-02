@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from zicato.dashboard.state_reader import (
+from zicato.query import (
     WorkspacePaths,
     _natural_key,
     build_lineage_view,

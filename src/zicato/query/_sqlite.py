@@ -1,4 +1,4 @@
-"""_sqlite — extracted from zicato.dashboard.state_reader (pure move)."""
+"""_sqlite — extracted from the former dashboard state_reader monolith (pure move)."""
 
 from __future__ import annotations
 

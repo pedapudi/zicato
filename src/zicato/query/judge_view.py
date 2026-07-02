@@ -1,4 +1,4 @@
-"""judge_view — extracted from zicato.dashboard.state_reader (pure move)."""
+"""judge_view — extracted from the former dashboard state_reader monolith (pure move)."""
 
 from __future__ import annotations
 
@@ -6,15 +6,15 @@ import json
 from pathlib import Path
 from typing import Any
 
-from zicato.dashboard.readers import gate_view as _gate_view
-from zicato.dashboard.readers._sqlite import _opt_json
-from zicato.dashboard.readers.epoch_view import (
+from zicato.query import gate_view as _gate_view
+from zicato.query._sqlite import _opt_json
+from zicato.query.epoch_view import (
     _parse_board,
     build_epoch_view,
     build_epochs_summary,
 )
-from zicato.dashboard.readers.lineage_view import build_lineage_view
-from zicato.dashboard.readers.paths import (
+from zicato.query.lineage_view import build_lineage_view
+from zicato.query.paths import (
     WorkspacePaths,
     _iso,
     _opt_bool,
@@ -25,17 +25,17 @@ from zicato.dashboard.readers.paths import (
     layout_of,
     read_current_epoch,
 )
-from zicato.dashboard.readers.run_log import (
+from zicato.query.run_log import (
     RUN_LOG_DEFAULT_LIMIT,
     build_run_log,
 )
-from zicato.dashboard.readers.runtime_view import (
+from zicato.query.runtime_view import (
     read_active_runs_view,
     read_active_tournament_dict,
     read_heartbeat_dict,
     read_lock_dict,
 )
-from zicato.dashboard.readers.tournament_view import (
+from zicato.query.tournament_view import (
     _champion_lineage,
     _opt_metrics,
     _opt_score,

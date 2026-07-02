@@ -1,4 +1,4 @@
-"""paths — extracted from zicato.dashboard.state_reader (pure move)."""
+"""paths — extracted from the former dashboard state_reader monolith (pure move)."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from zicato.workspace import epochs as _ws_epochs
 
 # The ONE definition of the epoch ordering + enumeration now lives in
 # :mod:`zicato.workspace.epochs`; re-export the primitives here so existing
-# ``from zicato.dashboard.readers.paths import _natural_key`` / ``_NUM_RUN`` /
+# ``from zicato.query.paths import _natural_key`` / ``_NUM_RUN`` /
 # ``_epoch_sort_key`` imports (and the readers' ``__init__`` exports) keep
 # resolving to the single source of truth — there is no second definition.
 _NUM_RUN = _ws_epochs._NUM_RUN

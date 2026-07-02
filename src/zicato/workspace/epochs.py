@@ -15,7 +15,7 @@ order uniform.
 
 The ordering primitives (:func:`natural_key`, :func:`epoch_sort_key`,
 :func:`epoch_created_at`) live here as the single definition;
-:mod:`zicato.dashboard.readers.paths` re-exports them for back-compat so
+:mod:`zicato.query.paths` re-exports them for back-compat so
 existing imports keep working.
 """
 

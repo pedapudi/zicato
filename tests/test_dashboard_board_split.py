@@ -1,6 +1,6 @@
 """Board-status surface: the server-side train/holdout split + ladder summary.
 
-Pins the state_reader exposure the dashboard's Board-status panel reads:
+Pins the zicato.query exposure the dashboard's Board-status panel reads:
 
 * ``compute_board_split`` — the deterministic, seed-stable train/holdout
   selection (tag-held + fraction tail), mirroring the runtime's own
@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from zicato.dashboard.state_reader import (
+from zicato.query import (
     WorkspacePaths,
     build_epoch_view,
     compute_board_split,

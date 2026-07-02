@@ -1,4 +1,4 @@
-"""run_log — extracted from zicato.dashboard.state_reader (pure move)."""
+"""run_log — extracted from the former dashboard state_reader monolith (pure move)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from zicato.dashboard.readers.paths import (
+from zicato.query.paths import (
     WorkspacePaths,
     _read_json_value,
     to_snake,

@@ -27,13 +27,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from zicato.dashboard.readers.gate_view import build_score_trajectory
-from zicato.dashboard.readers.lineage_view import build_lineage_view
-from zicato.dashboard.readers.paths import (
+from zicato.query.gate_view import build_score_trajectory
+from zicato.query.lineage_view import build_lineage_view
+from zicato.query.paths import (
     WorkspacePaths,
     _resolve_epoch_id,
 )
-from zicato.dashboard.readers.tournament_view import build_bracket
+from zicato.query.tournament_view import build_bracket
 
 
 def _is_num(v: Any) -> bool:

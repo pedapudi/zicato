@@ -885,7 +885,7 @@ def _ingest_experiment_into(
     parent it challenged (``parent_generation_id``) and the tournament
     verdict (``outcome.tournament_decision``). This is the
     source-of-truth the dashboard lineage walker uses (see
-    ``state_reader._champion_lineage``), so writing it from here keeps
+    ``zicato.query._champion_lineage``), so writing it from here keeps
     the index aligned with disk even when the live dual-write fires
     BEFORE ``lineage.json`` is updated (the orchestrator writes
     experiment.json first, then appends to lineage — so a

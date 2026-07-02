@@ -42,7 +42,7 @@ from starlette.routing import Route
 
 from zicato.dashboard.endpoints import make_endpoints
 from zicato.dashboard.sse import ChangeBroker, sse_event_stream
-from zicato.dashboard.state_reader import WorkspacePaths
+from zicato.query import WorkspacePaths
 
 # Index-fallback when the static bundle is missing entirely, so an
 # operator still sees something useful at the document root.
@@ -121,7 +121,7 @@ def create_app(
         workspace paths so the state readers inject it into the heartbeat
         payload, lighting up the standalone deep-links into persisted
         harmonograf sessions. A live evolve's own heartbeat URL still wins
-        (see ``state_reader.read_heartbeat_dict``).
+        (see ``zicato.query.read_heartbeat_dict``).
     """
     paths = _resolve_workspace(workspace_root, harmonograf_url=harmonograf_url)
     static_dir = Path(static_dir)

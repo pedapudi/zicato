@@ -31,7 +31,7 @@ from tests._reader_parity_harness import (
     capture_snapshot,
     epoch_order_of,
 )
-from zicato.dashboard import state_reader as sr
+from zicato import query as sr
 
 _GOLDEN = Path(__file__).parent / "data" / "reader_parity_snapshot.json"
 

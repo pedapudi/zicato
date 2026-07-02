@@ -830,7 +830,7 @@ def test_backfill_recovers_champion_lineage_for_t6_chain(tmp_path: Path) -> None
     and the spine collapses to just ``v0``. After the backfill the
     spine is the full champion chain.
     """
-    from zicato.dashboard.state_reader import (  # noqa: PLC0415
+    from zicato.query import (  # noqa: PLC0415
         _champion_lineage,  # type: ignore[attr-defined]
     )
 

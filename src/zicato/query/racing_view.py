@@ -24,11 +24,11 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from zicato.dashboard.readers.paths import (
+from zicato.query.paths import (
     WorkspacePaths,
     _resolve_epoch_id,
 )
-from zicato.dashboard.readers.tournament_view import build_bracket
+from zicato.query.tournament_view import build_bracket
 
 _RUNG_RE = re.compile(r"^rung(\d+)")
 

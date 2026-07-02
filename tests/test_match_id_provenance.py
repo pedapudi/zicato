@@ -29,11 +29,11 @@ from zicato.core import (
 )
 from zicato.core.types import DriftCount, ExpectationResult
 from zicato.core.workspace import loss_profile_path
-from zicato.dashboard.state_reader import WorkspacePaths, build_per_entry_for_generation
 from zicato.epoch.journal import write_experiment
 from zicato.epoch.lifecycle import new_epoch
 from zicato.epoch.lineage import append_to_lineage
 from zicato.index.ingest import rebuild_index
+from zicato.query import WorkspacePaths, build_per_entry_for_generation
 from zicato.selection.strategy import rung_for_match_id
 from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
 from zicato.testing.fixtures import make_experiment, make_outcome_record

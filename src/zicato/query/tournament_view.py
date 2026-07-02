@@ -1,21 +1,21 @@
-"""tournament_view — extracted from zicato.dashboard.state_reader (pure move)."""
+"""tournament_view — extracted from the former dashboard state_reader monolith (pure move)."""
 
 from __future__ import annotations
 
 import sqlite3
 from typing import Any
 
-from zicato.dashboard.readers._sqlite import (
+from zicato.query._sqlite import (
     _IndexAbsent,
     _open_index,
     _opt_json,
     _query,
 )
-from zicato.dashboard.readers.epoch_view import (
+from zicato.query.epoch_view import (
     _normalize_structure,
     _tournament_block_from_scoring,
 )
-from zicato.dashboard.readers.paths import (
+from zicato.query.paths import (
     WorkspacePaths,
     _opt_bool,
     _read_json_value,
@@ -24,7 +24,7 @@ from zicato.dashboard.readers.paths import (
     layout_of,
     read_current_epoch,
 )
-from zicato.dashboard.readers.runtime_view import read_active_tournament_dict
+from zicato.query.runtime_view import read_active_tournament_dict
 from zicato.workspace import read_gen_score
 
 

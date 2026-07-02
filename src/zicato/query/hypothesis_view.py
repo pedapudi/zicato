@@ -28,8 +28,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from zicato.dashboard.readers.decisions import experiment_decision as _experiment_decision
-from zicato.dashboard.readers.paths import (
+from zicato.query.decisions import experiment_decision as _experiment_decision
+from zicato.query.paths import (
     WorkspacePaths,
     _natural_key,
     _read_json_value,

@@ -1,4 +1,4 @@
-"""epoch_view — extracted from zicato.dashboard.state_reader (pure move)."""
+"""epoch_view — extracted from the former dashboard state_reader monolith (pure move)."""
 
 from __future__ import annotations
 
@@ -6,12 +6,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-from zicato.dashboard.readers.decisions import (
+from zicato.query.decisions import (
     experiment_decision,
     promoted_tristate,
     stamp_experiment_decision,
 )
-from zicato.dashboard.readers.paths import (
+from zicato.query.paths import (
     WorkspacePaths,
     _is_finite,
     _natural_key,
@@ -239,7 +239,7 @@ def _read_epoch_experiments(epoch_dir: Path) -> list[dict[str, Any]]:
     Every record is stamped with the CANONICAL decision surface — a
     ``decision`` token (``promoted`` / ``rejected`` / ``deferred`` /
     ``None`` while in flight) and a tri-state ``promoted`` — via the ONE
-    shared classifier (:mod:`zicato.dashboard.readers.decisions`), so the
+    shared classifier (:mod:`zicato.query.decisions`), so the
     frontend renders decisions verbatim and never re-classifies the raw
     nested ``outcome``.
     """

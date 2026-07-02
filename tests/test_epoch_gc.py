@@ -275,7 +275,7 @@ def test_dashboard_views_degrade_gracefully_for_pruned_generation(workspace: Pat
         build_generation_tree,
         read_generation_file,
     )
-    from zicato.dashboard.state_reader import WorkspacePaths
+    from zicato.query import WorkspacePaths
 
     _seed_lineage(workspace)
     prune_generations(workspace, EPOCH, keep_promoted_only=True, dry_run=False)
@@ -326,7 +326,7 @@ def test_dashboard_mutation_index_survives_pruned_generations(workspace: Path) -
     both backends (per-patch JSON files / journal fallback).
     """
     from zicato.dashboard.mutations import build_mutation_index
-    from zicato.dashboard.state_reader import WorkspacePaths
+    from zicato.query import WorkspacePaths
 
     _seed_lineage(workspace)
     prune_generations(workspace, EPOCH, keep_promoted_only=True, dry_run=False)

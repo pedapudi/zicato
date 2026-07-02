@@ -22,7 +22,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from zicato.dashboard.server import create_app
-from zicato.dashboard.state_reader import (
+from zicato.query import (
     WorkspacePaths,
     build_expectation_outcomes_for_run,
     build_run_header,

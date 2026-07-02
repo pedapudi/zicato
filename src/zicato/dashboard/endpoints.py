@@ -1,7 +1,7 @@
 """HTTP route handlers for the dashboard service.
 
 Each handler reads the live ``.zicato/`` workspace through
-:mod:`zicato.dashboard.state_reader` and returns a JSON shape the
+:mod:`zicato.query` and returns a JSON shape the
 dashboard front-end consumes. ``/api/environment`` is the consolidated
 read of the whole environment; the granular per-section endpoints are
 kept alongside it.
@@ -28,8 +28,8 @@ from typing import Any
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse, Response
 
-from zicato.dashboard import state_reader
-from zicato.dashboard.state_reader import WorkspacePaths
+from zicato import query
+from zicato.query import WorkspacePaths
 
 # Guard the transcript-reconstructor import so the whole server still
 # runs (and its tests still pass) even if that module is unavailable.
@@ -135,22 +135,22 @@ def _make_state_endpoints(
         )
 
     async def api_state(_request: Request) -> JSONResponse:
-        return JSONResponse(state_reader.build_snapshot(paths))
+        return JSONResponse(query.build_snapshot(paths))
 
     async def api_environment(request: Request) -> JSONResponse:
         # One coalesced read of the whole environment — the front-end
         # refreshes the entire view from this single endpoint instead of
         # fanning out to six. ``?run-log-limit=`` is clamped like the
         # dedicated run-log endpoint.
-        limit = state_reader.clamp_run_log_limit(_int_query(request, "run-log-limit"))
-        return JSONResponse(state_reader.build_environment(paths, run_log_limit=limit))
+        limit = query.clamp_run_log_limit(_int_query(request, "run-log-limit"))
+        return JSONResponse(query.build_environment(paths, run_log_limit=limit))
 
     async def api_workspace(_request: Request) -> JSONResponse:
         """L0 (workspace-level) cross-epoch summary for the new shell."""
-        return JSONResponse(state_reader.build_workspace_view(paths))
+        return JSONResponse(query.build_workspace_view(paths))
 
     async def api_health_report(_request: Request) -> JSONResponse:
-        return JSONResponse(state_reader.build_health_report(paths))
+        return JSONResponse(query.build_health_report(paths))
 
     async def api_search(request: Request) -> JSONResponse:
         """Sidebar search across entries / judges / patches / mutations.
@@ -160,7 +160,7 @@ def _make_state_endpoints(
         callers cannot trigger a wide scan with a degenerate query.
         """
         q = request.query_params.get("q", "")
-        return JSONResponse(state_reader.build_search_results(paths, q))
+        return JSONResponse(query.build_search_results(paths, q))
 
     return {
         "api_health": api_health,
@@ -180,7 +180,7 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         # (the dashboard's cross-epoch view); omitted ⇒ current (byte-identical).
         try:
             epoch_id = _epoch_query(request)
-            return JSONResponse(state_reader.build_epoch_view(paths, epoch_id))
+            return JSONResponse(query.build_epoch_view(paths, epoch_id))
         except (_BadEpoch, ValueError):
             return JSONResponse({"error": "unknown epoch"}, status_code=404)
 
@@ -189,7 +189,7 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         # (the epoch-scoped generations feed); omitted ⇒ workspace-global.
         try:
             epoch_id = _epoch_query(request)
-            return JSONResponse(state_reader.build_lineage_view(paths, epoch_id))
+            return JSONResponse(query.build_lineage_view(paths, epoch_id))
         except (_BadEpoch, ValueError):
             return JSONResponse({"error": "unknown epoch"}, status_code=404)
 
@@ -201,7 +201,7 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
                 {"epoch_id": epoch_id, "generations": [], "judges": []},
                 status_code=200,
             )
-        return JSONResponse(state_reader.build_per_judge_trend(paths, epoch_id))
+        return JSONResponse(query.build_per_judge_trend(paths, epoch_id))
 
     async def api_epoch_trajectory(request: Request) -> JSONResponse:
         """Promoted-lineage trajectory + promotion rate + honest verdict.
@@ -226,7 +226,7 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
                 },
                 status_code=200,
             )
-        return JSONResponse(state_reader.build_optimization_trajectory(paths, epoch_id))
+        return JSONResponse(query.build_optimization_trajectory(paths, epoch_id))
 
     async def api_epoch_cost(request: Request) -> JSONResponse:
         """Wall-clock + run-count cost accounting for one epoch.
@@ -248,7 +248,7 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
                 },
                 status_code=200,
             )
-        return JSONResponse(state_reader.build_tournament_cost(paths, epoch_id))
+        return JSONResponse(query.build_tournament_cost(paths, epoch_id))
 
     async def api_epoch_racing_field(request: Request) -> JSONResponse:
         """The settled racing-field ladder for one epoch, joined server-side.
@@ -261,7 +261,7 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         epoch_id = request.path_params["epoch_id"]
         if not _is_safe_id(epoch_id):
             return JSONResponse({"epoch_id": epoch_id, "present": False}, status_code=200)
-        return JSONResponse(state_reader.build_racing_field(paths, epoch_id))
+        return JSONResponse(query.build_racing_field(paths, epoch_id))
 
     async def api_epoch_round_timeline(request: Request) -> JSONResponse:
         """The epoch's settled round timeline + loss-floor waterfall.
@@ -284,7 +284,7 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
                 },
                 status_code=200,
             )
-        return JSONResponse(state_reader.build_round_timeline(paths, epoch_id))
+        return JSONResponse(query.build_round_timeline(paths, epoch_id))
 
     async def api_contract_diff(request: Request) -> JSONResponse:
         """L1 (epoch-level) contract diff vs predecessor epoch."""
@@ -298,14 +298,14 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
                     "any_changed": False,
                 }
             )
-        return JSONResponse(state_reader.build_contract_diff(paths, epoch_id))
+        return JSONResponse(query.build_contract_diff(paths, epoch_id))
 
     async def api_score_trajectory(request: Request) -> JSONResponse:
         # The environment-wide evolution curve — scalar per generation.
         # Optional ``?epoch=<id>`` scopes to a non-current epoch.
         try:
             epoch_id = _epoch_query(request)
-            return JSONResponse(state_reader.build_score_trajectory(paths, epoch_id))
+            return JSONResponse(query.build_score_trajectory(paths, epoch_id))
         except (_BadEpoch, ValueError):
             return JSONResponse({"error": "unknown epoch"}, status_code=404)
 
@@ -319,7 +319,7 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         """
         try:
             epoch_id = _epoch_query(request)
-            return JSONResponse(state_reader.build_calibration_trend(paths, epoch_id))
+            return JSONResponse(query.build_calibration_trend(paths, epoch_id))
         except (_BadEpoch, ValueError):
             return JSONResponse({"error": "unknown epoch"}, status_code=404)
 
@@ -418,7 +418,7 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         epoch_id = request.path_params["epoch_id"]
         if not _is_safe_id(epoch_id):
             return PlainTextResponse("invalid epoch id", status_code=400)
-        html = state_reader.read_epoch_analysis_html(paths, epoch_id)
+        html = query.read_epoch_analysis_html(paths, epoch_id)
         if html is None:
             return PlainTextResponse("analysis.html not found for this epoch", status_code=404)
         return HTMLResponse(html)
@@ -455,9 +455,7 @@ def _make_judge_run_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
                 {"epoch_id": epoch_id, "generation_id": generation_id, "judges": []},
                 status_code=200,
             )
-        return JSONResponse(
-            state_reader.build_per_judge_for_generation(paths, epoch_id, generation_id)
-        )
+        return JSONResponse(query.build_per_judge_for_generation(paths, epoch_id, generation_id))
 
     async def api_per_entry_for_generation(request: Request) -> JSONResponse:
         """Per-entry breakdown for one generation, via tournament_id FK (L2)."""
@@ -473,9 +471,7 @@ def _make_judge_run_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
                 },
                 status_code=200,
             )
-        return JSONResponse(
-            state_reader.build_per_entry_for_generation(paths, epoch_id, generation_id)
-        )
+        return JSONResponse(query.build_per_entry_for_generation(paths, epoch_id, generation_id))
 
     async def api_per_judge_comparison(request: Request) -> JSONResponse:
         """Per-judge Δ between champion and challenger (L3)."""
@@ -498,7 +494,7 @@ def _make_judge_run_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
                 status_code=200,
             )
         return JSONResponse(
-            state_reader.build_per_judge_comparison(paths, epoch_id, champion_id, challenger_id)
+            query.build_per_judge_comparison(paths, epoch_id, champion_id, challenger_id)
         )
 
     async def api_per_judge_for_run(request: Request) -> JSONResponse:
@@ -506,7 +502,7 @@ def _make_judge_run_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         run_id = request.path_params["run_id"]
         if not _is_safe_id(run_id):
             return JSONResponse({"run_id": run_id, "judges": []}, status_code=200)
-        return JSONResponse(state_reader.build_per_judge_for_run(paths, run_id))
+        return JSONResponse(query.build_per_judge_for_run(paths, run_id))
 
     async def api_per_judge_for_run_by_entry(request: Request) -> JSONResponse:
         """Per-judge breakdown for one run, addressed by (epoch, gen, entry).
@@ -543,7 +539,7 @@ def _make_judge_run_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
             run_id = None
         if run_id is None:
             run_id = entry_id  # Best-effort fallback: directory name.
-        result = state_reader.build_per_judge_for_run(paths, run_id)
+        result = query.build_per_judge_for_run(paths, run_id)
         return JSONResponse(result)
 
     async def api_run_expectations(request: Request) -> JSONResponse:
@@ -562,9 +558,7 @@ def _make_judge_run_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
                 status_code=200,
             )
         return JSONResponse(
-            state_reader.build_expectation_outcomes_for_run(
-                paths, epoch_id, generation_id, entry_id
-            )
+            query.build_expectation_outcomes_for_run(paths, epoch_id, generation_id, entry_id)
         )
 
     async def api_run_header(request: Request) -> JSONResponse:
@@ -591,14 +585,14 @@ def _make_judge_run_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
                 },
                 status_code=200,
             )
-        return JSONResponse(state_reader.build_run_header(paths, epoch_id, generation_id, entry_id))
+        return JSONResponse(query.build_run_header(paths, epoch_id, generation_id, entry_id))
 
     async def api_run_log(request: Request) -> JSONResponse:
-        limit = state_reader.clamp_run_log_limit(_int_query(request, "limit"))
+        limit = query.clamp_run_log_limit(_int_query(request, "limit"))
         # ``?after=<cursor>`` requests only events past a cursor so the
         # dashboard appends to its log tail instead of re-rendering it.
         after = _int_query(request, "after")
-        return JSONResponse(state_reader.build_run_log(paths, limit, after=after))
+        return JSONResponse(query.build_run_log(paths, limit, after=after))
 
     async def api_hypothesis_accuracy(request: Request) -> JSONResponse:
         """Per-experiment hypothesis prediction-accuracy scorecard.
@@ -623,7 +617,7 @@ def _make_judge_run_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
                 },
                 status_code=200,
             )
-        return JSONResponse(state_reader.build_hypothesis_accuracy(paths, epoch_id, generation_id))
+        return JSONResponse(query.build_hypothesis_accuracy(paths, epoch_id, generation_id))
 
     return {
         "api_per_judge_for_generation": api_per_judge_for_generation,
@@ -642,13 +636,13 @@ def _make_live_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
     """Live-runtime surface — heartbeat / active runs / active tournament / pipeline."""
 
     async def api_active_runs(_request: Request) -> JSONResponse:
-        return JSONResponse(state_reader.read_active_runs_view(paths))
+        return JSONResponse(query.read_active_runs_view(paths))
 
     async def api_active_tournament(_request: Request) -> JSONResponse:
-        return JSONResponse(state_reader.read_active_tournament_dict(paths))
+        return JSONResponse(query.read_active_tournament_dict(paths))
 
     async def api_heartbeat(_request: Request) -> JSONResponse:
-        return JSONResponse(state_reader.read_heartbeat_dict(paths))
+        return JSONResponse(query.read_heartbeat_dict(paths))
 
     async def api_live_pipeline(_request: Request) -> JSONResponse:
         """The authoritative propose→apply→run→gate pipeline projection.
@@ -656,7 +650,7 @@ def _make_live_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         ``GET /api/live/pipeline``. The server owns the phase-string
         inference the stepper renders — see ``build_round_pipeline``.
         """
-        return JSONResponse(state_reader.build_round_pipeline(paths))
+        return JSONResponse(query.build_round_pipeline(paths))
 
     return {
         "api_active_runs": api_active_runs,
@@ -672,7 +666,7 @@ def _make_tournament_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
     async def api_tournaments(request: Request) -> JSONResponse:
         try:
             epoch_id = _epoch_query(request)
-            return JSONResponse(state_reader.build_bracket(paths, epoch_id))
+            return JSONResponse(query.build_bracket(paths, epoch_id))
         except (_BadEpoch, ValueError):
             return JSONResponse({"error": "unknown epoch"}, status_code=404)
 
@@ -699,7 +693,7 @@ def _make_tournament_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
                     "source": "loss_files",
                 }
             )
-        return JSONResponse(state_reader.build_tournament_structure(paths, epoch_id, tournament_id))
+        return JSONResponse(query.build_tournament_structure(paths, epoch_id, tournament_id))
 
     async def api_tournament_detail(request: Request) -> JSONResponse:
         generation_id = request.path_params["generation_id"]
@@ -707,13 +701,13 @@ def _make_tournament_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
             # A malformed id degrades to "no such matchup".
             return JSONResponse(
                 {
-                    "epoch_id": state_reader.read_current_epoch(paths),
+                    "epoch_id": query.read_current_epoch(paths),
                     "generation_id": generation_id,
                     "patches": [],
                     "ab_grid": [],
                 }
             )
-        return JSONResponse(state_reader.build_matchup_detail(paths, generation_id))
+        return JSONResponse(query.build_matchup_detail(paths, generation_id))
 
     async def api_matchup_grid(request: Request) -> JSONResponse:
         # Per-entry A/B grid read straight off the persisted per-run
@@ -740,9 +734,7 @@ def _make_tournament_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
                     "source": "loss_files",
                 }
             )
-        return JSONResponse(
-            state_reader.build_matchup_grid(paths, epoch_id, champion_id, challenger_id)
-        )
+        return JSONResponse(query.build_matchup_grid(paths, epoch_id, champion_id, challenger_id))
 
     async def api_gate(request: Request) -> JSONResponse:
         """Structured promote-gate breakdown for one round (L3 decision view).
@@ -783,23 +775,21 @@ def _make_tournament_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
                 },
                 status_code=200,
             )
-        return JSONResponse(
-            state_reader.build_gate_breakdown(paths, epoch_id, champion_id, challenger_id)
-        )
+        return JSONResponse(query.build_gate_breakdown(paths, epoch_id, champion_id, challenger_id))
 
     async def api_drift_movements(request: Request) -> JSONResponse:
         generation_id = request.path_params["generation_id"]
         if not _is_safe_id(generation_id):
             return JSONResponse(
                 {
-                    "epoch_id": state_reader.read_current_epoch(paths),
+                    "epoch_id": query.read_current_epoch(paths),
                     "generation_id": generation_id,
                     "champion": None,
                     "challenger": generation_id,
                     "movements": [],
                 }
             )
-        return JSONResponse(state_reader.build_drift_movements(paths, generation_id))
+        return JSONResponse(query.build_drift_movements(paths, generation_id))
 
     return {
         "api_tournaments": api_tournaments,
@@ -931,14 +921,14 @@ def _make_conversation_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         events_path: Path | None = None
         if gen and entry and _is_safe_id(gen) and _is_safe_id(entry):
             epoch_for = epoch_q if (epoch_q and _is_safe_id(epoch_q)) else ""
-            events_path = state_reader.resolve_transcript_events(
+            events_path = query.resolve_transcript_events(
                 paths, epoch_for, gen, entry, run_id=run_id
             )
             if events_path is None:
                 # Strict to the entry's own run dir — never a sibling's.
-                events_path = state_reader.find_generation_entry_events(paths, gen, entry)
+                events_path = query.find_generation_entry_events(paths, gen, entry)
         if events_path is None:
-            events_path = state_reader.find_run_events_path(paths, run_id)
+            events_path = query.find_run_events_path(paths, run_id)
         if events_path is None:
             return JSONResponse({"error": f"no events for run {run_id}"}, status_code=404)
         try:
@@ -1021,7 +1011,7 @@ def _make_conversation_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         match_q = request.query_params.get("match")
         run_q = run_q if (run_q and _is_safe_id(run_q)) else None
         match_q = match_q if (match_q and _is_safe_id(match_q)) else None
-        events_path = state_reader.resolve_transcript_events(
+        events_path = query.resolve_transcript_events(
             paths,
             epoch_id,
             generation_id,
@@ -1315,7 +1305,7 @@ def _build_matchup_conversations(paths: WorkspacePaths, entry_id: str) -> dict[s
     in-progress round's runs directory, in one uniform code path.
     """
     result: dict[str, Any] = {"champion": None, "challenger": None}
-    tournament = state_reader.read_active_tournament_dict(paths)
+    tournament = query.read_active_tournament_dict(paths)
     if not isinstance(tournament, dict):
         return result
 
@@ -1353,7 +1343,7 @@ def _build_matchup_conversations(paths: WorkspacePaths, entry_id: str) -> dict[s
     def _side(side: str, generation_id: Any) -> dict[str, Any] | None:
         if not isinstance(generation_id, str) or not generation_id:
             return None
-        located = state_reader.find_generation_run(paths, generation_id, entry_id)
+        located = query.find_generation_run(paths, generation_id, entry_id)
         if located is None:
             return {
                 "run_id": None,

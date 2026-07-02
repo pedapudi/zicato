@@ -28,7 +28,7 @@ from __future__ import annotations
 import datetime as _dt
 from typing import Any
 
-from zicato.dashboard.readers.paths import (
+from zicato.query.paths import (
     WorkspacePaths,
     _iso,
     _parse_iso,
@@ -359,7 +359,7 @@ def build_round_pipeline(paths: WorkspacePaths) -> dict[str, Any]:
     Best-effort: every input degrades independently — never raises.
     """
     # Deferred imports: this rides the SSE-adjacent read path, keep it lean.
-    from zicato.dashboard.readers.runtime_view import (  # noqa: PLC0415
+    from zicato.query.runtime_view import (  # noqa: PLC0415
         read_active_runs_view,
         read_active_tournament_dict,
         read_heartbeat_dict,

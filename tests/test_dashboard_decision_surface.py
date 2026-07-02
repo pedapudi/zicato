@@ -19,16 +19,16 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from zicato.dashboard.readers.decisions import (
-    canonical_decision,
-    experiment_decision,
-    promoted_tristate,
-)
 from zicato.dashboard.server import create_app
-from zicato.dashboard.state_reader import (
+from zicato.query import (
     WorkspacePaths,
     build_epoch_view,
     build_lineage_view,
+)
+from zicato.query.decisions import (
+    canonical_decision,
+    experiment_decision,
+    promoted_tristate,
 )
 
 EPOCH = "2026-06-01_e0"

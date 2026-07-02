@@ -40,9 +40,9 @@ import re
 from dataclasses import asdict
 from typing import Any
 
-from zicato.dashboard.readers.paths import list_epoch_ids
-from zicato.dashboard.state_reader import WorkspacePaths
 from zicato.epoch.genstore import GenerationStore, default_generation_store
+from zicato.query import WorkspacePaths
+from zicato.query.paths import list_epoch_ids
 
 #: Files larger than this are not inlined into the content response —
 #: the browser gets a truncation marker instead. The dashboard is a

@@ -1,15 +1,15 @@
-"""lineage_view — extracted from zicato.dashboard.state_reader (pure move)."""
+"""lineage_view — extracted from the former dashboard state_reader monolith (pure move)."""
 
 from __future__ import annotations
 
 import datetime as _dt
 from typing import Any
 
-from zicato.dashboard.readers.decisions import (
+from zicato.query.decisions import (
     experiment_decision,
     promoted_tristate,
 )
-from zicato.dashboard.readers.paths import (
+from zicato.query.paths import (
     WorkspacePaths,
     _iso,
     _natural_key,

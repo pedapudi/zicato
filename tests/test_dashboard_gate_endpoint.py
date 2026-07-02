@@ -18,7 +18,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from zicato.dashboard.server import create_app
-from zicato.dashboard.state_reader import WorkspacePaths, build_gate_breakdown
+from zicato.query import WorkspacePaths, build_gate_breakdown
 
 EPOCH_ID = "2026-05-28_e0"
 
@@ -582,7 +582,7 @@ def test_gate_endpoint_carries_scalars_and_live_keys(tmp_path: Path, static_dir:
 
 def test_provenance_parser_token_shapes() -> None:
     """The parser decomposes every documented token shape (incl. fail-open)."""
-    from zicato.dashboard.state_reader import _parse_scoring_provenance
+    from zicato.query import _parse_scoring_provenance
 
     # None / builtin -> quiet built-in (None additionally marks present=False).
     none_view = _parse_scoring_provenance(None)
@@ -617,7 +617,7 @@ def test_provenance_parser_token_shapes() -> None:
 def test_provenance_parser_flags_fail_open() -> None:
     """A ``(fallback: …)`` token is flagged fail-open with its reason, while
     the underlying pre-plugin token is still classified."""
-    from zicato.dashboard.state_reader import _parse_scoring_provenance
+    from zicato.query import _parse_scoring_provenance
 
     view = _parse_scoring_provenance("builtin (fallback: raised ValueError)")
     assert view["fail_open"] is True

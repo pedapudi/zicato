@@ -1,4 +1,4 @@
-"""runtime_view — extracted from zicato.dashboard.state_reader (pure move)."""
+"""runtime_view — extracted from the former dashboard state_reader monolith (pure move)."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from zicato.dashboard.readers.epoch_view import build_epoch_view
-from zicato.dashboard.readers.paths import (
+from zicato.query.epoch_view import build_epoch_view
+from zicato.query.paths import (
     WorkspacePaths,
     _iso,
     _parse_iso,
