@@ -174,7 +174,10 @@ def test_gauntlet_schedules_exactly_one_full_board_duel() -> None:
     batch = s.next_matchups()
     assert len(batch) == 1
     assert batch[0].board_subset is None  # full board
-    assert batch[0].replicates == 1
+    # The noise-aware default: two averaged paired runs per duel (the base
+    # ``_default_replicates``); pin ``replicates: 1`` for the historical
+    # single-run duel.
+    assert batch[0].replicates == 2
     # No further matchups scheduled before a result lands.
     assert s.next_matchups() == ()
 

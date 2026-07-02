@@ -26,13 +26,13 @@ from typing import Any
 
 import pytest
 
+from tests._contract_pins import deterministic_weights
 from zicato.core.types import (
     BoardEntry,
     DriftCount,
     ExpectationResult,
     LossProfile,
     RunResult,
-    ScoringWeights,
 )
 from zicato.epoch.lifecycle import new_epoch
 
@@ -112,7 +112,11 @@ def _bootstrap_workspace(tmp_path: Path) -> tuple[Path, str]:
         name="alpha",
         board_source=board_src,
         brief_source=brief_src,
-        weights=ScoringWeights(promote_margin=0.01),
+        # Pinned deterministic knobs (replicates 1, evidence gate off,
+        # single-sample proposer): these tests drive SCRIPTED proposers and
+        # stub reducers whose call sequences assume the historical
+        # single-run duel. See tests/_contract_pins.py.
+        weights=deterministic_weights(promote_margin=0.01),
         auto_close_previous=False,
     )
 
@@ -1059,7 +1063,11 @@ def test_evolve_once_threads_configured_proposer_skill_into_system_prompt(
         name="alpha",
         board_source=board_src,
         brief_source=brief_src,
-        weights=ScoringWeights(promote_margin=0.01),
+        # Pinned deterministic knobs (replicates 1, evidence gate off,
+        # single-sample proposer): these tests drive SCRIPTED proposers and
+        # stub reducers whose call sequences assume the historical
+        # single-run duel. See tests/_contract_pins.py.
+        weights=deterministic_weights(promote_margin=0.01),
         auto_close_previous=False,
         proposer_path=proposer_dir,
     )

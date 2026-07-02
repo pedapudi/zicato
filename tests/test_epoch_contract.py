@@ -357,7 +357,7 @@ def test_absent_overfitting_block_hashes_as_the_defaults(tmp_path: Path) -> None
                 "overfitting": {
                     "enabled": True,
                     "holdout_fraction": 0.3,
-                    "min_board_size_for_split": 8,
+                    "min_board_size_for_split": 6,
                     "restrict_proposer_visibility": True,
                 },
             }

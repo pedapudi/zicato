@@ -32,10 +32,22 @@ intervals:
   resolved pairing) is the cheapest replicate to sharpen the fit. The driver
   spends each defer's replicate there, refits, and rechecks.
 
-Everything here is **pure** and **opt-in**: nothing on the default selection
-path imports this module unless ``params["promote_confidence_threshold"]`` is
-set. With it unset, :func:`read_promote_confidence_threshold` returns ``None``
-and the caller takes its existing path unchanged — byte-identical to today.
+Everything here is **pure** and **opt-in**: with
+``params["promote_confidence_threshold"]`` unset,
+:func:`read_promote_confidence_threshold` returns ``None`` and no pre-gate
+runs. The gate is deliberately NOT on by default — it is a **soundness**
+device, not a power device. Measured on the two-contestant crowning pair
+(the Tier-2 power harness): the gate blocks 100% of A/A false promotes, but
+its CIs separate only after an UNBROKEN win streak of ~37 duels (mixed
+records never separate), so a small default budget would freeze every true
+promotion at ``inconclusive`` and a converging budget costs ~32×2×board
+fresh runs per crowning. Decision **power** is bought with per-duel
+replication (the ``replicates`` knob, default 2) and a margin calibrated
+above the measured A/A noise floor (:mod:`zicato.tournament.calibration`);
+the scaffolded contracts (``zicato init`` / the builder) enable the gate
+EXPLICITLY with an honest budget, so operators see the cost they are
+opting into. Both selection shapes reach it when enabled — the
+multi-challenger driver and the gauntlet crowning duel.
 """
 
 from __future__ import annotations
@@ -63,12 +75,22 @@ MIN_CREDIBLE_DUELS: int = 3
 #: two unrelated bars.
 CI_Z: float = 1.959963984540054
 
-#: The default replicate budget for the defer→replicate loop when the operator
-#: sets a threshold but no explicit ``promote_confidence_replicates``. A small
-#: budget: the unit cache makes each extra replicate cheap, but a near-tie that
-#: will not separate should reach ``inconclusive`` quickly rather than burn the
-#: round's wall-clock budget.
+#: The default replicate budget for the defer→replicate loop when
+#: ``promote_confidence_replicates`` is unset. A small budget: the unit cache
+#: makes each extra replicate cheap, but a near-tie that will not separate
+#: should reach ``inconclusive`` quickly rather than burn the round's
+#: wall-clock budget.
 DEFAULT_REPLICATE_BUDGET: int = 3
+
+#: The RECOMMENDED probability bar — the value the scaffolded contracts
+#: (``zicato init`` / the builder's blank draft) write explicitly when they
+#: enable the gate. NOT applied when the param is absent (the gate is opt-in;
+#: see the module docstring for the measured soundness-vs-power tradeoff).
+#: ``0.8`` is deliberately below the 0.95 the CI level speaks at: the
+#: CI-separation requirement is the sharp half of the test, and the
+#: probability bar mostly guards against a fit whose point estimates favour
+#: the challenger while the evidence is thin.
+DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD: float = 0.8
 
 #: The verdict literal this module emits. ``"rejected"`` is included only so a
 #: caller can pass through a gate-reject unchanged; this module never *produces*
@@ -82,9 +104,11 @@ def read_promote_confidence_threshold(params: Mapping[str, Any]) -> float | None
     Reads ``params["promote_confidence_threshold"]`` — the probability bar a
     promotion must clear under the Bradley--Terry pre-gate: crown only if
     ``P(theta_child > theta_champion)`` reaches it AND the rating CIs clear.
-    Absent / non-numeric / outside ``(0, 1)`` ⇒ ``None`` (today's behaviour, no
-    pre-gate). Like every guard here, a bad value safely degrades to "no
-    pre-gate" rather than crowning on noise.
+    Absent / explicit ``null`` / ``0`` / non-numeric / outside ``(0, 1)`` ⇒
+    ``None`` (no pre-gate). The gate is deliberately OPT-IN — see the module
+    docstring for the measured soundness-vs-power tradeoff; the scaffolded
+    contracts enable it explicitly with an honest replicate budget. Like
+    every guard here, a bad value safely degrades to "no pre-gate".
 
     Lives in the opaque ``TournamentStructure.params`` map — NOT on
     :class:`~zicato.core.ScoringWeights` — precisely because an absent param
@@ -444,6 +468,7 @@ class ReplicationOutcome:
 __all__ = [
     "MIN_CREDIBLE_DUELS",
     "CI_Z",
+    "DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD",
     "DEFAULT_REPLICATE_BUDGET",
     "EvidenceDecision",
     "RatingCI",

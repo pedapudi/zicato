@@ -161,7 +161,7 @@ class OverfittingConfig:
 
     enabled: bool = True
     holdout_fraction: float = 0.3
-    min_board_size_for_split: int = 8
+    min_board_size_for_split: int = 6
     restrict_proposer_visibility: bool = True
     ladder: LadderConfig = field(default_factory=_default_ladder_config)
     rotate_holdout: bool = True
@@ -203,11 +203,13 @@ class ProposerQualityConfig:
     correct: a proposer that samples N candidates and self-critiques proposes
     *differently* than one that samples once.
 
-    The DEFAULT is byte-identical to today's single-sample proposer:
-    :attr:`best_of_n` ``= 1`` short-circuits the wrapper to a single inner
-    ``propose`` call with NO critique, so every epoch on disk and every
-    operator who never touches the knob behaves exactly as before this lever
-    existed. See ``docs/design/FUNCTIONALITY-RECOMMENDATIONS.md`` §4.1.
+    The DEFAULT samples a slate: :attr:`best_of_n` ``= 3`` — three candidate
+    experiments per propose-step with the self-critique pass selecting the
+    best (the top proposal-quality lever; a valid-but-mediocre single sample
+    was never reconsidered). Pin ``"proposer_quality": {"best_of_n": 1}`` for
+    the historical single-sample, no-critique proposer (scripted / mock
+    proposers do). Changing the value rolls the epoch, like every contract
+    field. See ``docs/design/FUNCTIONALITY-RECOMMENDATIONS.md`` §4.1.
 
     Overfitting discipline (LOAD-BEARING): the self-critique pass sees ONLY
     the SAME restricted prompt context the proposer itself sees (the
@@ -221,12 +223,15 @@ class ProposerQualityConfig:
     ------
     best_of_n:
         How many candidate experiments to sample per propose-step before
-        the critique pass picks the best. ``1`` (default) = today's single
-        sample, no critique. Must be ``>= 1``. Each sample is an independent
-        inner ``propose`` (the LLM's own sampling supplies the variety); a
-        candidate that the inner proposer cannot produce simply narrows the
-        slate, and an empty slate falls back to a final inner ``propose`` so
-        the step never silently yields nothing.
+        the critique pass picks the best. ``3`` (default) samples a slate;
+        ``1`` is the historical single sample with no critique. Must be
+        ``>= 1``. Each sample is an independent inner ``propose`` (the LLM's
+        own sampling supplies the variety, and each slate slot carries a
+        distinct edit-class hint — see
+        :data:`zicato.proposer.best_of_n.EDIT_CLASS_HINTS`); a candidate that
+        the inner proposer cannot produce simply narrows the slate, and an
+        empty slate falls back to a final inner ``propose`` so the step never
+        silently yields nothing.
     critique_enabled:
         When ``True`` (default) and ``best_of_n > 1``, a single cheap
         auxiliary-LLM self-critique pass scores the sampled candidates
@@ -238,7 +243,7 @@ class ProposerQualityConfig:
         ``best_of_n == 1`` this flag is inert (no critique ever runs).
     """
 
-    best_of_n: int = 1
+    best_of_n: int = 3
     critique_enabled: bool = True
 
     def __post_init__(self) -> None:
@@ -247,7 +252,7 @@ class ProposerQualityConfig:
 
     @classmethod
     def defaults(cls) -> ProposerQualityConfig:
-        """The fully-defaulted (single-sample, today's behaviour) config."""
+        """The fully-defaulted (best-of-3 + self-critique) config."""
         return cls()
 
 
@@ -513,8 +518,9 @@ class ScoringWeights:
     # into the contract hash through the existing scoring canonicalizer with
     # zero new plumbing (the canonicalizer recurses into nested frozen
     # dataclasses): changing the best-of-N count or the critique flag rolls
-    # the epoch. The DEFAULT (``best_of_n == 1``) is byte-identical to today's
-    # single-sample proposer. See :class:`ProposerQualityConfig`.
+    # the epoch. The DEFAULT (``best_of_n == 3``) samples a slate + critiques;
+    # pin ``best_of_n: 1`` for the historical single-sample proposer. See
+    # :class:`ProposerQualityConfig`.
     proposer_quality: ProposerQualityConfig = field(
         default_factory=_default_proposer_quality_config
     )
@@ -666,3 +672,49 @@ class ScoringWeights:
         if raw_scope is not None and raw_scope not in ("per_entry", "aggregate"):
             data = {**data, "pass_rate_monotonicity_scope": cls().pass_rate_monotonicity_scope}
         return jsonable_to_dataclass(cls, data)
+
+
+def recommended_scaffold_weights() -> ScoringWeights:
+    """The FULL effective contract new-workspace scaffolds write out.
+
+    Shared by ``zicato init`` (which writes it to the operator's live
+    ``scoring.json``) and the tournament builder's blank draft, so both
+    scaffolds spell the SAME recommended contract explicitly instead of
+    leaning on invisible defaults: the racing structure (field 4, eta 2,
+    board_fraction 0.4), two averaged replicates per duel, and the
+    Bradley--Terry evidence gate ENABLED EXPLICITLY (threshold 0.8 with a
+    32-replicate budget). The gate is deliberately NOT a silent in-code
+    default — its CIs separate only after a long unbroken win streak (~37
+    duels on a two-contestant pair), so it needs an honest budget the
+    operator can see and price: under racing the crowning-pair replicates
+    amortize through the per-unit cache, and the builder's cost meter
+    reflects the ``replicates`` knob. Everything else is the dataclass
+    default; the field-enumerating serializer then writes every field, so
+    the generated ``scoring.json`` IS the effective contract.
+
+    A pure recommendation for NEW workspaces — the in-code default
+    structure when a contract says nothing remains the gauntlet, with no
+    pre-gate.
+    """
+    # Function-local import: core is the base layer; the selection package
+    # (which imports core) owns the recommended evidence-gate bar.
+    from zicato.selection.evidence_gate import (  # noqa: PLC0415
+        DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD,
+    )
+
+    return ScoringWeights(
+        tournament_structure=TournamentStructure(
+            structure="racing",
+            params={
+                "field_size": 4,
+                "eta": 2,
+                "board_fraction": 0.4,
+                "replicates": 2,
+                "promote_confidence_threshold": DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD,
+                # An honest defer→replicate budget: CI separation on a
+                # two-contestant crowning pair needs ~32+ decisive duels,
+                # each a cheap cache-amortized re-read under racing.
+                "promote_confidence_replicates": 32,
+            },
+        ),
+    )

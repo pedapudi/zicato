@@ -28,6 +28,7 @@ from pathlib import Path
 import pytest
 
 # Reuse the fully-mocked harness from the gauntlet orchestrator tests.
+from tests._contract_pins import pin_deterministic
 from tests.test_orchestrator import (
     _harness_call_llm,
     _install_stub_adapter_factory,
@@ -131,12 +132,18 @@ def _bootstrap_swiss_workspace(
         name="swiss-epoch",
         board_source=board_src,
         brief_source=brief_src,
-        weights=ScoringWeights(
-            promote_margin=0.01,
-            tournament_structure=TournamentStructure(
-                structure="swiss",
-                params={"field_size": field_size, "rounds_n": rounds_n, "replicates": 1},
-            ),
+        # Pinned deterministic knobs (single replicate, evidence gate off,
+        # single-sample proposer): the scripted proposers + canned per-gen
+        # losses assume one propose per slot and identical re-draws, so the
+        # noise-aware defaults are pinned back. See tests/_contract_pins.py.
+        weights=pin_deterministic(
+            ScoringWeights(
+                promote_margin=0.01,
+                tournament_structure=TournamentStructure(
+                    structure="swiss",
+                    params={"field_size": field_size, "rounds_n": rounds_n, "replicates": 1},
+                ),
+            )
         ),
         auto_close_previous=False,
     )

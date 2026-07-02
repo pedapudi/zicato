@@ -148,8 +148,20 @@ def test_wrap_with_n1_returns_inner_unchanged() -> None:
     inner = _ScriptedInnerAgent(
         [_experiment(core_idea="a", mutation_id="router__sp", new_content="x")]
     )
-    wrapped = wrap_with_proposer_quality(inner, ProposerQualityConfig())  # best_of_n == 1
+    wrapped = wrap_with_proposer_quality(inner, ProposerQualityConfig(best_of_n=1))
     assert wrapped is inner
+
+
+def test_wrap_default_interposes_wrapper() -> None:
+    # The noise-aware default (best_of_n == 3) interposes the best-of-N
+    # wrapper; only an explicit best_of_n == 1 pin is a pass-through.
+    inner = _ScriptedInnerAgent(
+        [_experiment(core_idea="a", mutation_id="router__sp", new_content="x")]
+    )
+    wrapped = wrap_with_proposer_quality(inner, ProposerQualityConfig())
+    assert wrapped is not inner
+    assert isinstance(wrapped, BestOfNProposerAgent)
+    assert wrapped.config.best_of_n == 3
 
 
 @pytest.mark.asyncio

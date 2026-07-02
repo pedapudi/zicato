@@ -50,9 +50,10 @@ class RacingStrategy(SelectionStrategy):
 
     structure = "racing"
     # Racing's replication is INTRINSIC — the escalating board slices are the
-    # sample, not per-duel ``replicates`` — so it keeps the base default of 1
-    # (a per-duel replicate would re-run a slice, not enlarge it). Declared
-    # explicitly so the shared default-replicates map reads a stable value.
+    # sample, not per-duel ``replicates`` — so it pins 1 even though the base
+    # default is now 2 (a per-duel replicate would re-run a slice, not
+    # enlarge it). Declared explicitly so the shared default-replicates map
+    # reads a stable value.
     _default_replicates = 1
 
     def __init__(self, params: dict[str, Any] | None = None) -> None:

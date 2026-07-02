@@ -200,6 +200,10 @@ def test_cost_gauntlet() -> None:
 def test_cost_swiss() -> None:
     draft = TournamentDraft()
     draft.entries = _board(6)
+    # A 6-entry board now clears the (lowered, 8 -> 6) split floor; this
+    # test's subject is the swiss run arithmetic over the whole board, so
+    # pin the holdout split off.
+    _no_holdout(draft)
     ops.set_structure(draft, "swiss")
     ops.set_param(draft, "field_size", 4)
     ops.set_param(draft, "replicates", 2)
@@ -300,10 +304,12 @@ def test_cost_explicit_replicates_overrides_structure_default() -> None:
 
 def test_cost_unset_replicates_per_structure_defaults() -> None:
     # The per-structure default the estimator applies when ``replicates`` is
-    # unset, for EVERY structure: gauntlet=1, single_elim=2, double_elim=2,
-    # swiss=2, racing=1. (Each computed over an 8-board, field 4, holdout off.)
+    # unset, for EVERY structure: the base default is now 2 (the noise-aware
+    # posture) — gauntlet/elim/swiss inherit or pin it — while racing pins 1
+    # (its replication is intrinsic to the escalating board slices). (Each
+    # computed over an 8-board, field 4, holdout off.)
     expected = {
-        "gauntlet": 1,
+        "gauntlet": 2,
         "single_elim": 2,
         "double_elim": 2,
         "swiss": 2,

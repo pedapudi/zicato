@@ -23,7 +23,11 @@
       "board_fraction": 0.4,
       "rung0_board_size": 0,
       "matchup_budget_seconds": null,
-      "final_rung_budget_seconds": 1800
+      "final_rung_budget_seconds": 1800,
+      "promote_confidence_threshold": null
     }
+  },
+  "proposer_quality": {
+    "best_of_n": 1
   }
 }

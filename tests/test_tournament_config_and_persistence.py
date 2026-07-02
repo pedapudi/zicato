@@ -77,7 +77,8 @@ def test_absent_overfitting_block_is_default_on() -> None:
     cfg = overfitting_config_from_dict(None)
     assert cfg.enabled is True
     assert cfg.holdout_fraction == 0.3
-    assert cfg.min_board_size_for_split == 8
+    # The noise-aware defaults flip lowered the split floor from 8 to 6.
+    assert cfg.min_board_size_for_split == 6
     assert cfg.restrict_proposer_visibility is True
 
 

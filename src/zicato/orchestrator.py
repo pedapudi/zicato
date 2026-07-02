@@ -888,6 +888,12 @@ async def evolve_once(
             # exactly absent), so this is byte-identical for contracts that do
             # not opt in.
             child_diff_size=child_diff_size,
+            # The structure's resolved per-duel replication (the strategy
+            # resolves params["replicates"] against its default — 2 for the
+            # gauntlet, the noise-aware posture; averaged paired runs). Pin
+            # "replicates": 1 in the contract for the historical single-run
+            # duel.
+            replicates=strategy.replicates(),
         )
 
     # Cache gen_score.json for future fast-mode runs.
@@ -918,14 +924,16 @@ async def evolve_once(
     )
 
     # --- 10b'. Evidence-gate confirmation of the crowning promote ---------
-    # The noise-aware default: a train-promote (post holdout confirmation —
-    # the gate outcome above is already Ladder-mediated) is confirmed by the
-    # SAME Bradley--Terry defer→replicate→inconclusive adjudication the
-    # multi-challenger driver runs, before anything is persisted. CIs that
-    # never separate within the replicate budget leave the champion standing
-    # (a DEFERRED outcome + a dead-letter record). Turned off only by an
-    # explicit ``"promote_confidence_threshold": null`` / ``0`` in the
-    # structure params.
+    # When the contract opts into ``promote_confidence_threshold`` (the
+    # scaffolded contracts do; the bare default is off — the gate is a
+    # soundness device whose CI separation needs a long win streak, see
+    # zicato.selection.evidence_gate), a train-promote (post holdout
+    # confirmation — the gate outcome above is already Ladder-mediated) is
+    # confirmed by the SAME Bradley--Terry defer→replicate→inconclusive
+    # adjudication the multi-challenger driver runs, before anything is
+    # persisted. CIs that never separate within the replicate budget leave
+    # the champion standing (a DEFERRED outcome + a dead-letter record).
+    # Unset ⇒ a no-op pass-through, byte-identical to the plain gate.
     selection_decision, gate_evidence = await _confirm_gauntlet_promotion(
         selection_decision,
         tournament_spec=tournament_spec,
@@ -2919,11 +2927,12 @@ async def _confirm_gauntlet_promotion(
     stands and the duel is recorded to the dead-letter queue, exactly as the
     multi-challenger path records it.
 
-    Consulted only when ``promote_confidence_threshold`` resolves to a
-    threshold (the noise-aware default; an explicit ``null`` / ``0`` in the
-    structure params turns it off) AND the crowning verdict is a promotion —
-    a reject / defer passes through unchanged (the pre-gate can only hold a
-    promotion, never force one).
+    Consulted only when the contract opts into
+    ``promote_confidence_threshold`` (the scaffolded contracts do; absent ⇒
+    off — the gate is a soundness device, see the evidence-gate module
+    docstring for the measured tradeoff) AND the crowning verdict is a
+    promotion — a reject / defer passes through unchanged (the pre-gate can
+    only hold a promotion, never force one).
 
     Returns ``(decision, evidence_block)``: the (possibly held) decision and
     the JSON-shaped evidence block (rating CIs + ``ci_history``) to journal
@@ -3712,15 +3721,20 @@ def _warn_margin_below_noise_floor(workspace_root: Path, epoch_id: str) -> None:
         return
     log.warning(
         "promote_margin %.6g is BELOW the measured A/A noise floor %.6g for "
-        "epoch %s and the evidence gate is OFF "
-        "(promote_confidence_threshold null/0): duels decided by the margin "
+        "epoch %s and the evidence gate is off: duels decided by the margin "
         "alone CANNOT distinguish a real improvement from a re-roll of the "
-        "same generation. Raise promote_margin above the floor or re-enable "
-        "the evidence gate. (Measured by `zicato board audit`; this run "
-        "continues unchanged.)",
+        "same generation (measured: a naive margin below the floor promotes "
+        "pure noise). RECOMMENDED: set promote_margin above the measured "
+        "floor (%.6g), and/or enable the evidence gate — "
+        '"promote_confidence_threshold": 0.8 with an honest '
+        '"promote_confidence_replicates" budget (the scaffolded contracts '
+        "use 32) — so promotions must replicate to CI separation. "
+        "(Floor measured by `zicato board audit`; this run continues "
+        "unchanged.)",
         margin,
         max_abs,
         epoch_id,
+        max_abs,
     )
 
 

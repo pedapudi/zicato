@@ -1102,11 +1102,11 @@ def _read_promote_confidence_threshold(paths: WorkspacePaths, epoch_id: str) -> 
     """Read the epoch's opt-in ``promote_confidence_threshold`` from disk.
 
     The pre-gate threshold lives in the structure params, persisted under
-    ``scoring.json`` → ``tournament.params``. Returns ``None`` (no pre-gate)
-    when the epoch predates the field, the key is absent, or the value is out
-    of range — exactly the reader-side mirror of
-    :func:`zicato.selection.evidence_gate.read_promote_confidence_threshold`,
-    so a disabled run reports ``present=false``.
+    ``scoring.json`` → ``tournament.params``, and resolves through the SAME
+    :func:`zicato.selection.evidence_gate.read_promote_confidence_threshold`
+    the selection layer uses. Returns ``None`` (no pre-gate) when the epoch
+    predates the field, the key is absent / an explicit ``null`` / ``0``, or
+    the value is out of range — so a disabled run reports ``present=false``.
     """
     from zicato.selection.evidence_gate import (  # noqa: PLC0415
         read_promote_confidence_threshold as _read_threshold,

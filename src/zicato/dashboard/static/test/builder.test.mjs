@@ -539,7 +539,8 @@ test('estimateCost: the per-structure default-replicates twin matches the Python
   // The JS default-replicates map is the twin of the Python
   // STRUCTURE_DEFAULT_REPLICATES (derived from each strategy's
   // _default_replicates). Pin every structure so the two can never drift.
-  const expected = { gauntlet: 1, single_elim: 2, double_elim: 2, swiss: 2, racing: 1 };
+  // Base default 2 (noise-aware); racing pins 1 (intrinsic replication).
+  const expected = { gauntlet: 2, single_elim: 2, double_elim: 2, swiss: 2, racing: 1 };
   for (const [structure, def] of Object.entries(expected)) {
     assertEqual(builder.defaultReplicatesFor(structure), def, `${structure} default replicates`);
     // The UNSET-default estimate equals the explicit-default estimate.

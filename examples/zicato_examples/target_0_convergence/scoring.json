@@ -9,5 +9,15 @@
   "plan_revision_weight": 0.5,
   "runtime_weight": 0.0,
   "promote_margin": 0.01,
-  "pass_rate_monotonicity": true
+  "pass_rate_monotonicity": true,
+  "tournament": {
+    "structure": "gauntlet",
+    "params": {
+      "replicates": 1,
+      "promote_confidence_threshold": null
+    }
+  },
+  "proposer_quality": {
+    "best_of_n": 1
+  }
 }

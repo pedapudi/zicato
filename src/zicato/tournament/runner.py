@@ -899,8 +899,21 @@ async def run_tournament(
     total_rounds: int = 0,
     force_fresh: bool = True,
     child_diff_size: dict[str, int] | None = None,
+    replicates: int = 1,
 ) -> TournamentResult:
     """Run a full A/B tournament. See module docstring.
+
+    ``replicates`` is the §9-lever-1 replication knob on the full A/B path
+    (mirroring :func:`run_matchup`): the paired board is run ``replicates``
+    times — each replicate on its own per-unit cache slot (the
+    ``(generation, entry, replicate)`` key) — and the per-entry drift losses
+    are averaged BEFORE aggregation via the same
+    :func:`~zicato.tournament.unit_cache._average_losses` the matchup runner
+    uses, so a noisy single run no longer decides a duel. ``1`` (this
+    function's own default; the orchestrator threads the structure's
+    resolved value) is the historical single-run path, byte-identical to
+    before the knob existed. The champion/child force-fresh semantics below
+    apply per replicate slot.
 
     ``child_diff_size`` is the OPT-IN parsimony / MDL input (OVERFITTING.md §5
     / §12 #4): the challenger generation's ``{added, removed, patches}`` diff
@@ -1035,18 +1048,28 @@ async def run_tournament(
         #
         # Both sides are persisted so a later fast round / structure can
         # reuse them.
-        parent_losses, child_losses = await _run_board_units_full(
-            adapter=adapter,
-            parent_gen=parent_gen,
-            child_gen=child_gen,
-            board=board,
-            weights=weights,
-            config=config,
-            workspace_root=workspace_root,
-            epoch_id=epoch_id,
-            force_fresh=force_fresh,
-            parent_force_fresh=champion_force_fresh,
-        )
+        replicate_count = max(1, replicates)
+        replicate_runs: list[tuple[dict[str, LossProfile], dict[str, LossProfile]]] = []
+        for replicate_index in range(replicate_count):
+            run_parent, run_child = await _run_board_units_full(
+                adapter=adapter,
+                parent_gen=parent_gen,
+                child_gen=child_gen,
+                board=board,
+                weights=weights,
+                config=config,
+                workspace_root=workspace_root,
+                epoch_id=epoch_id,
+                replicate_index=replicate_index,
+                force_fresh=force_fresh,
+                parent_force_fresh=champion_force_fresh,
+            )
+            replicate_runs.append((run_parent, run_child))
+        if replicate_count == 1:
+            parent_losses, child_losses = replicate_runs[0]
+        else:
+            parent_losses = _average_losses([r[0] for r in replicate_runs])
+            child_losses = _average_losses([r[1] for r in replicate_runs])
     finally:
         if rt is not None:
             state_mod, _ = rt
@@ -1130,10 +1153,14 @@ async def run_fast_mode(
 ) -> TournamentResult:
     """Inline keep/discard against a historical aggregate.
 
-    Runs only the child generation. Compares the result against the
-    caller-supplied ``parent_historical_agg`` — typically the parent's
-    last full-mode aggregate dict cached in the journal. Same gate
-    logic, so the decision shape is identical to full mode. Per-entry
+    Runs only the child generation, ONCE — fast mode is the explicit
+    cheap inline keep/discard and does not replicate (the contract's
+    ``replicates`` knob applies to the full A/B path and the structure
+    matchup runner; under fast mode the noise hedge is the evidence
+    gate's crowning confirmation instead). Compares the result against
+    the caller-supplied ``parent_historical_agg`` — typically the
+    parent's last full-mode aggregate dict cached in the journal. Same
+    gate logic, so the decision shape is identical to full mode. Per-entry
     losses contain only the child side; the parent tuple slot is left
     empty by storing the child's loss in both positions IS WRONG — we
     keep parent slot ``None``-equivalent by simply omitting parent

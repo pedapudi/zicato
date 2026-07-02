@@ -205,14 +205,15 @@ function floatOf(params, key, def) {
 
 // The per-structure default `replicates` when params.replicates is UNSET — the
 // JS twin of zicato.selection.registry.STRUCTURE_DEFAULT_REPLICATES (itself
-// derived from each strategy's `_default_replicates`). swiss / elim default to
-// 2 (replication, not bracket shape, is their noise lever); gauntlet / racing
-// default to 1 (racing's replication is intrinsic to its escalating board
-// slices). The cost meter MUST resolve the default by structure, not a flat 1,
-// or it under-reports the schedule a structure actually runs — the Python
-// estimator and this twin must agree (the py↔js parity test pins it).
+// derived from each strategy's `_default_replicates`). The base default is 2
+// (the noise-aware posture — replication, not bracket shape, is the noise
+// lever), inherited by gauntlet / elim / swiss; racing pins 1 (its replication
+// is intrinsic to its escalating board slices). The cost meter MUST resolve
+// the default by structure, not a flat 1, or it under-reports the schedule a
+// structure actually runs — the Python estimator and this twin must agree
+// (the py↔js parity test pins it).
 export const STRUCTURE_DEFAULT_REPLICATES = {
-  gauntlet: 1, single_elim: 2, double_elim: 2, swiss: 2, racing: 1,
+  gauntlet: 2, single_elim: 2, double_elim: 2, swiss: 2, racing: 1,
 };
 export function defaultReplicatesFor(structure) {
   const d = STRUCTURE_DEFAULT_REPLICATES[structure];

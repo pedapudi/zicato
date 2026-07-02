@@ -1,9 +1,10 @@
 """ON-path tests for the Bradley--Terry promotion pre-gate (opt-in).
 
 The pre-gate (:mod:`zicato.selection.evidence_gate`) is DEFAULT-OFF: with
-``promote_confidence_threshold`` unset every selection decision is byte-
-identical to today (proven by the parity suite). These tests exercise it ON, to
-prove the new capability works:
+``promote_confidence_threshold`` unset every selection decision skips it —
+the gate is a soundness device the scaffolded contracts enable explicitly
+(see the module docstring's measured soundness-vs-power tradeoff). These
+tests exercise it ON, to prove the machinery works:
 
 * a deferred verdict on a noisy near-tie,
 * the closest-CI replication schedule,
@@ -23,6 +24,7 @@ from zicato.selection.dead_letter import (
     record_inconclusive,
 )
 from zicato.selection.evidence_gate import (
+    DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD,
     DEFAULT_REPLICATE_BUDGET,
     MIN_CREDIBLE_DUELS,
     closest_ci_duel,
@@ -72,12 +74,16 @@ def _audit(parent: str, child: str, *, child_wins: int, parent_wins: int) -> lis
 
 
 def test_threshold_reader_defaults_to_none() -> None:
+    # The gate is OPT-IN: an absent key (and an explicit null / 0) is off.
     assert read_promote_confidence_threshold({}) is None
     assert read_promote_confidence_threshold({"promote_confidence_threshold": None}) is None
-    # Out of range / non-numeric ⇒ no pre-gate (safe degrade).
     assert read_promote_confidence_threshold({"promote_confidence_threshold": 0.0}) is None
+    assert read_promote_confidence_threshold({"promote_confidence_threshold": -1}) is None
+    # Out of range / non-numeric ⇒ no pre-gate (safe degrade).
     assert read_promote_confidence_threshold({"promote_confidence_threshold": 1.0}) is None
     assert read_promote_confidence_threshold({"promote_confidence_threshold": "x"}) is None
+    # The RECOMMENDED bar the scaffolds write explicitly.
+    assert DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD == 0.8
 
 
 def test_threshold_reader_accepts_valid() -> None:
