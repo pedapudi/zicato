@@ -35,7 +35,7 @@ already inside that envelope.
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -46,6 +46,70 @@ from zicato.proposer.proposer import ProposerError
 from zicato.scoring.diff_complexity import diff_char_size as _diff_size
 
 log = logging.getLogger("zicato.proposer.best_of_n")
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateScreenResult:
+    """One slate candidate's pre-tournament screen verdict (tryouts).
+
+    Produced per candidate by the screen runner
+    (:mod:`zicato.epoch.screen`) and consumed by
+    :class:`BestOfNProposerAgent` — VETO-FIRST semantics: the screen
+    disqualifies catastrophic regressions, it never ranks; the
+    critic/heuristic still chooses among the survivors.
+
+    Fields
+    ------
+    vetoed:
+        The candidate is disqualified from the slate selection (a
+        confirmed pass-flip on a champion-passing panel entry, or a
+        budget abort). An all-vetoed slate still selects — the wrapper
+        falls back to critic-over-all — so a veto can narrow but never
+        empty the step.
+    reason:
+        Human-readable veto/clear summary. COUNTS ONLY by contract —
+        never an entry id, never a question/output token — so the string
+        can flow into the round log and the (restricted-visibility)
+        proposer stack without widening what the proposer may learn
+        about the board (OVERFITTING.md §11).
+    scalar:
+        The candidate's aggregate panel scalar (lower = better), or
+        ``None`` when the screen produced no usable signal (every panel
+        unit infra-aborted, or the screen errored for this candidate).
+        SELECTION-BIASED by construction: it is measured on a small,
+        champion-passing panel chosen for the veto — advisory tiebreak
+        material only, never journaled as evidence and never compared
+        against tournament scalars.
+    entries_screened:
+        How many panel entries this candidate ran.
+    baseline_passes:
+        How many of those entries the champion (parent, replicate-0
+        baseline) passes — the flip-eligible subset.
+    candidate_passes:
+        How many panel entries the candidate passed.
+    confirmed:
+        ``True`` only for a veto that survived the confirm re-run (the
+        pass-flip re-ran at the reserved confirm replicate and flipped
+        twice). Immediate vetoes (budget aborts) carry ``False``.
+    """
+
+    vetoed: bool
+    reason: str
+    scalar: float | None
+    entries_screened: int
+    baseline_passes: int
+    candidate_passes: int
+    confirmed: bool
+
+
+#: The screen-runner seam (the :data:`~zicato.proposer.proposer.ExperimentValidator`
+#: precedent): the orchestrator builds ONE closure per round — binding the
+#: rotating train panel, the parent baseline, the adapter and the frozen
+#: weights — and threads it on :attr:`ProposerContext.screen_candidates`.
+#: Called with the settled slate; returns one result per candidate, in
+#: slate order. ``None`` on the context (every caller that does not opt
+#: in) screens nothing.
+ScreenRunner = Callable[[Sequence[Experiment]], Awaitable[Sequence[CandidateScreenResult]]]
 
 #: Per-slot edit-class steering for the best-of-N slate — the intra-slate
 #: DIVERSITY lever. Slot ``i`` of the slate gets ``EDIT_CLASS_HINTS[i %

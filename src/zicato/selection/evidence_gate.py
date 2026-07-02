@@ -80,8 +80,10 @@ MIN_CREDIBLE_DUELS: int = 3
 #: real duel replicates count up from 0, A/A calibration draws at 1000
 #: (:data:`zicato.tournament.calibration.CALIBRATION_REPLICATE_BASE`), the
 #: contract pre-flight at 2000
-#: (:data:`zicato.epoch.preflight.PREFLIGHT_REPLICATE_BASE`), and 3000 is
-#: reserved for screening.
+#: (:data:`zicato.epoch.preflight.PREFLIGHT_REPLICATE_BASE`), and the
+#: pre-tournament candidate screen at 3000
+#: (:data:`zicato.epoch.screen.SCREEN_REPLICATE_BASE`; its
+#: confirm-before-veto re-run at 3001).
 EVIDENCE_REPLICATE_BASE: int = 4000
 
 #: The half-width multiplier turning a Bradley--Terry standard error into a

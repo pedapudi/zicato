@@ -59,6 +59,7 @@ from zicato.core.types import (
 from zicato.proposer.proposer import ExperimentValidator, propose_experiment
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
+    from zicato.proposer.best_of_n import ScreenRunner
     from zicato.telemetry.meta_loop import MetaLoopEmitter
 
 
@@ -134,6 +135,18 @@ class ProposerContext:
     #: invocation so a raising emitter can never fail a propose step.
     #: ``None`` (the default) emits nothing.
     round_event_emitter: Callable[[str, dict[str, Any]], None] | None = None
+    #: Optional pre-tournament candidate-screen runner (tryouts; WS-S).
+    #: The orchestrator builds ONE closure per round — via
+    #: ``_build_candidate_screen_runner``, only when the contract opts in
+    #: (``proposer_quality.screen_entries > 0`` AND ``best_of_n > 1``) —
+    #: binding the rotating train panel, the parent baseline and the
+    #: frozen weights. The best-of-N wrapper calls it GUARDED once the
+    #: slate settles: veto-first (a catastrophic regression is
+    #: disqualified before the critic chooses), and any screen failure
+    #: degrades to an unscreened selection — screening can never fail a
+    #: propose. ``None`` (the default) screens nothing and the propose
+    #: path is byte-identical.
+    screen_candidates: ScreenRunner | None = None
 
 
 class ProposerAgent(Protocol):

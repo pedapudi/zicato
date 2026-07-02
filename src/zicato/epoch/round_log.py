@@ -112,6 +112,27 @@ class CandidateSampled:
 
 
 @dataclass(frozen=True, slots=True)
+class CandidateScreened:
+    """The pre-tournament screen settled slate candidate ``index``.
+
+    Emitted once per candidate after the ``candidate_sampled`` events and
+    before ``critique_selected`` (the screen runs between the slate
+    settling and the selection). ``screen_summary`` carries the
+    counts-only measurement block (panel size, baseline passes, candidate
+    passes, the counts-only reason string) — NEVER an entry id.
+    ``confirmed`` is true only for a veto that survived the
+    confirm-before-veto re-run (a twice-flipped entry); an immediate
+    budget-abort veto carries ``False``.
+    """
+
+    TYPE: ClassVar[str] = "candidate_screened"
+    index: int = 0
+    vetoed: bool = False
+    confirmed: bool = False
+    screen_summary: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class CritiqueSelected:
     """The self-critique pass picked candidate ``index`` for ``reason``."""
 
@@ -205,6 +226,7 @@ EVENT_TYPES: dict[str, type] = {
         RoundOpened,
         ProposalAttempted,
         CandidateSampled,
+        CandidateScreened,
         CritiqueSelected,
         ExperimentMinted,
         PatchesApplied,
@@ -223,6 +245,7 @@ RoundEvent = (
     RoundOpened
     | ProposalAttempted
     | CandidateSampled
+    | CandidateScreened
     | CritiqueSelected
     | ExperimentMinted
     | PatchesApplied
@@ -410,11 +433,19 @@ class RoundLog:
 
 @dataclass(frozen=True, slots=True)
 class ProposalSession:
-    """The round's proposal-session summary, folded from the log."""
+    """The round's proposal-session summary, folded from the log.
+
+    ``candidates_screened`` / ``screen_vetoes`` tally the pre-tournament
+    candidate screen (one ``candidate_screened`` event per slate
+    candidate); both stay ``0`` for a round whose contract does not opt
+    into screening.
+    """
 
     attempts: int = 0
     errors: tuple[str, ...] = ()
     candidates_sampled: int = 0
+    candidates_screened: int = 0
+    screen_vetoes: int = 0
     critique_index: int | None = None
     critique_reason: str = ""
     experiment_ids: tuple[str, ...] = ()
@@ -468,6 +499,8 @@ def fold_round_record(events: list[RoundLogEnvelope]) -> RoundRecord:
     attempts = 0
     errors: list[str] = []
     candidates = 0
+    screened = 0
+    screen_vetoes = 0
     critique_index: int | None = None
     critique_reason = ""
     experiment_ids: list[str] = []
@@ -494,6 +527,10 @@ def fold_round_record(events: list[RoundLogEnvelope]) -> RoundRecord:
             errors.extend(event.errors)
         elif isinstance(event, CandidateSampled):
             candidates += 1
+        elif isinstance(event, CandidateScreened):
+            screened += 1
+            if event.vetoed:
+                screen_vetoes += 1
         elif isinstance(event, CritiqueSelected):
             critique_index = event.index
             critique_reason = event.reason
@@ -525,6 +562,8 @@ def fold_round_record(events: list[RoundLogEnvelope]) -> RoundRecord:
             attempts=attempts,
             errors=tuple(errors),
             candidates_sampled=candidates,
+            candidates_screened=screened,
+            screen_vetoes=screen_vetoes,
             critique_index=critique_index,
             critique_reason=critique_reason,
             experiment_ids=tuple(experiment_ids),
@@ -549,6 +588,7 @@ __all__ = [
     "RoundOpened",
     "ProposalAttempted",
     "CandidateSampled",
+    "CandidateScreened",
     "CritiqueSelected",
     "ExperimentMinted",
     "PatchesApplied",
