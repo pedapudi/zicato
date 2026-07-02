@@ -263,7 +263,7 @@ epoch boundary by hand.
 zicato epoch COMMAND [ARGS]...
 ```
 
-Commands: `close`, `list`, `new`, `set-goal`, `switch`.
+Commands: `close`, `gc`, `list`, `new`, `set-goal`, `switch`.
 
 #### `zicato epoch new`
 
@@ -297,6 +297,27 @@ zicato epoch close [OPTIONS] [EPOCH_ID]
 | Option | Default | Meaning |
 |---|---|---|
 | `--workspace TEXT` | `.zicato` | Path to the zicato workspace directory. |
+
+#### `zicato epoch gc`
+
+Prune generation SOURCE TREES under an epoch; records survive. Reclaims the
+disk held by settled-rejected generations' source trees (directory-backend
+snapshot dirs; git-backend tags + worktrees, whose commits then become
+collectable). Never touches `lineage.json`, the journal, experiment/score
+records, or run telemetry. Promoted generations, in-flight generations, and
+the seed `v0` are never pruned. Dry-run by default; pass `--apply` to
+execute. When `EPOCH_ID` is omitted, the current epoch is targeted.
+
+```
+zicato epoch gc [OPTIONS] [EPOCH_ID]
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--workspace TEXT` | `.zicato` | Path to the zicato workspace directory. |
+| `--keep-last INTEGER` | unset | Keep the N newest generations in addition to the always-kept set (promoted chain, in-flight generations, v0); prune older settled-rejected trees. Exactly one of `--keep-last` / `--keep-promoted-only` is required. |
+| `--keep-promoted-only` | off | Keep only the always-kept set; prune every settled-rejected generation's source tree. |
+| `--apply` | off | Actually prune. Without this flag the command is a DRY RUN that prints the plan and removes nothing. |
 
 #### `zicato epoch list`
 

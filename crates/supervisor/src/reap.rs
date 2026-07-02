@@ -2,8 +2,9 @@
 //!
 //! When the orchestrator process is genuinely gone — not merely slow — its
 //! run workers are orphaned and the per-run ephemeral snapshot directories
-//! (`${TMPDIR}/ztw-snap-*`, created by the runner's
-//! [`zicato.tournament.worker_transport._make_ephemeral_snapshot`] and
+//! (`${TMPDIR}/ztw-snap-*`, materialised by the generation store's
+//! `checkout_ephemeral` — see [`zicato.epoch.genstore`] — via the runner's
+//! [`zicato.tournament.worker_transport._checkout_run_snapshot`], and
 //! normally discarded on a clean run-end) are leaked. The supervisor is the
 //! out-of-band process that can clean both up.
 //!
@@ -26,9 +27,9 @@ use crate::state::{ActiveRun, Heartbeat};
 use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
 
-/// The mkdtemp prefix the runner uses for a run's ephemeral snapshot root
-/// (`tempfile.mkdtemp(prefix="ztw-snap-…")`). Must match
-/// `zicato.tournament.worker_transport._EPHEMERAL_SNAPSHOT_PREFIX`.
+/// The mkdtemp prefix every generation-store backend uses for a run's
+/// ephemeral snapshot root (`tempfile.mkdtemp(prefix="ztw-snap-…")`). Must
+/// match `zicato.epoch.genstore.EPHEMERAL_SNAPSHOT_PREFIX`.
 pub const SNAPSHOT_PREFIX: &str = "ztw-snap-";
 
 /// Whether the orchestrator behind `heartbeat` is CONFIRMED dead — the
@@ -76,7 +77,7 @@ fn system_temp_dir() -> PathBuf {
 /// The runner records the per-run WORKING COPY (`<ztw-snap-root>/<name>`) as
 /// `snapshot_path`; the directory to remove is its `ztw-snap-*` mkdtemp
 /// ancestor (the parent, which also holds the run's scratch dir), mirroring
-/// the Python `_discard_ephemeral_snapshot`. This walks from the recorded
+/// the Python `discard_ephemeral_parent`. This walks from the recorded
 /// path up toward the temp dir to find the FIRST ancestor whose basename
 /// starts with [`SNAPSHOT_PREFIX`], then enforces the rail:
 ///
@@ -285,7 +286,7 @@ mod tests {
     fn resolves_the_snap_root_from_the_recorded_working_copy() {
         // The recorded path is the WORKING COPY (a child of the ztw-snap-*
         // mkdtemp root); the guard returns the ztw-snap-* PARENT to remove,
-        // mirroring the Python _discard_ephemeral_snapshot.
+        // mirroring the Python discard_ephemeral_parent.
         let temp = TempDir::new().unwrap();
         let snap_root = temp.path().join("ztw-snap-run42-XXXX");
         let working_copy = snap_root.join("snapshot");

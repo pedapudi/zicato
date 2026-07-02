@@ -292,13 +292,15 @@ class ActiveRun:
         on a platform without process groups); the supervisor then falls
         back to the single-pid kill.
     snapshot_path:
-        Absolute path-as-string to the run's ephemeral snapshot working
-        copy (the ``ztw-snap-*`` temp directory the runner copytrees the
-        code snapshot into for this run). The runner discards it on a
-        clean run-end, but if the ORCHESTRATOR dies mid-run the directory
-        is orphaned; recording it here lets the supervisor GC the
-        leftover ``ztw-snap-*`` tree after an orchestrator death. ``None``
-        for a legacy record, or a run that mounted no ephemeral snapshot.
+        Absolute path-as-string to the run's ephemeral snapshot checkout
+        (the ``ztw-snap-*`` temp directory the generation store
+        materialises the per-run code tree into — a ``copytree`` under
+        the directory backend, a detached ``git worktree`` under the git
+        backend). The runner discards it on a clean run-end, but if the
+        ORCHESTRATOR dies mid-run the directory is orphaned; recording it
+        here lets the supervisor GC the leftover ``ztw-snap-*`` tree
+        after an orchestrator death. ``None`` for a legacy record, or a
+        run that mounted no ephemeral snapshot.
     """
 
     run_id: str

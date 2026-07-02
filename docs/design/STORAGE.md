@@ -422,7 +422,7 @@ always-available fallback; the git backend is selected off
 | **Generation** | A commit, tagged `epoch/{epoch_id}/{generation_id}` | The commit is the immutable tree; the tag is the stable handle. The branch head moves as generations are appended; the tags do not. |
 | **Generation lineage** | The commit DAG | A child generation commit parents its parent generation — `git log` *is* the lineage. |
 | **Patch set** | The deriving commit's message, after a `---zicato-meta---` sentinel, as a JSON block | Patch metadata travels *with* the commit — visible in plain `git log`, transported by any fetch/push, parsed back by `list_patches`. |
-| **Parallel tournament run** | A `git worktree` checked out at the generation tag | Isolated, cheap per-run checkout; a runtime write inside it never touches the commit. Replaces `_make_ephemeral_snapshot`'s `copytree`. |
+| **Parallel tournament run** | A per-run `git worktree` checked out at the generation tag (`checkout_ephemeral`) | Isolated, cheap per-run checkout; a runtime write inside it never touches the commit. Replaces the directory backend's per-run `copytree` (`copy_checkout_ephemeral`). |
 
 A repo-root orphan branch `zicato-root` carries only the
 artifact-exclusion `.gitignore`; every epoch branch is created from it,

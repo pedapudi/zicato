@@ -292,12 +292,12 @@ async def _run_full_board_unit(
 
     The two runs are safely concurrent: :func:`_run_single` spawns each
     in its OWN subprocess worker, each pointed at its OWN per-run
-    ephemeral snapshot working copy (a distinct ``tempfile.mkdtemp``
-    tree, see :func:`_make_ephemeral_snapshot`) and writing to a
-    distinct ``run_id`` (``{generation_id}--{entry_id}``, and the two
-    generations differ). So nothing — snapshot copy, ``active_runs``
-    state file, ``loss.json`` — is shared between the champion and
-    challenger of the same entry.
+    ephemeral snapshot checkout (a distinct ``ztw-snap-*`` temp tree,
+    see :func:`zicato.tournament.worker_transport._checkout_run_snapshot`)
+    and writing to a distinct ``run_id`` (``{generation_id}--{entry_id}``,
+    and the two generations differ). So nothing — snapshot checkout,
+    ``active_runs`` state file, ``loss.json`` — is shared between the
+    champion and challenger of the same entry.
 
     ``return_exceptions=True`` keeps a failing side from cancelling its
     in-flight sibling mid-subprocess (which would orphan a worker and
