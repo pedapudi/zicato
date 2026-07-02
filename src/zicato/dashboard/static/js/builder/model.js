@@ -227,7 +227,10 @@ function costLine(label, runs, detail) { return { label, runs, detail }; }
 // holdout split. Mirrors operations.estimate_cost (+ _racing_cost). Returns the
 // SAME { board_runs_per_round, breakdown:[{label,runs,detail}] } shape the
 // `/builder/op` cost envelope carries, so the preview renderer reads one shape.
-export function estimateCost(structure, params, trainCount, holdoutCount) {
+// `proposerQuality` (optional) is the contract's proposer_quality block —
+// when it opts into candidate screening (screen_entries > 0, best_of_n > 1)
+// the screen's tryout runs are added, mirroring the Python term exactly.
+export function estimateCost(structure, params, trainCount, holdoutCount, proposerQuality) {
   const boardSize = Math.max(0, trainCount || 0);
   const holdoutSize = Math.max(0, holdoutCount || 0);
   // Default `replicates` to the STRUCTURE's own default (swiss / elim default
@@ -268,6 +271,24 @@ export function estimateCost(structure, params, trainCount, holdoutCount) {
     lines.push(costLine('holdout-confirm runs', holdoutConfirm,
       `holdout ${holdoutSize} × replicates ${replicates}`));
     perRound += holdoutConfirm;
+  }
+
+  // Pre-tournament candidate screening (tryouts) — the JS twin of the
+  // Python estimator's candidate-screen term: proposes × best_of_n ×
+  // panel, where the panel is capped at the train board. Off (no line)
+  // unless the contract opts in with screen_entries > 0 and a slate.
+  const pq = proposerQuality || {};
+  const screenEntries = Math.max(0, Number(pq.screen_entries) || 0);
+  const bestOfN = Math.max(1, Number(pq.best_of_n) || 1);
+  if (screenEntries > 0 && bestOfN > 1) {
+    const proposes = (structure === 'gauntlet' || fieldSize <= 1) ? 1 : fieldSize;
+    const panel = Math.min(screenEntries, boardSize);
+    const screenRuns = proposes * bestOfN * panel;
+    if (screenRuns) {
+      lines.push(costLine('candidate-screen runs', screenRuns,
+        `proposes ${proposes} × best_of_n ${bestOfN} × panel ${panel}`));
+      perRound += screenRuns;
+    }
   }
   return { board_runs_per_round: perRound, breakdown: lines };
 }

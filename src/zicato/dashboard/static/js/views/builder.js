@@ -291,6 +291,35 @@ function fieldSection(d) {
     return controlRow(spec.label, spec.info, input);
   });
   if (!rows.length) rows.push(empty('This structure has no tunable field params.'));
+  // Pre-tournament candidate screening (tryouts) — a proposer_quality
+  // contract knob, so it drives the dedicated set_screening op rather
+  // than set_param. Rendered next to the replicates control: both are
+  // noise-vs-cost levers over the same board-unit runner.
+  const pq = ((d.scoring || {}).proposer_quality) || {};
+  const screen = el('input', {
+    class: 'dn-bld-num', type: 'number',
+    value: String(pq.screen_entries != null ? pq.screen_entries : 0),
+    min: '0', step: '1', 'aria-label': 'Candidate screen entries',
+  });
+  screen.addEventListener('change', () => {
+    const n = Number(screen.value != null ? screen.value : screen.getAttribute('value'));
+    if (!isFinite(n) || n < 0) return;
+    runOp('set_screening', { entries: Math.round(n) });
+  });
+  rows.push(controlRow('Candidate screen entries', {
+    title: 'Candidate screen entries', def: '0 (off); scaffold 2',
+    body: 'Pre-tournament tryout: each best-of-N slate candidate runs this many rotating champion-passing train entries BEFORE selection, and a confirmed catastrophic regression (pass-flip or budget blow-out) is vetoed. Veto-first — the screen disqualifies, it never ranks; the critic chooses among survivors. Costs proposes × best_of_n × entries extra runs per round; inert when best_of_n is 1.',
+  }, screen));
+  const vetoOnly = el('input', { class: 'dn-bld-check', type: 'checkbox', 'aria-label': 'Screen veto-only' });
+  if (pq.screen_veto_only) vetoOnly.setAttribute('checked', 'checked');
+  vetoOnly.addEventListener('change', () => {
+    const on = vetoOnly.checked != null ? vetoOnly.checked : (vetoOnly.getAttribute('checked') != null);
+    runOp('set_screening', { veto_only: !!on });
+  });
+  rows.push(controlRow('Screen veto-only', {
+    title: 'Screen veto-only', def: 'off',
+    body: 'When on, the screen may only disqualify: its panel counts feed neither the critic prompt nor the heuristic tiebreak. Keeps selection blind to the (selection-biased) tryout measurements while still catching catastrophic regressions.',
+  }, el('label', { class: 'dn-bld-checkwrap' }, [vetoOnly, el('span', { text: 'veto only — no selection tiebreak' })])));
   return section('Field & noise', ...rows);
 }
 

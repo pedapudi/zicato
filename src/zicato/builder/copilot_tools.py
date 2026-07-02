@@ -282,6 +282,26 @@ def set_gate(
     return _result_json(_summary(patch))
 
 
+def set_screening(entries: int | None = None, veto_only: bool | None = None) -> str:
+    """Set the pre-tournament candidate screen (tryouts).
+
+    ``entries`` sizes the rotating train panel each best-of-N slate
+    candidate runs BEFORE the selection pass (``0`` = screen off; the
+    recommended scaffold uses ``2``) — veto-first semantics: a candidate
+    with a confirmed catastrophic regression is disqualified, the critic
+    chooses among the survivors. ``veto_only=True`` keeps the veto but
+    withholds the screen's counts from the selection tiebreak. Changing
+    either rolls the epoch (a contract change). Returns an ``error`` for
+    a negative ``entries``.
+    """
+    ctx = _active_context()
+    try:
+        patch = ops.set_screening(ctx.draft(), entries=entries, veto_only=veto_only)
+    except ValueError as exc:
+        return _result_json({"error": str(exc)})
+    return _result_json(_summary(patch))
+
+
 def edit_board_entry(entry: dict[str, Any]) -> str:
     """Add or replace a board entry (matched by id).
 
@@ -400,6 +420,7 @@ DEFAULT_BUILDER_TOOLS = (
     set_proposer,
     set_weights,
     set_gate,
+    set_screening,
     edit_board_entry,
     add_judge,
     remove_judge,
@@ -420,6 +441,7 @@ __all__ = [
     "set_proposer",
     "set_weights",
     "set_gate",
+    "set_screening",
     "edit_board_entry",
     "add_judge",
     "remove_judge",

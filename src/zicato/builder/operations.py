@@ -384,6 +384,41 @@ def set_gate(
     return DraftPatch(op="set_gate", changed=changed)
 
 
+def set_screening(
+    draft: TournamentDraft,
+    *,
+    entries: int | None = None,
+    veto_only: bool | None = None,
+) -> DraftPatch:
+    """Set the pre-tournament candidate screen (tryouts).
+
+    ``entries`` is the rotating train-panel size each best-of-N slate
+    candidate runs before selection (``0`` turns the screen OFF — the
+    code default; the scaffold enables ``2``); ``veto_only`` restricts
+    the screen's measurements to the veto (no selection tiebreak feeds).
+    Both live on the nested ``proposer_quality`` contract block, so a
+    change rolls the epoch like any other weight. A negative ``entries``
+    raises (the dataclass validator re-checks on replace).
+    """
+    changed: dict[str, Any] = {}
+    quality = draft.scoring.proposer_quality
+    quality_changes: dict[str, Any] = {}
+    if entries is not None:
+        if entries < 0:
+            raise ValueError(f"screen entries must be >= 0, got {entries!r}")
+        if entries != quality.screen_entries:
+            quality_changes["screen_entries"] = entries
+            changed["screen_entries"] = {"from": quality.screen_entries, "to": entries}
+    if veto_only is not None and veto_only != quality.screen_veto_only:
+        quality_changes["screen_veto_only"] = veto_only
+        changed["screen_veto_only"] = {"from": quality.screen_veto_only, "to": veto_only}
+    if quality_changes:
+        draft.scoring = _replace_scoring(
+            draft, proposer_quality=dataclasses.replace(quality, **quality_changes)
+        )
+    return DraftPatch(op="set_screening", changed=changed)
+
+
 def edit_board_entry(draft: TournamentDraft, entry: BoardEntry) -> DraftPatch:
     """Add or replace a board entry (matched by id).
 
@@ -588,6 +623,26 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
             )
         )
         per_round += holdout_confirm
+
+    # Pre-tournament candidate screening (tryouts): when the contract opts
+    # in (screen_entries > 0 with a best-of-N slate), each propose-step's
+    # candidates run a small train panel before selection — the gauntlet
+    # proposes once per round, a wider structure proposes field_size
+    # challengers. The panel can never exceed the train board.
+    quality = draft.scoring.proposer_quality
+    if quality.screen_entries > 0 and quality.best_of_n > 1:
+        proposes = 1 if (structure == "gauntlet" or field_size <= 1) else field_size
+        panel = min(quality.screen_entries, board_size)
+        screen_runs = proposes * quality.best_of_n * panel
+        if screen_runs:
+            lines.append(
+                CostLine(
+                    "candidate-screen runs",
+                    screen_runs,
+                    f"proposes {proposes} × best_of_n {quality.best_of_n} × panel {panel}",
+                )
+            )
+            per_round += screen_runs
 
     return CostEstimate(
         structure=structure,
@@ -910,6 +965,7 @@ __all__ = [
     "set_proposer",
     "set_weights",
     "set_gate",
+    "set_screening",
     "edit_board_entry",
     "add_judge",
     "remove_judge",

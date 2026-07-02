@@ -220,7 +220,7 @@ async function renderContract() {
     // The read-only preview model: the SAME shape the builder's preview reads,
     // but with no diff (nothing to apply) and the cost / warnings recomputed
     // client-side from the frozen contract.
-    const cost = estimateCost(structure, params, trainCount, holdoutCount);
+    const cost = estimateCost(structure, params, trainCount, holdoutCount, scoring.proposer_quality);
     const warnings = validateContract(structure, params, trainCount, holdoutCount, overfitting);
     const preview = el('aside', { class: 'dn-set-preview dn-bld-preview', 'aria-label': 'Contract visualization' },
       previewNodes({

@@ -403,3 +403,71 @@ def test_validate_whole_board_holdout() -> None:
     ops.set_holdout(draft, tags=["e0", "e1", "e2"])
     codes = {w.code for w in ops.validate(draft)}
     assert "holdout_tags_cover_whole_board" in codes
+
+
+# ---------------------------------------------------------------------------
+# set_screening — the candidate-screen (tryouts) contract knobs
+# ---------------------------------------------------------------------------
+
+
+def test_set_screening() -> None:
+    import json
+
+    import pytest
+
+    draft = TournamentDraft()
+    assert draft.scoring.proposer_quality.screen_entries == 0
+    patch = ops.set_screening(draft, entries=2, veto_only=True)
+    assert draft.scoring.proposer_quality.screen_entries == 2
+    assert draft.scoring.proposer_quality.screen_veto_only is True
+    assert patch.changed["screen_entries"] == {"from": 0, "to": 2}
+    assert patch.changed["screen_veto_only"] == {"from": False, "to": True}
+
+    # No-op edit records nothing.
+    patch2 = ops.set_screening(draft, entries=2, veto_only=True)
+    assert patch2.changed == {}
+
+    # It survives the draft's serialized form (what the REST surface returns).
+    serialized = json.loads(json.dumps(draft.to_dict()))
+    assert serialized["scoring"]["proposer_quality"]["screen_entries"] == 2
+    assert serialized["scoring"]["proposer_quality"]["screen_veto_only"] is True
+
+    # A negative panel size is rejected, not silently coerced.
+    with pytest.raises(ValueError, match=">= 0"):
+        ops.set_screening(TournamentDraft(), entries=-1)
+
+
+def test_cost_includes_candidate_screen_runs_when_opted_in() -> None:
+    draft = TournamentDraft()
+    draft.entries = _board(10)
+    _no_holdout(draft)
+    ops.set_structure(draft, "gauntlet")
+    ops.set_param(draft, "field_size", 1)
+    ops.set_param(draft, "replicates", 1)
+
+    # Default (screen off): no candidate-screen line.
+    est_off = ops.estimate_cost(draft)
+    assert not any(line.label == "candidate-screen runs" for line in est_off.breakdown)
+
+    # Opted in: proposes 1 (gauntlet) × best_of_n 3 (default) × panel 2.
+    ops.set_screening(draft, entries=2)
+    est = ops.estimate_cost(draft)
+    screen_lines = [line for line in est.breakdown if line.label == "candidate-screen runs"]
+    assert len(screen_lines) == 1
+    assert screen_lines[0].runs == 1 * 3 * 2
+    assert est.board_runs_per_round == est_off.board_runs_per_round + 6
+
+
+def test_cost_screen_runs_scale_with_field_and_cap_at_board() -> None:
+    draft = TournamentDraft()
+    draft.entries = _board(3)
+    _no_holdout(draft)
+    ops.set_structure(draft, "racing")
+    ops.set_param(draft, "field_size", 4)
+    # Panel request larger than the board caps at the train-board size.
+    ops.set_screening(draft, entries=8)
+    est = ops.estimate_cost(draft)
+    screen_lines = [line for line in est.breakdown if line.label == "candidate-screen runs"]
+    assert len(screen_lines) == 1
+    # proposes 4 (racing field) × best_of_n 3 × panel min(8, 3) = 36.
+    assert screen_lines[0].runs == 4 * 3 * 3

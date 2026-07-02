@@ -100,6 +100,14 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
             monotonicity=args.get("monotonicity"),
             monotonicity_scope=args.get("monotonicity_scope"),
         )
+    if op == "set_screening":
+        raw_entries = args.get("entries")
+        raw_veto_only = args.get("veto_only")
+        return ops.set_screening(
+            draft,
+            entries=int(raw_entries) if raw_entries is not None else None,
+            veto_only=bool(raw_veto_only) if raw_veto_only is not None else None,
+        )
     if op == "edit_board_entry":
         entry = validate_board_entry(args["entry"])
         return ops.edit_board_entry(draft, entry)
