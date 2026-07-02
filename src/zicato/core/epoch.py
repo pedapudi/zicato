@@ -79,6 +79,17 @@ class EpochConfig:
         configuring a proposer dir (or editing one of its skills) rolls
         the epoch. Defaults to ``None``; an epoch ``config.json`` written
         before this field landed loads as the built-in default.
+    noise_floor:
+        The measured A/A noise floor for this epoch's contract — the
+        persisted :meth:`zicato.tournament.calibration.NoiseFloor.to_json`
+        dict (``{generation_id, epoch_id, runs, scalars, max_abs_delta,
+        delta_std, measured_at}``) — or ``None`` when never measured. A
+        RUNTIME measurement recorded post-creation (like :attr:`goal`),
+        NOT a contract input: it never folds into the contract hash. Set
+        via :func:`zicato.epoch.lifecycle.set_epoch_noise_floor` (the
+        ``zicato board audit`` surface / the opt-in evolve-start
+        calibration step); read back by the evolve-start margin check and
+        the loop-health detector.
     """
 
     id: str
@@ -95,6 +106,10 @@ class EpochConfig:
     # the built-in default proposer. Folded into the contract hash; missing
     # in an epoch ``config.json`` written before this field landed ⇒ ``None``.
     proposer_path: Path | None = None
+    # Measured A/A noise floor (runtime measurement, never hashed). ``None``
+    # when never measured; missing in an epoch ``config.json`` written
+    # before this field landed ⇒ ``None``.
+    noise_floor: dict[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)

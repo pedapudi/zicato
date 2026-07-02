@@ -183,6 +183,9 @@ def _config_to_dict(cfg: EpochConfig) -> dict[str, Any]:
         # ``None`` ⇒ built-in default proposer. Written as null so an
         # epoch that never configured a proposer round-trips cleanly.
         "proposer_path": str(cfg.proposer_path) if cfg.proposer_path is not None else None,
+        # Measured A/A noise floor (runtime measurement, never hashed).
+        # ``None`` ⇒ never measured; written as null so it round-trips.
+        "noise_floor": cfg.noise_floor,
     }
 
 
@@ -204,6 +207,7 @@ def _config_from_dict(d: dict[str, Any]) -> EpochConfig:
     # proposer) so an epoch ``config.json`` written before the field
     # landed loads cleanly.
     raw_proposer = d.get("proposer_path")
+    raw_floor = d.get("noise_floor")
     return EpochConfig(
         id=d["id"],
         name=d["name"],
@@ -216,6 +220,9 @@ def _config_from_dict(d: dict[str, Any]) -> EpochConfig:
         contract_hash=(str(raw_hash) if (raw_hash := d.get("contract_hash")) else None),
         goal=str(d.get("goal", "")),
         proposer_path=Path(raw_proposer) if raw_proposer else None,
+        # ``noise_floor`` defaults to ``None`` (never measured) so epochs
+        # written before the calibration surface landed load cleanly.
+        noise_floor=raw_floor if isinstance(raw_floor, dict) else None,
     )
 
 
@@ -646,6 +653,28 @@ def set_epoch_goal(workspace_root: Path, epoch_id: str, goal: str) -> EpochConfi
     return cfg
 
 
+def set_epoch_noise_floor(
+    workspace_root: Path, epoch_id: str, noise_floor: dict[str, Any]
+) -> EpochConfig:
+    """Persist the measured A/A noise floor onto an existing epoch's config.
+
+    Mirrors :func:`set_epoch_goal`: loads the epoch's ``config.json``,
+    replaces the additive ``noise_floor`` field with the supplied
+    :meth:`zicato.tournament.calibration.NoiseFloor.to_json` dict, and
+    writes the config back. The floor is a RUNTIME measurement, never a
+    contract input — writing it does not touch ``contract_hash`` and never
+    rolls the epoch. Re-measuring overwrites the prior record.
+
+    Raises :class:`FileNotFoundError` if the epoch does not exist.
+    """
+    from dataclasses import replace
+
+    cfg = load_epoch(workspace_root, epoch_id)
+    cfg = replace(cfg, noise_floor=dict(noise_floor))
+    _write_config(workspace_root, cfg)
+    return cfg
+
+
 def _write_stub_html_companion(
     workspace_root: Path,
     epoch_id: str,
@@ -685,4 +714,5 @@ __all__ = [
     "current_epoch_id",
     "load_epoch",
     "set_epoch_goal",
+    "set_epoch_noise_floor",
 ]

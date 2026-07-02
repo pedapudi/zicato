@@ -75,6 +75,9 @@ def _install_fake_health(
         board_entries: list[Any],
         epoch_id: str,
         max_generations_per_contract: int | None = None,
+        noise_floor: dict[str, Any] | None = None,
+        promote_margin: float | None = None,
+        evidence_gate_on: bool = True,
     ) -> _FakeLoopHealth:
         calls.append((losses_by_generation, experiments, board_entries, epoch_id))
         return health

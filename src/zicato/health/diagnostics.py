@@ -133,7 +133,8 @@ class HealthFinding:
         finding. One of ``"degenerate_scoring"``,
         ``"non_differentiating_entry"``, ``"flat_drift_signal"``,
         ``"no_expectations"``, ``"stalled_loop"``,
-        ``"generalization_gap"``, ``"refresh_cadence"``.
+        ``"generalization_gap"``, ``"refresh_cadence"``,
+        ``"margin_below_noise_floor"``.
     severity:
         ``"info"`` | ``"warning"`` | ``"critical"``. A loop is
         considered unhealthy when any ``"warning"`` or ``"critical"``
@@ -736,6 +737,64 @@ def detect_refresh_cadence(
     ]
 
 
+def detect_margin_below_noise_floor(
+    noise_floor: dict[str, Any] | None,
+    promote_margin: float | None,
+    evidence_gate_on: bool,
+) -> list[HealthFinding]:
+    """Warn when ``promote_margin`` sits inside the measured A/A noise.
+
+    The calibration half of the noise-aware decision procedure: when an
+    A/A audit (:mod:`zicato.tournament.calibration`) has measured the
+    epoch's noise floor and the contract's ``promote_margin`` is strictly
+    below it, a duel decided by the margin alone cannot distinguish a real
+    improvement from a re-roll of the same generation. With the evidence
+    gate ON the defer→replicate loop absorbs that noise, so the finding is
+    downgraded to an ``info`` observation; with the gate explicitly OFF it
+    is a ``warning`` — the loop is promoting/rejecting on noise.
+
+    Silent when no floor was ever measured (``noise_floor is None``), when
+    the floor record is malformed, or when the margin clears the floor.
+    """
+    if promote_margin is None:
+        return []
+    from zicato.tournament.calibration import margin_below_floor  # noqa: PLC0415
+
+    if not margin_below_floor(promote_margin, noise_floor):
+        return []
+    assert isinstance(noise_floor, dict)  # narrowed by margin_below_floor
+    max_abs = float(noise_floor.get("max_abs_delta", 0.0))
+    severity = "info" if evidence_gate_on else "warning"
+    gate_note = (
+        "the evidence gate is ON, so the defer→replicate loop still holds "
+        "promotions to CI separation"
+        if evidence_gate_on
+        else "the evidence gate is OFF — duels are decided by the margin alone"
+    )
+    return [
+        HealthFinding(
+            code="margin_below_noise_floor",
+            severity=severity,
+            summary=(
+                f"promote_margin {promote_margin:.6g} is below the measured A/A "
+                f"noise floor {max_abs:.6g}; {gate_note}"
+            ),
+            detail={
+                "promote_margin": promote_margin,
+                "noise_floor_max_abs_delta": max_abs,
+                "noise_floor_runs": noise_floor.get("runs"),
+                "noise_floor_generation_id": noise_floor.get("generation_id"),
+                "evidence_gate_on": evidence_gate_on,
+                "recommendation": (
+                    "raise promote_margin above the measured floor, or keep "
+                    "promote_confidence_threshold set so promotions replicate "
+                    "to CI separation"
+                ),
+            },
+        )
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -748,6 +807,9 @@ def assess_loop_health(
     epoch_id: str,
     config: HealthConfig | None = None,
     max_generations_per_contract: int | None = None,
+    noise_floor: dict[str, Any] | None = None,
+    promote_margin: float | None = None,
+    evidence_gate_on: bool = True,
 ) -> LoopHealth:
     """Run every detector and collect the findings into a :class:`LoopHealth`.
 
@@ -779,6 +841,14 @@ def assess_loop_health(
         threaded through so :func:`detect_refresh_cadence` can surface a
         board-refresh recommendation. ``None`` (the default) disables the
         cadence detector entirely.
+    noise_floor, promote_margin, evidence_gate_on:
+        The epoch's measured A/A noise floor
+        (:meth:`zicato.tournament.calibration.NoiseFloor.to_json` dict, or
+        ``None`` when never measured), the contract's ``promote_margin``,
+        and whether the Bradley--Terry evidence gate resolves to ON —
+        threaded so :func:`detect_margin_below_noise_floor` can warn when
+        the margin sits inside measured noise. ``noise_floor=None`` or
+        ``promote_margin=None`` (the defaults) disable that detector.
 
     Returns
     -------
@@ -796,6 +866,7 @@ def assess_loop_health(
     findings.extend(detect_stalled_loop(experiments, health))
     findings.extend(detect_generalization_gap(experiments, health))
     findings.extend(detect_refresh_cadence(experiments, max_generations_per_contract))
+    findings.extend(detect_margin_below_noise_floor(noise_floor, promote_margin, evidence_gate_on))
 
     healthy = not any(finding.severity in ("warning", "critical") for finding in findings)
     return LoopHealth(

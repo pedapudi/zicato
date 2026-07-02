@@ -398,6 +398,35 @@ async def evolve_once(
         promoted=True,
     )
 
+    # --- 2a. Optional A/A noise-floor calibration (epoch-open step) -------
+    # When the workspace opts in (config.json: ``"calibrate_noise_floor": K``)
+    # and this epoch has no measured floor yet, duel the champion against
+    # itself K times through the same board-unit workers and persist the
+    # measured spread onto the epoch record. Idempotent (the persisted record
+    # short-circuits every later round) and best-effort. ``zicato board
+    # audit`` is the manual surface for the same measurement.
+    await _maybe_calibrate_noise_floor(
+        workspace_root=workspace_root,
+        epoch_id=resolved_epoch_id,
+        epoch_cfg=_epoch_cfg,
+        workspace_config=workspace_config,
+        adapter=adapter,
+        parent_gen=parent_gen,
+        board=board,
+        weights=weights,
+        config=config,
+        disable_drift=disable_drift,
+        judge_only=judge_only,
+    )
+
+    # --- 2b. Margin-vs-noise-floor sanity check (once per invocation) -----
+    # When a measured floor exists and the contract's promote_margin sits
+    # inside it, say so loudly at evolve start — a duel decided by the margin
+    # alone cannot distinguish a real improvement from an A/A re-roll. Never
+    # hard-refuses; the per-round health report carries the matching finding.
+    if round_index == 0:
+        _warn_margin_below_noise_floor(workspace_root, resolved_epoch_id)
+
     # --- 3. Mutations ---
     mutations = enumerate_mutations(_resolve_mutable_trees(adapter, parent_gen.snapshot_root))
     if not mutations:
@@ -3565,6 +3594,136 @@ def _epoch_max_generations_per_contract(workspace_root: Path, epoch_id: str) -> 
     return overfitting_config_from_dict(raw.get("overfitting")).max_generations_per_contract
 
 
+def _epoch_noise_floor_inputs(
+    workspace_root: Path, epoch_id: str
+) -> tuple[dict[str, Any] | None, float | None, bool]:
+    """Read the epoch's ``(noise_floor, promote_margin, evidence_gate_on)``.
+
+    Threaded into :func:`zicato.health.diagnostics.detect_margin_below_noise_floor`
+    so the per-round health report can warn when the contract's margin sits
+    inside measured A/A noise. Best-effort: an unreadable epoch record yields
+    ``(None, None, True)``, which keeps that detector silent.
+    """
+    from zicato.epoch.lifecycle import load_epoch  # noqa: PLC0415
+    from zicato.selection.evidence_gate import (  # noqa: PLC0415
+        read_promote_confidence_threshold,
+    )
+
+    try:
+        cfg = load_epoch(workspace_root, epoch_id)
+    except Exception:  # noqa: BLE001 — health inputs are best-effort
+        return None, None, True
+    gate_on = read_promote_confidence_threshold(cfg.scoring.tournament_structure.params) is not None
+    return cfg.noise_floor, float(cfg.scoring.promote_margin), gate_on
+
+
+async def _maybe_calibrate_noise_floor(
+    *,
+    workspace_root: Path,
+    epoch_id: str,
+    epoch_cfg: Any,
+    workspace_config: Any,
+    adapter: Any,
+    parent_gen: Generation,
+    board: list[Any],
+    weights: Any,
+    config: Any,
+    disable_drift: tuple[Any, ...],
+    judge_only: bool,
+) -> None:
+    """Run the opt-in A/A noise-floor calibration once per epoch.
+
+    Fires only when the workspace config carries ``"calibrate_noise_floor":
+    K`` (K >= 2 draws) AND the epoch record has no measured floor yet, so the
+    measurement happens exactly once at epoch open (the first evolve round of
+    a fresh epoch) and every later round short-circuits on the persisted
+    record. Best-effort by contract — a calibration failure must never abort
+    the round.
+    """
+    raw = workspace_config.get("calibrate_noise_floor")
+    if not raw:
+        return
+    try:
+        runs = int(raw)
+    except (TypeError, ValueError):
+        log.warning("calibrate_noise_floor=%r is not an integer; skipping calibration", raw)
+        return
+    if runs < 2:
+        log.warning("calibrate_noise_floor=%d needs at least 2 draws; skipping calibration", runs)
+        return
+    if getattr(epoch_cfg, "noise_floor", None) is not None:
+        return
+
+    from zicato.epoch.lifecycle import set_epoch_noise_floor  # noqa: PLC0415
+    from zicato.tournament.calibration import measure_noise_floor  # noqa: PLC0415
+
+    with best_effort(
+        "A/A noise-floor calibration",
+        on_error=lambda exc: log.warning("noise-floor calibration skipped: %s", exc),
+    ):
+        floor = await measure_noise_floor(
+            adapter=adapter,
+            generation=parent_gen,
+            board=board,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            runs=runs,
+            disable_drift=disable_drift,
+            judge_only=judge_only,
+        )
+        set_epoch_noise_floor(workspace_root, epoch_id, floor.to_json())
+        log.info(
+            "A/A noise floor measured for epoch %s (%s, %d draws): "
+            "max |delta| = %.6g, delta std = %.6g",
+            epoch_id,
+            parent_gen.id,
+            runs,
+            floor.max_abs_delta,
+            floor.delta_std,
+        )
+
+
+def _warn_margin_below_noise_floor(workspace_root: Path, epoch_id: str) -> None:
+    """Log loudly when the contract's margin sits inside measured A/A noise.
+
+    Consulted once per evolve invocation (round 0). A WARNING only when the
+    evidence gate is OFF — with the gate on, the defer→replicate loop still
+    holds promotions to CI separation, so the margin being inside the noise
+    is an informational note, not a decision hazard. Never hard-refuses.
+    """
+    from zicato.tournament.calibration import margin_below_floor  # noqa: PLC0415
+
+    floor, margin, gate_on = _epoch_noise_floor_inputs(workspace_root, epoch_id)
+    if margin is None or not margin_below_floor(margin, floor):
+        return
+    assert isinstance(floor, dict)  # narrowed by margin_below_floor
+    max_abs = float(floor.get("max_abs_delta", 0.0))
+    if gate_on:
+        log.info(
+            "promote_margin %.6g is below the measured A/A noise floor %.6g "
+            "for epoch %s; the evidence gate is ON, so promotions still "
+            "replicate to CI separation",
+            margin,
+            max_abs,
+            epoch_id,
+        )
+        return
+    log.warning(
+        "promote_margin %.6g is BELOW the measured A/A noise floor %.6g for "
+        "epoch %s and the evidence gate is OFF "
+        "(promote_confidence_threshold null/0): duels decided by the margin "
+        "alone CANNOT distinguish a real improvement from a re-roll of the "
+        "same generation. Raise promote_margin above the floor or re-enable "
+        "the evidence gate. (Measured by `zicato board audit`; this run "
+        "continues unchanged.)",
+        margin,
+        max_abs,
+        epoch_id,
+    )
+
+
 def _assess_and_persist_loop_health(
     workspace_root: Path,
     epoch_id: str,
@@ -3602,6 +3761,9 @@ def _assess_and_persist_loop_health(
         losses_by_generation, experiments = _collect_epoch_health_inputs(
             workspace_root, epoch_id, board
         )
+        noise_floor, promote_margin, evidence_gate_on = _epoch_noise_floor_inputs(
+            workspace_root, epoch_id
+        )
         health = assess_loop_health(
             losses_by_generation,
             experiments,
@@ -3610,6 +3772,9 @@ def _assess_and_persist_loop_health(
             max_generations_per_contract=_epoch_max_generations_per_contract(
                 workspace_root, epoch_id
             ),
+            noise_floor=noise_floor,
+            promote_margin=promote_margin,
+            evidence_gate_on=evidence_gate_on,
         )
     except Exception as exc:  # noqa: BLE001 — health assessment is best-effort
         log.debug("loop-health assessment skipped for %s round %d: %s", epoch_id, round_n, exc)
