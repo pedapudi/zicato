@@ -328,6 +328,7 @@ def create_app(
         ),
         Route("/events", events),
         Route("/api/control/pause", handlers["control_pause"], methods=["POST"]),
+        Route("/api/control/resume", handlers["control_resume"], methods=["POST"]),
         Route(
             "/api/control/skip-round",
             handlers["control_skip_round"],

@@ -1009,6 +1009,33 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         _atomic_write(path, json.dumps(payload).encode())
         return JSONResponse({"accepted": True, "path": str(path)}, status_code=202)
 
+    async def control_resume(_request: Request) -> Response:
+        """Clear the ``pause_epoch`` flag — the dashboard's resume gesture.
+
+        The orchestrator's :func:`block_while_paused` polls the flag until
+        it clears (and archives the pause episode itself), so resume is a
+        plain atomic unlink of the flag file — never a queued command.
+        Idempotent: resuming an unpaused workspace is an accepted no-op
+        (``removed: false``) rather than an error, so a double-click /
+        raced resume cannot surface a spurious failure.
+        """
+        forbidden = _forbidden_if_read_only()
+        if forbidden is not None:
+            return forbidden
+        path = _control_path("pause_epoch")
+        removed = False
+        try:
+            path.unlink()
+            removed = True
+        except FileNotFoundError:
+            removed = False
+        except OSError:
+            return JSONResponse({"error": "could not clear pause flag"}, status_code=500)
+        return JSONResponse(
+            {"accepted": True, "removed": removed, "path": str(path), "ts": _now_iso()},
+            status_code=202,
+        )
+
     async def control_skip_round(request: Request) -> Response:
         forbidden = _forbidden_if_read_only()
         if forbidden is not None:
@@ -1124,6 +1151,7 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         "api_matchup_conversations": api_matchup_conversations,
         "api_run_transcript": api_run_transcript,
         "control_pause": control_pause,
+        "control_resume": control_resume,
         "control_skip_round": control_skip_round,
         "control_kill": control_kill,
         "control_promote": control_promote,

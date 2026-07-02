@@ -146,6 +146,7 @@ from zicato.dashboard.readers.runtime_view import (
     read_heartbeat_dict,
     read_lock_dict,
     read_meta_loop_session_id,
+    read_paused,
 )
 from zicato.dashboard.readers.tournament_view import (
     _champion_lineage,
@@ -306,6 +307,7 @@ __all__ = [
     "read_heartbeat_dict",
     "read_lock_dict",
     "read_meta_loop_session_id",
+    "read_paused",
     "resolve_transcript_events",
     "to_snake",
 ]

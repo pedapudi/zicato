@@ -104,6 +104,7 @@ pub fn router(state: AppState) -> Router {
             .route("/api/health", get(api_health))
             .route("/events", get(events))
             .route("/api/control/pause", post(control_pause))
+            .route("/api/control/resume", post(control_resume))
             .route("/api/control/skip-round", post(control_skip_round))
             .route("/api/control/kill/:run_id", post(control_kill))
             .route("/api/control/promote/:generation_id", post(control_promote))
@@ -455,6 +456,42 @@ async fn control_pause(State(s): State<AppState>, body: Option<Json<EmptyBody>>)
         serde_json::json!({"reason": reason, "ts": chrono::Utc::now()}),
     )
     .await
+}
+
+/// `POST /api/control/resume` — clear the `pause_epoch` flag file.
+///
+/// The dashboard's resume gesture: the orchestrator's `block_while_paused`
+/// polls the flag until it clears (and archives the pause episode itself),
+/// so resume is a plain atomic unlink — never a queued command file.
+/// Idempotent: resuming an unpaused workspace is an accepted no-op
+/// (`removed: false`), so a double-click / raced resume never errors.
+async fn control_resume(State(s): State<AppState>) -> Response {
+    if let Some(r) = forbidden_if_read_only(&s) {
+        return r;
+    }
+    let path = s.paths.control_dir().join("pause_epoch");
+    let removed = match tokio::fs::remove_file(&path).await {
+        Ok(_) => true,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        Err(e) => {
+            warn!(?path, error=%e, "resume: pause-flag unlink failed");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("unlink failed: {e}"),
+            )
+                .into_response();
+        }
+    };
+    (
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({
+            "accepted": true,
+            "removed": removed,
+            "path": path.display().to_string(),
+            "ts": chrono::Utc::now(),
+        })),
+    )
+        .into_response()
 }
 
 async fn control_skip_round(State(s): State<AppState>, body: Option<Json<EmptyBody>>) -> Response {

@@ -1636,6 +1636,22 @@
     border-bottom: 1px solid var(--v2-rule);
   }
 
+  /* the topbar LOOP CONTROLS (pause/resume + skip-round). Same quiet chrome
+   * as the back control; the ARMED skip confirm reads in caution ink so the
+   * two-step is visually explicit. Hidden entirely when read-only / idle
+   * (the host is left empty by renderLoopControls). */
+  .dt-loopctl { display: inline-flex; align-items: center; }
+  .dt-loopctl-group { display: inline-flex; align-items: center; gap: 6px; }
+  .dt-loopctl-btn { display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
+    background: transparent; border: 1px solid var(--v2-rule); border-radius: 5px;
+    padding: 3px 8px; cursor: pointer; white-space: nowrap;
+    transition: background 0.15s, color 0.15s, border-color 0.15s; }
+  .dt-loopctl-btn:hover { color: var(--v2-paper); background: var(--v2-accent); border-color: var(--v2-accent); }
+  .dt-loopctl-resume { color: var(--v2-good); border-color: var(--v2-good); }
+  .dt-loopctl-skip.dt-loopctl-armed { color: var(--v2-caution); border-color: var(--v2-caution); }
+  .dt-loopctl-skip.dt-loopctl-armed:hover { color: var(--v2-paper); background: var(--v2-caution); }
+
   /* the top-left back / up control (THE BACK-BUTTON FIX) */
   .dt-back { display: inline-flex; align-items: center; gap: 5px;
     font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
@@ -3022,6 +3038,17 @@
   .dt-live-match-row { display: grid;
     grid-template-columns: max-content minmax(40px, 1fr) max-content max-content max-content;
     align-items: center; column-gap: 9px; border-radius: 4px; padding: 1px 2px; }
+  /* a row carrying the per-run kill cluster grows a sixth content column. */
+  .dt-live-match-row-kill {
+    grid-template-columns: max-content minmax(40px, 1fr) max-content max-content max-content max-content; }
+  .dt-live-kill-cluster { display: inline-flex; gap: 4px; }
+  .dt-live-kill { font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1));
+    color: var(--v2-ink-faint); background: transparent; border: 1px solid var(--v2-rule);
+    border-radius: 4px; padding: 0 5px; line-height: 1.5; cursor: pointer; white-space: nowrap;
+    transition: color 0.15s, border-color 0.15s, background 0.15s; }
+  .dt-live-kill:hover { color: var(--v2-bad); border-color: var(--v2-bad); }
+  .dt-live-kill.dt-live-kill-armed { color: var(--v2-bad); border-color: var(--v2-bad); }
+  .dt-live-kill.dt-live-kill-armed:hover { color: var(--v2-paper); background: var(--v2-bad); }
   .dt-live-match-row[tabindex] { cursor: pointer; }
   .dt-live-match-row[tabindex]:hover { background: var(--v2-rule-soft); }
   .dt-live-match-row:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 1px; }

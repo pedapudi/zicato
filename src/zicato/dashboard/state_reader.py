@@ -156,6 +156,7 @@ from zicato.dashboard.readers import (
     read_heartbeat_dict,
     read_lock_dict,
     read_meta_loop_session_id,
+    read_paused,
     resolve_transcript_events,
     to_snake,
 )
@@ -297,6 +298,7 @@ __all__ = [
     "read_heartbeat_dict",
     "read_lock_dict",
     "read_meta_loop_session_id",
+    "read_paused",
     "resolve_transcript_events",
     "to_snake",
 ]

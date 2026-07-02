@@ -448,6 +448,72 @@ async fn pause_writes_control_file_atomically() {
 }
 
 #[tokio::test]
+async fn resume_deletes_pause_flag_and_is_idempotent() {
+    let (_t, paths) = make_workspace();
+    let (handle, shutdown) = start_server(paths.clone(), false).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    // Pause writes the flag; resume unlinks it.
+    let r = client
+        .post(format!("{base}/api/control/pause"))
+        .json(&serde_json::json!({"reason": "hold"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 202);
+    let marker = paths.control_dir().join("pause_epoch");
+    assert!(marker.exists(), "pause_epoch marker missing after pause");
+
+    let r = client
+        .post(format!("{base}/api/control/resume"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 202);
+    let body: Value = r.json().await.unwrap();
+    assert_eq!(body["accepted"], true);
+    assert_eq!(body["removed"], true);
+    assert!(!marker.exists(), "pause_epoch flag survived resume");
+
+    // Idempotent: a second resume on an unpaused workspace is an accepted
+    // no-op (removed: false), never an error.
+    let r = client
+        .post(format!("{base}/api/control/resume"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 202);
+    let body: Value = r.json().await.unwrap();
+    assert_eq!(body["removed"], false);
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn resume_is_forbidden_when_read_only() {
+    let (_t, paths) = make_workspace();
+    // A pending pause flag must survive a read-only resume attempt.
+    std::fs::write(paths.control_dir().join("pause_epoch"), b"{}").unwrap();
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let r = client
+        .post(format!("{base}/api/control/resume"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+    assert!(
+        paths.control_dir().join("pause_epoch").exists(),
+        "read-only resume must not touch the flag"
+    );
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
 async fn brief_post_writes_replacement_file() {
     let (_t, paths) = make_workspace();
     let (handle, shutdown) = start_server(paths.clone(), false).await;

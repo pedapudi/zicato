@@ -27,6 +27,21 @@ from zicato.runtime.state import (
 # ---------------------------------------------------------------------------
 
 
+def read_paused(paths: WorkspacePaths) -> bool:
+    """Whether the operator ``pause_epoch`` flag is present.
+
+    The dashboard's pause control writes ``runtime/control/pause_epoch``
+    and the orchestrator's ``block_while_paused`` holds scheduling until
+    it clears — so flag presence IS the paused state. Cheap existence
+    check (no JSON parse); any stat failure reads as not-paused so the
+    runtime payload never errors on it.
+    """
+    try:
+        return (paths.control_dir / "pause_epoch").exists()
+    except OSError:
+        return False
+
+
 def read_heartbeat_dict(paths: WorkspacePaths) -> dict[str, Any] | None:
     """The heartbeat as a plain dict, or ``None`` when absent.
 
@@ -74,6 +89,7 @@ def read_heartbeat_dict(paths: WorkspacePaths) -> dict[str, Any] | None:
                 "harmonograf_url": injected_url,
                 "harmonograf_persistent": True,
                 "last_heartbeat": _heartbeat_file_mtime_iso(paths),
+                "paused": read_paused(paths),
             }
             meta = read_meta_loop_session_id(paths)
             if meta:
@@ -81,6 +97,11 @@ def read_heartbeat_dict(paths: WorkspacePaths) -> dict[str, Any] | None:
             return synthetic
         return None
     out = hb.to_dict()
+    # Pause-flag presence rides on the heartbeat payload so every runtime
+    # read (/api/heartbeat, /api/state, /api/environment, the SSE snapshot)
+    # carries the paused state without a second fetch. Additive — an older
+    # frontend simply ignores it.
+    out["paused"] = read_paused(paths)
     if _parse_iso(out.get("last_heartbeat")) is None:
         out["last_heartbeat"] = _heartbeat_file_mtime_iso(paths)
     if injected_url:
@@ -383,7 +404,12 @@ def read_active_runs_view(paths: WorkspacePaths) -> list[dict[str, Any]]:
 
 
 def build_snapshot(paths: WorkspacePaths) -> dict[str, Any]:
-    """The full ``/api/state`` snapshot, mirroring the Rust ``Snapshot``."""
+    """The full ``/api/state`` snapshot, mirroring the Rust ``Snapshot``.
+
+    ``paused`` (the operator pause-flag presence) rides top-level too —
+    a paused-but-not-running workspace has no heartbeat to carry it, so
+    the state read must surface it independently.
+    """
     return {
         "heartbeat": read_heartbeat_dict(paths),
         "lock": read_lock_dict(paths),
@@ -392,5 +418,6 @@ def build_snapshot(paths: WorkspacePaths) -> dict[str, Any]:
         "lineage": _read_json_value(paths.lineage),
         "epoch_id": read_current_epoch(paths),
         "epoch": build_epoch_view(paths),
+        "paused": read_paused(paths),
         "generated_at": _iso(_utc_now()),
     }

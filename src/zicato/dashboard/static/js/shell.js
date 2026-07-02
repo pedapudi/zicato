@@ -25,7 +25,7 @@ import { el, svgEl, clearChildren, patchText, patchClass } from './core/dom.js';
 import { harmonografMetaUrl } from './core/harmonograf.js';
 import { state } from './core/state.js';
 import { bus } from './core/bus.js';
-import { loadEnvironment, loadServiceIdentity } from './core/api.js';
+import { loadEnvironment, loadServiceIdentity, postControl } from './core/api.js';
 import { connectSSE } from './core/sse.js';
 import { parseRoute, navigate, href, crumbTrail, up } from './router.js';
 import * as D from './data.js';
@@ -78,6 +78,9 @@ let _runStateTextEl = null;   // the run-state WORD inside the pill
 let _runLabelEl = null;       // the structure+phase run label
 let _runCountEl = null;       // the in-flight board-unit count
 let _staleEl = null;          // the "last seen Ns ago / stale" affordance
+let _loopCtlHost = null;      // topbar loop-control cluster (pause/resume/skip)
+let _lastLoopCtlDigest = null;
+let _pausedOverride = null;   // optimistic paused verdict after a control POST
 let _colorDropdown = null;     // the swatch-dropdown controller (Change 6)
 let _typeEl = [];
 let _scaleInput = null;
@@ -583,6 +586,15 @@ export function mountShell(root) {
     _runStateEl,
   ]);
 
+  // THE LOOP CONTROLS (WS4-A item 3c): Pause/Resume toggle + Skip-round,
+  // beside the status pill. Rendered ONLY while the loop is controllable
+  // (live + a writable workspace); read-only / idle keeps the host empty.
+  // renderLoopControls fills it, digest-gated on {shown, paused} so a
+  // steady heartbeat writes zero DOM here.
+  _loopCtlHost = el('span', { class: 'dt-loopctl', role: 'group', 'aria-label': 'Loop controls' });
+  _lastLoopCtlDigest = null;
+  _pausedOverride = null;
+
   // top-left UP control — navigates UP the selection hierarchy (the parent
   // route); dispatch then repaints the destination into the MAIN detail pane
   // (never the sidebar). Labelled "↑ up" to reflect its function (it climbs the
@@ -628,6 +640,7 @@ export function mountShell(root) {
     ]),
     colorSwitch,
     scalePill,
+    _loopCtlHost,
     _statusEl,
   ]);
   root.appendChild(topbar);
@@ -661,6 +674,10 @@ export function mountShell(root) {
       const epochId = (r.params && r.params.epochId) || state.epoch.id || null;
       if (epochId) navigate('candidate', { epochId, gen });
     },
+    // the per-run kill sink (confirm-on-click lives in the row's button) —
+    // routes through the file-based control channel; refresh afterwards so
+    // the torn-down run leaves the in-flight rows promptly.
+    onKill: (runId) => fireLoopControl('kill/' + encodeURIComponent(runId), undefined, null),
   });
   _heroHost = el('div', { class: 'dt-hero-host' }, [_live.node]);
   root.appendChild(_heroHost);
@@ -950,6 +967,10 @@ function renderStatus() {
     terminal: state.terminal,
     lastSeqAdvanceAt: state.lastSeqAdvanceAt,
   });
+  // The loop-control cluster gates on its OWN digest ({shown, paused}) —
+  // paused is not part of the status digest, so it must render before the
+  // status early-return below.
+  renderLoopControls(status);
   const digest = liveStatusDigest(conn, status);
   if (digest === _lastStatusDigest) return;
   _lastStatusDigest = digest;
@@ -993,6 +1014,101 @@ function renderStatus() {
     patchText(_staleEl, (!status.alive && status.heartbeatStale)
       ? ('· ' + staleLabel(status.heartbeatAgeMs)) : '');
   }
+}
+
+// ── THE TOPBAR LOOP CONTROLS (WS4-A item 3c) ─────────────────────────
+//
+// Pause/Resume toggle + Skip-round, driven through the previously-dead
+// postControl. Shown ONLY when the workspace is writable (read_only:false
+// from /api/health) AND the loop is alive (or already paused — a paused
+// loop's heartbeat may be held, and the resume affordance must survive
+// that). The pause flag state comes from the runtime payload's `paused`
+// (readers/runtime_view.py) with a short optimistic override after a
+// successful POST — a control write does not advance the orchestrator seq,
+// so the SSE no-op-skip gate would otherwise delay the readback.
+
+// The pure control cluster: a pause OR resume toggle (reflecting `paused`)
+// plus a two-step confirm-on-click skip-round. Exported for the node tests.
+export function buildLoopControls(opts) {
+  const o = opts || {};
+  const wrap = el('span', { class: 'dt-loopctl-group' });
+  const toggle = el('button', {
+    class: 'dt-loopctl-btn ' + (o.paused ? 'dt-loopctl-resume' : 'dt-loopctl-pause'),
+    type: 'button',
+    title: o.paused
+      ? 'Resume — clear the pause flag; the orchestrator continues at its next poll'
+      : 'Pause — hold scheduling at the next between-rounds safe point',
+    text: o.paused ? '▶ resume' : '⏸ pause',
+  });
+  toggle.addEventListener('click', () => {
+    if (o.paused) { if (o.onResume) o.onResume(); } else if (o.onPause) o.onPause();
+  });
+  wrap.appendChild(toggle);
+
+  // Skip-round is destructive-ish (aborts the in-flight round like a budget
+  // cut), so it takes a TWO-STEP confirm: first click arms, second fires;
+  // an armed button auto-disarms after a few seconds.
+  const skip = el('button', {
+    class: 'dt-loopctl-btn dt-loopctl-skip', type: 'button',
+    title: 'Skip the current round — aborts it cleanly, exactly like a wall-clock budget cut',
+    text: '⏭ skip round',
+  });
+  let armed = false;
+  let timer = null;
+  const disarm = () => {
+    armed = false;
+    if (timer != null) { clearTimeout(timer); timer = null; }
+    patchText(skip, '⏭ skip round');
+    skip.classList.remove('dt-loopctl-armed');
+  };
+  skip.addEventListener('click', () => {
+    if (!armed) {
+      armed = true;
+      patchText(skip, 'confirm skip?');
+      skip.classList.add('dt-loopctl-armed');
+      timer = setTimeout(disarm, 4000);
+      return;
+    }
+    disarm();
+    if (o.onSkip) o.onSkip();
+  });
+  wrap.appendChild(skip);
+  return wrap;
+}
+
+async function fireLoopControl(action, body, pausedAfter) {
+  let res = { ok: false, status: 0 };
+  try { res = await postControl(action, body); } catch (err) { res = { ok: false, status: 0 }; }
+  if (res.ok && pausedAfter != null) _pausedOverride = pausedAfter;
+  // A control write does not advance the orchestrator progress seq, so the
+  // SSE no-op-skip gate drops its state_change — refresh explicitly so the
+  // paused readback converges (and the button flips) promptly.
+  try { await loadEnvironment(); } catch (err) { /* transient — next beat retries */ }
+  _lastLoopCtlDigest = null;
+  renderStatus();
+}
+
+function renderLoopControls(status) {
+  if (!_loopCtlHost) return;
+  const canControl = !!(state.health && state.health.read_only === false);
+  const serverPaused = !!(state.heartbeat && state.heartbeat.paused);
+  // The optimistic override retires the moment the server agrees with it.
+  if (_pausedOverride != null && serverPaused === _pausedOverride) _pausedOverride = null;
+  const paused = _pausedOverride != null ? _pausedOverride : serverPaused;
+  // Visible while the loop is ALIVE (live/stalled pulse) — and while PAUSED
+  // even if the pulse held, so resume is always reachable. Hidden read-only.
+  const show = canControl && (!!(status && status.alive) || paused);
+  const digest = (show ? 'S' : '-') + (paused ? 'P' : '-');
+  if (digest === _lastLoopCtlDigest && (!show || _loopCtlHost.firstChild)) return;
+  _lastLoopCtlDigest = digest;
+  clearChildren(_loopCtlHost);
+  if (!show) return;
+  _loopCtlHost.appendChild(buildLoopControls({
+    paused,
+    onPause: () => fireLoopControl('pause', { reason: 'operator pause (dashboard topbar)' }, true),
+    onResume: () => fireLoopControl('resume', undefined, false),
+    onSkip: () => fireLoopControl('skip-round', { reason: 'operator skip (dashboard topbar)' }, null),
+  }));
 }
 
 // THE ZICATO-LEVEL HARMONOGRAF LINK. The top-bar "execution ▸" entry deep-links
@@ -1040,6 +1156,8 @@ function refreshLive() {
     heartbeat: state.heartbeat,
     activeRuns: state.activeRuns,
     activeTournament: state.activeTournament,
+    // the kill affordances render only on a writable workspace.
+    canControl: !!(state.health && state.health.read_only === false),
   });
   // The hero host follows the SAME orchestrator-alive gate as the hero itself
   // (LIVE or STALLED) — NOT the narrower `running` — so the panel does not

@@ -1973,6 +1973,52 @@ def test_control_pause_writes_marker(rw_client: TestClient, workspace: Path) -> 
     assert json.loads(marker.read_text())["reason"] == "test"
 
 
+def test_control_resume_deletes_pause_flag(rw_client: TestClient, workspace: Path) -> None:
+    """Resume atomically unlinks the pause flag; a second resume is a no-op."""
+    assert rw_client.post("/api/control/pause", json={"reason": "hold"}).status_code == 202
+    marker = workspace / "runtime" / "control" / "pause_epoch"
+    assert marker.exists()
+
+    r = rw_client.post("/api/control/resume")
+    assert r.status_code == 202
+    body = r.json()
+    assert body["accepted"] is True
+    assert body["removed"] is True
+    assert not marker.exists()
+
+    # Idempotent: resuming an unpaused workspace is an accepted no-op.
+    r = rw_client.post("/api/control/resume")
+    assert r.status_code == 202
+    assert r.json()["removed"] is False
+
+
+def test_control_resume_forbidden_when_read_only(client: TestClient, workspace: Path) -> None:
+    """A read-only dashboard must answer 403 and leave the flag intact."""
+    marker = workspace / "runtime" / "control" / "pause_epoch"
+    marker.write_text("{}", encoding="utf-8")
+    r = client.post("/api/control/resume")
+    assert r.status_code == 403
+    assert marker.exists()
+
+
+def test_paused_flag_surfaces_in_runtime_payloads(rw_client: TestClient, workspace: Path) -> None:
+    """Pause-flag presence rides /api/state (top-level) + the heartbeat dict."""
+    # Unpaused baseline.
+    snap = rw_client.get("/api/state").json()
+    assert snap["paused"] is False
+    assert snap["heartbeat"]["paused"] is False
+    hb = rw_client.get("/api/heartbeat").json()
+    assert hb["paused"] is False
+
+    # Paused: the flag flips both reads; resume flips them back.
+    assert rw_client.post("/api/control/pause").status_code == 202
+    snap = rw_client.get("/api/state").json()
+    assert snap["paused"] is True
+    assert snap["heartbeat"]["paused"] is True
+    assert rw_client.post("/api/control/resume").status_code == 202
+    assert rw_client.get("/api/state").json()["paused"] is False
+
+
 def test_control_kill_writes_per_run_marker(rw_client: TestClient, workspace: Path) -> None:
     r = rw_client.post("/api/control/kill/waffles_single")
     assert r.status_code == 202
