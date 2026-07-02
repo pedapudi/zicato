@@ -156,8 +156,14 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         except (_BadEpoch, ValueError):
             return JSONResponse({"error": "unknown epoch"}, status_code=404)
 
-    async def api_lineage(_request: Request) -> JSONResponse:
-        return JSONResponse(state_reader.build_lineage_view(paths))
+    async def api_lineage(request: Request) -> JSONResponse:
+        # Optional ``?epoch=<id>`` scopes the feed to ONE epoch's generations
+        # (the epoch-scoped generations feed); omitted ⇒ workspace-global.
+        try:
+            epoch_id = _epoch_query(request)
+            return JSONResponse(state_reader.build_lineage_view(paths, epoch_id))
+        except (_BadEpoch, ValueError):
+            return JSONResponse({"error": "unknown epoch"}, status_code=404)
 
     async def api_workspace(_request: Request) -> JSONResponse:
         """L0 (workspace-level) cross-epoch summary for the new shell."""
@@ -219,6 +225,42 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
                 status_code=200,
             )
         return JSONResponse(state_reader.build_tournament_cost(paths, epoch_id))
+
+    async def api_epoch_racing_field(request: Request) -> JSONResponse:
+        """The settled racing-field ladder for one epoch, joined server-side.
+
+        ``GET /api/epoch/{epoch_id}/racing-field``. The per-challenger racing
+        records are joined into ONE rung/gate ladder payload here — the
+        frontend never reconstructs it. ``present: false`` (HTTP 200) when the
+        epoch has no racing records; a malformed id degrades the same way.
+        """
+        epoch_id = request.path_params["epoch_id"]
+        if not _is_safe_id(epoch_id):
+            return JSONResponse({"epoch_id": epoch_id, "present": False}, status_code=200)
+        return JSONResponse(state_reader.build_racing_field(paths, epoch_id))
+
+    async def api_epoch_round_timeline(request: Request) -> JSONResponse:
+        """The epoch's settled round timeline + loss-floor waterfall.
+
+        ``GET /api/epoch/{epoch_id}/round-timeline``. The four-endpoint join
+        the frontend used to perform (epoch + lineage + trajectory +
+        tournaments -> rounds along the champion spine) is served here; the
+        client only overlays its LIVE in-flight round. A malformed id degrades
+        to the empty timeline shape (HTTP 200).
+        """
+        epoch_id = request.path_params["epoch_id"]
+        if not _is_safe_id(epoch_id):
+            return JSONResponse(
+                {
+                    "epoch_id": epoch_id,
+                    "structure": "gauntlet",
+                    "source": "none",
+                    "rounds": [],
+                    "waterfall": [],
+                },
+                status_code=200,
+            )
+        return JSONResponse(state_reader.build_round_timeline(paths, epoch_id))
 
     async def api_per_judge_for_generation(request: Request) -> JSONResponse:
         """Per-judge breakdown for one generation (L2)."""
@@ -503,6 +545,10 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
                     "challenger": challenger_id,
                     "decision": "deferred",
                     "reason": "",
+                    "deciding_rule": None,
+                    "margin": None,
+                    "regressed_predicate": None,
+                    "regressed_namespace": None,
                     "delta_scalar": None,
                     "delta_pass_rate": None,
                     "champion_scalar": None,
@@ -1122,6 +1168,8 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         "api_per_judge_trend": api_per_judge_trend,
         "api_epoch_trajectory": api_epoch_trajectory,
         "api_epoch_cost": api_epoch_cost,
+        "api_epoch_racing_field": api_epoch_racing_field,
+        "api_epoch_round_timeline": api_epoch_round_timeline,
         "api_per_judge_for_generation": api_per_judge_for_generation,
         "api_per_entry_for_generation": api_per_entry_for_generation,
         "api_per_judge_comparison": api_per_judge_comparison,

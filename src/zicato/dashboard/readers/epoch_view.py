@@ -6,9 +6,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from zicato.dashboard.readers.lineage_view import (
-    _PROMOTED_DECISIONS,
-    _experiment_decision,
+from zicato.dashboard.readers.decisions import (
+    experiment_decision,
+    promoted_tristate,
+    stamp_experiment_decision,
 )
 from zicato.dashboard.readers.paths import (
     WorkspacePaths,
@@ -231,6 +232,13 @@ def _read_epoch_experiments(epoch_dir: Path) -> list[dict[str, Any]]:
     raw ``experiment.json`` fields plus a ``patch_content`` mapping from
     mutation id to the raw patch dict (from ``patches/*.json``) so the
     frontend can render diffs without a second round-trip.
+
+    Every record is stamped with the CANONICAL decision surface — a
+    ``decision`` token (``promoted`` / ``rejected`` / ``deferred`` /
+    ``None`` while in flight) and a tri-state ``promoted`` — via the ONE
+    shared classifier (:mod:`zicato.dashboard.readers.decisions`), so the
+    frontend renders decisions verbatim and never re-classifies the raw
+    nested ``outcome``.
     """
     gens_dir = epoch_dir / "generations"
     if not gens_dir.is_dir():
@@ -261,8 +269,57 @@ def _read_epoch_experiments(epoch_dir: Path) -> list[dict[str, Any]]:
         # frontend can key on it even when the JSON omits it.
         record["generation_id"] = gen_dir.name
         record["patches"] = patches
+        # The canonical decision surface: ``decision`` + tri-state
+        # ``promoted``, stamped by the shared classifier so this feed can
+        # never disagree with the lineage view.
+        stamp_experiment_decision(record)
         experiments.append(record)
     return experiments
+
+
+def _current_champion(experiments: list[dict[str, Any]]) -> str | None:
+    """The epoch's REIGNING champion, from the stamped experiment records.
+
+    Walks the promoted champion spine (the same chain
+    :func:`compute_epoch_delta_summary` and the tournament view's
+    ``_champion_lineage`` build) and returns its LAST id — the reigning
+    generation. When nothing is promoted yet, the parentless seed (round
+    0's incoming champion) is the champion; ``None`` when the epoch has
+    no generations at all.
+    """
+    by_gen: dict[str, dict[str, Any]] = {}
+    promoted: set[str] = set()
+    for exp in experiments:
+        gid = exp.get("generation_id")
+        if not isinstance(gid, str) or not gid:
+            continue
+        by_gen[gid] = exp
+        if exp.get("promoted") is True:
+            promoted.add(gid)
+
+    if promoted:
+        child_of: dict[str, str] = {}
+        roots: list[str] = []
+        for gid in sorted(promoted):
+            parent = by_gen[gid].get("parent_generation_id")
+            if isinstance(parent, str) and parent in promoted:
+                child_of.setdefault(parent, gid)
+            else:
+                roots.append(gid)
+        if roots:
+            cur = roots[0]
+            seen = {cur}
+            while cur in child_of and child_of[cur] not in seen:
+                cur = child_of[cur]
+                seen.add(cur)
+            return cur
+
+    # No promotion yet — the seed (parentless) generation is the champion.
+    for gid in sorted(by_gen, key=_natural_key):
+        parent = by_gen[gid].get("parent_generation_id")
+        if not isinstance(parent, str) or not parent:
+            return gid
+    return None
 
 
 def compute_epoch_delta_summary(
@@ -313,8 +370,7 @@ def compute_epoch_delta_summary(
             if isinstance(ds, int | float) and _is_finite(ds):
                 gross_total += float(ds)
                 gross_have = True
-            decision = _experiment_decision(exp)
-            if decision is not None and decision.strip().lower() in _PROMOTED_DECISIONS:
+            if promoted_tristate(experiment_decision(exp)) is True:
                 promoted_set.add(gid)
 
     # Edges among promoted generations only. A promoted child whose
@@ -696,8 +752,14 @@ def build_epoch_view(paths: WorkspacePaths, epoch_id: str | None = None) -> dict
     mutations = _parse_mutations(epoch_dir / "mutations.json")
     view["mutations"] = mutations if mutations is not None else []
 
-    # Experiment log: per-generation hypothesis + outcome + patch content.
+    # Experiment log: per-generation hypothesis + outcome + patch content,
+    # each stamped with the canonical ``decision`` + tri-state ``promoted``.
     view["experiments"] = _read_epoch_experiments(epoch_dir)
+
+    # The REIGNING champion — the end of the promoted spine (or the seed
+    # while nothing is promoted). The ONE champion pointer the frontend
+    # reads instead of re-scanning the generation list.
+    view["current_champion"] = _current_champion(view["experiments"])
 
     # Holdout ladder summary — the latest decision's ``holdout`` block
     # (ladder budget + train/holdout scalars). Read defensively from the

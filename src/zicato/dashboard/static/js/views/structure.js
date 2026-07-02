@@ -195,224 +195,16 @@ export function normalizeStructure(st, live) {
   };
 }
 
-// ── RECONSTRUCT a racing ladder from the per-challenger records ─────
-//
-// A racing tournament is persisted as ONE record PER CHALLENGER on
-// carries no racing records.
-export function reconstructRacing(brk, epochId) {
-  if (!brk || typeof brk !== 'object') return null;
-  const all = Array.isArray(brk.tournaments) ? brk.tournaments : [];
-  // SCOPE TO THE VIEWED EPOCH — /api/tournaments spans the whole workspace, so
-  // drop any record whose epoch is KNOWN and DIFFERENT from `epochId`.
-  const inEpoch = (t) => {
-    if (epochId == null) return true;
-    const want = String(epochId);
-    if (t && t.epoch_id != null) return String(t.epoch_id) === want;
-    const tid = String((t && t.tournament_id) || '');
-    if (tid.indexOf(want) >= 0) return true;
-    // a record whose tournament_id plainly names a DIFFERENT epoch is excluded;
-    // one with no recognisable epoch token is kept (cannot prove it is foreign).
-    return !/(^tourn_|:)/.test(tid);
-  };
-  const racing = all.filter((t) => t && String(t.structure) === 'racing'
-    && Array.isArray(t.rounds) && t.rounds.length && inEpoch(t));
-  if (!racing.length) return null;
-  const lineageIds = Array.isArray(brk.champion_lineage) ? brk.champion_lineage.map(String) : [];
-
-  // FAST PATH — an ASSEMBLED record whose rounds already hold the rung field
-  // ({competitors, survivors, cut}); synthesise the gate from lineage if absent.
-  const assembled = racing.find((t) => (Array.isArray(t.rounds) ? t.rounds : []).some((r) => {
-    const m = (r && Array.isArray(r.matches) && r.matches[0]) ? r.matches[0] : null;
-    return m && (Array.isArray(m.survivors) || Array.isArray(m.cut) || Array.isArray(m.competitors));
-  }));
-  if (assembled) {
-    const rounds = (Array.isArray(assembled.rounds) ? assembled.rounds : []).map((r) => r);
-    const hasFinal = rounds.some((r) => {
-      const m = (r && Array.isArray(r.matches) && r.matches[0]) ? r.matches[0] : {};
-      return String(m.match_id || '') === 'racing-final';
-    });
-    // synthesise a gate from the lone final-rung survivor + lineage when the
-    // assembled record itself recorded no `racing-final` match.
-    if (!hasFinal) {
-      let lastSurv = [];
-      for (let i = rounds.length - 1; i >= 0; i--) {
-        const m = (rounds[i] && Array.isArray(rounds[i].matches) && rounds[i].matches[0]) ? rounds[i].matches[0] : {};
-        if (Array.isArray(m.survivors) && m.survivors.length) { lastSurv = m.survivors.map(String); break; }
-      }
-      if (lastSurv.length === 1) {
-        const survivor = lastSurv[0];
-        const promoted = lineageIds.length ? lineageIds[lineageIds.length - 1] === survivor : false;
-        const champ = (Array.isArray(assembled.competitors) ? assembled.competitors.map(String) : [])
-          .find((c) => c !== survivor) || null;
-        rounds.push({
-          round_index: rounds.length,
-          label: 'Champion gate',
-          matches: [{
-            match_id: 'racing-final',
-            competitors: [champ, survivor].filter(Boolean),
-            winner: promoted ? survivor : (champ || ''),
-            decision: promoted ? 'promoted' : 'rejected',
-            board_fraction: 1.0,
-          }],
-        });
-      }
-    }
-    return normalizeStructure({
-      structure: 'racing',
-      structure_params: assembled.structure_params || brk.structure_params || {},
-      competitors: Array.isArray(assembled.competitors) ? assembled.competitors : [],
-      rounds,
-      standings: Array.isArray(assembled.standings) ? assembled.standings
-        : (Array.isArray(brk.standings) ? brk.standings : []),
-      champion_lineage: lineageIds,
-      source: 'reconstructed',
-    }, false);
-  }
-
-  // The challenger of a record is the child id — the suffix of the
-  // `<epoch>:<champion>-><challenger>` tournament id, falling back to
-  // competitors[1] (parent, child, …opponents). The champion is the opponent
-  const championOf = (t) => {
-    const comps = Array.isArray(t.competitors) ? t.competitors.map(String) : [];
-    return comps.length ? comps[0] : null;
-  };
-  const challengerOf = (t) => {
-    const id = String(t.tournament_id || '');
-    const arrow = id.lastIndexOf('->');
-    if (arrow >= 0) return id.slice(arrow + 2);
-    const comps = Array.isArray(t.competitors) ? t.competitors.map(String) : [];
-    return comps.length > 1 ? comps[1] : (comps[0] || null);
-  };
-
-  // rungIndex("rung3_m1") → 3 ; "racing-final" → Infinity (the gate).
-  const rungIndexOf = (matchId) => {
-    const m = /^rung(\d+)/.exec(String(matchId || ''));
-    if (m) return Number(m[1]);
-    return null; // not a rung (the gate, or unknown)
-  };
-  const isFinal = (matchId) => String(matchId || '') === 'racing-final';
-
-  // For each rung index, collect the field + each challenger's Δ-vs-champion;
-  // and track which challengers reached the final gate.
-  const byRung = new Map();         // rungIdx → Map(challenger → {delta, won})
-  const finalists = new Set();      // challengers with a `racing-final` match
-  const finalMatch = new Map();     // challenger → {won, delta, opponent}
-  let championId = null;
-  for (const t of racing) {
-    const chall = challengerOf(t);
-    if (!chall) continue;
-    const champ = championOf(t);
-    if (champ && !championId) championId = champ;
-    for (const r of (Array.isArray(t.rounds) ? t.rounds : [])) {
-      const mid = r && r.match_id;
-      if (isFinal(mid)) {
-        finalists.add(chall);
-        finalMatch.set(chall, {
-          won: !!(r && r.won),
-          delta: svg.isNum(r && r.delta_scalar) ? r.delta_scalar : null,
-          opponent: (r && r.opponent) || champ || null,
-        });
-        continue;
-      }
-      const ri = rungIndexOf(mid);
-      if (ri == null) continue;
-      if (!byRung.has(ri)) byRung.set(ri, new Map());
-      byRung.get(ri).set(chall, {
-        delta: svg.isNum(r && r.delta_scalar) ? r.delta_scalar : null,
-        won: !!(r && r.won),
-      });
-    }
-  }
-  if (!byRung.size && !finalists.size) return null;
-
-  // per-rung board fraction: rung N covers min(1, base · η^N) of the board.
-  const params = (brk.structure_params && typeof brk.structure_params === 'object')
-    ? brk.structure_params : {};
-  const eta = svg.isNum(params.eta) && params.eta >= 2 ? params.eta : 2;
-  const baseFrac = svg.isNum(params.board_fraction) && params.board_fraction > 0
-    ? params.board_fraction : null;
-  const fracFor = (ri) => (baseFrac == null ? null : Math.min(1, baseFrac * Math.pow(eta, ri)));
-
-  // Ordered rung indices.
-  const rungIdxs = [...byRung.keys()].sort((a, b) => a - b);
-  // Build the rung rounds. A challenger SURVIVES a rung when it also appears at
-  // the NEXT rung, or (for the last rung) in the champion gate.
-  const rounds = [];
-  for (let k = 0; k < rungIdxs.length; k++) {
-    const ri = rungIdxs[k];
-    const fieldMap = byRung.get(ri);
-    const field = [...fieldMap.keys()];
-    const nextIdx = rungIdxs[k + 1];
-    const nextField = nextIdx != null ? byRung.get(nextIdx) : null;
-    const survivors = [];
-    const cut = [];
-    for (const c of field) {
-      const carried = (nextField && nextField.has(c)) || finalists.has(c);
-      (carried ? survivors : cut).push(c);
-    }
-    const frac = fracFor(ri);
-    rounds.push({
-      round_index: ri,
-      label: `Rung ${ri}`,
-      matches: [{
-        match_id: `rung${ri}`,
-        competitors: field,
-        survivors,
-        cut,
-        board_fraction: frac,
-        deltas: Object.fromEntries(field.map((c) => [c, fieldMap.get(c).delta])),
-      }],
-    });
-  }
-
-  // The champion gate (the `racing-final` match). The lone finalist faces the
-  // champion on the full board; `won` (Δ negative ⇒ lower loss) ⇒ promoted.
-  const finalList = [...finalists];
-  const lineage = Array.isArray(brk.champion_lineage) ? brk.champion_lineage.map(String) : [];
-  const crownedFromLineage = lineage.length ? lineage[lineage.length - 1] : null;
-  if (finalList.length) {
-    // Prefer the finalist the lineage crowned; else the lone finalist.
-    const survivor = (crownedFromLineage && finalists.has(crownedFromLineage))
-      ? crownedFromLineage : finalList[0];
-    const fm = finalMatch.get(survivor) || {};
-    const promoted = !!fm.won;
-    const champ = championId || fm.opponent || null;
-    rounds.push({
-      round_index: (rungIdxs.length ? rungIdxs[rungIdxs.length - 1] : 0) + 1,
-      label: 'Champion gate',
-      matches: [{
-        match_id: 'racing-final',
-        competitors: [champ, survivor].filter(Boolean),
-        winner: promoted ? survivor : (champ || ''),
-        decision: promoted ? 'promoted' : 'rejected',
-        delta_scalar: svg.isNum(fm.delta) ? fm.delta : null,
-        board_fraction: 1.0,
-      }],
-    });
-  }
-
-  return normalizeStructure({
-    structure: 'racing',
-    structure_params: params,
-    competitors: [],
-    rounds,
-    standings: Array.isArray(brk.standings) ? brk.standings : [],
-    champion_lineage: lineage,
-    source: 'reconstructed',
-  }, false);
-}
-
 // ── the ONE non-gauntlet structure RESOLVER (live ↔ recorded) ───────
 //
 // THE SINGLE SOURCE OF TRUTH for "what tournament payload renders for this
 // epoch". Both the ALL-ROUNDS Match-ups page (renderConfiguredStructure) AND the
 // PER-ROUND drill-down (renderRoundDrilldown) MUST resolve their racing/swiss/
 // elim `st` THROUGH HERE, so the two paths can never drift (the recurring round-
-// view-empty bug class: the round view used to read the per-round FIELD record
-// directly, but a racing field record carries `rounds: []` — rungs live in the
-// per-challenger records + the live envelope, NOT the aggregate field record —
-// so the round view came up with zero rungs while the epoch view, which went
-// live-first → reconstructRacing, showed them).
+// view-empty bug class). The SETTLED racing ladder is SERVED by
+// `/api/epoch/{id}/racing-field` (the per-challenger join moved server-side);
+// callers fetch it and hand it in as the `completedRecord` — the client never
+// reconstructs rungs / survivors / the crowned winner from raw records.
 //
 // PURE + SYNCHRONOUS: it consumes ALREADY-FETCHED inputs (the live
 // active-tournament payload, the /api/tournaments bracket, the heartbeat /
@@ -423,23 +215,21 @@ export function reconstructRacing(brk, epochId) {
 // which page asks.
 //
 //   structure      — the configured structure ('racing'|'swiss'|'single_elim'|…)
-//   bracket        — the /api/tournaments payload (for reconstructRacing + the
-//                    per-tournament fallback record selection)
-//   epochId        — scopes reconstructRacing + the live guard
+//   bracket        — the /api/tournaments payload (per-tournament fallback
+//                    record selection)
+//   epochId        — scopes the live guard
 //   liveRaw        — the /api/active-tournament payload (null when idle / foreign)
 //   heartbeat,     — the live signals the progressive builders overlay
 //   activeRuns
 //   params         — the contract's structure params (fallback for a sparse record)
-//   completedRecord— an OPTIONAL already-fetched per-tournament structure record
-//                    (swiss/elim completed fallback); racing uses reconstructRacing
-//                    so it does not need this.
+//   completedRecord— an OPTIONAL already-fetched, normalized SETTLED record:
+//                    the per-tournament structure record (swiss/elim) or the
+//                    SERVED racing-field payload (racing).
 //
-// → { st, source } where source ∈ 'live' | 'reconstructed' | 'record' | null.
+// → { st, source } where source ∈ 'live' | 'record' | null.
 export function resolveNonGauntletSt(opts) {
   const o = opts || {};
   const structure = String(o.structure || 'gauntlet');
-  const bracket = (o.bracket && typeof o.bracket === 'object') ? o.bracket : {};
-  const epochId = o.epochId != null ? o.epochId : null;
   const liveRaw = (o.liveRaw && typeof o.liveRaw === 'object') ? o.liveRaw : null;
 
   // (1) LIVE-FIRST — a run in flight for THIS epoch governs the topology so the
@@ -487,16 +277,10 @@ export function resolveNonGauntletSt(opts) {
     return { st: liveSt, source: 'live' };
   }
 
-  // (2) RACING — reconstruct the rung/gate ladder from the per-challenger records
-  // on the bracket (the aggregate field record carries `rounds: []` by design).
-  if (structure === 'racing') {
-    const recon = reconstructRacing(bracket, epochId);
-    if (recon) return { st: recon, source: 'reconstructed' };
-  }
-
-  // (3) the COMPLETED per-tournament record (swiss/elim — or racing when no
-  // per-challenger records reconstruct), already fetched + normalized by the
-  // caller. Null ⇒ no recorded structure for this epoch.
+  // (2) the COMPLETED settled record — the per-tournament structure record
+  // (swiss/elim) or the SERVED racing-field payload (racing), already fetched
+  // + normalized by the caller. Null ⇒ no recorded structure for this epoch
+  // (the views render their honest empty; nothing is re-derived here).
   if (o.completedRecord) return { st: o.completedRecord, source: 'record' };
   return { st: null, source: null };
 }
@@ -2104,54 +1888,45 @@ export function liveMatchupsForCandidate(at, genId) {
 }
 
 // ── ONE candidate's PATH through the racing tournament ──────────────
+// A pure PROJECTION of the SERVED racing-field payload (or the normalized
+// racing `st` the resolver returned): which rungs this candidate raced, its
+// Δ-vs-champion at each, whether the rung's SERVED survivors/cut list carried
+// it forward, and the served champion-gate verdict. Nothing here re-derives a
+// decision — the survivors/cut/winner all come off the payload verbatim; a
+// candidate absent from the payload yields null (unknown, never guessed).
 // → { stages:[{ label, kind:'rung'|'final', delta, verdict }] } | null
-export function candidateProgression(brk, genId) {
-  if (!brk || typeof brk !== 'object' || genId == null) return null;
+export function candidateProgression(field, genId) {
+  if (!field || typeof field !== 'object' || genId == null) return null;
+  if (String(field.structure || '') !== 'racing') return null;
   const id = String(genId);
-  const all = Array.isArray(brk.tournaments) ? brk.tournaments : [];
-  // find THIS candidate's per-challenger racing record (challenger == genId).
-  const challengerOf = (t) => {
-    const tid = String(t.tournament_id || '');
-    const arrow = tid.lastIndexOf('->');
-    if (arrow >= 0) return tid.slice(arrow + 2);
-    const comps = Array.isArray(t.competitors) ? t.competitors.map(String) : [];
-    return comps.length > 1 ? comps[1] : (comps[0] || null);
-  };
-  const rec = all.find((t) => t && String(t.structure) === 'racing'
-    && Array.isArray(t.rounds) && t.rounds.length && challengerOf(t) === id);
-  if (!rec) return null;
-
-  const rungIndexOf = (mid) => { const m = /^rung(\d+)/.exec(String(mid || '')); return m ? Number(m[1]) : null; };
+  const rounds = Array.isArray(field.rounds) ? field.rounds : [];
+  const firstMatch = (r) => (r && Array.isArray(r.matches) && r.matches[0]) ? r.matches[0] : {};
   const isFinal = (mid) => String(mid || '') === 'racing-final';
-  const lineage = Array.isArray(brk.champion_lineage) ? brk.champion_lineage.map(String) : [];
-  const crowned = lineage.length ? lineage[lineage.length - 1] : null;
-
-  const rungs = [];
-  let final = null;
-  for (const r of rec.rounds) {
-    const mid = r && r.match_id;
-    const delta = svg.isNum(r && r.delta_scalar) ? r.delta_scalar : null;
-    if (isFinal(mid)) { final = { delta, won: !!(r && r.won) }; continue; }
-    const ri = rungIndexOf(mid);
-    if (ri == null) continue;
-    rungs.push({ ri, delta, won: !!(r && r.won) });
-  }
-  rungs.sort((a, b) => a.ri - b.ri);
-  if (!rungs.length && !final) return null;
 
   const stages = [];
-  rungs.forEach((rg, k) => {
-    // a rung is "survived" when there is a later rung or a final; else "cut".
-    const survived = k < rungs.length - 1 || !!final;
-    stages.push({ label: `rung ${rg.ri}`, kind: 'rung', delta: rg.delta, verdict: survived ? 'survived' : 'cut' });
-  });
-  if (final) {
-    const promoted = final.won || (crowned === id);
-    stages.push({ label: 'final', kind: 'final', delta: final.delta, verdict: promoted ? 'promoted' : 'rejected' });
-  } else if (rungs.length) {
-    // no final reached → the candidate was cut at its last rung.
-    stages[stages.length - 1].verdict = 'cut';
+  let sawFinal = false;
+  for (const r of rounds) {
+    const m = firstMatch(r);
+    const comps = (Array.isArray(m.competitors) ? m.competitors : []).map(String);
+    if (isFinal(m.match_id)) {
+      if (comps.indexOf(id) < 0) continue;
+      sawFinal = true;
+      const promoted = String(m.decision || '') === 'promoted' && String(m.winner || '') === id;
+      stages.push({ label: 'final', kind: 'final',
+        delta: svg.isNum(m.delta_scalar) ? m.delta_scalar : null,
+        verdict: promoted ? 'promoted' : 'rejected' });
+      continue;
+    }
+    if (comps.indexOf(id) < 0) continue;
+    const ri = svg.isNum(r.round_index) ? r.round_index
+      : (svg.isNum(r.stage_index) ? r.stage_index : stages.length);
+    const survivors = (Array.isArray(m.survivors) ? m.survivors : []).map(String);
+    const delta = (m.deltas && typeof m.deltas === 'object' && svg.isNum(m.deltas[id])) ? m.deltas[id] : null;
+    stages.push({ label: `rung ${ri}`, kind: 'rung', delta,
+      verdict: survivors.indexOf(id) >= 0 ? 'survived' : 'cut' });
   }
+  if (!stages.length) return null;
+  void sawFinal;
   return { stages };
 }
 
@@ -2309,19 +2084,17 @@ export function gauntletModel(st) {
     if (scalar == null && championScalar != null && delta != null) scalar = championScalar + delta;
     if (delta == null && scalar != null && championScalar != null) delta = scalar - championScalar;
 
-    // outcome: an explicit gate decision wins; else derive from scalar vs gate.
+    // outcome: the SERVER'S decision only — the match's recorded decision or
+    // the standings' champion/eliminated status. An absent decision renders
+    // as unknown (null); the client NEVER re-runs the gate rule against the
+    // scalar + margin (the deleted single-rule fallback could disagree with
+    // the real multi-rule gate).
     const dec = m ? String(m.decision || '').toLowerCase() : '';
     let outcome = null;
     if (dec === 'promoted') outcome = 'cleared';
     else if (dec === 'rejected') outcome = 'failed';
     else if (s && String(s.status || '').toLowerCase() === 'champion') outcome = 'cleared';
     else if (s && String(s.status || '').toLowerCase() === 'eliminated') outcome = 'failed';
-    // a settled scalar with a known gate resolves the outcome when no decision.
-    if (outcome == null && !live && svg.isNum(scalar) && championScalar != null) {
-      const gate = promoteMargin != null ? championScalar - promoteMargin : championScalar;
-      if (Math.abs(scalar - gate) < 1e-9) outcome = 'tied';
-      else outcome = scalar < gate ? 'cleared' : 'failed';
-    }
     const survivor = outcome === 'cleared'
       || (lineage.length && lineage[lineage.length - 1] === id && id !== championId);
 

@@ -134,15 +134,15 @@ export function lineage() { return cachedJson('/api/lineage'); }
 
 // ---- epoch-scoped reads --------------------------------------------
 //
-// /api/lineage is workspace-GLOBAL (every generation across every epoch),
-// but each row carries `epoch_id`. The Console screens must show only the
-// gens of the epoch they are VIEWING — not always the current one — so the
-// cross-epoch leakage (Class A) is fixed at the read layer: filter the
-// global lineage to one epoch, deduped by generation id. Fall back to the
-// unfiltered list ONLY when NO row carries an epoch_id (a pre-feature
-// payload), so a single-epoch workspace keeps working unchanged.
+// The SERVER scopes the generations feed: `/api/lineage?epoch=<id>` returns
+// one epoch's generations (every row already carries the server-stamped
+// tri-state `promoted` + `epoch_id`). The residual client-side epoch filter
+// below is a SCOPING GUARD only — a degraded server (the Rust supervisor
+// ignores the query param) still answers with the global feed, and a
+// foreign-tagged row must not leak into the viewed epoch. It never
+// re-derives any per-row field.
 export async function generationsForEpoch(epochId) {
-  const lin = await lineage();
+  const lin = await cachedJson(epochId != null ? `/api/lineage?epoch=${enc(epochId)}` : '/api/lineage');
   const gens = (lin && Array.isArray(lin.generations)) ? lin.generations : [];
   if (!gens.length) return [];
   const anyTagged = gens.some((g) => g && g.epoch_id != null);
@@ -270,6 +270,22 @@ export function fieldStatusSummary(fs) {
   };
 }
 
+// The SETTLED round timeline for one epoch — the champion-spine rounds + the
+// loss-floor waterfall, JOINED SERVER-SIDE (build_round_timeline). The old
+// four-endpoint client join is deleted; a null read (the endpoint absent —
+// e.g. the Rust supervisor) renders the honest empty timeline, never a
+// client-side re-derivation.
+export function roundTimeline(epochId) {
+  return cachedJson(`/api/epoch/${enc(epochId)}/round-timeline`);
+}
+// The SETTLED racing-field ladder for one epoch — the per-challenger racing
+// records joined into ONE rung/gate payload SERVER-SIDE (build_racing_field).
+// Returns null when absent or `present: false` (no racing records) so callers
+// fall through to their empty state without reconstructing anything.
+export async function racingField(epochId) {
+  const payload = await cachedJson(`/api/epoch/${enc(epochId)}/racing-field`);
+  return (payload && payload.present) ? payload : null;
+}
 export function perJudgeTrend(epochId) {
   return cachedJson(`/api/epoch/${enc(epochId)}/per-judge-trend`);
 }

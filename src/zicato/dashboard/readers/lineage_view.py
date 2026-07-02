@@ -5,6 +5,10 @@ from __future__ import annotations
 import datetime as _dt
 from typing import Any
 
+from zicato.dashboard.readers.decisions import (
+    experiment_decision,
+    promoted_tristate,
+)
 from zicato.dashboard.readers.paths import (
     WorkspacePaths,
     _iso,
@@ -17,31 +21,24 @@ from zicato.workspace import iter_epochs
 # ---------------------------------------------------------------------------
 # Lineage view (directory-derived)
 # ---------------------------------------------------------------------------
-
-_PROMOTED_DECISIONS = frozenset({"promoted", "promote", "accepted", "accept", "win", "won"})
-
-
-def _experiment_decision(exp: dict[str, Any]) -> str | None:
-    outcome = exp.get("outcome")
-    if outcome is None:
-        return None
-    if isinstance(outcome, str):
-        return outcome
-    if isinstance(outcome, dict):
-        for key in ("decision", "tournament_decision", "verdict"):
-            val = outcome.get(key)
-            if isinstance(val, str):
-                return val
-    return None
+#
+# The decision classifier lives in ``readers.decisions`` — the ONE module the
+# lineage view, the epoch experiments feed, and every other reader share, so
+# the payloads cannot disagree about what counts as a promotion.
 
 
-def build_lineage_view(paths: WorkspacePaths) -> dict[str, Any]:
+def build_lineage_view(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[str, Any]:
     """Every generation directory in every epoch, in-flight or resolved.
 
     Walks ``epochs/{id}/generations/*`` and emits one node per directory
     with ``{generation_id, epoch_id, parent_generation_id, promoted,
     created_at}`` — ``promoted`` is ``None`` while a generation is still
     being scored. Identical shape to the Rust ``build_lineage_view``.
+
+    ``epoch_id`` scopes the feed to ONE epoch's generations (the
+    epoch-scoped generations feed the views consume); ``None`` keeps the
+    workspace-global walk. An unknown id yields an empty list — the same
+    honest degrade as an epoch with no generations.
     """
     legacy: dict[tuple[str, str], dict[str, Any]] = {}
     lineage_file = _read_json_value(paths.lineage)
@@ -49,14 +46,14 @@ def build_lineage_view(paths: WorkspacePaths) -> dict[str, Any]:
         for ep in lineage_file.get("epochs", []) or []:
             if not isinstance(ep, dict):
                 continue
-            epoch_id = str(ep.get("id", ""))
+            legacy_eid = str(ep.get("id", ""))
             for gen in ep.get("generations", []) or []:
                 if not isinstance(gen, dict):
                     continue
                 gid = gen.get("id")
                 if not isinstance(gid, str):
                     continue
-                legacy[(epoch_id, gid)] = {
+                legacy[(legacy_eid, gid)] = {
                     "parent_id": gen.get("parent_id"),
                     "created_at": gen.get("created_at") or None,
                     "promoted": gen.get("promoted"),
@@ -70,15 +67,17 @@ def build_lineage_view(paths: WorkspacePaths) -> dict[str, Any]:
     # it through ``iter_epochs`` keeps the workspace walk in one place and
     # reuses the cached ``created_at`` each typed ``Epoch`` already carries.
     for epoch in iter_epochs(layout_of(paths)):
-        epoch_id = epoch.id
-        epoch_created[epoch_id] = epoch.created_at
+        if epoch_id is not None and epoch.id != epoch_id:
+            continue
+        eid = epoch.id
+        epoch_created[eid] = epoch.created_at
         gens_dir = epoch.directory / "generations"
         if gens_dir.is_dir():
             for gen_dir in sorted(gens_dir.iterdir(), key=lambda p: _natural_key(p.name)):
                 if not gen_dir.is_dir():
                     continue
                 generation_id = gen_dir.name
-                meta = legacy.get((epoch_id, generation_id), {})
+                meta = legacy.get((eid, generation_id), {})
                 experiment = _read_json_value(gen_dir / "experiment.json")
                 experiment = experiment if isinstance(experiment, dict) else None
 
@@ -90,9 +89,7 @@ def build_lineage_view(paths: WorkspacePaths) -> dict[str, Any]:
 
                 promoted: bool | None = None
                 if experiment is not None:
-                    decision = _experiment_decision(experiment)
-                    if decision is not None:
-                        promoted = decision.strip().lower() in _PROMOTED_DECISIONS
+                    promoted = promoted_tristate(experiment_decision(experiment))
                 if promoted is None:
                     legacy_promoted = meta.get("promoted")
                     if isinstance(legacy_promoted, bool):
@@ -133,7 +130,7 @@ def build_lineage_view(paths: WorkspacePaths) -> dict[str, Any]:
 
                 node: dict[str, Any] = {
                     "generation_id": generation_id,
-                    "epoch_id": epoch_id,
+                    "epoch_id": eid,
                     "parent_generation_id": parent if isinstance(parent, str) else None,
                     "promoted": promoted,
                     "created_at": created_at,

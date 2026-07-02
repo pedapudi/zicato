@@ -52,13 +52,20 @@ function freshHb(hb) {
   return hb;
 }
 
+import { roundTimelineFromFixtures, racingFieldFromFixtures, racingFieldFromBracket } from './mock_server.mjs';
+
 const FIXTURE = {
   '/api/epoch': {
     epoch_id: EPOCH_ID, closed: false, goal: 'Make the presentation agent crisper.',
+    // the REIGNING champion — the server-stamped pointer the views read
+    // (never re-scanned from the generation list client-side).
+    current_champion: 'v0',
     experiments: [
-      { generation_id: 'v0', parent_generation_id: '', outcome: { decision: 'baseline' } },
-      { generation_id: 'v1', parent_generation_id: 'v0', outcome: { decision: 'rejected' } },
-      { generation_id: 'v2', parent_generation_id: 'v0', outcome: { decision: 'rejected' } },
+      // each record carries the CANONICAL server-stamped decision surface
+      // (`decision` + tri-state `promoted`) beside the raw outcome.
+      { generation_id: 'v0', parent_generation_id: '', outcome: { decision: 'baseline' }, decision: 'baseline', promoted: false },
+      { generation_id: 'v1', parent_generation_id: 'v0', outcome: { decision: 'rejected' }, decision: 'rejected', promoted: false },
+      { generation_id: 'v2', parent_generation_id: 'v0', outcome: { decision: 'rejected' }, decision: 'rejected', promoted: false },
     ],
     board: [
       { id: 'waffles_single', kind: 'single_turn', input_preview: 'Make a presentation about waffles.', expectation_kind: 'predicate', budget_s: 180, weight: 1, tags: ['smoke'] },
@@ -115,6 +122,7 @@ FIXTURE[`/api/generation/${EPOCH_ID}/v2/per-entry`] = { epoch_id: EPOCH_ID, gene
   { entry_id: 'waffles_single', run_id: 'run_v2_waffles', drift_loss: 61.0, pass_fail: 0, runtime_ms: 180000, wall_clock_budget_exceeded: false },
 ] };
 FIXTURE[`/api/round/${EPOCH_ID}/v0/v1/gate`] = { decision: 'rejected', delta_scalar: 75.71, delta_pass_rate: 0,
+  deciding_rule: 'scalar_margin', margin: 0.01, regressed_predicate: null, regressed_namespace: null,
   reason: 'challenger regressed: loss rose by 75.71', rules: [
     { id: 'scalar_margin', label: 'Scalar margin', status: 'fail', fired: true, detail: '70.94 → 146.65 (+75.71; needs ≤ -0.01)' },
     { id: 'pass_rate_monotonicity', label: 'Pass-rate monotonicity', status: 'not_reached', fired: false },
@@ -130,7 +138,8 @@ FIXTURE[`/api/round/${EPOCH_ID}/v0/v1/gate`] = { decision: 'rejected', delta_sca
     challenger: { scalar: { present: true, kind: 'transform', source: 'pow(2.0)', transforms: [{ kind: 'pass', op: 'pow(2.0)' }], fail_open: false, fallback_reason: null },
                   drift: { present: true, kind: 'transform', source: 'drift transform', transforms: [{ kind: 'looping_reasoning', op: 'harmonic' }], fail_open: false, fallback_reason: null } } },
   primary_driver: { judge: 'incorporates_feedback', delta: 24.0 } };
-FIXTURE[`/api/round/${EPOCH_ID}/v0/v2/gate`] = { decision: 'rejected', delta_scalar: 1.51, reason: 'regressed', rules: [
+FIXTURE[`/api/round/${EPOCH_ID}/v0/v2/gate`] = { decision: 'rejected', delta_scalar: 1.51, reason: 'regressed',
+  deciding_rule: 'scalar_margin', margin: 0.01, regressed_predicate: null, regressed_namespace: null, rules: [
   { id: 'scalar_margin', label: 'Scalar margin', status: 'fail', fired: true, detail: '70.94 → 72.45' },
 ] };
 FIXTURE['/api/conversation/run_v1_waffles'] = {
@@ -156,6 +165,15 @@ FIXTURE['/api/conversation/run_v0_waffles'] = {
 // the base — the fallback serves it from the base fixture, unchanged.
 function lookupFixture(F, path) {
   if (Object.prototype.hasOwnProperty.call(F, path)) return F[path];
+  // The two SERVED joins (round timeline + racing field) are derived from the
+  // granular fixtures by the MOCK SERVER (mirroring the Python readers), so a
+  // fixture map does not have to hand-write them — exactly like the real
+  // dashboard service derives them from the same underlying records. An
+  // EXPLICIT fixture (above) always wins.
+  let m = /^\/api\/epoch\/([^/?]+)\/round-timeline$/.exec(path);
+  if (m) return roundTimelineFromFixtures(F, decodeURIComponent(m[1]));
+  m = /^\/api\/epoch\/([^/?]+)\/racing-field$/.exec(path);
+  if (m) return racingFieldFromFixtures(F, decodeURIComponent(m[1]));
   const q = path.indexOf('?');
   if (q >= 0) {
     const base = path.slice(0, q);
@@ -462,7 +480,7 @@ test('candidate view (RACING): an in-flight candidate ghosts a PROJECTED radar +
   const F = { ...FIXTURE };
   F['/api/epoch'] = { ...FIXTURE['/api/epoch'],
     tournament: { structure: 'racing', params: {} },
-    experiments: [...FIXTURE['/api/epoch'].experiments, { generation_id: 'v3', parent_generation_id: 'v0', outcome: {} }] };
+    experiments: [...FIXTURE['/api/epoch'].experiments, { generation_id: 'v3', parent_generation_id: 'v0', outcome: {}, decision: null, promoted: null }] };
   F['/api/lineage'] = { generations: [...FIXTURE['/api/lineage'].generations,
     { generation_id: 'v3', epoch_id: EPOCH_ID, parent_generation_id: 'v0', promoted: false }] };
   // v3 is NOT in the score-trajectory → no settled scalar (it is racing).
@@ -1473,6 +1491,14 @@ test('under-render: a NEW candidate folded into AppState repaints the tree (no h
     if (base === '/api/epoch') return { ok: true, json: async () => liveEpoch };
     if (base === '/api/tournaments') return { ok: true, json: async () => liveBracket };
     if (base === '/api/score-trajectory') return { ok: true, json: async () => ({ points: [] }) };
+    // the SERVED round timeline derives from THIS test's live fixtures (the
+    // global FIXTURE's rounds must not leak into the flat under-render epoch).
+    const mTl = /^\/api\/epoch\/([^/?]+)\/round-timeline$/.exec(path);
+    if (mTl) {
+      const F = { '/api/lineage': liveLineage, '/api/epoch': liveEpoch,
+        '/api/tournaments': liveBracket, '/api/score-trajectory': { points: [] } };
+      return { ok: true, json: async () => roundTimelineFromFixtures(F, decodeURIComponent(mTl[1])) };
+    }
     const v = lookupFixture(FIXTURE, path);
     if (v !== undefined) return { ok: true, json: async () => v };
     return { ok: false, status: 404, json: async () => ({ error: 'not found: ' + path }) };
@@ -2508,8 +2534,8 @@ const RACING_STRUCT = {
 function structFixture(structure, payload, tournamentId) {
   const gens = payload.competitors.map((c) => ({ generation_id: c.generation_id, epoch_id: EPOCH_ID, parent_generation_id: c.role === 'champion' ? '' : 'v0', promoted: c.role === 'champion' }));
   const F = {
-    '/api/epoch': { epoch_id: EPOCH_ID, closed: false, goal: 'g', tournament: { structure, params: payload.structure_params },
-      experiments: gens.map((g) => ({ generation_id: g.generation_id, parent_generation_id: g.parent_generation_id, outcome: { decision: g.promoted ? 'baseline' : 'rejected' } })), board: [] },
+    '/api/epoch': { epoch_id: EPOCH_ID, closed: false, goal: 'g', current_champion: 'v0', tournament: { structure, params: payload.structure_params },
+      experiments: gens.map((g) => ({ generation_id: g.generation_id, parent_generation_id: g.parent_generation_id, outcome: { decision: g.promoted ? 'baseline' : 'rejected' }, decision: g.promoted ? 'baseline' : 'rejected', promoted: false })), board: [] },
     '/api/lineage': { generations: gens },
     '/api/score-trajectory': { points: gens.map((g, i) => ({ generation_id: g.generation_id, scalar: 70 + i })) },
     '/api/tournaments': { epoch_id: EPOCH_ID, structure, structure_params: payload.structure_params, champion_lineage: ['v0'],
@@ -2873,8 +2899,8 @@ function racingRoundFixture({ live }) {
   const fieldRec = { ...RACING_FIELD_EMPTY, rounds: settledRounds, standings: settledStandings, state: live ? 'in_progress' : 'settled' };
   const structRec = { ...fieldRec, source: 'index' };
   const F = {
-    '/api/epoch': { epoch_id: EPOCH_ID, closed: !live, goal: 'g', tournament: { structure: 'racing', params: RACING_FIELD_EMPTY.structure_params },
-      experiments: gens.map((g) => ({ generation_id: g.generation_id, parent_generation_id: g.parent_generation_id, outcome: { decision: g.promoted ? 'baseline' : 'pending' }, round_index: 0 })), board: [] },
+    '/api/epoch': { epoch_id: EPOCH_ID, closed: !live, goal: 'g', current_champion: 'v0', tournament: { structure: 'racing', params: RACING_FIELD_EMPTY.structure_params },
+      experiments: gens.map((g) => ({ generation_id: g.generation_id, parent_generation_id: g.parent_generation_id, outcome: { decision: g.promoted ? 'baseline' : 'pending' }, decision: g.promoted ? 'baseline' : 'pending', promoted: null, round_index: 0 })), board: [] },
     '/api/lineage': { generations: gens },
     '/api/score-trajectory': { points: live ? [] : [{ generation_id: 'v0', scalar: 54.0 }, { generation_id: 'v1', scalar: 40.0 }] },
     '/api/tournaments': { epoch_id: EPOCH_ID, structure: 'racing', structure_params: RACING_FIELD_EMPTY.structure_params, champion_lineage: ['v0'],
@@ -3954,7 +3980,7 @@ test('live racing model: the champion-gate is PENDING (deciding…) during the r
 // (f) the fully-completed race still renders the full ladder (no regression).
 test('live racing model: a fully-completed race (all rounds, no live) still reconstructs the full ladder (no regression)', () => {
   // this is the existing reconstruct path — assert it is unaffected.
-  const st = STRUCT.reconstructRacing(RACING_TOURNAMENTS, RC_EPOCH);
+  const st = STRUCT.normalizeStructure(racingFieldFromBracket(RACING_TOURNAMENTS, RC_EPOCH), false);
   assert(st && st.structure === 'racing', 'the completed reconstruction still yields a racing ladder');
   const model = STRUCT.racingModel(st);
   assert(model.hasRungs, 'the completed ladder has rungs');
@@ -4625,8 +4651,8 @@ const RACING_TOURNAMENTS = {
 
 // ---- (a) reconstruct the rungs/field/cuts/survivors -----------------
 
-test('racing reconstruct: groups the per-challenger records into rung0 {v1,v2,v3,v4} (v1/v2 cut ✕, v3/v4 survive ↑) and rung1 {v3,v4} (v4 cut, v3 survives)', () => {
-  const st = STRUCT.reconstructRacing(RACING_TOURNAMENTS, RC_EPOCH);
+test('racing field (SERVED): rung0 {v1,v2,v3,v4} (v1/v2 cut ✕, v3/v4 survive ↑) and rung1 {v3,v4} (v4 cut, v3 survives) read verbatim', () => {
+  const st = STRUCT.normalizeStructure(racingFieldFromBracket(RACING_TOURNAMENTS, RC_EPOCH), false);
   assert(st, 'a racing structure was reconstructed from the per-challenger records');
   assertEqual(st.structure, 'racing', 'the reconstructed structure is racing');
   // only the RUNG rounds (racing-final is the gate, not a rung).
@@ -4652,8 +4678,8 @@ test('racing reconstruct: groups the per-challenger records into rung0 {v1,v2,v3
 
 // ---- (b) the champion-gate crowns v3 (NOT "tbd") --------------------
 
-test('racing reconstruct: the champion-gate resolves v3 as the promoted champion ♛ (racing-final won + champion_lineage), NOT "tbd"', () => {
-  const st = STRUCT.reconstructRacing(RACING_TOURNAMENTS, RC_EPOCH);
+test('racing field (SERVED): the champion-gate names v3 as the promoted champion ♛, NOT "tbd"', () => {
+  const st = STRUCT.normalizeStructure(racingFieldFromBracket(RACING_TOURNAMENTS, RC_EPOCH), false);
   const gate = st.rounds.find((r) => String(r.matches[0].match_id) === 'racing-final');
   assert(gate, 'a racing-final champion-gate round was reconstructed');
   const gm = gate.matches[0];
@@ -4678,8 +4704,8 @@ test('racing reconstruct: the champion-gate resolves v3 as the promoted champion
 
 // ---- (c) competitors are clickable to their candidate ---------------
 
-test('racing reconstruct: each competitor in the funnel is clickable → its candidate page', () => {
-  const st = STRUCT.reconstructRacing(RACING_TOURNAMENTS, RC_EPOCH);
+test('racing field (SERVED): each competitor in the funnel is clickable → its candidate page', () => {
+  const st = STRUCT.normalizeStructure(racingFieldFromBracket(RACING_TOURNAMENTS, RC_EPOCH), false);
   let navTo = null;
   const ctx = { navigate: (v, p) => { navTo = { v, p }; }, href: router.href };
   const nodes = STRUCT.renderStructure(st, ctx, RC_EPOCH);
@@ -5921,9 +5947,10 @@ test('lifecycle DAG (integration): the candidate view feeds the champion compari
   assert(agg.getAttribute('data-champ-sigma') && agg.getAttribute('data-delta-sigma'), 'the rendered Σ node carries the champion Σ + the Δ');
 });
 
-test('lifecycle RUNG-PROGRESSION strip: reconstructs rung0→rung1→final (Δ + won/cut) from the per-challenger structure record', () => {
-  // v3’s racing path from RACING_TOURNAMENTS: rung0 won → rung1 → racing-final promoted.
-  const prog = STRUCT.candidateProgression(RACING_TOURNAMENTS, 'v3');
+test('lifecycle RUNG-PROGRESSION strip: projects rung0→rung1→final (Δ + survived/cut) off the SERVED racing field', () => {
+  // v3’s racing path off the SERVED field: rung0 survived → rung1 → final promoted.
+  const RACING_FIELD_SERVED = STRUCT.normalizeStructure(racingFieldFromBracket(RACING_TOURNAMENTS, RC_EPOCH), false);
+  const prog = STRUCT.candidateProgression(RACING_FIELD_SERVED, 'v3');
   assert(prog && Array.isArray(prog.stages), 'a progression was reconstructed for the racing candidate v3');
   assertDeep(prog.stages.map((s) => s.label), ['rung 0', 'rung 1', 'final'], 'the path is rung0 → rung1 → final');
   assertDeep(prog.stages.map((s) => s.kind), ['rung', 'rung', 'final'], 'the final stage is flagged kind=final');
@@ -5932,12 +5959,14 @@ test('lifecycle RUNG-PROGRESSION strip: reconstructs rung0→rung1→final (Δ +
   assertEqual(prog.stages[2].delta, -32.19, 'the final stage carries the Δ-vs-champion');
 
   // a cut candidate (v4: rung0 → rung1, no final) ends "cut".
-  const prog4 = STRUCT.candidateProgression(RACING_TOURNAMENTS, 'v4');
+  const prog4 = STRUCT.candidateProgression(STRUCT.normalizeStructure(racingFieldFromBracket(RACING_TOURNAMENTS, RC_EPOCH), false), 'v4');
   assert(prog4, 'v4 has a progression');
   assertEqual(prog4.stages[prog4.stages.length - 1].verdict, 'cut', 'v4 was cut at its last rung (no final reached)');
 
-  // a gauntlet / non-racing candidate has NO progression (strip suppressed).
+  // a gauntlet / non-racing payload has NO progression (strip suppressed).
   assertEqual(STRUCT.candidateProgression(FIXTURE['/api/tournaments'], 'v1'), null, 'a gauntlet candidate has no rung progression');
+  // and an UNSERVED racing field (null) reads as unknown — never re-derived.
+  assertEqual(STRUCT.candidateProgression(null, 'v3'), null, 'no served field → no progression');
 
   // the builder renders a fit-to-width SVG with a stage per rung.
   const node = dag.rungProgression({ stages: prog.stages });
@@ -6707,7 +6736,7 @@ test('live motion: prefers-reduced-motion suppresses the live animation classes/
 // carries the champion/benchmark (v0) reference …" test below.)
 
 test('racing: the racingModel derives the champion/benchmark (v0) seat distinct from the survivor', () => {
-  const st = STRUCT.reconstructRacing(RACING_TOURNAMENTS, RC_EPOCH);
+  const st = STRUCT.normalizeStructure(racingFieldFromBracket(RACING_TOURNAMENTS, RC_EPOCH), false);
   const model = STRUCT.racingModel(st);
   assert(model, 'a racing model was derived');
   assertEqual(model.benchmarkId, 'v0', 'the benchmark is the champion v0 (the seat the field is raced against)');
@@ -7064,12 +7093,12 @@ test('epoch view (cross-epoch): a PROPOSING e1 shows the honest empty state — 
   coreState.state.activeTournament = null;
 });
 
-test('reconstructRacing (cross-epoch): scoped to the viewed epoch — a foreign epoch’s records are dropped', () => {
-  // the tournaments payload carries ONLY e0 racing records; reconstructing for e1
-  // must return null (no funnel), but reconstructing for e0 still rebuilds it.
+test('racing field: the client-side reconstruction is DELETED — the ladder is SERVED and epoch-scoped by the server', () => {
+  // reconstructRacing (the client join over per-challenger records) is GONE:
+  // the server scopes + joins (build_racing_field); the mock server mirrors it.
+  assertEqual(STRUCT.reconstructRacing, undefined, 'reconstructRacing is deleted from the client');
   const brk = twoEpochFixture(TWO_EP_NEW)['/api/tournaments'];
-  assertEqual(STRUCT.reconstructRacing(brk, TWO_EP_NEW), null, 'no e1 racing record → null (the e0 records are NOT adopted under e1)');
-  const e0 = STRUCT.reconstructRacing(brk, TWO_EP_OLD);
+  const e0 = STRUCT.normalizeStructure(racingFieldFromBracket(brk, TWO_EP_OLD), false);
   assert(e0 && e0.structure === 'racing', 'the e0 ladder still reconstructs from its own records');
 });
 
@@ -7669,7 +7698,7 @@ test('Tier2 (Class B): decisionFor never defaults null/absent → rejected', () 
   assertEqual(ui.decisionFor({ promoted: true, parent: 'v0' }), 'promoted', 'promoted:true → promoted');
   assertEqual(ui.decisionFor({ promoted: false, parent: 'v0' }), 'rejected', 'promoted:false → rejected');
   assertEqual(ui.decisionFor({ parent: null }), 'baseline', 'no parent → baseline');
-  assertEqual(ui.decisionFor({ promoted: null, parent: 'v0', exp: { outcome: { decision: 'rejected' } } }), 'rejected', 'null + resolved negative outcome → rejected');
+  assertEqual(ui.decisionFor({ promoted: null, parent: 'v0', exp: { decision: 'rejected' } }), 'rejected', 'null + stamped negative decision → rejected');
   assertEqual(ui.decisionFor({ promoted: null, parent: 'v0', gate: { decision: 'promoted' } }), 'promoted', 'null + resolved gate promote → promoted');
   assertEqual(ui.decisionFor({}), 'baseline', 'empty (no parent) → baseline, never rejected');
 });
@@ -8848,7 +8877,24 @@ test('Task 3 — elimFlow: a lane ELIMINATED in a column draws NO phantom advanc
 
 // ---- (1) the round MODEL groups gens by round_index ----------------
 
-test('round model: groups generations by round_index — champion spine threads v0 → promoted', () => {
+// Serve a round timeline for plain test inputs via the MOCK SERVER (the same
+// join build_round_timeline performs), then consume it exactly as the views
+// do — roundsFromTimeline + the live overlay. The client-side four-endpoint
+// join (epochRoundModel) is DELETED; these tests exercise the consumer.
+function roundsModelFor({ gens, scalarBy, bracket, structure, championId, projected, inflight }) {
+  const F = {
+    '/api/lineage': { generations: (gens || []).map((g) => ({
+      generation_id: g.id, epoch_id: 'e-model', parent_generation_id: g.parent || '',
+      promoted: g.promoted, round_index: g.round_index })) },
+    '/api/score-trajectory': { points: [...(scalarBy || new Map()).entries()].map(([generation_id, scalar]) => ({ generation_id, scalar })) },
+    '/api/tournaments': Object.assign({}, bracket || {}),
+    '/api/epoch': { epoch_id: 'e-model', tournament: { structure } },
+  };
+  const timeline = roundTimelineFromFixtures(F, 'e-model');
+  return rounds.roundsFromTimeline({ timeline, bracket, gens, scalarBy, structure, championId, projected, inflight });
+}
+
+test('round model: groups generations by round_index — champion spine threads v0 → promoted (SERVED timeline consumed)', () => {
   const gens = [
     { id: 'v0', parent: null, promoted: true, round_index: null },
     { id: 'v1', parent: 'v0', promoted: false, round_index: 0 },
@@ -8857,7 +8903,7 @@ test('round model: groups generations by round_index — champion spine threads 
     { id: 'v4', parent: 'v2', promoted: false, round_index: 1 },
   ];
   const scalarBy = new Map([['v0', 100], ['v1', 110], ['v2', 80], ['v3', 85], ['v4', 90]]);
-  const model = rounds.epochRoundModel({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v0' });
+  const model = roundsModelFor({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v0' });
   assertEqual(model.length, 2, 'two rounds (round_index 0 and 1)');
   assertEqual(model[0].source, 'round_index', 'the model derives from the round_index stamp');
   // round 0: champion v0 (loss 100), minted {v1, v2}, gate promotes v2.
@@ -8888,7 +8934,7 @@ test('round model: degrades to the per-round FIELD records when round_index is a
     { tournament_id: 't0', structure: 'swiss', competitors: [{ generation_id: 'v0' }, { generation_id: 'v1' }, { generation_id: 'v2' }], rounds: [], standings: [] },
     { tournament_id: 't1', structure: 'swiss', competitors: [{ generation_id: 'v2' }, { generation_id: 'v3' }], rounds: [], standings: [] },
   ] };
-  const model = rounds.epochRoundModel({ gens, scalarBy, bracket, structure: 'swiss', championId: 'v0' });
+  const model = roundsModelFor({ gens, scalarBy, bracket, structure: 'swiss', championId: 'v0' });
   assertEqual(model.length, 2, 'two rounds from the two field records');
   assertEqual(model[0].source, 'field', 'the model derives from the field records');
   assertEqual(model[0].champion.id, 'v0', 'round 0 champion is v0');
@@ -8909,7 +8955,7 @@ test('round model: degrades to a SINGLE round 0 when neither round_index nor fie
     { champion: 'v0', challenger: 'v1', decision: 'rejected', ran_at: 'a' },
     { champion: 'v0', challenger: 'v2', decision: 'rejected', ran_at: 'b' },
   ] };
-  const model = rounds.epochRoundModel({ gens, scalarBy, bracket, structure: 'gauntlet', championId: 'v0' });
+  const model = roundsModelFor({ gens, scalarBy, bracket, structure: 'gauntlet', championId: 'v0' });
   // gauntlet matchups: each is its own single-challenger round (the spine reads
   // r0 → r1), so two rounds — but a single-tournament epoch collapses to one.
   assert(model.length >= 1, 'at least one round is produced');
@@ -8943,7 +8989,7 @@ test('round model (issue #16): a NEW round still PROPOSING surfaces as its own i
       { generation_id: 'v7', status: 'proposing' },
     ],
   };
-  const model = rounds.epochRoundModel({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v2', inflight });
+  const model = roundsModelFor({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v2', inflight });
   assertEqual(model.length, 2, 'the settled round 0 + the in-flight round 1 (NOT one folded round)');
   const r1 = model[1];
   assertEqual(r1.round_index, 1, 'the in-flight round takes round_index 1 (the NEW round, not 0)');
@@ -8963,9 +9009,9 @@ test('round model (issue #16): the in-flight round carries per-challenger field_
   const scalarBy = new Map([['v0', 100], ['v1', 80]]);
   const base = { epoch_id: 'e0', structure: 'gauntlet', phase: 'proposing', round_index: 1, competitors: [{ generation_id: 'v1', seed: 1, role: 'champion' }] };
   // EARLY: only v5 proposed (proposing). LATER: v5 applied, v6 proposing.
-  const early = rounds.epochRoundModel({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1',
+  const early = roundsModelFor({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1',
     inflight: { ...base, field_status: [{ generation_id: 'v5', status: 'proposing' }] } });
-  const later = rounds.epochRoundModel({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1',
+  const later = roundsModelFor({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1',
     inflight: { ...base, field_status: [{ generation_id: 'v5', status: 'applied' }, { generation_id: 'v6', status: 'proposing' }] } });
   const eR = early[early.length - 1];
   const lR = later[later.length - 1];
@@ -8978,7 +9024,7 @@ test('round model (issue #16): the in-flight round carries per-challenger field_
   // repaints), but is byte-IDENTICAL on a no-op re-derive (anti-flash).
   assert(rounds.roundModelDigest(early) !== rounds.roundModelDigest(later),
     'a field-status change (proposing → applied + a new slot) re-stamps the round digest');
-  const earlyAgain = rounds.epochRoundModel({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1',
+  const earlyAgain = roundsModelFor({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1',
     inflight: { ...base, field_status: [{ generation_id: 'v5', status: 'proposing' }] } });
   assertEqual(rounds.roundModelDigest(early), rounds.roundModelDigest(earlyAgain),
     'a no-op re-derive (same field_status) yields a byte-identical digest — no repaint on an idle beat');
@@ -8990,12 +9036,12 @@ test('round model (issue #16): a SETTLED / done / idle envelope does NOT spawn a
   const base = { epoch_id: 'e0', structure: 'gauntlet', round_index: 1, competitors: [{ generation_id: 'v1' }],
     field_status: [{ generation_id: 'v5', status: 'applied' }] };
   for (const phase of ['done', 'complete', 'completed', 'idle', 'tournament:round_1:v5', '']) {
-    const model = rounds.epochRoundModel({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1',
+    const model = roundsModelFor({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1',
       inflight: { ...base, phase } });
     assert(!model.some((r) => r.inflight), `phase="${phase}" must NOT spawn an in-flight round (it is terminal/settled)`);
   }
   // and no envelope at all → no in-flight round (the pre-feature path).
-  const none = rounds.epochRoundModel({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1' });
+  const none = roundsModelFor({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1' });
   assert(!none.some((r) => r.inflight), 'no live envelope → no in-flight round');
 });
 
@@ -9010,7 +9056,7 @@ test('round model (issue #16): once the new round SETTLES into a recorded round,
   const scalarBy = new Map([['v0', 100], ['v1', 80], ['v5', 85]]);
   const inflight = { epoch_id: 'e0', structure: 'gauntlet', phase: 'proposing', round_index: 1,
     competitors: [{ generation_id: 'v1' }], field_status: [{ generation_id: 'v5', status: 'applied' }] };
-  const model = rounds.epochRoundModel({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1', inflight });
+  const model = roundsModelFor({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1', inflight });
   assertEqual(model.length, 2, 'round 0 + the now-recorded round 1 (no phantom duplicate)');
   const r1 = model[model.length - 1];
   assert(!r1.inflight, 'the recorded round 1 is NOT re-flagged in-flight — the settled source is authoritative');
@@ -9024,7 +9070,7 @@ test('round model (issue #16): round 0’s OWN proposing overlays the forming fi
   const inflight = { epoch_id: 'e0', structure: 'gauntlet', phase: 'proposing', round_index: 0,
     competitors: [{ generation_id: 'v0' }],
     field_status: [{ generation_id: 'v1', status: 'applied' }, { generation_id: 'v2', status: 'proposing' }] };
-  const model = rounds.epochRoundModel({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v0', inflight });
+  const model = roundsModelFor({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v0', inflight });
   assertEqual(model.length, 1, 'round 0’s own proposing stays ONE round (overlaid in place, not duplicated)');
   const r0 = model[0];
   assert(r0.inflight === true, 'round 0 is flagged in-flight while it proposes its first field');
@@ -9200,7 +9246,14 @@ test('round model: reads the CANONICAL per-round champion (id + cached/re-run ev
     { tournament_id: 't0', competitors: [{ generation_id: 'v1' }], champion: { id: 'v0', scalar: 5.0, eval_mode: 'full', run_ref: 'epochs/e/generations/v0' } },
     { tournament_id: 't1', competitors: [{ generation_id: 'v2' }], champion: { id: 'v0', scalar: 4.0, eval_mode: 'fast', run_ref: 'epochs/e/generations/v0' } },
   ] };
-  const model = rounds.roundsForTree({ gens, bracket, structure: 'swiss', championId: 'v0' });
+  const F = {
+    '/api/lineage': { generations: gens.map((g) => ({ generation_id: g.id, epoch_id: 'e-cm', parent_generation_id: g.parent || '', promoted: g.promoted, round_index: g.round_index })) },
+    '/api/score-trajectory': { points: [] },
+    '/api/tournaments': bracket,
+    '/api/epoch': { epoch_id: 'e-cm', tournament: { structure: 'swiss' } },
+  };
+  const timeline = roundTimelineFromFixtures(F, 'e-cm');
+  const model = rounds.roundsForTree({ timeline, gens, bracket, structure: 'swiss', championId: 'v0' });
   const r0 = model.find((r) => r.round_index === 0);
   const r1 = model.find((r) => r.round_index === 1);
   assert(r0 && r0.championEvalMode === 'full', 'round 0 surfaces the record champion eval mode (full = re-run)');
@@ -9334,17 +9387,31 @@ test('waterfall: rounds as downward steps (good by direction), a held round flat
   assert(bars.length >= 2 && bars.every((b) => b.getAttribute('data-hovercard') === '1'), 'each step bar is hovercard-wired (winning mutation on hover)');
 });
 
-test('waterfallModel: derives from the epoch round model — a promotion drops the floor, a held round holds it flat', () => {
-  const r = [
-    { round_index: 0, champion: { id: 'v0', scalar: 20 }, challengers: [{ id: 'v1', scalar: 14, promoted: true }], gateOutcome: { kind: 'promoted', gen: 'v1' } },
-    { round_index: 1, champion: { id: 'v1', scalar: 14 }, challengers: [{ id: 'v2', scalar: 16, promoted: false }], gateOutcome: { kind: 'held', gen: null } },
-  ];
-  const steps = rounds.waterfallModel(r);
+test('waterfall: SERVED on the round timeline — a promotion drops the floor, a held round holds it flat (never re-derived)', () => {
+  // the loss-floor steps ride on the SERVED timeline payload (waterfall beside
+  // rounds); the client accessor only type-guards the read.
+  const F = {
+    '/api/lineage': { generations: [
+      { generation_id: 'v0', epoch_id: 'e-w', parent_generation_id: '', promoted: false, round_index: null },
+      { generation_id: 'v1', epoch_id: 'e-w', parent_generation_id: 'v0', promoted: true, round_index: 0 },
+      { generation_id: 'v2', epoch_id: 'e-w', parent_generation_id: 'v1', promoted: false, round_index: 1 },
+    ] },
+    '/api/score-trajectory': { points: [
+      { generation_id: 'v0', scalar: 20 }, { generation_id: 'v1', scalar: 14 }, { generation_id: 'v2', scalar: 16 },
+    ] },
+    '/api/tournaments': {},
+    '/api/epoch': { epoch_id: 'e-w', tournament: { structure: 'gauntlet' } },
+  };
+  const timeline = roundTimelineFromFixtures(F, 'e-w');
+  const steps = rounds.waterfallSteps(timeline);
   assertEqual(steps.length, 2, 'one step per round');
   assertEqual(steps[0].from, 20); assertEqual(steps[0].to, 14); assertEqual(steps[0].delta, -6);
   assert(steps[0].promoted === true && steps[0].gen === 'v1', 'a promotion step carries its winning mutation');
   assertEqual(steps[1].from, 14); assertEqual(steps[1].to, 14);
   assert(steps[1].promoted === false, 'a held round is flat (no step)');
+  // the deleted client derivation is GONE; absent payload → empty steps.
+  assertEqual(rounds.waterfallModel, undefined, 'the client-side waterfallModel is deleted');
+  assertDeep(rounds.waterfallSteps(null), [], 'a null timeline reads as zero steps (honest empty, not re-derived)');
 });
 
 // ---- the CHAMPION REIGN GANTT — bars + ♛ current / ♔ former ----

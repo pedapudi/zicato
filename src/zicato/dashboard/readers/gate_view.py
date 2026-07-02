@@ -757,6 +757,20 @@ def build_gate_breakdown(
         "challenger": challenger_id,
         "decision": "deferred",
         "reason": "",
+        # The CANONICAL single-token explanation of the verdict: the ONE rule
+        # that fired (the server sets ``fired`` on exactly one rule), or
+        # ``None`` when nothing fired / the gate could not be reconstructed.
+        # The frontend reads this verbatim — it never re-infers the deciding
+        # rule from the rule list or scrapes the free-text ``detail``.
+        "deciding_rule": None,
+        # The promote margin the scalar rule compares against — structured,
+        # so no consumer parses it out of the rule detail string.
+        "margin": float(getattr(weights, "promote_margin", 0.01)),
+        # The regressed predicate / namespace named by a fired monotonicity
+        # rule (the first regressed item — the one the gate reports). ``None``
+        # when no monotonicity rule fired.
+        "regressed_predicate": None,
+        "regressed_namespace": None,
         "delta_scalar": None,
         "delta_pass_rate": None,
         # Absolute scalars for each side (pure projection of the already-read
@@ -955,6 +969,14 @@ def build_gate_breakdown(
         fired_rule = "pass_rate_monotonicity"
     elif ns_mono_enabled and regressed_ns:
         fired_rule = "namespace_monotonicity"
+
+    # The structured decision surface (the frontend reads these verbatim;
+    # the free-text rule ``detail`` is display-only).
+    base["deciding_rule"] = fired_rule
+    if fired_rule == "pass_rate_monotonicity" and regressed_entries:
+        base["regressed_predicate"] = regressed_entries[0]
+    if fired_rule == "namespace_monotonicity" and regressed_ns:
+        base["regressed_namespace"] = regressed_ns[0]
 
     order = [
         "regression_suite",

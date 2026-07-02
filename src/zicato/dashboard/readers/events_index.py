@@ -11,6 +11,10 @@ from zicato.dashboard.readers._sqlite import (
     _IndexAbsent,
     _open_index,
 )
+from zicato.dashboard.readers.decisions import (
+    experiment_decision,
+    promoted_tristate,
+)
 from zicato.dashboard.readers.epoch_view import (
     _distill_brief_goal,
     _normalize_structure,
@@ -18,10 +22,6 @@ from zicato.dashboard.readers.epoch_view import (
     _tournament_block_from_scoring,
 )
 from zicato.dashboard.readers.gate_view import _mean_drift_loss_per_generation
-from zicato.dashboard.readers.lineage_view import (
-    _PROMOTED_DECISIONS,
-    _experiment_decision,
-)
 from zicato.dashboard.readers.paths import (
     WorkspacePaths,
     _is_finite,
@@ -451,11 +451,7 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
                     if isinstance(exp, dict):
                         outcome = exp.get("outcome")
                         if isinstance(outcome, dict):
-                            decision = _experiment_decision(exp)
-                            if (
-                                decision is not None
-                                and decision.strip().lower() in _PROMOTED_DECISIONS
-                            ):
+                            if promoted_tristate(experiment_decision(exp)) is True:
                                 promoted_count += 1
 
             # Lineage edge — read ``parent_epoch_id`` from the index

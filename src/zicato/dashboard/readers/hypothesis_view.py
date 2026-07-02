@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from zicato.dashboard.readers.lineage_view import _experiment_decision
+from zicato.dashboard.readers.decisions import experiment_decision as _experiment_decision
 from zicato.dashboard.readers.paths import (
     WorkspacePaths,
     _natural_key,

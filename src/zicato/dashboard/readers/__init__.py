@@ -12,6 +12,12 @@ from zicato.dashboard.readers._sqlite import (
     _opt_json,
     _query,
 )
+from zicato.dashboard.readers.decisions import (
+    PROMOTED_DECISIONS as _PROMOTED_DECISIONS,
+)
+from zicato.dashboard.readers.decisions import (
+    experiment_decision as _experiment_decision,
+)
 from zicato.dashboard.readers.epoch_view import (
     _TOURNAMENT_STRUCTURES,
     _board_input_preview,
@@ -89,8 +95,6 @@ from zicato.dashboard.readers.judge_view import (
     build_workspace_identity,
 )
 from zicato.dashboard.readers.lineage_view import (
-    _PROMOTED_DECISIONS,
-    _experiment_decision,
     build_lineage_view,
 )
 from zicato.dashboard.readers.loop_view import (
@@ -115,6 +119,12 @@ from zicato.dashboard.readers.paths import (
     list_epoch_ids,
     read_current_epoch,
     to_snake,
+)
+from zicato.dashboard.readers.racing_view import (
+    build_racing_field,
+)
+from zicato.dashboard.readers.rounds_view import (
+    build_round_timeline,
 )
 from zicato.dashboard.readers.run_log import (
     _ENVELOPE_KEYS,
@@ -277,6 +287,8 @@ __all__ = [
     "build_matchup_grid",
     "build_meta_loop_ledger",
     "build_optimization_trajectory",
+    "build_racing_field",
+    "build_round_timeline",
     "build_per_entry_for_generation",
     "build_round_pipeline",
     "build_per_judge_comparison",

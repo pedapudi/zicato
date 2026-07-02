@@ -11,9 +11,9 @@ import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { deriveLiveStatus } from '../livestatus.js';
-import { gatedSwap, section, empty, stat, renderMarkdown, normaliseDecision, densityTokens } from '../ui.js';
+import { gatedSwap, section, empty, stat, renderMarkdown, densityTokens } from '../ui.js';
 import { structurePill, isNonGauntlet, structureLabel, normalizeStructure, racingModel, swissOverviewModel, elimModel, resolveNonGauntletSt, structureDigest } from './structure.js';
-import { epochRoundModel, roundModelDigest, waterfallModel } from './rounds.js';
+import { roundsFromTimeline, roundModelDigest, waterfallSteps } from './rounds.js';
 import { boardStatusModel, boardStatusDigest, renderBoardStatus } from './boardstatus.js';
 import { loopVerdict, promotionRateLabel, costPerPromotionLabel, fmtDurationMs, noiseBandFor } from './home.js';
 
@@ -32,9 +32,10 @@ export async function render(host, ctx, params) {
   // contract via the epoch-SCOPED accessor (NEVER bare `D.epoch()`, which returns
   // the CURRENT epoch) so viewing e0 shows e0 even while e1 is live.
   const routeEpoch = (params && params.epochId) || null;
-  const [ep, lin, traj, bracket] = await Promise.all([
-    D.epoch(routeEpoch), D.lineage(), D.scoreTrajectory(routeEpoch), D.bracket(routeEpoch),
+  const [ep, traj, bracket] = await Promise.all([
+    D.epoch(routeEpoch), D.scoreTrajectory(routeEpoch), D.bracket(routeEpoch),
   ]);
+  // (the round timeline is fetched below once the epoch id is resolved.)
   if (!ep || ep.epoch_id == null) {
     gatedSwap(host, 'no-epoch', () => [el('h1', { class: 'dn-h1', text: 'Epoch' }), empty('No current epoch.')]);
     return;
@@ -53,14 +54,15 @@ export async function render(host, ctx, params) {
     D.trajectory(epochId), D.tournamentCost(epochId), D.perJudgeTrend(epochId),
   ]);
 
-  // SCOPE TO THE VIEWED EPOCH: /api/lineage spans the whole workspace, so filter
-  // to this epoch's generations (fall back to the scoped ep.experiments; dedupe
-  // by id) — otherwise a sibling epoch's gens leak into the heatmap + field count.
-  const lineageRows = (lin && Array.isArray(lin.generations)) ? lin.generations : [];
-  const scopedLineage = lineageRows.filter((g) => g && g.epoch_id === epochId);
+  // THE EPOCH-SCOPED GENERATIONS FEED (server-scoped `/api/lineage?epoch=`),
+  // falling back to the scoped ep.experiments; dedupe by id. The SETTLED round
+  // timeline is SERVED (`/api/epoch/{id}/round-timeline`).
+  const [scopedLineage, timeline] = await Promise.all([
+    D.generationsForEpoch(epochId), D.roundTimeline(epochId),
+  ]);
   const rawGens = scopedLineage.length
     ? scopedLineage.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: !!g.promoted, round_index: svg.isNum(g.round_index) ? g.round_index : null }))
-    : experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: normaliseDecision(x.outcome) === 'promoted', round_index: svg.isNum(x.round_index) ? x.round_index : null }));
+    : experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: x.promoted === true, round_index: svg.isNum(x.round_index) ? x.round_index : null }));
   const gens = [];
   const seenGen = new Set();
   for (const g of rawGens) {
@@ -91,9 +93,8 @@ export async function render(host, ctx, params) {
   });
   for (const b of board) { const id = b.entry_id || b.id; if (id) entryIds.add(id); }
 
-  // The reigning champion: the promoted (or seed) generation — round 0's seed.
-  const champ = gens.find((g) => g.promoted) || gens.find((g) => !g.parent) || null;
-  const championId = champ ? champ.id : null;
+  // The REIGNING champion — the server-stamped pointer (never re-scanned).
+  const championId = (ep && ep.current_champion != null) ? String(ep.current_champion) : null;
 
   // The configured tournament structure (§3.1) — surfaced as a one-line
   // header pill. Absent ⇒ no pill (a gauntlet epoch that predates the
@@ -144,12 +145,15 @@ export async function render(host, ctx, params) {
     const liveRaw = liveInflight;
     const liveForThisEpoch = !!liveInflight;
 
-    // pre-fetch the COMPLETED per-tournament record (the recorded fallback the
-    // resolver uses for swiss/elim, and the SECOND fallback behind
-    // reconstructRacing for racing). Same selection gens.js uses, so the recorded
-    // source is identical across the two callers. Cached + failure-tolerant.
+    // pre-fetch the SETTLED record. RACING reads the SERVED racing-field
+    // payload (the per-challenger join lives server-side); swiss/elim read the
+    // epoch's most-recent per-tournament structure record. Same selection
+    // gens.js uses, so the recorded source is identical across the two
+    // callers. Cached + failure-tolerant.
     let completedRecord = null;
-    {
+    if (structure === 'racing') {
+      completedRecord = normalizeStructure(await D.racingField(epochId), false);
+    } else {
       const tournaments = (bracket && Array.isArray(bracket.tournaments)) ? bracket.tournaments : [];
       const matchStruct = tournaments.filter((t) => t && t.structure === structure);
       const nonGaunt = tournaments.filter((t) => t && t.structure && t.structure !== 'gauntlet');
@@ -161,7 +165,7 @@ export async function render(host, ctx, params) {
     }
 
     const resolved = resolveNonGauntletSt({
-      structure, bracket, epochId, liveRaw: liveForThisEpoch ? liveRaw : null,
+      structure, epochId, liveRaw: liveForThisEpoch ? liveRaw : null,
       heartbeat: state.heartbeat, activeRuns: state.activeRuns,
       params: (tournament && tournament.params) || {},
       completedRecord,
@@ -182,12 +186,12 @@ export async function render(host, ctx, params) {
   }
 
   // ---- THE EPOCH ROUND MODEL (the champion-spine timeline's source) ----
-  // The epoch is N evolve rounds along the champion spine. Derive the rounds
-  // from per-gen round_index, else the per-round field records, else the
-  // gauntlet matchups, else a single round 0 (every run so far). The timeline
-  // SUBSUMES the old gauntlet reel + the non-gauntlet structure strip — one
-  // renderer for all structures, degrading to a single episode for --rounds 1.
-  const epochRounds = epochRoundModel({ gens, scalarBy: scalarByGen, bracket, structure, championId, projected: liveProjected, inflight: liveInflight });
+  // The SETTLED rounds are SERVED by /api/epoch/{id}/round-timeline; only the
+  // LIVE overlay (projected standings + the in-flight proposing round) is
+  // applied client-side. The timeline SUBSUMES the old gauntlet reel + the
+  // non-gauntlet structure strip — one renderer for all structures, degrading
+  // to a single episode for --rounds 1 (and an honest empty when unserved).
+  const epochRounds = roundsFromTimeline({ timeline, bracket, gens, scalarBy: scalarByGen, structure, championId, projected: liveProjected, inflight: liveInflight });
 
   // The BOARD-STATUS surface (train/holdout split + ladder + generalization
   // gap). Derived DEFENSIVELY from the epoch payload — graceful empty states
@@ -203,7 +207,7 @@ export async function render(host, ctx, params) {
     elimOver: elimOver ? structureDigest(elimOver.st) : null,
     gens: gens.map((g) => [g.id, g.parent, g.promoted, svg.isNum(g.round_index) ? g.round_index : null, scalarByGen.has(g.id) ? scalarByGen.get(g.id).toFixed(3) : null]),
     rounds: roundModelDigest(epochRounds),
-    waterfall: waterfallModel(epochRounds).map((s) => [s.round_index, svg.isNum(s.from) ? s.from.toFixed(2) : null, svg.isNum(s.to) ? s.to.toFixed(2) : null, s.promoted, s.gen]),
+    waterfall: waterfallSteps(timeline).map((s) => [s.round_index, svg.isNum(s.from) ? s.from.toFixed(2) : null, svg.isNum(s.to) ? s.to.toFixed(2) : null, s.promoted, s.gen]),
     loss: [...lossLookup.entries()].sort(),
     board: board.map((b) => [b.entry_id || b.id, b.kind, b.weight, b.budget_s]),
     boardStatus: boardStatusDigest(boardStatus),
@@ -337,10 +341,10 @@ export async function render(host, ctx, params) {
     // need ≥2 rounds to mean anything. A single-round epoch (every run so far)
     // has no descent to draw, so we skip both and show just the round's episode
     // card; rendering an empty h=220 waterfall + a one-node spine read as broken.
-    const waterfallSteps = waterfallModel(epochRounds);
-    if (!single && waterfallSteps.some((s) => svg.isNum(s.to) || svg.isNum(s.from))) {
+    const wfSteps = waterfallSteps(timeline);
+    if (!single && wfSteps.some((s) => svg.isNum(s.to) || svg.isNum(s.from))) {
       timelineCard.appendChild(el('div', { class: 'dn-roundtl-waterfall dn-figpane' }, [
-        svg.waterfall({ steps: waterfallSteps, onRound: drill, onCompetitor: open }),
+        svg.waterfall({ steps: wfSteps, onRound: drill, onCompetitor: open }),
       ]));
       timelineCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:6px 0 10px;', text:
         'the loss-floor descent across rounds — each step a promotion Δ (good = lower floor), a held round flat · the spine baseline is the champion floor · hover a step for its winning mutation' }));

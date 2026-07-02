@@ -31,7 +31,6 @@ import { parseRoute, navigate, href, crumbTrail, up } from './router.js';
 import * as D from './data.js';
 import { invalidateLive, liveDataSignature } from './data.js';
 import { buildTree, treeDigest } from './tree.js';
-import { normaliseDecision } from './ui.js';
 import { roundsForTree } from './views/rounds.js';
 import { deriveLiveStatus, liveStatusDigest, treeLiveSet, staleLabel, runStateLabel } from './livestatus.js';
 import { LiveController } from './live.js';
@@ -827,15 +826,16 @@ export async function buildTreeModel(route) {
   // contract's own epoch when /api/epoch resolved, else the routed epoch (so a
   // deep-link / the publication route still attaches the board to its node).
   const contractEpochId = (ep && ep.epoch_id != null) ? ep.epoch_id : routeEpochId;
-  // The CURRENT champion = the LAST id in champion_lineage (the epoch's
-  // reigning generation). Every OTHER promoted generation is a FORMER champion
-  // (it held the title, then was succeeded). When the lineage is absent, fall
-  // back to the last-promoted generation as the current champion so a
-  // pre-feature index still disambiguates one current crown. (The bracket is
-  // fetched for the contract epoch, so the lineage applies to that epoch's
-  // champion disambiguation.)
-  const lineage = (brk && Array.isArray(brk.champion_lineage)) ? brk.champion_lineage.map(String) : [];
-  const currentChampionId = lineage.length ? lineage[lineage.length - 1] : null;
+  // The CURRENT champion — the SERVER-STAMPED `current_champion` pointer on
+  // the epoch payload (the end of the promoted spine, or the seed). Every
+  // OTHER promoted generation is a FORMER champion (it held the title, then
+  // was succeeded). Never re-derived from the lineage / promoted flags here.
+  const currentChampionId = (ep && ep.current_champion != null) ? String(ep.current_champion) : null;
+  // the SERVED per-epoch round timelines (cached reads; null when unserved) —
+  // the tree's round grouping is a projection of these, never a client join.
+  const timelineByEpoch = new Map(
+    (await Promise.all(epochs.map(async (e) => [e.id, await D.roundTimeline(e.id)])))
+  );
   for (const e of epochs) {
     const id = e.id;
     // THE PER-EPOCH FIX: each node lists its OWN generations — the lineage rows
@@ -853,16 +853,13 @@ export async function buildTreeModel(route) {
       ? linForEpoch.map((g) => ({ id: g.generation_id, promoted: g.promoted == null ? null : !!g.promoted, parent: g.parent_generation_id || null, round_index: Number.isInteger(g.round_index) ? g.round_index : null }))
       : (isContractEpoch && ep && Array.isArray(ep.experiments) ? ep.experiments.map((x) => ({
           id: x.generation_id, parent: x.parent_generation_id || null,
-          promoted: normaliseDecision(x.outcome) === 'promoted' ? true : (normaliseDecision(x.outcome) === 'rejected' ? false : null),
+          promoted: x.promoted == null ? null : !!x.promoted,
           round_index: Number.isInteger(x.round_index) ? x.round_index : null,
         })) : []);
     // disambiguate the CURRENT champion (♛) from FORMER champions (hollow
-    // crown ♔) — the champion lineage applies to the contract epoch's bracket.
-    const fallbackCurrent = currentChampionId == null
-      ? (gensList.filter((g) => g.promoted === true).map((g) => g.id).pop() || null)
-      : currentChampionId;
+    // crown ♔) — the server's pointer applies to the contract epoch.
     for (const g of gensList) {
-      const champ = isContractEpoch && g.promoted === true && String(g.id) === String(fallbackCurrent);
+      const champ = isContractEpoch && g.promoted === true && String(g.id) === String(currentChampionId);
       g.currentChampion = champ;
       g.formerChampion = g.promoted === true && !champ;
     }
@@ -882,17 +879,17 @@ export async function buildTreeModel(route) {
       id: b.entry_id || b.id, kindTag: KIND_TAG[b.kind] || null,
     })).filter((b) => b.id);
     // ROUND GROUPING (Task 5): Epoch → Round 0 / Round 1 / … → {challengers
-    // minted that round}. Derived from per-gen round_index (+ the field-record /
-    // matchup fallback for the contract epoch, where the bracket is in scope).
-    // Degrades to a single round 0 when round_index is absent and no records
-    // resolve — the tree then renders a flat list (the round node is suppressed
-    // below when there is only one round and no round_index stamp).
+    // minted that round}, read off the SERVED per-epoch round timeline
+    // (/api/epoch/{id}/round-timeline). A missing timeline (the endpoint
+    // absent — e.g. the Rust supervisor) yields no round nodes: the tree
+    // renders its flat generation list, never a re-derived grouping.
     const epochStructure = (isContractEpoch && ep && ep.tournament && ep.tournament.structure) || 'gauntlet';
     const treeRounds = roundsForTree({
+      timeline: timelineByEpoch.get(id) || null,
       gens: gensList,
       bracket: isContractEpoch ? brk : null,
       structure: epochStructure,
-      championId: fallbackCurrent,
+      championId: currentChampionId,
     });
     byEpoch[id] = { gens: gensList, boards: boardList, rounds: treeRounds };
   }

@@ -13,7 +13,7 @@ import { el } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, section, empty, stat, normaliseDecision, densityTokens } from '../ui.js';
+import { gatedSwap, section, empty, stat, densityTokens } from '../ui.js';
 import { inflightForActiveEpoch, inflightForEntryGen, runProgressRatio } from './structure.js';
 import { deriveLiveStatus } from '../livestatus.js';
 
@@ -38,7 +38,7 @@ export async function render(host, ctx, params) {
   const rows = await D.generationsForEpoch(epochId);
   const gens = rows.length
     ? rows.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted }))
-    : (Array.isArray(ep.experiments) ? ep.experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: normaliseDecision(x.outcome) === 'promoted' })) : []);
+    : (Array.isArray(ep.experiments) ? ep.experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: x.promoted === true })) : []);
 
   const perEntries = await Promise.all(gens.map((g) => D.perEntry(epochId, g.id)));
   const rowByGenEntry = new Map();

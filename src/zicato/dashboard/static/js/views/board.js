@@ -18,7 +18,7 @@ import { el, clearChildren } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, section, empty, stat, normaliseDecision, decisionFor, densityTokens, prText, metricsDigest, scoreFmt } from '../ui.js';
+import { gatedSwap, section, empty, stat, decisionFor, densityTokens, prText, metricsDigest, scoreFmt } from '../ui.js';
 
 // In-flight board-units for THIS entry, read from /api/active-runs (folded
 // into AppState by /api/environment). Each carries a generation_id / run_id /
@@ -77,7 +77,7 @@ export async function render(host, ctx, params) {
   const [rows0, traj] = await Promise.all([D.generationsForEpoch(epochId), D.scoreTrajectory(epochId)]);
   const genList = rows0.length
     ? rows0.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted }))
-    : (Array.isArray(ep.experiments) ? ep.experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: normaliseDecision(x.outcome) === 'promoted' })) : []);
+    : (Array.isArray(ep.experiments) ? ep.experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: x.promoted === true })) : []);
 
   const scalarByGen = new Map();
   if (traj && Array.isArray(traj.points)) for (const p of traj.points) if (svg.isNum(p.scalar)) scalarByGen.set(p.generation_id, p.scalar);

@@ -222,6 +222,14 @@ def create_app(
             handlers["api_epoch_cost"],
         ),
         Route(
+            "/api/epoch/{epoch_id}/racing-field",
+            handlers["api_epoch_racing_field"],
+        ),
+        Route(
+            "/api/epoch/{epoch_id}/round-timeline",
+            handlers["api_epoch_round_timeline"],
+        ),
+        Route(
             "/api/generation/{epoch_id}/{generation_id}/per-judge",
             handlers["api_per_judge_for_generation"],
         ),
