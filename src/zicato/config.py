@@ -61,14 +61,25 @@ value is actually consumed.
 Env-var surface
 ---------------
 
-The env-settable surface is deliberately small and shrinking: operator
-knobs move to CLI flags and the workspace ``config.json``. Every
-``ZICATO_*`` variable the loader still honours is enumerated in
-:data:`_ENV_BINDINGS`; a variable absent from that table is ignored by
-:func:`load_config`. The redundant trio ``ZICATO_MAX_WALL_CLOCK_SECONDS``
-/ ``ZICATO_WORKSPACE`` / ``ZICATO_INSTANCE_ID`` was deleted outright —
-each was fully shadowed by an existing CLI flag
-(``--max-wall-clock-seconds`` / ``--workspace`` / ``--instance-id``).
+Operator knobs are NOT environment variables: they live on CLI flags
+(pinned here via :func:`pin_overrides`) and in the workspace
+``config.json`` (the ``health`` block —
+:func:`health_config_from_workspace` — plus the ``runtime`` /
+``harmonograf_url`` keys read by their own loaders). Every
+``ZICATO_*`` variable :func:`load_config` still honours is enumerated
+in :data:`_ENV_BINDINGS`; a variable absent from that table is ignored.
+The former operator-env surface was deleted outright:
+
+* the redundant trio ``ZICATO_MAX_WALL_CLOCK_SECONDS`` /
+  ``ZICATO_WORKSPACE`` / ``ZICATO_INSTANCE_ID`` (each fully shadowed by
+  an existing CLI flag);
+* the six flag-converted knobs (``ZICATO_AUX_CALL_TIMEOUT``,
+  ``ZICATO_PARALLELISM``, ``ZICATO_HARNESS_CALL_TIMEOUT_MS``,
+  ``ZICATO_SUPERVISOR_BINARY``, ``ZICATO_DASHBOARD_STATIC_DIR``,
+  ``ZICATO_HARMONOGRAF_URL`` — the last surviving only as the internal
+  auto-launch handoff read by :mod:`zicato.telemetry.sink`);
+* the six ``ZICATO_HEALTH_*`` thresholds, moved to the ``health`` block
+  of the workspace ``config.json``.
 """
 
 from __future__ import annotations
@@ -87,11 +98,28 @@ from typing import Any
 class HealthConfig:
     """Tuning knobs for the evolve-loop health detectors.
 
-    These thresholds drive :mod:`zicato.health.diagnostics`. Every one is
+    These thresholds drive :mod:`zicato.health.diagnostics`. Operators
+    tune them in the workspace ``config.json``'s ``health`` block::
+
+        {
+          "health": {
+            "scoring_window": 5,
+            "scoring_epsilon": 1e-6,
+            "no_expectations_fraction": 0.5,
+            "stalled_rejects": 3,
+            "generalization_gap_warn": 0.05,
+            "generalization_gap_crit": 0.15
+          }
+        }
+
+    which :func:`health_config_from_workspace` parses into this
+    dataclass (the orchestrator's per-round health assessment and the
+    ``zicato health`` command both route through it). Every threshold is
     a magnitude or a fraction where a non-positive (or, for fractions, a
-    negative) value is meaningless; :func:`load_config` clamps invalid
-    env input back to the default rather than letting an operator
-    accidentally disable a detector.
+    negative) value is meaningless; the parser clamps an invalid value
+    back to the field default rather than letting an operator
+    accidentally disable a detector, while an *unknown key* raises so a
+    typo fails loudly.
 
     Fields
     ------
@@ -330,26 +358,68 @@ def _coerce_non_negative_float(raw: str, default: float) -> float:
 #: variable is simply ignored. (``ZICATO_HARMONOGRAF_URL`` survives
 #: ONLY as the internal auto-launch handoff channel read by
 #: :mod:`zicato.telemetry.sink`, not as a ``load_config`` binding.)
-_ENV_BINDINGS: dict[str, tuple[str, str, Any]] = {
-    "ZICATO_HEALTH_SCORING_WINDOW": ("health", "scoring_window", _coerce_positive_int),
-    "ZICATO_HEALTH_SCORING_EPSILON": ("health", "scoring_epsilon", _coerce_non_negative_float),
-    "ZICATO_HEALTH_NO_EXPECTATIONS_FRACTION": (
-        "health",
-        "no_expectations_fraction",
-        _coerce_non_negative_float,
-    ),
-    "ZICATO_HEALTH_STALLED_REJECTS": ("health", "stalled_rejects", _coerce_positive_int),
-    "ZICATO_HEALTH_GENERALIZATION_GAP_WARN": (
-        "health",
-        "generalization_gap_warn",
-        _coerce_non_negative_float,
-    ),
-    "ZICATO_HEALTH_GENERALIZATION_GAP_CRIT": (
-        "health",
-        "generalization_gap_crit",
-        _coerce_non_negative_float,
-    ),
+_ENV_BINDINGS: dict[str, tuple[str, str, Any]] = {}
+
+
+#: Coercer per :class:`HealthConfig` field for the workspace
+#: ``config.json`` ``health`` block. The same clamp-to-default coercers
+#: the env bindings used (they accept JSON numbers as well as strings),
+#: so an out-of-range value degrades to the field default instead of
+#: disabling a detector. The former ``ZICATO_HEALTH_*`` env vars are
+#: deleted; this block is the operator surface.
+_HEALTH_FIELD_COERCERS: dict[str, Any] = {
+    "scoring_window": _coerce_positive_int,
+    "scoring_epsilon": _coerce_non_negative_float,
+    "no_expectations_fraction": _coerce_non_negative_float,
+    "stalled_rejects": _coerce_positive_int,
+    "generalization_gap_warn": _coerce_non_negative_float,
+    "generalization_gap_crit": _coerce_non_negative_float,
 }
+
+
+def health_config_from_workspace(workspace_config: Mapping[str, Any] | None) -> HealthConfig:
+    """Build the :class:`HealthConfig` from a workspace ``config.json`` dict.
+
+    Reads the optional top-level ``health`` block — the operator surface
+    for the loop-health detector thresholds (the former
+    ``ZICATO_HEALTH_*`` env vars, deleted). Both health call sites route
+    through here: the orchestrator's per-round assessment and the
+    ``zicato health`` command.
+
+    Semantics:
+
+    * an absent / ``None`` config, or a config without a ``health``
+      block, yields the fully-defaulted :class:`HealthConfig`;
+    * a ``health`` block that is not a JSON object raises ``ValueError``
+      (fail loudly, like every other malformed config block);
+    * an unknown key raises ``KeyError`` naming the valid fields, so a
+      typo cannot silently leave a detector on its default;
+    * each value runs through the same clamp-to-default coercer the env
+      binding used — an unparseable or out-of-range value falls back to
+      the field default rather than disabling a detector.
+    """
+    if not workspace_config:
+        return HealthConfig()
+    raw = workspace_config.get("health")
+    if raw is None:
+        return HealthConfig()
+    if not isinstance(raw, Mapping):
+        raise ValueError(
+            f"workspace config.json 'health' block must be a JSON object, "
+            f"got {type(raw).__name__}"
+        )
+    unknown = set(raw) - set(_HEALTH_FIELD_COERCERS)
+    if unknown:
+        raise KeyError(
+            f"unknown field(s) {sorted(unknown)} in the workspace config.json "
+            f"'health' block; known fields: {sorted(_HEALTH_FIELD_COERCERS)}"
+        )
+    defaults = HealthConfig()
+    values: dict[str, Any] = {}
+    for field_name, coerce in _HEALTH_FIELD_COERCERS.items():
+        if field_name in raw:
+            values[field_name] = coerce(raw[field_name], getattr(defaults, field_name))
+    return replace(defaults, **values)
 
 
 def describe_env_vars() -> dict[str, str]:
@@ -532,6 +602,7 @@ __all__ = [
     "RuntimeTuningConfig",
     "ZicatoConfig",
     "load_config",
+    "health_config_from_workspace",
     "describe_env_vars",
     "pin_overrides",
     "get_pinned_overrides",

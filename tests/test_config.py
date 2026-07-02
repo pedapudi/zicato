@@ -28,6 +28,7 @@ from zicato.config import (
     clear_pinned_overrides,
     describe_env_vars,
     get_pinned_overrides,
+    health_config_from_workspace,
     load_config,
     pin_overrides,
     pinned_override,
@@ -72,24 +73,94 @@ def test_programmatic_construction_works() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Env-var parsing and type coercion
+# The workspace config.json 'health' block -> HealthConfig
 # ---------------------------------------------------------------------------
 
 
-def test_env_sets_every_section() -> None:
-    """Each surviving ``ZICATO_*`` variable lands on the right field."""
-    cfg = load_config(
-        env={
-            "ZICATO_HEALTH_SCORING_WINDOW": "8",
-            "ZICATO_HEALTH_SCORING_EPSILON": "0.25",
-            "ZICATO_HEALTH_NO_EXPECTATIONS_FRACTION": "0.75",
-            "ZICATO_HEALTH_STALLED_REJECTS": "6",
+def test_health_block_round_trips_every_field() -> None:
+    """Every ``health`` key lands on the matching :class:`HealthConfig` field."""
+    cfg = health_config_from_workspace(
+        {
+            "health": {
+                "scoring_window": 8,
+                "scoring_epsilon": 0.25,
+                "no_expectations_fraction": 0.75,
+                "stalled_rejects": 6,
+                "generalization_gap_warn": 0.02,
+                "generalization_gap_crit": 0.4,
+            }
         }
     )
-    assert cfg.health.scoring_window == 8
-    assert cfg.health.scoring_epsilon == 0.25
-    assert cfg.health.no_expectations_fraction == 0.75
-    assert cfg.health.stalled_rejects == 6
+    assert cfg == HealthConfig(
+        scoring_window=8,
+        scoring_epsilon=0.25,
+        no_expectations_fraction=0.75,
+        stalled_rejects=6,
+        generalization_gap_warn=0.02,
+        generalization_gap_crit=0.4,
+    )
+
+
+def test_health_block_absent_yields_defaults() -> None:
+    """No config, or a config without a ``health`` block, means defaults."""
+    assert health_config_from_workspace(None) == HealthConfig()
+    assert health_config_from_workspace({}) == HealthConfig()
+    assert health_config_from_workspace({"runtime": {}}) == HealthConfig()
+
+
+def test_health_block_partial_keeps_other_defaults() -> None:
+    """A partial block only overrides the named fields."""
+    cfg = health_config_from_workspace({"health": {"scoring_window": 9}})
+    assert cfg.scoring_window == 9
+    assert cfg.stalled_rejects == 3
+    assert cfg.scoring_epsilon == 1e-6
+
+
+def test_health_block_clamps_invalid_values_to_defaults() -> None:
+    """Out-of-range / unparseable values degrade to the field default.
+
+    The same clamp the env bindings applied: a zero window or a negative
+    epsilon would silently disable a detector, so it falls back instead.
+    """
+    cfg = health_config_from_workspace(
+        {
+            "health": {
+                "scoring_window": 0,
+                "stalled_rejects": -4,
+                "scoring_epsilon": -1.0,
+                "generalization_gap_warn": "not-a-number",
+            }
+        }
+    )
+    assert cfg.scoring_window == 3
+    assert cfg.stalled_rejects == 3
+    assert cfg.scoring_epsilon == 1e-6
+    assert cfg.generalization_gap_warn == 0.05
+
+
+def test_health_block_zero_is_valid_for_non_negative_float() -> None:
+    """Zero is a legal value for a non-negative-float field (epsilon)."""
+    cfg = health_config_from_workspace({"health": {"scoring_epsilon": 0}})
+    assert cfg.scoring_epsilon == 0.0
+
+
+def test_health_block_string_numbers_coerce() -> None:
+    """A JSON-string number still coerces (same coercers as the env layer)."""
+    cfg = health_config_from_workspace({"health": {"scoring_window": "5"}})
+    assert cfg.scoring_window == 5
+    assert isinstance(cfg.scoring_window, int)
+
+
+def test_health_block_unknown_key_raises() -> None:
+    """A typo'd key fails loudly, naming the valid fields."""
+    with pytest.raises(KeyError, match="scoring_windw"):
+        health_config_from_workspace({"health": {"scoring_windw": 5}})
+
+
+def test_health_block_non_object_raises() -> None:
+    """A ``health`` block that is not a JSON object fails loudly."""
+    with pytest.raises(ValueError, match="'health' block"):
+        health_config_from_workspace({"health": 5})
 
 
 # ---------------------------------------------------------------------------
@@ -97,10 +168,11 @@ def test_env_sets_every_section() -> None:
 # ---------------------------------------------------------------------------
 
 #: Every deleted env binding, with a plausible value. The redundant trio
-#: was fully shadowed by pre-existing CLI flags; the other six were
-#: converted to flags (`zicato evolve --parallelism /
-#: --harness-call-timeout-ms / --aux-call-timeout / --supervisor-binary /
-#: --harmonograf-url`, `zicato dashboard|builder --static-dir`).
+#: was fully shadowed by pre-existing CLI flags; six more were converted
+#: to flags (`zicato evolve --parallelism / --harness-call-timeout-ms /
+#: --aux-call-timeout / --supervisor-binary / --harmonograf-url`,
+#: `zicato dashboard|builder --static-dir`); the six ZICATO_HEALTH_*
+#: thresholds moved to the workspace config.json 'health' block.
 _DELETED_ENV_VARS: dict[str, str] = {
     "ZICATO_MAX_WALL_CLOCK_SECONDS": "900",
     "ZICATO_WORKSPACE": "/work/.zicato",
@@ -111,6 +183,12 @@ _DELETED_ENV_VARS: dict[str, str] = {
     "ZICATO_SUPERVISOR_BINARY": "/opt/zicato-supervisor",
     "ZICATO_DASHBOARD_STATIC_DIR": "/srv/static",
     "ZICATO_HARMONOGRAF_URL": "http://localhost:9000",
+    "ZICATO_HEALTH_SCORING_WINDOW": "8",
+    "ZICATO_HEALTH_SCORING_EPSILON": "0.25",
+    "ZICATO_HEALTH_NO_EXPECTATIONS_FRACTION": "0.75",
+    "ZICATO_HEALTH_STALLED_REJECTS": "6",
+    "ZICATO_HEALTH_GENERALIZATION_GAP_WARN": "0.02",
+    "ZICATO_HEALTH_GENERALIZATION_GAP_CRIT": "0.4",
 }
 
 
@@ -136,61 +214,9 @@ def test_deleted_env_vars_absent_from_describe() -> None:
         assert name not in described
 
 
-def test_env_int_coercion_produces_real_ints() -> None:
-    """An int-typed env var is coerced from its string form to an ``int``."""
-    cfg = load_config(env={"ZICATO_HEALTH_SCORING_WINDOW": "5"})
-    assert cfg.health.scoring_window == 5
-    assert isinstance(cfg.health.scoring_window, int)
-
-
-def test_env_float_coercion_produces_real_floats() -> None:
-    """A float-typed env var is coerced from its string form to a ``float``."""
-    cfg = load_config(env={"ZICATO_HEALTH_SCORING_EPSILON": "1"})
-    assert cfg.health.scoring_epsilon == 1.0
-    assert isinstance(cfg.health.scoring_epsilon, float)
-
-
-# ---------------------------------------------------------------------------
-# Invalid-value clamping
-# ---------------------------------------------------------------------------
-
-
-def test_unparseable_int_falls_back_to_default() -> None:
-    """A non-numeric int env value is clamped back to the default."""
-    cfg = load_config(env={"ZICATO_HEALTH_SCORING_WINDOW": "not-a-number"})
-    assert cfg.health.scoring_window == 3
-
-
-def test_non_positive_int_falls_back_to_default() -> None:
-    """A zero or negative positive-int env value is clamped to the default."""
-    assert load_config(env={"ZICATO_HEALTH_SCORING_WINDOW": "0"}).health.scoring_window == 3
-    assert load_config(env={"ZICATO_HEALTH_STALLED_REJECTS": "-4"}).health.stalled_rejects == 3
-
-
-def test_negative_float_falls_back_to_default() -> None:
-    """A negative value for a non-negative-float field is clamped."""
-    cfg = load_config(env={"ZICATO_HEALTH_SCORING_EPSILON": "-1.0"})
-    assert cfg.health.scoring_epsilon == 1e-6
-
-
-def test_zero_is_valid_for_non_negative_float() -> None:
-    """Zero is a legal value for a non-negative-float field (epsilon)."""
-    cfg = load_config(env={"ZICATO_HEALTH_SCORING_EPSILON": "0"})
-    assert cfg.health.scoring_epsilon == 0.0
-
-
 # ---------------------------------------------------------------------------
 # Precedence / override layering
 # ---------------------------------------------------------------------------
-
-
-def test_overrides_beat_the_environment() -> None:
-    """An explicit override wins over an env-var value for the same field."""
-    cfg = load_config(
-        env={"ZICATO_HEALTH_SCORING_WINDOW": "7"},
-        overrides={"health": {"scoring_window": 99}},
-    )
-    assert cfg.health.scoring_window == 99
 
 
 def test_overrides_beat_the_defaults() -> None:
@@ -199,30 +225,11 @@ def test_overrides_beat_the_defaults() -> None:
     assert cfg.aux.call_timeout_s == 5.0
 
 
-def test_env_beats_the_defaults() -> None:
-    """An env var wins over the dataclass default when no override is given."""
-    cfg = load_config(env={"ZICATO_HEALTH_STALLED_REJECTS": "9"})
-    assert cfg.health.stalled_rejects == 9
-
-
-def test_override_and_env_on_different_fields_compose() -> None:
-    """Env and override target different fields — both land, no interference."""
-    cfg = load_config(
-        env={"ZICATO_HEALTH_SCORING_WINDOW": "7"},
-        overrides={"aux": {"call_timeout_s": 30.0}},
-    )
-    assert cfg.health.scoring_window == 7  # from env
-    assert cfg.aux.call_timeout_s == 30.0  # from override
-
-
 def test_override_leaves_other_fields_of_a_section_intact() -> None:
     """Overriding one field of a section preserves that section's other fields."""
-    cfg = load_config(
-        env={"ZICATO_HEALTH_SCORING_EPSILON": "0.1"},
-        overrides={"health": {"scoring_window": 42}},
-    )
+    cfg = load_config(env={}, overrides={"health": {"scoring_window": 42}})
     assert cfg.health.scoring_window == 42  # from override
-    assert cfg.health.scoring_epsilon == 0.1  # from env, untouched by override
+    assert cfg.health.scoring_epsilon == 1e-6  # default, untouched
     assert cfg.health.stalled_rejects == 3  # default, untouched
 
 
@@ -250,40 +257,15 @@ def test_non_mapping_override_section_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Isolation: the default env is os.environ but a passed env is honoured
+# Deleted env vars are ignored through the REAL os.environ too
 # ---------------------------------------------------------------------------
 
 
-def test_passed_env_fully_replaces_os_environ(monkeypatch: pytest.MonkeyPatch) -> None:
-    """An explicit ``env`` is read instead of ``os.environ`` — no leakage."""
-    # A real env var that would otherwise be picked up.
-    monkeypatch.setenv("ZICATO_HEALTH_SCORING_WINDOW", "999")
-    # An explicit env that does NOT carry it.
-    cfg = load_config(env={})
-    assert cfg.health.scoring_window == 3  # default, not 999
-
-
-def test_default_env_reads_os_environ(monkeypatch: pytest.MonkeyPatch) -> None:
-    """With no ``env`` argument, ``load_config`` reads the real ``os.environ``."""
+def test_deleted_env_vars_ignored_via_os_environ(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A deleted variable in the real process environment is a no-op."""
     monkeypatch.setenv("ZICATO_HEALTH_SCORING_WINDOW", "21")
     cfg = load_config()
-    assert cfg.health.scoring_window == 21
-
-
-# ---------------------------------------------------------------------------
-# describe_env_vars introspection
-# ---------------------------------------------------------------------------
-
-
-def test_describe_env_vars_enumerates_every_binding() -> None:
-    """``describe_env_vars`` lists every honoured variable mapped to its field."""
-    described = describe_env_vars()
-    assert described["ZICATO_HEALTH_SCORING_WINDOW"] == "health.scoring_window"
-    # Every described "section.field" pair resolves to a real dataclass field.
-    blank = ZicatoConfig()
-    for target in described.values():
-        section, field = target.split(".")
-        assert hasattr(getattr(blank, section), field)
+    assert cfg.health.scoring_window == 3  # default — env var deleted
 
 
 # ---------------------------------------------------------------------------
@@ -294,10 +276,10 @@ def test_describe_env_vars_enumerates_every_binding() -> None:
 # clears them around every test, so these tests only pin, never clean up.
 
 
-def test_pinned_overrides_layer_on_top_of_env() -> None:
-    """A pinned value beats both the defaults and the environment."""
+def test_pinned_overrides_beat_the_defaults() -> None:
+    """A pinned value beats the dataclass default."""
     pin_overrides({"health": {"scoring_window": 12}})
-    cfg = load_config(env={"ZICATO_HEALTH_SCORING_WINDOW": "7"})
+    cfg = load_config(env={})
     assert cfg.health.scoring_window == 12
 
 
