@@ -60,6 +60,7 @@ function freshDraft() {
 
 let DRAFT = freshDraft();
 const OP_CALLS = [];
+let SLOTS = [];
 
 function envelope(patch) {
   return {
@@ -75,14 +76,33 @@ function envelope(patch) {
 function installBuilderFetch() {
   OP_CALLS.length = 0;
   DRAFT = freshDraft();
+  SLOTS = [];
   globalThis.fetch = async (path, init) => {
     const body = init && init.body ? JSON.parse(init.body) : {};
     if (path === '/builder/config') return jsonRes(CONFIG);
     if (path.startsWith('/builder/draft')) {
-      return jsonRes({ session: 'dashboard', draft: DRAFT, cost: envelope().cost, warnings: [], diff: envelope().diff });
+      return jsonRes({ session: 'dashboard', draft: DRAFT, cost: envelope().cost, warnings: [], diff: envelope().diff, drafts: SLOTS.slice() });
     }
     if (path === '/builder/op') {
       OP_CALLS.push(body);
+      // the fork/compare lifecycle ops: maintain the slot list + return the
+      // envelope with `drafts` (and `compare` for the compare op).
+      if (body.op === 'fork' || body.op === 'switch' || body.op === 'list_drafts' || body.op === 'compare') {
+        if (body.op === 'fork' && !SLOTS.includes(body.args.name)) SLOTS.push(body.args.name);
+        const env = envelope({ op: body.op, changed: body.args.name ? { name: body.args.name } : body.args });
+        env.drafts = SLOTS.slice();
+        if (body.op === 'compare') {
+          env.compare = {
+            a: body.args.name_a, b: body.args.name_b,
+            changed_components: ['scoring'],
+            scoring: { promote_margin: { a: 0.01, b: 0.07 } },
+            board: { added: [], removed: [], changed: [] },
+            brief: { changed: false, a_chars: 3, b_chars: 3 },
+            proposer: { changed: false, a: null, b: null },
+          };
+        }
+        return jsonRes(env);
+      }
       // the preflight READ op: the normal envelope plus the `preflight` result
       // (here the REFUSE case) and the just-measured-floor refuse warning.
       if (body.op === 'preflight') {
@@ -715,6 +735,68 @@ test('builder view: the evidence-gate params join Field & noise; threshold 0 REM
   await tick();
   assert(OP_CALLS.find((c) => c.op === 'set_param' && c.args.key === 'promote_confidence_replicates' && c.args.value === 32),
     'the replicate budget posts set_param');
+});
+
+// ── the fork/compare lifecycle (slot picker + compare view) ────────────
+
+test('builder view: the rail slot strip forks the working draft and switches slots', async () => {
+  installBuilderFetch();
+  globalThis.window.localStorage.clear();
+  const host = globalThis.document.createElement('div');
+  await view.render(host);
+  // the compact picker rides at the bottom of the rail.
+  const strip = firstClass(host, 'dn-bld-slots');
+  assert(strip, 'the draft-slot strip renders in the rail');
+  // fork: type a name, click Fork → POST op fork {name}.
+  const nameIn = byAria(host, 'dn-bld-slots-name', 'Fork name');
+  assert(nameIn, 'the fork-name input renders');
+  nameIn.value = 'variant-a';
+  const forkBtn = firstClass(host, 'dn-bld-btn-fork');
+  forkBtn.dispatchEvent(makeEvent('click'));
+  await tick();
+  const forkCall = OP_CALLS.find((c) => c.op === 'fork');
+  assert(forkCall && forkCall.args.name === 'variant-a', 'fork posted with the typed name');
+  // the slot select now lists the fork and marks it active.
+  const pick = byAria(host, 'dn-bld-select', 'Draft slot') || firstClass(host, 'dn-bld-slots-pick');
+  assert(pick, 'the slot select renders');
+  assert(pick.children.some((o) => o.getAttribute('value') === 'variant-a'), 'the fork appears in the picker');
+  // fork made variant-a active already; add a second slot and switch back.
+  const nameIn2 = byAria(host, 'dn-bld-slots-name', 'Fork name');
+  nameIn2.value = 'variant-b';
+  firstClass(host, 'dn-bld-btn-fork').dispatchEvent(makeEvent('click'));
+  await tick();
+  const pick2 = byAria(host, 'dn-bld-select', 'Draft slot') || firstClass(host, 'dn-bld-slots-pick');
+  pick2.value = 'variant-a';
+  pick2.dispatchEvent(makeEvent('change'));
+  await tick();
+  const switchCall = OP_CALLS.find((c) => c.op === 'switch');
+  assert(switchCall && switchCall.args.name === 'variant-a', 'the picker posts op switch');
+});
+
+test('builder view: the Review compare panel posts op compare and renders the keyed diff', async () => {
+  const host = await mountAt('Review');
+  // seed a slot so the selects have a named operand.
+  const nameIn = byAria(host, 'dn-bld-slots-name', 'Fork name');
+  nameIn.value = 'tuned';
+  firstClass(host, 'dn-bld-btn-fork').dispatchEvent(makeEvent('click'));
+  await tick();
+  const selB = byAria(host, 'dn-bld-select', 'Compare draft B');
+  assert(selB, 'the compare operand selects render');
+  selB.value = 'tuned';
+  selB.dispatchEvent(makeEvent('change'));
+  await tick();
+  const cmpBtn = firstClass(host, 'dn-bld-btn-compare');
+  cmpBtn.dispatchEvent(makeEvent('click'));
+  await tick();
+  const cmpCall = OP_CALLS.find((c) => c.op === 'compare');
+  assert(cmpCall, 'the Compare button posts op compare');
+  assertEqual(cmpCall.args.name_a, 'session', 'operand A defaults to the working draft');
+  assertEqual(cmpCall.args.name_b, 'tuned', 'operand B follows the select');
+  // the keyed diff renders: the changed scoring key with both values.
+  const result = firstClass(host, 'dn-bld-cmp-result');
+  assert(result, 'the compare result panel renders');
+  assert(result.textContent.includes('promote_margin'), 'the differing scoring key is named');
+  assert(result.textContent.includes('0.01') && result.textContent.includes('0.07'), 'both values are shown');
 });
 
 // ── the build-time statistical pre-flight (Review pane) ────────────────

@@ -529,6 +529,76 @@ async def preflight(runs: int | None = None) -> str:
     return _result_json(payload)
 
 
+def fork(name: str) -> str:
+    """Fork the working draft into a NAMED slot and switch to it.
+
+    Snapshots the session's current draft as ``name`` (1-64 chars of
+    [A-Za-z0-9._-]) — the fork/compare way to iterate on contract
+    variants WITHOUT rolling the epoch. Subsequent edits accumulate on
+    the named slot; `switch` moves between slots with their state intact;
+    `compare` diffs any two. Never overwrites an existing name (returns
+    an ``error`` instead). Applying still writes whichever draft the
+    session is on.
+    """
+    ctx = _active_context()
+    try:
+        ctx.store.fork(ctx.session_id, name, ctx.workspace_root)
+    except ValueError as exc:
+        return _result_json({"error": str(exc)})
+    patch = ops.DraftPatch(op="fork", changed={"name": name})
+    return _result_json({**_summary(patch), "drafts": ctx.store.list_drafts()})
+
+
+def switch(name: str) -> str:
+    """Switch the session to the named draft slot (its state intact).
+
+    The previous slot keeps every edit. Returns the patch + the switched
+    draft's cost / warnings / diff, or an ``error`` for an unknown name.
+    """
+    ctx = _active_context()
+    try:
+        ctx.store.switch(ctx.session_id, name)
+    except ValueError as exc:
+        return _result_json({"error": str(exc)})
+    patch = ops.DraftPatch(op="switch", changed={"name": name})
+    return _result_json({**_summary(patch), "drafts": ctx.store.list_drafts()})
+
+
+def list_drafts() -> str:
+    """List the named draft slots (the fork/compare variants)."""
+    ctx = _active_context()
+    return _result_json({"drafts": ctx.store.list_drafts()})
+
+
+def compare(name_a: str, name_b: str) -> str:
+    """Keyed diff between two drafts — slots, ``"session"``, or ``"live"``.
+
+    ``"session"`` is the current working draft; ``"live"`` is the
+    workspace's running contract; anything else names a fork slot. The
+    diff is keyed the way the epoch-roll rule sees it: differing
+    contract-canonical scoring keys (with both values), board entry ids
+    added/removed/changed, the brief, the proposer. Read-only.
+    """
+    ctx = _active_context()
+
+    def _resolve(name: str) -> TournamentDraft:
+        if name == "session":
+            return ctx.draft()
+        if name == "live":
+            return TournamentDraft.from_workspace(ctx.workspace_root)
+        slot = ctx.store.slot(name)
+        if slot is None:
+            known = ", ".join(["session", "live", *ctx.store.list_drafts()])
+            raise ValueError(f"no draft named {name!r} (known: {known})")
+        return slot
+
+    try:
+        diff = ops.compare_drafts(_resolve(name_a), _resolve(name_b))
+    except ValueError as exc:
+        return _result_json({"error": str(exc)})
+    return _result_json({"compare": {"a": name_a, "b": name_b, **diff}})
+
+
 def preview_apply() -> str:
     """Dry-run the apply: preview the diff / predicted hash / cost.
 
@@ -587,6 +657,10 @@ DEFAULT_BUILDER_TOOLS = (
     estimate_cost,
     validate,
     preflight,
+    fork,
+    switch,
+    list_drafts,
+    compare,
     preview_apply,
 )
 
@@ -612,5 +686,9 @@ __all__ = [
     "estimate_cost",
     "validate",
     "preflight",
+    "fork",
+    "switch",
+    "list_drafts",
+    "compare",
     "preview_apply",
 ]

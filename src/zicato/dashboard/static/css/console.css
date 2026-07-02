@@ -3389,6 +3389,30 @@
   .dn-bld-refuses { display: flex; flex-direction: column; gap: 5px; margin: 8px 0; }
   .dn-bld-refuses-empty { display: none; }
 
+  /* the draft-slot picker (fork/compare lifecycle) — a compact strip at the
+   * bottom of the section rail. */
+  .dn-bld-slots { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--v2-rule);
+    display: flex; flex-direction: column; gap: 6px; }
+  .dn-bld-slots-head { font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--v2-ink-faint); }
+  .dn-bld-slots-pick { width: 100%; }
+  .dn-bld-slots-forkrow { display: flex; gap: 5px; }
+  .dn-bld-slots-name { flex: 1; min-width: 0; width: auto; }
+
+  /* draft compare (Review pane): operand selects + the keyed diff table. */
+  .dn-bld-cmp { margin: 10px 0; }
+  .dn-bld-cmp-controls { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .dn-bld-cmp-vs { font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
+  .dn-bld-cmp-result { margin-top: 8px; background: var(--v2-panel); border: 1px solid var(--v2-rule);
+    border-radius: 4px; padding: 6px 9px; display: flex; flex-direction: column; gap: 3px; overflow-x: auto; }
+  .dn-bld-cmp-row { display: grid; grid-template-columns: minmax(120px, 1.2fr) 1fr 1fr; gap: 8px;
+    font-size: calc(11px * var(--dt-font-scale, 1)); line-height: 1.5; align-items: baseline; }
+  .dn-bld-cmp-headrow { color: var(--v2-ink-faint); border-bottom: 1px solid var(--v2-rule-soft); padding-bottom: 3px; }
+  .dn-bld-cmp-key { color: var(--v2-ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dn-bld-cmp-a { color: var(--v2-bad); overflow-wrap: anywhere; }
+  .dn-bld-cmp-b { color: var(--v2-good); overflow-wrap: anywhere; }
+  .dn-bld-cmp-same { margin: 6px 0 0; }
+
   /* the chat copilot pane — a FULL-HEIGHT docked column, not a content-sized
    * stub. The grid stretches it to the workspace height; it is a 3-row flex
    * column (header · log · composer) whose log grows (flex:1) and scrolls, so

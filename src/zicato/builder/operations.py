@@ -1187,6 +1187,86 @@ def _measured_noise_floor(workspace_root: Path) -> float | None:
 
 
 # ---------------------------------------------------------------------------
+# Read-side: draft-vs-draft compare (the fork/compare lifecycle)
+# ---------------------------------------------------------------------------
+
+
+def compare_drafts(a: TournamentDraft, b: TournamentDraft) -> dict[str, Any]:
+    """A keyed diff between two drafts — the fork/compare read-op.
+
+    The :meth:`TournamentDraft.diff_vs_live` precedent generalized to any
+    draft pair, over the SAME canonicalizers the epoch-roll rule uses
+    (:func:`~zicato.builder.draft._scoring_canon` /
+    :func:`~zicato.builder.draft._board_canon` /
+    :func:`~zicato.builder.draft._brief_canon`), so "differs" here agrees
+    with "would roll the epoch". Purely read-side; mutates nothing.
+
+    Shape::
+
+        {
+          "changed_components": ["scoring", "board", ...],
+          "scoring": {key: {"a": ..., "b": ...}, ...},   # differing top-level keys
+          "board": {"added": [ids], "removed": [ids], "changed": [ids]},
+          "brief": {"changed": bool, "a_chars": int, "b_chars": int},
+          "proposer": {"changed": bool, "a": str|None, "b": str|None},
+        }
+
+    ``scoring`` keys come from the contract-canonical scoring form (float-
+    rounded, omitted-at-default fields absent), so the diff never reports
+    a phantom change the contract hash would not see. ``board`` is keyed
+    by entry id: ``added`` = in ``b`` only, ``removed`` = in ``a`` only,
+    ``changed`` = present in both with differing canonical content.
+    """
+    import json as _json
+
+    from zicato.builder.draft import _board_canon, _brief_canon, _scoring_canon
+
+    changed_components: list[str] = []
+
+    scoring_a = _json.loads(_scoring_canon(a.scoring))
+    scoring_b = _json.loads(_scoring_canon(b.scoring))
+    scoring_diff: dict[str, Any] = {}
+    for key in sorted(set(scoring_a) | set(scoring_b)):
+        va, vb = scoring_a.get(key), scoring_b.get(key)
+        if va != vb:
+            scoring_diff[key] = {"a": va, "b": vb}
+    if scoring_diff:
+        changed_components.append("scoring")
+
+    canon_a = {e.id: _board_canon([e]) for e in a.entries}
+    canon_b = {e.id: _board_canon([e]) for e in b.entries}
+    added = sorted(set(canon_b) - set(canon_a))
+    removed = sorted(set(canon_a) - set(canon_b))
+    entry_changed = sorted(
+        eid for eid in set(canon_a) & set(canon_b) if canon_a[eid] != canon_b[eid]
+    )
+    if added or removed or entry_changed:
+        changed_components.append("board")
+
+    brief_changed = _brief_canon(a.brief) != _brief_canon(b.brief)
+    if brief_changed:
+        changed_components.append("brief")
+
+    proposer_a = str(a.proposer_path) if a.proposer_path is not None else None
+    proposer_b = str(b.proposer_path) if b.proposer_path is not None else None
+    proposer_changed = proposer_a != proposer_b
+    if proposer_changed:
+        changed_components.append("proposer")
+
+    return {
+        "changed_components": changed_components,
+        "scoring": scoring_diff,
+        "board": {"added": added, "removed": removed, "changed": entry_changed},
+        "brief": {
+            "changed": brief_changed,
+            "a_chars": len(a.brief),
+            "b_chars": len(b.brief),
+        },
+        "proposer": {"changed": proposer_changed, "a": proposer_a, "b": proposer_b},
+    }
+
+
+# ---------------------------------------------------------------------------
 # Read-side: the build-time contract pre-flight
 # ---------------------------------------------------------------------------
 
@@ -1511,6 +1591,7 @@ __all__ = [
     "set_brief",
     "estimate_cost",
     "validate",
+    "compare_drafts",
     "apply",
     "VALID_TOURNAMENT_STRUCTURES",
 ]

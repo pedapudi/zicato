@@ -51,6 +51,11 @@ let _cost = null;        // last cost.to_dict()
 let _warnings = [];      // last warnings[]
 let _diff = null;        // last diff.to_dict()
 let _preflight = null;   // last preflight result (the op's `preflight` key)
+let _drafts = [];        // named fork slots (the fork/compare lifecycle)
+let _activeSlot = null;  // the slot the session is bound to ('' = unnamed)
+let _compare = null;     // last compare result (the op's `compare` key)
+let _cmpA = 'session';   // compare operand selections (persist across renders)
+let _cmpB = 'live';
 let _config = null;      // /builder/config public dict
 let _active = 'structure';
 let _busy = false;
@@ -126,6 +131,7 @@ function applySnapshot(snap) {
   _cost = snap.cost || _cost;
   _warnings = Array.isArray(snap.warnings) ? snap.warnings : [];
   _diff = snap.diff || _diff;
+  if (Array.isArray(snap.drafts)) _drafts = snap.drafts;
 }
 
 // Apply the {draft,patch,cost,warnings,diff} envelope the op / a chat patch
@@ -138,6 +144,13 @@ function applyOpResult(env, opts) {
   if (Array.isArray(env.warnings)) _warnings = env.warnings;
   if (env.diff) _diff = env.diff;
   if (env.preflight) _preflight = env.preflight;
+  if (Array.isArray(env.drafts)) _drafts = env.drafts;
+  if (env.compare) _compare = env.compare;
+  if (env.patch && (env.patch.op === 'fork' || env.patch.op === 'switch')
+      && env.patch.changed && env.patch.changed.name) {
+    _activeSlot = env.patch.changed.name;
+  }
+  _renderRail();
   _renderCenter();
   _renderPreview();
   if (_chat && (opts && opts.fromChat) && env.patch) _chat.tagLastEdit(summarizePatch(env.patch));
@@ -175,19 +188,60 @@ function flashError(msg) { _flash = String(msg || ''); _renderCenter(); }
 // ── left rail ─────────────────────────────────────────────────────────
 
 function renderRail(host) {
-  const digest = JSON.stringify({ active: _active, done: SECTIONS.map((s) => sectionDone(s.id)) });
-  if (gatedSwap(host, 'rail|' + digest, () => SECTIONS.map((s) => {
-    const done = sectionDone(s.id);
-    const btn = el('button', {
-      class: 'dn-bld-railitem' + (s.id === _active ? ' dn-bld-railitem-active' : '') + (done ? ' dn-bld-railitem-done' : ''),
-      type: 'button', 'aria-current': s.id === _active ? 'step' : null,
-    }, [
-      el('span', { class: 'dn-bld-railglyph', 'aria-hidden': 'true', text: done ? '✓' : (s.id === _active ? '◆' : '◇') }),
-      el('span', { class: 'dn-bld-raillabel', text: s.label }),
-    ]);
-    btn.addEventListener('click', () => { _active = s.id; _renderRail(); _renderCenter(); _renderPreview(); });
-    return btn;
-  }))) { /* swapped */ }
+  const digest = JSON.stringify({
+    active: _active, done: SECTIONS.map((s) => sectionDone(s.id)),
+    drafts: _drafts, slot: _activeSlot,
+  });
+  if (gatedSwap(host, 'rail|' + digest, () => {
+    const items = SECTIONS.map((s) => {
+      const done = sectionDone(s.id);
+      const btn = el('button', {
+        class: 'dn-bld-railitem' + (s.id === _active ? ' dn-bld-railitem-active' : '') + (done ? ' dn-bld-railitem-done' : ''),
+        type: 'button', 'aria-current': s.id === _active ? 'step' : null,
+      }, [
+        el('span', { class: 'dn-bld-railglyph', 'aria-hidden': 'true', text: done ? '✓' : (s.id === _active ? '◆' : '◇') }),
+        el('span', { class: 'dn-bld-raillabel', text: s.label }),
+      ]);
+      btn.addEventListener('click', () => { _active = s.id; _renderRail(); _renderCenter(); _renderPreview(); });
+      return btn;
+    });
+    items.push(slotStrip());
+    return items;
+  })) { /* swapped */ }
+}
+
+// ── the draft-slot picker (fork/compare lifecycle) ─────────────────────
+//
+// Compact strip at the bottom of the rail: switch between named fork slots,
+// or fork the working draft into a new one. Slots are how operators iterate
+// on contract variants WITHOUT rolling the epoch — apply still writes only
+// the draft the session is on.
+function slotStrip() {
+  const wrap = el('div', { class: 'dn-bld-slots' });
+  wrap.appendChild(el('div', { class: 'dn-bld-slots-head', text: 'Drafts' }));
+  const cur = _activeSlot || '';
+  const sel = el('select', { class: 'dn-bld-select dn-bld-slots-pick', 'aria-label': 'Draft slot' }, [
+    el('option', { value: '', text: '(working draft)' }),
+    ..._drafts.map((n) => el('option', { value: n, text: n })),
+  ]);
+  sel.value = cur;
+  sel.setAttribute('value', cur);
+  sel.addEventListener('change', () => {
+    const v = sel.value != null ? sel.value : sel.getAttribute('value');
+    if (v && v !== _activeSlot) runOp('switch', { name: v });
+  });
+  wrap.appendChild(sel);
+  const nameIn = el('input', {
+    class: 'dn-bld-text dn-bld-slots-name', type: 'text',
+    placeholder: 'variant-name', 'aria-label': 'Fork name',
+  });
+  const forkBtn = el('button', { class: 'dn-bld-btn dn-bld-btn-fork', type: 'button', text: 'Fork' });
+  forkBtn.addEventListener('click', () => {
+    const v = String(nameIn.value != null ? nameIn.value : (nameIn.getAttribute('value') || '')).trim();
+    if (v) runOp('fork', { name: v });
+  });
+  wrap.appendChild(el('div', { class: 'dn-bld-slots-forkrow' }, [nameIn, forkBtn]));
+  return wrap;
 }
 
 // A section is "done" once the operator has visibly engaged its core contract
@@ -215,7 +269,10 @@ function sectionDone(id) {
 
 function renderCenter(host) {
   const d = _draft || {};
-  const digest = JSON.stringify({ active: _active, draft: d, busy: _busy, flash: _flash, pf: _preflight });
+  const digest = JSON.stringify({
+    active: _active, draft: d, busy: _busy, flash: _flash, pf: _preflight,
+    cmp: _compare, cmpSel: [_cmpA, _cmpB], drafts: _drafts,
+  });
   gatedSwap(host, 'center|' + digest, () => {
     const nodes = [];
     if (_flash) {
@@ -676,8 +733,93 @@ function reviewSection(d) {
     ]),
     preflightPanel(),
     refuseWarningsPanel(),
+    comparePanel(),
     el('div', { class: 'dn-bld-applyrow' }, [dry, apply]),
     out);
+}
+
+// ── draft compare (the fork/compare lifecycle, Review pane) ────────────
+//
+// Two operand selects (the working draft, the live contract, or any fork
+// slot) + a keyed diff: differing contract-canonical scoring keys with both
+// values, board ids added/removed/changed, the brief, the proposer.
+function comparePanel() {
+  const names = ['session', 'live', ..._drafts];
+  const mkSel = (aria, cur, onPick) => {
+    const sel = el('select', { class: 'dn-bld-select', 'aria-label': aria },
+      names.map((n) => el('option', { value: n, text: n })));
+    sel.value = cur;
+    sel.setAttribute('value', cur);
+    sel.addEventListener('change', () => {
+      const v = sel.value != null ? sel.value : sel.getAttribute('value');
+      if (v) onPick(v);
+    });
+    return sel;
+  };
+  const selA = mkSel('Compare draft A', _cmpA, (v) => { _cmpA = v; });
+  const selB = mkSel('Compare draft B', _cmpB, (v) => { _cmpB = v; });
+  const btn = el('button', { class: 'dn-bld-btn dn-bld-btn-compare', type: 'button', text: 'Compare' });
+  btn.addEventListener('click', () => runOp('compare', { name_a: _cmpA, name_b: _cmpB }));
+  const kids = [
+    el('div', { class: 'dn-bld-cmp-controls' }, [selA, el('span', { class: 'dn-bld-cmp-vs', text: 'vs' }), selB, btn]),
+  ];
+  if (_compare) kids.push(compareResult(_compare));
+  return el('div', { class: 'dn-bld-cmp' }, [
+    el('h3', { class: 'dn-bld-subhead', text: 'Compare drafts' }),
+    ...kids,
+  ]);
+}
+
+function compareResult(cmp) {
+  const changed = cmp.changed_components || [];
+  if (!changed.length) {
+    return el('p', { class: 'dn-faint dn-bld-cmp-same', text: `${cmp.a} and ${cmp.b} describe the same contract.` });
+  }
+  const rows = [];
+  const scoring = cmp.scoring || {};
+  for (const key of Object.keys(scoring)) {
+    rows.push(el('div', { class: 'dn-bld-cmp-row' }, [
+      el('span', { class: 'dn-bld-cmp-key dn-mono', text: key }),
+      el('span', { class: 'dn-bld-cmp-a dn-mono', text: fmtCmp(scoring[key].a) }),
+      el('span', { class: 'dn-bld-cmp-b dn-mono', text: fmtCmp(scoring[key].b) }),
+    ]));
+  }
+  const board = cmp.board || {};
+  for (const [label, ids] of [['added', board.added], ['removed', board.removed], ['changed', board.changed]]) {
+    if (Array.isArray(ids) && ids.length) {
+      rows.push(el('div', { class: 'dn-bld-cmp-row' }, [
+        el('span', { class: 'dn-bld-cmp-key dn-mono', text: 'board.' + label }),
+        el('span', { class: 'dn-bld-cmp-b', text: ids.join(', ') }),
+      ]));
+    }
+  }
+  if (cmp.brief && cmp.brief.changed) {
+    rows.push(el('div', { class: 'dn-bld-cmp-row' }, [
+      el('span', { class: 'dn-bld-cmp-key dn-mono', text: 'brief' }),
+      el('span', { class: 'dn-bld-cmp-a', text: `${cmp.brief.a_chars} chars` }),
+      el('span', { class: 'dn-bld-cmp-b', text: `${cmp.brief.b_chars} chars` }),
+    ]));
+  }
+  if (cmp.proposer && cmp.proposer.changed) {
+    rows.push(el('div', { class: 'dn-bld-cmp-row' }, [
+      el('span', { class: 'dn-bld-cmp-key dn-mono', text: 'proposer' }),
+      el('span', { class: 'dn-bld-cmp-a dn-mono', text: cmp.proposer.a || 'builtin' }),
+      el('span', { class: 'dn-bld-cmp-b dn-mono', text: cmp.proposer.b || 'builtin' }),
+    ]));
+  }
+  return el('div', { class: 'dn-bld-cmp-result' }, [
+    el('div', { class: 'dn-bld-cmp-row dn-bld-cmp-headrow' }, [
+      el('span', { class: 'dn-bld-cmp-key', text: `changed: ${changed.join(', ')}` }),
+      el('span', { class: 'dn-bld-cmp-a', text: cmp.a }),
+      el('span', { class: 'dn-bld-cmp-b', text: cmp.b }),
+    ]),
+    ...rows,
+  ]);
+}
+
+function fmtCmp(v) {
+  if (v === undefined) return '—';
+  try { return JSON.stringify(v); } catch (e) { return String(v); }
 }
 
 // ── the build-time statistical pre-flight (Review pane) ────────────────

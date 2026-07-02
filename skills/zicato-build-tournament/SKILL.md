@@ -216,6 +216,8 @@ copilot's tools (conceptual builder surface):
 | `validate` | (read-only) advisory warnings, incl. the statistical margin-vs-noise-floor rule (`refuse` severity when a measured floor is known and the evidence gate is off) |
 | `preflight` | (read-only, spends the small K-draw measurement budget) measures the DRAFT contract's A/A noise floor + achievable signal against the registered target; verdict `ok`/`warn`/`refuse`, recommend-only; degrades honestly when the workspace has no registered target. CLI equivalents: `zicato board preflight`, `zicato board audit` |
 | `preview_apply` | (read-only) dry-run: the diff, the predicted contract hash, the cost |
+| `fork` / `switch` / `list_drafts` | NAMED draft slots — the fork/compare lifecycle. `fork name` snapshots the working draft into a slot and binds the session to it; `switch` moves between slots with their state intact. Iterating on contract variants never writes anything — only `apply` does |
+| `compare name_a name_b` | (read-only) keyed diff between any two drafts (`session` = the working draft, `live` = the running contract, or a slot name): differing contract-canonical scoring keys with both values, board ids added/removed/changed, brief, proposer |
 | `apply` | freezes the draft into the contract — **ROLLS THE EPOCH** |
 
 The loop the copilot runs on every operator request:

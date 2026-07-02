@@ -268,8 +268,22 @@ def make_builder_endpoints(
                 "cost": cost.to_dict(),
                 "warnings": [w.to_dict() for w in warns],
                 "diff": diff.to_dict(),
+                "drafts": draft_store.list_drafts(),
             }
         )
+
+    def _resolve_compare_draft(name: str, session: str) -> TournamentDraft:
+        """Resolve a compare operand: ``"session"`` (the working draft),
+        ``"live"`` (the workspace's current contract), or a named slot."""
+        if name == "session":
+            return draft_store.get(session, root)
+        if name == "live":
+            return TournamentDraft.from_workspace(root)
+        slot = draft_store.slot(name)
+        if slot is None:
+            known = ", ".join(["session", "live", *draft_store.list_drafts()])
+            raise ValueError(f"no draft named {name!r} (known: {known})")
+        return slot
 
     async def builder_op(request: Request) -> JSONResponse:
         forbidden = _forbidden()
@@ -287,6 +301,50 @@ def make_builder_endpoints(
             return JSONResponse({"error": "'args' must be a JSON object"}, status_code=400)
         session = _session_of(body, request)
         draft = draft_store.get(session, root)
+        if op in ("fork", "switch", "list_drafts", "compare"):
+            # The fork/compare LIFECYCLE ops act on the store's named slots
+            # rather than mutating draft fields, so they dispatch here. Their
+            # responses carry the normal envelope (the possibly-switched
+            # active draft) plus the slot list — and `compare` its keyed diff.
+            try:
+                extra: dict[str, Any] = {}
+                if op == "fork":
+                    draft = draft_store.fork(session, str(args["name"]), root)
+                    patch = ops.DraftPatch(op="fork", changed={"name": str(args["name"])})
+                elif op == "switch":
+                    draft = draft_store.switch(session, str(args["name"]))
+                    patch = ops.DraftPatch(op="switch", changed={"name": str(args["name"])})
+                elif op == "list_drafts":
+                    patch = ops.DraftPatch(op="list_drafts")
+                else:  # compare
+                    name_a = str(args["name_a"])
+                    name_b = str(args["name_b"])
+                    extra["compare"] = {
+                        "a": name_a,
+                        "b": name_b,
+                        **ops.compare_drafts(
+                            _resolve_compare_draft(name_a, session),
+                            _resolve_compare_draft(name_b, session),
+                        ),
+                    }
+                    patch = ops.DraftPatch(op="compare", changed={"a": name_a, "b": name_b})
+            except KeyError as exc:
+                return JSONResponse(
+                    {"error": f"missing arg {exc.args[0]!r} for op {op!r}"}, status_code=400
+                )
+            except ValueError as exc:
+                return JSONResponse({"error": str(exc)}, status_code=400)
+            return JSONResponse(
+                {
+                    "draft": draft.to_dict(),
+                    "patch": patch.to_dict(),
+                    "cost": ops.estimate_cost(draft).to_dict(),
+                    "warnings": [w.to_dict() for w in ops.validate(draft, root)],
+                    "diff": draft.diff_vs_live(root).to_dict(),
+                    "drafts": draft_store.list_drafts(),
+                    **extra,
+                }
+            )
         if op == "preflight":
             # The build-time statistical pre-flight — a READ op that spends
             # the small K-draw measurement budget, so it rides the same

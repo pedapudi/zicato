@@ -973,3 +973,130 @@ def test_cost_all_honest_terms_compose_with_the_screen_line() -> None:
     confirm = next(line for line in est.breakdown if "crowning-confirm" in line.label)
     assert confirm.runs == 640
     assert confirm.runs > est.board_runs_per_round / 2
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle — DraftStore named slots (fork / list / switch) + compare_drafts
+# ---------------------------------------------------------------------------
+
+
+def _slot_workspace(tmp_path) -> object:
+    """A minimal workspace with a live contract for DraftStore init."""
+    import json
+
+    from zicato.cli.common import write_workspace_config
+    from zicato.core.types import ScoringWeights
+    from zicato.epoch.lifecycle import new_epoch
+
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    board = tmp_path / "board.jsonl"
+    board.write_text(
+        '{"id": "e1", "kind": "single_turn", "budget_s": 60, "input": "hi"}\n'
+        '{"id": "e2", "kind": "single_turn", "budget_s": 60, "input": "bye"}\n',
+        encoding="utf-8",
+    )
+    brief = tmp_path / "brief.md"
+    brief.write_text("# Brief\n", encoding="utf-8")
+    scoring = tmp_path / "scoring.json"
+    scoring.write_text(json.dumps({"drift_weight": 1.0}), encoding="utf-8")
+    write_workspace_config(
+        ws,
+        {
+            "instance_id": "default",
+            "contract": {
+                "board_path": str(board.resolve()),
+                "rubric_path": str(brief.resolve()),
+                "scoring_path": str(scoring.resolve()),
+            },
+        },
+    )
+    new_epoch(ws, name="a", board_source=board, brief_source=brief, weights=ScoringWeights())
+    return ws
+
+
+def test_draftstore_fork_switch_roundtrip(tmp_path) -> None:
+    import pytest
+
+    from zicato.builder.draft import DraftStore
+
+    ws = _slot_workspace(tmp_path)
+    store = DraftStore()
+    assert store.list_drafts() == []
+
+    # Build up some working state, then fork it into slot A.
+    working = store.get("s", ws)
+    ops.set_structure(working, "swiss")
+    forked = store.fork("s", "variant-a", ws)
+    assert store.list_drafts() == ["variant-a"]
+    # The fork inherits the working state and IS the session's draft now.
+    assert forked.scoring.tournament_structure.structure == "swiss"
+    assert store.get("s", ws) is forked
+
+    # Edits accumulate on the slot; fork B from A, edit B; switch back to A.
+    ops.set_param(forked, "field_size", 4)
+    forked_b = store.fork("s", "variant-b", ws)
+    ops.set_structure(forked_b, "racing")
+    assert store.list_drafts() == ["variant-a", "variant-b"]
+    back = store.switch("s", "variant-a")
+    assert back.scoring.tournament_structure.structure == "swiss"
+    assert back.scoring.tournament_structure.params["field_size"] == 4
+    # B kept its own state — the fork was a real copy, no shared mutation.
+    assert store.slot("variant-b").scoring.tournament_structure.structure == "racing"
+    assert store.slot("variant-a").scoring.tournament_structure.structure == "swiss"
+
+    # Errors: duplicate name, malformed name, unknown switch target.
+    with pytest.raises(ValueError, match="already exists"):
+        store.fork("s", "variant-a", ws)
+    with pytest.raises(ValueError, match="invalid draft name"):
+        store.fork("s", "no spaces!", ws)
+    with pytest.raises(ValueError, match="no draft named"):
+        store.switch("s", "nope")
+
+
+def test_draftstore_fork_board_edits_do_not_leak(tmp_path) -> None:
+    from zicato.builder.draft import DraftStore
+
+    ws = _slot_workspace(tmp_path)
+    store = DraftStore()
+    store.get("s", ws)
+    a = store.fork("s", "a", ws)
+    b = store.fork("s", "b", ws)
+    ops.edit_board_entry(b, _entry("extra"))
+    assert {e.id for e in b.entries} == {"e1", "e2", "extra"}
+    assert {e.id for e in a.entries} == {"e1", "e2"}
+
+
+def test_compare_drafts_keyed_diff() -> None:
+    a = TournamentDraft()
+    a.entries = _board(3)
+    b = TournamentDraft()
+    b.entries = _board(3)
+
+    # Identical drafts: nothing changed.
+    same = ops.compare_drafts(a, b)
+    assert same["changed_components"] == []
+    assert same["scoring"] == {}
+    assert same["board"] == {"added": [], "removed": [], "changed": []}
+
+    # Scoring diff is keyed on the contract-canonical scoring keys.
+    ops.set_structure(b, "swiss")
+    ops.set_gate(b, promote_margin=0.05)
+    # Board: b gains an entry, loses one, and edits one in place.
+    ops.edit_board_entry(b, _entry("extra"))
+    b.entries = [e for e in b.entries if e.id != "e0"]
+    import dataclasses as _dc
+
+    b.entries = [_dc.replace(e, input="changed") if e.id == "e1" else e for e in b.entries]
+    ops.set_brief(b, "different brief")
+
+    diff = ops.compare_drafts(a, b)
+    assert set(diff["changed_components"]) == {"scoring", "board", "brief"}
+    assert diff["scoring"]["promote_margin"] == {"a": 0.01, "b": 0.05}
+    assert diff["scoring"]["tournament_structure"]["a"]["structure"] == "gauntlet"
+    assert diff["scoring"]["tournament_structure"]["b"]["structure"] == "swiss"
+    assert diff["board"]["added"] == ["extra"]
+    assert diff["board"]["removed"] == ["e0"]
+    assert diff["board"]["changed"] == ["e1"]
+    assert diff["brief"]["changed"] is True
+    assert diff["proposer"]["changed"] is False
