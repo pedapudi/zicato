@@ -111,6 +111,21 @@ class RuntimeConfig:
         This is a RUNTIME tuning knob, NOT part of the frozen evaluation
         contract — flipping it does not roll the epoch. Must be in ``(0, 1]``
         when set.
+    supervisor_kill_wait_s:
+        Seconds the tournament parent waits for the SUPERVISOR to
+        escalate-kill an over-budget worker after the parent writes the
+        kill-request marker, BEFORE falling back to its own last-resort
+        SIGTERM→grace→SIGKILL escalation. The supervisor is the single
+        escalator: this window must comfortably exceed the supervisor's
+        SIGTERM→SIGKILL grace plus its watchdog tick so a healthy
+        supervisor always wins the kill. When NO supervisor is attached
+        (an ad-hoc run with no watchdog, or a supervisor that itself
+        died), this value is the ABORT-LATENCY FLOOR: every over-budget
+        run waits the full window before the parent's fallback reaps the
+        worker. The default (``20.0``) is generous on purpose — a few
+        extra seconds on an already-overrun run is cheap; a leaked worker
+        is not. Tests and supervisor-less harnesses shrink it to keep
+        that floor from dominating wall-clock time.
 
     Construction-time validation
     ----------------------------
@@ -141,6 +156,7 @@ class RuntimeConfig:
     scrub_worker_env: bool = False
     worker_env_passthrough: tuple[str, ...] = ()
     diversity_tolerance: float | None = None
+    supervisor_kill_wait_s: float = 20.0
     #: The ADK model object (a ``BaseLlm``, typically a ``LiteLlm``) the inner
     #: ADK agents run on, built from a ``models.harness`` *model spec* (model +
     #: endpoint + api_key_env) via :func:`zicato.models_config.build_adk_model`.

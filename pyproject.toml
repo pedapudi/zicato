@@ -226,8 +226,17 @@ testpaths = ["tests"]
 addopts = "-n auto -m 'not node'"
 # Custom markers. `node` tags tests that shell out to the `node` runtime
 # (the dashboard JS harness); excluded from the default run via addopts.
+# `slow` and `integration` tag the real-subprocess / real-server tests
+# (worker isolation, real pytest boots, live harmonograf launches,
+# git-native genstore): the FULL suite stays the default — these markers
+# only enable an opt-in fast lane. NOTE: a command-line `-m` REPLACES the
+# `-m 'not node'` below, so the fast lane is
+# `pytest -m "not slow and not node"`. A tagged test's runtime IS its
+# coverage — never a candidate for stubbing.
 markers = [
     "node: shells out to the standalone Node test harness (run via `make node-test`)",
+    "slow: real-subprocess / real-server test whose runtime IS the coverage; the fast lane is `-m 'not slow and not node'` (the full suite stays the default run)",
+    "integration: crosses a process or network boundary (worker subprocesses, live servers, git subprocesses)",
 ]
 # With the package under src/, an editable install puts `zicato` on
 # sys.path, but a bare `pytest` from a non-installed checkout would

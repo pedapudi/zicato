@@ -19,9 +19,9 @@ Also provides shared scaffolding for the CLI tests that invoke
   test that lets the real spawn happen orphans the dashboard subprocess
   (it squats on the dashboard port and is reaped by ``systemd --user``,
   never the test). Mocking the spawn keeps those tests hermetic.
-* :func:`_reap_leaked_dashboards` is an autouse safety net: even if some
-  test spawns a real dashboard child, it is group-killed at teardown so
-  nothing leaks across the session.
+* :func:`_reap_leaked_dashboards` is an autouse, session-scoped safety
+  net: even if some test spawns a real dashboard child, it is group-killed
+  at session end so nothing leaks past the suite.
 """
 
 from __future__ import annotations
@@ -256,15 +256,23 @@ def _leaked_dashboard_pids() -> list[int]:
     return pids
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture(autouse=True, scope="session")
 def _reap_leaked_dashboards() -> Iterator[None]:
-    """Safety net: group-kill any real dashboard child a test leaks.
+    """Safety net: group-kill any real dashboard child the session leaks.
 
     A test should never spawn a real dashboard (see ``mock_dashboard_spawn``),
     but if one slips through, terminate the whole process group so nothing —
     including any harmonograf the dashboard parents — is left squatting on a
     port. Only ``-m zicato.dashboard`` children are reaped; a live operator
     ``zicato dashboard`` is a distinct argv and is never matched.
+
+    SESSION-scoped on purpose: the previous per-test version ran ``ps -eo
+    pid,args`` twice for every test (~5,700 subprocess spawns per suite run)
+    to catch a leak a test earlier — but the net's contract is only that a
+    leaked child never survives the session, and one snapshot at session
+    start plus one sweep at session end (per xdist worker) keeps that
+    contract at ~0 cost. Dashboards alive BEFORE the session (an operator's
+    live instance) are in the ``before`` snapshot and are never touched.
     """
     before = set(_leaked_dashboard_pids())
     try:

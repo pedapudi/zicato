@@ -214,7 +214,6 @@ from zicato.tournament.worker_transport import (  # noqa: F401
     _PARENT_BUDGET_GRACE_S,
     _REPLICATE_INDEX_CONTEXT_KEY,
     _SIGTERM_TO_SIGKILL_GRACE_S,
-    _SUPERVISOR_KILL_WAIT_S,
     _aborted_loss_profile,
     _adapter_spec,
     _callable_dotted_path,
@@ -684,15 +683,17 @@ async def _run_single(
             # parent falls back to its own last-resort escalation so the
             # worker is never leaked. The fallback fires only AFTER the whole
             # supervisor window elapsed with the worker still alive, so it
-            # never races a healthy supervisor over the same pid.
+            # never races a healthy supervisor over the same pid. The window
+            # (config.supervisor_kill_wait_s) is the abort-latency floor when
+            # no supervisor is attached.
             try:
-                await asyncio.wait_for(proc.wait(), timeout=_SUPERVISOR_KILL_WAIT_S)
+                await asyncio.wait_for(proc.wait(), timeout=config.supervisor_kill_wait_s)
             except TimeoutError:
                 log.warning(
                     "run %s: supervisor did not reap the worker within %.0fs; "
                     "parent escalating as a last resort",
                     run_id,
-                    _SUPERVISOR_KILL_WAIT_S,
+                    config.supervisor_kill_wait_s,
                 )
                 await _terminate_worker(proc)
 

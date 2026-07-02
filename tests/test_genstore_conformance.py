@@ -15,6 +15,8 @@ dashboard read surface (``list_tree`` / ``read_file`` / ``list_patches``).
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 import tempfile
 import textwrap
 from collections.abc import Callable
@@ -46,10 +48,62 @@ _BACKENDS: dict[str, Callable[[Path], GenerationStore]] = {
 
 
 @pytest.fixture(params=sorted(_BACKENDS), ids=sorted(_BACKENDS))
-def store(request: pytest.FixtureRequest, tmp_path: Path) -> GenerationStore:
-    """A fresh generation store, once per backend."""
-    factory = _BACKENDS[request.param]
-    return factory(tmp_path / "ws")
+def backend(request: pytest.FixtureRequest) -> str:
+    """The backend under test — the single parametrisation axis."""
+    return str(request.param)
+
+
+@pytest.fixture
+def store(backend: str, tmp_path: Path) -> GenerationStore:
+    """A fresh, EMPTY generation store, once per backend."""
+    return _BACKENDS[backend](tmp_path / "ws")
+
+
+@pytest.fixture(scope="session")
+def _seeded_ws_templates(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
+    """Per-backend workspace templates with ``e1/v0`` already seeded.
+
+    Seeding the git backend costs a dozen-plus ``git`` subprocess spawns
+    (init + identity + add + commit + tag + worktree). Building the seeded
+    workspace ONCE per backend and ``copytree``-ing it per test keeps every
+    test hermetic — each test still gets a private, writable workspace —
+    while dropping the per-test spawn storm. Tests whose contract IS the
+    seeding behaviour keep seeding a fresh store instead.
+    """
+    templates: dict[str, Path] = {}
+    for name, factory in _BACKENDS.items():
+        base = tmp_path_factory.mktemp(f"genstore-template-{name}")
+        ws = base / "ws"
+        factory(ws).seed_generation("e1", "v0", [_template_tree(base / "src")])
+        # A materialised git worktree registers its ABSOLUTE path inside the
+        # repo, which cannot survive relocation-by-copytree: drop the
+        # worktrees and prune the registrations so each copy re-materialises
+        # its own on first snapshot_root().
+        worktrees = ws / GitGenerationStore.WORKTREES_DIRNAME
+        if worktrees.is_dir():
+            shutil.rmtree(worktrees)
+            subprocess.run(
+                ["git", "worktree", "prune"],
+                cwd=str(ws / GitGenerationStore.REPO_DIRNAME),
+                check=True,
+                capture_output=True,
+            )
+        templates[name] = ws
+    return templates
+
+
+@pytest.fixture
+def seeded_store(
+    backend: str, _seeded_ws_templates: dict[str, Path], tmp_path: Path
+) -> GenerationStore:
+    """A store with ``e1/v0`` already seeded from :func:`_template_tree`.
+
+    A private copy of the session template — mutations (derives, new
+    worktrees) never leak between tests.
+    """
+    ws = tmp_path / "ws"
+    shutil.copytree(_seeded_ws_templates[backend], ws)
+    return _BACKENDS[backend](ws)
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +144,17 @@ def _mutable_tree(root: Path, *, instr: str = "original") -> Path:
         INSTR = """{instr}"""
         ''',
     )
+    return tree
+
+
+def _template_tree(root: Path) -> Path:
+    """The tree the session-scoped seeded templates are built from.
+
+    ``_mutable_tree`` (``instr="original"``) plus one never-mutated extra
+    file, so the read-surface tests can assert on a multi-file listing.
+    """
+    tree = _mutable_tree(root, instr="original")
+    _write(tree / "lib" / "util.py", "X = 1\n")
     return tree
 
 
@@ -161,10 +226,8 @@ def test_seed_generation_excludes_run_artifacts(store: GenerationStore, tmp_path
 # ---------------------------------------------------------------------------
 
 
-def test_derive_generation_applies_patch(store: GenerationStore, tmp_path: Path) -> None:
-    tree = _mutable_tree(tmp_path / "src", instr="original")
-    store.seed_generation("e1", "v0", [tree])
-
+def test_derive_generation_applies_patch(seeded_store: GenerationStore) -> None:
+    store = seeded_store
     child_root = store.derive_generation(
         "e1",
         "v0",
@@ -176,9 +239,9 @@ def test_derive_generation_applies_patch(store: GenerationStore, tmp_path: Path)
     assert "original" not in text
 
 
-def test_derive_generation_leaves_parent_untouched(store: GenerationStore, tmp_path: Path) -> None:
-    tree = _mutable_tree(tmp_path / "src", instr="original")
-    parent_root = store.seed_generation("e1", "v0", [tree])
+def test_derive_generation_leaves_parent_untouched(seeded_store: GenerationStore) -> None:
+    store = seeded_store
+    parent_root = store.snapshot_root("e1", "v0")
     store.derive_generation(
         "e1",
         "v0",
@@ -204,11 +267,9 @@ def test_derive_generation_raises_for_missing_parent(
 
 
 def test_derive_generation_all_or_nothing_on_bad_patch(
-    store: GenerationStore, tmp_path: Path
+    seeded_store: GenerationStore,
 ) -> None:
-    tree = _mutable_tree(tmp_path / "src")
-    store.seed_generation("e1", "v0", [tree])
-
+    store = seeded_store
     with pytest.raises(ValueError):
         store.derive_generation(
             "e1",
@@ -219,9 +280,8 @@ def test_derive_generation_all_or_nothing_on_bad_patch(
     assert store.has_generation("e1", "v1") is False
 
 
-def test_derive_generation_chain(store: GenerationStore, tmp_path: Path) -> None:
-    tree = _mutable_tree(tmp_path / "src", instr="gen0")
-    store.seed_generation("e1", "v0", [tree])
+def test_derive_generation_chain(seeded_store: GenerationStore) -> None:
+    store = seeded_store
     store.derive_generation(
         "e1",
         "v0",
@@ -244,11 +304,8 @@ def test_derive_generation_chain(store: GenerationStore, tmp_path: Path) -> None
 # ---------------------------------------------------------------------------
 
 
-def test_list_tree_returns_sorted_entries(store: GenerationStore, tmp_path: Path) -> None:
-    tree = _mutable_tree(tmp_path / "src")
-    _write(tree / "lib" / "util.py", "X = 1\n")
-    store.seed_generation("e1", "v0", [tree])
-
+def test_list_tree_returns_sorted_entries(seeded_store: GenerationStore) -> None:
+    store = seeded_store
     entries = store.list_tree("e1", "v0")
     assert all(isinstance(e, TreeEntry) for e in entries)
     paths = [e.path for e in entries]
@@ -267,32 +324,24 @@ def test_list_tree_raises_for_missing_generation(store: GenerationStore) -> None
         store.list_tree("e1", "v99")
 
 
-def test_read_file_returns_bytes(store: GenerationStore, tmp_path: Path) -> None:
-    tree = _mutable_tree(tmp_path / "src", instr="hello")
-    store.seed_generation("e1", "v0", [tree])
-    data = store.read_file("e1", "v0", "agent/prompts.py")
+def test_read_file_returns_bytes(seeded_store: GenerationStore) -> None:
+    data = seeded_store.read_file("e1", "v0", "agent/prompts.py")
     assert isinstance(data, bytes)
-    assert b"hello" in data
+    assert b"original" in data
 
 
-def test_read_file_rejects_traversal(store: GenerationStore, tmp_path: Path) -> None:
-    tree = _mutable_tree(tmp_path / "src")
-    store.seed_generation("e1", "v0", [tree])
+def test_read_file_rejects_traversal(seeded_store: GenerationStore) -> None:
     with pytest.raises(ValueError):
-        store.read_file("e1", "v0", "../../../etc/passwd")
+        seeded_store.read_file("e1", "v0", "../../../etc/passwd")
 
 
-def test_read_file_missing_file_raises(store: GenerationStore, tmp_path: Path) -> None:
-    tree = _mutable_tree(tmp_path / "src")
-    store.seed_generation("e1", "v0", [tree])
+def test_read_file_missing_file_raises(seeded_store: GenerationStore) -> None:
     with pytest.raises(FileNotFoundError):
-        store.read_file("e1", "v0", "agent/nonexistent.py")
+        seeded_store.read_file("e1", "v0", "agent/nonexistent.py")
 
 
-def test_list_patches_empty_for_seed(store: GenerationStore, tmp_path: Path) -> None:
-    tree = _mutable_tree(tmp_path / "src")
-    store.seed_generation("e1", "v0", [tree])
-    record = store.list_patches("e1", "v0")
+def test_list_patches_empty_for_seed(seeded_store: GenerationStore) -> None:
+    record = seeded_store.list_patches("e1", "v0")
     assert isinstance(record, PatchRecord)
     assert record.generation_id == "v0"
     assert record.patches == ()

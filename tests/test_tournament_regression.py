@@ -6,7 +6,11 @@ suite. These tests:
 * Exercise :class:`RegressionResult` for shape / round-tripping.
 * Run :func:`run_regression_suite` against a temp tree with passing
   tests, then with failing tests, then with an artificially-slow test
-  to drive the timeout path.
+  to drive the timeout path — the THREE real-subprocess tests, kept
+  real because process spawn/kill semantics ARE their contract.
+* Drive the pure seams directly (:func:`_resolve_test_root` discovery,
+  :func:`_classify_completed_run` summary / exit-code / failed-id
+  mapping) with canned layouts + output, no subprocess boot per case.
 * Drive :func:`run_tournament` with a stub adapter and verify that a
   regression failure forces a ``"rejected"`` :class:`GateOutcome` with
   the right reason — even when the scoring side would otherwise
@@ -40,6 +44,8 @@ from zicato.core import (
 from zicato.tournament.gate import GateOutcome
 from zicato.tournament.regression import (
     RegressionResult,
+    _classify_completed_run,
+    _resolve_test_root,
     run_regression_suite,
 )
 from zicato.tournament.runner import TournamentResult, run_tournament
@@ -121,6 +127,8 @@ def test_run_regression_suite_returns_passed_when_no_tests_dir(tmp_path: Path) -
     assert result.elapsed_s == 0.0
 
 
+@pytest.mark.slow
+@pytest.mark.integration
 def test_run_regression_suite_passes_on_green_suite(tmp_path: Path) -> None:
     """A snapshot whose pytest suite passes yields ``passed=True``."""
     snapshot_root = _make_snapshot_with_test(
@@ -139,6 +147,8 @@ def test_run_regression_suite_passes_on_green_suite(tmp_path: Path) -> None:
     assert result.elapsed_s > 0.0
 
 
+@pytest.mark.slow
+@pytest.mark.integration
 def test_run_regression_suite_fails_with_failed_ids(tmp_path: Path) -> None:
     """A failing pytest run yields ``passed=False`` + populated failed ids."""
     snapshot_root = _make_snapshot_with_test(
@@ -163,10 +173,16 @@ def test_run_regression_suite_fails_with_failed_ids(tmp_path: Path) -> None:
     assert result.summary == "2 tests failed"
 
 
-def test_run_regression_suite_locates_tests_under_mutable_tree_subdir(
+def test_resolve_test_root_locates_tests_under_mutable_tree_subdir(
     tmp_path: Path,
 ) -> None:
-    """When the snapshot wraps a goldfive-style checkout the tests still get found."""
+    """When the snapshot wraps a goldfive-style checkout the tests still get found.
+
+    Discovery is a pure path decision (:func:`_resolve_test_root`), so it is
+    asserted directly instead of booting a real pytest child per layout —
+    the green/failing tests above already prove the resolved root is handed
+    to a real subprocess correctly.
+    """
     snapshot_root = _make_snapshot_with_test(
         tmp_path,
         """
@@ -176,12 +192,60 @@ def test_run_regression_suite_locates_tests_under_mutable_tree_subdir(
         subdir="goldfive",
     )
 
-    result = asyncio.run(run_regression_suite(snapshot_root, test_command=_PYTEST_CMD))
+    # The goldfive-style shape resolves to the child checkout dir.
+    assert _resolve_test_root(snapshot_root) == snapshot_root / "goldfive"
 
-    assert result.passed is True
-    assert result.summary == "all tests passed"
+    # A tests/ dir directly under the snapshot root wins over any child.
+    direct = snapshot_root / "tests"
+    direct.mkdir()
+    assert _resolve_test_root(snapshot_root) == snapshot_root
+
+    # No tests/ anywhere -> None (run_regression_suite silently skips).
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    assert _resolve_test_root(bare) is None
 
 
+def test_classify_completed_run_maps_output_and_exit_codes() -> None:
+    """The parse seam maps canned pytest stdout + exit codes exactly.
+
+    Drives :func:`_classify_completed_run` — the pure classification layer
+    ``run_regression_suite`` delegates to after ``communicate()`` — so the
+    summary wording / exit-code mapping / failed-id extraction are covered
+    without a subprocess boot per case.
+    """
+    # Exit 0 -> passed, regardless of chatter in the output.
+    ok = _classify_completed_run("....\n4 passed in 0.10s\n", 0, 0.1)
+    assert ok.passed is True
+    assert ok.failed_tests == ()
+    assert ok.summary == "all tests passed"
+    assert ok.elapsed_s == 0.1
+
+    # Non-zero exit with FAILED lines -> ids extracted, counted summary.
+    output = (
+        "FAILED tests/test_x.py::test_one - AssertionError: boom\n"
+        "FAILED tests/test_x.py::test_two - assert 0 == 1\n"
+        "FAILED tests/test_x.py::test_one - AssertionError: boom\n"  # dupe squashed
+        "2 failed, 1 passed in 0.20s\n"
+    )
+    failed = _classify_completed_run(output, 1, 0.2)
+    assert failed.passed is False
+    assert failed.failed_tests == (
+        "tests/test_x.py::test_one",
+        "tests/test_x.py::test_two",
+    )
+    assert failed.summary == "2 tests failed"
+
+    # Non-zero exit with NO FAILED lines (collection error, crash) -> the
+    # exit code itself is the summary and no ids are invented.
+    crashed = _classify_completed_run("INTERNALERROR> boom\n", 3, 0.05)
+    assert crashed.passed is False
+    assert crashed.failed_tests == ()
+    assert crashed.summary == "pytest exit code 3"
+
+
+@pytest.mark.slow
+@pytest.mark.integration
 def test_run_regression_suite_times_out_on_slow_test(tmp_path: Path) -> None:
     """A test that outlives the timeout maps to ``passed=False`` w/ timeout summary."""
     snapshot_root = _make_snapshot_with_test(
