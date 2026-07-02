@@ -44,11 +44,13 @@ export async function render(host, ctx, params) {
   const board = Array.isArray(ep.board) ? ep.board : [];
 
   // The LOOP-COMMUNICATION reads for this epoch: the promoted-lineage
-  // trajectory (promotion rate + uncertainty-honest verdict + noise floor)
-  // and the tournament cost accounting. Both null-degrade (the Rust
-  // supervisor serves neither) → the panels are simply omitted.
-  const [loopTraj, loopCost] = await Promise.all([
-    D.trajectory(epochId), D.tournamentCost(epochId),
+  // trajectory (promotion rate + uncertainty-honest verdict + noise floor),
+  // the tournament cost accounting, and the per-judge loss trend (the reader
+  // + endpoint shipped long ago with zero view consumers — this is its view).
+  // All null-degrade (the Rust supervisor serves none of the three) → the
+  // panels are simply omitted.
+  const [loopTraj, loopCost, judgeTrend] = await Promise.all([
+    D.trajectory(epochId), D.tournamentCost(epochId), D.perJudgeTrend(epochId),
   ]);
 
   // SCOPE TO THE VIEWED EPOCH: /api/lineage spans the whole workspace, so filter
@@ -206,9 +208,10 @@ export async function render(host, ctx, params) {
     board: board.map((b) => [b.entry_id || b.id, b.kind, b.weight, b.budget_s]),
     boardStatus: boardStatusDigest(boardStatus),
     // loop-communication panels: content-gated on their own rounded folds so
-    // a no-op heartbeat (identical trajectory/cost) churns no DOM.
+    // a no-op heartbeat (identical trajectory/cost/judge-trend) churns no DOM.
     loopTraj: trajectoryPanelDigest(loopTraj),
     loopCost: costPanelDigest(loopCost),
+    judgeTrend: judgeTrendDigest(judgeTrend),
   });
 
   gatedSwap(host, digest, () => {
@@ -368,6 +371,12 @@ export async function render(host, ctx, params) {
       onGen: (gid) => ctx.navigate('candidate', { epochId, gen: gid }),
     });
     if (costPanel) nodes.push(section('Tournament cost · wall-clock per promotion', costPanel));
+
+    // ---- the PER-JUDGE TREND: one sparkline per judge across the spine ----
+    // Consumes the long-shipped /api/epoch/{id}/per-judge-trend read (its
+    // first view consumer). Absent / empty → the panel is simply omitted.
+    const judgePanel = buildJudgeTrendPanel(judgeTrend);
+    if (judgePanel) nodes.push(section('Per-judge trend · weighted loss across the spine', judgePanel));
 
     // ---- COMPACT board entries × generations heatmap (stays here, fix #6) ----
     const rows = [...entryIds].sort().map((id) => ({ id, label: id }));
@@ -562,6 +571,62 @@ export function costPanelDigest(cost) {
       m && m.challenger_generation_id, m && m.decision,
       m && svg.isNum(m.runtime_ms) ? Math.round(m.runtime_ms) : 0,
       m && m.run_count, m && m.aborted_count,
+    ]),
+  ];
+}
+
+// ---- the PER-JUDGE TREND panel (pure builder — node-testable) ---------
+
+// One row per judge: name · a sparkline of its weighted loss across the spine
+// generations · the last value. Consumes the /api/epoch/{id}/per-judge-trend
+// shape verbatim ({generations: [spine ids], judges: [{judge_name,
+// by_generation}]}). Null when the read is absent (Rust supervisor), degraded
+// (note, empty judges), or carries no judge with a plottable value — the
+// epoch view is then byte-identical to today.
+export function buildJudgeTrendPanel(trend) {
+  if (!trend || typeof trend !== 'object') return null;
+  const gens = Array.isArray(trend.generations) ? trend.generations : [];
+  const judges = Array.isArray(trend.judges) ? trend.judges : [];
+  if (!gens.length || !judges.length) return null;
+  const rows = [];
+  for (const j of judges) {
+    if (!j || typeof j !== 'object' || !j.judge_name) continue;
+    const by = (j.by_generation && typeof j.by_generation === 'object') ? j.by_generation : {};
+    const vals = gens.map((g) => (svg.isNum(by[g]) ? by[g] : null));
+    if (!vals.some((v) => svg.isNum(v))) continue;
+    rows.push({ name: String(j.judge_name), vals });
+  }
+  if (!rows.length) return null;
+  const card = el('div', { class: 'dn-panel dn-judgetrend-pane' });
+  for (const r of rows) {
+    const finite = r.vals.filter((v) => svg.isNum(v));
+    const last = finite.length ? finite[finite.length - 1] : null;
+    card.appendChild(el('div', { class: 'dn-judgetrend-row', 'data-judge': r.name }, [
+      el('span', { class: 'dn-judgetrend-name', title: r.name, text: r.name }),
+      svg.sparkline({ width: 320, height: 26, values: r.vals, markers: true, goodDirection: 'down' }),
+      el('span', { class: 'dn-judgetrend-last', text: svg.isNum(last) ? last.toFixed(3) : '—' }),
+    ]));
+  }
+  card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;',
+    text: 'each judge’s weighted loss across the promoted spine (lower = better) · a diverging judge names WHICH pressure the loop is trading away' }));
+  return card;
+}
+
+// Digest fold for the per-judge trend: rounded per-judge series over the
+// spine, timestamp-free — a no-op beat is byte-identical, a new generation
+// column / a moved loss flips it.
+export function judgeTrendDigest(trend) {
+  if (!trend || typeof trend !== 'object') return null;
+  const gens = Array.isArray(trend.generations) ? trend.generations : [];
+  const judges = Array.isArray(trend.judges) ? trend.judges : [];
+  return [
+    gens.map((g) => String(g)),
+    judges.map((j) => [
+      j && j.judge_name,
+      gens.map((g) => {
+        const v = j && j.by_generation ? j.by_generation[g] : null;
+        return svg.isNum(v) ? v.toFixed(3) : null;
+      }),
     ]),
   ];
 }
