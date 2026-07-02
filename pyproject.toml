@@ -88,6 +88,10 @@ dev = [
     # never diverge.
     "ruff == 0.5.7",
     "mypy >= 1.10",
+    # Enforces the library/driver import contracts declared in
+    # [tool.importlinter] below (`uv run lint-imports`; wired into
+    # `make check` and CI).
+    "import-linter >= 2.0",
     "types-jsonschema",
     "types-protobuf",
     # The dashboard service and its TestClient-based tests.
@@ -154,7 +158,33 @@ select = [
     "I",   # isort
     "B",   # flake8-bugbear
     "UP",  # pyupgrade
+    "TID", # flake8-tidy-imports (banned-api: retired private-reach paths)
 ]
+
+# The specific cross-module private reaches retired by the library/driver
+# restructure. Each name was promoted to a public seam at its honest home;
+# these bans keep the old underscore paths from regrowing.
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"zicato.orchestrator._compute_field_diversity".msg = "moved: use zicato.selection.diversity.compute_field_diversity"
+"zicato.orchestrator._jaccard".msg = "moved: use zicato.selection.diversity.jaccard"
+"zicato.runtime._atomic".msg = "deleted shim: use the public zicato.storage face (read_json / atomic_write_json / atomic_write_text / atomic_claim)"
+"zicato.storage._atomic.read_json".msg = "use the public face: from zicato.storage import read_json"
+"zicato.epoch.lifecycle._scoring_to_dict".msg = "promoted: use zicato.epoch.lifecycle.scoring_to_dict"
+"zicato.epoch.contract._round_floats".msg = "promoted: use zicato.epoch.contract.round_floats"
+"zicato.epoch.contract._scoring_to_canon".msg = "promoted: use zicato.epoch.contract.scoring_to_canon"
+"zicato.board.jsonl._entry_to_dict".msg = "promoted: use zicato.board.jsonl.entry_to_dict"
+"zicato.proposer.skills._parse_frontmatter".msg = "promoted: use zicato.proposer.skills.parse_frontmatter"
+"zicato.workspace_loader._scoring_weights_from_dict".msg = "promoted: use zicato.workspace_loader.scoring_weights_from_dict"
+"zicato.analyzer.aggregator._to_snake".msg = "private to the aggregator: use zicato.query.paths.to_snake"
+"zicato.adapters.adk._entry_judge_only".msg = "promoted: use zicato.adapters.entry_judge_only"
+"zicato.adapters.adk._entry_disable_drift".msg = "promoted: use zicato.adapters.entry_disable_drift"
+
+[tool.ruff.lint.per-file-ignores]
+# The storage package owns its private _atomic module; its own modules
+# (and the _atomic unit test) import it directly. Everyone else goes
+# through the public zicato.storage face.
+"src/zicato/storage/**" = ["TID251"]
+"tests/test_storage_atomic.py" = ["TID251"]
 
 [tool.ruff.lint.isort]
 # Declare the in-repo packages as first-party so isort sorts them into
@@ -243,6 +273,94 @@ markers = [
 # not see it. Pin the repo root explicitly so src-layout imports
 # resolve via the installed/editable package consistently.
 pythonpath = ["."]
+
+# The library/driver import contracts (`uv run lint-imports`; wired into
+# `make check` and CI). zicato is a library first — the surface declared
+# in zicato/__init__.py — with three drivers on top: zicato.cli,
+# zicato.dashboard (the HTTP server), zicato.builder. The contracts pin:
+#
+# 1. No library package imports a driver. zicato.query is LIBRARY code
+#    (the workspace query layer the dashboard consumes) — it appears in
+#    the source list like every other lib package.
+# 2. The only driver->driver edges are the two declared ones:
+#    cli -> dashboard (the CLI launches the server and resolves its
+#    static bundle) and dashboard -> builder (server.py mounts the
+#    builder's REST routes). Everything else is forbidden.
+[tool.importlinter]
+root_packages = ["zicato"]
+
+[[tool.importlinter.contracts]]
+name = "the library must not import the drivers (cli / dashboard / builder)"
+type = "forbidden"
+source_modules = [
+    "zicato._tournament_worker",
+    "zicato.adapter_factory",
+    "zicato.adapters",
+    "zicato.analyzer",
+    "zicato.aux_timeout",
+    "zicato.board",
+    "zicato.config",
+    "zicato.core",
+    "zicato.emulator",
+    "zicato.epoch",
+    "zicato.evolve",
+    "zicato.health",
+    "zicato.import_path",
+    "zicato.index",
+    "zicato.judge_runtime",
+    "zicato.models_config",
+    "zicato.mutation",
+    "zicato.orchestrator",
+    "zicato.patterns",
+    "zicato.proposer",
+    "zicato.query",
+    "zicato.runtime",
+    "zicato.runtime_factory",
+    "zicato.scoring",
+    "zicato.selection",
+    "zicato.storage",
+    "zicato.synthetic",
+    "zicato.telemetry",
+    "zicato.testing",
+    "zicato.tournament",
+    "zicato.util",
+    "zicato.workspace",
+    "zicato.workspace_loader",
+]
+forbidden_modules = [
+    "zicato.cli",
+    "zicato.dashboard",
+    "zicato.builder",
+]
+
+[[tool.importlinter.contracts]]
+name = "dashboard driver: no import of the cli (dashboard -> builder mount is the declared edge)"
+type = "forbidden"
+source_modules = ["zicato.dashboard"]
+forbidden_modules = ["zicato.cli"]
+
+[[tool.importlinter.contracts]]
+name = "builder driver: no import of the other drivers"
+type = "forbidden"
+source_modules = ["zicato.builder"]
+forbidden_modules = ["zicato.cli", "zicato.dashboard"]
+
+[[tool.importlinter.contracts]]
+name = "cli driver: no direct import of the builder (cli -> dashboard is the declared edge)"
+type = "forbidden"
+source_modules = ["zicato.cli"]
+forbidden_modules = ["zicato.builder"]
+# Direct only: the cli legitimately reaches the builder TRANSITIVELY
+# through the two declared edges (cli -> dashboard.server -> builder.api
+# mount); what this contract forbids is the cli growing its own builder
+# dependency.
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "the query layer stays dashboard-free"
+type = "forbidden"
+source_modules = ["zicato.query"]
+forbidden_modules = ["zicato.dashboard"]
 
 # uv workspace: the vendored dogfood targets under examples/ are a
 # distinct distribution (zicato-examples). Declaring examples/ as a

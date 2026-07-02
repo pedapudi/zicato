@@ -1,7 +1,7 @@
 """Bridge between the ``runtime/`` domain and the storage seam.
 
 The ``runtime/`` modules historically reached straight for the atomic-file
-helpers (:mod:`zicato.runtime._atomic`) and :class:`pathlib.Path` math. As
+helpers (:mod:`zicato.storage`) and :class:`pathlib.Path` math. As
 of the storage-layer refactor they go through :class:`StorageBackend`
 instead — this module is the thin adapter that makes that routing
 ergonomic without changing any public ``runtime/`` signature.

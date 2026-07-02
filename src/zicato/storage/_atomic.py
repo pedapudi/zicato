@@ -6,7 +6,7 @@ it delivers the :class:`~zicato.storage.base.StorageBackend` atomic-write
 contract by routing every write through here. The module sits in the
 ``storage`` package (not ``runtime``, where it historically lived) so the
 storage layer is self-contained: ``runtime`` depends on ``storage``, never
-the reverse. :mod:`zicato.runtime._atomic` re-exports these names for any
+the reverse. :mod:`zicato.storage` re-exports these names as the public face for any
 caller still importing from the old path.
 
 The goal is a hard guarantee: no reader ever observes a half-written

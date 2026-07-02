@@ -10,7 +10,7 @@ slotted, JSON-friendly, and carry the minimum information the supervisor
 and the dashboard need to render a live view of an in-progress epoch.
 
 Every writer is atomic (``.tmp`` + ``fsync`` + ``os.replace``); see
-:mod:`zicato.runtime._atomic`. Readers tolerate missing files and return
+:mod:`zicato.storage` (the atomic primitives). Readers tolerate missing files and return
 ``None`` so the supervisor can run against a workspace that has never
 booted an orchestrator.
 

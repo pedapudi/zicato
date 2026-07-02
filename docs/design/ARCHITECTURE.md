@@ -808,6 +808,18 @@ Three properties hold across the runtime layer:
    once L3 lands — one specific worker). No locking beyond the
    pid-based `lock.json`.
 
+**Supervisor-binary ownership.** The Rust watchdog binary splits
+cleanly along the library/driver boundary: *packaging* belongs to the
+root wheel — the hatchling build hook (`hatch_build.py`) compiles the
+crate and bundles the artifact at `zicato/_bin/zicato-supervisor`, so
+every wheel install carries it — while *resolution* is CLI policy.
+`zicato.cli.commands.evolve._resolve_supervisor_binary` decides which
+binary actually runs (the `--supervisor-binary` flag / config pin, the
+freshest of the bundled `_bin/` copy vs. a dev checkout's
+`target/release` build, then `PATH`). The library never locates or
+spawns the supervisor; a caller embedding zicato as a library brings
+its own watchdog story.
+
 The full design lives in seven documents:
 
 | Concern | Document |

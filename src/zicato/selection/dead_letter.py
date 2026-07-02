@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from zicato.runtime.paths import inconclusive_dir, inconclusive_record_path
-from zicato.storage._atomic import atomic_write_json, read_json
+from zicato.storage import atomic_write_json, read_json
 
 
 @dataclass(frozen=True, slots=True)

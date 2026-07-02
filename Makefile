@@ -1,6 +1,6 @@
 ROOT := $(shell pwd)
 
-.PHONY: help install install-hooks test test-fast node-test lint format typecheck check clean supervisor supervisor-test supervisor-check install-supervisor
+.PHONY: help install install-hooks test test-fast node-test lint import-lint format typecheck check clean supervisor supervisor-test supervisor-check install-supervisor
 
 # Path to the dashboard JS behaviour suite (run standalone under node).
 JS_TEST_DIR := $(ROOT)/src/zicato/dashboard/static/test
@@ -13,6 +13,7 @@ help:
 	@echo "  test-fast          Run pytest without the slow real-subprocess/server tests"
 	@echo "  node-test          Run the dashboard JS behaviour suite under node"
 	@echo "  lint               Run ruff check"
+	@echo "  import-lint        Run the import-linter library/driver contracts"
 	@echo "  format             Run ruff format"
 	@echo "  typecheck          Run mypy over src/zicato/"
 	@echo "  check              Run lint + typecheck + test + node-test"
@@ -49,17 +50,23 @@ node-test:
 lint:
 	@cd $(ROOT) && uv run ruff check .
 
+# The library/driver import contracts ([tool.importlinter] in
+# pyproject.toml): lib packages never import the drivers; only the two
+# declared driver->driver edges exist.
+import-lint:
+	@cd $(ROOT) && uv run lint-imports
+
 format:
 	@cd $(ROOT) && uv run ruff format .
 
 typecheck:
 	@cd $(ROOT) && uv run mypy src/zicato/
 
-# The four gates are independent (no shared state, distinct caches), so
-# they parallelize cleanly: `make -j4 check` runs them concurrently and
+# The five gates are independent (no shared state, distinct caches), so
+# they parallelize cleanly: `make -j5 check` runs them concurrently and
 # finishes in max(gate) instead of sum(gates). Sequential `make check`
 # still works exactly as before.
-check: lint typecheck test node-test
+check: lint import-lint typecheck test node-test
 
 clean:
 	@rm -rf $(ROOT)/dist $(ROOT)/build $(ROOT)/*.egg-info

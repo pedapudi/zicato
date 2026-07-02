@@ -29,7 +29,7 @@ from typing import Any
 # Best-effort JSON read; missing / empty / malformed -> ``None``. Imported
 # lazily-stable here (same helper the dashboard's prior inline readers used,
 # so config.json parsing degrades identically).
-from zicato.storage._atomic import read_json
+from zicato.storage import read_json
 from zicato.workspace.layout import WorkspaceLayout
 
 _NUM_RUN = re.compile(r"(\d+)")
