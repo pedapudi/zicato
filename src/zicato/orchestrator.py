@@ -419,6 +419,28 @@ async def evolve_once(
         judge_only=judge_only,
     )
 
+    # --- 2a'. Optional contract pre-flight (epoch-open step) --------------
+    # When the workspace opts in (config.json: ``"contract_preflight": K``)
+    # and this epoch has no persisted verdict yet, measure the A/A floor AND
+    # the achievable signal (champion vs a deliberately-degraded ephemeral
+    # copy of itself) and persist the verdict onto the epoch record.
+    # Recommend-only: a REFUSE/saturation verdict warns and flows into the
+    # per-round health report but never gates. ``zicato board preflight`` is
+    # the manual surface for the same measurement.
+    await _maybe_contract_preflight(
+        workspace_root=workspace_root,
+        epoch_id=resolved_epoch_id,
+        epoch_cfg=_epoch_cfg,
+        workspace_config=workspace_config,
+        adapter=adapter,
+        parent_gen=parent_gen,
+        board=board,
+        weights=weights,
+        config=config,
+        disable_drift=disable_drift,
+        judge_only=judge_only,
+    )
+
     # --- 2b. Margin-vs-noise-floor sanity check (once per invocation) -----
     # When a measured floor exists and the contract's promote_margin sits
     # inside it, say so loudly at evolve start — a duel decided by the margin
@@ -3626,6 +3648,23 @@ def _epoch_noise_floor_inputs(
     return cfg.noise_floor, float(cfg.scoring.promote_margin), gate_on
 
 
+def _epoch_preflight_record(workspace_root: Path, epoch_id: str) -> dict[str, Any] | None:
+    """Read the epoch's persisted contract pre-flight verdict, if any.
+
+    Threaded into :func:`zicato.health.diagnostics.detect_preflight_verdict`
+    so a REFUSE/saturation verdict stays visible in every round's health
+    report. Best-effort: an unreadable epoch record yields ``None``, which
+    keeps that detector silent.
+    """
+    from zicato.epoch.lifecycle import load_epoch  # noqa: PLC0415
+
+    try:
+        cfg = load_epoch(workspace_root, epoch_id)
+    except Exception:  # noqa: BLE001 — health inputs are best-effort
+        return None
+    return cfg.preflight
+
+
 async def _maybe_calibrate_noise_floor(
     *,
     workspace_root: Path,
@@ -3692,6 +3731,101 @@ async def _maybe_calibrate_noise_floor(
             floor.max_abs_delta,
             floor.delta_std,
         )
+
+
+async def _maybe_contract_preflight(
+    *,
+    workspace_root: Path,
+    epoch_id: str,
+    epoch_cfg: Any,
+    workspace_config: Any,
+    adapter: Any,
+    parent_gen: Generation,
+    board: list[Any],
+    weights: Any,
+    config: Any,
+    disable_drift: tuple[Any, ...],
+    judge_only: bool,
+) -> None:
+    """Run the opt-in contract pre-flight once per epoch (epoch-open step).
+
+    Mirrors :func:`_maybe_calibrate_noise_floor`: fires only when the
+    workspace config carries ``"contract_preflight": K`` (K >= 2 A/A
+    draws) AND the epoch record has no persisted pre-flight verdict yet,
+    so the measurement happens exactly once at epoch open and every later
+    round short-circuits on the record. Best-effort by contract — a
+    pre-flight failure must never abort the round; the verdict itself is
+    recommend-only (it flows into the per-round health report, never a
+    gate). ``zicato board preflight`` is the manual surface for the same
+    measurement.
+    """
+    raw = workspace_config.get("contract_preflight")
+    if not raw:
+        return
+    try:
+        runs = int(raw)
+    except (TypeError, ValueError):
+        log.warning("contract_preflight=%r is not an integer; skipping pre-flight", raw)
+        return
+    if runs < 2:
+        log.warning("contract_preflight=%d needs at least 2 A/A draws; skipping pre-flight", runs)
+        return
+    if getattr(epoch_cfg, "preflight", None) is not None:
+        return
+
+    from zicato.epoch.lifecycle import (  # noqa: PLC0415
+        load_epoch,
+        set_epoch_noise_floor,
+        set_epoch_preflight,
+    )
+    from zicato.epoch.preflight import VERDICT_OK, run_contract_preflight  # noqa: PLC0415
+
+    with best_effort(
+        "contract pre-flight",
+        on_error=lambda exc: log.warning("contract pre-flight skipped: %s", exc),
+    ):
+        report, floor = await run_contract_preflight(
+            adapter=adapter,
+            generation=parent_gen,
+            board=board,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            runs=runs,
+            disable_drift=disable_drift,
+            judge_only=judge_only,
+        )
+        set_epoch_preflight(workspace_root, epoch_id, report.to_json())
+        # The pre-flight's step (a) IS the A/A calibration; persist the
+        # floor too when the epoch has none yet (reload — the calibration
+        # hook may have written one after ``epoch_cfg`` was loaded), so the
+        # margin check + noise-floor detector benefit from the same draws.
+        if load_epoch(workspace_root, epoch_id).noise_floor is None:
+            set_epoch_noise_floor(workspace_root, epoch_id, floor.to_json())
+        if report.verdict == VERDICT_OK:
+            log.info(
+                "contract pre-flight OK for epoch %s (%s): achievable signal "
+                "%.6g clears the measured noise floor %.6g",
+                epoch_id,
+                parent_gen.id,
+                report.signal,
+                report.noise_floor_max_abs_delta,
+            )
+        else:
+            log.warning(
+                "contract pre-flight verdict %r for epoch %s (%s): achievable "
+                "signal %.6g vs noise floor %.6g (degraded point %s → scalar "
+                "%.6g). Recommend-only — the run continues; see the per-round "
+                "health report / `zicato board preflight`.",
+                report.verdict,
+                epoch_id,
+                parent_gen.id,
+                report.signal,
+                report.noise_floor_max_abs_delta,
+                report.degraded_mutation_id,
+                report.degraded_scalar,
+            )
 
 
 def _warn_margin_below_noise_floor(workspace_root: Path, epoch_id: str) -> None:
@@ -3789,6 +3923,7 @@ def _assess_and_persist_loop_health(
             noise_floor=noise_floor,
             promote_margin=promote_margin,
             evidence_gate_on=evidence_gate_on,
+            preflight=_epoch_preflight_record(workspace_root, epoch_id),
         )
     except Exception as exc:  # noqa: BLE001 — health assessment is best-effort
         log.debug("loop-health assessment skipped for %s round %d: %s", epoch_id, round_n, exc)

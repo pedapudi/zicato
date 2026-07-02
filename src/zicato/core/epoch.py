@@ -90,6 +90,19 @@ class EpochConfig:
         ``zicato board audit`` surface / the opt-in evolve-start
         calibration step); read back by the evolve-start margin check and
         the loop-health detector.
+    preflight:
+        The contract pre-flight verdict for this epoch — the persisted
+        :meth:`zicato.epoch.preflight.PreflightReport.to_json` dict
+        (``{verdict, signal, noise_floor_max_abs_delta, champion_scalars,
+        degraded_scalar, ...}``) — or ``None`` when never run. Like
+        :attr:`noise_floor` it is a RUNTIME measurement recorded
+        post-creation, NOT a contract input: it never folds into the
+        contract hash. Set via
+        :func:`zicato.epoch.lifecycle.set_epoch_preflight` (the ``zicato
+        board preflight`` surface / the opt-in epoch-open hook,
+        ``config.json``'s ``"contract_preflight": K``); read back by the
+        loop-health detector
+        (:func:`zicato.health.diagnostics.detect_preflight_verdict`).
     """
 
     id: str
@@ -110,6 +123,10 @@ class EpochConfig:
     # when never measured; missing in an epoch ``config.json`` written
     # before this field landed ⇒ ``None``.
     noise_floor: dict[str, object] | None = None
+    # Contract pre-flight verdict (runtime measurement, never hashed).
+    # ``None`` when never run; missing in an epoch ``config.json`` written
+    # before this field landed ⇒ ``None``.
+    preflight: dict[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)

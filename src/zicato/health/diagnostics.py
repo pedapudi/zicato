@@ -134,7 +134,9 @@ class HealthFinding:
         ``"non_differentiating_entry"``, ``"flat_drift_signal"``,
         ``"no_expectations"``, ``"stalled_loop"``,
         ``"generalization_gap"``, ``"refresh_cadence"``,
-        ``"margin_below_noise_floor"``.
+        ``"margin_below_noise_floor"``,
+        ``"preflight_signal_below_floor"``,
+        ``"preflight_saturated_contract"``.
     severity:
         ``"info"`` | ``"warning"`` | ``"critical"``. A loop is
         considered unhealthy when any ``"warning"`` or ``"critical"``
@@ -795,6 +797,90 @@ def detect_margin_below_noise_floor(
     ]
 
 
+def detect_preflight_verdict(preflight: dict[str, Any] | None) -> list[HealthFinding]:
+    """Re-surface a non-OK contract pre-flight verdict as a health finding.
+
+    The contract pre-flight (:mod:`zicato.epoch.preflight`) measures the
+    epoch's A/A noise floor AND its achievable signal (champion vs a
+    deliberately-degraded copy of itself) before rounds burn budget. Its
+    verdict persists onto the epoch record; this detector folds it into
+    every round's health report so the operator keeps seeing it for as
+    long as the contract stays un-fixed. Recommend-only — like every
+    finding, it never gates.
+
+    * verdict ``"refuse"`` → ``critical`` ``preflight_signal_below_floor``:
+      the measured achievable signal is at or below the measured noise
+      floor, so duels under this contract are decided by noise.
+    * verdict ``"warn"`` → ``warning`` ``preflight_saturated_contract``:
+      every probe — K A/A draws plus a deliberately-degraded tree —
+      scored identically (the historical ``1.000000`` signature); the
+      contract cannot discriminate candidates.
+
+    Silent when no pre-flight was ever run (``None``), when the record is
+    malformed, or when the verdict is ``"ok"``.
+    """
+    if not isinstance(preflight, dict):
+        return []
+    verdict = str(preflight.get("verdict", "") or "")
+    if verdict not in ("refuse", "warn"):
+        return []
+
+    def _num(key: str) -> float:
+        try:
+            return float(preflight.get(key, 0.0))
+        except (TypeError, ValueError):
+            return 0.0
+
+    signal = _num("signal")
+    floor = _num("noise_floor_max_abs_delta")
+    detail: dict[str, Any] = {
+        "verdict": verdict,
+        "signal": signal,
+        "noise_floor_max_abs_delta": floor,
+        "champion_scalars": preflight.get("champion_scalars"),
+        "degraded_scalar": preflight.get("degraded_scalar"),
+        "degraded_mutation_id": preflight.get("degraded_mutation_id"),
+        "generation_id": preflight.get("generation_id"),
+        "measured_at": preflight.get("measured_at"),
+    }
+    if verdict == "refuse":
+        detail["recommendation"] = (
+            "refusal recommended: the contract's achievable signal does not "
+            "clear its own noise floor — reduce evaluation noise (more "
+            "replicates, steadier judges) or strengthen the board before "
+            "running rounds"
+        )
+        return [
+            HealthFinding(
+                code="preflight_signal_below_floor",
+                severity="critical",
+                summary=(
+                    f"contract pre-flight: achievable signal {signal:.6g} is at/below "
+                    f"the measured A/A noise floor {floor:.6g} — duels under this "
+                    "contract are decided by noise (refusal recommended)"
+                ),
+                detail=detail,
+            )
+        ]
+    detail["recommendation"] = (
+        "add expectations / strengthen judges so the board can discriminate "
+        "candidates — even a deliberately-degraded tree scored identically "
+        "to the champion"
+    )
+    return [
+        HealthFinding(
+            code="preflight_saturated_contract",
+            severity="warning",
+            summary=(
+                "contract pre-flight: scalar spread was exactly zero across every "
+                "probe (K A/A draws + a deliberately-degraded tree) — the contract "
+                "cannot discriminate candidates (the 1.000000 saturation signature)"
+            ),
+            detail=detail,
+        )
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -810,6 +896,7 @@ def assess_loop_health(
     noise_floor: dict[str, Any] | None = None,
     promote_margin: float | None = None,
     evidence_gate_on: bool = True,
+    preflight: dict[str, Any] | None = None,
 ) -> LoopHealth:
     """Run every detector and collect the findings into a :class:`LoopHealth`.
 
@@ -849,6 +936,13 @@ def assess_loop_health(
         threaded so :func:`detect_margin_below_noise_floor` can warn when
         the margin sits inside measured noise. ``noise_floor=None`` or
         ``promote_margin=None`` (the defaults) disable that detector.
+    preflight:
+        The epoch's persisted contract pre-flight verdict
+        (:meth:`zicato.epoch.preflight.PreflightReport.to_json` dict, or
+        ``None`` when never run) — threaded so
+        :func:`detect_preflight_verdict` can keep a REFUSE/saturation
+        verdict visible in every round's report. ``None`` (the default)
+        disables that detector.
 
     Returns
     -------
@@ -867,6 +961,7 @@ def assess_loop_health(
     findings.extend(detect_generalization_gap(experiments, health))
     findings.extend(detect_refresh_cadence(experiments, max_generations_per_contract))
     findings.extend(detect_margin_below_noise_floor(noise_floor, promote_margin, evidence_gate_on))
+    findings.extend(detect_preflight_verdict(preflight))
 
     healthy = not any(finding.severity in ("warning", "critical") for finding in findings)
     return LoopHealth(
@@ -894,5 +989,6 @@ __all__ = [
     "detect_dead_judge",
     "detect_stalled_loop",
     "detect_generalization_gap",
+    "detect_preflight_verdict",
     "detect_refresh_cadence",
 ]
