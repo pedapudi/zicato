@@ -28,29 +28,37 @@ source. The robustness phasing in [ROBUSTNESS.md](ROBUSTNESS.md) covers
 what each layer of defense catches; this document covers the operator
 experience and the HTTP / SSE surface.
 
-> **Shipped vs planned, up front.** The Python dashboard service, the
-> GET endpoints (§6), the `/events` SSE stream, the L0→L4 navigation,
-> the ⌘K command palette, and the status pill all **ship today**. The
-> **decision-centric layer** described in §4 is the redesign being
-> implemented now: the **lineage ribbon** navigation metaphor, the **L3
-> decision view** (gate ladder, per-entry diverging A/B chart, scalar
-> waterfall, primary-driver call-out, margin band), and the new
-> `GET /api/round/.../gate` endpoint that feeds it are documented here
-> as the target. They compose existing endpoints plus the one new
-> `/gate` endpoint. The POST control endpoints (§6.2) are **wired and
-> live** — when `evolve` spawns the dashboard it is served
-> `read_only=False`, so the control buttons write `control/` files.
-> What is **planned** is the *other half* of that loop: the orchestrator
-> does not yet *consume* those `control/` files at safe points (see
-> [RUNTIME.md](RUNTIME.md) §2.5), so a control action is recorded but
-> not yet enacted. **Uncertainty as first-class** (§4.6) — error bars,
-> the paired-significance verdict in the gate ladder, the field
-> leaderboard — is **planned**, gated on the replication work in
-> [SELECTION.md §7](SELECTION.md#7-the-recommended-design); today the
-> dashboard shows point estimates plus a margin band. The `zicato
-> dashboard` CLI exposes only `--workspace` / `--host` / `--port`; the
-> `--read-only` / `--daemon` standalone modes in §2.2 are **not shipped**
-> on that CLI.
+> **SUPERSEDED IN PART — read this first.** The UI that ships today is
+> **Console** (bake-off Variant T): its shell, views, and figure grammar
+> are documented in [variant-T.md](variant-T.md) (round-by-round
+> changelog) and
+> [CONSOLE-DESIGN-LANGUAGE.md](CONSOLE-DESIGN-LANGUAGE.md) (the visual
+> source of truth). In particular, the **lineage-ribbon navigation
+> metaphor** this document teaches in §4.1 (and references from the L0/L1
+> level tables) was superseded by Console's tree sidebar + the
+> champion-spine **round timeline**; read those sections as design
+> history, not as the shipped navigation. The decision-centric ideas of
+> §4 themselves DID ship — the L3 decision view (gate ladder, per-entry
+> A/B read, primary-driver call-out, margin band) is live, fed by
+> `GET /api/round/.../gate`.
+>
+> Two older claims in this document are corrected here rather than
+> rewritten throughout:
+>
+> * **Controls are enacted.** The POST control endpoints (§6.2) are wired
+>   live AND the orchestrator now *consumes* the `control/` files at safe
+>   points (`zicato.runtime.control_consumer`; pause/resume, skip-round,
+>   per-run kill, and per-challenger promote/reject overrides all take
+>   effect and are read back on the dashboard). The "recorded but not
+>   yet enacted" caveat below is stale.
+> * **Uncertainty is first-class.** The Bradley–Terry rating pre-gate
+>   (θ̂ ± CI, `p_stronger`, the credible-interval band on the gate) and
+>   the noise-floor-honest trajectory verdicts ship today; "error bars
+>   are planned" below is stale.
+>
+> The `zicato dashboard` CLI exposes only `--workspace` / `--host` /
+> `--port`; the `--read-only` / `--daemon` standalone modes in §2.2 are
+> **not shipped** on that CLI.
 
 ## 1. What the dashboard is
 
