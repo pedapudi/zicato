@@ -10,16 +10,19 @@ two things unresolved that this document closes:
    `ANALYTICAL-INDEX.md`.
 2. **The record-level vs generation-level seam fork** — the
    `StorageBackend` ABC is record-level (key→blob); generation
-   snapshots are directory trees and a future git backend is
+   snapshots are directory trees and the git backend is
    commit/worktree-shaped. §4 resolves this fork explicitly and §5
    states what the implementation does about it now.
 
 The `GenerationStore` protocol that resolves that fork is shipped, and
-**both** backends behind it are shipped: the directory-snapshot
-backend (the default and always-available fallback) and the
-git-backed backend (`GitGenerationStore`, selected by config — §7).
-The directory backend remains the default. What is *not* yet
-shipped — and is correctly marked as roadmap below — is the operator
+**both** backends behind it are shipped: the git-backed backend
+(`GitGenerationStore`, §7) and the directory-snapshot backend (the
+always-available, dependency-free fallback). **The git backend is the
+default** (`DEFAULT_STORAGE_BACKEND = "git"` in
+`epoch/genstore.py`; a missing/blank `storage_backend` knob resolves to
+git); the directory backend is selected by `storage_backend:
+"directory"`. What is *not* yet shipped — and is correctly marked as
+roadmap below — is the operator
 CLI surface over the git store (`zicato repo` / `log` / `diff` /
 `show` / `bisect` / `blame`) and the `zicato workspace migrate-to-git`
 converter for an existing directory-backed workspace (§7.5). The git
@@ -55,7 +58,7 @@ three of the five.
 |---|---|---|
 | **1. Runtime state** | **Files** — one JSON record per file, through `StorageBackend` (the file backend). | Each record is independently written by a different process (orchestrator, per-run workers). One-file-per-record is the lock-free, crash-isolated shape. A DB here would serialise independent writers behind one lock for zero query benefit — runtime state is read by key, never joined. |
 | **2. Telemetry** | **JSONL** — `events.jsonl`, one append-only file per run, written by goldfive's `JSONLPersistenceSink`. | The access pattern is append-while-running, tail-for-the-log-panel, stream-to-SSE, replay-once-in-the-reducer. JSONL wins every one. Events are never queried *across* runs — the reduced `LossProfile` is (and that goes in the index). A row-per-event table would add write contention during the run for no query benefit. This is **goldfive's format**; zicato consumes it and does not re-schematize it. |
-| **3. Generation source trees** | **Directory snapshots (default) or git — selected by config.** Behind the `GenerationStore` protocol (§5) either way. | The data is intrinsically file-shaped. The directory backend is a full `copytree` per generation — correct, simple, the default. The git backend (§7) adds blob dedup across generations and `diff`/`log`/`blame`/`bisect` for free; it is a *second* `GenerationStore` implementation behind the same protocol, not a different design. Both keep the source tree code-only via the shared artifact-exclusion policy (`snapshot_scope`, §5.2.1). |
+| **3. Generation source trees** | **Git (default) or directory snapshots — selected by config.** Behind the `GenerationStore` protocol (§5) either way. | The data is intrinsically file-shaped. The git backend (§7, **the default**) makes each generation a commit on an epoch branch and materialises it for a run as a `git worktree`; the object store dedups unchanged blobs across a lineage and gives `diff`/`log`/`blame`/`bisect` for free. The directory backend is a full `copytree` per generation — correct, simple, dependency-free — kept as the always-available fallback (`storage_backend: "directory"`); it is a *second* `GenerationStore` implementation behind the same protocol, not a different design. Both keep the source tree code-only via the shared artifact-exclusion policy (`snapshot_scope`, §5.2.1). |
 | **4. Lineage / experiments / journals** | **Files** — JSON records + per-patch JSON files + markdown, through `StorageBackend` (the file backend). | These are the typed canonical record. They are small, human-readable in a pager, diffable, and edited at generation granularity by a single writer (the orchestrator) per epoch. Files keep them inspectable and keep the store of record uniform with runtime state. They are *projected* into the index (kind 5) for cross-run queries. |
 | **5. The analytical index** | **A real database — SQLite today, DuckDB an evaluated option (§6).** Derived, disposable, rebuilt from kinds 1-4. | A relational index is exactly the right shape for cross-run aggregates ("loss across runs × generations × epochs"). This is the one place a real DB genuinely fits. It is **never canonical** — `zicato reindex` reconstructs it from the files, so it carries no information not already on disk. |
 
@@ -98,7 +101,7 @@ routes through it too — see §5.1.
 
 The earlier memo named, but did not resolve, a real design tension. The
 `StorageBackend` ABC is record-level. Generation source trees (kind 3)
-are directory trees, and a future git backend's natural unit is a
+are directory trees, and the git backend's natural unit is a
 commit / a ref / a checked-out worktree. `write_json(key, data)` cannot
 express *"commit generation v3 with this experiment metadata"*. There
 were two ways to close this:
@@ -394,10 +397,11 @@ speculation.
 
 The git backend for kind 3 (generation source trees) **ships**, in
 `zicato.epoch.git_genstore`, as a drop-in second `GenerationStore`
-implementation. `DirectoryGenerationStore` stays the default and the
-always-available fallback; the git backend is selected off
-`config.json`'s `storage_backend: "git"` knob, resolved at one seam,
-`default_generation_store`.
+implementation. `GitGenerationStore` **is** the default; a workspace
+whose `config.json` has no `storage_backend` knob (or a blank one)
+resolves to git at the one selection seam, `default_generation_store`.
+`DirectoryGenerationStore` stays the always-available, dependency-free
+fallback, selected off `config.json`'s `storage_backend: "directory"`.
 
 ### 7.1 Why git, and the payoff
 

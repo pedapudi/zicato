@@ -27,10 +27,11 @@ The path-returning shape
 :class:`~pathlib.Path`. That is not an accident of the directory
 backend — it is the contract. The orchestrator and the subprocess
 tournament workers genuinely need a path: a worker ``chdir``\\ s into a
-generation's source tree and loads the inner-harness adapter from it. A
-future git backend satisfies this by checking out a ``git worktree``
-and returning *its* path; the protocol is written so that backend is a
-drop-in second implementation. A record-store-shaped ``read() ->
+generation's source tree and loads the inner-harness adapter from it. The
+git backend (now the **default** — see Backends below) satisfies this by
+checking out a ``git worktree`` and returning *its* path; the protocol is
+written so that backend is a drop-in second implementation alongside the
+directory fallback. A record-store-shaped ``read() ->
 dict[str, bytes]`` surface could not serve the worker, which is the
 other half of why §4 keeps this seam separate.
 
