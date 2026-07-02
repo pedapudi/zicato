@@ -31,9 +31,9 @@ import pytest
 from zicato.builder.config import BuilderAgentConfig, BuilderConfig
 from zicato.builder.copilot import CHAT_DISABLED_MESSAGE, run_copilot
 from zicato.builder.draft import DraftStore
-from zicato.cli.common import write_workspace_config
 from zicato.core.types import ScoringWeights
 from zicato.epoch.lifecycle import new_epoch
+from zicato.workspace.config_io import write_workspace_config
 
 
 def _seed_workspace(tmp_path: Path) -> Path:
@@ -260,7 +260,7 @@ async def test_copilot_apply_tool_only_dry_runs(tmp_path: Path) -> None:
     config = BuilderConfig(agent=BuilderAgentConfig(model="builder-copilot-model"))
 
     # Read the live contract config + board BEFORE the run to compare after.
-    from zicato.cli.common import read_workspace_config
+    from zicato.workspace.config_io import read_workspace_config
 
     before_config = read_workspace_config(ws)
     board_path = Path(before_config["contract"]["board_path"])

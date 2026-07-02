@@ -261,7 +261,7 @@ def _dashboard_spawn_argv(workspace_root: Path, host: str, port: int) -> list[st
     The ``zicato.dashboard.__main__`` entry point accepts ``--workspace``,
     ``--host`` and ``--port`` and calls :func:`zicato.dashboard.server.run`
     with the bundled static directory resolved by
-    :func:`zicato.cli.commands.dashboard.resolve_static_dir`. If the
+    :func:`zicato.dashboard.static_assets.resolve_static_dir`. If the
     dashboard's optional dependencies are absent the spawn fails cleanly
     and ``evolve`` continues without a dashboard (see
     :func:`_maybe_spawn_dashboard`).

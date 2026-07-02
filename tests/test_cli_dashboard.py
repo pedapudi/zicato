@@ -28,8 +28,9 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
-from zicato.cli.commands.dashboard import dashboard_cmd, resolve_static_dir
+from zicato.cli.commands.dashboard import dashboard_cmd
 from zicato.cli.discovery import build_cli_root
+from zicato.dashboard.static_assets import resolve_static_dir
 
 # ---------------------------------------------------------------------------
 # Stub LLMs for evolve invocations

@@ -984,9 +984,9 @@ def _slot_workspace(tmp_path) -> object:
     """A minimal workspace with a live contract for DraftStore init."""
     import json
 
-    from zicato.cli.common import write_workspace_config
     from zicato.core.types import ScoringWeights
     from zicato.epoch.lifecycle import new_epoch
+    from zicato.workspace.config_io import write_workspace_config
 
     ws = tmp_path / ".zicato"
     ws.mkdir()

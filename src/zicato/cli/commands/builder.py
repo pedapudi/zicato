@@ -11,7 +11,7 @@ straight at the builder's deep-link.
 
 It is a thin focus-wrapper over ``zicato dashboard``: it reuses the same
 dashboard launch machinery (the server's :func:`run` entry point + the bundled
-static asset directory via :func:`zicato.cli.commands.dashboard.resolve_static_dir`),
+static asset directory via :func:`zicato.dashboard.static_assets.resolve_static_dir`),
 honours the same loopback-only bind rule, and prints the builder deep-link
 (``http://<host>:<port>/#/builder``) as the primary link so the browser opens
 on the builder rather than the environment overview.
@@ -25,8 +25,8 @@ from pathlib import Path
 
 import click
 
-from zicato.cli.commands.dashboard import resolve_static_dir
 from zicato.config import DashboardConfig
+from zicato.dashboard.static_assets import resolve_static_dir
 
 #: The dashboard hash-route the builder lives behind. ``zicato builder`` prints
 #: this deep-link so the browser opens directly on the standalone tournament-

@@ -9,10 +9,10 @@ import pytest
 
 from zicato.builder import operations as ops
 from zicato.builder.draft import DraftStore, TournamentDraft
-from zicato.cli.common import write_workspace_config
 from zicato.core.types import BoardEntry, ScoringWeights
 from zicato.epoch.contract import compute_contract_hash, resolve_contract_inputs
 from zicato.epoch.lifecycle import current_epoch_id, load_epoch, new_epoch
+from zicato.workspace.config_io import write_workspace_config
 
 
 @pytest.fixture()

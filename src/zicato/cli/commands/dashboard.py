@@ -15,10 +15,9 @@ and exposes two entry points::
     create_app(workspace_root, static_dir, *, read_only=True) -> Starlette
     run(workspace_root, host, port, static_dir) -> None
 
-This command resolves the bundled static asset directory and calls
-``run(...)``. The static bundle is the dashboard's own — it lives next
-to the dashboard package at ``zicato/dashboard/static/`` and is served
-straight off disk.
+This command resolves the bundled static asset directory (via
+:func:`zicato.dashboard.static_assets.resolve_static_dir` — the
+dashboard owns its own bundle) and calls ``run(...)``.
 """
 
 from __future__ import annotations
@@ -27,43 +26,8 @@ from pathlib import Path
 
 import click
 
-from zicato.config import DashboardConfig, load_config
-
-
-def resolve_static_dir(config: DashboardConfig | None = None) -> Path:
-    """Return the path to the bundled dashboard static asset directory.
-
-    The dashboard front-end (``index.html`` / ``app.js`` / ``style.css``
-    / ``icons.svg``) is the dashboard package's own asset bundle. It
-    lives beside the package source and is served straight off disk.
-
-    Resolution order:
-
-    1. The ``static_dir`` of :class:`~zicato.config.DashboardConfig`,
-       sourced from the ``--static-dir`` flag — useful for tests and
-       for installed wheels that relocate the bundle.
-    2. The in-tree ``zicato/dashboard/static`` directory. This file is at
-       ``zicato/cli/commands/dashboard.py``; the bundle lives at
-       ``zicato/dashboard/static`` under the same package root.
-
-    Parameters
-    ----------
-    config:
-        The :class:`~zicato.config.DashboardConfig` carrying
-        ``static_dir`` (the command builds it from the ``--static-dir``
-        flag). When ``None`` it is loaded via
-        :func:`zicato.config.load_config`.
-
-    The path is returned even when it does not exist on disk — the
-    dashboard service is responsible for reporting a missing bundle.
-    """
-    dashboard = config if config is not None else load_config().dashboard
-    if dashboard.static_dir:
-        return Path(dashboard.static_dir)
-
-    # zicato/cli/commands/dashboard.py -> zicato/dashboard/static
-    here = Path(__file__).resolve()
-    return here.parent.parent.parent / "dashboard" / "static"
+from zicato.config import DashboardConfig
+from zicato.dashboard.static_assets import resolve_static_dir
 
 
 @click.command(
@@ -138,4 +102,4 @@ def dashboard_cmd(workspace: str, host: str, port: int, static_dir_flag: str | N
     )
 
 
-__all__ = ["dashboard_cmd", "resolve_static_dir"]
+__all__ = ["dashboard_cmd"]

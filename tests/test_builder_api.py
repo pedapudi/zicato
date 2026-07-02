@@ -8,10 +8,10 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from zicato.cli.common import write_workspace_config
 from zicato.core.types import ScoringWeights
 from zicato.dashboard.server import create_app
 from zicato.epoch.lifecycle import new_epoch
+from zicato.workspace.config_io import write_workspace_config
 
 
 @pytest.fixture()

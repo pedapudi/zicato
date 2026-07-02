@@ -52,12 +52,12 @@ from pathlib import Path
 
 import click
 
-from zicato.cli.common import read_workspace_config, write_workspace_config
 from zicato.core.types import ScoringWeights
 from zicato.epoch import lifecycle
 from zicato.epoch.contract import default_contract_paths
 from zicato.epoch.lineage import render_lineage_summary
 from zicato.index.ingest import rebuild_index, repair_epoch_goals
+from zicato.workspace.config_io import read_workspace_config, write_workspace_config
 
 
 def _prompt_for_goal() -> str:

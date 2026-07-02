@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from zicato.cli.common import (
+from zicato.workspace.config_io import (
     CONFIG_FILENAME,
     LINEAGE_FILENAME,
     workspace_is_initialized,

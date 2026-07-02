@@ -1477,9 +1477,9 @@ def _write_contract(draft: TournamentDraft, workspace_root: Path) -> None:
     import json as _json
 
     from zicato.board.jsonl import save_board
-    from zicato.cli.common import read_workspace_config, write_workspace_config
     from zicato.epoch.contract import default_contract_paths
     from zicato.epoch.lifecycle import _scoring_to_dict
+    from zicato.workspace.config_io import read_workspace_config, write_workspace_config
 
     config = read_workspace_config(workspace_root)
     defaults = default_contract_paths(workspace_root)
