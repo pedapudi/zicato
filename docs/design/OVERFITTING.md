@@ -18,8 +18,9 @@
 > Ladder-mediated on the holdout. §12 now carries per-lever **SHIPPED /
 > FUTURE** status tags (**#4** diff-complexity regularization has since
 > shipped its loss-term half — `ScoringWeights.diff_complexity_weight`,
-> default-off; only the complexity-ceiling half and **#7** the
-> random-baseline check remain unbuilt); treat the
+> default-off — and **#7** the random-baseline check has since shipped as
+> the opt-in placebo arm, `overfitting.random_baseline_every_n`; only the
+> #4 complexity-ceiling half remains unbuilt); treat the
 > *mechanism → verdict* analysis as the design rationale and those tags
 > as the as-built status. The proposer **outcome-marginal failure-mode
 > channel** (§11.5) is the most recent addition.
@@ -404,8 +405,9 @@ lineage's holdout gain over the random baseline is within noise, the
 "progress" was validation overfitting.
 
 **Verdict.** **PARTIAL BUILD via existing levers.** The trial-limit is
-`SELECTION-THEORY.md`'s; rotation is §7; the random-baseline holdout check
-is a cheap, novel addition worth a §12 mention (#7) but lower priority.
+`SELECTION-THEORY.md`'s; rotation is §7; the random-baseline check has
+since shipped as the §12 #7 placebo arm (a re-drawn no-op champion the
+gate must reject each cadence tick).
 
 ## 10. Goodhart's law / proxy gaming / reward hacking (the general framing)
 
@@ -548,10 +550,11 @@ and **#6** the board-refresh / holdout-rotation cadence (`board/split.py`
 through the non-gauntlet structures** (swiss / single_elim / double_elim /
 racing) via `orchestrator._evolve_multi_challenger` +
 `runner.confirm_crowning_holdout`, so a crowning under any structure — not
-just the gauntlet — is Ladder-mediated on the holdout. Still **future
-work**: **#4** diff-complexity regularization and **#7** the
-random-baseline holdout sanity check (both flagged inline below). Levers
-compose; the dependency arrows are noted.
+just the gauntlet — is Ladder-mediated on the holdout; and **#7** the
+random-baseline placebo arm (`overfitting.random_baseline_every_n`).
+Still **future work**: the complexity-ceiling half of **#4**
+diff-complexity regularization (flagged inline below). Levers compose;
+the dependency arrows are noted.
 
 ```mermaid
 flowchart TB
@@ -643,12 +646,24 @@ lineage. *Tradeoff:* loses warm-start within the contract — but that's the
 intended horizon reset ([`SELECTION-THEORY.md`](SELECTION-THEORY.md) §5.4).
 Depends on #1, #5.
 
-**#7 — Random-baseline holdout sanity check. (FUTURE — not built.)**
-*What:* periodically score a random mutation (or the re-drawn champion) on
-the holdout; if the lineage's holdout gain over this baseline is within
-noise, the "progress" is validation overfitting. *Where:* an optional
-orchestrator step + a health finding. *Cost:* one extra holdout run per
-check. *Tradeoff:* added compute for a diagnostic; lowest priority.
+**#7 — Random-baseline sanity check. (SHIPPED — the placebo arm.)**
+*What (as built):* every Nth round (opt-in
+`overfitting.random_baseline_every_n`, default off) the orchestrator
+fields one ADDITIONAL challenger whose patch is a semantics-preserving
+no-op — the re-drawn champion, hypothesis marked with the placebo prefix
+(`zicato.core.experiment.PLACEBO_HYPOTHESIS_MARKER`). The gate must
+reject it (identical behaviour clears no margin); a PROMOTED placebo is
+the alarm — the CRITICAL `placebo_promoted` health finding (gate
+discrimination broken; recent wins suspect). *Where:*
+`zicato/evolve/placebo.py`; the gauntlet runs it as one extra scheduled
+duel after the round (never advancing the champion pointer), a
+multi-challenger field carries it as one extra slate slot; placebo
+experiments are filtered out of the optimization-stream health detectors
+(an always-rejected control must not read as a stall). *Cost:* one extra
+board evaluation per cadence tick. *Still open:* the original
+holdout-gain-vs-baseline comparison (measuring the LINEAGE's holdout gain
+against the baseline arm over time) is a natural follow-on analysis over
+the persisted placebo outcomes.
 
 **Explicitly deferred / cross-referenced (not new work here):**
 
