@@ -34,6 +34,25 @@ selection only as a LATE tiebreak (suppressed entirely by
 ``screen_veto_only``); the panel scalar is selection-biased and is never
 journaled as evidence.
 
+Screen-informed revise (WS-R; bounded, rides the screen opt-in)
+---------------------------------------------------------------
+When the screen runs and the slate ends ALL-VETOED, the wrapper takes
+exactly ONE revise pass before degrading to critic-over-all: it
+re-samples a single replacement candidate with the slate's COUNTS-ONLY
+veto summary seeded into the repair-feedback machinery
+(:attr:`~zicato.proposer.agent.ProposerContext.revise_feedback` — the
+same ``feedback`` slot a validation failure threads on retry), screens
+the replacement GUARDED, and returns it when it survives
+(``screen_revise_survivor``). A replacement that is itself vetoed — or a
+revise the inner proposer cannot produce — falls back to the existing
+``screen_all_vetoed`` critic-over-all degrade. There is NO new config
+knob: the revise rides ``screen_entries > 0``, because an all-vetoed
+slate with no revise wastes the whole propose step on a known-vetoed
+candidate — the single re-sample is the cheapest possible recovery, and
+a contract that opted into paying for the screen has already accepted
+that propose-step cost class. With screening off nothing here runs and
+the propose path is byte-identical.
+
 Overfitting discipline (LOAD-BEARING)
 -------------------------------------
 The self-critique pass sees ONLY the SAME restricted prompt context the
@@ -326,6 +345,52 @@ _CRITIC_SYSTEM_PROMPT = (
 )
 
 
+def _screened_event_fields(
+    index: int, res: CandidateScreenResult, revise: bool = False
+) -> dict[str, Any]:
+    """One ``candidate_screened`` event payload — the counts-only summary.
+
+    Shared by the slate screen and the revise-replacement screen so both
+    emit the identical shape; ``revise`` marks the replacement's event
+    (its ``index`` is one past the original slate). NEVER carries an
+    entry id — only the counts and the counts-only reason string.
+    """
+    return {
+        "index": index,
+        "vetoed": res.vetoed,
+        "confirmed": res.confirmed,
+        "screen_summary": {
+            "entries_screened": res.entries_screened,
+            "baseline_passes": res.baseline_passes,
+            "candidate_passes": res.candidate_passes,
+            "reason": res.reason,
+        },
+        "revise": revise,
+    }
+
+
+def _render_revise_feedback(results: Sequence[CandidateScreenResult]) -> str:
+    """The revise re-sample's repair-feedback string. COUNTS ONLY by contract.
+
+    Composed exclusively from the per-candidate
+    :attr:`CandidateScreenResult.reason` strings — themselves counts-only
+    by that field's contract (never an entry id, never a question/output
+    token) — plus static instruction text, so the string can flow into
+    the (restricted-visibility) proposer prompt without widening what the
+    proposer may learn about the board (OVERFITTING.md §11).
+    """
+    per_candidate = "; ".join(f"candidate {i}: {res.reason}" for i, res in enumerate(results))
+    return (
+        "the pre-tournament candidate screen VETOED every sampled candidate "
+        f"({per_candidate}). Each candidate ran a small tryout panel; a veto "
+        "means a confirmed regression on behaviour the current champion gets "
+        "right, or a wall-clock budget exhaustion. Propose ONE different "
+        "experiment that avoids these failure modes: prefer a smaller, more "
+        "conservative edit that cannot regress currently-passing behaviour "
+        "and stays well inside the per-run budget."
+    )
+
+
 def _emit_round_event(ctx: ProposerContext, type_token: str, fields: dict[str, Any]) -> None:
     """Best-effort round-log emission through the context's optional emitter.
 
@@ -436,17 +501,33 @@ class BestOfNProposerAgent:
         screen_results = await self._screen_slate(candidates, ctx)
         survivor_indices = list(range(len(candidates)))
         all_vetoed = False
+        revise_chosen = False
+        vetoed_mode_prefix = "screen_all_vetoed"
         if screen_results is not None:
             survivors = [i for i, res in enumerate(screen_results) if not res.vetoed]
             if survivors:
                 survivor_indices = survivors
             else:
-                # Every candidate vetoed — the screen may narrow but never
-                # empty the step: fall back to critic-over-ALL, with the
-                # mode string recording the degraded selection basis.
+                # Every candidate vetoed — take the ONE bounded
+                # screen-informed revise pass first (WS-R); only when it
+                # too produces nothing usable does the step degrade to
+                # critic-over-ALL, with the mode string recording the
+                # degraded selection basis. The screen may narrow but
+                # never empty the step either way.
                 all_vetoed = True
+                revise_outcome = await self._revise_all_vetoed(candidates, screen_results, ctx, n)
+                if revise_outcome == "chosen":
+                    revise_chosen = True
+                elif revise_outcome == "fallback":
+                    vetoed_mode_prefix = "screen_all_vetoed_after_revise"
 
-        if screen_results is not None and not all_vetoed and len(survivor_indices) == 1:
+        if revise_chosen:
+            # The revise replacement survived its own screen (or could not
+            # be screened — the guarded degrade): it is the choice, no
+            # critique call needed. It is also the LAST-validated
+            # candidate, so the tree alignment below is a no-op.
+            chosen, selection_mode = len(candidates) - 1, "screen_revise_survivor"
+        elif screen_results is not None and not all_vetoed and len(survivor_indices) == 1:
             # A single survivor needs no critique call — the veto already
             # decided the slate.
             chosen, selection_mode = survivor_indices[0], "screen_sole_survivor"
@@ -455,7 +536,7 @@ class BestOfNProposerAgent:
                 candidates, survivor_indices, screen_results, ctx
             )
             if all_vetoed:
-                selection_mode = f"screen_all_vetoed:{selection_mode}"
+                selection_mode = f"{vetoed_mode_prefix}:{selection_mode}"
         chosen, selection_mode = await self._align_child_tree(
             candidates, chosen, selection_mode, ctx
         )
@@ -491,22 +572,137 @@ class BestOfNProposerAgent:
             )
             return None
         for i, res in enumerate(results):
-            _emit_round_event(
-                ctx,
-                "candidate_screened",
-                {
-                    "index": i,
-                    "vetoed": res.vetoed,
-                    "confirmed": res.confirmed,
-                    "screen_summary": {
-                        "entries_screened": res.entries_screened,
-                        "baseline_passes": res.baseline_passes,
-                        "candidate_passes": res.candidate_passes,
-                        "reason": res.reason,
-                    },
-                },
-            )
+            _emit_round_event(ctx, "candidate_screened", _screened_event_fields(i, res))
         return results
+
+    async def _revise_all_vetoed(
+        self,
+        candidates: list[Experiment],
+        screen_results: list[CandidateScreenResult],
+        ctx: ProposerContext,
+        n: int,
+    ) -> str:
+        """The ONE bounded screen-informed revise pass (WS-R). GUARDED.
+
+        Called only for an ALL-VETOED screened slate — the one screen
+        verdict under which proceeding is *knowingly* wasteful (the step
+        would send a vetoed candidate to a full tournament round). That
+        is deliberately the WHOLE trigger: a cold-start slate whose
+        survivors were merely crash-only screened (no champion-passing
+        baseline, so no pass-flip was ever detectable —
+        :class:`~zicato.epoch.screen.ScreenPanel.baseline_pass_ids`
+        empty) does NOT revise, because a replacement would face the same
+        crash-only panel and could earn no stronger signal than the
+        survivors already hold; and a no-signal survivor (screen error)
+        is the screen's own degrade-to-unscreened contract, not evidence
+        against the slate.
+
+        One replacement is re-sampled with the slate's COUNTS-ONLY veto
+        summary seeded through the repair-feedback machinery
+        (:attr:`ProposerContext.revise_feedback` — the same ``feedback``
+        slot a validation failure threads on retry; never an entry id,
+        so the restricted-visibility envelope is untouched), then
+        screened GUARDED. Exactly one revise per propose — this method
+        never re-enters :meth:`propose` and never loops.
+
+        MUTATES ``candidates``: a successfully-proposed replacement is
+        APPENDED whatever its own screen verdict, because its post-apply
+        validation (inside the inner ``propose``) just re-derived the
+        shared on-disk child tree — appending keeps
+        :meth:`_align_child_tree`'s last-validated bookkeeping honest on
+        every downstream path.
+
+        Returns one of:
+
+        * ``"chosen"`` — the replacement survived (or could not be
+          screened — the screen-failure degrade): the caller selects it.
+        * ``"fallback"`` — the replacement was itself vetoed: the caller
+          degrades to critic-over-ALL over the ORIGINAL slate, with the
+          ``screen_all_vetoed_after_revise`` mode prefix recording that
+          the revise was spent.
+        * ``"unavailable"`` — the inner proposer produced no replacement:
+          the caller degrades exactly as before the revise existed
+          (``screen_all_vetoed``). The last-validated original's child
+          tree is restored first, since the failed revise attempts may
+          have clobbered it.
+        """
+        revise_index = len(candidates)
+        feedback = _render_revise_feedback(screen_results)
+        try:
+            replacement = await self.inner.propose(replace(ctx, revise_feedback=feedback))
+        except Exception as exc:  # noqa: BLE001 — the revise must never fail a propose
+            log.debug(
+                "screen-informed revise produced no replacement (%s); "
+                "degrading to critic-over-all",
+                exc,
+            )
+            await self._restore_last_validated_tree(candidates, ctx)
+            return "unavailable"
+        _emit_round_event(ctx, "candidate_sampled", {"i": revise_index, "n": n, "revise": True})
+        result = await self._screen_replacement(replacement, revise_index, ctx)
+        candidates.append(replacement)
+        if result is not None and result.vetoed:
+            return "fallback"
+        return "chosen"
+
+    async def _screen_replacement(
+        self, replacement: Experiment, index: int, ctx: ProposerContext
+    ) -> CandidateScreenResult | None:
+        """Screen the ONE revise replacement. GUARDED like :meth:`_screen_slate`.
+
+        ``None`` — a raising runner or a malformed result — means
+        UNSCREENED: the caller treats the replacement as chosen (the
+        screen-failure discipline: degrade to unscreened, never fail or
+        empty the propose; the feedback-informed replacement is strictly
+        better-informed than the known-vetoed originals). A real result
+        emits the replacement's ``candidate_screened`` event with the
+        ``revise`` marker (``index`` is one past the original slate).
+        """
+        screen = ctx.screen_candidates
+        if screen is None:  # pragma: no cover — only a screened slate revises
+            return None
+        try:
+            results = list(await screen([replacement]))
+        except Exception as exc:  # noqa: BLE001 — screening must never fail a propose
+            log.debug("revise-replacement screen failed (%s); treating as unscreened", exc)
+            return None
+        if len(results) != 1:
+            log.debug(
+                "revise-replacement screen returned %d result(s) for 1 candidate; "
+                "treating as unscreened",
+                len(results),
+            )
+            return None
+        res = results[0]
+        _emit_round_event(ctx, "candidate_screened", _screened_event_fields(index, res, True))
+        return res
+
+    async def _restore_last_validated_tree(
+        self, candidates: list[Experiment], ctx: ProposerContext
+    ) -> None:
+        """Re-derive the last original candidate's child tree after a failed revise.
+
+        A revise ``propose`` that failed may still have run its post-apply
+        validation attempts, each of which re-derives the SHARED child
+        snapshot in place — so the on-disk tree can belong to a rejected
+        revise attempt rather than to ``candidates[-1]`` (the state every
+        downstream path assumes). One idempotent hook call restores it.
+        If even the restore fails, no candidate's tree can be mounted
+        consistently and the step surfaces the standard
+        :class:`~zicato.proposer.proposer.ProposerError` — the
+        :meth:`_align_child_tree` both-failed precedent.
+        """
+        validate = ctx.validate_experiment
+        if validate is None:
+            return
+        findings = await self._revalidate(validate, candidates[-1])
+        if findings:
+            raise ProposerError(
+                [
+                    f"restore of last-validated candidate after a failed revise failed: {f}"
+                    for f in findings
+                ]
+            )
 
     async def _select_over(
         self,

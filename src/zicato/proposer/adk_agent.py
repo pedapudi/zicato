@@ -439,7 +439,10 @@ class ADKProposerAgent:
         )
         mutations_by_id = {mp.id: mp for mp in ctx.mutations}
 
-        feedback = ""
+        # The revise channel seeds the FIRST attempt's feedback (empty for
+        # every non-revise call — byte-identical input); retries then
+        # overwrite it with their own concrete errors exactly as before.
+        feedback = ctx.revise_feedback
         attempt_errors: list[str] = []
         total_attempts = ctx.max_retries + 1
         for _attempt in range(total_attempts):

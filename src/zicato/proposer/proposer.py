@@ -106,6 +106,7 @@ async def propose_experiment(
     failure_profile: str = "",
     sample_hint: str = "",
     mutation_track_records: Mapping[str, MutationTrackRecord] | None = None,
+    revise_feedback: str = "",
 ) -> Experiment:
     """Compose prompts, call the auxiliary LLM, parse the response.
 
@@ -260,6 +261,18 @@ async def propose_experiment(
         touching this point" (never causal). ``None`` (the default) renders
         a byte-identical manifest.
 
+    revise_feedback:
+        Optional SEED for the repair-feedback loop's first attempt — the
+        best-of-N screen-informed revise channel (WS-R). When non-empty,
+        the FIRST attempt already renders the repair section with this
+        string in the ``feedback`` slot, exactly as a retry after a
+        validation failure would; subsequent retries overwrite it with
+        their own concrete errors as usual. The wrapper stamps only the
+        screen's COUNTS-ONLY veto summary here (never an entry id), so
+        the restricted-visibility envelope is untouched. Empty (the
+        default) seeds nothing — every existing caller renders a
+        byte-identical first prompt.
+
     Raises
     ------
     ProposerError
@@ -291,7 +304,10 @@ async def propose_experiment(
     # not exhausted on the first attempt.
     prior_experiments_list = list(prior_experiments)
 
-    feedback = ""
+    # The revise channel seeds the FIRST attempt's feedback (empty for every
+    # non-revise call, rendering a byte-identical prompt); retries then
+    # overwrite it with their own concrete errors exactly as before.
+    feedback = revise_feedback
     # Repair-turn carriers. Each failed attempt that produced a response
     # populates these so the NEXT attempt's prompt can echo the prior raw
     # output back and target the empty-vs-malformed failure mode. An

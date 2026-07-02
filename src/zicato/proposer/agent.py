@@ -126,6 +126,15 @@ class ProposerContext:
     #: it composes with the restricted-visibility envelope untouched. Empty
     #: (the default — every single-sample propose) renders no section.
     sample_hint: str = ""
+    #: Optional seed for the repair-feedback loop's FIRST attempt — the
+    #: screen-informed revise channel (WS-R). The best-of-N wrapper stamps
+    #: the all-vetoed slate's COUNTS-ONLY veto summary here (never an entry
+    #: id — the restricted-visibility envelope) so the ONE bounded revise
+    #: re-sample starts as a genuine repair turn: both engines thread it
+    #: into the same ``feedback`` slot a validation failure would populate
+    #: on retry. Empty (the default — every non-revise propose) seeds
+    #: nothing and every prompt renders byte-identically.
+    revise_feedback: str = ""
     #: Optional per-mutation-point track records (the fertility map —
     #: :func:`zicato.index.query.mutation_point_track_record`), read
     #: best-effort from the analytical index by the orchestrator, exactly
@@ -211,6 +220,7 @@ class DefaultProposerAgent:
             failure_profile=ctx.failure_profile,
             sample_hint=ctx.sample_hint,
             mutation_track_records=ctx.mutation_track_records,
+            revise_feedback=ctx.revise_feedback,
         )
 
 

@@ -181,6 +181,71 @@ async def test_propose_experiment_retries_on_invalid_json() -> None:
 
 
 @pytest.mark.asyncio
+async def test_revise_feedback_seeds_the_first_attempt() -> None:
+    """The revise channel renders the repair section on attempt ONE."""
+    stub = _StubLLM([_valid_response()])
+    await propose_experiment(
+        epoch_id="e1",
+        parent_generation_id="v0",
+        new_generation_id="v1",
+        patterns=[],
+        mutations=_MUTATIONS,
+        brief_text="",
+        current_loss_summary="",
+        aux_call_llm=stub,
+        revise_feedback="the screen vetoed every sampled candidate (counts only)",
+    )
+    assert len(stub.calls) == 1
+    _, user, _ = stub.calls[0]
+    assert "Previous attempt was rejected" in user
+    assert "the screen vetoed every sampled candidate (counts only)" in user
+
+
+@pytest.mark.asyncio
+async def test_revise_feedback_is_overwritten_by_a_real_retry_error() -> None:
+    """A retry replaces the revise seed with its own concrete error, exactly
+    as the feedback loop always behaved."""
+    stub = _StubLLM(["this is not json", _valid_response()])
+    await propose_experiment(
+        epoch_id="e1",
+        parent_generation_id="v0",
+        new_generation_id="v1",
+        patterns=[],
+        mutations=_MUTATIONS,
+        brief_text="",
+        current_loss_summary="",
+        aux_call_llm=stub,
+        max_retries=2,
+        revise_feedback="REVISE-SEED-MARKER",
+    )
+    _, first_user, _ = stub.calls[0]
+    _, retry_user, _ = stub.calls[1]
+    assert "REVISE-SEED-MARKER" in first_user
+    assert "REVISE-SEED-MARKER" not in retry_user
+    assert "Previous attempt was rejected" in retry_user
+
+
+@pytest.mark.asyncio
+async def test_empty_revise_feedback_is_byte_identical() -> None:
+    """The default (empty) revise channel renders the exact same prompt as a
+    call that predates the parameter."""
+    stub_default = _StubLLM([_valid_response()])
+    stub_explicit = _StubLLM([_valid_response()])
+    kwargs = dict(
+        epoch_id="e1",
+        parent_generation_id="v0",
+        new_generation_id="v1",
+        patterns=[_pattern()],
+        mutations=_MUTATIONS,
+        brief_text="# Proposer brief\n",
+        current_loss_summary="loss=2.3",
+    )
+    await propose_experiment(aux_call_llm=stub_default, **kwargs)  # type: ignore[arg-type]
+    await propose_experiment(aux_call_llm=stub_explicit, revise_feedback="", **kwargs)  # type: ignore[arg-type]
+    assert stub_default.calls == stub_explicit.calls
+
+
+@pytest.mark.asyncio
 async def test_propose_experiment_repairs_prose_response() -> None:
     """A reasoning model returning prose on attempt 1 is repaired on attempt 2.
 

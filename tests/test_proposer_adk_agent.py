@@ -277,6 +277,35 @@ async def test_validate_rejection_triggers_one_retry_then_succeeds(tmp_path: Pat
     assert model.cursor == 2
 
 
+def _request_text(request: Any) -> str:
+    """Concatenate every text part of one captured ADK LlmRequest."""
+    chunks: list[str] = []
+    for content in getattr(request, "contents", None) or ():
+        for part in getattr(content, "parts", None) or ():
+            text = getattr(part, "text", None)
+            if text:
+                chunks.append(text)
+    return "\n".join(chunks)
+
+
+@pytest.mark.asyncio
+async def test_revise_feedback_seeds_the_first_run_input(tmp_path: Path) -> None:
+    """The context's revise channel reaches the FIRST agent run's input as a
+    repair section (the best-of-N screen-informed revise path)."""
+    snapshot, mutations = _build_snapshot(tmp_path)
+    ctx = _make_ctx(tmp_path, snapshot, mutations, revise_feedback="screen vetoed the whole slate")
+    model = make_fake_adk_model([TextTurn(text=_experiment_json())], model="proposer-model")
+    agent = build_agent(model=model)
+    proposer = ADKProposerAgent(spec=ProposerSpec.default(), agent=agent)
+
+    await proposer.propose(ctx)
+
+    assert model.invocations
+    first_input = _request_text(model.invocations[0])
+    assert "Previous attempt was rejected" in first_input
+    assert "screen vetoed the whole slate" in first_input
+
+
 @pytest.mark.asyncio
 async def test_exhausting_retries_raises_proposer_error(tmp_path: Path) -> None:
     snapshot, mutations = _build_snapshot(tmp_path)

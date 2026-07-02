@@ -742,6 +742,50 @@ class _RaisingScreen:
         raise RuntimeError("screen infrastructure exploded")
 
 
+class _SequencedScreen:
+    """Per-call scripted screen results: call ``k`` returns ``script[k]``.
+
+    Unlike :class:`_ScriptedScreen` (which replays ONE result list on
+    every call), this double scripts EACH call independently — needed by
+    the revise tests, where the slate screen and the replacement screen
+    return differently-sized result lists.
+    """
+
+    def __init__(self, script: list[list[CandidateScreenResult]]) -> None:
+        self._script = [list(results) for results in script]
+        self.calls = 0
+
+    async def __call__(self, candidates: object) -> list[CandidateScreenResult]:
+        idx = self.calls
+        self.calls += 1
+        return list(self._script[idx])
+
+
+class _ExhaustibleInnerAgent:
+    """Scripted inner agent recording each call's context; raises when spent.
+
+    The revise-path double: the slate consumes the scripted candidates in
+    order and any call past the script (the revise re-sample, when the
+    test wants it to fail) raises the standard
+    :class:`~zicato.proposer.proposer.ProposerError`.
+    """
+
+    def __init__(self, candidates: list[Experiment]) -> None:
+        self._candidates = list(candidates)
+        self.contexts: list[ProposerContext] = []
+        self.calls = 0
+
+    async def propose(self, ctx: ProposerContext) -> Experiment:
+        from zicato.proposer.proposer import ProposerError
+
+        self.contexts.append(ctx)
+        idx = self.calls
+        self.calls += 1
+        if idx >= len(self._candidates):
+            raise ProposerError([f"inner agent exhausted at call {idx}"])
+        return self._candidates[idx]
+
+
 def _screened_context(aux: object, screen: object, **overrides: object) -> ProposerContext:
     from dataclasses import replace as _replace
 
@@ -809,10 +853,13 @@ async def test_sole_survivor_mode_string_and_event_ordering() -> None:
 
 @pytest.mark.asyncio
 async def test_all_vetoed_slate_degrades_to_critic_over_all() -> None:
+    """An all-vetoed slate whose revise produces NO replacement (the inner
+    proposer is exhausted) degrades exactly as before the revise existed:
+    critic-over-all with the ``screen_all_vetoed`` mode prefix."""
     events: list[tuple[str, dict]] = []
     cand0 = _experiment(core_idea="a", mutation_id="router__sp", new_content="a")
     cand1 = _experiment(core_idea="b", mutation_id="writer__sp", new_content="b")
-    inner = _ScriptedInnerAgent([cand0, cand1])
+    inner = _ExhaustibleInnerAgent([cand0, cand1])
     critic = _CapturingCriticLLM("1")
     screen = _ScriptedScreen(
         [
@@ -827,6 +874,7 @@ async def test_all_vetoed_slate_degrades_to_critic_over_all() -> None:
     out = await agent.propose(ctx)
     assert out is cand1  # the critic still chose — the step never empties
     assert len(critic.user_prompts) == 1
+    assert inner.calls == 3  # 2 slate samples + the one (failed) revise
     assert dict(events)["critique_selected"]["reason"] == "screen_all_vetoed:critique"
 
 
@@ -835,7 +883,7 @@ async def test_all_vetoed_heuristic_mode_string() -> None:
     events: list[tuple[str, dict]] = []
     cand0 = _experiment(core_idea="a", mutation_id="router__sp", new_content="a")
     cand1 = _experiment(core_idea="b", mutation_id="writer__sp", new_content="bb")
-    inner = _ScriptedInnerAgent([cand0, cand1])
+    inner = _ExhaustibleInnerAgent([cand0, cand1])
     screen = _ScriptedScreen(
         [_screen_result(vetoed=True, passes=0), _screen_result(vetoed=True, passes=0)]
     )
@@ -986,6 +1034,245 @@ async def test_veto_only_still_vetoes() -> None:
     )
     out = await agent.propose(_screened_context(_CapturingCriticLLM("0"), screen))
     assert out is cand1
+
+
+# --------------------------------------------------------------------------
+# Screen-informed revise (WS-R) — one bounded re-sample on an all-vetoed slate
+# --------------------------------------------------------------------------
+
+
+def _revise_fixture(
+    *,
+    replacement_result: CandidateScreenResult | list[CandidateScreenResult] | None,
+    critic: str = "1",
+    critique_enabled: bool = True,
+) -> tuple[list[Experiment], _ExhaustibleInnerAgent, _SequencedScreen, _CapturingCriticLLM]:
+    """An all-vetoed two-candidate slate plus one scripted revise replacement.
+
+    ``replacement_result`` scripts the replacement's screen call — a single
+    result, a full (malformed-size) list, or ``None`` for no second call
+    scripted (the revise-unavailable tests never reach it).
+    """
+    cand0 = _experiment(core_idea="a", mutation_id="router__sp", new_content="a")
+    cand1 = _experiment(core_idea="b", mutation_id="writer__sp", new_content="b")
+    replacement = _experiment(core_idea="revised", mutation_id="writer__sp", new_content="c")
+    slate_call = [
+        _screen_result(vetoed=True, confirmed=True, passes=0),
+        _screen_result(vetoed=True, passes=0),
+    ]
+    script: list[list[CandidateScreenResult]] = [slate_call]
+    if isinstance(replacement_result, list):
+        script.append(replacement_result)
+    elif replacement_result is not None:
+        script.append([replacement_result])
+    inner = _ExhaustibleInnerAgent([cand0, cand1, replacement])
+    return [cand0, cand1, replacement], inner, _SequencedScreen(script), _CapturingCriticLLM(critic)
+
+
+@pytest.mark.asyncio
+async def test_all_vetoed_revise_survivor_is_chosen() -> None:
+    candidates, inner, screen, critic = _revise_fixture(replacement_result=_screen_result())
+    events: list[tuple[str, dict]] = []
+    agent = BestOfNProposerAgent(
+        inner=inner, config=ProposerQualityConfig(best_of_n=2, screen_entries=2)
+    )
+    ctx = _screened_context(critic, screen, round_event_emitter=lambda t, f: events.append((t, f)))
+    out = await agent.propose(ctx)
+    # The surviving replacement IS the choice — no critique call needed.
+    assert out is candidates[2]
+    assert critic.user_prompts == []
+    assert inner.calls == 3  # 2 slate samples + exactly ONE revise
+    assert screen.calls == 2  # the slate, then the replacement (guarded)
+    selected = dict(events)["critique_selected"]
+    assert selected == {"index": 2, "reason": "screen_revise_survivor"}
+
+
+@pytest.mark.asyncio
+async def test_revise_also_vetoed_falls_back_with_distinct_mode_string() -> None:
+    candidates, inner, screen, critic = _revise_fixture(
+        replacement_result=_screen_result(vetoed=True, passes=0)
+    )
+    events: list[tuple[str, dict]] = []
+    agent = BestOfNProposerAgent(
+        inner=inner, config=ProposerQualityConfig(best_of_n=2, screen_entries=2)
+    )
+    ctx = _screened_context(critic, screen, round_event_emitter=lambda t, f: events.append((t, f)))
+    out = await agent.propose(ctx)
+    # The critic chose over the ORIGINAL slate; the vetoed replacement is
+    # never returned, and the budget is exactly one revise (no recursion).
+    assert out is candidates[1]
+    assert inner.calls == 3
+    assert screen.calls == 2
+    assert dict(events)["critique_selected"]["reason"] == "screen_all_vetoed_after_revise:critique"
+
+
+@pytest.mark.asyncio
+async def test_revise_feedback_carries_counts_only() -> None:
+    _, inner, screen, critic = _revise_fixture(replacement_result=_screen_result())
+    agent = BestOfNProposerAgent(
+        inner=inner, config=ProposerQualityConfig(best_of_n=2, screen_entries=2)
+    )
+    await agent.propose(_screened_context(critic, screen))
+    # The two slate samples carry no revise feedback; the revise re-sample
+    # carries the counts-only veto summary through the repair channel.
+    assert [c.revise_feedback for c in inner.contexts[:2]] == ["", ""]
+    feedback = inner.contexts[2].revise_feedback
+    assert "VETOED every sampled candidate" in feedback
+    assert "candidate 0: vetoed: panel 2" in feedback
+    assert "candidate 1: vetoed: panel 2" in feedback
+    # Counts only — the restricted-visibility envelope: no board-entry
+    # identity of any shape reaches the feedback string (the reason
+    # strings are counts-only by CandidateScreenResult contract, and the
+    # rest of the string is static instruction text).
+    assert "entry" not in feedback.lower()
+    # The revise re-sample keeps the same restricted context otherwise.
+    assert inner.contexts[2].restrict_visibility is True
+
+
+@pytest.mark.asyncio
+async def test_revise_round_log_ordering_and_markers() -> None:
+    _, inner, screen, critic = _revise_fixture(replacement_result=_screen_result())
+    events: list[tuple[str, dict]] = []
+    agent = BestOfNProposerAgent(
+        inner=inner, config=ProposerQualityConfig(best_of_n=2, screen_entries=2)
+    )
+    ctx = _screened_context(critic, screen, round_event_emitter=lambda t, f: events.append((t, f)))
+    await agent.propose(ctx)
+    # Slate samples, slate screens, THEN the revise sample + its screen,
+    # then the selection — the existing vocabulary end to end.
+    assert [t for t, _ in events] == [
+        "candidate_sampled",
+        "candidate_sampled",
+        "candidate_screened",
+        "candidate_screened",
+        "candidate_sampled",
+        "candidate_screened",
+        "critique_selected",
+    ]
+    sampled = [f for t, f in events if t == "candidate_sampled"]
+    assert sampled[0] == {"i": 0, "n": 2}
+    assert sampled[1] == {"i": 1, "n": 2}
+    assert sampled[2] == {"i": 2, "n": 2, "revise": True}
+    screened = [f for t, f in events if t == "candidate_screened"]
+    assert [f["revise"] for f in screened] == [False, False, True]
+    assert screened[2]["index"] == 2
+    assert screened[2]["vetoed"] is False
+    assert set(screened[2]["screen_summary"]) == {
+        "entries_screened",
+        "baseline_passes",
+        "candidate_passes",
+        "reason",
+    }
+
+
+@pytest.mark.asyncio
+async def test_screening_off_never_revises_byte_identical() -> None:
+    cand0 = _experiment(core_idea="a", mutation_id="router__sp", new_content="a")
+    cand1 = _experiment(core_idea="b", mutation_id="writer__sp", new_content="b")
+    inner = _ExhaustibleInnerAgent([cand0, cand1])
+    critic = _CapturingCriticLLM("1")
+    events: list[tuple[str, dict]] = []
+    agent = BestOfNProposerAgent(
+        inner=inner, config=ProposerQualityConfig(best_of_n=2, screen_entries=2)
+    )
+    from dataclasses import replace as _replace
+
+    out = await agent.propose(
+        _replace(_context(critic), round_event_emitter=lambda t, f: events.append((t, f)))
+    )
+    # No screen runner on the context ⇒ no screen, no revise: exactly the
+    # N slate samples, no revise feedback anywhere, and the pre-revise
+    # event stream byte-for-byte (no revise markers, no extra events).
+    assert out is cand1
+    assert inner.calls == 2
+    assert all(c.revise_feedback == "" for c in inner.contexts)
+    assert events == [
+        ("candidate_sampled", {"i": 0, "n": 2}),
+        ("candidate_sampled", {"i": 1, "n": 2}),
+        ("critique_selected", {"index": 1, "reason": "critique"}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_revise_malformed_screen_result_treated_as_unscreened_survivor() -> None:
+    # The replacement's screen returns a malformed (2-for-1) result list —
+    # the guarded degrade treats the replacement as unscreened and chooses
+    # it (the alternative is a known-vetoed original).
+    candidates, inner, screen, critic = _revise_fixture(
+        replacement_result=[_screen_result(), _screen_result()]
+    )
+    events: list[tuple[str, dict]] = []
+    agent = BestOfNProposerAgent(
+        inner=inner, config=ProposerQualityConfig(best_of_n=2, screen_entries=2)
+    )
+    ctx = _screened_context(critic, screen, round_event_emitter=lambda t, f: events.append((t, f)))
+    out = await agent.propose(ctx)
+    assert out is candidates[2]
+    assert dict(events)["critique_selected"]["reason"] == "screen_revise_survivor"
+    # The malformed screen emitted no candidate_screened event for the
+    # replacement (its verdict is unknown, not clear).
+    assert [f.get("revise") for t, f in events if t == "candidate_screened"] == [False, False]
+
+
+@pytest.mark.asyncio
+async def test_revise_survivor_needs_no_tree_realign() -> None:
+    # The chosen replacement is the LAST-validated candidate — the tree
+    # alignment is a no-op (no extra hook call after selection).
+    _, inner, screen, critic = _revise_fixture(replacement_result=_screen_result())
+    hook = _RecordingValidator()
+    from dataclasses import replace as _replace
+
+    ctx = _replace(_screened_context(critic, screen), validate_experiment=hook)
+    agent = BestOfNProposerAgent(
+        inner=inner, config=ProposerQualityConfig(best_of_n=2, screen_entries=2)
+    )
+    await agent.propose(ctx)
+    assert hook.calls == []
+
+
+@pytest.mark.asyncio
+async def test_revise_fallback_realigns_the_chosen_original_tree() -> None:
+    # Revise-also-vetoed: the selection returns to an ORIGINAL candidate,
+    # but the replacement's validation re-derived the shared child tree —
+    # the alignment must re-derive the chosen original's tree.
+    candidates, inner, screen, critic = _revise_fixture(
+        replacement_result=_screen_result(vetoed=True, passes=0), critic="0"
+    )
+    hook = _RecordingValidator()
+    from dataclasses import replace as _replace
+
+    ctx = _replace(_screened_context(critic, screen), validate_experiment=hook)
+    agent = BestOfNProposerAgent(
+        inner=inner, config=ProposerQualityConfig(best_of_n=2, screen_entries=2)
+    )
+    out = await agent.propose(ctx)
+    assert out is candidates[0]
+    assert hook.calls == [candidates[0]]
+
+
+@pytest.mark.asyncio
+async def test_failed_revise_restores_the_last_validated_tree() -> None:
+    # The revise propose fails after the failed attempts may have clobbered
+    # the shared child tree: the wrapper restores the last ORIGINAL
+    # candidate's tree before selecting, then aligns the chosen pick.
+    cand0 = _experiment(core_idea="a", mutation_id="router__sp", new_content="a")
+    cand1 = _experiment(core_idea="b", mutation_id="writer__sp", new_content="b")
+    inner = _ExhaustibleInnerAgent([cand0, cand1])  # the revise call raises
+    screen = _ScriptedScreen(
+        [_screen_result(vetoed=True, passes=0), _screen_result(vetoed=True, passes=0)]
+    )
+    hook = _RecordingValidator()
+    from dataclasses import replace as _replace
+
+    ctx = _replace(_screened_context(_CapturingCriticLLM("0"), screen), validate_experiment=hook)
+    agent = BestOfNProposerAgent(
+        inner=inner, config=ProposerQualityConfig(best_of_n=2, screen_entries=2)
+    )
+    out = await agent.propose(ctx)
+    assert out is cand0
+    # Restore of cand1 (the last original), then the alignment re-derive of
+    # the chosen cand0.
+    assert hook.calls == [cand1, cand0]
 
 
 @pytest.mark.asyncio

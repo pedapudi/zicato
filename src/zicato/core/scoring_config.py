@@ -277,6 +277,16 @@ class ProposerQualityConfig:
         epoch, which is correct — a proposer whose slate is screened
         selects differently. Must be ``>= 0``. See
         :mod:`zicato.epoch.screen`.
+
+        The screen-informed revise pass RIDES this knob (no separate
+        lever, deliberately): when a screened slate ends all-vetoed, the
+        wrapper takes exactly one feedback-informed re-sample before
+        degrading to critic-over-all. An all-vetoed slate with no revise
+        wastes the whole propose step on a known-vetoed candidate, so
+        the single re-sample is the cheapest possible recovery — and a
+        contract that opted into paying for the screen has already
+        accepted that propose-step cost class. See
+        :meth:`zicato.proposer.best_of_n.BestOfNProposerAgent`.
     screen_veto_only:
         When ``True``, the screen's measurements feed NOTHING but the
         veto: the critic prompt carries no ``## Screen measurements``

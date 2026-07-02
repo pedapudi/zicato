@@ -104,11 +104,18 @@ class ProposalAttempted:
 
 @dataclass(frozen=True, slots=True)
 class CandidateSampled:
-    """Best-of-N sampling drew candidate ``i`` of ``n``."""
+    """Best-of-N sampling drew candidate ``i`` of ``n``.
+
+    ``revise`` marks the ONE bounded screen-informed revise re-sample an
+    all-vetoed slate may take (``i`` is then the replacement's slate
+    position, one past the sampled slots). Additive with a default so
+    every pre-revise log decodes identically.
+    """
 
     TYPE: ClassVar[str] = "candidate_sampled"
     i: int = 0
     n: int = 1
+    revise: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,7 +129,10 @@ class CandidateScreened:
     passes, the counts-only reason string) — NEVER an entry id.
     ``confirmed`` is true only for a veto that survived the
     confirm-before-veto re-run (a twice-flipped entry); an immediate
-    budget-abort veto carries ``False``.
+    budget-abort veto carries ``False``. ``revise`` marks the screen of
+    the ONE bounded revise replacement an all-vetoed slate may sample
+    (``index`` is then one past the original slate) — additive with a
+    default so every pre-revise log decodes identically.
     """
 
     TYPE: ClassVar[str] = "candidate_screened"
@@ -130,6 +140,7 @@ class CandidateScreened:
     vetoed: bool = False
     confirmed: bool = False
     screen_summary: dict[str, Any] = field(default_factory=dict)
+    revise: bool = False
 
 
 @dataclass(frozen=True, slots=True)
