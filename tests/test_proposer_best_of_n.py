@@ -355,3 +355,180 @@ async def test_partial_failure_uses_surviving_candidate() -> None:
     out = await agent.propose(_context(critic))
     assert out is survivor
     assert critic.user_prompts == []  # single survivor — no critique needed
+
+
+# --------------------------------------------------------------------------
+# Intra-slate diversity — distinct edit-class hints per slate slot
+# --------------------------------------------------------------------------
+
+
+class _HintRecordingInnerAgent(_ScriptedInnerAgent):
+    """Scripted inner agent that also records each call's ``sample_hint``."""
+
+    def __init__(self, candidates: list[Experiment]) -> None:
+        super().__init__(candidates)
+        self.hints: list[str] = []
+
+    async def propose(self, ctx: ProposerContext) -> Experiment:
+        self.hints.append(ctx.sample_hint)
+        return await super().propose(ctx)
+
+
+@pytest.mark.asyncio
+async def test_slate_slots_carry_distinct_edit_class_hints() -> None:
+    """Each of the N samples gets a DISTINCT rotating edit-class hint on its
+    context; the caller's own context is never mutated."""
+    from zicato.proposer.best_of_n import EDIT_CLASS_HINTS
+
+    inner = _HintRecordingInnerAgent(
+        [
+            _experiment(core_idea="a", mutation_id="router__sp", new_content="x"),
+            _experiment(core_idea="b", mutation_id="router__sp", new_content="y"),
+            _experiment(core_idea="c", mutation_id="router__sp", new_content="z"),
+        ]
+    )
+    agent = BestOfNProposerAgent(
+        inner=inner,
+        config=ProposerQualityConfig(best_of_n=3, critique_enabled=False),
+    )
+    ctx = _context(_CapturingCriticLLM("0"))
+    await agent.propose(ctx)
+    assert inner.hints == list(EDIT_CLASS_HINTS[:3])
+    assert len(set(inner.hints)) == 3
+    assert ctx.sample_hint == ""  # the shared context is untouched
+
+
+@pytest.mark.asyncio
+async def test_n1_direct_propose_carries_no_hint() -> None:
+    """The single-sample short-circuit passes the context through verbatim —
+    no hint section is ever added to a non-slate propose."""
+    inner = _HintRecordingInnerAgent(
+        [_experiment(core_idea="only", mutation_id="router__sp", new_content="x")]
+    )
+    agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=1))
+    await agent.propose(_context(_CapturingCriticLLM("0")))
+    assert inner.hints == [""]
+
+
+def test_sample_hint_renders_a_prompt_section_only_when_set() -> None:
+    from zicato.proposer.prompts import render_user_prompt
+
+    base_kwargs: dict = {
+        "current_loss_summary": "loss=1.0",
+        "patterns": (),
+        "mutations": _MUTATIONS,
+    }
+    plain = render_user_prompt(**base_kwargs)
+    assert "Edit-class hint" not in plain
+    # Empty hint is byte-identical to the pre-surface prompt.
+    assert render_user_prompt(**base_kwargs, sample_hint="") == plain
+    hinted = render_user_prompt(**base_kwargs, sample_hint="Prefer the smallest grounded fix.")
+    assert hinted.startswith("## Edit-class hint (this sample)\n")
+    assert "Prefer the smallest grounded fix." in hinted
+    # The hint only PREPENDS — the rest of the prompt is unchanged.
+    assert hinted.endswith(plain)
+
+
+# --------------------------------------------------------------------------
+# Calibration-aware selection — prediction_accuracy steers, never gates
+# --------------------------------------------------------------------------
+
+
+def _prediction_bearing(core_idea: str, *, diff_pad: str = "") -> Experiment:
+    """A candidate whose hypothesis states a concrete expected movement."""
+    from dataclasses import replace as _replace
+
+    from zicato.core.types import ExpectedDriftMovement
+
+    exp = _experiment(core_idea=core_idea, mutation_id="router__sp", new_content="x" + diff_pad)
+    return _replace(
+        exp,
+        hypothesis=_replace(
+            exp.hypothesis,
+            expected_drift_movements=(
+                ExpectedDriftMovement(kind="off_topic", direction="decrease", magnitude="medium"),
+            ),
+        ),
+    )
+
+
+def _prior(accuracy: float | None) -> object:
+    from zicato.core.types import PriorExperiment
+
+    return PriorExperiment(
+        generation_id="v9",
+        epoch_id="e1",
+        core_idea="prior",
+        modulating=("router__sp",),
+        decision="promoted",
+        rejection_reason="",
+        scalar_score_delta=-0.1,
+        prediction_accuracy=accuracy,
+    )
+
+
+def test_heuristic_prefers_predictions_when_lineage_calibrated() -> None:
+    from dataclasses import replace as _replace
+
+    from zicato.proposer.best_of_n import _heuristic_best_index
+
+    # Candidate 0: no expected movements, SMALLER diff. Candidate 1: carries
+    # expected movements, larger diff. Both equally grounded (no patterns).
+    bare = _experiment(core_idea="bare", mutation_id="router__sp", new_content="x")
+    predicted = _prediction_bearing("predicted", diff_pad="pad-pad-pad")
+    candidates = [bare, predicted]
+
+    # Uncalibrated lineage (no graded history): the term is inert — the
+    # smaller diff wins as before.
+    ctx = _context(_CapturingCriticLLM("0"))
+    assert _heuristic_best_index(candidates, ctx) == 0
+
+    # Poorly-calibrated lineage: still inert (guessing is not rewarded).
+    ctx_low = _replace(ctx, prior_experiments=(_prior(0.2),))
+    assert _heuristic_best_index(candidates, ctx_low) == 0
+
+    # Well-calibrated lineage: the prediction-bearing candidate ranks ahead
+    # of the smaller bare edit (advisory ordering, applied before diff size).
+    ctx_high = _replace(ctx, prior_experiments=(_prior(0.9), _prior(0.7)))
+    assert _heuristic_best_index(candidates, ctx_high) == 1
+
+
+def test_recent_prediction_accuracy_means_graded_entries_only() -> None:
+    from dataclasses import replace as _replace
+
+    from zicato.proposer.best_of_n import recent_prediction_accuracy
+
+    ctx = _context(_CapturingCriticLLM("0"))
+    assert recent_prediction_accuracy(ctx) is None
+    ctx2 = _replace(ctx, prior_experiments=(_prior(1.0), _prior(None), _prior(0.5)))
+    assert recent_prediction_accuracy(ctx2) == 0.75
+
+
+@pytest.mark.asyncio
+async def test_critic_prompt_carries_calibration_note_when_calibrated() -> None:
+    from dataclasses import replace as _replace
+
+    critic = _CapturingCriticLLM("1")
+    inner = _ScriptedInnerAgent(
+        [
+            _experiment(core_idea="a", mutation_id="router__sp", new_content="x"),
+            _prediction_bearing("b"),
+        ]
+    )
+    agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=2))
+    ctx = _replace(_context(critic), prior_experiments=(_prior(0.9),))
+    await agent.propose(ctx)
+    assert len(critic.user_prompts) == 1
+    assert "predictions have mostly borne out" in critic.user_prompts[0]
+
+    # Uncalibrated lineage: no note.
+    critic2 = _CapturingCriticLLM("1")
+    inner2 = _ScriptedInnerAgent(
+        [
+            _experiment(core_idea="a", mutation_id="router__sp", new_content="x"),
+            _prediction_bearing("b"),
+        ]
+    )
+    agent2 = BestOfNProposerAgent(inner=inner2, config=ProposerQualityConfig(best_of_n=2))
+    await agent2.propose(_context(critic2))
+    assert "predictions have mostly borne out" not in critic2.user_prompts[0]

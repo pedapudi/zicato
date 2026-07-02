@@ -721,6 +721,7 @@ def render_user_prompt(
     restrict_visibility: bool = False,
     custom_judge_names: Iterable[str] = (),
     failure_profile: str = "",
+    sample_hint: str = "",
 ) -> str:
     """Build the user prompt for one proposer call.
 
@@ -798,6 +799,16 @@ def render_user_prompt(
         only splices it. Empty (the default) omits the section entirely, so a
         caller that supplies no profile renders a byte-identical prompt to
         before this surface existed.
+    sample_hint:
+        Optional per-sample edit-class steering line (the best-of-N slate
+        diversifier — see :data:`zicato.proposer.best_of_n.EDIT_CLASS_HINTS`).
+        When non-empty, an ``## Edit-class hint (this sample)`` section is
+        prepended at the very top of the body so each slate slot explores a
+        DIFFERENT edit strategy rather than re-rolling one. A STATIC
+        instruction string carrying no board identity, so it composes with
+        the restricted-visibility envelope untouched. Empty (the default —
+        every single-sample call) omits the section entirely, rendering a
+        byte-identical prompt to before this surface existed.
     """
 
     body = USER_PROMPT_TEMPLATE.format(
@@ -822,6 +833,11 @@ def render_user_prompt(
     if insights.strip():
         insights_prefix = f"## Recent telemetry insights\n{insights.strip()}\n\n"
         body = insights_prefix + body
+    if sample_hint.strip():
+        # The best-of-N slate diversifier: this sample's edit-class steering,
+        # read first so the slot's strategy frames everything below it.
+        hint_prefix = f"## Edit-class hint (this sample)\n{sample_hint.strip()}\n\n"
+        body = hint_prefix + body
     if feedback:
         sections = [
             "## Previous attempt was rejected",

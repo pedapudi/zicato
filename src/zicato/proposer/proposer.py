@@ -103,6 +103,7 @@ async def propose_experiment(
     skills: tuple[ProposerSkill, ...] = (),
     restrict_visibility: bool = False,
     failure_profile: str = "",
+    sample_hint: str = "",
 ) -> Experiment:
     """Compose prompts, call the auxiliary LLM, parse the response.
 
@@ -237,6 +238,15 @@ async def propose_experiment(
         With outcome left as ``None`` (the tournament fills it in
         after the run).
 
+    sample_hint:
+        Optional per-sample edit-class steering line (the best-of-N slate
+        diversifier — :data:`zicato.proposer.best_of_n.EDIT_CLASS_HINTS`).
+        Threaded verbatim into :func:`render_user_prompt`, which prepends an
+        ``## Edit-class hint (this sample)`` section when non-empty. A static
+        instruction string carrying no board identity, so the restricted-
+        visibility envelope is untouched. Empty (the default) renders a
+        byte-identical prompt.
+
     Raises
     ------
     ProposerError
@@ -292,6 +302,7 @@ async def propose_experiment(
             restrict_visibility=restrict_visibility,
             custom_judge_names=custom_judge_names or frozenset(),
             failure_profile=failure_profile,
+            sample_hint=sample_hint,
         )
         # Meta-loop bookends: one paired ``proposer_call_started`` /
         # ``proposer_call_completed`` per attempt. ``invocation_id`` is

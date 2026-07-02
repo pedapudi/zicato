@@ -116,6 +116,14 @@ class ProposerContext:
     #: banded by its renderer; the agents only forward it. Empty (the
     #: default) omits the section, byte-identical to before this surface.
     failure_profile: str = ""
+    #: Optional per-sample edit-class steering line — the best-of-N slate
+    #: diversifier (:data:`zicato.proposer.best_of_n.EDIT_CLASS_HINTS`). The
+    #: wrapper stamps a DISTINCT hint on each slate slot's context via
+    #: ``dataclasses.replace`` so the N samples explore different edit
+    #: strategies. A static instruction string carrying no board identity —
+    #: it composes with the restricted-visibility envelope untouched. Empty
+    #: (the default — every single-sample propose) renders no section.
+    sample_hint: str = ""
 
 
 class ProposerAgent(Protocol):
@@ -167,6 +175,7 @@ class DefaultProposerAgent:
             skills=self.spec.skills,
             restrict_visibility=ctx.restrict_visibility,
             failure_profile=ctx.failure_profile,
+            sample_hint=ctx.sample_hint,
         )
 
 
