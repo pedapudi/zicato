@@ -342,3 +342,137 @@ def test_prediction_accuracy_is_diagnostic_only(tmp_path: Path) -> None:
     assert out[0].decision == "promoted"  # verdict untouched
     assert out[0].scalar_score_delta == -0.2  # delta untouched
     assert out[0].prediction_accuracy == 0.0  # advisory signal only
+
+
+# --------------------------------------------------------------------------
+# Cross-epoch transfer (EXPERIMENT-MEMORY.md §3.4 / §5.2 — opt-in)
+# --------------------------------------------------------------------------
+
+
+def _insert_epoch(db_path: Path, epoch_id: str, contract_hash: str) -> None:
+    """Insert one ``epochs`` row carrying the given contract hash."""
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            "INSERT INTO epochs (epoch_id, contract_hash, created_at, closed, "
+            "goal, parent_epoch_id) VALUES (?, ?, ?, ?, ?, ?)",
+            (epoch_id, contract_hash, "2026-07-01T00:00:00Z", 1, "", None),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _cross_epoch_world(tmp_path: Path) -> Path:
+    """Three epochs: current (e2) + a prior sibling under the SAME hash (e1)
+    + a prior epoch under a DIFFERENT hash (e0) + a legacy hashless one."""
+    db = _new_index(tmp_path)
+    _insert_epoch(db, "e0", "hash-other")
+    _insert_epoch(db, "e1", "hash-shared")
+    _insert_epoch(db, "e2", "hash-shared")
+    _insert_epoch(db, "e_legacy", "")
+    # Current epoch: one settled win of its own.
+    _insert_experiment(
+        db, epoch_id="e2", generation_id="v1", decision="promoted", scalar_delta=-0.1
+    )
+    # Prior sibling epoch (same hash): a win, a rejection, and an unsettled row.
+    _insert_experiment(
+        db,
+        epoch_id="e1",
+        generation_id="v3",
+        decision="promoted",
+        scalar_delta=-0.2,
+        core_idea="shared-contract win",
+        modulating=["router"],
+    )
+    _insert_experiment(
+        db,
+        epoch_id="e1",
+        generation_id="v4",
+        decision="rejected",
+        scalar_delta=0.3,
+        rejection_reason="regressed",
+        core_idea="shared-contract miss",
+    )
+    _insert_experiment(db, epoch_id="e1", generation_id="v5", decision=None, scalar_delta=None)
+    # A different-contract epoch: must NEVER surface, knob or not.
+    _insert_experiment(
+        db,
+        epoch_id="e0",
+        generation_id="v9",
+        decision="promoted",
+        scalar_delta=-0.9,
+        core_idea="other-contract win",
+    )
+    # Legacy (pre-hash) epoch: an unknown contract is never transferable.
+    _insert_experiment(
+        db,
+        epoch_id="e_legacy",
+        generation_id="v7",
+        decision="promoted",
+        scalar_delta=-0.5,
+        core_idea="legacy win",
+    )
+    return db
+
+
+def test_cross_epoch_knob_off_is_byte_identical(tmp_path: Path) -> None:
+    """The default reader never sees the prior epochs — identical output
+    with and without the knob argument spelled out."""
+    db = _cross_epoch_world(tmp_path)
+    default_out = prior_experiments_for_epoch(db, "e2")
+    explicit_off = prior_experiments_for_epoch(db, "e2", cross_epoch=False)
+    assert default_out == explicit_off
+    assert [pe.generation_id for pe in default_out] == ["v1"]
+    assert all(pe.same_contract for pe in default_out)
+
+
+def test_cross_epoch_knob_on_appends_flagged_entries(tmp_path: Path) -> None:
+    """Knob on: prior-epoch settled entries under the SAME hash appear,
+    flagged same_contract=False with their delta omitted; other-hash and
+    legacy-hash epochs never surface; unsettled rows are skipped."""
+    db = _cross_epoch_world(tmp_path)
+    out = prior_experiments_for_epoch(db, "e2", cross_epoch=True)
+
+    same = [pe for pe in out if pe.same_contract]
+    cross = [pe for pe in out if not pe.same_contract]
+    # Same-epoch entries first (priority in the cap), untouched.
+    assert [pe.generation_id for pe in same] == ["v1"]
+    assert out[: len(same)] == same
+    # The shared-hash sibling's settled rows are present, win first.
+    assert [(pe.epoch_id, pe.generation_id) for pe in cross] == [("e1", "v3"), ("e1", "v4")]
+    for pe in cross:
+        assert pe.same_contract is False
+        assert pe.scalar_score_delta is None  # the number does not transfer
+        assert pe.prediction_accuracy is None
+    # Different-hash and legacy epochs never leak through.
+    surfaced = {(pe.epoch_id, pe.generation_id) for pe in out}
+    assert ("e0", "v9") not in surfaced
+    assert ("e_legacy", "v7") not in surfaced
+    # Unsettled prior-epoch rows are skipped.
+    assert ("e1", "v5") not in surfaced
+
+
+def test_cross_epoch_entries_never_displace_same_epoch(tmp_path: Path) -> None:
+    """Same-epoch history keeps priority: when the cap is filled by the
+    current epoch, no cross-epoch entry is admitted."""
+    db = _new_index(tmp_path)
+    _insert_epoch(db, "e1", "hash-shared")
+    _insert_epoch(db, "e2", "hash-shared")
+    cap = EXPERIMENT_MEMORY_MAX_ENTRIES
+    for i in range(cap):
+        _insert_experiment(
+            db, epoch_id="e2", generation_id=f"w{i:02d}", decision="promoted", scalar_delta=-0.1
+        )
+    _insert_experiment(
+        db, epoch_id="e1", generation_id="v1", decision="promoted", scalar_delta=-0.2
+    )
+    out = prior_experiments_for_epoch(db, "e2", cross_epoch=True)
+    assert len(out) == cap
+    assert all(pe.same_contract for pe in out)
+
+    # With head-room, the cross entry fills exactly the remaining budget.
+    roomy = prior_experiments_for_epoch(db, "e2", max_entries=cap + 2, cross_epoch=True)
+    assert len(roomy) == cap + 1
+    assert roomy[-1].same_contract is False
+    assert roomy[-1].epoch_id == "e1"

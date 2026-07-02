@@ -567,19 +567,23 @@ def _render_prior_experiment_line(pe: PriorExperiment, *, restrict: bool = False
     """
     ids = ", ".join(pe.modulating) if pe.modulating else "—"
     verdict = pe.decision.upper().replace("_", "-")
+    # A cross-contract entry is labelled with its SOURCE epoch so the
+    # provenance is unmistakable; a same-contract entry renders its bare
+    # generation id, byte-identical to before cross-epoch memory existed.
+    gen_label = pe.generation_id if pe.same_contract else f"{pe.epoch_id}::{pe.generation_id}"
     # A cross-contract entry's Δscalar is measured against a different
     # board and is not comparable, so it is omitted; an in-flight sibling
     # has no outcome yet.
     if pe.scalar_score_delta is not None and pe.same_contract:
         if restrict:
             head = (
-                f"- {pe.generation_id} {verdict} "
+                f"- {gen_label} {verdict} "
                 f"Δscalar={_bucket_scalar_delta(pe.scalar_score_delta)}  [{ids}]"
             )
         else:
-            head = f"- {pe.generation_id} {verdict} Δscalar={pe.scalar_score_delta:+.3f}  [{ids}]"
+            head = f"- {gen_label} {verdict} Δscalar={pe.scalar_score_delta:+.3f}  [{ids}]"
     else:
-        head = f"- {pe.generation_id} {verdict}  [{ids}]"
+        head = f"- {gen_label} {verdict}  [{ids}]"
     if pe.decision == "rejected" and pe.rejection_reason:
         head = f"{head}  ({pe.rejection_reason})"
     # Advisory hypothesis prediction-accuracy (diagnostic, never gates) —
@@ -607,15 +611,26 @@ def render_prior_experiments_block(
     proposer (forbidden-ids remains the only hard gate), it surfaces what
     has already been attempted so re-proposing a rejected direction is a
     deliberate choice rather than an accident of amnesia.
+
+    Cross-contract entries (``same_contract=False`` — a different epoch
+    under the SAME contract hash; EXPERIMENT-MEMORY.md §3.4) render in
+    their OWN clearly-separated block after the same-epoch blocks: they
+    carry directions (core idea + decision, epoch-tagged), never deltas —
+    a Δscalar measured under another epoch does not transfer. A digest
+    with no cross-contract entries renders byte-identically to before
+    cross-epoch memory existed.
     """
     items = list(prior)
     if not items:
         return ""
 
-    promoted = [pe for pe in items if pe.decision == "promoted"]
-    rejected = [pe for pe in items if pe.decision == "rejected"]
-    in_flight = [pe for pe in items if pe.decision == "in_flight"]
-    deferred = [pe for pe in items if pe.decision == "deferred"]
+    cross = [pe for pe in items if not pe.same_contract]
+    same = [pe for pe in items if pe.same_contract]
+
+    promoted = [pe for pe in same if pe.decision == "promoted"]
+    rejected = [pe for pe in same if pe.decision == "rejected"]
+    in_flight = [pe for pe in same if pe.decision == "in_flight"]
+    deferred = [pe for pe in same if pe.decision == "deferred"]
 
     blocks: list[str] = []
     if promoted:
@@ -633,6 +648,12 @@ def render_prior_experiments_block(
         body = "\n".join(_render_prior_experiment_line(pe, restrict=restrict) for pe in in_flight)
         blocks.append(
             f"Proposed this round, not yet evaluated (diversify away from these):\n{body}"
+        )
+    if cross:
+        body = "\n".join(_render_prior_experiment_line(pe, restrict=restrict) for pe in cross)
+        blocks.append(
+            "From PRIOR epochs under the same contract (cross-epoch memory — "
+            f"directions only, deltas do not transfer):\n{body}"
         )
 
     return "\n\n".join(blocks)

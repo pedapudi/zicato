@@ -177,3 +177,60 @@ def test_section_lands_between_insights_and_loss_summary() -> None:
     i_tried = prompt.index("## What's already been tried")
     i_loss = prompt.index("## Current loss summary")
     assert i_insights < i_tried < i_loss
+
+
+# ---------------------------------------------------------------------------
+# Cross-epoch memory rendering (EXPERIMENT-MEMORY.md §3.4 — opt-in transfer)
+# ---------------------------------------------------------------------------
+
+
+def _cross_contract() -> PriorExperiment:
+    return PriorExperiment(
+        generation_id="v3",
+        epoch_id="e0_prior",
+        core_idea="Route budget hints through the coordinator.",
+        modulating=("coordinator.routing",),
+        decision="promoted",
+        rejection_reason="",
+        scalar_score_delta=None,
+        same_contract=False,
+    )
+
+
+def test_cross_contract_entries_render_in_separated_block() -> None:
+    """Cross-epoch entries never mix into the same-epoch decision blocks:
+    they render LAST, under their own clearly-labelled header, epoch-tagged,
+    and with no Δscalar (the number does not transfer)."""
+    block = render_prior_experiments_block([_promoted(), _rejected(), _cross_contract()])
+    assert "From PRIOR epochs under the same contract" in block
+    assert "deltas do not transfer" in block
+    # Epoch-tagged generation label; delta omitted on the cross line.
+    assert "e0_prior::v3 PROMOTED" in block
+    cross_section = block.split("From PRIOR epochs under the same contract")[1]
+    assert "Δscalar" not in cross_section
+    # The cross block comes AFTER every same-epoch block.
+    assert block.index("Already promoted") < block.index("From PRIOR epochs")
+    assert block.index("Already rejected") < block.index("From PRIOR epochs")
+
+
+def test_rendering_without_cross_entries_is_byte_identical() -> None:
+    """A digest with no cross-contract entries renders exactly as before the
+    cross-epoch feature existed (the knob-off guarantee at the prompt layer)."""
+    same_only = [_promoted(), _rejected(), _in_flight()]
+    block = render_prior_experiments_block(same_only)
+    assert "From PRIOR epochs" not in block
+    # The historical exact line shapes are untouched.
+    assert "- v5 PROMOTED Δscalar=+0.120  [coordinator.routing]" in block
+    assert "- v8 IN-FLIGHT  [researcher.instruction]" in block
+
+
+def test_cross_contract_delta_never_renders_even_if_present() -> None:
+    """Defense-in-depth: even if a cross entry somehow carries a delta, the
+    renderer omits it — the restricted-visibility envelope does not depend
+    on the reader having nulled it."""
+    from dataclasses import replace
+
+    leaky = replace(_cross_contract(), scalar_score_delta=-0.42)
+    block = render_prior_experiments_block([leaky])
+    assert "Δscalar" not in block
+    assert "-0.42" not in block

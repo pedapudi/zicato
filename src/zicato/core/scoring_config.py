@@ -261,6 +261,48 @@ def _default_proposer_quality_config() -> ProposerQualityConfig:
     return ProposerQualityConfig.defaults()
 
 
+@dataclass(frozen=True, slots=True)
+class ExperimentMemoryConfig:
+    """Experiment-memory scoping: what settled history the proposer sees.
+
+    Part of the frozen evaluation contract — a field of
+    :class:`ScoringWeights`, like :class:`OverfittingConfig` — because
+    changing what history the proposer reads selects champions under a
+    different rule (EXPERIMENT-MEMORY.md §3.4). The field is
+    omitted-at-default from the contract canonicalizer
+    (``epoch/contract.py::_SCORING_OMIT_AT_DEFAULT_FIELDS``), so a
+    contract that never sets it hashes byte-identically to one that
+    predates it; a non-default value rolls the epoch normally.
+
+    Fields
+    ------
+    cross_epoch:
+        Opt-in cross-epoch transfer (EXPERIMENT-MEMORY.md §3.4 / §5.2).
+        ``False`` (default): the experiment-memory digest is same-epoch
+        only — byte-identical to the shipped behaviour. ``True``: settled
+        experiments from PRIOR epochs of the same workspace that share
+        the current epoch's ``contract_hash`` are appended to the digest,
+        marked ``same_contract=False``, with their ``scalar_score_delta``
+        omitted (the number does not transfer), rendered in a clearly
+        separated block, and admitted only into the budget left after
+        every same-epoch entry — same-epoch history always keeps priority
+        in the cap. Experiments under a DIFFERENT contract hash are never
+        surfaced regardless of this knob.
+    """
+
+    cross_epoch: bool = False
+
+    @classmethod
+    def defaults(cls) -> ExperimentMemoryConfig:
+        """The fully-defaulted (same-epoch-only) config."""
+        return cls()
+
+
+def _default_experiment_memory_config() -> ExperimentMemoryConfig:
+    """Default-factory for :attr:`ScoringWeights.experiment_memory`."""
+    return ExperimentMemoryConfig.defaults()
+
+
 # ---------------------------------------------------------------------------
 # Scoring weights
 # ---------------------------------------------------------------------------
@@ -523,6 +565,16 @@ class ScoringWeights:
     # :class:`ProposerQualityConfig`.
     proposer_quality: ProposerQualityConfig = field(
         default_factory=_default_proposer_quality_config
+    )
+    # Experiment-memory scoping (EXPERIMENT-MEMORY.md §3.4): opt-in
+    # cross-epoch transfer of settled history under the SAME contract
+    # hash. Default-off ⇒ same-epoch-only, byte-identical digest; the
+    # contract canonicalizer omits the field at its default (see
+    # ``_SCORING_OMIT_AT_DEFAULT_FIELDS``) so existing epochs never roll
+    # retroactively, while opting in rolls the epoch like any other
+    # contract change. See :class:`ExperimentMemoryConfig`.
+    experiment_memory: ExperimentMemoryConfig = field(
+        default_factory=_default_experiment_memory_config
     )
     # Optional operator outcome-summarizer hook (Capability 2 of issue #18,
     # item 8). A dotted spec (``pkg.mod:fn`` / ``pkg.mod.fn``) resolved like

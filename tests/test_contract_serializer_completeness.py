@@ -38,6 +38,7 @@ from typing import Any
 import pytest
 
 from zicato.core.types import (
+    ExperimentMemoryConfig,
     LadderConfig,
     OverfittingConfig,
     ProposerQualityConfig,
@@ -60,6 +61,7 @@ _CONTRACT_DATACLASSES = [
     OverfittingConfig,
     LadderConfig,
     ProposerQualityConfig,
+    ExperimentMemoryConfig,
 ]
 
 # A hand-curated, constraint-VALID non-default value for every field of
@@ -93,6 +95,9 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         "best_of_n": 4,
         "critique_enabled": False,
     },
+    "ExperimentMemoryConfig": {
+        "cross_epoch": True,
+    },
     "ScoringWeights": {
         "drift_weight": 2.5,
         "pass_weight": 3.5,
@@ -120,6 +125,7 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
             ladder=LadderConfig(threshold=0.27, budget=8),
         ),
         "proposer_quality": ProposerQualityConfig(best_of_n=5, critique_enabled=False),
+        "experiment_memory": ExperimentMemoryConfig(cross_epoch=True),
         "outcome_summarizer_spec": "pkg.mod:summarize_outcomes",
         "pass_transform": {"op": "pow", "exponent": 2.0},
         "drift_kind_aggregation": {
@@ -360,3 +366,19 @@ def test_continuous_score_adds_no_scoring_contract_field() -> None:
     field_names = {f.name for f in fields(ScoringWeights)}
     assert "score" not in field_names
     assert "metrics" not in field_names
+
+
+def test_experiment_memory_omitted_from_canon_at_default() -> None:
+    """The opt-in cross-epoch memory knob is additive: an unset (or
+    explicitly-default) ``experiment_memory`` block is OMITTED from the
+    canonical scoring form, so every existing epoch keeps its hash; opting
+    in emits the block and rolls the epoch like any contract change."""
+    canon_default = _scoring_to_canon(ScoringWeights())
+    assert "experiment_memory" not in canon_default
+
+    explicit_default = ScoringWeights(experiment_memory=ExperimentMemoryConfig())
+    assert _canon(explicit_default) == _canon(ScoringWeights())
+
+    opted_in = ScoringWeights(experiment_memory=ExperimentMemoryConfig(cross_epoch=True))
+    assert _scoring_to_canon(opted_in)["experiment_memory"] == {"cross_epoch": True}
+    assert _canon(opted_in) != _canon(ScoringWeights())

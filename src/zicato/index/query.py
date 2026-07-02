@@ -535,11 +535,96 @@ def _row_value(row: sqlite3.Row, key: str) -> Any:
         return None
 
 
+def _cross_contract_settled_rows(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
+    """Settled experiments from OTHER epochs sharing ``epoch_id``'s contract.
+
+    The cross-epoch half of the experiment-memory reader
+    (EXPERIMENT-MEMORY.md §3.4 / §5.2): joins ``experiments`` to
+    ``epochs`` on ``epoch_id`` and keeps rows whose epoch carries the
+    SAME non-empty ``contract_hash`` as the current epoch. "Sharing the
+    workspace" is structural — the index file is per-workspace, so every
+    row here is already workspace-scoped. Excluded by construction:
+
+    * the current epoch's own rows (the same-epoch reader owns those);
+    * unsettled rows (``tournament_decision IS NULL`` — no learning
+      signal);
+    * every epoch under a DIFFERENT hash — its mutation ids and losses
+      are not comparable and are never surfaced;
+    * legacy / pre-hash epochs (``contract_hash`` empty) — an unknown
+      contract is never treated as transferable.
+
+    Ordered ``(epoch_id, generation_id)`` ascending so the caller can walk
+    it newest-first with ``reversed`` exactly like the same-epoch rows.
+    """
+    return _select(
+        db_path,
+        "SELECT e.epoch_id, e.generation_id, e.hypothesis_core_idea, "
+        "e.hypothesis_json, e.tournament_decision, e.rejection_reason, "
+        "e.scalar_score_delta, e.outcome_json FROM experiments AS e "
+        "JOIN epochs AS ep ON ep.epoch_id = e.epoch_id "
+        "WHERE ep.contract_hash != '' "
+        "AND ep.contract_hash = ("
+        "SELECT contract_hash FROM epochs WHERE epoch_id = ?) "
+        "AND e.epoch_id != ? "
+        "AND e.tournament_decision IS NOT NULL "
+        "ORDER BY e.epoch_id, e.generation_id",
+        (epoch_id, epoch_id),
+    )
+
+
+def _cross_contract_entries(db_path: Path, epoch_id: str, budget: int) -> list[PriorExperiment]:
+    """Build the capped ``same_contract=False`` tail of the digest.
+
+    Every entry carries ``scalar_score_delta=None`` (a Δscalar measured
+    under another epoch does not transfer — §3.4; the renderer would omit
+    it anyway, and the restricted-visibility envelope must not depend on
+    the renderer) and ``prediction_accuracy=None`` (the calibration band
+    is same-epoch diagnostics). Curation mirrors the same-epoch reader in
+    miniature: promoted wins first (newest-first), then the most recent
+    rejections, then deferred — bounded by ``budget``, the room left
+    AFTER every same-epoch entry (same-epoch history always keeps
+    priority in the cap, which also realises §3.4's "only when same-epoch
+    history is sparse": a busy epoch leaves no budget).
+    """
+    if budget <= 0:
+        return []
+    rows = _cross_contract_settled_rows(db_path, epoch_id)
+    promoted: list[PriorExperiment] = []
+    rejected: list[PriorExperiment] = []
+    deferred: list[PriorExperiment] = []
+    for row in reversed(rows):
+        decision = str(row["tournament_decision"])
+        entry = PriorExperiment(
+            generation_id=str(row["generation_id"]),
+            epoch_id=str(row["epoch_id"]),
+            core_idea=str(row["hypothesis_core_idea"] or ""),
+            modulating=_modulating_from_hypothesis_json(row["hypothesis_json"]),
+            decision=decision,
+            rejection_reason=str(row["rejection_reason"] or ""),
+            scalar_score_delta=None,
+            same_contract=False,
+            prediction_accuracy=None,
+        )
+        if decision == "promoted":
+            promoted.append(entry)
+        elif decision == "rejected":
+            rejected.append(entry)
+        elif decision == "deferred":
+            deferred.append(entry)
+    out = promoted[:budget]
+    if len(out) < budget:
+        out.extend(rejected[: budget - len(out)])
+    if len(out) < budget:
+        out.extend(deferred[: budget - len(out)])
+    return out
+
+
 def prior_experiments_for_epoch(
     db_path: Path,
     epoch_id: str,
     *,
     max_entries: int = EXPERIMENT_MEMORY_MAX_ENTRIES,
+    cross_epoch: bool = False,
 ) -> list[PriorExperiment]:
     """Return a curated digest of ``epoch_id``'s SETTLED prior experiments.
 
@@ -559,9 +644,16 @@ def prior_experiments_for_epoch(
       (most-recent-first — wins are rare and high-value, never dropped
       while budget remains), then the most-recent ``rejected`` ordered by
       sharpest regression (most-negative ``scalar_score_delta``) first,
-      then ``deferred`` if budget remains. Every entry is built with
-      ``same_contract=True`` — the reader is same-epoch (= same-contract)
-      only.
+      then ``deferred`` if budget remains. Every same-epoch entry is built
+      with ``same_contract=True``.
+    * **Opt-in cross-epoch transfer** (``cross_epoch=True`` — the
+      ``experiment_memory.cross_epoch`` contract knob;
+      EXPERIMENT-MEMORY.md §3.4 / §5.2): settled experiments from OTHER
+      epochs under the SAME ``contract_hash`` fill whatever budget the
+      same-epoch entries left, as clearly-flagged ``same_contract=False``
+      entries with ``scalar_score_delta=None`` (the number does not
+      transfer). The default (``False``) is byte-identical to the
+      same-epoch-only reader.
 
     Tolerates a missing index the same way every selector here does: a
     never-indexed workspace yields ``[]`` rather than raising
@@ -606,10 +698,6 @@ def prior_experiments_for_epoch(
             rejected.append(entry)
         elif decision == "deferred":
             deferred.append(entry)
-        # extension point: a cross-contract branch (same contract_hash,
-        # different epoch — see EXPERIMENT-MEMORY.md §3.4) attaches here,
-        # yielding same_contract=False entries with scalar_score_delta=None.
-        # Not built this phase.
 
     out: list[PriorExperiment] = []
     out.extend(promoted[:max_entries])
@@ -630,6 +718,13 @@ def prior_experiments_for_epoch(
 
     if len(out) < max_entries:
         out.extend(deferred[: max_entries - len(out)])
+
+    # Cross-contract branch (EXPERIMENT-MEMORY.md §3.4 / §5.2): fill ONLY
+    # the budget the same-epoch entries left, so same-epoch history always
+    # keeps priority in the cap and the knob-off path above stays
+    # byte-identical.
+    if cross_epoch and len(out) < max_entries:
+        out.extend(_cross_contract_entries(db_path, epoch_id, max_entries - len(out)))
     return out[:max_entries]
 
 

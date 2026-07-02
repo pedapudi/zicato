@@ -617,7 +617,11 @@ async def evolve_once(
     # proposer simply runs without the ``## What's already been tried``
     # section. The gauntlet field is a single challenger, so there are no
     # in-flight siblings to concatenate here.
-    prior = _load_prior_experiments(workspace_root, resolved_epoch_id)
+    prior = _load_prior_experiments(
+        workspace_root,
+        resolved_epoch_id,
+        cross_epoch=weights.experiment_memory.cross_epoch,
+    )
 
     proposer_validation_failed: ProposerError | None = None
     # --- 6r. Conservative crash-resume short-circuit (gauntlet path) ---
@@ -1715,7 +1719,13 @@ async def _evolve_multi_challenger(
     # successfully-applied challenger so challenger k sees the hypotheses
     # of challengers 0..k-1 this round and can diversify away from them; a
     # challenger whose proposer failed contributes no sibling.
-    prior = tuple(_load_prior_experiments(workspace_root, epoch_id))
+    prior = tuple(
+        _load_prior_experiments(
+            workspace_root,
+            epoch_id,
+            cross_epoch=weights.experiment_memory.cross_epoch,
+        )
+    )
     siblings: list[PriorExperiment] = []
     # Field-diversity constraint (FUNCTIONALITY-RECOMMENDATIONS.md §4.3): the
     # signatures of the siblings already minted this round, so a later
@@ -3468,6 +3478,8 @@ def _index_db_path(workspace_root: Path) -> Path:
 def _load_prior_experiments(
     workspace_root: Path,
     epoch_id: str,
+    *,
+    cross_epoch: bool = False,
 ) -> list[PriorExperiment]:
     """Best-effort read of the epoch's settled experiment-memory digest.
 
@@ -3479,11 +3491,19 @@ def _load_prior_experiments(
     any failure — a missing module, an unreadable database — is logged at
     ``debug`` level and yields ``[]``. ``experiment.json`` on disk stays
     canonical; an empty digest simply omits the prompt section.
+
+    ``cross_epoch`` is the contract's opt-in
+    ``experiment_memory.cross_epoch`` knob (EXPERIMENT-MEMORY.md §3.4):
+    when set, settled experiments from prior epochs under the SAME
+    contract hash fill the cap-budget the same-epoch entries leave, as
+    ``same_contract=False`` entries.
     """
     try:
         from zicato.index.query import prior_experiments_for_epoch  # noqa: PLC0415
 
-        return prior_experiments_for_epoch(_index_db_path(workspace_root), epoch_id)
+        return prior_experiments_for_epoch(
+            _index_db_path(workspace_root), epoch_id, cross_epoch=cross_epoch
+        )
     except ImportError:
         log.debug("zicato.index.query unavailable; proposer runs without experiment memory")
         return []
