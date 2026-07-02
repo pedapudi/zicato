@@ -54,7 +54,7 @@ from zicato.tournament.unit_cache import (
     _skipped_unit_loss,
     _UnitProvenance,
 )
-from zicato.tournament.worker_transport import _runtime_state
+from zicato.tournament.worker_transport import _runtime_state, _stamp_replicate_index
 
 log = logging.getLogger("zicato.tournament.runner")
 
@@ -993,12 +993,15 @@ async def _run_replicated(
         # runner handles champion + challenger cache-first, so an existing
         # replicate is reused (incremental) and only missing slots run.
         # Subprocess isolation, scoring, and failure surfacing are
-        # unchanged.
+        # unchanged. The replicate index is stamped onto each entry's
+        # context (run provenance for the harness under test — a
+        # seeded/deterministic harness varies its noise draw by it);
+        # replicate 0 is left untouched, byte-identical to before.
         left_losses, right_losses = await _run_board_units_full(
             adapter=adapter,
             parent_gen=left_gen,
             child_gen=right_gen,
-            board=board,
+            board=_stamp_replicate_index(board, replicate_index),
             weights=weights,
             config=config,
             workspace_root=workspace_root,
