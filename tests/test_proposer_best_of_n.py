@@ -430,6 +430,173 @@ def test_sample_hint_renders_a_prompt_section_only_when_set() -> None:
 
 
 # --------------------------------------------------------------------------
+# Chosen-candidate tree alignment — the mounted child tree must match the
+# selection, not the last-sampled slate slot
+# --------------------------------------------------------------------------
+
+
+class _RecordingValidator:
+    """A ``validate_experiment`` double recording every candidate it derives.
+
+    In production this is the post-apply hook
+    (:func:`zicato.evolve.round.build_post_apply_validator`): each call
+    re-derives the SAME fixed child snapshot from the candidate's patches,
+    clearing the prior attempt's tree. ``findings_script`` scripts the
+    return of successive calls (empty list = validated cleanly); once the
+    script is exhausted every further call validates cleanly.
+    """
+
+    def __init__(self, findings_script: list[list[str]] | None = None) -> None:
+        self.calls: list[Experiment] = []
+        self._script = list(findings_script or [])
+
+    async def __call__(self, candidate: Experiment) -> list[str]:
+        self.calls.append(candidate)
+        if self._script:
+            return self._script.pop(0)
+        return []
+
+
+def _slate3() -> list[Experiment]:
+    return [
+        _experiment(core_idea="zero", mutation_id="router__sp", new_content="a"),
+        _experiment(core_idea="one", mutation_id="writer__sp", new_content="b"),
+        _experiment(core_idea="two", mutation_id="router__sp", new_content="c"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_chosen_earlier_candidate_rederives_its_child_tree() -> None:
+    """When the selection picks a candidate that is NOT the last-validated
+    one, the wrapper re-runs the validation hook on the pick so the on-disk
+    child tree (derived per attempt, last-writer-wins) matches the
+    experiment the caller will mount + persist."""
+    from dataclasses import replace as _replace
+
+    candidates = _slate3()
+    inner = _ScriptedInnerAgent(candidates)
+    hook = _RecordingValidator()
+    events: list[tuple[str, dict]] = []
+    ctx = _replace(
+        _context(_CapturingCriticLLM("0")),
+        validate_experiment=hook,
+        round_event_emitter=lambda t, f: events.append((t, f)),
+    )
+    agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
+    out = await agent.propose(ctx)
+    assert out is candidates[0]
+    # Exactly one post-selection re-derive, for the chosen candidate. (The
+    # scripted inner agent does not itself call the hook; the production
+    # inner engine calls it once per attempt BEFORE selection.)
+    assert hook.calls == [candidates[0]]
+    selected = dict(events)["critique_selected"]
+    assert selected == {"index": 0, "reason": "critique"}
+
+
+@pytest.mark.asyncio
+async def test_chosen_last_candidate_skips_the_rederive() -> None:
+    """Picking the last-sampled candidate needs no extra derive — its tree
+    is already the one on disk."""
+    from dataclasses import replace as _replace
+
+    candidates = _slate3()
+    inner = _ScriptedInnerAgent(candidates)
+    hook = _RecordingValidator()
+    ctx = _replace(_context(_CapturingCriticLLM("2")), validate_experiment=hook)
+    agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
+    out = await agent.propose(ctx)
+    assert out is candidates[2]
+    assert hook.calls == []
+
+
+@pytest.mark.asyncio
+async def test_no_validation_hook_keeps_selection_untouched() -> None:
+    """Without a validate hook there is no derived tree to align — the
+    selection is returned as-is (the pre-hook caller contract)."""
+    candidates = _slate3()
+    inner = _ScriptedInnerAgent(candidates)
+    agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
+    out = await agent.propose(_context(_CapturingCriticLLM("1")))
+    assert out is candidates[1]
+
+
+@pytest.mark.asyncio
+async def test_rederive_failure_falls_back_to_last_validated_candidate() -> None:
+    """An unexpected re-validate failure (it validated cleanly moments ago)
+    falls back to the LAST-validated candidate — restoring that candidate's
+    tree — so the mounted tree and the returned (persisted) experiment stay
+    consistent either way."""
+    from dataclasses import replace as _replace
+
+    candidates = _slate3()
+    inner = _ScriptedInnerAgent(candidates)
+    # First post-selection call (the chosen candidate 0) fails; the restore
+    # call (the last-validated candidate 2) succeeds.
+    hook = _RecordingValidator(findings_script=[["parent tree changed underneath the slate"]])
+    events: list[tuple[str, dict]] = []
+    ctx = _replace(
+        _context(_CapturingCriticLLM("0")),
+        validate_experiment=hook,
+        round_event_emitter=lambda t, f: events.append((t, f)),
+    )
+    agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
+    out = await agent.propose(ctx)
+    # The experiment the caller persists IS the candidate whose tree is now
+    # on disk: the fallback re-derived candidate 2 after candidate 0's
+    # failed re-derive cleared the tree.
+    assert out is candidates[2]
+    assert hook.calls == [candidates[0], candidates[2]]
+    selected = dict(events)["critique_selected"]
+    assert selected["index"] == 2
+    assert selected["reason"] == "critique:revalidate-fallback"
+
+
+@pytest.mark.asyncio
+async def test_rederive_and_restore_both_failing_raises_proposer_error() -> None:
+    """When even the fallback candidate no longer re-derives, no consistent
+    tree can be mounted — the step surfaces the standard ProposerError the
+    call sites already handle."""
+    from dataclasses import replace as _replace
+
+    from zicato.proposer.proposer import ProposerError
+
+    candidates = _slate3()
+    inner = _ScriptedInnerAgent(candidates)
+    hook = _RecordingValidator(findings_script=[["chosen failed"], ["fallback failed"]])
+    ctx = _replace(_context(_CapturingCriticLLM("0")), validate_experiment=hook)
+    agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
+    with pytest.raises(ProposerError) as exc_info:
+        await agent.propose(ctx)
+    attempts = list(exc_info.value.attempts)
+    assert any("chosen failed" in a for a in attempts)
+    assert any("fallback failed" in a for a in attempts)
+
+
+@pytest.mark.asyncio
+async def test_rederive_hook_raising_is_folded_into_the_fallback() -> None:
+    """A hook that RAISES (doubly unexpected — its contract is to return
+    findings) is treated exactly like findings: fall back, restore, return
+    the last-validated candidate."""
+    from dataclasses import replace as _replace
+
+    candidates = _slate3()
+    inner = _ScriptedInnerAgent(candidates)
+    calls: list[Experiment] = []
+
+    async def _hook(candidate: Experiment) -> list[str]:
+        calls.append(candidate)
+        if len(calls) == 1:
+            raise RuntimeError("boom")
+        return []
+
+    ctx = _replace(_context(_CapturingCriticLLM("0")), validate_experiment=_hook)
+    agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
+    out = await agent.propose(ctx)
+    assert out is candidates[2]
+    assert calls == [candidates[0], candidates[2]]
+
+
+# --------------------------------------------------------------------------
 # Calibration-aware selection — prediction_accuracy steers, never gates
 # --------------------------------------------------------------------------
 

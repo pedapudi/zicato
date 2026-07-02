@@ -308,8 +308,97 @@ class BestOfNProposerAgent:
             return candidates[0]
 
         chosen, selection_mode = await self._select_best(candidates, ctx)
+        chosen, selection_mode = await self._align_child_tree(
+            candidates, chosen, selection_mode, ctx
+        )
         _emit_round_event(ctx, "critique_selected", {"index": chosen, "reason": selection_mode})
         return candidates[chosen]
+
+    async def _align_child_tree(
+        self,
+        candidates: list[Experiment],
+        chosen: int,
+        selection_mode: str,
+        ctx: ProposerContext,
+    ) -> tuple[int, str]:
+        """Make the on-disk child tree match the CHOSEN candidate.
+
+        Every slate sample's post-apply validation (``ctx.validate_experiment``)
+        derives the SAME fixed child snapshot in place — each attempt clears
+        the previous attempt's tree (see
+        :func:`zicato.evolve.round.build_post_apply_validator`) — so after N
+        samples the on-disk child tree belongs to the LAST successfully-
+        validated candidate, while the selection above may pick an EARLIER
+        one. Both evolve pipelines mount that snapshot while persisting the
+        CHOSEN candidate's experiment (and the field path additionally judges
+        the chosen hypothesis's diversity signature), so a mismatch would
+        score — and diversity-judge — a tree that is not the experiment on
+        record.
+
+        When the chosen candidate is not the last-validated one, run the
+        validation hook once more on it: the hook re-derives the child
+        snapshot from the chosen candidate's patches (the same idempotent
+        clear-and-reapply a retry performs), so the mounted tree and the
+        returned experiment agree.
+
+        The chosen candidate validated cleanly moments ago, so findings here
+        are unexpected (e.g. the parent tree changed underneath the slate).
+        On any finding the selection FALLS BACK to the last-validated
+        candidate — whose tree is restored by one more hook call, because the
+        failed re-derive cleared it — so tree and experiment stay consistent
+        either way. If even the restore fails, no candidate's tree can be
+        mounted consistently and the step surfaces the standard
+        :class:`~zicato.proposer.proposer.ProposerError` every call site
+        already handles.
+
+        Returns the (possibly changed) ``(chosen, selection_mode)`` pair; a
+        fallback stamps ``:revalidate-fallback`` onto the mode string so the
+        round log records why the critic's pick was not returned.
+        """
+        last_validated = len(candidates) - 1
+        validate = ctx.validate_experiment
+        if validate is None or chosen == last_validated:
+            return chosen, selection_mode
+        findings = await self._revalidate(validate, candidates[chosen])
+        if not findings:
+            return chosen, selection_mode
+        log.warning(
+            "best-of-N: re-validating chosen candidate %d failed unexpectedly (%s); "
+            "falling back to last-validated candidate %d so the mounted child tree "
+            "matches the persisted experiment",
+            chosen,
+            "; ".join(findings),
+            last_validated,
+        )
+        restore_findings = await self._revalidate(validate, candidates[last_validated])
+        if restore_findings:
+            # The fallback candidate no longer re-derives either — there is
+            # no candidate whose tree can be mounted consistently with its
+            # experiment. Surface the standard proposer failure.
+            raise ProposerError(
+                [f"re-validate of chosen candidate {chosen} failed: {f}" for f in findings]
+                + [
+                    f"re-validate of fallback candidate {last_validated} failed: {f}"
+                    for f in restore_findings
+                ]
+            )
+        return last_validated, f"{selection_mode}:revalidate-fallback"
+
+    @staticmethod
+    async def _revalidate(
+        validate: Callable[[Experiment], Awaitable[list[str]]], candidate: Experiment
+    ) -> list[str]:
+        """Run the post-apply hook once; any raise is reported as a finding.
+
+        The hook's own contract is to RETURN findings (it already folds a
+        ``derive_generation`` rejection into one), so an exception here is
+        doubly unexpected — fold it into the findings list so the caller's
+        fallback logic handles both failure shapes identically.
+        """
+        try:
+            return list(await validate(candidate))
+        except Exception as exc:  # noqa: BLE001 — fold into the fallback path
+            return [f"validation hook raised unexpectedly: {exc}"]
 
     async def _select_best(
         self, candidates: list[Experiment], ctx: ProposerContext

@@ -588,6 +588,19 @@ class GitGenerationStore:
         )
         self._commit(message)
         self._tag_generation(epoch_id, child_generation_id)
+        # A RE-derive of the same child id (a proposer retry after failed
+        # post-apply validation, the best-of-N chosen-candidate re-derive, a
+        # crash-resume re-validate) moves the tag to the fresh commit — but a
+        # worktree materialised by an EARLIER attempt stays detached at the
+        # old commit, so ``snapshot_root`` would hand back a stale tree that
+        # no longer matches the commit just derived (the directory backend
+        # clears + rebuilds the child tree instead, so only this backend
+        # needs the refresh). Drop the stale checkout; ``snapshot_root``
+        # below re-materialises it from the moved tag (its ``worktree add``
+        # path prunes the orphaned registration first).
+        stale_worktree = self._worktree_path(epoch_id, child_generation_id)
+        if stale_worktree.is_dir():
+            shutil.rmtree(stale_worktree, ignore_errors=True)
         return self.snapshot_root(epoch_id, child_generation_id)
 
     def _replace_working_tree(self, new_tree: Path) -> None:
