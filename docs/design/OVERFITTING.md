@@ -532,6 +532,18 @@ bucketing step, and reads only aggregate scalars, it adds no new holdout
 exposure: it is restriction #3 extended from *which drift fired* to *why
 the outcome failed*, under the same marginal-not-joint guarantee.
 
+### 11.6 The process-exemplar channel (opt-in — its own doc)
+
+One further, **opt-in** widening of the channel exists: drift-anchored,
+mechanically-redacted event windows that show the proposer *how* a
+detected failure pattern unfolds (the wandering plan step, the looping
+tool call) without ever naming *which* entry it unfolded on. Unlike
+§11.5 it is **off by default and not scaffolded** — it touches this
+boundary directly, so the operator opts in deliberately, under an
+empirical harm-detection runbook keyed to the §12 #5
+`generalization_gap` detector. Design, normative redaction rules, and
+the runbook: [`PROCESS-EXEMPLARS.md`](PROCESS-EXEMPLARS.md).
+
 ---
 
 ## 12. The recommendation (ranked)
