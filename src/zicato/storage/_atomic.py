@@ -21,6 +21,9 @@ The pattern is:
 3. ``fsync`` the temporary file (durability of contents).
 4. :func:`os.replace` it onto the final path (atomic on POSIX and
    Windows for files on the same filesystem).
+5. ``fsync`` the parent DIRECTORY (durability of the rename itself —
+   without it a power loss can forget the directory entry even though
+   the file's blocks reached disk, leaving the OLD file, or none).
 
 Readers can use :func:`read_json` which tolerates a missing file (returns
 ``None``) and a transient mid-rename window (rare; retries once).
@@ -44,12 +47,41 @@ def _tmp_path(path: Path) -> Path:
     return path.with_suffix(path.suffix + ".tmp")
 
 
+def _fsync_dir(directory: Path) -> None:
+    """``fsync`` a directory so a rename inside it survives power loss.
+
+    ``os.replace`` / ``os.rename`` mutate the DIRECTORY, and on POSIX
+    the directory entry itself must be fsynced for the rename to be
+    durable — fsyncing the file alone leaves the new name at the
+    filesystem's mercy on power loss. Called unconditionally after
+    every rename in this module: at zicato's write rates the extra
+    fsync is micro-cost (verified against the full test-suite
+    wall-clock).
+
+    Best-effort by necessity, not by choice: some platforms cannot open
+    a directory fd at all (Windows raises ``PermissionError``), and
+    some filesystems reject directory fsync. Those environments simply
+    keep the pre-existing durability level; POSIX gets the upgrade.
+    """
+    try:
+        fd = os.open(str(directory), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
 def atomic_write_text(path: Path, content: str) -> None:
     """Atomically replace ``path`` with ``content``.
 
     Creates parent directories as needed. ``fsync`` flushes the temp
     file's content before the rename so a crash after the rename
-    cannot leave an empty file behind.
+    cannot leave an empty file behind, and the parent directory is
+    fsynced after the rename so the rename itself is durable.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = _tmp_path(path)
@@ -60,6 +92,7 @@ def atomic_write_text(path: Path, content: str) -> None:
     finally:
         os.close(fd)
     os.replace(tmp, path)
+    _fsync_dir(path.parent)
 
 
 def atomic_write_json(path: Path, data: Any) -> None:
@@ -92,12 +125,20 @@ def atomic_claim(src: Path, dst: Path) -> bool:
     The parent directory of ``dst`` is created if needed. ``dst`` must be
     on the same filesystem as ``src`` (it always is here — both live under
     the same workspace) so the rename is atomic rather than a copy+unlink.
+
+    After a successful claim BOTH parent directories are fsynced: the
+    destination's so the claim survives power loss, and the source's so
+    the removal does too — otherwise a crash could resurrect the source
+    entry and let an already-claimed command fire twice.
     """
     dst.parent.mkdir(parents=True, exist_ok=True)
     try:
         os.rename(src, dst)
     except FileNotFoundError:
         return False
+    _fsync_dir(dst.parent)
+    if src.parent != dst.parent:
+        _fsync_dir(src.parent)
     return True
 
 
