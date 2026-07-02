@@ -281,18 +281,11 @@ _PARENT_BUDGET_GRACE_S: float = 30.0
 #: now delegates escalation to the supervisor (see below).
 _SIGTERM_TO_SIGKILL_GRACE_S: float = 5.0
 
-#: Seconds the parent waits for the SUPERVISOR to escalate-kill a worker
-#: after the parent writes the kill-request marker, BEFORE falling back to
-#: a last-resort self-kill. The supervisor is the single SIGTERM→grace→
-#: SIGKILL escalator: the parent requests a kill and waits for the worker
-#: to die. This window must comfortably exceed the supervisor's own
-#: SIGTERM→SIGKILL grace + its watchdog tick so a healthy supervisor
-#: always wins the kill — the parent's fallback fires only when no
-#: supervisor is attached (e.g. an ad-hoc run with no watchdog, or a
-#: supervisor that itself died), which is exactly when the parent must
-#: still guarantee the worker is reaped. Generous on purpose: a few extra
-#: seconds on an already-overrun run is cheap; a leaked worker is not.
-_SUPERVISOR_KILL_WAIT_S: float = 20.0
+# NOTE: the window the parent waits for the SUPERVISOR to escalate-kill a
+# worker (before falling back to a last-resort self-kill) is configurable
+# per run — see :attr:`zicato.core.RuntimeConfig.supervisor_kill_wait_s`.
+# It defaults to 20s, which is the abort-latency floor when no supervisor
+# is attached.
 
 #: Filename prefix for a run's ephemeral snapshot working copy. The copy
 #: lives in the system temp dir (``tempfile.mkdtemp``) so it never sits
@@ -735,7 +728,8 @@ async def _terminate_worker(proc: Any) -> None:
     supervisor (the single SIGTERM→grace→SIGKILL escalator): the parent
     writes a kill-request marker and waits for the worker to die. This
     function is the parent's *fallback*, used only when the supervisor did
-    not reap the worker within :data:`_SUPERVISOR_KILL_WAIT_S` — i.e. no
+    not reap the worker within the config's ``supervisor_kill_wait_s``
+    window (:attr:`zicato.core.RuntimeConfig.supervisor_kill_wait_s`) — i.e. no
     supervisor is attached (an ad-hoc run with no watchdog) or the
     supervisor itself is gone. In that case the parent MUST still
     guarantee the worker is reaped, so it runs the same escalation here.
@@ -798,7 +792,6 @@ __all__ = [
     "_JUDGE_ONLY_CONTEXT_KEY",
     "_PARENT_BUDGET_GRACE_S",
     "_SIGTERM_TO_SIGKILL_GRACE_S",
-    "_SUPERVISOR_KILL_WAIT_S",
     "_WORKER_ESSENTIAL_ENV_KEYS",
     "_aborted_loss_profile",
     "_adapter_spec",

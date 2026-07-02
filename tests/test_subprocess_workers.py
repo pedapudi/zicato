@@ -52,6 +52,11 @@ from zicato.runtime.paths import active_run_path
 from zicato.runtime.state import ActiveRun
 from zicato.tournament.runner import _run_single
 
+# Every test here spawns (or deliberately kills) real worker subprocesses —
+# the process-isolation semantics ARE the coverage. Tagged for the opt-in
+# fast lane (`-m "not slow"`); the full suite still runs them by default.
+pytestmark = [pytest.mark.slow, pytest.mark.integration]
+
 # ---------------------------------------------------------------------------
 # Hermeticity fixture
 # ---------------------------------------------------------------------------
@@ -102,14 +107,20 @@ def _generation(workspace: Path, gen_id: str = "v0") -> Generation:
     )
 
 
-def _config(workspace: Path) -> RuntimeConfig:
+def _config(workspace: Path, *, supervisor_kill_wait_s: float = 20.0) -> RuntimeConfig:
     # The two callables are real, importable, module-level objects so the
     # worker subprocess can re-resolve them from a dotted path.
+    #
+    # supervisor_kill_wait_s: tests that drive an over-budget worker with NO
+    # supervisor attached shrink this — the production default (20s) is the
+    # no-supervisor abort-latency floor and would dominate the test's
+    # wall-clock time for nothing.
     return RuntimeConfig(
         instance_id="test",
         workspace_root=workspace,
         harness_call_llm=harness_call_llm,
         auxiliary_call_llm=auxiliary_call_llm,
+        supervisor_kill_wait_s=supervisor_kill_wait_s,
     )
 
 
@@ -678,9 +689,9 @@ def test_parent_kills_worker_that_blocks_past_budget_plus_grace(
     The single SIGTERM→grace→SIGKILL escalator lives in the supervisor:
     the parent writes a kill-request marker and waits for the supervisor to
     reap the worker. No supervisor is attached in this test, so the
-    parent's LAST-RESORT fallback escalation fires after
-    ``_SUPERVISOR_KILL_WAIT_S`` — shrunk here so the fallback is exercised
-    fast.
+    parent's LAST-RESORT fallback escalation fires after the config's
+    ``supervisor_kill_wait_s`` window — shrunk here so the fallback is
+    exercised fast.
     """
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
@@ -690,10 +701,9 @@ def test_parent_kills_worker_that_blocks_past_budget_plus_grace(
     entry = _entry(budget_s=1)
 
     # Shrink the parent's grace margins so the test is fast. With no
-    # supervisor present, the parent waits _SUPERVISOR_KILL_WAIT_S before its
+    # supervisor present, the parent waits supervisor_kill_wait_s before its
     # last-resort escalation — shrink that too so the fallback fires quickly.
     monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", 0.3)
-    monkeypatch.setattr(runner_mod, "_SUPERVISOR_KILL_WAIT_S", 0.5)
     monkeypatch.setattr(runner_mod, "_SIGTERM_TO_SIGKILL_GRACE_S", 0.3)
 
     started = time.monotonic()
@@ -703,7 +713,7 @@ def test_parent_kills_worker_that_blocks_past_budget_plus_grace(
             generation=generation,
             entry=entry,
             weights=ScoringWeights(),
-            config=_config(workspace),
+            config=_config(workspace, supervisor_kill_wait_s=0.5),
             workspace_root=workspace,
             epoch_id="e0",
             side="parent",
@@ -754,7 +764,6 @@ def test_tournament_continues_after_a_budget_killed_run(
     generation = _generation(workspace)
 
     monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", 0.3)
-    monkeypatch.setattr(runner_mod, "_SUPERVISOR_KILL_WAIT_S", 0.5)
     monkeypatch.setattr(runner_mod, "_SIGTERM_TO_SIGKILL_GRACE_S", 0.3)
 
     losses: dict[str, LossProfile] = {}
@@ -768,7 +777,7 @@ def test_tournament_continues_after_a_budget_killed_run(
                 generation=generation,
                 entry=entry,
                 weights=ScoringWeights(),
-                config=_config(workspace),
+                config=_config(workspace, supervisor_kill_wait_s=0.5),
                 workspace_root=workspace,
                 epoch_id="e0",
                 side="parent",
@@ -800,9 +809,6 @@ def test_parent_delegates_kill_to_supervisor_via_request_marker(
     run_id = f"{generation.id}--{entry.id}"
 
     monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", 0.3)
-    # Generous supervisor-wait: the fake supervisor reaps well within it, so
-    # the parent's last-resort fallback should never be reached.
-    monkeypatch.setattr(runner_mod, "_SUPERVISOR_KILL_WAIT_S", 10.0)
 
     # Trip a flag if the parent's last-resort escalation ever fires.
     fallback_fired = {"value": False}
@@ -842,7 +848,10 @@ def test_parent_delegates_kill_to_supervisor_via_request_marker(
                 generation=generation,
                 entry=entry,
                 weights=ScoringWeights(),
-                config=_config(workspace),
+                # Generous supervisor-wait: the fake supervisor reaps well
+                # within it, so the parent's last-resort fallback should
+                # never be reached.
+                config=_config(workspace, supervisor_kill_wait_s=10.0),
                 workspace_root=workspace,
                 epoch_id="e0",
                 side="parent",
@@ -955,7 +964,11 @@ def test_parent_escalates_to_sigkill_when_worker_ignores_sigterm(
             generation=generation,
             entry=entry,
             weights=ScoringWeights(),
-            config=_config(workspace),
+            # No supervisor is attached, so the parent waits the full
+            # supervisor_kill_wait_s window before its last-resort
+            # SIGTERM->SIGKILL escalation — shrunk so the escalation
+            # semantics (not the dead wait) dominate the test.
+            config=_config(workspace, supervisor_kill_wait_s=0.3),
             workspace_root=workspace,
             epoch_id="e0",
             side="parent",
@@ -965,8 +978,10 @@ def test_parent_escalates_to_sigkill_when_worker_ignores_sigterm(
 
     assert isinstance(loss, LossProfile)
     assert loss.wall_clock_budget_exceeded is True
-    # budget(1) + grace(0.3) + sigterm->sigkill grace(0.3) ≈ 1.6s; well under 60.
-    assert elapsed < 40.0
+    # budget(1) + grace(0.3) + supervisor wait(0.3) + sigterm->sigkill
+    # grace(0.3) ≈ 1.9s; the bound leaves headroom for a loaded machine
+    # while still catching a reintroduced multi-second dead wait.
+    assert elapsed < 10.0
     assert not active_run_path(workspace, f"{generation.id}--{entry.id}").exists()
 
 
