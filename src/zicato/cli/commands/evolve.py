@@ -58,6 +58,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+import signal
 from pathlib import Path
 from typing import Any
 
@@ -841,7 +842,45 @@ def evolve_cmd(
     # ended.
     stop_reason_out: list[str] = []
 
+    # SIGTERM teardown state (task #12). The children live in their OWN
+    # sessions (post-#72 blast-radius isolation), so an unhandled SIGTERM
+    # of evolve would orphan BOTH of them: the default disposition kills
+    # this process without unwinding ``_run``'s teardown. The handler
+    # below converts SIGTERM into a cooperative cancellation of the main
+    # task, which unwinds through the SAME ``_terminate_child`` teardown
+    # path the error/interrupt exit already uses (and through
+    # ``evolve_n_rounds``'s own ``finally`` — heartbeat stopped, workspace
+    # lock released, run marked terminal). SIGINT needs no handler:
+    # ``asyncio.run`` already maps Ctrl-C onto a main-task cancellation +
+    # ``KeyboardInterrupt``, which the same teardown path handles today.
+    sigterm_state = {"received": False}
+
     async def _run() -> list[Any]:
+        # Signal-handler discipline: the evolve command is fully async
+        # under ``asyncio.run``, so ``loop.add_signal_handler`` (not
+        # ``signal.signal``) is the correct seam — the callback runs on
+        # the loop, where cancelling the main task is safe. Installed
+        # BEFORE the children spawn so no window orphans a child.
+        loop = asyncio.get_running_loop()
+        main_task = asyncio.current_task()
+
+        def _on_sigterm() -> None:
+            if sigterm_state["received"]:
+                # Repeat SIGTERMs must not re-cancel the task mid-teardown
+                # (a second cancellation would interrupt the child reaping
+                # in flight). One signal, one orderly unwind.
+                return
+            sigterm_state["received"] = True
+            if main_task is not None:
+                main_task.cancel()
+
+        try:
+            loop.add_signal_handler(signal.SIGTERM, _on_sigterm)
+        except (NotImplementedError, RuntimeError):
+            # Platforms/loops without signal-handler support keep the
+            # default disposition — no worse than before this handler.
+            pass
+
         # The supervisor is now watchdog-only (spawned with
         # --no-dashboard); the dashboard UI is served by the separate
         # Python dashboard service. Both are children of this evolve
@@ -852,17 +891,19 @@ def evolve_cmd(
         # neither walks onto the other's port. The dashboard's URL is
         # reported only after reading the port it actually bound back
         # from runtime/dashboard.json — never assumed.
-        sup = await _maybe_spawn_supervisor(
-            workspace_root,
-            disabled=no_dashboard,
-        )
-        dash = await _maybe_spawn_dashboard(
-            workspace_root,
-            dashboard_port,
-            disabled=no_dashboard,
-        )
-        await _report_dashboard_url(workspace_root, dashboard_port, dash)
+        sup: asyncio.subprocess.Process | None = None
+        dash: asyncio.subprocess.Process | None = None
         try:
+            sup = await _maybe_spawn_supervisor(
+                workspace_root,
+                disabled=no_dashboard,
+            )
+            dash = await _maybe_spawn_dashboard(
+                workspace_root,
+                dashboard_port,
+                disabled=no_dashboard,
+            )
+            await _report_dashboard_url(workspace_root, dashboard_port, dash)
             result = await evolve_n_rounds(
                 rounds=rounds,
                 workspace_root=workspace_root,
@@ -877,10 +918,13 @@ def evolve_cmd(
                 stop_reason_out=stop_reason_out,
             )
         except BaseException:
-            # Genuine error path or an explicit interrupt (Ctrl-C raises
-            # KeyboardInterrupt, a BaseException). Clean up BOTH children:
-            # tear the dashboard down first so its port is freed before the
-            # watchdog notices it is gone.
+            # Genuine error path or an explicit interrupt — Ctrl-C raises
+            # KeyboardInterrupt, and a SIGTERM lands here as the handler's
+            # cooperative CancelledError. Clean up BOTH children: tear the
+            # dashboard down first so its port is freed before the
+            # watchdog notices it is gone. (Spawn-time failures land here
+            # too; ``_terminate_child(None)`` is a no-op for a child that
+            # never spawned.)
             await _terminate_child(dash)
             await _terminate_child(sup)
             raise
@@ -889,12 +933,23 @@ def evolve_cmd(
         # dashboard service running so the operator can inspect the final
         # state of the run (per repo convention every evolve launch serves
         # the dashboard and reports its URL). Announce that it is still up.
+        # The SIGTERM handler above applies to SIGNAL-interrupted exits
+        # only — it never fires on this path, so the served dashboard
+        # outliving the command is untouched.
         await _terminate_child(sup)
         _announce_dashboard_still_serving(workspace_root, dashboard_port, dash)
         return result
 
     try:
         outcomes = asyncio.run(_run())
+    except asyncio.CancelledError:
+        if sigterm_state["received"]:
+            # The SIGTERM path: both children were reaped by the teardown
+            # inside ``_run`` and the evolve loop's own ``finally`` released
+            # the workspace lock. Exit with the conventional fatal-signal
+            # status (128 + SIGTERM) instead of a cancellation traceback.
+            raise SystemExit(128 + signal.SIGTERM) from None
+        raise
     except (FileNotFoundError, RuntimeError) as exc:
         # FileNotFoundError: missing config / epoch marker.
         # RuntimeError: contract drift under --no-auto-epoch, or a
