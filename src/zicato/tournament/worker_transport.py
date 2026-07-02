@@ -229,6 +229,72 @@ def _stamp_judge_only(
     return stamped
 
 
+#: ``BoardEntry.context`` key carrying the run's REPLICATE INDEX to the
+#: harness under test. Run provenance, not a contract input: a
+#: deterministic/seeded harness (e.g. the convergence example's noisy
+#: adapter) derives its per-run noise from stable identifiers, and the
+#: replicate index is the one identifier that distinguishes the N
+#: otherwise-identical paired runs of a replicated matchup. ``context``
+#: is the one per-entry channel that survives the
+#: runner -> args-file -> subprocess-worker -> ``validate_board_entry`` ->
+#: adapter round-trip (see :data:`_DISABLE_DRIFT_CONTEXT_KEY`). The value
+#: is the decimal string form (``context`` is string-valued); an ABSENT
+#: key means replicate 0, so single-replicate runs are byte-identical to
+#: before this key existed.
+_REPLICATE_INDEX_CONTEXT_KEY = "replicate_index"
+
+#: ``BoardEntry.context`` key carrying the run's GENERATION ID to the
+#: harness under test. Stamped by ``_run_single`` onto the serialised
+#: worker entry only (the in-process board objects are untouched), so a
+#: session that never sees its canonical snapshot path — the worker
+#: mounts an ephemeral copy with a throwaway name — can still identify
+#: WHICH generation it is measuring from a stable identifier. Mirrors
+#: :data:`_REPLICATE_INDEX_CONTEXT_KEY`; consumers must tolerate absence
+#: (an ad-hoc / in-process drive outside the worker).
+_GENERATION_ID_CONTEXT_KEY = "generation_id"
+
+
+def _stamp_replicate_index(
+    board: list[BoardEntry],
+    replicate_index: int,
+) -> list[BoardEntry]:
+    """Return ``board`` with the replicate index on each entry's context.
+
+    Stamped once per replicate pass by the replication loop
+    (:func:`zicato.tournament.scheduling._run_replicated`) so every run of
+    replicate ``r`` carries ``context['replicate_index'] == str(r)``
+    through the subprocess boundary to the adapter session.
+
+    ``replicate_index == 0`` returns the board UNCHANGED (object identity
+    preserved), mirroring :func:`_stamp_disable_drift`'s "empty →
+    untouched" behaviour: every single-replicate path — the gauntlet, the
+    seed scoring, replicate 0 of a replicated matchup — is byte-identical
+    to before, and readers treat an absent key as replicate 0.
+    """
+    if replicate_index <= 0:
+        return board
+    stamped: list[BoardEntry] = []
+    for entry in board:
+        context = dict(entry.context)
+        context[_REPLICATE_INDEX_CONTEXT_KEY] = str(replicate_index)
+        stamped.append(replace(entry, context=context))
+    return stamped
+
+
+def _entry_replicate_index(entry: BoardEntry) -> int:
+    """Read the replicate index stamped onto an entry's context, or ``0``.
+
+    The read side of :func:`_stamp_replicate_index`: an absent key is
+    replicate 0 (every single-replicate path), and a malformed value is
+    read as 0 rather than raising inside a scoring run.
+    """
+    raw = dict(entry.context).get(_REPLICATE_INDEX_CONTEXT_KEY, "0")
+    try:
+        return max(0, int(raw or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _runtime_state() -> tuple[Any, Any] | None:
     """Lazy-import runtime state helpers; return None if unavailable.
 
@@ -794,8 +860,10 @@ __all__ = [
     "_ABORTED_TASK_FAILURE_MULTIPLIER",
     "_DISABLE_DRIFT_CONTEXT_KEY",
     "_EPHEMERAL_SNAPSHOT_PREFIX",
+    "_GENERATION_ID_CONTEXT_KEY",
     "_INDEX_DB_RELPATH",
     "_JUDGE_ONLY_CONTEXT_KEY",
+    "_REPLICATE_INDEX_CONTEXT_KEY",
     "_PARENT_BUDGET_GRACE_S",
     "_SIGTERM_TO_SIGKILL_GRACE_S",
     "_SUPERVISOR_KILL_WAIT_S",
@@ -806,6 +874,7 @@ __all__ = [
     "_callable_dotted_path",
     "_discard_ephemeral_snapshot",
     "_drift_kind_wire",
+    "_entry_replicate_index",
     "_entry_to_dict",
     "_index_db_path",
     "_ingest_run_into_index",
@@ -820,6 +889,7 @@ __all__ = [
     "_scrubbed_worker_env",
     "_stamp_disable_drift",
     "_stamp_judge_only",
+    "_stamp_replicate_index",
     "_telemetry_helpers",
     "_terminate_worker",
     "_weights_spec",

@@ -210,9 +210,11 @@ from zicato.tournament.worker_transport import (  # noqa: F401
     _ABORTED_TASK_FAILURE_MULTIPLIER,
     _DISABLE_DRIFT_CONTEXT_KEY,
     _EPHEMERAL_SNAPSHOT_PREFIX,
+    _GENERATION_ID_CONTEXT_KEY,
     _INDEX_DB_RELPATH,
     _JUDGE_ONLY_CONTEXT_KEY,
     _PARENT_BUDGET_GRACE_S,
+    _REPLICATE_INDEX_CONTEXT_KEY,
     _SIGTERM_TO_SIGKILL_GRACE_S,
     _SUPERVISOR_KILL_WAIT_S,
     _aborted_loss_profile,
@@ -220,6 +222,7 @@ from zicato.tournament.worker_transport import (  # noqa: F401
     _callable_dotted_path,
     _discard_ephemeral_snapshot,
     _drift_kind_wire,
+    _entry_replicate_index,
     _entry_to_dict,
     _index_db_path,
     _ingest_run_into_index,
@@ -234,6 +237,7 @@ from zicato.tournament.worker_transport import (  # noqa: F401
     _scrubbed_worker_env,
     _stamp_disable_drift,
     _stamp_judge_only,
+    _stamp_replicate_index,
     _telemetry_helpers,
     _terminate_worker,
     _weights_spec,
@@ -467,9 +471,21 @@ async def _run_single(
         generation_id=generation.id,
         entry_id=entry.id,
     )
-    from zicato.core.workspace import loss_profile_path  # noqa: PLC0415
-
-    loss_path = loss_profile_path(workspace_root, epoch_id, generation.id, entry.id)
+    # The worker writes its loss into the run's REPLICATE-keyed cache slot
+    # (the stamped replicate index; see _stamp_replicate_index). Replicate
+    # 0 — every single-replicate path — maps to the canonical
+    # ``runs/<entry>/loss.json``, byte-identical to before; replicate r>0
+    # maps to the sibling ``loss.r<r>.json`` so a later replicate's worker
+    # write can no longer CLOBBER the canonical file that doubles as
+    # replicate 0's cache slot (which silently replaced replicate 0's
+    # persisted sample with the last replicate's draw).
+    loss_path = _unit_loss_path(
+        workspace_root,
+        epoch_id,
+        generation.id,
+        entry.id,
+        _entry_replicate_index(entry),
+    )
     run_id = _run_id_for(generation, entry)
     budget_s = float(entry.wall_clock_budget_seconds)
 
@@ -535,13 +551,26 @@ async def _run_single(
                 # path (today's behavior). Ad-hoc callers (tests) that run a
                 # generation without a full workspace config still spawn.
                 _models = ModelsConfig()
+            # Run provenance for the harness under test: the worker mounts
+            # an EPHEMERAL snapshot copy with a throwaway name, so the
+            # session cannot recover WHICH generation it is measuring from
+            # its own root path. Stamp the generation id onto the
+            # serialised entry's context (the one channel that survives
+            # the worker round-trip — see _GENERATION_ID_CONTEXT_KEY);
+            # a seeded/deterministic harness derives its per-run noise
+            # from it. The in-process ``entry`` object is untouched.
+            entry_dict = _entry_to_dict(entry)
+            entry_dict["context"] = {
+                **entry_dict.get("context", {}),
+                _GENERATION_ID_CONTEXT_KEY: generation.id,
+            }
             args_payload = {
                 "workspace_root": str(workspace_root),
                 "epoch_id": epoch_id,
                 "generation_id": generation.id,
                 "snapshot_root": str(ephemeral_snapshot),
                 "scratch_dir": str(scratch_dir),
-                "entry": _entry_to_dict(entry),
+                "entry": entry_dict,
                 "adapter": _adapter_spec(adapter),
                 "harness_role": _role_worker_spec(
                     "harness", models=_models, fallback_callable=config.harness_call_llm
