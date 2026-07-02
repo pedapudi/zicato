@@ -264,6 +264,21 @@ export function fieldStatusSummary(fs) {
 export function perJudgeTrend(epochId) {
   return cachedJson(`/api/epoch/${enc(epochId)}/per-judge-trend`);
 }
+// The promoted-lineage OPTIMIZATION TRAJECTORY for one epoch — scalar points
+// along the winners spine + promotion_rate + the UNCERTAINTY-HONEST verdict
+// ("improving" / "plateaued" / "no_signal" when the recent movement sits below
+// the measured A/A noise floor) + the floor itself (build_optimization_
+// trajectory). Absent on the Rust supervisor → cachedJson null-degrades and
+// the panels are simply omitted.
+export function trajectory(epochId) {
+  return cachedJson(`/api/epoch/${enc(epochId)}/trajectory`);
+}
+// The wall-clock + run-count COST accounting for one epoch's tournament —
+// per-matchup runtime/runs/aborts + cost_per_promotion_ms (build_tournament_
+// cost). Null-degrades on the Rust supervisor like every accessor here.
+export function tournamentCost(epochId) {
+  return cachedJson(`/api/epoch/${enc(epochId)}/cost`);
+}
 export function perEntry(epochId, genId) {
   return cachedJson(`/api/generation/${enc(epochId)}/${enc(genId)}/per-entry`);
 }

@@ -173,6 +173,53 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
             )
         return JSONResponse(state_reader.build_per_judge_trend(paths, epoch_id))
 
+    async def api_epoch_trajectory(request: Request) -> JSONResponse:
+        """Promoted-lineage trajectory + promotion rate + honest verdict.
+
+        ``GET /api/epoch/{epoch_id}/trajectory``. A malformed id degrades
+        to the empty trajectory shape (HTTP 200), matching every other
+        coordinate handler.
+        """
+        epoch_id = request.path_params["epoch_id"]
+        if not _is_safe_id(epoch_id):
+            return JSONResponse(
+                {
+                    "epoch_id": epoch_id,
+                    "points": [],
+                    "promotion_rate": None,
+                    "promoted_count": 0,
+                    "challenger_count": 0,
+                    "plateaued": False,
+                    "verdict": None,
+                    "recent_movement": None,
+                    "noise_floor": None,
+                },
+                status_code=200,
+            )
+        return JSONResponse(state_reader.build_optimization_trajectory(paths, epoch_id))
+
+    async def api_epoch_cost(request: Request) -> JSONResponse:
+        """Wall-clock + run-count cost accounting for one epoch.
+
+        ``GET /api/epoch/{epoch_id}/cost``. A malformed id degrades to the
+        empty cost shape (HTTP 200).
+        """
+        epoch_id = request.path_params["epoch_id"]
+        if not _is_safe_id(epoch_id):
+            return JSONResponse(
+                {
+                    "epoch_id": epoch_id,
+                    "per_matchup": [],
+                    "total_runtime_ms": 0,
+                    "total_run_count": 0,
+                    "total_aborted_count": 0,
+                    "promoted_count": 0,
+                    "cost_per_promotion_ms": None,
+                },
+                status_code=200,
+            )
+        return JSONResponse(state_reader.build_tournament_cost(paths, epoch_id))
+
     async def api_per_judge_for_generation(request: Request) -> JSONResponse:
         """Per-judge breakdown for one generation (L2)."""
         epoch_id = request.path_params["epoch_id"]
@@ -1038,6 +1085,8 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         "api_workspace": api_workspace,
         "api_contract_diff": api_contract_diff,
         "api_per_judge_trend": api_per_judge_trend,
+        "api_epoch_trajectory": api_epoch_trajectory,
+        "api_epoch_cost": api_epoch_cost,
         "api_per_judge_for_generation": api_per_judge_for_generation,
         "api_per_entry_for_generation": api_per_entry_for_generation,
         "api_per_judge_comparison": api_per_judge_comparison,

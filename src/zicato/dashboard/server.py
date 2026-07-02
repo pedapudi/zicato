@@ -214,6 +214,14 @@ def create_app(
             handlers["api_per_judge_trend"],
         ),
         Route(
+            "/api/epoch/{epoch_id}/trajectory",
+            handlers["api_epoch_trajectory"],
+        ),
+        Route(
+            "/api/epoch/{epoch_id}/cost",
+            handlers["api_epoch_cost"],
+        ),
+        Route(
             "/api/generation/{epoch_id}/{generation_id}/per-judge",
             handlers["api_per_judge_for_generation"],
         ),

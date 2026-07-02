@@ -93,6 +93,10 @@ from zicato.dashboard.readers.lineage_view import (
     _experiment_decision,
     build_lineage_view,
 )
+from zicato.dashboard.readers.loop_view import (
+    build_optimization_trajectory,
+    build_tournament_cost,
+)
 from zicato.dashboard.readers.paths import (
     _NUM_RUN,
     _PREVIEW_CHARS,
@@ -270,6 +274,7 @@ __all__ = [
     "build_matchup_detail",
     "build_matchup_grid",
     "build_meta_loop_ledger",
+    "build_optimization_trajectory",
     "build_per_entry_for_generation",
     "build_per_judge_comparison",
     "build_per_judge_for_generation",
@@ -280,6 +285,7 @@ __all__ = [
     "build_score_trajectory",
     "build_search_results",
     "build_snapshot",
+    "build_tournament_cost",
     "build_tournament_structure",
     "build_workspace_identity",
     "build_workspace_view",

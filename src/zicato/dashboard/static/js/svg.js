@@ -381,6 +381,17 @@ export function sparkline(opts) {
   // ±0.5 window when lo===hi; minSpan/padY refine it so a near-flat series sits
   // calmly CENTRED (mid ± span/2) instead of collapsed onto one frame edge.
   let [lo, hi] = extent(fin);
+  // OPT-IN measured-noise band: `noiseBand: {center, half}` shades the
+  // horizontal [center−half, center+half] band (the epoch's measured A/A noise
+  // floor around the champion floor) so scalar movement INSIDE the band reads
+  // honestly as indistinguishable from a re-roll of the same generation. The
+  // y-domain widens to keep the whole band in frame.
+  const nb = (o.noiseBand && isNum(o.noiseBand.center) && isNum(o.noiseBand.half)
+    && o.noiseBand.half > 0) ? o.noiseBand : null;
+  if (nb) {
+    lo = Math.min(lo, nb.center - nb.half);
+    hi = Math.max(hi, nb.center + nb.half);
+  }
   if (isNum(o.minSpan) && o.minSpan > 0 && hi - lo < o.minSpan) {
     const mid = (lo + hi) / 2;
     lo = mid - o.minSpan / 2;
@@ -399,6 +410,17 @@ export function sparkline(opts) {
   const y = scale([lo, hi], [h - pad, pad]);
   if (o.band) {
     svg.appendChild(svgEl('rect', { x: pad, y: pad, width: w - 2 * pad, height: h - 2 * pad, class: 'dn-spark-band' }));
+  }
+  if (nb) {
+    const top = y(nb.center + nb.half);
+    const bot = y(nb.center - nb.half);
+    svg.appendChild(hov(
+      svgEl('rect', {
+        x: pad, y: Math.min(top, bot), width: w - 2 * pad,
+        height: Math.max(0.5, Math.abs(bot - top)), class: 'dn-spark-noise',
+      }),
+      'measured noise floor · movement inside this band is indistinguishable from a re-roll (±' + fmt(nb.half) + ')',
+    ));
   }
   if (isNum(o.baseline)) {
     const by = y(o.baseline);

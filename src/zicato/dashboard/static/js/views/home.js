@@ -43,9 +43,24 @@ export async function render(host, ctx) {
   // single currently-loaded contract and never a fabricated curve. The backend
   // scopes /api/score-trajectory by `?epoch=<id>`; missing/short series degrade
   // to an honest "no trajectory yet" placeholder downstream.
-  const trajs = await Promise.all(rows.map((r) => D.scoreTrajectory(r.epoch_id)));
+  //
+  // The LOOP-COMMUNICATION reads ride alongside: the per-epoch optimization
+  // trajectory (promotion rate + the uncertainty-honest verdict + the measured
+  // noise floor) and the tournament cost (cost/promotion). Both null-degrade
+  // (absent endpoint on the Rust supervisor) → the stats are simply omitted.
+  const [trajs, loops, costs] = await Promise.all([
+    Promise.all(rows.map((r) => D.scoreTrajectory(r.epoch_id))),
+    Promise.all(rows.map((r) => D.trajectory(r.epoch_id))),
+    Promise.all(rows.map((r) => D.tournamentCost(r.epoch_id))),
+  ]);
   const trajByEpoch = new Map();
-  rows.forEach((r, i) => trajByEpoch.set(r.epoch_id, epochTrajectoryValues(trajs[i])));
+  const loopByEpoch = new Map();
+  const costByEpoch = new Map();
+  rows.forEach((r, i) => {
+    trajByEpoch.set(r.epoch_id, epochTrajectoryValues(trajs[i]));
+    loopByEpoch.set(r.epoch_id, loops[i] || null);
+    costByEpoch.set(r.epoch_id, costs[i] || null);
+  });
 
   // The CURRENT epoch's proposer CALIBRATION TREND (DIAGNOSTIC) — the
   // prediction-accuracy fraction over its lineage, surfaced beside the meta-loop
@@ -59,6 +74,9 @@ export async function render(host, ctx) {
     rows: rows.map((r) => [r.epoch_id, r.generation_count || 0, r.promoted_count || 0,
       svg.isNum(r.best_scalar) ? r.best_scalar.toFixed(3) : null, !!r.closed,
       (trajByEpoch.get(r.epoch_id) || []).map((v) => v.toFixed(3))]),
+    // the loop-communication stats are content-gated on their own rounded fold
+    // so a no-op heartbeat (identical rates/verdicts/costs) churns no DOM.
+    loop: rows.map((r) => loopStatsDigest(loopByEpoch.get(r.epoch_id), costByEpoch.get(r.epoch_id))),
     // The ledger is content-gated by its own builder digest so a no-op
     // heartbeat (identical matrix) churns no DOM — the cross-epoch overview
     // is the heaviest figure on this page.
@@ -83,7 +101,8 @@ export async function render(host, ctx) {
     // a glance, each card the per-epoch drill-in.
     const fleet = rows.length === 0
       ? empty('No epochs recorded in this workspace yet.')
-      : el('div', { class: 'dn-fleet' }, rows.map((r) => fleetCard(r, r.epoch_id === current, ctx, trajByEpoch.get(r.epoch_id) || [], live)));
+      : el('div', { class: 'dn-fleet' }, rows.map((r) => fleetCard(r, r.epoch_id === current, ctx, trajByEpoch.get(r.epoch_id) || [], live,
+        loopByEpoch.get(r.epoch_id), costByEpoch.get(r.epoch_id))));
     nodes.push(section('Fleet · ' + rows.length + ' epoch' + (rows.length === 1 ? '' : 's'), fleet));
 
     // Below the fleet: the composed meta-loop ledger (study opt 7) — the
@@ -153,31 +172,111 @@ function statTile(value, key, foot) {
   ].filter(Boolean));
 }
 
-function fleetCard(row, isCurrent, ctx, sparkVals, live) {
+function fleetCard(row, isCurrent, ctx, sparkVals, live, loop, cost) {
   // "running" requires the GATED live flag (fresh heartbeat) — not just an
   // active_tournament.json whose epoch_id matches. A stale file must not paint
   // the current epoch's chip "running" after the orchestrator has exited.
   const liveHere = isCurrent && !!live && state.activeTournament && state.activeTournament.epoch_id === row.epoch_id;
   const st = isCurrent ? (liveHere ? 'live' : 'open') : (row.closed ? 'closed' : 'open');
+  // The UNCERTAINTY-HONEST loop verdict chip: "plateaued" only when the recent
+  // movement is resolvable above the measured noise floor; below the floor the
+  // honest word is "no detectable signal", never a confident plateau.
+  const verdict = loopVerdict(loop);
   const head = el('div', { class: 'dn-fleet-head' }, [
     el('span', { class: 'dn-fleet-id', text: row.epoch_id }),
+    verdict ? el('span', { class: 'dn-chip dn-chip-' + verdict.cls, text: verdict.word }) : null,
     el('span', { class: 'dn-chip dn-chip-' + (liveHere ? 'live' : st), text: liveHere ? 'running' : st }),
-  ]);
+  ].filter(Boolean));
   const goal = el('div', { class: 'dn-fleet-goal', text: row.goal || '(no goal recorded)' });
+  // The measured A/A noise floor renders as a band around the champion floor
+  // (the trajectory's last scalar): movement inside it is indistinguishable
+  // from a re-roll. Absent floor → no band (byte-identical to today).
   const hero = el('div', { class: 'dn-fleet-spark' }, [
     sparkVals.length >= 2
-      ? svg.sparkline({ width: 240, height: 46, values: sparkVals, band: true, goodDirection: 'down' })
+      ? svg.sparkline({ width: 240, height: 46, values: sparkVals, band: true, goodDirection: 'down',
+          noiseBand: noiseBandFor(loop, sparkVals) })
       : el('span', { class: 'dn-faint', text: 'no trajectory yet' }),
   ]);
+  const promo = promotionRateLabel(loop);
+  const costLabel = costPerPromotionLabel(cost);
   const stats = el('div', { class: 'dn-fleet-stats' }, [
     miniStat('best', fmt(row.best_scalar), 'good'),
     miniStat('gens', String(row.generation_count || 0)),
     miniStat('promoted', String(row.promoted_count || 0)),
-  ]);
+    promo ? miniStat('promo rate', promo) : null,
+    costLabel ? miniStat('cost/promo', costLabel) : null,
+  ].filter(Boolean));
   return el('a', {
     class: 'dn-fleet-card' + (isCurrent ? ' dn-is-current' : ''),
     href: ctx.href('epoch', { epochId: row.epoch_id }),
   }, [head, goal, hero, stats]);
+}
+
+// ---- loop-communication helpers (pure — node-testable) --------------
+
+// The verdict chip for one epoch's /api/epoch/{id}/trajectory read, or null
+// when there is nothing to flag ("improving" is the default state — no chip).
+// The below-noise-floor case renders the EXACT honest phrase, never a
+// confident "plateaued" the measurement cannot support.
+export function loopVerdict(traj) {
+  const v = traj && typeof traj === 'object' ? traj.verdict : null;
+  if (v === 'no_signal') {
+    return { word: 'no detectable signal (below noise floor)', cls: 'nosignal' };
+  }
+  if (v === 'plateaued') return { word: 'plateaued', cls: 'plateau' };
+  return null;
+}
+
+// "promoted/challengers · NN%" from the trajectory read, or null when the
+// epoch has no challengers yet (or the read degraded / is unavailable).
+export function promotionRateLabel(traj) {
+  if (!traj || typeof traj !== 'object') return null;
+  if (!svg.isNum(traj.promotion_rate) || !(traj.challenger_count > 0)) return null;
+  return (traj.promoted_count || 0) + '/' + traj.challenger_count
+    + ' · ' + Math.round(traj.promotion_rate * 100) + '%';
+}
+
+// cost_per_promotion_ms → a compact human duration, or null when nothing was
+// promoted yet (cost_per_promotion_ms is null) / the read is unavailable.
+export function costPerPromotionLabel(cost) {
+  const v = cost && typeof cost === 'object' ? cost.cost_per_promotion_ms : null;
+  return svg.isNum(v) ? fmtDurationMs(v) : null;
+}
+
+// A short duration: 850ms · 12.3s · 4.2m · 1.5h.
+export function fmtDurationMs(ms) {
+  if (!svg.isNum(ms) || ms < 0) return '—';
+  if (ms < 1000) return Math.round(ms) + 'ms';
+  const s = ms / 1000;
+  if (s < 90) return (Math.round(s * 10) / 10) + 's';
+  const m = s / 60;
+  if (m < 90) return (Math.round(m * 10) / 10) + 'm';
+  return (Math.round((m / 60) * 10) / 10) + 'h';
+}
+
+// The sparkline noiseBand spec for a trajectory read: the measured A/A floor
+// (± max_abs_delta) centred on the LAST plotted scalar — the champion floor.
+// Null when no floor was measured / no scalar is plotted (no band).
+export function noiseBandFor(traj, sparkVals) {
+  const nf = traj && typeof traj === 'object' ? traj.noise_floor : null;
+  const half = nf && svg.isNum(nf.max_abs_delta) ? nf.max_abs_delta : null;
+  const vals = (Array.isArray(sparkVals) ? sparkVals : []).filter((v) => svg.isNum(v));
+  if (!svg.isNum(half) || half <= 0 || !vals.length) return null;
+  return { center: vals[vals.length - 1], half };
+}
+
+// The digest fold for one epoch's loop stats: rounded, timestamp-free, so a
+// no-op heartbeat is byte-identical while a real rate/verdict/cost/floor move
+// flips it (the render-discipline contract).
+export function loopStatsDigest(traj, cost) {
+  return [
+    traj && traj.verdict ? String(traj.verdict) : null,
+    traj && svg.isNum(traj.promotion_rate) ? traj.promotion_rate.toFixed(3) : null,
+    traj && svg.isNum(traj.challenger_count) ? traj.challenger_count : null,
+    (traj && traj.noise_floor && svg.isNum(traj.noise_floor.max_abs_delta))
+      ? traj.noise_floor.max_abs_delta.toFixed(4) : null,
+    cost && svg.isNum(cost.cost_per_promotion_ms) ? Math.round(cost.cost_per_promotion_ms) : null,
+  ];
 }
 
 function miniStat(k, v, tone) {

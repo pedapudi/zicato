@@ -15,6 +15,7 @@ import { gatedSwap, section, empty, stat, renderMarkdown, normaliseDecision, den
 import { structurePill, isNonGauntlet, structureLabel, normalizeStructure, racingModel, swissOverviewModel, elimModel, resolveNonGauntletSt, structureDigest } from './structure.js';
 import { epochRoundModel, roundModelDigest, waterfallModel } from './rounds.js';
 import { boardStatusModel, boardStatusDigest, renderBoardStatus } from './boardstatus.js';
+import { loopVerdict, promotionRateLabel, costPerPromotionLabel, fmtDurationMs, noiseBandFor } from './home.js';
 
 // The user's last expand/collapse of the proposer brief, keyed by epoch. The
 // epoch view is digest-gated: a live heartbeat that moves ANY data rebuilds the
@@ -41,6 +42,14 @@ export async function render(host, ctx, params) {
   const epochId = routeEpoch || ep.epoch_id;
   const experiments = Array.isArray(ep.experiments) ? ep.experiments : [];
   const board = Array.isArray(ep.board) ? ep.board : [];
+
+  // The LOOP-COMMUNICATION reads for this epoch: the promoted-lineage
+  // trajectory (promotion rate + uncertainty-honest verdict + noise floor)
+  // and the tournament cost accounting. Both null-degrade (the Rust
+  // supervisor serves neither) → the panels are simply omitted.
+  const [loopTraj, loopCost] = await Promise.all([
+    D.trajectory(epochId), D.tournamentCost(epochId),
+  ]);
 
   // SCOPE TO THE VIEWED EPOCH: /api/lineage spans the whole workspace, so filter
   // to this epoch's generations (fall back to the scoped ep.experiments; dedupe
@@ -196,6 +205,10 @@ export async function render(host, ctx, params) {
     loss: [...lossLookup.entries()].sort(),
     board: board.map((b) => [b.entry_id || b.id, b.kind, b.weight, b.budget_s]),
     boardStatus: boardStatusDigest(boardStatus),
+    // loop-communication panels: content-gated on their own rounded folds so
+    // a no-op heartbeat (identical trajectory/cost) churns no DOM.
+    loopTraj: trajectoryPanelDigest(loopTraj),
+    loopCost: costPanelDigest(loopCost),
   });
 
   gatedSwap(host, digest, () => {
@@ -342,6 +355,20 @@ export async function render(host, ctx, params) {
       : `Round timeline · the champion spine across ${epochRounds.length} rounds · ` + structureLabel(structure, params),
       timelineCard));
 
+    // ---- LOOP COMMUNICATION: the optimization trajectory + tournament cost ----
+    // Rendered only when the read resolved with content (absent endpoint /
+    // never-indexed workspace → byte-identical to today). The trajectory panel
+    // is UNCERTAINTY-HONEST: a below-noise-floor window reads "no detectable
+    // signal", and the measured floor is drawn as a band on the sparkline.
+    const trajPanel = buildTrajectoryPanel(loopTraj, {
+      onGen: (gid) => ctx.navigate('candidate', { epochId, gen: gid }),
+    });
+    if (trajPanel) nodes.push(section('Optimization trajectory · promoted lineage', trajPanel));
+    const costPanel = buildCostPanel(loopCost, {
+      onGen: (gid) => ctx.navigate('candidate', { epochId, gen: gid }),
+    });
+    if (costPanel) nodes.push(section('Tournament cost · wall-clock per promotion', costPanel));
+
     // ---- COMPACT board entries × generations heatmap (stays here, fix #6) ----
     const rows = [...entryIds].sort().map((id) => ({ id, label: id }));
     const cols = gens.map((g) => ({ id: g.id, label: g.id }));
@@ -384,6 +411,159 @@ export function objectiveText(ep) {
   if (ep && typeof ep.goal === 'string' && ep.goal.trim()) return ep.goal.trim();
   const title = briefTitle(ep && ep.brief);
   return title || '(no objective recorded)';
+}
+
+// ---- LOOP COMMUNICATION panels (pure builders — node-testable) --------
+
+// The verdict WORD the trajectory panel prints (full honesty phrasing).
+function verdictLine(traj) {
+  const v = loopVerdict(traj);
+  if (v) return v;
+  if (traj && traj.verdict === 'improving') return { word: 'improving', cls: 'open' };
+  return null;
+}
+
+// The OPTIMIZATION-TRAJECTORY panel for one /api/epoch/{id}/trajectory read.
+// Null when the read is absent (Rust supervisor) or carries no points AND no
+// promotion stats — the epoch view is then byte-identical to today.
+export function buildTrajectoryPanel(traj, opts) {
+  if (!traj || typeof traj !== 'object') return null;
+  const points = Array.isArray(traj.points) ? traj.points : [];
+  const vals = points.map((p) => (p && svg.isNum(p.scalar) ? p.scalar : null));
+  const finite = vals.filter((v) => svg.isNum(v));
+  const promo = promotionRateLabel(traj);
+  if (!finite.length && !promo) return null;
+  const o = opts || {};
+  const card = el('div', { class: 'dn-panel dn-figpane dn-looptraj-pane' });
+
+  // the stat row: promotion rate + the honest verdict + the floor readout.
+  const rowKids = [];
+  if (promo) rowKids.push(stat(promo, 'promotion rate'));
+  const v = verdictLine(traj);
+  if (v) {
+    rowKids.push(el('div', { class: 'dn-stat' }, [
+      el('span', { class: 'v' }, [el('span', { class: 'dn-chip dn-chip-' + v.cls + ' dn-looptraj-verdict', text: v.word })]),
+      el('span', { class: 'k', text: 'trajectory' }),
+    ]));
+  }
+  const nf = traj.noise_floor;
+  if (nf && svg.isNum(nf.max_abs_delta)) {
+    rowKids.push(stat('±' + (Math.round(nf.max_abs_delta * 1000) / 1000), 'measured noise floor'));
+  }
+  if (svg.isNum(traj.recent_movement)) {
+    rowKids.push(stat(String(Math.round(traj.recent_movement * 1000) / 1000), 'recent movement'));
+  }
+  if (rowKids.length) card.appendChild(el('div', { class: 'dn-row', style: 'margin-bottom:8px;' }, rowKids));
+
+  // the promoted-lineage scalar sparkline with the noise-floor band.
+  if (finite.length >= 1) {
+    card.appendChild(svg.sparkline({
+      width: 420, height: 64, values: vals, markers: true, goodDirection: 'down',
+      responsive: true, noiseBand: noiseBandFor(traj, finite),
+    }));
+    const last = points[points.length - 1];
+    if (last && last.generation_id && o.onGen) {
+      // the spine ids as a compact clickable strip under the sparkline.
+      const strip = el('div', { class: 'dn-looptraj-strip dn-mono' });
+      for (const p of points) {
+        const gid = p && p.generation_id;
+        if (!gid) continue;
+        const b = el('button', { class: 'dn-looptraj-gen', type: 'button', text: String(gid) });
+        b.addEventListener('click', () => o.onGen(String(gid)));
+        strip.appendChild(b);
+      }
+      card.appendChild(strip);
+    }
+  }
+  card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
+    'the champion floor across the promoted lineage (lower = better) · the shaded band is the measured A/A noise floor — movement inside it is indistinguishable from a re-roll'
+    + (traj.verdict === 'no_signal' ? ' · recent movement sits below the floor: no detectable signal (below noise floor)' : '') }));
+  return card;
+}
+
+// Digest fold for the trajectory panel: rounded, timestamp-free.
+export function trajectoryPanelDigest(traj) {
+  if (!traj || typeof traj !== 'object') return null;
+  return [
+    (Array.isArray(traj.points) ? traj.points : []).map((p) => [
+      p && p.generation_id, p && svg.isNum(p.scalar) ? p.scalar.toFixed(3) : null,
+    ]),
+    traj.verdict || null,
+    svg.isNum(traj.promotion_rate) ? traj.promotion_rate.toFixed(3) : null,
+    svg.isNum(traj.challenger_count) ? traj.challenger_count : null,
+    (traj.noise_floor && svg.isNum(traj.noise_floor.max_abs_delta))
+      ? traj.noise_floor.max_abs_delta.toFixed(4) : null,
+    svg.isNum(traj.recent_movement) ? traj.recent_movement.toFixed(4) : null,
+  ];
+}
+
+// The TOURNAMENT-COST panel for one /api/epoch/{id}/cost read. Null when the
+// read is absent or the epoch recorded no runs at all.
+export function buildCostPanel(cost, opts) {
+  if (!cost || typeof cost !== 'object') return null;
+  const matchups = Array.isArray(cost.per_matchup) ? cost.per_matchup : [];
+  const totalRuns = svg.isNum(cost.total_run_count) ? cost.total_run_count : 0;
+  if (!matchups.length && totalRuns === 0) return null;
+  const o = opts || {};
+  const card = el('div', { class: 'dn-panel dn-loopcost-pane' });
+
+  const cpp = costPerPromotionLabel(cost);
+  card.appendChild(el('div', { class: 'dn-row', style: 'margin-bottom:8px;' }, [
+    stat(cpp || '—', 'cost / promotion'),
+    stat(fmtDurationMs(cost.total_runtime_ms || 0), 'total runtime'),
+    stat(String(totalRuns), 'runs'),
+    stat(String(cost.total_aborted_count || 0), 'aborted'),
+  ]));
+
+  if (matchups.length) {
+    const table = el('table', { class: 'dn-loopcost-table' });
+    const thead = el('thead', null, [el('tr', null, [
+      el('th', { text: 'challenger' }), el('th', { text: 'decision' }),
+      el('th', { text: 'runtime' }), el('th', { text: 'runs' }), el('th', { text: 'aborted' }),
+    ])]);
+    const tbody = el('tbody');
+    for (const m of matchups) {
+      if (!m || typeof m !== 'object') continue;
+      const gid = m.challenger_generation_id != null ? String(m.challenger_generation_id) : '—';
+      const genCell = el('td', { class: 'dn-mono' });
+      if (o.onGen && gid !== '—') {
+        const b = el('button', { class: 'dn-loopcost-gen', type: 'button', text: gid });
+        b.addEventListener('click', () => o.onGen(gid));
+        genCell.appendChild(b);
+      } else {
+        genCell.appendChild(el('span', { text: gid }));
+      }
+      tbody.appendChild(el('tr', { class: 'dn-loopcost-row', 'data-gen': gid }, [
+        genCell,
+        el('td', { class: m.decision === 'promoted' ? 'dn-good-t' : (m.decision === 'rejected' ? 'dn-faint' : ''), text: m.decision || '—' }),
+        el('td', { class: 'dn-mono', text: fmtDurationMs(m.runtime_ms || 0) }),
+        el('td', { class: 'dn-mono', text: String(m.run_count || 0) }),
+        el('td', { class: 'dn-mono' + ((m.aborted_count || 0) > 0 ? ' dn-bad-t' : ''), text: String(m.aborted_count || 0) }),
+      ]));
+    }
+    table.appendChild(thead);
+    table.appendChild(tbody);
+    card.appendChild(table);
+  }
+  card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;',
+    text: 'what a promotion costs in wall-clock — total challenger runtime ÷ promotions · per-challenger runtime/run/abort accounting' }));
+  return card;
+}
+
+// Digest fold for the cost panel: integers only, timestamp-free.
+export function costPanelDigest(cost) {
+  if (!cost || typeof cost !== 'object') return null;
+  return [
+    svg.isNum(cost.cost_per_promotion_ms) ? Math.round(cost.cost_per_promotion_ms) : null,
+    svg.isNum(cost.total_runtime_ms) ? Math.round(cost.total_runtime_ms) : 0,
+    cost.total_run_count || 0,
+    cost.total_aborted_count || 0,
+    (Array.isArray(cost.per_matchup) ? cost.per_matchup : []).map((m) => [
+      m && m.challenger_generation_id, m && m.decision,
+      m && svg.isNum(m.runtime_ms) ? Math.round(m.runtime_ms) : 0,
+      m && m.run_count, m && m.aborted_count,
+    ]),
+  ];
 }
 
 // The first H1 of a brief, with a leading "Epoch eN — "/"Epoch eN: " prefix

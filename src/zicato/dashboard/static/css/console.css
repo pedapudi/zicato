@@ -683,6 +683,11 @@
   .dn-chip-live { color: var(--v2-caution); border-color: var(--v2-caution); }
   .dn-chip-open { color: var(--v2-good); border-color: var(--v2-good); }
   .dn-chip-closed { color: var(--v2-ink-faint); }
+  /* loop-communication verdict chips: a plateau is caution ink; a below-noise-
+   * floor "no detectable signal" is faint (the honest can't-tell state, never
+   * an alarm hue). */
+  .dn-chip-plateau { color: var(--v2-caution); border-color: var(--v2-caution); }
+  .dn-chip-nosignal { color: var(--v2-ink-faint); border-color: var(--v2-rule); }
 
   /* the overrideChip — operator-override provenance riding BESIDE a verdict
    * pill / status pill, NEVER recoloring it. Tone is earned by DIRECTION only
@@ -835,6 +840,10 @@
   .dn-spark-hero { width: 100%; height: auto; max-height: 140px; max-width: 1960px; }
   .dn-spark-line { stroke: var(--v2-ink); stroke-width: 1.4; vector-effect: non-scaling-stroke; }
   .dn-spark-band { fill: var(--v2-rule-soft); }
+  /* the MEASURED-NOISE band (opt-in via sparkline({noiseBand})): the epoch's
+   * A/A floor around the champion floor — movement inside it is
+   * indistinguishable from a re-roll, so it reads as recessed caution ink. */
+  .dn-spark-noise { fill: var(--v2-caution, var(--v2-rule)); opacity: 0.16; }
   .dn-spark-baseline { stroke: var(--v2-rule); stroke-width: 1; stroke-dasharray: 2 2; vector-effect: non-scaling-stroke; }
   .dn-spark-empty { stroke: var(--v2-rule); stroke-width: 1; stroke-dasharray: 2 3; }
   .dn-spark-dot { fill: var(--v2-ink); }
@@ -1076,17 +1085,37 @@
    * on the surrounding panel/page, so the table can be wide without any element
    * escaping its pane. */
   .dn-table-scroll { max-width: 100%; overflow-x: auto; }
-  .dn-md-table, .dn-board-table, .dn-scores-table {
+  .dn-md-table, .dn-board-table, .dn-scores-table, .dn-loopcost-table {
     border-collapse: collapse; width: 100%; font-size: calc(12px * var(--dt-font-scale, 1)); margin: 4px 0 12px; }
   .dn-md-table th, .dn-md-table td, .dn-board-table th, .dn-board-table td,
-  .dn-scores-table th, .dn-scores-table td {
+  .dn-scores-table th, .dn-scores-table td,
+  .dn-loopcost-table th, .dn-loopcost-table td {
     border: 1px solid var(--v2-rule); padding: 5px 9px; text-align: left; color: var(--v2-ink); }
-  .dn-md-table th, .dn-board-table th, .dn-scores-table th {
+  .dn-md-table th, .dn-board-table th, .dn-scores-table th, .dn-loopcost-table th {
     background: var(--v2-rule-soft); font-weight: 600; color: var(--v2-ink-soft); }
   .dn-md-table .dn-num, .dn-board-table .dn-num, .dn-scores-table .dn-num { text-align: right; }
   .dn-board-table tr { transition: background 0.12s; }
   .dn-board-table tr.dn-board-champ td { background: var(--v2-good-soft); }
   .dn-board-run { padding: 2px 7px; font-size: calc(10.5px * var(--dt-font-scale, 1)); }
+
+  /* ===================  loop communication (trajectory / cost / judges) ============= */
+
+  /* the promoted-spine id strip under the trajectory sparkline: each id is a
+   * quiet mono button routing to that candidate. */
+  .dn-looptraj-strip { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .dn-looptraj-gen, .dn-loopcost-gen {
+    background: none; border: none; padding: 0; cursor: pointer;
+    font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1));
+    color: var(--v2-accent); text-decoration: underline; text-underline-offset: 2px; }
+  .dn-looptraj-verdict { vertical-align: middle; }
+
+  /* the per-judge trend rows: name column + a sparkline lane + the last value. */
+  .dn-judgetrend-row { display: grid; grid-template-columns: minmax(120px, 18ch) 1fr 8ch;
+    gap: 12px; align-items: center; padding: 3px 0; }
+  .dn-judgetrend-name { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1));
+    color: var(--v2-ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dn-judgetrend-last { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1));
+    font-variant-numeric: tabular-nums; text-align: right; color: var(--v2-ink); }
 
   /* ===================  promote gate (stacked, no overlap — fix #1)  =================== */
 
