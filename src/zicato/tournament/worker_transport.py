@@ -681,6 +681,27 @@ def _entry_to_dict(entry: BoardEntry) -> dict[str, Any]:
     return out
 
 
+def _config_pins() -> dict[str, dict[str, Any]]:
+    """Snapshot the process-pinned config overrides for the worker args file.
+
+    CLI flags that shadow typed-config knobs (``--harness-call-timeout-ms``,
+    ``--aux-call-timeout``, ...) are pinned process-wide via
+    :func:`zicato.config.pin_overrides`. Some of those knobs are consumed
+    INSIDE the worker subprocess — the adapter reads the harness call
+    timeout when it builds the goldfive runtime, the judge/emulator call
+    sites read the aux budget — so the pins must cross the process
+    boundary. They travel in the args file (this snapshot) and the worker
+    re-pins them at startup; no environment variable is involved.
+
+    Best-effort by construction: an empty dict (no flags pinned) is the
+    common case and the worker then runs on its own defaults, exactly as
+    the orchestrator does.
+    """
+    from zicato.config import get_pinned_overrides  # noqa: PLC0415
+
+    return get_pinned_overrides()
+
+
 def _resolve_harmonograf_url(workspace_root: Path) -> str:
     """Best-effort harmonograf URL resolution for the worker args file.
 
@@ -878,6 +899,7 @@ __all__ = [
     "_api_key_env_names",
     "_callable_dotted_path",
     "_checkout_run_snapshot",
+    "_config_pins",
     "_discard_run_snapshot",
     "_drift_kind_wire",
     "_entry_replicate_index",

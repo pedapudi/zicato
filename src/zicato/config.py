@@ -27,7 +27,10 @@ Precedence, lowest to highest:
 1. The dataclass field defaults.
 2. The environment (``ZICATO_*`` variables — all enumerated in
    :data:`_ENV_BINDINGS`).
-3. The explicit ``overrides`` mapping passed to :func:`load_config`.
+3. Process-pinned overrides (:func:`pin_overrides`) — how CLI flags
+   land on the tree: a command pins the flag values once at startup and
+   every later :func:`load_config` call in the process sees them.
+4. The explicit ``overrides`` mapping passed to :func:`load_config`.
 
 Programmatic construction
 -------------------------
@@ -40,6 +43,20 @@ involved at all::
 That is the supported way for an embedding application to pin
 configuration. :func:`load_config` is a convenience that layers the
 environment underneath such an override.
+
+CLI flags → the config tree
+---------------------------
+
+Operator knobs are CLI flags (plus, for some knobs, a workspace
+``config.json`` block) — not environment variables. A flag reaches the
+deep call sites that re-resolve configuration via :func:`load_config`
+through :func:`pin_overrides`: the CLI command validates and pins the
+flag values once at startup, and every subsequent :func:`load_config`
+in the process layers those pins on top of the environment. The
+tournament runner threads the pins across the worker subprocess
+boundary in the worker args file, so a flag like
+``--harness-call-timeout-ms`` is honoured inside the worker where the
+value is actually consumed.
 
 Env-var surface
 ---------------
@@ -127,9 +144,10 @@ class AuxConfig:
         Per-call wall-clock budget, in seconds, for every auxiliary-LLM
         invocation. A hung auxiliary endpoint can wedge a round; each
         call site wraps its ``aux_call_llm`` invocation in
-        :func:`asyncio.wait_for` against this budget. A non-positive
-        value is meaningless (it would short-circuit every call), so
-        :func:`load_config` clamps it back to the default.
+        :func:`asyncio.wait_for` against this budget. Operators tune it
+        with ``zicato evolve --aux-call-timeout``. A non-positive value
+        is meaningless — it would short-circuit every call — and the
+        flag rejects it up front.
     """
 
     call_timeout_s: float = 120.0
@@ -146,18 +164,24 @@ class IntegrationConfig:
         invocation's telemetry to. Empty string (the default) means
         zicato auto-launches its own harmonograf bound to a free
         localhost port at evolve startup (see
-        :mod:`zicato.telemetry.harmonograf_supervisor`). Set this to opt
-        out of auto-launch and stream to an external long-lived
-        harmonograf instead — useful for collecting traffic from many
-        zicato invocations into a single shared console. The full
-        integration design (server lifecycle, the board-run vs meta-loop
-        session taxonomy, and the two dashboard surfaces) lives in
-        ``docs/design/HARMONOGRAF.md``.
+        :mod:`zicato.telemetry.harmonograf_supervisor`). Operators set
+        it with ``zicato evolve --harmonograf-url`` (or the workspace
+        ``config.json`` key ``harmonograf_url``) to opt out of
+        auto-launch and stream to an external long-lived harmonograf
+        instead — useful for collecting traffic from many zicato
+        invocations into a single shared console. The full integration
+        design (server lifecycle, the board-run vs meta-loop session
+        taxonomy, and the two dashboard surfaces) lives in
+        ``docs/design/HARMONOGRAF.md``. Note the auto-launch path also
+        broadcasts the resolved URL through the INTERNAL
+        ``ZICATO_HARMONOGRAF_URL`` handoff channel — see
+        :mod:`zicato.telemetry.sink` — which is not an operator surface.
     supervisor_binary:
         Filesystem path to the ``zicato-supervisor`` watchdog binary, or
         empty string to fall back to the in-tree release build and then
-        the system ``PATH``. Mostly used by tests pointing at a sentinel
-        script.
+        the system ``PATH``. Operators set it with ``zicato evolve
+        --supervisor-binary``; mostly used by tests pointing at a
+        sentinel script.
     """
 
     harmonograf_url: str = ""
@@ -173,8 +197,10 @@ class DashboardConfig:
     static_dir:
         Filesystem path to the bundled dashboard static-asset directory,
         or empty string to fall back to the in-tree
-        ``supervisor/static`` directory. Useful for installed wheels
-        that relocate the bundle and for tests.
+        ``zicato/dashboard/static`` directory. Operators set it with
+        ``zicato dashboard --static-dir`` / ``zicato builder
+        --static-dir``. Useful for installed wheels that relocate the
+        bundle and for tests.
     """
 
     static_dir: str = ""
@@ -187,15 +213,9 @@ class RuntimeTuningConfig:
     This sub-config exists so ``parallelism`` — historically hardcoded
     at :class:`zicato.core.types.RuntimeConfig`'s default and not
     settable through *any* mechanism — becomes a discoverable, typed,
-    documented field.
-
-    Note
-    ----
-    Wiring this value into :class:`zicato.core.types.RuntimeConfig` (the
-    runtime/watchdog config) is intentionally out of this module's
-    scope; the field is surfaced here so the knob is discoverable and a
-    follow-up can thread it through the ``RuntimeConfig`` construction
-    site.
+    documented field. :func:`zicato.runtime_factory.make_runtime_config`
+    threads it into the :class:`zicato.core.types.RuntimeConfig` it
+    builds.
 
     Fields
     ------
@@ -205,8 +225,10 @@ class RuntimeTuningConfig:
         unit per board entry; in full mode a unit runs its champion and
         challenger runs concurrently (so ``parallelism`` units mean up to
         ``2 * parallelism`` subprocesses), in fast mode only the
-        challenger. ``1`` admits one board unit at a time. Must be
-        ``>= 1``.
+        challenger. ``1`` admits one board unit at a time. Operators
+        tune it with ``zicato evolve --parallelism`` (or the workspace
+        ``config.json``'s ``runtime.parallelism``; the flag wins). Must
+        be ``>= 1``.
     harness_call_timeout_ms:
         Per-LLM-call wall-clock budget, in milliseconds, for the *inner
         harness* agent's calls — distinct from
@@ -216,8 +238,8 @@ class RuntimeTuningConfig:
         exceeds on a long prompt under concurrency; zicato raises the
         default to a value sized for reasoning-model latency and
         threads it into the goldfive ``RuntimeConfig`` it constructs
-        for every ``goldfive.run`` call. Operators tune via
-        ``ZICATO_HARNESS_CALL_TIMEOUT_MS``. Must be ``>= 1``.
+        for every ``goldfive.run`` call. Operators tune it with
+        ``zicato evolve --harness-call-timeout-ms``. Must be ``>= 1``.
     """
 
     parallelism: int = 4
@@ -282,34 +304,12 @@ def _coerce_non_negative_float(raw: str, default: float) -> float:
     return parsed if parsed >= 0.0 else default
 
 
-def _coerce_positive_float(raw: str, default: float) -> float:
-    """Parse a strictly-positive float; fall back to ``default`` on invalid input.
-
-    A non-positive value is invalid: the only consumer is the auxiliary
-    call timeout, where a 0-second budget would short-circuit every
-    call.
-    """
-    try:
-        parsed = float(raw)
-    except (TypeError, ValueError):
-        return default
-    return parsed if parsed > 0.0 else default
-
-
-def _coerce_str(raw: str, _default: str) -> str:
-    """Pass a string through verbatim — the identity coercion.
-
-    Present so every binding in :data:`_ENV_BINDINGS` has a uniform
-    ``(raw, default) -> value`` coercer signature.
-    """
-    return raw
-
-
 # ---------------------------------------------------------------------------
 # The single enumeration of every ZICATO_* environment variable
 # ---------------------------------------------------------------------------
 
-#: Every ``ZICATO_*`` environment variable zicato honours, in one place.
+#: Every ``ZICATO_*`` environment variable :func:`load_config` honours,
+#: in one place.
 #:
 #: Each entry maps an env-var name to ``(section, field, coercer)``:
 #:
@@ -320,8 +320,16 @@ def _coerce_str(raw: str, _default: str) -> str:
 #:   parses the env string and clamps invalid input to the default.
 #:
 #: :func:`load_config` walks this table; nothing else reads the
-#: environment. To add a new env-settable knob, add a field to the
-#: relevant sub-config and one row here.
+#: environment. The table only shrinks: operator knobs live on CLI
+#: flags (landing here via :func:`pin_overrides`) and in the workspace
+#: ``config.json``, not in new environment variables. The former
+#: operator-env knobs (``ZICATO_AUX_CALL_TIMEOUT``,
+#: ``ZICATO_PARALLELISM``, ``ZICATO_HARNESS_CALL_TIMEOUT_MS``,
+#: ``ZICATO_SUPERVISOR_BINARY``, ``ZICATO_DASHBOARD_STATIC_DIR``,
+#: ``ZICATO_HARMONOGRAF_URL``) were deleted in favour of flags — a set
+#: variable is simply ignored. (``ZICATO_HARMONOGRAF_URL`` survives
+#: ONLY as the internal auto-launch handoff channel read by
+#: :mod:`zicato.telemetry.sink`, not as a ``load_config`` binding.)
 _ENV_BINDINGS: dict[str, tuple[str, str, Any]] = {
     "ZICATO_HEALTH_SCORING_WINDOW": ("health", "scoring_window", _coerce_positive_int),
     "ZICATO_HEALTH_SCORING_EPSILON": ("health", "scoring_epsilon", _coerce_non_negative_float),
@@ -340,16 +348,6 @@ _ENV_BINDINGS: dict[str, tuple[str, str, Any]] = {
         "health",
         "generalization_gap_crit",
         _coerce_non_negative_float,
-    ),
-    "ZICATO_AUX_CALL_TIMEOUT": ("aux", "call_timeout_s", _coerce_positive_float),
-    "ZICATO_HARMONOGRAF_URL": ("integration", "harmonograf_url", _coerce_str),
-    "ZICATO_SUPERVISOR_BINARY": ("integration", "supervisor_binary", _coerce_str),
-    "ZICATO_DASHBOARD_STATIC_DIR": ("dashboard", "static_dir", _coerce_str),
-    "ZICATO_PARALLELISM": ("runtime", "parallelism", _coerce_positive_int),
-    "ZICATO_HARNESS_CALL_TIMEOUT_MS": (
-        "runtime",
-        "harness_call_timeout_ms",
-        _coerce_positive_int,
     ),
 }
 
@@ -403,6 +401,72 @@ def _apply_overrides(config: ZicatoConfig, overrides: Mapping[str, Any]) -> Zica
     return replace(config, **section_updates)
 
 
+# ---------------------------------------------------------------------------
+# Process-pinned overrides — how CLI flags land on the tree
+# ---------------------------------------------------------------------------
+
+#: Process-wide pinned overrides, ``{section: {field: value}}``. Written
+#: only by :func:`pin_overrides` (the CLI commands, and the tournament
+#: worker re-pinning the values its args file carried across the process
+#: boundary); read by :func:`load_config`, which layers them on top of
+#: the environment.
+_PINNED_OVERRIDES: dict[str, dict[str, Any]] = {}
+
+
+def pin_overrides(overrides: Mapping[str, Mapping[str, Any]]) -> None:
+    """Pin ``{section: {field: value}}`` overrides for the whole process.
+
+    This is the bridge from CLI flags to the config tree: a command
+    validates and pins its flag values once at startup, and every later
+    :func:`load_config` call — however deep in the call graph — sees
+    them layered on top of the environment (explicit ``overrides``
+    passed to :func:`load_config` still win).
+
+    Validation is eager: an unknown section or field raises immediately
+    (via the same check :func:`load_config` applies), so a typo fails at
+    the pin site rather than surfacing as a silently-defaulted knob
+    later. Repeated calls merge field-by-field; the latest pin of a
+    field wins.
+
+    The tournament runner serialises the current pins into every worker
+    args file and the worker re-pins them at startup, so a pinned knob
+    consumed inside the worker subprocess (e.g. the harness call
+    timeout) crosses the process boundary without an environment
+    variable.
+    """
+    # Validate loudly before mutating any state.
+    _apply_overrides(ZicatoConfig(), overrides)
+    for section_name, field_values in overrides.items():
+        _PINNED_OVERRIDES.setdefault(section_name, {}).update(dict(field_values))
+
+
+def get_pinned_overrides() -> dict[str, dict[str, Any]]:
+    """Return a deep copy of the process-pinned overrides.
+
+    Used by the tournament runner to thread the pins across the worker
+    subprocess boundary (the copy is JSON-serialisable as long as pinned
+    values are, which every CLI-flag value is), and by tests.
+    """
+    return {section: dict(fields_map) for section, fields_map in _PINNED_OVERRIDES.items()}
+
+
+def pinned_override(section: str, field: str) -> Any | None:
+    """Return the pinned value for ``section.field``, or ``None`` if unpinned.
+
+    For the rare call site that must distinguish "the operator
+    explicitly pinned this knob" from "the knob is at its default" —
+    e.g. :func:`zicato.runtime_factory.make_runtime_config`, where an
+    explicit ``--parallelism`` flag outranks the workspace
+    ``config.json`` value but the mere default must not.
+    """
+    return _PINNED_OVERRIDES.get(section, {}).get(field)
+
+
+def clear_pinned_overrides() -> None:
+    """Drop every process-pinned override (test isolation)."""
+    _PINNED_OVERRIDES.clear()
+
+
 def load_config(
     *,
     env: Mapping[str, str] = os.environ,
@@ -421,10 +485,12 @@ def load_config(
     2. ``env`` — every ``ZICATO_*`` variable in :data:`_ENV_BINDINGS`.
        Invalid values (unparseable, or out of a field's meaningful
        range) are clamped back to the default by the field's coercer.
-    3. ``overrides`` — an explicit nested ``{section: {field: value}}``
-       mapping. Values here win over both defaults and the environment;
-       this is how an embedding application pins configuration on top of
-       whatever the environment supplies.
+    3. Process-pinned overrides (:func:`pin_overrides`) — CLI-flag
+       values pinned once at command startup.
+    4. ``overrides`` — an explicit nested ``{section: {field: value}}``
+       mapping. Values here win over everything; this is how an
+       embedding application pins configuration on top of whatever the
+       environment and the CLI supply.
 
     Parameters
     ----------
@@ -451,6 +517,8 @@ def load_config(
     config = ZicatoConfig()
     if section_updates:
         config = _apply_overrides(config, section_updates)
+    if _PINNED_OVERRIDES:
+        config = _apply_overrides(config, _PINNED_OVERRIDES)
     if overrides:
         config = _apply_overrides(config, overrides)
     return config
@@ -465,4 +533,8 @@ __all__ = [
     "ZicatoConfig",
     "load_config",
     "describe_env_vars",
+    "pin_overrides",
+    "get_pinned_overrides",
+    "pinned_override",
+    "clear_pinned_overrides",
 ]

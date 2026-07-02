@@ -88,6 +88,36 @@ def test_builder_invokes_server_run_and_surfaces_the_builder_url(
     assert "http://127.0.0.1:8123/#/builder" in result.output
 
 
+def test_builder_static_dir_flag_threads_to_server_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``zicato builder --static-dir`` reaches ``server.run`` verbatim.
+
+    The flag shadows the ``dashboard.static_dir`` config knob, exactly
+    as on ``zicato dashboard``.
+    """
+    import types
+
+    captured: dict[str, Any] = {}
+
+    def _fake_run(**kwargs: Any) -> None:
+        captured.update(kwargs)
+
+    fake_server = types.SimpleNamespace(run=_fake_run)
+    fake_pkg = types.SimpleNamespace(server=fake_server)
+    monkeypatch.setitem(__import__("sys").modules, "zicato.dashboard", fake_pkg)
+    monkeypatch.setitem(__import__("sys").modules, "zicato.dashboard.server", fake_server)
+
+    custom = tmp_path / "assets"
+    runner = CliRunner()
+    result = runner.invoke(
+        builder_cmd,
+        ["--workspace", str(tmp_path), "--static-dir", str(custom)],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["static_dir"] == custom
+
+
 def test_builder_binds_loopback_only(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """The bind address is fixed at loopback — never a routable interface."""
     import types

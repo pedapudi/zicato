@@ -218,6 +218,7 @@ from zicato.tournament.worker_transport import (  # noqa: F401
     _adapter_spec,
     _callable_dotted_path,
     _checkout_run_snapshot,
+    _config_pins,
     _discard_run_snapshot,
     _drift_kind_wire,
     _entry_replicate_index,
@@ -596,6 +597,14 @@ async def _run_single(
                 "harmonograf_url": (_hg_url := _resolve_harmonograf_url(workspace_root)),
                 "harmonograf_grpc": _resolve_harmonograf_grpc(workspace_root, _hg_url),
                 "weights": _weights_spec(weights),
+                # Process-pinned config overrides (CLI flags such as
+                # --harness-call-timeout-ms / --aux-call-timeout, pinned
+                # via zicato.config.pin_overrides). The worker re-pins
+                # them at startup so a flag whose knob is consumed
+                # INSIDE the worker (the adapter's per-call harness
+                # timeout, the judge/emulator aux budget) crosses the
+                # process boundary without an environment variable.
+                "config_pins": _config_pins(),
             }
             args_path.write_text(json.dumps(args_payload), encoding="utf-8")
         except (ValueError, OSError) as exc:

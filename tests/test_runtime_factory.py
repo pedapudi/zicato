@@ -106,14 +106,11 @@ def test_runtime_config_diversity_tolerance_out_of_range_raises(tmp_path: Path) 
         )
 
 
-def test_runtime_config_parallelism_workspace_value_wins(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_runtime_config_parallelism_workspace_value_wins_over_default(
+    tmp_path: Path,
 ) -> None:
-    """An explicit ``runtime.parallelism`` in the workspace config wins.
-
-    It must override even an env-backed ``ZICATO_PARALLELISM`` value.
-    """
-    monkeypatch.setenv("ZICATO_PARALLELISM", "7")
+    """An explicit ``runtime.parallelism`` in the workspace config wins
+    over the typed-config default (no flag pinned)."""
     cfg = make_runtime_config(
         {"runtime": {"parallelism": 3}},
         workspace_root=tmp_path,
@@ -123,10 +120,31 @@ def test_runtime_config_parallelism_workspace_value_wins(
     assert cfg.parallelism == 3
 
 
-def test_runtime_config_parallelism_env_fallback(
+def test_runtime_config_parallelism_pinned_flag_wins_over_workspace(
+    tmp_path: Path,
+) -> None:
+    """A pinned ``--parallelism`` flag outranks the workspace config.
+
+    The flag is a per-invocation operator decision; the workspace
+    ``config.json`` is the per-workspace default. The pin is applied
+    exactly as the evolve CLI applies it.
+    """
+    from zicato.config import pin_overrides
+
+    pin_overrides({"runtime": {"parallelism": 7}})
+    cfg = make_runtime_config(
+        {"runtime": {"parallelism": 3}},
+        workspace_root=tmp_path,
+        harness_call_llm=_stub_harness,
+        auxiliary_call_llm=_stub_aux,
+    )
+    assert cfg.parallelism == 7
+
+
+def test_runtime_config_parallelism_env_var_is_ignored(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """With no workspace value, the env-backed typed config supplies it."""
+    """The deleted ``ZICATO_PARALLELISM`` env var is ignored entirely."""
     monkeypatch.setenv("ZICATO_PARALLELISM", "9")
     cfg = make_runtime_config(
         {"runtime": {}},
@@ -134,14 +152,11 @@ def test_runtime_config_parallelism_env_fallback(
         harness_call_llm=_stub_harness,
         auxiliary_call_llm=_stub_aux,
     )
-    assert cfg.parallelism == 9
+    assert cfg.parallelism == 4
 
 
-def test_runtime_config_parallelism_default(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """With neither a workspace value nor an env var, the default 4 holds."""
-    monkeypatch.delenv("ZICATO_PARALLELISM", raising=False)
+def test_runtime_config_parallelism_default(tmp_path: Path) -> None:
+    """With neither a workspace value nor a pinned flag, the default 4 holds."""
     cfg = make_runtime_config(
         {},
         workspace_root=tmp_path,

@@ -2,10 +2,11 @@
 ``zicato.cli.commands.evolve``.
 
 ``zicato evolve`` spawns two children: the watchdog-only supervisor
-binary and the Python dashboard service. These tests use a sentinel
+binary and the Python dashboard service. These tests pin a sentinel
 shell script (instead of the real Rust binary) as the
-``ZICATO_SUPERVISOR_BINARY`` so the test runs without the supervisor
-crate being built, and assert the dashboard spawn argv.
+``integration.supervisor_binary`` config knob — exactly as the
+``--supervisor-binary`` flag pins it — so the test runs without the
+supervisor crate being built, and assert the dashboard spawn argv.
 """
 
 from __future__ import annotations
@@ -41,25 +42,41 @@ def _write_sentinel(tmp_path: Path) -> Path:
     return script
 
 
-def test_resolve_supervisor_binary_uses_env_override(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """``ZICATO_SUPERVISOR_BINARY`` short-circuits resolution."""
+def _pin_supervisor_binary(path: Path) -> None:
+    """Pin the watchdog binary exactly as ``--supervisor-binary`` does."""
+    from zicato.config import pin_overrides
+
+    pin_overrides({"integration": {"supervisor_binary": str(path)}})
+
+
+def test_resolve_supervisor_binary_uses_pinned_flag(tmp_path: Path) -> None:
+    """A pinned ``--supervisor-binary`` value short-circuits resolution."""
     sentinel = _write_sentinel(tmp_path)
-    monkeypatch.setenv("ZICATO_SUPERVISOR_BINARY", str(sentinel))
+    _pin_supervisor_binary(sentinel)
     resolved = _resolve_supervisor_binary()
     assert resolved == sentinel
+
+
+def test_resolve_supervisor_binary_ignores_deleted_env_var(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``ZICATO_SUPERVISOR_BINARY`` was deleted for ``--supervisor-binary``."""
+    sentinel = _write_sentinel(tmp_path)
+    monkeypatch.setenv("ZICATO_SUPERVISOR_BINARY", str(sentinel))
+    # Strip PATH so the deleted env var is the only way the sentinel
+    # could ever be found — it must not be.
+    monkeypatch.setenv("PATH", "/nonexistent")
+    assert _resolve_supervisor_binary() != sentinel
 
 
 def test_resolve_supervisor_binary_returns_none_when_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """If env override + bundled + PATH + dev-checkout all miss, returns ``None``."""
-    monkeypatch.delenv("ZICATO_SUPERVISOR_BINARY", raising=False)
-    # Point env at a non-executable; resolver should fall through.
+    """If flag pin + bundled + PATH + dev-checkout all miss, returns ``None``."""
+    # Pin a non-executable; resolver should fall through.
     not_executable = tmp_path / "not-exec"
     not_executable.write_text("")
-    monkeypatch.setenv("ZICATO_SUPERVISOR_BINARY", str(not_executable))
+    _pin_supervisor_binary(not_executable)
     # Strip PATH so the system zicato-supervisor (if any) is unreachable.
     monkeypatch.setenv("PATH", "/nonexistent")
     # The bundled (zicato/_bin/) and dev-checkout (target/release/)
@@ -123,9 +140,8 @@ def _fake_checkout(
     if dev_mtime is not None:
         _make_exec(dev, dev_mtime)
 
-    # No env override, and an empty PATH so a system zicato-supervisor never
-    # leaks into the resolution under test.
-    monkeypatch.delenv("ZICATO_SUPERVISOR_BINARY", raising=False)
+    # No flag pin (the autouse fixture cleared any), and an empty PATH so
+    # a system zicato-supervisor never leaks into the resolution under test.
     monkeypatch.setenv("PATH", str(tmp_path / "empty-path"))
     return bundled, dev
 
@@ -175,14 +191,14 @@ def test_resolve_dev_only_bundled_absent(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert _resolve_supervisor_binary() == dev
 
 
-def test_resolve_env_override_beats_dev_checkout(
+def test_resolve_pinned_flag_beats_dev_checkout(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """An explicit ``ZICATO_SUPERVISOR_BINARY`` short-circuits everything,
+    """A pinned ``--supervisor-binary`` short-circuits everything,
     even a present-and-newer dev-checkout build."""
     _bundled, _dev = _fake_checkout(monkeypatch, tmp_path, bundled_mtime=1000.0, dev_mtime=9000.0)
     override = _make_exec(tmp_path / "override" / "zicato-supervisor", 4242.0)
-    monkeypatch.setenv("ZICATO_SUPERVISOR_BINARY", str(override))
+    _pin_supervisor_binary(override)
     assert _resolve_supervisor_binary() == override
 
 
@@ -210,7 +226,7 @@ def test_supervisor_spawned_with_no_dashboard(
     supervisor must run watchdog-only.
     """
     sentinel = _write_sentinel(tmp_path)
-    monkeypatch.setenv("ZICATO_SUPERVISOR_BINARY", str(sentinel))
+    _pin_supervisor_binary(sentinel)
 
     captured: dict[str, tuple[str, ...]] = {}
 
@@ -237,7 +253,7 @@ def test_supervisor_spawned_with_no_dashboard(
 def test_spawn_and_terminate_round_trip(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Spawn the sentinel, observe it's running, terminate it cleanly."""
     sentinel = _write_sentinel(tmp_path)
-    monkeypatch.setenv("ZICATO_SUPERVISOR_BINARY", str(sentinel))
+    _pin_supervisor_binary(sentinel)
 
     async def _scenario() -> None:
         proc = await _maybe_spawn_supervisor(tmp_path, disabled=False)
@@ -365,7 +381,7 @@ def test_spawn_helpers_isolate_children_in_new_sessions(
     at the dashboard child take down the evolve orchestrator with it.
     """
     sentinel = _write_sentinel(tmp_path)
-    monkeypatch.setenv("ZICATO_SUPERVISOR_BINARY", str(sentinel))
+    _pin_supervisor_binary(sentinel)
 
     captured: list[dict[str, object]] = []
 

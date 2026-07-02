@@ -245,6 +245,53 @@ class AbortingAdapter:
         }
 
 
+class _ConfigProbeSession:
+    """A session that records the WORKER process's resolved typed config.
+
+    Writes the worker-side ``load_config()`` view of the two knobs that
+    are consumed inside the worker (the aux call budget and the harness
+    call timeout) to ``config_probe.json`` next to the events file. The
+    config-pins threading test reads it back to prove a value pinned in
+    the ORCHESTRATOR process (a CLI flag) crossed the subprocess
+    boundary via the args file — with no environment variable involved.
+    """
+
+    async def run(self, entry: Any, sink_path: Path) -> None:
+        import json  # noqa: PLC0415
+
+        from zicato.config import load_config  # noqa: PLC0415
+
+        del entry
+        cfg = load_config()
+        probe = {
+            "aux_call_timeout_s": cfg.aux.call_timeout_s,
+            "harness_call_timeout_ms": cfg.runtime.harness_call_timeout_ms,
+        }
+        sink_path.parent.mkdir(parents=True, exist_ok=True)
+        (sink_path.parent / "config_probe.json").write_text(json.dumps(probe), encoding="utf-8")
+        sink_path.write_text("", encoding="utf-8")
+
+
+class ConfigProbeAdapter:
+    """Adapter whose session records the worker's resolved typed config."""
+
+    name = "stub"
+
+    def load(self, generation_root: Path) -> _ConfigProbeSession:
+        del generation_root
+        return _ConfigProbeSession()
+
+    def mutation_points(self, source_roots: Any = None) -> list[Any]:
+        del source_roots
+        return []
+
+    def worker_spec(self) -> dict[str, Any]:
+        return {
+            "kind": "import",
+            "factory": "tests._subprocess_worker_support:make_config_probe_adapter",
+        }
+
+
 class StubAdapter:
     """A minimal :class:`~zicato.adapters.base.HarnessAdapter`-shaped object.
 
@@ -299,6 +346,11 @@ class SleepingAdapter:
 def make_stub_adapter() -> StubAdapter:
     """Factory used by the ``import`` adapter spec for the happy path."""
     return StubAdapter()
+
+
+def make_config_probe_adapter() -> ConfigProbeAdapter:
+    """Factory for the adapter that records the worker's resolved config."""
+    return ConfigProbeAdapter()
 
 
 def make_snapshot_writing_adapter() -> SnapshotWritingAdapter:
