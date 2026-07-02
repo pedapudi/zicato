@@ -313,6 +313,48 @@ function rungStepperDigest({ stepIndex, stepCount } = {}) {
   return 'step|' + (stepIndex == null ? '?' : stepIndex) + '/' + (stepCount == null ? '?' : stepCount);
 }
 
+// ── the ROUND-PIPELINE stepper (WS4-A item 4) ─────────────────────────
+//
+// A compact propose → apply → run → gate stepper rendering the SERVER's
+// authoritative /api/live/pipeline projection VERBATIM — the reader owns
+// the phase-string inference; this builder never re-derives loop position
+// from phase tokens. One pip+label per step (done = filled/muted, active =
+// accent, pending = hollow), the active step's detail beside it, and the
+// gate decision word once the round settles. Pure: builds detached DOM.
+export function pipelineStepper(pipe) {
+  const steps = (pipe && Array.isArray(pipe.steps)) ? pipe.steps : [];
+  const wrap = el('div', { class: 'dt-pipe', role: 'img', 'aria-label': 'round pipeline' });
+  steps.forEach((s, i) => {
+    if (!s || !s.id) return;
+    const state = (s.state === 'done' || s.state === 'active') ? s.state : 'pending';
+    if (i > 0) wrap.appendChild(el('span', { class: 'dt-pipe-sep', 'aria-hidden': 'true', text: '→' }));
+    const node = el('span', { class: 'dt-pipe-step dt-pipe-' + state, 'data-step': String(s.id) }, [
+      el('span', { class: 'dt-pipe-dot', 'aria-hidden': 'true' }),
+      el('span', { class: 'dt-pipe-label', text: s.label || s.id }),
+      (state === 'active' && s.detail)
+        ? el('span', { class: 'dt-pipe-detail dn-faint', text: s.detail }) : null,
+    ].filter(Boolean));
+    wrap.appendChild(node);
+  });
+  if (pipe && pipe.decision) {
+    wrap.appendChild(el('span', {
+      class: 'dt-pipe-decision' + (pipe.decision === 'promoted' ? ' dn-good-t' : ' dn-faint'),
+      text: '· ' + pipe.decision,
+    }));
+  }
+  return wrap;
+}
+
+// The stepper digest: step states + the active detail + the decision — a
+// steady heartbeat re-serving the same projection is byte-identical (zero
+// DOM); a step advancing / a detail moving / the verdict landing flips it.
+export function pipelineStepperDigest(pipe) {
+  if (!pipe || !Array.isArray(pipe.steps)) return 'none';
+  return 'pipe|' + pipe.steps.map((s) => [
+    s && s.id, s && s.state, (s && s.state === 'active' && s.detail) ? s.detail : '',
+  ].join(':')).join('|') + '|' + (pipe.decision || '') + '|' + (pipe.running ? 'R' : '-');
+}
+
 // ── the activity ticker (append-only, capped, NEVER repaints) ─────────
 //
 // A compact streaming feed. New events are PREPENDED (newest on top), the list
@@ -606,6 +648,7 @@ export class LiveController {
     this._matchesDigest = null;
     this._metaKey = null;
     this._stepDigest = null;
+    this._pipeDigest = null;
     this.ticker = new ActivityTicker({ cap: o.cap || 40 });
     this._build();
   }
@@ -628,7 +671,12 @@ export class LiveController {
       this._pillText,
     ]);
     this._meta = el('span', { class: 'dt-live-hero-meta', text: '' });
-    const head = el('div', { class: 'dt-live-hero-head' }, [this._pill, this._meta]);
+    // the ROUND-PIPELINE stepper host (propose→apply→run→gate) — filled by
+    // updatePipeline() with the server's authoritative projection, digest-
+    // gated; empty (and invisible) when the endpoint is absent (Rust
+    // supervisor) or the pipeline is idle.
+    this._pipeHost = el('span', { class: 'dt-live-hero-pipe' });
+    const head = el('div', { class: 'dt-live-hero-head' }, [this._pill, this._meta, this._pipeHost]);
 
     // ── 2. THE RACE STATE — the PRIMARY, FULL-WIDTH viz ─────────────────
     // The scalar number-line fills the hero width (it IS the hero). A compact
@@ -683,7 +731,11 @@ export class LiveController {
     this._seq = seq;
     if (events.length) this.ticker.push(events);
     this._prevSnap = alive ? snap : null;
-    if (!alive) { this._funnelDigest = null; this._matchesDigest = null; this._metaKey = null; this._stepDigest = null; return false; }
+    if (!alive) {
+      this._funnelDigest = null; this._matchesDigest = null; this._metaKey = null; this._stepDigest = null;
+      this.updatePipeline(null);
+      return false;
+    }
 
     // ── tournament-level progress: the ONE rung-number source of truth ──
     // liveProgress reads the live TOPOLOGY (resolved rungs + the active rung),
@@ -731,6 +783,25 @@ export class LiveController {
     // completed / stale-foreign shows the honest placeholder.
     this._updateStructure(activeTournament, heartbeat, activeRuns);
     return true;
+  }
+
+  // Drive the round-pipeline stepper from the server's /api/live/pipeline
+  // projection. Digest-gated: a steady heartbeat re-serving the same
+  // projection writes ZERO DOM; a step advancing repaints. `null` (endpoint
+  // absent — the Rust supervisor — or the hero going idle) clears the host,
+  // degrading the head to exactly its pre-stepper reading.
+  updatePipeline(pipe) {
+    if (!this._pipeHost) return;
+    // an idle projection (all steps pending, nothing decided) reads as no
+    // stepper — the meta line already says "proposing …" etc. while filling.
+    const idle = !pipe || !Array.isArray(pipe.steps)
+      || (!pipe.decision && pipe.steps.every((s) => !s || (s.state !== 'active' && s.state !== 'done')));
+    const digest = idle ? 'none' : pipelineStepperDigest(pipe);
+    if (digest === this._pipeDigest && (idle || this._pipeHost.firstChild)) return;
+    this._pipeDigest = digest;
+    clear(this._pipeHost);
+    if (idle) return;
+    this._pipeHost.appendChild(pipelineStepper(pipe));
   }
 
   // Build the ONE muted metadata baseline as an ordered token list:

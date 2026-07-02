@@ -1636,6 +1636,23 @@
     border-bottom: 1px solid var(--v2-rule);
   }
 
+  /* the ROUND-PIPELINE stepper (propose → apply → run → gate) in the live
+   * hero head — renders the server's /api/live/pipeline projection verbatim.
+   * done = muted filled pip; active = accent pip + label; pending = hollow. */
+  .dt-live-hero-pipe { display: inline-flex; align-items: center; margin-left: 14px; min-width: 0; }
+  .dt-pipe { display: inline-flex; align-items: center; gap: 6px;
+    font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
+  .dt-pipe-step { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .dt-pipe-dot { width: 7px; height: 7px; border-radius: 50%; border: 1px solid var(--v2-rule);
+    background: transparent; flex: none; }
+  .dt-pipe-done .dt-pipe-dot { background: var(--v2-ink-faint); border-color: var(--v2-ink-faint); }
+  .dt-pipe-done .dt-pipe-label { color: var(--v2-ink-soft); }
+  .dt-pipe-active .dt-pipe-dot { background: var(--v2-good); border-color: var(--v2-good); }
+  .dt-pipe-active .dt-pipe-label { color: var(--v2-ink); font-weight: 600; }
+  .dt-pipe-detail { margin-left: 2px; }
+  .dt-pipe-sep { color: var(--v2-rule); }
+  .dt-pipe-decision { margin-left: 4px; }
+
   /* the topbar LOOP CONTROLS (pause/resume + skip-round). Same quiet chrome
    * as the back control; the ARMED skip confirm reads in caution ink so the
    * two-step is visually explicit. Hidden entirely when read-only / idle

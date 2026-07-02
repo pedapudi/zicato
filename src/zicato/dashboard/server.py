@@ -253,6 +253,7 @@ def create_app(
         Route("/api/active-runs", handlers["api_active_runs"]),
         Route("/api/active-tournament", handlers["api_active_tournament"]),
         Route("/api/heartbeat", handlers["api_heartbeat"]),
+        Route("/api/live/pipeline", handlers["api_live_pipeline"]),
         Route("/api/tournaments", handlers["api_tournaments"]),
         Route(
             "/api/tournament-structure/{epoch_id}/{tournament_id}",

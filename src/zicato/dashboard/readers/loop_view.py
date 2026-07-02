@@ -25,9 +25,16 @@ so the floor still surfaces on a degraded read.
 
 from __future__ import annotations
 
+import datetime as _dt
 from typing import Any
 
-from zicato.dashboard.readers.paths import WorkspacePaths, _read_json_value
+from zicato.dashboard.readers.paths import (
+    WorkspacePaths,
+    _iso,
+    _parse_iso,
+    _read_json_value,
+    _utc_now,
+)
 
 
 def _epoch_noise_floor(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any] | None:
@@ -188,7 +195,241 @@ def build_tournament_cost(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any
         return _empty_cost(epoch_id, "index unreadable")
 
 
+# ---------------------------------------------------------------------------
+# The authoritative live ROUND-PIPELINE projection (propose → apply → run →
+# gate). The server owns the inference the JS used to do by parsing phase
+# strings, so every consumer reads ONE verdict.
+# ---------------------------------------------------------------------------
+
+#: The four pipeline steps, in loop order.
+PIPELINE_STEPS: tuple[tuple[str, str], ...] = (
+    ("propose", "propose"),
+    ("apply", "apply"),
+    ("run", "run"),
+    ("gate", "gate"),
+)
+
+#: Heartbeat staleness window (mirrors the frontend's STALE_HEARTBEAT_MS —
+#: livestatus.js): a frozen heartbeat must never read as a live pipeline.
+_STALE_HEARTBEAT_S = 30.0
+
+#: Heartbeat-phase tokens that mean "the loop is at rest" — mirrors the
+#: frontend's IDLE_PHASES (livestatus.js) so the two liveness reads agree.
+_IDLE_HEADS = frozenset(
+    {"", "idle", "done", "complete", "completed", "finished", "stopped", "error"}
+)
+
+
+def _phase_round_index(segments: list[str]) -> int | None:
+    """Extract the evolve-round index from phase segments, or ``None``."""
+    for seg in segments:
+        for prefix in ("round_", "after_round_"):
+            if seg.startswith(prefix):
+                tail = seg[len(prefix) :]
+                if tail.isdigit():
+                    return int(tail)
+    return None
+
+
+def _field_counts(tournament: dict[str, Any] | None) -> dict[str, int] | None:
+    """Tally the active tournament's ``field_status`` slots, or ``None``.
+
+    Returns ``{proposing, applied, rejected, total}`` when the (epoch-
+    scoped) live tournament carries per-slot proposing-step outcomes.
+    """
+    if not isinstance(tournament, dict):
+        return None
+    raw = tournament.get("field_status")
+    if not isinstance(raw, list) or not raw:
+        return None
+    counts = {"proposing": 0, "applied": 0, "rejected": 0, "total": 0}
+    for slot in raw:
+        if not isinstance(slot, dict):
+            continue
+        status = str(slot.get("status", ""))
+        counts["total"] += 1
+        if status == "proposing":
+            counts["proposing"] += 1
+        elif status == "applied":
+            counts["applied"] += 1
+        else:
+            counts["rejected"] += 1
+    return counts if counts["total"] else None
+
+
+def _project_pipeline(
+    phase: str,
+    *,
+    field_counts: dict[str, int] | None = None,
+    tournament_phase: str | None = None,
+    run_count: int = 0,
+) -> tuple[list[dict[str, str]], str | None, str | None]:
+    """The pure propose→apply→run→gate inference (unit-testable).
+
+    Returns ``(steps, active_step, decision)`` where each step is
+    ``{id, label, state, detail}`` with ``state`` ∈ pending | active |
+    done. This is the single place the phase-string vocabulary
+    (``proposing:… / tournament:… / done:… / after_round_…``) is decoded
+    for the pipeline display — the JS renders the verdict verbatim.
+    """
+    states = {sid: "pending" for sid, _ in PIPELINE_STEPS}
+    details = {sid: "" for sid, _ in PIPELINE_STEPS}
+    active: str | None = None
+    decision: str | None = None
+
+    segments = [s for s in str(phase or "").strip().lower().split(":") if s]
+    head = segments[0] if segments else ""
+
+    fc = field_counts
+    field_detail = ""
+    if fc is not None:
+        field_detail = f"{fc['applied']} applied · {fc['rejected']} rejected"
+
+    if head in ("proposing", "evolve_once"):
+        if fc is not None and fc["proposing"] == 0:
+            # every slot settled but the tournament has not opened yet —
+            # the patches are applied/validated; the field is being staged.
+            states["propose"] = "done"
+            states["apply"] = "active"
+            details["propose"] = f"{fc['total']} slot" + ("s" if fc["total"] != 1 else "")
+            details["apply"] = field_detail
+            active = "apply"
+        else:
+            states["propose"] = "active"
+            if fc is not None:
+                settled = fc["total"] - fc["proposing"]
+                details["propose"] = f"{settled}/{fc['total']} slots settled"
+                if settled:
+                    details["apply"] = field_detail
+            active = "propose"
+    elif head == "tournament":
+        states["propose"] = "done"
+        states["apply"] = "done"
+        if fc is not None:
+            details["apply"] = field_detail
+        at_completed = str(tournament_phase or "").lower() in ("completed", "complete", "done")
+        if any("bt-replicate" in s for s in segments):
+            # the evidence pre-gate's replicate audit — the GATE is deciding.
+            states["run"] = "done"
+            states["gate"] = "active"
+            details["gate"] = "evidence audit · replicate duels"
+            active = "gate"
+        elif at_completed:
+            # every unit settled, verdict pending — the gate is deciding.
+            states["run"] = "done"
+            states["gate"] = "active"
+            details["gate"] = "deciding"
+            active = "gate"
+        else:
+            states["run"] = "active"
+            if run_count > 0:
+                plural = "s" if run_count != 1 else ""
+                details["run"] = f"{run_count} unit{plural} in flight"
+            active = "run"
+    elif head == "done" or head.startswith("after_round_"):
+        for sid, _ in PIPELINE_STEPS:
+            states[sid] = "done"
+        if fc is not None:
+            details["apply"] = field_detail
+        tail = segments[-1] if segments else ""
+        if tail in ("promoted", "rejected", "deferred", "no_decision", "crowned"):
+            decision = tail
+            details["gate"] = tail
+    # any other head (evolve_n_rounds:start/done, idle, unknown) → all pending.
+
+    steps = [
+        {"id": sid, "label": label, "state": states[sid], "detail": details[sid]}
+        for sid, label in PIPELINE_STEPS
+    ]
+    return steps, active, decision
+
+
+def build_round_pipeline(paths: WorkspacePaths) -> dict[str, Any]:
+    """The authoritative live pipeline state — ``GET /api/live/pipeline``.
+
+    Projects the propose → apply → run → gate position SERVER-SIDE from,
+    in preference order: the runtime tournament event-log fold (the
+    ``field_status`` slot outcomes + the tournament ``phase``), the
+    heartbeat ``phase`` string, and the in-flight ``active_runs`` count.
+    The reader owns the phase-string inference the JS previously did —
+    the stepper renders this verdict verbatim.
+
+    ``running`` is staleness-gated exactly like the frontend (a frozen /
+    untimestamped heartbeat is NOT live); the step projection is still
+    reported for a stale workspace so a post-mortem read stays honest.
+    Best-effort: every input degrades independently — never raises.
+    """
+    # Deferred imports: this rides the SSE-adjacent read path, keep it lean.
+    from zicato.dashboard.readers.runtime_view import (  # noqa: PLC0415
+        read_active_runs_view,
+        read_active_tournament_dict,
+        read_heartbeat_dict,
+    )
+
+    hb = read_heartbeat_dict(paths)
+    tournament = read_active_tournament_dict(paths)
+    try:
+        run_count = len(read_active_runs_view(paths))
+    except Exception:  # noqa: BLE001 — best-effort
+        run_count = 0
+
+    phase = str(hb.get("phase") or "") if isinstance(hb, dict) else ""
+    hb_epoch = str(hb.get("epoch_id") or "") if isinstance(hb, dict) else ""
+    round_index: int | None = None
+    if isinstance(hb, dict) and isinstance(hb.get("round_index"), int):
+        round_index = hb["round_index"]
+
+    # Epoch-scope the tournament exactly like the frontend's
+    # liveBelongsToEpoch: a KNOWN-and-different pair is rejected; a side
+    # with no epoch id is tolerated (legacy single-epoch payloads).
+    at: dict[str, Any] | None = tournament if isinstance(tournament, dict) else None
+    if at is not None:
+        at_epoch = str(at.get("epoch_id") or "")
+        if at_epoch and hb_epoch and at_epoch != hb_epoch:
+            at = None
+
+    segments = [s for s in phase.strip().lower().split(":") if s]
+    if round_index is None:
+        round_index = _phase_round_index(segments)
+
+    steps, active, decision = _project_pipeline(
+        phase,
+        field_counts=_field_counts(at),
+        tournament_phase=(str(at.get("phase") or "") if at is not None else None),
+        run_count=run_count,
+    )
+
+    # Staleness gate (mirrors livestatus.js): fresh = a parseable heartbeat
+    # timestamp within the window. In-flight runs corroborate liveness on
+    # their own (per-run beaters are independent of the orchestrator beat).
+    fresh = False
+    if isinstance(hb, dict):
+        ts = _parse_iso(hb.get("last_heartbeat"))
+        if ts is not None:
+            age = (_utc_now() - ts) / _dt.timedelta(seconds=1)
+            fresh = 0 <= age <= _STALE_HEARTBEAT_S
+    head = segments[0] if segments else ""
+    tail_idle = any(seg in _IDLE_HEADS for seg in segments) if segments else True
+    phase_active = head not in _IDLE_HEADS and not tail_idle
+    running = (phase_active and fresh) or run_count > 0
+
+    return {
+        "running": running,
+        "stale": isinstance(hb, dict) and not fresh,
+        "phase": phase or None,
+        "epoch_id": hb_epoch or None,
+        "round_index": round_index,
+        "steps": steps,
+        "active_step": active,
+        "decision": decision,
+        "in_flight": run_count,
+        "generated_at": _iso(_utc_now()),
+    }
+
+
 __all__ = [
+    "PIPELINE_STEPS",
     "build_optimization_trajectory",
+    "build_round_pipeline",
     "build_tournament_cost",
 ]

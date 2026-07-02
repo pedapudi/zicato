@@ -95,6 +95,7 @@ from zicato.dashboard.readers.lineage_view import (
 )
 from zicato.dashboard.readers.loop_view import (
     build_optimization_trajectory,
+    build_round_pipeline,
     build_tournament_cost,
 )
 from zicato.dashboard.readers.paths import (
@@ -277,6 +278,7 @@ __all__ = [
     "build_meta_loop_ledger",
     "build_optimization_trajectory",
     "build_per_entry_for_generation",
+    "build_round_pipeline",
     "build_per_judge_comparison",
     "build_per_judge_for_generation",
     "build_per_judge_for_run",

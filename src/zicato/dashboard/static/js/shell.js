@@ -1163,6 +1163,28 @@ function refreshLive() {
   // (LIVE or STALLED) — NOT the narrower `running` — so the panel does not
   // flicker out when `running` momentarily drops during a long reasoning call.
   if (_heroHost) patchClass(_heroHost, 'dt-hero-live', !!status.alive);
+  // The AUTHORITATIVE round-pipeline stepper: fetched server-side (the reader
+  // owns the phase-string inference) on each live tick, single-flight so a
+  // burst of state:changed pulses never stacks fetches; the controller's
+  // digest gate makes a re-served identical projection a zero-DOM no-op.
+  refreshPipeline(!!status.alive);
+}
+
+let _pipeInFlight = false;
+async function refreshPipeline(alive) {
+  if (!_live) return;
+  if (!alive) { _live.updatePipeline(null); return; }
+  if (_pipeInFlight) return;
+  _pipeInFlight = true;
+  try {
+    const pipe = await D.livePipeline();
+    _live.updatePipeline(pipe);
+  } catch (err) {
+    // absent endpoint (Rust supervisor) / transient failure → no stepper.
+    _live.updatePipeline(null);
+  } finally {
+    _pipeInFlight = false;
+  }
 }
 
 // Enable/disable the back control: it is inert at the environment root (no

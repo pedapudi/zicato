@@ -397,6 +397,14 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
     async def api_heartbeat(_request: Request) -> JSONResponse:
         return JSONResponse(state_reader.read_heartbeat_dict(paths))
 
+    async def api_live_pipeline(_request: Request) -> JSONResponse:
+        """The authoritative propose→apply→run→gate pipeline projection.
+
+        ``GET /api/live/pipeline``. The server owns the phase-string
+        inference the stepper renders — see ``build_round_pipeline``.
+        """
+        return JSONResponse(state_reader.build_round_pipeline(paths))
+
     async def api_tournaments(request: Request) -> JSONResponse:
         try:
             epoch_id = _epoch_query(request)
@@ -1125,6 +1133,7 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         "api_active_runs": api_active_runs,
         "api_active_tournament": api_active_tournament,
         "api_heartbeat": api_heartbeat,
+        "api_live_pipeline": api_live_pipeline,
         "api_tournaments": api_tournaments,
         "api_tournament_structure": api_tournament_structure,
         "api_tournament_detail": api_tournament_detail,

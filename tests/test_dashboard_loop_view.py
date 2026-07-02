@@ -9,10 +9,15 @@ confident "plateaued". These tests seed the analytical index directly
 (the ``test_tournament_detail`` fixture pattern) and exercise the readers
 plus the ``/api/epoch/{id}/trajectory`` + ``/api/epoch/{id}/cost``
 endpoints end-to-end.
+
+The round-pipeline projection (``build_round_pipeline`` /
+``GET /api/live/pipeline``) is covered here too: the server owns the
+propose→apply→run→gate inference the stepper renders verbatim.
 """
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import sqlite3
 from pathlib import Path
@@ -20,10 +25,12 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
+from zicato.dashboard.readers.loop_view import _project_pipeline
 from zicato.dashboard.server import create_app
 from zicato.dashboard.state_reader import (
     WorkspacePaths,
     build_optimization_trajectory,
+    build_round_pipeline,
     build_tournament_cost,
 )
 
@@ -264,6 +271,228 @@ def test_cost_degrades_without_index(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Pipeline projection: the pure inference
+# ---------------------------------------------------------------------------
+
+
+def _states(steps: list[dict]) -> dict[str, str]:
+    return {s["id"]: s["state"] for s in steps}
+
+
+def test_pipeline_proposing_no_field(_=None) -> None:
+    steps, active, decision = _project_pipeline("proposing:round_0:v1")
+    assert _states(steps) == {
+        "propose": "active",
+        "apply": "pending",
+        "run": "pending",
+        "gate": "pending",
+    }
+    assert active == "propose"
+    assert decision is None
+
+
+def test_pipeline_proposing_with_mixed_field() -> None:
+    steps, active, _ = _project_pipeline(
+        "proposing:round_1:v4",
+        field_counts={"proposing": 1, "applied": 2, "rejected": 1, "total": 4},
+    )
+    assert _states(steps)["propose"] == "active"
+    assert active == "propose"
+    by_id = {s["id"]: s for s in steps}
+    assert by_id["propose"]["detail"] == "3/4 slots settled"
+
+
+def test_pipeline_field_settled_moves_to_apply() -> None:
+    steps, active, _ = _project_pipeline(
+        "proposing:round_1:v4",
+        field_counts={"proposing": 0, "applied": 3, "rejected": 1, "total": 4},
+    )
+    assert _states(steps) == {
+        "propose": "done",
+        "apply": "active",
+        "run": "pending",
+        "gate": "pending",
+    }
+    assert active == "apply"
+    assert {s["id"]: s for s in steps}["apply"]["detail"] == "3 applied · 1 rejected"
+
+
+def test_pipeline_tournament_running() -> None:
+    steps, active, _ = _project_pipeline("tournament:round_0:v1", run_count=3)
+    assert _states(steps) == {
+        "propose": "done",
+        "apply": "done",
+        "run": "active",
+        "gate": "pending",
+    }
+    assert active == "run"
+    assert {s["id"]: s for s in steps}["run"]["detail"] == "3 units in flight"
+
+
+def test_pipeline_replicate_audit_is_the_gate() -> None:
+    steps, active, _ = _project_pipeline("tournament:round_0:bt-replicate:v0:v1")
+    assert _states(steps)["run"] == "done"
+    assert _states(steps)["gate"] == "active"
+    assert active == "gate"
+
+
+def test_pipeline_settled_tournament_is_deciding() -> None:
+    steps, active, _ = _project_pipeline(
+        "tournament:round_0:v1", tournament_phase="completed", run_count=0
+    )
+    assert _states(steps)["run"] == "done"
+    assert _states(steps)["gate"] == "active"
+    assert {s["id"]: s for s in steps}["gate"]["detail"] == "deciding"
+    assert active == "gate"
+
+
+def test_pipeline_done_carries_the_decision() -> None:
+    steps, active, decision = _project_pipeline("done:round_0:v1:promoted")
+    assert all(s["state"] == "done" for s in steps)
+    assert active is None
+    assert decision == "promoted"
+
+
+def test_pipeline_after_round_reads_done() -> None:
+    steps, _, decision = _project_pipeline("after_round_2:rejected")
+    assert all(s["state"] == "done" for s in steps)
+    assert decision == "rejected"
+
+
+def test_pipeline_idle_heads_read_all_pending() -> None:
+    for phase in ("", "idle", "evolve_n_rounds:start", "evolve_n_rounds:done"):
+        steps, active, decision = _project_pipeline(phase)
+        assert all(s["state"] == "pending" for s in steps), phase
+        assert active is None
+        assert decision is None
+
+
+# ---------------------------------------------------------------------------
+# Pipeline projection: the workspace reader
+# ---------------------------------------------------------------------------
+
+
+def _pipeline_workspace(
+    tmp_path: Path,
+    *,
+    phase: str,
+    fresh: bool = True,
+    tournament: dict | None = None,
+    runs: int = 0,
+) -> Path:
+    ws = tmp_path / ".zicato"
+    (ws / "runtime" / "active_runs").mkdir(parents=True)
+    (ws / "epochs").mkdir(parents=True)
+    now = _dt.datetime.now(_dt.UTC)
+    beat = now if fresh else now - _dt.timedelta(minutes=10)
+    (ws / "runtime" / "heartbeat.json").write_text(
+        json.dumps(
+            {
+                "pid": 1,
+                "instance_id": "default",
+                "started_at": now.isoformat().replace("+00:00", "Z"),
+                "last_heartbeat": beat.isoformat().replace("+00:00", "Z"),
+                "epoch_id": EPOCH,
+                "generation_id": "v1",
+                "phase": phase,
+                "round_index": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    if tournament is not None:
+        (ws / "runtime" / "active_tournament.json").write_text(
+            json.dumps(tournament), encoding="utf-8"
+        )
+    started = now.isoformat().replace("+00:00", "Z")
+    deadline = (now + _dt.timedelta(minutes=3)).isoformat().replace("+00:00", "Z")
+    for i in range(runs):
+        (ws / "runtime" / "active_runs" / f"r{i}.json").write_text(
+            json.dumps(
+                {
+                    "run_id": f"r{i}",
+                    "pid": 100 + i,
+                    "started_at": started,
+                    "last_progress": started,
+                    "wall_clock_budget_seconds": 180,
+                    "deadline": deadline,
+                    "events_jsonl_path": str(ws / "events.jsonl"),
+                    "entry_id": f"entry_{i}",
+                    "generation_id": "v1",
+                    "epoch_id": EPOCH,
+                }
+            ),
+            encoding="utf-8",
+        )
+    return ws
+
+
+def test_build_round_pipeline_live_tournament(tmp_path: Path) -> None:
+    ws = _pipeline_workspace(
+        tmp_path,
+        phase="tournament:round_0:v1",
+        runs=2,
+        tournament={
+            "tournament_id": "t1",
+            "epoch_id": EPOCH,
+            "parent_generation_id": "v0",
+            "child_generation_id": "v1",
+            "phase": "running",
+            "started_at": "2026-06-01T00:00:00Z",
+            "entries": [],
+        },
+    )
+    out = build_round_pipeline(WorkspacePaths(ws))
+    assert out["running"] is True
+    assert out["active_step"] == "run"
+    assert out["round_index"] == 0
+    assert _states(out["steps"])["propose"] == "done"
+    assert _states(out["steps"])["run"] == "active"
+    assert out["in_flight"] == 2
+
+
+def test_build_round_pipeline_stale_heartbeat_not_running(tmp_path: Path) -> None:
+    ws = _pipeline_workspace(tmp_path, phase="tournament:round_0:v1", fresh=False)
+    out = build_round_pipeline(WorkspacePaths(ws))
+    # The projection survives (post-mortem honesty) but running gates off.
+    assert out["running"] is False
+    assert out["stale"] is True
+    assert _states(out["steps"])["run"] == "active"
+
+
+def test_build_round_pipeline_foreign_epoch_tournament_ignored(tmp_path: Path) -> None:
+    # A retained tournament from ANOTHER epoch must not feed field counts.
+    ws = _pipeline_workspace(
+        tmp_path,
+        phase="proposing:round_0:v1",
+        tournament={
+            "tournament_id": "old",
+            "epoch_id": "some_other_epoch",
+            "parent_generation_id": "v0",
+            "child_generation_id": "v9",
+            "phase": "running",
+            "started_at": "2026-06-01T00:00:00Z",
+            "entries": [],
+            "field_status": [{"generation_id": "v9", "status": "applied"}],
+        },
+    )
+    out = build_round_pipeline(WorkspacePaths(ws))
+    # With the foreign field ignored there is no slot data → propose active.
+    assert out["active_step"] == "propose"
+    by_id = {s["id"]: s for s in out["steps"]}
+    assert by_id["propose"]["detail"] == ""
+
+
+def test_build_round_pipeline_empty_workspace(tmp_path: Path) -> None:
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    out = build_round_pipeline(WorkspacePaths(ws))
+    assert out["running"] is False
+    assert out["active_step"] is None
+    assert all(s["state"] == "pending" for s in out["steps"])
+
+
+# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
@@ -313,3 +542,13 @@ def test_cost_endpoint_malformed_id_degrades(client: TestClient) -> None:
     body = r.json()
     assert body["per_matchup"] == []
     assert body["cost_per_promotion_ms"] is None
+
+
+def test_live_pipeline_endpoint(client: TestClient) -> None:
+    # The fixture workspace has no runtime tree: an honest idle projection.
+    r = client.get("/api/live/pipeline")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["running"] is False
+    assert [s["id"] for s in body["steps"]] == ["propose", "apply", "run", "gate"]
+    assert all(s["state"] == "pending" for s in body["steps"])

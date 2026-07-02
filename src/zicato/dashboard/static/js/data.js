@@ -189,6 +189,15 @@ export async function activeTournament() {
   try { return await fetchJson('/api/active-tournament'); } catch (err) { return null; }
 }
 
+// The AUTHORITATIVE live round-pipeline projection (propose → apply → run →
+// gate), computed SERVER-side (build_round_pipeline) so the stepper never
+// re-derives loop position by parsing phase strings client-side. NEVER cached
+// — it moves on every heartbeat — and a failure (the Rust supervisor does not
+// serve it) degrades to null so the hero simply omits the stepper.
+export async function livePipeline() {
+  try { return await fetchJson('/api/live/pipeline'); } catch (err) { return null; }
+}
+
 // The actual configured tournament STRUCTURE for one tournament — the
 // full bracket / standings / racing state (§3.2). Resolves from the
 // index → live active record → per-run loss files, so a completed
