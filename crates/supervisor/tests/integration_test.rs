@@ -276,7 +276,7 @@ async fn epoch_endpoint_returns_full_definition() {
 
     let board = r["board"].as_array().unwrap();
     assert_eq!(board.len(), 2);
-    assert_eq!(board[0]["id"], "waffles_single");
+    assert_eq!(board[0]["entry_id"], "waffles_single");
     assert_eq!(board[0]["kind"], "single_turn");
     assert_eq!(board[0]["expectation_kind"], "predicate");
     assert_eq!(board[0]["budget_s"], 900.0);

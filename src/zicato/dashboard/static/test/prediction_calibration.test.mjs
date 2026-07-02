@@ -357,8 +357,8 @@ function candidateBackend(scorecard) {
     ] },
     '/api/score-trajectory': { points: [{ generation_id: 'v0', scalar: 41 }, { generation_id: 'v1', scalar: 46 }] },
   };
-  F[`/api/generation/${DEPOCH}/v0/per-entry`] = { entries: [{ entry_id: 'b1', drift_loss: 41, pass_fail: 1 }] };
-  F[`/api/generation/${DEPOCH}/v1/per-entry`] = { entries: [{ entry_id: 'b1', drift_loss: 46, pass_fail: 0 }] };
+  F[`/api/generation/${DEPOCH}/v0/per-entry`] = { entries: [{ entry_id: 'b1', drift_loss: 41, pass_fail: true }] };
+  F[`/api/generation/${DEPOCH}/v1/per-entry`] = { entries: [{ entry_id: 'b1', drift_loss: 46, pass_fail: false }] };
   F[`/api/round/${DEPOCH}/v0/v1/gate`] = { decision: 'rejected', delta_scalar: 5.2, rules: [
     { id: 'scalar_margin', label: 'Scalar margin', status: 'fail', fired: true, detail: '41 → 46' },
   ] };

@@ -216,8 +216,8 @@
       "board": [
         {
           "budget_s": null,
+          "entry_id": "t1",
           "expectation_kind": "rubric",
-          "id": "t1",
           "input_preview": "Say hello.",
           "kind": "single_turn",
           "tags": [
@@ -227,8 +227,8 @@
         },
         {
           "budget_s": null,
+          "entry_id": "t2",
           "expectation_kind": "predicate",
-          "id": "t2",
           "input_preview": "Say goodbye.",
           "kind": "single_turn",
           "tags": [],
@@ -400,8 +400,8 @@
     "board": [
       {
         "budget_s": null,
+        "entry_id": "t1",
         "expectation_kind": "rubric",
-        "id": "t1",
         "input_preview": "Say hello.",
         "kind": "single_turn",
         "tags": [
@@ -411,8 +411,8 @@
       },
       {
         "budget_s": null,
+        "entry_id": "t2",
         "expectation_kind": "predicate",
-        "id": "t2",
         "input_preview": "Say goodbye.",
         "kind": "single_turn",
         "tags": [],
@@ -497,8 +497,8 @@
     "board": [
       {
         "budget_s": null,
+        "entry_id": "t1",
         "expectation_kind": "rubric",
-        "id": "t1",
         "input_preview": "Say hello.",
         "kind": "single_turn",
         "tags": [
@@ -508,8 +508,8 @@
       },
       {
         "budget_s": null,
+        "entry_id": "t2",
         "expectation_kind": "predicate",
-        "id": "t2",
         "input_preview": "Say goodbye.",
         "kind": "single_turn",
         "tags": [],
@@ -609,8 +609,8 @@
     "board": [
       {
         "budget_s": null,
+        "entry_id": "t1",
         "expectation_kind": "rubric",
-        "id": "t1",
         "input_preview": "Say hello.",
         "kind": "single_turn",
         "tags": [
@@ -620,8 +620,8 @@
       },
       {
         "budget_s": null,
+        "entry_id": "t2",
         "expectation_kind": "predicate",
-        "id": "t2",
         "input_preview": "Say goodbye.",
         "kind": "single_turn",
         "tags": [],
@@ -1153,8 +1153,8 @@
       "board": [
         {
           "budget_s": null,
+          "entry_id": "t1",
           "expectation_kind": "rubric",
-          "id": "t1",
           "input_preview": "Say hello.",
           "kind": "single_turn",
           "tags": [
@@ -1164,8 +1164,8 @@
         },
         {
           "budget_s": null,
+          "entry_id": "t2",
           "expectation_kind": "predicate",
-          "id": "t2",
           "input_preview": "Say goodbye.",
           "kind": "single_turn",
           "tags": [],

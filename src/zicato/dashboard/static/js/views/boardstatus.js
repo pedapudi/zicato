@@ -65,7 +65,7 @@ function splitModel(ep) {
   } else {
     const board = Array.isArray(ep.board) ? ep.board : [];
     entries = board.map((b) => ({
-      entryId: String((b && (b.entry_id != null ? b.entry_id : b.id)) || ''),
+      entryId: String((b && b.entry_id != null ? b.entry_id : '') || ''),
       slice: 'train',
       tag: null,
       weight: b && svg.isNum(b.weight) ? b.weight : null,

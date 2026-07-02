@@ -17,6 +17,7 @@ from zicato.dashboard.readers.epoch_view import (
 )
 from zicato.dashboard.readers.paths import (
     WorkspacePaths,
+    _opt_bool,
     _read_json_value,
     _resolve_epoch_id,
     layout_of,
@@ -389,7 +390,7 @@ def build_matchup_detail(paths: WorkspacePaths, generation_id: str) -> dict[str,
             cell = ab.setdefault(key, {"entry_id": r["entry_id"]})
             cell["entry_id"] = r["entry_id"]
             cell["parent_drift_loss"] = r["drift_loss"]
-            cell["parent_pass_fail"] = r["pass_fail"]
+            cell["parent_pass_fail"] = _opt_bool(r["pass_fail"])
             lj = _opt_json(r["loss_json"])
             if isinstance(lj, dict):
                 sid = lj.get("adk_session_id")
@@ -400,7 +401,7 @@ def build_matchup_detail(paths: WorkspacePaths, generation_id: str) -> dict[str,
             cell = ab.setdefault(key, {"entry_id": r["entry_id"]})
             cell["entry_id"] = r["entry_id"]
             cell["child_drift_loss"] = r["drift_loss"]
-            cell["child_pass_fail"] = r["pass_fail"]
+            cell["child_pass_fail"] = _opt_bool(r["pass_fail"])
             lj = _opt_json(r["loss_json"])
             if isinstance(lj, dict):
                 sid = lj.get("adk_session_id")
@@ -564,7 +565,7 @@ def _read_run_loss_files(
         cell: dict[str, Any] = {
             "entry_id": entry_id,
             "drift_loss": drift if isinstance(drift, int | float) else None,
-            "pass_fail": loss.get("pass_fail"),
+            "pass_fail": _opt_bool(loss.get("pass_fail")),
             # Continuous per-entry outcome + its optional precision/recall
             # decomposition (#18). ``None`` for a pre-score loss.json.
             "score": _opt_score(loss.get("score")),

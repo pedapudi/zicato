@@ -16,9 +16,6 @@ export const COLORS = {
   grid: '#d0d7de',
 };
 
-// Tournament promotion margin default (overridden by scoring.json).
-export const DEFAULT_MARGIN = 0.05;
-
 export function fmtDelta(v) {
   if (typeof v !== 'number' || !isFinite(v)) return '—';
   const s = v >= 0 ? '+' : '';

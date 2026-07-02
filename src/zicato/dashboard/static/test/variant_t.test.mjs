@@ -37,17 +37,15 @@ const { svgEl } = await import('../js/core/dom.js');
 
 const EPOCH_ID = '2026-05-30_e0';
 
-// Stamp a FRESH `last_heartbeat` on a heartbeat fixture so the live-status
-// staleness gate (deriveLiveStatus) reads it as a live orchestrator pulse.
-// A real SSE heartbeat always carries this stamp; these UI fixtures elide it,
-// and after the dead-run-shows-LIVE fix a heartbeat with no ageable timestamp
-// reads STALE (not live). Use this for any fixture that should drive a LIVE
-// proposing/tournament render off the heartbeat phase alone (no in-flight
-// active-runs to act as ground truth). Respects an explicit `last_heartbeat`
+// Stamp a FRESH `ts` (the server's ONE typed ms-epoch liveness timestamp) on
+// a heartbeat fixture so the live-status staleness gate (deriveLiveStatus)
+// reads it as a live orchestrator pulse. A real heartbeat payload always
+// carries the stamp; these UI fixtures elide it, and a heartbeat with no
+// ageable timestamp reads STALE (not live). Respects an explicit `ts`
 // already on the object (e.g. a deliberately-stale fixture).
 function freshHb(hb) {
-  if (hb && hb.last_heartbeat == null) {
-    return { ...hb, last_heartbeat: new Date().toISOString() };
+  if (hb && hb.ts == null) {
+    return { ...hb, ts: Date.now() };
   }
   return hb;
 }
@@ -68,8 +66,8 @@ const FIXTURE = {
       { generation_id: 'v2', parent_generation_id: 'v0', outcome: { decision: 'rejected' }, decision: 'rejected', promoted: false },
     ],
     board: [
-      { id: 'waffles_single', kind: 'single_turn', input_preview: 'Make a presentation about waffles.', expectation_kind: 'predicate', budget_s: 180, weight: 1, tags: ['smoke'] },
-      { id: 'picky_stakeholder_emulated', kind: 'multi_turn_emulated', input_preview: null, expectation_kind: null, budget_s: 360, weight: 1, tags: ['hard'] },
+      { entry_id: 'waffles_single', kind: 'single_turn', input_preview: 'Make a presentation about waffles.', expectation_kind: 'predicate', budget_s: 180, weight: 1, tags: ['smoke'] },
+      { entry_id: 'picky_stakeholder_emulated', kind: 'multi_turn_emulated', input_preview: null, expectation_kind: null, budget_s: 360, weight: 1, tags: ['hard'] },
     ],
   },
   '/api/lineage': { generations: [
@@ -111,15 +109,15 @@ const FIXTURE = {
   [`/api/files/${EPOCH_ID}/v0/patches`]: { patches: [] },
 };
 FIXTURE[`/api/generation/${EPOCH_ID}/v0/per-entry`] = { epoch_id: EPOCH_ID, generation_id: 'v0', entries: [
-  { entry_id: 'waffles_single', run_id: 'run_v0_waffles', drift_loss: 60.5, pass_fail: 0, runtime_ms: 180000, wall_clock_budget_exceeded: false },
-  { entry_id: 'picky_stakeholder_emulated', run_id: 'run_v0_picky', drift_loss: 105.5, pass_fail: 0, runtime_ms: 360000, wall_clock_budget_exceeded: true },
+  { entry_id: 'waffles_single', run_id: 'run_v0_waffles', drift_loss: 60.5, pass_fail: false, runtime_ms: 180000, wall_clock_budget_exceeded: false },
+  { entry_id: 'picky_stakeholder_emulated', run_id: 'run_v0_picky', drift_loss: 105.5, pass_fail: false, runtime_ms: 360000, wall_clock_budget_exceeded: true },
 ] };
 FIXTURE[`/api/generation/${EPOCH_ID}/v1/per-entry`] = { epoch_id: EPOCH_ID, generation_id: 'v1', entries: [
-  { entry_id: 'waffles_single', run_id: 'run_v1_waffles', drift_loss: 60.5, pass_fail: 0, runtime_ms: 180000, wall_clock_budget_exceeded: true },
-  { entry_id: 'picky_stakeholder_emulated', run_id: 'run_v1_picky', drift_loss: 642.5, pass_fail: 0, runtime_ms: 360000, wall_clock_budget_exceeded: true },
+  { entry_id: 'waffles_single', run_id: 'run_v1_waffles', drift_loss: 60.5, pass_fail: false, runtime_ms: 180000, wall_clock_budget_exceeded: true },
+  { entry_id: 'picky_stakeholder_emulated', run_id: 'run_v1_picky', drift_loss: 642.5, pass_fail: false, runtime_ms: 360000, wall_clock_budget_exceeded: true },
 ] };
 FIXTURE[`/api/generation/${EPOCH_ID}/v2/per-entry`] = { epoch_id: EPOCH_ID, generation_id: 'v2', entries: [
-  { entry_id: 'waffles_single', run_id: 'run_v2_waffles', drift_loss: 61.0, pass_fail: 0, runtime_ms: 180000, wall_clock_budget_exceeded: false },
+  { entry_id: 'waffles_single', run_id: 'run_v2_waffles', drift_loss: 61.0, pass_fail: false, runtime_ms: 180000, wall_clock_budget_exceeded: false },
 ] };
 FIXTURE[`/api/round/${EPOCH_ID}/v0/v1/gate`] = { decision: 'rejected', delta_scalar: 75.71, delta_pass_rate: 0,
   deciding_rule: 'scalar_margin', margin: 0.01, regressed_predicate: null, regressed_namespace: null,
@@ -485,7 +483,7 @@ test('candidate view (RACING): an in-flight candidate ghosts a PROJECTED radar +
     { generation_id: 'v3', epoch_id: EPOCH_ID, parent_generation_id: 'v0', promoted: false }] };
   // v3 is NOT in the score-trajectory → no settled scalar (it is racing).
   F[`/api/generation/${EPOCH_ID}/v3/per-entry`] = { epoch_id: EPOCH_ID, generation_id: 'v3', entries: [
-    { entry_id: 'waffles_single', run_id: 'run_v3_waffles', drift_loss: 58.0, pass_fail: 1, runtime_ms: 120000, wall_clock_budget_exceeded: false },
+    { entry_id: 'waffles_single', run_id: 'run_v3_waffles', drift_loss: 58.0, pass_fail: true, runtime_ms: 120000, wall_clock_budget_exceeded: false },
   ] };
   F[`/api/round/${EPOCH_ID}/v0/v3/gate`] = { decision: 'pending', delta_scalar: -2.0, delta_pass_rate: 0.5,
     rules: [{ id: 'scalar_margin', label: 'Scalar margin', status: 'not_reached', fired: false }],
@@ -499,7 +497,7 @@ test('candidate view (RACING): an in-flight candidate ghosts a PROJECTED radar +
   // for v3 — boards still streaming (3 of 8 scored).
   coreState.state.activeTournament = { epoch_id: EPOCH_ID, structure: 'racing',
     projected: { v3: { scalar: 60.0, boards_done: 3, boards_total: 8 } } };
-  coreState.state.heartbeat = { phase: 'tournament:running', epoch_id: EPOCH_ID, last_heartbeat: new Date().toISOString() };
+  coreState.state.heartbeat = { phase: 'tournament:running', epoch_id: EPOCH_ID, ts: Date.now() };
   coreState.state.activeRuns = [{ generation_id: 'v3', entry_id: 'picky_stakeholder_emulated', run_id: 'run_v3_picky' }];
   try {
     const candidate = await import('../js/views/candidate.js');
@@ -923,7 +921,7 @@ for (const structure of ['swiss', 'single_elim']) {
         epoch_id: EPOCH_ID, closed: false, goal: 'g',
         tournament: { structure, params: {} },
         experiments: [{ generation_id: 'v0', parent_generation_id: '', outcome: { decision: 'baseline' } }],
-        board: [{ id: 'waffles_single', kind: 'single_turn', input_preview: 'x', budget_s: 180, weight: 1 }],
+        board: [{ entry_id: 'waffles_single', kind: 'single_turn', input_preview: 'x', budget_s: 180, weight: 1 }],
       },
       '/api/lineage': { generations: [
         { generation_id: 'v0', epoch_id: EPOCH_ID, parent_generation_id: '', promoted: true },
@@ -1591,7 +1589,7 @@ function installInflightFetch(fieldStatus) {
       tournament: { structure: 'gauntlet', params: { field_size: 3 } },
       experiments: gens.map((g) => ({ generation_id: g.generation_id, parent_generation_id: g.parent_generation_id,
         round_index: g.round_index, outcome: { decision: g.promoted ? 'promoted' : 'rejected' } })),
-      board: [{ id: 'b1', kind: 'single_turn' }] },
+      board: [{ entry_id: 'b1', kind: 'single_turn' }] },
     '/api/lineage': { generations: gens },
     '/api/tournaments': { epoch_id: INFLIGHT_EPOCH, champion_lineage: ['v0', 'v1'],
       matchups: [{ champion: 'v0', challenger: 'v1', decision: 'promoted', delta_scalar: -20, ran_at: 'a' }],
@@ -1619,7 +1617,7 @@ test('epoch view (issue #16): a round still PROPOSING shows as its OWN in-flight
   ]);
   // the live signals the epoch view reads to decide a run is active for this epoch.
   coreState.state.activeTournament = { epoch_id: INFLIGHT_EPOCH, structure: 'gauntlet', phase: 'proposing', round_index: 1 };
-  coreState.state.heartbeat = { phase: 'proposing:round_1:v7', epoch_id: INFLIGHT_EPOCH, last_heartbeat: new Date().toISOString() };
+  coreState.state.heartbeat = { phase: 'proposing:round_1:v7', epoch_id: INFLIGHT_EPOCH, ts: Date.now() };
   coreState.state.activeRuns = [];
 
   const epoch = await import('../js/views/epoch.js');
@@ -1649,7 +1647,7 @@ test('epoch view (issue #16): the banner INCREMENTS as the field mints (applied 
   freshState();
   installInflightFetch([{ generation_id: 'v5', status: 'applied' }, { generation_id: 'v6', status: 'proposing' }]);
   coreState.state.activeTournament = { epoch_id: INFLIGHT_EPOCH, structure: 'gauntlet', phase: 'proposing', round_index: 1 };
-  coreState.state.heartbeat = { phase: 'proposing:round_1:v6', epoch_id: INFLIGHT_EPOCH, last_heartbeat: new Date().toISOString() };
+  coreState.state.heartbeat = { phase: 'proposing:round_1:v6', epoch_id: INFLIGHT_EPOCH, ts: Date.now() };
   coreState.state.activeRuns = [];
   const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
@@ -1662,7 +1660,7 @@ test('epoch view (issue #16): the banner INCREMENTS as the field mints (applied 
   freshState();
   installInflightFetch([{ generation_id: 'v5', status: 'applied' }, { generation_id: 'v6', status: 'proposing' }]);
   coreState.state.activeTournament = { epoch_id: INFLIGHT_EPOCH, structure: 'gauntlet', phase: 'proposing', round_index: 1 };
-  coreState.state.heartbeat = { phase: 'proposing:round_1:v6', epoch_id: INFLIGHT_EPOCH, last_heartbeat: new Date().toISOString() };
+  coreState.state.heartbeat = { phase: 'proposing:round_1:v6', epoch_id: INFLIGHT_EPOCH, ts: Date.now() };
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: INFLIGHT_EPOCH });
   assert(allByClass(host, 'dn-roundtl')[0] === tl1, 'a no-op heartbeat preserves the timeline node (digest-gated, zero rebuild)');
 
@@ -1670,7 +1668,7 @@ test('epoch view (issue #16): the banner INCREMENTS as the field mints (applied 
   freshState();
   installInflightFetch([{ generation_id: 'v5', status: 'applied' }, { generation_id: 'v6', status: 'applied' }]);
   coreState.state.activeTournament = { epoch_id: INFLIGHT_EPOCH, structure: 'gauntlet', phase: 'proposing', round_index: 1 };
-  coreState.state.heartbeat = { phase: 'proposing:round_1:v6', epoch_id: INFLIGHT_EPOCH, last_heartbeat: new Date().toISOString() };
+  coreState.state.heartbeat = { phase: 'proposing:round_1:v6', epoch_id: INFLIGHT_EPOCH, ts: Date.now() };
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: INFLIGHT_EPOCH });
   assert(/2 proposed/.test(host.textContent) && /2 applied/.test(host.textContent), 'after v6 applies: 2 proposed · 2 applied (the banner incremented)');
 
@@ -1696,7 +1694,7 @@ function installManyFetch(roundN) {
   const MANY = {
     '/api/epoch': { epoch_id: MANY_EPOCH, closed: false, goal: 'Many rounds.',
       experiments: gens.map((g) => ({ generation_id: g.generation_id, parent_generation_id: g.parent_generation_id,
-        outcome: { decision: g.promoted ? 'baseline' : 'rejected' } })), board: [{ id: 'b1', kind: 'single_turn' }] },
+        outcome: { decision: g.promoted ? 'baseline' : 'rejected' } })), board: [{ entry_id: 'b1', kind: 'single_turn' }] },
     '/api/lineage': { generations: gens },
     '/api/tournaments': { epoch_id: MANY_EPOCH, champion_lineage: ['v0'], matchups },
     '/api/score-trajectory': { points },
@@ -1944,7 +1942,7 @@ test('fit-to-width: the lifecycle DAG renders as a responsive SVG (width:100% + 
   assert(!hasScrollWrapperAncestor(dagSvg, host), 'no horizontal-scroll wrapper around the lifecycle DAG figure/panel');
 
   // the unit builder honours the same contract directly.
-  const direct = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries: [{ entry_id: 'b1', drift_loss: 10, pass_fail: 0 }], decision: 'rejected' });
+  const direct = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries: [{ entry_id: 'b1', drift_loss: 10, pass_fail: false }], decision: 'rejected' });
   assertEqual(direct.getAttribute('width'), '100%', 'lifecycleDag() builds a width:100% SVG');
 });
 
@@ -2006,7 +2004,7 @@ test('contained: the publication view’s wide tables carry their OWN contained 
 // ---- (c) the lifecycle DAG DERIVES its height from the board-node count ----
 
 test('lifecycle DAG height is DERIVED from the (deduped) board-node count, not a passed token, and it stays fit-to-width', () => {
-  const entries = [{ entry_id: 'b1', drift_loss: 10, pass_fail: 0 }, { entry_id: 'b2', drift_loss: 20, pass_fail: 1 }];
+  const entries = [{ entry_id: 'b1', drift_loss: 10, pass_fail: false }, { entry_id: 'b2', drift_loss: 20, pass_fail: true }];
   // a passed `height` is now IGNORED — the figure sizes itself to its nodes so
   // both compare sides share identical row spacing.
   const d = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries, decision: 'rejected', height: 999 });
@@ -2014,7 +2012,7 @@ test('lifecycle DAG height is DERIVED from the (deduped) board-node count, not a
   assert(hAttr !== 999, 'the passed height is NOT honoured verbatim — height is derived from node count');
   assert(hAttr > 0 && hAttr < 300, 'a 2-node DAG is compact (height derived from 2 rows + padding, not a fixed 300+)');
   // adding a node grows the height by exactly ONE row pitch (constant per-node).
-  const d3 = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries: entries.concat([{ entry_id: 'b3', drift_loss: 30, pass_fail: 0 }]), decision: 'rejected' });
+  const d3 = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries: entries.concat([{ entry_id: 'b3', drift_loss: 30, pass_fail: false }]), decision: 'rejected' });
   const grew = +d3.getAttribute('height') - hAttr;
   assert(grew > 0, 'one more board node makes the figure taller by a constant row pitch (' + grew + 'px)');
   // fit-to-width holds (Problem 1): width:100% + a viewBox so it scales to the pane.
@@ -2919,7 +2917,7 @@ async function renderRacingView(view, params, { live }) {
   installFixtureMap(racingRoundFixture({ live }));
   if (live) {
     coreState.state.activeTournament = RACING_LIVE_AT;
-    coreState.state.heartbeat = { phase: 'tournament:round_0:running', epoch_id: EPOCH_ID, last_heartbeat: new Date().toISOString() };
+    coreState.state.heartbeat = { phase: 'tournament:round_0:running', epoch_id: EPOCH_ID, ts: Date.now() };
     coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'run_v1' }];
   } else {
     coreState.state.activeTournament = null;
@@ -3068,7 +3066,7 @@ test('REGRESSION (view-divergence): the CANDIDATE racing dossier builds field pa
   freshState();
   installFixtureMap(racingRoundFixture({ live: true }));
   coreState.state.activeTournament = RACING_LIVE_AT;
-  coreState.state.heartbeat = { phase: 'tournament:round_0:running', epoch_id: EPOCH_ID, last_heartbeat: new Date().toISOString() };
+  coreState.state.heartbeat = { phase: 'tournament:round_0:running', epoch_id: EPOCH_ID, ts: Date.now() };
   coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'run_v1' }];
   try {
     const candMod = await import('../js/views/candidate.js');
@@ -3108,12 +3106,12 @@ test('REGRESSION (view-divergence): the CANDIDATE racing dossier builds field pa
 function radarStructFixture(structure, payload, tournamentId) {
   const F = structFixture(structure, payload, tournamentId);
   F[`/api/generation/${EPOCH_ID}/v0/per-entry`] = { epoch_id: EPOCH_ID, generation_id: 'v0', entries: [
-    { entry_id: 'waffles_single', run_id: 'run_v0_w', drift_loss: 60.5, pass_fail: 0, runtime_ms: 180000, wall_clock_budget_exceeded: false },
-    { entry_id: 'picky_stakeholder_emulated', run_id: 'run_v0_p', drift_loss: 70.0, pass_fail: 1, runtime_ms: 180000, wall_clock_budget_exceeded: false },
+    { entry_id: 'waffles_single', run_id: 'run_v0_w', drift_loss: 60.5, pass_fail: false, runtime_ms: 180000, wall_clock_budget_exceeded: false },
+    { entry_id: 'picky_stakeholder_emulated', run_id: 'run_v0_p', drift_loss: 70.0, pass_fail: true, runtime_ms: 180000, wall_clock_budget_exceeded: false },
   ] };
   F[`/api/generation/${EPOCH_ID}/v1/per-entry`] = { epoch_id: EPOCH_ID, generation_id: 'v1', entries: [
-    { entry_id: 'waffles_single', run_id: 'run_v1_w', drift_loss: 55.0, pass_fail: 1, runtime_ms: 180000, wall_clock_budget_exceeded: false },
-    { entry_id: 'picky_stakeholder_emulated', run_id: 'run_v1_p', drift_loss: 66.0, pass_fail: 1, runtime_ms: 180000, wall_clock_budget_exceeded: false },
+    { entry_id: 'waffles_single', run_id: 'run_v1_w', drift_loss: 55.0, pass_fail: true, runtime_ms: 180000, wall_clock_budget_exceeded: false },
+    { entry_id: 'picky_stakeholder_emulated', run_id: 'run_v1_p', drift_loss: 66.0, pass_fail: true, runtime_ms: 180000, wall_clock_budget_exceeded: false },
   ] };
   F[`/api/round/${EPOCH_ID}/v0/v1/gate`] = { decision: 'promoted', delta_scalar: -4.5, delta_pass_rate: 0.5,
     reason: 'challenger improved', rules: [
@@ -3184,12 +3182,12 @@ test('candidate dossier: the RADAR is UNIVERSAL — a SETTLED racer shows the ra
   freshState();
   const F = racingRoundFixture({ live: false });
   F[`/api/generation/${EPOCH_ID}/v0/per-entry`] = { epoch_id: EPOCH_ID, generation_id: 'v0', entries: [
-    { entry_id: 'b0', run_id: 'run_v0_b0', drift_loss: 60.5, pass_fail: 0, runtime_ms: 180000, wall_clock_budget_exceeded: false },
-    { entry_id: 'b1', run_id: 'run_v0_b1', drift_loss: 70.0, pass_fail: 1, runtime_ms: 180000, wall_clock_budget_exceeded: false },
+    { entry_id: 'b0', run_id: 'run_v0_b0', drift_loss: 60.5, pass_fail: false, runtime_ms: 180000, wall_clock_budget_exceeded: false },
+    { entry_id: 'b1', run_id: 'run_v0_b1', drift_loss: 70.0, pass_fail: true, runtime_ms: 180000, wall_clock_budget_exceeded: false },
   ] };
   F[`/api/generation/${EPOCH_ID}/v1/per-entry`] = { epoch_id: EPOCH_ID, generation_id: 'v1', entries: [
-    { entry_id: 'b0', run_id: 'run_v1_b0', drift_loss: 38.0, pass_fail: 1, runtime_ms: 180000, wall_clock_budget_exceeded: false },
-    { entry_id: 'b1', run_id: 'run_v1_b1', drift_loss: 42.0, pass_fail: 1, runtime_ms: 180000, wall_clock_budget_exceeded: false },
+    { entry_id: 'b0', run_id: 'run_v1_b0', drift_loss: 38.0, pass_fail: true, runtime_ms: 180000, wall_clock_budget_exceeded: false },
+    { entry_id: 'b1', run_id: 'run_v1_b1', drift_loss: 42.0, pass_fail: true, runtime_ms: 180000, wall_clock_budget_exceeded: false },
   ] };
   F[`/api/round/${EPOCH_ID}/v0/v1/gate`] = { decision: 'promoted', delta_scalar: -14.0, delta_pass_rate: 0.5,
     reason: 'challenger improved', rules: [
@@ -3385,7 +3383,7 @@ test('live-status: a live RACING run (non-idle phase + in-flight runs + tourname
 test('live-status: a FRESH heartbeat phase ALONE (proposing) lights the running state even before a tournament exists', () => {
   const now = 1_000_000_000_000;
   const status = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'proposing:field', generation_id: null, last_heartbeat: now - 2_000 /* fresh */ },
+    heartbeat: { phase: 'proposing:field', generation_id: null, ts: now - 2_000 /* fresh */ },
     activeRuns: [],
     activeTournament: null,
   }, now);
@@ -3453,7 +3451,7 @@ test('live-status: a STALE heartbeat + terminal phase + 0 runs + completed tourn
   // finished process, no in-flight units, a completed (not running) tournament.
   const now = 1_000_000_000_000; // fixed epoch ms for determinism
   const status = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'evolve_n_rounds:done', last_heartbeat: now - 120_000 /* 2 min old */ },
+    heartbeat: { phase: 'evolve_n_rounds:done', ts: now - 120_000 /* 2 min old */ },
     activeRuns: [],
     activeTournament: { structure: 'racing', phase: 'completed' },
   }, now);
@@ -3464,7 +3462,7 @@ test('live-status: a STALE heartbeat + terminal phase + 0 runs + completed tourn
 test('live-status: a FRESH heartbeat + active phase reads as RUNNING', () => {
   const now = 1_000_000_000_000;
   const status = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'tournament:round_0:rung0_m3', last_heartbeat: now - 2_000 /* 2s old, fresh */ },
+    heartbeat: { phase: 'tournament:round_0:rung0_m3', ts: now - 2_000 /* 2s old, fresh */ },
     activeRuns: [],
     activeTournament: { structure: 'racing', phase: 'running' },
   }, now);
@@ -3474,7 +3472,7 @@ test('live-status: a FRESH heartbeat + active phase reads as RUNNING', () => {
 test('live-status: an in-flight active-run forces RUNNING even with an old timestamp (ground truth)', () => {
   const now = 1_000_000_000_000;
   const status = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'evolve_n_rounds:done', last_heartbeat: now - 600_000 /* 10 min old */ },
+    heartbeat: { phase: 'evolve_n_rounds:done', ts: now - 600_000 /* 10 min old */ },
     activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.5 }],
     activeTournament: null,
   }, now);
@@ -3485,7 +3483,7 @@ test('live-status: an in-flight active-run forces RUNNING even with an old times
 test('live-status: a completed active-tournament ALONE (no fresh phase, no runs) does NOT read live', () => {
   const now = 1_000_000_000_000;
   const status = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'idle', last_heartbeat: now - 5_000 },
+    heartbeat: { phase: 'idle', ts: now - 5_000 },
     activeRuns: [],
     activeTournament: { structure: 'swiss', phase: 'completed' },
   }, now);
@@ -3506,16 +3504,43 @@ test('live-status: a heartbeat with NO parseable timestamp reads NOT live (missi
   assertEqual(noTs.heartbeatStale, true, 'a heartbeat with no parseable timestamp is flagged stale');
   // a garbage timestamp is likewise unparseable ⇒ stale ⇒ not live.
   const badTs = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'tournament:round_0:rung0_m3', last_heartbeat: 'not-a-date' }, activeRuns: [], activeTournament: null,
+    heartbeat: { phase: 'tournament:round_0:rung0_m3', ts: 'not-a-date' }, activeRuns: [], activeTournament: null,
   }, now);
   assertEqual(badTs.running, false, 'an unparseable timestamp reads NOT live (stale)');
+});
+
+test('live-status (clean break): ONLY the typed ms-epoch `ts` ages the heartbeat — the alias keys + magnitude guessing are DELETED', () => {
+  const now = 1_780_455_964_000;
+  // the retired alternate keys (last_heartbeat / emitted_at / updated_at)
+  // carry perfectly-fresh timestamps — they must NOT read live any more (the
+  // server stamps `ts`; a payload without it has no ageable timestamp).
+  for (const key of ['last_heartbeat', 'emitted_at', 'updated_at']) {
+    const st = livestatus.deriveLiveStatus({
+      heartbeat: { phase: 'tournament:round_0', [key]: new Date(now - 1000).toISOString() },
+      activeRuns: [], activeTournament: null,
+    }, now);
+    assertEqual(st.running, false, `a fresh ${key} WITHOUT ts reads stale (the alias is dead)`);
+  }
+  // an ISO string in `ts` is NOT parsed — ts is a typed NUMBER (ms).
+  const iso = livestatus.deriveLiveStatus({
+    heartbeat: { phase: 'tournament:round_0', ts: new Date(now - 1000).toISOString() },
+    activeRuns: [], activeTournament: null,
+  }, now);
+  assertEqual(iso.running, false, 'an ISO-string ts is not a typed ms number → stale');
+  // a SECONDS-magnitude value is NOT scaled up to ms (the guessing is gone):
+  // it reads as an ancient ms timestamp → stale.
+  const secs = livestatus.deriveLiveStatus({
+    heartbeat: { phase: 'tournament:round_0', ts: Math.floor((now - 1000) / 1000) },
+    activeRuns: [], activeTournament: null,
+  }, now);
+  assertEqual(secs.running, false, 'a seconds-magnitude ts is NOT rescaled — the ms contract is typed');
 });
 
 test('live-status: a heartbeat OLDER than STALE_HEARTBEAT_MS reads NOT live (the one staleness rule)', () => {
   const now = 1_780_455_964_000;
   // just past the staleness window on an otherwise-active phase ⇒ not live.
   const old = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'tournament:round_0:final', last_heartbeat: now - (livestatus.STALE_HEARTBEAT_MS + 1_000) },
+    heartbeat: { phase: 'tournament:round_0:final', ts: now - (livestatus.STALE_HEARTBEAT_MS + 1_000) },
     activeRuns: [],
     activeTournament: null,
   }, now);
@@ -3523,7 +3548,7 @@ test('live-status: a heartbeat OLDER than STALE_HEARTBEAT_MS reads NOT live (the
   assertEqual(old.heartbeatStale, true, 'a too-old heartbeat is flagged stale');
   // a FRESH timestamp on the same active phase reads live (the positive case).
   const fresh = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'tournament:round_0:final', last_heartbeat: now - 2_000 },
+    heartbeat: { phase: 'tournament:round_0:final', ts: now - 2_000 },
     activeRuns: [],
     activeTournament: null,
   }, now);
@@ -3538,7 +3563,7 @@ test('live-status: a DEAD run (stale phase + frozen active_tournament phase:runn
   // phase:"running", and ZERO in-flight board-units. The frozen tournament
   // file must NOT keep it live now that the orchestrator heartbeat is stale.
   const dead = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'tournament:round_0:final', generation_id: 'v3', epoch_id: '2026-06-03_e3', last_heartbeat: now - 800_000 /* ~13 min */ },
+    heartbeat: { phase: 'tournament:round_0:final', generation_id: 'v3', epoch_id: '2026-06-03_e3', ts: now - 800_000 /* ~13 min */ },
     activeRuns: [],
     activeTournament: { structure: 'single_elim', phase: 'running' },
   }, now);
@@ -3550,7 +3575,7 @@ test('live-status: a DEAD run (stale phase + frozen active_tournament phase:runn
 test('live-status: a stale run exposes a heartbeat AGE + a "last seen Ns ago" affordance (not a silent freeze)', () => {
   const now = 1_780_455_964_000;
   const dead = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'tournament:round_0:racing-final', last_heartbeat: now - 90_000 /* 90s */ },
+    heartbeat: { phase: 'tournament:round_0:racing-final', ts: now - 90_000 /* 90s */ },
     activeRuns: [],
     activeTournament: { structure: 'racing', phase: 'running' },
   }, now);
@@ -3572,7 +3597,7 @@ test('live-status: the chrome shows the stale affordance + a non-running dot whe
   coreState.state.connecting = false;
   // a FROZEN heartbeat: an active-looking phase + a running tournament file,
   // but a last_heartbeat well past the staleness window → NOT live.
-  coreState.state.setHeartbeat({ phase: 'tournament:round_0:racing-final', generation_id: 'v3', last_heartbeat: now - 120_000 });
+  coreState.state.setHeartbeat({ phase: 'tournament:round_0:racing-final', generation_id: 'v3', ts: now - 120_000 });
   coreState.state.activeRuns = [];
   coreState.state.activeTournament = { structure: 'racing', phase: 'running', competitors: [{ generation_id: 'v0' }] };
 
@@ -3658,15 +3683,16 @@ test('board view: an entry mid-run with NO completed results renders its in-flig
   coreState.state.activeRuns = [];
 });
 
-test('board view: the inflightForEntry filter matches entry_id and tolerates alternate keys', async () => {
+test('board view: the inflightForEntry filter matches the CANONICAL entry_id ONLY — the alias keys are dead', async () => {
   const runs = [
     { generation_id: 'v1', entry_id: 'e1', run_id: 'r1' },
+    // the retired alias spellings NO server writes — they must NOT match.
     { generation_id: 'v2', board_entry_id: 'e1', run_id: 'r2' },
     { generation_id: 'v3', entry: 'e1', run_id: 'r3' },
     { generation_id: 'v4', entry_id: 'e2', run_id: 'r4' },
   ];
   const b = await import('../js/views/board.js');
-  assertEqual(b.inflightForEntry(runs, 'e1').length, 3, 'all three e1 runs match across entry_id / board_entry_id / entry keys');
+  assertEqual(b.inflightForEntry(runs, 'e1').length, 1, 'ONLY the canonical entry_id spelling matches (aliases deleted)');
   assertEqual(b.inflightForEntry(runs, 'nope').length, 0, 'no match for an unknown entry');
   assertEqual(b.inflightForEntry(null, 'e1').length, 0, 'a null active-runs feed yields no in-flight runs');
 });
@@ -5054,12 +5080,12 @@ test('lifecycle BOARD column: a RACING candidate dedupes to ONE node per distinc
   //   q3_metrics_outline ×3, waffles_single ×2, picky_stakeholder_emulated (once).
   // The last run per entry is the racing-final / full-board run (representative).
   const entries = [
-    { entry_id: 'q3_metrics_outline', run_id: 'r0a', drift_loss: 90.0, pass_fail: 0, wall_clock_budget_exceeded: false },
-    { entry_id: 'q3_metrics_outline', run_id: 'r1a', drift_loss: 85.0, pass_fail: 0, wall_clock_budget_exceeded: false },
-    { entry_id: 'q3_metrics_outline', run_id: 'r2a', drift_loss: 80.0, pass_fail: 1, wall_clock_budget_exceeded: false },
-    { entry_id: 'waffles_single', run_id: 'r0b', drift_loss: 60.0, pass_fail: 0, wall_clock_budget_exceeded: false },
-    { entry_id: 'waffles_single', run_id: 'r1b', drift_loss: 61.0, pass_fail: 0, wall_clock_budget_exceeded: true },
-    { entry_id: 'picky_stakeholder_emulated', run_id: 'r0c', drift_loss: 105.0, pass_fail: 0, wall_clock_budget_exceeded: false },
+    { entry_id: 'q3_metrics_outline', run_id: 'r0a', drift_loss: 90.0, pass_fail: false, wall_clock_budget_exceeded: false },
+    { entry_id: 'q3_metrics_outline', run_id: 'r1a', drift_loss: 85.0, pass_fail: false, wall_clock_budget_exceeded: false },
+    { entry_id: 'q3_metrics_outline', run_id: 'r2a', drift_loss: 80.0, pass_fail: true, wall_clock_budget_exceeded: false },
+    { entry_id: 'waffles_single', run_id: 'r0b', drift_loss: 60.0, pass_fail: false, wall_clock_budget_exceeded: false },
+    { entry_id: 'waffles_single', run_id: 'r1b', drift_loss: 61.0, pass_fail: false, wall_clock_budget_exceeded: true },
+    { entry_id: 'picky_stakeholder_emulated', run_id: 'r0c', drift_loss: 105.0, pass_fail: false, wall_clock_budget_exceeded: false },
   ];
   const distinct = new Set(entries.map((e) => e.entry_id));
   const svgNode = dag.lifecycleDag({ genId: 'v3', parentId: 'v0', entries, decision: 'rejected', height: 360 });
@@ -5091,11 +5117,11 @@ test('lifecycle BOARD column: a RACING candidate dedupes to ONE node per distinc
 
 test('lifecycle BOARD column: labels never overlap the loss disc + rows are vertically spaced', () => {
   const entries = [
-    { entry_id: 'q3_metrics_outline', drift_loss: 80, pass_fail: 0 },
-    { entry_id: 'q3_metrics_outline', drift_loss: 80, pass_fail: 0 },
-    { entry_id: 'waffles_single', drift_loss: 60, pass_fail: 0 },
-    { entry_id: 'picky_stakeholder_emulated', drift_loss: 105, pass_fail: 0 },
-    { entry_id: 'every_expectation_kind', drift_loss: 40, pass_fail: 1 },
+    { entry_id: 'q3_metrics_outline', drift_loss: 80, pass_fail: false },
+    { entry_id: 'q3_metrics_outline', drift_loss: 80, pass_fail: false },
+    { entry_id: 'waffles_single', drift_loss: 60, pass_fail: false },
+    { entry_id: 'picky_stakeholder_emulated', drift_loss: 105, pass_fail: false },
+    { entry_id: 'every_expectation_kind', drift_loss: 40, pass_fail: true },
   ];
   const h = 360;
   const svgNode = dag.lifecycleDag({ genId: 'v3', parentId: 'v0', entries, decision: 'rejected', height: h });
@@ -5125,8 +5151,8 @@ test('lifecycle BOARD column: labels never overlap the loss disc + rows are vert
 test('lifecycle BOARD column: a GAUNTLET candidate (one run per entry) renders unchanged — one node per entry, NO spurious multiplicity badge', () => {
   // the gauntlet path: each board entry is run exactly once. Dedupe is a no-op.
   const entries = [
-    { entry_id: 'waffles_single', run_id: 'g1', drift_loss: 60.5, pass_fail: 0, wall_clock_budget_exceeded: false },
-    { entry_id: 'picky_stakeholder_emulated', run_id: 'g2', drift_loss: 105.5, pass_fail: 0, wall_clock_budget_exceeded: true },
+    { entry_id: 'waffles_single', run_id: 'g1', drift_loss: 60.5, pass_fail: false, wall_clock_budget_exceeded: false },
+    { entry_id: 'picky_stakeholder_emulated', run_id: 'g2', drift_loss: 105.5, pass_fail: false, wall_clock_budget_exceeded: true },
   ];
   const svgNode = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries, decision: 'rejected', height: 360 });
   const nodes = boardNodesOf(svgNode);
@@ -5553,10 +5579,10 @@ function runRowsOf(boardNode) {
 test('lifecycle BOARD node: a re-raced entry is EXPANDABLE and reveals each run’s loss (no longer lossy on the values)', () => {
   // q3_metrics_outline raced 3× (rung0/rung1/final) with losses 4.0 / 64.0 / 63.5.
   const entries = [
-    { entry_id: 'q3_metrics_outline', run_id: 'r0', drift_loss: 4.0, pass_fail: 1, wall_clock_budget_exceeded: false },
-    { entry_id: 'q3_metrics_outline', run_id: 'r1', drift_loss: 64.0, pass_fail: 0, wall_clock_budget_exceeded: false },
-    { entry_id: 'q3_metrics_outline', run_id: 'r2', drift_loss: 63.5, pass_fail: 0, wall_clock_budget_exceeded: false },
-    { entry_id: 'waffles_single', run_id: 'g1', drift_loss: 60.5, pass_fail: 0, wall_clock_budget_exceeded: false },
+    { entry_id: 'q3_metrics_outline', run_id: 'r0', drift_loss: 4.0, pass_fail: true, wall_clock_budget_exceeded: false },
+    { entry_id: 'q3_metrics_outline', run_id: 'r1', drift_loss: 64.0, pass_fail: false, wall_clock_budget_exceeded: false },
+    { entry_id: 'q3_metrics_outline', run_id: 'r2', drift_loss: 63.5, pass_fail: false, wall_clock_budget_exceeded: false },
+    { entry_id: 'waffles_single', run_id: 'g1', drift_loss: 60.5, pass_fail: false, wall_clock_budget_exceeded: false },
   ];
   let navTo = null;
   const svgNode = dag.lifecycleDag({ genId: 'v3', parentId: 'v0', entries, decision: 'rejected', height: 360,
@@ -5588,9 +5614,9 @@ test('lifecycle BOARD node: a re-raced entry is EXPANDABLE and reveals each run�
 
 test('lifecycle BOARD node: per-run rows are LABELLED by rung when records carry match_id/rung', () => {
   const entries = [
-    { entry_id: 'q3_metrics_outline', run_id: 'r0', drift_loss: 4.0, pass_fail: 1, match_id: 'rung0_m2', rung: 'rung 0' },
-    { entry_id: 'q3_metrics_outline', run_id: 'r1', drift_loss: 64.0, pass_fail: 0, match_id: 'rung1_m0', rung: 'rung 1' },
-    { entry_id: 'q3_metrics_outline', run_id: 'r2', drift_loss: 63.5, pass_fail: 0, match_id: 'racing-final', rung: 'final' },
+    { entry_id: 'q3_metrics_outline', run_id: 'r0', drift_loss: 4.0, pass_fail: true, match_id: 'rung0_m2', rung: 'rung 0' },
+    { entry_id: 'q3_metrics_outline', run_id: 'r1', drift_loss: 64.0, pass_fail: false, match_id: 'rung1_m0', rung: 'rung 1' },
+    { entry_id: 'q3_metrics_outline', run_id: 'r2', drift_loss: 63.5, pass_fail: false, match_id: 'racing-final', rung: 'final' },
   ];
   const svgNode = dag.lifecycleDag({ genId: 'v3', parentId: 'v0', entries, decision: 'rejected', height: 360 });
   const q3 = boardNodesOf(svgNode)[0];
@@ -5602,9 +5628,9 @@ test('lifecycle BOARD node: per-run rows are LABELLED by rung when records carry
 test('lifecycle BOARD node: with NO rung tags (legacy data) the per-run losses still show but NO rung labels are fabricated', () => {
   // the current e0 legacy shape: repeated entries, NO match_id/rung fields.
   const entries = [
-    { entry_id: 'q3_metrics_outline', run_id: 'r0', drift_loss: 4.0, pass_fail: 1 },
-    { entry_id: 'q3_metrics_outline', run_id: 'r1', drift_loss: 64.0, pass_fail: 0 },
-    { entry_id: 'q3_metrics_outline', run_id: 'r2', drift_loss: 63.5, pass_fail: 0 },
+    { entry_id: 'q3_metrics_outline', run_id: 'r0', drift_loss: 4.0, pass_fail: true },
+    { entry_id: 'q3_metrics_outline', run_id: 'r1', drift_loss: 64.0, pass_fail: false },
+    { entry_id: 'q3_metrics_outline', run_id: 'r2', drift_loss: 63.5, pass_fail: false },
   ];
   const svgNode = dag.lifecycleDag({ genId: 'v3', parentId: 'v0', entries, decision: 'rejected', height: 360 });
   const q3 = boardNodesOf(svgNode)[0];
@@ -5627,8 +5653,8 @@ test('lifecycle BOARD node: with NO rung tags (legacy data) the per-run losses s
 
 test('lifecycle BOARD circle: exposes the champion comparison (champion loss + signed Δ) for its board', () => {
   const entries = [
-    { entry_id: 'waffles_single', drift_loss: 60.5, pass_fail: 0 },
-    { entry_id: 'picky_stakeholder_emulated', drift_loss: 642.5, pass_fail: 0 },
+    { entry_id: 'waffles_single', drift_loss: 60.5, pass_fail: false },
+    { entry_id: 'picky_stakeholder_emulated', drift_loss: 642.5, pass_fail: false },
   ];
   // the champion scored LOWER on both boards → the challenger's Δ is positive
   // (worse) on each, even though one of its raw losses (60.5) is identical.
@@ -5659,7 +5685,7 @@ test('lifecycle BOARD circle: exposes the champion comparison (champion loss + s
 
   // an EVEN board (identical loss) is neither worse nor better.
   const even = dag.lifecycleDag({ genId: 'v1', parentId: 'v0',
-    entries: [{ entry_id: 'b', drift_loss: 60.5, pass_fail: 0 }], decision: 'rejected',
+    entries: [{ entry_id: 'b', drift_loss: 60.5, pass_fail: false }], decision: 'rejected',
     championId: 'v0', championLoss: { b: 60.5 } });
   const evCmp = childByClass(boardNodesOf(even)[0], 'ezn-board-cmp');
   assert((evCmp.getAttribute('class') || '').includes('ezn-cmp-even'), 'an equal-loss board is coloured even (neither worse nor better)');
@@ -5667,8 +5693,8 @@ test('lifecycle BOARD circle: exposes the champion comparison (champion loss + s
 
 test('lifecycle Σ node: exposes candidate-Σ vs champion-Σ and the Δ between them (what the gate sees)', () => {
   const entries = [
-    { entry_id: 'waffles_single', drift_loss: 60.5, pass_fail: 0 },
-    { entry_id: 'picky_stakeholder_emulated', drift_loss: 642.5, pass_fail: 0 },
+    { entry_id: 'waffles_single', drift_loss: 60.5, pass_fail: false },
+    { entry_id: 'picky_stakeholder_emulated', drift_loss: 642.5, pass_fail: false },
   ];
   const svgNode = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries, decision: 'rejected', height: 360,
     championId: 'v0', candidateSigma: 703.0, championSigma: 166.0, deltaSigma: 537.0 });
@@ -5689,7 +5715,7 @@ test('lifecycle Σ node: exposes candidate-Σ vs champion-Σ and the Δ between 
 });
 
 test('lifecycle GATE node: names the deciding rule + the Δ — a POSITIVE Δ rejection explains "worse than champion"', () => {
-  const entries = [{ entry_id: 'b', drift_loss: 100, pass_fail: 0 }];
+  const entries = [{ entry_id: 'b', drift_loss: 100, pass_fail: false }];
   const gateExplain = { decision: 'rejected', decidingRule: 'scalar_margin', decidingLabel: 'Scalar margin',
     deltaScalar: 75.71, margin: -0.01, regressed: null, reason: 'challenger regressed: loss rose by 75.71' };
   const svgNode = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries, decision: 'rejected', height: 360,
@@ -5712,7 +5738,7 @@ test('lifecycle GATE node: names the deciding rule + the Δ — a POSITIVE Δ re
 });
 
 test('lifecycle GATE node: a MONOTONICITY rejection explains the regressed predicate even when the scalar is BETTER', () => {
-  const entries = [{ entry_id: 'b', drift_loss: 10, pass_fail: 0 }];
+  const entries = [{ entry_id: 'b', drift_loss: 10, pass_fail: false }];
   // scalar is BETTER (Δ negative) yet the candidate is rejected because it
   // regressed a previously-passing predicate (rule 2). This is the "smaller Σ
   // but rejected" case made legible.
@@ -5732,7 +5758,7 @@ test('lifecycle GATE node: a MONOTONICITY rejection explains the regressed predi
 });
 
 test('lifecycle DAG: de-crowded to ONE concise key line + a "?" info hovercard (the verbose how-to is gone from the figure), omitted for a baseline', () => {
-  const entries = [{ entry_id: 'b', drift_loss: 10, pass_fail: 0 }];
+  const entries = [{ entry_id: 'b', drift_loss: 10, pass_fail: false }];
   const svgNode = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries, decision: 'rejected', height: 360, championId: 'v0' });
 
   // exactly ONE always-on key line — short, de-crowded (the old two-block verbose
@@ -5858,7 +5884,7 @@ test('hovercard: the per-board dot-plot dot + reference rule use the hovercard, 
 
 test('hovercard: NO native <title> remains on the interactive marks of the lifecycle DAG, heatmap, or dot-plot', () => {
   const dagSvg = dag.lifecycleDag({ genId: 'v1', parentId: 'v0',
-    entries: [{ entry_id: 'b', drift_loss: 10, pass_fail: 0 }], decision: 'rejected',
+    entries: [{ entry_id: 'b', drift_loss: 10, pass_fail: false }], decision: 'rejected',
     championId: 'v0', championLoss: { b: 5 }, candidateSigma: 10, championSigma: 5, deltaSigma: 5 });
   const hm = svg.heatmap({ rows: [{ id: 'r', label: 'r' }], cols: [{ id: 'c', label: 'c' }], value: () => 1 });
   const dp = svg.valueDotPlot({ items: [{ label: 'x', value: 1 }], reference: { value: 2, label: 'ref' } });
@@ -5990,9 +6016,9 @@ test('lifecycle RUNG-PROGRESSION strip: a racing candidate page renders the stri
   };
   // per-entry records for v3: the SAME entry raced across rungs, carrying rung tags.
   F[`/api/generation/${RC_EPOCH}/v3/per-entry`] = { entries: [
-    { entry_id: 'q3_metrics_outline', run_id: 'r0', drift_loss: 4.0, pass_fail: 1, match_id: 'rung0_m2', rung: 'rung 0' },
-    { entry_id: 'q3_metrics_outline', run_id: 'r1', drift_loss: 64.0, pass_fail: 0, match_id: 'rung1_m0', rung: 'rung 1' },
-    { entry_id: 'q3_metrics_outline', run_id: 'r2', drift_loss: 63.5, pass_fail: 0, match_id: 'racing-final', rung: 'final' },
+    { entry_id: 'q3_metrics_outline', run_id: 'r0', drift_loss: 4.0, pass_fail: true, match_id: 'rung0_m2', rung: 'rung 0' },
+    { entry_id: 'q3_metrics_outline', run_id: 'r1', drift_loss: 64.0, pass_fail: false, match_id: 'rung1_m0', rung: 'rung 1' },
+    { entry_id: 'q3_metrics_outline', run_id: 'r2', drift_loss: 63.5, pass_fail: false, match_id: 'racing-final', rung: 'final' },
   ] };
   installFixtureMap(F);
   const candidate = await import('../js/views/candidate.js');
@@ -6959,7 +6985,7 @@ function twoEpochFixture(viewedEpoch, opts) {
   for (const g of lineage) {
     perEntry[`/api/generation/${g.epoch_id}/${g.generation_id}/per-entry`] = {
       epoch_id: g.epoch_id, generation_id: g.generation_id,
-      entries: [{ entry_id: 'waffles_single', run_id: `r_${g.epoch_id}_${g.generation_id}`, drift_loss: 50, pass_fail: 0 }],
+      entries: [{ entry_id: 'waffles_single', run_id: `r_${g.epoch_id}_${g.generation_id}`, drift_loss: 50, pass_fail: false }],
     };
   }
   const F = {
@@ -6972,7 +6998,7 @@ function twoEpochFixture(viewedEpoch, opts) {
         generation_id: g.generation_id, parent_generation_id: g.parent_generation_id,
         outcome: { decision: g.promoted ? 'baseline' : 'rejected' },
       })),
-      board: [{ id: 'waffles_single', kind: 'single_turn', budget_s: 180, weight: 1 }],
+      board: [{ entry_id: 'waffles_single', kind: 'single_turn', budget_s: 180, weight: 1 }],
     },
     '/api/lineage': { generations: lineage },
     '/api/score-trajectory': { points: lineage.filter((g) => g.epoch_id === viewedEpoch).map((g, i) => ({ generation_id: g.generation_id, scalar: 50 + i })) },
@@ -7243,7 +7269,7 @@ function scopeFixture() {
     epoch_id: id, closed: id === SC_OLD, goal: 'g',
     experiments: gens.map((g) => ({ generation_id: g.generation_id, parent_generation_id: g.parent_generation_id,
       outcome: g.promoted === true ? { decision: 'promoted' } : g.promoted === false ? { decision: 'rejected' } : {} })),
-    board: [{ id: 'waffles_single', kind: 'single_turn', budget_s: 180, weight: 1 }],
+    board: [{ entry_id: 'waffles_single', kind: 'single_turn', budget_s: 180, weight: 1 }],
   });
   const traj = (gens) => ({ points: gens.map((g, i) => ({ generation_id: g.generation_id, scalar: 40 + i })) });
   const oldGens = lineage.filter((g) => g.epoch_id === SC_OLD);
@@ -7264,7 +7290,7 @@ function scopeFixture() {
   for (const g of lineage) {
     F[`/api/generation/${g.epoch_id}/${g.generation_id}/per-entry`] = {
       epoch_id: g.epoch_id, generation_id: g.generation_id,
-      entries: [{ entry_id: 'waffles_single', run_id: `r_${g.epoch_id}_${g.generation_id}`, drift_loss: 50, pass_fail: 0 }],
+      entries: [{ entry_id: 'waffles_single', run_id: `r_${g.epoch_id}_${g.generation_id}`, drift_loss: 50, pass_fail: false }],
     };
   }
   F[`/api/epoch/${SC_NEW}/analysis`] = { analysis_md: '' };
@@ -7548,8 +7574,8 @@ test('candidate view: per-board dumbbell click → board drill-down for THAT run
   const path = `/api/generation/${EPOCH_ID}/v1/per-entry`;
   const saved = FIXTURE[path];
   FIXTURE[path] = { epoch_id: EPOCH_ID, generation_id: 'v1', entries: [
-    { entry_id: 'waffles_single', run_id: 'run_v1_w_r0', drift_loss: 80.0, pass_fail: 0, runtime_ms: 180000, wall_clock_budget_exceeded: false, match_id: 'rung0_m1', rung: 'rung 0' },
-    { entry_id: 'waffles_single', run_id: 'run_v1_w_r1', drift_loss: 40.0, pass_fail: 1, runtime_ms: 180000, wall_clock_budget_exceeded: false, match_id: 'rung1_m1', rung: 'rung 1' },
+    { entry_id: 'waffles_single', run_id: 'run_v1_w_r0', drift_loss: 80.0, pass_fail: false, runtime_ms: 180000, wall_clock_budget_exceeded: false, match_id: 'rung0_m1', rung: 'rung 0' },
+    { entry_id: 'waffles_single', run_id: 'run_v1_w_r1', drift_loss: 40.0, pass_fail: true, runtime_ms: 180000, wall_clock_budget_exceeded: false, match_id: 'rung1_m1', rung: 'rung 1' },
   ] };
   try {
     const host = document.createElement('div');
@@ -8142,8 +8168,8 @@ function liveUxFixture() {
         { generation_id: 'v1', parent_generation_id: 'v0', outcome: {} },
       ],
       board: [
-        { id: 'b0', kind: 'single_turn', budget_s: 180, weight: 1 },
-        { id: 'b1', kind: 'single_turn', budget_s: 180, weight: 1 },
+        { entry_id: 'b0', kind: 'single_turn', budget_s: 180, weight: 1 },
+        { entry_id: 'b1', kind: 'single_turn', budget_s: 180, weight: 1 },
       ],
     },
     '/api/lineage': { generations: [
@@ -8152,7 +8178,7 @@ function liveUxFixture() {
     ] },
     '/api/score-trajectory': { points: [{ generation_id: 'v0', scalar: 50 }] },
     '/api/tournaments': { epoch_id: LIVE_UX_EPOCH, champion_lineage: ['v0'], matchups: [] },
-    [`/api/generation/${LIVE_UX_EPOCH}/v0/per-entry`]: { entries: [{ entry_id: 'b0', run_id: 'r0', drift_loss: 40, pass_fail: 1 }] },
+    [`/api/generation/${LIVE_UX_EPOCH}/v0/per-entry`]: { entries: [{ entry_id: 'b0', run_id: 'r0', drift_loss: 40, pass_fail: true }] },
     [`/api/generation/${LIVE_UX_EPOCH}/v1/per-entry`]: { entries: [] },
   };
 }
@@ -8311,7 +8337,7 @@ test('live hero (BLOOM): a RUNNING swiss with the applied field as competitors (
 
 // (5) the lifecycle DAG's pending terminal label is STRUCTURE-AWARE.
 test('lifecycle DAG: the pending terminal label is structure-aware (swiss → "⋯ competing", elim → "⋯ in bracket", racing → "⋯ racing", unknown → "⋯ awaiting gate")', () => {
-  const entries = [{ entry_id: 'b0', drift_loss: 10, pass_fail: 1 }];
+  const entries = [{ entry_id: 'b0', drift_loss: 10, pass_fail: true }];
   const swiss = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', decision: 'pending', entries, structure: 'swiss' });
   assert(swiss.textContent.includes('⋯ competing'), 'a pending swiss candidate reads "⋯ competing"');
   assert(!swiss.textContent.includes('⋯ racing'), 'a pending swiss candidate does NOT read "racing"');
@@ -8385,8 +8411,8 @@ test('candidate match-ups: a candidate running its first round populates from th
     '/api/score-trajectory': { points: [{ generation_id: 'v0', scalar: 50 }] },
     // the COMPLETED bracket feed is EMPTY — nothing has committed yet.
     '/api/tournaments': { epoch_id: CM_EPOCH, champion_lineage: ['v0'], matchups: [], tournaments: [] },
-    [`/api/generation/${CM_EPOCH}/v0/per-entry`]: { entries: [{ entry_id: 'b0', run_id: 'r0', drift_loss: 40, pass_fail: 1 }] },
-    [`/api/generation/${CM_EPOCH}/v1/per-entry`]: { entries: [{ entry_id: 'b0', run_id: 'r1', drift_loss: 38, pass_fail: 1, match_id: 'WB-R0-0' }] },
+    [`/api/generation/${CM_EPOCH}/v0/per-entry`]: { entries: [{ entry_id: 'b0', run_id: 'r0', drift_loss: 40, pass_fail: true }] },
+    [`/api/generation/${CM_EPOCH}/v1/per-entry`]: { entries: [{ entry_id: 'b0', run_id: 'r1', drift_loss: 38, pass_fail: true, match_id: 'WB-R0-0' }] },
   };
   installFixtureMap(F);
   // a LIVE run for THIS epoch: the published rounds carry v0 vs v1 in flight.
@@ -8464,7 +8490,7 @@ test('cached champion: per-entry cached/source_epoch surfaces a "cached · from 
     '/api/tournaments': { epoch_id: CC_EPOCH, champion_lineage: ['v0'], matchups: [], tournaments: [] },
     // the champion v0's per-board results are CACHED from a prior epoch.
     [`/api/generation/${CC_EPOCH}/v0/per-entry`]: { entries: [
-      { entry_id: 'b0', run_id: 'r0', drift_loss: 40, pass_fail: 1, cached: true, source_epoch: '2026-06-01_e0', source_run: 'run_prior' },
+      { entry_id: 'b0', run_id: 'r0', drift_loss: 40, pass_fail: true, cached: true, source_epoch: '2026-06-01_e0', source_run: 'run_prior' },
     ] },
   };
   installFixtureMap(F);
@@ -9494,7 +9520,7 @@ test('liked figures untouched: heatmap / valueDotPlot / lifecycleDag still rende
   assert(allByClass(dp, 'dn-ref-rule').length >= 1, 'the dot-plot still draws its reference rule');
   assert(allByClass(dp, 'dn-dot').length >= 2, 'the dot-plot still draws its dots');
   // lifecycleDag
-  const d = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries: [{ entry_id: 'b1', drift_loss: 10, pass_fail: 0 }], decision: 'rejected' });
+  const d = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries: [{ entry_id: 'b1', drift_loss: 10, pass_fail: false }], decision: 'rejected' });
   assertEqual(d.getAttribute('width'), '100%', 'the lifecycle DAG renderer unchanged (width:100%)');
   assert((d.getAttribute('viewBox') || '').startsWith('0 0 '), 'the lifecycle DAG keeps its viewBox');
 });
@@ -9743,22 +9769,22 @@ function scoredFixture() {
   const F = { ...FIXTURE };
   F[`/api/generation/${EPOCH_ID}/v1/per-entry`] = {
     epoch_id: EPOCH_ID, generation_id: 'v1', mean_score: 0.71, entries: [
-      { entry_id: 'waffles_single', run_id: 'run_v1_waffles', drift_loss: 60.5, pass_fail: 1,
+      { entry_id: 'waffles_single', run_id: 'run_v1_waffles', drift_loss: 60.5, pass_fail: true,
         runtime_ms: 180000, wall_clock_budget_exceeded: false,
         score: 0.81, metrics: { precision: 0.88, recall: 0.74 } },
       // bool-only entry: no score / metrics — must keep the pass/fail display.
       { entry_id: 'picky_stakeholder_emulated', run_id: 'run_v1_picky', drift_loss: 105.5,
-        pass_fail: 0, runtime_ms: 360000, wall_clock_budget_exceeded: false },
+        pass_fail: false, runtime_ms: 360000, wall_clock_budget_exceeded: false },
     ],
   };
   // champion v0 also has a scored waffles + a bool-only picky.
   F[`/api/generation/${EPOCH_ID}/v0/per-entry`] = {
     epoch_id: EPOCH_ID, generation_id: 'v0', mean_score: 0.62, entries: [
-      { entry_id: 'waffles_single', run_id: 'run_v0_waffles', drift_loss: 70.0, pass_fail: 1,
+      { entry_id: 'waffles_single', run_id: 'run_v0_waffles', drift_loss: 70.0, pass_fail: true,
         runtime_ms: 180000, wall_clock_budget_exceeded: false,
         score: 0.62, metrics: { precision: 0.70, recall: 0.55 } },
       { entry_id: 'picky_stakeholder_emulated', run_id: 'run_v0_picky', drift_loss: 99.0,
-        pass_fail: 1, runtime_ms: 360000, wall_clock_budget_exceeded: false },
+        pass_fail: true, runtime_ms: 360000, wall_clock_budget_exceeded: false },
     ],
   };
   return F;

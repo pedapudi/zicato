@@ -230,6 +230,18 @@ def _parse_iso(value: Any) -> _dt.datetime | None:
     return dt
 
 
+def _opt_bool(value: Any) -> bool | None:
+    """Coerce a stored pass/fail flag to a JSON boolean (or ``None``).
+
+    ONE spelling on the wire: the SQLite index stores 0/1 ints, loss.json
+    stores real booleans — every payload emits ``true`` / ``false`` /
+    ``null``, never a bare int the frontend has to re-interpret.
+    """
+    if value is None:
+        return None
+    return bool(value)
+
+
 def _is_finite(value: float) -> bool:
     try:
         return value == value and value not in (float("inf"), float("-inf"))

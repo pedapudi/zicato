@@ -1382,10 +1382,11 @@ def _read_run_result(run_dir: Path) -> dict[str, Any] | None:
                 }
             )
 
+    pass_fail = loss.get("pass_fail")
     return {
         "wall_clock_budget_exceeded": bool(loss.get("wall_clock_budget_exceeded", False)),
         "runtime_ms": int(loss.get("runtime_ms") or 0),
-        "pass_fail": loss.get("pass_fail"),
+        "pass_fail": None if pass_fail is None else bool(pass_fail),
         "expectation_result": expectation,
         "metric_counts": metric_counts,
         "drift_loss": (

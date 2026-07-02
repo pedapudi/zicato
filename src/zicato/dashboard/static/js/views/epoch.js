@@ -91,7 +91,7 @@ export async function render(host, ctx, params) {
       if (svg.isNum(r.drift_loss)) lossLookup.set(`${r.entry_id}|${g.id}`, r.drift_loss);
     }
   });
-  for (const b of board) { const id = b.entry_id || b.id; if (id) entryIds.add(id); }
+  for (const b of board) { if (b.entry_id) entryIds.add(b.entry_id); }
 
   // The REIGNING champion — the server-stamped pointer (never re-scanned).
   const championId = (ep && ep.current_champion != null) ? String(ep.current_champion) : null;
@@ -209,7 +209,7 @@ export async function render(host, ctx, params) {
     rounds: roundModelDigest(epochRounds),
     waterfall: waterfallSteps(timeline).map((s) => [s.round_index, svg.isNum(s.from) ? s.from.toFixed(2) : null, svg.isNum(s.to) ? s.to.toFixed(2) : null, s.promoted, s.gen]),
     loss: [...lossLookup.entries()].sort(),
-    board: board.map((b) => [b.entry_id || b.id, b.kind, b.weight, b.budget_s]),
+    board: board.map((b) => [b.entry_id, b.kind, b.weight, b.budget_s]),
     boardStatus: boardStatusDigest(boardStatus),
     // loop-communication panels: content-gated on their own rounded folds so
     // a no-op heartbeat (identical trajectory/cost/judge-trend) churns no DOM.

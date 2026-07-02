@@ -81,15 +81,14 @@ export function inflightForActiveEpoch(activeRuns, { heartbeat, activeTournament
   return Array.isArray(activeRuns) ? activeRuns.filter((r) => r && typeof r === 'object') : [];
 }
 
-// Pull the board-entry id off an in-flight run record (payloads vary).
+// The run coordinates — ONE spelling on the wire (`entry_id` /
+// `generation_id`, exactly what ActiveRun serializes). The old
+// board_entry_id / entry / gen alias-coalescing is DELETED.
 function runEntryId(r) {
-  if (!r || typeof r !== 'object') return null;
-  return r.entry_id != null ? r.entry_id : (r.board_entry_id != null ? r.board_entry_id : (r.entry != null ? r.entry : null));
+  return (r && typeof r === 'object' && r.entry_id != null) ? r.entry_id : null;
 }
-// Pull the generation id off an in-flight run record.
 function runGenId(r) {
-  if (!r || typeof r !== 'object') return null;
-  return r.generation_id != null ? r.generation_id : (r.gen != null ? r.gen : null);
+  return (r && typeof r === 'object' && r.generation_id != null) ? r.generation_id : null;
 }
 
 // Filter in-flight runs to a single candidate×board cell (gen + entry). Either
@@ -103,27 +102,22 @@ export function inflightForEntryGen(runs, entryId, genId) {
   });
 }
 
-// Terminal tokens a run's `status` / `state` field may carry once it has ended.
+// Terminal tokens a run's `status` field may carry once it has ended.
 const RUN_TERMINAL_STATUS = new Set([
   'done', 'complete', 'completed', 'finished', 'pass', 'fail', 'failed',
   'error', 'timeout', 'cached', 'skipped',
 ]);
 
-// Is this run record TERMINAL (ended)? True on an explicit terminal flag/status
-// or when every task/board has landed — keyed to COMPLETION, not the wall-clock
-// budget (the "1/1 tasks completed but 0%" bug: the bar read elapsed/budget and
-// ignored the completed work).
+// Is this run record TERMINAL (ended)? True on a terminal `status` token
+// (the server's canonical entry-status vocabulary) or when every board has
+// landed (`boards_done`/`boards_total` — the ONE spelling; the speculative
+// tasks_*/done/completed aliases no server ever wrote are DELETED). Keyed to
+// COMPLETION, not the wall-clock budget, so a finished run never shows a
+// stale low time-fraction.
 export function runIsTerminal(r) {
   if (!r || typeof r !== 'object') return false;
-  if (r.completed === true || r.terminal === true || r.done === true) return true;
-  const tok = String(r.status != null ? r.status : (r.state != null ? r.state : '')).trim().toLowerCase();
+  const tok = String(r.status != null ? r.status : '').trim().toLowerCase();
   if (tok && RUN_TERMINAL_STATUS.has(tok)) return true;
-  // all tasks landed (e.g. the "1/1 tasks completed" case).
-  if (svg.isNum(r.tasks_total) && r.tasks_total > 0) {
-    const td = svg.isNum(r.tasks_completed) ? r.tasks_completed
-      : (svg.isNum(r.tasks_done) ? r.tasks_done : null);
-    if (td != null && td >= r.tasks_total) return true;
-  }
   // all boards scored.
   if (svg.isNum(r.boards_total) && r.boards_total > 0
       && svg.isNum(r.boards_done) && r.boards_done >= r.boards_total) return true;
@@ -1243,7 +1237,7 @@ function inflightByGen(activeRuns, epochGens) {
   const genSet = epochGens ? new Set([...epochGens].map(String)) : null;
   const map = new Map();
   for (const r of (Array.isArray(activeRuns) ? activeRuns : [])) {
-    const g = String(r.generation_id || r.gen || '');
+    const g = String(r.generation_id || '');
     if (!g) continue;
     if (genSet && !genSet.has(g)) continue;
     const p = svg.isNum(r.progress) ? r.progress : 0;

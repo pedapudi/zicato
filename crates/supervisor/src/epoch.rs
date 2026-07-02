@@ -55,7 +55,9 @@ pub struct Harness {
 /// One board entry, summarised for display.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct BoardEntry {
-    pub id: Option<String>,
+    /// ONE spelling on the wire: `entry_id` (the board JSONL's own `id`
+    /// is an input-format detail, not a payload field).
+    pub entry_id: Option<String>,
     pub kind: Option<String>,
     pub input_preview: Option<String>,
     pub expectation_kind: Option<String>,
@@ -196,7 +198,7 @@ fn parse_board(path: &std::path::Path) -> Option<Vec<BoardEntry>> {
             })
             .unwrap_or_default();
         entries.push(BoardEntry {
-            id: str_field(&obj, "id"),
+            entry_id: str_field(&obj, "id"),
             kind: str_field(&obj, "kind"),
             input_preview: board_input_preview(&obj),
             expectation_kind,

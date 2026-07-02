@@ -117,10 +117,10 @@ test('setHeartbeat folds the heartbeat seq into the cursor (environment-poll pat
   resetCursor();
   // a heartbeat carries seq mirroring the SSE frame — folding it keeps the
   // cursor current even with no SSE wiring.
-  state.setHeartbeat({ phase: 'tournament:round_0:rung0_m1', seq: 11, last_heartbeat: NOW });
+  state.setHeartbeat({ phase: 'tournament:round_0:rung0_m1', seq: 11, ts: NOW });
   assertEqual(state.lastSeq, 11, 'the heartbeat seq advances the cursor');
   // a minimal beat with no seq must NOT move the cursor.
-  state.setHeartbeat({ last_heartbeat: NOW + 1000 });
+  state.setHeartbeat({ ts: NOW + 1000 });
   assertEqual(state.lastSeq, 11, 'a seq-less minimal beat does not move the cursor');
 });
 
@@ -227,7 +227,7 @@ const RS = livestatus.RUN_STATE;
 
 test('run-state: a fresh seq advance reads LIVE', () => {
   const s = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'tournament:round_0:rung0_m1', last_heartbeat: NOW - 1000 },
+    heartbeat: { phase: 'tournament:round_0:rung0_m1', ts: NOW - 1000 },
     activeRuns: [{ generation_id: 'v1', entry_id: 'b0' }],
     activeTournament: { structure: 'racing', phase: 'running' },
     seq: 12, terminal: false, lastSeqAdvanceAt: NOW - 2000,
@@ -237,7 +237,7 @@ test('run-state: a fresh seq advance reads LIVE', () => {
 
 test('run-state: a TERMINAL marker reads SETTLED — authoritative over everything else', () => {
   const s = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'tournament:round_0:rung0_m1', last_heartbeat: NOW - 1000 },
+    heartbeat: { phase: 'tournament:round_0:rung0_m1', ts: NOW - 1000 },
     activeRuns: [{ generation_id: 'v1' }],
     activeTournament: { structure: 'racing', phase: 'running' },
     seq: 20, terminal: true, lastSeqAdvanceAt: NOW - 500 /* even a recent advance */,
@@ -247,7 +247,7 @@ test('run-state: a TERMINAL marker reads SETTLED — authoritative over everythi
 
 test('run-state: seq frozen past budget but heartbeat STILL pulsing reads STALLED', () => {
   const s = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'tournament:round_0:rung0_m1', last_heartbeat: NOW - 1000 /* fresh pulse */ },
+    heartbeat: { phase: 'tournament:round_0:rung0_m1', ts: NOW - 1000 /* fresh pulse */ },
     activeRuns: [],
     activeTournament: { structure: 'swiss', phase: 'running' },
     seq: 5, terminal: false,
@@ -258,7 +258,7 @@ test('run-state: seq frozen past budget but heartbeat STILL pulsing reads STALLE
 
 test('run-state: seq frozen AND no fresh heartbeat (no pulse) reads DEAD', () => {
   const s = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'tournament:round_0:rung0_m1', last_heartbeat: NOW - (livestatus.STALE_HEARTBEAT_MS + 10_000) },
+    heartbeat: { phase: 'tournament:round_0:rung0_m1', ts: NOW - (livestatus.STALE_HEARTBEAT_MS + 10_000) },
     activeRuns: [],
     activeTournament: { structure: 'swiss', phase: 'running' },
     seq: 5, terminal: false,
@@ -269,7 +269,7 @@ test('run-state: seq frozen AND no fresh heartbeat (no pulse) reads DEAD', () =>
 
 test('run-state: an in-flight board unit keeps a frozen-seq run STALLED (a worker pulse, not DEAD)', () => {
   const s = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'tournament:round_0:rung0_m1', last_heartbeat: NOW - (livestatus.STALE_HEARTBEAT_MS + 10_000) },
+    heartbeat: { phase: 'tournament:round_0:rung0_m1', ts: NOW - (livestatus.STALE_HEARTBEAT_MS + 10_000) },
     activeRuns: [{ generation_id: 'v1', entry_id: 'b0' }] /* a per-run beater pulse */,
     activeTournament: { structure: 'racing', phase: 'running' },
     seq: 5, terminal: false,
@@ -281,7 +281,7 @@ test('run-state: an in-flight board unit keeps a frozen-seq run STALLED (a worke
 test('run-state DEGRADE: with NO seq known (seq -1) it falls back to the timestamp verdict', () => {
   // running per the timestamp path ⇒ LIVE.
   const live = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'proposing:field', last_heartbeat: NOW - 1000 },
+    heartbeat: { phase: 'proposing:field', ts: NOW - 1000 },
     activeRuns: [], activeTournament: null,
     seq: -1, terminal: false, lastSeqAdvanceAt: NaN,
   }, NOW);
@@ -289,14 +289,14 @@ test('run-state DEGRADE: with NO seq known (seq -1) it falls back to the timesta
   assertEqual(live.seqKnown, false, 'seqKnown is false on the degrade path');
   // a frozen heartbeat (stale, not running) ⇒ DEAD.
   const dead = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'tournament:round_0:final', last_heartbeat: NOW - (livestatus.STALE_HEARTBEAT_MS + 5000) },
+    heartbeat: { phase: 'tournament:round_0:final', ts: NOW - (livestatus.STALE_HEARTBEAT_MS + 5000) },
     activeRuns: [], activeTournament: null,
     seq: -1, terminal: false, lastSeqAdvanceAt: NaN,
   }, NOW);
   assertEqual(dead.runState, RS.DEAD, 'no seq + a stale frozen heartbeat ⇒ DEAD');
   // an idle/done workspace ⇒ SETTLED.
   const settled = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'idle', last_heartbeat: NOW - 1000 },
+    heartbeat: { phase: 'idle', ts: NOW - 1000 },
     activeRuns: [], activeTournament: null,
     seq: -1, terminal: false, lastSeqAdvanceAt: NaN,
   }, NOW);
@@ -316,13 +316,13 @@ test('liveStatusDigest: a steady tick (same run-state, climbing advance-age) is 
   // discrete run-state is unchanged ⇒ the digest must NOT flip (the
   // render-discipline rule: never fold the climbing age).
   const a = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'tournament:round_0:rung0_m1', last_heartbeat: NOW - 1000 },
+    heartbeat: { phase: 'tournament:round_0:rung0_m1', ts: NOW - 1000 },
     activeRuns: [{ generation_id: 'v1' }],
     activeTournament: { structure: 'racing', phase: 'running' },
     seq: 9, terminal: false, lastSeqAdvanceAt: NOW - 3000,
   }, NOW);
   const b = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'tournament:round_0:rung0_m1', last_heartbeat: NOW + 2000 },
+    heartbeat: { phase: 'tournament:round_0:rung0_m1', ts: NOW + 2000 },
     activeRuns: [{ generation_id: 'v1' }],
     activeTournament: { structure: 'racing', phase: 'running' },
     seq: 9, terminal: false, lastSeqAdvanceAt: NOW - 3000,
@@ -337,13 +337,13 @@ test('liveStatusDigest: a steady tick (same run-state, climbing advance-age) is 
 
 test('liveStatusDigest: a run-state TRANSITION flips the digest', () => {
   const liveSt = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'tournament:round_0:rung0_m1', last_heartbeat: NOW - 1000 },
+    heartbeat: { phase: 'tournament:round_0:rung0_m1', ts: NOW - 1000 },
     activeRuns: [{ generation_id: 'v1' }],
     activeTournament: { structure: 'racing', phase: 'running' },
     seq: 9, terminal: false, lastSeqAdvanceAt: NOW - 2000,
   }, NOW);
   const settledSt = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'tournament:round_0:rung0_m1', last_heartbeat: NOW - 1000 },
+    heartbeat: { phase: 'tournament:round_0:rung0_m1', ts: NOW - 1000 },
     activeRuns: [{ generation_id: 'v1' }],
     activeTournament: { structure: 'racing', phase: 'running' },
     seq: 9, terminal: true, lastSeqAdvanceAt: NOW - 2000,
@@ -393,7 +393,7 @@ test('chrome: the dt-run-state pill paints LIVE on an advancing seq + flips to S
   state.connected = true;
   state.activeTournament = { structure: 'racing', phase: 'running' };
   state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0' }];
-  state.setHeartbeat({ phase: 'tournament:round_0:rung0_m1', seq: 3, last_heartbeat: Date.now() });
+  state.setHeartbeat({ phase: 'tournament:round_0:rung0_m1', seq: 3, ts: Date.now() });
   state._changed();
   await new Promise((r) => setTimeout(r, 0));
   assert(allByClass(root, 'dt-rs-live')[0], 'an advancing seq lights the pill LIVE');
@@ -416,7 +416,7 @@ test('chrome: a NO-OP heartbeat beat (same seq) churns ZERO DOM in the status pi
   state.activeTournament = { structure: 'racing', phase: 'running' };
   state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0' }];
   const t0 = Date.now();
-  state.setHeartbeat({ phase: 'tournament:round_0:rung0_m1', seq: 4, last_heartbeat: t0 });
+  state.setHeartbeat({ phase: 'tournament:round_0:rung0_m1', seq: 4, ts: t0 });
   state._changed();
   await new Promise((r) => setTimeout(r, 0));
   const statusEl = allByClass(root, 'dt-status')[0];
@@ -426,7 +426,7 @@ test('chrome: a NO-OP heartbeat beat (same seq) churns ZERO DOM in the status pi
   const firstChildBefore = pill.firstChild;
 
   // a NO-OP beat: same seq, a slightly newer (but same-bucket) heartbeat ts.
-  state.setHeartbeat({ phase: 'tournament:round_0:rung0_m1', seq: 4, last_heartbeat: t0 + 500 });
+  state.setHeartbeat({ phase: 'tournament:round_0:rung0_m1', seq: 4, ts: t0 + 500 });
   state._changed();
   await new Promise((r) => setTimeout(r, 0));
   assertEqual(state.lastSeq, 4, 'the cursor is unchanged by the no-op beat');

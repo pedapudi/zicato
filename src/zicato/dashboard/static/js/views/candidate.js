@@ -437,9 +437,9 @@ export function buildRadarModel({ primaryGate, championScalar, settledScalar, pr
   // (2) pass-rate axis — higher = better, so it maps directly (no inverse). The
   // candidate's pass-rate is read off its own per-board pass_fail; the champion's
   // is recovered from the gate's delta_pass_rate (delta = challenger − champion).
-  const passable = (Array.isArray(entries) ? entries : []).filter((e) => e && (e.pass_fail === 0 || e.pass_fail === 1 || e.pass_fail === true || e.pass_fail === false));
+  const passable = (Array.isArray(entries) ? entries : []).filter((e) => e && typeof e.pass_fail === 'boolean');
   if (passable.length) {
-    const candRate = passable.filter((e) => e.pass_fail === 1 || e.pass_fail === true).length / passable.length;
+    const candRate = passable.filter((e) => e.pass_fail === true).length / passable.length;
     const dpr = primaryGate && svg.isNum(primaryGate.delta_pass_rate) ? primaryGate.delta_pass_rate : null;
     const champRate = dpr != null ? Math.max(0, Math.min(1, candRate - dpr)) : null;
     if (champRate != null) {
@@ -623,7 +623,7 @@ function candidateDigest(s) {
     // beat that advances progress repaints, but a no-op heartbeat stays equal.
     inflight: Array.isArray(s.inflight) ? s.inflight.map((r) => {
       const pr = runProgressRatio(r);
-      return [r.entry_id != null ? r.entry_id : (r.board_entry_id != null ? r.board_entry_id : r.entry || null),
+      return [r.entry_id != null ? r.entry_id : null,
         r.run_id || null, pr != null ? pr.toFixed(2) : null];
     }).sort() : null,
   };
@@ -769,7 +769,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     ])]));
     const tbody = el('tbody');
     for (const r of inflight) {
-      const eid = r.entry_id != null ? r.entry_id : (r.board_entry_id != null ? r.board_entry_id : (r.entry != null ? r.entry : '—'));
+      const eid = r.entry_id != null ? r.entry_id : '—';
       const pr = runProgressRatio(r);
       const pct = pr != null ? Math.round(pr * 100) : null;
       // a per-run harmonograf "execution ▸" link — liveness-gated (these are

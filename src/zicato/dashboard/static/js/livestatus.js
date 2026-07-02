@@ -63,26 +63,14 @@ export function isActivePhase(phase) {
   return true;
 }
 
-// Parse a heartbeat timestamp into epoch ms. Tolerates an ISO-8601 string or a
-// numeric epoch (ms, or seconds — values that small are scaled up). Returns NaN
-// when the value is absent/unparseable; a NaN result means the heartbeat has no
-// ageable timestamp and is therefore treated as STALE (not live), never fresh.
-function parseHeartbeatTs(value) {
-  if (value == null) return NaN;
-  if (typeof value === 'number') {
-    if (!isFinite(value)) return NaN;
-    // epoch seconds (10-digit) vs ms (13-digit): scale sub-1e12 values up.
-    return value < 1e12 ? value * 1000 : value;
-  }
-  const s = String(value).trim();
-  if (s === '') return NaN;
-  // a bare numeric string is an epoch value too.
-  if (/^\d+(\.\d+)?$/.test(s)) {
-    const n = Number(s);
-    return n < 1e12 ? n * 1000 : n;
-  }
-  const ms = Date.parse(s);
-  return isFinite(ms) ? ms : NaN;
+// The heartbeat's ONE typed liveness timestamp: `ts`, integer MILLISECONDS
+// since the epoch, stamped SERVER-SIDE (both the Python reader and the Rust
+// supervisor derive it from `last_heartbeat`). The old sec-vs-ms magnitude
+// guessing + the four alternate keys are DELETED — a heartbeat without a
+// numeric `ts` has no ageable timestamp and reads STALE, never fresh.
+function heartbeatTs(hb) {
+  const v = hb ? hb.ts : null;
+  return (typeof v === 'number' && isFinite(v)) ? v : NaN;
 }
 
 // Build a short, readable label from the heartbeat phase + the structure.
@@ -203,10 +191,8 @@ export function deriveLiveStatus(
   const tournamentRunning = !!(at && String(at.phase || '').toLowerCase() === 'running');
 
   // Heartbeat freshness: a FROZEN heartbeat from a dead/torn-down process must
-  // NOT read "live" — no matter how its phase/tournament file froze. Read the
-  // timestamp from any of the known fields (the backend stamps `last_heartbeat`
-  // and, when the on-disk record carries no usable stamp, falls back to the
-  // file mtime in the same field).
+  // NOT read "live" — no matter how its phase/tournament file froze. The
+  // server stamps the single typed `ts` (ms epoch) on every heartbeat payload.
   //
   // THE ONE STALENESS RULE: a heartbeat is FRESH only when it carries a
   // PARSEABLE timestamp AND that timestamp is within STALE_HEARTBEAT_MS of now.
@@ -215,12 +201,7 @@ export function deriveLiveStatus(
   // leaves a heartbeat whose ts cannot be aged out, so treating "no readable
   // ts" as fresh let an active/terminal phase (and a frozen
   // active_tournament.json with phase:"running") read live forever.
-  const hbTs = hb
-    ? parseHeartbeatTs(hb.last_heartbeat != null ? hb.last_heartbeat
-        : hb.emitted_at != null ? hb.emitted_at
-        : hb.ts != null ? hb.ts
-        : hb.updated_at)
-    : NaN;
+  const hbTs = heartbeatTs(hb);
   const heartbeatFresh = isFinite(hbTs) && (now - hbTs) <= STALE_HEARTBEAT_MS;
   // `heartbeatStale` is the public flag the chrome/digest read: a heartbeat
   // that EXISTS but is not fresh (old OR untimestamped) is stale.
@@ -343,8 +324,8 @@ export function treeLiveSet({ activeRuns, running, epochId } = {}) {
     if (!r || typeof r !== 'object') continue;
     // drop a run whose epoch is KNOWN-and-DIFFERENT from the viewed epoch.
     if (want != null && r.epoch_id != null && String(r.epoch_id) !== want) continue;
-    const gen = r.generation_id != null ? r.generation_id : r.gen;
-    const entry = r.entry_id != null ? r.entry_id : (r.board_entry_id != null ? r.board_entry_id : r.entry);
+    const gen = r.generation_id;
+    const entry = r.entry_id;
     if (gen != null && String(gen) !== '') out.add(String(gen));
     if (entry != null && String(entry) !== '') out.add(String(entry));
   }

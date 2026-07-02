@@ -876,7 +876,7 @@ export async function buildTreeModel(route) {
     // Boards come from the epoch contract — attach them only to the contract
     // epoch's node (the other epochs' boards resolve when that epoch is viewed).
     const boardList = (isContractEpoch && ep && Array.isArray(ep.board) ? ep.board : []).map((b) => ({
-      id: b.entry_id || b.id, kindTag: KIND_TAG[b.kind] || null,
+      id: b.entry_id, kindTag: KIND_TAG[b.kind] || null,
     })).filter((b) => b.id);
     // ROUND GROUPING (Task 5): Epoch → Round 0 / Round 1 / … → {challengers
     // minted that round}, read off the SERVED per-epoch round timeline

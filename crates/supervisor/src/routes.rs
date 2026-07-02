@@ -345,11 +345,20 @@ async fn api_health_report(State(s): State<AppState>) -> Json<serde_json::Value>
 }
 
 async fn api_heartbeat(State(s): State<AppState>) -> Json<serde_json::Value> {
-    Json(
-        reader::read_heartbeat(&s.paths)
-            .map(|h| serde_json::to_value(h).unwrap_or(serde_json::Value::Null))
-            .unwrap_or(serde_json::Value::Null),
-    )
+    // Stamp the ONE typed liveness timestamp — `ts`, integer MILLISECONDS
+    // since the epoch, derived from `last_heartbeat` — mirroring the Python
+    // reader. The frontend ages the heartbeat off this field alone.
+    let value = reader::read_heartbeat(&s.paths)
+        .map(|h| {
+            let ts = h.last_heartbeat.map(|dt| dt.timestamp_millis());
+            let mut v = serde_json::to_value(h).unwrap_or(serde_json::Value::Null);
+            if let (Some(obj), Some(ms)) = (v.as_object_mut(), ts) {
+                obj.insert("ts".into(), serde_json::Value::from(ms));
+            }
+            v
+        })
+        .unwrap_or(serde_json::Value::Null);
+    Json(value)
 }
 
 #[derive(Serialize)]

@@ -130,7 +130,7 @@ test('LiveController: kill buttons render only on a writable workspace', () => {
     rounds: [{ round_index: 0, matches: [{ match_id: 'm0', competitors: ['v0', 'v1'] }] }],
     entries: [], champion_lineage: ['v0'],
   };
-  const heartbeat = { phase: 'tournament:round_0', epoch_id: 'e0', last_heartbeat: new Date().toISOString() };
+  const heartbeat = { phase: 'tournament:round_0', epoch_id: 'e0', ts: Date.now() };
   const activeRuns = [{ run_id: 'r7', generation_id: 'v1', entry_id: 'waffles', epoch_id: 'e0' }];
   const status = { running: true, alive: true, structure: 'gauntlet', inFlight: 1 };
 

@@ -91,6 +91,7 @@ def read_heartbeat_dict(paths: WorkspacePaths) -> dict[str, Any] | None:
                 "last_heartbeat": _heartbeat_file_mtime_iso(paths),
                 "paused": read_paused(paths),
             }
+            synthetic["ts"] = _heartbeat_ts_ms(synthetic["last_heartbeat"])
             meta = read_meta_loop_session_id(paths)
             if meta:
                 synthetic["harmonograf_meta_session"] = meta
@@ -104,6 +105,11 @@ def read_heartbeat_dict(paths: WorkspacePaths) -> dict[str, Any] | None:
     out["paused"] = read_paused(paths)
     if _parse_iso(out.get("last_heartbeat")) is None:
         out["last_heartbeat"] = _heartbeat_file_mtime_iso(paths)
+    # THE one typed liveness timestamp: `ts`, integer MILLISECONDS since the
+    # epoch, stamped server-side from the ageable `last_heartbeat`. The
+    # frontend ages the heartbeat off THIS field alone — no ISO parsing, no
+    # sec-vs-ms magnitude guessing, no alternate keys.
+    out["ts"] = _heartbeat_ts_ms(out["last_heartbeat"])
     if injected_url:
         # Heartbeat-from-live-evolve wins: only fill the URL when absent.
         existing = out.get("harmonograf_url")
@@ -120,6 +126,14 @@ def read_heartbeat_dict(paths: WorkspacePaths) -> dict[str, Any] | None:
             if meta:
                 out["harmonograf_meta_session"] = meta
     return out
+
+
+def _heartbeat_ts_ms(last_heartbeat: Any) -> int | None:
+    """``last_heartbeat`` (ISO) as integer ms-epoch, or ``None`` if unparseable."""
+    parsed = _parse_iso(last_heartbeat)
+    if parsed is None:
+        return None
+    return int(parsed.timestamp() * 1000)
 
 
 def _heartbeat_file_mtime_iso(paths: WorkspacePaths) -> str:

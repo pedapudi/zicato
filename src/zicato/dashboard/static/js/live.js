@@ -173,9 +173,9 @@ export function liveSnapshot({ heartbeat, activeRuns, activeTournament, status }
     structure: (status && status.structure) || (at && at.structure) || null,
     running: !!(status && status.running),
     runs: runs.map((r) => ({
-      key: String(r.run_id || (String(r.generation_id || r.gen || '') + '|' + String(r.entry_id || r.board_entry_id || r.entry || ''))),
-      gen: r.generation_id || r.gen || null,
-      entry: r.entry_id || r.board_entry_id || r.entry || null,
+      key: String(r.run_id || (String(r.generation_id || '') + '|' + String(r.entry_id || ''))),
+      gen: r.generation_id || null,
+      entry: r.entry_id || null,
     })),
     rungs,
     lineageLen: (at && Array.isArray(at.champion_lineage)) ? at.champion_lineage.length : 0,

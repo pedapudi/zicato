@@ -17,6 +17,7 @@ from zicato.dashboard.readers.lineage_view import build_lineage_view
 from zicato.dashboard.readers.paths import (
     WorkspacePaths,
     _iso,
+    _opt_bool,
     _preview,
     _read_json_value,
     _utc_now,
@@ -254,7 +255,7 @@ def build_per_entry_for_generation(
         value = row[key]
         return value if isinstance(value, str) and value else None
 
-    def _opt_bool(row: Any, key: str) -> bool:
+    def _row_bool(row: Any, key: str) -> bool:
         if key not in _row_keys(row):
             return False
         return bool(row[key]) if row[key] is not None else False
@@ -285,7 +286,7 @@ def build_per_entry_for_generation(
                 "drift_loss": (
                     float(r["drift_loss"]) if isinstance(r["drift_loss"], int | float) else None
                 ),
-                "pass_fail": r["pass_fail"],
+                "pass_fail": _opt_bool(r["pass_fail"]),
                 # Continuous per-entry outcome + precision/recall (#18),
                 # parsed from the row's loss_json blob. ``None`` for a
                 # pre-score entry (renders by pass_fail as before).
@@ -305,7 +306,7 @@ def build_per_entry_for_generation(
                 # OWN loss.json / index materializes the provenance so this read
                 # stays epoch-local. ``cached`` False / ``source_*`` None for a
                 # freshly-executed run.
-                "cached": _opt_bool(r, "cached"),
+                "cached": _row_bool(r, "cached"),
                 "source_epoch": _opt_str(r, "source_epoch"),
                 "source_run": _opt_str(r, "source_run"),
             }
@@ -617,6 +618,8 @@ def build_run_header(
         # discard nested dicts / lists which are not header material.
         if v is None or isinstance(v, int | float | str | bool):
             header[k] = v
+    # ONE spelling on the wire: pass_fail is a JSON boolean (or null).
+    header["pass_fail"] = _opt_bool(header["pass_fail"])
     return header
 
 
@@ -906,7 +909,7 @@ def build_search_results(paths: WorkspacePaths, query: str) -> dict[str, Any]:
         board = _parse_board(board_path)
         if board:
             for entry in board:
-                eid = entry.get("id")
+                eid = entry.get("entry_id")
                 if not isinstance(eid, str) or not eid:
                     continue
                 if q_lower in eid.lower():

@@ -84,7 +84,9 @@ def _parse_board(path: Path) -> list[dict[str, Any]] | None:
         tags_list = [t for t in tags if isinstance(t, str)] if isinstance(tags, list) else []
         entries.append(
             {
-                "id": obj.get("id"),
+                # ONE spelling on the wire: `entry_id` (the board JSONL's own
+                # `id` is an input-format detail, not a payload field).
+                "entry_id": obj.get("id"),
                 "kind": obj.get("kind"),
                 "input_preview": _board_input_preview(obj),
                 "expectation_kind": expectation_kind if isinstance(expectation_kind, str) else None,
@@ -553,7 +555,7 @@ def compute_board_split(
     # so the count is floor(total * fraction), drawn by stable-hash order.
     rows: list[tuple[str, dict[str, Any]]] = []
     for b in board:
-        eid = b.get("entry_id") if b.get("entry_id") is not None else b.get("id")
+        eid = b.get("entry_id")
         if eid is None:
             continue
         rows.append((str(eid), b))

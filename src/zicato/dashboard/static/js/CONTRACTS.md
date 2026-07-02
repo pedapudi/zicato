@@ -202,7 +202,6 @@ state.health                          — dashboard-service identity
 state.epoch           { id, generation, round, startedAt }
 state.epochDef        — full epoch contract
 state.epochs          — per-epoch goal summary [ { epoch_id, goal } ]
-state.scoring         { margin }
 state.workspace
 state.files / state.mutations         — Files-view scratch state
 ```

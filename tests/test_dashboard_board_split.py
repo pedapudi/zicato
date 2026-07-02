@@ -32,14 +32,19 @@ def _write_json(path: Path, obj: object) -> None:
 
 
 def _board() -> list[dict[str, object]]:
-    # Real board.jsonl entries key the id under "id" (the board format); the
-    # split's entry-id resolution prefers "entry_id" then falls back to "id".
+    # The PARSED board payload (``_parse_board``) — ONE spelling on the wire:
+    # ``entry_id`` (the raw board.jsonl "id" is an input-format detail).
     return [
-        {"id": "b1", "weight": 1.0, "tags": ["adversarial"]},
-        {"id": "b2", "weight": 2.0, "tags": ["adversarial", "rare"]},
-        {"id": "b3", "weight": 1.0, "tags": []},
-        {"id": "b4", "weight": 1.0, "tags": []},
+        {"entry_id": "b1", "weight": 1.0, "tags": ["adversarial"]},
+        {"entry_id": "b2", "weight": 2.0, "tags": ["adversarial", "rare"]},
+        {"entry_id": "b3", "weight": 1.0, "tags": []},
+        {"entry_id": "b4", "weight": 1.0, "tags": []},
     ]
+
+
+def _board_jsonl_rows() -> list[dict[str, object]]:
+    # The RAW board.jsonl rows (the board input format keys the id as "id").
+    return [{"id": e["entry_id"], "weight": e["weight"], "tags": e["tags"]} for e in _board()]
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +127,7 @@ def _epoch_ws(tmp_path: Path, *, scoring: dict, experiments: list[dict] | None =
     edir = ws / "epochs" / EPOCH
     _write_json(edir / "config.json", {"closed": False, "goal": "g"})
     _write_json(edir / "scoring.json", scoring)
-    board_lines = "\n".join(json.dumps(e) for e in _board())
+    board_lines = "\n".join(json.dumps(e) for e in _board_jsonl_rows())
     (edir / "board.jsonl").parent.mkdir(parents=True, exist_ok=True)
     (edir / "board.jsonl").write_text(board_lines + "\n", encoding="utf-8")
     for exp in experiments or []:

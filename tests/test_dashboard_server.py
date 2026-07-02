@@ -406,7 +406,16 @@ def test_active_tournament_matches_file(client: TestClient, workspace: Path) -> 
 def test_heartbeat_endpoint(client: TestClient) -> None:
     r = client.get("/api/heartbeat")
     assert r.status_code == 200
-    assert r.json()["phase"] == "tournament"
+    body = r.json()
+    assert body["phase"] == "tournament"
+    # THE one typed liveness timestamp: integer ms-epoch, stamped server-side
+    # from last_heartbeat (2026-05-16T04:30:00Z). The frontend ages the
+    # heartbeat off this field alone — no ISO parsing, no magnitude guessing.
+    import datetime as _dt
+
+    expected_ms = int(_dt.datetime(2026, 5, 16, 4, 30, tzinfo=_dt.UTC).timestamp() * 1000)
+    assert body["ts"] == expected_ms
+    assert isinstance(body["ts"], int)
 
 
 def test_read_heartbeat_dict_falls_back_to_mtime_for_unageable_stamp(tmp_path: Path) -> None:
@@ -448,6 +457,10 @@ def test_read_heartbeat_dict_falls_back_to_mtime_for_unageable_stamp(tmp_path: P
     assert out is not None
     # The unageable stamp is replaced by the file mtime as an ISO-8601 string.
     assert out["last_heartbeat"] == "2026-06-03T03:06:04Z"
+    # ...and the typed ms-epoch `ts` is stamped from that same fallback.
+    import datetime as _dt2
+
+    assert out["ts"] == int(_dt2.datetime(2026, 6, 3, 3, 6, 4, tzinfo=_dt2.UTC).timestamp() * 1000)
     # Other fields pass through unchanged.
     assert out["phase"] == "tournament:round_0:final"
     assert out["pid"] == 4242
@@ -822,7 +835,7 @@ def test_epoch_view_board_skips_board_meta_header(workspace: Path) -> None:
     view = build_epoch_view(WorkspacePaths(workspace))
     # Only the real entry — the board_meta header is dropped.
     assert len(view["board"]) == 1
-    assert view["board"][0]["id"] == "waffles_single"
+    assert view["board"][0]["entry_id"] == "waffles_single"
     assert all(e.get("board_meta") is not True for e in view["board"])
 
 
@@ -3499,15 +3512,15 @@ def test_epoch_view_scoped_to_non_current_epoch(client: TestClient, workspace: P
     current = client.get("/api/epoch").json()
     assert current["epoch_id"] == "2026-05-16_e0"
     assert current["contract_hash"] == "h1"
-    assert current["board"][0]["id"] == "waffles_single"
+    assert current["board"][0]["entry_id"] == "waffles_single"
 
     # scoped ⇒ the SECOND epoch's own contract / board.
     scoped = client.get(f"/api/epoch?epoch={e1}").json()
     assert scoped["epoch_id"] == e1
     assert scoped["contract_hash"] == "h2"
     assert scoped["closed"] is True
-    assert scoped["board"][0]["id"] == "second_board_entry"
-    assert scoped["board"][0]["id"] != "waffles_single"
+    assert scoped["board"][0]["entry_id"] == "second_board_entry"
+    assert scoped["board"][0]["entry_id"] != "waffles_single"
 
 
 def test_score_trajectory_scoped_to_non_current_epoch(client: TestClient, workspace: Path) -> None:
