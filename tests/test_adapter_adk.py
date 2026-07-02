@@ -1497,18 +1497,26 @@ def test_goldfive_runtime_raises_call_timeout_above_goldfive_default(
     goldfive runtime config it builds.
     """
     monkeypatch.delenv("GOLDFIVE_AGENT_CALL_TIMEOUT_MS", raising=False)
-    monkeypatch.delenv("ZICATO_HARNESS_CALL_TIMEOUT_MS", raising=False)
     runtime = _goldfive_runtime()
     assert runtime.agent.call_timeout_ms == 1_800_000
     assert runtime.agent.call_timeout_ms > 120_000
 
 
-def test_goldfive_runtime_honours_zicato_env_override(
+def test_goldfive_runtime_honours_pinned_flag_value(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``ZICATO_HARNESS_CALL_TIMEOUT_MS`` tunes the per-call budget."""
+    """A pinned ``--harness-call-timeout-ms`` value tunes the per-call budget.
+
+    The value is pinned exactly as the evolve CLI pins it (and as the
+    worker re-pins it from its args file); the deleted
+    ``ZICATO_HARNESS_CALL_TIMEOUT_MS`` env var is set too, to prove it
+    is ignored.
+    """
+    from zicato.config import pin_overrides
+
     monkeypatch.delenv("GOLDFIVE_AGENT_CALL_TIMEOUT_MS", raising=False)
-    monkeypatch.setenv("ZICATO_HARNESS_CALL_TIMEOUT_MS", "456000")
+    monkeypatch.setenv("ZICATO_HARNESS_CALL_TIMEOUT_MS", "123000")  # ignored
+    pin_overrides({"runtime": {"harness_call_timeout_ms": 456000}})
     runtime = _goldfive_runtime()
     assert runtime.agent.call_timeout_ms == 456000
 
@@ -1517,8 +1525,10 @@ def test_goldfive_runtime_defers_to_explicit_goldfive_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An explicit ``GOLDFIVE_AGENT_CALL_TIMEOUT_MS`` is not overridden."""
+    from zicato.config import pin_overrides
+
     monkeypatch.setenv("GOLDFIVE_AGENT_CALL_TIMEOUT_MS", "999000")
-    monkeypatch.setenv("ZICATO_HARNESS_CALL_TIMEOUT_MS", "111000")
+    pin_overrides({"runtime": {"harness_call_timeout_ms": 111000}})
     runtime = _goldfive_runtime()
     # goldfive's own env value wins; zicato does not override it.
     assert runtime.agent.call_timeout_ms == 999000
@@ -1530,7 +1540,6 @@ async def test_run_single_turn_forwards_runtime_to_goldfive_run(
 ) -> None:
     """``goldfive.run`` receives a ``runtime`` carrying the raised timeout."""
     monkeypatch.delenv("GOLDFIVE_AGENT_CALL_TIMEOUT_MS", raising=False)
-    monkeypatch.delenv("ZICATO_HARNESS_CALL_TIMEOUT_MS", raising=False)
     generation_root, entrypoint = inner_harness
     adapter = ADKHarnessAdapter(
         entrypoint=entrypoint,

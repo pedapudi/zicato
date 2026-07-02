@@ -221,7 +221,9 @@ def _goldfive_runtime() -> Any:
     raw default aborts healthy calls and fires a spurious
     ``LLM_CALL_TIMEOUT`` drift. zicato raises the per-call budget to
     :attr:`zicato.config.RuntimeTuningConfig.harness_call_timeout_ms`
-    (operator-tunable via ``ZICATO_HARNESS_CALL_TIMEOUT_MS``).
+    (operator-tunable via ``zicato evolve --harness-call-timeout-ms``,
+    whose pinned value reaches this worker-side call site through the
+    worker args file — see ``zicato.config.pin_overrides``).
 
     We start from :meth:`goldfive.config.RuntimeConfig.from_env` so
     every other goldfive subsystem (embedding, judge endpoint,

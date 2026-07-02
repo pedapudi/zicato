@@ -7,7 +7,8 @@ Covered:
   ``--workspace`` / ``--host`` / ``--port`` options and the right
   defaults.
 * ``resolve_static_dir`` points at the bundled
-  ``zicato/dashboard/static`` directory and honours the env override.
+  ``zicato/dashboard/static`` directory and honours the ``--static-dir``
+  override (the former env override is deleted and ignored).
 * ``zicato evolve`` spawns the watchdog supervisor with
   ``--no-dashboard`` and ALSO spawns the Python dashboard service.
 * ``zicato evolve --no-dashboard`` suppresses the dashboard spawn.
@@ -81,10 +82,53 @@ def test_resolve_static_dir_points_at_bundled_static() -> None:
     assert (static / "index.html").exists()
 
 
-def test_resolve_static_dir_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``ZICATO_DASHBOARD_STATIC_DIR`` short-circuits resolution."""
+def test_resolve_static_dir_config_override() -> None:
+    """An explicit ``DashboardConfig.static_dir`` short-circuits resolution."""
+    from zicato.config import DashboardConfig
+
+    assert resolve_static_dir(DashboardConfig(static_dir="/custom/static")) == Path(
+        "/custom/static"
+    )
+
+
+def test_resolve_static_dir_ignores_deleted_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``ZICATO_DASHBOARD_STATIC_DIR`` was deleted for ``--static-dir``."""
     monkeypatch.setenv("ZICATO_DASHBOARD_STATIC_DIR", "/custom/static")
-    assert resolve_static_dir() == Path("/custom/static")
+    static = resolve_static_dir()
+    assert static != Path("/custom/static")
+    assert static.name == "static"
+
+
+def test_dashboard_static_dir_flag_threads_to_server_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``zicato dashboard --static-dir`` reaches ``server.run`` verbatim.
+
+    The flag shadows the ``dashboard.static_dir`` config knob — the
+    dashboard serves the named directory instead of the bundled one.
+    """
+    import types
+
+    captured: dict[str, Any] = {}
+
+    def _fake_run(**kwargs: Any) -> None:
+        captured.update(kwargs)
+
+    fake_server = types.SimpleNamespace(run=_fake_run)
+    fake_pkg = types.SimpleNamespace(server=fake_server)
+    monkeypatch.setitem(__import__("sys").modules, "zicato.dashboard", fake_pkg)
+    monkeypatch.setitem(__import__("sys").modules, "zicato.dashboard.server", fake_server)
+
+    custom = tmp_path / "assets"
+    runner = CliRunner()
+    result = runner.invoke(
+        dashboard_cmd,
+        ["--workspace", str(tmp_path), "--static-dir", str(custom)],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["static_dir"] == custom
 
 
 def test_dashboard_invokes_server_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

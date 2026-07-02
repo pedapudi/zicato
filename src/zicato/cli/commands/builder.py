@@ -26,6 +26,7 @@ from pathlib import Path
 import click
 
 from zicato.cli.commands.dashboard import resolve_static_dir
+from zicato.config import DashboardConfig
 
 #: The dashboard hash-route the builder lives behind. ``zicato builder`` prints
 #: this deep-link so the browser opens directly on the standalone tournament-
@@ -58,7 +59,18 @@ def builder_url(host: str, port: int) -> str:
     type=click.IntRange(min=1, max=65535),
     help="Port for the dashboard HTTP server.",
 )
-def builder_cmd(workspace: str, port: int) -> None:
+@click.option(
+    "--static-dir",
+    "static_dir_flag",
+    default=None,
+    type=click.Path(file_okay=False),
+    help=(
+        "Filesystem path to the dashboard static-asset directory. "
+        "Shadows the dashboard.static_dir config knob. Unset (the "
+        "default) serves the bundled zicato/dashboard/static directory."
+    ),
+)
+def builder_cmd(workspace: str, port: int, static_dir_flag: str | None) -> None:
     """Launch the dashboard focused on the tournament builder.
 
     Boots the same dashboard service ``zicato dashboard`` runs, against the
@@ -74,7 +86,9 @@ def builder_cmd(workspace: str, port: int) -> None:
     # rule: the dashboard (and the builder it homes) is a local surface.
     host = "127.0.0.1"
     workspace_root = Path(workspace).resolve()
-    static_dir = resolve_static_dir()
+    static_dir = resolve_static_dir(
+        DashboardConfig(static_dir=static_dir_flag) if static_dir_flag else None
+    )
 
     # Lazy import: the dashboard service pulls in Starlette. Importing it here
     # (rather than at module top level) keeps `zicato --help` fast and means an

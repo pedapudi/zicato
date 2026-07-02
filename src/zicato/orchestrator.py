@@ -4967,6 +4967,29 @@ def _warn_margin_below_noise_floor(workspace_root: Path, epoch_id: str) -> None:
     )
 
 
+def _workspace_health_config(workspace_root: Path) -> Any:
+    """Resolve the detector thresholds from the workspace ``config.json``.
+
+    The ``health`` block of the workspace config is the operator surface
+    for the loop-health thresholds (the former ``ZICATO_HEALTH_*`` env
+    vars, deleted); it is parsed by
+    :func:`zicato.config.health_config_from_workspace`. Best-effort like
+    the rest of the health path: a missing / unreadable / malformed
+    workspace config yields ``None`` so ``assess_loop_health`` falls
+    back to the defaulted :class:`~zicato.config.HealthConfig` rather
+    than blocking the round. (A malformed ``health`` block still fails
+    loudly in ``zicato health``, the operator-facing command.)
+    """
+    try:
+        from zicato.config import health_config_from_workspace  # noqa: PLC0415
+        from zicato.workspace_loader import load_workspace_config  # noqa: PLC0415
+
+        return health_config_from_workspace(load_workspace_config(workspace_root))
+    except Exception as exc:  # noqa: BLE001 — health tuning is best-effort here
+        log.debug("workspace health config unavailable (%s); using defaults", exc)
+        return None
+
+
 def _assess_and_persist_loop_health(
     workspace_root: Path,
     epoch_id: str,
@@ -5012,6 +5035,7 @@ def _assess_and_persist_loop_health(
             experiments,
             board,
             epoch_id,
+            config=_workspace_health_config(workspace_root),
             max_generations_per_contract=_epoch_max_generations_per_contract(
                 workspace_root, epoch_id
             ),

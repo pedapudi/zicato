@@ -390,13 +390,12 @@ def test_cli_max_wall_clock_seconds_defaults_to_none(
     monkeypatch: pytest.MonkeyPatch,
     mock_dashboard_spawn: list[Any],
 ) -> None:
-    """With no flag and no env var the total budget is ``None`` (unbounded)."""
+    """With no flag the total budget is ``None`` (unbounded)."""
     del mock_dashboard_spawn
     from zicato.cli.commands.evolve import evolve_cmd
 
     captured: dict[str, Any] = {}
     _install_cli_capture(monkeypatch, captured)
-    monkeypatch.delenv("ZICATO_MAX_WALL_CLOCK_SECONDS", raising=False)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -412,11 +411,16 @@ def test_cli_max_wall_clock_seconds_defaults_to_none(
     assert captured["max_wall_clock_seconds"] is None
 
 
-def test_cli_max_wall_clock_seconds_env_var(
+def test_cli_max_wall_clock_seconds_env_var_is_ignored(
     monkeypatch: pytest.MonkeyPatch,
     mock_dashboard_spawn: list[Any],
 ) -> None:
-    """``ZICATO_MAX_WALL_CLOCK_SECONDS`` is honoured when the flag is absent."""
+    """The deleted ``ZICATO_MAX_WALL_CLOCK_SECONDS`` env var is ignored.
+
+    The variable was fully shadowed by ``--max-wall-clock-seconds`` and
+    was deleted; setting it must leave the budget unbounded (``None``),
+    exactly as if it were never set.
+    """
     del mock_dashboard_spawn
     from zicato.cli.commands.evolve import evolve_cmd
 
@@ -435,35 +439,7 @@ def test_cli_max_wall_clock_seconds_env_var(
         ],
     )
     assert result.exit_code == 0, result.output
-    assert captured["max_wall_clock_seconds"] == 720
-
-
-def test_cli_flag_overrides_env_var(
-    monkeypatch: pytest.MonkeyPatch,
-    mock_dashboard_spawn: list[Any],
-) -> None:
-    """An explicit flag wins over the env var."""
-    del mock_dashboard_spawn
-    from zicato.cli.commands.evolve import evolve_cmd
-
-    captured: dict[str, Any] = {}
-    _install_cli_capture(monkeypatch, captured)
-    monkeypatch.setenv("ZICATO_MAX_WALL_CLOCK_SECONDS", "720")
-
-    runner = CliRunner()
-    result = runner.invoke(
-        evolve_cmd,
-        [
-            "--harness-call-llm",
-            "tests.test_evolve_budget:_harness_call_llm",
-            "--auxiliary-call-llm",
-            "tests.test_evolve_budget:_aux_call_llm",
-            "--max-wall-clock-seconds",
-            "30",
-        ],
-    )
-    assert result.exit_code == 0, result.output
-    assert captured["max_wall_clock_seconds"] == 30
+    assert captured["max_wall_clock_seconds"] is None
 
 
 def test_cli_summary_reports_budget_stop(

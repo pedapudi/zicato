@@ -167,6 +167,30 @@ def _max_generations_per_contract(workspace_dir: Path, epoch_id: str) -> int | N
     return overfitting_config_from_dict(raw.get("overfitting")).max_generations_per_contract
 
 
+def _workspace_health_config(workspace_dir: Path) -> Any:
+    """Resolve the detector thresholds from the workspace ``config.json``.
+
+    The ``health`` block is the operator surface for the loop-health
+    thresholds (the former ``ZICATO_HEALTH_*`` env vars, deleted). A
+    missing / unreadable ``config.json`` yields ``None`` — the defaults
+    apply, matching the other best-effort loaders here — but a PRESENT,
+    malformed ``health`` block fails loudly (as a clean CLI error): the
+    operator explicitly wrote it and deserves the typo report, not a
+    silently defaulted detector.
+    """
+    from zicato.config import health_config_from_workspace  # noqa: PLC0415
+    from zicato.workspace_loader import load_workspace_config  # noqa: PLC0415
+
+    try:
+        cfg = load_workspace_config(workspace_dir)
+    except (FileNotFoundError, ValueError):
+        return None
+    try:
+        return health_config_from_workspace(cfg)
+    except (KeyError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
 def render_report(report: LoopHealth) -> str:
     """Render a :class:`LoopHealth` report as colour-coded terminal text.
 
@@ -234,6 +258,7 @@ def health_cmd(workspace: str, epoch: str | None) -> None:
         experiments=experiments,
         board_entries=board_entries,
         epoch_id=epoch_id,
+        config=_workspace_health_config(workspace_dir),
         max_generations_per_contract=_max_generations_per_contract(workspace_dir, epoch_id),
     )
 

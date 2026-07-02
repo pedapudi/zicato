@@ -141,20 +141,26 @@ def make_runtime_config(
     seed: int | None = int(seed_raw) if seed_raw is not None else None
 
     # Resolve ``parallelism`` with three-tier precedence:
-    #   1. The workspace config's ``runtime`` block — the same place
-    #      ``instance_id`` and ``seed`` are read, so an explicit per-
-    #      workspace value wins.
-    #   2. The typed config tree's env-backed field
-    #      (:attr:`ZicatoConfig.runtime.parallelism`, bound to
-    #      ``ZICATO_PARALLELISM``).
-    #   3. The :class:`RuntimeConfig` default of 4.
+    #   1. An explicit ``--parallelism`` flag, pinned into the typed
+    #      config tree at CLI startup (``zicato.config.pin_overrides``).
+    #      A per-invocation flag outranks the per-workspace file, so it
+    #      is checked FIRST — but only when explicitly pinned, so the
+    #      mere typed-config default never masks the workspace value.
+    #   2. The workspace config's ``runtime`` block — the same place
+    #      ``instance_id`` and ``seed`` are read.
+    #   3. The typed config tree
+    #      (:attr:`ZicatoConfig.runtime.parallelism` — its default of 4,
+    #      or whatever an embedding application pinned).
     # ``RuntimeConfig.__post_init__`` re-validates ``parallelism >= 1``.
+    from zicato.config import load_config, pinned_override  # noqa: PLC0415 — avoid import cycle
+
+    pinned_parallelism = pinned_override("runtime", "parallelism")
     parallelism_raw = runtime_dict.get("parallelism")
-    if parallelism_raw is not None:
+    if pinned_parallelism is not None:
+        parallelism = int(pinned_parallelism)
+    elif parallelism_raw is not None:
         parallelism = int(parallelism_raw)
     else:
-        from zicato.config import load_config  # noqa: PLC0415 — avoid import cycle
-
         parallelism = load_config().runtime.parallelism
 
     # Worker env-scrub: opt-in containment read from the same ``runtime``

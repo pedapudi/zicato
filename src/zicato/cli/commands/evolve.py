@@ -63,8 +63,39 @@ from typing import Any
 
 import click
 
-from zicato.config import IntegrationConfig, load_config
+from zicato.config import IntegrationConfig, load_config, pin_overrides
 from zicato.import_path import import_dotted_path
+
+
+def _pin_config_flags(
+    *,
+    parallelism: int | None,
+    harness_call_timeout_ms: int | None,
+    aux_call_timeout: float | None,
+    supervisor_binary: str | None,
+    harmonograf_url: str | None,
+) -> None:
+    """Pin the config-shadowing evolve flags via :func:`pin_overrides`.
+
+    Each flag shadows one typed-config knob; only explicitly-passed
+    flags (non-``None``) are pinned so a defaulted flag never overrides
+    the workspace ``config.json`` or the dataclass default. Pinning
+    happens once, at command startup, before any ``load_config()``
+    consumer runs.
+    """
+    pins: dict[str, dict[str, Any]] = {}
+    if parallelism is not None:
+        pins.setdefault("runtime", {})["parallelism"] = parallelism
+    if harness_call_timeout_ms is not None:
+        pins.setdefault("runtime", {})["harness_call_timeout_ms"] = harness_call_timeout_ms
+    if aux_call_timeout is not None:
+        pins.setdefault("aux", {})["call_timeout_s"] = aux_call_timeout
+    if supervisor_binary is not None:
+        pins.setdefault("integration", {})["supervisor_binary"] = supervisor_binary
+    if harmonograf_url is not None:
+        pins.setdefault("integration", {})["harmonograf_url"] = harmonograf_url
+    if pins:
+        pin_overrides(pins)
 
 
 def _resolve_supervisor_binary(config: IntegrationConfig | None = None) -> Path | None:
@@ -74,8 +105,8 @@ def _resolve_supervisor_binary(config: IntegrationConfig | None = None) -> Path 
 
     1. The ``supervisor_binary`` of
        :class:`~zicato.config.IntegrationConfig`, sourced from the
-       ``ZICATO_SUPERVISOR_BINARY`` environment variable (useful for
-       tests that point at a sentinel script).
+       ``--supervisor-binary`` flag pinned at command startup (useful
+       for tests that point at a sentinel script).
     2. The fresher of two checkout/install candidates:
 
        * the binary bundled inside the installed package at
@@ -102,10 +133,10 @@ def _resolve_supervisor_binary(config: IntegrationConfig | None = None) -> Path 
     Parameters
     ----------
     config:
-        The :class:`~zicato.config.IntegrationConfig` carrying the
-        env-sourced ``supervisor_binary``. When ``None`` it is loaded
-        via :func:`zicato.config.load_config` — the single place the
-        environment is read.
+        The :class:`~zicato.config.IntegrationConfig` carrying
+        ``supervisor_binary``. When ``None`` it is loaded via
+        :func:`zicato.config.load_config`, which layers any pinned
+        ``--supervisor-binary`` flag on top of the defaults.
 
     Returns ``None`` when nothing resolves — the caller prints a warning
     and proceeds without a dashboard.
@@ -609,14 +640,70 @@ def _import_callable(dotted: str, *, kind: str) -> Any:
     "--max-wall-clock-seconds",
     default=None,
     type=click.IntRange(min=1),
-    envvar="ZICATO_MAX_WALL_CLOCK_SECONDS",
     help=(
         "Total wall-clock budget for this whole evolve invocation, in "
         "seconds. The loop stops cleanly between rounds once the budget "
         "is spent, and a single round that would overrun it is cancelled "
         "and recorded as aborted. Unset (the default) leaves the loop "
         "unbounded. Applies on top of each board entry's own "
-        "wall_clock_budget_seconds. Env var: ZICATO_MAX_WALL_CLOCK_SECONDS."
+        "wall_clock_budget_seconds."
+    ),
+)
+@click.option(
+    "--parallelism",
+    default=None,
+    type=click.IntRange(min=1),
+    help=(
+        "Maximum number of board units the tournament runner keeps in "
+        "flight at once. Shadows the runtime.parallelism config knob; "
+        "wins over the workspace config.json's runtime.parallelism. "
+        "Unset (the default) reads config.json, then the built-in "
+        "default of 4."
+    ),
+)
+@click.option(
+    "--harness-call-timeout-ms",
+    default=None,
+    type=click.IntRange(min=1),
+    help=(
+        "Per-LLM-call wall-clock budget, in milliseconds, for the inner "
+        "harness agent's calls. Shadows the "
+        "runtime.harness_call_timeout_ms config knob (default 1800000). "
+        "An explicit GOLDFIVE_AGENT_CALL_TIMEOUT_MS still wins — an "
+        "operator who tunes goldfive directly is not overridden."
+    ),
+)
+@click.option(
+    "--aux-call-timeout",
+    default=None,
+    type=click.FloatRange(min=0, min_open=True),
+    help=(
+        "Per-call wall-clock budget, in seconds, for every "
+        "auxiliary-LLM (proposer / judge / emulator / analysis) call. "
+        "Shadows the aux.call_timeout_s config knob (default 120)."
+    ),
+)
+@click.option(
+    "--supervisor-binary",
+    default=None,
+    type=click.Path(),
+    help=(
+        "Filesystem path to the zicato-supervisor watchdog binary. "
+        "Shadows the integration.supervisor_binary config knob. Unset "
+        "(the default) resolves the bundled / dev-checkout build, then "
+        "the system PATH."
+    ),
+)
+@click.option(
+    "--harmonograf-url",
+    default=None,
+    help=(
+        "URL of an external harmonograf server to stream this "
+        "invocation's telemetry to. Shadows the "
+        "integration.harmonograf_url config knob (also settable via the "
+        "workspace config.json's harmonograf_url; the flag wins). Unset "
+        "(the default) auto-launches a per-workspace harmonograf on a "
+        "free localhost port."
     ),
 )
 @click.option(
@@ -687,6 +774,11 @@ def evolve_cmd(
     auxiliary_dotted: str,
     max_consecutive_rejections: int,
     max_wall_clock_seconds: int | None,
+    parallelism: int | None,
+    harness_call_timeout_ms: int | None,
+    aux_call_timeout: float | None,
+    supervisor_binary: str | None,
+    harmonograf_url: str | None,
     tournament_structure: str | None,
     tournament_params: tuple[str, ...],
     no_auto_epoch: bool,
@@ -712,6 +804,21 @@ def evolve_cmd(
     The dashboard is launched automatically and its URL is printed.
     """
     workspace_root = Path(workspace).resolve()
+
+    # Pin the config-shadowing flags process-wide, FIRST — every later
+    # load_config() in this invocation (the supervisor-binary resolver,
+    # the aux-timeout call sites, the runtime factory, the harmonograf
+    # resolver) then sees them; the tournament runner also threads the
+    # pins into every worker args file so the values cross the worker
+    # subprocess boundary. Only explicitly-passed flags are pinned, so
+    # a defaulted flag never masks the workspace config.json.
+    _pin_config_flags(
+        parallelism=parallelism,
+        harness_call_timeout_ms=harness_call_timeout_ms,
+        aux_call_timeout=aux_call_timeout,
+        supervisor_binary=supervisor_binary,
+        harmonograf_url=harmonograf_url,
+    )
 
     # Contract-mutating convenience: when --tournament-structure is set,
     # write the {structure, params} block into the live scoring.json

@@ -16,23 +16,24 @@ Thresholds
 
 Every detector's tuning knob is a typed field of
 :class:`zicato.config.HealthConfig`, with a default and a documented
-meaning. An operator re-tunes between runs by setting the matching
-``ZICATO_HEALTH_*`` environment variable (read once by
-:func:`zicato.config.load_config`) or, when embedding zicato, by
+meaning. An operator re-tunes between runs in the ``health`` block of
+the workspace ``config.json`` (parsed by
+:func:`zicato.config.health_config_from_workspace`; the former
+``ZICATO_HEALTH_*`` env vars are deleted) or, when embedding zicato, by
 constructing a :class:`~zicato.config.HealthConfig` directly. This
 module never reads ``os.environ`` itself — every detector takes the
 config as an optional parameter.
 
-================================  =========================  =========
-HealthConfig field                Environment variable        Default
-================================  =========================  =========
-``scoring_window``                ``ZICATO_HEALTH_SCORING_WINDOW``       3
-``scoring_epsilon``               ``ZICATO_HEALTH_SCORING_EPSILON``   1e-6
-``no_expectations_fraction``      ``ZICATO_HEALTH_NO_EXPECTATIONS_FRACTION``   0.5
-``stalled_rejects``               ``ZICATO_HEALTH_STALLED_REJECTS``      3
-``generalization_gap_warn``       ``ZICATO_HEALTH_GENERALIZATION_GAP_WARN``   0.05
-``generalization_gap_crit``       ``ZICATO_HEALTH_GENERALIZATION_GAP_CRIT``   0.15
-================================  =========================  =========
+================================  =========
+HealthConfig / ``health`` key      Default
+================================  =========
+``scoring_window``                       3
+``scoring_epsilon``                   1e-6
+``no_expectations_fraction``           0.5
+``stalled_rejects``                      3
+``generalization_gap_warn``           0.05
+``generalization_gap_crit``           0.15
+================================  =========
 
 * ``scoring_window`` — how many of the most-recent tournaments
   :func:`detect_degenerate_scoring` inspects. The detector fires only
@@ -105,13 +106,15 @@ _DRIFT_NAMESPACE = "drift:"
 
 
 def _resolve_health_config(config: HealthConfig | None) -> HealthConfig:
-    """Return ``config`` if given, else load it from the environment once.
+    """Return ``config`` if given, else the typed-config default.
 
     Detectors accept an optional :class:`~zicato.config.HealthConfig` so
-    a caller that already holds a loaded config threads it in. When a
-    caller passes nothing, :func:`zicato.config.load_config` supplies the
-    env-sourced configuration — the single place the environment is
-    read.
+    a caller that already holds one threads it in — the orchestrator and
+    the ``zicato health`` command both build it from the workspace
+    ``config.json``'s ``health`` block via
+    :func:`zicato.config.health_config_from_workspace`. When a caller
+    passes nothing, :func:`zicato.config.load_config` supplies the
+    defaulted tree (plus any process-pinned overrides).
     """
     if config is not None:
         return config
@@ -1051,10 +1054,11 @@ def assess_loop_health(
         The epoch the report describes.
     config:
         The :class:`~zicato.config.HealthConfig` carrying the detector
-        thresholds. Defaults to the env-sourced configuration via
-        :func:`zicato.config.load_config`; resolved once here and passed
-        to every threshold-using detector so the environment is read at
-        most once per assessment.
+        thresholds. The orchestrator and the ``zicato health`` command
+        build it from the workspace ``config.json``'s ``health`` block
+        (:func:`zicato.config.health_config_from_workspace`); when
+        omitted, the typed-config default applies. Resolved once here
+        and passed to every threshold-using detector.
     max_generations_per_contract:
         The cadence ceiling from
         :attr:`~zicato.core.types.OverfittingConfig.max_generations_per_contract`,

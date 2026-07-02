@@ -40,9 +40,8 @@ def resolve_static_dir(config: DashboardConfig | None = None) -> Path:
     Resolution order:
 
     1. The ``static_dir`` of :class:`~zicato.config.DashboardConfig`,
-       sourced from the ``ZICATO_DASHBOARD_STATIC_DIR`` environment
-       variable — useful for tests and for installed wheels that
-       relocate the bundle.
+       sourced from the ``--static-dir`` flag — useful for tests and
+       for installed wheels that relocate the bundle.
     2. The in-tree ``zicato/dashboard/static`` directory. This file is at
        ``zicato/cli/commands/dashboard.py``; the bundle lives at
        ``zicato/dashboard/static`` under the same package root.
@@ -50,10 +49,10 @@ def resolve_static_dir(config: DashboardConfig | None = None) -> Path:
     Parameters
     ----------
     config:
-        The :class:`~zicato.config.DashboardConfig` carrying the
-        env-sourced ``static_dir``. When ``None`` it is loaded via
-        :func:`zicato.config.load_config` — the single place the
-        environment is read.
+        The :class:`~zicato.config.DashboardConfig` carrying
+        ``static_dir`` (the command builds it from the ``--static-dir``
+        flag). When ``None`` it is loaded via
+        :func:`zicato.config.load_config`.
 
     The path is returned even when it does not exist on disk — the
     dashboard service is responsible for reporting a missing bundle.
@@ -91,7 +90,18 @@ def resolve_static_dir(config: DashboardConfig | None = None) -> Path:
     type=click.IntRange(min=1, max=65535),
     help="Port for the dashboard HTTP server.",
 )
-def dashboard_cmd(workspace: str, host: str, port: int) -> None:
+@click.option(
+    "--static-dir",
+    "static_dir_flag",
+    default=None,
+    type=click.Path(file_okay=False),
+    help=(
+        "Filesystem path to the dashboard static-asset directory. "
+        "Shadows the dashboard.static_dir config knob. Unset (the "
+        "default) serves the bundled zicato/dashboard/static directory."
+    ),
+)
+def dashboard_cmd(workspace: str, host: str, port: int, static_dir_flag: str | None) -> None:
     """Serve the dashboard for an existing workspace over HTTP.
 
     Point this at any workspace — a completed epoch for a post-mortem,
@@ -100,7 +110,9 @@ def dashboard_cmd(workspace: str, host: str, port: int) -> None:
     foreground until interrupted (Ctrl-C).
     """
     workspace_root = Path(workspace).resolve()
-    static_dir = resolve_static_dir()
+    static_dir = resolve_static_dir(
+        DashboardConfig(static_dir=static_dir_flag) if static_dir_flag else None
+    )
 
     # Lazy import: the dashboard service pulls in Starlette. Importing it
     # here (rather than at module top level) keeps `zicato --help` fast

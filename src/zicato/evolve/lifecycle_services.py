@@ -39,9 +39,10 @@ def _resolve_harmonograf_url(workspace_root: Path) -> str:
     """Resolve the harmonograf console URL for this run, or ``""``.
 
     Delegates to :func:`zicato.telemetry.sink.resolve_harmonograf_url`,
-    feeding it the workspace ``config.json`` so both the
-    ``ZICATO_HARMONOGRAF_URL`` environment variable and the
-    ``harmonograf_url`` config key are honoured. Best-effort: any
+    feeding it the workspace ``config.json`` so every source is
+    honoured: the ``--harmonograf-url`` flag (pinned into the typed
+    config tree), the internal ``ZICATO_HARMONOGRAF_URL`` auto-launch
+    handoff, and the ``harmonograf_url`` config key. Best-effort: any
     failure resolving the config falls back to the empty string so a
     broken config never blocks an evolve run.
 
@@ -71,10 +72,13 @@ def _resolve_or_launch_harmonograf(
 
     Auto-launch semantics (the post-#202 default):
 
-    * If the operator pinned ``ZICATO_HARMONOGRAF_URL`` (or the
-      workspace-config ``harmonograf_url`` key), use that URL verbatim
+    * If the operator pinned a URL — the ``--harmonograf-url`` flag or
+      the workspace-config ``harmonograf_url`` key — use it verbatim
       and return a no-op handle — opt-out lets a long-lived shared
       harmonograf collect traffic from multiple zicato invocations.
+      (An inherited ``ZICATO_HARMONOGRAF_URL`` handoff from an OUTER
+      zicato invocation short-circuits the launch the same way, so a
+      nested evolve reuses its parent's console.)
     * Otherwise launch an in-process harmonograf server bound to a free
       localhost port (see :mod:`zicato.telemetry.harmonograf_supervisor`)
       and return its URL + a real handle whose ``shutdown()`` the
@@ -124,9 +128,10 @@ def _resolve_or_launch_harmonograf(
         return "", _NoopShutdownHandle()
 
     # Make the resolved URL discoverable to the tournament runner and the
-    # worker subprocesses, both of which re-resolve the env var via
-    # load_config()/resolve_harmonograf_url(). The restorer is captured on
-    # the handle so shutdown unsets / restores the environment cleanly.
+    # worker subprocesses, both of which re-resolve it via
+    # resolve_harmonograf_url() (whose second lookup step is exactly this
+    # internal env handoff). The restorer is captured on the handle so
+    # shutdown unsets / restores the environment cleanly.
     restorers: list[_EnvVarRestorer] = []
     url_restorer = _EnvVarRestorer("ZICATO_HARMONOGRAF_URL")
     url_restorer.set(handle.web_url)

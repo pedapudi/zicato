@@ -3,9 +3,7 @@
 Provides:
 
 * :func:`shared_options` — decorator that attaches the three flags every
-  subcommand wants (``--workspace``, ``--verbose``, ``--instance-id``)
-  with environment-variable fallbacks (``ZICATO_WORKSPACE``,
-  ``ZICATO_INSTANCE_ID``).
+  subcommand wants (``--workspace``, ``--verbose``, ``--instance-id``).
 * :func:`get_workspace_root` — coerces an argument or a click context
   into a workspace :class:`Path`.
 * :func:`read_workspace_config` / :func:`write_workspace_config` — JSON
@@ -29,9 +27,6 @@ import click
 CONFIG_FILENAME = "config.json"
 LINEAGE_FILENAME = "lineage.json"
 
-ENV_WORKSPACE = "ZICATO_WORKSPACE"
-ENV_INSTANCE_ID = "ZICATO_INSTANCE_ID"
-
 
 def shared_options(fn: Callable[..., Any]) -> Callable[..., Any]:
     """Decorator that adds the three universal CLI flags to a command.
@@ -39,8 +34,8 @@ def shared_options(fn: Callable[..., Any]) -> Callable[..., Any]:
     Adds (in this order so the resulting parameter list reads naturally
     on ``--help``):
 
-    * ``--workspace`` (default ``.zicato``, env ``ZICATO_WORKSPACE``)
-    * ``--instance-id`` (default ``"default"``, env ``ZICATO_INSTANCE_ID``)
+    * ``--workspace`` (default ``.zicato``)
+    * ``--instance-id`` (default ``"default"``)
     * ``--verbose`` / ``-v`` (flag, off by default)
 
     Each subcommand receives these as keyword arguments named
@@ -58,17 +53,15 @@ def shared_options(fn: Callable[..., Any]) -> Callable[..., Any]:
         "--instance-id",
         "instance_id",
         default="default",
-        envvar=ENV_INSTANCE_ID,
         show_default=True,
-        help=f"Logical instance identifier (env: {ENV_INSTANCE_ID}).",
+        help="Logical instance identifier.",
     )
     @click.option(
         "--workspace",
         default=".zicato",
-        envvar=ENV_WORKSPACE,
         show_default=True,
         type=click.Path(file_okay=False, dir_okay=True),
-        help=f"Path to the .zicato/ workspace (env: {ENV_WORKSPACE}).",
+        help="Path to the .zicato/ workspace.",
     )
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -140,8 +133,6 @@ def workspace_is_initialized(workspace_root: Path) -> bool:
 __all__ = [
     "CONFIG_FILENAME",
     "LINEAGE_FILENAME",
-    "ENV_WORKSPACE",
-    "ENV_INSTANCE_ID",
     "shared_options",
     "get_workspace_root",
     "read_workspace_config",

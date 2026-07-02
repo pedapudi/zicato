@@ -66,6 +66,22 @@ _REAL_DEFAULT_PROPOSER_MODULES = frozenset(
 
 
 @pytest.fixture(autouse=True)
+def _isolate_config_pins() -> Iterator[None]:
+    """Clear process-pinned config overrides around every test.
+
+    CLI commands (and tests exercising them) pin flag values process-wide
+    via :func:`zicato.config.pin_overrides`; the pins are module-global
+    state and would otherwise leak from one test into the next. Cleared
+    on BOTH sides so a test neither inherits nor bequeaths pins.
+    """
+    from zicato.config import clear_pinned_overrides
+
+    clear_pinned_overrides()
+    yield
+    clear_pinned_overrides()
+
+
+@pytest.fixture(autouse=True)
 def _pin_default_proposer_to_text_shim(
     request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,

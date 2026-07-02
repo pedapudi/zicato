@@ -6,16 +6,17 @@ hung endpoint there can wedge a round. Each call site wraps its
 budget exposed by :func:`aux_call_timeout_s`.
 
 The budget is the ``AuxConfig.call_timeout_s`` field of the typed
-configuration tree (see :mod:`zicato.config`). It is sourced from the
-``ZICATO_AUX_CALL_TIMEOUT`` environment variable when
-:func:`zicato.config.load_config` reads the environment, but this module
-no longer reads ``os.environ`` itself — it takes a config object.
+configuration tree (see :mod:`zicato.config`). Operators tune it with
+``zicato evolve --aux-call-timeout``, whose value the CLI pins
+process-wide via :func:`zicato.config.pin_overrides` (and the
+tournament runner threads across the worker subprocess boundary); this
+module never reads ``os.environ`` itself — it takes a config object.
 
 A caller that has already loaded a :class:`~zicato.config.ZicatoConfig`
 threads its ``aux`` sub-config in. A caller that has not passes nothing,
-and :func:`aux_call_timeout_s` loads the config itself — which keeps the
-env var honoured for the call sites not yet threaded through a config
-object.
+and :func:`aux_call_timeout_s` loads the config itself — which keeps any
+pinned flag value honoured for the call sites not yet threaded through a
+config object.
 """
 
 from __future__ import annotations
@@ -37,9 +38,8 @@ def aux_call_timeout_s(config: AuxConfig | None = None) -> float:
         The :class:`~zicato.config.AuxConfig` to read the budget from.
         When ``None`` (the common call-site form, kept for call sites
         not yet threaded through a config object) the configuration is
-        loaded via :func:`zicato.config.load_config`, which reads the
-        ``ZICATO_AUX_CALL_TIMEOUT`` environment variable and clamps an
-        invalid or non-positive value back to the default.
+        loaded via :func:`zicato.config.load_config`, which layers any
+        pinned ``--aux-call-timeout`` flag value on top of the default.
 
     Returns
     -------

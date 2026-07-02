@@ -251,24 +251,35 @@ def test_register_requires_adk_flag(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Shared option behaviour via env vars
+# Deleted env vars are ignored — flags are the only source
 # ---------------------------------------------------------------------------
 
 
-def test_init_uses_env_var_for_instance_id_when_explicit(
+def test_init_ignores_deleted_instance_id_env_var(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # init_cmd's own --instance-id has a hardcoded default; it does not
-    # consult ZICATO_INSTANCE_ID directly (that env var is honoured by
-    # shared_options on the broader CLI). This test just confirms an
-    # explicit flag still wins.
-    workspace = tmp_path / ".zicato"
+    """``ZICATO_INSTANCE_ID`` is deleted; only ``--instance-id`` counts.
+
+    The env var was fully shadowed by the ``--instance-id`` flag and was
+    removed. Setting it must change nothing: with no flag the default
+    lands, and an explicit flag is the only way to pick another id.
+    """
     monkeypatch.setenv("ZICATO_INSTANCE_ID", "from-env")
     runner = CliRunner()
+
+    # No flag: the default wins, the env var is invisible.
+    defaulted = tmp_path / "defaulted" / ".zicato"
+    result = runner.invoke(init_cmd, ["--workspace", str(defaulted)])
+    assert result.exit_code == 0
+    config = json.loads((defaulted / CONFIG_FILENAME).read_text())
+    assert config["instance_id"] == "default"
+
+    # Explicit flag: the flag value lands.
+    explicit = tmp_path / "explicit" / ".zicato"
     result = runner.invoke(
         init_cmd,
-        ["--workspace", str(workspace), "--instance-id", "explicit-wins"],
+        ["--workspace", str(explicit), "--instance-id", "explicit-wins"],
     )
     assert result.exit_code == 0
-    config = json.loads((workspace / CONFIG_FILENAME).read_text())
+    config = json.loads((explicit / CONFIG_FILENAME).read_text())
     assert config["instance_id"] == "explicit-wins"

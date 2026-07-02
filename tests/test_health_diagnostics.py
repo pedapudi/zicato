@@ -431,15 +431,20 @@ def test_generalization_gap_degrades_below_two_generations() -> None:
     assert detect_generalization_gap(experiments) == []
 
 
-def test_generalization_gap_env_overrides_thresholds(monkeypatch) -> None:
-    # Lower the warn bar via the env knob so a small widening now fires.
-    monkeypatch.setenv("ZICATO_HEALTH_GENERALIZATION_GAP_WARN", "0.01")
-    monkeypatch.setenv("ZICATO_HEALTH_GENERALIZATION_GAP_CRIT", "0.5")
+def test_generalization_gap_workspace_config_overrides_thresholds() -> None:
+    # Lower the warn bar via the workspace config.json 'health' block —
+    # the operator surface for these thresholds — so a small widening
+    # now fires.
+    from zicato.config import health_config_from_workspace
+
+    config = health_config_from_workspace(
+        {"health": {"generalization_gap_warn": 0.01, "generalization_gap_crit": 0.5}}
+    )
     experiments = [
         _gap_experiment("v1", train_loss=0.50, holdout_loss=0.50),
         _gap_experiment("v2", train_loss=0.46, holdout_loss=0.48),  # gap 0.02
     ]
-    findings = detect_generalization_gap(experiments)
+    findings = detect_generalization_gap(experiments, config)
     assert len(findings) == 1
     assert findings[0].severity == "warning"
 
@@ -576,26 +581,40 @@ def test_health_finding_is_frozen() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Threshold env overrides
+# Threshold overrides via the workspace config.json 'health' block
 # ---------------------------------------------------------------------------
 
 
-def test_scoring_window_env_override_widens_detector(monkeypatch) -> None:
-    monkeypatch.setenv("ZICATO_HEALTH_SCORING_WINDOW", "5")
+def test_scoring_window_workspace_override_widens_detector() -> None:
+    from zicato.config import health_config_from_workspace
+
+    config = health_config_from_workspace({"health": {"scoring_window": 5}})
     # Only 3 zero-delta tournaments — below the overridden window of 5.
     experiments = [_experiment(f"v{n}", scalar_delta=0.0, decision="rejected") for n in range(1, 4)]
-    assert detect_degenerate_scoring(experiments) == []
+    assert detect_degenerate_scoring(experiments, config) == []
 
 
-def test_stalled_rejects_env_override(monkeypatch) -> None:
-    monkeypatch.setenv("ZICATO_HEALTH_STALLED_REJECTS", "2")
+def test_stalled_rejects_workspace_override() -> None:
+    from zicato.config import health_config_from_workspace
+
+    config = health_config_from_workspace({"health": {"stalled_rejects": 2}})
     experiments = [
         _experiment("v1", scalar_delta=0.0, decision="rejected"),
         _experiment("v2", scalar_delta=0.0, decision="rejected"),
     ]
-    findings = detect_stalled_loop(experiments)
+    findings = detect_stalled_loop(experiments, config)
     assert len(findings) == 1
     assert findings[0].detail["consecutive_rejects"] == 2
+
+
+def test_deleted_health_env_vars_are_ignored(monkeypatch) -> None:
+    """The former ``ZICATO_HEALTH_*`` env vars are deleted, not aliased."""
+    monkeypatch.setenv("ZICATO_HEALTH_SCORING_WINDOW", "5")
+    monkeypatch.setenv("ZICATO_HEALTH_STALLED_REJECTS", "2")
+    # 3 flat tournaments == the DEFAULT window of 3 — the env var did not
+    # widen it, so the detector fires.
+    experiments = [_experiment(f"v{n}", scalar_delta=0.0, decision="rejected") for n in range(1, 4)]
+    assert detect_degenerate_scoring(experiments) != []
 
 
 # ---------------------------------------------------------------------------
@@ -679,6 +698,37 @@ def test_cli_health_reports_and_exits_nonzero_on_critical(tmp_path: Path) -> Non
     assert result.exit_code == 1, result.output
     assert "UNHEALTHY" in result.output
     assert "degenerate_scoring" in result.output
+
+
+def test_cli_health_reads_thresholds_from_workspace_config(tmp_path: Path) -> None:
+    """The config.json ``health`` block round-trips into the detectors.
+
+    The same degenerate workspace, plus a ``health`` block that widens
+    the scoring window past the 3 flat tournaments on disk — the
+    degenerate-scoring detector must now stay silent. This is the
+    end-to-end proof that the block (the former ``ZICATO_HEALTH_*``
+    surface) actually reaches the assessment.
+    """
+    workspace = _build_degenerate_workspace(tmp_path)
+    (workspace / "config.json").write_text(
+        json.dumps({"health": {"scoring_window": 5}}), encoding="utf-8"
+    )
+    runner = CliRunner()
+    result = runner.invoke(health_cmd, ["--workspace", str(workspace)])
+    assert "degenerate_scoring" not in result.output
+
+
+def test_cli_health_rejects_typo_in_workspace_health_block(tmp_path: Path) -> None:
+    """A typo'd key in the ``health`` block fails loudly, not silently."""
+    workspace = _build_degenerate_workspace(tmp_path)
+    (workspace / "config.json").write_text(
+        json.dumps({"health": {"scoring_windw": 5}}), encoding="utf-8"
+    )
+    runner = CliRunner()
+    result = runner.invoke(health_cmd, ["--workspace", str(workspace)])
+    assert result.exit_code != 0
+    assert "scoring_windw" in result.output
+    assert "known fields" in result.output
 
 
 def test_cli_health_healthy_workspace_exits_zero(tmp_path: Path) -> None:
