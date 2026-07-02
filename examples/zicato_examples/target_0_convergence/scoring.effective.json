@@ -1,0 +1,27 @@
+{
+  "drift_weight": 1.0,
+  "pass_weight": 1.0,
+  "severity_weights": {
+    "info": 1.0,
+    "warning": 3.0,
+    "critical": 10.0
+  },
+  "plan_revision_weight": 0.5,
+  "runtime_weight": 0.0,
+  "promote_margin": 0.01,
+  "pass_rate_monotonicity": true,
+  "tournament": {
+    "structure": "racing",
+    "params": {
+      "field_size": 4,
+      "replicates": 2,
+      "eta": 2,
+      "board_fraction": 0.4,
+      "rung0_board_size": 0,
+      "matchup_budget_seconds": null,
+      "final_rung_budget_seconds": 1800,
+      "promote_confidence_threshold": 0.8,
+      "promote_confidence_replicates": 32
+    }
+  }
+}
