@@ -255,6 +255,49 @@ def test_gauntlet_converges_to_known_floor(tmp_path: Path) -> None:
         assert "non_differentiating_entry" not in codes, report.name
     assert not any(o.health_critical for o in outcomes)
 
+    # --- (e) RoundLog (WS8): every round left a durable, foldable event
+    # log whose transition sequence and folded decisions reproduce the
+    # round exactly. The contract pins best_of_n=1 (scripted proposer), so
+    # no candidate_sampled / critique_selected events appear; the 5-entry
+    # board is below the split floor, so no holdout events appear; the
+    # evidence pre-gate is off, so no evidence_replicated events appear.
+    from zicato.epoch.lifecycle import load_epoch
+    from zicato.epoch.round_log import RoundLog, fold_round_record
+
+    contract_hash = load_epoch(workspace, epoch_id).contract_hash
+    assert contract_hash, "the epoch must carry a computed contract hash"
+    expected_rounds = {0: ("v1", "promoted"), 1: ("v2", "rejected"), 2: ("v3", "promoted")}
+    for round_index, (gid, decision) in expected_rounds.items():
+        rlog = RoundLog(workspace, epoch_id, round_index)
+        assert rlog.path.exists(), f"round {round_index} left no round_log.jsonl"
+        events = rlog.read()
+        assert [e.seq for e in events] == list(range(1, len(events) + 1)), round_index
+        # One unit_completed per (entry, side): 5 board entries x 2 sides.
+        types = [e.type for e in events]
+        assert types == (
+            ["round_opened", "proposal_attempted", "experiment_minted", "patches_applied"]
+            + ["unit_completed"] * (2 * BOARD_SIZE)
+            + ["gate_evaluated", "decision_recorded", "round_closed"]
+        ), f"round {round_index}: {types}"
+        record = fold_round_record(events)
+        assert record.complete, round_index
+        assert record.contract_hash == contract_hash, round_index
+        assert record.proposal.attempts == 1, round_index
+        assert record.proposal.errors == (), round_index
+        assert record.generation_ids == (gid,), round_index
+        assert len(record.units) == 2 * BOARD_SIZE, round_index
+        assert {u.side for u in record.units} == {"parent", "child"}, round_index
+        assert len(record.gates) == 1, round_index
+        assert record.gates[0].decision == decision, round_index
+        assert record.decision == decision, round_index
+        assert record.decision_provenance["parent_generation_id"] == (
+            "v0" if round_index == 0 else "v1"
+        ), round_index
+        assert record.decision_provenance["promoted_generation_id"] == (
+            gid if decision == "promoted" else None
+        ), round_index
+        assert record.decision_provenance["operator_override"] is False, round_index
+
 
 def test_racing_field_best_arm_survives_to_floor(tmp_path: Path) -> None:
     """The racing contract (field 4, replicates 2, evidence pre-gate at
@@ -301,3 +344,32 @@ def test_racing_field_best_arm_survives_to_floor(tmp_path: Path) -> None:
     # The promoted head advanced to the surviving arm.
     marker = workspace / "epochs" / epoch_id / "current_generation"
     assert marker.read_text().strip() == "v2"
+
+    # RoundLog (WS8) on the multi-challenger path: the racing round left a
+    # durable log that opens, traces the 4-challenger field's proposals and
+    # every rung's units + gate verdicts, records the crowning decision
+    # with its provenance, and closes — and the fold reproduces it.
+    from zicato.epoch.lifecycle import load_epoch
+    from zicato.epoch.round_log import RoundLog, fold_round_record
+
+    rlog = RoundLog(workspace, epoch_id, 0)
+    assert rlog.path.exists(), "the racing round left no round_log.jsonl"
+    events = rlog.read()
+    types = [e.type for e in events]
+    assert types[0] == "round_opened"
+    assert types[-1] == "round_closed"
+    record = fold_round_record(events)
+    assert record.complete
+    assert record.contract_hash == load_epoch(workspace, epoch_id).contract_hash
+    # Four challengers proposed + applied cleanly (the scripted field).
+    assert record.proposal.attempts == 4
+    assert record.proposal.errors == ()
+    assert record.generation_ids == ("v1", "v2", "v3", "v4")
+    # Every rung ran real board units and ended in a gate verdict.
+    assert record.units, "racing rungs must trace unit_completed events"
+    assert record.gates, "every matchup must trace a gate_evaluated event"
+    assert record.decision == "promoted"
+    assert record.decision_provenance["structure"] == "racing"
+    assert record.decision_provenance["promoted_generation_id"] == "v2"
+    assert record.decision_provenance["promoted_generation_ids"] == ["v2"]
+    assert record.decision_provenance["overrides"] == {}

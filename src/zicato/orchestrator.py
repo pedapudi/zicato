@@ -346,6 +346,13 @@ async def evolve_once(
     from zicato.proposer.best_of_n import wrap_with_proposer_quality  # noqa: PLC0415
 
     proposer_agent = wrap_with_proposer_quality(proposer_agent, weights.proposer_quality)
+    # --- 0b. Durable per-round event log (WS8) ---
+    # The round's store-of-record trace at
+    # ``epochs/{epoch}/rounds/{round_index}/round_log.jsonl``, opened here
+    # with the frozen contract hash. Every emission is best-effort: a log
+    # failure can never fail the round (the index dual-write precedent).
+    round_log = _RoundLogEmitter(workspace_root, resolved_epoch_id, round_index)
+    round_log.emit("round_opened", {"contract_hash": _epoch_cfg.contract_hash or ""})
     # Custom judges declared on the board / per_judge_weights are valid
     # ``drift:<judge_name>`` metric targets in a proposer hypothesis even
     # though they are not built-in goldfive drift kinds.
@@ -538,6 +545,7 @@ async def evolve_once(
             total_rounds=total_rounds,
             meta_loop_emitter=meta_loop_emitter,
             proposer_agent=proposer_agent,
+            round_log=round_log,
         )
 
     # --- 6. Propose ---
@@ -680,6 +688,7 @@ async def evolve_once(
                 restrict_visibility=weights.overfitting.restrict_proposer_visibility,
                 failure_profile=failure_profile,
                 round_index=round_index,
+                round_emitter=round_log,
             )
         except ProposerError as exc:
             # The proposer exhausted its bounded retries without producing
@@ -734,6 +743,7 @@ async def evolve_once(
             auxiliary_call_llm=auxiliary_call_llm,
             auxiliary_model=str(workspace_config.get("auxiliary_model", "")),
             beater=beater,
+            round_log=round_log,
         )
 
     # --- 10. Run the tournament ---
@@ -856,6 +866,18 @@ async def evolve_once(
     _cache_gen_score(workspace_root, resolved_epoch_id, parent_id, tournament_result.parent_agg)
     _cache_gen_score(workspace_root, resolved_epoch_id, next_id, tournament_result.child_agg)
 
+    # WS8: the duel's board units (aggregate — see _emit_tournament_units),
+    # the gate verdict, and — when the runner consulted a holdout — the
+    # Ladder's release, all onto the round's durable event log.
+    _emit_tournament_units(round_log, tournament_result)
+    _emit_gate_evaluated(round_log, tournament_result.outcome)
+    _holdout_block = getattr(tournament_result, "holdout", None)
+    if _holdout_block is not None:
+        round_log.emit(
+            "holdout_released",
+            {"confirmed": bool(_holdout_block.get("confirmed"))},
+        )
+
     # Progress transition: the tournament settled (a verdict is resolvable).
     # Advances the orchestrator liveness seq on genuine progress — never on
     # a timer — so a slow tournament reads as "between transitions", not
@@ -908,6 +930,11 @@ async def evolve_once(
         total_rounds=total_rounds,
         beater=beater,
     )
+    # WS8: one ``evidence_replicated`` per evidence-gate refit (the
+    # ``ci_history`` trace rows the pre-gate accumulated while it deferred).
+    if gate_evidence is not None:
+        for _ci_row in gate_evidence.get("ci_history", []):
+            round_log.emit("evidence_replicated", {"ci_state": dict(_ci_row)})
 
     # --- 10c. Operator gate override (control protocol, RUNTIME-V2 Phase 2) ---
     # The gate has settled but the outcome is not yet persisted — the safe
@@ -1013,6 +1040,21 @@ async def evolve_once(
         lineage_parent_id=parent_id,
         advance_current_generation=bookkeeping_decision == "promoted",
     )
+    # WS8: the round's terminal decision + provenance (overrides explicit).
+    round_log.emit(
+        "decision_recorded",
+        {
+            "decision": str(decision),
+            "provenance": {
+                "structure": tournament_spec.structure,
+                "reason": outcome_record.rejection_reason,
+                "operator_override": operator_override,
+                "operator_override_reason": operator_override_reason,
+                "parent_generation_id": parent_id,
+                "promoted_generation_id": (next_id if bookkeeping_decision == "promoted" else None),
+            },
+        },
+    )
 
     # --- 13b. Optional random-baseline placebo arm (OVERFITTING.md #7) ---
     # One EXTRA scheduled duel after the settled round, on the opt-in
@@ -1066,6 +1108,7 @@ async def evolve_once(
         round_index=round_index,
         phase=f"done:round_{round_index}:{next_id}:{bookkeeping_decision}",
     )
+    round_log.emit("round_closed")
 
     return EvolveRoundOutcome(
         parent_generation_id=parent_id,
@@ -1334,6 +1377,7 @@ async def _propose_and_apply_challenger(
     restrict_visibility: bool = False,
     failure_profile: str = "",
     on_status: Callable[[dict[str, Any]], None] | None = None,
+    round_emitter: _RoundLogEmitter | None = None,
 ) -> tuple[_AppliedChallenger | None, dict[str, Any]]:
     """Propose + apply ONE challenger child of the champion.
 
@@ -1456,6 +1500,7 @@ async def _propose_and_apply_challenger(
             restrict_visibility=restrict_visibility,
             failure_profile=failure_profile,
             round_index=round_index,
+            round_emitter=round_emitter,
         )
     except ProposerError as exc:
         reason = _short_reject_reason(exc.attempts) or str(exc)
@@ -1706,6 +1751,7 @@ async def _evolve_multi_challenger(
     total_rounds: int,
     meta_loop_emitter: Any,
     proposer_agent: ProposerAgent,
+    round_log: _RoundLogEmitter | None = None,
 ) -> EvolveRoundOutcome:
     """Run ONE evolve round under a non-gauntlet tournament structure.
 
@@ -1758,6 +1804,11 @@ async def _evolve_multi_challenger(
 
     auxiliary_model = str(workspace_config.get("auxiliary_model", ""))
     field_n = strategy.field_size()
+    # WS8: a direct caller (tests) may not thread the opened emitter; bind
+    # one so every emit below is uniformly best-effort. ``evolve_once`` (the
+    # production caller) passes the emitter it already opened the round on.
+    if round_log is None:
+        round_log = _RoundLogEmitter(workspace_root, epoch_id, round_index)
 
     # TRAIN/HOLDOUT split (OVERFITTING.md §3/§4). The structure's internal
     # matchups (swiss rounds, elim nodes, racing rungs) — INCLUDING the final
@@ -1909,6 +1960,7 @@ async def _evolve_multi_challenger(
             restrict_visibility=weights.overfitting.restrict_proposer_visibility,
             failure_profile=failure_profile,
             on_status=_publish_proposing,
+            round_emitter=round_log,
         )
         # Field-diversity DECISION (pure — `_mint_challenger_field`): accept
         # the challenger into the run slate, or soft-reject it as an exact
@@ -2071,6 +2123,21 @@ async def _evolve_multi_challenger(
             phase=TournamentPhase.PROPOSING,
             entries=_field_entries(champion_only),
         )
+        # WS8: the round's terminal decision + close — the per-challenger
+        # proposal_attempted failures were already emitted as they settled.
+        round_log.emit(
+            "decision_recorded",
+            {
+                "decision": "rejected",
+                "provenance": {
+                    "structure": tournament_spec.structure,
+                    "reason": "multi-challenger field: no challenger applied cleanly",
+                    "parent_generation_id": parent_id,
+                    "promoted_generation_id": None,
+                },
+            },
+        )
+        round_log.emit("round_closed")
         return EvolveRoundOutcome(
             parent_generation_id=parent_id,
             proposed_generation_id="",
@@ -2237,6 +2304,9 @@ async def _evolve_multi_challenger(
         # gauntlet path's _cache_gen_score calls.
         _cache_gen_score(workspace_root, epoch_id, m.left.generation_id, result.parent_agg)
         _cache_gen_score(workspace_root, epoch_id, m.right.generation_id, result.child_agg)
+        # WS8: this matchup's board units + gate verdict onto the round log.
+        _emit_tournament_units(round_log, result)
+        _emit_gate_evaluated(round_log, result.outcome)
         return MatchupResult(
             matchup_id=m.matchup_id,
             left_id=m.left.generation_id,
@@ -2405,6 +2475,12 @@ async def _evolve_multi_challenger(
                         reason=verdict.reason,
                     ),
                 )
+            # WS8: the ci_state trail per evidence-gate refit. On this path
+            # the driver surfaces the resolution only for the inconclusive
+            # terminal; a confirmed promote's replicate duels are still
+            # traced through the per-matchup unit/gate events above.
+            for _ci_row in resolution.ci_history:
+                round_log.emit("evidence_replicated", {"ci_state": dict(_ci_row)})
 
         on_inconclusive = _on_inconclusive
 
@@ -2461,6 +2537,13 @@ async def _evolve_multi_challenger(
     crowning_holdout_child_scalar = crowning_confirm.holdout_child_scalar
     crowning_challenger_id = crowning_confirm.challenger_id
     crowning_challenger_train_scalar = crowning_confirm.challenger_train_scalar
+    # WS8: the crowning holdout release (a populated block always means a
+    # holdout existed and was consulted).
+    if crowning_holdout_block is not None:
+        round_log.emit(
+            "holdout_released",
+            {"confirmed": bool(crowning_holdout_block.get("confirmed"))},
+        )
 
     # --- Operator gate override (control protocol) for the FIELD ---------
     # The structure has settled (train bracket + holdout confirmation) but
@@ -2500,6 +2583,22 @@ async def _evolve_multi_challenger(
         crowning_reason_override=crowning_reason_override,
         field_overrides=field_overrides,
         structure=tournament_spec.structure,
+    )
+    # WS8: the round's terminal decision + provenance (operator overrides
+    # explicit, never silent) — the post-holdout/post-override truth.
+    round_log.emit(
+        "decision_recorded",
+        {
+            "decision": str(effective_decision.decision),
+            "provenance": {
+                "structure": tournament_spec.structure,
+                "reason": effective_decision.reason,
+                "parent_generation_id": parent_id,
+                "promoted_generation_id": promoted_id,
+                "promoted_generation_ids": sorted(promoted_ids),
+                "overrides": override_provenance,
+            },
+        },
     )
 
     # Settle the live envelope with the resolved rounds + standings so the
@@ -2776,6 +2875,7 @@ async def _evolve_multi_challenger(
         round_index=round_index,
         phase=f"done:round_{round_index}:{tournament_id}:{bookkeeping_decision}",
     )
+    round_log.emit("round_closed")
 
     # The round summary's champion/challenger scalars MUST come from the gate's
     # CROWNING matchup — the same champion-vs-leader duel the rejection_reason is
@@ -2922,6 +3022,7 @@ async def _propose_child(
     restrict_visibility: bool,
     failure_profile: str,
     round_index: int,
+    round_emitter: _RoundLogEmitter | None = None,
 ) -> Experiment:
     """Build the :class:`ProposerContext` + propose ONE child of the champion.
 
@@ -2935,31 +3036,55 @@ async def _propose_child(
     The returned experiment carries the EVOLVE ``round_index`` stamped on —
     the authoritative birth round the dashboard's round-grouping and the
     journal read (issue #16); the proposer's default is round 0.
+
+    ``round_emitter`` (WS8, best-effort) traces the propose step onto the
+    round's durable event log: the emitter callable rides
+    ``ProposerContext.round_event_emitter`` so the best-of-N wrapper can
+    emit ``candidate_sampled`` / ``critique_selected`` without importing the
+    log module. On success one ``proposal_attempted`` (empty errors) plus
+    ``experiment_minted`` + ``patches_applied`` are emitted (a success after
+    internal retries records one settled attempt — per-attempt fidelity
+    lives in the failure path, where ``ProposerError.attempts`` carries the
+    full trail and one event per failed attempt is emitted).
     """
     from zicato.proposer.agent import ProposerContext  # noqa: PLC0415
+    from zicato.proposer.proposer import ProposerError  # noqa: PLC0415
 
-    experiment = await proposer_agent.propose(
-        ProposerContext(
-            epoch_id=epoch_id,
-            parent_generation_id=parent_id,
-            new_generation_id=next_id,
-            patterns=tuple(patterns),
-            mutations=tuple(mutations),
-            brief_text=brief.text,
-            current_loss_summary=loss_summary,
-            aux_call_llm=auxiliary_call_llm,
-            model=auxiliary_model,
-            max_retries=max_proposer_retries,
-            forbidden_ids=brief.forbidden_ids,
-            workspace_root=workspace_root,
-            validate_experiment=validate_experiment,
-            meta_loop_emitter=meta_loop_emitter,
-            custom_judge_names=custom_judge_names,
-            prior_experiments=prior_experiments,
-            restrict_visibility=restrict_visibility,
-            failure_profile=failure_profile,
+    try:
+        experiment = await proposer_agent.propose(
+            ProposerContext(
+                epoch_id=epoch_id,
+                parent_generation_id=parent_id,
+                new_generation_id=next_id,
+                patterns=tuple(patterns),
+                mutations=tuple(mutations),
+                brief_text=brief.text,
+                current_loss_summary=loss_summary,
+                aux_call_llm=auxiliary_call_llm,
+                model=auxiliary_model,
+                max_retries=max_proposer_retries,
+                forbidden_ids=brief.forbidden_ids,
+                workspace_root=workspace_root,
+                validate_experiment=validate_experiment,
+                meta_loop_emitter=meta_loop_emitter,
+                custom_judge_names=custom_judge_names,
+                prior_experiments=prior_experiments,
+                restrict_visibility=restrict_visibility,
+                failure_profile=failure_profile,
+                round_event_emitter=(round_emitter.emit if round_emitter is not None else None),
+            )
         )
-    )
+    except ProposerError as exc:
+        if round_emitter is not None:
+            for attempt_error in exc.attempts:
+                round_emitter.emit("proposal_attempted", {"errors": (str(attempt_error),)})
+        raise
+    if round_emitter is not None:
+        round_emitter.emit("proposal_attempted", {})
+        round_emitter.emit("experiment_minted", {"experiment_id": experiment.id})
+        # The proposer's validate hook derived + validated the child tree
+        # before a successful return, so the patches are applied by here.
+        round_emitter.emit("patches_applied", {"generation_id": next_id})
     return replace(experiment, round_index=round_index)
 
 
@@ -3088,6 +3213,7 @@ async def _persist_rejected_round(
     auxiliary_call_llm: CallLLM,
     auxiliary_model: str,
     beater: HeartbeatBeater | None,
+    round_log: _RoundLogEmitter | None = None,
 ) -> EvolveRoundOutcome:
     """Persist a gauntlet round rejected before its tournament ever ran.
 
@@ -3126,6 +3252,20 @@ async def _persist_rejected_round(
         generation_id=next_id,
         outcome=rejected_outcome,
     )
+    # WS8: the validator findings, the terminal decision, and the close.
+    if round_log is not None:
+        round_log.emit("validation_failed", {"findings": tuple(validation_errors)})
+        round_log.emit(
+            "decision_recorded",
+            {
+                "decision": "rejected",
+                "provenance": {
+                    "reason": rejected_outcome.rejection_reason,
+                    "parent_generation_id": parent_id,
+                    "promoted_generation_id": None,
+                },
+            },
+        )
     health_summary, health_critical = await _round_epilogue(
         workspace_root=workspace_root,
         epoch_id=epoch_id,
@@ -3147,6 +3287,8 @@ async def _persist_rejected_round(
         round_index=round_index,
         phase=f"done:round_{round_index}:{next_id}:rejected",
     )
+    if round_log is not None:
+        round_log.emit("round_closed")
     return EvolveRoundOutcome(
         parent_generation_id=parent_id,
         proposed_generation_id=next_id,
@@ -4102,6 +4244,95 @@ def _ingest_experiment_into_index(
             generation_id,
             exc,
         )
+
+
+# ---------------------------------------------------------------------------
+# Durable per-round event log (WS8) — best-effort emission
+# ---------------------------------------------------------------------------
+
+
+class _RoundLogEmitter:
+    """Best-effort appender onto one round's durable RoundLog (WS8).
+
+    Emission failures must NEVER fail a round — the live index dual-write
+    (:func:`_ingest_experiment_into_index`) is the precedent: the canonical
+    stores (``experiment.json``, lineage, journal) stay authoritative and
+    the event log is a derived, replayable trace. A bind failure degrades
+    to a permanent no-op emitter; every append failure is logged at
+    ``debug`` and swallowed.
+
+    ``emit`` takes the wire ``type_token`` plus its payload fields and
+    resolves the typed event through
+    :data:`zicato.epoch.round_log.EVENT_TYPES` — the same string-token seam
+    the proposer-side callback uses (:attr:`ProposerContext
+    .round_event_emitter`), so one signature serves both sides. An unknown
+    token is silently dropped (never a crash on a vocabulary skew).
+    """
+
+    __slots__ = ("_log",)
+
+    def __init__(self, workspace_root: Path, epoch_id: str, round_index: int) -> None:
+        self._log: Any = None
+        try:
+            from zicato.epoch.round_log import RoundLog  # noqa: PLC0415
+
+            self._log = RoundLog(workspace_root, epoch_id, round_index)
+        except Exception as exc:  # noqa: BLE001 — emission must never fail a round
+            log.debug("round-log emitter unavailable: %s", exc)
+
+    def emit(self, type_token: str, fields: dict[str, Any] | None = None) -> None:
+        """Append one typed event; any failure is swallowed at debug level."""
+        if self._log is None:
+            return
+        try:
+            from zicato.epoch.round_log import EVENT_TYPES  # noqa: PLC0415
+
+            cls = EVENT_TYPES.get(type_token)
+            if cls is None:
+                return
+            self._log.append(cls(**(fields or {})))
+        except Exception as exc:  # noqa: BLE001 — emission must never fail a round
+            log.debug("round-log emit %s skipped: %s", type_token, exc)
+
+
+def _emit_tournament_units(round_log: _RoundLogEmitter, tournament_result: Any) -> None:
+    """Emit ``unit_completed`` events for a settled duel's board units.
+
+    Emitted as an AGGREGATE after the duel settles (per-unit emission at
+    the runner layer would thread a callback through the subprocess-worker
+    boundary — too invasive for the runner's contract): one event per
+    ``(entry, side)`` pair off the duel's ``per_entry_losses`` map, with
+    ``replicate=0`` (the runner's per-entry map carries the canonical
+    replicate; extra replicates fold into the aggregates upstream and are
+    not re-derivable here). Best-effort like every emission.
+    """
+    per_entry = getattr(tournament_result, "per_entry_losses", None) or {}
+    try:
+        entry_ids = sorted(per_entry)
+    except Exception:  # noqa: BLE001 — emission must never fail a round
+        return
+    for entry_id in entry_ids:
+        for side in ("parent", "child"):
+            round_log.emit(
+                "unit_completed",
+                {"entry_id": str(entry_id), "replicate": 0, "side": side},
+            )
+
+
+def _emit_gate_evaluated(round_log: _RoundLogEmitter, outcome: Any) -> None:
+    """Emit the ``gate_evaluated`` event for one settled duel's gate verdict.
+
+    ``rule_fired`` carries the gate's own ``reason`` verbatim (the string
+    that names which rule rejected; empty on a clean promote — the gate
+    reports no rule for a pass).
+    """
+    round_log.emit(
+        "gate_evaluated",
+        {
+            "rule_fired": str(getattr(outcome, "reason", "") or ""),
+            "decision": str(getattr(outcome, "decision", "") or ""),
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

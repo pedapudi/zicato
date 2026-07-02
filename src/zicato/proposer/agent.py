@@ -47,7 +47,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from zicato.core.types import (
     Experiment,
@@ -124,6 +124,16 @@ class ProposerContext:
     #: it composes with the restricted-visibility envelope untouched. Empty
     #: (the default — every single-sample propose) renders no section.
     sample_hint: str = ""
+    #: Optional best-effort ROUND-LOG event emitter (WS8), threaded by the
+    #: orchestrator so the proposer stack can trace its sampling decisions
+    #: into the round's durable event log WITHOUT importing the log module
+    #: (the proposer stays decoupled from :mod:`zicato.epoch.round_log`).
+    #: Called as ``emitter(type_token, fields)`` — e.g.
+    #: ``("candidate_sampled", {"i": 0, "n": 3})`` from the best-of-N
+    #: wrapper. Emission is best-effort by contract: callers guard every
+    #: invocation so a raising emitter can never fail a propose step.
+    #: ``None`` (the default) emits nothing.
+    round_event_emitter: Callable[[str, dict[str, Any]], None] | None = None
 
 
 class ProposerAgent(Protocol):

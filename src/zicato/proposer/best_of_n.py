@@ -37,6 +37,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
+from typing import Any
 
 from zicato.core.types import Experiment, ProposerQualityConfig
 from zicato.proposer.agent import ProposerAgent, ProposerContext
@@ -207,6 +208,24 @@ _CRITIC_SYSTEM_PROMPT = (
 )
 
 
+def _emit_round_event(ctx: ProposerContext, type_token: str, fields: dict[str, Any]) -> None:
+    """Best-effort round-log emission through the context's optional emitter.
+
+    The emitter seam keeps the proposer decoupled from the round-log module
+    (WS8): the orchestrator threads an ``emitter(type_token, fields)``
+    callable on :attr:`ProposerContext.round_event_emitter`; ``None`` (every
+    caller that does not opt in) emits nothing. Guarded here so a raising
+    emitter can never fail a propose step.
+    """
+    emitter = ctx.round_event_emitter
+    if emitter is None:
+        return
+    try:
+        emitter(type_token, fields)
+    except Exception as exc:  # noqa: BLE001 — emission must never fail a propose
+        log.debug("round-log %s emission skipped: %s", type_token, exc)
+
+
 def _parse_critic_choice(response: str, n: int) -> int | None:
     """Parse the critic's chosen index out of its raw response.
 
@@ -274,6 +293,8 @@ class BestOfNProposerAgent:
                 # narrows the slate; remember the error so an all-failed
                 # slate can re-raise the real failure.
                 last_error = exc
+            else:
+                _emit_round_event(ctx, "candidate_sampled", {"i": sample, "n": n})
 
         if not candidates:
             # The whole slate failed — surface the inner failure exactly as a
@@ -286,30 +307,35 @@ class BestOfNProposerAgent:
         if len(candidates) == 1:
             return candidates[0]
 
-        chosen = await self._select_best(candidates, ctx)
+        chosen, selection_mode = await self._select_best(candidates, ctx)
+        _emit_round_event(ctx, "critique_selected", {"index": chosen, "reason": selection_mode})
         return candidates[chosen]
 
-    async def _select_best(self, candidates: list[Experiment], ctx: ProposerContext) -> int:
-        """Return the index of the best candidate against the §4.1 quality bar.
+    async def _select_best(
+        self, candidates: list[Experiment], ctx: ProposerContext
+    ) -> tuple[int, str]:
+        """Return ``(best index, selection mode)`` against the §4.1 quality bar.
 
         Runs the self-critique LLM pass when it is enabled and an auxiliary
         callable is available; otherwise (or on any critique failure) falls
         back to the deterministic :func:`_heuristic_best_index`. Either way
-        the selection sees ONLY the restricted proposer context.
+        the selection sees ONLY the restricted proposer context. The mode
+        string (``"critique"`` / ``"heuristic"``) is round-log provenance
+        only — the caller's choice of candidate is the index.
         """
         if not self.config.critique_enabled:
-            return _heuristic_best_index(candidates, ctx)
+            return _heuristic_best_index(candidates, ctx), "heuristic"
 
         aux_call_llm = ctx.aux_call_llm
         if aux_call_llm is None:  # pragma: no cover — orchestrator always wires it
-            return _heuristic_best_index(candidates, ctx)
+            return _heuristic_best_index(candidates, ctx), "heuristic"
 
         choice = await self._critique(aux_call_llm, candidates, ctx)
         if choice is None:
             # Critique failed / unparseable — fall back to the heuristic so a
             # flaky critic never blocks the step.
-            return _heuristic_best_index(candidates, ctx)
-        return choice
+            return _heuristic_best_index(candidates, ctx), "heuristic"
+        return choice, "critique"
 
     async def _critique(
         self,
