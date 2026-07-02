@@ -139,6 +139,10 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         # round-trip / drop-a-field guard this test exercises.
         "scalar_fn": "pkg.mod:my_scalar",
         "drift_reducer": "pkg.mod:my_drift_reducer",
+        # Opt-in integrity blocking modes (default OFF; omit-at-default in
+        # the canonicalizer — opting in rolls the epoch like any weight).
+        "block_on_containment_violation": True,
+        "block_on_gate_contradiction": True,
     },
 }
 

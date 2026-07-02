@@ -400,6 +400,12 @@ _SCORING_OMIT_AT_DEFAULT_FIELDS: frozenset[str] = frozenset(
         # the nested field is omitted at its 0 default (no retroactive
         # roll) and a non-zero cadence rolls the epoch.
         "random_baseline_every_n",
+        # Opt-in integrity BLOCKING modes (default OFF — alarm-only parity
+        # with the supervisor's notary). Omitted at their False default so
+        # existing epochs never roll; opting either on selects champions
+        # under a stricter rule and rolls the epoch, which is correct.
+        "block_on_containment_violation",
+        "block_on_gate_contradiction",
     }
 )
 

@@ -659,6 +659,35 @@ class ScoringWeights:
     # class). ``scalar_fn`` is Seam 2 — it runs in the orchestrator.
     drift_reducer: str = ""
     scalar_fn: str = ""
+    # Opt-in INTEGRITY BLOCKING modes (both default OFF — the alarm-only
+    # posture of the supervisor's integrity notary is the shipped baseline).
+    # Both are omitted from the contract canonical form at their default
+    # (``epoch/contract.py::_SCORING_OMIT_AT_DEFAULT_FIELDS``) so existing
+    # epochs never roll retroactively; opting in rolls the epoch normally.
+    #
+    # ``block_on_containment_violation``: before finalizing a GATE-DECIDED
+    # promotion, the orchestrator re-checks diff containment on the same
+    # rule surface the Rust supervisor attests out-of-band
+    # (``crates/supervisor/src/diff_containment.rs``): every file OUTSIDE
+    # the registered mutable trees must be byte-identical parent↔child.
+    # When ON, a violating child is REJECTED with a clear
+    # ``containment_violation`` reason instead of promoted-with-alarm.
+    # Fail-open like the supervisor: an unreadable snapshot skips the
+    # check (never a false quarantine). An explicit operator
+    # force-promote is NOT blocked — the override is recorded provenance,
+    # never silent.
+    block_on_containment_violation: bool = False
+    # ``block_on_gate_contradiction``: immediately before finalizing a
+    # GATE-DECIDED promotion, re-derive the gate's scalar rule
+    # (``delta_scalar <= -promote_margin`` — the supervisor's
+    # ``promotion_gate.rs check_row`` semantics, applied pre-persist) and
+    # REFUSE the promotion on contradiction. When OFF (default) a
+    # contradiction persists exactly as today and the supervisor's
+    # out-of-band scan raises the alarm. An explicit operator
+    # force-promote is NOT re-checked (same rationale as above); a
+    # promotion with no usable scalar evidence is skipped (fail-open,
+    # mirroring ``check_row``'s SkippedNoEvidence).
+    block_on_gate_contradiction: bool = False
 
     def __post_init__(self) -> None:
         """Validate the declarative transform specs fail-fast at construction.

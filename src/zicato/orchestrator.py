@@ -936,6 +936,33 @@ async def evolve_once(
         for _ci_row in gate_evidence.get("ci_history", []):
             round_log.emit("evidence_replicated", {"ci_state": dict(_ci_row)})
 
+    # --- 10b''. Opt-in integrity blocking modes (default OFF) -------------
+    # Both checks (diff containment + gate-contradiction re-derivation)
+    # guard the GATE-DECIDED promotion only, BEFORE the operator-override
+    # claim below: an explicit force-promote remains the operator's
+    # recorded prerogative. Default-off keeps this branch inert and the
+    # round byte-identical (alarm-only supervisor posture).
+    if selection_decision.decision == "promoted":
+        _block_reason = _integrity_block_reason(
+            weights=weights,
+            parent_snapshot_root=parent_gen.snapshot_root,
+            child_snapshot_root=child_snapshot,
+            mutable_trees=_registered_mutable_trees(workspace_config),
+            delta_scalar=tournament_result.outcome.delta_scalar,
+        )
+        if _block_reason is not None:
+            log.warning(
+                "evolve: integrity block — generation %s promotion refused (%s)",
+                next_id,
+                _block_reason,
+            )
+            selection_decision = replace(
+                selection_decision,
+                promoted_generation_id=None,
+                decision=TournamentDecision.REJECTED,
+                reason=_block_reason,
+            )
+
     # --- 10c. Operator gate override (control protocol, RUNTIME-V2 Phase 2) ---
     # The gate has settled but the outcome is not yet persisted — the safe
     # point at which an operator's force-promote / force-reject of THIS
@@ -2545,6 +2572,30 @@ async def _evolve_multi_challenger(
             {"confirmed": bool(crowning_holdout_block.get("confirmed"))},
         )
 
+    # --- Opt-in integrity blocking modes (default OFF) -------------------
+    # Guard the GATE-DECIDED crowning promote before anything persists,
+    # mirroring the gauntlet's 10b'' block: diff containment on the crowned
+    # child's snapshot + the gate-contradiction re-derivation against the
+    # crowning duel's delta. Runs BEFORE the operator-override claim below,
+    # so an explicit force-promote remains the operator's recorded
+    # prerogative. Default-off ⇒ this branch is inert.
+    if promoted_id is not None:
+        _block_reason = _integrity_block_reason(
+            weights=weights,
+            parent_snapshot_root=champion_gen.snapshot_root,
+            child_snapshot_root=by_id[promoted_id].snapshot_root,
+            mutable_trees=_registered_mutable_trees(workspace_config),
+            delta_scalar=crowning_confirm.crowning_delta_scalar,
+        )
+        if _block_reason is not None:
+            log.warning(
+                "evolve: integrity block — generation %s crowning refused (%s)",
+                promoted_id,
+                _block_reason,
+            )
+            promoted_id = None
+            crowning_reason_override = _block_reason
+
     # --- Operator gate override (control protocol) for the FIELD ---------
     # The structure has settled (train bracket + holdout confirmation) but
     # nothing is persisted yet — the safe point at which an operator's
@@ -3368,6 +3419,11 @@ class _CrowningHoldout:
     holdout_child_scalar: float | None = None
     challenger_id: str | None = None
     challenger_train_scalar: float | None = None
+    #: The crowning duel's gate delta, normalized to the champion-as-parent
+    #: orientation (``challenger_scalar - champion_scalar``; negative =
+    #: improvement) — the scalar evidence the opt-in gate-contradiction
+    #: block re-derives against. ``None`` when no crowning duel ran.
+    crowning_delta_scalar: float | None = None
 
 
 async def _confirm_crowning_on_holdout(
@@ -3423,6 +3479,10 @@ async def _confirm_crowning_on_holdout(
     champ_train_agg = crowning_result.left_agg if champ_is_left else crowning_result.right_agg
     challenger_train_agg = crowning_result.right_agg if champ_is_left else crowning_result.left_agg
     challenger_train_scalar = float(challenger_train_agg.get("scalar", 0.0))
+    # The gate's delta treats LEFT as parent; normalize to the
+    # champion-as-parent orientation for the contradiction re-derivation.
+    raw_delta = float(crowning_result.outcome.delta_scalar)
+    crowning_delta_scalar = raw_delta if champ_is_left else -raw_delta
     (
         crowning_outcome,
         holdout_block,
@@ -3457,6 +3517,7 @@ async def _confirm_crowning_on_holdout(
         holdout_child_scalar=holdout_child_scalar,
         challenger_id=challenger_crown_id,
         challenger_train_scalar=challenger_train_scalar,
+        crowning_delta_scalar=crowning_delta_scalar,
     )
 
 
@@ -3561,6 +3622,73 @@ def _apply_field_overrides(
             reason=_decision_reason,
         )
     return promoted_id, promoted_ids, override_provenance, effective_decision
+
+
+def _registered_mutable_trees(workspace_config: Any) -> list[str]:
+    """The workspace's registered mutable-tree paths (empty when unset).
+
+    The same config surface :func:`_ensure_baseline_snapshot` seeds from
+    (``mutable_trees`` with the legacy ``source_roots`` fallback) and the
+    same one the Rust supervisor reads for its out-of-band containment
+    attestation — the two ends of the check share the rule surface.
+    """
+    raw = workspace_config.get("mutable_trees") or workspace_config.get("source_roots") or []
+    return [str(t) for t in raw]
+
+
+def _integrity_block_reason(
+    *,
+    weights: Any,
+    parent_snapshot_root: Path,
+    child_snapshot_root: Path,
+    mutable_trees: list[str],
+    delta_scalar: float | None,
+) -> str | None:
+    """The refusal reason when an opt-in integrity block fires, else ``None``.
+
+    Consulted immediately before a GATE-DECIDED promotion is finalized —
+    the in-band, opt-in twins of the supervisor's alarm-only integrity
+    notary. Both checks default OFF (``ScoringWeights``); an explicit
+    operator force-promote is never routed here (the override is recorded
+    provenance, not a silent flip, and blocking it would neuter the
+    control protocol).
+
+    (a) **Diff containment** (``block_on_containment_violation``): every
+        file outside the registered mutable trees must be byte-identical
+        parent↔child (``zicato.evolve.containment`` mirrors
+        ``crates/supervisor/src/diff_containment.rs``). Fail-open: an
+        unreadable snapshot skips the check.
+    (b) **Promotion-gate contradiction** (``block_on_gate_contradiction``):
+        re-derive the gate's scalar rule ``delta_scalar <= -promote_margin``
+        (``promotion_gate.rs check_row``, applied pre-persist) and refuse
+        on contradiction. ``delta_scalar is None`` (no usable scalar
+        evidence) skips the check — check_row's SkippedNoEvidence.
+    """
+    if weights.block_on_containment_violation:
+        from zicato.evolve.containment import (  # noqa: PLC0415
+            check_containment,
+            containment_reason,
+        )
+
+        report = check_containment(parent_snapshot_root, child_snapshot_root, mutable_trees)
+        if not report.contained:
+            return containment_reason(report)
+    if weights.block_on_gate_contradiction and delta_scalar is not None:
+        margin = float(weights.promote_margin)
+        if not (delta_scalar <= -margin):
+            if delta_scalar > 0.0:
+                detail = (
+                    f"challenger regressed: loss rose by {delta_scalar:.6g} "
+                    f"(a promotion needs the loss to drop by at least {margin:.6g})"
+                )
+            else:
+                detail = (
+                    f"improvement was insufficient: loss fell by only "
+                    f"{-delta_scalar:.6g} (a promotion needs a drop of at "
+                    f"least {margin:.6g})"
+                )
+            return f"gate_contradiction: recorded PROMOTE but {detail}; refused pre-persist"
+    return None
 
 
 def _gauntlet_decision_from_result(
