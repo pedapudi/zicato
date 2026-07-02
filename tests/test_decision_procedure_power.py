@@ -947,3 +947,424 @@ def test_noisy_session_seed_derives_only_from_stable_identifiers(tmp_path):
         make_noisy_adapter(None).load(snapshot).run(det_entry, [], SimpleNamespace(seed=99))
     )
     assert det.final_output == plain.final_output
+
+
+# ===========================================================================
+# WS-S — pre-tournament candidate screening (tryouts): operating
+# characteristics of the veto-first screen over the SAME seeded noise model.
+#
+# The screen runs each best-of-N slate candidate on a small champion-passing
+# train panel BEFORE selection (reserved replicate 3000; the confirm re-run
+# of a pass-flip at 3001) and vetoes only a CONFIRMED catastrophic
+# regression. These tests measure, on the Tier-2 noise harness:
+#
+# * the deterministic contract — a broken candidate (one that breaks an
+#   entry the champion passes) is vetoed and the best survivor is chosen;
+# * the MEASURED false-veto rate of confirm-before-veto vs the naive
+#   any-flip rule (the failing alternative): one flip vetoes at ~sigma per
+#   flip-capable panel entry, the confirmed rule at ~sigma^2 — at the
+#   moderate sigma=0.10 harness the measured confirmed rate is <= ~2%
+#   while naive any-flip runs an order of magnitude hotter; at the
+#   deliberately-extreme Tier-2 sigma=0.22 the squaring still holds
+#   (measured ~sigma^2 ~ 5%) but NO single-confirm rule can reach 2%
+#   there — that harness plants sigma large enough that one full defect is
+#   only ~1x the A/A floor, far noisier than a usable contract;
+# * the survivors' panel-scalar tiebreak — better than random selection at
+#   a large planted delta, no worse than random at a small one;
+# * screened-vs-naive composition: a slate containing a broken candidate
+#   NEVER sends it to the tournament, while the unscreened heuristic would.
+# ===========================================================================
+
+
+def _screen_truth_parent_losses() -> list[LossProfile]:
+    """The champion's TRUE per-entry baseline under BASE_TOKENS.
+
+    conv_body always passes (structural); conv_no_fabrication passes
+    (fabricate-metrics absent from BASE_TOKENS); the three defect entries
+    fail. This is the clean replicate-0 baseline the panel selector reads;
+    the false-veto measurements below are therefore ENGINE operating
+    characteristics (candidate-side noise only). A measured (noisy)
+    baseline can also admit a truly-failing entry into the panel as
+    "champion-passing" — that failure mode belongs to the baseline
+    measurement, not to the confirm rule, and is bounded by the same
+    replicate-0 canonicalization the promote gate itself trusts.
+    """
+    truth_pass = {"conv_body": True, "conv_no_fabrication": True}
+    losses = []
+    for entry in _board():
+        losses.append(
+            LossProfile(
+                run_id=f"run-v0-{entry.id}",
+                entry_id=entry.id,
+                generation_id="v0",
+                epoch_id="e0",
+                drift_counts=(),
+                plan_revisions=0,
+                task_failure_ratio=0.0,
+                runtime_ms=1,
+                wall_clock_budget_exceeded=False,
+                expectation_result=None,
+                drift_loss=float(len(BASE_TOKENS)),
+                pass_fail=truth_pass.get(entry.id, False),
+            )
+        )
+    return losses
+
+
+def _screen_runner_for(
+    tmp_path: Path,
+    *,
+    seed: int,
+    sigma: float,
+    candidate_tokens: list[tuple[str, ...]],
+    monkeypatch: pytest.MonkeyPatch,
+    veto_only: bool = False,
+) -> Any:
+    """One trial's real orchestrator-built screen closure over _NoisyWorld."""
+    from zicato.core.types import ProposerQualityConfig
+    from zicato.orchestrator import _build_candidate_screen_runner
+
+    snap = tmp_path / "champion_snapshot"
+    if not snap.exists():
+        snap.mkdir(parents=True)
+        (snap / "policy.txt").write_text("champion\n")
+    parent = replace(_gen("v0"), snapshot_root=snap)
+    tokens_by_gen: dict[str, tuple[str, ...]] = {"v0": BASE_TOKENS}
+    for i, tokens in enumerate(candidate_tokens):
+        tokens_by_gen[f"v0-screen-r0c{i}"] = tokens
+    world = _NoisyWorld(tokens_by_gen, sigma)
+    world.install(monkeypatch)
+    weights = ScoringWeights(
+        proposer_quality=ProposerQualityConfig(
+            best_of_n=max(2, len(candidate_tokens)),
+            critique_enabled=False,
+            screen_entries=2,
+            screen_veto_only=veto_only,
+        )
+    )
+    runner = _build_candidate_screen_runner(
+        weights=weights,
+        adapter=object(),
+        parent_gen=parent,
+        train_board=list(_board()),
+        parent_losses=_screen_truth_parent_losses(),
+        config=_config(tmp_path, seed),
+        workspace_root=tmp_path,
+        epoch_id="e0",
+        round_index=0,
+        disable_drift=(),
+        judge_only=False,
+        beater=None,
+    )
+    assert runner is not None
+    return runner
+
+
+def _screen_experiment(exp_id: str) -> Any:
+    """A patch-free slate candidate (equal diff size across the slate, so
+    the heuristic's screen-scalar tiebreak — not parsimony — decides)."""
+    from zicato.core.types import Experiment, HypothesisSpec
+
+    return Experiment(
+        id=exp_id,
+        epoch_id="e0",
+        generation_id="v1",
+        parent_generation_id="v0",
+        proposed_at="2026-01-01T00:00:00Z",
+        hypothesis=HypothesisSpec(
+            core_idea=f"candidate {exp_id}",
+            modulating=(),
+            why="screen acceptance",
+            expected_drift_movements=(),
+            expected_pass_rate_delta="+0.0",
+        ),
+        patches=(),
+        outcome=None,
+    )
+
+
+def _fab_metrics_measured(seed: int, gen_key: str, replicate: int, sigma: float) -> bool:
+    """Whether ``fabricate-metrics`` is MEASURED present for one draw —
+    the same stable-seeded draw the engine's fake worker makes, so the
+    naive any-flip alternative is computed on the identical sample."""
+    rng = random.Random(
+        stable_noise_seed(
+            workspace_seed=seed,
+            generation_key=gen_key,
+            entry_id="conv_no_fabrication",
+            replicate_index=replicate,
+        )
+    )
+    measured = draw_measured_tokens(list(BASE_TOKENS), rng, sigma)
+    return "fabricate-metrics" in measured
+
+
+def test_screen_deterministic_slate_vetoes_broken_selects_best(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """sigma=0: good / mediocre / broken slate — broken vetoed, best chosen."""
+    from zicato.core.types import ProposerQualityConfig
+    from zicato.proposer.agent import ProposerContext
+    from zicato.proposer.best_of_n import BestOfNProposerAgent
+
+    good = ()  # fixes every defect: passes all five entries, zero drift
+    mediocre = BASE_TOKENS  # champion-identical
+    broken = (*BASE_TOKENS, "fabricate-metrics")  # breaks a champion-passing entry
+    runner = _screen_runner_for(
+        tmp_path,
+        seed=7,
+        sigma=0.0,
+        candidate_tokens=[broken, mediocre, good],
+        monkeypatch=monkeypatch,
+    )
+    candidates = [
+        _screen_experiment("broken"),
+        _screen_experiment("mediocre"),
+        _screen_experiment("good"),
+    ]
+    results = asyncio.run(runner(candidates))
+    assert [r.vetoed for r in results] == [True, False, False]
+    assert results[0].confirmed is True  # the flip re-confirmed at 3001
+    assert results[0].scalar is not None  # measured, selection-biased
+    # Panel scalars order the survivors: the full fix beats champion-equal.
+    assert results[2].scalar is not None and results[1].scalar is not None
+    assert results[2].scalar < results[1].scalar
+
+    # Composed through the wrapper: broken filtered, GOOD chosen (equal
+    # diffs, so the screen-scalar tiebreak decides among the survivors).
+    class _Inner:
+        def __init__(self) -> None:
+            self.queue = list(candidates)
+
+        async def propose(self, ctx: ProposerContext) -> Any:
+            return self.queue.pop(0)
+
+    async def _no_llm(system: str, user: str, model: str) -> str:
+        return "0"
+
+    agent = BestOfNProposerAgent(
+        inner=_Inner(),
+        config=ProposerQualityConfig(best_of_n=3, critique_enabled=False, screen_entries=2),
+    )
+    ctx = ProposerContext(
+        epoch_id="e0",
+        parent_generation_id="v0",
+        new_generation_id="v1",
+        patterns=(),
+        mutations=(),
+        brief_text="",
+        current_loss_summary="",
+        aux_call_llm=_no_llm,
+        screen_candidates=runner,
+    )
+    chosen = asyncio.run(agent.propose(ctx))
+    assert chosen.id == "good"
+
+
+def _measure_screen_false_veto_rates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    sigma: float,
+    trials: int,
+) -> tuple[float, float]:
+    """(confirmed-rule rate, naive any-flip rate) for an A/A candidate.
+
+    The candidate's TRUE tokens equal the champion's, so ANY veto is
+    false. The naive alternative is computed on the identical seeded
+    draws the engine consumed (one flip at replicate 3000 = veto), so
+    the two rates compare the RULES, not the samples.
+    """
+    confirmed_vetoes = 0
+    naive_vetoes = 0
+    for trial in range(trials):
+        runner = _screen_runner_for(
+            tmp_path,
+            seed=trial,
+            sigma=sigma,
+            candidate_tokens=[BASE_TOKENS],
+            monkeypatch=monkeypatch,
+        )
+        (result,) = asyncio.run(runner([_screen_experiment("aa")]))
+        confirmed_vetoes += 1 if result.vetoed else 0
+        # conv_body cannot flip (structural pass); the panel's only
+        # flip-capable entry is conv_no_fabrication.
+        naive_vetoes += 1 if _fab_metrics_measured(trial, "v0-screen-r0c0", 3000, sigma) else 0
+    return confirmed_vetoes / trials, naive_vetoes / trials
+
+
+def test_screen_false_veto_rate_confirm_beats_naive_any_flip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trials = 200
+    # Moderate harness noise (sigma=0.10): the confirm-before-veto rule
+    # measures at ~sigma^2 = 1% — inside the <= ~2% acceptance bar — while
+    # the NAIVE any-flip rule (the failing alternative) measures at ~sigma
+    # = 10%: one noisy re-roll would disqualify a healthy candidate ten
+    # times as often as the confirmed rule.
+    confirmed, naive = _measure_screen_false_veto_rates(
+        tmp_path, monkeypatch, sigma=0.10, trials=trials
+    )
+    assert confirmed <= 0.02, f"confirmed false-veto rate {confirmed:.3f} > 2%"
+    assert naive >= 0.05, f"naive any-flip rate unexpectedly low: {naive:.3f}"
+    assert confirmed <= naive / 3, (confirmed, naive)
+
+    # The deliberately-extreme Tier-2 sigma (0.22 — one FULL defect is only
+    # ~1x the A/A floor): the squaring still holds (measured ~sigma^2), but
+    # no single-confirm rule can reach 2% here — sigma^2 is already 4.8%.
+    # Pinned as documentation of the failing alternative's shape, not as
+    # the acceptance bar.
+    confirmed_hot, naive_hot = _measure_screen_false_veto_rates(
+        tmp_path, monkeypatch, sigma=NOISE_SIGMA, trials=trials
+    )
+    assert confirmed_hot <= naive_hot / 2.5, (confirmed_hot, naive_hot)
+    assert confirmed_hot <= 0.10, f"confirmed rate at hot sigma: {confirmed_hot:.3f}"
+
+
+def test_screen_tiebreak_beats_random_at_large_delta_safe_at_small(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Survivor tiebreak: >> random at a large planted delta; ~random at a
+    small one (never systematically WORSE than random)."""
+    from zicato.core.types import ProposerQualityConfig
+    from zicato.proposer.agent import ProposerContext
+    from zicato.proposer.best_of_n import BestOfNProposerAgent
+
+    async def _no_llm(system: str, user: str, model: str) -> str:
+        return "0"
+
+    def _pick_rate(better_tokens: tuple[str, ...], trials: int) -> float:
+        picked_better = 0
+        for trial in range(trials):
+            # Alternate slate order so the stable-index tiebreak cannot
+            # hand the better candidate free wins.
+            better_first = trial % 2 == 0
+            slate_tokens = (
+                [better_tokens, BASE_TOKENS] if better_first else [BASE_TOKENS, better_tokens]
+            )
+            runner = _screen_runner_for(
+                tmp_path,
+                seed=1000 + trial,
+                sigma=NOISE_SIGMA,
+                candidate_tokens=slate_tokens,
+                monkeypatch=monkeypatch,
+            )
+            candidates = (
+                [_screen_experiment("better"), _screen_experiment("equal")]
+                if better_first
+                else [_screen_experiment("equal"), _screen_experiment("better")]
+            )
+
+            class _Inner:
+                def __init__(self, queue: list[Any]) -> None:
+                    self.queue = list(queue)
+
+                async def propose(self, ctx: ProposerContext) -> Any:
+                    return self.queue.pop(0)
+
+            agent = BestOfNProposerAgent(
+                inner=_Inner(candidates),
+                config=ProposerQualityConfig(best_of_n=2, critique_enabled=False, screen_entries=2),
+            )
+            ctx = ProposerContext(
+                epoch_id="e0",
+                parent_generation_id="v0",
+                new_generation_id="v1",
+                patterns=(),
+                mutations=(),
+                brief_text="",
+                current_loss_summary="",
+                aux_call_llm=_no_llm,
+                screen_candidates=runner,
+            )
+            chosen = asyncio.run(agent.propose(ctx))
+            picked_better += 1 if chosen.id == "better" else 0
+        return picked_better / trials
+
+    # Large delta (all three defects fixed, ~3x the A/A floor): the panel
+    # scalar separates far beyond the noise — picked (essentially) always.
+    large_rate = _pick_rate(DELTA_CASES["large"][0], trials=24)
+    assert large_rate >= 0.75, f"large-delta pick rate {large_rate:.2f}"
+
+    # Small delta (~0.5x floor): the 2-entry panel cannot reliably resolve
+    # it — the requirement is only NO WORSE than the 0.5 random baseline
+    # (the tiebreak must never invert a real ordering systematically).
+    small_rate = _pick_rate(DELTA_CASES["small"][0], trials=24)
+    assert small_rate >= 0.35, f"small-delta pick rate {small_rate:.2f} < random band"
+
+
+def test_screened_slate_never_sends_broken_to_the_tournament(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The acceptance headline: with screening, a slate containing a broken
+    candidate NEVER forwards it; the unscreened heuristic (same slate,
+    same contract otherwise) would have.
+
+    Pinned at sigma=0 because "never" is a DETERMINISTIC contract: the
+    broken candidate's regression is real, so the screen draw and its
+    confirm re-run both observe it and the veto always fires. Under
+    measurement noise no single-confirm rule can promise "never" — at
+    sigma the defect is measured ABSENT with probability sigma per draw,
+    so the veto misses ~sigma*(2-sigma) of slates and only the panel
+    scalar tiebreak (and the downstream tournament gate) backstops it;
+    the noise-side operating characteristics live in the rate tests
+    above, not in this guarantee.
+    """
+    from zicato.core.types import ProposerQualityConfig
+    from zicato.proposer.agent import ProposerContext
+    from zicato.proposer.best_of_n import BestOfNProposerAgent
+
+    async def _no_llm(system: str, user: str, model: str) -> str:
+        return "0"
+
+    broken = (*BASE_TOKENS, "fabricate-metrics")
+    forwarded_broken_screened = 0
+    forwarded_broken_unscreened = 0
+    trials = 12
+    for trial in range(trials):
+        runner = _screen_runner_for(
+            tmp_path,
+            seed=5000 + trial,
+            sigma=0.0,
+            candidate_tokens=[broken, BASE_TOKENS],
+            monkeypatch=monkeypatch,
+        )
+        candidates = [_screen_experiment("broken"), _screen_experiment("ok")]
+
+        class _Inner:
+            def __init__(self, queue: list[Any]) -> None:
+                self.queue = list(queue)
+
+            async def propose(self, ctx: ProposerContext) -> Any:
+                return self.queue.pop(0)
+
+        def _ctx(screen: Any) -> ProposerContext:
+            return ProposerContext(
+                epoch_id="e0",
+                parent_generation_id="v0",
+                new_generation_id="v1",
+                patterns=(),
+                mutations=(),
+                brief_text="",
+                current_loss_summary="",
+                aux_call_llm=_no_llm,
+                screen_candidates=screen,
+            )
+
+        config = ProposerQualityConfig(best_of_n=2, critique_enabled=False, screen_entries=2)
+        screened_agent = BestOfNProposerAgent(inner=_Inner(candidates), config=config)
+        chosen = asyncio.run(screened_agent.propose(_ctx(runner)))
+        forwarded_broken_screened += 1 if chosen.id == "broken" else 0
+
+        # The naive alternative: same slate, no screen runner — the
+        # heuristic ties on grounding/diff and falls to the stable index,
+        # forwarding the broken candidate every time.
+        unscreened_agent = BestOfNProposerAgent(inner=_Inner(candidates), config=config)
+        chosen_naive = asyncio.run(unscreened_agent.propose(_ctx(None)))
+        forwarded_broken_unscreened += 1 if chosen_naive.id == "broken" else 0
+
+    assert forwarded_broken_screened == 0, (
+        f"screened slate forwarded the broken candidate "
+        f"{forwarded_broken_screened}/{trials} times"
+    )
+    assert forwarded_broken_unscreened == trials  # the failing alternative
