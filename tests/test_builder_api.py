@@ -238,3 +238,108 @@ def test_builder_op_envelope_carries_noise_floor_refuse_warning(
     snap = client.get("/builder/draft?session=pf3").json()
     codes = {w["code"] for w in snap["warnings"]}
     assert "margin_below_noise_floor" in codes
+
+
+def test_builder_op_full_knob_dispatch(client: TestClient) -> None:
+    """Every new knob-coverage op dispatches through /builder/op and lands on
+    the serialized draft: the extended holdout, the extended gate, namespace
+    weights, proposer quality, experiment memory."""
+    s = {"session": "knobs"}
+    r = client.post(
+        "/builder/op",
+        json={
+            **s,
+            "op": "set_holdout",
+            "args": {
+                "min_board_size_for_split": 12,
+                "rotate_holdout": False,
+                "random_baseline_every_n": 4,
+                "ladder": {"budget": 6},
+            },
+        },
+    )
+    assert r.status_code == 200
+    of = r.json()["draft"]["scoring"]["overfitting"]
+    assert of["min_board_size_for_split"] == 12
+    assert of["rotate_holdout"] is False
+    assert of["random_baseline_every_n"] == 4
+    assert of["ladder"]["budget"] == 6
+
+    r = client.post(
+        "/builder/op",
+        json={
+            **s,
+            "op": "set_gate",
+            "args": {
+                "monotonicity_scope": "aggregate",
+                "block_on_containment_violation": True,
+                "regression_gate_enabled": True,
+                "regression_test_command": ["pytest", "-q"],
+                "regression_timeout_s": 90,
+                "namespace_monotonicity": {"rubric:": True},
+            },
+        },
+    )
+    assert r.status_code == 200
+    sc = r.json()["draft"]["scoring"]
+    assert sc["pass_rate_monotonicity_scope"] == "aggregate"
+    assert sc["block_on_containment_violation"] is True
+    assert sc["regression_gate_enabled"] is True
+    assert sc["regression_test_command"] == ["pytest", "-q"]
+    assert sc["regression_timeout_s"] == 90
+    assert sc["namespace_monotonicity"] == {"rubric:": True}
+
+    r = client.post(
+        "/builder/op",
+        json={
+            **s,
+            "op": "set_namespace_weights",
+            "args": {
+                "namespace_weights": {"drift:": 1.0, "rubric:": -2.0},
+                "diff_complexity_weight": 0.005,
+            },
+        },
+    )
+    assert r.status_code == 200
+    sc = r.json()["draft"]["scoring"]
+    assert sc["namespace_weights"] == {"drift:": 1.0, "rubric:": -2.0}
+    assert sc["diff_complexity_weight"] == 0.005
+
+    r = client.post(
+        "/builder/op",
+        json={
+            **s,
+            "op": "set_proposer_quality",
+            "args": {"best_of_n": 4, "critique_enabled": False},
+        },
+    )
+    assert r.status_code == 200
+    pq = r.json()["draft"]["scoring"]["proposer_quality"]
+    assert pq["best_of_n"] == 4
+    assert pq["critique_enabled"] is False
+
+    r = client.post(
+        "/builder/op", json={**s, "op": "set_experiment_memory", "args": {"cross_epoch": True}}
+    )
+    assert r.status_code == 200
+    assert r.json()["draft"]["scoring"]["experiment_memory"]["cross_epoch"] is True
+
+
+def test_builder_op_knob_dispatch_errors_are_400(client: TestClient) -> None:
+    r = client.post(
+        "/builder/op",
+        json={"session": "kerr", "op": "set_gate", "args": {"regression_timeout_s": "soon"}},
+    )
+    assert r.status_code == 400
+    assert "integer" in r.json()["error"]
+    r = client.post(
+        "/builder/op",
+        json={"session": "kerr", "op": "set_holdout", "args": {"ladder": {"bogus": 1}}},
+    )
+    assert r.status_code == 400
+    assert "ladder" in r.json()["error"]
+    r = client.post(
+        "/builder/op",
+        json={"session": "kerr", "op": "set_proposer_quality", "args": {"best_of_n": 0}},
+    )
+    assert r.status_code == 400

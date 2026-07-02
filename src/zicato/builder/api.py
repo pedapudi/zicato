@@ -78,6 +78,12 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
             enabled=args.get("enabled"),
             fraction=args.get("fraction"),
             tags=args.get("tags"),
+            min_board_size_for_split=_opt_int(args, "min_board_size_for_split"),
+            rotate_holdout=_opt_bool(args, "rotate_holdout"),
+            restrict_proposer_visibility=_opt_bool(args, "restrict_proposer_visibility"),
+            random_baseline_every_n=_opt_int(args, "random_baseline_every_n"),
+            max_generations_per_contract=_opt_int(args, "max_generations_per_contract"),
+            ladder=args.get("ladder"),
         )
     if op == "set_proposer":
         return ops.set_proposer(draft, args.get("proposer_path"))
@@ -99,7 +105,27 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
             promote_margin=args.get("promote_margin"),
             monotonicity=args.get("monotonicity"),
             monotonicity_scope=args.get("monotonicity_scope"),
+            namespace_monotonicity=args.get("namespace_monotonicity"),
+            block_on_containment_violation=_opt_bool(args, "block_on_containment_violation"),
+            block_on_gate_contradiction=_opt_bool(args, "block_on_gate_contradiction"),
+            regression_gate_enabled=_opt_bool(args, "regression_gate_enabled"),
+            regression_test_command=args.get("regression_test_command"),
+            regression_timeout_s=_opt_int(args, "regression_timeout_s"),
         )
+    if op == "set_namespace_weights":
+        return ops.set_namespace_weights(
+            draft,
+            namespace_weights=args.get("namespace_weights"),
+            diff_complexity_weight=args.get("diff_complexity_weight"),
+        )
+    if op == "set_proposer_quality":
+        return ops.set_proposer_quality(
+            draft,
+            best_of_n=_opt_int(args, "best_of_n"),
+            critique_enabled=_opt_bool(args, "critique_enabled"),
+        )
+    if op == "set_experiment_memory":
+        return ops.set_experiment_memory(draft, cross_epoch=_opt_bool(args, "cross_epoch"))
     if op == "set_screening":
         raw_entries = args.get("entries")
         raw_veto_only = args.get("veto_only")
@@ -118,6 +144,29 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
     if op == "set_brief":
         return ops.set_brief(draft, str(args["text"]))
     raise ValueError(f"unknown builder op {op!r}")
+
+
+def _opt_int(args: dict[str, Any], key: str) -> int | None:
+    """Coerce an optional integer arg (absent / null ⇒ ``None``).
+
+    A non-integer raises :class:`ValueError` so the handler returns a
+    clear 400 instead of silently mis-typing a contract knob.
+    """
+    raw = args.get(key)
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{key!r} must be an integer, got {raw!r}") from exc
+
+
+def _opt_bool(args: dict[str, Any], key: str) -> bool | None:
+    """Coerce an optional boolean arg (absent / null ⇒ ``None``)."""
+    raw = args.get(key)
+    if raw is None:
+        return None
+    return bool(raw)
 
 
 def _runs_of(args: dict[str, Any]) -> int | None:

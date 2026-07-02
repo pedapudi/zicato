@@ -681,3 +681,168 @@ def test_preflight_measures_draft_contract_against_target0(tmp_path) -> None:
     record = load_epoch(ws, cfg.id)
     assert record.preflight is None
     assert record.noise_floor is None
+
+
+# ---------------------------------------------------------------------------
+# Full knob coverage — set_holdout (overfitting), set_gate (hard blocks),
+# set_namespace_weights, set_proposer_quality, set_experiment_memory
+# ---------------------------------------------------------------------------
+
+
+def test_set_holdout_full_overfitting_coverage() -> None:
+    draft = TournamentDraft()
+    patch = ops.set_holdout(
+        draft,
+        min_board_size_for_split=10,
+        rotate_holdout=False,
+        restrict_proposer_visibility=False,
+        random_baseline_every_n=5,
+        max_generations_per_contract=40,
+    )
+    of = draft.scoring.overfitting
+    assert of.min_board_size_for_split == 10
+    assert of.rotate_holdout is False
+    assert of.restrict_proposer_visibility is False
+    assert of.random_baseline_every_n == 5
+    assert of.max_generations_per_contract == 40
+    assert patch.changed["random_baseline_every_n"] == {"from": 0, "to": 5}
+    assert patch.changed["max_generations_per_contract"] == {"from": None, "to": 40}
+
+    # ``0`` clears the ceiling (None is reserved for "leave unchanged").
+    patch2 = ops.set_holdout(draft, max_generations_per_contract=0)
+    assert draft.scoring.overfitting.max_generations_per_contract is None
+    assert patch2.changed["max_generations_per_contract"] == {"from": 40, "to": None}
+
+    # No-op edit records nothing.
+    patch3 = ops.set_holdout(draft, rotate_holdout=False)
+    assert patch3.changed == {}
+
+
+def test_set_holdout_ladder_partial_mapping() -> None:
+    import pytest
+
+    draft = TournamentDraft()
+    patch = ops.set_holdout(draft, ladder={"budget": 8, "noise_scale": 0.1})
+    ladder = draft.scoring.overfitting.ladder
+    assert ladder.budget == 8
+    assert ladder.noise_scale == 0.1
+    assert ladder.enabled is True  # untouched by the partial mapping
+    assert patch.changed["ladder.budget"] == {"from": 16, "to": 8}
+
+    # An explicit threshold pins it; an explicit null resets to auto.
+    ops.set_holdout(draft, ladder={"threshold": 0.02})
+    assert draft.scoring.overfitting.ladder.threshold == 0.02
+    patch_auto = ops.set_holdout(draft, ladder={"threshold": None})
+    assert draft.scoring.overfitting.ladder.threshold is None
+    assert patch_auto.changed["ladder.threshold"] == {"from": 0.02, "to": None}
+
+    # Unknown ladder keys raise; invalid values hit the dataclass validator.
+    with pytest.raises(ValueError, match="unknown ladder key"):
+        ops.set_holdout(draft, ladder={"nope": 1})
+    with pytest.raises(ValueError, match="budget"):
+        ops.set_holdout(draft, ladder={"budget": -1})
+
+
+def test_set_holdout_invalid_values_rejected_by_dataclass() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="random_baseline_every_n"):
+        ops.set_holdout(TournamentDraft(), random_baseline_every_n=-1)
+    with pytest.raises(ValueError, match="holdout_fraction"):
+        ops.set_holdout(TournamentDraft(), fraction=1.5)
+
+
+def test_set_gate_full_coverage() -> None:
+    import pytest
+
+    draft = TournamentDraft()
+    patch = ops.set_gate(
+        draft,
+        block_on_containment_violation=True,
+        block_on_gate_contradiction=True,
+        regression_gate_enabled=True,
+        regression_test_command=["python", "-m", "unittest", "discover"],
+        regression_timeout_s=120,
+        namespace_monotonicity={"rubric:": True, "schema:": False},
+    )
+    sc = draft.scoring
+    assert sc.block_on_containment_violation is True
+    assert sc.block_on_gate_contradiction is True
+    assert sc.regression_gate_enabled is True
+    assert sc.regression_test_command == ("python", "-m", "unittest", "discover")
+    assert sc.regression_timeout_s == 120
+    assert dict(sc.namespace_monotonicity) == {"rubric:": True, "schema:": False}
+    assert patch.changed["block_on_containment_violation"]["to"] is True
+    assert patch.changed["regression_test_command"]["to"] == [
+        "python",
+        "-m",
+        "unittest",
+        "discover",
+    ]
+
+    # It survives the draft's serialized form (the REST envelope shape).
+    import json
+
+    serialized = json.loads(json.dumps(draft.to_dict()))
+    assert serialized["scoring"]["block_on_gate_contradiction"] is True
+    assert serialized["scoring"]["namespace_monotonicity"] == {"rubric:": True, "schema:": False}
+
+    with pytest.raises(ValueError, match="non-empty argv"):
+        ops.set_gate(TournamentDraft(), regression_test_command=[])
+    with pytest.raises(ValueError, match=">= 1"):
+        ops.set_gate(TournamentDraft(), regression_timeout_s=0)
+
+
+def test_set_namespace_weights() -> None:
+    import pytest
+
+    draft = TournamentDraft()
+    weights = {"drift:": 2.0, "rubric:": -0.5, "cost:": 0.0}
+    patch = ops.set_namespace_weights(draft, namespace_weights=weights, diff_complexity_weight=0.01)
+    assert dict(draft.scoring.namespace_weights) == weights
+    assert draft.scoring.diff_complexity_weight == 0.01
+    assert patch.changed["namespace_weights"]["to"] == weights
+    assert patch.changed["diff_complexity_weight"] == {"from": 0.0, "to": 0.01}
+
+    # No-op replacement records nothing.
+    patch2 = ops.set_namespace_weights(draft, namespace_weights=dict(weights))
+    assert patch2.changed == {}
+
+    with pytest.raises(ValueError, match=">= 0"):
+        ops.set_namespace_weights(TournamentDraft(), diff_complexity_weight=-0.1)
+
+
+def test_set_proposer_quality_composes_with_screening() -> None:
+    import pytest
+
+    draft = TournamentDraft()
+    ops.set_screening(draft, entries=2, veto_only=True)
+    patch = ops.set_proposer_quality(draft, best_of_n=5, critique_enabled=False)
+    quality = draft.scoring.proposer_quality
+    assert quality.best_of_n == 5
+    assert quality.critique_enabled is False
+    # COMPOSITION: the screen knobs set by set_screening are untouched.
+    assert quality.screen_entries == 2
+    assert quality.screen_veto_only is True
+    assert patch.changed["best_of_n"] == {"from": 3, "to": 5}
+
+    # And the reverse: set_screening leaves the quality knobs alone.
+    ops.set_screening(draft, entries=4)
+    assert draft.scoring.proposer_quality.best_of_n == 5
+
+    with pytest.raises(ValueError, match=">= 1"):
+        ops.set_proposer_quality(TournamentDraft(), best_of_n=0)
+
+
+def test_set_experiment_memory() -> None:
+    import json
+
+    draft = TournamentDraft()
+    assert draft.scoring.experiment_memory.cross_epoch is False
+    patch = ops.set_experiment_memory(draft, cross_epoch=True)
+    assert draft.scoring.experiment_memory.cross_epoch is True
+    assert patch.changed["cross_epoch"] == {"from": False, "to": True}
+    # No-op records nothing.
+    assert ops.set_experiment_memory(draft, cross_epoch=True).changed == {}
+    serialized = json.loads(json.dumps(draft.to_dict()))
+    assert serialized["scoring"]["experiment_memory"]["cross_epoch"] is True

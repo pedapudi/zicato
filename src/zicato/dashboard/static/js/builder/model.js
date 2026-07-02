@@ -71,18 +71,42 @@ const REPLICATES = {
   },
 };
 
+// The Bradley–Terry EVIDENCE GATE params — generic tournament params (they
+// live in the same opaque params map as field_size), so they apply to every
+// structure. The threshold is OPT-IN: setting 0 REMOVES the key from the
+// contract (removeAtZero) so an unset gate hashes byte-identically to a
+// contract that predates it. These are the recommended-scaffold's gate knobs
+// — the form could not display them before this spec existed.
+const EVIDENCE_THRESHOLD = {
+  key: 'promote_confidence_threshold', label: 'Evidence-gate threshold', def: 0,
+  min: 0, max: 0.99, step: 0.05, int: false, removeAtZero: true,
+  info: {
+    title: 'Evidence-gate threshold', def: 'unset (gate off); scaffold 0.8',
+    body: 'The Bradley–Terry pre-gate: crown only when P(challenger > champion) reaches this probability AND the rating confidence intervals separate. Soundness, not power — it stops noise-crownings but needs replicated evidence to say yes, so give it an honest replicate budget. 0 removes the param (gate off).',
+  },
+};
+const EVIDENCE_REPLICATES = {
+  key: 'promote_confidence_replicates', label: 'Evidence replicate budget', def: 3,
+  min: 0, step: 1, int: true,
+  info: {
+    title: 'Evidence replicate budget', def: '3; scaffold 32',
+    body: 'How many extra crowning-pair replicates the defer→replicate loop may spend chasing CI separation before going inconclusive. Each replicate is a FRESH board sweep for BOTH contestants (~budget × 2 × board runs, per confirmed crowning) — after the F2 fix this is typically the largest cost driver, so the cost meter prices it. CI separation on a near-tie needs ~32+ decisive duels.',
+  },
+};
+
 export function paramSpecsFor(structure) {
+  const evidence = [EVIDENCE_THRESHOLD, EVIDENCE_REPLICATES];
   switch (structure) {
     case 'gauntlet':
-      return [FIELD_SIZE, REPLICATES];
+      return [FIELD_SIZE, REPLICATES, ...evidence];
     case 'single_elim':
     case 'double_elim':
-      return [FIELD_SIZE, REPLICATES];
+      return [FIELD_SIZE, REPLICATES, ...evidence];
     case 'swiss':
       return [FIELD_SIZE, REPLICATES, {
         key: 'rounds_n', label: 'Rounds', def: 4, min: 1, step: 1, int: true,
         info: { title: 'Rounds (rounds_n)', def: '4', body: 'How many score-paired swiss rounds to play. More rounds sharpen the standings (each pairs nearer-ranked challengers) but cost rounds_n × pairings × board per epoch.' },
-      }];
+      }, ...evidence];
     case 'racing':
       return [FIELD_SIZE, REPLICATES, {
         key: 'eta', label: 'Cut factor (eta)', def: 2, min: 2, step: 1, int: true,
@@ -90,9 +114,9 @@ export function paramSpecsFor(structure) {
       }, {
         key: 'board_fraction', label: 'Rung-0 board fraction', def: 0.25, min: 0.05, max: 1, step: 0.05, int: false,
         info: { title: 'Rung-0 board fraction', def: '0.25', body: 'The fraction of the board the FIRST (cheapest) rung scores on. Smaller is cheaper but a thin first rung can cut a challenger on too little signal; the slice grows by eta each rung up to the full board.' },
-      }];
+      }, ...evidence];
     default:
-      return [FIELD_SIZE, REPLICATES];
+      return [FIELD_SIZE, REPLICATES, ...evidence];
   }
 }
 

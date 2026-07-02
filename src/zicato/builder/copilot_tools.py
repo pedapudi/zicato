@@ -208,14 +208,46 @@ def set_holdout(
     enabled: bool | None = None,
     fraction: float | None = None,
     tags: list[str] | None = None,
+    min_board_size_for_split: int | None = None,
+    rotate_holdout: bool | None = None,
+    restrict_proposer_visibility: bool | None = None,
+    random_baseline_every_n: int | None = None,
+    max_generations_per_contract: int | None = None,
+    ladder: dict[str, Any] | None = None,
 ) -> str:
-    """Edit the train/holdout split (enable, hash-fraction, explicit tags).
+    """Edit the train/holdout split + the full anti-overfitting config.
 
-    Any subset of ``enabled`` / ``fraction`` / ``tags`` may be supplied.
-    Returns the patch + updated cost / warnings.
+    ``enabled`` / ``fraction`` tune the hash-derived split; ``tags`` sets
+    the explicit per-entry holdout ids. The rest covers the whole
+    overfitting contract: ``min_board_size_for_split`` (the split floor),
+    ``rotate_holdout`` (a fresh ~fraction slice each epoch),
+    ``restrict_proposer_visibility`` (band/aggregate what the proposer
+    sees), ``random_baseline_every_n`` (the PLACEBO cadence — every Nth
+    round fields one no-op challenger the gate MUST reject; a promoted
+    placebo is the gate-discrimination alarm; 0 = off),
+    ``max_generations_per_contract`` (board-refresh recommendation
+    ceiling; 0 clears it), and ``ladder`` — a partial mapping over the
+    Ladder/Thresholdout governor (``enabled`` / ``threshold`` /
+    ``budget`` / ``noise_scale``; ``"threshold": null`` resets to
+    auto-derive from promote_margin). Any subset may be supplied; every
+    change rolls the epoch. Returns the patch + updated cost / warnings.
     """
     ctx = _active_context()
-    patch = ops.set_holdout(ctx.draft(), enabled=enabled, fraction=fraction, tags=tags)
+    try:
+        patch = ops.set_holdout(
+            ctx.draft(),
+            enabled=enabled,
+            fraction=fraction,
+            tags=tags,
+            min_board_size_for_split=min_board_size_for_split,
+            rotate_holdout=rotate_holdout,
+            restrict_proposer_visibility=restrict_proposer_visibility,
+            random_baseline_every_n=random_baseline_every_n,
+            max_generations_per_contract=max_generations_per_contract,
+            ladder=ladder,
+        )
+    except ValueError as exc:
+        return _result_json({"error": str(exc)})
     return _result_json(_summary(patch))
 
 
@@ -261,8 +293,14 @@ def set_gate(
     promote_margin: float | None = None,
     monotonicity: bool | None = None,
     monotonicity_scope: str | None = None,
+    namespace_monotonicity: dict[str, bool] | None = None,
+    block_on_containment_violation: bool | None = None,
+    block_on_gate_contradiction: bool | None = None,
+    regression_gate_enabled: bool | None = None,
+    regression_test_command: list[str] | None = None,
+    regression_timeout_s: int | None = None,
 ) -> str:
-    """Set the promote gate: the margin floor + pass-rate monotonicity.
+    """Set the promote gate: margin, monotonicity, and the hard blocks.
 
     ``monotonicity`` toggles the pass-rate guard on/off. When on,
     ``monotonicity_scope`` selects its granularity: ``"per_entry"``
@@ -270,15 +308,94 @@ def set_gate(
     for invariant / regression-suite boards; ``"aggregate"`` rejects only
     if the overall pass-rate drops — right for sampled evaluation boards
     where a strictly-better challenger should not be vetoed by one entry
-    flip.
+    flip. ``namespace_monotonicity`` replaces the per-namespace
+    strict-monotonicity flag mapping wholesale (e.g. ``{"rubric:": true}``).
+    The two ``block_on_*`` booleans upgrade the integrity notary from
+    alarm-only to BLOCKING (containment violations / gate
+    contradictions). The ``regression_*`` trio runs the snapshot's own
+    test suite as a hard pre-gate (argv list + timeout seconds >= 1).
+    Returns the patch + updated cost / warnings, or an ``error`` for an
+    invalid scope / command / timeout.
     """
     ctx = _active_context()
-    patch = ops.set_gate(
-        ctx.draft(),
-        promote_margin=promote_margin,
-        monotonicity=monotonicity,
-        monotonicity_scope=monotonicity_scope,
-    )
+    try:
+        patch = ops.set_gate(
+            ctx.draft(),
+            promote_margin=promote_margin,
+            monotonicity=monotonicity,
+            monotonicity_scope=monotonicity_scope,
+            namespace_monotonicity=namespace_monotonicity,
+            block_on_containment_violation=block_on_containment_violation,
+            block_on_gate_contradiction=block_on_gate_contradiction,
+            regression_gate_enabled=regression_gate_enabled,
+            regression_test_command=regression_test_command,
+            regression_timeout_s=regression_timeout_s,
+        )
+    except ValueError as exc:
+        return _result_json({"error": str(exc)})
+    return _result_json(_summary(patch))
+
+
+def set_namespace_weights(
+    namespace_weights: dict[str, float] | None = None,
+    diff_complexity_weight: float | None = None,
+) -> str:
+    """Set the multi-objective namespace coefficients + the parsimony term.
+
+    ``namespace_weights`` replaces the whole per-namespace coefficient
+    mapping (keys keep the trailing colon, e.g. ``"drift:"``; the sign
+    encodes the "worse" direction — positive = higher is worse, negative
+    = higher is better, zero = tracked but unscored).
+    ``diff_complexity_weight`` is the opt-in MDL/parsimony coefficient
+    (0 = exactly absent; must be >= 0 — it biases selection toward the
+    smaller, more general edit). Changing either rolls the epoch.
+    """
+    ctx = _active_context()
+    try:
+        patch = ops.set_namespace_weights(
+            ctx.draft(),
+            namespace_weights=namespace_weights,
+            diff_complexity_weight=diff_complexity_weight,
+        )
+    except ValueError as exc:
+        return _result_json({"error": str(exc)})
+    return _result_json(_summary(patch))
+
+
+def set_proposer_quality(
+    best_of_n: int | None = None,
+    critique_enabled: bool | None = None,
+) -> str:
+    """Set the proposer-quality levers: best-of-N slate + self-critique.
+
+    ``best_of_n`` is how many candidate experiments each propose-step
+    samples before selection (1 = the historical single sample, no
+    critique; must be >= 1); ``critique_enabled`` toggles the auxiliary
+    self-critique selection pass (inert at best_of_n 1). The screen
+    (tryout) knobs live on `set_screening` — the two ops COMPOSE on the
+    same proposer_quality contract block. Changing either rolls the
+    epoch. Returns the patch + updated cost / warnings.
+    """
+    ctx = _active_context()
+    try:
+        patch = ops.set_proposer_quality(
+            ctx.draft(), best_of_n=best_of_n, critique_enabled=critique_enabled
+        )
+    except ValueError as exc:
+        return _result_json({"error": str(exc)})
+    return _result_json(_summary(patch))
+
+
+def set_experiment_memory(cross_epoch: bool | None = None) -> str:
+    """Set the experiment-memory scoping (what settled history the proposer sees).
+
+    ``cross_epoch=True`` opts settled experiments from PRIOR epochs that
+    share the current contract hash into the proposer's digest (banded;
+    same-epoch history keeps budget priority); ``False`` (default) is
+    same-epoch-only. A contract change — it rolls the epoch.
+    """
+    ctx = _active_context()
+    patch = ops.set_experiment_memory(ctx.draft(), cross_epoch=cross_epoch)
     return _result_json(_summary(patch))
 
 
@@ -459,6 +576,9 @@ DEFAULT_BUILDER_TOOLS = (
     set_proposer,
     set_weights,
     set_gate,
+    set_namespace_weights,
+    set_proposer_quality,
+    set_experiment_memory,
     set_screening,
     edit_board_entry,
     add_judge,
@@ -481,6 +601,9 @@ __all__ = [
     "set_proposer",
     "set_weights",
     "set_gate",
+    "set_namespace_weights",
+    "set_proposer_quality",
+    "set_experiment_memory",
     "set_screening",
     "edit_board_entry",
     "add_judge",

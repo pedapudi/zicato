@@ -30,8 +30,22 @@ function freshDraft() {
       // (that is the Python ScoringWeights attribute name). The view must read
       // this exact key — the stuck-on-Gauntlet bug was reading the wrong one.
       tournament: { structure: 'gauntlet', params: { field_size: 2, replicates: 1 } },
-      overfitting: { enabled: true, holdout_fraction: 0.2, min_board_size_for_split: 8 },
+      overfitting: {
+        enabled: true, holdout_fraction: 0.2, min_board_size_for_split: 8,
+        rotate_holdout: true, restrict_proposer_visibility: true,
+        random_baseline_every_n: 0,
+        ladder: { enabled: true, threshold: null, budget: 16, noise_scale: 0 },
+      },
       promote_margin: 0, pass_rate_monotonicity: false,
+      pass_rate_monotonicity_scope: 'per_entry',
+      drift_weight: 1, pass_weight: 1, diff_complexity_weight: 0,
+      namespace_weights: { 'drift:': 1, 'rubric:': -1 },
+      namespace_monotonicity: { 'rubric:': true },
+      block_on_containment_violation: false, block_on_gate_contradiction: false,
+      regression_gate_enabled: false, regression_test_command: ['pytest', 'tests/', '-q'],
+      regression_timeout_s: 600,
+      proposer_quality: { best_of_n: 3, critique_enabled: true, screen_entries: 0, screen_veto_only: false },
+      experiment_memory: { cross_epoch: false },
     },
     board: [
       { id: 'waffles', kind: 'single_turn' },
@@ -155,7 +169,7 @@ test('builder view: renders the left-rail sections + the structure section', asy
   const host = globalThis.document.createElement('div');
   await view.render(host);
   const railItems = byClass(host, 'dn-bld-railitem');
-  assertEqual(railItems.length, 6, 'six contract sections in the left rail');
+  assertEqual(railItems.length, 8, 'eight contract sections in the left rail (incl. Overfitting + Weights)');
   // the structure section leads with the five structure cards.
   const cards = byClass(host, 'dn-bld-card');
   assertEqual(cards.length, 5, 'five structure picker cards');
@@ -551,6 +565,156 @@ test('estimateCost: an explicit replicates is honored verbatim over the structur
   assertEqual(est1.board_runs_per_round, 64, 'explicit replicates=1 → 64 (4 × 2 × 1 × 8)');
   const est3 = builder.estimateCost('swiss', { field_size: 4, replicates: 3 }, 8, 0);
   assertEqual(est3.board_runs_per_round, 192, 'explicit replicates=3 → 192 (4 × 2 × 3 × 8)');
+});
+
+// ── full knob coverage: the new sections drive the new ops ────────────
+
+// helper: mount the view and switch to the rail section whose label matches.
+async function mountAt(label) {
+  installBuilderFetch();
+  globalThis.window.localStorage.clear();
+  const host = globalThis.document.createElement('div');
+  await view.render(host);
+  const rail = byClass(host, 'dn-bld-railitem').find((r) => r.textContent.includes(label));
+  assert(rail, `the ${label} rail item exists`);
+  rail.dispatchEvent(makeEvent('click'));
+  await tick();
+  return host;
+}
+
+function byAria(host, cls, aria) {
+  return byClass(host, cls).find((n) => n.getAttribute('aria-label') === aria);
+}
+
+test('builder view: the Overfitting section drives set_holdout (ladder, placebo, rotation)', async () => {
+  const host = await mountAt('Overfitting');
+  // the placebo cadence numeric posts random_baseline_every_n.
+  const placebo = byAria(host, 'dn-bld-num', 'Random baseline every N rounds');
+  assert(placebo, 'the placebo-cadence control renders');
+  placebo.value = '5';
+  placebo.dispatchEvent(makeEvent('change'));
+  await tick();
+  let call = OP_CALLS.find((c) => c.op === 'set_holdout' && c.args.random_baseline_every_n === 5);
+  assert(call, 'the placebo cadence posts set_holdout {random_baseline_every_n}');
+  // the ladder budget numeric posts a PARTIAL ladder mapping.
+  const budget = byAria(host, 'dn-bld-num', 'Ladder budget');
+  budget.value = '8';
+  budget.dispatchEvent(makeEvent('change'));
+  await tick();
+  call = OP_CALLS.find((c) => c.op === 'set_holdout' && c.args.ladder && c.args.ladder.budget === 8);
+  assert(call, 'the ladder budget posts set_holdout {ladder:{budget}}');
+  // the rotation checkbox posts rotate_holdout.
+  const rotate = byAria(host, 'dn-bld-check', 'Rotate holdout');
+  rotate.checked = false;
+  rotate.dispatchEvent(makeEvent('change'));
+  await tick();
+  call = OP_CALLS.find((c) => c.op === 'set_holdout' && c.args.rotate_holdout === false);
+  assert(call, 'the rotation toggle posts set_holdout {rotate_holdout:false}');
+});
+
+test('builder view: the Weights section drives set_weights + set_namespace_weights (full mapping)', async () => {
+  const host = await mountAt('Weights');
+  const drift = byAria(host, 'dn-bld-num', 'Drift weight');
+  assert(drift, 'the drift-weight control renders (set_weights has a GUI now)');
+  drift.value = '2';
+  drift.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_weights' && c.args.drift_weight === 2), 'drift weight posts set_weights');
+  // a namespace weight edit posts the WHOLE mapping with the one key changed.
+  const rubric = byAria(host, 'dn-bld-num', 'Namespace weight rubric:');
+  assert(rubric, 'per-namespace weight controls render');
+  rubric.value = '-2';
+  rubric.dispatchEvent(makeEvent('change'));
+  await tick();
+  const nsCall = OP_CALLS.find((c) => c.op === 'set_namespace_weights' && c.args.namespace_weights);
+  assert(nsCall, 'a namespace edit posts set_namespace_weights');
+  assertEqual(nsCall.args.namespace_weights['rubric:'], -2, 'the edited key carries the new value');
+  assertEqual(nsCall.args.namespace_weights['drift:'], 1, 'the untouched keys ride along (wholesale mapping)');
+  // the parsimony term posts diff_complexity_weight.
+  const mdl = byAria(host, 'dn-bld-num', 'Diff complexity weight');
+  mdl.value = '0.01';
+  mdl.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_namespace_weights' && c.args.diff_complexity_weight === 0.01),
+    'the MDL term posts set_namespace_weights {diff_complexity_weight}');
+});
+
+test('builder view: the Proposer section drives set_proposer_quality + set_experiment_memory', async () => {
+  const host = await mountAt('Proposer');
+  const bestOf = byAria(host, 'dn-bld-num', 'Best of N');
+  assert(bestOf, 'the best-of-N control renders');
+  bestOf.value = '5';
+  bestOf.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_proposer_quality' && c.args.best_of_n === 5),
+    'best-of-N posts set_proposer_quality');
+  const critique = byAria(host, 'dn-bld-check', 'Critique enabled');
+  critique.checked = false;
+  critique.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_proposer_quality' && c.args.critique_enabled === false),
+    'the critique toggle posts set_proposer_quality');
+  const mem = byAria(host, 'dn-bld-check', 'Cross-epoch experiment memory');
+  mem.checked = true;
+  mem.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_experiment_memory' && c.args.cross_epoch === true),
+    'the memory toggle posts set_experiment_memory');
+});
+
+test('builder view: the Gate section gains scope + blocking + regression controls', async () => {
+  const host = await mountAt('Gate');
+  // the monotonicity-scope select posts set_gate {monotonicity_scope}.
+  const scope = byAria(host, 'dn-bld-select', 'Monotonicity scope');
+  assert(scope, 'the scope select renders');
+  scope.value = 'aggregate';
+  scope.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_gate' && c.args.monotonicity_scope === 'aggregate'),
+    'the scope select posts set_gate');
+  const contain = byAria(host, 'dn-bld-check', 'Block on containment violation');
+  contain.checked = true;
+  contain.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_gate' && c.args.block_on_containment_violation === true),
+    'the containment block posts set_gate');
+  const regTimeout = byAria(host, 'dn-bld-num', 'Regression timeout seconds');
+  regTimeout.value = '90';
+  regTimeout.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_gate' && c.args.regression_timeout_s === 90),
+    'the regression timeout posts set_gate');
+  // the regression command splits into an argv list.
+  const regCmd = byAria(host, 'dn-bld-text', 'Regression test command');
+  regCmd.value = 'python -m unittest discover';
+  regCmd.dispatchEvent(makeEvent('change'));
+  await tick();
+  const cmdCall = OP_CALLS.find((c) => c.op === 'set_gate' && Array.isArray(c.args.regression_test_command));
+  assert(cmdCall, 'the regression command posts set_gate');
+  assertEqual(cmdCall.args.regression_test_command.join('|'), 'python|-m|unittest|discover', 'whitespace-split argv');
+});
+
+test('builder view: the evidence-gate params join Field & noise; threshold 0 REMOVES the key', async () => {
+  const host = await mountAt('Field');
+  const thr = byAria(host, 'dn-bld-num', 'Evidence-gate threshold');
+  const budget = byAria(host, 'dn-bld-num', 'Evidence replicate budget');
+  assert(thr, 'the evidence-gate threshold control renders');
+  assert(budget, 'the evidence replicate budget control renders');
+  thr.value = '0.8';
+  thr.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_param' && c.args.key === 'promote_confidence_threshold' && c.args.value === 0.8),
+    'a non-zero threshold posts set_param with the number');
+  thr.value = '0';
+  thr.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_param' && c.args.key === 'promote_confidence_threshold' && c.args.value === null),
+    'threshold 0 posts value:null — the key is REMOVED so the unset gate hashes identically');
+  budget.value = '32';
+  budget.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_param' && c.args.key === 'promote_confidence_replicates' && c.args.value === 32),
+    'the replicate budget posts set_param');
 });
 
 // ── the build-time statistical pre-flight (Review pane) ────────────────

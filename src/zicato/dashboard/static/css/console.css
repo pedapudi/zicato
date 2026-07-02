@@ -3271,6 +3271,12 @@
   .dn-bld-num:focus { outline: 2px solid var(--v2-accent); outline-offset: 0; }
   .dn-bld-checkwrap { display: inline-flex; align-items: center; gap: 7px; font-size: calc(12px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); cursor: pointer; }
   .dn-bld-check { accent-color: var(--v2-accent); }
+  .dn-bld-select, .dn-bld-text { font-family: var(--v2-mono); font-size: calc(12px * var(--dt-font-scale, 1)); max-width: 100%;
+    background: var(--v2-paper); color: var(--v2-ink); border: 1px solid var(--v2-rule); border-radius: 4px; padding: 5px 8px; }
+  .dn-bld-text { width: 320px; }
+  .dn-bld-select:focus, .dn-bld-text:focus { outline: 2px solid var(--v2-accent); outline-offset: 0; }
+  .dn-bld-subhead { font-size: calc(12px * var(--dt-font-scale, 1)); font-weight: 600; color: var(--v2-ink-soft);
+    text-transform: uppercase; letter-spacing: 0.05em; margin: 16px 0 8px; }
 
   /* structure picker cards. */
   .dn-bld-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }

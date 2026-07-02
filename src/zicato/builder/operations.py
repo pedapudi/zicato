@@ -294,23 +294,76 @@ def set_holdout(
     enabled: bool | None = None,
     fraction: float | None = None,
     tags: list[str] | None = None,
+    min_board_size_for_split: int | None = None,
+    rotate_holdout: bool | None = None,
+    restrict_proposer_visibility: bool | None = None,
+    random_baseline_every_n: int | None = None,
+    max_generations_per_contract: int | None = None,
+    ladder: dict[str, Any] | None = None,
 ) -> DraftPatch:
-    """Edit the train/holdout split.
+    """Edit the train/holdout split + the full anti-overfitting config.
 
     ``enabled`` / ``fraction`` tune the hash-derived split on
     :class:`OverfittingConfig`; ``tags`` sets the explicit per-entry
     ``holdout`` tag exactly on the supplied ids (every other entry loses
-    the tag). Any subset of the three may be supplied.
+    the tag). The remaining keywords cover the rest of the overfitting
+    contract: the split floor (``min_board_size_for_split``), per-epoch
+    holdout rotation, the proposer-visibility restriction, the placebo
+    cadence (``random_baseline_every_n``; the gate-discrimination
+    control — ``0`` fields no baseline), and the board-refresh ceiling
+    (``max_generations_per_contract``; ``0`` CLEARS the ceiling, since
+    ``None`` here means "leave unchanged").
+
+    ``ladder`` is a PARTIAL mapping over the
+    :class:`~zicato.core.scoring_config.LadderConfig` knobs (``enabled``
+    / ``threshold`` / ``budget`` / ``noise_scale``) merged onto the
+    current ladder — an explicit ``"threshold": null`` IN the mapping
+    resets the release threshold to auto (derive from
+    ``promote_margin``). Unknown ladder keys raise. Any subset of the
+    keywords may be supplied; each change rolls the epoch like every
+    contract edit (the dataclass validators re-check on replace).
     """
     changed: dict[str, Any] = {}
     of = draft.scoring.overfitting
     of_changes: dict[str, Any] = {}
-    if enabled is not None and enabled != of.enabled:
-        of_changes["enabled"] = enabled
-        changed["enabled"] = {"from": of.enabled, "to": enabled}
-    if fraction is not None and fraction != of.holdout_fraction:
-        of_changes["holdout_fraction"] = fraction
-        changed["holdout_fraction"] = {"from": of.holdout_fraction, "to": fraction}
+    for name, value in (
+        ("enabled", enabled),
+        ("holdout_fraction", fraction),
+        ("min_board_size_for_split", min_board_size_for_split),
+        ("rotate_holdout", rotate_holdout),
+        ("restrict_proposer_visibility", restrict_proposer_visibility),
+        ("random_baseline_every_n", random_baseline_every_n),
+    ):
+        if value is not None and value != getattr(of, name):
+            of_changes[name] = value
+            changed[name] = {"from": getattr(of, name), "to": value}
+    if max_generations_per_contract is not None:
+        # ``0`` clears the ceiling (the field's meaningful "off" is None,
+        # which this op reserves for "leave unchanged").
+        ceiling = None if max_generations_per_contract == 0 else max_generations_per_contract
+        if ceiling != of.max_generations_per_contract:
+            of_changes["max_generations_per_contract"] = ceiling
+            changed["max_generations_per_contract"] = {
+                "from": of.max_generations_per_contract,
+                "to": ceiling,
+            }
+    if ladder is not None:
+        allowed = {"enabled", "threshold", "budget", "noise_scale"}
+        unknown = set(ladder) - allowed
+        if unknown:
+            raise ValueError(
+                f"unknown ladder key(s) {sorted(unknown)!r}; expected a subset of "
+                f"{sorted(allowed)!r}"
+            )
+        ladder_changes: dict[str, Any] = {}
+        for key, value in ladder.items():
+            # ``threshold: None`` is a REAL value (auto-derive); every other
+            # key treats None as absent-from-the-mapping only.
+            if value != getattr(of.ladder, key):
+                ladder_changes[key] = value
+                changed[f"ladder.{key}"] = {"from": getattr(of.ladder, key), "to": value}
+        if ladder_changes:
+            of_changes["ladder"] = dataclasses.replace(of.ladder, **ladder_changes)
     if of_changes:
         draft.scoring = _replace_scoring(draft, overfitting=dataclasses.replace(of, **of_changes))
     if tags is not None:
@@ -391,14 +444,30 @@ def set_gate(
     promote_margin: float | None = None,
     monotonicity: bool | None = None,
     monotonicity_scope: str | None = None,
+    namespace_monotonicity: dict[str, bool] | None = None,
+    block_on_containment_violation: bool | None = None,
+    block_on_gate_contradiction: bool | None = None,
+    regression_gate_enabled: bool | None = None,
+    regression_test_command: list[str] | None = None,
+    regression_timeout_s: int | None = None,
 ) -> DraftPatch:
-    """Set the promote gate: the margin floor + pass-rate monotonicity.
+    """Set the promote gate: margin, monotonicity, and the hard blocks.
 
     ``monotonicity`` is the on/off switch; ``monotonicity_scope`` selects
     the granularity when it is on (``"per_entry"`` — default, every
     champion-passed entry must hold — or ``"aggregate"`` — only the overall
     pass-rate may not regress; see SCORING.md §5). An invalid scope token
     raises rather than silently coercing.
+
+    The remaining keywords cover the rest of the gate contract:
+    ``namespace_monotonicity`` replaces the per-namespace strict-
+    monotonicity flag mapping wholesale (the builder edits mappings
+    wholesale, like :func:`set_weights`); the two ``block_on_*`` booleans
+    opt into the integrity BLOCKING modes (containment / gate-
+    contradiction — both alarm-only by default); the ``regression_*``
+    trio configures the snapshot's own test suite as a hard pre-gate
+    (``regression_test_command`` is the argv list; ``regression_timeout_s``
+    must be >= 1).
     """
     changed: dict[str, Any] = {}
     scoring_changes: dict[str, Any] = {}
@@ -426,9 +495,141 @@ def set_gate(
                 "from": draft.scoring.pass_rate_monotonicity_scope,
                 "to": monotonicity_scope,
             }
+    for name, value in (
+        ("block_on_containment_violation", block_on_containment_violation),
+        ("block_on_gate_contradiction", block_on_gate_contradiction),
+        ("regression_gate_enabled", regression_gate_enabled),
+    ):
+        if value is not None and value != getattr(draft.scoring, name):
+            scoring_changes[name] = value
+            changed[name] = {"from": getattr(draft.scoring, name), "to": value}
+    if namespace_monotonicity is not None:
+        normalized_ns = {str(k): bool(v) for k, v in namespace_monotonicity.items()}
+        if normalized_ns != dict(draft.scoring.namespace_monotonicity):
+            scoring_changes["namespace_monotonicity"] = normalized_ns
+            changed["namespace_monotonicity"] = {
+                "from": dict(draft.scoring.namespace_monotonicity),
+                "to": normalized_ns,
+            }
+    if regression_test_command is not None:
+        command = tuple(str(part) for part in regression_test_command)
+        if not command:
+            raise ValueError("regression_test_command must be a non-empty argv list")
+        if command != draft.scoring.regression_test_command:
+            scoring_changes["regression_test_command"] = command
+            changed["regression_test_command"] = {
+                "from": list(draft.scoring.regression_test_command),
+                "to": list(command),
+            }
+    if regression_timeout_s is not None:
+        if regression_timeout_s < 1:
+            raise ValueError(f"regression_timeout_s must be >= 1, got {regression_timeout_s!r}")
+        if regression_timeout_s != draft.scoring.regression_timeout_s:
+            scoring_changes["regression_timeout_s"] = regression_timeout_s
+            changed["regression_timeout_s"] = {
+                "from": draft.scoring.regression_timeout_s,
+                "to": regression_timeout_s,
+            }
     if scoring_changes:
         draft.scoring = _replace_scoring(draft, **scoring_changes)
     return DraftPatch(op="set_gate", changed=changed)
+
+
+def set_namespace_weights(
+    draft: TournamentDraft,
+    *,
+    namespace_weights: dict[str, float] | None = None,
+    diff_complexity_weight: float | None = None,
+) -> DraftPatch:
+    """Set the multi-objective namespace coefficients + the parsimony term.
+
+    ``namespace_weights`` replaces the whole per-namespace coefficient
+    mapping (keys keep their trailing colon, e.g. ``"drift:"``; the SIGN
+    encodes the namespace's "worse" direction — positive = higher is
+    worse, negative = higher is better, zero = tracked but unscored).
+    ``diff_complexity_weight`` is the opt-in MDL/parsimony coefficient
+    (``0`` = the term is exactly absent; must be >= 0). Both are contract
+    fields — changing either rolls the epoch.
+    """
+    changed: dict[str, Any] = {}
+    scoring_changes: dict[str, Any] = {}
+    if namespace_weights is not None:
+        normalized = {str(k): float(v) for k, v in namespace_weights.items()}
+        if normalized != dict(draft.scoring.namespace_weights):
+            scoring_changes["namespace_weights"] = normalized
+            changed["namespace_weights"] = {
+                "from": dict(draft.scoring.namespace_weights),
+                "to": normalized,
+            }
+    if diff_complexity_weight is not None:
+        if diff_complexity_weight < 0:
+            raise ValueError(f"diff_complexity_weight must be >= 0, got {diff_complexity_weight!r}")
+        if diff_complexity_weight != draft.scoring.diff_complexity_weight:
+            scoring_changes["diff_complexity_weight"] = diff_complexity_weight
+            changed["diff_complexity_weight"] = {
+                "from": draft.scoring.diff_complexity_weight,
+                "to": diff_complexity_weight,
+            }
+    if scoring_changes:
+        draft.scoring = _replace_scoring(draft, **scoring_changes)
+    return DraftPatch(op="set_namespace_weights", changed=changed)
+
+
+def set_proposer_quality(
+    draft: TournamentDraft,
+    *,
+    best_of_n: int | None = None,
+    critique_enabled: bool | None = None,
+) -> DraftPatch:
+    """Set the proposer-quality levers: best-of-N slate + self-critique.
+
+    ``best_of_n`` is how many candidate experiments each propose-step
+    samples before selection (``1`` = the historical single sample, no
+    critique; must be >= 1); ``critique_enabled`` toggles the auxiliary
+    self-critique selection pass (inert at ``best_of_n == 1``). COMPOSES
+    with :func:`set_screening` — both edit the same nested
+    ``proposer_quality`` block; the screen knobs stay that op's. Changing
+    either rolls the epoch.
+    """
+    changed: dict[str, Any] = {}
+    quality = draft.scoring.proposer_quality
+    quality_changes: dict[str, Any] = {}
+    if best_of_n is not None:
+        if best_of_n < 1:
+            raise ValueError(f"best_of_n must be >= 1, got {best_of_n!r}")
+        if best_of_n != quality.best_of_n:
+            quality_changes["best_of_n"] = best_of_n
+            changed["best_of_n"] = {"from": quality.best_of_n, "to": best_of_n}
+    if critique_enabled is not None and critique_enabled != quality.critique_enabled:
+        quality_changes["critique_enabled"] = critique_enabled
+        changed["critique_enabled"] = {"from": quality.critique_enabled, "to": critique_enabled}
+    if quality_changes:
+        draft.scoring = _replace_scoring(
+            draft, proposer_quality=dataclasses.replace(quality, **quality_changes)
+        )
+    return DraftPatch(op="set_proposer_quality", changed=changed)
+
+
+def set_experiment_memory(
+    draft: TournamentDraft,
+    *,
+    cross_epoch: bool | None = None,
+) -> DraftPatch:
+    """Set the experiment-memory scoping (what settled history the proposer sees).
+
+    ``cross_epoch=True`` opts settled experiments from PRIOR epochs that
+    share the current contract hash into the proposer's digest (banded,
+    same-epoch entries keep budget priority); ``False`` (the default) is
+    same-epoch-only. A contract field — changing it rolls the epoch.
+    """
+    changed: dict[str, Any] = {}
+    memory = draft.scoring.experiment_memory
+    if cross_epoch is not None and cross_epoch != memory.cross_epoch:
+        draft.scoring = _replace_scoring(
+            draft, experiment_memory=dataclasses.replace(memory, cross_epoch=cross_epoch)
+        )
+        changed["cross_epoch"] = {"from": memory.cross_epoch, "to": cross_epoch}
+    return DraftPatch(op="set_experiment_memory", changed=changed)
 
 
 def set_screening(
@@ -1222,6 +1423,9 @@ __all__ = [
     "set_proposer",
     "set_weights",
     "set_gate",
+    "set_namespace_weights",
+    "set_proposer_quality",
+    "set_experiment_memory",
     "set_screening",
     "edit_board_entry",
     "add_judge",
