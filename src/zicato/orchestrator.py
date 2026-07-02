@@ -113,6 +113,14 @@ CallLLM = Callable[[str, str, str], Awaitable[str]]
 # Public dataclasses
 # ---------------------------------------------------------------------------
 
+#: The :attr:`EvolveRoundOutcome.tournament_decision` value for a round the
+#: endpoint-outage circuit DEFERRED (WS-H;
+#: :attr:`~zicato.core.runtime.RuntimeConfig.infra_abort_round_threshold`).
+#: Distinct from ``"rejected"`` on purpose: the evolve loop must not count
+#: it toward the consecutive-rejection breaker (the experiment was never
+#: judged), and it backs off + re-reconciles instead of re-proposing.
+DEFERRED_INFRA_DECISION = "deferred_infra"
+
 
 @dataclass(frozen=True, slots=True)
 class EvolveRoundOutcome:
@@ -128,6 +136,11 @@ class EvolveRoundOutcome:
         ``"promoted"`` or ``"rejected"``. ``"deferred"`` is mapped to
         ``"rejected"`` for the orchestrator's bookkeeping — the
         evolve loop only advances on promotions.
+        :data:`DEFERRED_INFRA_DECISION` (``"deferred_infra"``) is the ONE
+        additional value: the endpoint-outage circuit tripped, nothing
+        was journaled (the experiment persists un-outcomed for the
+        crash-resume reconciliation), and the loop backs off before the
+        next round.
     rejection_reason:
         Symbolic / human-readable string when the round did not
         promote. Empty string on a successful promotion.
@@ -888,6 +901,34 @@ async def evolve_once(
             # duel.
             replicates=strategy.replicates(),
         )
+
+    # --- 10a. Endpoint-outage circuit (WS-H) ------------------------------
+    # BEFORE anything downstream consumes the duel (the fast-mode score
+    # caches, the round events, the gate routing): when the runtime opted
+    # in (``infra_abort_round_threshold >= 1``) and this round's
+    # INFRA-aborted run count reached it, the verdict is meaningless — the
+    # aborted runs scored worst-case, so feeding the gate would burn the
+    # experiment on an endpoint outage. Defer instead: the
+    # ``experiment.json`` written above stays UN-OUTCOMED on disk, exactly
+    # the shape :mod:`zicato.runtime.resume` reconciles (resume-in-place
+    # when some units completed, discard-no-progress when none did).
+    # Threshold 0 (the default) skips this block entirely — byte-identical.
+    infra_threshold = int(getattr(config, "infra_abort_round_threshold", 0) or 0)
+    if infra_threshold > 0:
+        infra_aborted = _count_infra_aborted_runs(tournament_result)
+        if infra_aborted >= infra_threshold:
+            return _defer_round_infra_outage(
+                workspace_root=workspace_root,
+                epoch_id=resolved_epoch_id,
+                parent_id=parent_id,
+                next_id=next_id,
+                board=board,
+                round_index=round_index,
+                infra_aborted=infra_aborted,
+                infra_threshold=infra_threshold,
+                beater=beater,
+                round_log=round_log,
+            )
 
     # Cache gen_score.json for future fast-mode runs.
     _cache_gen_score(workspace_root, resolved_epoch_id, parent_id, tournament_result.parent_agg)
@@ -3183,6 +3224,114 @@ async def _propose_child(
     return replace(experiment, round_index=round_index)
 
 
+def _count_infra_aborted_runs(tournament_result: Any) -> int:
+    """Count THIS duel's INFRA-aborted runs across both sides.
+
+    Reads the settled result's ``per_entry_losses`` — one
+    ``(parent, child)`` :class:`~zicato.core.LossProfile` pair per board
+    entry — and counts every profile whose ``abort_cause`` names a
+    non-cacheable infra abort
+    (:func:`~zicato.core.loss.is_infra_abort_cause`: a worker crash, a
+    parent/supervisor kill, an unreadable result — never the genuine
+    ``budget_exhausted`` wall-clock exhaustion). Cache-reused units can
+    never contribute (an infra abort is never persisted to the unit
+    cache), so the count reflects THIS round's live failures only —
+    the honest per-round outage signal for the circuit breaker.
+    """
+    from zicato.core.loss import is_infra_abort_cause  # noqa: PLC0415
+
+    per_entry = getattr(tournament_result, "per_entry_losses", None) or {}
+    count = 0
+    for pair in per_entry.values():
+        for loss in pair:
+            if is_infra_abort_cause(getattr(loss, "abort_cause", None)):
+                count += 1
+    return count
+
+
+def _defer_round_infra_outage(
+    *,
+    workspace_root: Path,
+    epoch_id: str,
+    parent_id: str,
+    next_id: str,
+    board: list[Any],
+    round_index: int,
+    infra_aborted: int,
+    infra_threshold: int,
+    beater: HeartbeatBeater | None,
+    round_log: _RoundLogEmitter,
+) -> EvolveRoundOutcome:
+    """Settle one round as DEFERRED on the endpoint-outage circuit (WS-H).
+
+    Deliberately does NOT: cache either side's ``gen_score.json`` (a
+    mostly-aborted aggregate would poison fast mode), route the gate
+    verdict through the strategy, write an outcome / lineage / journal
+    entry, or advance anything. The ``experiment.json`` persisted before
+    the tournament stays UN-OUTCOMED — the exact on-disk shape the
+    conservative crash-resume (:func:`zicato.runtime.resume.prepare_resume`)
+    already reconciles: with at least one completed unit's cached
+    ``loss.json`` the round resumes in place (the cache HITs the done
+    units), with none it discards cleanly and re-proposes. The round log
+    records the deferral, and the round's health report carries the
+    ``infra_outage`` WARNING so the outage is visible on every surface
+    that reads findings.
+    """
+    reason = (
+        f"deferred_infra: {infra_aborted} infra-aborted run(s) reached the "
+        f"endpoint-outage threshold of {infra_threshold}"
+    )
+    log.warning(
+        "evolve: round %d (%s) DEFERRED — %d infra-aborted run(s) reached the "
+        "endpoint-outage threshold of %d; keeping the experiment un-outcomed "
+        "for resume (check the model endpoint / worker infrastructure)",
+        round_index,
+        next_id,
+        infra_aborted,
+        infra_threshold,
+    )
+    round_log.emit(
+        "decision_recorded",
+        {
+            "decision": DEFERRED_INFRA_DECISION,
+            "provenance": {
+                "reason": reason,
+                "infra_aborted_runs": infra_aborted,
+                "infra_abort_round_threshold": infra_threshold,
+                "parent_generation_id": parent_id,
+                "promoted_generation_id": None,
+            },
+        },
+    )
+    health_summary, health_critical = _assess_and_persist_loop_health(
+        workspace_root,
+        epoch_id,
+        _round_n_from_generation_id(next_id) or round_index,
+        board,
+        infra_outage=(infra_aborted, infra_threshold),
+    )
+    _beat(
+        beater,
+        workspace_root=workspace_root,
+        epoch_id=epoch_id,
+        generation_id=next_id,
+        round_index=round_index,
+        phase=f"deferred_infra:round_{round_index}:{next_id}",
+    )
+    round_log.emit("round_closed")
+    return EvolveRoundOutcome(
+        parent_generation_id=parent_id,
+        proposed_generation_id=next_id,
+        tournament_decision=DEFERRED_INFRA_DECISION,
+        rejection_reason=reason,
+        parent_scalar=0.0,
+        child_scalar=0.0,
+        delta_scalar=0.0,
+        health_summary=health_summary,
+        health_critical=health_critical,
+    )
+
+
 def _finalize_generation(
     *,
     workspace_root: Path,
@@ -4918,8 +5067,14 @@ def _assess_and_persist_loop_health(
     epoch_id: str,
     round_n: int,
     board: list[Any],
+    infra_outage: tuple[int, int] | None = None,
 ) -> tuple[str, bool]:
     """Run the per-round loop-health check and persist its report.
+
+    ``infra_outage`` — the ``(infra_aborted_runs, threshold)`` pair for a
+    round the endpoint-outage circuit deferred — is threaded through to
+    :func:`~zicato.health.diagnostics.detect_infra_outage`; ``None``
+    (every non-deferred round) is inert.
 
     Calls :func:`zicato.health.diagnostics.assess_loop_health` with the
     epoch's accumulated losses, experiments, and board, then writes the
@@ -4953,6 +5108,13 @@ def _assess_and_persist_loop_health(
         noise_floor, promote_margin, evidence_gate_on = _epoch_noise_floor_inputs(
             workspace_root, epoch_id
         )
+        # ``infra_outage`` is passed only when a deferral actually carries
+        # one, so an older / stubbed ``assess_loop_health`` signature (the
+        # sibling-may-lag tolerance this function already documents) keeps
+        # working for every non-deferred round.
+        extra_kwargs: dict[str, Any] = {}
+        if infra_outage is not None:
+            extra_kwargs["infra_outage"] = infra_outage
         health = assess_loop_health(
             losses_by_generation,
             experiments,
@@ -4966,6 +5128,7 @@ def _assess_and_persist_loop_health(
             promote_margin=promote_margin,
             evidence_gate_on=evidence_gate_on,
             preflight=_epoch_preflight_record(workspace_root, epoch_id),
+            **extra_kwargs,
         )
     except Exception as exc:  # noqa: BLE001 — health assessment is best-effort
         log.debug("loop-health assessment skipped for %s round %d: %s", epoch_id, round_n, exc)

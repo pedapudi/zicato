@@ -25,6 +25,16 @@ from typing import Any
 #: switches on ``model``.
 CallLLM = Callable[[str, str, str], Awaitable[str]]
 
+#: Default first-deferral backoff (seconds) for the endpoint-outage circuit
+#: (:attr:`RuntimeConfig.infra_backoff_base_s`). Module-level so the evolve
+#: loop — which reads the raw workspace ``runtime`` block without building a
+#: full :class:`RuntimeConfig` — shares one source of truth with the factory.
+INFRA_BACKOFF_BASE_S_DEFAULT: float = 30.0
+
+#: Default ceiling (seconds) on the exponential infra backoff
+#: (:attr:`RuntimeConfig.infra_backoff_cap_s`). See the base default above.
+INFRA_BACKOFF_CAP_S_DEFAULT: float = 480.0
+
 
 @dataclass(frozen=True, slots=True)
 class RuntimeConfig:
@@ -126,6 +136,28 @@ class RuntimeConfig:
         extra seconds on an already-overrun run is cheap; a leaked worker
         is not. Tests and supervisor-less harnesses shrink it to keep
         that floor from dominating wall-clock time.
+    infra_abort_round_threshold:
+        Endpoint-outage circuit breaker (WS-H). ``0`` (the DEFAULT) is
+        OFF — an all-infra-aborted round settles exactly as today (the
+        aborted runs score worst-case and the child is rejected). When
+        ``>= 1``: after a gauntlet round's tournament settles, the
+        orchestrator counts the duel's INFRA-aborted runs
+        (:func:`zicato.core.loss.is_infra_abort_cause` — worker crashes,
+        parent/supervisor kills; never a genuine budget exhaustion) and,
+        at or above this threshold, the round DEFERS instead of burning
+        the experiment: the tournament's verdict is discarded, nothing
+        is journaled/finalized (the experiment persists un-outcomed, the
+        exact shape the conservative crash-resume already reconciles),
+        and the evolve loop backs off before the next round. A RUNTIME
+        tuning knob, NOT part of the frozen evaluation contract —
+        flipping it does not roll the epoch. Must be ``>= 0``.
+    infra_backoff_base_s:
+        First backoff delay (seconds) after a round defers on the infra
+        circuit; consecutive deferrals double it. Only consulted while
+        :attr:`infra_abort_round_threshold` is on. Must be ``>= 0``.
+    infra_backoff_cap_s:
+        Ceiling (seconds) on the exponential infra backoff. Must be
+        ``>= 0``.
 
     Construction-time validation
     ----------------------------
@@ -157,6 +189,9 @@ class RuntimeConfig:
     worker_env_passthrough: tuple[str, ...] = ()
     diversity_tolerance: float | None = None
     supervisor_kill_wait_s: float = 20.0
+    infra_abort_round_threshold: int = 0
+    infra_backoff_base_s: float = INFRA_BACKOFF_BASE_S_DEFAULT
+    infra_backoff_cap_s: float = INFRA_BACKOFF_CAP_S_DEFAULT
     #: The ADK model object (a ``BaseLlm``, typically a ``LiteLlm``) the inner
     #: ADK agents run on, built from a ``models.harness`` *model spec* (model +
     #: endpoint + api_key_env) via :func:`zicato.models_config.build_adk_model`.
@@ -180,6 +215,18 @@ class RuntimeConfig:
                 "RuntimeConfig.diversity_tolerance must be in (0, 1] or None, "
                 f"got {self.diversity_tolerance!r}; use None to disable "
                 "field-diversity enforcement"
+            )
+        if self.infra_abort_round_threshold < 0:
+            raise ValueError(
+                "RuntimeConfig.infra_abort_round_threshold must be >= 0, got "
+                f"{self.infra_abort_round_threshold!r}; use 0 to disable the "
+                "endpoint-outage circuit"
+            )
+        if self.infra_backoff_base_s < 0 or self.infra_backoff_cap_s < 0:
+            raise ValueError(
+                "RuntimeConfig.infra_backoff_base_s / infra_backoff_cap_s must "
+                f"be >= 0, got {self.infra_backoff_base_s!r} / "
+                f"{self.infra_backoff_cap_s!r}"
             )
 
     def effective_judge_call_llm(self) -> CallLLM:

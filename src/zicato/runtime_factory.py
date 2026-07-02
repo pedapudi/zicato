@@ -179,6 +179,26 @@ def make_runtime_config(
     tolerance_raw = runtime_dict.get("diversity_tolerance")
     diversity_tolerance = float(tolerance_raw) if tolerance_raw is not None else None
 
+    # Endpoint-outage circuit (WS-H): opt-in runtime knobs read from the same
+    # ``runtime`` block. Absent ⇒ the dataclass defaults (threshold 0 = the
+    # circuit is OFF — today's behavior, byte-for-byte unchanged).
+    # ``RuntimeConfig.__post_init__`` re-validates the >= 0 bounds.
+    from zicato.core.runtime import (  # noqa: PLC0415
+        INFRA_BACKOFF_BASE_S_DEFAULT,
+        INFRA_BACKOFF_CAP_S_DEFAULT,
+    )
+
+    infra_threshold_raw = runtime_dict.get("infra_abort_round_threshold")
+    infra_abort_round_threshold = int(infra_threshold_raw) if infra_threshold_raw is not None else 0
+    infra_base_raw = runtime_dict.get("infra_backoff_base_s")
+    infra_backoff_base_s = (
+        float(infra_base_raw) if infra_base_raw is not None else INFRA_BACKOFF_BASE_S_DEFAULT
+    )
+    infra_cap_raw = runtime_dict.get("infra_backoff_cap_s")
+    infra_backoff_cap_s = (
+        float(infra_cap_raw) if infra_cap_raw is not None else INFRA_BACKOFF_CAP_S_DEFAULT
+    )
+
     # Inner ADK agent model: when ``models.harness`` is a *model spec* (a
     # model string, optionally + endpoint/api_key_env), build the ADK model
     # object so the adapter can rebind the target's agents to it with native
@@ -212,6 +232,9 @@ def make_runtime_config(
         worker_env_passthrough=worker_env_passthrough,
         diversity_tolerance=diversity_tolerance,
         inner_model=inner_model,
+        infra_abort_round_threshold=infra_abort_round_threshold,
+        infra_backoff_base_s=infra_backoff_base_s,
+        infra_backoff_cap_s=infra_backoff_cap_s,
     )
 
 

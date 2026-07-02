@@ -1022,6 +1022,46 @@ def detect_preflight_verdict(preflight: dict[str, Any] | None) -> list[HealthFin
 # ---------------------------------------------------------------------------
 
 
+def detect_infra_outage(infra_outage: tuple[int, int] | None) -> list[HealthFinding]:
+    """Surface a round deferred by the endpoint-outage circuit (WS-H).
+
+    ``infra_outage`` is the ``(infra_aborted_runs, threshold)`` pair the
+    orchestrator observed when THIS round's infra-abort count crossed
+    :attr:`~zicato.core.runtime.RuntimeConfig.infra_abort_round_threshold`
+    and the round deferred instead of burning the experiment on
+    worst-case-scored aborts. A ``warning`` — the loop is healthy but the
+    ENDPOINT is not, and the operator should check it before the backoff
+    schedule spends the remaining rounds. ``None`` (every round the
+    circuit did not trip, including circuit-off) is silent — a runtime
+    event, unlike every other detector's disk-derived inputs, so the
+    orchestrator threads it in per round.
+    """
+    if infra_outage is None:
+        return []
+    aborted, threshold = infra_outage
+    return [
+        HealthFinding(
+            code="infra_outage",
+            severity="warning",
+            summary=(
+                f"round deferred: {aborted} infra-aborted run(s) reached the "
+                f"endpoint-outage threshold of {threshold} — the model endpoint "
+                "(or worker infrastructure) is failing; the experiment was kept "
+                "un-outcomed and the loop is backing off"
+            ),
+            detail={
+                "infra_aborted_runs": aborted,
+                "infra_abort_round_threshold": threshold,
+                "recommendation": (
+                    "check the harness/auxiliary endpoint health and credentials; "
+                    "the deferred round resumes (or discards cleanly) via the "
+                    "standard crash-resume reconciliation"
+                ),
+            },
+        )
+    ]
+
+
 def assess_loop_health(
     losses_by_generation: dict[str, list[LossProfile]],
     experiments: list[Any],
@@ -1033,6 +1073,7 @@ def assess_loop_health(
     promote_margin: float | None = None,
     evidence_gate_on: bool = True,
     preflight: dict[str, Any] | None = None,
+    infra_outage: tuple[int, int] | None = None,
 ) -> LoopHealth:
     """Run every detector and collect the findings into a :class:`LoopHealth`.
 
@@ -1080,6 +1121,13 @@ def assess_loop_health(
         :func:`detect_preflight_verdict` can keep a REFUSE/saturation
         verdict visible in every round's report. ``None`` (the default)
         disables that detector.
+    infra_outage:
+        THIS round's endpoint-outage circuit trip, as an
+        ``(infra_aborted_runs, threshold)`` pair — threaded by the
+        orchestrator only for a round it DEFERRED on
+        :attr:`~zicato.core.runtime.RuntimeConfig.infra_abort_round_threshold`
+        (see :func:`detect_infra_outage`). ``None`` (the default) is
+        silent.
 
     Returns
     -------
@@ -1110,6 +1158,7 @@ def assess_loop_health(
     findings.extend(detect_margin_below_noise_floor(noise_floor, promote_margin, evidence_gate_on))
     findings.extend(detect_preflight_verdict(preflight))
     findings.extend(detect_placebo_promoted(placebo_experiments))
+    findings.extend(detect_infra_outage(infra_outage))
 
     healthy = not any(finding.severity in ("warning", "critical") for finding in findings)
     return LoopHealth(
@@ -1137,6 +1186,7 @@ __all__ = [
     "detect_dead_judge",
     "detect_stalled_loop",
     "detect_generalization_gap",
+    "detect_infra_outage",
     "detect_noisy_judge",
     "detect_placebo_promoted",
     "detect_preflight_verdict",
