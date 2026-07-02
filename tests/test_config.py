@@ -19,12 +19,10 @@ import pytest
 
 from zicato.config import (
     AuxConfig,
-    BudgetConfig,
     DashboardConfig,
     HealthConfig,
     IntegrationConfig,
     RuntimeTuningConfig,
-    WorkspaceConfig,
     ZicatoConfig,
     describe_env_vars,
     load_config,
@@ -44,12 +42,9 @@ def test_empty_env_yields_all_defaults() -> None:
     assert cfg.health.no_expectations_fraction == 0.5
     assert cfg.health.stalled_rejects == 3
     assert cfg.aux.call_timeout_s == 120.0
-    assert cfg.budget.max_wall_clock_seconds is None
     assert cfg.integration.harmonograf_url == ""
     assert cfg.integration.supervisor_binary == ""
     assert cfg.dashboard.static_dir == ""
-    assert cfg.workspace.root == ".zicato"
-    assert cfg.workspace.instance_id == "default"
     assert cfg.runtime.parallelism == 4
 
 
@@ -85,12 +80,9 @@ def test_env_sets_every_section() -> None:
             "ZICATO_HEALTH_NO_EXPECTATIONS_FRACTION": "0.75",
             "ZICATO_HEALTH_STALLED_REJECTS": "6",
             "ZICATO_AUX_CALL_TIMEOUT": "45.5",
-            "ZICATO_MAX_WALL_CLOCK_SECONDS": "900",
             "ZICATO_HARMONOGRAF_URL": "http://localhost:9000",
             "ZICATO_SUPERVISOR_BINARY": "/opt/zicato-supervisor",
             "ZICATO_DASHBOARD_STATIC_DIR": "/srv/static",
-            "ZICATO_WORKSPACE": "/work/.zicato",
-            "ZICATO_INSTANCE_ID": "instance-7",
             "ZICATO_PARALLELISM": "16",
             "ZICATO_HARNESS_CALL_TIMEOUT_MS": "600000",
         }
@@ -100,14 +92,46 @@ def test_env_sets_every_section() -> None:
     assert cfg.health.no_expectations_fraction == 0.75
     assert cfg.health.stalled_rejects == 6
     assert cfg.aux.call_timeout_s == 45.5
-    assert cfg.budget.max_wall_clock_seconds == 900
     assert cfg.integration.harmonograf_url == "http://localhost:9000"
     assert cfg.integration.supervisor_binary == "/opt/zicato-supervisor"
     assert cfg.dashboard.static_dir == "/srv/static"
-    assert cfg.workspace.root == "/work/.zicato"
-    assert cfg.workspace.instance_id == "instance-7"
     assert cfg.runtime.parallelism == 16
     assert cfg.runtime.harness_call_timeout_ms == 600000
+
+
+# ---------------------------------------------------------------------------
+# Deleted bindings — redundant env vars are gone, not aliased
+# ---------------------------------------------------------------------------
+
+
+def test_deleted_redundant_env_vars_are_ignored() -> None:
+    """The redundant trio is ignored entirely — no hidden alias survives.
+
+    ``ZICATO_MAX_WALL_CLOCK_SECONDS`` / ``ZICATO_WORKSPACE`` /
+    ``ZICATO_INSTANCE_ID`` were fully shadowed by CLI flags
+    (``--max-wall-clock-seconds`` / ``--workspace`` / ``--instance-id``)
+    and were deleted. Setting them must leave the config tree at its
+    defaults, and the config tree no longer even carries their former
+    ``budget`` / ``workspace`` sections.
+    """
+    cfg = load_config(
+        env={
+            "ZICATO_MAX_WALL_CLOCK_SECONDS": "900",
+            "ZICATO_WORKSPACE": "/work/.zicato",
+            "ZICATO_INSTANCE_ID": "instance-7",
+        }
+    )
+    assert cfg == ZicatoConfig()
+    assert not hasattr(cfg, "budget")
+    assert not hasattr(cfg, "workspace")
+
+
+def test_deleted_redundant_env_vars_absent_from_describe() -> None:
+    """``describe_env_vars`` no longer lists the deleted redundant vars."""
+    described = describe_env_vars()
+    assert "ZICATO_MAX_WALL_CLOCK_SECONDS" not in described
+    assert "ZICATO_WORKSPACE" not in described
+    assert "ZICATO_INSTANCE_ID" not in described
 
 
 def test_env_int_coercion_produces_real_ints() -> None:
@@ -122,12 +146,6 @@ def test_env_float_coercion_produces_real_floats() -> None:
     cfg = load_config(env={"ZICATO_AUX_CALL_TIMEOUT": "12"})
     assert cfg.aux.call_timeout_s == 12.0
     assert isinstance(cfg.aux.call_timeout_s, float)
-
-
-def test_optional_int_budget_accepts_a_value() -> None:
-    """The wall-clock budget — ``int | None`` — coerces a concrete value."""
-    cfg = load_config(env={"ZICATO_MAX_WALL_CLOCK_SECONDS": "600"})
-    assert cfg.budget.max_wall_clock_seconds == 600
 
 
 # ---------------------------------------------------------------------------
@@ -174,14 +192,6 @@ def test_unparseable_aux_timeout_falls_back_to_default() -> None:
     """A non-numeric aux timeout env value is clamped to the default."""
     cfg = load_config(env={"ZICATO_AUX_CALL_TIMEOUT": "soon"})
     assert cfg.aux.call_timeout_s == 120.0
-
-
-def test_invalid_budget_keeps_none_default() -> None:
-    """An unparseable wall-clock budget keeps the ``None`` (unbounded) default."""
-    unparseable = load_config(env={"ZICATO_MAX_WALL_CLOCK_SECONDS": "lots"})
-    assert unparseable.budget.max_wall_clock_seconds is None
-    non_positive = load_config(env={"ZICATO_MAX_WALL_CLOCK_SECONDS": "0"})
-    assert non_positive.budget.max_wall_clock_seconds is None
 
 
 # ---------------------------------------------------------------------------
@@ -285,7 +295,6 @@ def test_describe_env_vars_enumerates_every_binding() -> None:
     described = describe_env_vars()
     assert described["ZICATO_HEALTH_SCORING_WINDOW"] == "health.scoring_window"
     assert described["ZICATO_AUX_CALL_TIMEOUT"] == "aux.call_timeout_s"
-    assert described["ZICATO_MAX_WALL_CLOCK_SECONDS"] == "budget.max_wall_clock_seconds"
     assert described["ZICATO_PARALLELISM"] == "runtime.parallelism"
     # Every described "section.field" pair resolves to a real dataclass field.
     blank = ZicatoConfig()
@@ -299,8 +308,6 @@ def test_every_sub_config_is_reachable_from_the_root() -> None:
     cfg = ZicatoConfig()
     assert isinstance(cfg.health, HealthConfig)
     assert isinstance(cfg.aux, AuxConfig)
-    assert isinstance(cfg.budget, BudgetConfig)
     assert isinstance(cfg.integration, IntegrationConfig)
     assert isinstance(cfg.dashboard, DashboardConfig)
-    assert isinstance(cfg.workspace, WorkspaceConfig)
     assert isinstance(cfg.runtime, RuntimeTuningConfig)

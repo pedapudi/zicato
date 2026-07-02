@@ -609,14 +609,13 @@ def _import_callable(dotted: str, *, kind: str) -> Any:
     "--max-wall-clock-seconds",
     default=None,
     type=click.IntRange(min=1),
-    envvar="ZICATO_MAX_WALL_CLOCK_SECONDS",
     help=(
         "Total wall-clock budget for this whole evolve invocation, in "
         "seconds. The loop stops cleanly between rounds once the budget "
         "is spent, and a single round that would overrun it is cancelled "
         "and recorded as aborted. Unset (the default) leaves the loop "
         "unbounded. Applies on top of each board entry's own "
-        "wall_clock_budget_seconds. Env var: ZICATO_MAX_WALL_CLOCK_SECONDS."
+        "wall_clock_budget_seconds."
     ),
 )
 @click.option(

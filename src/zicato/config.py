@@ -41,13 +41,17 @@ That is the supported way for an embedding application to pin
 configuration. :func:`load_config` is a convenience that layers the
 environment underneath such an override.
 
-Env-var compatibility
----------------------
+Env-var surface
+---------------
 
-Every ``ZICATO_*`` variable zicato has ever honoured is still honoured —
-the names are simply all enumerated in :data:`_ENV_BINDINGS` rather than
-scattered across the tree. To learn the full set, read that table (or
-call :func:`describe_env_vars`).
+The env-settable surface is deliberately small and shrinking: operator
+knobs move to CLI flags and the workspace ``config.json``. Every
+``ZICATO_*`` variable the loader still honours is enumerated in
+:data:`_ENV_BINDINGS`; a variable absent from that table is ignored by
+:func:`load_config`. The redundant trio ``ZICATO_MAX_WALL_CLOCK_SECONDS``
+/ ``ZICATO_WORKSPACE`` / ``ZICATO_INSTANCE_ID`` was deleted outright —
+each was fully shadowed by an existing CLI flag
+(``--max-wall-clock-seconds`` / ``--workspace`` / ``--instance-id``).
 """
 
 from __future__ import annotations
@@ -132,23 +136,6 @@ class AuxConfig:
 
 
 @dataclass(frozen=True, slots=True)
-class BudgetConfig:
-    """Wall-clock budgeting for an evolve invocation.
-
-    Fields
-    ------
-    max_wall_clock_seconds:
-        Total wall-clock budget for a whole ``zicato evolve``
-        invocation, in seconds, or ``None`` for an unbounded loop. The
-        loop stops cleanly between rounds once the budget is spent;
-        applies on top of each board entry's own
-        ``wall_clock_budget_seconds``.
-    """
-
-    max_wall_clock_seconds: int | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class IntegrationConfig:
     """Paths and URLs for the processes zicato integrates with.
 
@@ -191,23 +178,6 @@ class DashboardConfig:
     """
 
     static_dir: str = ""
-
-
-@dataclass(frozen=True, slots=True)
-class WorkspaceConfig:
-    """Identity and location of the zicato workspace.
-
-    Fields
-    ------
-    root:
-        Path to the ``.zicato/`` workspace directory.
-    instance_id:
-        Logical instance identifier. Distinguishes nested instances when
-        an outer zicato is optimizing an inner one.
-    """
-
-    root: str = ".zicato"
-    instance_id: str = "default"
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,10 +244,8 @@ class ZicatoConfig:
 
     health: HealthConfig = HealthConfig()
     aux: AuxConfig = AuxConfig()
-    budget: BudgetConfig = BudgetConfig()
     integration: IntegrationConfig = IntegrationConfig()
     dashboard: DashboardConfig = DashboardConfig()
-    workspace: WorkspaceConfig = WorkspaceConfig()
     runtime: RuntimeTuningConfig = RuntimeTuningConfig()
 
 
@@ -328,19 +296,6 @@ def _coerce_positive_float(raw: str, default: float) -> float:
     return parsed if parsed > 0.0 else default
 
 
-def _coerce_optional_positive_int(raw: str, default: int | None) -> int | None:
-    """Parse a strictly-positive int, or keep ``default`` (which may be ``None``).
-
-    The only consumer is the wall-clock budget, where ``None`` means
-    "unbounded" and any concrete value must be ``>= 1``.
-    """
-    try:
-        parsed = int(raw)
-    except (TypeError, ValueError):
-        return default
-    return parsed if parsed > 0 else default
-
-
 def _coerce_str(raw: str, _default: str) -> str:
     """Pass a string through verbatim — the identity coercion.
 
@@ -387,16 +342,9 @@ _ENV_BINDINGS: dict[str, tuple[str, str, Any]] = {
         _coerce_non_negative_float,
     ),
     "ZICATO_AUX_CALL_TIMEOUT": ("aux", "call_timeout_s", _coerce_positive_float),
-    "ZICATO_MAX_WALL_CLOCK_SECONDS": (
-        "budget",
-        "max_wall_clock_seconds",
-        _coerce_optional_positive_int,
-    ),
     "ZICATO_HARMONOGRAF_URL": ("integration", "harmonograf_url", _coerce_str),
     "ZICATO_SUPERVISOR_BINARY": ("integration", "supervisor_binary", _coerce_str),
     "ZICATO_DASHBOARD_STATIC_DIR": ("dashboard", "static_dir", _coerce_str),
-    "ZICATO_WORKSPACE": ("workspace", "root", _coerce_str),
-    "ZICATO_INSTANCE_ID": ("workspace", "instance_id", _coerce_str),
     "ZICATO_PARALLELISM": ("runtime", "parallelism", _coerce_positive_int),
     "ZICATO_HARNESS_CALL_TIMEOUT_MS": (
         "runtime",
@@ -511,10 +459,8 @@ def load_config(
 __all__ = [
     "HealthConfig",
     "AuxConfig",
-    "BudgetConfig",
     "IntegrationConfig",
     "DashboardConfig",
-    "WorkspaceConfig",
     "RuntimeTuningConfig",
     "ZicatoConfig",
     "load_config",
