@@ -11,6 +11,7 @@ Surface:
   zicato epoch close [<epoch_id>]
   zicato epoch list
   zicato epoch switch <epoch_id>
+  zicato epoch gc [<epoch_id>] (--keep-last <n> | --keep-promoted-only) [--apply]
 
 This module is thin — every command is one Click handler that calls
 into :mod:`zicato.epoch.lifecycle`. There is no business logic here;
@@ -377,6 +378,93 @@ def switch_cmd(epoch_id: str, workspace: str) -> None:
     ws = _resolve_workspace(workspace)
     lifecycle.switch_epoch(ws, epoch_id)
     click.echo(f"Switched to {epoch_id}.")
+
+
+@epoch_grp.command(
+    "gc",
+    short_help="Prune settled-rejected generation source trees (dry-run by default).",
+)
+@click.argument("epoch_id", required=False)
+@click.option(
+    "--workspace",
+    default=".zicato",
+    show_default=True,
+    help="Path to the zicato workspace directory.",
+)
+@click.option(
+    "--keep-last",
+    "keep_last_n",
+    type=int,
+    default=None,
+    help="Keep the N newest generations in addition to the always-kept "
+    "set (promoted chain, in-flight generations, v0); prune older "
+    "settled-rejected trees.",
+)
+@click.option(
+    "--keep-promoted-only",
+    is_flag=True,
+    default=False,
+    help="Keep only the always-kept set; prune every settled-rejected " "generation's source tree.",
+)
+@click.option(
+    "--apply",
+    "apply_",
+    is_flag=True,
+    default=False,
+    help="Actually prune. Without this flag the command is a DRY RUN "
+    "that prints the plan and removes nothing.",
+)
+def gc_cmd(
+    epoch_id: str | None,
+    workspace: str,
+    keep_last_n: int | None,
+    keep_promoted_only: bool,
+    apply_: bool,
+) -> None:
+    """Prune generation SOURCE TREES under an epoch; records survive.
+
+    Reclaims the disk held by settled-rejected generations' source
+    trees (directory-backend snapshot dirs; git-backend tags +
+    worktrees, whose commits then become collectable). Never touches
+    lineage.json, the journal, experiment/score records, or run
+    telemetry — a pruned generation stays fully analysable, it just no
+    longer has a browsable source tree.
+
+    Promoted generations, in-flight generations, and the seed v0 are
+    never pruned. Select a retention policy with exactly one of
+    --keep-last N / --keep-promoted-only. Dry-run by default; pass
+    --apply to execute. When EPOCH_ID is omitted, the current epoch is
+    targeted.
+    """
+    from zicato.epoch.gc import prune_generations
+
+    ws = _resolve_workspace(workspace)
+    if epoch_id is None:
+        epoch_id = lifecycle.current_epoch_id(ws)
+        if epoch_id is None:
+            raise click.UsageError("no EPOCH_ID supplied and no current_epoch marker")
+    if keep_promoted_only == (keep_last_n is not None):
+        raise click.UsageError("pass exactly one of --keep-last N / --keep-promoted-only")
+    try:
+        report = prune_generations(
+            ws,
+            epoch_id,
+            keep_last_n=keep_last_n,
+            keep_promoted_only=keep_promoted_only,
+            dry_run=not apply_,
+        )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+
+    verb = "would prune" if report.dry_run else "pruned"
+    click.echo(f"Epoch {report.epoch_id} ({report.backend} backend, {report.policy}):")
+    click.echo(f"  kept   : {', '.join(report.kept) or '(none)'}")
+    click.echo(
+        f"  {verb}: {', '.join(report.pruned) or '(none)'}"
+        f"  [{report.bytes_reclaimed} tree bytes]"
+    )
+    if report.dry_run:
+        click.echo("DRY RUN — nothing was removed. Re-run with --apply to prune.")
 
 
 @epoch_grp.command(

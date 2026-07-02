@@ -541,6 +541,14 @@ def _close_epoch_prelude(
     from zicato.epoch import lineage as _lineage
 
     _lineage.mark_closed(workspace_root, epoch_id, cfg.closed_at)
+
+    # OPT-IN snapshot GC on close (the workspace ``storage_gc`` config
+    # block; absent = off, the default). Best-effort by construction —
+    # the hook logs-and-swallows internally, so closing an epoch can
+    # never fail because a source-tree prune hiccuped.
+    from zicato.epoch.gc import maybe_prune_on_epoch_close
+
+    maybe_prune_on_epoch_close(workspace_root, epoch_id)
     return epoch_id, analysis_path(workspace_root, epoch_id)
 
 
