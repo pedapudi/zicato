@@ -57,6 +57,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from zicato.config import HealthConfig, load_config
+from zicato.core.experiment import PLACEBO_HYPOTHESIS_MARKER
 from zicato.core.types import BoardEntry, LossProfile
 from zicato.util.iso_time import now_iso as _utcnow_iso
 
@@ -136,7 +137,8 @@ class HealthFinding:
         ``"generalization_gap"``, ``"refresh_cadence"``,
         ``"margin_below_noise_floor"``,
         ``"preflight_signal_below_floor"``,
-        ``"preflight_saturated_contract"``, ``"noisy_judge"``.
+        ``"preflight_saturated_contract"``, ``"noisy_judge"``,
+        ``"placebo_promoted"``.
     severity:
         ``"info"`` | ``"warning"`` | ``"critical"``. A loop is
         considered unhealthy when any ``"warning"`` or ``"critical"``
@@ -861,6 +863,73 @@ def detect_noisy_judge(
     return findings
 
 
+def _is_placebo_experiment(experiment: Any) -> bool:
+    """Whether an experiment record is the random-baseline placebo arm.
+
+    Keyed on the stable
+    :data:`zicato.core.experiment.PLACEBO_HYPOTHESIS_MARKER` prefix of
+    ``hypothesis.core_idea`` (the contract with the minting side,
+    :mod:`zicato.evolve.placebo`). Tolerant of typed records and plain
+    ``experiment.json`` dicts via the usual :func:`_attr_or_key` shim.
+    """
+    hypothesis = _attr_or_key(experiment, "hypothesis")
+    if hypothesis is None:
+        return False
+    core_idea = _attr_or_key(hypothesis, "core_idea")
+    return isinstance(core_idea, str) and core_idea.startswith(PLACEBO_HYPOTHESIS_MARKER)
+
+
+def detect_placebo_promoted(experiments: list[Any]) -> list[HealthFinding]:
+    """CRITICAL when a random-baseline (placebo) challenger was PROMOTED.
+
+    The placebo arm (OVERFITTING.md #7,
+    ``overfitting.random_baseline_every_n``) fields a semantics-preserving
+    no-op challenger the gate MUST reject — identical behaviour leaves no
+    improvement to clear the margin. A promoted placebo therefore means
+    the decision procedure is promoting noise: gate discrimination is
+    broken (margin inside the noise floor, a broken reducer, a rigged
+    gate) and every recent real "win" is suspect. One ``critical``
+    finding per promoted placebo generation.
+
+    Silent when no placebo experiments exist (the knob is off / no
+    cadence tick yet) or every placebo was rejected — the arm doing its
+    quiet calibration job.
+    """
+    findings: list[HealthFinding] = []
+    for exp in experiments:
+        if not _is_placebo_experiment(exp):
+            continue
+        outcome = _attr_or_key(exp, "outcome")
+        if outcome is None:
+            continue
+        decision = str(_attr_or_key(outcome, "tournament_decision") or "")
+        if decision != "promoted":
+            continue
+        generation_id = str(_attr_or_key(exp, "generation_id") or "")
+        findings.append(
+            HealthFinding(
+                code="placebo_promoted",
+                severity="critical",
+                summary=(
+                    f"random-baseline placebo {generation_id!r} was PROMOTED — a "
+                    "semantics-preserving no-op won a tournament, so the gate is "
+                    "promoting noise; recent promotions are suspect"
+                ),
+                detail={
+                    "generation_id": generation_id,
+                    "scalar_score_delta": _attr_or_key(outcome, "scalar_score_delta"),
+                    "recommendation": (
+                        "stop and audit the decision procedure: re-measure the "
+                        "noise floor (zicato board audit / board preflight), "
+                        "raise promote_margin above it, keep the evidence gate "
+                        "on, and re-examine recent promotions"
+                    ),
+                },
+            )
+        )
+    return findings
+
+
 def detect_preflight_verdict(preflight: dict[str, Any] | None) -> list[HealthFinding]:
     """Re-surface a non-OK contract pre-flight verdict as a health finding.
 
@@ -1015,6 +1084,16 @@ def assess_loop_health(
         ``"critical"`` severity.
     """
     health = _resolve_health_config(config)
+    # The random-baseline placebo arm is a CALIBRATION probe, not part of
+    # the optimization stream: an always-rejected control fielded every
+    # Nth round must not read as a stall, a flat-scoring window, or a
+    # mined-out contract. Split it out — the stream detectors see only the
+    # real experiments; the placebo experiments feed exactly one detector
+    # (a promoted placebo is the gate-discrimination alarm). With the knob
+    # off there are no placebo records and the split is the identity.
+    placebo_experiments = [exp for exp in experiments if _is_placebo_experiment(exp)]
+    if placebo_experiments:
+        experiments = [exp for exp in experiments if not _is_placebo_experiment(exp)]
     findings: list[HealthFinding] = []
     findings.extend(detect_degenerate_scoring(experiments, health))
     findings.extend(detect_non_differentiating_entry(losses_by_generation))
@@ -1026,6 +1105,7 @@ def assess_loop_health(
     findings.extend(detect_refresh_cadence(experiments, max_generations_per_contract))
     findings.extend(detect_margin_below_noise_floor(noise_floor, promote_margin, evidence_gate_on))
     findings.extend(detect_preflight_verdict(preflight))
+    findings.extend(detect_placebo_promoted(placebo_experiments))
 
     healthy = not any(finding.severity in ("warning", "critical") for finding in findings)
     return LoopHealth(
@@ -1054,6 +1134,7 @@ __all__ = [
     "detect_stalled_loop",
     "detect_generalization_gap",
     "detect_noisy_judge",
+    "detect_placebo_promoted",
     "detect_preflight_verdict",
     "detect_refresh_cadence",
 ]

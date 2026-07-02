@@ -90,6 +90,7 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         "ladder": LadderConfig(enabled=False, threshold=0.25, budget=4, noise_scale=0.1),
         "rotate_holdout": False,
         "max_generations_per_contract": 9,
+        "random_baseline_every_n": 5,
     },
     "ProposerQualityConfig": {
         "best_of_n": 4,

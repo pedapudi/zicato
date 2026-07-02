@@ -394,6 +394,12 @@ _SCORING_OMIT_AT_DEFAULT_FIELDS: frozenset[str] = frozenset(
         # its ``default_factory()`` instance, so an all-default block is
         # omitted (no retroactive roll) while any opt-in rolls the epoch.
         "experiment_memory",
+        # Opt-in random-baseline (placebo) challenger cadence
+        # (OVERFITTING.md #7). Lives on the nested ``OverfittingConfig`` —
+        # the canonicalizer recurses through this same field-name set, so
+        # the nested field is omitted at its 0 default (no retroactive
+        # roll) and a non-zero cadence rolls the epoch.
+        "random_baseline_every_n",
     }
 )
 

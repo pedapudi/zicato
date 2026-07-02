@@ -1097,6 +1097,30 @@ async def evolve_once(
     # --- 13. Journal ---
     append_journal_entry(workspace_root, resolved_epoch_id, finalised)
 
+    # --- 13b. Optional random-baseline placebo arm (OVERFITTING.md #7) ---
+    # One EXTRA scheduled duel after the settled round, on the opt-in
+    # cadence ``overfitting.random_baseline_every_n``: champion vs a
+    # semantics-preserving no-op copy of itself. Runs BEFORE the health
+    # assessment below so a promoted placebo raises its CRITICAL finding
+    # in THIS round's report. Best-effort; never advances the champion.
+    await _maybe_run_placebo_arm_gauntlet(
+        workspace_root=workspace_root,
+        epoch_id=resolved_epoch_id,
+        adapter=adapter,
+        parent_gen=parent_gen,
+        parent_id=parent_id,
+        round_id=next_id,
+        mutations=mutations,
+        board=board,
+        weights=weights,
+        config=config,
+        disable_drift=disable_drift,
+        judge_only=judge_only,
+        fast_mode=fast_mode,
+        round_index=round_index,
+        total_rounds=total_rounds,
+    )
+
     # --- 14. Per-round loop-health check ---
     # Assess whether the loop is producing usable signal this round —
     # the epoch's accumulated losses + experiments + board, fed to
@@ -1172,6 +1196,184 @@ async def evolve_once(
         health_summary=health_summary,
         health_critical=health_critical,
     )
+
+
+# ---------------------------------------------------------------------------
+# Random-baseline (placebo) challenger — OVERFITTING.md #7's control arm
+# ---------------------------------------------------------------------------
+
+
+def _mint_placebo_challenger(
+    *,
+    workspace_root: Path,
+    epoch_id: str,
+    parent_id: str,
+    next_id: str,
+    point: Any,
+    round_index: int,
+) -> _AppliedChallenger:
+    """Derive + persist the random-baseline placebo challenger.
+
+    The same derive → ``experiment.json`` → lineage pipeline every real
+    challenger goes through (:mod:`zicato.evolve.placebo` builds the
+    marked hypothesis + the semantics-preserving no-op patch), so the
+    placebo is a genuine lineage child with a genuine snapshot — the gate
+    scores it exactly like any challenger. Shared by the gauntlet's extra
+    scheduled duel and the multi-challenger field's extra slot.
+    """
+    from zicato.epoch import append_to_lineage, write_experiment  # noqa: PLC0415
+    from zicato.evolve.placebo import (  # noqa: PLC0415
+        build_placebo_experiment,
+        derive_placebo_snapshot,
+    )
+
+    experiment = build_placebo_experiment(
+        epoch_id=epoch_id,
+        generation_id=next_id,
+        parent_id=parent_id,
+        point=point,
+        round_index=round_index,
+    )
+    child_snapshot = derive_placebo_snapshot(
+        workspace_root,
+        epoch_id=epoch_id,
+        parent_id=parent_id,
+        generation_id=next_id,
+        patches=experiment.patches,
+    )
+    write_experiment(workspace_root, epoch_id, next_id, experiment)
+    _ingest_experiment_into_index(workspace_root, epoch_id, next_id)
+    child_gen = Generation(
+        id=next_id,
+        epoch_id=epoch_id,
+        parent_id=parent_id,
+        snapshot_root=child_snapshot,
+        created_at=_now_iso(),
+        round_index=round_index,
+    )
+    append_to_lineage(workspace_root, epoch_id, child_gen, parent_id=parent_id, pending=True)
+    return _AppliedChallenger(
+        generation_id=next_id,
+        snapshot_root=child_snapshot,
+        experiment=experiment,
+        generation=child_gen,
+    )
+
+
+async def _maybe_run_placebo_arm_gauntlet(
+    *,
+    workspace_root: Path,
+    epoch_id: str,
+    adapter: Any,
+    parent_gen: Generation,
+    parent_id: str,
+    round_id: str,
+    mutations: list[Any],
+    board: list[Any],
+    weights: Any,
+    config: Any,
+    disable_drift: tuple[Any, ...],
+    judge_only: bool,
+    fast_mode: bool,
+    round_index: int,
+    total_rounds: int,
+) -> None:
+    """Run the opt-in placebo duel after a settled gauntlet round.
+
+    OVERFITTING.md #7 on the single-challenger path: when the contract
+    sets ``overfitting.random_baseline_every_n`` and this round's
+    epoch-cumulative number is a cadence tick, one EXTRA scheduled duel
+    runs after the round — champion vs a semantics-preserving no-op copy
+    of itself (id ``{vN}-placebo``, deliberately non-``vN`` so round
+    numbering / id minting are untouched). The duel goes through the
+    unchanged runner + gate; its outcome persists to ``experiment.json``
+    (before the round's health assessment reads it) and to lineage as a
+    dead branch — the placebo NEVER advances the champion pointer, even
+    on the alarm outcome. A promoted placebo surfaces as the CRITICAL
+    ``placebo_promoted`` loop-health finding. Best-effort by contract:
+    any failure here never aborts the round.
+    """
+    from zicato.evolve.placebo import placebo_round_due  # noqa: PLC0415
+
+    every_n = int(getattr(weights.overfitting, "random_baseline_every_n", 0))
+    round_n = _round_n_from_generation_id(round_id)
+    if not placebo_round_due(every_n, round_n) or not mutations:
+        return
+
+    from zicato.epoch import append_to_lineage, update_experiment_outcome  # noqa: PLC0415
+    from zicato.tournament.runner import run_matchup  # noqa: PLC0415
+
+    placebo_id = f"{round_id}-placebo"
+    with best_effort(
+        "random-baseline placebo arm",
+        on_error=lambda exc: log.warning("random-baseline placebo arm skipped: %s", exc),
+    ):
+        challenger = _mint_placebo_challenger(
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            parent_id=parent_id,
+            next_id=placebo_id,
+            point=mutations[0],
+            round_index=round_index,
+        )
+        result = await run_matchup(
+            adapter=adapter,
+            left_gen=parent_gen,
+            right_gen=challenger.generation,
+            board=board,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            disable_drift=disable_drift,
+            judge_only=judge_only,
+            fast=fast_mode,
+            round_index=round_index,
+            total_rounds=total_rounds,
+            match_id=f"placebo:{placebo_id}",
+        )
+        decision = result.outcome.decision
+        promoted = str(decision) == "promoted"
+        update_experiment_outcome(
+            workspace_root,
+            epoch_id,
+            placebo_id,
+            OutcomeRecord(
+                ran_at=_now_iso(),
+                drift_movements=(),
+                pass_rate_delta=result.outcome.delta_pass_rate,
+                drift_loss_delta=0.0,
+                scalar_score_delta=result.outcome.delta_scalar,
+                tournament_decision=decision,
+                rejection_reason="" if promoted else result.outcome.reason,
+            ),
+        )
+        _ingest_experiment_into_index(workspace_root, epoch_id, placebo_id)
+        # Lineage: ALWAYS a dead branch. Even a (pathological) promoted
+        # verdict never advances the champion pointer — the arm measures
+        # the gate; the alarm is the health finding, not a crowning.
+        append_to_lineage(
+            workspace_root,
+            epoch_id,
+            replace(challenger.generation, promoted=False),
+            parent_id=parent_id,
+        )
+        if promoted:
+            log.warning(
+                "random-baseline placebo %s was PROMOTED by the gate "
+                "(Δscalar=%.6g) — the decision procedure is promoting noise; "
+                "the CRITICAL placebo_promoted health finding will fire. The "
+                "champion pointer was NOT advanced.",
+                placebo_id,
+                result.outcome.delta_scalar,
+            )
+        else:
+            log.info(
+                "random-baseline placebo %s rejected as expected (%s) — gate "
+                "discrimination confirmed this cadence tick",
+                placebo_id,
+                result.outcome.reason,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -1992,6 +2194,57 @@ async def _evolve_multi_challenger(
             child_scalar=0.0,
             delta_scalar=0.0,
         )
+
+    # --- Optional random-baseline placebo arm (OVERFITTING.md #7) --------
+    # Every Nth epoch-cumulative round the field carries ONE extra slot: a
+    # semantics-preserving no-op child of the champion, hypothesis marked
+    # as the baseline arm (zicato.evolve.placebo). It flows through the
+    # unchanged strategy + gate like any challenger; the gate must reject
+    # it, and a promoted placebo raises the CRITICAL ``placebo_promoted``
+    # loop-health finding. Appended AFTER the all-failed early-return above
+    # (a fully-failed proposer field keeps its historical outcome) and
+    # appended LAST so sibling diversity, ``first_challenger_id``, and the
+    # real challengers' ids are untouched. Best-effort: a placebo mint
+    # failure narrows the field back to the real challengers.
+    _placebo_every_n = int(getattr(weights.overfitting, "random_baseline_every_n", 0))
+    if base_n is not None and mutations:
+        from zicato.evolve.placebo import placebo_round_due  # noqa: PLC0415
+
+        if placebo_round_due(_placebo_every_n, base_n):
+            _placebo_id = f"v{base_n + field_n}"
+            with best_effort(
+                "random-baseline placebo mint",
+                on_error=lambda exc: log.warning("random-baseline placebo skipped: %s", exc),
+            ):
+                _placebo = _mint_placebo_challenger(
+                    workspace_root=workspace_root,
+                    epoch_id=epoch_id,
+                    parent_id=parent_id,
+                    next_id=_placebo_id,
+                    point=mutations[0],
+                    round_index=round_index,
+                )
+                applied.append(_placebo)
+                _placebo_status = {
+                    "generation_id": _placebo.generation_id,
+                    "status": "applied",
+                    "reason": "random_baseline",
+                    "attempts": 1,
+                    "attempt_reasons": [],
+                    "hypothesis": _trim_reason(_placebo.experiment.hypothesis.core_idea),
+                    "seed": field_n + 2,
+                }
+                field_status.append(_placebo_status)
+                _publish_proposing(_placebo_status)
+                log.info(
+                    "multi-challenger field: %s/%s fielded as the random-baseline "
+                    "placebo arm (cadence every_n=%d, round %d) — the gate must "
+                    "reject it",
+                    epoch_id,
+                    _placebo.generation_id,
+                    _placebo_every_n,
+                    base_n,
+                )
 
     by_id: dict[str, _AppliedChallenger] = {c.generation_id: c for c in applied}
     champion_gen = Generation(

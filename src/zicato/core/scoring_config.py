@@ -157,6 +157,20 @@ class OverfittingConfig:
         a cue that the contract should be refreshed (the operator rolls).
         ``None`` (default) imposes no ceiling. This never forces a surprising
         auto epoch-roll; it only recommends. Must be ``>= 1`` when set.
+    random_baseline_every_n:
+        Opt-in random-baseline challenger cadence (OVERFITTING.md §12 #7 —
+        the placebo arm). When ``> 0``, every Nth round the orchestrator
+        fields ONE additional challenger whose patch is a
+        semantics-preserving no-op (the mutation point's current value
+        re-emitted unchanged), hypothesis clearly marked as the baseline
+        arm. The gate MUST reject it — identical trees leave no
+        improvement to clear the margin — so a PROMOTED baseline is the
+        alarm: the loop emits a CRITICAL ``placebo_promoted`` health
+        finding (gate discrimination is broken; recent "wins" are
+        suspect). ``0`` (default) fields no baseline and the loop is
+        byte-identical. Like ``diff_complexity_weight``, the field is
+        omitted from the contract canonical form at its default so
+        existing epochs never roll retroactively. Must be ``>= 0``.
     """
 
     enabled: bool = True
@@ -166,6 +180,7 @@ class OverfittingConfig:
     ladder: LadderConfig = field(default_factory=_default_ladder_config)
     rotate_holdout: bool = True
     max_generations_per_contract: int | None = None
+    random_baseline_every_n: int = 0
 
     def __post_init__(self) -> None:
         if not 0.0 < self.holdout_fraction < 1.0:
@@ -178,6 +193,10 @@ class OverfittingConfig:
             raise ValueError(
                 f"max_generations_per_contract must be >= 1 or None, got "
                 f"{self.max_generations_per_contract!r}"
+            )
+        if self.random_baseline_every_n < 0:
+            raise ValueError(
+                f"random_baseline_every_n must be >= 0, got {self.random_baseline_every_n!r}"
             )
 
     @classmethod
