@@ -271,13 +271,7 @@ async def evolve_once(
         runtime_factory,
         workspace_loader,  # noqa: PLC0415
     )
-    from zicato.epoch import (  # noqa: PLC0415
-        append_journal_entry,
-        append_to_lineage,
-        load_epoch,  # noqa: PLC0415
-        update_experiment_outcome,
-        write_experiment,
-    )
+    from zicato.epoch import load_epoch, write_experiment  # noqa: PLC0415
     from zicato.epoch.lifecycle import current_epoch_id  # noqa: PLC0415
     from zicato.mutation.enumerator import enumerate_mutations  # noqa: PLC0415
     from zicato.patterns.detectors import (  # noqa: PLC0415
@@ -285,10 +279,7 @@ async def evolve_once(
         DetectorInput,
         detect_patterns,
     )
-    from zicato.proposer.agent import (  # noqa: PLC0415
-        ProposerContext,
-        build_proposer_agent,
-    )
+    from zicato.proposer.agent import build_proposer_agent  # noqa: PLC0415
     from zicato.proposer.proposer import ProposerError  # noqa: PLC0415
     from zicato.proposer.skills import resolve_proposer_spec  # noqa: PLC0415
     from zicato.telemetry.reducer import read_loss_profile  # noqa: PLC0415
@@ -669,27 +660,26 @@ async def evolve_once(
         experiment = resumed_experiment
     else:
         try:
-            experiment = await proposer_agent.propose(
-                ProposerContext(
-                    epoch_id=resolved_epoch_id,
-                    parent_generation_id=parent_id,
-                    new_generation_id=next_id,
-                    patterns=tuple(patterns),
-                    mutations=tuple(mutations),
-                    brief_text=brief.text,
-                    current_loss_summary=loss_summary,
-                    aux_call_llm=auxiliary_call_llm,
-                    model=str(workspace_config.get("auxiliary_model", "")),
-                    max_retries=max_proposer_retries,
-                    forbidden_ids=brief.forbidden_ids,
-                    workspace_root=workspace_root,
-                    validate_experiment=_validate_experiment_post_apply,
-                    meta_loop_emitter=meta_loop_emitter,
-                    custom_judge_names=custom_judge_names,
-                    prior_experiments=tuple(prior),
-                    restrict_visibility=weights.overfitting.restrict_proposer_visibility,
-                    failure_profile=failure_profile,
-                )
+            experiment = await _propose_child(
+                proposer_agent=proposer_agent,
+                epoch_id=resolved_epoch_id,
+                parent_id=parent_id,
+                next_id=next_id,
+                patterns=patterns,
+                mutations=mutations,
+                brief=brief,
+                loss_summary=loss_summary,
+                auxiliary_call_llm=auxiliary_call_llm,
+                auxiliary_model=str(workspace_config.get("auxiliary_model", "")),
+                max_proposer_retries=max_proposer_retries,
+                workspace_root=workspace_root,
+                validate_experiment=_validate_experiment_post_apply,
+                meta_loop_emitter=meta_loop_emitter,
+                custom_judge_names=custom_judge_names,
+                prior_experiments=tuple(prior),
+                restrict_visibility=weights.overfitting.restrict_proposer_visibility,
+                failure_profile=failure_profile,
+                round_index=round_index,
             )
         except ProposerError as exc:
             # The proposer exhausted its bounded retries without producing
@@ -699,17 +689,6 @@ async def evolve_once(
             # journal entry, and the loop continues.
             proposer_validation_failed = exc
             experiment = None
-        else:
-            # Stamp the EVOLVE round that minted this generation onto the
-            # experiment so it persists into experiment.json — the
-            # dashboard's round-timeline / champion-spine attributes each
-            # generation to its birth round from this stamp (the canonical
-            # value the loop already threads as round_index). The guard is
-            # redundant at runtime (the `else` means propose succeeded, so
-            # experiment is non-None) but narrows the union type for the
-            # checker.
-            if experiment is not None:
-                experiment = replace(experiment, round_index=round_index)
 
     # --- 7. Validate patch set against the manifest ---
     if experiment is not None:
@@ -741,69 +720,20 @@ async def evolve_once(
 
     # --- 9. Act on validation outcome ---
     if validation_errors:
-        # Persist the experiment with a rejected outcome describing
-        # the validator findings, then abort. Two distinct symbolic
-        # reasons: ``validation_failed`` when a single applied patch set
-        # failed post-apply validation; ``proposer_retries_exhausted``
-        # when the proposer could not produce a patch set that survives
-        # validation within its bounded retry budget.
-        write_experiment(workspace_root, resolved_epoch_id, next_id, experiment)
-        if proposer_validation_failed is not None:
-            rejection_reason = "proposer_retries_exhausted: " + "; ".join(validation_errors)
-        else:
-            rejection_reason = "validation_failed: " + "; ".join(validation_errors)
-        rejected_outcome = OutcomeRecord(
-            ran_at=_now_iso(),
-            drift_movements=(),
-            pass_rate_delta=0.0,
-            drift_loss_delta=0.0,
-            scalar_score_delta=0.0,
-            tournament_decision=TournamentDecision.REJECTED,
-            rejection_reason=rejection_reason,
-        )
-        finalised = update_experiment_outcome(
-            workspace_root, resolved_epoch_id, next_id, rejected_outcome
-        )
-        # Live index dual-write: experiment.json now carries the rejected
-        # outcome, so fold it into the SQLite analytical index.
-        _ingest_experiment_into_index(workspace_root, resolved_epoch_id, next_id)
-        append_journal_entry(workspace_root, resolved_epoch_id, finalised)
-        # Loop-health check for this round even on an early validator
-        # rejection — a stuck loop should still surface on the dashboard.
-        round_n = _round_n_from_generation_id(next_id) or round_index
-        health_summary, health_critical = _assess_and_persist_loop_health(
-            workspace_root, resolved_epoch_id, round_n, board
-        )
-        if health_critical:
-            _warn_loop_no_signal(resolved_epoch_id, round_n, health_summary)
-        # Regenerate the comprehensive epoch analysis report even on an
-        # early validator rejection — the round still wrote an
-        # experiment + journal entry, so the report should reflect it.
-        await _regenerate_epoch_report(
-            workspace_root,
-            resolved_epoch_id,
-            auxiliary_call_llm,
-            str(workspace_config.get("auxiliary_model", "")),
-        )
-        _beat(
-            beater,
+        assert experiment is not None  # narrowed: rejected placeholder above
+        return await _persist_rejected_round(
             workspace_root=workspace_root,
-            progress=progress_log.REJECT,
             epoch_id=resolved_epoch_id,
-            generation_id=next_id,
+            parent_id=parent_id,
+            next_id=next_id,
+            experiment=experiment,
+            validation_errors=validation_errors,
+            proposer_retries_exhausted=proposer_validation_failed is not None,
+            board=board,
             round_index=round_index,
-            phase=f"done:round_{round_index}:{next_id}:rejected",
-        )
-        return EvolveRoundOutcome(
-            parent_generation_id=parent_id,
-            proposed_generation_id=next_id,
-            tournament_decision="rejected",
-            rejection_reason=rejected_outcome.rejection_reason,
-            parent_scalar=0.0,
-            child_scalar=0.0,
-            delta_scalar=0.0,
-            health_summary=health_summary,
-            health_critical=health_critical,
+            auxiliary_call_llm=auxiliary_call_llm,
+            auxiliary_model=str(workspace_config.get("auxiliary_model", "")),
+            beater=beater,
         )
 
     # --- 10. Run the tournament ---
@@ -1060,42 +990,29 @@ async def evolve_once(
         # without a credible terminal.
         evidence=gate_evidence,
     )
-    finalised = update_experiment_outcome(
-        workspace_root, resolved_epoch_id, next_id, outcome_record
+    # --- 11b + 12 + 13. Persist outcome → index → lineage → journal ---
+    # One shared write pipeline (`_finalize_generation`) for every round
+    # tail. A rejected generation is still recorded in lineage (as a dead
+    # branch) so the operator can see it in `zicato epoch list`; the
+    # current-generation marker advances only on promotion.
+    finalised_gen = Generation(
+        id=next_id,
+        epoch_id=resolved_epoch_id,
+        parent_id=parent_id,
+        snapshot_root=child_snapshot,
+        created_at=child_gen.created_at,
+        promoted=bookkeeping_decision == "promoted",
+        round_index=child_gen.round_index,
     )
-    # Live index dual-write: experiment.json now carries the tournament
-    # outcome — refresh the SQLite analytical index entry for it.
-    _ingest_experiment_into_index(workspace_root, resolved_epoch_id, next_id)
-
-    # --- 12. Lineage / current-generation marker on promotion ---
-    if bookkeeping_decision == "promoted":
-        promoted_gen = Generation(
-            id=next_id,
-            epoch_id=resolved_epoch_id,
-            parent_id=parent_id,
-            snapshot_root=child_snapshot,
-            created_at=child_gen.created_at,
-            promoted=True,
-            round_index=child_gen.round_index,
-        )
-        append_to_lineage(workspace_root, resolved_epoch_id, promoted_gen, parent_id=parent_id)
-        _set_current_generation(workspace_root, resolved_epoch_id, next_id)
-    else:
-        # Still record the rejected generation in lineage so the
-        # operator can see it in `zicato epoch list`.
-        rejected_gen = Generation(
-            id=next_id,
-            epoch_id=resolved_epoch_id,
-            parent_id=parent_id,
-            snapshot_root=child_snapshot,
-            created_at=child_gen.created_at,
-            promoted=False,
-            round_index=child_gen.round_index,
-        )
-        append_to_lineage(workspace_root, resolved_epoch_id, rejected_gen, parent_id=parent_id)
-
-    # --- 13. Journal ---
-    append_journal_entry(workspace_root, resolved_epoch_id, finalised)
+    _finalize_generation(
+        workspace_root=workspace_root,
+        epoch_id=resolved_epoch_id,
+        generation_id=next_id,
+        outcome=outcome_record,
+        lineage_generation=finalised_gen,
+        lineage_parent_id=parent_id,
+        advance_current_generation=bookkeeping_decision == "promoted",
+    )
 
     # --- 13b. Optional random-baseline placebo arm (OVERFITTING.md #7) ---
     # One EXTRA scheduled duel after the settled round, on the opt-in
@@ -1121,56 +1038,21 @@ async def evolve_once(
         total_rounds=total_rounds,
     )
 
-    # --- 14. Per-round loop-health check ---
-    # Assess whether the loop is producing usable signal this round —
-    # the epoch's accumulated losses + experiments + board, fed to
-    # zicato.health. The LoopHealth report lands at
-    # epochs/{epoch}/health/round_{N}.json; a CRITICAL finding (e.g.
-    # degenerate scoring) escalates to a prominent stderr WARNING so the
-    # operator sees "the loop is producing no signal." Best-effort: a
-    # missing health sibling, or any assessment error, never aborts the
-    # round (see _assess_and_persist_loop_health).
-    round_n = _round_n_from_generation_id(next_id) or round_index
-    health_summary, health_critical = _assess_and_persist_loop_health(
-        workspace_root, resolved_epoch_id, round_n, board
-    )
-    if health_critical:
-        _warn_loop_no_signal(resolved_epoch_id, round_n, health_summary)
-
-    # --- 15. Best-effort decision-telemetry analyzer ---
-    # Analyser failure must never abort the round; the orchestrator
-    # only logs at debug level and keeps going. The analyser writes
-    # ``epochs/{epoch}/insights/round_{N}.md`` which the next round's
-    # proposer (via :func:`zicato.analyzer.load_latest_insights`) reads.
-    # The round number is derived from the newly-proposed generation
-    # id (``v{N}``) so the insight file lines up with the lineage.
-    with best_effort(
-        "decision telemetry analyzer",
-        on_error=lambda exc: log.debug("decision telemetry analyzer skipped: %s", exc),
-    ):
-        from zicato.analyzer import analyze_epoch_telemetry  # noqa: PLC0415
-
-        analyzer_round = _round_n_from_generation_id(next_id)
-        await analyze_epoch_telemetry(
-            workspace_root,
-            resolved_epoch_id,
-            auxiliary_call_llm,
-            model=str(workspace_config.get("auxiliary_model", "")),
-            round_n=analyzer_round,
-            # Ground the insight prompt in the agent's REAL mutation
-            # surface (enumerated above for this round) so the LLM's
-            # "Suggested next mutations" section cannot hallucinate
-            # mutation target ids that do not exist.
-            mutation_ids=[m.id for m in mutations],
-            meta_loop_emitter=meta_loop_emitter,
-        )
-
-    # --- 16. Best-effort epoch analysis report regeneration ---
-    await _regenerate_epoch_report(
-        workspace_root,
-        resolved_epoch_id,
-        auxiliary_call_llm,
-        str(workspace_config.get("auxiliary_model", "")),
+    # --- 14 + 15 + 16. Shared round epilogue ---
+    # Per-round loop-health check + best-effort decision-telemetry
+    # analyzer + best-effort epoch analysis report regeneration — the
+    # same `_round_epilogue` the multi-challenger path runs, so a new
+    # epilogue step can never land on one pipeline only.
+    health_summary, health_critical = await _round_epilogue(
+        workspace_root=workspace_root,
+        epoch_id=resolved_epoch_id,
+        board=board,
+        round_n=_round_n_from_generation_id(next_id) or round_index,
+        analyzer_round=_round_n_from_generation_id(next_id),
+        mutations=mutations,
+        auxiliary_call_llm=auxiliary_call_llm,
+        auxiliary_model=str(workspace_config.get("auxiliary_model", "")),
+        meta_loop_emitter=meta_loop_emitter,
     )
 
     _beat(
@@ -1498,7 +1380,6 @@ async def _propose_and_apply_challenger(
     """
     from zicato.epoch import append_to_lineage, write_experiment  # noqa: PLC0415
     from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
-    from zicato.proposer.agent import ProposerContext  # noqa: PLC0415
     from zicato.proposer.proposer import ProposerError  # noqa: PLC0415
 
     genstore = default_generation_store(workspace_root)
@@ -1555,27 +1436,26 @@ async def _propose_and_apply_challenger(
     )
 
     try:
-        experiment = await proposer_agent.propose(
-            ProposerContext(
-                epoch_id=epoch_id,
-                parent_generation_id=parent_id,
-                new_generation_id=next_id,
-                patterns=tuple(patterns),
-                mutations=tuple(mutations),
-                brief_text=brief.text,
-                current_loss_summary=loss_summary,
-                aux_call_llm=auxiliary_call_llm,
-                model=auxiliary_model,
-                max_retries=max_proposer_retries,
-                forbidden_ids=brief.forbidden_ids,
-                workspace_root=workspace_root,
-                validate_experiment=_validate,
-                meta_loop_emitter=meta_loop_emitter,
-                custom_judge_names=custom_judge_names,
-                prior_experiments=prior_experiments,
-                restrict_visibility=restrict_visibility,
-                failure_profile=failure_profile,
-            )
+        experiment = await _propose_child(
+            proposer_agent=proposer_agent,
+            epoch_id=epoch_id,
+            parent_id=parent_id,
+            next_id=next_id,
+            patterns=patterns,
+            mutations=mutations,
+            brief=brief,
+            loss_summary=loss_summary,
+            auxiliary_call_llm=auxiliary_call_llm,
+            auxiliary_model=auxiliary_model,
+            max_proposer_retries=max_proposer_retries,
+            workspace_root=workspace_root,
+            validate_experiment=_validate,
+            meta_loop_emitter=meta_loop_emitter,
+            custom_judge_names=custom_judge_names,
+            prior_experiments=prior_experiments,
+            restrict_visibility=restrict_visibility,
+            failure_profile=failure_profile,
+            round_index=round_index,
         )
     except ProposerError as exc:
         reason = _short_reject_reason(exc.attempts) or str(exc)
@@ -1606,15 +1486,9 @@ async def _propose_and_apply_challenger(
     check_patch_manifest_and_forbidden(experiment, mutations, brief.forbidden_ids)
 
     child_snapshot = last_child_snapshot["path"]
-    # Stamp the EVOLVE round that minted this challenger onto the experiment
-    # so it persists into experiment.json — mirroring the gauntlet path's
-    # round_index stamp. Without it a multi-challenger field's experiments
-    # carry the proposer's default round_index=0, so EVERY in-flight round's
-    # challengers fold onto round 0's bracket (the round mis-attribution in
-    # issue #16). The dashboard's round-grouping treats round_index as the
-    # authoritative birth round, so this stamp is what makes a live round
-    # group correctly by construction.
-    experiment = replace(experiment, round_index=round_index)
+    # ``_propose_child`` already stamped the EVOLVE round onto the
+    # experiment (round_index is the authoritative birth round the
+    # dashboard's round-grouping reads — issue #16).
     # Persist the proposer-side experiment.json (outcome still None) and
     # fold it into the live index, exactly as the gauntlet path does for
     # its single challenger before the tournament finishes.
@@ -2036,9 +1910,22 @@ async def _evolve_multi_challenger(
             failure_profile=failure_profile,
             on_status=_publish_proposing,
         )
-        if challenger is not None and _duplicates_inflight_sibling(
-            challenger.experiment, sibling_signatures
-        ):
+        # Field-diversity DECISION (pure — `_mint_challenger_field`): accept
+        # the challenger into the run slate, or soft-reject it as an exact
+        # duplicate of an in-flight sibling / an over-tolerance overlap with
+        # an accepted sibling. The persistence + publish I/O for a rejected
+        # slot stays here, separated from the decision.
+        mint = (
+            _mint_challenger_field(
+                challenger.experiment,
+                sibling_signatures,
+                accepted_mutation_sets,
+                diversity_tolerance,
+            )
+            if challenger is not None
+            else None
+        )
+        if challenger is not None and mint is not None and mint.action == "reject_duplicate":
             # Field-diversity soft-reject: this challenger duplicates an
             # already-minted sibling (same modulating id-set + core idea), so
             # it would collapse the field. Drop it from the run slate and
@@ -2083,48 +1970,47 @@ async def _evolve_multi_challenger(
         # challenger whose mutation-id set overlaps an accepted sibling beyond
         # the ceiling. Skipped entirely (no key emitted) when tolerance is
         # None, so the default path is byte-identical.
-        if challenger is not None and diversity_tolerance is not None:
-            cand_ids = frozenset(challenger.experiment.hypothesis.modulating)
-            overlap, peer_idx = _max_overlap_with_accepted(cand_ids, accepted_mutation_sets)
-            if cand_ids and overlap > diversity_tolerance:
-                hyp = challenger.experiment.hypothesis
-                peer_gid = applied[peer_idx].generation_id if 0 <= peer_idx < len(applied) else ""
-                overlap_status = {
-                    "generation_id": challenger.generation_id,
-                    "status": "rejected",
-                    "reason": "field_diversity_overlap",
-                    "diversity_status": "soft_rejected",
-                    "attempts": (int(status.get("attempts", 0)) if isinstance(status, dict) else 0),
-                    "attempt_reasons": [
-                        f"mutation-id overlap {overlap:.3f} with sibling "
-                        f"{peer_gid or '(accepted)'} exceeds diversity_tolerance "
-                        f"{diversity_tolerance:.3f}; soft-rejected to keep the field diverse"
-                    ],
-                    "hypothesis": _trim_reason(hyp.core_idea),
-                    "seed": offset + 2,
-                    "overlap": round(overlap, 6),
-                    "overlap_peer": peer_gid,
-                    "diversity_tolerance": diversity_tolerance,
-                }
-                field_status.append(overlap_status)
-                _publish_proposing(overlap_status)
-                diversity_soft_rejected += 1
-                log.info(
-                    "multi-challenger field: %s/%s overlaps sibling %s by %.3f "
-                    "(> tolerance %.3f); soft-rejected for field diversity",
-                    epoch_id,
-                    challenger.generation_id,
-                    peer_gid,
-                    overlap,
-                    diversity_tolerance,
-                )
-                _persist_soft_reject(
-                    challenger.generation_id,
-                    "field_diversity_overlap",
-                    f"overlap {overlap:.3f} with sibling {peer_gid or '(accepted)'} "
-                    f"exceeds diversity_tolerance {diversity_tolerance:.3f}",
-                )
-                continue
+        if challenger is not None and mint is not None and mint.action == "reject_overlap":
+            overlap, peer_idx = mint.overlap, mint.overlap_peer_index
+            assert diversity_tolerance is not None  # narrowed: overlap fires only with a tolerance
+            hyp = challenger.experiment.hypothesis
+            peer_gid = applied[peer_idx].generation_id if 0 <= peer_idx < len(applied) else ""
+            overlap_status = {
+                "generation_id": challenger.generation_id,
+                "status": "rejected",
+                "reason": "field_diversity_overlap",
+                "diversity_status": "soft_rejected",
+                "attempts": (int(status.get("attempts", 0)) if isinstance(status, dict) else 0),
+                "attempt_reasons": [
+                    f"mutation-id overlap {overlap:.3f} with sibling "
+                    f"{peer_gid or '(accepted)'} exceeds diversity_tolerance "
+                    f"{diversity_tolerance:.3f}; soft-rejected to keep the field diverse"
+                ],
+                "hypothesis": _trim_reason(hyp.core_idea),
+                "seed": offset + 2,
+                "overlap": round(overlap, 6),
+                "overlap_peer": peer_gid,
+                "diversity_tolerance": diversity_tolerance,
+            }
+            field_status.append(overlap_status)
+            _publish_proposing(overlap_status)
+            diversity_soft_rejected += 1
+            log.info(
+                "multi-challenger field: %s/%s overlaps sibling %s by %.3f "
+                "(> tolerance %.3f); soft-rejected for field diversity",
+                epoch_id,
+                challenger.generation_id,
+                peer_gid,
+                overlap,
+                diversity_tolerance,
+            )
+            _persist_soft_reject(
+                challenger.generation_id,
+                "field_diversity_overlap",
+                f"overlap {overlap:.3f} with sibling {peer_gid or '(accepted)'} "
+                f"exceeds diversity_tolerance {diversity_tolerance:.3f}",
+            )
+            continue
         if challenger is not None and diversity_tolerance is not None and isinstance(status, dict):
             # Enforcement active and the challenger is kept: stamp the slot
             # ``applied`` so the per-slot diversity status is explicit. Only
@@ -2553,63 +2439,28 @@ async def _evolve_multi_challenger(
     # the crowned/leading challenger's OutcomeRecord below (same shape as the
     # gauntlet), so #5's gap detector + the board-status surface work for
     # these structures too.
-    promoted_id = decision.promoted_generation_id
-    crowning_reason_override: str | None = None
-    crowning_holdout_block: dict[str, Any] | None = None
-    crowning_holdout_child_scalar: float | None = None
-    crowning_challenger_id: str | None = None
-    crowning_challenger_train_scalar: float | None = None
-    crowning_result = (
-        next(
-            (m for m in decision.matchups if m.matchup_id == decision.crowning_matchup_id),
-            None,
-        )
-        if decision.crowning_matchup_id
-        else None
+    crowning_confirm = await _confirm_crowning_on_holdout(
+        decision=decision,
+        parent_id=parent_id,
+        champion_gen=champion_gen,
+        generation_for=_generation_for,
+        adapter=adapter,
+        board=board,
+        weights=weights,
+        config=config,
+        workspace_root=workspace_root,
+        epoch_id=epoch_id,
+        disable_drift=disable_drift,
+        judge_only=judge_only,
+        fast_mode=fast_mode,
+        confirm_fn=confirm_crowning_holdout,
     )
-    if crowning_result is not None and decision.decision == "promoted" and promoted_id is not None:
-        # Identify the champion (parent) and challenger (survivor) sides of
-        # the crowning duel; ``left`` is the champion by the strategy's
-        # convention, but resolve defensively so a future strategy that
-        # seeds the champion on the right still confirms the right pair.
-        champ_is_left = crowning_result.left_id == parent_id
-        challenger_crown_id = crowning_result.right_id if champ_is_left else crowning_result.left_id
-        crowning_challenger_id = challenger_crown_id
-        champ_train_agg = crowning_result.left_agg if champ_is_left else crowning_result.right_agg
-        challenger_train_agg = (
-            crowning_result.right_agg if champ_is_left else crowning_result.left_agg
-        )
-        # The crowning challenger's TRAIN-slice scalar — paired with its
-        # holdout-slice scalar (below) for a consistent generalization gap
-        # measured on the SAME crowning duel (mirrors the gauntlet, where the
-        # gap is the child's train vs holdout scalar of the one duel).
-        crowning_challenger_train_scalar = float(challenger_train_agg.get("scalar", 0.0))
-        (
-            crowning_outcome,
-            crowning_holdout_block,
-            crowning_holdout_child_scalar,
-        ) = await confirm_crowning_holdout(
-            adapter=adapter,
-            champion_gen=champion_gen,
-            challenger_gen=_generation_for(challenger_crown_id),
-            board=board,
-            train_outcome=crowning_result.outcome,
-            train_parent_agg=champ_train_agg,
-            train_child_agg=challenger_train_agg,
-            weights=weights,
-            config=config,
-            workspace_root=workspace_root,
-            epoch_id=epoch_id,
-            disable_drift=disable_drift,
-            judge_only=judge_only,
-            fast=fast_mode,
-        )
-        if crowning_outcome.decision != "promoted":
-            # The holdout flipped a bracket-leader's train win to a reject:
-            # the champion stands, the crowned generation is demoted to a
-            # dead branch, and the crowning reason carries the holdout cause.
-            promoted_id = None
-            crowning_reason_override = crowning_outcome.reason
+    promoted_id = crowning_confirm.promoted_id
+    crowning_reason_override = crowning_confirm.reason_override
+    crowning_holdout_block = crowning_confirm.holdout_block
+    crowning_holdout_child_scalar = crowning_confirm.holdout_child_scalar
+    crowning_challenger_id = crowning_confirm.challenger_id
+    crowning_challenger_train_scalar = crowning_confirm.challenger_train_scalar
 
     # --- Operator gate override (control protocol) for the FIELD ---------
     # The structure has settled (train bracket + holdout confirmation) but
@@ -2632,92 +2483,24 @@ async def _evolve_multi_challenger(
     field_overrides: dict[str, GateOverride] = claim_field_gate_overrides(
         workspace_root, field_candidate_ids
     )
-    promoted_ids: set[str] = {promoted_id} if promoted_id is not None else set()
-    override_provenance: dict[str, dict[str, Any]] = {}
-    if field_overrides:
-        for gid, ov in field_overrides.items():
-            override_provenance[gid] = _field_override_provenance(workspace_root, ov)
-            if ov.decision == "promoted":
-                promoted_ids.add(gid)
-                log.warning(
-                    "evolve: operator field override — generation %s force-promoted "
-                    "(structure %s); recording as an explicit override. reason=%s",
-                    gid,
-                    tournament_spec.structure,
-                    ov.reason,
-                )
-            else:  # "rejected"
-                promoted_ids.discard(gid)
-                log.warning(
-                    "evolve: operator field override — generation %s force-rejected "
-                    "(structure %s); recording as an explicit override. reason=%s",
-                    gid,
-                    tournament_spec.structure,
-                    ov.reason,
-                )
-        # Re-resolve the PRIMARY head after the overrides mutated the set.
-        # Prefer the originally-crowned leader if it survived; otherwise the
-        # lowest-scalar promoted candidate is the deterministic new head
-        # (mirrors the gate's lower-scalar-wins convention). The set is empty
-        # only when every leader was force-rejected ⇒ the champion stands.
-        if promoted_id is not None and promoted_id in promoted_ids:
-            pass  # leader survived — primary head unchanged
-        elif promoted_ids:
-            promoted_id = min(
-                promoted_ids,
-                key=lambda g: (
-                    float((_first_aggregate_for(g, decision) or {}).get("scalar", 0.0)),
-                    g,
-                ),
-            )
-        else:
-            promoted_id = None
-
-    # The EFFECTIVE crowning verdict — what the workspace will actually
-    # commit. The strategy's ``decision`` reflects the TRAIN-slice bracket
-    # only; the holdout confirmation above can DEMOTE a train winner (sets
-    # ``promoted_id = None``), and an operator override can promote a
-    # non-winner or reject the leader. The durable bracket + the live envelope
-    # must describe the post-confirmation/post-override truth, NOT the
-    # pre-confirmation train decision — otherwise a settled bracket would
-    # assert ``promoted`` / ``promoted_generation_id`` for a generation the
-    # champion pointer + lineage never advance to (issue #20). A flip rewrites
-    # the decision to ``rejected`` with the cause and no promoted id, so every
-    # queryable store agrees the champion stood.
-    # When an operator override fired, the reason carries the override note so
-    # the settled bracket / journal one-liner is legible — never a silent flip.
-    override_decision_reason: str | None = None
-    if field_overrides:
-        head_ov = field_overrides.get(promoted_id) if promoted_id is not None else None
-        if head_ov is not None and head_ov.decision == "promoted":
-            override_decision_reason = f"operator override: {head_ov.reason}"
-        elif promoted_id is None:
-            # The leader was force-rejected and no candidate was promoted in
-            # its place — the champion stands under the operator's reject.
-            rej = next(
-                (o for o in field_overrides.values() if o.decision == "rejected"),
-                None,
-            )
-            if rej is not None:
-                override_decision_reason = f"operator override: {rej.reason}"
-
-    effective_decision = decision
-    _decision_reason = (
-        override_decision_reason
-        if override_decision_reason is not None
-        else (crowning_reason_override if crowning_reason_override is not None else decision.reason)
+    # The override RE-RESOLUTION is pure (`_apply_field_overrides`): given
+    # the claimed overrides + the post-holdout crowning state it derives the
+    # promoted set, the primary head, the per-generation provenance, and the
+    # EFFECTIVE decision (the post-confirmation/post-override truth every
+    # durable store must describe — issue #20). Only the claim above is I/O.
+    (
+        promoted_id,
+        promoted_ids,
+        override_provenance,
+        effective_decision,
+    ) = _apply_field_overrides(
+        workspace_root=workspace_root,
+        decision=decision,
+        promoted_id=promoted_id,
+        crowning_reason_override=crowning_reason_override,
+        field_overrides=field_overrides,
+        structure=tournament_spec.structure,
     )
-    if promoted_id != decision.promoted_generation_id or _decision_reason != decision.reason:
-        effective_decision = replace(
-            decision,
-            promoted_generation_id=promoted_id,
-            decision=(
-                TournamentDecision.PROMOTED
-                if promoted_id is not None
-                else TournamentDecision.REJECTED
-            ),
-            reason=_decision_reason,
-        )
 
     # Settle the live envelope with the resolved rounds + standings so the
     # dashboard's structure reader sees the final bracket. Unlike the
@@ -2883,9 +2666,18 @@ async def _evolve_multi_challenger(
             holdout_loss=gen_fields["holdout_loss"],
             generalization_gap=gen_fields["generalization_gap"],
         )
-        finalised = update_experiment_outcome(workspace_root, epoch_id, gid, outcome_record)
-        finalised_by_id[gid] = finalised
-        _ingest_experiment_into_index(workspace_root, epoch_id, gid)
+        # Shared outcome→index pipeline. Lineage + journal are deferred to
+        # the loops below so the multi-challenger write ORDER is preserved:
+        # every outcome persists, THEN the crowning invariant is checked,
+        # THEN lineage + the champion marker advance, THEN the journal —
+        # an invariant violation must abort before any lineage write.
+        finalised_by_id[gid] = _finalize_generation(
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            generation_id=gid,
+            outcome=outcome_record,
+            journal=False,
+        )
 
     # --- Crowning invariant (issue #20): the durable bracket and the
     # champion state MUST agree. A settled bracket that records ``promoted``
@@ -2950,31 +2742,19 @@ async def _evolve_multi_challenger(
     for challenger in applied:
         append_journal_entry(workspace_root, epoch_id, finalised_by_id[challenger.generation_id])
 
-    # --- Loop-health + analyzer + report (mirrors the gauntlet path).
-    round_n = _round_n_from_generation_id(applied[0].generation_id) or round_index
-    health_summary, health_critical = _assess_and_persist_loop_health(
-        workspace_root, epoch_id, round_n, board
+    # --- Shared round epilogue (loop-health + analyzer + report) — the
+    # same `_round_epilogue` the gauntlet path runs.
+    health_summary, health_critical = await _round_epilogue(
+        workspace_root=workspace_root,
+        epoch_id=epoch_id,
+        board=board,
+        round_n=_round_n_from_generation_id(applied[0].generation_id) or round_index,
+        analyzer_round=_round_n_from_generation_id(applied[0].generation_id),
+        mutations=mutations,
+        auxiliary_call_llm=auxiliary_call_llm,
+        auxiliary_model=auxiliary_model,
+        meta_loop_emitter=meta_loop_emitter,
     )
-    if health_critical:
-        _warn_loop_no_signal(epoch_id, round_n, health_summary)
-
-    with best_effort(
-        "decision telemetry analyzer",
-        on_error=lambda exc: log.debug("decision telemetry analyzer skipped: %s", exc),
-    ):
-        from zicato.analyzer import analyze_epoch_telemetry  # noqa: PLC0415
-
-        await analyze_epoch_telemetry(
-            workspace_root,
-            epoch_id,
-            auxiliary_call_llm,
-            model=auxiliary_model,
-            round_n=_round_n_from_generation_id(applied[0].generation_id),
-            mutation_ids=[m.id for m in mutations],
-            meta_loop_emitter=meta_loop_emitter,
-        )
-
-    await _regenerate_epoch_report(workspace_root, epoch_id, auxiliary_call_llm, auxiliary_model)
 
     bookkeeping_decision = "promoted" if promoted_id is not None else "rejected"
     # Progress transition: the field tournament settled — record the
@@ -3119,6 +2899,526 @@ def _first_aggregate_for(gid: str, decision: Any) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 # Round-decision + outcome helpers shared by the evolve pipelines
 # ---------------------------------------------------------------------------
+
+
+async def _propose_child(
+    *,
+    proposer_agent: ProposerAgent,
+    epoch_id: str,
+    parent_id: str,
+    next_id: str,
+    patterns: Any,
+    mutations: Any,
+    brief: Any,
+    loss_summary: str,
+    auxiliary_call_llm: CallLLM,
+    auxiliary_model: str,
+    max_proposer_retries: int,
+    workspace_root: Path,
+    validate_experiment: Any,
+    meta_loop_emitter: Any,
+    custom_judge_names: frozenset[str],
+    prior_experiments: tuple[PriorExperiment, ...],
+    restrict_visibility: bool,
+    failure_profile: str,
+    round_index: int,
+) -> Experiment:
+    """Build the :class:`ProposerContext` + propose ONE child of the champion.
+
+    The single propose shape both pipelines share — the gauntlet's inline
+    propose block and :func:`_propose_and_apply_challenger` previously built
+    near-identical contexts, so a new ``ProposerContext`` field could land on
+    one path only. Raises :class:`~zicato.proposer.proposer.ProposerError`
+    exactly as the inner agent does (callers own the rejected-outcome /
+    narrower-field handling).
+
+    The returned experiment carries the EVOLVE ``round_index`` stamped on —
+    the authoritative birth round the dashboard's round-grouping and the
+    journal read (issue #16); the proposer's default is round 0.
+    """
+    from zicato.proposer.agent import ProposerContext  # noqa: PLC0415
+
+    experiment = await proposer_agent.propose(
+        ProposerContext(
+            epoch_id=epoch_id,
+            parent_generation_id=parent_id,
+            new_generation_id=next_id,
+            patterns=tuple(patterns),
+            mutations=tuple(mutations),
+            brief_text=brief.text,
+            current_loss_summary=loss_summary,
+            aux_call_llm=auxiliary_call_llm,
+            model=auxiliary_model,
+            max_retries=max_proposer_retries,
+            forbidden_ids=brief.forbidden_ids,
+            workspace_root=workspace_root,
+            validate_experiment=validate_experiment,
+            meta_loop_emitter=meta_loop_emitter,
+            custom_judge_names=custom_judge_names,
+            prior_experiments=prior_experiments,
+            restrict_visibility=restrict_visibility,
+            failure_profile=failure_profile,
+        )
+    )
+    return replace(experiment, round_index=round_index)
+
+
+def _finalize_generation(
+    *,
+    workspace_root: Path,
+    epoch_id: str,
+    generation_id: str,
+    outcome: OutcomeRecord,
+    lineage_generation: Generation | None = None,
+    lineage_parent_id: str | None = None,
+    advance_current_generation: bool = False,
+    journal: bool = True,
+) -> Experiment:
+    """Persist one generation's terminal outcome through every store.
+
+    The ONE write pipeline every round tail flows through:
+
+    1. ``update_experiment_outcome`` — the :class:`OutcomeRecord` lands on
+       ``experiment.json`` (the canonical record; a field present on the
+       record can no longer be dropped by one tail's hand-rolled copy);
+    2. live SQLite index dual-write (best-effort, never aborts the round);
+    3. optional lineage upsert (``lineage_generation`` — ``None`` for a
+       validation-rejected round that never entered lineage, and for the
+       multi-challenger loop which defers lineage until after its crowning
+       invariant checks);
+    4. optional champion-marker advance (``advance_current_generation`` —
+       the gauntlet's on-promotion step, sequenced between lineage and
+       journal exactly as the inline tail wrote them);
+    5. optional journal append (``journal=False`` lets the multi-challenger
+       path keep its all-outcomes-then-all-journals order).
+
+    Returns the finalised :class:`Experiment` for the caller to journal /
+    summarise.
+    """
+    from zicato.epoch import (  # noqa: PLC0415
+        append_journal_entry,
+        append_to_lineage,
+        update_experiment_outcome,
+    )
+
+    finalised = update_experiment_outcome(workspace_root, epoch_id, generation_id, outcome)
+    # Live index dual-write: experiment.json now carries the outcome —
+    # refresh the SQLite analytical index entry for it.
+    _ingest_experiment_into_index(workspace_root, epoch_id, generation_id)
+    if lineage_generation is not None:
+        append_to_lineage(workspace_root, epoch_id, lineage_generation, parent_id=lineage_parent_id)
+    if advance_current_generation:
+        _set_current_generation(workspace_root, epoch_id, generation_id)
+    if journal:
+        append_journal_entry(workspace_root, epoch_id, finalised)
+    return finalised
+
+
+async def _round_epilogue(
+    *,
+    workspace_root: Path,
+    epoch_id: str,
+    board: list[Any],
+    round_n: int,
+    analyzer_round: int | None,
+    mutations: list[Any],
+    auxiliary_call_llm: CallLLM,
+    auxiliary_model: str,
+    meta_loop_emitter: Any,
+    run_analyzer: bool = True,
+) -> tuple[str, bool]:
+    """The shared end-of-round tail: loop-health + analyzer + epoch report.
+
+    Near-verbatim duplicated across the gauntlet and multi-challenger paths
+    before extraction; now both call here so a new epilogue step can never
+    land on one pipeline only. Every step is best-effort by contract:
+
+    * per-round loop-health assessment persisted to
+      ``epochs/{epoch}/health/round_{round_n}.json``, with the CRITICAL
+      no-signal stderr WARNING;
+    * the decision-telemetry analyzer (writes ``insights/round_{N}.md``
+      for the next round's proposer) — skipped on the gauntlet's
+      validation-reject tail (``run_analyzer=False``), which historically
+      never ran it;
+    * the comprehensive epoch analysis report regeneration.
+
+    Returns ``(health_summary, health_critical)`` for the round outcome.
+    """
+    health_summary, health_critical = _assess_and_persist_loop_health(
+        workspace_root, epoch_id, round_n, board
+    )
+    if health_critical:
+        _warn_loop_no_signal(epoch_id, round_n, health_summary)
+
+    if run_analyzer:
+        with best_effort(
+            "decision telemetry analyzer",
+            on_error=lambda exc: log.debug("decision telemetry analyzer skipped: %s", exc),
+        ):
+            from zicato.analyzer import analyze_epoch_telemetry  # noqa: PLC0415
+
+            await analyze_epoch_telemetry(
+                workspace_root,
+                epoch_id,
+                auxiliary_call_llm,
+                model=auxiliary_model,
+                round_n=analyzer_round,
+                # Ground the insight prompt in the agent's REAL mutation
+                # surface so the LLM's "Suggested next mutations" section
+                # cannot hallucinate mutation target ids that do not exist.
+                mutation_ids=[m.id for m in mutations],
+                meta_loop_emitter=meta_loop_emitter,
+            )
+
+    await _regenerate_epoch_report(workspace_root, epoch_id, auxiliary_call_llm, auxiliary_model)
+    return health_summary, health_critical
+
+
+async def _persist_rejected_round(
+    *,
+    workspace_root: Path,
+    epoch_id: str,
+    parent_id: str,
+    next_id: str,
+    experiment: Experiment,
+    validation_errors: list[str],
+    proposer_retries_exhausted: bool,
+    board: list[Any],
+    round_index: int,
+    auxiliary_call_llm: CallLLM,
+    auxiliary_model: str,
+    beater: HeartbeatBeater | None,
+) -> EvolveRoundOutcome:
+    """Persist a gauntlet round rejected before its tournament ever ran.
+
+    The validation-reject tail: the experiment is written with a rejected
+    :class:`OutcomeRecord` describing the validator findings, folded through
+    the shared :func:`_finalize_generation` pipeline (no lineage entry — the
+    generation never earned one), and the shared :func:`_round_epilogue`
+    still runs (minus the analyzer, which this tail historically skipped) so
+    a stuck loop surfaces on the dashboard even on early rejections.
+
+    Two distinct symbolic reasons: ``validation_failed`` when a single
+    applied patch set failed post-apply validation;
+    ``proposer_retries_exhausted`` when the proposer could not produce a
+    patch set that survives validation within its bounded retry budget.
+    """
+    from zicato.epoch import write_experiment  # noqa: PLC0415
+    from zicato.runtime import progress_log  # noqa: PLC0415
+
+    write_experiment(workspace_root, epoch_id, next_id, experiment)
+    if proposer_retries_exhausted:
+        rejection_reason = "proposer_retries_exhausted: " + "; ".join(validation_errors)
+    else:
+        rejection_reason = "validation_failed: " + "; ".join(validation_errors)
+    rejected_outcome = OutcomeRecord(
+        ran_at=_now_iso(),
+        drift_movements=(),
+        pass_rate_delta=0.0,
+        drift_loss_delta=0.0,
+        scalar_score_delta=0.0,
+        tournament_decision=TournamentDecision.REJECTED,
+        rejection_reason=rejection_reason,
+    )
+    _finalize_generation(
+        workspace_root=workspace_root,
+        epoch_id=epoch_id,
+        generation_id=next_id,
+        outcome=rejected_outcome,
+    )
+    health_summary, health_critical = await _round_epilogue(
+        workspace_root=workspace_root,
+        epoch_id=epoch_id,
+        board=board,
+        round_n=_round_n_from_generation_id(next_id) or round_index,
+        analyzer_round=None,
+        mutations=[],
+        auxiliary_call_llm=auxiliary_call_llm,
+        auxiliary_model=auxiliary_model,
+        meta_loop_emitter=None,
+        run_analyzer=False,
+    )
+    _beat(
+        beater,
+        workspace_root=workspace_root,
+        progress=progress_log.REJECT,
+        epoch_id=epoch_id,
+        generation_id=next_id,
+        round_index=round_index,
+        phase=f"done:round_{round_index}:{next_id}:rejected",
+    )
+    return EvolveRoundOutcome(
+        parent_generation_id=parent_id,
+        proposed_generation_id=next_id,
+        tournament_decision="rejected",
+        rejection_reason=rejected_outcome.rejection_reason,
+        parent_scalar=0.0,
+        child_scalar=0.0,
+        delta_scalar=0.0,
+        health_summary=health_summary,
+        health_critical=health_critical,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _FieldMintDecision:
+    """The pure accept/soft-reject verdict for one proposed field slot.
+
+    ``action`` is one of ``"accept"`` (the challenger joins the run slate),
+    ``"reject_duplicate"`` (exact in-flight duplicate — same modulating
+    id-set + core idea as a minted sibling), or ``"reject_overlap"`` (the
+    opt-in Jaccard-overlap ceiling fired; ``overlap`` /
+    ``overlap_peer_index`` locate the most-overlapping ACCEPTED sibling).
+    """
+
+    action: str
+    overlap: float = 0.0
+    overlap_peer_index: int = -1
+
+
+def _mint_challenger_field(
+    experiment: Experiment,
+    sibling_signatures: list[tuple[frozenset[str], str]],
+    accepted_mutation_sets: list[frozenset[str]],
+    diversity_tolerance: float | None,
+) -> _FieldMintDecision:
+    """Decide whether a freshly-applied challenger joins the field — PURE.
+
+    The field-diversity DECISION separated from its persistence I/O
+    (FUNCTIONALITY-RECOMMENDATIONS.md §4.3 / EXPERIMENT-MEMORY.md §2.2), so
+    the previously e2e-only branches are unit-testable:
+
+    1. An exact duplicate of an already-minted in-flight sibling (same
+       modulating id-set AND core idea) collapses the field ⇒ soft-reject.
+    2. With a configured ``diversity_tolerance``, a non-empty mutation-id
+       set whose Jaccard overlap with an already-ACCEPTED sibling's exceeds
+       the tolerance ⇒ soft-reject. ``None`` tolerance skips this check
+       entirely (the default-off path).
+    3. Otherwise: accept.
+    """
+    if _duplicates_inflight_sibling(experiment, sibling_signatures):
+        return _FieldMintDecision(action="reject_duplicate")
+    if diversity_tolerance is not None:
+        cand_ids = frozenset(experiment.hypothesis.modulating)
+        overlap, peer_idx = _max_overlap_with_accepted(cand_ids, accepted_mutation_sets)
+        if cand_ids and overlap > diversity_tolerance:
+            return _FieldMintDecision(
+                action="reject_overlap", overlap=overlap, overlap_peer_index=peer_idx
+            )
+    return _FieldMintDecision(action="accept")
+
+
+@dataclass(frozen=True, slots=True)
+class _CrowningHoldout:
+    """The post-holdout crowning state for a resolved multi-challenger field.
+
+    ``promoted_id`` is the (possibly demoted-to-``None``) crowned
+    generation; ``reason_override`` carries the holdout cause when the
+    confirmation flipped a train win; the remaining fields are the
+    evidence the crowning challenger's :class:`OutcomeRecord` stamps
+    (holdout block + the train/holdout scalar pair the generalization gap
+    is measured from).
+    """
+
+    promoted_id: str | None
+    reason_override: str | None = None
+    holdout_block: dict[str, Any] | None = None
+    holdout_child_scalar: float | None = None
+    challenger_id: str | None = None
+    challenger_train_scalar: float | None = None
+
+
+async def _confirm_crowning_on_holdout(
+    *,
+    decision: Any,
+    parent_id: str,
+    champion_gen: Generation,
+    generation_for: Callable[[str], Generation],
+    adapter: Any,
+    board: list[Any],
+    weights: Any,
+    config: Any,
+    workspace_root: Path,
+    epoch_id: str,
+    disable_drift: tuple[Any, ...],
+    judge_only: bool,
+    fast_mode: bool,
+    confirm_fn: Any,
+) -> _CrowningHoldout:
+    """Confirm a field's crowning train-promote on the holdout slice.
+
+    OVERFITTING.md §3/§4 on the multi-challenger path: the structure
+    resolved its leader on the TRAIN slice; a ``promoted`` crowning duel
+    must ALSO confirm on the holdout — through the SAME Ladder-mediated
+    machinery + per-epoch budget the gauntlet uses (``confirm_fn`` is
+    :func:`zicato.tournament.runner.confirm_crowning_holdout`, injected so
+    the decision shape is unit-testable). A released non-confirmation flips
+    the crowning promote to a holdout reject: the champion stands and
+    ``reason_override`` carries the cause. No crowning duel / a
+    non-promote / an empty holdout ⇒ the decision passes through unchanged.
+
+    The champion (parent) side is resolved defensively — ``left`` is the
+    champion by the strategy's convention, but a future strategy that seeds
+    the champion on the right still confirms the right pair. The crowning
+    challenger's TRAIN-slice scalar is paired with its holdout-slice scalar
+    so the generalization gap is measured on the SAME crowning duel
+    (mirroring the gauntlet).
+    """
+    promoted_id = decision.promoted_generation_id
+    crowning_result = (
+        next(
+            (m for m in decision.matchups if m.matchup_id == decision.crowning_matchup_id),
+            None,
+        )
+        if decision.crowning_matchup_id
+        else None
+    )
+    if crowning_result is None or decision.decision != "promoted" or promoted_id is None:
+        return _CrowningHoldout(promoted_id=promoted_id)
+
+    champ_is_left = crowning_result.left_id == parent_id
+    challenger_crown_id = crowning_result.right_id if champ_is_left else crowning_result.left_id
+    champ_train_agg = crowning_result.left_agg if champ_is_left else crowning_result.right_agg
+    challenger_train_agg = crowning_result.right_agg if champ_is_left else crowning_result.left_agg
+    challenger_train_scalar = float(challenger_train_agg.get("scalar", 0.0))
+    (
+        crowning_outcome,
+        holdout_block,
+        holdout_child_scalar,
+    ) = await confirm_fn(
+        adapter=adapter,
+        champion_gen=champion_gen,
+        challenger_gen=generation_for(challenger_crown_id),
+        board=board,
+        train_outcome=crowning_result.outcome,
+        train_parent_agg=champ_train_agg,
+        train_child_agg=challenger_train_agg,
+        weights=weights,
+        config=config,
+        workspace_root=workspace_root,
+        epoch_id=epoch_id,
+        disable_drift=disable_drift,
+        judge_only=judge_only,
+        fast=fast_mode,
+    )
+    reason_override: str | None = None
+    if crowning_outcome.decision != "promoted":
+        # The holdout flipped a bracket-leader's train win to a reject:
+        # the champion stands, the crowned generation is demoted to a
+        # dead branch, and the crowning reason carries the holdout cause.
+        promoted_id = None
+        reason_override = crowning_outcome.reason
+    return _CrowningHoldout(
+        promoted_id=promoted_id,
+        reason_override=reason_override,
+        holdout_block=holdout_block,
+        holdout_child_scalar=holdout_child_scalar,
+        challenger_id=challenger_crown_id,
+        challenger_train_scalar=challenger_train_scalar,
+    )
+
+
+def _apply_field_overrides(
+    *,
+    workspace_root: Path,
+    decision: Any,
+    promoted_id: str | None,
+    crowning_reason_override: str | None,
+    field_overrides: dict[str, GateOverride],
+    structure: str,
+) -> tuple[str | None, set[str], dict[str, dict[str, Any]], Any]:
+    """Re-resolve the field's crowning under claimed operator overrides — PURE.
+
+    Given the strategy's ``decision``, the post-holdout ``promoted_id``, and
+    the operator's claimed per-generation overrides, derives:
+
+    * ``promoted_ids`` — the (possibly multi-element) promoted SET. With no
+      override it is exactly ``{promoted_id}`` (or empty), so the
+      single-promotion path is byte-identical.
+    * ``promoted_id`` — the PRIMARY head that advances
+      ``current_generation``. The originally-crowned leader if it survived;
+      otherwise the lowest-scalar operator-promoted candidate (mirroring the
+      gate's lower-scalar-wins convention); ``None`` when every leader was
+      force-rejected (the champion stands).
+    * ``override_provenance`` — the per-generation override-status readback
+      for the durable field record (never a silent flip).
+    * ``effective_decision`` — the EFFECTIVE crowning verdict the workspace
+      will actually commit: the post-confirmation/post-override truth every
+      durable store must describe (issue #20). A flip rewrites the decision
+      to ``rejected`` with the cause and no promoted id; an override's
+      reason is carried so the settled bracket / journal one-liner is
+      legible.
+    """
+    promoted_ids: set[str] = {promoted_id} if promoted_id is not None else set()
+    override_provenance: dict[str, dict[str, Any]] = {}
+    if field_overrides:
+        for gid, ov in field_overrides.items():
+            override_provenance[gid] = _field_override_provenance(workspace_root, ov)
+            if ov.decision == "promoted":
+                promoted_ids.add(gid)
+                log.warning(
+                    "evolve: operator field override — generation %s force-promoted "
+                    "(structure %s); recording as an explicit override. reason=%s",
+                    gid,
+                    structure,
+                    ov.reason,
+                )
+            else:  # "rejected"
+                promoted_ids.discard(gid)
+                log.warning(
+                    "evolve: operator field override — generation %s force-rejected "
+                    "(structure %s); recording as an explicit override. reason=%s",
+                    gid,
+                    structure,
+                    ov.reason,
+                )
+        # Re-resolve the PRIMARY head after the overrides mutated the set.
+        if promoted_id is not None and promoted_id in promoted_ids:
+            pass  # leader survived — primary head unchanged
+        elif promoted_ids:
+            promoted_id = min(
+                promoted_ids,
+                key=lambda g: (
+                    float((_first_aggregate_for(g, decision) or {}).get("scalar", 0.0)),
+                    g,
+                ),
+            )
+        else:
+            promoted_id = None
+
+    override_decision_reason: str | None = None
+    if field_overrides:
+        head_ov = field_overrides.get(promoted_id) if promoted_id is not None else None
+        if head_ov is not None and head_ov.decision == "promoted":
+            override_decision_reason = f"operator override: {head_ov.reason}"
+        elif promoted_id is None:
+            # The leader was force-rejected and no candidate was promoted in
+            # its place — the champion stands under the operator's reject.
+            rej = next(
+                (o for o in field_overrides.values() if o.decision == "rejected"),
+                None,
+            )
+            if rej is not None:
+                override_decision_reason = f"operator override: {rej.reason}"
+
+    effective_decision = decision
+    _decision_reason = (
+        override_decision_reason
+        if override_decision_reason is not None
+        else (crowning_reason_override if crowning_reason_override is not None else decision.reason)
+    )
+    if promoted_id != decision.promoted_generation_id or _decision_reason != decision.reason:
+        effective_decision = replace(
+            decision,
+            promoted_generation_id=promoted_id,
+            decision=(
+                TournamentDecision.PROMOTED
+                if promoted_id is not None
+                else TournamentDecision.REJECTED
+            ),
+            reason=_decision_reason,
+        )
+    return promoted_id, promoted_ids, override_provenance, effective_decision
 
 
 def _gauntlet_decision_from_result(
