@@ -291,9 +291,9 @@ read.
 landed used an inline `patches: [{...}, ...]` array directly on
 `experiment.json`. The read helper transparently accepts that old
 shape for backward compatibility; new writes always use the
-per-patch layout. The `zicato.epoch.migrate.migrate_inline_to_perpatch`
-utility brings an old generation in line with the new layout when
-the operator wants a clean conversion.
+per-patch layout (and stamp `format_version: 1` — see STORAGE.md §8).
+The one-shot `zicato.epoch.migrate` converter was deleted once nothing
+live called it.
 
 The patch is referenced by mutation id, not by file path. The
 applier resolves the id to a location and rewrites it. See

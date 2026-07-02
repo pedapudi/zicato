@@ -45,6 +45,19 @@ import sqlite3
 SCHEMA_VERSION = 10
 
 
+class IndexSchemaNewerError(RuntimeError):
+    """The index database was written by a NEWER zicato than this build.
+
+    Raised by :func:`apply_schema` when ``PRAGMA user_version`` exceeds
+    :data:`SCHEMA_VERSION`: an older writer must never silently re-stamp
+    a newer database DOWN (the newer schema may carry columns/semantics
+    this build does not understand, and the down-stamp would corrupt the
+    version signal for the newer build). The index is derived and always
+    rebuildable, so the recovery is cheap — upgrade zicato, or delete the
+    database and run ``zicato reindex``.
+    """
+
+
 #: The canonical table DDL. Ordered so that ``CREATE TABLE`` statements
 #: precede the ``CREATE INDEX`` statements that reference them. Every
 #: statement is ``IF NOT EXISTS`` so :func:`apply_schema` is safe to run
@@ -355,7 +368,21 @@ def apply_schema(conn: sqlite3.Connection) -> None:
 
     Both the ``user_version`` pragma and the ``schema_meta`` table are
     stamped with :data:`SCHEMA_VERSION`.
+
+    Raises :class:`IndexSchemaNewerError` when the database's stamped
+    ``user_version`` EXCEEDS this build's :data:`SCHEMA_VERSION` —
+    re-stamping a newer database down would silently corrupt the version
+    signal for the newer writer. (In-place migration only ever carries an
+    OLDER database forward.)
     """
+    current = read_schema_version(conn)
+    if current > SCHEMA_VERSION:
+        raise IndexSchemaNewerError(
+            f"index database schema is v{current}, newer than this build's "
+            f"v{SCHEMA_VERSION}; refusing to re-stamp it down. Upgrade "
+            "zicato, or delete the index database and run `zicato reindex` "
+            "(the index is derived — a rebuild loses nothing)."
+        )
     # Step the v1 -> v2 migration first so an older file's CREATE TABLE
     # statement (a no-op because the table already exists) does not skip
     # adding the new columns. Then the IF-NOT-EXISTS statements below
@@ -515,6 +542,7 @@ def read_schema_version(conn: sqlite3.Connection) -> int:
 
 __all__ = [
     "SCHEMA_VERSION",
+    "IndexSchemaNewerError",
     "apply_schema",
     "read_schema_version",
 ]

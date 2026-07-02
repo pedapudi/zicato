@@ -1007,6 +1007,11 @@ def rebuild_index(workspace_root: Path, db_path: Path | None = None) -> Path:
     conn = sqlite3.connect(str(target))
     try:
         conn.execute("PRAGMA journal_mode=WAL")
+        # Same short lock wait every other index connection sets: a rebuild
+        # racing a live reader (dashboard / supervisor) should queue behind
+        # the lock briefly rather than fail immediately with
+        # "database is locked".
+        conn.execute("PRAGMA busy_timeout=5000")
         apply_schema(conn)
         _rebuild_all(conn, workspace_root)
         # The read-only Elo analytics fold runs AFTER every tournament has

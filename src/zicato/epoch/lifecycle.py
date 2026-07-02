@@ -52,7 +52,9 @@ from zicato.core.workspace import (
     scoring_path,
 )
 from zicato.epoch._storage import (
+    RECORD_FORMAT_VERSION,
     backend_for,
+    check_record_format,
     current_epoch_key,
     epoch_config_key,
     scoring_key,
@@ -168,6 +170,9 @@ def _scoring_from_dict(d: dict[str, Any]) -> ScoringWeights:
 
 def _config_to_dict(cfg: EpochConfig) -> dict[str, Any]:
     return {
+        # Record-format version (WS5): stamped at write, checked at read
+        # (absent-on-read reads as version 1 so pre-stamp epochs load).
+        "format_version": RECORD_FORMAT_VERSION,
         "id": cfg.id,
         "name": cfg.name,
         "created_at": cfg.created_at,
@@ -277,6 +282,9 @@ def load_epoch(workspace_root: Path, epoch_id: str) -> EpochConfig:
     raw = backend_for(workspace_root).read_json(epoch_config_key(epoch_id))
     if raw is None:
         raise FileNotFoundError(f"epoch {epoch_id!r} has no config.json under {workspace_root}")
+    # Record-format guard (WS5): absent ⇒ version 1 (pre-stamp epochs keep
+    # loading); a future incompatible version refuses with a clear error.
+    check_record_format(raw, f"epochs/{epoch_id}/config.json")
     return _config_from_dict(raw)
 
 
@@ -306,6 +314,10 @@ def list_epochs(workspace_root: Path) -> list[EpochConfig]:
             continue
         if raw is None:
             continue
+        # Record-format guard (WS5): a future incompatible config.json is a
+        # LOUD refusal, not a silent skip — unlike a torn in-progress write,
+        # the record is intact and the operator must know why it won't load.
+        check_record_format(raw, f"epochs/{epoch_id}/config.json")
         try:
             out.append(_config_from_dict(raw))
         except (KeyError, TypeError):

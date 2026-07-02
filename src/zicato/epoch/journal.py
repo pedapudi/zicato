@@ -46,7 +46,9 @@ from zicato.core.types import (
 )
 from zicato.core.workspace import epoch_dir
 from zicato.epoch._storage import (
+    RECORD_FORMAT_VERSION,
     backend_for,
+    check_record_format,
     experiment_key,
     journal_key,
     patch_key,
@@ -401,6 +403,11 @@ def write_experiment(
         )
 
     body: dict[str, Any] = {
+        # Record-format version (WS5): stamped at write, checked at read.
+        # Absent-on-read is treated as version 1 (pre-stamp records keep
+        # loading); a HIGHER version refuses with a clear error rather
+        # than misreading a future incompatible shape.
+        "format_version": RECORD_FORMAT_VERSION,
         "id": experiment.id,
         "epoch_id": experiment.epoch_id,
         "generation_id": experiment.generation_id,
@@ -476,6 +483,9 @@ def read_experiment(
             f"experiment.json not found for {epoch_id}/{generation_id} "
             f"(storage key {exp_key!r})"
         )
+    # Record-format guard (WS5): absent ⇒ version 1 (pre-stamp records keep
+    # loading); a future incompatible version refuses with a clear error.
+    check_record_format(body, f"experiment.json ({epoch_id}/{generation_id})")
 
     raw_inline = body.get("patches")
     patch_ids = body.get("patch_ids")

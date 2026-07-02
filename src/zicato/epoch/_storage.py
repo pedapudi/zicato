@@ -98,6 +98,43 @@ def journal_key(epoch_id: str) -> str:
     return f"{_epoch_ns(epoch_id)}/journal.md"
 
 
+#: Version stamped into the CANONICAL JSON records (``experiment.json``,
+#: each epoch's ``config.json``, ``lineage.json``) at write time (WS5).
+#: A record with NO ``format_version`` key is treated as version 1 THIS
+#: release — every pre-stamp workspace/fixture keeps reading — so the
+#: refusal targets FUTURE incompatible shapes only: a record stamped
+#: with a HIGHER version was written by a newer zicato whose shape this
+#: build cannot promise to interpret, and the reader refuses with a
+#: clear error instead of silently misreading it. There are NO migration
+#: shims; bumping this constant is a deliberate format break.
+RECORD_FORMAT_VERSION = 1
+
+
+class RecordFormatError(RuntimeError):
+    """A canonical JSON record's ``format_version`` is not readable here."""
+
+
+def check_record_format(body: dict[str, object], record_name: str) -> None:
+    """Refuse a canonical record whose ``format_version`` this build cannot read.
+
+    ``body`` is the parsed JSON record; ``record_name`` names it in the
+    error (e.g. ``"experiment.json"``). Absent ⇒ version 1 (pre-stamp
+    records — accepted this release); equal ⇒ fine; anything else raises
+    :class:`RecordFormatError` with the upgrade guidance.
+    """
+    raw = body.get("format_version")
+    if raw is None:
+        return  # pre-stamp record — version 1 by definition this release
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw == RECORD_FORMAT_VERSION:
+        return
+    raise RecordFormatError(
+        f"{record_name}: format_version {raw!r} is not readable by this "
+        f"zicato (expects {RECORD_FORMAT_VERSION}); the record was written "
+        "by an incompatible (likely newer) version — upgrade zicato rather "
+        "than letting an old reader misinterpret it"
+    )
+
+
 def lineage_key() -> str:
     """Storage key for the workspace-level ``lineage.json``."""
     return "lineage.json"
@@ -125,7 +162,10 @@ def patch_key(epoch_id: str, generation_id: str, patch_id: str) -> str:
 
 __all__ = [
     "EPOCHS_NS",
+    "RECORD_FORMAT_VERSION",
+    "RecordFormatError",
     "backend_for",
+    "check_record_format",
     "epoch_config_key",
     "scoring_key",
     "journal_key",

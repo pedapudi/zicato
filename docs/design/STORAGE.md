@@ -394,10 +394,22 @@ speculation.
 
 The git backend for kind 3 (generation source trees) **ships**, in
 `zicato.epoch.git_genstore`, as a drop-in second `GenerationStore`
-implementation. `DirectoryGenerationStore` stays the default and the
-always-available fallback; the git backend is selected off
-`config.json`'s `storage_backend: "git"` knob, resolved at one seam,
-`default_generation_store`.
+implementation — and is now the **default** (a missing/blank
+`storage_backend` knob selects `"git"`; see
+`zicato.epoch.genstore.default_generation_store`, the one seam where
+the choice is made). `DirectoryGenerationStore` remains the
+always-available no-git fallback, selected by
+`storage_backend: "directory"`.
+
+> **Superseded design note.** The earlier "generation isolation & delta
+> materialization" sketch (a pluggable host-capability-selected
+> materialization strategy — overlayfs / reflink-CoW / copytree
+> fallback — to avoid the full per-generation `copytree`) is
+> **superseded by this section**: the git backend is now the default
+> generation store, its object store IS the delta representation (blob
+> dedup across generations), and `checkout_ephemeral`'s per-run
+> `git worktree` is the cheap isolated materialization the sketch
+> wanted. No overlayfs/reflink layer is planned.
 
 ### 7.1 Why git, and the payoff
 
@@ -516,12 +528,16 @@ data migration**:
   unchanged.
 - The index (§5.3) is derived and disposable; nothing to migrate.
 
-The one pre-existing migration utility,
-`zicato.epoch.migrate.migrate_inline_to_perpatch` (legacy inline
-`patches: [...]` array → per-patch files), is unchanged and remains the
-opportunistic converter for pre-per-patch workspaces. The
-`read_experiment` reader still transparently accepts both shapes, so no
-operator is forced to run it.
+The pre-existing migration utility for the legacy inline
+`patches: [...]` array (`zicato.epoch.migrate`) has been **deleted**:
+nothing live called it, and the `read_experiment` reader still
+transparently accepts both on-disk shapes, so no operator was ever
+forced to run it. Canonical JSON records (`experiment.json`, epoch
+`config.json`, `lineage.json`) now carry an explicit
+`format_version: 1` stamp at write; readers treat an absent stamp as
+version 1 (every pre-stamp workspace keeps loading) and refuse a
+FUTURE incompatible version with a clear error — no shape-sniffing
+migration shims.
 
 The directory-snapshot → git migration (`migrate-to-git`) ships only
 when the git backend ships (§7).
