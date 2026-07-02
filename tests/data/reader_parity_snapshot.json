@@ -1228,7 +1228,8 @@
     "generated_at": "<masked>",
     "heartbeat": null,
     "lineage": null,
-    "lock": null
+    "lock": null,
+    "paused": false
   },
   "tournament_structure::e0": {
     "competitors": [],
