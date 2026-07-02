@@ -188,6 +188,10 @@ async def _maybe_spawn_supervisor(
     ``disabled`` mirrors ``--no-dashboard``: with the dashboard
     suppressed there is nothing for the watchdog to guard the lifecycle
     of, so the supervisor is not spawned either.
+
+    ``start_new_session=True`` — see :func:`_maybe_spawn_dashboard` for
+    the full rationale; the same blast-radius isolation applies to the
+    watchdog child.
     """
     if disabled:
         return None
@@ -204,6 +208,7 @@ async def _maybe_spawn_supervisor(
             "--workspace",
             str(workspace_root),
             "--no-dashboard",
+            start_new_session=True,
         )
     except (OSError, FileNotFoundError) as exc:
         click.echo(
@@ -281,6 +286,20 @@ async def _maybe_spawn_dashboard(
     refusing to run, exactly like the supervisor helper. The dashboard's
     URL is NOT printed here; :func:`_report_dashboard_url` prints it once
     the real bound port is known.
+
+    ``start_new_session=True`` is LOAD-BEARING blast-radius isolation:
+    the child becomes its own session/process-group leader, so a
+    group-directed signal aimed AT the child (``os.killpg`` from a
+    process-hygiene sweeper, a stray ``kill -- -PID``) can reach only the
+    dashboard and whatever the dashboard itself spawned — never the
+    evolve orchestrator or its sibling watchdog. Without it the child
+    shares evolve's own process group, and a group-kill targeted at the
+    dashboard takes the whole evolve invocation down with it (observed
+    live: a concurrently-running test session's leaked-dashboard reaper
+    group-killed the evolve loop within a second of startup, which
+    presented as "evolve with the dashboard hangs before the first
+    round"). Teardown is unaffected: :func:`_terminate_child` signals
+    the child pid directly.
     """
     if disabled:
         return None
@@ -295,7 +314,7 @@ async def _maybe_spawn_dashboard(
         pass
     argv = _dashboard_spawn_argv(workspace_root, _DASHBOARD_HOST, port)
     try:
-        proc = await asyncio.create_subprocess_exec(*argv)
+        proc = await asyncio.create_subprocess_exec(*argv, start_new_session=True)
     except (OSError, FileNotFoundError) as exc:
         click.echo(
             f"warning: failed to spawn the dashboard service ({exc}); dashboard disabled",
