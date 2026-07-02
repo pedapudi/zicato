@@ -68,21 +68,3 @@ def _generation_decision_var(g: GenerationView) -> str:
     controls the actual rendered colour.
     """
     return _decision_var(g.decision, is_baseline=g.is_baseline)
-
-
-def _generation_decision_color(g: GenerationView) -> str:
-    """Map a generation's decision to its palette hex colour.
-
-    Retained for tests / callers that need a literal hex; figures
-    themselves emit :func:`_generation_decision_var` so the host
-    palette can re-tint them.
-    """
-    if g.is_baseline:
-        return BASELINE_COLOR
-    if g.decision == "promoted":
-        return PROMOTED_COLOR
-    if g.decision == "rejected":
-        return REJECTED_COLOR
-    if g.decision == "deferred":
-        return DEFERRED_COLOR
-    return NEUTRAL_COLOR

@@ -710,10 +710,12 @@ def ensure_workspace_harmonograf(workspace_root: Path) -> WorkspaceHarmonografHa
 # ---------------------------------------------------------------------------
 
 
-# harmonograf validates agent / session names against this regex; any
-# name handed to ``harmonograf_client.Client(name=...)`` MUST match or
-# the sink construction raises and the live link points at nothing.
-_AGENT_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
+# harmonograf validates agent / session names against
+# ``^[a-zA-Z0-9_-]{1,128}$``; any name handed to
+# ``harmonograf_client.Client(name=...)`` MUST match or the sink
+# construction raises and the live link points at nothing. The sanitizer
+# below substitutes every disallowed character so its output always
+# satisfies that rule.
 _AGENT_NAME_DISALLOWED = re.compile(r"[^a-zA-Z0-9_-]")
 
 
@@ -828,11 +830,3 @@ __all__ = [
     "meta_loop_session_id",
     "start_harmonograf",
 ]
-
-
-def _is_valid_agent_name(name: str) -> bool:
-    """True when ``name`` satisfies harmonograf's agent-name regex.
-
-    Exposed for tests asserting the sanitizer's output is always valid.
-    """
-    return _AGENT_NAME_RE.match(name) is not None

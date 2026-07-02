@@ -9,7 +9,6 @@ from zicato.analyzer.svg.palette import (
     _VAR_PROMOTED,
     _VAR_REJECTED,
     _VAR_STRIPE_BG,
-    GRID_COLOR,
 )
 from zicato.analyzer.svg.primitives import (
     _coerce_float,
@@ -144,32 +143,6 @@ def _per_entry_delta_against(
     if chal is None or champ is None:
         return None
     return chal - champ
-
-
-def _heatmap_color(value: float, vmax: float) -> str:
-    """Map a signed delta to a red/grey/green cell colour.
-
-    ``vmax`` is the symmetric magnitude used to normalise; a delta of
-    ``+vmax`` saturates to red (worse), ``-vmax`` to green (better),
-    zero is neutral grey. Lower scalar is better, hence the sign mapping.
-
-    Returns a literal CSS colour string — retained for tests that still
-    exercise the canonical hex/rgba palette directly. The figure
-    renderer itself uses :func:`_heatmap_cell_style` so the cell picks
-    up the host's decision palette via CSS variables.
-    """
-    if vmax <= 0:
-        return GRID_COLOR
-    t = max(-1.0, min(1.0, value / vmax))
-    if abs(t) < 0.04:
-        return "#dde2e7"  # near-zero grey
-    if t > 0:
-        # red — worse
-        a = 0.25 + 0.55 * t
-        return f"rgba(215, 58, 73, {a:.3f})"
-    # green — better
-    a = 0.25 + 0.55 * (-t)
-    return f"rgba(46, 160, 67, {a:.3f})"
 
 
 def _heatmap_cell_style(value: float, vmax: float) -> str:

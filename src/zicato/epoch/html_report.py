@@ -33,7 +33,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from zicato.core.types import (
-    DriftMovementActual,
     Experiment,
     Generation,
 )
@@ -107,17 +106,6 @@ def _decision_of(exp: Experiment) -> str:
     if exp.outcome is None:
         return "pending"
     return exp.outcome.tournament_decision
-
-
-def _decision_color(decision: str) -> str:
-    """Map a decision string to its color."""
-    if decision == "promoted":
-        return PROMOTED_COLOR
-    if decision == "rejected":
-        return REJECTED_COLOR
-    if decision == "deferred":
-        return DEFERRED_COLOR
-    return BASELINE_COLOR
 
 
 def _decision_marker(decision: str) -> str:
@@ -973,31 +961,6 @@ def _empty_svg(width: int, height: int, message: str) -> str:
 # ---------------------------------------------------------------------------
 # Experiment cards
 # ---------------------------------------------------------------------------
-
-
-def _render_drift_table(movements: tuple[DriftMovementActual, ...]) -> str:
-    if not movements:
-        return '<p class="empty">No drift movements recorded.</p>'
-    rows = []
-    for mv in movements:
-        match = "yes" if mv.hypothesis_match else "no"
-        note = _esc(mv.note) if mv.note else ""
-        rows.append(
-            "<tr>"
-            f"<td><code>{_esc(mv.kind)}</code></td>"
-            f"<td>{_fmt_rate(mv.from_rate)}</td>"
-            f"<td>{_fmt_rate(mv.to_rate)}</td>"
-            f"<td>{_fmt_rate(mv.to_rate - mv.from_rate)}</td>"
-            f"<td>{match}</td>"
-            f"<td>{note}</td>"
-            "</tr>"
-        )
-    return (
-        "<table><thead><tr>"
-        "<th>kind</th><th>from</th><th>to</th><th>delta</th>"
-        "<th>match</th><th>note</th>"
-        "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
-    )
 
 
 def _render_patches_list(experiment: Experiment) -> str:

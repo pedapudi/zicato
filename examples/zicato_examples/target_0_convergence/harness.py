@@ -227,6 +227,36 @@ def synthesize_output(entry_input: str, tokens: list[str]) -> str:
     return "\n".join(parts)
 
 
+def _run_identifier(entry: Any) -> str:
+    """One run's stable id, unique per ``(generation, entry, replicate)``.
+
+    The historical ``conv-<entry>`` id was REUSED across generations and
+    replicates, so the analytical index's ``runs`` rows (PRIMARY KEY
+    ``run_id``) were silently overwritten as the lineage advanced — only
+    the last generation's runs survived (task #11). The generation id and
+    replicate index are recovered from the same ``entry.context`` keys the
+    noisy session already reads (the runner stamps the generation onto
+    every worker entry; the replication loop stamps replicates > 0), so
+    the id is a pure function of the run's stable coordinate:
+    ``conv-<generation>-<entry>[-r<replicate>]``. An ad-hoc drive outside
+    the worker (no generation in context) keeps the historical
+    ``conv-<entry>`` form.
+    """
+    context = dict(getattr(entry, "context", {}) or {})
+    generation = str(context.get(GENERATION_ID_CONTEXT_KEY, "") or "")
+    try:
+        replicate = int(context.get(REPLICATE_INDEX_CONTEXT_KEY, "0") or 0)
+    except (TypeError, ValueError):
+        replicate = 0
+    parts = ["conv"]
+    if generation:
+        parts.append(generation)
+    parts.append(str(entry.id))
+    if replicate:
+        parts.append(f"r{replicate}")
+    return "-".join(parts)
+
+
 def _drift_event(run_id: str, sequence: int, token: str) -> Any:
     """Build one ``drift_detected`` frame for a remaining defect token.
 
@@ -264,7 +294,7 @@ class _PolicySession:
         the worker evaluates the entry's predicate expectation against.
         """
         started = time.monotonic()
-        run_id = f"conv-{entry.id}"
+        run_id = _run_identifier(entry)
 
         policy_path = self._generation_root / POLICY_RELPATH
         try:

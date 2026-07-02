@@ -2602,17 +2602,12 @@ async def _evolve_multi_challenger(
     # force-promote / force-reject of ANY field candidate overrides the
     # verdict. Unlike the gauntlet (one in-flight generation), a field round
     # resolves a whole slate, so an override may target a non-winner, the
-    # crowned leader, or SEVERAL candidates (a tie / a multi-promote). Each
-    # matching command is claimed + archived; the result drives a
-    # ``promoted_ids`` SET (multi-promotion) whose default — no override — is
-    # the single crowned id, so the single-promotion path is byte-identical.
-    #
-    # ``promoted_ids`` is the multi-promotion set; ``promoted_id`` stays the
-    # PRIMARY head that advances ``current_generation`` (the crowned leader,
-    # or the lowest-scalar operator-promoted candidate when the leader was
-    # demoted). Every member of the set is marked promoted in lineage; only
-    # the primary head moves the champion pointer, keeping the single-head
-    # invariant the downstream guards rely on.
+    # crowned leader, or SEVERAL candidates (a tie / a multi-promote).
+    # `_apply_field_overrides` documents the promoted-SET semantics + the
+    # no-override single-promotion byte-identity invariant; every member of
+    # the set is marked promoted in lineage while only the PRIMARY head
+    # moves the champion pointer (the single-head invariant the downstream
+    # guards rely on).
     field_candidate_ids = [c.generation_id for c in applied]
     field_overrides: dict[str, GateOverride] = claim_field_gate_overrides(
         workspace_root, field_candidate_ids
@@ -2749,9 +2744,8 @@ async def _evolve_multi_challenger(
     for challenger in applied:
         gid = challenger.generation_id
         # A generation is crowned if it is in the (possibly multi-element)
-        # promoted set. With no operator override the set is exactly
-        # ``{promoted_id}`` (or empty), so this is ``gid == promoted_id`` —
-        # byte-identical to the single-promotion path.
+        # promoted set — see `_apply_field_overrides` for the no-override
+        # single-promotion invariant (the set is exactly ``{promoted_id}``).
         is_crowned = gid in promoted_ids
         gid_override = field_overrides.get(gid)
         gen_decision = "promoted" if is_crowned else "rejected"
@@ -2790,9 +2784,8 @@ async def _evolve_multi_challenger(
             holdout_block = None
             gen_fields = _generalization_fields_from_scalars(gen_scalar, None)
         # An operator override on THIS generation makes its verdict explicit
-        # (the reject reason carries the override note; a forced promote clears
-        # it). Only stamped when an override fired, so a no-override field round
-        # records each generation's OutcomeRecord byte-identically.
+        # (the reject reason carries the override note; a forced promote
+        # clears it). Only stamped when an override fired.
         operator_override = gid_override is not None
         operator_override_reason = gid_override.reason if gid_override is not None else ""
         if gid_override is not None:
@@ -2855,11 +2848,10 @@ async def _evolve_multi_challenger(
         )
 
     # --- Lineage: every PROMOTED generation on the spine (promoted=True),
-    # every other challenger recorded as a dead branch (rejected child of the
-    # champion). With no operator override the promoted set is the single
-    # crowned id (or empty), so this is byte-identical to single-promotion;
-    # an operator multi-promote marks each advanced candidate promoted while
-    # current_generation still advances only to the PRIMARY head below.
+    # every other challenger recorded as a dead branch (rejected child of
+    # the champion). An operator multi-promote marks each advanced candidate
+    # promoted while current_generation still advances only to the PRIMARY
+    # head below.
     for challenger in applied:
         gid = challenger.generation_id
         is_crowned = gid in promoted_ids

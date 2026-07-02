@@ -96,27 +96,6 @@ def _parse_failed_tests(output: str) -> tuple[str, ...]:
     return tuple(seen)
 
 
-def _has_tests_dir(snapshot_root: Path) -> bool:
-    """Return True if a ``tests/`` directory exists anywhere immediately
-    under ``snapshot_root`` (or as ``snapshot_root/tests`` itself).
-
-    The snapshot layout is ``snapshot_root/<mutable_tree_name>/...``
-    when the workspace registered one or more mutable trees; an adapter
-    that does not narrow can also drop tests directly at
-    ``snapshot_root/tests``. Both shapes are accepted; we return on the
-    first match.
-    """
-    direct = snapshot_root / "tests"
-    if direct.is_dir():
-        return True
-    if not snapshot_root.is_dir():
-        return False
-    for child in snapshot_root.iterdir():
-        if child.is_dir() and (child / "tests").is_dir():
-            return True
-    return False
-
-
 def _resolve_test_root(snapshot_root: Path) -> Path | None:
     """Find the directory whose ``tests/`` we want pytest to run in.
 

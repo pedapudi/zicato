@@ -298,6 +298,28 @@ def test_gauntlet_converges_to_known_floor(tmp_path: Path) -> None:
         ), round_index
         assert record.decision_provenance["operator_override"] is False, round_index
 
+    # --- (f) Index run rows are unique per (generation, entry): the
+    # harness derives run ids from the run's stable coordinate
+    # (``conv-<generation>-<entry>``), so the ``runs`` table (PRIMARY KEY
+    # run_id) keeps every generation's rows instead of each round
+    # overwriting the last (task #11: the old ``conv-<entry>`` id was
+    # reused across generations).
+    import sqlite3
+
+    conn = sqlite3.connect(str(workspace / "index.db"))
+    try:
+        per_gen = dict(
+            conn.execute(
+                "SELECT generation_id, COUNT(*) FROM runs GROUP BY generation_id"
+            ).fetchall()
+        )
+        run_ids = [r[0] for r in conn.execute("SELECT run_id FROM runs").fetchall()]
+    finally:
+        conn.close()
+    assert per_gen == {gid: BOARD_SIZE for gid in ("v0", "v1", "v2", "v3")}
+    assert len(run_ids) == len(set(run_ids)) == 4 * BOARD_SIZE
+    assert all(run_id.startswith("conv-v") for run_id in run_ids)
+
 
 def test_racing_field_best_arm_survives_to_floor(tmp_path: Path) -> None:
     """The racing contract (field 4, replicates 2, evidence pre-gate at
