@@ -3119,6 +3119,12 @@ async def _propose_child(
     from zicato.proposer.agent import ProposerContext  # noqa: PLC0415
     from zicato.proposer.proposer import ProposerError  # noqa: PLC0415
 
+    # The mutation-point fertility map — best-effort, {} on any failure
+    # (which renders a byte-identical manifest). Settled experiments only
+    # change between rounds, so every challenger in a round sees the same
+    # records.
+    mutation_track_records = _load_mutation_track_records(workspace_root, epoch_id)
+
     try:
         experiment = await proposer_agent.propose(
             ProposerContext(
@@ -3140,6 +3146,7 @@ async def _propose_child(
                 prior_experiments=prior_experiments,
                 restrict_visibility=restrict_visibility,
                 failure_profile=failure_profile,
+                mutation_track_records=mutation_track_records,
                 round_event_emitter=(round_emitter.emit if round_emitter is not None else None),
             )
         )
@@ -4370,6 +4377,33 @@ def _load_prior_experiments(
             exc,
         )
         return []
+
+
+def _load_mutation_track_records(
+    workspace_root: Path,
+    epoch_id: str,
+) -> dict[str, Any]:
+    """Best-effort read of the epoch's mutation-point fertility map.
+
+    The orchestrator threads the result onto the
+    :class:`~zicato.proposer.agent.ProposerContext` so the prompt renderer
+    can annotate each manifest entry with its compact, banded track-record
+    line ("experiments touching this point" — advisory, never causal).
+    Mirrors :func:`_load_prior_experiments` exactly: the index read is
+    best-effort — a missing :mod:`zicato.index` sibling, a never-built
+    database, or any read failure is logged at ``debug`` level and yields
+    ``{}``, which renders a byte-identical manifest.
+    """
+    try:
+        from zicato.index.query import mutation_point_track_record  # noqa: PLC0415
+
+        return dict(mutation_point_track_record(_index_db_path(workspace_root), epoch_id))
+    except ImportError:
+        log.debug("zicato.index.query unavailable; manifest renders without track records")
+        return {}
+    except Exception as exc:  # noqa: BLE001 — track-record read is best-effort
+        log.debug("mutation_point_track_record skipped for %s: %s", epoch_id, exc)
+        return {}
 
 
 def _ingest_experiment_into_index(

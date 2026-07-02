@@ -308,6 +308,75 @@ def grep_mutable(pattern: str) -> str:
     return body
 
 
+def mutation_track_record(mutation_id: str) -> str:
+    """Return one mutation point's banded per-epoch track record as JSON.
+
+    The tool surface of the mutation-point fertility map
+    (:func:`zicato.index.query.mutation_point_track_record`): how many
+    settled experiments this epoch touched ``mutation_id``, how many were
+    promoted, a BUCKETED Δscalar summary, and a coarse recency flag.
+    AGGREGATES ONLY — the same restricted-visibility banding as the
+    manifest annotation (bucketed deltas via the prompt renderer's bands,
+    no exact experiment-level delta, no board identity), so a tool-using
+    proposer learns nothing the annotated manifest would not already show.
+
+    HONESTY (load-bearing): every figure is **experiment-level** — the
+    ``basis`` field says "experiments touching this point" and the payload
+    counts how many of those experiments also touched other points (their
+    credit is confounded). Nothing here is causal.
+
+    ``mutation_id`` must name a point in the CURRENT round's manifest
+    (:func:`list_mutation_points`); an unknown id raises
+    :class:`ValueError` so the agent gets an actionable retry signal. A
+    point no settled experiment has touched (or a workspace whose index
+    was never built) returns a zeroed record rather than an error — "no
+    track record yet" is a real answer.
+    """
+    ctx = _active_context()
+    if mutation_id not in {mp.id for mp in ctx.mutations}:
+        raise ValueError(
+            f"mutation_track_record: unknown mutation id {mutation_id!r}; "
+            "only ids in the current manifest (see list_mutation_points) "
+            "are valid"
+        )
+    from zicato.index.query import mutation_point_track_record  # noqa: PLC0415
+    from zicato.proposer.prompts import render_mutation_track_annotation  # noqa: PLC0415
+
+    basis = (
+        "experiments touching this point (experiment-level attribution; "
+        "multi-patch experiments confound credit — not causal)"
+    )
+    records = mutation_point_track_record(
+        ctx.workspace_root / "index.db", ctx.epoch_id, mutation_id
+    )
+    record = records.get(mutation_id)
+    if record is None:
+        return json.dumps(
+            {
+                "mutation_id": mutation_id,
+                "basis": basis,
+                "experiments_touching": 0,
+                "promoted": 0,
+                "confounded_experiments": 0,
+                "recent": False,
+                "summary": "(no settled experiment has touched this point yet)",
+            },
+            indent=2,
+        )
+    return json.dumps(
+        {
+            "mutation_id": mutation_id,
+            "basis": basis,
+            "experiments_touching": record.experiments_touching,
+            "promoted": record.promoted,
+            "confounded_experiments": record.confounded_experiments,
+            "recent": record.recent_touching > 0,
+            "summary": render_mutation_track_annotation(record),
+        },
+        indent=2,
+    )
+
+
 def read_journal() -> str:
     """Return the epoch's running narrative journal, or ``""`` when absent.
 
@@ -347,6 +416,7 @@ DEFAULT_PROPOSER_TOOLS = (
     grep_mutable,
     read_journal,
     read_insights,
+    mutation_track_record,
 )
 
 
@@ -356,6 +426,7 @@ __all__ = [
     "bind_proposer_tool_context",
     "grep_mutable",
     "list_mutation_points",
+    "mutation_track_record",
     "read_insights",
     "read_journal",
     "read_mutable_file",

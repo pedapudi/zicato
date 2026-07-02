@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -51,6 +51,7 @@ from zicato.proposer.structured import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
+    from zicato.index.query import MutationTrackRecord
     from zicato.telemetry.meta_loop import MetaLoopEmitter
 
 #: An optional post-parse validation hook. The proposer calls it with a
@@ -104,6 +105,7 @@ async def propose_experiment(
     restrict_visibility: bool = False,
     failure_profile: str = "",
     sample_hint: str = "",
+    mutation_track_records: Mapping[str, MutationTrackRecord] | None = None,
 ) -> Experiment:
     """Compose prompts, call the auxiliary LLM, parse the response.
 
@@ -247,6 +249,17 @@ async def propose_experiment(
         visibility envelope is untouched. Empty (the default) renders a
         byte-identical prompt.
 
+    mutation_track_records:
+        Optional per-mutation-point track records (the fertility map —
+        :func:`zicato.index.query.mutation_point_track_record`), assembled
+        by the *caller* exactly like ``prior_experiments`` (the orchestrator
+        reads the index best-effort; the proposer stays a pure
+        prompt-assembler). Threaded into :func:`render_user_prompt`, which
+        annotates each manifest entry that has a record with one compact,
+        BANDED advisory line — aggregates only, labelled "experiments
+        touching this point" (never causal). ``None`` (the default) renders
+        a byte-identical manifest.
+
     Raises
     ------
     ProposerError
@@ -303,6 +316,7 @@ async def propose_experiment(
             custom_judge_names=custom_judge_names or frozenset(),
             failure_profile=failure_profile,
             sample_hint=sample_hint,
+            mutation_track_records=mutation_track_records,
         )
         # Meta-loop bookends: one paired ``proposer_call_started`` /
         # ``proposer_call_completed`` per attempt. ``invocation_id`` is
