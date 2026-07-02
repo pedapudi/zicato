@@ -1,5 +1,17 @@
 # Changelog
 
+### Contract hash no longer depends on the process cwd or checkout path
+
+`_canon_mutable_trees` previously RESOLVED the registered mutable-tree
+paths against the process cwd, folding the absolute checkout path into
+the contract hash — the same workspace hashed differently when `evolve`
+ran from a different directory, or after the workspace moved, and
+spuriously rolled its epoch. Paths are now normalized (never
+filesystem-resolved). BREAKING: every existing epoch's contract hash
+moves once; the workspace auto-rolls on the next `evolve` (the standard
+contract-change behavior). The parity CONTRACT-HASH golden is
+re-captured and is now checkout-independent.
+
 All notable changes to zicato are recorded here. Format roughly follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 

@@ -33,9 +33,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 log = logging.getLogger("zicato.epoch.contract")
 
@@ -61,8 +62,11 @@ class ContractInputs:
         The registered ``--adk`` entrypoint string, verbatim.
     mutable_trees:
         The registered ``--mutable-tree`` paths. Stored as a tuple of
-        strings; :func:`compute_contract_hash` sorts and absolutises
-        them so order and relative/absolute spelling do not matter.
+        strings; :func:`compute_contract_hash` sorts and *normalizes*
+        them (never filesystem-resolves — the hash must not depend on
+        the process cwd or the checkout's absolute path) so
+        registration order and ``.``/``..``/separator spelling do not
+        matter.
     proposer_path:
         Location of the proposer dir (``proposers/<name>/``) the epoch
         steers with, or ``None`` for the built-in default proposer.
@@ -512,14 +516,20 @@ def _canon_entrypoint(entrypoint: str) -> str:
 
 
 def _canon_mutable_trees(mutable_trees: tuple[str, ...]) -> str:
-    """Canonical form of the mutable trees: sorted absolute path strings.
+    """Canonical form of the mutable trees: sorted normalized path strings.
 
-    Each path is resolved to an absolute string and the result is
-    sorted, so the registration order and any relative/absolute spelling
-    differences do not move the hash. Adding or removing a tree does.
+    The identity being hashed is *which subtrees of the target are
+    mutable* — a property of the registration, not of where the checkout
+    happens to live. Paths are normalized (``.``/``..`` segments and
+    separators collapsed, POSIX-rendered) but NEVER resolved against the
+    filesystem: resolving folded the process cwd and the absolute
+    checkout path into the hash, so the same workspace hashed
+    differently when run from a different directory — or after being
+    moved — and spuriously rolled its epoch. Registration order does not
+    move the hash (sorted); adding or removing a tree does.
     """
-    resolved = sorted(str(Path(p).resolve()) for p in mutable_trees)
-    return "\n".join(resolved)
+    normalized = sorted(PurePosixPath(os.path.normpath(p)).as_posix() for p in mutable_trees)
+    return "\n".join(normalized)
 
 
 def _canon_proposer(proposer_path: Path | None) -> str:

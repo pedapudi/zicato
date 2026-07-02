@@ -837,3 +837,55 @@ def test_resolve_contract_inputs_proposer_path_absent_is_none(tmp_path: Path) ->
     )
     inputs = resolve_contract_inputs(workspace)
     assert inputs.proposer_path is None
+
+
+def test_contract_hash_is_cwd_and_checkout_invariant(tmp_path, monkeypatch):
+    """The hash must identify the CONTRACT, not the checkout.
+
+    Registration-relative mutable trees previously resolved against the
+    process cwd, folding the absolute checkout path into the hash — the
+    same workspace hashed differently run from a different directory (or
+    after being moved) and spuriously rolled its epoch.
+    """
+    from zicato.epoch.contract import ContractInputs, compute_contract_hash
+
+    board = tmp_path / "board.jsonl"
+    board.write_text("", encoding="utf-8")
+    brief = tmp_path / "brief.md"
+    brief.write_text("goal", encoding="utf-8")
+    scoring = tmp_path / "scoring.json"
+    scoring.write_text("{}", encoding="utf-8")
+
+    def compute_from(cwd):
+        monkeypatch.chdir(cwd)
+        return compute_contract_hash(
+            ContractInputs(
+                board_path=board,
+                brief_path=brief,
+                scoring_path=scoring,
+                entrypoint="pkg.mod:agent",
+                mutable_trees=("agent", "./skills/../skills"),
+            )
+        )
+
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    assert compute_from(tmp_path) == compute_from(other)
+
+    # Normalization unifies ./ and ../ spellings; ordering is irrelevant.
+    monkeypatch.chdir(tmp_path)
+    base = ContractInputs(
+        board_path=board,
+        brief_path=brief,
+        scoring_path=scoring,
+        entrypoint="pkg.mod:agent",
+        mutable_trees=("agent", "skills"),
+    )
+    spelled = ContractInputs(
+        board_path=board,
+        brief_path=brief,
+        scoring_path=scoring,
+        entrypoint="pkg.mod:agent",
+        mutable_trees=("./skills", "agent/"),
+    )
+    assert compute_contract_hash(base) == compute_contract_hash(spelled)

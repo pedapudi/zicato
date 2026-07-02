@@ -3,11 +3,11 @@
     "board": "359ce5b069c21962e45f4dbe095137ed0e95664f639b5fbc92aef06a243f8a21",
     "brief": "466a5a9c2d1569fa8cfa8e0fe2dea135395af1d1cc42bc19ad146dd4ccc59eff",
     "entrypoint": "85655a014d66dd333f5089c8d4faa8c8ddd7fdb2f50381d57f3d955711f904aa",
-    "mutable_trees": "7c4f084006c24ef3b03af9abb96890b29cbb85070faab08a96056721c8c9ffd8",
+    "mutable_trees": "d4f0bc5a29de06b510f9aa428f1eedba926012b591fef7a518e776a7c9bd1824",
     "proposer": "de6fb5da86f4c9df7de8bddaedff5966b5d36ff9faacb71e9f43f6dea83aae0e",
     "scoring": "92c400cc52bbbceda416de90b8445d97a6a7e39290ae866785cc69c4f94c99d5"
   },
-  "contract_hash": "6d7390017adcad21fa6a417bfde4093a21702eff92e02f06099b96f213d2b0ad",
+  "contract_hash": "c4303b91780368b59f53903ae87684c1b1dfafb7e0ce4fc44161cc3b3292229c",
   "entrypoint": "zicato_examples.target_1_presentation.agent:root_agent",
   "fixture": "target_1_presentation",
   "mutable_trees": [
