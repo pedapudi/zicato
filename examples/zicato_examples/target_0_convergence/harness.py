@@ -24,11 +24,20 @@ The adapter is subprocess-safe: ``worker_spec()`` returns the
 ``{"kind": "import", "factory": ...}`` shape both
 :func:`zicato.adapter_factory.make_adapter_from_config` and the
 tournament worker's ``_build_adapter`` reconstruct from a dotted path.
+
+:class:`NoisyPolicyAdapter` (Tier 2) is the SEEDED-NOISE variant: true
+quality stays the policy's token set, but each run's measured pass/drift
+is a reproducible draw around it — the RNG seed derives only from
+``(workspace seed, generation id, entry id, replicate index)``, so the
+stochastic operating characteristics of the decision procedure can be
+asserted in CI. See :func:`draw_measured_tokens`.
 """
 
 from __future__ import annotations
 
 import ast
+import hashlib
+import random
 import time
 from pathlib import Path
 from typing import Any
@@ -50,6 +59,117 @@ KNOWN_DEFECTS = ("verbose-prose", "omit-summary", "skip-citations", "fabricate-m
 #: enough on its own to blow the ``is_concise`` predicate's character
 #: budget (see :data:`.predicates.CONCISE_MAX_CHARS`).
 _FILLER = "FILLER: " + "meandering prose that adds nothing " * 24
+
+#: ``BoardEntry.context`` keys carrying run provenance to the session.
+#: Kept in sync with the tournament runner's
+#: ``zicato.tournament.worker_transport._GENERATION_ID_CONTEXT_KEY`` /
+#: ``_REPLICATE_INDEX_CONTEXT_KEY`` — the two ends meet on these strings.
+#: The runner stamps the generation id onto every worker entry, and the
+#: replication loop stamps the replicate index for replicates > 0, so a
+#: session can derive its noise seed from stable identifiers even though
+#: it only ever sees an ephemeral snapshot copy with a throwaway name.
+GENERATION_ID_CONTEXT_KEY = "generation_id"
+REPLICATE_INDEX_CONTEXT_KEY = "replicate_index"
+
+#: Prefix of the INTERMITTENT defect-token form the noisy harness
+#: understands: ``sometimes-<pct>-<token>`` behaves as ``<token>`` with
+#: probability ``pct/100`` per run draw, and is absent otherwise — a
+#: defect that manifests intermittently, the real-world flaky behaviour
+#: the decision procedure must resolve. Under the DETERMINISTIC adapter
+#: the whole token is simply an unknown defect (one drift frame, no
+#: feature suppressed), so deterministic boards are unaffected.
+_INTERMITTENT_PREFIX = "sometimes-"
+
+
+def stable_noise_seed(
+    workspace_seed: int,
+    generation_key: str,
+    entry_id: str,
+    replicate_index: int,
+) -> int:
+    """Derive one run's RNG seed from its stable identifiers.
+
+    ``sha256`` over the joined identifier tuple, truncated to 64 bits.
+    Deterministic across processes and interpreter versions (no
+    ``hash()`` randomisation, no wall clock, no global RNG), so a run is
+    exactly reproducible given the same ``(workspace seed, generation,
+    entry, replicate)`` coordinate — and two coordinates that differ in
+    ANY component draw independently.
+    """
+    material = f"{workspace_seed}|{generation_key}|{entry_id}|{replicate_index}"
+    digest = hashlib.sha256(material.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big")
+
+
+def parse_intermittent_token(token: str) -> tuple[str, float] | None:
+    """Parse a ``sometimes-<pct>-<token>`` form, or ``None`` for any other.
+
+    Returns ``(inner_token, probability)`` with probability in ``[0, 1]``.
+    A malformed percentage yields ``None`` (the token then counts as a
+    plain unknown defect — one drift frame, nothing suppressed — rather
+    than raising inside a scoring run).
+    """
+    if not token.startswith(_INTERMITTENT_PREFIX):
+        return None
+    rest = token[len(_INTERMITTENT_PREFIX) :]
+    pct_text, sep, inner = rest.partition("-")
+    if not sep or not inner:
+        return None
+    try:
+        pct = float(pct_text)
+    except ValueError:
+        return None
+    if not 0.0 <= pct <= 100.0:
+        return None
+    return inner, pct / 100.0
+
+
+def draw_measured_tokens(
+    tokens: list[str],
+    rng: random.Random,
+    noise_sigma: float,
+) -> list[str]:
+    """One run's MEASURED defect-token draw around the policy's true tokens.
+
+    Two stochastic layers, both driven by the caller's seeded ``rng`` in a
+    fixed order (so the draw is a pure function of the seed):
+
+    1. **Intermittent manifestation** — each ``sometimes-<pct>-<token>``
+       manifests as its inner token with probability ``pct/100`` (in
+       token-list order). This is TRUE behaviour variance: the policy's
+       expected quality genuinely sits between "defect present" and
+       "defect fixed".
+    2. **Measurement flips** — each KNOWN defect's measured presence is
+       flipped with probability ``noise_sigma`` (in :data:`KNOWN_DEFECTS`
+       order). This is OBSERVATION noise: the run degrades a feature the
+       policy would have produced, or produces one it would have
+       suppressed, exactly like a stochastic agent/judge would.
+
+    Unknown tokens pass through deterministically (one drift frame each,
+    no flip), so a planted noise-free effect stays available to the
+    operating-characteristics tests. Returned order is KNOWN defects
+    first (:data:`KNOWN_DEFECTS` order) then the surviving unknown tokens
+    in their original order.
+    """
+    manifested: list[str] = []
+    for token in tokens:
+        intermittent = parse_intermittent_token(token)
+        if intermittent is None:
+            manifested.append(token)
+            continue
+        inner, prob = intermittent
+        if rng.random() < prob:
+            manifested.append(inner)
+    measured: list[str] = []
+    present = set(manifested)
+    for known in KNOWN_DEFECTS:
+        is_present = known in present
+        if rng.random() < noise_sigma:
+            is_present = not is_present
+        if is_present:
+            measured.append(known)
+    measured.extend(t for t in manifested if t not in KNOWN_DEFECTS)
+    return measured
 
 
 def parse_style_tokens(policy_source: str) -> list[str]:
@@ -143,7 +263,6 @@ class _PolicySession:
         JSONL persistence sink), then returns the :class:`RunResult`
         the worker evaluates the entry's predicate expectation against.
         """
-        del config
         started = time.monotonic()
         run_id = f"conv-{entry.id}"
 
@@ -152,7 +271,9 @@ class _PolicySession:
             policy_source = policy_path.read_text(encoding="utf-8")
         except OSError:
             policy_source = ""
-        tokens = parse_style_tokens(policy_source)
+        tokens = self._measured_tokens(
+            entry, config, parse_style_tokens(policy_source), policy_source
+        )
         final_output = synthesize_output(str(getattr(entry, "input", "") or ""), tokens)
 
         # Emit the lifecycle frames: run_started, one drift_detected per
@@ -201,6 +322,68 @@ class _PolicySession:
             runtime_ms=runtime_ms,
         )
 
+    def _measured_tokens(
+        self,
+        entry: Any,
+        config: Any,
+        tokens: list[str],
+        policy_source: str,
+    ) -> list[str]:
+        """The token set THIS run measures — identity for the deterministic base.
+
+        The single seam the noisy session overrides: the base session
+        measures exactly the true tokens (byte-identical to the Tier-1
+        behaviour), so output, drift frames, and predicate outcomes stay
+        an exact function of the policy.
+        """
+        del entry, config, policy_source
+        return tokens
+
+
+class _NoisyPolicySession(_PolicySession):
+    """A :class:`_PolicySession` whose measurement is a seeded noisy draw.
+
+    True quality stays the policy's token set; the MEASURED pass/drift of
+    each run is a draw around it (see :func:`draw_measured_tokens`). The
+    draw's RNG seed derives ONLY from stable identifiers — the workspace
+    seed (``config.seed``), the generation id (stamped onto
+    ``entry.context`` by the runner; content digest of the policy as the
+    ad-hoc fallback), the entry id, and the replicate index — so a run is
+    exactly reproducible in CI yet varies across replicates, generations,
+    and workspace seeds exactly like real noise. No wall clock, no global
+    RNG.
+    """
+
+    def __init__(self, generation_root: Path, noise_sigma: float) -> None:
+        super().__init__(generation_root)
+        self._noise_sigma = float(noise_sigma)
+
+    def _measured_tokens(
+        self,
+        entry: Any,
+        config: Any,
+        tokens: list[str],
+        policy_source: str,
+    ) -> list[str]:
+        context = dict(getattr(entry, "context", {}) or {})
+        generation_key = str(context.get(GENERATION_ID_CONTEXT_KEY, "") or "")
+        if not generation_key:
+            # Ad-hoc drive outside the worker: fall back to the policy's
+            # content digest — still a stable identifier, never the
+            # ephemeral snapshot path.
+            generation_key = hashlib.sha256(policy_source.encode("utf-8")).hexdigest()
+        try:
+            replicate_index = int(context.get(REPLICATE_INDEX_CONTEXT_KEY, "0") or 0)
+        except (TypeError, ValueError):
+            replicate_index = 0
+        seed = stable_noise_seed(
+            workspace_seed=int(getattr(config, "seed", None) or 0),
+            generation_key=generation_key,
+            entry_id=str(entry.id),
+            replicate_index=replicate_index,
+        )
+        return draw_measured_tokens(tokens, random.Random(seed), self._noise_sigma)
+
 
 class DeterministicPolicyAdapter:
     """Adapter whose sessions score a snapshot's policy deterministically.
@@ -240,11 +423,59 @@ def make_adapter() -> DeterministicPolicyAdapter:
     return DeterministicPolicyAdapter()
 
 
+class NoisyPolicyAdapter(DeterministicPolicyAdapter):
+    """The seeded-noise variant of :class:`DeterministicPolicyAdapter`.
+
+    Same policy parsing, output synthesis, frames, and predicates — only
+    the per-run MEASUREMENT is a seeded draw around the true token set
+    (see :class:`_NoisyPolicySession`). ``noise_sigma`` is the per-known-
+    defect flip probability; ``0.0`` reproduces the deterministic adapter
+    exactly. The spec round-trips through ``worker_spec()`` with its
+    ``args`` payload, so the subprocess worker reconstructs an adapter
+    with the SAME sigma — the noise level is part of the honest adapter
+    declaration, not ambient state.
+    """
+
+    name = "noisy_deterministic_policy"
+
+    def __init__(self, noise_sigma: float) -> None:
+        self.noise_sigma = float(noise_sigma)
+
+    def load(self, generation_root: Path) -> _PolicySession:
+        return _NoisyPolicySession(generation_root, self.noise_sigma)
+
+    def worker_spec(self) -> dict[str, Any]:
+        return {
+            "kind": "import",
+            "factory": "zicato_examples.target_0_convergence.harness:make_noisy_adapter",
+            "args": [{"noise_sigma": self.noise_sigma}],
+        }
+
+
+def make_noisy_adapter(options: dict[str, Any] | None = None) -> NoisyPolicyAdapter:
+    """Module-level factory for the noisy ``import`` adapter spec.
+
+    ``options`` is the single positional ``args`` element of the
+    ``{"kind": "import", ...}`` spec: ``{"noise_sigma": <float>}``. An
+    absent/empty options dict yields sigma ``0.0`` — byte-identical
+    behaviour to :func:`make_adapter`.
+    """
+    sigma = float((options or {}).get("noise_sigma", 0.0))
+    return NoisyPolicyAdapter(noise_sigma=sigma)
+
+
 __all__ = [
     "DeterministicPolicyAdapter",
+    "GENERATION_ID_CONTEXT_KEY",
     "KNOWN_DEFECTS",
+    "NoisyPolicyAdapter",
     "POLICY_RELPATH",
+    "REPLICATE_INDEX_CONTEXT_KEY",
+    "draw_measured_tokens",
     "make_adapter",
+    "make_noisy_adapter",
+    "parse_intermittent_token",
     "parse_style_tokens",
+    "stable_noise_seed",
     "synthesize_output",
 ]
