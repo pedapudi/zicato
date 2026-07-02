@@ -363,6 +363,82 @@ async def _run_full_board_unit(
     return parent_result, child_result
 
 
+def _skip_unit_side(
+    *,
+    generation: Generation,
+    entry: BoardEntry,
+    weights: ScoringWeights,
+    match_id: str,
+    workspace_root: Path,
+    epoch_id: str,
+    replicate_index: int,
+    side_force_fresh: bool,
+    provenance: dict[str, _UnitProvenance] | None,
+) -> tuple[LossProfile, bool]:
+    """Record ONE side of an un-launched board unit under a spent budget.
+
+    A unit ALREADY in the cache costs nothing, so it is reused verbatim (a
+    budget never clobbers a good result and the cache stays consistent). A
+    genuine MISS is synthesized as a budget-exceeded loss
+    (:func:`_skipped_unit_loss`) and persisted, exactly as the matchup
+    wall-clock deadline path records its skips. Returns ``(loss,
+    was_skipped)`` — ``was_skipped`` true only for a real synthesized skip,
+    so callers count genuine skips toward the log tally.
+    """
+    cached = (
+        None
+        if side_force_fresh
+        else _resolve_cached_unit(
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            generation_id=generation.id,
+            entry_id=entry.id,
+            replicate_index=replicate_index,
+        )
+    )
+    if cached is not None:
+        _record_provenance(provenance, generation.id, cached=True)
+        return cached, False
+    loss = _skipped_unit_loss(
+        generation=generation,
+        entry=entry,
+        epoch_id=epoch_id,
+        weights=weights,
+        match_id=match_id,
+    )
+    _persist_unit_loss(
+        workspace_root=workspace_root,
+        epoch_id=epoch_id,
+        generation_id=generation.id,
+        entry_id=entry.id,
+        replicate_index=replicate_index,
+        loss=loss,
+    )
+    # A skipped unit was not cache-reused — it produced a freshly
+    # synthesised loss — so it counts as a MISS in the provenance tally,
+    # mirroring a genuine (if budget-exceeded) evaluation.
+    _record_provenance(provenance, generation.id, cached=False)
+    return loss, True
+
+
+def _token_budget_spent(config: RuntimeConfig) -> bool:
+    """Whether the round's token ledger (when bound) is exhausted. LATCHING.
+
+    The per-round token budget's would-launch check (WS-H;
+    :attr:`~zicato.core.runtime.RuntimeConfig.max_tokens_per_round`): the
+    schedulers consult it between board units / replicate slots and stop
+    LAUNCHING once the budget is spent — never mid-unit. ``None`` (the
+    knob off — the default) is always ``False`` with no ledger even
+    consulted, so the un-opted-in path is byte-identical. A ``True``
+    latches the ledger's ``clipped`` flag, which is how the orchestrator
+    learns the round was token-clipped (the health finding).
+    """
+    ledger = config.token_ledger
+    if ledger is None:
+        return False
+    return bool(ledger.check_and_clip())
+
+
 def _effective_unit_semaphore(
     unit_semaphore: asyncio.Semaphore | None, config: RuntimeConfig
 ) -> asyncio.Semaphore:
@@ -482,8 +558,43 @@ async def _run_board_units_full(
         board_total=len(board),
     )
 
+    effective_parent_force_fresh = force_fresh if parent_force_fresh is None else parent_force_fresh
+    token_skipped = 0
+
     async def _bounded(entry: BoardEntry) -> tuple[LossProfile, LossProfile]:
+        nonlocal token_skipped
         async with semaphore:
+            # Per-round token budget (WS-H): the would-launch check, taken
+            # AFTER the semaphore admits this unit so a bounded-parallelism
+            # run consults the tally the earlier units actually produced.
+            # A spent budget skips the WHOLE pair (never one side of it),
+            # recording both sides exactly as the matchup-deadline path
+            # does. Inert (no ledger consulted) with the knob off.
+            if _token_budget_spent(config):
+                token_skipped += 1
+                parent_loss, _ = _skip_unit_side(
+                    generation=parent_gen,
+                    entry=entry,
+                    weights=weights,
+                    match_id=match_id,
+                    workspace_root=workspace_root,
+                    epoch_id=epoch_id,
+                    replicate_index=replicate_index,
+                    side_force_fresh=effective_parent_force_fresh,
+                    provenance=provenance,
+                )
+                child_loss, _ = _skip_unit_side(
+                    generation=child_gen,
+                    entry=entry,
+                    weights=weights,
+                    match_id=match_id,
+                    workspace_root=workspace_root,
+                    epoch_id=epoch_id,
+                    replicate_index=replicate_index,
+                    side_force_fresh=force_fresh,
+                    provenance=provenance,
+                )
+                return parent_loss, child_loss
             return await _run_full_board_unit(
                 adapter=adapter,
                 parent_gen=parent_gen,
@@ -508,6 +619,15 @@ async def _run_board_units_full(
     for result in results:
         if isinstance(result, BaseException):
             raise result
+    if token_skipped:
+        log.warning(
+            "matchup %s: per-round token budget reached; skipped %d/%d board "
+            "unit(s) (recorded as budget-exceeded losses for both sides) — "
+            "partial aggregate returned",
+            match_id or "(untagged)",
+            token_skipped,
+            len(board),
+        )
 
     parent_losses: dict[str, LossProfile] = {}
     child_losses: dict[str, LossProfile] = {}
@@ -630,41 +750,18 @@ async def _run_board_units_full_budgeted(
         any_skipped = False
         for gen in (parent_gen, child_gen):
             side_force_fresh = effective_parent_force_fresh if gen is parent_gen else force_fresh
-            cached = (
-                None
-                if side_force_fresh
-                else _resolve_cached_unit(
-                    workspace_root=workspace_root,
-                    epoch_id=epoch_id,
-                    generation_id=gen.id,
-                    entry_id=entry.id,
-                    replicate_index=replicate_index,
-                )
+            loss, was_skipped = _skip_unit_side(
+                generation=gen,
+                entry=entry,
+                weights=weights,
+                match_id=match_id,
+                workspace_root=workspace_root,
+                epoch_id=epoch_id,
+                replicate_index=replicate_index,
+                side_force_fresh=side_force_fresh,
+                provenance=provenance,
             )
-            if cached is not None:
-                _record_provenance(provenance, gen.id, cached=True)
-                loss = cached
-            else:
-                loss = _skipped_unit_loss(
-                    generation=gen,
-                    entry=entry,
-                    epoch_id=epoch_id,
-                    weights=weights,
-                    match_id=match_id,
-                )
-                _persist_unit_loss(
-                    workspace_root=workspace_root,
-                    epoch_id=epoch_id,
-                    generation_id=gen.id,
-                    entry_id=entry.id,
-                    replicate_index=replicate_index,
-                    loss=loss,
-                )
-                # A skipped unit was not cache-reused — it produced a freshly
-                # synthesised loss — so it counts as a MISS in the provenance
-                # tally, mirroring a genuine (if budget-exceeded) evaluation.
-                _record_provenance(provenance, gen.id, cached=False)
-                any_skipped = True
+            any_skipped = any_skipped or was_skipped
             if gen is parent_gen:
                 parent_losses[entry.id] = loss
             else:
@@ -674,9 +771,13 @@ async def _run_board_units_full_budgeted(
     batch_size = max(1, config.parallelism)
     for start in range(0, len(board), batch_size):
         batch = board[start : start + batch_size]
-        if not budget_tripped and time.monotonic() >= matchup_deadline:
-            # The cap is spent: stop LAUNCHING. Every unit from here on is
-            # recorded as a budget-exceeded loss instead of being run.
+        if not budget_tripped and (
+            time.monotonic() >= matchup_deadline or _token_budget_spent(config)
+        ):
+            # A cap is spent (the matchup wall-clock deadline, or — when a
+            # round token ledger is bound — the per-round token budget):
+            # stop LAUNCHING. Every unit from here on is recorded as a
+            # budget-exceeded loss instead of being run.
             budget_tripped = True
         if budget_tripped:
             for entry in batch:
@@ -697,7 +798,8 @@ async def _run_board_units_full_budgeted(
 
     if skipped:
         log.warning(
-            "matchup %s: wall-clock budget reached after %d/%d board units; "
+            "matchup %s: budget (wall-clock deadline or round token cap) "
+            "reached after %d/%d board units; "
             "skipped %d remaining unit(s) (recorded as budget-exceeded losses "
             "for both sides) — partial aggregate returned",
             match_id or "(untagged)",
@@ -755,8 +857,28 @@ async def _run_board_units_fast(
         board_total=len(board),
     )
 
+    token_skipped = 0
+
     async def _bounded(entry: BoardEntry) -> LossProfile:
+        nonlocal token_skipped
         async with semaphore:
+            # Per-round token budget (WS-H): the would-launch check, after
+            # the semaphore admits this unit (see the full-mode twin).
+            # Inert (no ledger consulted) with the knob off.
+            if _token_budget_spent(config):
+                token_skipped += 1
+                skipped_loss, _ = _skip_unit_side(
+                    generation=child_gen,
+                    entry=entry,
+                    weights=weights,
+                    match_id=match_id,
+                    workspace_root=workspace_root,
+                    epoch_id=epoch_id,
+                    replicate_index=replicate_index,
+                    side_force_fresh=force_fresh,
+                    provenance=provenance,
+                )
+                return skipped_loss
             child_loss = await _run_unit_cache_first(
                 adapter=adapter,
                 generation=child_gen,
@@ -786,6 +908,15 @@ async def _run_board_units_fast(
     for result in results:
         if isinstance(result, BaseException):
             raise result
+    if token_skipped:
+        log.warning(
+            "matchup %s: per-round token budget reached; skipped %d/%d "
+            "fast-mode board unit(s) (recorded as budget-exceeded losses) — "
+            "partial aggregate returned",
+            match_id or "(untagged)",
+            token_skipped,
+            len(board),
+        )
 
     losses: dict[str, LossProfile] = {}
     for entry, result in zip(board, results, strict=True):
@@ -851,6 +982,13 @@ async def _run_unit_cache_first(
         side=side,
         match_id=match_id,
     )
+    # Per-round token accounting (WS-H): every FRESH run — and only a
+    # fresh run; a cache hit returned above spends nothing — folds its
+    # opportunistic token count into the round's ledger. This is the ONE
+    # choke point every board unit (champion, challenger, screen, evidence
+    # replicate) already routes through, so the tally spans the round.
+    if config.token_ledger is not None:
+        config.token_ledger.add(loss.tokens_spent)
     # Do NOT cache an INFRA abort (a parent/supervisor kill or a worker
     # crash). Persisting its worst-case loss would make it a permanent cache
     # HIT for the rest of the epoch, poisoning this unit's score off a single
@@ -1005,6 +1143,21 @@ async def _run_replicated(
         # context (run provenance for the harness under test — a
         # seeded/deterministic harness varies its noise draw by it);
         # replicate 0 is left untouched, byte-identical to before.
+        # Per-round token budget (WS-H): stop scheduling FURTHER replicate
+        # slots once the budget is spent — the completed slots average
+        # as-is ("settle with what it has"), rather than folding synthetic
+        # worst-case skips into entries that already measured cleanly.
+        # Slot 0 always runs (its own between-unit checks skip-record when
+        # the budget was already spent) so the return shape is intact.
+        if replicate_offset > 0 and _token_budget_spent(config):
+            log.warning(
+                "matchup %s: per-round token budget reached after %d/%d "
+                "replicate slot(s); settling with the completed replicates",
+                match_id or "(untagged)",
+                replicate_offset,
+                replicate_count,
+            )
+            break
         replicate_index = replicate_base + replicate_offset
         left_losses, right_losses = await _run_board_units_full(
             adapter=adapter,

@@ -390,6 +390,16 @@ async def evolve_once(
     # We do nothing more here.
     if config.instance_id != instance_id:
         config = replace(config, instance_id=instance_id)
+    # Per-round token budget (WS-H): mint a FRESH ledger for this round and
+    # rebind it onto the config, so every runner seam that already receives
+    # the config — the full/fast board-unit schedulers, the candidate
+    # screen, the evidence-gate replicate duels — shares one tally with no
+    # signature changes. Knob off (0 — the default) binds nothing and no
+    # scheduler ever consults a ledger: byte-identical.
+    if config.max_tokens_per_round > 0:
+        from zicato.core.runtime import RoundTokenLedger  # noqa: PLC0415
+
+        config = replace(config, token_ledger=RoundTokenLedger(config.max_tokens_per_round))
 
     # --- 2. Parent generation ---
     # Materialise a v0 baseline snapshot from the registered mutable
@@ -1190,6 +1200,7 @@ async def evolve_once(
         auxiliary_call_llm=auxiliary_call_llm,
         auxiliary_model=str(workspace_config.get("auxiliary_model", "")),
         meta_loop_emitter=meta_loop_emitter,
+        token_clip=_token_clip_state(config),
     )
 
     _beat(
@@ -2916,6 +2927,7 @@ async def _evolve_multi_challenger(
         auxiliary_call_llm=auxiliary_call_llm,
         auxiliary_model=auxiliary_model,
         meta_loop_emitter=meta_loop_emitter,
+        token_clip=_token_clip_state(config),
     )
 
     bookkeeping_decision = "promoted" if promoted_id is not None else "rejected"
@@ -3249,6 +3261,20 @@ def _count_infra_aborted_runs(tournament_result: Any) -> int:
     return count
 
 
+def _token_clip_state(config: Any) -> tuple[int, int] | None:
+    """The round's token-clip evidence for the health report, or ``None``.
+
+    ``(tokens_spent, max_tokens_per_round)`` when this round's ledger
+    latched its ``clipped`` flag (a scheduler stopped launching work on the
+    spent budget); ``None`` otherwise — including every round with the
+    knob off, where no ledger is even bound.
+    """
+    ledger = getattr(config, "token_ledger", None)
+    if ledger is None or not getattr(ledger, "clipped", False):
+        return None
+    return int(ledger.spent), int(ledger.max_tokens)
+
+
 def _defer_round_infra_outage(
     *,
     workspace_root: Path,
@@ -3395,6 +3421,7 @@ async def _round_epilogue(
     auxiliary_model: str,
     meta_loop_emitter: Any,
     run_analyzer: bool = True,
+    token_clip: tuple[int, int] | None = None,
 ) -> tuple[str, bool]:
     """The shared end-of-round tail: loop-health + analyzer + epoch report.
 
@@ -3411,10 +3438,15 @@ async def _round_epilogue(
       never ran it;
     * the comprehensive epoch analysis report regeneration.
 
+    ``token_clip`` — the round's ``(tokens_spent, max_tokens_per_round)``
+    pair when the per-round token budget clipped it
+    (:func:`_token_clip_state`) — is threaded into the health assessment;
+    ``None`` (every unclipped round) is inert.
+
     Returns ``(health_summary, health_critical)`` for the round outcome.
     """
     health_summary, health_critical = _assess_and_persist_loop_health(
-        workspace_root, epoch_id, round_n, board
+        workspace_root, epoch_id, round_n, board, token_clip=token_clip
     )
     if health_critical:
         _warn_loop_no_signal(epoch_id, round_n, health_summary)
@@ -5068,13 +5100,18 @@ def _assess_and_persist_loop_health(
     round_n: int,
     board: list[Any],
     infra_outage: tuple[int, int] | None = None,
+    token_clip: tuple[int, int] | None = None,
 ) -> tuple[str, bool]:
     """Run the per-round loop-health check and persist its report.
 
     ``infra_outage`` — the ``(infra_aborted_runs, threshold)`` pair for a
     round the endpoint-outage circuit deferred — is threaded through to
     :func:`~zicato.health.diagnostics.detect_infra_outage`; ``None``
-    (every non-deferred round) is inert.
+    (every non-deferred round) is inert. ``token_clip`` — the
+    ``(tokens_spent, max_tokens_per_round)`` pair for a round the token
+    budget clipped — feeds
+    :func:`~zicato.health.diagnostics.detect_token_budget_clip` the same
+    way.
 
     Calls :func:`zicato.health.diagnostics.assess_loop_health` with the
     epoch's accumulated losses, experiments, and board, then writes the
@@ -5108,13 +5145,15 @@ def _assess_and_persist_loop_health(
         noise_floor, promote_margin, evidence_gate_on = _epoch_noise_floor_inputs(
             workspace_root, epoch_id
         )
-        # ``infra_outage`` is passed only when a deferral actually carries
-        # one, so an older / stubbed ``assess_loop_health`` signature (the
-        # sibling-may-lag tolerance this function already documents) keeps
-        # working for every non-deferred round.
+        # The runtime-event inputs are passed only when a round actually
+        # carries one, so an older / stubbed ``assess_loop_health``
+        # signature (the sibling-may-lag tolerance this function already
+        # documents) keeps working for every ordinary round.
         extra_kwargs: dict[str, Any] = {}
         if infra_outage is not None:
             extra_kwargs["infra_outage"] = infra_outage
+        if token_clip is not None:
+            extra_kwargs["token_clip"] = token_clip
         health = assess_loop_health(
             losses_by_generation,
             experiments,

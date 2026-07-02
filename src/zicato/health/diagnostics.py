@@ -1062,6 +1062,45 @@ def detect_infra_outage(infra_outage: tuple[int, int] | None) -> list[HealthFind
     ]
 
 
+def detect_token_budget_clip(token_clip: tuple[int, int] | None) -> list[HealthFinding]:
+    """Surface a round the per-round token budget clipped (WS-H).
+
+    ``token_clip`` is the ``(tokens_spent, max_tokens_per_round)`` pair
+    the orchestrator observed when the round's ledger latched its clip
+    flag — a scheduler stopped launching board units / replicate slots on
+    the spent budget and the round settled with what it had. A
+    ``warning``: the round's verdict rests on partial coverage (un-run
+    units scored as budget-exceeded losses), so the operator should size
+    the budget against the board before trusting a streak of clipped
+    rounds. ``None`` (every unclipped round, including budget-off) is
+    silent — a runtime event threaded per round by the orchestrator, like
+    :func:`detect_infra_outage`.
+    """
+    if token_clip is None:
+        return []
+    spent, budget = token_clip
+    return [
+        HealthFinding(
+            code="round_token_clipped",
+            severity="warning",
+            summary=(
+                f"round token-clipped: {spent} tokens spent reached the per-round "
+                f"budget of {budget} — further board units/replicates were not "
+                "scheduled and the round settled on partial coverage"
+            ),
+            detail={
+                "tokens_spent": spent,
+                "max_tokens_per_round": budget,
+                "recommendation": (
+                    "raise runtime.max_tokens_per_round (or shrink the board / "
+                    "replicates) so a full round fits the budget; a clipped round "
+                    "scores its un-run units as budget-exceeded losses"
+                ),
+            },
+        )
+    ]
+
+
 def assess_loop_health(
     losses_by_generation: dict[str, list[LossProfile]],
     experiments: list[Any],
@@ -1074,6 +1113,7 @@ def assess_loop_health(
     evidence_gate_on: bool = True,
     preflight: dict[str, Any] | None = None,
     infra_outage: tuple[int, int] | None = None,
+    token_clip: tuple[int, int] | None = None,
 ) -> LoopHealth:
     """Run every detector and collect the findings into a :class:`LoopHealth`.
 
@@ -1128,6 +1168,12 @@ def assess_loop_health(
         :attr:`~zicato.core.runtime.RuntimeConfig.infra_abort_round_threshold`
         (see :func:`detect_infra_outage`). ``None`` (the default) is
         silent.
+    token_clip:
+        THIS round's per-round token-budget clip, as a
+        ``(tokens_spent, max_tokens_per_round)`` pair — threaded by the
+        orchestrator only for a round the budget actually clipped (see
+        :func:`detect_token_budget_clip`). ``None`` (the default) is
+        silent.
 
     Returns
     -------
@@ -1159,6 +1205,7 @@ def assess_loop_health(
     findings.extend(detect_preflight_verdict(preflight))
     findings.extend(detect_placebo_promoted(placebo_experiments))
     findings.extend(detect_infra_outage(infra_outage))
+    findings.extend(detect_token_budget_clip(token_clip))
 
     healthy = not any(finding.severity in ("warning", "critical") for finding in findings)
     return LoopHealth(
@@ -1191,4 +1238,5 @@ __all__ = [
     "detect_placebo_promoted",
     "detect_preflight_verdict",
     "detect_refresh_cadence",
+    "detect_token_budget_clip",
 ]
