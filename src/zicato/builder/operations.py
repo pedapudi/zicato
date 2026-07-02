@@ -134,8 +134,11 @@ class Warning:
     message:
         Human-readable explanation.
     severity:
-        ``"info"`` (advisory) / ``"warning"`` (likely a mistake). The
-        builder never blocks on these — they inform the operator's choice.
+        ``"info"`` (advisory) / ``"warning"`` (likely a mistake) /
+        ``"refuse"`` (statistically unsound — the same recommend-only
+        REFUSE posture the contract pre-flight verdict carries). The
+        builder never blocks on any of these — they inform the operator's
+        choice; even a ``refuse`` never hard-blocks apply.
     """
 
     code: str
@@ -144,6 +147,50 @@ class Warning:
 
     def to_dict(self) -> dict[str, Any]:
         return {"code": self.code, "message": self.message, "severity": self.severity}
+
+
+@dataclass(frozen=True, slots=True)
+class PreflightResult:
+    """The outcome of the builder's :func:`preflight` read-op.
+
+    Either a real measurement (``available=True`` with the
+    :class:`~zicato.epoch.preflight.PreflightReport` JSON + the measured
+    A/A noise floor) or an HONEST degrade (``available=False`` with a
+    clear ``reason`` naming what the measurement needs — a registered
+    target, a seeded baseline, runtime ``call_llm`` config). Never an
+    exception for a workspace that simply is not ready; recommend-only
+    either way.
+
+    Fields
+    ------
+    available:
+        ``True`` iff the measurement ran.
+    verdict:
+        The pre-flight verdict (``"ok"`` / ``"warn"`` / ``"refuse"``)
+        when available, else ``None``. Recommend-only, never a gate.
+    reason:
+        The honest degrade explanation when ``available`` is ``False``.
+    report:
+        :meth:`PreflightReport.to_json` dict when available.
+    noise_floor:
+        The measured A/A floor's :meth:`NoiseFloor.to_json` dict when
+        available.
+    """
+
+    available: bool
+    verdict: str | None = None
+    reason: str = ""
+    report: dict[str, Any] | None = None
+    noise_floor: dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "available": self.available,
+            "verdict": self.verdict,
+            "reason": self.reason,
+            "report": self.report,
+            "noise_floor": self.noise_floor,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -705,7 +752,12 @@ def _racing_cost(
     return total, lines
 
 
-def validate(draft: TournamentDraft) -> list[Warning]:
+def validate(
+    draft: TournamentDraft,
+    workspace_root: Path | None = None,
+    *,
+    noise_floor_max_abs_delta: float | None = None,
+) -> list[Warning]:
     """Return advisory warnings about the draft (never blocking).
 
     Checks include:
@@ -719,6 +771,15 @@ def validate(draft: TournamentDraft) -> list[Warning]:
     * ``replicates < 2`` is risky for a bracket structure (a single noisy
       run can flip a match verdict).
     * an explicit ``holdout`` tag referencing no entry, or every entry.
+    * STATISTICAL: when a measured A/A noise floor is known — passed in
+      explicitly (``noise_floor_max_abs_delta``, e.g. the floor a
+      just-run :func:`preflight` measured) or read off the current
+      epoch's record under ``workspace_root`` — a ``promote_margin`` at
+      or below that floor WITH the evidence gate off
+      (``promote_confidence_threshold`` unset) is flagged at ``refuse``
+      severity: every duel decided by the margin alone would be decided
+      by noise. Recommend-only, like every warning here — apply is never
+      hard-blocked.
     """
     warnings: list[Warning] = []
     ts = draft.scoring.tournament_structure
@@ -786,7 +847,201 @@ def validate(draft: TournamentDraft) -> list[Warning]:
             )
         )
 
+    floor = noise_floor_max_abs_delta
+    if floor is None and workspace_root is not None:
+        floor = _measured_noise_floor(workspace_root)
+    if floor is not None:
+        from zicato.selection.evidence_gate import (  # noqa: PLC0415
+            read_promote_confidence_threshold,
+        )
+
+        gate_on = read_promote_confidence_threshold(params) is not None
+        margin = draft.scoring.promote_margin
+        if not gate_on and margin <= floor:
+            warnings.append(
+                Warning(
+                    "margin_below_noise_floor",
+                    f"promote_margin {margin:.6g} does not clear the measured A/A "
+                    f"noise floor {floor:.6g} and the evidence gate "
+                    "(promote_confidence_threshold) is off: a duel decided by the "
+                    "margin alone cannot distinguish a real improvement from a "
+                    "re-roll of the same tree. Raise promote_margin above the "
+                    "floor or enable the evidence gate. Recommend-only — apply "
+                    "is not blocked.",
+                    severity="refuse",
+                )
+            )
+
     return warnings
+
+
+def _measured_noise_floor(workspace_root: Path) -> float | None:
+    """The current epoch's measured A/A floor (``max_abs_delta``), if any.
+
+    Reads the additive ``noise_floor`` field off the CURRENT epoch's
+    record (the :func:`zicato.epoch.lifecycle.set_epoch_noise_floor`
+    shape — written by ``zicato board audit`` / ``board preflight`` / the
+    epoch-open calibration hook). ``None`` on any absence — no epoch, no
+    record, no measurement, malformed value — so the statistical validate
+    rule degrades silently on an uncalibrated workspace instead of
+    guessing a floor.
+    """
+    from zicato.epoch.lifecycle import current_epoch_id, load_epoch  # noqa: PLC0415
+
+    try:
+        epoch_id = current_epoch_id(workspace_root)
+        if not epoch_id:
+            return None
+        record = load_epoch(workspace_root, epoch_id)
+    except (OSError, ValueError):
+        return None
+    raw = record.noise_floor
+    if not isinstance(raw, dict):
+        return None
+    raw_value = raw.get("max_abs_delta")
+    if isinstance(raw_value, bool) or not isinstance(raw_value, int | float):
+        return None
+    value = float(raw_value)
+    if not math.isfinite(value) or value < 0.0:
+        return None
+    return value
+
+
+# ---------------------------------------------------------------------------
+# Read-side: the build-time contract pre-flight
+# ---------------------------------------------------------------------------
+
+
+async def preflight(
+    draft: TournamentDraft,
+    workspace_root: Path,
+    *,
+    runs: int | None = None,
+) -> PreflightResult:
+    """Measure the DRAFT contract's noise floor + achievable signal.
+
+    Runs :func:`zicato.epoch.preflight.run_contract_preflight` — the SAME
+    measurement ``zicato board preflight`` takes — but against the
+    DRAFT's board and scoring weights (the two contract components the
+    builder edits; ``run_contract_preflight`` consumes them directly, so
+    the draft needs no on-disk materialization). The champion tree, the
+    adapter, and the runtime ``call_llm`` config are the workspace's own:
+    a pre-flight needs a real registered target to probe.
+
+    HONEST DEGRADE, never a crash: each missing prerequisite returns
+    ``available=False`` with a ``reason`` naming exactly what is missing
+    (no current epoch / no seeded baseline generation / no adapter block /
+    no ``runtime.harness_call_llm`` dotted callables / an empty draft
+    board / no mutation points). The result is RECOMMEND-ONLY and is NOT
+    persisted onto the epoch record — the draft is not the live contract,
+    so its measurement must never masquerade as the live epoch's.
+
+    This op never starts a live ``zicato evolve``; it spends only the
+    small K-draw measurement budget (cache-idempotent with ``zicato board
+    audit`` — re-running is a cache hit).
+    """
+    from zicato import adapter_factory, runtime_factory, workspace_loader  # noqa: PLC0415
+    from zicato.core.types import Generation  # noqa: PLC0415
+    from zicato.epoch.lifecycle import current_epoch_id  # noqa: PLC0415
+    from zicato.epoch.preflight import run_contract_preflight  # noqa: PLC0415
+    from zicato.tournament.calibration import DEFAULT_CALIBRATION_RUNS  # noqa: PLC0415
+
+    resolved_runs = DEFAULT_CALIBRATION_RUNS if runs is None else int(runs)
+    if resolved_runs < 2:
+        raise ValueError(f"preflight needs at least 2 A/A draws, got {resolved_runs!r}")
+
+    if not draft.entries:
+        return PreflightResult(
+            available=False,
+            reason="preflight requires a non-empty draft board — there is nothing to measure",
+        )
+
+    epoch_id = current_epoch_id(workspace_root)
+    if not epoch_id:
+        return PreflightResult(
+            available=False,
+            reason=(
+                "preflight requires a registered target: no current epoch under "
+                "this workspace (run `zicato register` / `zicato epoch new` first)"
+            ),
+        )
+
+    try:
+        workspace_config = workspace_loader.load_workspace_config(workspace_root)
+    except (FileNotFoundError, ValueError) as exc:
+        return PreflightResult(
+            available=False,
+            reason=f"preflight requires a registered target: {exc}",
+        )
+
+    from zicato.orchestrator import (  # noqa: PLC0415
+        _resolve_current_generation,
+        _snapshot_root,
+    )
+
+    try:
+        champion_id = _resolve_current_generation(workspace_root, epoch_id)
+    except FileNotFoundError:
+        return PreflightResult(
+            available=False,
+            reason=(
+                "preflight requires a registered target with a seeded baseline "
+                "generation — run one `zicato evolve` round (or seed v0) first"
+            ),
+        )
+
+    try:
+        adapter = adapter_factory.make_adapter_from_config(workspace_config)
+    except (KeyError, ValueError, ImportError) as exc:
+        return PreflightResult(
+            available=False,
+            reason=f"preflight requires a configured adapter: {exc}",
+        )
+
+    try:
+        config = runtime_factory.make_runtime_config(
+            workspace_config, workspace_root=workspace_root
+        )
+    except (ValueError, ImportError) as exc:
+        return PreflightResult(
+            available=False,
+            reason=(
+                "preflight requires the runtime call_llm config "
+                f"(config.json `runtime.harness_call_llm` / `runtime.auxiliary_call_llm`): {exc}"
+            ),
+        )
+
+    champion = Generation(
+        id=champion_id,
+        epoch_id=epoch_id,
+        parent_id=None,
+        snapshot_root=_snapshot_root(workspace_root, epoch_id, champion_id),
+        created_at="",
+        promoted=True,
+    )
+
+    try:
+        report, floor = await run_contract_preflight(
+            adapter=adapter,
+            generation=champion,
+            board=list(draft.entries),
+            weights=draft.scoring,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            runs=resolved_runs,
+        )
+    except ValueError as exc:
+        # No mutation points under the champion snapshot — nothing to
+        # degrade (and nothing an evolve loop could optimize either).
+        return PreflightResult(available=False, reason=str(exc))
+
+    return PreflightResult(
+        available=True,
+        verdict=report.verdict,
+        report=report.to_json(),
+        noise_floor=floor.to_json(),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -918,7 +1173,7 @@ def apply(draft: TournamentDraft, workspace_root: Path, confirm: bool) -> ApplyR
     diff = draft.diff_vs_live(workspace_root)
     diff_dict = diff.to_dict()
     cost = estimate_cost(draft)
-    warns = tuple(validate(draft))
+    warns = tuple(validate(draft, workspace_root))
     components_changed = _components_changed(diff_dict)
 
     if not confirm:
@@ -958,7 +1213,9 @@ __all__ = [
     "CostLine",
     "CostEstimate",
     "Warning",
+    "PreflightResult",
     "ApplyResult",
+    "preflight",
     "set_structure",
     "set_param",
     "set_holdout",

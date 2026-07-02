@@ -140,7 +140,7 @@ def _summary(patch: ops.DraftPatch) -> dict[str, Any]:
     ctx = _active_context()
     draft = ctx.draft()
     cost = ops.estimate_cost(draft)
-    warns = ops.validate(draft)
+    warns = ops.validate(draft, ctx.workspace_root)
     diff = draft.diff_vs_live(ctx.workspace_root)
     return {
         "patch": patch.to_dict(),
@@ -368,9 +368,48 @@ def estimate_cost() -> str:
 
 
 def validate() -> str:
-    """Return the current advisory validation warnings for the draft."""
+    """Return the current advisory validation warnings for the draft.
+
+    Includes the statistical margin-vs-noise-floor rule when the current
+    epoch's record carries a measured A/A floor (severity ``refuse`` —
+    recommend-only, never blocking).
+    """
     ctx = _active_context()
-    return _result_json({"warnings": [w.to_dict() for w in ops.validate(ctx.draft())]})
+    return _result_json(
+        {"warnings": [w.to_dict() for w in ops.validate(ctx.draft(), ctx.workspace_root)]}
+    )
+
+
+async def preflight(runs: int | None = None) -> str:
+    """Measure the DRAFT contract's noise floor + achievable signal.
+
+    The build-time statistical pre-flight (the same measurement `zicato
+    board preflight` takes, run against the DRAFT's board + scoring):
+    (a) K A/A draws of the workspace's champion measure the noise floor;
+    (b) a deliberately-degraded ephemeral copy measures the achievable
+    signal. Verdict `ok` / `warn` (saturated — the board cannot
+    discriminate) / `refuse` (signal at or below the floor — duels would
+    be decided by noise). RECOMMEND-ONLY, never a gate. Degrades honestly
+    (`available: false` + a reason) when the workspace has no registered
+    target / seeded baseline / runtime call_llm config. ``runs`` defaults
+    to 5 A/A draws; re-running is cache-idempotent.
+    """
+    ctx = _active_context()
+    try:
+        result = await ops.preflight(ctx.draft(), ctx.workspace_root, runs=runs)
+    except ValueError as exc:
+        return _result_json({"error": str(exc)})
+    payload: dict[str, Any] = {"preflight": result.to_dict()}
+    floor = (result.noise_floor or {}).get("max_abs_delta")
+    payload["warnings"] = [
+        w.to_dict()
+        for w in ops.validate(
+            ctx.draft(),
+            ctx.workspace_root,
+            noise_floor_max_abs_delta=floor if isinstance(floor, int | float) else None,
+        )
+    ]
+    return _result_json(payload)
 
 
 def preview_apply() -> str:
@@ -427,6 +466,7 @@ DEFAULT_BUILDER_TOOLS = (
     set_brief,
     estimate_cost,
     validate,
+    preflight,
     preview_apply,
 )
 
@@ -448,5 +488,6 @@ __all__ = [
     "set_brief",
     "estimate_cost",
     "validate",
+    "preflight",
     "preview_apply",
 ]

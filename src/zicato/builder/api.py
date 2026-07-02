@@ -120,6 +120,21 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
     raise ValueError(f"unknown builder op {op!r}")
 
 
+def _runs_of(args: dict[str, Any]) -> int | None:
+    """Coerce the optional ``runs`` arg of the ``preflight`` op.
+
+    ``None`` (absent) defers to the op's default; a non-integer raises
+    :class:`ValueError` so the handler returns a clear 400.
+    """
+    raw = args.get("runs")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"preflight 'runs' must be an integer, got {raw!r}") from exc
+
+
 def _format_sse(frame: dict[str, Any]) -> str:
     """Encode one copilot frame as an SSE ``data:`` event.
 
@@ -175,7 +190,7 @@ def make_builder_endpoints(
 
     def _op_response(draft: TournamentDraft, patch: ops.DraftPatch) -> JSONResponse:
         cost = ops.estimate_cost(draft)
-        warns = ops.validate(draft)
+        warns = ops.validate(draft, root)
         diff = draft.diff_vs_live(root)
         return JSONResponse(
             {
@@ -195,7 +210,7 @@ def make_builder_endpoints(
         session = request.query_params.get("session") or _DEFAULT_SESSION
         draft = draft_store.get(session, root)
         cost = ops.estimate_cost(draft)
-        warns = ops.validate(draft)
+        warns = ops.validate(draft, root)
         diff = draft.diff_vs_live(root)
         return JSONResponse(
             {
@@ -223,6 +238,34 @@ def make_builder_endpoints(
             return JSONResponse({"error": "'args' must be a JSON object"}, status_code=400)
         session = _session_of(body, request)
         draft = draft_store.get(session, root)
+        if op == "preflight":
+            # The build-time statistical pre-flight — a READ op that spends
+            # the small K-draw measurement budget, so it rides the same
+            # read-only guard as the write ops. Its response carries the
+            # normal envelope PLUS the `preflight` result, and the warnings
+            # are recomputed against the JUST-MEASURED floor so the
+            # margin-vs-noise rule fires immediately.
+            try:
+                result = await ops.preflight(draft, root, runs=_runs_of(args))
+            except ValueError as exc:
+                return JSONResponse({"error": str(exc)}, status_code=400)
+            floor = None
+            if result.noise_floor is not None:
+                floor = result.noise_floor.get("max_abs_delta")
+            warns = ops.validate(
+                draft,
+                root,
+                noise_floor_max_abs_delta=floor if isinstance(floor, int | float) else None,
+            )
+            return JSONResponse(
+                {
+                    "draft": draft.to_dict(),
+                    "preflight": result.to_dict(),
+                    "cost": ops.estimate_cost(draft).to_dict(),
+                    "warnings": [w.to_dict() for w in warns],
+                    "diff": draft.diff_vs_live(root).to_dict(),
+                }
+            )
         try:
             patch = _dispatch_op(draft, op, args)
         except KeyError as exc:

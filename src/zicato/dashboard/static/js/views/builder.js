@@ -48,6 +48,7 @@ let _draft = null;       // the live draft.to_dict()
 let _cost = null;        // last cost.to_dict()
 let _warnings = [];      // last warnings[]
 let _diff = null;        // last diff.to_dict()
+let _preflight = null;   // last preflight result (the op's `preflight` key)
 let _config = null;      // /builder/config public dict
 let _active = 'structure';
 let _busy = false;
@@ -134,6 +135,7 @@ function applyOpResult(env, opts) {
   if (env.cost) _cost = env.cost;
   if (Array.isArray(env.warnings)) _warnings = env.warnings;
   if (env.diff) _diff = env.diff;
+  if (env.preflight) _preflight = env.preflight;
   _renderCenter();
   _renderPreview();
   if (_chat && (opts && opts.fromChat) && env.patch) _chat.tagLastEdit(summarizePatch(env.patch));
@@ -209,7 +211,7 @@ function sectionDone(id) {
 
 function renderCenter(host) {
   const d = _draft || {};
-  const digest = JSON.stringify({ active: _active, draft: d, busy: _busy, flash: _flash });
+  const digest = JSON.stringify({ active: _active, draft: d, busy: _busy, flash: _flash, pf: _preflight });
   gatedSwap(host, 'center|' + digest, () => {
     const nodes = [];
     if (_flash) {
@@ -461,8 +463,78 @@ function reviewSection(d) {
         el('span', { class: 'dn-bld-v', text: changed.length ? changed.join(', ') : 'nothing' }),
       ]),
     ]),
+    preflightPanel(),
+    refuseWarningsPanel(),
     el('div', { class: 'dn-bld-applyrow' }, [dry, apply]),
     out);
+}
+
+// ── the build-time statistical pre-flight (Review pane) ────────────────
+//
+// A READ measurement, surfaced BEFORE apply: can the draft contract
+// out-signal its own noise? The op returns the normal envelope plus a
+// `preflight` result; the verdict chip + reasons render from module state
+// so a re-render (digest includes `pf`) keeps the last measurement
+// visible. Recommend-only — apply is never hard-blocked.
+
+function preflightPanel() {
+  const btn = el('button', {
+    class: 'dn-bld-btn dn-bld-btn-preflight', type: 'button',
+    text: _busy ? 'measuring…' : 'Run preflight',
+  });
+  btn.addEventListener('click', () => runOp('preflight', {}));
+  const kids = [
+    el('p', { class: 'dn-lede', text: 'Statistical pre-flight: measures the A/A noise floor and the achievable signal of this draft against the registered target, before any round is spent. Recommend-only.' }),
+    el('div', { class: 'dn-bld-applyrow' }, [btn]),
+  ];
+  if (_preflight) kids.push(preflightVerdict(_preflight));
+  return el('div', { class: 'dn-bld-preflight' }, kids);
+}
+
+function preflightVerdict(pf) {
+  const verdict = pf.available ? (pf.verdict || 'ok') : 'unavailable';
+  const chip = el('span', {
+    class: 'dn-bld-pf-chip dn-bld-pf-' + verdict,
+    text: verdict === 'unavailable' ? 'unavailable' : verdict.toUpperCase(),
+  });
+  const reasons = [];
+  if (!pf.available) {
+    reasons.push(pf.reason || 'preflight is unavailable for this workspace');
+  } else {
+    const r = pf.report || {};
+    reasons.push(`noise floor ${fmtSig(r.noise_floor_max_abs_delta)} (max |Δ| over ${r.noise_floor_runs != null ? r.noise_floor_runs : '?'} A/A draws)`);
+    reasons.push(`achievable signal ${fmtSig(r.signal)} (degraded point ${r.degraded_mutation_id || '?'})`);
+    if (verdict === 'refuse') reasons.push('the signal is at or below the floor — duels under this contract would be decided by noise');
+    if (verdict === 'warn') reasons.push('saturated: every probe scored identically — the board cannot discriminate even a deliberate degradation');
+    if (verdict === 'ok') reasons.push('the achievable signal clears the measured floor');
+  }
+  return el('div', { class: 'dn-bld-pf', role: 'status' }, [
+    el('div', { class: 'dn-bld-pf-head' }, [
+      el('span', { class: 'dn-bld-k', text: 'preflight verdict' }),
+      chip,
+    ]),
+    el('ul', { class: 'dn-bld-pf-reasons' }, reasons.map((t) => el('li', { text: t }))),
+  ]);
+}
+
+// REFUSE-severity validation warnings (e.g. margin_below_noise_floor) get a
+// dedicated slot in the Review pane so the statistical objection is in front
+// of the operator right where they apply — not only in the side preview.
+function refuseWarningsPanel() {
+  const refuses = (_warnings || []).filter((w) => w && w.severity === 'refuse');
+  if (!refuses.length) return el('div', { class: 'dn-bld-refuses dn-bld-refuses-empty' });
+  return el('div', { class: 'dn-bld-refuses', role: 'alert' }, refuses.map((w) => el('div', {
+    class: 'dn-bld-warn dn-bld-warn-refuse',
+  }, [
+    el('span', { class: 'dn-bld-warn-glyph', 'aria-hidden': 'true', text: '⛔' }),
+    el('span', { class: 'dn-bld-warn-msg', text: w.message || w.code || '' }),
+  ])));
+}
+
+function fmtSig(v) {
+  const n = Number(v);
+  if (!isFinite(n)) return '—';
+  return String(Math.round(n * 1e6) / 1e6);
 }
 
 let _confirmApply = false;

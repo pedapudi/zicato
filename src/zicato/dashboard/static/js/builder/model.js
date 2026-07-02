@@ -324,9 +324,18 @@ function racingCost(params, fieldSize, replicates, boardSize) {
 
 // Advisory warnings about a structure + params over a split. Mirrors
 // operations.validate (the checks that do NOT need the entry tag set: the
-// degenerate-field, racing rung-0, and bracket-replicates warnings). Returns
-// the SAME [{code, message, severity}] shape `/builder/op` carries.
-export function validateContract(structure, params, trainCount, holdoutCount, overfitting) {
+// degenerate-field, racing rung-0, and bracket-replicates warnings — plus the
+// STATISTICAL margin-vs-noise-floor rule when the caller supplies the
+// measured floor via `opts`). Returns the SAME [{code, message, severity}]
+// shape `/builder/op` carries.
+//
+// `opts` (optional): { promoteMargin, noiseFloor } — the contract's
+// promote_margin and the epoch's measured A/A floor (max |Δ|). When both are
+// known, the margin sitting at/below the floor WITH the evidence gate off
+// (params.promote_confidence_threshold unset / out of (0,1)) yields the
+// `refuse`-severity `margin_below_noise_floor` warning — the JS twin of the
+// Python rule. Recommend-only, like every warning here.
+export function validateContract(structure, params, trainCount, holdoutCount, overfitting, opts) {
   const warnings = [];
   const fieldSize = Math.max(1, intOf(params, 'field_size', 2));
   const replicates = Math.max(1, intOf(params, 'replicates', 1));
@@ -361,6 +370,19 @@ export function validateContract(structure, params, trainCount, holdoutCount, ov
       code: 'replicates_recommended_for_brackets', severity: 'warning',
       message: `structure '${structure}' with replicates=${replicates}: a single noisy run can flip a match verdict; replicates>=2 is recommended.`,
     });
+  }
+  const o = opts || {};
+  const floor = Number(o.noiseFloor);
+  const margin = Number(o.promoteMargin);
+  if (isFinite(floor) && floor >= 0 && isFinite(margin)) {
+    const thr = Number(params && params.promote_confidence_threshold);
+    const gateOn = isFinite(thr) && thr > 0 && thr < 1;
+    if (!gateOn && margin <= floor) {
+      warnings.push({
+        code: 'margin_below_noise_floor', severity: 'refuse',
+        message: `promote_margin ${margin} does not clear the measured A/A noise floor ${floor} and the evidence gate (promote_confidence_threshold) is off: a duel decided by the margin alone cannot distinguish a real improvement from a re-roll of the same tree. Raise promote_margin above the floor or enable the evidence gate. Recommend-only — apply is not blocked.`,
+      });
+    }
   }
   return warnings;
 }

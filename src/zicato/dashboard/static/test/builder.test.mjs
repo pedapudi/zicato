@@ -69,6 +69,24 @@ function installBuilderFetch() {
     }
     if (path === '/builder/op') {
       OP_CALLS.push(body);
+      // the preflight READ op: the normal envelope plus the `preflight` result
+      // (here the REFUSE case) and the just-measured-floor refuse warning.
+      if (body.op === 'preflight') {
+        const env = envelope({ op: 'preflight', changed: {} });
+        env.preflight = {
+          available: true, verdict: 'refuse', reason: '',
+          report: {
+            verdict: 'refuse', signal: 0.02, noise_floor_max_abs_delta: 0.14,
+            noise_floor_runs: 5, degraded_mutation_id: 'style_rules',
+          },
+          noise_floor: { max_abs_delta: 0.14, runs: 5 },
+        };
+        env.warnings = [{
+          code: 'margin_below_noise_floor', severity: 'refuse',
+          message: 'promote_margin 0 does not clear the measured A/A noise floor 0.14…',
+        }];
+        return jsonRes(env);
+      }
       // mutate the shared draft so the applied envelope is observably different.
       if (body.op === 'set_structure') DRAFT.scoring.tournament.structure = body.args.structure;
       if (body.op === 'set_param') DRAFT.scoring.tournament.params[body.args.key] = body.args.value;
@@ -533,6 +551,54 @@ test('estimateCost: an explicit replicates is honored verbatim over the structur
   assertEqual(est1.board_runs_per_round, 64, 'explicit replicates=1 → 64 (4 × 2 × 1 × 8)');
   const est3 = builder.estimateCost('swiss', { field_size: 4, replicates: 3 }, 8, 0);
   assertEqual(est3.board_runs_per_round, 192, 'explicit replicates=3 → 192 (4 × 2 × 3 × 8)');
+});
+
+// ── the build-time statistical pre-flight (Review pane) ────────────────
+
+test('builder view: the Review pane runs the preflight op and renders the verdict chip + refuse warnings', async () => {
+  installBuilderFetch();
+  globalThis.window.localStorage.clear();
+  const host = globalThis.document.createElement('div');
+  await view.render(host);
+  const rail = byClass(host, 'dn-bld-railitem').find((r) => r.textContent.includes('Review'));
+  rail.dispatchEvent(makeEvent('click'));
+  await tick();
+  // the preflight control renders BEFORE apply, with no verdict yet.
+  const pfBtn = byClass(host, 'dn-bld-btn-preflight')[0];
+  assert(pfBtn, 'the Review pane offers a Run-preflight control');
+  assertEqual(byClass(host, 'dn-bld-pf-chip').length, 0, 'no verdict chip before a measurement');
+  pfBtn.dispatchEvent(makeEvent('click'));
+  await tick();
+  const pfCall = OP_CALLS.find((c) => c.op === 'preflight');
+  assert(pfCall, 'the preflight op was posted through the same /builder/op dispatch');
+  // the REFUSE verdict chip + reasons render from the returned envelope.
+  const chip = byClass(host, 'dn-bld-pf-chip')[0];
+  assert(chip, 'a verdict chip rendered');
+  assert(chip.classList.contains('dn-bld-pf-refuse'), 'the chip carries the refuse class');
+  assert(chip.textContent.includes('REFUSE'), 'the chip names the verdict');
+  const reasons = firstClass(host, 'dn-bld-pf-reasons');
+  assert(reasons && reasons.textContent.includes('noise floor'), 'the reasons name the measured floor');
+  assert(reasons.textContent.includes('signal'), 'the reasons name the achievable signal');
+  // the REFUSE-severity validate warning surfaces in the Review pane itself.
+  const refuse = byClass(host, 'dn-bld-warn-refuse')[0];
+  assert(refuse && refuse.textContent.includes('noise floor'), 'the margin-vs-floor refuse warning renders beside apply');
+});
+
+test('validateContract twin: margin at/below a measured floor with the evidence gate off → refuse', () => {
+  // Gate off, margin 0.01 <= floor 0.05 → the refuse-severity rule fires.
+  const warns = builder.validateContract('gauntlet', {}, 6, 0, {}, { promoteMargin: 0.01, noiseFloor: 0.05 });
+  const hit = warns.find((w) => w.code === 'margin_below_noise_floor');
+  assert(hit, 'the margin_below_noise_floor rule fired');
+  assertEqual(hit.severity, 'refuse', 'the rule is refuse-severity');
+  // Evidence gate ON (threshold in (0,1)) silences it.
+  const gated = builder.validateContract('gauntlet', { promote_confidence_threshold: 0.8 }, 6, 0, {}, { promoteMargin: 0.01, noiseFloor: 0.05 });
+  assert(!gated.find((w) => w.code === 'margin_below_noise_floor'), 'the evidence gate silences the rule');
+  // Margin clearing the floor silences it.
+  const clear = builder.validateContract('gauntlet', {}, 6, 0, {}, { promoteMargin: 0.06, noiseFloor: 0.05 });
+  assert(!clear.find((w) => w.code === 'margin_below_noise_floor'), 'a clearing margin is silent');
+  // No floor known → silent (never guess).
+  const unknown = builder.validateContract('gauntlet', {}, 6, 0, {}, { promoteMargin: 0.01 });
+  assert(!unknown.find((w) => w.code === 'margin_below_noise_floor'), 'no measured floor, no rule');
 });
 
 test('estimateCost: the per-structure default-replicates twin matches the Python map for every structure', () => {

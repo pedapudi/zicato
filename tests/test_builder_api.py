@@ -182,3 +182,59 @@ def test_builder_endpoints_read_only_forbids_writes(workspace: Path, tmp_path: P
     assert op_resp.status_code == 403
     apply_resp = ro_client.post("/builder/apply", json={"confirm": True})
     assert apply_resp.status_code == 403
+
+
+def test_builder_op_preflight_degrades_honestly(client: TestClient) -> None:
+    """The fixture workspace has an epoch but no seeded baseline generation:
+    the preflight op returns 200 with an honest `available: false` + reason,
+    alongside the normal draft/cost/warnings/diff envelope."""
+    resp = client.post("/builder/op", json={"session": "pf1", "op": "preflight", "args": {}})
+    assert resp.status_code == 200
+    body = resp.json()
+    pf = body["preflight"]
+    assert pf["available"] is False
+    assert pf["verdict"] is None
+    assert pf["reason"]
+    assert "draft" in body
+    assert "cost" in body
+    assert "warnings" in body
+    assert "diff" in body
+
+
+def test_builder_op_preflight_bad_runs_is_400(client: TestClient) -> None:
+    resp = client.post(
+        "/builder/op", json={"session": "pf2", "op": "preflight", "args": {"runs": "nope"}}
+    )
+    assert resp.status_code == 400
+    assert "runs" in resp.json()["error"]
+    resp = client.post(
+        "/builder/op", json={"session": "pf2", "op": "preflight", "args": {"runs": 1}}
+    )
+    assert resp.status_code == 400
+
+
+def test_builder_op_envelope_carries_noise_floor_refuse_warning(
+    client: TestClient, workspace: Path
+) -> None:
+    """Once the epoch record carries a measured A/A floor, every op envelope's
+    warnings include the REFUSE-severity margin_below_noise_floor rule (the
+    fixture contract's default margin 0.01 with the evidence gate off)."""
+    from zicato.epoch.lifecycle import current_epoch_id, set_epoch_noise_floor
+
+    epoch_id = current_epoch_id(workspace)
+    assert epoch_id
+    set_epoch_noise_floor(workspace, epoch_id, {"max_abs_delta": 0.5, "runs": 5})
+
+    resp = client.post(
+        "/builder/op",
+        json={"session": "pf3", "op": "set_structure", "args": {"structure": "swiss"}},
+    )
+    assert resp.status_code == 200
+    warns = {w["code"]: w for w in resp.json()["warnings"]}
+    assert "margin_below_noise_floor" in warns
+    assert warns["margin_below_noise_floor"]["severity"] == "refuse"
+
+    # The draft snapshot GET carries it too (the Review pane's first paint).
+    snap = client.get("/builder/draft?session=pf3").json()
+    codes = {w["code"] for w in snap["warnings"]}
+    assert "margin_below_noise_floor" in codes

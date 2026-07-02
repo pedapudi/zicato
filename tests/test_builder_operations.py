@@ -471,3 +471,213 @@ def test_cost_screen_runs_scale_with_field_and_cap_at_board() -> None:
     assert len(screen_lines) == 1
     # proposes 4 (racing field) × best_of_n 3 × panel min(8, 3) = 36.
     assert screen_lines[0].runs == 4 * 3 * 3
+
+
+# ---------------------------------------------------------------------------
+# validate — the statistical margin-vs-noise-floor rule (REFUSE severity)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_margin_below_noise_floor_refuses_when_gate_off() -> None:
+    # Default contract: promote_margin 0.01, evidence gate OFF. A measured
+    # floor at/above the margin makes margin-only duels noise-decided.
+    draft = TournamentDraft()
+    draft.entries = _board(4)
+    warns = {w.code: w for w in ops.validate(draft, noise_floor_max_abs_delta=0.05)}
+    assert "margin_below_noise_floor" in warns
+    assert warns["margin_below_noise_floor"].severity == "refuse"
+    assert "0.05" in warns["margin_below_noise_floor"].message
+
+    # Exactly-at-floor also refuses (margin <= floor).
+    ops.set_gate(draft, promote_margin=0.05)
+    codes = {w.code for w in ops.validate(draft, noise_floor_max_abs_delta=0.05)}
+    assert "margin_below_noise_floor" in codes
+
+
+def test_validate_margin_rule_silent_when_gate_on_or_margin_clears() -> None:
+    draft = TournamentDraft()
+    draft.entries = _board(4)
+    # Evidence gate ON (threshold in (0,1)) silences the rule — the
+    # defer→replicate loop supplies the statistical resolution instead.
+    ops.set_param(draft, "promote_confidence_threshold", 0.8)
+    codes = {w.code for w in ops.validate(draft, noise_floor_max_abs_delta=0.05)}
+    assert "margin_below_noise_floor" not in codes
+
+    # Gate off but the margin clears the floor — silent.
+    ops.set_param(draft, "promote_confidence_threshold", None)
+    ops.set_gate(draft, promote_margin=0.06)
+    codes = {w.code for w in ops.validate(draft, noise_floor_max_abs_delta=0.05)}
+    assert "margin_below_noise_floor" not in codes
+
+
+def test_validate_margin_rule_silent_without_any_floor() -> None:
+    # No floor passed, no workspace: the rule cannot fire (no guessing).
+    draft = TournamentDraft()
+    draft.entries = _board(4)
+    codes = {w.code for w in ops.validate(draft)}
+    assert "margin_below_noise_floor" not in codes
+
+
+def test_validate_reads_measured_floor_off_the_epoch_record(tmp_path) -> None:
+    """With a workspace, validate() reads the CURRENT epoch's measured
+    ``noise_floor`` record (the `zicato board audit` shape) on its own."""
+    import json
+
+    from zicato.epoch.lifecycle import new_epoch, set_epoch_noise_floor
+
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    board = tmp_path / "board.jsonl"
+    board.write_text(
+        '{"id": "e1", "kind": "single_turn", "budget_s": 60, "input": "hi"}\n',
+        encoding="utf-8",
+    )
+    brief = tmp_path / "brief.md"
+    brief.write_text("# b\n", encoding="utf-8")
+    (ws / "config.json").write_text(json.dumps({"instance_id": "default"}), encoding="utf-8")
+    from zicato.core.types import ScoringWeights
+
+    cfg = new_epoch(ws, name="a", board_source=board, brief_source=brief, weights=ScoringWeights())
+
+    draft = TournamentDraft()
+    draft.entries = _board(4)
+    # No measurement yet: silent.
+    codes = {w.code for w in ops.validate(draft, ws)}
+    assert "margin_below_noise_floor" not in codes
+
+    set_epoch_noise_floor(ws, cfg.id, {"max_abs_delta": 0.2, "runs": 5})
+    warns = {w.code: w for w in ops.validate(draft, ws)}
+    assert "margin_below_noise_floor" in warns
+    assert warns["margin_below_noise_floor"].severity == "refuse"
+
+    # An explicit floor argument overrides the record.
+    codes = {w.code for w in ops.validate(draft, ws, noise_floor_max_abs_delta=0.001)}
+    assert "margin_below_noise_floor" not in codes
+
+
+# ---------------------------------------------------------------------------
+# preflight — the build-time statistical measurement (honest degrades)
+# ---------------------------------------------------------------------------
+
+
+def test_preflight_degrades_on_empty_board_and_missing_epoch(tmp_path) -> None:
+    import asyncio
+
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+
+    # Empty draft board: nothing to measure.
+    empty = TournamentDraft()
+    res = asyncio.run(ops.preflight(empty, ws))
+    assert res.available is False
+    assert "non-empty draft board" in res.reason
+    assert res.to_dict()["verdict"] is None
+
+    # A board but no current epoch: preflight needs a registered target.
+    draft = TournamentDraft()
+    draft.entries = _board(3)
+    res = asyncio.run(ops.preflight(draft, ws))
+    assert res.available is False
+    assert "registered target" in res.reason
+
+
+def test_preflight_degrades_without_seeded_baseline(tmp_path) -> None:
+    import asyncio
+    import json
+
+    from zicato.core.types import ScoringWeights
+    from zicato.epoch.lifecycle import new_epoch
+
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    board = tmp_path / "board.jsonl"
+    board.write_text(
+        '{"id": "e1", "kind": "single_turn", "budget_s": 60, "input": "hi"}\n',
+        encoding="utf-8",
+    )
+    brief = tmp_path / "brief.md"
+    brief.write_text("# b\n", encoding="utf-8")
+    (ws / "config.json").write_text(json.dumps({"instance_id": "default"}), encoding="utf-8")
+    new_epoch(ws, name="a", board_source=board, brief_source=brief, weights=ScoringWeights())
+
+    draft = TournamentDraft()
+    draft.entries = _board(3)
+    res = asyncio.run(ops.preflight(draft, ws))
+    assert res.available is False
+    assert "baseline" in res.reason
+
+
+def test_preflight_rejects_sub_two_runs(tmp_path) -> None:
+    import asyncio
+
+    import pytest
+
+    draft = TournamentDraft()
+    draft.entries = _board(3)
+    with pytest.raises(ValueError, match="at least 2"):
+        asyncio.run(ops.preflight(draft, tmp_path, runs=1))
+
+
+def test_preflight_measures_draft_contract_against_target0(tmp_path) -> None:
+    """The REAL measurement, against target_0's deterministic adapter with
+    the runtime call_llm config in config.json (the shape the builder relies
+    on — no explicit callables). Verdict OK; the epoch record is untouched
+    (a draft measurement never masquerades as the live epoch's)."""
+    import asyncio
+    import json
+    from pathlib import Path
+
+    import zicato_examples.target_0_convergence as _t0_pkg
+    from zicato.epoch.lifecycle import _scoring_from_dict, load_epoch, new_epoch
+
+    example_dir = Path(_t0_pkg.__file__).resolve().parent
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    (ws / "config.json").write_text(
+        json.dumps(
+            {
+                "instance_id": "default",
+                "adapter": {
+                    "kind": "import",
+                    "factory": "zicato_examples.target_0_convergence.harness:make_adapter",
+                },
+                "mutable_trees": [str(example_dir / "agent")],
+                "runtime": {
+                    "harness_call_llm": "zicato_examples.target_0_convergence.mocks:harness_llm",
+                    "auxiliary_call_llm": "zicato_examples.target_0_convergence.mocks:aux_llm",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    brief = tmp_path / "brief.md"
+    brief.write_text("# Pre-flight brief\n", encoding="utf-8")
+    weights = _scoring_from_dict(json.loads((example_dir / "scoring.json").read_text()))
+    cfg = new_epoch(
+        ws,
+        name="t0-builder-preflight",
+        board_source=example_dir / "board.jsonl",
+        brief_source=brief,
+        weights=weights,
+        auto_close_previous=False,
+        proposer_path=example_dir / "proposer",
+    )
+    # Seed v0 so there is a champion tree to probe.
+    from zicato import workspace_loader
+    from zicato.orchestrator import _ensure_baseline_snapshot
+
+    _ensure_baseline_snapshot(ws, cfg.id, workspace_loader.load_workspace_config(ws))
+
+    draft = TournamentDraft.from_workspace(ws)
+    res = asyncio.run(ops.preflight(draft, ws, runs=3))
+    assert res.available is True, res.reason
+    assert res.verdict == "ok"
+    assert res.report is not None
+    assert res.report["signal"] > 0.0
+    assert res.noise_floor is not None
+    assert res.noise_floor["max_abs_delta"] == 0.0
+
+    # RECOMMEND-ONLY and draft-scoped: nothing persisted onto the record.
+    record = load_epoch(ws, cfg.id)
+    assert record.preflight is None
+    assert record.noise_floor is None
