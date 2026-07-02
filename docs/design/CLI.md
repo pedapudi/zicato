@@ -5,10 +5,10 @@
 > is the source of truth; if this document and the binary ever disagree,
 > trust `zicato --help` / `zicato help <command>`.
 >
-> *Last reconciled against the live `--help` on 2026-06-10.* Verified the
+> *Last reconciled against the live `--help` on 2026-07-02.* Verified the
 > full command set (`init`, `evolve`, and the advanced/debugging group:
-> `analyze-telemetry`, `board`, `builder`, `dashboard`, `epoch`, `health`,
-> `help`, `mutations`, `propose`, `regenerate-report`, `register`,
+> `analyze-telemetry`, `board`, `builder`, `config`, `dashboard`, `epoch`,
+> `health`, `help`, `mutations`, `propose`, `regenerate-report`, `register`,
 > `reindex`, `reindex-generations`, `repair-epoch-goals`,
 > `repair-judge-losses`, `repair-tournament-fk`, `repair-v0-baseline`,
 > `tournament`) and every option/default below by running
@@ -38,6 +38,18 @@ Run the CLI through uv:
 uv run zicato --help
 uv run zicato help <command>      # equivalent to: zicato <command> --help
 ```
+
+## Environment variables
+
+There are none to set. **No environment variable is a configuration knob**:
+every operator knob is a CLI flag (each flag's `--help` names the config knob
+it shadows) or a workspace `config.json` block (`health`, `runtime`, `models`,
+`harmonograf_url`). The former `ZICATO_*` operator variables are deleted and
+ignored. What zicato still deliberately touches in the environment is a small
+set of process-boundary contracts — the per-run harness scratch-dir contract,
+the internal harmonograf handoff, the operator-*named* credential variables,
+goldfive's own timeout, and CI/test toggles — enumerated with role labels by
+[`zicato config env`](#zicato-config-env).
 
 ## How evolve orchestrates everything
 
@@ -111,7 +123,12 @@ zicato evolve [OPTIONS]
 | `--harness-call-llm TEXT` | **required** | Dotted import path of the harness `call_llm` (e.g. `mymodule:harness`). |
 | `--auxiliary-call-llm TEXT` | **required** | Dotted import path of the auxiliary `call_llm` (e.g. `mymodule:aux`). |
 | `--max-consecutive-rejections INTEGER RANGE` | `3` (x>=1) | Stop early when this many rounds in a row are rejected. |
-| `--max-wall-clock-seconds INTEGER RANGE` | unset (unbounded) | Total wall-clock budget for the whole evolve invocation, in seconds. The loop stops cleanly between rounds once the budget is spent; a single round that would overrun it is cancelled and recorded as aborted. Applies on top of each board entry's own `wall_clock_budget_seconds`. Env var: `ZICATO_MAX_WALL_CLOCK_SECONDS`. |
+| `--max-wall-clock-seconds INTEGER RANGE` | unset (unbounded) | Total wall-clock budget for the whole evolve invocation, in seconds. The loop stops cleanly between rounds once the budget is spent; a single round that would overrun it is cancelled and recorded as aborted. Applies on top of each board entry's own `wall_clock_budget_seconds`. |
+| `--parallelism INTEGER RANGE` | unset ⇒ `config.json`'s `runtime.parallelism`, else `4` (x>=1) | Maximum number of board units the tournament runner keeps in flight at once. Shadows the `runtime.parallelism` config knob; the flag wins over the workspace `config.json`. |
+| `--harness-call-timeout-ms INTEGER RANGE` | unset ⇒ `1800000` (x>=1) | Per-LLM-call wall-clock budget, in milliseconds, for the inner harness agent's calls. Shadows the `runtime.harness_call_timeout_ms` config knob. An explicit `GOLDFIVE_AGENT_CALL_TIMEOUT_MS` still wins — an operator who tunes goldfive directly is not overridden. |
+| `--aux-call-timeout FLOAT RANGE` | unset ⇒ `120` (x>0) | Per-call wall-clock budget, in seconds, for every auxiliary-LLM (proposer / judge / emulator / analysis) call. Shadows the `aux.call_timeout_s` config knob. |
+| `--supervisor-binary PATH` | unset ⇒ bundled / dev-checkout build, then system `PATH` | Filesystem path to the `zicato-supervisor` watchdog binary. Shadows the `integration.supervisor_binary` config knob. |
+| `--harmonograf-url TEXT` | unset ⇒ auto-launch a per-workspace harmonograf | URL of an external harmonograf server to stream this invocation's telemetry to. Shadows the `integration.harmonograf_url` config knob (also settable via the workspace `config.json`'s `harmonograf_url`; the flag wins). |
 | `--tournament-structure [gauntlet\|single_elim\|double_elim\|swiss\|racing]` | unset ⇒ reads `scoring.json` (`gauntlet` when absent) | Set the per-epoch tournament structure. **Contract-mutating convenience**: it writes `{structure, params}` into the live `scoring.json` before the contract hash is computed, so it participates in the hash and auto-rolls the epoch if it differs — exactly equivalent to editing `scoring.json` by hand. |
 | `--tournament-param KEY=VALUE` | — | Set one tournament params key (repeatable). VALUE is parsed as JSON when possible, else taken as a string. Only applied when `--tournament-structure` is also passed. |
 | `--no-auto-epoch` | off | Disable contract-hash auto-epoching. With this flag, evolve errors out (instead of rolling the epoch) when the contract has drifted from the current epoch. |
@@ -286,6 +303,48 @@ zicato builder [OPTIONS]
 |---|---|---|
 | `--workspace PATH` | `.zicato` | Path to the zicato workspace root to serve. |
 | `--dashboard-port INTEGER RANGE` | `7892` (1–65535) | Port for the dashboard HTTP server (bound on `127.0.0.1`). |
+| `--static-dir DIRECTORY` | unset ⇒ the bundled `zicato/dashboard/static` | Filesystem path to the dashboard static-asset directory. Shadows the `dashboard.static_dir` config knob. |
+
+### `zicato config`
+
+Introspect zicato's configuration surface. Operator knobs are CLI flags and
+workspace `config.json` blocks — not environment variables. The subcommands
+here make that surface discoverable without grepping the tree.
+
+```
+zicato config [OPTIONS] COMMAND [ARGS]...
+```
+
+#### `zicato config env`
+
+List the environment variables zicato deliberately touches. Since the env-var
+rationalization, **no environment variable is a configuration knob**. What
+remains — and is printed here, grouped by role — is the small merited set of
+process-boundary contracts:
+
+* **harness-contract** — `ZICATO_RUN_SCRATCH_DIR`: set *by* the tournament
+  worker *for* the inner harness; the per-run scratch directory run output
+  must land in.
+* **internal-handoff** — `ZICATO_HARMONOGRAF_URL` / `ZICATO_HARMONOGRAF_GRPC`:
+  set (and restored) by the evolve loop's harmonograf auto-launch so
+  downstream re-resolvers — including worker subprocesses — discover the
+  launched console. Not operator knobs; `--harmonograf-url` and the
+  `config.json` `harmonograf_url` key outrank them.
+* **secrets-boundary** — the operator-*named* `api_key_env` variables from the
+  `config.json` `models` block, plus the `runtime.worker_env_passthrough`
+  allowlist: credentials stay in the environment, never in files.
+* **external-integration** — `GOLDFIVE_AGENT_CALL_TIMEOUT_MS`: goldfive's own
+  knob; when set, zicato defers to it instead of `--harness-call-timeout-ms`.
+* **test-toggle** — `ZICATO_SKIP_HOOK_CHECK`, `ZICATO_PARITY_UPDATE`: CI/test
+  switches, never read on an operator path.
+
+```
+zicato config env [--json]
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--json` | off | Emit the set as a JSON array instead of grouped text. |
 
 ### `zicato dashboard`
 
@@ -305,6 +364,7 @@ zicato dashboard [OPTIONS]
 | `--workspace PATH` | `.zicato` | Path to the zicato workspace root to serve. |
 | `--host TEXT` | `127.0.0.1` | Host/bind address for the dashboard HTTP server. |
 | `--port INTEGER RANGE` | `7892` (1–65535) | Port for the dashboard HTTP server. |
+| `--static-dir DIRECTORY` | unset ⇒ the bundled `zicato/dashboard/static` | Filesystem path to the dashboard static-asset directory. Shadows the `dashboard.static_dir` config knob. |
 
 ### `zicato epoch`
 

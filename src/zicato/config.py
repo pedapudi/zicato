@@ -15,34 +15,33 @@ configuration surface is the dataclass definition itself.
 Loading
 -------
 
-:func:`load_config` is the *only* place in zicato that reads the
-environment. It reads ``env`` exactly once, treats it as the
-lowest-priority override layer, applies any explicit ``overrides`` on
-top, and returns a fully-typed :class:`ZicatoConfig`. Downstream code
-takes the config object (or the relevant sub-config) as a parameter and
-never touches ``os.environ`` itself.
+:func:`load_config` builds the tree from the dataclass defaults, layers
+the process-pinned CLI-flag values (:func:`pin_overrides`) on top, and
+applies any explicit ``overrides`` last. It does NOT read the
+environment — every operator knob that used to be a ``ZICATO_*``
+variable is now a CLI flag or a workspace ``config.json`` block, and
+downstream code takes the config object (or the relevant sub-config) as
+a parameter rather than touching ``os.environ``.
 
 Precedence, lowest to highest:
 
 1. The dataclass field defaults.
-2. The environment (``ZICATO_*`` variables — all enumerated in
-   :data:`_ENV_BINDINGS`).
-3. Process-pinned overrides (:func:`pin_overrides`) — how CLI flags
+2. Process-pinned overrides (:func:`pin_overrides`) — how CLI flags
    land on the tree: a command pins the flag values once at startup and
    every later :func:`load_config` call in the process sees them.
-4. The explicit ``overrides`` mapping passed to :func:`load_config`.
+3. The explicit ``overrides`` mapping passed to :func:`load_config`.
 
 Programmatic construction
 -------------------------
 
-The dataclass tree is constructible directly, with no environment
+The dataclass tree is constructible directly, with no loader
 involved at all::
 
     cfg = ZicatoConfig(health=HealthConfig(scoring_window=10))
 
 That is the supported way for an embedding application to pin
 configuration. :func:`load_config` is a convenience that layers the
-environment underneath such an override.
+pinned CLI-flag values underneath such an override.
 
 CLI flags → the config tree
 ---------------------------
@@ -52,7 +51,7 @@ Operator knobs are CLI flags (plus, for some knobs, a workspace
 deep call sites that re-resolve configuration via :func:`load_config`
 through :func:`pin_overrides`: the CLI command validates and pins the
 flag values once at startup, and every subsequent :func:`load_config`
-in the process layers those pins on top of the environment. The
+in the process layers those pins on top of the defaults. The
 tournament runner threads the pins across the worker subprocess
 boundary in the worker args file, so a flag like
 ``--harness-call-timeout-ms`` is honoured inside the worker where the
@@ -61,14 +60,8 @@ value is actually consumed.
 Env-var surface
 ---------------
 
-Operator knobs are NOT environment variables: they live on CLI flags
-(pinned here via :func:`pin_overrides`) and in the workspace
-``config.json`` (the ``health`` block —
-:func:`health_config_from_workspace` — plus the ``runtime`` /
-``harmonograf_url`` keys read by their own loaders). Every
-``ZICATO_*`` variable :func:`load_config` still honours is enumerated
-in :data:`_ENV_BINDINGS`; a variable absent from that table is ignored.
-The former operator-env surface was deleted outright:
+:func:`load_config` honours NO environment variables; the former
+operator-env surface was deleted outright:
 
 * the redundant trio ``ZICATO_MAX_WALL_CLOCK_SECONDS`` /
   ``ZICATO_WORKSPACE`` / ``ZICATO_INSTANCE_ID`` (each fully shadowed by
@@ -80,11 +73,20 @@ The former operator-env surface was deleted outright:
   auto-launch handoff read by :mod:`zicato.telemetry.sink`);
 * the six ``ZICATO_HEALTH_*`` thresholds, moved to the ``health`` block
   of the workspace ``config.json``.
+
+What remains is a small MERITED set of environment variables zicato
+deliberately touches — each one an actual process-boundary contract,
+not a configuration knob: the per-run harness contract
+(``ZICATO_RUN_SCRATCH_DIR``), the internal harmonograf handoff pair,
+the secrets boundary (operator-NAMED ``api_key_env`` variables and the
+``runtime.worker_env_passthrough`` allowlist), goldfive's own
+``GOLDFIVE_AGENT_CALL_TIMEOUT_MS``, and two CI/test toggles. The set is
+enumerated (with role labels) by :func:`describe_env_vars` and surfaced
+by ``zicato config env``.
 """
 
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping
 from dataclasses import dataclass, fields, replace
 from typing import Any
@@ -332,35 +334,6 @@ def _coerce_non_negative_float(raw: str, default: float) -> float:
     return parsed if parsed >= 0.0 else default
 
 
-# ---------------------------------------------------------------------------
-# The single enumeration of every ZICATO_* environment variable
-# ---------------------------------------------------------------------------
-
-#: Every ``ZICATO_*`` environment variable :func:`load_config` honours,
-#: in one place.
-#:
-#: Each entry maps an env-var name to ``(section, field, coercer)``:
-#:
-#: * ``section`` — the :class:`ZicatoConfig` attribute holding the
-#:   sub-config (e.g. ``"health"``).
-#: * ``field`` — the field on that sub-config the variable sets.
-#: * ``coercer`` — a ``(raw_str, default) -> value`` function that
-#:   parses the env string and clamps invalid input to the default.
-#:
-#: :func:`load_config` walks this table; nothing else reads the
-#: environment. The table only shrinks: operator knobs live on CLI
-#: flags (landing here via :func:`pin_overrides`) and in the workspace
-#: ``config.json``, not in new environment variables. The former
-#: operator-env knobs (``ZICATO_AUX_CALL_TIMEOUT``,
-#: ``ZICATO_PARALLELISM``, ``ZICATO_HARNESS_CALL_TIMEOUT_MS``,
-#: ``ZICATO_SUPERVISOR_BINARY``, ``ZICATO_DASHBOARD_STATIC_DIR``,
-#: ``ZICATO_HARMONOGRAF_URL``) were deleted in favour of flags — a set
-#: variable is simply ignored. (``ZICATO_HARMONOGRAF_URL`` survives
-#: ONLY as the internal auto-launch handoff channel read by
-#: :mod:`zicato.telemetry.sink`, not as a ``load_config`` binding.)
-_ENV_BINDINGS: dict[str, tuple[str, str, Any]] = {}
-
-
 #: Coercer per :class:`HealthConfig` field for the workspace
 #: ``config.json`` ``health`` block. The same clamp-to-default coercers
 #: the env bindings used (they accept JSON numbers as well as strings),
@@ -422,17 +395,138 @@ def health_config_from_workspace(workspace_config: Mapping[str, Any] | None) -> 
     return replace(defaults, **values)
 
 
-def describe_env_vars() -> dict[str, str]:
-    """Return ``{env_var_name: "section.field"}`` for every honoured variable.
+# ---------------------------------------------------------------------------
+# The merited env-var set — the environment variables zicato still touches
+# ---------------------------------------------------------------------------
 
-    A small introspection helper for the CLI and for documentation: the
-    configuration surface is discoverable without grepping the tree.
+
+@dataclass(frozen=True, slots=True)
+class EnvVarInfo:
+    """One deliberately-kept environment variable, with its role.
+
+    Fields
+    ------
+    name:
+        The variable name, or an ``<angle-bracketed>`` placeholder for a
+        family whose concrete names the operator chooses in
+        ``config.json`` (the secrets boundary).
+    role:
+        Why an environment variable is the RIGHT mechanism here — one of
+        ``"harness-contract"``, ``"internal-handoff"``,
+        ``"secrets-boundary"``, ``"external-integration"``,
+        ``"test-toggle"``. Configuration knobs are none of these; they
+        live on CLI flags and in the workspace ``config.json``.
+    description:
+        Who sets it, who reads it, and what crosses the boundary.
     """
-    return {name: f"{section}.{field}" for name, (section, field, _) in _ENV_BINDINGS.items()}
+
+    name: str
+    role: str
+    description: str
+
+
+#: The small merited set, one entry per variable (or operator-named
+#: family). Every entry is a process-boundary contract — a value that
+#: must cross between processes (orchestrator ↔ worker ↔ inner harness ↔
+#: sibling tools) where an environment variable is the honest mechanism —
+#: never an operator tuning knob. Operator knobs are CLI flags and
+#: ``config.json`` blocks; see the module docstring.
+_MERITED_ENV_VARS: tuple[EnvVarInfo, ...] = (
+    EnvVarInfo(
+        name="ZICATO_RUN_SCRATCH_DIR",
+        role="harness-contract",
+        description=(
+            "Set BY the tournament worker FOR the inner harness: a fresh "
+            "per-run scratch directory the harness must route its runtime "
+            "output to, so run artifacts never pollute the generation code "
+            "snapshot (zicato.epoch.snapshot_scope.SCRATCH_DIR_ENV)."
+        ),
+    ),
+    EnvVarInfo(
+        name="ZICATO_HARMONOGRAF_URL",
+        role="internal-handoff",
+        description=(
+            "Set by the evolve loop's harmonograf AUTO-LAUNCH to broadcast "
+            "the launched console's web URL to every downstream re-resolver "
+            "(in-process call sites and tournament worker subprocesses); "
+            "restored to its prior state at shutdown. NOT an operator knob — "
+            "operators use `zicato evolve --harmonograf-url` or the "
+            "config.json harmonograf_url key, both of which outrank it."
+        ),
+    ),
+    EnvVarInfo(
+        name="ZICATO_HARMONOGRAF_GRPC",
+        role="internal-handoff",
+        description=(
+            "Companion to ZICATO_HARMONOGRAF_URL on the auto-launch path: "
+            "the native gRPC host:port the per-run telemetry sinks must "
+            "dial (the web URL serves gRPC-Web on a different port). Set "
+            "and restored by the same lifecycle."
+        ),
+    ),
+    EnvVarInfo(
+        name="<models.<role>.api_key_env>",
+        role="secrets-boundary",
+        description=(
+            "Operator-NAMED variables holding provider credentials: each "
+            "model role in config.json's models block names the variable "
+            "(api_key_env) whose VALUE the worker reads to authenticate. "
+            "Credentials stay in the environment — never in config files — "
+            "and the worker env-scrub keeps exactly the named variables."
+        ),
+    ),
+    EnvVarInfo(
+        name="<runtime.worker_env_passthrough>",
+        role="secrets-boundary",
+        description=(
+            "Operator-named allowlist (a config.json runtime key) of extra "
+            "environment variables a scrubbed worker still receives — the "
+            "escape hatch for a target that reads a bespoke variable."
+        ),
+    ),
+    EnvVarInfo(
+        name="GOLDFIVE_AGENT_CALL_TIMEOUT_MS",
+        role="external-integration",
+        description=(
+            "goldfive's own per-call agent timeout. When set, zicato defers "
+            "to it and does not apply --harness-call-timeout-ms, so an "
+            "operator who tunes goldfive directly is never overridden."
+        ),
+    ),
+    EnvVarInfo(
+        name="ZICATO_SKIP_HOOK_CHECK",
+        role="test-toggle",
+        description=(
+            "CI/test toggle: skips the test asserting the repo's git hooks "
+            "are installed (for environments that manage hooks differently)."
+        ),
+    ),
+    EnvVarInfo(
+        name="ZICATO_PARITY_UPDATE",
+        role="test-toggle",
+        description=(
+            "CI/test toggle: set to 1 to re-capture the dashboard "
+            "reader-parity golden instead of diffing against it."
+        ),
+    ),
+)
+
+
+def describe_env_vars() -> tuple[EnvVarInfo, ...]:
+    """Return the merited set of environment variables zicato touches.
+
+    The introspection helper behind ``zicato config env``. Since the
+    env-var rationalization, NO environment variable is a configuration
+    knob — operator knobs live on CLI flags and in the workspace
+    ``config.json`` — so this describes only the deliberately-kept
+    process-boundary contracts, each labelled with the role that makes
+    an environment variable the right mechanism for it.
+    """
+    return _MERITED_ENV_VARS
 
 
 # ---------------------------------------------------------------------------
-# The loader — the one place that reads the environment
+# The loader
 # ---------------------------------------------------------------------------
 
 
@@ -539,34 +633,29 @@ def clear_pinned_overrides() -> None:
 
 def load_config(
     *,
-    env: Mapping[str, str] = os.environ,
     overrides: Mapping[str, Any] | None = None,
 ) -> ZicatoConfig:
-    """Build a :class:`ZicatoConfig`, reading the environment exactly once.
+    """Build a :class:`ZicatoConfig` from defaults + pins + ``overrides``.
 
-    This is the **only** function in zicato that reads the environment.
-    Downstream code takes the returned :class:`ZicatoConfig` (or one of
-    its sub-configs) as a parameter and never touches ``os.environ``
-    itself.
+    Reads NO environment variables — operator knobs are CLI flags
+    (landing here via :func:`pin_overrides`) and workspace
+    ``config.json`` blocks. Downstream code takes the returned
+    :class:`ZicatoConfig` (or one of its sub-configs) as a parameter
+    rather than touching ``os.environ``.
 
     Precedence, lowest to highest:
 
     1. The dataclass field defaults.
-    2. ``env`` — every ``ZICATO_*`` variable in :data:`_ENV_BINDINGS`.
-       Invalid values (unparseable, or out of a field's meaningful
-       range) are clamped back to the default by the field's coercer.
-    3. Process-pinned overrides (:func:`pin_overrides`) — CLI-flag
-       values pinned once at command startup.
-    4. ``overrides`` — an explicit nested ``{section: {field: value}}``
+    2. Process-pinned overrides (:func:`pin_overrides`) — CLI-flag
+       values pinned once at command startup (and re-pinned by the
+       tournament worker from its args file).
+    3. ``overrides`` — an explicit nested ``{section: {field: value}}``
        mapping. Values here win over everything; this is how an
        embedding application pins configuration on top of whatever the
-       environment and the CLI supply.
+       CLI supplied.
 
     Parameters
     ----------
-    env:
-        The environment mapping to read. Defaults to ``os.environ``;
-        tests pass a plain dict to get full isolation.
     overrides:
         Optional ``{section: {field: value}}`` mapping applied last. An
         unknown section or field name raises rather than being ignored.
@@ -576,17 +665,7 @@ def load_config(
     ZicatoConfig
         A fully-typed, frozen configuration tree.
     """
-    section_updates: dict[str, dict[str, Any]] = {}
-    for env_name, (section, field, coerce) in _ENV_BINDINGS.items():
-        raw = env.get(env_name)
-        if raw is None:
-            continue
-        default = getattr(getattr(ZicatoConfig(), section), field)
-        section_updates.setdefault(section, {})[field] = coerce(raw, default)
-
     config = ZicatoConfig()
-    if section_updates:
-        config = _apply_overrides(config, section_updates)
     if _PINNED_OVERRIDES:
         config = _apply_overrides(config, _PINNED_OVERRIDES)
     if overrides:
@@ -601,6 +680,7 @@ __all__ = [
     "DashboardConfig",
     "RuntimeTuningConfig",
     "ZicatoConfig",
+    "EnvVarInfo",
     "load_config",
     "health_config_from_workspace",
     "describe_env_vars",
