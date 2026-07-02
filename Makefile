@@ -1,6 +1,6 @@
 ROOT := $(shell pwd)
 
-.PHONY: help install install-hooks test node-test lint format typecheck check clean supervisor supervisor-test supervisor-check install-supervisor
+.PHONY: help install install-hooks test test-fast node-test lint format typecheck check clean supervisor supervisor-test supervisor-check install-supervisor
 
 # Path to the dashboard JS behaviour suite (run standalone under node).
 JS_TEST_DIR := $(ROOT)/src/zicato/dashboard/static/test
@@ -9,12 +9,14 @@ help:
 	@echo "zicato Makefile targets:"
 	@echo "  install            Install package + all optional dependencies via uv"
 	@echo "  install-hooks      Install the pre-commit git hook into .git/hooks/"
-	@echo "  test               Run pytest"
+	@echo "  test               Run pytest (the full suite)"
+	@echo "  test-fast          Run pytest without the slow real-subprocess/server tests"
 	@echo "  node-test          Run the dashboard JS behaviour suite under node"
 	@echo "  lint               Run ruff check"
 	@echo "  format             Run ruff format"
 	@echo "  typecheck          Run mypy over src/zicato/"
-	@echo "  check              Run lint + typecheck + test"
+	@echo "  check              Run lint + typecheck + test + node-test"
+	@echo "                     (independent gates: run 'make -j4 check' to parallelize)"
 	@echo "  clean              Remove build, cache, and generated artifacts"
 	@echo "  supervisor         Build the Rust zicato-supervisor binary (release)"
 	@echo "  supervisor-test    Run the supervisor's cargo tests"
@@ -29,6 +31,12 @@ install-hooks:
 
 test:
 	@cd $(ROOT) && uv run pytest tests/
+
+# The opt-in fast lane: drop the `slow`-marked real-subprocess / real-server
+# tests (their runtime IS their coverage — run `make test` before merging).
+# A command-line -m REPLACES the pyproject `-m 'not node'`, hence both terms.
+test-fast:
+	@cd $(ROOT) && uv run pytest tests/ -m "not slow and not node"
 
 # The dashboard's JavaScript behaviour suite. The in-pytest shim
 # (tests/test_dashboard_js.py) carries the `node` marker and is EXCLUDED
@@ -47,6 +55,10 @@ format:
 typecheck:
 	@cd $(ROOT) && uv run mypy src/zicato/
 
+# The four gates are independent (no shared state, distinct caches), so
+# they parallelize cleanly: `make -j4 check` runs them concurrently and
+# finishes in max(gate) instead of sum(gates). Sequential `make check`
+# still works exactly as before.
 check: lint typecheck test node-test
 
 clean:
