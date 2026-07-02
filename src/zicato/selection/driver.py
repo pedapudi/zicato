@@ -13,6 +13,7 @@ injected callables, so it is fully unit-testable with synthetic
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -47,7 +48,21 @@ RunMatchup = Callable[[Matchup], Awaitable[MatchupResult]]
 #: through this callable, refits, and rechecks. ``None`` (the default) disables
 #: the loop entirely — the pre-gate then defers/inconclusive on its current
 #: evidence without scheduling any new duel.
+#:
+#: CONTRACT: every call must return an INDEPENDENT fresh draw of the pair,
+#: under a matchup id that is unique within the audit. The orchestrator's
+#: implementations satisfy both by running each evidence replicate ``j`` at
+#: the reserved replicate index
+#: :data:`~zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE` ``+ j``
+#: (both sides drawn fresh — never a cache replay of the canonical
+#: replicate-0 slots) and encoding that index in the matchup id
+#: (``bt-replicate:r{index}:{left}:{right}``). The driver refuses to append a
+#: result whose matchup id already appears in the audit: identical data
+#: re-presented to the fit would shrink the Bradley--Terry SE by repetition
+#: alone, letting duplicate duels "separate" CIs without new evidence.
 ReplicateDuel = Callable[[str, str], Awaitable[MatchupResult]]
+
+log = logging.getLogger("zicato.selection.driver")
 
 #: ``on_inconclusive(resolution)`` is called once, at the moment the pre-gate
 #: reaches the terminal ``inconclusive`` state, with the full
@@ -255,6 +270,11 @@ async def confirm_promotion_with_evidence(
     audit: list[MatchupResult] = list(decision.matchups)
     ci_history: list[dict[str, Any]] = []
     replicates_spent = 0
+    # The audit must only ever accumulate DISTINCT draws: the replicate ids
+    # encode the reserved replicate index (see the ReplicateDuel contract),
+    # so a duplicate id is the same draw re-presented — appending it would
+    # shrink the fitted SE by pure repetition, never by new evidence.
+    seen_matchup_ids = {r.matchup_id for r in audit}
 
     while True:
         verdict = evidence_verdict(
@@ -298,8 +318,20 @@ async def confirm_promotion_with_evidence(
             return _finalize(decision, terminal, audit, ci_history, promoted_id, on_inconclusive)
 
         extra = await replicate_duel(candidate.left_id, candidate.right_id)
-        audit.append(extra)
+        # The spend is counted regardless: the budget bounds duels RUN, and
+        # skipping the count on a duplicate would loop forever against a
+        # runner that keeps replaying one draw.
         replicates_spent += 1
+        if extra.matchup_id in seen_matchup_ids:
+            log.warning(
+                "evidence pre-gate: replicate duel returned an already-audited "
+                "draw (matchup_id %r) — not appended to the Bradley--Terry "
+                "audit; identical data must never separate CIs",
+                extra.matchup_id,
+            )
+            continue
+        seen_matchup_ids.add(extra.matchup_id)
+        audit.append(extra)
 
 
 def _finalize(

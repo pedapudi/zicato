@@ -1818,6 +1818,7 @@ async def _evolve_multi_challenger(
     )
     from zicato.selection.driver import EvidenceResolution  # noqa: PLC0415
     from zicato.selection.evidence_gate import (  # noqa: PLC0415
+        EVIDENCE_REPLICATE_BASE,
         rating_block,
         read_promote_confidence_threshold,
         read_replicate_budget,
@@ -2279,7 +2280,15 @@ async def _evolve_multi_challenger(
     round_unit_semaphore = asyncio.Semaphore(max(1, int(config.parallelism)))
 
     # --- run_matchup: one duel via the board-unit runner + unchanged gate.
-    async def _run_matchup(m: Matchup) -> MatchupResult:
+    # ``replicate_base`` / ``cache_scores`` exist for the evidence pre-gate's
+    # replicate duels only: a reserved replicate base keeps evidence draws
+    # off the canonical cache slots, and ``cache_scores=False`` keeps a
+    # single evidence draw's aggregates from overwriting the round-scored
+    # ``gen_score.json`` the fast-mode champion reuse reads. Every strategy
+    # matchup uses the defaults, byte-identical to before.
+    async def _run_matchup(
+        m: Matchup, *, replicate_base: int = 0, cache_scores: bool = True
+    ) -> MatchupResult:
         _beat(
             beater,
             epoch_id=epoch_id,
@@ -2303,6 +2312,7 @@ async def _evolve_multi_challenger(
             epoch_id=epoch_id,
             board_subset=m.board_subset,
             replicates=m.replicates,
+            replicate_base=replicate_base,
             disable_drift=disable_drift,
             judge_only=judge_only,
             fast=fast_mode,
@@ -2328,9 +2338,12 @@ async def _evolve_multi_challenger(
             champion_cached_units += champ_prov.cached
             champion_fresh_units += champ_prov.fresh
         # Cache both sides' aggregates for fast-mode reuse, mirroring the
-        # gauntlet path's _cache_gen_score calls.
-        _cache_gen_score(workspace_root, epoch_id, m.left.generation_id, result.parent_agg)
-        _cache_gen_score(workspace_root, epoch_id, m.right.generation_id, result.child_agg)
+        # gauntlet path's _cache_gen_score calls. Skipped for evidence
+        # replicate duels (``cache_scores=False``): one reserved-slot draw
+        # must not overwrite the round-scored aggregates.
+        if cache_scores:
+            _cache_gen_score(workspace_root, epoch_id, m.left.generation_id, result.parent_agg)
+            _cache_gen_score(workspace_root, epoch_id, m.right.generation_id, result.child_agg)
         # WS8: this matchup's board units + gate verdict onto the round log.
         _emit_tournament_units(round_log, result)
         _emit_gate_evaluated(round_log, result.outcome)
@@ -2459,17 +2472,30 @@ async def _evolve_multi_challenger(
             threshold=bt_threshold,
             replicate_budget=read_replicate_budget(tournament_spec.params),
         )
+        evidence_replicates_run = 0
 
         async def _replicate_duel(left_id: str, right_id: str) -> MatchupResult:
             # One extra crowning-pair duel for the pre-gate's evidence loop,
-            # routed through the SAME board-unit runner + gate every other duel
-            # uses (so a replicate is scored identically to the original duel).
+            # routed through the SAME board-unit runner + gate every other
+            # duel uses (so a replicate is scored identically to the original
+            # duel) — but at a RESERVED replicate index
+            # (EVIDENCE_REPLICATE_BASE + j for evidence replicate j), so each
+            # replicate draws BOTH sides fresh instead of cache-replaying (or,
+            # in full mode, clobbering) the canonical replicate-0 slots. The
+            # matchup id encodes the index; the driver's audit guard keys on
+            # it. ``cache_scores=False`` keeps the single-draw aggregates out
+            # of the fast-mode ``gen_score.json`` reuse.
+            nonlocal evidence_replicates_run
+            replicate_slot = EVIDENCE_REPLICATE_BASE + evidence_replicates_run
+            evidence_replicates_run += 1
             return await _run_matchup(
                 Matchup(
-                    matchup_id=f"bt-replicate:{left_id}:{right_id}",
+                    matchup_id=f"bt-replicate:r{replicate_slot}:{left_id}:{right_id}",
                     left=Contestant(generation_id=left_id, role="champion"),
                     right=Contestant(generation_id=right_id, role="challenger"),
-                )
+                ),
+                replicate_base=replicate_slot,
+                cache_scores=False,
             )
 
         replicate_duel = _replicate_duel
@@ -3796,6 +3822,7 @@ async def _confirm_gauntlet_promotion(
         confirm_promotion_with_evidence,
     )
     from zicato.selection.evidence_gate import (  # noqa: PLC0415
+        EVIDENCE_REPLICATE_BASE,
         rating_block,
         read_promote_confidence_threshold,
         read_replicate_budget,
@@ -3812,20 +3839,33 @@ async def _confirm_gauntlet_promotion(
         replicate_budget=read_replicate_budget(tournament_spec.params),
     )
     generations = {parent_gen.id: parent_gen, child_gen.id: child_gen}
+    evidence_replicates_run = 0
 
     async def _replicate_duel(left_id: str, right_id: str) -> MatchupResult:
         # One extra crowning-pair duel for the pre-gate's evidence loop,
         # routed through the SAME board-unit runner + gate every other duel
-        # uses. ``fast=fast_mode`` mirrors the multi-challenger replicate:
-        # full mode re-samples both sides fresh (a genuine new noise draw);
-        # fast mode cache-reads already-persisted units.
+        # uses — but at a RESERVED replicate index (EVIDENCE_REPLICATE_BASE
+        # + j for evidence replicate j), so each replicate draws BOTH sides
+        # fresh: a fast-mode cache read of the canonical replicate-0 slots
+        # would replay one identical sample into the Bradley--Terry fit
+        # (shrinking its SE by repetition alone), and a full-mode force-fresh
+        # re-run at slot 0 would clobber the canonical ``loss.json`` that
+        # reindex/crash-resume key on. The reserved slot is a natural MISS
+        # the first time (a fresh draw of champion AND challenger) and an
+        # idempotent cache HIT on a resumed confirm — mirroring the A/A
+        # calibration's reserved-index discipline. The matchup id encodes
+        # the index; the driver's audit guard keys on it.
+        nonlocal evidence_replicates_run
+        replicate_slot = EVIDENCE_REPLICATE_BASE + evidence_replicates_run
+        evidence_replicates_run += 1
+        matchup_id = f"bt-replicate:r{replicate_slot}:{left_id}:{right_id}"
         _beat(
             beater,
             workspace_root=workspace_root,
             epoch_id=epoch_id,
             generation_id=right_id,
             round_index=round_index,
-            phase=f"tournament:round_{round_index}:bt-replicate:{left_id}:{right_id}",
+            phase=f"tournament:round_{round_index}:{matchup_id}",
         )
         result = await run_matchup(
             adapter=adapter,
@@ -3840,15 +3880,16 @@ async def _confirm_gauntlet_promotion(
             config=config,
             workspace_root=workspace_root,
             epoch_id=epoch_id,
+            replicate_base=replicate_slot,
             disable_drift=disable_drift,
             judge_only=judge_only,
             fast=fast_mode,
             round_index=round_index,
             total_rounds=total_rounds,
-            match_id=f"bt-replicate:{left_id}:{right_id}",
+            match_id=matchup_id,
         )
         return MatchupResult(
-            matchup_id=f"bt-replicate:{left_id}:{right_id}",
+            matchup_id=matchup_id,
             left_id=left_id,
             right_id=right_id,
             left_agg=result.parent_agg,

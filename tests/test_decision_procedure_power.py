@@ -77,10 +77,13 @@ from zicato.core import (
     LossProfile,
     RuntimeConfig,
     ScoringWeights,
+    TournamentDecision,
 )
-from zicato.core.types import DriftCount, ExpectationResult
+from zicato.core.types import DriftCount, ExpectationResult, TournamentStructure
+from zicato.core.workspace import loss_profile_path
 from zicato.import_path import import_dotted_path
 from zicato.selection.driver import EvidencePreGate, resolve_tournament
+from zicato.selection.evidence_gate import EVIDENCE_REPLICATE_BASE
 from zicato.selection.strategies.gauntlet import GauntletStrategy
 from zicato.selection.strategy import Contestant, Matchup, MatchupResult, SelectionDecision
 from zicato.tournament.runner import run_matchup
@@ -219,13 +222,16 @@ class _NoisyWorld:
         self.tokens_by_gen = dict(tokens_by_gen)
         self.sigma = float(sigma)
 
-    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def install(self, monkeypatch: pytest.MonkeyPatch, *, persist: bool = False) -> None:
         monkeypatch.setattr(runner_mod, "_run_single", self._fake_run_single)
         # The dashboard-facing live-state appends and the per-unit cache
         # persist are best-effort side channels orthogonal to the decision
         # procedure; silencing them keeps thousands of seeded trials lean.
+        # ``persist=True`` keeps the REAL per-unit cache persistence so the
+        # canonical-slot-integrity tests can watch the ``loss.json`` files.
         monkeypatch.setattr(scheduling_mod, "_runtime_state", lambda: None)
-        monkeypatch.setattr(scheduling_mod, "_persist_unit_loss", lambda **_kw: None)
+        if not persist:
+            monkeypatch.setattr(scheduling_mod, "_persist_unit_loss", lambda **_kw: None)
 
     async def _fake_run_single(
         self,
@@ -334,6 +340,8 @@ def _effective_decision(
             outcome=result.outcome,
         )
 
+    evidence_counter = itertools.count()
+
     async def _replicate_duel(left_id: str, right_id: str) -> MatchupResult:
         # Mirrors the orchestrator's replicate-duel wiring — one extra
         # crowning-pair duel through the SAME runner + gate — except each
@@ -342,10 +350,17 @@ def _effective_decision(
         # replicated (low-variance) duel makes that streak sustainable for
         # a small true effect. This is the deterministic analogue of the
         # racing contract's ``promote_confidence_replicates`` measurement
-        # budget.
+        # budget. Per the ReplicateDuel contract each call mints a UNIQUE
+        # matchup id (the driver's audit guard drops re-presented ids); the
+        # per-duel INDEPENDENCE that production buys with the reserved
+        # replicate base (EVIDENCE_REPLICATE_BASE + j) is supplied here by
+        # advancing the workspace seed per duel — the harness fakes the
+        # worker boundary and persists nothing, so no cache slot exists to
+        # collide with. The measured numbers below are therefore unchanged
+        # by the reserved-base fix: this harness always drew fresh.
         return await _run(
             Matchup(
-                matchup_id=f"bt-replicate:{left_id}:{right_id}",
+                matchup_id=f"bt-replicate:{next(evidence_counter)}:{left_id}:{right_id}",
                 left=Contestant(generation_id=left_id, role="champion"),
                 right=Contestant(generation_id=right_id, role="challenger"),
                 replicates=EFFECTIVE_REPLICATES,
@@ -556,6 +571,185 @@ def test_naive_default_misses_small_effects_the_evidence_gate_catches(monkeypatc
     assert effective_rate >= naive_rate + 0.25
     # And the effective procedure remains sound (see the A/A tests): its
     # extra power comes from evidence, not from a looser gate.
+
+
+# ---------------------------------------------------------------------------
+# The PRODUCTION evidence-replicate wiring, under seeded noise
+#
+# The orchestrator's gauntlet confirm (`_confirm_gauntlet_promotion`) is the
+# real seam the evolve loop drives: its replicate duels must be INDEPENDENT
+# samples — each at a reserved replicate index (EVIDENCE_REPLICATE_BASE + j),
+# both sides drawn fresh — never cache replays of, or force-fresh clobbers
+# over, the canonical replicate-0 slots the tournament scored.
+# ---------------------------------------------------------------------------
+
+
+def _seed_crowning_decision(
+    workspace: Path, *, seed: int, fast: bool
+) -> tuple[SelectionDecision, Any]:
+    """Run one real crowning duel and wrap it as a promoted decision.
+
+    The decision is FORCED to ``promoted`` (the confirm only adjudicates
+    promotions); under the A/A world the pre-gate must then hold it, and the
+    audit trail it accumulates is the object under test.
+    """
+    result = asyncio.run(
+        run_matchup(
+            adapter=object(),
+            left_gen=_gen("champion"),
+            right_gen=_gen("challenger"),
+            board=list(_board()),
+            weights=NAIVE_WEIGHTS,
+            config=_config(workspace, seed),
+            workspace_root=workspace,
+            epoch_id="e0",
+            match_id="crowning",
+            fast=fast,
+        )
+    )
+    crowning = MatchupResult(
+        matchup_id="crowning",
+        left_id="champion",
+        right_id="challenger",
+        left_agg=result.parent_agg,
+        right_agg=result.child_agg,
+        outcome=result.outcome,
+    )
+    decision = SelectionDecision(
+        promoted_generation_id="challenger",
+        decision=TournamentDecision.PROMOTED,
+        reason="forced promote for the evidence loop",
+        matchups=(crowning,),
+        crowning_matchup_id="crowning",
+    )
+    return decision, result
+
+
+def _confirm(
+    workspace: Path,
+    decision: SelectionDecision,
+    *,
+    seed: int,
+    fast_mode: bool,
+    budget: int,
+) -> tuple[Any, dict[str, Any] | None]:
+    from zicato.orchestrator import _confirm_gauntlet_promotion
+
+    spec = TournamentStructure(
+        structure="gauntlet",
+        params={
+            "promote_confidence_threshold": EFFECTIVE_THRESHOLD,
+            "promote_confidence_replicates": budget,
+        },
+    )
+    return asyncio.run(
+        _confirm_gauntlet_promotion(
+            decision,
+            tournament_spec=spec,
+            adapter=object(),
+            parent_gen=_gen("champion"),
+            child_gen=_gen("challenger"),
+            train_board=list(_board()),
+            weights=NAIVE_WEIGHTS,
+            config=_config(workspace, seed),
+            workspace_root=workspace,
+            epoch_id="e0",
+            disable_drift=(),
+            judge_only=False,
+            fast_mode=fast_mode,
+            round_index=0,
+            total_rounds=1,
+            beater=None,
+        )
+    )
+
+
+def test_evidence_replicates_are_independent_draws(monkeypatch, tmp_path):
+    """Consecutive evidence replicates are DISTINCT noise draws of BOTH sides.
+
+    Fast mode, A/A world: before the reserved-base fix every "replicate" ran
+    at replicate slot 0 — the same stamped index ⇒ the same seeded draw (and,
+    with a warm cache, a byte-identical replay) — so the audit's deltas had
+    ZERO variance and repetition alone shrank the Bradley--Terry SE. Now each
+    replicate ``j`` runs at ``EVIDENCE_REPLICATE_BASE + j`` under a matchup
+    id that encodes the slot, and the deltas — and the CHAMPION's own
+    scalars — genuinely vary.
+    """
+    _NoisyWorld(_aa_world(), NOISE_SIGMA).install(monkeypatch)
+    decision, _ = _seed_crowning_decision(tmp_path, seed=101, fast=True)
+    budget = 6
+    confirmed, evidence = _confirm(tmp_path, decision, seed=101, fast_mode=True, budget=budget)
+
+    # A/A never separates within a small budget ⇒ the hold is terminal and
+    # the full audit (crowning + every replicate) is stamped on the decision.
+    assert confirmed.decision == TournamentDecision.DEFERRED
+    assert evidence is not None
+    assert len(evidence["ci_history"]) == budget + 1
+
+    replicates = list(confirmed.matchups[1:])
+    assert len(replicates) == budget
+    # Every replicate ran at its own RESERVED slot, encoded in the id.
+    assert [r.matchup_id for r in replicates] == [
+        f"bt-replicate:r{EVIDENCE_REPLICATE_BASE + j}:champion:challenger" for j in range(budget)
+    ]
+    # (a) Distinct draws: the audit deltas have variance > 0.
+    deltas = [r.outcome.delta_scalar for r in replicates]
+    assert len(set(deltas)) > 1, f"evidence replicates drew identically: {deltas}"
+    # (c) The CHAMPION side is re-drawn per replicate, not replayed.
+    champion_scalars = {float(r.left_agg["scalar"]) for r in replicates}
+    assert len(champion_scalars) > 1, f"champion never re-drawn: {champion_scalars}"
+
+
+def test_full_mode_evidence_loop_never_touches_canonical_slots(monkeypatch, tmp_path):
+    """(b) The child's (and champion's) canonical ``loss.json`` is
+    byte-identical across the evidence loop, and the evidence draws persist
+    under the reserved base instead.
+
+    Full mode: before the fix each replicate force-fresh re-ran at slot 0
+    and RE-PERSISTED there, clobbering the canonical files that reindex and
+    crash-resume key on. The confirm below runs under a DIFFERENT workspace
+    seed than the seeding duel (the deterministic analogue of an LLM
+    re-sampling on a later re-run), so any slot-0 rewrite would change the
+    bytes.
+    """
+    _NoisyWorld(_aa_world(), NOISE_SIGMA).install(monkeypatch, persist=True)
+    decision, _ = _seed_crowning_decision(tmp_path, seed=1, fast=False)
+
+    canonical: dict[tuple[str, str], bytes] = {}
+    for gid in ("champion", "challenger"):
+        for entry in _board():
+            path = loss_profile_path(tmp_path, "e0", gid, entry.id)
+            canonical[(gid, entry.id)] = path.read_bytes()
+
+    budget = 4
+    confirmed, _evidence = _confirm(tmp_path, decision, seed=2, fast_mode=False, budget=budget)
+    assert confirmed.decision == TournamentDecision.DEFERRED  # A/A: held
+
+    # Canonical replicate-0 slots: byte-identical before/after the loop.
+    for (gid, entry_id), before in canonical.items():
+        after = loss_profile_path(tmp_path, "e0", gid, entry_id).read_bytes()
+        assert after == before, f"canonical loss.json clobbered for {gid}/{entry_id}"
+
+    # The evidence draws persisted under the RESERVED base — for BOTH sides.
+    for gid in ("champion", "challenger"):
+        for j in range(budget):
+            slot = EVIDENCE_REPLICATE_BASE + j
+            for entry in _board():
+                reserved = loss_profile_path(tmp_path, "e0", gid, entry.id).with_name(
+                    f"loss.r{slot}.json"
+                )
+                assert reserved.exists(), f"missing reserved draw {gid}/{entry.id} r{slot}"
+
+    # (c) The champion's reserved draws are fresh samples, not copies of its
+    # canonical slot: at least one entry's bytes differ from canonical r0.
+    redrawn = any(
+        loss_profile_path(tmp_path, "e0", "champion", entry.id)
+        .with_name(f"loss.r{EVIDENCE_REPLICATE_BASE}.json")
+        .read_bytes()
+        != canonical[("champion", entry.id)]
+        for entry in _board()
+    )
+    assert redrawn, "champion evidence draws replicate its canonical slot byte-for-byte"
 
 
 # ---------------------------------------------------------------------------

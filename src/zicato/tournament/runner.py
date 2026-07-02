@@ -1368,6 +1368,7 @@ async def run_matchup(
     epoch_id: str,
     board_subset: tuple[str, ...] | None = None,
     replicates: int = 1,
+    replicate_base: int = 0,
     disable_drift: tuple[Any, ...] = (),
     judge_only: bool = False,
     round_index: int = 0,
@@ -1400,6 +1401,15 @@ async def run_matchup(
     enabling per-run rung attribution in the dashboard. Empty string (the
     default) leaves runs untagged, which is exactly what the gauntlet path
     (via :func:`run_tournament`) does.
+
+    ``replicate_base`` offsets every replicate's per-unit cache slot (and
+    the index stamped onto each entry for the harness's seeded noise draw):
+    replicate ``i`` runs at index ``replicate_base + i``. ``0`` (every
+    tournament matchup) is byte-identical to before the parameter existed;
+    the evidence pre-gate's replicate duels pass a RESERVED base
+    (:data:`zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE`) so each
+    evidence draw is a fresh sample of BOTH sides that never reads or
+    clobbers the canonical replicate-0 slots.
 
     ``fast`` is the structure-agnostic fast-mode champion-eval knob (the
     runtime ``--mode fast`` setting, threaded identically to
@@ -1461,6 +1471,7 @@ async def run_matchup(
         workspace_root=workspace_root,
         epoch_id=epoch_id,
         replicates=replicates,
+        replicate_base=replicate_base,
         match_id=match_id,
         fast=fast,
         matchup_budget_seconds=matchup_budget_seconds,

@@ -7,12 +7,29 @@ subprocess workers, and the crowning train-promote must be confirmed by
 the Bradley--Terry defer→replicate→inconclusive adjudication before it
 is persisted.
 
+Every evidence replicate ``j`` executes at the RESERVED replicate index
+``EVIDENCE_REPLICATE_BASE + j`` — a genuine fresh subprocess run of BOTH
+sides on a distinct per-unit cache slot — never a cache replay of (or a
+force-fresh clobber over) the canonical replicate-0 ``loss.json`` the
+crowning tournament scored. Both tests assert that routing on disk: the
+reserved-slot files exist for champion AND challenger, tagged with the
+slot-encoding matchup id, and the canonical slots carry no replicate tag.
+
 Determinism note (mirrors the Tier-1 racing case): target_0 is exactly
-zero-noise, so every replicate of the crowning pair is an IDENTICAL
-child-win draw. The Bradley--Terry fit over n identical wins is a fixed
-function of n; its CIs separate only after several dozen duels (the
-Fisher information grows slowly on a two-node graph). Both terminals are
-therefore byte-deterministic:
+zero-noise, so every fresh draw of the crowning pair is an IDENTICAL
+child-win sample — under zero noise, independent sampling and replay are
+indistinguishable BY VALUE, which is why this deterministic e2e cannot
+(and does not) prove statistical independence. What it proves is that the
+production replicate path executes at the reserved base through the real
+worker machinery and the confirm still resolves both terminals; the
+SOUNDNESS half — distinct draws with real variance, canonical byte
+integrity under noise, and the driver refusing duplicate draws — lives in
+``test_decision_procedure_power`` and ``test_driver_evidence_pregate``.
+
+The Bradley--Terry fit over n identical wins is a fixed function of n;
+its CIs separate only after several dozen duels (the Fisher information
+grows slowly on a two-node graph). Both terminals are therefore
+byte-deterministic:
 
 * a GENEROUS budget (48) converges — the loop bootstraps to the
   credibility floor, defers while the CIs overlap, and crowns once they
@@ -21,10 +38,12 @@ therefore byte-deterministic:
   CIs — terminally ``inconclusive``, the champion stands, and the duel
   is recorded to the dead-letter queue (the champion-stands path).
 
-``fast_mode=True`` keeps the replicate loop cheap: the first round's
-degraded-fast full tournament persists every board unit, so each
-replicate duel is a pure cache read (identical draws under zero noise —
-exactly the point).
+Cost note: each replicate duel is now a real 2-sides x 5-entries worker
+sweep the first time (the reserved slot is a natural cache MISS; a
+repeated confirm under the same contract would reuse the persisted
+draws). That is the honest price of independent evidence — the pre-fix
+"pure cache read" replicates were free precisely because they re-counted
+one sample.
 """
 
 from __future__ import annotations
@@ -35,6 +54,7 @@ from pathlib import Path
 
 import zicato_examples.target_0_convergence as _t0_pkg
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
+from zicato.selection.evidence_gate import EVIDENCE_REPLICATE_BASE
 from zicato_examples.target_0_convergence import mocks as t0_mocks
 
 EXAMPLE_DIR = Path(_t0_pkg.__file__).resolve().parent
@@ -111,6 +131,45 @@ def _run_one_round(workspace: Path, epoch_id: str) -> list:
     )
 
 
+#: The five board-entry ids of the target_0 board (the crowning pair duels
+#: the full board — no holdout split at this size).
+_BOARD_ENTRY_IDS = (
+    "conv_body",
+    "conv_summary",
+    "conv_citations",
+    "conv_concise",
+    "conv_no_fabrication",
+)
+
+
+def _assert_replicates_ran_at_reserved_slots(
+    workspace: Path, epoch_id: str, *, replicates_run: int
+) -> None:
+    """Assert the evidence replicates executed at the RESERVED cache slots.
+
+    For each evidence replicate ``j`` and BOTH sides of the crowning pair,
+    the per-unit draw persisted as ``loss.r{EVIDENCE_REPLICATE_BASE+j}.json``
+    next to — never over — the canonical ``loss.json``, and carries the
+    slot-encoding matchup id the driver's audit guard keys on. The canonical
+    slot itself belongs to the crowning tournament (no replicate tag).
+    """
+    for gen_id in ("v0", "v1"):
+        runs_dir = workspace / "epochs" / epoch_id / "generations" / gen_id / "runs"
+        for entry_id in _BOARD_ENTRY_IDS:
+            canonical = json.loads((runs_dir / entry_id / "loss.json").read_text())
+            assert not str(canonical.get("match_id", "")).startswith(
+                "bt-replicate:"
+            ), f"{gen_id}/{entry_id}: an evidence replicate clobbered the canonical slot"
+            for j in range(replicates_run):
+                slot = EVIDENCE_REPLICATE_BASE + j
+                reserved = runs_dir / entry_id / f"loss.r{slot}.json"
+                assert reserved.exists(), f"{gen_id}/{entry_id}: no reserved draw at r{slot}"
+                profile = json.loads(reserved.read_text())
+                assert (
+                    profile.get("match_id") == f"bt-replicate:r{slot}:v0:v1"
+                ), f"{gen_id}/{entry_id}: r{slot} draw is not tagged with its slot"
+
+
 def test_gauntlet_promote_confirmed_by_evidence_gate(tmp_path: Path) -> None:
     """A true improvement still promotes — after the defer→replicate loop
     actually ran the crowning pair to CI separation."""
@@ -147,6 +206,12 @@ def test_gauntlet_promote_confirmed_by_evidence_gate(tmp_path: Path) -> None:
     assert len(evidence["ci_history"]) == evidence["replicates_spent"] + 1
     assert evidence["ci_history"][0]["replicates_spent"] == 0
 
+    # Every evidence replicate really executed at its reserved slot, both
+    # sides, canonical slots untouched.
+    _assert_replicates_ran_at_reserved_slots(
+        workspace, epoch_id, replicates_run=evidence["replicates_spent"]
+    )
+
     # The dead-letter queue stays empty on a confirmed promotion.
     assert not (workspace / "runtime" / "inconclusive").exists()
 
@@ -180,6 +245,10 @@ def test_gauntlet_inconclusive_champion_stands(tmp_path: Path) -> None:
     assert evidence["ci_overlap"] is True
     assert evidence["n_duels"] == 3  # 1 crowning duel + 2 bootstrap replicates
     assert len(evidence["ci_history"]) == 3
+
+    # Both bootstrap replicates executed at the reserved slots (r4000,
+    # r4001) on both sides; the canonical slots stayed the crowning duel's.
+    _assert_replicates_ran_at_reserved_slots(workspace, epoch_id, replicates_run=2)
 
     # Lineage records the held generation as a dead branch.
     lineage = json.loads((workspace / "lineage.json").read_text())

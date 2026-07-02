@@ -893,6 +893,7 @@ async def _run_replicated(
     workspace_root: Path,
     epoch_id: str,
     replicates: int,
+    replicate_base: int = 0,
     match_id: str = "",
     fast: bool = False,
     matchup_budget_seconds: float | None = None,
@@ -935,6 +936,13 @@ async def _run_replicated(
     only the missing ``R-r`` (the cached samples are reused, never
     re-run).
 
+    ``replicate_base`` offsets every slot: replicate ``i`` runs (and
+    caches, and stamps its harness noise draw) at index ``replicate_base +
+    i``. ``0`` (every tournament matchup) is byte-identical to before the
+    parameter existed; the evidence pre-gate passes a RESERVED base
+    (:data:`zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE`) so its
+    extra draws never read or write the canonical replicate-0 slots.
+
     The returned ``champion_eval_mode`` is derived from the LEFT side's
     cached-vs-fresh provenance, preserving the journal's existing
     vocabulary: ``"full"`` when fast was not requested; ``"fast"`` when
@@ -969,7 +977,7 @@ async def _run_replicated(
                 epoch_id=epoch_id,
                 generation_id=left_gen.id,
                 entry_id=entry.id,
-                replicate_index=r,
+                replicate_index=replicate_base + r,
             )
             is not None
             for r in range(replicate_count)
@@ -988,7 +996,7 @@ async def _run_replicated(
     )
 
     runs: list[tuple[dict[str, LossProfile], dict[str, LossProfile]]] = []
-    for replicate_index in range(replicate_count):
+    for replicate_offset in range(replicate_count):
         # Each replicate keys a distinct cache slot; the same board-unit
         # runner handles champion + challenger cache-first, so an existing
         # replicate is reused (incremental) and only missing slots run.
@@ -997,6 +1005,7 @@ async def _run_replicated(
         # context (run provenance for the harness under test — a
         # seeded/deterministic harness varies its noise draw by it);
         # replicate 0 is left untouched, byte-identical to before.
+        replicate_index = replicate_base + replicate_offset
         left_losses, right_losses = await _run_board_units_full(
             adapter=adapter,
             parent_gen=left_gen,

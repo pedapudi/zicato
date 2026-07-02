@@ -68,6 +68,22 @@ from zicato.selection.strategy import MatchupResult
 #: the rating block is reported with ``present`` but ``credible=False``.
 MIN_CREDIBLE_DUELS: int = 3
 
+#: Replicate-index base for the pre-gate's evidence duels. Evidence replicate
+#: ``j`` runs the crowning pair at replicate index ``EVIDENCE_REPLICATE_BASE
+#: + j`` — a RESERVED per-unit cache slot — so each replicate draws BOTH
+#: sides (champion AND challenger) fresh instead of replaying the canonical
+#: replicate-0 sample the tournament already scored: identical data repeated
+#: through the fit would shrink the Bradley--Terry SE by repetition alone
+#: (fast mode), and a force-fresh re-run at slot 0 would clobber the child's
+#: canonical ``loss.json`` that reindex/crash-resume key on (full mode).
+#: Reserved far above every sibling base so the slots can never collide:
+#: real duel replicates count up from 0, A/A calibration draws at 1000
+#: (:data:`zicato.tournament.calibration.CALIBRATION_REPLICATE_BASE`), the
+#: contract pre-flight at 2000
+#: (:data:`zicato.epoch.preflight.PREFLIGHT_REPLICATE_BASE`), and 3000 is
+#: reserved for screening.
+EVIDENCE_REPLICATE_BASE: int = 4000
+
 #: The half-width multiplier turning a Bradley--Terry standard error into a
 #: confidence interval ``theta ± Z * se``. ``1.96`` is the 95% normal quantile
 #: — the same level the ``prob_stronger`` probability is naturally read at, so
@@ -466,6 +482,7 @@ class ReplicationOutcome:
 
 
 __all__ = [
+    "EVIDENCE_REPLICATE_BASE",
     "MIN_CREDIBLE_DUELS",
     "CI_Z",
     "DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD",
