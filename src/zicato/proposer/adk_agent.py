@@ -107,7 +107,11 @@ _DEFAULT_PROPOSER_INSTRUCTION = (
     "already tried and what the analyzer observed;\n"
     "- call `mutation_track_record` to see how experiments touching a "
     "candidate target have fared this epoch (advisory aggregates — "
-    "experiments touching the point, not causal effects).\n\n"
+    "experiments touching the point, not causal effects);\n"
+    "- call `read_parent_diff` to see exactly what the LAST promotion "
+    "changed, so you can build on it rather than blindly re-roll it;\n"
+    "- call `mutation_usage` to find where a candidate target's current "
+    "value/symbol is referenced across the snapshot before you change it.\n\n"
     "Then emit a SINGLE JSON object matching the schema in the user message "
     "— no prose, no markdown fences. The first character of your final "
     "response MUST be '{' and the last MUST be '}'."
@@ -431,6 +435,7 @@ class ADKProposerAgent:
             generation_root=generation_root,
             epoch_id=ctx.epoch_id,
             mutations=ctx.mutations,
+            generation_id=ctx.parent_generation_id,
         )
         mutations_by_id = {mp.id: mp for mp in ctx.mutations}
 

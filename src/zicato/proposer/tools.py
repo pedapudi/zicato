@@ -86,12 +86,20 @@ class ProposerToolContext:
         :class:`MutationPoint` tuple the default proposer is offered.
         ``list_mutation_points`` renders it; the read/grep tools derive
         the mutable subtrees from its ``source_root`` set.
+    generation_id:
+        The id of the generation ``generation_root`` snapshots — the
+        round's champion (the proposer's PARENT generation). Lets
+        ``read_parent_diff`` resolve the generation-store coordinates of
+        the tree the tools are already reading. Empty (the legacy
+        default) degrades that tool to an explicit "coordinates
+        unavailable" answer.
     """
 
     workspace_root: Path
     generation_root: Path
     epoch_id: str
     mutations: tuple[MutationPoint, ...]
+    generation_id: str = ""
 
     def mutable_roots(self) -> tuple[Path, ...]:
         """Return the mutable surface roots under the snapshot.
@@ -407,6 +415,149 @@ def read_insights() -> str:
     return load_latest_insights(ctx.workspace_root, ctx.epoch_id)
 
 
+#: Hard cap on the characters ``read_parent_diff`` returns. A promotion's
+#: diff is normally a handful of prompt/config edits; only a pathological
+#: whole-tree rewrite is trimmed (with a note), mirroring the other tools'
+#: runaway-context guards.
+_PARENT_DIFF_LIMIT_CHARS = 20_000
+
+#: Per-patch cap on the new-value text ``read_parent_diff``'s directory-
+#: backend fallback echoes. The full value is visible via
+#: ``read_mutable_file`` anyway; the fallback only needs enough to show
+#: WHAT changed.
+_PATCH_VALUE_LIMIT_CHARS = 2_000
+
+
+def _truncate_note(text: str, limit: int) -> str:
+    """Clip ``text`` to ``limit`` chars with an explicit truncation note."""
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}\n[... truncated: output exceeds {limit} chars ...]"
+
+
+def read_parent_diff() -> str:
+    """Show what the LAST PROMOTION changed — the parent generation's diff.
+
+    The round's champion (the generation whose snapshot the other tools
+    read) was minted by the most recent promotion; this tool shows that
+    change so the agent can build on — or deliberately depart from — what
+    just worked.
+
+    * **Git backend (the default):** one read-only ``git diff`` between
+      the parent generation's tag and ITS parent's tag
+      (:meth:`~zicato.epoch.git_genstore.GitGenerationStore.diff_generations`
+      — tree objects only, nearly free, nothing is written or checked
+      out).
+    * **Directory backend (or a generation with no commit):** falls back
+      to the generation's recorded patch set from the journal
+      (``list_patches`` reads ``experiment.json``), rendered compactly —
+      the same change, as patch records rather than a line diff.
+
+    A seed generation (no prior promotion) returns an explicit notice.
+    Output is capped at :data:`_PARENT_DIFF_LIMIT_CHARS`. Read-only by
+    contract, like every tool here.
+    """
+    ctx = _active_context()
+    if not ctx.generation_id:
+        return (
+            "(parent-generation coordinates unavailable in this context; "
+            "no promotion diff to show)"
+        )
+    from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
+    from zicato.epoch.git_genstore import GitGenerationStore  # noqa: PLC0415
+
+    store = default_generation_store(ctx.workspace_root)
+    if isinstance(store, GitGenerationStore) and store.has_generation(
+        ctx.epoch_id, ctx.generation_id
+    ):
+        parent_id = store.parent_generation_id(ctx.epoch_id, ctx.generation_id)
+        if parent_id is None:
+            return (
+                f"(generation {ctx.generation_id} is a seed — there is no "
+                "prior promotion to diff)"
+            )
+        diff = store.diff_generations(ctx.epoch_id, parent_id, ctx.generation_id)
+        if not diff.strip():
+            return (
+                f"(generations {parent_id} -> {ctx.generation_id} are "
+                "byte-identical — the promoted patch set changed nothing textually)"
+            )
+        header = f"# diff {parent_id} -> {ctx.generation_id} (what the last promotion changed)\n"
+        return _truncate_note(header + diff, _PARENT_DIFF_LIMIT_CHARS)
+
+    # Directory backend (or no commit for the coordinate): the journal's
+    # patch records are the durable account of what derived this generation.
+    record = store.list_patches(ctx.epoch_id, ctx.generation_id)
+    if not record.patches:
+        return (
+            f"(generation {ctx.generation_id} has no recorded patch set — a "
+            "seed generation; there is no prior promotion to show)"
+        )
+    lines = [
+        f"# patch record for {ctx.generation_id} (what the last promotion "
+        "changed; journal patch records — not a line diff)"
+    ]
+    for patch in record.patches:
+        lines.append(f"- {patch.op} {patch.mutation_id}: {patch.rationale or '(no rationale)'}")
+        if patch.new_content is not None:
+            value = _truncate_note(patch.new_content, _PATCH_VALUE_LIMIT_CHARS)
+            lines.append("  new content:\n" + "\n".join(f"    {ln}" for ln in value.splitlines()))
+        elif patch.new_numeric is not None:
+            lines.append(f"  new numeric: {patch.new_numeric}")
+        elif patch.new_enum is not None:
+            lines.append(f"  new enum: {patch.new_enum}")
+    return _truncate_note("\n".join(lines), _PARENT_DIFF_LIMIT_CHARS)
+
+
+def mutation_usage(mutation_id: str) -> str:
+    """Find where a mutation point's current value/symbol is referenced.
+
+    Grounds a candidate edit in how the point is actually USED: greps the
+    parent snapshot's mutable subtrees for (a) the point's symbol — the
+    trailing segment of its id, which by the marker convention names the
+    variable/kwarg holding the span — and (b) its current content, when
+    that content is a short single-line literal (a numeric/enum value, a
+    one-line prompt), so the agent sees every consumer of the value it is
+    about to change.
+
+    Bounded and sandboxed by construction: each search is delegated to
+    :func:`grep_mutable` (regex-escaped), so the mutable-subtree
+    resolution, the escape guard, and the :data:`_GREP_MATCH_LIMIT` cap
+    all apply unchanged. Read-only. ``mutation_id`` must name a point in
+    the current manifest; an unknown id raises :class:`ValueError`.
+    """
+    ctx = _active_context()
+    point = next((mp for mp in ctx.mutations if mp.id == mutation_id), None)
+    if point is None:
+        raise ValueError(
+            f"mutation_usage: unknown mutation id {mutation_id!r}; only ids "
+            "in the current manifest (see list_mutation_points) are valid"
+        )
+
+    terms: list[str] = []
+    symbol = mutation_id.rsplit("__", 1)[-1].strip()
+    if symbol:
+        terms.append(symbol)
+    content = point.content.strip()
+    if content and "\n" not in content and len(content) <= 120 and content not in terms:
+        terms.append(content)
+
+    root = ctx.generation_root.resolve()
+    file_path = Path(point.file)
+    try:
+        rel_file = str(file_path.resolve().relative_to(root))
+    except ValueError:
+        rel_file = str(file_path)
+    header = (
+        f"# usage of mutation point {mutation_id} "
+        f"(defined at {rel_file}:{point.line_start}-{point.line_end})"
+    )
+    sections = [header]
+    for term in terms:
+        sections.append(f"### references to {term!r}\n{grep_mutable(re.escape(term))}")
+    return "\n\n".join(sections)
+
+
 #: The full read-only tool set a custom proposer agent may opt into at
 #: once. A custom ``agent.py`` does ``tools=list(DEFAULT_PROPOSER_TOOLS)``
 #: to expose every tool above to its ``LlmAgent``.
@@ -417,6 +568,8 @@ DEFAULT_PROPOSER_TOOLS = (
     read_journal,
     read_insights,
     mutation_track_record,
+    read_parent_diff,
+    mutation_usage,
 )
 
 
@@ -427,7 +580,9 @@ __all__ = [
     "grep_mutable",
     "list_mutation_points",
     "mutation_track_record",
+    "mutation_usage",
     "read_insights",
     "read_journal",
     "read_mutable_file",
+    "read_parent_diff",
 ]

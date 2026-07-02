@@ -135,6 +135,9 @@ The read-only tool registry (`zicato.proposer.tools.DEFAULT_PROPOSER_TOOLS`):
 | `grep_mutable` | Regex search across the mutable subtrees, `path:line: text`. | Read-only; match count capped to protect the context window. |
 | `read_journal` | The epoch's running narrative journal. | Read-only; empty string when absent. |
 | `read_insights` | The epoch's latest analyzer insights — same content the default proposer embeds. | Read-only; empty string when absent. |
+| `mutation_track_record` | One mutation point's per-epoch track record from the analytical index — banded aggregates over *experiments touching the point* (multi-patch experiments confound credit; never causal). | Read-only; manifest-scoped ids; bucketed Δscalar only, inside the restricted-visibility envelope. |
+| `read_parent_diff` | What the last promotion changed: the parent generation diffed against *its* parent (git backend: one read-only `git diff` between tags; directory backend: the journal's patch records). | Read-only; output capped; explicit notice for a seed generation. |
+| `mutation_usage` | Where a mutation point's current value/symbol is referenced across the parent snapshot. | Read-only; delegated to `grep_mutable`, so the mutable-subtree sandbox and match cap apply unchanged. |
 
 Every tool is **read-only** by contract. A proposer tool that wrote to the
 snapshot would corrupt the very tree the round is about to patch (and break the

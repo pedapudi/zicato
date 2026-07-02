@@ -747,6 +747,61 @@ class GitGenerationStore:
             raise GitCommandError(argv[1:], proc.returncode, err)
         return proc.stdout
 
+    def parent_generation_id(self, epoch_id: str, generation_id: str) -> str | None:
+        """Read a generation's parent generation id from its commit metadata.
+
+        The lineage coordinate travels in the deriving commit's message
+        (:meth:`_format_commit_message`); this reads it straight back with
+        one ``git log`` — read-only, no worktree, no checkout. Returns
+        ``None`` for a seed generation (its metadata records no parent)
+        or a commit whose metadata block is missing/unparseable.
+
+        Raises :class:`FileNotFoundError` when the generation has no
+        commit, matching the other read-surface methods.
+        """
+        if not self.has_generation(epoch_id, generation_id):
+            raise FileNotFoundError(
+                f"parent_generation_id: generation {epoch_id}/{generation_id} "
+                f"has no commit in the generation repo"
+            )
+        meta = self._read_commit_meta(self._generation_tag(epoch_id, generation_id))
+        if not meta:
+            return None
+        parent = meta.get("parent_generation_id")
+        return parent if isinstance(parent, str) and parent else None
+
+    def diff_generations(
+        self, epoch_id: str, from_generation_id: str, to_generation_id: str
+    ) -> str:
+        """Unified diff between two generation commits — nearly free reads.
+
+        Runs a single read-only ``git diff`` between the two generations'
+        tags: git diffs the tree OBJECTS, so no worktree is materialised
+        and nothing in the repo changes. ``--no-ext-diff`` / ``--no-color``
+        pin the output to plain unified-diff text regardless of any
+        ambient git configuration. Returns the empty string when the two
+        trees are byte-identical (a derived child can legitimately equal
+        its parent — see :meth:`_commit`).
+
+        Raises :class:`FileNotFoundError` when either generation has no
+        commit, matching the other read-surface methods.
+        """
+        for gid in (from_generation_id, to_generation_id):
+            if not self.has_generation(epoch_id, gid):
+                raise FileNotFoundError(
+                    f"diff_generations: generation {epoch_id}/{gid} has no "
+                    f"commit in the generation repo"
+                )
+        from_tag = self._generation_tag(epoch_id, from_generation_id)
+        to_tag = self._generation_tag(epoch_id, to_generation_id)
+        return self._git(
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            f"refs/tags/{from_tag}",
+            f"refs/tags/{to_tag}",
+        )
+
     def list_patches(self, epoch_id: str, generation_id: str) -> PatchRecord:
         """Read a generation's applied patch set from its commit metadata.
 
