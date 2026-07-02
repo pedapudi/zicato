@@ -30,6 +30,7 @@ from zicato.core.types import (
 from zicato.proposer.agent import ProposerContext
 from zicato.proposer.best_of_n import (
     BestOfNProposerAgent,
+    CandidateScreenResult,
     wrap_with_proposer_quality,
 )
 
@@ -699,3 +700,306 @@ async def test_critic_prompt_carries_calibration_note_when_calibrated() -> None:
     agent2 = BestOfNProposerAgent(inner=inner2, config=ProposerQualityConfig(best_of_n=2))
     await agent2.propose(_context(critic2))
     assert "predictions have mostly borne out" not in critic2.user_prompts[0]
+
+
+# --------------------------------------------------------------------------
+# Candidate screening (tryouts) — veto filter, tiebreak feeds, guardrails
+# --------------------------------------------------------------------------
+
+
+def _screen_result(
+    *,
+    vetoed: bool = False,
+    scalar: float | None = None,
+    confirmed: bool = False,
+    passes: int = 2,
+) -> CandidateScreenResult:
+    return CandidateScreenResult(
+        vetoed=vetoed,
+        reason=("vetoed: panel 2" if vetoed else "clear: panel 2"),
+        scalar=scalar,
+        entries_screened=2,
+        baseline_passes=2,
+        candidate_passes=passes,
+        confirmed=confirmed,
+    )
+
+
+class _ScriptedScreen:
+    """A screen-runner double: returns scripted results, counts calls."""
+
+    def __init__(self, results: list[CandidateScreenResult]) -> None:
+        self.results = list(results)
+        self.calls = 0
+
+    async def __call__(self, candidates: object) -> list[CandidateScreenResult]:
+        self.calls += 1
+        return list(self.results)
+
+
+class _RaisingScreen:
+    async def __call__(self, candidates: object) -> list[CandidateScreenResult]:
+        raise RuntimeError("screen infrastructure exploded")
+
+
+def _screened_context(aux: object, screen: object, **overrides: object) -> ProposerContext:
+    from dataclasses import replace as _replace
+
+    return _replace(_context(aux), screen_candidates=screen, **overrides)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_vetoed_candidate_is_never_selected() -> None:
+    cand0 = _experiment(core_idea="broken", mutation_id="router__sp", new_content="a")
+    cand1 = _experiment(core_idea="fine", mutation_id="writer__sp", new_content="b")
+    inner = _ScriptedInnerAgent([cand0, cand1])
+    # The critic would pick 0 — but 0 is vetoed, so it must never win.
+    critic = _CapturingCriticLLM("0")
+    screen = _ScriptedScreen(
+        [_screen_result(vetoed=True, confirmed=True, passes=0), _screen_result(scalar=1.0)]
+    )
+    agent = BestOfNProposerAgent(
+        inner=inner, config=ProposerQualityConfig(best_of_n=2, screen_entries=2)
+    )
+    out = await agent.propose(_screened_context(critic, screen))
+    assert out is cand1
+    assert screen.calls == 1
+    # A single survivor needs no critique call at all.
+    assert critic.user_prompts == []
+
+
+@pytest.mark.asyncio
+async def test_sole_survivor_mode_string_and_event_ordering() -> None:
+    events: list[tuple[str, dict]] = []
+    cand0 = _experiment(core_idea="broken", mutation_id="router__sp", new_content="a")
+    cand1 = _experiment(core_idea="fine", mutation_id="writer__sp", new_content="b")
+    inner = _ScriptedInnerAgent([cand0, cand1])
+    screen = _ScriptedScreen(
+        [_screen_result(vetoed=True, confirmed=True, passes=0), _screen_result(scalar=1.0)]
+    )
+    agent = BestOfNProposerAgent(
+        inner=inner, config=ProposerQualityConfig(best_of_n=2, screen_entries=2)
+    )
+    ctx = _screened_context(
+        _CapturingCriticLLM("0"), screen, round_event_emitter=lambda t, f: events.append((t, f))
+    )
+    await agent.propose(ctx)
+    # candidate_sampled xN, then candidate_screened xN, then critique_selected.
+    assert [t for t, _ in events] == [
+        "candidate_sampled",
+        "candidate_sampled",
+        "candidate_screened",
+        "candidate_screened",
+        "critique_selected",
+    ]
+    screened = [f for t, f in events if t == "candidate_screened"]
+    assert screened[0]["vetoed"] is True
+    assert screened[0]["confirmed"] is True
+    assert screened[1]["vetoed"] is False
+    # Counts-only summary — the seam never carries entry ids.
+    assert set(screened[0]["screen_summary"]) == {
+        "entries_screened",
+        "baseline_passes",
+        "candidate_passes",
+        "reason",
+    }
+    selected = dict(events)["critique_selected"]
+    assert selected == {"index": 1, "reason": "screen_sole_survivor"}
+
+
+@pytest.mark.asyncio
+async def test_all_vetoed_slate_degrades_to_critic_over_all() -> None:
+    events: list[tuple[str, dict]] = []
+    cand0 = _experiment(core_idea="a", mutation_id="router__sp", new_content="a")
+    cand1 = _experiment(core_idea="b", mutation_id="writer__sp", new_content="b")
+    inner = _ScriptedInnerAgent([cand0, cand1])
+    critic = _CapturingCriticLLM("1")
+    screen = _ScriptedScreen(
+        [
+            _screen_result(vetoed=True, confirmed=True, passes=0),
+            _screen_result(vetoed=True, passes=0),
+        ]
+    )
+    agent = BestOfNProposerAgent(
+        inner=inner, config=ProposerQualityConfig(best_of_n=2, screen_entries=2)
+    )
+    ctx = _screened_context(critic, screen, round_event_emitter=lambda t, f: events.append((t, f)))
+    out = await agent.propose(ctx)
+    assert out is cand1  # the critic still chose — the step never empties
+    assert len(critic.user_prompts) == 1
+    assert dict(events)["critique_selected"]["reason"] == "screen_all_vetoed:critique"
+
+
+@pytest.mark.asyncio
+async def test_all_vetoed_heuristic_mode_string() -> None:
+    events: list[tuple[str, dict]] = []
+    cand0 = _experiment(core_idea="a", mutation_id="router__sp", new_content="a")
+    cand1 = _experiment(core_idea="b", mutation_id="writer__sp", new_content="bb")
+    inner = _ScriptedInnerAgent([cand0, cand1])
+    screen = _ScriptedScreen(
+        [_screen_result(vetoed=True, passes=0), _screen_result(vetoed=True, passes=0)]
+    )
+    agent = BestOfNProposerAgent(
+        inner=inner,
+        config=ProposerQualityConfig(best_of_n=2, critique_enabled=False, screen_entries=2),
+    )
+    ctx = _screened_context(
+        _CapturingCriticLLM("0"), screen, round_event_emitter=lambda t, f: events.append((t, f))
+    )
+    out = await agent.propose(ctx)
+    assert out is cand0  # smaller diff wins under the heuristic
+    assert dict(events)["critique_selected"]["reason"] == "screen_all_vetoed:heuristic"
+
+
+@pytest.mark.asyncio
+async def test_raising_screen_proceeds_unscreened() -> None:
+    events: list[tuple[str, dict]] = []
+    cand0 = _experiment(core_idea="a", mutation_id="router__sp", new_content="a")
+    cand1 = _experiment(core_idea="b", mutation_id="writer__sp", new_content="b")
+    inner = _ScriptedInnerAgent([cand0, cand1])
+    critic = _CapturingCriticLLM("0")
+    agent = BestOfNProposerAgent(
+        inner=inner, config=ProposerQualityConfig(best_of_n=2, screen_entries=2)
+    )
+    ctx = _screened_context(
+        critic, _RaisingScreen(), round_event_emitter=lambda t, f: events.append((t, f))
+    )
+    out = await agent.propose(ctx)
+    # Screening must never fail a propose: the critic selected as if
+    # unscreened, and no candidate_screened event was emitted.
+    assert out is cand0
+    assert dict(events)["critique_selected"]["reason"] == "critique"
+    assert "candidate_screened" not in [t for t, _ in events]
+    # The critic prompt carries no screen block on the unscreened path.
+    assert "## Screen measurements" not in critic.user_prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_malformed_screen_result_count_proceeds_unscreened() -> None:
+    cand0 = _experiment(core_idea="a", mutation_id="router__sp", new_content="a")
+    cand1 = _experiment(core_idea="b", mutation_id="writer__sp", new_content="b")
+    inner = _ScriptedInnerAgent([cand0, cand1])
+    critic = _CapturingCriticLLM("0")
+    screen = _ScriptedScreen([_screen_result()])  # one result for two candidates
+    agent = BestOfNProposerAgent(
+        inner=inner, config=ProposerQualityConfig(best_of_n=2, screen_entries=2)
+    )
+    out = await agent.propose(_screened_context(critic, screen))
+    assert out is cand0
+
+
+@pytest.mark.asyncio
+async def test_screen_scalar_is_penultimate_heuristic_tiebreak() -> None:
+    # Equal grounding / calibration / DIFF SIZE: the panel scalar breaks the
+    # tie (lower = better) ahead of the stable index...
+    cand0 = _experiment(core_idea="a", mutation_id="router__sp", new_content="xx")
+    cand1 = _experiment(core_idea="b", mutation_id="writer__sp", new_content="yy")
+    inner = _ScriptedInnerAgent([cand0, cand1])
+    screen = _ScriptedScreen([_screen_result(scalar=5.0), _screen_result(scalar=0.5)])
+    agent = BestOfNProposerAgent(
+        inner=inner,
+        config=ProposerQualityConfig(best_of_n=2, critique_enabled=False, screen_entries=2),
+    )
+    out = await agent.propose(_screened_context(_CapturingCriticLLM("0"), screen))
+    assert out is cand1
+
+    # ...but never outranks the diff-size term: the smaller edit still wins
+    # even with the worse panel scalar (the screen advises, it cannot rank).
+    small = _experiment(core_idea="small", mutation_id="router__sp", new_content="x")
+    large = _experiment(core_idea="large", mutation_id="writer__sp", new_content="y" * 50)
+    inner2 = _ScriptedInnerAgent([small, large])
+    screen2 = _ScriptedScreen([_screen_result(scalar=9.0), _screen_result(scalar=0.1)])
+    agent2 = BestOfNProposerAgent(
+        inner=inner2,
+        config=ProposerQualityConfig(best_of_n=2, critique_enabled=False, screen_entries=2),
+    )
+    out2 = await agent2.propose(_screened_context(_CapturingCriticLLM("0"), screen2))
+    assert out2 is small
+
+    # A None (no-signal) scalar sorts after every measured one.
+    inner3 = _ScriptedInnerAgent([cand0, cand1])
+    screen3 = _ScriptedScreen([_screen_result(scalar=None), _screen_result(scalar=7.0)])
+    agent3 = BestOfNProposerAgent(
+        inner=inner3,
+        config=ProposerQualityConfig(best_of_n=2, critique_enabled=False, screen_entries=2),
+    )
+    out3 = await agent3.propose(_screened_context(_CapturingCriticLLM("0"), screen3))
+    assert out3 is cand1
+
+
+@pytest.mark.asyncio
+async def test_veto_only_suppresses_both_tiebreak_feeds() -> None:
+    # Heuristic feed: with screen_veto_only the panel scalar is ignored —
+    # the stable index decides the (otherwise equal) tie again.
+    cand0 = _experiment(core_idea="a", mutation_id="router__sp", new_content="xx")
+    cand1 = _experiment(core_idea="b", mutation_id="writer__sp", new_content="yy")
+    inner = _ScriptedInnerAgent([cand0, cand1])
+    screen = _ScriptedScreen([_screen_result(scalar=5.0), _screen_result(scalar=0.5)])
+    agent = BestOfNProposerAgent(
+        inner=inner,
+        config=ProposerQualityConfig(
+            best_of_n=2, critique_enabled=False, screen_entries=2, screen_veto_only=True
+        ),
+    )
+    out = await agent.propose(_screened_context(_CapturingCriticLLM("0"), screen))
+    assert out is cand0
+
+    # Critic feed: no "## Screen measurements" block reaches the prompt.
+    inner2 = _ScriptedInnerAgent([cand0, cand1])
+    critic = _CapturingCriticLLM("0")
+    screen2 = _ScriptedScreen([_screen_result(scalar=5.0), _screen_result(scalar=0.5)])
+    agent2 = BestOfNProposerAgent(
+        inner=inner2,
+        config=ProposerQualityConfig(best_of_n=2, screen_entries=2, screen_veto_only=True),
+    )
+    await agent2.propose(_screened_context(critic, screen2))
+    assert len(critic.user_prompts) == 1
+    assert "## Screen measurements" not in critic.user_prompts[0]
+
+    # ...while the default (veto_only False) feeds the counts-only block.
+    inner3 = _ScriptedInnerAgent([cand0, cand1])
+    critic3 = _CapturingCriticLLM("0")
+    screen3 = _ScriptedScreen([_screen_result(scalar=5.0), _screen_result(scalar=0.5)])
+    agent3 = BestOfNProposerAgent(
+        inner=inner3, config=ProposerQualityConfig(best_of_n=2, screen_entries=2)
+    )
+    await agent3.propose(_screened_context(critic3, screen3))
+    prompt = critic3.user_prompts[0]
+    assert "## Screen measurements" in prompt
+    assert "not a ranking" in prompt
+    # Counts only — no raw scalar leaks into the critic prompt.
+    assert "5.0" not in prompt
+    assert "0.5" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_veto_only_still_vetoes() -> None:
+    cand0 = _experiment(core_idea="broken", mutation_id="router__sp", new_content="a")
+    cand1 = _experiment(core_idea="fine", mutation_id="writer__sp", new_content="b")
+    inner = _ScriptedInnerAgent([cand0, cand1])
+    screen = _ScriptedScreen(
+        [_screen_result(vetoed=True, confirmed=True, passes=0), _screen_result()]
+    )
+    agent = BestOfNProposerAgent(
+        inner=inner,
+        config=ProposerQualityConfig(best_of_n=2, screen_entries=2, screen_veto_only=True),
+    )
+    out = await agent.propose(_screened_context(_CapturingCriticLLM("0"), screen))
+    assert out is cand1
+
+
+@pytest.mark.asyncio
+async def test_no_screen_runner_on_context_screens_nothing() -> None:
+    # A context without a screen runner (every contract that does not opt
+    # in) never constructs screen machinery — the selection is the plain
+    # critic path even when the config carries screen knobs.
+    cand0 = _experiment(core_idea="a", mutation_id="router__sp", new_content="a")
+    cand1 = _experiment(core_idea="b", mutation_id="writer__sp", new_content="b")
+    inner = _ScriptedInnerAgent([cand0, cand1])
+    critic = _CapturingCriticLLM("1")
+    agent = BestOfNProposerAgent(
+        inner=inner, config=ProposerQualityConfig(best_of_n=2, screen_entries=2)
+    )
+    out = await agent.propose(_context(critic))
+    assert out is cand1
+    assert "## Screen measurements" not in critic.user_prompts[0]

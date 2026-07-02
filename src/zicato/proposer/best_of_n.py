@@ -17,6 +17,23 @@ critique and NO extra work (:meth:`BestOfNProposerAgent.propose`) — the
 historical single-sample proposer, the right pin for scripted/deterministic
 proposers.
 
+Candidate screening (tryouts; opt-in)
+-------------------------------------
+When the contract opts in (``proposer_quality.screen_entries > 0`` with
+``best_of_n > 1``), the orchestrator threads a per-round
+:data:`ScreenRunner` on :attr:`~zicato.proposer.agent.ProposerContext
+.screen_candidates` and the wrapper calls it GUARDED once the slate
+settles: each candidate runs a small rotating TRAIN panel
+(:mod:`zicato.epoch.screen`) and a catastrophic regression is VETOED
+before the selection pass. Veto-first by design — the screen
+disqualifies, it never ranks; the critic/heuristic chooses among the
+survivors, an all-vetoed slate degrades to critic-over-all, and any
+screen failure degrades to an unscreened selection (screening can never
+fail a propose). The survivors' counts-only panel measurements feed the
+selection only as a LATE tiebreak (suppressed entirely by
+``screen_veto_only``); the panel scalar is selection-biased and is never
+journaled as evidence.
+
 Overfitting discipline (LOAD-BEARING)
 -------------------------------------
 The self-critique pass sees ONLY the SAME restricted prompt context the
@@ -29,7 +46,8 @@ per-entry identity the proposer is not already allowed to see. The critic is
 inside the same overfitting-visibility envelope as the proposer
 (OVERFITTING.md §11); it cannot widen what the proposer learns about the
 board. The candidates it ranks are the proposer's own outputs, which are
-already inside that envelope.
+already inside that envelope. The screen's feeds keep the same envelope:
+counts only, never an entry id.
 """
 
 from __future__ import annotations
@@ -180,7 +198,11 @@ def _targets_observed_failure(experiment: Experiment, ctx: ProposerContext) -> b
     return bool(touched & affected)
 
 
-def _heuristic_best_index(candidates: list[Experiment], ctx: ProposerContext) -> int:
+def _heuristic_best_index(
+    candidates: list[Experiment],
+    ctx: ProposerContext,
+    screen_scalars: list[float | None] | None = None,
+) -> int:
     """Deterministically select the best candidate by the §4.1 quality bar.
 
     The no-LLM selection (used when critique is disabled, or as the fallback
@@ -198,7 +220,13 @@ def _heuristic_best_index(candidates: list[Experiment], ctx: ProposerContext) ->
        gate.
     3. **Minimal diff** — among equally-ranked candidates, the smaller
        edit wins (MDL parsimony; OVERFITTING.md §5).
-    4. **Stable order** — ties break toward the earlier-sampled candidate, so
+    4. **Screen panel scalar** (opt-in tiebreak) — when the candidate
+       screen ran and the contract has not pinned ``screen_veto_only``,
+       the smaller (better) SELECTION-BIASED panel scalar breaks the
+       remaining tie; a ``None`` scalar (no signal) sorts after every
+       measured one. ``screen_scalars is None`` (unscreened / veto-only)
+       leaves the term constant — inert, byte-identical ordering.
+    5. **Stable order** — ties break toward the earlier-sampled candidate, so
        the selection is deterministic for a fixed slate.
 
     Returns the index into ``candidates``. ``candidates`` is non-empty by
@@ -207,13 +235,21 @@ def _heuristic_best_index(candidates: list[Experiment], ctx: ProposerContext) ->
     accuracy = recent_prediction_accuracy(ctx)
     calibrated = accuracy is not None and accuracy >= CALIBRATION_TRUST_BAR
 
-    def _key(i: int) -> tuple[bool, bool, int, int]:
+    def _key(i: int) -> tuple[bool, bool, int, tuple[bool, float], int]:
+        # The PENULTIMATE key (after diff size, before the stable index):
+        # the screen's panel scalar, lower = better, None-scalar last.
+        # Constant (inert) when the screen did not run or is veto-only.
+        screen_key = (True, 0.0)
+        if screen_scalars is not None:
+            scalar = screen_scalars[i]
+            screen_key = (scalar is None, scalar if scalar is not None else 0.0)
         return (
             not _targets_observed_failure(candidates[i], ctx),  # grounded first
             # False sorts first: with a calibrated lineage, prediction-bearing
             # candidates rank ahead; otherwise the term is constant (inert).
             calibrated and not _carries_expected_movements(candidates[i]),
             _diff_size(candidates[i]),
+            screen_key,
             i,
         )
 
@@ -253,6 +289,36 @@ def _render_candidate_slate(candidates: list[Experiment]) -> str:
             f"patches:\n{patch_block}"
         )
     return "\n\n".join(blocks)
+
+
+def _render_screen_note(results: list[CandidateScreenResult]) -> str:
+    """The critic's counts-only ``## Screen measurements`` advisory block.
+
+    One line per RENDERED candidate (indexes match the slate block the
+    critic sees), carrying pass COUNTS only — never an entry id, never a
+    raw scalar — so the block stays inside the restricted-visibility
+    envelope exactly like the calibration note. Advisory tiebreak
+    material: the instruction explicitly subordinates it to the quality
+    bar, because the panel measurement is selection-biased (a small,
+    champion-passing tryout panel) and must not become a ranking.
+    """
+    lines: list[str] = []
+    for i, res in enumerate(results):
+        if res.entries_screened <= 0:
+            lines.append(f"Candidate {i}: not screened (no signal).")
+            continue
+        status = "VETOED (confirmed regression)" if res.vetoed else "clear"
+        lines.append(
+            f"Candidate {i}: {status}; passed {res.candidate_passes}/"
+            f"{res.entries_screened} tryout entries "
+            f"({res.baseline_passes} champion-passing)."
+        )
+    return (
+        "\n## Screen measurements\n"
+        "Each candidate ran a small train-panel tryout (counts only; "
+        "selection-biased). Use these ONLY to break ties the quality bar "
+        "leaves — they are not a ranking.\n" + "\n".join(lines) + "\n"
+    )
 
 
 _CRITIC_SYSTEM_PROMPT = (
@@ -371,12 +437,116 @@ class BestOfNProposerAgent:
         if len(candidates) == 1:
             return candidates[0]
 
-        chosen, selection_mode = await self._select_best(candidates, ctx)
+        # Optional pre-tournament candidate screen (tryouts) — VETO-FIRST:
+        # a catastrophic regression is disqualified here, but the screen
+        # never ranks; the critic/heuristic below still chooses among the
+        # survivors. ``None`` (unscreened — no runner threaded, screen
+        # error, or malformed result) leaves the selection byte-identical.
+        screen_results = await self._screen_slate(candidates, ctx)
+        survivor_indices = list(range(len(candidates)))
+        all_vetoed = False
+        if screen_results is not None:
+            survivors = [i for i, res in enumerate(screen_results) if not res.vetoed]
+            if survivors:
+                survivor_indices = survivors
+            else:
+                # Every candidate vetoed — the screen may narrow but never
+                # empty the step: fall back to critic-over-ALL, with the
+                # mode string recording the degraded selection basis.
+                all_vetoed = True
+
+        if screen_results is not None and not all_vetoed and len(survivor_indices) == 1:
+            # A single survivor needs no critique call — the veto already
+            # decided the slate.
+            chosen, selection_mode = survivor_indices[0], "screen_sole_survivor"
+        else:
+            chosen, selection_mode = await self._select_over(
+                candidates, survivor_indices, screen_results, ctx
+            )
+            if all_vetoed:
+                selection_mode = f"screen_all_vetoed:{selection_mode}"
         chosen, selection_mode = await self._align_child_tree(
             candidates, chosen, selection_mode, ctx
         )
         _emit_round_event(ctx, "critique_selected", {"index": chosen, "reason": selection_mode})
         return candidates[chosen]
+
+    async def _screen_slate(
+        self, candidates: list[Experiment], ctx: ProposerContext
+    ) -> list[CandidateScreenResult] | None:
+        """Run the optional candidate screen over the settled slate. GUARDED.
+
+        ``None`` — no screen runner on the context (every contract that
+        does not opt in), a raising runner, or a malformed result — means
+        UNSCREENED: the caller selects exactly as before. Screening must
+        never fail a propose step. Emits one ``candidate_screened`` round
+        event per candidate (after the ``candidate_sampled`` events,
+        before ``critique_selected``) with the counts-only summary.
+        """
+        screen = ctx.screen_candidates
+        if screen is None:
+            return None
+        try:
+            results = list(await screen(candidates))
+        except Exception as exc:  # noqa: BLE001 — screening must never fail a propose
+            log.debug("candidate screen failed (%s); selecting unscreened", exc)
+            return None
+        if len(results) != len(candidates):
+            log.debug(
+                "candidate screen returned %d result(s) for %d candidate(s); "
+                "selecting unscreened",
+                len(results),
+                len(candidates),
+            )
+            return None
+        for i, res in enumerate(results):
+            _emit_round_event(
+                ctx,
+                "candidate_screened",
+                {
+                    "index": i,
+                    "vetoed": res.vetoed,
+                    "confirmed": res.confirmed,
+                    "screen_summary": {
+                        "entries_screened": res.entries_screened,
+                        "baseline_passes": res.baseline_passes,
+                        "candidate_passes": res.candidate_passes,
+                        "reason": res.reason,
+                    },
+                },
+            )
+        return results
+
+    async def _select_over(
+        self,
+        candidates: list[Experiment],
+        survivor_indices: list[int],
+        screen_results: list[CandidateScreenResult] | None,
+        ctx: ProposerContext,
+    ) -> tuple[int, str]:
+        """Select over the surviving sub-slate; map the index back to the slate.
+
+        The screen's measurements feed the selection only as a LATE
+        tiebreak — and only when the contract has not pinned
+        ``screen_veto_only`` — through two advisory channels: the critique
+        prompt's counts-only ``## Screen measurements`` block, and the
+        heuristic's penultimate panel-scalar key. Unscreened (or
+        veto-only), both channels are inert and the selection is
+        byte-identical to the pre-screen wrapper.
+        """
+        sub = [candidates[i] for i in survivor_indices]
+        feed = screen_results is not None and not self.config.screen_veto_only
+        screen_scalars: list[float | None] | None = None
+        screen_note = ""
+        if feed:
+            assert screen_results is not None  # narrowed by ``feed``
+            sub_results = [screen_results[i] for i in survivor_indices]
+            screen_scalars = [res.scalar for res in sub_results]
+            screen_note = _render_screen_note(sub_results)
+        sub_choice, selection_mode = await self._select_best(
+            sub, ctx, screen_scalars=screen_scalars, screen_note=screen_note
+        )
+        return survivor_indices[sub_choice], selection_mode
 
     async def _align_child_tree(
         self,
@@ -465,7 +635,11 @@ class BestOfNProposerAgent:
             return [f"validation hook raised unexpectedly: {exc}"]
 
     async def _select_best(
-        self, candidates: list[Experiment], ctx: ProposerContext
+        self,
+        candidates: list[Experiment],
+        ctx: ProposerContext,
+        screen_scalars: list[float | None] | None = None,
+        screen_note: str = "",
     ) -> tuple[int, str]:
         """Return ``(best index, selection mode)`` against the §4.1 quality bar.
 
@@ -475,19 +649,23 @@ class BestOfNProposerAgent:
         the selection sees ONLY the restricted proposer context. The mode
         string (``"critique"`` / ``"heuristic"``) is round-log provenance
         only — the caller's choice of candidate is the index.
+
+        ``screen_scalars`` / ``screen_note`` are the OPTIONAL candidate-
+        screen tiebreak feeds (heuristic key / critic prompt block); both
+        default inert — every unscreened caller is byte-identical.
         """
         if not self.config.critique_enabled:
-            return _heuristic_best_index(candidates, ctx), "heuristic"
+            return _heuristic_best_index(candidates, ctx, screen_scalars), "heuristic"
 
         aux_call_llm = ctx.aux_call_llm
         if aux_call_llm is None:  # pragma: no cover — orchestrator always wires it
-            return _heuristic_best_index(candidates, ctx), "heuristic"
+            return _heuristic_best_index(candidates, ctx, screen_scalars), "heuristic"
 
-        choice = await self._critique(aux_call_llm, candidates, ctx)
+        choice = await self._critique(aux_call_llm, candidates, ctx, screen_note)
         if choice is None:
             # Critique failed / unparseable — fall back to the heuristic so a
             # flaky critic never blocks the step.
-            return _heuristic_best_index(candidates, ctx), "heuristic"
+            return _heuristic_best_index(candidates, ctx, screen_scalars), "heuristic"
         return choice, "critique"
 
     async def _critique(
@@ -495,6 +673,7 @@ class BestOfNProposerAgent:
         aux_call_llm: Callable[[str, str, str], Awaitable[str]],
         candidates: list[Experiment],
         ctx: ProposerContext,
+        screen_note: str = "",
     ) -> int | None:
         """One cheap self-critique LLM call; returns the chosen index or None.
 
@@ -536,7 +715,11 @@ class BestOfNProposerAgent:
             f"{restricted_context}\n\n"
             "## Candidate proposals\n"
             f"{slate}\n"
-            f"{calibration_note}\n"
+            # Optional counts-only screen block (the calibration-note
+            # precedent) — empty for every unscreened / veto-only call, so
+            # the prompt is byte-identical to the pre-screen wrapper.
+            f"{calibration_note}"
+            f"{screen_note}\n"
             f"Respond with ONLY the integer index (0..{len(candidates) - 1}) "
             "of the best candidate."
         )
@@ -569,6 +752,8 @@ __all__ = [
     "CALIBRATION_TRUST_BAR",
     "EDIT_CLASS_HINTS",
     "BestOfNProposerAgent",
+    "CandidateScreenResult",
+    "ScreenRunner",
     "recent_prediction_accuracy",
     "wrap_with_proposer_quality",
 ]

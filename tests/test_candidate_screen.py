@@ -555,3 +555,80 @@ def test_round_log_folds_candidate_screened_tally(tmp_path: Path) -> None:
     # The event decodes through the wire vocabulary (round-trip).
     decoded = [e.event for e in log.read() if e.type == "candidate_screened"]
     assert [getattr(e, "vetoed", None) for e in decoded] == [False, True]
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator wiring — the per-round closure builder
+# ---------------------------------------------------------------------------
+
+
+def test_screen_runner_not_built_unless_opted_in(tmp_path: Path) -> None:
+    from zicato.orchestrator import _build_candidate_screen_runner
+
+    workspace_root, parent = _workspace(tmp_path)
+    board = [_entry("e_a"), _entry("e_b")]
+
+    def _build(weights: ScoringWeights) -> Any:
+        return _build_candidate_screen_runner(
+            weights=weights,
+            adapter=object(),
+            parent_gen=parent,
+            train_board=board,
+            parent_losses=[_parent_loss(e.id) for e in board],
+            config=_config(tmp_path),
+            workspace_root=workspace_root,
+            epoch_id="e1",
+            round_index=0,
+            disable_drift=(),
+            judge_only=False,
+            beater=None,
+        )
+
+    from zicato.core.types import ProposerQualityConfig
+
+    # The code default (screen_entries=0): no closure is even constructed.
+    assert _build(ScoringWeights()) is None
+    # Inert unless best_of_n > 1 — a single sample has no slate to screen.
+    assert (
+        _build(
+            ScoringWeights(proposer_quality=ProposerQualityConfig(best_of_n=1, screen_entries=2))
+        )
+        is None
+    )
+    # Opted in: a per-round closure exists.
+    runner = _build(ScoringWeights(proposer_quality=ProposerQualityConfig(screen_entries=2)))
+    assert runner is not None
+
+
+def test_screen_runner_closure_drives_the_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from zicato.core.types import ProposerQualityConfig
+    from zicato.orchestrator import _build_candidate_screen_runner
+
+    workspace_root, parent = _workspace(tmp_path)
+    board = [_entry("e_a"), _entry("e_b"), _entry("e_c")]
+    world = _ScreenWorld({("e_a", SCREEN_REPLICATE_BASE): BUDGET_ABORT_CAUSE})
+    world.install(monkeypatch)
+    runner = _build_candidate_screen_runner(
+        weights=ScoringWeights(proposer_quality=ProposerQualityConfig(screen_entries=2)),
+        adapter=object(),
+        parent_gen=parent,
+        train_board=board,
+        parent_losses=[_parent_loss(e.id) for e in board],
+        config=_config(tmp_path),
+        workspace_root=workspace_root,
+        epoch_id="e1",
+        round_index=0,
+        disable_drift=(),
+        judge_only=False,
+        beater=None,
+    )
+    assert runner is not None
+    results = asyncio.run(runner([_experiment("c0")]))
+    (res,) = list(results)
+    # Round 0's ring panel over the passing baseline is (e_a, e_b); the
+    # budget abort on e_a vetoes immediately.
+    assert res.vetoed is True
+    assert {c[1] for c in world.calls} == {"e_a", "e_b"}
+    assert all(c[2] == SCREEN_REPLICATE_BASE for c in world.calls)

@@ -31,7 +31,7 @@ import asyncio
 import json
 import logging
 import time  # noqa: F401  — kept as the ``orch.time`` clock seam (see __all__)
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -100,6 +100,7 @@ if TYPE_CHECKING:
     # ``evolve_once`` (see the module docstring on lazy imports), so its
     # exception type is referenced here purely for type annotations.
     from zicato.proposer.agent import ProposerAgent
+    from zicato.proposer.best_of_n import ScreenRunner
     from zicato.proposer.proposer import ProposerError
 
 log = logging.getLogger("zicato.orchestrator")
@@ -502,6 +503,29 @@ async def evolve_once(
     # byte-identical to today (OVERFITTING.md §11.4).
     failure_profile = _render_failure_profile(losses, weights)
 
+    # --- 5a'. Optional pre-tournament candidate screen (tryouts) ---
+    # ONE closure per round, built only when the contract opts in
+    # (proposer_quality.screen_entries > 0 AND best_of_n > 1) — otherwise
+    # ``None`` and no screen callable even exists on the propose path. It
+    # binds this round's rotating TRAIN panel (never the holdout), the
+    # parent's replicate-0 baseline passes, and the frozen weights; the
+    # best-of-N wrapper calls it GUARDED once its slate settles, so a
+    # catastrophically-regressed candidate is vetoed before selection.
+    screen_candidates = _build_candidate_screen_runner(
+        weights=weights,
+        adapter=adapter,
+        parent_gen=parent_gen,
+        train_board=train_board,
+        parent_losses=losses,
+        config=config,
+        workspace_root=workspace_root,
+        epoch_id=resolved_epoch_id,
+        round_index=round_index,
+        disable_drift=disable_drift,
+        judge_only=judge_only,
+        beater=beater,
+    )
+
     # --- 5b. Tournament-structure dispatch ---
     # The gauntlet (the default and back-compat baseline) has field_size
     # == 1: one champion, one challenger, one full-board duel. Steps 6-13
@@ -520,6 +544,7 @@ async def evolve_once(
     strategy = make_strategy(tournament_spec, board_ids=[e.id for e in board])
     if strategy.field_size() > 1:
         return await _evolve_multi_challenger(
+            screen_candidates=screen_candidates,
             workspace_root=workspace_root,
             epoch_id=resolved_epoch_id,
             tournament_spec=tournament_spec,
@@ -689,6 +714,7 @@ async def evolve_once(
                 failure_profile=failure_profile,
                 round_index=round_index,
                 round_emitter=round_log,
+                screen_candidates=screen_candidates,
             )
         except ProposerError as exc:
             # The proposer exhausted its bounded retries without producing
@@ -1405,6 +1431,7 @@ async def _propose_and_apply_challenger(
     failure_profile: str = "",
     on_status: Callable[[dict[str, Any]], None] | None = None,
     round_emitter: _RoundLogEmitter | None = None,
+    screen_candidates: ScreenRunner | None = None,
 ) -> tuple[_AppliedChallenger | None, dict[str, Any]]:
     """Propose + apply ONE challenger child of the champion.
 
@@ -1528,6 +1555,7 @@ async def _propose_and_apply_challenger(
             failure_profile=failure_profile,
             round_index=round_index,
             round_emitter=round_emitter,
+            screen_candidates=screen_candidates,
         )
     except ProposerError as exc:
         reason = _short_reject_reason(exc.attempts) or str(exc)
@@ -1779,6 +1807,7 @@ async def _evolve_multi_challenger(
     meta_loop_emitter: Any,
     proposer_agent: ProposerAgent,
     round_log: _RoundLogEmitter | None = None,
+    screen_candidates: ScreenRunner | None = None,
 ) -> EvolveRoundOutcome:
     """Run ONE evolve round under a non-gauntlet tournament structure.
 
@@ -1989,6 +2018,7 @@ async def _evolve_multi_challenger(
             failure_profile=failure_profile,
             on_status=_publish_proposing,
             round_emitter=round_log,
+            screen_candidates=screen_candidates,
         )
         # Field-diversity DECISION (pure — `_mint_challenger_field`): accept
         # the challenger into the run slate, or soft-reject it as an exact
@@ -3070,6 +3100,70 @@ def _first_aggregate_for(gid: str, decision: Any) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 
 
+def _build_candidate_screen_runner(
+    *,
+    weights: Any,
+    adapter: Any,
+    parent_gen: Generation,
+    train_board: list[Any],
+    parent_losses: list[Any],
+    config: Any,
+    workspace_root: Path,
+    epoch_id: str,
+    round_index: int,
+    disable_drift: tuple[Any, ...],
+    judge_only: bool,
+    beater: HeartbeatBeater | None,
+) -> ScreenRunner | None:
+    """Build this round's candidate-screen closure, or ``None`` when OFF.
+
+    ``None`` — the DEFAULT — unless the contract opts in with
+    ``proposer_quality.screen_entries > 0`` AND ``best_of_n > 1`` (a
+    single-sample proposer has no slate to screen): the propose path then
+    carries no screen callable at all and is byte-identical.
+
+    When built, the closure binds ONE deterministic rotating TRAIN panel
+    for the whole round (:func:`zicato.epoch.screen.select_screen_entries`
+    over the champion's replicate-0 baseline — the holdout is never
+    eligible) so every propose site this round (the gauntlet's single
+    challenger, every slot of a multi-challenger field) screens on the
+    same panel. Each invocation stamps a ``screening:r{round}`` heartbeat
+    phase before the panel runs, so the stall detector attributes the
+    extra propose-step wall-clock honestly.
+    """
+    quality = weights.proposer_quality
+    if quality.screen_entries <= 0 or quality.best_of_n <= 1:
+        return None
+    from zicato.epoch.screen import run_candidate_screen, select_screen_entries  # noqa: PLC0415
+
+    panel = select_screen_entries(train_board, parent_losses, quality.screen_entries, round_index)
+
+    async def _screen(candidates: Sequence[Experiment]) -> list[Any]:
+        _beat(
+            beater,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            generation_id=parent_gen.id,
+            round_index=round_index,
+            phase=f"screening:r{round_index}",
+        )
+        return await run_candidate_screen(
+            candidates=list(candidates),
+            adapter=adapter,
+            parent_gen=parent_gen,
+            panel=panel,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            round_index=round_index,
+            disable_drift=disable_drift,
+            judge_only=judge_only,
+        )
+
+    return _screen
+
+
 async def _propose_child(
     *,
     proposer_agent: ProposerAgent,
@@ -3092,6 +3186,7 @@ async def _propose_child(
     failure_profile: str,
     round_index: int,
     round_emitter: _RoundLogEmitter | None = None,
+    screen_candidates: ScreenRunner | None = None,
 ) -> Experiment:
     """Build the :class:`ProposerContext` + propose ONE child of the champion.
 
@@ -3141,6 +3236,7 @@ async def _propose_child(
                 restrict_visibility=restrict_visibility,
                 failure_profile=failure_profile,
                 round_event_emitter=(round_emitter.emit if round_emitter is not None else None),
+                screen_candidates=screen_candidates,
             )
         )
     except ProposerError as exc:
