@@ -4,9 +4,12 @@ The mutation-site browser extends the Files view: it lists every
 ``# zicato:mutable`` annotated span in an epoch's ``v0`` baseline and,
 per site, exposes the baseline content plus the patched content in any
 generation whose patch touched that mutation id — the frontend diffs the
-two. These tests exercise it end-to-end through the ASGI app for **both**
-storage backends, so the view is proven backend-neutral, exactly like
-the file-tree browser it sits beside.
+two. These tests exercise it end-to-end through the ASGI app on the
+directory backend only, exactly like the file-tree browser it sits
+beside: the endpoints read exclusively through the ``GenerationStore``
+protocol, whose cross-backend behaviour is pinned by
+``tests/test_genstore_conformance.py``, so a git axis here added spawn
+cost without new coverage.
 """
 
 from __future__ import annotations
@@ -20,7 +23,6 @@ from starlette.testclient import TestClient
 from zicato.core.types import Experiment, HypothesisSpec, Patch
 from zicato.dashboard.server import create_app
 from zicato.epoch.genstore import DirectoryGenerationStore
-from zicato.epoch.git_genstore import GitGenerationStore
 from zicato.epoch.journal import write_experiment
 
 
@@ -76,30 +78,26 @@ def _experiment(patches: tuple[Patch, ...]) -> Experiment:
     )
 
 
-@pytest.fixture(params=["directory", "git"])
-def populated_workspace(request: pytest.FixtureRequest, tmp_path: Path) -> Path:
+@pytest.fixture
+def populated_workspace(tmp_path: Path) -> Path:
     """A ``.zicato/`` workspace with a seeded + patched generation.
 
-    Parametrised over both storage backends. ``v1`` is derived from
-    ``v0`` by a patch against ``researcher_instr``; ``reviewer_instr`` is
-    left untouched so the "site with no patch" path is also covered. The
-    ``experiment.json`` record is written so :meth:`list_patches` — the
-    seam the mutation browser reads patch sets through — resolves the
-    patch set for ``v1``.
+    Directory backend only (backend-agnostic endpoints; see the module
+    docstring). ``v1`` is derived from ``v0`` by a patch against
+    ``researcher_instr``; ``reviewer_instr`` is left untouched so the
+    "site with no patch" path is also covered. The ``experiment.json``
+    record is written so :meth:`list_patches` — the seam the mutation
+    browser reads patch sets through — resolves the patch set for ``v1``.
+    The ``config.json`` pin is still required: the dashboard reads through
+    ``default_generation_store``, which defaults to git, so the workspace
+    must declare the backend it was seeded under.
     """
     ws = tmp_path / ".zicato"
     ws.mkdir()
     (ws / "epochs" / "e1").mkdir(parents=True)
 
-    if request.param == "git":
-        (ws / "config.json").write_text('{"storage_backend": "git"}', encoding="utf-8")
-        store: DirectoryGenerationStore | GitGenerationStore = GitGenerationStore(ws)
-    else:
-        # Pin the directory backend explicitly: the dashboard endpoint reads
-        # through ``default_generation_store``, which now defaults to git, so
-        # the directory variant must declare the backend it seeded under.
-        (ws / "config.json").write_text('{"storage_backend": "directory"}', encoding="utf-8")
-        store = DirectoryGenerationStore(ws)
+    (ws / "config.json").write_text('{"storage_backend": "directory"}', encoding="utf-8")
+    store = DirectoryGenerationStore(ws)
 
     tree = _mutable_tree(tmp_path / "src", instr="original instruction")
     store.seed_generation("e1", "v0", [tree])

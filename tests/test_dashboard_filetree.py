@@ -2,8 +2,14 @@
 
 The Files view browses every generation's source tree and applied
 patches through the :class:`~zicato.epoch.genstore.GenerationStore`
-seam. These tests exercise it end-to-end through the ASGI app for
-**both** storage backends, so the view is proven backend-neutral.
+seam. These tests exercise it end-to-end through the ASGI app on the
+directory backend only: the endpoints read exclusively through the
+``GenerationStore`` protocol, whose cross-backend behaviour is pinned by
+``tests/test_genstore_conformance.py`` (and the git-specific mapping by
+``tests/test_git_genstore.py``), so re-running every endpoint-shape test
+against the git backend added spawn cost without new coverage. The
+config-driven backend *selection* the endpoints rely on is covered in
+``tests/test_git_genstore.py``'s config-knob tests.
 """
 
 from __future__ import annotations
@@ -17,7 +23,6 @@ from starlette.testclient import TestClient
 from zicato.core.types import Patch
 from zicato.dashboard.server import create_app
 from zicato.epoch.genstore import DirectoryGenerationStore
-from zicato.epoch.git_genstore import GitGenerationStore
 
 
 def _write(path: Path, body: str) -> None:
@@ -50,28 +55,24 @@ def _patch(pid: str, new_content: str) -> Patch:
     )
 
 
-@pytest.fixture(params=["directory", "git"])
-def populated_workspace(request: pytest.FixtureRequest, tmp_path: Path) -> Path:
+@pytest.fixture
+def populated_workspace(tmp_path: Path) -> Path:
     """A ``.zicato/`` workspace with a seeded + derived generation.
 
-    Parametrised over both storage backends. For the git backend the
-    workspace ``config.json`` carries ``storage_backend: "git"`` so the
-    dashboard's :func:`default_generation_store` selects it.
+    Directory backend only — the endpoints under test are backend-agnostic
+    (they read through the ``GenerationStore`` protocol, held to the same
+    contract for both backends by the conformance suite), so the git axis
+    here bought no coverage. The ``config.json`` pin is still required: the
+    dashboard reads through ``default_generation_store``, which defaults to
+    git, so the workspace must declare the backend it was seeded under.
     """
     ws = tmp_path / ".zicato"
     ws.mkdir()
     # An epoch directory must exist for the filetree index to list it.
     (ws / "epochs" / "e1").mkdir(parents=True)
 
-    if request.param == "git":
-        (ws / "config.json").write_text('{"storage_backend": "git"}', encoding="utf-8")
-        store = GitGenerationStore(ws)
-    else:
-        # Pin the directory backend explicitly: the dashboard endpoint reads
-        # through ``default_generation_store``, which now defaults to git, so
-        # the directory variant must declare the backend it seeded under.
-        (ws / "config.json").write_text('{"storage_backend": "directory"}', encoding="utf-8")
-        store = DirectoryGenerationStore(ws)
+    (ws / "config.json").write_text('{"storage_backend": "directory"}', encoding="utf-8")
+    store = DirectoryGenerationStore(ws)
 
     tree = _mutable_tree(tmp_path / "src", instr="original")
     store.seed_generation("e1", "v0", [tree])

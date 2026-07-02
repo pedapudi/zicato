@@ -9,6 +9,7 @@ materialisation, blob dedup, and config-knob selection.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import textwrap
 from pathlib import Path
@@ -18,6 +19,11 @@ import pytest
 from zicato.core.types import Patch
 from zicato.epoch.genstore import default_generation_store
 from zicato.epoch.git_genstore import GitGenerationStore
+
+# Every test here drives real ``git`` subprocesses — the git-native mapping
+# (branches, tags, worktrees, blobs) IS the coverage. Tagged for the opt-in
+# fast lane (`-m "not slow"`); the full suite still runs them by default.
+pytestmark = [pytest.mark.slow, pytest.mark.integration]
 
 
 def _write(path: Path, body: str) -> None:
@@ -61,6 +67,41 @@ def _git(repo: Path, *args: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Session-scoped seeded template
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def _seeded_git_ws_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A workspace with ``e1/v0`` seeded from the standard tree, built ONCE.
+
+    Seeding costs a dozen-plus ``git`` subprocess spawns (init + identity +
+    add + commit + tag + worktree); tests that only need "a seeded store"
+    copy this template instead of paying that per test. Tests whose contract
+    IS the seeding behaviour (epoch-branch creation, seed-from-worktree,
+    custom trees) keep seeding a fresh store.
+    """
+    base = tmp_path_factory.mktemp("git-genstore-template")
+    ws = base / "ws"
+    GitGenerationStore(ws).seed_generation("e1", "v0", [_mutable_tree(base / "src")])
+    # A materialised worktree registers its ABSOLUTE path inside the repo,
+    # which cannot survive relocation-by-copytree: drop the worktrees and
+    # prune the registrations so each copy re-materialises its own on first
+    # snapshot_root().
+    shutil.rmtree(ws / GitGenerationStore.WORKTREES_DIRNAME)
+    _git(ws / GitGenerationStore.REPO_DIRNAME, "worktree", "prune")
+    return ws
+
+
+@pytest.fixture
+def seeded_store(_seeded_git_ws_template: Path, tmp_path: Path) -> GitGenerationStore:
+    """A private copy of the seeded template — safe to derive/mutate."""
+    ws = tmp_path / "ws"
+    shutil.copytree(_seeded_git_ws_template, ws)
+    return GitGenerationStore(ws)
+
+
+# ---------------------------------------------------------------------------
 # domain → git mapping
 # ---------------------------------------------------------------------------
 
@@ -72,21 +113,17 @@ def test_epoch_becomes_a_branch(tmp_path: Path) -> None:
     assert "epoch/2026-05-18_e1" in branches
 
 
-def test_generation_becomes_a_tag(tmp_path: Path) -> None:
-    store = GitGenerationStore(tmp_path / "ws")
-    tree = _mutable_tree(tmp_path / "src")
-    store.seed_generation("e1", "v0", [tree])
+def test_generation_becomes_a_tag(seeded_store: GitGenerationStore) -> None:
+    store = seeded_store
     store.derive_generation("e1", "v0", "v1", [_patch("p1", '"""next"""')])
     tags = _git(store.repo_path, "tag", "--list").split()
     assert "epoch/e1/v0" in tags
     assert "epoch/e1/v1" in tags
 
 
-def test_generation_lineage_is_the_commit_dag(tmp_path: Path) -> None:
+def test_generation_lineage_is_the_commit_dag(seeded_store: GitGenerationStore) -> None:
     """A child generation commit parents the parent generation commit."""
-    store = GitGenerationStore(tmp_path / "ws")
-    tree = _mutable_tree(tmp_path / "src")
-    store.seed_generation("e1", "v0", [tree])
+    store = seeded_store
     store.derive_generation("e1", "v0", "v1", [_patch("p1", '"""next"""')])
 
     v0 = _git(store.repo_path, "rev-parse", "epoch/e1/v0").strip()
@@ -99,10 +136,10 @@ def test_generation_lineage_is_the_commit_dag(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_patch_metadata_travels_in_the_commit_message(tmp_path: Path) -> None:
-    store = GitGenerationStore(tmp_path / "ws")
-    tree = _mutable_tree(tmp_path / "src")
-    store.seed_generation("e1", "v0", [tree])
+def test_patch_metadata_travels_in_the_commit_message(
+    seeded_store: GitGenerationStore,
+) -> None:
+    store = seeded_store
     store.derive_generation("e1", "v0", "v1", [_patch("p-meta", '"""x"""')])
 
     message = _git(store.repo_path, "log", "-1", "--format=%B", "epoch/e1/v1")
@@ -114,10 +151,8 @@ def test_patch_metadata_travels_in_the_commit_message(tmp_path: Path) -> None:
     assert [p.id for p in record.patches] == ["p-meta"]
 
 
-def test_seed_generation_has_no_patches(tmp_path: Path) -> None:
-    store = GitGenerationStore(tmp_path / "ws")
-    store.seed_generation("e1", "v0", [_mutable_tree(tmp_path / "src")])
-    assert store.list_patches("e1", "v0").patches == ()
+def test_seed_generation_has_no_patches(seeded_store: GitGenerationStore) -> None:
+    assert seeded_store.list_patches("e1", "v0").patches == ()
 
 
 # ---------------------------------------------------------------------------
@@ -125,9 +160,8 @@ def test_seed_generation_has_no_patches(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_snapshot_root_materialises_a_worktree(tmp_path: Path) -> None:
-    store = GitGenerationStore(tmp_path / "ws")
-    store.seed_generation("e1", "v0", [_mutable_tree(tmp_path / "src")])
+def test_snapshot_root_materialises_a_worktree(seeded_store: GitGenerationStore) -> None:
+    store = seeded_store
     root = store.snapshot_root("e1", "v0")
     assert root.is_dir()
     assert (root / "agent" / "prompts.py").is_file()
@@ -136,11 +170,11 @@ def test_snapshot_root_materialises_a_worktree(tmp_path: Path) -> None:
     assert str(root) in worktrees
 
 
-def test_snapshot_root_reuses_an_existing_worktree(tmp_path: Path) -> None:
-    store = GitGenerationStore(tmp_path / "ws")
-    store.seed_generation("e1", "v0", [_mutable_tree(tmp_path / "src")])
-    first = store.snapshot_root("e1", "v0")
-    second = store.snapshot_root("e1", "v0")
+def test_snapshot_root_reuses_an_existing_worktree(
+    seeded_store: GitGenerationStore,
+) -> None:
+    first = seeded_store.snapshot_root("e1", "v0")
+    second = seeded_store.snapshot_root("e1", "v0")
     assert first == second
 
 
@@ -185,9 +219,8 @@ def test_unchanged_files_share_one_blob_across_generations(tmp_path: Path) -> No
 # ---------------------------------------------------------------------------
 
 
-def test_repo_carries_an_artifact_gitignore(tmp_path: Path) -> None:
-    store = GitGenerationStore(tmp_path / "ws")
-    store.seed_generation("e1", "v0", [_mutable_tree(tmp_path / "src")])
+def test_repo_carries_an_artifact_gitignore(seeded_store: GitGenerationStore) -> None:
+    store = seeded_store
     gitignore = store.repo_path / ".gitignore"
     assert gitignore.is_file()
     body = gitignore.read_text(encoding="utf-8")
@@ -239,9 +272,8 @@ def test_default_generation_store_malformed_config_is_git(
 # ---------------------------------------------------------------------------
 
 
-def test_retry_after_failed_derive_succeeds(tmp_path: Path) -> None:
-    store = GitGenerationStore(tmp_path / "ws")
-    store.seed_generation("e1", "v0", [_mutable_tree(tmp_path / "src")])
+def test_retry_after_failed_derive_succeeds(seeded_store: GitGenerationStore) -> None:
+    store = seeded_store
 
     # A failed derive (bad patch) leaves no v1 tag.
     with pytest.raises(ValueError):
@@ -305,17 +337,19 @@ def test_seed_from_a_worktrees_children_skips_git_admin(tmp_path: Path) -> None:
     assert "after-roll" in store.read_file("e1", "v1", "agent/prompts.py").decode("utf-8")
 
 
-def test_derive_an_unchanged_child_is_a_real_generation(tmp_path: Path) -> None:
+def test_derive_an_unchanged_child_is_a_real_generation(
+    seeded_store: GitGenerationStore,
+) -> None:
     """A patch that leaves the tree byte-identical to the parent (a proposer
     can propose a value that already holds) is still a legitimate
     generation — the directory backend records it, so the git backend must
     too rather than aborting with "nothing to commit".
     """
-    store = GitGenerationStore(tmp_path / "ws")
-    store.seed_generation("e1", "v0", [_mutable_tree(tmp_path / "src", instr="same")])
+    store = seeded_store
 
-    # Replace the marker with the SAME content it already holds.
-    store.derive_generation("e1", "v0", "v1", [_patch("p1", '"""same"""')])
+    # Replace the marker with the SAME content it already holds (the seeded
+    # template's instr value), so the child tree is byte-identical to v0.
+    store.derive_generation("e1", "v0", "v1", [_patch("p1", '"""original"""')])
 
     assert store.has_generation("e1", "v1") is True
     assert sorted(store.list_generations("e1")) == ["v0", "v1"]
