@@ -29,11 +29,13 @@ orchestrator.
 
 from __future__ import annotations
 
+import re
 import textwrap
 from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING
 
 from zicato.analyzer.outcome_marginals import OutcomeMarginalSummary
+from zicato.analyzer.process_exemplars import ProcessExemplar
 from zicato.core.drift_kinds import GOLDFIVE_DRIFT_KINDS
 from zicato.core.types import MutationPoint, Pattern, PriorExperiment, ProposerSkill
 
@@ -594,6 +596,52 @@ def render_failure_mode_profile(summary: OutcomeMarginalSummary) -> str:
     return "\n".join(lines)
 
 
+def render_process_exemplars(exemplars: Iterable[ProcessExemplar]) -> str:
+    """Render redacted process-exemplar windows into the prompt block body.
+
+    The prompt-side surface of the opt-in process-exemplar channel
+    (``docs/design/PROCESS-EXEMPLARS.md``;
+    :func:`zicato.analyzer.process_exemplars.extract_process_exemplars`).
+    Each exemplar renders as one bullet — the pattern it illustrates plus
+    its anchor label — followed by the window's events, one line each:
+    signed relative offset (the anchor is ``0``; never an absolute
+    sequence number), the payload case name, and the already-redacted
+    ``key=value`` fields the extractor's field policy admitted. This
+    function performs NO redaction of its own — every byte it renders was
+    already passed through the extractor's mechanical rules (allowlist,
+    anonymization, truncation, identity scrub); it only formats.
+
+    An empty iterable returns the EMPTY STRING — the proposer-side
+    sentinel for "omit this section entirely", exactly as the
+    failure-mode profile behaves — so a knob-off round renders a
+    byte-identical prompt.
+    """
+    items = list(exemplars)
+    if not items:
+        return ""
+    total = len(items)
+    blocks: list[str] = []
+    for i, ex in enumerate(items, start=1):
+        lines = [
+            f"- exemplar {i}/{total} — pattern {ex.pattern_kind} ({ex.anchor_label}):",
+        ]
+        for ev in ex.events:
+            parts = []
+            for name, value in ev.fields:
+                # Quote free-text values (they carry spaces) so field
+                # boundaries stay legible; closed-vocabulary values render
+                # bare. Purely cosmetic — the content is already redacted.
+                rendered = f'"{value}"' if re.search(r"\s", value) else value
+                parts.append(f"{name}={rendered}")
+            offset = f"{ev.offset:+d}" if ev.offset != 0 else " 0"
+            line = f"    {offset} {ev.case}"
+            if parts:
+                line = f"{line} {' '.join(parts)}"
+            lines.append(line)
+        blocks.append("\n".join(lines))
+    return "\n".join(blocks)
+
+
 def _band_prediction_accuracy(accuracy: float) -> str:
     """Coarsen a hypothesis prediction-accuracy fraction to a calibration band.
 
@@ -809,6 +857,7 @@ def render_user_prompt(
     restrict_visibility: bool = False,
     custom_judge_names: Iterable[str] = (),
     failure_profile: str = "",
+    process_exemplars: str = "",
     sample_hint: str = "",
     mutation_track_records: Mapping[str, MutationTrackRecord] | None = None,
 ) -> str:
@@ -888,6 +937,20 @@ def render_user_prompt(
         only splices it. Empty (the default) omits the section entirely, so a
         caller that supplies no profile renders a byte-identical prompt to
         before this surface existed.
+    process_exemplars:
+        Optional pre-rendered, train-slice-only, REDACTED process-exemplar
+        block (the opt-in ``proposer_quality.process_exemplars`` channel —
+        ``docs/design/PROCESS-EXEMPLARS.md``; built by
+        :func:`render_process_exemplars` from the extractor's already-
+        redacted windows). When non-empty, a ``## Process exemplars``
+        section is spliced in DIRECTLY AFTER the failure-mode profile,
+        headed by a banner restating the redaction contract, so the
+        proposer can see HOW a detected failure unfolds — never WHICH
+        board entry it unfolded on. The string is already redacted by the
+        extractor's mechanical rules; this function only splices it.
+        Empty (the default — every knob-off round) omits the section
+        entirely, rendering a byte-identical prompt to before this
+        surface existed.
     sample_hint:
         Optional per-sample edit-class steering line (the best-of-N slate
         diversifier — see :data:`zicato.proposer.best_of_n.EDIT_CLASS_HINTS`).
@@ -924,6 +987,22 @@ def render_user_prompt(
             f"failures, build on wins)\n\n{prior_block}\n\n"
         )
         body = prior_prefix + body
+    if process_exemplars.strip():
+        # Spliced so it lands DIRECTLY AFTER the failure-mode profile in the
+        # final prompt (prefixes stack in reverse prepend order). The banner
+        # restates the redaction contract so the model reads the windows as
+        # anonymized mechanism, not as named board evidence.
+        exemplars_prefix = (
+            "## Process exemplars (train slice — redacted event windows)\n"
+            "Redaction contract (PROCESS-EXEMPLARS.md): entry ids and task "
+            "text stripped, task ids\n"
+            "anonymized per window, free text truncated, model outputs "
+            "withheld. These show HOW a\n"
+            "detected failure unfolds — never WHICH board entry it unfolded "
+            "on.\n"
+            f"{process_exemplars.strip()}\n\n"
+        )
+        body = exemplars_prefix + body
     if failure_profile.strip():
         failure_prefix = (
             "## Failure-mode profile (this round, aggregate — train slice)\n"
@@ -984,6 +1063,7 @@ __all__ = [
     "USER_PROMPT_TEMPLATE",
     "render_failure_mode_profile",
     "render_metric_targets_block",
+    "render_process_exemplars",
     "render_mutation_track_annotation",
     "render_pattern_block",
     "render_mutation_block",

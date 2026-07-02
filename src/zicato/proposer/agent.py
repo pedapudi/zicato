@@ -118,6 +118,20 @@ class ProposerContext:
     #: banded by its renderer; the agents only forward it. Empty (the
     #: default) omits the section, byte-identical to before this surface.
     failure_profile: str = ""
+    #: Pre-rendered, train-slice-only, REDACTED process-exemplar block —
+    #: the opt-in ``proposer_quality.process_exemplars`` channel
+    #: (``docs/design/PROCESS-EXEMPLARS.md``). Built by the orchestrator,
+    #: best-effort, from
+    #: :func:`~zicato.analyzer.process_exemplars.extract_process_exemplars`
+    #: (mechanical redaction: no entry ids, no task text, no model outputs)
+    #: rendered through
+    #: :func:`~zicato.proposer.prompts.render_process_exemplars`. When
+    #: non-empty, a ``## Process exemplars`` section is spliced into the
+    #: user prompt directly after the failure-mode profile so the proposer
+    #: sees HOW a detected failure unfolds — never WHICH entry it unfolded
+    #: on. Empty (the default — every knob-off round) omits the section,
+    #: byte-identical to before this surface.
+    process_exemplars: str = ""
     #: Optional per-sample edit-class steering line — the best-of-N slate
     #: diversifier (:data:`zicato.proposer.best_of_n.EDIT_CLASS_HINTS`). The
     #: wrapper stamps a DISTINCT hint on each slate slot's context via
@@ -218,6 +232,7 @@ class DefaultProposerAgent:
             skills=self.spec.skills,
             restrict_visibility=ctx.restrict_visibility,
             failure_profile=ctx.failure_profile,
+            process_exemplars=ctx.process_exemplars,
             sample_hint=ctx.sample_hint,
             mutation_track_records=ctx.mutation_track_records,
             revise_feedback=ctx.revise_feedback,

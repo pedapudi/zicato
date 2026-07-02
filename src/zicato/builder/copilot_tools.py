@@ -365,21 +365,30 @@ def set_namespace_weights(
 def set_proposer_quality(
     best_of_n: int | None = None,
     critique_enabled: bool | None = None,
+    process_exemplars: int | None = None,
 ) -> str:
     """Set the proposer-quality levers: best-of-N slate + self-critique.
 
     ``best_of_n`` is how many candidate experiments each propose-step
     samples before selection (1 = the historical single sample, no
     critique; must be >= 1); ``critique_enabled`` toggles the auxiliary
-    self-critique selection pass (inert at best_of_n 1). The screen
-    (tryout) knobs live on `set_screening` — the two ops COMPOSE on the
-    same proposer_quality contract block. Changing either rolls the
+    self-critique selection pass (inert at best_of_n 1);
+    ``process_exemplars`` opts the proposer into up to that many REDACTED
+    drift-anchored event windows per round (0 = off, the default; it
+    touches the overfitting boundary — point the operator at
+    docs/design/PROCESS-EXEMPLARS.md §5, the harm-detection runbook,
+    before setting it; read-side only, no cost-meter impact). The screen
+    (tryout) knobs live on `set_screening` — the ops COMPOSE on the
+    same proposer_quality contract block. Changing any rolls the
     epoch. Returns the patch + updated cost / warnings.
     """
     ctx = _active_context()
     try:
         patch = ops.set_proposer_quality(
-            ctx.draft(), best_of_n=best_of_n, critique_enabled=critique_enabled
+            ctx.draft(),
+            best_of_n=best_of_n,
+            critique_enabled=critique_enabled,
+            process_exemplars=process_exemplars,
         )
     except ValueError as exc:
         return _result_json({"error": str(exc)})

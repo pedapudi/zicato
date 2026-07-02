@@ -559,3 +559,222 @@ def test_exemplar_types_are_frozen_and_hashable() -> None:
     assert hash(ex) == hash(ex)
     with pytest.raises(AttributeError):
         ev.case = "other"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Rendering + prompt splice (PROCESS-EXEMPLARS.md §6)
+# ---------------------------------------------------------------------------
+
+
+def _sample_exemplar() -> ProcessExemplar:
+    return ProcessExemplar(
+        pattern_id="p" * 16,
+        pattern_kind="drift_kind_frequency",
+        anchor_label="drift kind 'looping_tool_call'",
+        events=(
+            ExemplarEvent(
+                offset=-1,
+                case="agent_invocation_started",
+                fields=(("agent_name", "researcher"), ("task_id", "task-1")),
+            ),
+            ExemplarEvent(
+                offset=0,
+                case="drift_detected",
+                fields=(
+                    ("kind", "looping_tool_call"),
+                    ("severity", "warning"),
+                    ("detail", "tool called 4 times"),
+                ),
+            ),
+            ExemplarEvent(
+                offset=1,
+                case="task_failed",
+                fields=(("recoverable", "true"), ("task_id", "task-1")),
+            ),
+        ),
+    )
+
+
+def test_render_process_exemplars_block_shape() -> None:
+    from zicato.proposer.prompts import render_process_exemplars
+
+    rendered = render_process_exemplars([_sample_exemplar()])
+    lines = rendered.splitlines()
+    assert lines[0] == (
+        "- exemplar 1/1 — pattern drift_kind_frequency (drift kind 'looping_tool_call'):"
+    )
+    # Relative offsets, aligned; free text quoted, closed vocab bare.
+    assert lines[1] == "    -1 agent_invocation_started agent_name=researcher task_id=task-1"
+    assert lines[2] == (
+        '     0 drift_detected kind=looping_tool_call severity=warning detail="tool called 4 times"'
+    )
+    assert lines[3] == "    +1 task_failed recoverable=true task_id=task-1"
+
+
+def test_render_process_exemplars_empty_is_empty_string() -> None:
+    from zicato.proposer.prompts import render_process_exemplars
+
+    assert render_process_exemplars([]) == ""
+
+
+def _prompt_kwargs(**overrides: object) -> dict[str, object]:
+    base: dict[str, object] = {
+        "current_loss_summary": "drift_loss_mean=0.1 over 5 runs",
+        "patterns": (),
+        "mutations": (),
+    }
+    base.update(overrides)
+    return base
+
+
+def test_prompt_byte_identical_when_knob_off() -> None:
+    """Knob-off byte-identity, prompt side: no process_exemplars argument
+    and an explicit empty string render the SAME bytes — no section, no
+    extra newline (the contract-hash half lives in
+    test_contract_hash_stable_at_default_and_rolls_on_opt_in)."""
+    from zicato.proposer.prompts import render_user_prompt
+
+    without = render_user_prompt(**_prompt_kwargs())  # type: ignore[arg-type]
+    empty = render_user_prompt(**_prompt_kwargs(process_exemplars=""))  # type: ignore[arg-type]
+    assert without == empty
+    assert "Process exemplars" not in without
+
+
+def test_prompt_splices_exemplars_after_failure_profile() -> None:
+    from zicato.proposer.prompts import render_process_exemplars, render_user_prompt
+
+    block = render_process_exemplars([_sample_exemplar()])
+    rendered = render_user_prompt(
+        **_prompt_kwargs(
+            failure_profile="- looping: ~40%",
+            process_exemplars=block,
+            insights="something was observed",
+        )
+    )  # type: ignore[arg-type]
+    profile_at = rendered.index("## Failure-mode profile")
+    exemplars_at = rendered.index("## Process exemplars (train slice — redacted event windows)")
+    insights_at = rendered.index("## Recent telemetry insights")
+    loss_at = rendered.index("## Current loss summary")
+    # Order: insights, failure profile, process exemplars, ... template.
+    assert insights_at < profile_at < exemplars_at < loss_at
+    # The banner restates the redaction contract next to the windows.
+    assert "Redaction contract (PROCESS-EXEMPLARS.md)" in rendered
+    assert "never WHICH board entry" in rendered
+
+
+def test_proposer_context_forwards_process_exemplars() -> None:
+    """The DefaultProposerAgent engine threads ctx.process_exemplars into
+    the rendered user prompt (the ADK engine shares render_user_prompt)."""
+    import asyncio
+
+    from zicato.core.types import MutationPoint, ProposerSpec
+    from zicato.proposer.agent import DefaultProposerAgent, ProposerContext
+
+    seen: list[str] = []
+
+    async def _aux(system: str, user: str, model: str) -> str:
+        seen.append(user)
+        return json.dumps(
+            {
+                "hypothesis": {
+                    "core_idea": "x",
+                    "modulating": ["m1"],
+                    "why": "y",
+                    "expected_drift_movements": [
+                        {"kind": "off_topic", "direction": "decrease", "magnitude": "small"}
+                    ],
+                    "expected_pass_rate_delta": "+0.1",
+                },
+                "patches": [
+                    {
+                        "mutation_id": "m1",
+                        "op": "replace",
+                        "new_content": "new",
+                        "rationale": "r",
+                    }
+                ],
+            }
+        )
+
+    ctx = ProposerContext(
+        epoch_id="ep1",
+        parent_generation_id="v0",
+        new_generation_id="v1",
+        patterns=(),
+        mutations=(
+            MutationPoint(
+                id="m1",
+                kind="span",
+                file="f.py",
+                source_root="/src",
+                content_hash="h",
+                line_start=1,
+                line_end=2,
+                content="old",
+            ),
+        ),
+        brief_text="brief",
+        current_loss_summary="ok",
+        aux_call_llm=_aux,
+        process_exemplars="- exemplar 1/1 — pattern drift_kind_frequency (drift kind 'x'):",
+    )
+    agent = DefaultProposerAgent(ProposerSpec.default())
+    asyncio.run(agent.propose(ctx))
+    assert len(seen) == 1
+    assert "## Process exemplars (train slice — redacted event windows)" in seen[0]
+
+
+# ---------------------------------------------------------------------------
+# Builder op
+# ---------------------------------------------------------------------------
+
+
+def test_builder_set_proposer_quality_gains_the_knob() -> None:
+    from zicato.builder.draft import TournamentDraft
+    from zicato.builder.operations import set_proposer_quality
+
+    draft = TournamentDraft()
+    patch = set_proposer_quality(draft, process_exemplars=2)
+    assert patch.changed["process_exemplars"] == {"from": 0, "to": 2}
+    assert draft.scoring.proposer_quality.process_exemplars == 2
+    # No-op when unchanged; validation mirrors the dataclass.
+    patch2 = set_proposer_quality(draft, process_exemplars=2)
+    assert patch2.changed == {}
+    with pytest.raises(ValueError, match="process_exemplars"):
+        set_proposer_quality(draft, process_exemplars=-1)
+
+
+# ---------------------------------------------------------------------------
+# The harm-detection runbook's alarm (PROCESS-EXEMPLARS.md §5)
+# ---------------------------------------------------------------------------
+
+
+def test_harm_runbook_alarm_fires_on_rigged_widening_gap() -> None:
+    """PROCESS-EXEMPLARS.md §5 step 3/4 smoke: the runbook's alarm — the
+    generalization_gap detector — actually fires on the memorization
+    signature (train improving while the train→holdout gap widens), so an
+    operator following the doc gets the signal the doc promises."""
+    from zicato.health.diagnostics import detect_generalization_gap
+
+    experiments = [
+        # Early generation: train and holdout track (small gap).
+        {
+            "generation_id": "v1",
+            "outcome": {"train_loss": 1.0, "holdout_loss": 1.02, "generalization_gap": 0.02},
+        },
+        # Later generation: train IMPROVED (1.0 -> 0.5) while the holdout
+        # stalled — the gap widened past the default critical threshold.
+        {
+            "generation_id": "v5",
+            "outcome": {"train_loss": 0.5, "holdout_loss": 0.75, "generalization_gap": 0.25},
+        },
+    ]
+    findings = detect_generalization_gap(experiments)
+    assert findings, "the runbook's alarm did not fire on a rigged widening gap"
+    assert findings[0].severity == "critical"
+    assert findings[0].code == "generalization_gap"
+    # The response the runbook prescribes (disable the knob + roll the
+    # epoch, rotating the holdout) matches the detector's own
+    # recommendation surface.
+    assert findings[0].detail["refresh_recommended"] is True
+    assert "roll the epoch (rotating the holdout)" in findings[0].detail["recommendation"]

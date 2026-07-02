@@ -104,6 +104,7 @@ async def propose_experiment(
     skills: tuple[ProposerSkill, ...] = (),
     restrict_visibility: bool = False,
     failure_profile: str = "",
+    process_exemplars: str = "",
     sample_hint: str = "",
     mutation_track_records: Mapping[str, MutationTrackRecord] | None = None,
     revise_feedback: str = "",
@@ -234,6 +235,19 @@ async def propose_experiment(
         this engine only forwards it. Empty (the default) omits the section,
         so a caller that supplies no profile renders a byte-identical prompt
         to before this surface existed.
+    process_exemplars:
+        Optional pre-rendered, train-slice-only, REDACTED process-exemplar
+        block (the opt-in ``proposer_quality.process_exemplars`` channel —
+        ``docs/design/PROCESS-EXEMPLARS.md``). When non-empty, a
+        ``## Process exemplars`` section is spliced into the user prompt
+        directly after the failure-mode profile so the proposer can see HOW
+        a detected failure unfolds — never WHICH entry it unfolded on. The
+        string is already mechanically redacted by its extractor + renderer
+        (:func:`~zicato.analyzer.process_exemplars.extract_process_exemplars`
+        / :func:`~zicato.proposer.prompts.render_process_exemplars`); this
+        engine only forwards it. Empty (the default) omits the section, so
+        a caller that supplies no exemplars renders a byte-identical prompt
+        to before this surface existed.
 
     Returns
     -------
@@ -331,6 +345,7 @@ async def propose_experiment(
             restrict_visibility=restrict_visibility,
             custom_judge_names=custom_judge_names or frozenset(),
             failure_profile=failure_profile,
+            process_exemplars=process_exemplars,
             sample_hint=sample_hint,
             mutation_track_records=mutation_track_records,
         )

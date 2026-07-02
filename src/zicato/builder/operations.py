@@ -583,16 +583,21 @@ def set_proposer_quality(
     *,
     best_of_n: int | None = None,
     critique_enabled: bool | None = None,
+    process_exemplars: int | None = None,
 ) -> DraftPatch:
     """Set the proposer-quality levers: best-of-N slate + self-critique.
 
     ``best_of_n`` is how many candidate experiments each propose-step
     samples before selection (``1`` = the historical single sample, no
     critique; must be >= 1); ``critique_enabled`` toggles the auxiliary
-    self-critique selection pass (inert at ``best_of_n == 1``). COMPOSES
-    with :func:`set_screening` — both edit the same nested
-    ``proposer_quality`` block; the screen knobs stay that op's. Changing
-    either rolls the epoch.
+    self-critique selection pass (inert at ``best_of_n == 1``);
+    ``process_exemplars`` opts the proposer into up to that many REDACTED
+    drift-anchored event windows per round (``0`` = off, the default —
+    see ``docs/design/PROCESS-EXEMPLARS.md`` incl. its §5 harm-detection
+    runbook before opting in; must be >= 0; read-side only, so the cost
+    meter is untouched). COMPOSES with :func:`set_screening` — both edit
+    the same nested ``proposer_quality`` block; the screen knobs stay
+    that op's. Changing any rolls the epoch.
     """
     changed: dict[str, Any] = {}
     quality = draft.scoring.proposer_quality
@@ -606,6 +611,15 @@ def set_proposer_quality(
     if critique_enabled is not None and critique_enabled != quality.critique_enabled:
         quality_changes["critique_enabled"] = critique_enabled
         changed["critique_enabled"] = {"from": quality.critique_enabled, "to": critique_enabled}
+    if process_exemplars is not None:
+        if process_exemplars < 0:
+            raise ValueError(f"process_exemplars must be >= 0, got {process_exemplars!r}")
+        if process_exemplars != quality.process_exemplars:
+            quality_changes["process_exemplars"] = process_exemplars
+            changed["process_exemplars"] = {
+                "from": quality.process_exemplars,
+                "to": process_exemplars,
+            }
     if quality_changes:
         draft.scoring = _replace_scoring(
             draft, proposer_quality=dataclasses.replace(quality, **quality_changes)

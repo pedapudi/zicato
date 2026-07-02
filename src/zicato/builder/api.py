@@ -123,6 +123,7 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
             draft,
             best_of_n=_opt_int(args, "best_of_n"),
             critique_enabled=_opt_bool(args, "critique_enabled"),
+            process_exemplars=_opt_int(args, "process_exemplars"),
         )
     if op == "set_experiment_memory":
         return ops.set_experiment_memory(draft, cross_epoch=_opt_bool(args, "cross_epoch"))

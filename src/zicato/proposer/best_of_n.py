@@ -881,6 +881,10 @@ class BestOfNProposerAgent:
             restrict_visibility=ctx.restrict_visibility,
             custom_judge_names=ctx.custom_judge_names or frozenset(),
             failure_profile=ctx.failure_profile,
+            # The critic stays inside the SAME visibility envelope as the
+            # proposer: the redacted exemplar block (when the contract opted
+            # in) is part of that envelope — never anything beyond it.
+            process_exemplars=ctx.process_exemplars,
         )
         slate = _render_candidate_slate(candidates)
         # Calibration-aware advisory note (never a gate): when the lineage's

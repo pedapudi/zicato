@@ -527,6 +527,24 @@ async def evolve_once(
     # byte-identical to today (OVERFITTING.md §11.4).
     failure_profile = _render_failure_profile(losses, weights)
 
+    # --- 5a''. Opt-in process-exemplar block (PROCESS-EXEMPLARS.md) ---
+    # When the contract opts in (proposer_quality.process_exemplars > 0),
+    # extract up to that many drift-anchored, mechanically-REDACTED event
+    # windows from the champion's TRAIN-slice events.jsonl files — the same
+    # parent + train partition the patterns above used — so the proposer
+    # can see HOW a detected failure unfolds, never WHICH entry it unfolded
+    # on. Best-effort: any failure renders the empty string (the "omit this
+    # section" sentinel) and the round proceeds untouched. OFF by default:
+    # no extraction runs and the prompt is byte-identical to today.
+    process_exemplars_block = _render_process_exemplars_block(
+        workspace_root=workspace_root,
+        epoch_id=resolved_epoch_id,
+        parent_id=parent_id,
+        patterns=patterns,
+        train_entry_ids=[e.id for e in train_board],
+        weights=weights,
+    )
+
     # --- 5a'. Optional pre-tournament candidate screen (tryouts) ---
     # ONE closure per round, built only when the contract opts in
     # (proposer_quality.screen_entries > 0 AND best_of_n > 1) — otherwise
@@ -583,6 +601,7 @@ async def evolve_once(
             patterns=patterns,
             loss_summary=loss_summary,
             failure_profile=failure_profile,
+            process_exemplars=process_exemplars_block,
             disable_drift=disable_drift,
             judge_only=judge_only,
             fast_mode=fast_mode,
@@ -736,6 +755,7 @@ async def evolve_once(
                 prior_experiments=tuple(prior),
                 restrict_visibility=weights.overfitting.restrict_proposer_visibility,
                 failure_profile=failure_profile,
+                process_exemplars=process_exemplars_block,
                 round_index=round_index,
                 round_emitter=round_log,
                 screen_candidates=screen_candidates,
@@ -1482,6 +1502,7 @@ async def _propose_and_apply_challenger(
     prior_experiments: tuple[PriorExperiment, ...] = (),
     restrict_visibility: bool = False,
     failure_profile: str = "",
+    process_exemplars: str = "",
     on_status: Callable[[dict[str, Any]], None] | None = None,
     round_emitter: _RoundLogEmitter | None = None,
     screen_candidates: ScreenRunner | None = None,
@@ -1606,6 +1627,7 @@ async def _propose_and_apply_challenger(
             prior_experiments=prior_experiments,
             restrict_visibility=restrict_visibility,
             failure_profile=failure_profile,
+            process_exemplars=process_exemplars,
             round_index=round_index,
             round_emitter=round_emitter,
             screen_candidates=screen_candidates,
@@ -1770,6 +1792,7 @@ async def _evolve_multi_challenger(
     patterns: list[Any],
     loss_summary: str,
     failure_profile: str,
+    process_exemplars: str,
     disable_drift: tuple[Any, ...],
     judge_only: bool,
     fast_mode: bool,
@@ -1991,6 +2014,7 @@ async def _evolve_multi_challenger(
             proposer_agent=proposer_agent,
             restrict_visibility=weights.overfitting.restrict_proposer_visibility,
             failure_profile=failure_profile,
+            process_exemplars=process_exemplars,
             on_status=_publish_proposing,
             round_emitter=round_log,
             screen_candidates=screen_candidates,
@@ -3161,6 +3185,7 @@ async def _propose_child(
     restrict_visibility: bool,
     failure_profile: str,
     round_index: int,
+    process_exemplars: str = "",
     round_emitter: _RoundLogEmitter | None = None,
     screen_candidates: ScreenRunner | None = None,
 ) -> Experiment:
@@ -3217,6 +3242,7 @@ async def _propose_child(
                 prior_experiments=prior_experiments,
                 restrict_visibility=restrict_visibility,
                 failure_profile=failure_profile,
+                process_exemplars=process_exemplars,
                 mutation_track_records=mutation_track_records,
                 round_event_emitter=(round_emitter.emit if round_emitter is not None else None),
                 screen_candidates=screen_candidates,
@@ -4452,6 +4478,55 @@ def _render_failure_profile(losses: list[Any], weights: Any) -> str:
     operator_marginals = run_operator_summarizer(spec, losses) if spec else {}
     summary = aggregate_outcome_marginals(losses, operator_marginals=operator_marginals)
     return render_failure_mode_profile(summary)
+
+
+def _render_process_exemplars_block(
+    *,
+    workspace_root: Path,
+    epoch_id: str,
+    parent_id: str,
+    patterns: list[Any],
+    train_entry_ids: list[str],
+    weights: Any,
+) -> str:
+    """Build the opt-in, redacted process-exemplar prompt block — best-effort.
+
+    The opt-in half of the proposer failure-signal surface
+    (``docs/design/PROCESS-EXEMPLARS.md``): when the contract sets
+    ``proposer_quality.process_exemplars > 0``, extract up to that many
+    drift-anchored event windows from the CHAMPION's TRAIN-slice
+    ``events.jsonl`` files — the same ``parent_id`` + train partition the
+    patterns / loss summary / outcome marginals already use — mechanically
+    redacted by the extractor (no entry ids, no task text, no model
+    outputs), and render them through the proposer's block renderer.
+
+    Returns the empty string — the proposer-side "omit this section"
+    sentinel — when the knob is off (the default; no extraction even
+    runs, so the round is byte-identical to today), when no pattern has
+    an event footprint, or when extraction fails for any reason:
+    best-effort by contract, an exemplar failure must never abort a round.
+    """
+    quality = getattr(weights, "proposer_quality", None)
+    cap = int(getattr(quality, "process_exemplars", 0) or 0)
+    if cap <= 0:
+        return ""
+    with best_effort(
+        "process-exemplar extraction",
+        on_error=lambda exc: log.debug("process-exemplar extraction skipped: %s", exc),
+    ):
+        from zicato.analyzer.process_exemplars import extract_process_exemplars  # noqa: PLC0415
+        from zicato.proposer.prompts import render_process_exemplars  # noqa: PLC0415
+
+        exemplars = extract_process_exemplars(
+            workspace_root,
+            epoch_id,
+            patterns,
+            cap,
+            parent_generation_id=parent_id,
+            train_entry_ids=train_entry_ids,
+        )
+        return render_process_exemplars(exemplars)
+    return ""
 
 
 def _render_loss_summary(losses: list[Any]) -> str:

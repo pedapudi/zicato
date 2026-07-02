@@ -193,6 +193,20 @@ knob families carry this, and the copilot should teach them honestly:
   The gate MUST reject it — a promoted placebo is the alarm that the gate
   cannot tell signal from noise and recent promotions are suspect. Cheap
   insurance (one amortized duel every N rounds) on any long run.
+- **Process exemplars widen what the proposer may see — opt in with eyes
+  open.** `set_proposer_quality(process_exemplars=N)` shows the proposer up
+  to N mechanically-redacted event windows per round (how a detected failure
+  *unfolds* — the wandering plan, the looping tool call), extracted from the
+  champion's train-slice telemetry. Redaction is enforced in code (no entry
+  ids, no task text, no model outputs), the extraction is free (read-side
+  only — no cost-meter impact), and the epoch rolls on any change — but
+  unlike the screen this knob touches the overfitting boundary directly,
+  which is why the scaffold leaves it at 0. Be honest with the operator:
+  enable it only under the harm-detection runbook in
+  `docs/design/PROCESS-EXEMPLARS.md` §5 — keep the placebo arm on, watch the
+  `generalization_gap` health finding every round, and set the knob back to
+  0 (rolling the epoch, rotating the holdout) if the gap widens while train
+  keeps improving.
 
 ## The copilot's operating contract — DRAFT, then apply
 
@@ -205,7 +219,7 @@ copilot's tools (conceptual builder surface):
 | `set_param KEY=VALUE` | one structure param (`field_size`, `replicates`, `rounds_n`, `eta`, …) — also the evidence gate (`promote_confidence_threshold`, `promote_confidence_replicates`; value `null` removes a key) |
 | `set_holdout` | the whole anti-overfitting block: the split (fraction and/or `holdout`-tagged ids), the Ladder governor (`ladder: {enabled, threshold, budget, noise_scale}`), `rotate_holdout`, `min_board_size_for_split`, `restrict_proposer_visibility`, the placebo cadence (`random_baseline_every_n`), the refresh ceiling (`max_generations_per_contract`; 0 clears) |
 | `set_proposer` | the proposer dir / tier |
-| `set_proposer_quality` | best-of-N slate size + the self-critique pass (`best_of_n`, `critique_enabled`) |
+| `set_proposer_quality` | best-of-N slate size + the self-critique pass (`best_of_n`, `critique_enabled`) + the opt-in redacted process-exemplar channel (`process_exemplars`; 0 = off — see the soundness note above) |
 | `set_screening` | the pre-tournament candidate screen (`entries`, `veto_only`) — composes with `set_proposer_quality` on the same block |
 | `set_experiment_memory` | cross-epoch experiment-memory transfer (`cross_epoch`) |
 | `set_weights` | the loss-shaping weights (drift/pass/per-kind/per-judge/severity; also surfaced in `zicato-build-board`) |

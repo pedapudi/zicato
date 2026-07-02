@@ -592,6 +592,12 @@ function proposerSection(d) {
       body: 'A single cheap auxiliary-LLM pass scores the sampled slate against a quality bar (grounded? targets a real failure mode? minimal diff?) and selects the best. Off, selection falls back to the deterministic smallest-relevant-diff heuristic — no extra LLM call. Inert at best_of_n 1.',
     }, checkInput(pq.critique_enabled !== false, 'Critique enabled', 'auxiliary self-critique selects from the slate',
       (on) => runOp('set_proposer_quality', { critique_enabled: on }))),
+    controlRow('Process exemplars', {
+      title: 'process_exemplars', def: '0 (off)',
+      body: 'Opt-in: show the proposer up to N mechanically-REDACTED event windows per round (how a detected failure unfolds — no entry ids, no task text, no model outputs). Read-side only — free on the cost meter — but it widens the proposer-visibility channel, so enable it only under the harm-detection runbook in PROCESS-EXEMPLARS.md §5 (watch the generalization_gap finding; set back to 0 if it widens while train improves).',
+    }, numInput(pq.process_exemplars != null ? pq.process_exemplars : 0,
+      { min: '0', step: '1', 'aria-label': 'Process exemplars' },
+      (n) => runOp('set_proposer_quality', { process_exemplars: n }), { int: true })),
     controlRow('Cross-epoch memory', {
       title: 'experiment_memory.cross_epoch', def: 'off',
       body: 'Opts settled experiments from PRIOR epochs that share the current contract hash into the proposer\'s digest — banded, clearly separated, and only in the budget left after same-epoch history. Different-contract experiments are never surfaced.',
