@@ -155,8 +155,9 @@ class Heartbeat:
         progress log.
     harmonograf_url:
         Server address of the harmonograf console this run is streaming
-        telemetry to, when configured (via ``ZICATO_HARMONOGRAF_URL`` or
-        the workspace ``config.json``). Empty string when the run is
+        telemetry to, when configured (``zicato evolve --harmonograf-url``,
+        the workspace ``config.json``, or the auto-launch's internal
+        ``ZICATO_HARMONOGRAF_URL`` handoff). Empty string when the run is
         JSONL-only. The dashboard surfaces it as a "watch live" link.
         Optional — old readers ignore the field.
     harmonograf_meta_session:

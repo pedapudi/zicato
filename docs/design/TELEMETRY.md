@@ -145,7 +145,9 @@ the reducer extracts it and stamps it into `loss.json`
 (`LossProfile.adk_session_id`) so the dashboard can build the link
 without re-opening the event stream. The harmonograf URL itself is
 the auto-launched-or-configured one resolved by
-`resolve_harmonograf_url` (carried in `ZICATO_HARMONOGRAF_URL`).
+`resolve_harmonograf_url` (`--harmonograf-url` / the `config.json`
+`harmonograf_url` key, or — on the auto-launch path — the internal
+`ZICATO_HARMONOGRAF_URL` handoff).
 
 ## 2. The post-run reducer
 

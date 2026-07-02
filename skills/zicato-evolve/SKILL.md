@@ -52,7 +52,12 @@ The dashboard is launched automatically; its URL is printed
 | `--auxiliary-call-llm TEXT` | **Required.** Dotted path of the auxiliary call_llm — proposer/judge side. Must be a different Python object from the harness callable (collusion guard, `is`-distinct). |
 | `--rounds INTEGER` | Number of propose/tournament/promote rounds to attempt (default 1, must be >=1). |
 | `--mode full\|fast` | `fast` (default) = **cache-first**: every `(generation, entry, replicate)` board UNIT is evaluated at most once and reused across all pairings / rounds / structures — only cache misses run. So a carried champion is reused, not re-run (the round records `champion_eval_mode` = `fast`, or `fast-degraded` when some units had to run to seed the cache). `full` = bypass the cache and re-run every unit. Use `full` for the mock smoke and when you don't trust the cache; `fast` for cheaper real runs (and it is what makes a multi-challenger field affordable). |
-| `--max-wall-clock-seconds INTEGER` | Total wall-clock budget for the whole invocation. The loop stops cleanly between rounds once spent; a single round that would overrun is cancelled and recorded as aborted. Unset = unbounded. Stacks on top of each board entry's own `wall_clock_budget_seconds`. Env: `ZICATO_MAX_WALL_CLOCK_SECONDS`. |
+| `--max-wall-clock-seconds INTEGER` | Total wall-clock budget for the whole invocation. The loop stops cleanly between rounds once spent; a single round that would overrun is cancelled and recorded as aborted. Unset = unbounded. Stacks on top of each board entry's own `wall_clock_budget_seconds`. |
+| `--parallelism INTEGER` | Board units in flight at once. Shadows `runtime.parallelism`; wins over the workspace `config.json` value (default 4). |
+| `--harness-call-timeout-ms INTEGER` | Per-LLM-call budget for the inner harness agent's calls. Shadows `runtime.harness_call_timeout_ms` (default 1800000); an explicit `GOLDFIVE_AGENT_CALL_TIMEOUT_MS` still wins. |
+| `--aux-call-timeout FLOAT` | Per-call budget (seconds) for auxiliary-LLM (proposer/judge/emulator/analysis) calls. Shadows `aux.call_timeout_s` (default 120). |
+| `--supervisor-binary PATH` | Path to the zicato-supervisor watchdog binary. Shadows `integration.supervisor_binary`. |
+| `--harmonograf-url TEXT` | External harmonograf server URL (opt out of auto-launch). Shadows `integration.harmonograf_url`; wins over the `config.json` `harmonograf_url` key. |
 | `--max-consecutive-rejections INTEGER` | Stop early after this many rounds rejected in a row (default 3). |
 | `--epoch TEXT` | Pin an explicit epoch, skipping the auto-epoch check entirely. |
 | `--no-auto-epoch` | Strict mode: error out on a drifted contract instead of rolling a fresh epoch. |

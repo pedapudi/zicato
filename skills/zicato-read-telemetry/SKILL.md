@@ -100,8 +100,8 @@ that's the `flat_drift_signal` critical in
 ## One harmonograf server, many sessions
 
 There is exactly **one** harmonograf server for an evolve invocation (zicato
-auto-launches one, or you pin an external one via `ZICATO_HARMONOGRAF_URL` /
-the `harmonograf_url` config key). It hosts **many sessions**, and URLs
+auto-launches one, or you pin an external one via `zicato evolve
+--harmonograf-url` / the `harmonograf_url` config key). It hosts **many sessions**, and URLs
 deep-link to a session:
 
 ```

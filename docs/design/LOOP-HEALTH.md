@@ -122,9 +122,11 @@ fixed severity. The orchestrator runs them after a round and `zicato
 health` runs them on demand.
 
 Each detector's tuning knob is a field of `HealthConfig`, re-tunable
-between runs via a `ZICATO_HEALTH_*` environment variable. The four
-knobs and their defaults: `scoring_window` (3), `scoring_epsilon`
-(`1e-6`), `no_expectations_fraction` (`0.5`), `stalled_rejects` (3).
+between runs via the `health` block of the workspace `config.json`
+(parsed by `zicato.config.health_config_from_workspace`; the former
+`ZICATO_HEALTH_*` env vars are deleted). The four knobs and their
+defaults: `scoring_window` (3), `scoring_epsilon` (`1e-6`),
+`no_expectations_fraction` (`0.5`), `stalled_rejects` (3).
 
 ### 3.1 Degenerate scoring — `degenerate_scoring`
 
@@ -260,8 +262,9 @@ magnitude. A gap that has **widened** fires:
   [SELECTION-THEORY.md §5](SELECTION-THEORY.md) (the optimal-stopping
   horizon).
 
-Both thresholds are `HealthConfig` fields re-tunable via
-`ZICATO_HEALTH_GENERALIZATION_GAP_WARN` / `_CRIT`. The detector **degrades
+Both thresholds are `HealthConfig` fields re-tunable via the workspace
+`config.json`'s `health` block (`generalization_gap_warn` /
+`generalization_gap_crit`). The detector **degrades
 cleanly to no finding** when there is no holdout (small board, split
 disabled — every generation's holdout loss is `null`) or fewer than two
 generations carry a measured holdout. This is the safe, default-on degrade:

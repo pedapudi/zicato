@@ -632,7 +632,7 @@ large beneficial refactor; pair with the proposer-brief mutation budget
 `warning`/`critical` when the gap widens past a threshold. *Where:* a new
 detector in [`health/diagnostics.py`](../../src/zicato/health/diagnostics.py)
 beside the existing five ([`LOOP-HEALTH.md`](LOOP-HEALTH.md) §3), with a
-`ZICATO_HEALTH_*` knob. *Cost:* trivial (a pure function over history).
+`config.json` `health`-block knob. *Cost:* trivial (a pure function over history).
 *Tradeoff:* none beyond needing the split. Depends on #1.
 
 **#6 — Board refresh / rotation cadence. (SHIPPED.)**
