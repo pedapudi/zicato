@@ -10,6 +10,7 @@ from __future__ import annotations
 import http.client
 import os
 import socket
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -66,6 +67,45 @@ def _wait_for_health(url: str, *, deadline_s: float = 10.0) -> bool:
     return False
 
 
+def _boots_or_uses_live_server(func: object) -> object:
+    """Mark a test that boots a live harmonograf (or leans on the shared one).
+
+    The launch/liveness behaviour IS the coverage for these tests. Tagged
+    ``slow`` + ``integration`` for the opt-in fast lane (``-m "not slow"``);
+    the full suite still runs them by default.
+    """
+    return pytest.mark.slow(pytest.mark.integration(func))
+
+
+@pytest.fixture(scope="session")
+def session_harmonograf(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[tuple[Path, WorkspaceHarmonografHandle]]:
+    """ONE live workspace harmonograf shared by the READ-ONLY probes.
+
+    Booting a real server thread per test is the dominant cost of this
+    module; tests that only need "a live harmonograf to look at" (the
+    healthz-true probe, the reuse-a-live-record path) share this one.
+    Tests whose contract IS the launch/relaunch behaviour (fresh launch,
+    distinct ports, stale-record relaunch, shutdown idempotency) keep
+    booting their own. Yields ``(workspace_root, handle)``; the handle's
+    server stays up for the whole session and is shut down at the end.
+    """
+    ws = tmp_path_factory.mktemp("harmonograf-session-ws")
+    handle = ensure_workspace_harmonograf(ws)
+    if not handle.web_url:
+        handle.shutdown()
+        pytest.skip("harmonograf-server unavailable; cannot boot the shared server")
+    # A fresh workspace has no record ⇒ this ensure really launched.
+    assert handle.launched is True
+    assert _wait_for_health(handle.web_url, deadline_s=15.0)
+    try:
+        yield ws, handle
+    finally:
+        handle.shutdown()
+
+
+@_boots_or_uses_live_server
 def test_start_harmonograf_returns_local_url(tmp_path: Path) -> None:
     """Auto-launch happy path: free localhost port, server answers /healthz."""
     handle = start_harmonograf(tmp_path)
@@ -82,6 +122,7 @@ def test_start_harmonograf_returns_local_url(tmp_path: Path) -> None:
         handle.shutdown()
 
 
+@_boots_or_uses_live_server
 def test_shutdown_is_idempotent(tmp_path: Path) -> None:
     """Calling shutdown more than once does not raise."""
     handle = start_harmonograf(tmp_path)
@@ -94,6 +135,7 @@ def test_shutdown_is_idempotent(tmp_path: Path) -> None:
     handle.shutdown()
 
 
+@_boots_or_uses_live_server
 def test_distinct_ports_on_repeat_launch(tmp_path: Path) -> None:
     """Two concurrent supervisors get different ports — no hardcoded reuse."""
     h1 = start_harmonograf(tmp_path / "a")
@@ -137,6 +179,7 @@ def test_resolver_opt_out_does_not_launch(tmp_path: Path, monkeypatch: pytest.Mo
         handle.shutdown()  # must be a no-op
 
 
+@_boots_or_uses_live_server
 def test_resolver_auto_launch_sets_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Auto-launch path: orchestrator pushes URL into ZICATO_HARMONOGRAF_URL."""
     monkeypatch.delenv("ZICATO_HARMONOGRAF_URL", raising=False)
@@ -204,6 +247,7 @@ def test_heartbeat_round_trip_carries_resolved_url(
         handle.shutdown()
 
 
+@_boots_or_uses_live_server
 def test_worker_args_use_auto_launched_url(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tournament runner's resolver picks up the auto-launched URL via env."""
     # Clear env so the resolver lands on the auto-launch path.
@@ -333,6 +377,7 @@ def _harmonograf_data_dir(workspace_root: Path) -> Path:
     return supervisor._resolve_data_dir(workspace_root)
 
 
+@_boots_or_uses_live_server
 def test_ensure_workspace_harmonograf_launches_and_records(tmp_path: Path) -> None:
     """No record on disk ⇒ launch a fresh server and write ``server.json``."""
     handle = ensure_workspace_harmonograf(tmp_path)
@@ -355,26 +400,30 @@ def test_ensure_workspace_harmonograf_launches_and_records(tmp_path: Path) -> No
         handle.shutdown()
 
 
-def test_ensure_workspace_harmonograf_reuses_live_record(tmp_path: Path) -> None:
-    """A second ensure with a LIVE record reuses it (launched=False)."""
-    first = ensure_workspace_harmonograf(tmp_path)
-    try:
-        assert first.launched is True
-        assert _wait_for_health(first.web_url, deadline_s=15.0)
+@_boots_or_uses_live_server
+def test_ensure_workspace_harmonograf_reuses_live_record(
+    session_harmonograf: tuple[Path, WorkspaceHarmonografHandle],
+) -> None:
+    """A second ensure with a LIVE record reuses it (launched=False).
 
-        second = ensure_workspace_harmonograf(tmp_path)
-        # Reused — no second server, no shutdown ownership.
-        assert second.launched is False
-        assert second.web_url == first.web_url
-        assert second.grpc_target == first.grpc_target
-        # second.shutdown() must be a no-op (it does not own the server).
-        second.shutdown()
-        # The first server is still alive after the reuser's no-op shutdown.
-        assert _wait_for_health(first.web_url, deadline_s=5.0)
-    finally:
-        first.shutdown()
+    The "first" server is the session-shared one (whose fixture already
+    asserted ``launched is True`` on its fresh workspace); this probe is
+    read-only against it.
+    """
+    ws, first = session_harmonograf
+
+    second = ensure_workspace_harmonograf(ws)
+    # Reused — no second server, no shutdown ownership.
+    assert second.launched is False
+    assert second.web_url == first.web_url
+    assert second.grpc_target == first.grpc_target
+    # second.shutdown() must be a no-op (it does not own the server).
+    second.shutdown()
+    # The first server is still alive after the reuser's no-op shutdown.
+    assert _wait_for_health(first.web_url, deadline_s=5.0)
 
 
+@_boots_or_uses_live_server
 def test_ensure_workspace_harmonograf_relaunches_on_stale_record(tmp_path: Path) -> None:
     """A stale record (dead pid / unreachable port) is ignored and overwritten."""
     import json as _json
@@ -439,25 +488,28 @@ def test_healthz_probe_false_on_dead_and_non_harmonograf_ports() -> None:
         srv.close()
 
 
-def test_healthz_probe_true_on_live_harmonograf(tmp_path: Path) -> None:
-    """``_harmonograf_healthz_ok`` returns True against a real server."""
-    handle = ensure_workspace_harmonograf(tmp_path)
-    try:
-        assert _wait_for_health(handle.web_url, deadline_s=15.0)
-        from urllib.parse import urlparse
+@_boots_or_uses_live_server
+def test_healthz_probe_true_on_live_harmonograf(
+    session_harmonograf: tuple[Path, WorkspaceHarmonografHandle],
+) -> None:
+    """``_harmonograf_healthz_ok`` returns True against a real server.
 
-        parsed = urlparse(handle.web_url)
-        assert parsed.port is not None
-        assert (
-            supervisor._harmonograf_healthz_ok(
-                parsed.hostname or "127.0.0.1", parsed.port, timeout_s=2.0
-            )
-            is True
+    Read-only probe — shares the session server rather than booting one.
+    """
+    _ws, handle = session_harmonograf
+    from urllib.parse import urlparse
+
+    parsed = urlparse(handle.web_url)
+    assert parsed.port is not None
+    assert (
+        supervisor._harmonograf_healthz_ok(
+            parsed.hostname or "127.0.0.1", parsed.port, timeout_s=2.0
         )
-    finally:
-        handle.shutdown()
+        is True
+    )
 
 
+@_boots_or_uses_live_server
 def test_ensure_relaunches_when_recorded_port_is_not_harmonograf(tmp_path: Path) -> None:
     """A record whose pid is alive AND port is TCP-reachable but is NOT a
     harmonograf must NOT be reused — it must relaunch.

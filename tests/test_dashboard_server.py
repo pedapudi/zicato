@@ -10,6 +10,7 @@ stream connects and the conversation endpoints reconstruct transcripts.
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 import sys
 import types
@@ -34,10 +35,35 @@ def _write_json(path: Path, obj: object) -> None:
     _write(path, json.dumps(obj))
 
 
+@pytest.fixture(scope="session")
+def _workspace_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The populated fixture workspace, built ONCE per session.
+
+    Building the workspace means ~25 file writes plus a seeded SQLite
+    index; at one build per test that dominated this module's setup cost.
+    The template is immutable — tests receive a private ``copytree`` copy
+    via the function-scoped ``workspace`` fixture, so per-test hermeticity
+    (several tests write journals, loss files, control markers, heartbeats
+    into their workspace) is unchanged.
+    """
+    ws = tmp_path_factory.mktemp("dashboard-ws-template") / ".zicato"
+    _populate_workspace(ws)
+    return ws
+
+
 @pytest.fixture
-def workspace(tmp_path: Path) -> Path:
-    """A populated ``.zicato/`` workspace covering every endpoint's inputs."""
+def workspace(_workspace_template: Path, tmp_path: Path) -> Path:
+    """A populated ``.zicato/`` workspace covering every endpoint's inputs.
+
+    A private, writable copy of the session template.
+    """
     ws = tmp_path / ".zicato"
+    shutil.copytree(_workspace_template, ws)
+    return ws
+
+
+def _populate_workspace(ws: Path) -> Path:
+    """Write the fixture ``.zicato/`` tree covering every endpoint's inputs."""
     runtime = ws / "runtime"
     (runtime / "active_runs").mkdir(parents=True)
     (runtime / "control").mkdir(parents=True)
