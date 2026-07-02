@@ -133,16 +133,16 @@ def test_placebo_experiment_is_marked() -> None:
 
 
 def test_knob_validation_and_canon_omission() -> None:
-    from zicato.epoch.contract import _scoring_to_canon
+    from zicato.epoch.contract import scoring_to_canon
 
     with pytest.raises(ValueError):
         OverfittingConfig(random_baseline_every_n=-1)
 
-    default_canon = _scoring_to_canon(ScoringWeights())
+    default_canon = scoring_to_canon(ScoringWeights())
     assert "random_baseline_every_n" not in default_canon["overfitting"]
 
     on = ScoringWeights(overfitting=OverfittingConfig(random_baseline_every_n=4))
-    on_canon = _scoring_to_canon(on)
+    on_canon = scoring_to_canon(on)
     assert on_canon["overfitting"]["random_baseline_every_n"] == 4
     assert json.dumps(on_canon, sort_keys=True, default=str) != json.dumps(
         default_canon, sort_keys=True, default=str

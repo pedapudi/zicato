@@ -250,7 +250,7 @@ def _board_meta_to_dict(
     return out
 
 
-def _entry_to_dict(entry: BoardEntry) -> dict[str, Any]:
+def entry_to_dict(entry: BoardEntry) -> dict[str, Any]:
     """Serialize one entry, emitting only the keys relevant to its kind.
 
     The wall-clock budget is written as ``budget_s`` (the short form)
@@ -380,7 +380,7 @@ def save_board(
             fh.write(json.dumps(_board_meta_to_dict(disable_drift, judge_only), ensure_ascii=False))
             fh.write("\n")
         for entry in entries:
-            row = _entry_to_dict(entry)
+            row = entry_to_dict(entry)
             fh.write(json.dumps(row, ensure_ascii=False))
             fh.write("\n")
     tmp_path.replace(path)
@@ -416,7 +416,7 @@ def append_entry(path: Path, entry: BoardEntry) -> None:
         if any(e.id == entry.id for e in existing):
             raise ValueError(f"{path}: entry id {entry.id!r} already exists in board")
 
-    row = _entry_to_dict(entry)
+    row = entry_to_dict(entry)
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(row, ensure_ascii=False))
         fh.write("\n")
@@ -453,6 +453,7 @@ def remove_entry(path: Path, entry_id: str) -> None:
 
 
 __all__ = [
+    "entry_to_dict",
     "load_board",
     "load_board_with_meta",
     "save_board",

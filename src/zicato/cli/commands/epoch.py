@@ -94,7 +94,7 @@ def _resolve_workspace(workspace: str) -> Path:
 def _load_weights(scoring_path: str | None) -> ScoringWeights:
     """Load scoring weights from JSON, or return defaults.
 
-    Delegates to :func:`zicato.workspace_loader._scoring_weights_from_dict`
+    Delegates to :func:`zicato.workspace_loader.scoring_weights_from_dict`
     — the SAME loader the contract canonicalizer and ``evolve`` use when
     they re-derive the live scoring — so the ``ScoringWeights`` ``epoch
     new`` freezes is byte-for-byte what a later ``evolve`` reconstructs
@@ -107,10 +107,10 @@ def _load_weights(scoring_path: str | None) -> ScoringWeights:
     """
     if scoring_path is None:
         return ScoringWeights()
-    from zicato.workspace_loader import _scoring_weights_from_dict  # noqa: PLC0415
+    from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
 
     raw = json.loads(Path(scoring_path).read_text())
-    return _scoring_weights_from_dict(raw)
+    return scoring_weights_from_dict(raw)
 
 
 def _adopt_contract_sources(

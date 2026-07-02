@@ -47,7 +47,7 @@ def normalize_skill_body(body: str) -> str:
     return "\n".join(lines)
 
 
-def _parse_frontmatter(text: str, *, stem: str) -> tuple[str, str, str]:
+def parse_frontmatter(text: str, *, stem: str) -> tuple[str, str, str]:
     """Split ``*.md`` text into ``(name, description, body)``.
 
     Recognizes a leading ``---``-fenced frontmatter block and reads the
@@ -101,7 +101,7 @@ def load_proposer_skills(skills_dir: Path) -> tuple[ProposerSkill, ...]:
         if not md_path.is_file():
             continue
         text = md_path.read_text(encoding="utf-8")
-        name, description, body = _parse_frontmatter(text, stem=md_path.stem)
+        name, description, body = parse_frontmatter(text, stem=md_path.stem)
         skills.append(ProposerSkill(name=name, description=description, body=body))
     return tuple(skills)
 
@@ -140,6 +140,7 @@ def resolve_proposer_spec(proposer_path: Path | None) -> ProposerSpec:
 
 __all__ = [
     "normalize_skill_body",
+    "parse_frontmatter",
     "load_proposer_skills",
     "resolve_proposer_spec",
 ]

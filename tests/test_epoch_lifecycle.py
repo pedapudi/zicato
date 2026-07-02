@@ -435,7 +435,7 @@ def test_load_epoch_missing_raises(workspace: Path) -> None:
 # Per-judge weight preservation through the frozen scoring.json
 #
 # Twin of the workspace_loader fix (#179): ``_scoring_from_dict`` (read)
-# and ``_scoring_to_dict`` (write) on the epoch-creation path must
+# and ``scoring_to_dict`` (write) on the epoch-creation path must
 # preserve ``per_judge_weights`` and ``default_judge_weight``. Without
 # the fix, the frozen ``<epoch>/scoring.json`` silently drops the
 # operator's per-judge weighting, so re-reading the frozen contract
@@ -448,7 +448,7 @@ def test_scoring_from_dict_preserves_per_judge_weights() -> None:
     """``_scoring_from_dict`` round-trips ``per_judge_weights`` +
     ``default_judge_weight``.
 
-    Mirrors :func:`zicato.workspace_loader._scoring_weights_from_dict`
+    Mirrors :func:`zicato.workspace_loader.scoring_weights_from_dict`
     after #179. The helper is private but exercised here directly so the
     fix-shape is locked in at the unit level.
     """

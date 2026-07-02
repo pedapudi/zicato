@@ -64,7 +64,7 @@ Judge-only mode
 A board may opt into *judge-only* evaluation via its board-level
 ``judge_only`` flag (``Board.judge_only`` → ``board_meta`` header →
 stamped onto each entry's ``context`` by the tournament runner →
-:func:`_entry_judge_only`). In judge-only mode goldfive still JUDGES the
+:func:`entry_judge_only`). In judge-only mode goldfive still JUDGES the
 wrapped agent — the drift / process judges stay armed exactly as above —
 but does ZERO steering: no goal-derivation LLM call, no planner
 replanning, no drift-triggered refine. This is implemented by spreading
@@ -585,7 +585,7 @@ def _entry_judge_specs(entry: BoardEntry) -> tuple[Any, ...]:
 _DISABLE_DRIFT_CONTEXT_KEY = "disable_drift"
 
 
-def _entry_disable_drift(entry: BoardEntry) -> tuple[Any, ...]:
+def entry_disable_drift(entry: BoardEntry) -> tuple[Any, ...]:
     """Return the drift kinds the board wants suppressed for ``entry``.
 
     ``disable_drift`` is a board-LEVEL setting (``Board.disable_drift``),
@@ -618,7 +618,7 @@ def _entry_disable_drift(entry: BoardEntry) -> tuple[Any, ...]:
 _JUDGE_ONLY_CONTEXT_KEY = "judge_only"
 
 
-def _entry_judge_only(entry: BoardEntry) -> bool:
+def entry_judge_only(entry: BoardEntry) -> bool:
     """Return whether ``entry`` should run in judge-only (no-steering) mode.
 
     ``judge_only`` is a board-LEVEL setting (``Board.judge_only``), but
@@ -983,7 +983,7 @@ class ADKRunnableHarness:
         started_at = time.monotonic()
         judges = assemble_judges(
             entry_judges=_entry_judge_specs(entry),
-            disable_drift=_entry_disable_drift(entry),
+            disable_drift=entry_disable_drift(entry),
             aux_call_llm=config.effective_judge_call_llm(),
         )
         # Judge-only mode: spread in the no-steering overrides
@@ -994,7 +994,7 @@ class ADKRunnableHarness:
         gf_runtime = _goldfive_runtime()
         overrides = (
             _judge_only_overrides(self._agent, config.harness_call_llm, gf_runtime)
-            if _entry_judge_only(entry)
+            if entry_judge_only(entry)
             else {}
         )
         outcome = await goldfive.run(
@@ -1060,7 +1060,7 @@ class ADKRunnableHarness:
 
         judges = assemble_judges(
             entry_judges=_entry_judge_specs(entry),
-            disable_drift=_entry_disable_drift(entry),
+            disable_drift=entry_disable_drift(entry),
             aux_call_llm=config.effective_judge_call_llm(),
         )
         agent = self._agent
@@ -1072,7 +1072,7 @@ class ADKRunnableHarness:
         # each run boundary).
         overrides = (
             _judge_only_overrides(agent, config.harness_call_llm, gf_runtime)
-            if _entry_judge_only(entry)
+            if entry_judge_only(entry)
             else {}
         )
 
@@ -1156,7 +1156,7 @@ class ADKRunnableHarness:
 
         judges = assemble_judges(
             entry_judges=_entry_judge_specs(entry),
-            disable_drift=_entry_disable_drift(entry),
+            disable_drift=entry_disable_drift(entry),
             aux_call_llm=config.effective_judge_call_llm(),
         )
         agent = self._agent
@@ -1173,7 +1173,7 @@ class ADKRunnableHarness:
         # steerer — it unwires per-run state at each run boundary).
         overrides = (
             _judge_only_overrides(agent, config.harness_call_llm, gf_runtime)
-            if _entry_judge_only(entry)
+            if entry_judge_only(entry)
             else {}
         )
 
@@ -1398,6 +1398,8 @@ def _coerce_to_list(points: Iterable[MutationPoint]) -> list[MutationPoint]:
 
 __all__ = [
     "ADKHarnessAdapter",
+    "entry_disable_drift",
+    "entry_judge_only",
     "ADKRunnableHarness",
     "rebind_tree_models_to_adk_model",
     "rebind_tree_models_to_call_llm",

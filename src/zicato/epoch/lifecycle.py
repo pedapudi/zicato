@@ -129,7 +129,7 @@ def _make_epoch_id(workspace_root: Path, name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _scoring_to_dict(weights: ScoringWeights) -> dict[str, Any]:
+def scoring_to_dict(weights: ScoringWeights) -> dict[str, Any]:
     """Serialize :class:`ScoringWeights` to the frozen ``scoring.json`` shape.
 
     Field-enumerating (and recursive over the nested
@@ -150,13 +150,13 @@ def _scoring_to_dict(weights: ScoringWeights) -> dict[str, Any]:
 def _scoring_from_dict(d: dict[str, Any]) -> ScoringWeights:
     """Parse a frozen ``scoring.json`` dict back into :class:`ScoringWeights`.
 
-    The inverse of :func:`_scoring_to_dict`, field-enumerating via
+    The inverse of :func:`scoring_to_dict`, field-enumerating via
     :func:`zicato.epoch.contract_serde.jsonable_to_dataclass`: every field
     absent from a legacy ``scoring.json`` falls back to the dataclass
     default (so files written before a field landed load cleanly), and
     every present field — including the nested ``tournament`` /
     ``overfitting`` blocks — round-trips. Mirror of
-    :func:`zicato.workspace_loader._scoring_weights_from_dict`.
+    :func:`zicato.workspace_loader.scoring_weights_from_dict`.
     """
     from zicato.epoch.contract_serde import jsonable_to_dataclass  # noqa: PLC0415
     from zicato.workspace_loader import _reject_retired_pass_exponent  # noqa: PLC0415
@@ -178,7 +178,7 @@ def _config_to_dict(cfg: EpochConfig) -> dict[str, Any]:
         "created_at": cfg.created_at,
         "board_path": str(cfg.board_path),
         "brief_path": str(cfg.brief_path),
-        "scoring": _scoring_to_dict(cfg.scoring),
+        "scoring": scoring_to_dict(cfg.scoring),
         "closed": cfg.closed,
         "closed_at": cfg.closed_at,
         # ``None`` ⇒ pre-hash (legacy) epoch, written as null. Newly
@@ -484,7 +484,7 @@ def new_epoch(
     # 4. Scoring weights — serialized from the in-memory ScoringWeights,
     # written atomically through the storage seam.
     target_scoring = scoring_path(workspace_root, epoch_id)
-    backend_for(workspace_root).write_json(scoring_key(epoch_id), _scoring_to_dict(weights))
+    backend_for(workspace_root).write_json(scoring_key(epoch_id), scoring_to_dict(weights))
 
     # 5. Contract hash over the frozen board/brief/scoring plus the
     # registered inner-harness identity. Computed from the just-written
@@ -765,4 +765,5 @@ __all__ = [
     "set_epoch_goal",
     "set_epoch_noise_floor",
     "set_epoch_preflight",
+    "scoring_to_dict",
 ]

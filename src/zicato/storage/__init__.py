@@ -19,6 +19,9 @@ Public surface
 * :class:`InMemoryStorageBackend` — an in-process backend for tests.
 * :func:`make_storage_backend` — name → backend factory.
 * :func:`default_backend` — a started file backend for a workspace root.
+* :func:`atomic_write_json` / :func:`atomic_write_text` / :func:`read_json`
+  — the atomic file primitives every writer/reader in the tree shares
+  (temp-and-rename writes; reads that tolerate a missing file).
 
 The SQLite index (:mod:`zicato.index`) is the derived read side and is
 intentionally NOT a :class:`StorageBackend` — it is rebuildable from the
@@ -27,6 +30,7 @@ canonical records and evolves independently of this seam.
 
 from __future__ import annotations
 
+from zicato.storage._atomic import atomic_write_json, atomic_write_text, read_json
 from zicato.storage.base import StorageBackend
 from zicato.storage.factory import (
     DEFAULT_BACKEND,
@@ -43,4 +47,7 @@ __all__ = [
     "make_storage_backend",
     "default_backend",
     "DEFAULT_BACKEND",
+    "atomic_write_json",
+    "atomic_write_text",
+    "read_json",
 ]

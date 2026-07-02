@@ -1430,7 +1430,7 @@ def _predicted_contract_hash(draft: TournamentDraft, workspace_root: Path) -> st
         compute_contract_hash,
         resolve_contract_inputs,
     )
-    from zicato.epoch.lifecycle import _scoring_to_dict
+    from zicato.epoch.lifecycle import scoring_to_dict
 
     try:
         live_inputs = resolve_contract_inputs(workspace_root)
@@ -1449,7 +1449,7 @@ def _predicted_contract_hash(draft: TournamentDraft, workspace_root: Path) -> st
         brief_file.write_text(draft.brief, encoding="utf-8")
         import json as _json
 
-        scoring_file.write_text(_json.dumps(_scoring_to_dict(draft.scoring)), encoding="utf-8")
+        scoring_file.write_text(_json.dumps(scoring_to_dict(draft.scoring)), encoding="utf-8")
         return compute_contract_hash(
             ContractInputs(
                 board_path=board_file,
@@ -1478,7 +1478,7 @@ def _write_contract(draft: TournamentDraft, workspace_root: Path) -> None:
 
     from zicato.board.jsonl import save_board
     from zicato.epoch.contract import default_contract_paths
-    from zicato.epoch.lifecycle import _scoring_to_dict
+    from zicato.epoch.lifecycle import scoring_to_dict
     from zicato.workspace.config_io import read_workspace_config, write_workspace_config
 
     config = read_workspace_config(workspace_root)
@@ -1502,7 +1502,7 @@ def _write_contract(draft: TournamentDraft, workspace_root: Path) -> None:
     save_board(list(draft.entries), board_target)
     brief_target.write_text(draft.brief, encoding="utf-8")
     scoring_target.write_text(
-        _json.dumps(_scoring_to_dict(draft.scoring), indent=2) + "\n", encoding="utf-8"
+        _json.dumps(scoring_to_dict(draft.scoring), indent=2) + "\n", encoding="utf-8"
     )
 
     contract["board_path"] = str(board_target.resolve())

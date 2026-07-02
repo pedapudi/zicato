@@ -296,10 +296,10 @@ def _create_epoch_from_contract(
     the registered inner-harness identity into the contract hash.
     """
     from zicato.epoch.lifecycle import new_epoch  # noqa: PLC0415
-    from zicato.workspace_loader import _scoring_weights_from_dict  # noqa: PLC0415
+    from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
 
     if inputs.scoring_path.exists():
-        weights = _scoring_weights_from_dict(
+        weights = scoring_weights_from_dict(
             json.loads(inputs.scoring_path.read_text(encoding="utf-8"))
         )
     else:

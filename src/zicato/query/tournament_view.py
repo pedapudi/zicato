@@ -1207,9 +1207,9 @@ def _enrich_diversity(
         if tolerance is None and isinstance(tol, int | float):
             tolerance = float(tol)
 
-    from zicato.orchestrator import _compute_field_diversity  # noqa: PLC0415
+    from zicato.selection.diversity import compute_field_diversity  # noqa: PLC0415
 
-    block = _compute_field_diversity(
+    block = compute_field_diversity(
         mutation_sets, tolerance=tolerance, soft_rejected_count=soft_rejected
     )
     result["diversity"] = block

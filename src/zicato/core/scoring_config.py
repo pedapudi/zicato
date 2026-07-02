@@ -576,7 +576,7 @@ class ScoringWeights:
     # the diff-complexity term is exactly absent and the scalar / contract hash
     # / every golden are byte-identical to a contract without this field (the
     # contract canonicalizer omits it at the default — see
-    # ``epoch/contract.py::_scoring_to_canon``). Set ``> 0`` to fold a
+    # ``epoch/contract.py::scoring_to_canon``). Set ``> 0`` to fold a
     # ``diff_complexity_weight * (added + removed + patches)`` component into the
     # challenger's scalar so a shorter-description edit is preferred.
     diff_complexity_weight: float = 0.0

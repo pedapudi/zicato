@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from zicato.board.jsonl import _entry_to_dict
+from zicato.board.jsonl import entry_to_dict
 from zicato.board.split import HOLDOUT_TAG, split_board
 from zicato.core.types import (
     BoardEntry,
@@ -218,12 +218,12 @@ class TournamentDraft:
         train/holdout id partition so the UI can highlight the split
         without re-deriving it.
         """
-        from zicato.epoch.lifecycle import _scoring_to_dict  # noqa: PLC0415
+        from zicato.epoch.lifecycle import scoring_to_dict  # noqa: PLC0415
 
         train_ids, holdout_ids = split_board(self.entries, self.scoring.overfitting)
         return {
-            "scoring": _scoring_to_dict(self.scoring),
-            "board": [_entry_to_dict(e) for e in self.entries],
+            "scoring": scoring_to_dict(self.scoring),
+            "board": [entry_to_dict(e) for e in self.entries],
             "brief": self.brief,
             "proposer_path": str(self.proposer_path) if self.proposer_path is not None else None,
             "proposer": _proposer_to_dict(self.resolved_proposer()),
@@ -292,7 +292,7 @@ def _board_canon(entries: Sequence[BoardEntry]) -> str:
     import json
 
     return "\n".join(
-        json.dumps(_entry_to_dict(e), sort_keys=True, ensure_ascii=False)
+        json.dumps(entry_to_dict(e), sort_keys=True, ensure_ascii=False)
         for e in sorted(entries, key=lambda e: e.id)
     )
 
@@ -312,9 +312,9 @@ def _scoring_canon(weights: ScoringWeights) -> str:
     """Float-rounded, key-sorted scoring form, matching the contract hash."""
     import json
 
-    from zicato.epoch.contract import _round_floats, _scoring_to_canon  # noqa: PLC0415
+    from zicato.epoch.contract import round_floats, scoring_to_canon  # noqa: PLC0415
 
-    return json.dumps(_round_floats(_scoring_to_canon(weights)), sort_keys=True)
+    return json.dumps(round_floats(scoring_to_canon(weights)), sort_keys=True)
 
 
 #: Slot names are path/JSON-safe short slugs — same spirit as epoch ids.

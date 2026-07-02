@@ -111,12 +111,12 @@ def _canon_board(board_path: Path) -> str:
             board_path,
         )
         return ""
-    from zicato.board.jsonl import _entry_to_dict, load_board  # noqa: PLC0415
+    from zicato.board.jsonl import entry_to_dict, load_board  # noqa: PLC0415
 
     entries = load_board(board_path)
     canon_entries = [
         json.dumps(
-            _fold_entry_grading_source(_entry_to_dict(entry)),
+            _fold_entry_grading_source(entry_to_dict(entry)),
             sort_keys=True,
             ensure_ascii=False,
         )
@@ -144,7 +144,7 @@ def _fold_entry_grading_source(entry: dict[str, object]) -> dict[str, object]:
     Non-predicate expectations (text / regex / json_schema / rubric specs are not
     dotted plugins) and inline judges are left untouched, so a board that names
     no plugin canonicalizes byte-for-byte as before. Operates on a copy of the
-    nested dicts so the round-trip serializer (``_entry_to_dict``) is unaffected.
+    nested dicts so the round-trip serializer (``entry_to_dict``) is unaffected.
     """
     out = dict(entry)
     exp = out.get("expectation")
@@ -358,11 +358,11 @@ def _canon_scoring(scoring_path: Path) -> str:
             scoring_path,
         )
         return ""
-    from zicato.workspace_loader import _scoring_weights_from_dict  # noqa: PLC0415
+    from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
 
     raw = json.loads(scoring_path.read_text(encoding="utf-8"))
-    weights = _scoring_weights_from_dict(raw)
-    return json.dumps(_round_floats(_scoring_to_canon(weights)), sort_keys=True)
+    weights = scoring_weights_from_dict(raw)
+    return json.dumps(round_floats(scoring_to_canon(weights)), sort_keys=True)
 
 
 #: ``ScoringWeights`` fields that carry a dotted-spec pointing at an operator
@@ -417,7 +417,7 @@ _SCORING_OMIT_AT_DEFAULT_FIELDS: frozenset[str] = frozenset(
 )
 
 
-def _scoring_to_canon(weights: object) -> dict[str, object]:
+def scoring_to_canon(weights: object) -> dict[str, object]:
     """Reduce a :class:`ScoringWeights` to a plain JSON-shaped dict.
 
     Every public field is included so the canonical form is complete
@@ -463,7 +463,7 @@ def _scoring_to_canon(weights: object) -> dict[str, object]:
             # into the scoring contract automatically (§4 of the data
             # model design): switching structures or bumping a param
             # changes this canonical form and rolls the epoch.
-            out[f.name] = _scoring_to_canon(value)
+            out[f.name] = scoring_to_canon(value)
         elif hasattr(value, "items"):
             out[f.name] = {k: _canon_value(v) for k, v in value.items()}
         elif isinstance(value, tuple):
@@ -489,14 +489,14 @@ def _canon_value(value: object) -> object:
     return value
 
 
-def _round_floats(value: object) -> object:
+def round_floats(value: object) -> object:
     """Recursively round every float in a JSON-shaped value to 6 dp."""
     if isinstance(value, float):
         return round(value, 6)
     if isinstance(value, dict):
-        return {k: _round_floats(v) for k, v in value.items()}
+        return {k: round_floats(v) for k, v in value.items()}
     if isinstance(value, list):
-        return [_round_floats(v) for v in value]
+        return [round_floats(v) for v in value]
     return value
 
 
@@ -755,4 +755,6 @@ __all__ = [
     "compute_component_hashes",
     "resolve_contract_inputs",
     "default_contract_paths",
+    "round_floats",
+    "scoring_to_canon",
 ]

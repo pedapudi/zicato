@@ -82,10 +82,10 @@ def initialize_workspace(
     scoring_scaffold = workspace_root.resolve().parent / "scoring.json"
     if not scoring_scaffold.exists():
         from zicato.core.scoring_config import recommended_scaffold_weights  # noqa: PLC0415
-        from zicato.epoch.lifecycle import _scoring_to_dict  # noqa: PLC0415
+        from zicato.epoch.lifecycle import scoring_to_dict  # noqa: PLC0415
 
         scoring_scaffold.write_text(
-            json.dumps(_scoring_to_dict(recommended_scaffold_weights()), indent=2) + "\n"
+            json.dumps(scoring_to_dict(recommended_scaffold_weights()), indent=2) + "\n"
         )
 
     # Sanity check that the config file is actually on disk now.

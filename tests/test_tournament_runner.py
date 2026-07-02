@@ -1185,14 +1185,14 @@ def test_board_disable_drift_excludes_suppressed_builtin_judge_end_to_end(
        :func:`zicato.core.validate_board_entry`) — proving the
        suppression set survives the OS-process boundary;
     4. the adapter's read side
-       (:func:`zicato.adapters.adk._entry_disable_drift`); and
+       (:func:`zicato.adapters.adk.entry_disable_drift`); and
     5. :func:`zicato.judge_runtime.assemble_judges` actually producing a
        goldfive judge list with the suppressed built-in REMOVED.
 
     Needs goldfive for the real built-in judge set; skipped without it.
     """
     goldfive = pytest.importorskip("goldfive")
-    from zicato.adapters.adk import _entry_disable_drift
+    from zicato.adapters.adk import entry_disable_drift
     from zicato.board.jsonl import load_board_with_meta
     from zicato.core import validate_board_entry
     from zicato.judge_runtime import assemble_judges
@@ -1247,7 +1247,7 @@ def test_board_disable_drift_excludes_suppressed_builtin_judge_end_to_end(
 
     # --- 4 + 5. The adapter reads disable_drift off the re-parsed entry
     # and assemble_judges produces a judge list with tool_error dropped. ---
-    suppressed = _entry_disable_drift(reparsed)
+    suppressed = entry_disable_drift(reparsed)
     assert suppressed == ("tool_error",)
 
     async def _aux(system: str, user: str, model: str) -> str:

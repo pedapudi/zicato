@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from zicato.core import DriftCount, LossProfile, ScoringWeights
 from zicato.core.types import Experiment, HypothesisSpec, Patch
-from zicato.epoch.contract import _round_floats, _scoring_to_canon
+from zicato.epoch.contract import round_floats, scoring_to_canon
 from zicato.scoring.builtins import builtin_scalar, diff_complexity_component
 from zicato.scoring.diff_complexity import diff_char_size, diff_complexity, diff_size
 from zicato.tournament.gate import diff_size_evidence
@@ -242,13 +242,13 @@ def test_diff_size_evidence_empty_when_off() -> None:
 
 
 def test_canon_omits_field_at_default() -> None:
-    canon = _round_floats(_scoring_to_canon(ScoringWeights()))
+    canon = round_floats(scoring_to_canon(ScoringWeights()))
     assert "diff_complexity_weight" not in canon
 
 
 def test_canon_includes_and_rolls_when_set() -> None:
-    off = _round_floats(_scoring_to_canon(ScoringWeights()))
-    on = _round_floats(_scoring_to_canon(ScoringWeights(diff_complexity_weight=0.25)))
+    off = round_floats(scoring_to_canon(ScoringWeights()))
+    on = round_floats(scoring_to_canon(ScoringWeights(diff_complexity_weight=0.25)))
     assert on["diff_complexity_weight"] == 0.25
     # Setting the weight changes the canonical form ⇒ rolls the epoch.
     assert on != off

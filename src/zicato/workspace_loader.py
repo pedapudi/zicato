@@ -149,7 +149,7 @@ def load_current_scoring(workspace_root: Path) -> ScoringWeights:
             f"scoring.json not found at {path}; the current epoch is incomplete"
         )
     raw = json.loads(path.read_text(encoding="utf-8"))
-    return _scoring_weights_from_dict(raw)
+    return scoring_weights_from_dict(raw)
 
 
 def load_current_tournament(workspace_root: Path) -> TournamentStructure:
@@ -177,7 +177,7 @@ def load_current_brief(workspace_root: Path) -> ProposerBrief:
     return load_brief(path)
 
 
-def _scoring_weights_from_dict(d: Mapping[str, Any]) -> ScoringWeights:
+def scoring_weights_from_dict(d: Mapping[str, Any]) -> ScoringWeights:
     """Build a :class:`ScoringWeights` from a JSON-shaped dict.
 
     Delegates to the single field-enumerating parser
@@ -304,7 +304,7 @@ def tournament_structure_from_dict(raw: Any) -> TournamentStructure:
     object. ``params`` is stored verbatim as an opaque mapping; per-key
     semantics are the selection strategy's responsibility.
 
-    Shared by :func:`_scoring_weights_from_dict` (used by the contract
+    Shared by :func:`scoring_weights_from_dict` (used by the contract
     canonicalizer) and the lifecycle serializer so the on-disk format is
     fully shared between the two loaders.
     """
@@ -327,6 +327,7 @@ def tournament_structure_to_dict(spec: TournamentStructure) -> dict[str, Any]:
 
 __all__ = [
     "load_workspace_config",
+    "scoring_weights_from_dict",
     "load_current_epoch_config",
     "load_current_board",
     "load_current_board_with_meta",

@@ -130,9 +130,9 @@ def _run_id_for(generation: Generation, entry: BoardEntry) -> str:
 #: per-entry channel that already survives the full
 #: runner -> args-file -> subprocess-worker -> ``validate_board_entry`` ->
 #: adapter round-trip (it is a plain string-valued mapping serialised by
-#: ``zicato.board.jsonl._entry_to_dict`` and re-parsed by
+#: ``zicato.board.jsonl.entry_to_dict`` and re-parsed by
 #: ``validate_board_entry``), and it is exactly what
-#: ``zicato.adapters.adk._entry_disable_drift`` reads back. The value is a
+#: ``zicato.adapters.adk.entry_disable_drift`` reads back. The value is a
 #: space-separated list of ``goldfive.DriftKind`` wire strings.
 _DISABLE_DRIFT_CONTEXT_KEY = "disable_drift"
 
@@ -166,7 +166,7 @@ def _stamp_disable_drift(
     entry's :attr:`~zicato.core.BoardEntry.context` mapping under
     :data:`_DISABLE_DRIFT_CONTEXT_KEY` so it threads end-to-end —
     through the subprocess worker's entry (de)serialisation — to
-    :func:`zicato.adapters.adk._entry_disable_drift`.
+    :func:`zicato.adapters.adk.entry_disable_drift`.
 
     When ``disable_drift`` is empty the board is returned unchanged, so a
     board with no ``board_meta`` header — and any per-entry
@@ -210,7 +210,7 @@ def _stamp_judge_only(
     flag onto every entry's :attr:`~zicato.core.BoardEntry.context`
     mapping under :data:`_JUDGE_ONLY_CONTEXT_KEY` so it threads end-to-end
     — through the subprocess worker's entry (de)serialisation — to
-    :func:`zicato.adapters.adk._entry_judge_only`.
+    :func:`zicato.adapters.adk.entry_judge_only`.
 
     When ``judge_only`` is ``False`` the board is returned UNCHANGED,
     mirroring :func:`_stamp_disable_drift`'s "empty → untouched"

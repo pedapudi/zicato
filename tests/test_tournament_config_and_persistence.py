@@ -18,9 +18,9 @@ from zicato.epoch.contract import ContractInputs, compute_contract_hash
 from zicato.epoch.journal import _outcome_from_dict
 from zicato.runtime.state import ActiveTournament, ActiveTournamentEntry
 from zicato.workspace_loader import (
-    _scoring_weights_from_dict,
     overfitting_config_from_dict,
     overfitting_config_to_dict,
+    scoring_weights_from_dict,
     tournament_structure_from_dict,
     tournament_structure_to_dict,
 )
@@ -37,14 +37,12 @@ def test_absent_tournament_block_defaults_to_gauntlet() -> None:
 
 
 def test_scoring_without_tournament_key_is_gauntlet() -> None:
-    w = _scoring_weights_from_dict({"drift_weight": 2.0})
+    w = scoring_weights_from_dict({"drift_weight": 2.0})
     assert w.tournament_structure.structure == "gauntlet"
 
 
 def test_scoring_parses_swiss_block_with_params() -> None:
-    w = _scoring_weights_from_dict(
-        {"tournament": {"structure": "swiss", "params": {"rounds_n": 6}}}
-    )
+    w = scoring_weights_from_dict({"tournament": {"structure": "swiss", "params": {"rounds_n": 6}}})
     assert w.tournament_structure.structure == "swiss"
     assert w.tournament_structure.params["rounds_n"] == 6
 
@@ -83,13 +81,13 @@ def test_absent_overfitting_block_is_default_on() -> None:
 
 
 def test_scoring_without_overfitting_key_is_default_on() -> None:
-    w = _scoring_weights_from_dict({"drift_weight": 2.0})
+    w = scoring_weights_from_dict({"drift_weight": 2.0})
     assert w.overfitting.enabled is True
     assert w.overfitting.restrict_proposer_visibility is True
 
 
 def test_scoring_parses_overfitting_block() -> None:
-    w = _scoring_weights_from_dict(
+    w = scoring_weights_from_dict(
         {
             "overfitting": {
                 "enabled": False,
@@ -124,13 +122,13 @@ def test_overfitting_block_round_trips() -> None:
 def test_scoring_parses_rotation_and_cadence_knobs() -> None:
     # The §12 #6 knobs (rotate_holdout / max_generations_per_contract) parse
     # and default safely (rotation on, no ceiling) when absent.
-    o = _scoring_weights_from_dict(
+    o = scoring_weights_from_dict(
         {"overfitting": {"rotate_holdout": False, "max_generations_per_contract": 30}}
     ).overfitting
     assert o.rotate_holdout is False
     assert o.max_generations_per_contract == 30
 
-    default = _scoring_weights_from_dict({"overfitting": {"holdout_fraction": 0.3}}).overfitting
+    default = scoring_weights_from_dict({"overfitting": {"holdout_fraction": 0.3}}).overfitting
     assert default.rotate_holdout is True
     assert default.max_generations_per_contract is None
 
@@ -144,7 +142,7 @@ def test_absent_ladder_block_is_default_on() -> None:
 
 
 def test_scoring_parses_ladder_block() -> None:
-    w = _scoring_weights_from_dict(
+    w = scoring_weights_from_dict(
         {
             "overfitting": {
                 "ladder": {
@@ -185,14 +183,14 @@ def test_overfitting_block_round_trips_with_ladder() -> None:
 
 
 def test_scoring_lifecycle_serde_preserves_overfitting() -> None:
-    # The lifecycle serializer (_scoring_to_dict / _scoring_from_dict) must
+    # The lifecycle serializer (scoring_to_dict / _scoring_from_dict) must
     # carry the overfitting block through a full round-trip so a frozen
     # epoch's config.json reloads with the same anti-overfitting contract.
     from zicato.core.types import OverfittingConfig
-    from zicato.epoch.lifecycle import _scoring_from_dict, _scoring_to_dict
+    from zicato.epoch.lifecycle import _scoring_from_dict, scoring_to_dict
 
     weights = ScoringWeights(overfitting=OverfittingConfig(enabled=False, holdout_fraction=0.45))
-    again = _scoring_from_dict(_scoring_to_dict(weights))
+    again = _scoring_from_dict(scoring_to_dict(weights))
     assert again.overfitting == weights.overfitting
 
 

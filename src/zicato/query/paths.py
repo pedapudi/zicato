@@ -6,7 +6,7 @@ import datetime as _dt
 from pathlib import Path
 from typing import Any
 
-from zicato.runtime._atomic import read_json
+from zicato.storage import read_json
 from zicato.workspace import WorkspaceLayout
 from zicato.workspace import epochs as _ws_epochs
 
