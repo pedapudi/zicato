@@ -44,7 +44,7 @@ optional ``google-adk`` extra.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -59,6 +59,7 @@ from zicato.core.types import (
 from zicato.proposer.proposer import ExperimentValidator, propose_experiment
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
+    from zicato.index.query import MutationTrackRecord
     from zicato.proposer.best_of_n import ScreenRunner
     from zicato.telemetry.meta_loop import MetaLoopEmitter
 
@@ -125,6 +126,16 @@ class ProposerContext:
     #: it composes with the restricted-visibility envelope untouched. Empty
     #: (the default — every single-sample propose) renders no section.
     sample_hint: str = ""
+    #: Optional per-mutation-point track records (the fertility map —
+    #: :func:`zicato.index.query.mutation_point_track_record`), read
+    #: best-effort from the analytical index by the orchestrator, exactly
+    #: like ``prior_experiments``. The prompt renderer annotates each
+    #: manifest entry that has a record with one compact, BANDED advisory
+    #: line — aggregate counts + bucketed Δscalar only, labelled
+    #: "experiments touching this point" (multi-patch experiments confound
+    #: credit; never causal) — inside the restricted-visibility envelope.
+    #: ``None`` (the default) renders a byte-identical manifest.
+    mutation_track_records: Mapping[str, MutationTrackRecord] | None = None
     #: Optional best-effort ROUND-LOG event emitter (WS8), threaded by the
     #: orchestrator so the proposer stack can trace its sampling decisions
     #: into the round's durable event log WITHOUT importing the log module
@@ -199,6 +210,7 @@ class DefaultProposerAgent:
             restrict_visibility=ctx.restrict_visibility,
             failure_profile=ctx.failure_profile,
             sample_hint=ctx.sample_hint,
+            mutation_track_records=ctx.mutation_track_records,
         )
 
 

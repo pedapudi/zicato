@@ -24,7 +24,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import statistics
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -728,6 +730,179 @@ def prior_experiments_for_epoch(
     return out[:max_entries]
 
 
+#: How many of the epoch's most recent settled experiments count as
+#: "recent" for the mutation-point track record's recency signal. A simple
+#: LAST-K WINDOW was chosen over exponential decay deliberately: the
+#: consumer surfaces (the manifest annotation, the proposer tool) only need
+#: a coarse recent/stale read, a window is auditable by hand against the
+#: journal, and a decay constant would be one more tuning knob with no
+#: consumer that reads a continuous weight. K = 10 ≈ the experiment-memory
+#: digest cap, so "recent" aligns with the history the proposer already
+#: sees.
+TRACK_RECORD_RECENT_WINDOW = 10
+
+
+@dataclass(frozen=True)
+class MutationTrackRecord:
+    """Per-mutation-point track record over one epoch's SETTLED experiments.
+
+    HONESTY CONSTRAINT (load-bearing): every count and delta here is
+    **experiment-level** — it describes *experiments that touched this
+    point*, and a multi-patch experiment credits (or blames) EVERY point it
+    touched with the whole experiment's outcome. Credit is therefore
+    CONFOUNDED for multi-patch experiments (:attr:`confounded_experiments`
+    counts them) and nothing in this record is causal. Consumers must label
+    it accordingly ("experiments touching this point"), never as the
+    point's effect.
+
+    Fields
+    ------
+    mutation_id:
+        The mutation point the record describes.
+    experiments_touching:
+        How many settled experiments carried at least one patch on this
+        point (an experiment with several patches on the SAME point counts
+        once).
+    confounded_experiments:
+        Of those, how many also patched at least one OTHER point — the
+        experiments whose outcome cannot be attributed to this point.
+    promoted:
+        How many of the touching experiments were promoted.
+    delta_min / delta_median / delta_max:
+        Distribution summary of the touching experiments'
+        ``scalar_score_delta`` (experiment-level Δscalar; lower is better —
+        a negative delta is an improvement). ``None`` when no touching
+        experiment recorded a delta.
+    recent_touching / recent_promoted:
+        The same touch/promotion counts restricted to the epoch's
+        :data:`TRACK_RECORD_RECENT_WINDOW` most recent settled experiments
+        — the recency-weighted view (see the constant's docstring for why
+        a last-K window rather than exponential decay).
+    """
+
+    mutation_id: str
+    experiments_touching: int
+    confounded_experiments: int
+    promoted: int
+    delta_min: float | None
+    delta_median: float | None
+    delta_max: float | None
+    recent_touching: int
+    recent_promoted: int
+
+
+def mutation_point_track_record(
+    db_path: Path,
+    epoch_id: str,
+    mutation_id: str | None = None,
+    *,
+    recent_window: int = TRACK_RECORD_RECENT_WINDOW,
+) -> dict[str, MutationTrackRecord]:
+    """Fold each mutation point's per-epoch track record out of the index.
+
+    The mutation-point *fertility map*: for every point at least one
+    settled experiment patched under ``epoch_id``, how often it was
+    touched, how those experiments fared (promotion count, Δscalar
+    min/median/max), and the same counts over the epoch's
+    ``recent_window`` most recent settled experiments (ordered by the
+    touching generation's ``created_at`` then ``generation_id``; see
+    :data:`TRACK_RECORD_RECENT_WINDOW` for the documented last-K-window
+    choice). ``mutation_id`` narrows the result to that single point
+    (an untouched / unknown id yields an empty mapping).
+
+    Scope + honesty:
+
+    * **Settled experiments only** (``tournament_decision`` non-null) — an
+      in-flight experiment has no outcome to fold, exactly as the
+      experiment-memory reader treats it.
+    * **Experiment-level attribution only** — see
+      :class:`MutationTrackRecord`. Deltas and decisions belong to whole
+      experiments; a multi-patch experiment confounds per-point credit,
+      and the record counts exactly how many touching experiments are
+      confounded so a consumer can say so.
+
+    Tolerates a missing index the same way every selector here does: a
+    never-indexed workspace yields ``{}``.
+    """
+    # Settled experiments in recency order (oldest first), each with its
+    # touched mutation-id set. Two queries + a Python fold keeps the
+    # recency ranking (epoch-wide, not per-point) straightforward.
+    experiment_rows = _select(
+        db_path,
+        "SELECT e.generation_id, e.tournament_decision, e.scalar_score_delta "
+        "FROM experiments AS e "
+        "LEFT JOIN generations AS g "
+        "ON g.epoch_id = e.epoch_id AND g.generation_id = e.generation_id "
+        "WHERE e.epoch_id = ? AND e.tournament_decision IS NOT NULL "
+        "ORDER BY COALESCE(g.created_at, ''), e.generation_id",
+        (epoch_id,),
+    )
+    patch_rows = _select(
+        db_path,
+        "SELECT DISTINCT generation_id, mutation_id FROM patches WHERE epoch_id = ?",
+        (epoch_id,),
+    )
+    touched_by_generation: dict[str, set[str]] = {}
+    for row in patch_rows:
+        gid = str(row["generation_id"])
+        mid = str(row["mutation_id"] or "")
+        if mid:
+            touched_by_generation.setdefault(gid, set()).add(mid)
+
+    n_settled = len(experiment_rows)
+    per_point: dict[str, dict[str, Any]] = {}
+    for rank, row in enumerate(experiment_rows):
+        gid = str(row["generation_id"])
+        touched = touched_by_generation.get(gid, set())
+        if mutation_id is not None:
+            touched = touched & {mutation_id}
+        if not touched:
+            continue
+        promoted = str(row["tournament_decision"]) == "promoted"
+        raw_delta = row["scalar_score_delta"]
+        delta = float(raw_delta) if raw_delta is not None else None
+        # The last-K window: the K most recent settled experiments epoch-wide.
+        recent = (n_settled - rank) <= recent_window
+        confounded = len(touched_by_generation.get(gid, set())) > 1
+        for mid in touched:
+            acc = per_point.setdefault(
+                mid,
+                {
+                    "touching": 0,
+                    "confounded": 0,
+                    "promoted": 0,
+                    "deltas": [],
+                    "recent_touching": 0,
+                    "recent_promoted": 0,
+                },
+            )
+            acc["touching"] += 1
+            acc["confounded"] += int(confounded)
+            acc["promoted"] += int(promoted)
+            if delta is not None:
+                acc["deltas"].append(delta)
+            if recent:
+                acc["recent_touching"] += 1
+                acc["recent_promoted"] += int(promoted)
+
+    out: dict[str, MutationTrackRecord] = {}
+    for mid in sorted(per_point):
+        acc = per_point[mid]
+        deltas: list[float] = acc["deltas"]
+        out[mid] = MutationTrackRecord(
+            mutation_id=mid,
+            experiments_touching=acc["touching"],
+            confounded_experiments=acc["confounded"],
+            promoted=acc["promoted"],
+            delta_min=min(deltas) if deltas else None,
+            delta_median=statistics.median(deltas) if deltas else None,
+            delta_max=max(deltas) if deltas else None,
+            recent_touching=acc["recent_touching"],
+            recent_promoted=acc["recent_promoted"],
+        )
+    return out
+
+
 def tournaments_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
     """Return every resolved tournament row under ``epoch_id``.
 
@@ -818,7 +993,9 @@ def index_counts(db_path: Path) -> dict[str, int]:
 
 
 __all__ = [
+    "TRACK_RECORD_RECENT_WINDOW",
     "IndexNotBuiltError",
+    "MutationTrackRecord",
     "open_index",
     "index_schema_version",
     "all_epochs",
@@ -833,6 +1010,7 @@ __all__ = [
     "judge_losses_for_generation",
     "judge_loss_trend",
     "experiments_for_epoch",
+    "mutation_point_track_record",
     "prior_experiments_for_epoch",
     "tournaments_for_epoch",
     "elo_for_epoch",

@@ -30,11 +30,15 @@ orchestrator.
 from __future__ import annotations
 
 import textwrap
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from typing import TYPE_CHECKING
 
 from zicato.analyzer.outcome_marginals import OutcomeMarginalSummary
 from zicato.core.drift_kinds import GOLDFIVE_DRIFT_KINDS
 from zicato.core.types import MutationPoint, Pattern, PriorExperiment, ProposerSkill
+
+if TYPE_CHECKING:  # pragma: no cover - typing-only import
+    from zicato.index.query import MutationTrackRecord
 
 #: Hard ceiling on a single mutation point's rendered content. A
 #: ``replace`` patch MUST faithfully reproduce every part of the span it
@@ -307,16 +311,78 @@ def _render_content(content: str) -> str:
     )
 
 
-def render_mutation_block(mutations: Iterable[MutationPoint]) -> str:
-    """Render the mutation-point manifest into the user-prompt block."""
+def render_mutation_track_annotation(record: MutationTrackRecord) -> str:
+    """Render one mutation point's track record as a compact advisory line.
+
+    The proposer-facing surface of the mutation-point fertility map
+    (:func:`zicato.index.query.mutation_point_track_record`). BANDED and
+    aggregate-only, inside the restricted-visibility envelope:
+
+    * the touch / promotion counts are board-anonymous aggregates (they
+      count experiments, exactly like the pattern block's
+      ``entries_affected=N``);
+    * the Δscalar summary is coarsened through :func:`_bucket_scalar_delta`
+      — ``improved`` / ``flat`` / ``regressed`` bands, never the exact
+      experiment-level delta (the same memorization-resistance treatment
+      the experiment-memory digest applies; OVERFITTING.md §11.4);
+    * recency is a coarse ``recent`` / ``stale`` flag (the query's
+      documented last-K window), never a round number.
+
+    HONESTY (load-bearing): the line ALWAYS reads "experiments touching
+    this point" and names how many of them also touched other points
+    (multi-patch experiments confound per-point credit) — it is never
+    phrased as the point's causal effect.
+    """
+    n = record.experiments_touching
+    parts = [f"touched:{n}", f"promoted:{record.promoted}/{n}"]
+    if (
+        record.delta_min is not None
+        and record.delta_median is not None
+        and record.delta_max is not None
+    ):
+        parts.append(
+            f"Δscalar[best:{_bucket_scalar_delta(record.delta_min)} "
+            f"median:{_bucket_scalar_delta(record.delta_median)} "
+            f"worst:{_bucket_scalar_delta(record.delta_max)}]"
+        )
+    parts.append("recent" if record.recent_touching > 0 else "stale")
+    if record.confounded_experiments > 0:
+        basis = (
+            f"{record.confounded_experiments}/{n} also touched other points — " "credit confounded"
+        )
+    else:
+        basis = "each touched only this point"
+    return f"{' '.join(parts)} (experiments touching this point; {basis}; not causal)"
+
+
+def render_mutation_block(
+    mutations: Iterable[MutationPoint],
+    track_records: Mapping[str, MutationTrackRecord] | None = None,
+) -> str:
+    """Render the mutation-point manifest into the user-prompt block.
+
+    ``track_records`` — when supplied — annotates each manifest entry that
+    has one with its compact, banded track-record line
+    (:func:`render_mutation_track_annotation`): advisory context on how
+    experiments touching that point have fared this epoch. ``None`` / empty
+    (the default, and every point without a record) renders the manifest
+    byte-identically to before the surface existed.
+    """
 
     lines: list[str] = []
     items = list(mutations)
     if not items:
         return "(no mutation points available)"
+    records = track_records or {}
     for mp in items:
         meta_keys = sorted(mp.metadata.keys())
         meta_render = "; ".join(f"{k}={mp.metadata[k]}" for k in meta_keys) if meta_keys else "—"
+        record = records.get(mp.id)
+        track_line = (
+            f"  track record: {render_mutation_track_annotation(record)}\n"
+            if record is not None
+            else ""
+        )
         content = _render_content(mp.content)
         # Indent the full content under a "current content:" lead-in so
         # the model can see exactly what it is replacing.
@@ -325,6 +391,7 @@ def render_mutation_block(mutations: Iterable[MutationPoint]) -> str:
             f"- id={mp.id} kind={mp.kind} file={mp.file} "
             f"lines={mp.line_start}-{mp.line_end}\n"
             f"  metadata: {meta_render}\n"
+            f"{track_line}"
             f"  current content (full — a `replace` MUST preserve every part "
             f"you are not changing):\n{indented}"
         )
@@ -743,6 +810,7 @@ def render_user_prompt(
     custom_judge_names: Iterable[str] = (),
     failure_profile: str = "",
     sample_hint: str = "",
+    mutation_track_records: Mapping[str, MutationTrackRecord] | None = None,
 ) -> str:
     """Build the user prompt for one proposer call.
 
@@ -830,13 +898,24 @@ def render_user_prompt(
         the restricted-visibility envelope untouched. Empty (the default —
         every single-sample call) omits the section entirely, rendering a
         byte-identical prompt to before this surface existed.
+    mutation_track_records:
+        Optional per-mutation-point track records (the fertility map —
+        :func:`zicato.index.query.mutation_point_track_record`, assembled
+        best-effort by the orchestrator from the analytical index). Each
+        manifest entry with a record gains one compact, BANDED advisory
+        line (:func:`render_mutation_track_annotation`) — aggregate counts
+        and bucketed Δscalar only, honestly labelled as "experiments
+        touching this point" (multi-patch experiments confound credit;
+        never causal) — inside the restricted-visibility envelope. ``None``
+        / empty (the default) renders a byte-identical manifest to before
+        this surface existed.
     """
 
     body = USER_PROMPT_TEMPLATE.format(
         current_loss_summary=current_loss_summary.strip() or "(no loss summary)",
         metric_targets_block=render_metric_targets_block(custom_judge_names),
         pattern_block=render_pattern_block(patterns, restrict=restrict_visibility),
-        mutation_block=render_mutation_block(mutations),
+        mutation_block=render_mutation_block(mutations, track_records=mutation_track_records),
     )
     prior_block = render_prior_experiments_block(prior_experiments, restrict=restrict_visibility)
     if prior_block:
@@ -905,6 +984,7 @@ __all__ = [
     "USER_PROMPT_TEMPLATE",
     "render_failure_mode_profile",
     "render_metric_targets_block",
+    "render_mutation_track_annotation",
     "render_pattern_block",
     "render_mutation_block",
     "render_prior_experiments_block",
