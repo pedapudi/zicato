@@ -57,6 +57,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from zicato.config import HealthConfig, load_config
+from zicato.core.experiment import PLACEBO_HYPOTHESIS_MARKER
 from zicato.core.types import BoardEntry, LossProfile
 from zicato.util.iso_time import now_iso as _utcnow_iso
 
@@ -134,7 +135,10 @@ class HealthFinding:
         ``"non_differentiating_entry"``, ``"flat_drift_signal"``,
         ``"no_expectations"``, ``"stalled_loop"``,
         ``"generalization_gap"``, ``"refresh_cadence"``,
-        ``"margin_below_noise_floor"``.
+        ``"margin_below_noise_floor"``,
+        ``"preflight_signal_below_floor"``,
+        ``"preflight_saturated_contract"``, ``"noisy_judge"``,
+        ``"placebo_promoted"``.
     severity:
         ``"info"`` | ``"warning"`` | ``"critical"``. A loop is
         considered unhealthy when any ``"warning"`` or ``"critical"``
@@ -795,6 +799,221 @@ def detect_margin_below_noise_floor(
     ]
 
 
+#: Pairwise test–retest disagreement rate above which a judge counts as
+#: noisy. Mirrors
+#: :data:`zicato.judge_runtime.reliability.NOISY_JUDGE_DISAGREEMENT_THRESHOLD`
+#: (kept as a plain value here so this module stays dependency-light).
+NOISY_JUDGE_DISAGREEMENT: float = 0.25
+
+
+def detect_noisy_judge(
+    reliabilities: list[Any],
+    threshold: float = NOISY_JUDGE_DISAGREEMENT,
+) -> list[HealthFinding]:
+    """Flag judges whose test–retest disagreement exceeds ``threshold``.
+
+    Input is the output of a judge test–retest probe
+    (:func:`zicato.judge_runtime.reliability.test_retest_board`) — one
+    record per judge, as :class:`JudgeReliability` objects or their
+    ``to_json`` dicts. A judge that returns different verdicts for a
+    byte-identical frozen transcript injects pure noise into every
+    ``custom:<judge_name>`` drift count it produces; the finding is a
+    ``warning`` (recommend-only) whose recommendation points at the
+    contract's routing knob for exactly this signal:
+    ``per_judge_weights`` (down-weight the judge) — or sharpening the
+    criterion until the retest stabilises.
+
+    One finding per noisy judge; silent for an empty probe or when every
+    judge's disagreement is at or below the threshold.
+    """
+    findings: list[HealthFinding] = []
+    for rel in reliabilities:
+        try:
+            rate = float(_attr_or_key(rel, "disagreement_rate") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if rate <= threshold:
+            continue
+        name = str(_attr_or_key(rel, "judge_name") or "")
+        k = _attr_or_key(rel, "k")
+        fired = _attr_or_key(rel, "fired")
+        findings.append(
+            HealthFinding(
+                code="noisy_judge",
+                severity="warning",
+                summary=(
+                    f"judge {name!r} disagreed with itself on {rate:.0%} of verdict "
+                    f"pairs over the SAME frozen transcript (fired {fired}/{k}) — "
+                    "its drift signal is noise, not judgement"
+                ),
+                detail={
+                    "judge_name": name,
+                    "k": k,
+                    "fired": fired,
+                    "disagreement_rate": rate,
+                    "threshold": threshold,
+                    "recommendation": (
+                        f"down-weight it (scoring per_judge_weights[{name!r}] below "
+                        "the default) or sharpen its criterion until test-retest "
+                        "stabilises (see zicato board judges --test-retest)"
+                    ),
+                },
+            )
+        )
+    return findings
+
+
+def _is_placebo_experiment(experiment: Any) -> bool:
+    """Whether an experiment record is the random-baseline placebo arm.
+
+    Keyed on the stable
+    :data:`zicato.core.experiment.PLACEBO_HYPOTHESIS_MARKER` prefix of
+    ``hypothesis.core_idea`` (the contract with the minting side,
+    :mod:`zicato.evolve.placebo`). Tolerant of typed records and plain
+    ``experiment.json`` dicts via the usual :func:`_attr_or_key` shim.
+    """
+    hypothesis = _attr_or_key(experiment, "hypothesis")
+    if hypothesis is None:
+        return False
+    core_idea = _attr_or_key(hypothesis, "core_idea")
+    return isinstance(core_idea, str) and core_idea.startswith(PLACEBO_HYPOTHESIS_MARKER)
+
+
+def detect_placebo_promoted(experiments: list[Any]) -> list[HealthFinding]:
+    """CRITICAL when a random-baseline (placebo) challenger was PROMOTED.
+
+    The placebo arm (OVERFITTING.md #7,
+    ``overfitting.random_baseline_every_n``) fields a semantics-preserving
+    no-op challenger the gate MUST reject — identical behaviour leaves no
+    improvement to clear the margin. A promoted placebo therefore means
+    the decision procedure is promoting noise: gate discrimination is
+    broken (margin inside the noise floor, a broken reducer, a rigged
+    gate) and every recent real "win" is suspect. One ``critical``
+    finding per promoted placebo generation.
+
+    Silent when no placebo experiments exist (the knob is off / no
+    cadence tick yet) or every placebo was rejected — the arm doing its
+    quiet calibration job.
+    """
+    findings: list[HealthFinding] = []
+    for exp in experiments:
+        if not _is_placebo_experiment(exp):
+            continue
+        outcome = _attr_or_key(exp, "outcome")
+        if outcome is None:
+            continue
+        decision = str(_attr_or_key(outcome, "tournament_decision") or "")
+        if decision != "promoted":
+            continue
+        generation_id = str(_attr_or_key(exp, "generation_id") or "")
+        findings.append(
+            HealthFinding(
+                code="placebo_promoted",
+                severity="critical",
+                summary=(
+                    f"random-baseline placebo {generation_id!r} was PROMOTED — a "
+                    "semantics-preserving no-op won a tournament, so the gate is "
+                    "promoting noise; recent promotions are suspect"
+                ),
+                detail={
+                    "generation_id": generation_id,
+                    "scalar_score_delta": _attr_or_key(outcome, "scalar_score_delta"),
+                    "recommendation": (
+                        "stop and audit the decision procedure: re-measure the "
+                        "noise floor (zicato board audit / board preflight), "
+                        "raise promote_margin above it, keep the evidence gate "
+                        "on, and re-examine recent promotions"
+                    ),
+                },
+            )
+        )
+    return findings
+
+
+def detect_preflight_verdict(preflight: dict[str, Any] | None) -> list[HealthFinding]:
+    """Re-surface a non-OK contract pre-flight verdict as a health finding.
+
+    The contract pre-flight (:mod:`zicato.epoch.preflight`) measures the
+    epoch's A/A noise floor AND its achievable signal (champion vs a
+    deliberately-degraded copy of itself) before rounds burn budget. Its
+    verdict persists onto the epoch record; this detector folds it into
+    every round's health report so the operator keeps seeing it for as
+    long as the contract stays un-fixed. Recommend-only — like every
+    finding, it never gates.
+
+    * verdict ``"refuse"`` → ``critical`` ``preflight_signal_below_floor``:
+      the measured achievable signal is at or below the measured noise
+      floor, so duels under this contract are decided by noise.
+    * verdict ``"warn"`` → ``warning`` ``preflight_saturated_contract``:
+      every probe — K A/A draws plus a deliberately-degraded tree —
+      scored identically (the historical ``1.000000`` signature); the
+      contract cannot discriminate candidates.
+
+    Silent when no pre-flight was ever run (``None``), when the record is
+    malformed, or when the verdict is ``"ok"``.
+    """
+    if not isinstance(preflight, dict):
+        return []
+    verdict = str(preflight.get("verdict", "") or "")
+    if verdict not in ("refuse", "warn"):
+        return []
+
+    def _num(key: str) -> float:
+        try:
+            return float(preflight.get(key, 0.0))
+        except (TypeError, ValueError):
+            return 0.0
+
+    signal = _num("signal")
+    floor = _num("noise_floor_max_abs_delta")
+    detail: dict[str, Any] = {
+        "verdict": verdict,
+        "signal": signal,
+        "noise_floor_max_abs_delta": floor,
+        "champion_scalars": preflight.get("champion_scalars"),
+        "degraded_scalar": preflight.get("degraded_scalar"),
+        "degraded_mutation_id": preflight.get("degraded_mutation_id"),
+        "generation_id": preflight.get("generation_id"),
+        "measured_at": preflight.get("measured_at"),
+    }
+    if verdict == "refuse":
+        detail["recommendation"] = (
+            "refusal recommended: the contract's achievable signal does not "
+            "clear its own noise floor — reduce evaluation noise (more "
+            "replicates, steadier judges) or strengthen the board before "
+            "running rounds"
+        )
+        return [
+            HealthFinding(
+                code="preflight_signal_below_floor",
+                severity="critical",
+                summary=(
+                    f"contract pre-flight: achievable signal {signal:.6g} is at/below "
+                    f"the measured A/A noise floor {floor:.6g} — duels under this "
+                    "contract are decided by noise (refusal recommended)"
+                ),
+                detail=detail,
+            )
+        ]
+    detail["recommendation"] = (
+        "add expectations / strengthen judges so the board can discriminate "
+        "candidates — even a deliberately-degraded tree scored identically "
+        "to the champion"
+    )
+    return [
+        HealthFinding(
+            code="preflight_saturated_contract",
+            severity="warning",
+            summary=(
+                "contract pre-flight: scalar spread was exactly zero across every "
+                "probe (K A/A draws + a deliberately-degraded tree) — the contract "
+                "cannot discriminate candidates (the 1.000000 saturation signature)"
+            ),
+            detail=detail,
+        )
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -810,6 +1029,7 @@ def assess_loop_health(
     noise_floor: dict[str, Any] | None = None,
     promote_margin: float | None = None,
     evidence_gate_on: bool = True,
+    preflight: dict[str, Any] | None = None,
 ) -> LoopHealth:
     """Run every detector and collect the findings into a :class:`LoopHealth`.
 
@@ -849,6 +1069,13 @@ def assess_loop_health(
         threaded so :func:`detect_margin_below_noise_floor` can warn when
         the margin sits inside measured noise. ``noise_floor=None`` or
         ``promote_margin=None`` (the defaults) disable that detector.
+    preflight:
+        The epoch's persisted contract pre-flight verdict
+        (:meth:`zicato.epoch.preflight.PreflightReport.to_json` dict, or
+        ``None`` when never run) — threaded so
+        :func:`detect_preflight_verdict` can keep a REFUSE/saturation
+        verdict visible in every round's report. ``None`` (the default)
+        disables that detector.
 
     Returns
     -------
@@ -857,6 +1084,16 @@ def assess_loop_health(
         ``"critical"`` severity.
     """
     health = _resolve_health_config(config)
+    # The random-baseline placebo arm is a CALIBRATION probe, not part of
+    # the optimization stream: an always-rejected control fielded every
+    # Nth round must not read as a stall, a flat-scoring window, or a
+    # mined-out contract. Split it out — the stream detectors see only the
+    # real experiments; the placebo experiments feed exactly one detector
+    # (a promoted placebo is the gate-discrimination alarm). With the knob
+    # off there are no placebo records and the split is the identity.
+    placebo_experiments = [exp for exp in experiments if _is_placebo_experiment(exp)]
+    if placebo_experiments:
+        experiments = [exp for exp in experiments if not _is_placebo_experiment(exp)]
     findings: list[HealthFinding] = []
     findings.extend(detect_degenerate_scoring(experiments, health))
     findings.extend(detect_non_differentiating_entry(losses_by_generation))
@@ -867,6 +1104,8 @@ def assess_loop_health(
     findings.extend(detect_generalization_gap(experiments, health))
     findings.extend(detect_refresh_cadence(experiments, max_generations_per_contract))
     findings.extend(detect_margin_below_noise_floor(noise_floor, promote_margin, evidence_gate_on))
+    findings.extend(detect_preflight_verdict(preflight))
+    findings.extend(detect_placebo_promoted(placebo_experiments))
 
     healthy = not any(finding.severity in ("warning", "critical") for finding in findings)
     return LoopHealth(
@@ -894,5 +1133,8 @@ __all__ = [
     "detect_dead_judge",
     "detect_stalled_loop",
     "detect_generalization_gap",
+    "detect_noisy_judge",
+    "detect_placebo_promoted",
+    "detect_preflight_verdict",
     "detect_refresh_cadence",
 ]

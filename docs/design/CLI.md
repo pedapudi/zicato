@@ -151,7 +151,7 @@ changes — use this group only to inspect or hand-edit a frozen board.
 zicato board COMMAND [ARGS]...
 ```
 
-Commands: `add`, `audit`, `list`, `remove`.
+Commands: `add`, `audit`, `judges`, `list`, `preflight`, `remove`.
 
 #### `zicato board add`
 
@@ -188,6 +188,33 @@ zicato board audit [OPTIONS]
 | `--harness-call-llm TEXT` | required | Dotted import path of the harness call_llm (e.g. `mymodule:harness`). |
 | `--auxiliary-call-llm TEXT` | required | Dotted import path of the auxiliary call_llm (e.g. `mymodule:aux`). |
 
+#### `zicato board judges`
+
+List the board's declared process judges; optionally retest them.
+
+Without `--test-retest`: print every judge the board declares (name, mode,
+severity, criterion/dotted-path). With `--test-retest`: build each judge
+through the same runtime bridge real runs use and judge ONE frozen
+transcript `--retest-k` times; report the per-judge test-retest
+disagreement rate. A judge that disagrees with itself on identical input
+injects pure noise into every `custom:<judge_name>` drift count it
+produces — the fix is a lower `per_judge_weights` entry or a sharper
+criterion. Recommend-only; nothing is gated.
+
+```
+zicato board judges [OPTIONS]
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--workspace TEXT` | `.zicato` | Path to the zicato workspace root. |
+| `--epoch TEXT` | current epoch | Epoch whose board to inspect. |
+| `--test-retest` | off | Judge a frozen transcript k times per judge and report disagreement. |
+| `--retest-k INTEGER RANGE` | `3` (>=2) | How many times each judge re-judges the same frozen transcript. |
+| `--threshold FLOAT RANGE` | `0.25` (0..1) | Pairwise disagreement rate above which a judge is flagged noisy. |
+| `--transcript FILE` | synthetic fixture | Frozen transcript file to re-judge (e.g. a settled reasoning trace saved from a prior run's events). |
+| `--auxiliary-call-llm TEXT` | — | Dotted import path of the judge/aux call_llm (e.g. `mymodule:aux`). Required with `--test-retest` — inline judges are LLM-backed. |
+
 #### `zicato board list`
 
 List the entries in the current epoch's board.
@@ -199,6 +226,33 @@ zicato board list [OPTIONS]
 | Option | Default | Meaning |
 |---|---|---|
 | `--workspace TEXT` | `.zicato` | Path to the zicato workspace root. |
+
+#### `zicato board preflight`
+
+Measure the contract's noise floor AND achievable signal; verdict.
+
+Board-reflection v1. Two measurements: (a) the A/A noise floor — the
+champion duels ITSELF `--runs` times (same draws `zicato board audit`
+takes); (b) the scripted-perturbation duel — the champion vs a
+deliberately-degraded ephemeral copy of itself (the FIRST enumerated
+mutation point blanked/scrambled in a scratch tree; the real lineage is
+never touched). Verdict: REFUSE-recommended when the achievable signal is
+at/below the floor; WARN when every probe scored identically (a saturated
+contract — the 1.000000 signature); OK otherwise. Recommend-only — never
+gates. The verdict persists onto the epoch record and flows into the
+per-round health report.
+
+```
+zicato board preflight [OPTIONS]
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--workspace TEXT` | `.zicato` | Path to the zicato workspace root. |
+| `--epoch TEXT` | current epoch | Epoch to pre-flight. |
+| `--runs INTEGER RANGE` | `5` (>=2) | How many independent A/A draws of the champion to take. |
+| `--harness-call-llm TEXT` | required | Dotted import path of the harness call_llm (e.g. `mymodule:harness`). |
+| `--auxiliary-call-llm TEXT` | required | Dotted import path of the auxiliary call_llm (e.g. `mymodule:aux`). |
 
 #### `zicato board remove`
 

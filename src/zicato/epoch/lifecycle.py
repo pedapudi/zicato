@@ -186,6 +186,9 @@ def _config_to_dict(cfg: EpochConfig) -> dict[str, Any]:
         # Measured A/A noise floor (runtime measurement, never hashed).
         # ``None`` ⇒ never measured; written as null so it round-trips.
         "noise_floor": cfg.noise_floor,
+        # Contract pre-flight verdict (runtime measurement, never hashed).
+        # ``None`` ⇒ never run; written as null so it round-trips.
+        "preflight": cfg.preflight,
     }
 
 
@@ -208,6 +211,7 @@ def _config_from_dict(d: dict[str, Any]) -> EpochConfig:
     # landed loads cleanly.
     raw_proposer = d.get("proposer_path")
     raw_floor = d.get("noise_floor")
+    raw_preflight = d.get("preflight")
     return EpochConfig(
         id=d["id"],
         name=d["name"],
@@ -223,6 +227,9 @@ def _config_from_dict(d: dict[str, Any]) -> EpochConfig:
         # ``noise_floor`` defaults to ``None`` (never measured) so epochs
         # written before the calibration surface landed load cleanly.
         noise_floor=raw_floor if isinstance(raw_floor, dict) else None,
+        # ``preflight`` defaults to ``None`` (never run) so epochs written
+        # before the pre-flight surface landed load cleanly.
+        preflight=raw_preflight if isinstance(raw_preflight, dict) else None,
     )
 
 
@@ -683,6 +690,28 @@ def set_epoch_noise_floor(
     return cfg
 
 
+def set_epoch_preflight(
+    workspace_root: Path, epoch_id: str, preflight: dict[str, Any]
+) -> EpochConfig:
+    """Persist a contract pre-flight verdict onto an existing epoch's config.
+
+    Mirrors :func:`set_epoch_noise_floor`: loads the epoch's
+    ``config.json``, replaces the additive ``preflight`` field with the
+    supplied :meth:`zicato.epoch.preflight.PreflightReport.to_json` dict,
+    and writes the config back. The verdict is a RUNTIME measurement,
+    never a contract input — writing it does not touch ``contract_hash``
+    and never rolls the epoch. Re-running overwrites the prior record.
+
+    Raises :class:`FileNotFoundError` if the epoch does not exist.
+    """
+    from dataclasses import replace
+
+    cfg = load_epoch(workspace_root, epoch_id)
+    cfg = replace(cfg, preflight=dict(preflight))
+    _write_config(workspace_root, cfg)
+    return cfg
+
+
 def _write_stub_html_companion(
     workspace_root: Path,
     epoch_id: str,
@@ -723,4 +752,5 @@ __all__ = [
     "load_epoch",
     "set_epoch_goal",
     "set_epoch_noise_floor",
+    "set_epoch_preflight",
 ]

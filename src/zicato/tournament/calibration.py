@@ -147,6 +147,7 @@ async def measure_noise_floor(
     from zicato.tournament.worker_transport import (  # noqa: PLC0415
         _stamp_disable_drift,
         _stamp_judge_only,
+        _stamp_replicate_index,
     )
 
     if runs < 2:
@@ -157,10 +158,17 @@ async def measure_noise_floor(
 
     scalars: list[float] = []
     for draw in range(runs):
+        replicate_index = CALIBRATION_REPLICATE_BASE + draw
         losses = await _run_board_units_fast(
             adapter=adapter,
             child_gen=generation,
-            board=board,
+            # Stamp the replicate index onto each entry's context, exactly
+            # as the replicated-duel path does before it calls the same
+            # runner: the cache key alone does not reach the harness, and a
+            # seeded harness derives its noise draw from the STAMPED index
+            # — without the stamp every "fresh" draw re-rolls the identical
+            # seed and a stochastic harness measures a floor of 0.0.
+            board=_stamp_replicate_index(board, replicate_index),
             weights=weights,
             config=config,
             workspace_root=workspace_root,
@@ -168,7 +176,7 @@ async def measure_noise_floor(
             match_id=f"aa-calibration:{draw}",
             # Distinct replicate index per draw ⇒ distinct cache slot ⇒ a
             # fresh sample (and an idempotent re-read on a repeated audit).
-            replicate_index=CALIBRATION_REPLICATE_BASE + draw,
+            replicate_index=replicate_index,
         )
         agg = aggregate_generation_score(list(losses.values()), weights)
         scalars.append(float(agg.get("scalar", 0.0)))

@@ -319,6 +319,18 @@ class OutcomeRecord:
 #: §3.3.
 EXPERIMENT_MEMORY_MAX_ENTRIES = 12
 
+#: Prefix stamped onto the ``hypothesis.core_idea`` of a random-baseline
+#: (placebo) challenger — the opt-in calibration arm of OVERFITTING.md #7
+#: (``overfitting.random_baseline_every_n``). The marker is the STABLE
+#: contract between the minting side (:mod:`zicato.evolve.placebo`) and
+#: every consumer that must recognise the arm: the health detector
+#: (:func:`zicato.health.diagnostics.detect_placebo_promoted` — a PROMOTED
+#: placebo is the alarm) and the loop-health input filter (placebo
+#: experiments are calibration probes, excluded from the optimization-
+#: stream detectors like stalled-loop / degenerate-scoring). Lives here in
+#: :mod:`zicato.core` so both sides import one dependency-light constant.
+PLACEBO_HYPOTHESIS_MARKER = "[placebo:random-baseline]"
+
 
 @dataclass(frozen=True, slots=True)
 class PriorExperiment:

@@ -386,7 +386,22 @@ _SCORING_PLUGIN_SPEC_FIELDS: frozenset[str] = frozenset(
 #: field, while a NON-default value still appears in the canonical form and
 #: rolls the epoch — exactly like any other weight change. Only purely-additive,
 #: default-off fields belong here.
-_SCORING_OMIT_AT_DEFAULT_FIELDS: frozenset[str] = frozenset({"diff_complexity_weight"})
+_SCORING_OMIT_AT_DEFAULT_FIELDS: frozenset[str] = frozenset(
+    {
+        "diff_complexity_weight",
+        # Opt-in cross-epoch experiment memory (EXPERIMENT-MEMORY.md §3.4):
+        # the nested ``ExperimentMemoryConfig`` compares by value against
+        # its ``default_factory()`` instance, so an all-default block is
+        # omitted (no retroactive roll) while any opt-in rolls the epoch.
+        "experiment_memory",
+        # Opt-in random-baseline (placebo) challenger cadence
+        # (OVERFITTING.md #7). Lives on the nested ``OverfittingConfig`` —
+        # the canonicalizer recurses through this same field-name set, so
+        # the nested field is omitted at its 0 default (no retroactive
+        # roll) and a non-zero cadence rolls the epoch.
+        "random_baseline_every_n",
+    }
+)
 
 
 def _scoring_to_canon(weights: object) -> dict[str, object]:

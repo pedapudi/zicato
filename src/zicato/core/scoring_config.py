@@ -157,6 +157,20 @@ class OverfittingConfig:
         a cue that the contract should be refreshed (the operator rolls).
         ``None`` (default) imposes no ceiling. This never forces a surprising
         auto epoch-roll; it only recommends. Must be ``>= 1`` when set.
+    random_baseline_every_n:
+        Opt-in random-baseline challenger cadence (OVERFITTING.md §12 #7 —
+        the placebo arm). When ``> 0``, every Nth round the orchestrator
+        fields ONE additional challenger whose patch is a
+        semantics-preserving no-op (the mutation point's current value
+        re-emitted unchanged), hypothesis clearly marked as the baseline
+        arm. The gate MUST reject it — identical trees leave no
+        improvement to clear the margin — so a PROMOTED baseline is the
+        alarm: the loop emits a CRITICAL ``placebo_promoted`` health
+        finding (gate discrimination is broken; recent "wins" are
+        suspect). ``0`` (default) fields no baseline and the loop is
+        byte-identical. Like ``diff_complexity_weight``, the field is
+        omitted from the contract canonical form at its default so
+        existing epochs never roll retroactively. Must be ``>= 0``.
     """
 
     enabled: bool = True
@@ -166,6 +180,7 @@ class OverfittingConfig:
     ladder: LadderConfig = field(default_factory=_default_ladder_config)
     rotate_holdout: bool = True
     max_generations_per_contract: int | None = None
+    random_baseline_every_n: int = 0
 
     def __post_init__(self) -> None:
         if not 0.0 < self.holdout_fraction < 1.0:
@@ -178,6 +193,10 @@ class OverfittingConfig:
             raise ValueError(
                 f"max_generations_per_contract must be >= 1 or None, got "
                 f"{self.max_generations_per_contract!r}"
+            )
+        if self.random_baseline_every_n < 0:
+            raise ValueError(
+                f"random_baseline_every_n must be >= 0, got {self.random_baseline_every_n!r}"
             )
 
     @classmethod
@@ -259,6 +278,48 @@ class ProposerQualityConfig:
 def _default_proposer_quality_config() -> ProposerQualityConfig:
     """Default-factory for :attr:`ScoringWeights.proposer_quality`."""
     return ProposerQualityConfig.defaults()
+
+
+@dataclass(frozen=True, slots=True)
+class ExperimentMemoryConfig:
+    """Experiment-memory scoping: what settled history the proposer sees.
+
+    Part of the frozen evaluation contract — a field of
+    :class:`ScoringWeights`, like :class:`OverfittingConfig` — because
+    changing what history the proposer reads selects champions under a
+    different rule (EXPERIMENT-MEMORY.md §3.4). The field is
+    omitted-at-default from the contract canonicalizer
+    (``epoch/contract.py::_SCORING_OMIT_AT_DEFAULT_FIELDS``), so a
+    contract that never sets it hashes byte-identically to one that
+    predates it; a non-default value rolls the epoch normally.
+
+    Fields
+    ------
+    cross_epoch:
+        Opt-in cross-epoch transfer (EXPERIMENT-MEMORY.md §3.4 / §5.2).
+        ``False`` (default): the experiment-memory digest is same-epoch
+        only — byte-identical to the shipped behaviour. ``True``: settled
+        experiments from PRIOR epochs of the same workspace that share
+        the current epoch's ``contract_hash`` are appended to the digest,
+        marked ``same_contract=False``, with their ``scalar_score_delta``
+        omitted (the number does not transfer), rendered in a clearly
+        separated block, and admitted only into the budget left after
+        every same-epoch entry — same-epoch history always keeps priority
+        in the cap. Experiments under a DIFFERENT contract hash are never
+        surfaced regardless of this knob.
+    """
+
+    cross_epoch: bool = False
+
+    @classmethod
+    def defaults(cls) -> ExperimentMemoryConfig:
+        """The fully-defaulted (same-epoch-only) config."""
+        return cls()
+
+
+def _default_experiment_memory_config() -> ExperimentMemoryConfig:
+    """Default-factory for :attr:`ScoringWeights.experiment_memory`."""
+    return ExperimentMemoryConfig.defaults()
 
 
 # ---------------------------------------------------------------------------
@@ -523,6 +584,16 @@ class ScoringWeights:
     # :class:`ProposerQualityConfig`.
     proposer_quality: ProposerQualityConfig = field(
         default_factory=_default_proposer_quality_config
+    )
+    # Experiment-memory scoping (EXPERIMENT-MEMORY.md §3.4): opt-in
+    # cross-epoch transfer of settled history under the SAME contract
+    # hash. Default-off ⇒ same-epoch-only, byte-identical digest; the
+    # contract canonicalizer omits the field at its default (see
+    # ``_SCORING_OMIT_AT_DEFAULT_FIELDS``) so existing epochs never roll
+    # retroactively, while opting in rolls the epoch like any other
+    # contract change. See :class:`ExperimentMemoryConfig`.
+    experiment_memory: ExperimentMemoryConfig = field(
+        default_factory=_default_experiment_memory_config
     )
     # Optional operator outcome-summarizer hook (Capability 2 of issue #18,
     # item 8). A dotted spec (``pkg.mod:fn`` / ``pkg.mod.fn``) resolved like

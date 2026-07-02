@@ -419,6 +419,28 @@ async def evolve_once(
         judge_only=judge_only,
     )
 
+    # --- 2a'. Optional contract pre-flight (epoch-open step) --------------
+    # When the workspace opts in (config.json: ``"contract_preflight": K``)
+    # and this epoch has no persisted verdict yet, measure the A/A floor AND
+    # the achievable signal (champion vs a deliberately-degraded ephemeral
+    # copy of itself) and persist the verdict onto the epoch record.
+    # Recommend-only: a REFUSE/saturation verdict warns and flows into the
+    # per-round health report but never gates. ``zicato board preflight`` is
+    # the manual surface for the same measurement.
+    await _maybe_contract_preflight(
+        workspace_root=workspace_root,
+        epoch_id=resolved_epoch_id,
+        epoch_cfg=_epoch_cfg,
+        workspace_config=workspace_config,
+        adapter=adapter,
+        parent_gen=parent_gen,
+        board=board,
+        weights=weights,
+        config=config,
+        disable_drift=disable_drift,
+        judge_only=judge_only,
+    )
+
     # --- 2b. Margin-vs-noise-floor sanity check (once per invocation) -----
     # When a measured floor exists and the contract's promote_margin sits
     # inside it, say so loudly at evolve start — a duel decided by the margin
@@ -595,7 +617,11 @@ async def evolve_once(
     # proposer simply runs without the ``## What's already been tried``
     # section. The gauntlet field is a single challenger, so there are no
     # in-flight siblings to concatenate here.
-    prior = _load_prior_experiments(workspace_root, resolved_epoch_id)
+    prior = _load_prior_experiments(
+        workspace_root,
+        resolved_epoch_id,
+        cross_epoch=weights.experiment_memory.cross_epoch,
+    )
 
     proposer_validation_failed: ProposerError | None = None
     # --- 6r. Conservative crash-resume short-circuit (gauntlet path) ---
@@ -1071,6 +1097,30 @@ async def evolve_once(
     # --- 13. Journal ---
     append_journal_entry(workspace_root, resolved_epoch_id, finalised)
 
+    # --- 13b. Optional random-baseline placebo arm (OVERFITTING.md #7) ---
+    # One EXTRA scheduled duel after the settled round, on the opt-in
+    # cadence ``overfitting.random_baseline_every_n``: champion vs a
+    # semantics-preserving no-op copy of itself. Runs BEFORE the health
+    # assessment below so a promoted placebo raises its CRITICAL finding
+    # in THIS round's report. Best-effort; never advances the champion.
+    await _maybe_run_placebo_arm_gauntlet(
+        workspace_root=workspace_root,
+        epoch_id=resolved_epoch_id,
+        adapter=adapter,
+        parent_gen=parent_gen,
+        parent_id=parent_id,
+        round_id=next_id,
+        mutations=mutations,
+        board=board,
+        weights=weights,
+        config=config,
+        disable_drift=disable_drift,
+        judge_only=judge_only,
+        fast_mode=fast_mode,
+        round_index=round_index,
+        total_rounds=total_rounds,
+    )
+
     # --- 14. Per-round loop-health check ---
     # Assess whether the loop is producing usable signal this round —
     # the epoch's accumulated losses + experiments + board, fed to
@@ -1146,6 +1196,184 @@ async def evolve_once(
         health_summary=health_summary,
         health_critical=health_critical,
     )
+
+
+# ---------------------------------------------------------------------------
+# Random-baseline (placebo) challenger — OVERFITTING.md #7's control arm
+# ---------------------------------------------------------------------------
+
+
+def _mint_placebo_challenger(
+    *,
+    workspace_root: Path,
+    epoch_id: str,
+    parent_id: str,
+    next_id: str,
+    point: Any,
+    round_index: int,
+) -> _AppliedChallenger:
+    """Derive + persist the random-baseline placebo challenger.
+
+    The same derive → ``experiment.json`` → lineage pipeline every real
+    challenger goes through (:mod:`zicato.evolve.placebo` builds the
+    marked hypothesis + the semantics-preserving no-op patch), so the
+    placebo is a genuine lineage child with a genuine snapshot — the gate
+    scores it exactly like any challenger. Shared by the gauntlet's extra
+    scheduled duel and the multi-challenger field's extra slot.
+    """
+    from zicato.epoch import append_to_lineage, write_experiment  # noqa: PLC0415
+    from zicato.evolve.placebo import (  # noqa: PLC0415
+        build_placebo_experiment,
+        derive_placebo_snapshot,
+    )
+
+    experiment = build_placebo_experiment(
+        epoch_id=epoch_id,
+        generation_id=next_id,
+        parent_id=parent_id,
+        point=point,
+        round_index=round_index,
+    )
+    child_snapshot = derive_placebo_snapshot(
+        workspace_root,
+        epoch_id=epoch_id,
+        parent_id=parent_id,
+        generation_id=next_id,
+        patches=experiment.patches,
+    )
+    write_experiment(workspace_root, epoch_id, next_id, experiment)
+    _ingest_experiment_into_index(workspace_root, epoch_id, next_id)
+    child_gen = Generation(
+        id=next_id,
+        epoch_id=epoch_id,
+        parent_id=parent_id,
+        snapshot_root=child_snapshot,
+        created_at=_now_iso(),
+        round_index=round_index,
+    )
+    append_to_lineage(workspace_root, epoch_id, child_gen, parent_id=parent_id, pending=True)
+    return _AppliedChallenger(
+        generation_id=next_id,
+        snapshot_root=child_snapshot,
+        experiment=experiment,
+        generation=child_gen,
+    )
+
+
+async def _maybe_run_placebo_arm_gauntlet(
+    *,
+    workspace_root: Path,
+    epoch_id: str,
+    adapter: Any,
+    parent_gen: Generation,
+    parent_id: str,
+    round_id: str,
+    mutations: list[Any],
+    board: list[Any],
+    weights: Any,
+    config: Any,
+    disable_drift: tuple[Any, ...],
+    judge_only: bool,
+    fast_mode: bool,
+    round_index: int,
+    total_rounds: int,
+) -> None:
+    """Run the opt-in placebo duel after a settled gauntlet round.
+
+    OVERFITTING.md #7 on the single-challenger path: when the contract
+    sets ``overfitting.random_baseline_every_n`` and this round's
+    epoch-cumulative number is a cadence tick, one EXTRA scheduled duel
+    runs after the round — champion vs a semantics-preserving no-op copy
+    of itself (id ``{vN}-placebo``, deliberately non-``vN`` so round
+    numbering / id minting are untouched). The duel goes through the
+    unchanged runner + gate; its outcome persists to ``experiment.json``
+    (before the round's health assessment reads it) and to lineage as a
+    dead branch — the placebo NEVER advances the champion pointer, even
+    on the alarm outcome. A promoted placebo surfaces as the CRITICAL
+    ``placebo_promoted`` loop-health finding. Best-effort by contract:
+    any failure here never aborts the round.
+    """
+    from zicato.evolve.placebo import placebo_round_due  # noqa: PLC0415
+
+    every_n = int(getattr(weights.overfitting, "random_baseline_every_n", 0))
+    round_n = _round_n_from_generation_id(round_id)
+    if not placebo_round_due(every_n, round_n) or not mutations:
+        return
+
+    from zicato.epoch import append_to_lineage, update_experiment_outcome  # noqa: PLC0415
+    from zicato.tournament.runner import run_matchup  # noqa: PLC0415
+
+    placebo_id = f"{round_id}-placebo"
+    with best_effort(
+        "random-baseline placebo arm",
+        on_error=lambda exc: log.warning("random-baseline placebo arm skipped: %s", exc),
+    ):
+        challenger = _mint_placebo_challenger(
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            parent_id=parent_id,
+            next_id=placebo_id,
+            point=mutations[0],
+            round_index=round_index,
+        )
+        result = await run_matchup(
+            adapter=adapter,
+            left_gen=parent_gen,
+            right_gen=challenger.generation,
+            board=board,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            disable_drift=disable_drift,
+            judge_only=judge_only,
+            fast=fast_mode,
+            round_index=round_index,
+            total_rounds=total_rounds,
+            match_id=f"placebo:{placebo_id}",
+        )
+        decision = result.outcome.decision
+        promoted = str(decision) == "promoted"
+        update_experiment_outcome(
+            workspace_root,
+            epoch_id,
+            placebo_id,
+            OutcomeRecord(
+                ran_at=_now_iso(),
+                drift_movements=(),
+                pass_rate_delta=result.outcome.delta_pass_rate,
+                drift_loss_delta=0.0,
+                scalar_score_delta=result.outcome.delta_scalar,
+                tournament_decision=decision,
+                rejection_reason="" if promoted else result.outcome.reason,
+            ),
+        )
+        _ingest_experiment_into_index(workspace_root, epoch_id, placebo_id)
+        # Lineage: ALWAYS a dead branch. Even a (pathological) promoted
+        # verdict never advances the champion pointer — the arm measures
+        # the gate; the alarm is the health finding, not a crowning.
+        append_to_lineage(
+            workspace_root,
+            epoch_id,
+            replace(challenger.generation, promoted=False),
+            parent_id=parent_id,
+        )
+        if promoted:
+            log.warning(
+                "random-baseline placebo %s was PROMOTED by the gate "
+                "(Δscalar=%.6g) — the decision procedure is promoting noise; "
+                "the CRITICAL placebo_promoted health finding will fire. The "
+                "champion pointer was NOT advanced.",
+                placebo_id,
+                result.outcome.delta_scalar,
+            )
+        else:
+            log.info(
+                "random-baseline placebo %s rejected as expected (%s) — gate "
+                "discrimination confirmed this cadence tick",
+                placebo_id,
+                result.outcome.reason,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -1693,7 +1921,13 @@ async def _evolve_multi_challenger(
     # successfully-applied challenger so challenger k sees the hypotheses
     # of challengers 0..k-1 this round and can diversify away from them; a
     # challenger whose proposer failed contributes no sibling.
-    prior = tuple(_load_prior_experiments(workspace_root, epoch_id))
+    prior = tuple(
+        _load_prior_experiments(
+            workspace_root,
+            epoch_id,
+            cross_epoch=weights.experiment_memory.cross_epoch,
+        )
+    )
     siblings: list[PriorExperiment] = []
     # Field-diversity constraint (FUNCTIONALITY-RECOMMENDATIONS.md §4.3): the
     # signatures of the siblings already minted this round, so a later
@@ -1960,6 +2194,57 @@ async def _evolve_multi_challenger(
             child_scalar=0.0,
             delta_scalar=0.0,
         )
+
+    # --- Optional random-baseline placebo arm (OVERFITTING.md #7) --------
+    # Every Nth epoch-cumulative round the field carries ONE extra slot: a
+    # semantics-preserving no-op child of the champion, hypothesis marked
+    # as the baseline arm (zicato.evolve.placebo). It flows through the
+    # unchanged strategy + gate like any challenger; the gate must reject
+    # it, and a promoted placebo raises the CRITICAL ``placebo_promoted``
+    # loop-health finding. Appended AFTER the all-failed early-return above
+    # (a fully-failed proposer field keeps its historical outcome) and
+    # appended LAST so sibling diversity, ``first_challenger_id``, and the
+    # real challengers' ids are untouched. Best-effort: a placebo mint
+    # failure narrows the field back to the real challengers.
+    _placebo_every_n = int(getattr(weights.overfitting, "random_baseline_every_n", 0))
+    if base_n is not None and mutations:
+        from zicato.evolve.placebo import placebo_round_due  # noqa: PLC0415
+
+        if placebo_round_due(_placebo_every_n, base_n):
+            _placebo_id = f"v{base_n + field_n}"
+            with best_effort(
+                "random-baseline placebo mint",
+                on_error=lambda exc: log.warning("random-baseline placebo skipped: %s", exc),
+            ):
+                _placebo = _mint_placebo_challenger(
+                    workspace_root=workspace_root,
+                    epoch_id=epoch_id,
+                    parent_id=parent_id,
+                    next_id=_placebo_id,
+                    point=mutations[0],
+                    round_index=round_index,
+                )
+                applied.append(_placebo)
+                _placebo_status = {
+                    "generation_id": _placebo.generation_id,
+                    "status": "applied",
+                    "reason": "random_baseline",
+                    "attempts": 1,
+                    "attempt_reasons": [],
+                    "hypothesis": _trim_reason(_placebo.experiment.hypothesis.core_idea),
+                    "seed": field_n + 2,
+                }
+                field_status.append(_placebo_status)
+                _publish_proposing(_placebo_status)
+                log.info(
+                    "multi-challenger field: %s/%s fielded as the random-baseline "
+                    "placebo arm (cadence every_n=%d, round %d) — the gate must "
+                    "reject it",
+                    epoch_id,
+                    _placebo.generation_id,
+                    _placebo_every_n,
+                    base_n,
+                )
 
     by_id: dict[str, _AppliedChallenger] = {c.generation_id: c for c in applied}
     champion_gen = Generation(
@@ -3446,6 +3731,8 @@ def _index_db_path(workspace_root: Path) -> Path:
 def _load_prior_experiments(
     workspace_root: Path,
     epoch_id: str,
+    *,
+    cross_epoch: bool = False,
 ) -> list[PriorExperiment]:
     """Best-effort read of the epoch's settled experiment-memory digest.
 
@@ -3457,11 +3744,19 @@ def _load_prior_experiments(
     any failure — a missing module, an unreadable database — is logged at
     ``debug`` level and yields ``[]``. ``experiment.json`` on disk stays
     canonical; an empty digest simply omits the prompt section.
+
+    ``cross_epoch`` is the contract's opt-in
+    ``experiment_memory.cross_epoch`` knob (EXPERIMENT-MEMORY.md §3.4):
+    when set, settled experiments from prior epochs under the SAME
+    contract hash fill the cap-budget the same-epoch entries leave, as
+    ``same_contract=False`` entries.
     """
     try:
         from zicato.index.query import prior_experiments_for_epoch  # noqa: PLC0415
 
-        return prior_experiments_for_epoch(_index_db_path(workspace_root), epoch_id)
+        return prior_experiments_for_epoch(
+            _index_db_path(workspace_root), epoch_id, cross_epoch=cross_epoch
+        )
     except ImportError:
         log.debug("zicato.index.query unavailable; proposer runs without experiment memory")
         return []
@@ -3626,6 +3921,23 @@ def _epoch_noise_floor_inputs(
     return cfg.noise_floor, float(cfg.scoring.promote_margin), gate_on
 
 
+def _epoch_preflight_record(workspace_root: Path, epoch_id: str) -> dict[str, Any] | None:
+    """Read the epoch's persisted contract pre-flight verdict, if any.
+
+    Threaded into :func:`zicato.health.diagnostics.detect_preflight_verdict`
+    so a REFUSE/saturation verdict stays visible in every round's health
+    report. Best-effort: an unreadable epoch record yields ``None``, which
+    keeps that detector silent.
+    """
+    from zicato.epoch.lifecycle import load_epoch  # noqa: PLC0415
+
+    try:
+        cfg = load_epoch(workspace_root, epoch_id)
+    except Exception:  # noqa: BLE001 — health inputs are best-effort
+        return None
+    return cfg.preflight
+
+
 async def _maybe_calibrate_noise_floor(
     *,
     workspace_root: Path,
@@ -3692,6 +4004,101 @@ async def _maybe_calibrate_noise_floor(
             floor.max_abs_delta,
             floor.delta_std,
         )
+
+
+async def _maybe_contract_preflight(
+    *,
+    workspace_root: Path,
+    epoch_id: str,
+    epoch_cfg: Any,
+    workspace_config: Any,
+    adapter: Any,
+    parent_gen: Generation,
+    board: list[Any],
+    weights: Any,
+    config: Any,
+    disable_drift: tuple[Any, ...],
+    judge_only: bool,
+) -> None:
+    """Run the opt-in contract pre-flight once per epoch (epoch-open step).
+
+    Mirrors :func:`_maybe_calibrate_noise_floor`: fires only when the
+    workspace config carries ``"contract_preflight": K`` (K >= 2 A/A
+    draws) AND the epoch record has no persisted pre-flight verdict yet,
+    so the measurement happens exactly once at epoch open and every later
+    round short-circuits on the record. Best-effort by contract — a
+    pre-flight failure must never abort the round; the verdict itself is
+    recommend-only (it flows into the per-round health report, never a
+    gate). ``zicato board preflight`` is the manual surface for the same
+    measurement.
+    """
+    raw = workspace_config.get("contract_preflight")
+    if not raw:
+        return
+    try:
+        runs = int(raw)
+    except (TypeError, ValueError):
+        log.warning("contract_preflight=%r is not an integer; skipping pre-flight", raw)
+        return
+    if runs < 2:
+        log.warning("contract_preflight=%d needs at least 2 A/A draws; skipping pre-flight", runs)
+        return
+    if getattr(epoch_cfg, "preflight", None) is not None:
+        return
+
+    from zicato.epoch.lifecycle import (  # noqa: PLC0415
+        load_epoch,
+        set_epoch_noise_floor,
+        set_epoch_preflight,
+    )
+    from zicato.epoch.preflight import VERDICT_OK, run_contract_preflight  # noqa: PLC0415
+
+    with best_effort(
+        "contract pre-flight",
+        on_error=lambda exc: log.warning("contract pre-flight skipped: %s", exc),
+    ):
+        report, floor = await run_contract_preflight(
+            adapter=adapter,
+            generation=parent_gen,
+            board=board,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            runs=runs,
+            disable_drift=disable_drift,
+            judge_only=judge_only,
+        )
+        set_epoch_preflight(workspace_root, epoch_id, report.to_json())
+        # The pre-flight's step (a) IS the A/A calibration; persist the
+        # floor too when the epoch has none yet (reload — the calibration
+        # hook may have written one after ``epoch_cfg`` was loaded), so the
+        # margin check + noise-floor detector benefit from the same draws.
+        if load_epoch(workspace_root, epoch_id).noise_floor is None:
+            set_epoch_noise_floor(workspace_root, epoch_id, floor.to_json())
+        if report.verdict == VERDICT_OK:
+            log.info(
+                "contract pre-flight OK for epoch %s (%s): achievable signal "
+                "%.6g clears the measured noise floor %.6g",
+                epoch_id,
+                parent_gen.id,
+                report.signal,
+                report.noise_floor_max_abs_delta,
+            )
+        else:
+            log.warning(
+                "contract pre-flight verdict %r for epoch %s (%s): achievable "
+                "signal %.6g vs noise floor %.6g (degraded point %s → scalar "
+                "%.6g). Recommend-only — the run continues; see the per-round "
+                "health report / `zicato board preflight`.",
+                report.verdict,
+                epoch_id,
+                parent_gen.id,
+                report.signal,
+                report.noise_floor_max_abs_delta,
+                report.degraded_mutation_id,
+                report.degraded_scalar,
+            )
 
 
 def _warn_margin_below_noise_floor(workspace_root: Path, epoch_id: str) -> None:
@@ -3789,6 +4196,7 @@ def _assess_and_persist_loop_health(
             noise_floor=noise_floor,
             promote_margin=promote_margin,
             evidence_gate_on=evidence_gate_on,
+            preflight=_epoch_preflight_record(workspace_root, epoch_id),
         )
     except Exception as exc:  # noqa: BLE001 — health assessment is best-effort
         log.debug("loop-health assessment skipped for %s round %d: %s", epoch_id, round_n, exc)

@@ -16,12 +16,14 @@
 > orchestrator wiring — `_load_prior_experiments` plus the gauntlet and
 > multi-challenger (`_evolve_multi_challenger`, including in-flight
 > sibling accumulation) call sites. The §5 implementation plan describes
-> the as-built contract; read it in the past tense. The **only** part
-> that remains future work is the §3.4 / §5.2 **cross-contract transfer**
-> (`same_contract=False` — a different epoch under the *same*
-> `contract_hash`): the reader ships same-epoch-only, with the
-> cross-contract branch left as an explicit, unbuilt extension point in
-> [`query.py`](../../src/zicato/index/query.py).
+> the as-built contract; read it in the past tense. The §3.4 / §5.2
+> **cross-contract transfer** (`same_contract=False` — a different epoch
+> under the *same* `contract_hash`) is now ALSO built, as the opt-in
+> `experiment_memory.cross_epoch` contract knob (default off ⇒ the reader
+> stays same-epoch-only, byte-identical): see
+> [`query.py`](../../src/zicato/index/query.py)'s
+> `_cross_contract_entries` and the separated cross-epoch block in the
+> prompt renderer.
 
 The proposer is the only learning component in zicato that, today, does
 not learn. The loss reducer accumulates across runs, the pattern
@@ -261,10 +263,16 @@ flagged**: a cross-contract `PriorExperiment` (a different epoch under
 the *same* `contract_hash`, found via `epochs.contract_hash`) is marked
 `same_contract=False`, surfaced only as a *core-idea + decision* line
 with its Δscalar **omitted** (the number does not transfer), and only
-when same-epoch history is sparse. The default and shipped behaviour is
-**same-epoch only**; cross-contract transfer is a documented extension
-point, not the v1 default. Experiments from a *different* `contract_hash`
-are never surfaced — their mutation ids and losses are not comparable.
+into whatever cap-budget the same-epoch entries leave (same-epoch history
+keeps priority — the mechanised form of "only when same-epoch history is
+sparse"). The default behaviour is **same-epoch only**; cross-contract
+transfer is the opt-in `experiment_memory.cross_epoch` knob on the frozen
+contract (`ScoringWeights.experiment_memory`, omitted-at-default from the
+contract canonical form so existing epochs never roll; opting in rolls
+the epoch). Experiments from a *different* `contract_hash` are never
+surfaced — their mutation ids and losses are not comparable — and
+legacy pre-hash epochs (empty stored hash) are never treated as
+transferable.
 
 ### 3.5 Where it lands in the prompt, and the rendered shape
 
@@ -351,8 +359,8 @@ near-zero rejection is the first to fall off the cap. We deliberately do
 
 > **As-built.** This section was the implementation contract and is now
 > the shipped shape — read it as a description of the live code, not a
-> plan. The §3.4 cross-contract branch is the lone exception (still an
-> unbuilt extension point; see the §5.2 note).
+> plan. The §3.4 cross-contract branch is now also built (the opt-in
+> `experiment_memory.cross_epoch` knob; see the §5.2 note).
 
 No behaviour changes unless `workspace_root` is supplied to
 `propose_experiment` (the same gating the analyzer-insights surface
@@ -391,12 +399,15 @@ Add `prior_experiments_for_epoch(db_path, epoch_id, *, max_entries=EXPERIMENT_ME
   `IndexNotBuiltError` to the caller).
 - Add to `__all__`.
 
-(Cross-contract transfer of §3.4 is a follow-on extension on this same
-reader — a second query keyed on `epochs.contract_hash` that yields
-`same_contract=False` entries with `scalar_score_delta=None`. Ship the
-same-epoch reader first; leave a one-line `# extension point` comment
-where the cross-contract branch attaches. Do not implement the
-cross-contract branch in this phase unless explicitly asked.)
+(Cross-contract transfer of §3.4 is built on this same reader —
+`prior_experiments_for_epoch(..., cross_epoch=True)` runs a second query
+joining `experiments` to `epochs` on `contract_hash` and yields
+`same_contract=False` entries with `scalar_score_delta=None`, capped to
+the budget the same-epoch entries leave. The knob is
+`experiment_memory.cross_epoch` on the frozen contract, threaded through
+the orchestrator's `_load_prior_experiments` at both the gauntlet and
+multi-challenger call sites; the renderer gives cross entries their own
+clearly-separated, epoch-tagged block after the same-epoch blocks.)
 
 ### 5.3 Prompt rendering — `zicato/proposer/prompts.py`
 
