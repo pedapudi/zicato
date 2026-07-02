@@ -146,10 +146,16 @@ class TournamentDraft:
         (with judges / predicates / rubrics and any ``holdout`` tags), the
         proposer-brief text, and the configured proposer dir — so the
         builder opens pre-filled with what is running. A missing component
-        degrades to its default (empty board, empty brief, default scoring,
-        built-in proposer) rather than raising, so a freshly-``init``-ed
-        workspace with no epoch yet still yields an editable blank draft.
+        degrades to its default (empty board, empty brief, built-in
+        proposer) rather than raising, so a freshly-``init``-ed workspace
+        with no epoch yet still yields an editable draft. A missing scoring
+        contract degrades to the RECOMMENDED scaffold contract
+        (:func:`zicato.core.scoring_config.recommended_scaffold_weights` —
+        racing field 4, replicates 2, evidence gate on), the same full
+        effective contract ``zicato init`` writes, so a blank draft opens on
+        the noise-aware recommendation rather than the bare gauntlet.
         """
+        from zicato.core.scoring_config import recommended_scaffold_weights  # noqa: PLC0415
         from zicato.workspace_loader import (  # noqa: PLC0415
             load_current_board,
             load_current_brief,
@@ -160,7 +166,7 @@ class TournamentDraft:
         try:
             scoring = load_current_scoring(workspace_root)
         except FileNotFoundError:
-            scoring = ScoringWeights()
+            scoring = recommended_scaffold_weights()
 
         try:
             entries = list(load_current_board(workspace_root))
