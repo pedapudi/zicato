@@ -36,11 +36,19 @@ from zicato.judge_runtime.disable import (
     builtin_judge_names_to_suppress,
     default_judges_minus,
 )
+from zicato.judge_runtime.reliability import (
+    JudgeReliability,
+    test_retest,
+    test_retest_board,
+)
 
 __all__ = [
+    "JudgeReliability",
     "JudgeSpecLike",
     "assemble_judges",
     "builtin_judge_names_to_suppress",
     "default_judges_minus",
     "judge_spec_to_goldfive",
+    "test_retest",
+    "test_retest_board",
 ]

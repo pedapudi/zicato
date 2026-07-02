@@ -136,7 +136,7 @@ class HealthFinding:
         ``"generalization_gap"``, ``"refresh_cadence"``,
         ``"margin_below_noise_floor"``,
         ``"preflight_signal_below_floor"``,
-        ``"preflight_saturated_contract"``.
+        ``"preflight_saturated_contract"``, ``"noisy_judge"``.
     severity:
         ``"info"`` | ``"warning"`` | ``"critical"``. A loop is
         considered unhealthy when any ``"warning"`` or ``"critical"``
@@ -797,6 +797,70 @@ def detect_margin_below_noise_floor(
     ]
 
 
+#: Pairwise test–retest disagreement rate above which a judge counts as
+#: noisy. Mirrors
+#: :data:`zicato.judge_runtime.reliability.NOISY_JUDGE_DISAGREEMENT_THRESHOLD`
+#: (kept as a plain value here so this module stays dependency-light).
+NOISY_JUDGE_DISAGREEMENT: float = 0.25
+
+
+def detect_noisy_judge(
+    reliabilities: list[Any],
+    threshold: float = NOISY_JUDGE_DISAGREEMENT,
+) -> list[HealthFinding]:
+    """Flag judges whose test–retest disagreement exceeds ``threshold``.
+
+    Input is the output of a judge test–retest probe
+    (:func:`zicato.judge_runtime.reliability.test_retest_board`) — one
+    record per judge, as :class:`JudgeReliability` objects or their
+    ``to_json`` dicts. A judge that returns different verdicts for a
+    byte-identical frozen transcript injects pure noise into every
+    ``custom:<judge_name>`` drift count it produces; the finding is a
+    ``warning`` (recommend-only) whose recommendation points at the
+    contract's routing knob for exactly this signal:
+    ``per_judge_weights`` (down-weight the judge) — or sharpening the
+    criterion until the retest stabilises.
+
+    One finding per noisy judge; silent for an empty probe or when every
+    judge's disagreement is at or below the threshold.
+    """
+    findings: list[HealthFinding] = []
+    for rel in reliabilities:
+        try:
+            rate = float(_attr_or_key(rel, "disagreement_rate") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if rate <= threshold:
+            continue
+        name = str(_attr_or_key(rel, "judge_name") or "")
+        k = _attr_or_key(rel, "k")
+        fired = _attr_or_key(rel, "fired")
+        findings.append(
+            HealthFinding(
+                code="noisy_judge",
+                severity="warning",
+                summary=(
+                    f"judge {name!r} disagreed with itself on {rate:.0%} of verdict "
+                    f"pairs over the SAME frozen transcript (fired {fired}/{k}) — "
+                    "its drift signal is noise, not judgement"
+                ),
+                detail={
+                    "judge_name": name,
+                    "k": k,
+                    "fired": fired,
+                    "disagreement_rate": rate,
+                    "threshold": threshold,
+                    "recommendation": (
+                        f"down-weight it (scoring per_judge_weights[{name!r}] below "
+                        "the default) or sharpen its criterion until test-retest "
+                        "stabilises (see zicato board judges --test-retest)"
+                    ),
+                },
+            )
+        )
+    return findings
+
+
 def detect_preflight_verdict(preflight: dict[str, Any] | None) -> list[HealthFinding]:
     """Re-surface a non-OK contract pre-flight verdict as a health finding.
 
@@ -989,6 +1053,7 @@ __all__ = [
     "detect_dead_judge",
     "detect_stalled_loop",
     "detect_generalization_gap",
+    "detect_noisy_judge",
     "detect_preflight_verdict",
     "detect_refresh_cadence",
 ]

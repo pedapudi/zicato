@@ -507,4 +507,160 @@ def preflight_cmd(
         click.echo("  verdict:           OK (signal clears the measured floor)")
 
 
-__all__ = ["board_grp", "add_cmd", "audit_cmd", "list_cmd", "preflight_cmd", "remove_cmd"]
+@board_grp.command(
+    "judges",
+    short_help="List the board's judges; --test-retest measures reliability.",
+)
+@click.option(
+    "--workspace",
+    default=".zicato",
+    show_default=True,
+    help="Path to the zicato workspace root.",
+)
+@click.option(
+    "--epoch",
+    "epoch_id",
+    default=None,
+    help="Epoch whose board to inspect (default: the current epoch).",
+)
+@click.option(
+    "--test-retest",
+    "run_retest",
+    is_flag=True,
+    default=False,
+    help="Judge a frozen transcript k times per judge and report disagreement.",
+)
+@click.option(
+    "--retest-k",
+    default=3,
+    show_default=True,
+    type=click.IntRange(min=2),
+    help="How many times each judge re-judges the same frozen transcript.",
+)
+@click.option(
+    "--threshold",
+    default=0.25,
+    show_default=True,
+    type=click.FloatRange(min=0.0, max=1.0),
+    help="Pairwise disagreement rate above which a judge is flagged noisy.",
+)
+@click.option(
+    "--transcript",
+    "transcript_path",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help=(
+        "Frozen transcript file to re-judge (e.g. a settled reasoning trace "
+        "saved from a prior run's events). Default: a synthetic fixture "
+        "transcript."
+    ),
+)
+@click.option(
+    "--auxiliary-call-llm",
+    "auxiliary_dotted",
+    default=None,
+    help=(
+        "Dotted import path of the judge/aux call_llm (e.g. mymodule:aux). "
+        "Required with --test-retest — inline judges are LLM-backed."
+    ),
+)
+def judges_cmd(
+    workspace: str,
+    epoch_id: str | None,
+    run_retest: bool,
+    retest_k: int,
+    threshold: float,
+    transcript_path: str | None,
+    auxiliary_dotted: str | None,
+) -> None:
+    """List the board's declared process judges; optionally retest them.
+
+    Without --test-retest: print every judge the board declares (name,
+    mode, severity, criterion/dotted-path). With --test-retest: build
+    each judge through the same runtime bridge real runs use and judge
+    ONE frozen transcript --retest-k times; report the per-judge
+    test-retest disagreement rate. A judge that disagrees with itself on
+    identical input injects pure noise into every custom:<judge_name>
+    drift count it produces — the fix is a lower per_judge_weights entry
+    or a sharper criterion. Recommend-only; nothing is gated.
+    """
+    import asyncio  # noqa: PLC0415
+
+    from zicato.epoch.lifecycle import current_epoch_id  # noqa: PLC0415
+    from zicato.judge_runtime.reliability import (  # noqa: PLC0415
+        FIXTURE_TRANSCRIPT,
+        declared_judge_specs,
+        test_retest_board,
+    )
+
+    workspace_root = Path(workspace).resolve()
+    resolved_epoch = epoch_id or current_epoch_id(workspace_root)
+    board_file = (
+        board_path(workspace_root, resolved_epoch)
+        if resolved_epoch
+        else _resolve_board_path(workspace)
+    )
+    if not board_file.exists():
+        raise click.ClickException(f"no board at {board_file}")
+    try:
+        entries = load_board(board_file)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    specs = declared_judge_specs(entries)
+    if not specs:
+        click.echo(f"(no judges declared on {board_file})")
+        return
+
+    click.echo(f"{board_file} — {len(specs)} declared judge(s)")
+    for spec in specs:
+        body = str(spec.body).replace("\n", " ")
+        if len(body) > 60:
+            body = body[:57] + "..."
+        click.echo(f"  {spec.name}\t{spec.mode}\tseverity={spec.severity}\t{body}")
+    if not run_retest:
+        return
+
+    if not auxiliary_dotted:
+        raise click.ClickException(
+            "--test-retest needs --auxiliary-call-llm (inline judges are LLM-backed)"
+        )
+    from zicato.cli.commands.evolve import _import_callable  # noqa: PLC0415
+
+    aux_call_llm = _import_callable(auxiliary_dotted, kind="auxiliary_call_llm")
+    transcript = (
+        Path(transcript_path).read_text(encoding="utf-8") if transcript_path else FIXTURE_TRANSCRIPT
+    )
+
+    reliabilities = asyncio.run(test_retest_board(entries, transcript, aux_call_llm, k=retest_k))
+
+    click.echo(f"\nTest-retest over one frozen transcript (k={retest_k} per judge):")
+    for rel in reliabilities:
+        marks = "".join("V" if v else "." for v in rel.verdicts)
+        click.echo(
+            f"  {rel.judge_name}\tfired {rel.fired}/{rel.k} [{marks}]\t"
+            f"disagreement={rel.disagreement_rate:.0%}"
+        )
+
+    from zicato.health.diagnostics import detect_noisy_judge  # noqa: PLC0415
+
+    findings = detect_noisy_judge(reliabilities, threshold=threshold)
+    if not findings:
+        click.echo(f"  every judge is self-consistent at threshold {threshold:.0%}.")
+        return
+    for finding in findings:
+        click.echo(f"  WARNING [{finding.code}]: {finding.summary}", err=True)
+        recommendation = finding.detail.get("recommendation")
+        if recommendation:
+            click.echo(f"    recommendation: {recommendation}", err=True)
+
+
+__all__ = [
+    "board_grp",
+    "add_cmd",
+    "audit_cmd",
+    "judges_cmd",
+    "list_cmd",
+    "preflight_cmd",
+    "remove_cmd",
+]
