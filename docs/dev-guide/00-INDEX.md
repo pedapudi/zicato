@@ -55,7 +55,7 @@ chapter 01.
 
 | # | Rule | One-line | Verify |
 |---|---|---|---|
-| **G1** | The vendor rule | Nothing in git — code, comments, docstrings, tests, fixtures, commit messages, PR bodies, or trailers — references the model vendor. | `git log -p <base>..HEAD \| grep -icE 'claude\|anthropic\|co-authored\|generated with'` → **0** |
+| **G1** | The vendor rule | Nothing in git — code, comments, docstrings, tests, fixtures, commit messages, PR bodies, or trailers — references the model vendor. | `git log -p <base>..HEAD \| grep -icE "$pat"` (assemble `$pat` per `01-orientation.md §G1`; the check never spells the stems) → **0** |
 | **G2** | `uv sync --all-extras`, always | A bare `uv sync` deletes the dev tooling (pytest/mypy/ruff/uv itself) from `.venv`. | `uv run pytest --version` |
 | **G3** | No live model run without go-ahead | Live runs cost money and need explicit operator sign-off; the deterministic `target_0` recipe is the sanctioned e2e vehicle. | run `examples/zicato_examples/target_0_convergence/RUN.md`, not a real model |
 | **G4** | The two oracles are green before ANY commit | `test_convergence_known_answer` (the loop converges) + `test_decision_procedure_power` (the decision procedure's measured operating characteristics). | `uv run pytest tests/test_convergence_known_answer.py tests/test_decision_procedure_power.py -q` |
@@ -158,7 +158,7 @@ bash tools/parity.sh                                   # 6. the 6 parity gates (
 make node-test ; echo "node exit: $?"                  # 7. the JS behaviour suite (G5/G10)
 uv run pytest tests/test_convergence_known_answer.py \
              tests/test_decision_procedure_power.py -q # 8. the two oracles (G4)
-git log -p <base>..HEAD | grep -icE 'claude|anthropic|co-authored|generated with'  # 9. vendor scan (G1) → 0
+git log -p <base>..HEAD | grep -icE "$pat"    # 9. vendor scan (G1): assemble $pat per 01-orientation §G1 → 0
 ```
 
 > ✅ **ALWAYS** end at rung 9. It is the cheapest rung and the one whose failure is
