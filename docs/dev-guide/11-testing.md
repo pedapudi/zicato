@@ -25,16 +25,16 @@
 >
 > | ID | Invariant |
 > |----|-----------|
-> | T1 | **The full suite is the default; the fast lane is opt-in.** `make test` runs everything. A `slow`/`integration` test's runtime IS its coverage — never a candidate for stubbing. |
-> | T2 | **A regression test MUST fail with the fix stashed.** A test that passes both before and after a fix proves nothing about the fix. |
-> | T3 | **Never weaken an assertion to make a test pass.** Fix the code, or pin the new value with a measured justification in the commit. A pinned number moves only with a measured reason. |
-> | T4 | **Deterministic contracts pin interacting knobs OFF — AND carry the countermeasure.** Pinning best-of-1 / replicates-1 / gate-off makes a script deterministic, but every shipped default also needs a knob-ON adversarial test. Pinning-only is how bugs #6 and #8 hid. |
-> | T5 | **A worker subprocess resolves its adapter and callables from a dotted import path** — never a closure or a `sys.modules` monkeypatch. Those do not cross the process boundary. |
-> | T6 | **Autouse fixtures isolate process-global state on BOTH sides** (clear before AND after) so a test neither inherits nor bequeaths a pin. |
-> | T7 | **The dashboard reaper selects by workspace provenance and never signals its own process group.** Bug #5: a provenance-blind reaper group-killed an innocent concurrent evolve. |
-> | T8 | **The six parity gates are GREEN on unchanged behaviour; a RED gate is information.** A golden is re-captured only with a stated behavioural reason, and a re-capture never bakes an unrelated sibling change. |
-> | T9 | **The library never imports a driver; the query layer stays dashboard-free; the retired private paths stay retired.** These are import-linter / TID251 violations, caught by `lint-imports` / `ruff`, not a test. |
-> | T10 | **A node suite's real signal is the PROCESS EXIT CODE, not the tail line.** The `mock_server` mirrors the Python readers; a divergence is a bug in the mock. |
+> | V1 | **The full suite is the default; the fast lane is opt-in.** `make test` runs everything. A `slow`/`integration` test's runtime IS its coverage — never a candidate for stubbing. |
+> | V2 | **A regression test MUST fail with the fix stashed.** A test that passes both before and after a fix proves nothing about the fix. |
+> | V3 | **Never weaken an assertion to make a test pass.** Fix the code, or pin the new value with a measured justification in the commit. A pinned number moves only with a measured reason. |
+> | V4 | **Deterministic contracts pin interacting knobs OFF — AND carry the countermeasure.** Pinning best-of-1 / replicates-1 / gate-off makes a script deterministic, but every shipped default also needs a knob-ON adversarial test. Pinning-only is how bugs #6 and #8 hid. |
+> | V5 | **A worker subprocess resolves its adapter and callables from a dotted import path** — never a closure or a `sys.modules` monkeypatch. Those do not cross the process boundary. |
+> | V6 | **Autouse fixtures isolate process-global state on BOTH sides** (clear before AND after) so a test neither inherits nor bequeaths a pin. |
+> | V7 | **The dashboard reaper selects by workspace provenance and never signals its own process group.** Bug #5: a provenance-blind reaper group-killed an innocent concurrent evolve. |
+> | V8 | **The six parity gates are GREEN on unchanged behaviour; a RED gate is information.** A golden is re-captured only with a stated behavioural reason, and a re-capture never bakes an unrelated sibling change. |
+> | V9 | **The library never imports a driver; the query layer stays dashboard-free; the retired private paths stay retired.** These are import-linter / TID251 violations, caught by `lint-imports` / `ruff`, not a test. |
+> | V10 | **A node suite's real signal is the PROCESS EXIT CODE, not the tail line.** The `mock_server` mirrors the Python readers; a divergence is a bug in the mock. |
 
 ---
 
@@ -124,7 +124,7 @@ check: lint import-lint typecheck test node-test
 
 > ⛔ NEVER stub a `slow`-marked test's real subprocess / server / git call to
 > "speed it up". The marker's whole point is that the runtime IS the coverage
-> (T1): a worker-isolation test proves a real subprocess writes to a real
+> (V1): a worker-isolation test proves a real subprocess writes to a real
 > discarded checkout; a live-server test proves a real port binds. Stub it and
 > you have kept the assertion and deleted the thing it asserts. If the fast
 > lane needs to skip it, that is what the marker is for — the FULL suite stays
@@ -183,7 +183,7 @@ LOOP; the fourth is a session-scoped safety net. All follow the same
 opt-out shape: a `frozenset` of module names that exercise the REAL path
 and so skip the stub.
 
-### 11.2.1 Pin isolation (T6)
+### 11.2.1 Pin isolation (V6)
 
 CLI commands pin flag values process-wide via `config.pin_overrides`; the
 pins are module-global and would leak across tests. `_isolate_config_pins`
@@ -207,7 +207,7 @@ def _isolate_config_pins() -> Iterator[None]:
 ```
 — `tests/conftest.py`, `_isolate_config_pins`
 
-> ✅ ALWAYS clear process-global state on BOTH sides of the `yield` (T6). A
+> ✅ ALWAYS clear process-global state on BOTH sides of the `yield` (V6). A
 > before-only clear leaks a pin FORWARD (the test that set it poisons the
 > next); an after-only clear leaks a pin BACKWARD (a stray earlier pin
 > poisons this test). Under `-n auto` the leak is nondeterministic — the two
@@ -261,7 +261,7 @@ launch decision itself.
 > hides which path you actually exercise). The opt-out list IS the registry of
 > "tests that use the real thing".
 
-### 11.2.3 The provenance-scoped dashboard reaper (bug #5, T7)
+### 11.2.3 The provenance-scoped dashboard reaper (bug #5, V7)
 
 The most instructive fixture. It kills a real `python -m zicato.dashboard`
 child a test leaks — but its FAILURE mode, observed live, was killing a
@@ -385,7 +385,7 @@ for a spawn that slips through.
 
 ---
 
-## 11.3 The `_contract_pins` philosophy — pin OFF, then attack ON (T4)
+## 11.3 The `_contract_pins` philosophy — pin OFF, then attack ON (V4)
 
 The shipped defaults are **noise-aware**: best-of-3 proposer sampling, two
 averaged replicates per gauntlet duel, the Bradley–Terry evidence gate
@@ -446,7 +446,7 @@ knob owes a knob-ON adversarial test.
 
 > ⛔ NEVER let a shipped default be tested ONLY through contracts that pin it
 > OFF. That is precisely how bugs #6 and #8 shipped green: every scripted test
-> pinned the noise-aware machinery off, so nothing exercised it. T4: for every
+> pinned the noise-aware machinery off, so nothing exercised it. V4: for every
 > knob a deterministic contract pins off, there is at least one test whose
 > SUBJECT is that knob ON, driving the real machinery with an adversarial
 > fixture designed to expose the failure the knob enables.
@@ -544,7 +544,7 @@ A sibling test, `test_racing_field_best_arm_survives_to_floor`, drives the
 same target through a REAL multi-challenger racing round (field 4, replicates
 2, evidence pre-gate at 0.8) and asserts the best-known arm survives every
 rung, clears the champion gate, and is promoted at the exact floor — the
-knob-ON counterpart (T4) to the gauntlet oracle.
+knob-ON counterpart (V4) to the gauntlet oracle.
 
 > ✅ ALWAYS extend this oracle (not a new stubbed test) when you change the
 > scoring formula, the gate, the storage backend default, or the RoundLog
@@ -642,7 +642,7 @@ commit — never nudged to make a red test green.
 
 > ⛔ NEVER change a pinned rate / trial count / threshold in the power harness
 > to make it pass. Those numbers ARE the decision procedure's measured
-> operating characteristics (T3). If a change to the gate or replication moves
+> operating characteristics (V3). If a change to the gate or replication moves
 > them, that is the test doing its job — the RED tells you the procedure's
 > false-promote rate or its power changed. Re-derive the new number from the
 > seeded model, WRITE the derivation in the commit (the file's own arithmetic
@@ -701,7 +701,7 @@ rates stay meaningful: `AA_TRIALS = 60` cheap single-sample null duels,
 `AA_EFFECTIVE_TRIALS = 24` and `POWER_TRIALS = 12` for the replicated
 procedure (each effective trial runs up to ~39 replicated duels, ~12k board
 units in-process). These counts are pinned like every other OC number — they
-move only with a measured reason (§11.4.2, T3).
+move only with a measured reason (§11.4.2, V3).
 
 > ⚠️ TRAP — `_NoisyWorld` is a substitute for the WORKER, not for the
 > decision procedure. Its `install()` silences the best-effort dashboard-live
@@ -713,7 +713,7 @@ move only with a measured reason (§11.4.2, T3).
 
 ---
 
-## 11.5 The worker-boundary test support (T5)
+## 11.5 The worker-boundary test support (V5)
 
 `zicato._tournament_worker` runs in a SEPARATE OS process. So the adapter
 and `call_llm` callables it uses CANNOT be closures or
@@ -784,7 +784,7 @@ def make_sigterm_ignoring_adapter() -> SleepingAdapter:
 > `monkeypatch.setattr`, or a `sys.modules` injection. NONE of those cross a
 > `fork`/`exec` boundary — the child re-imports fresh and sees the real
 > module. A worker stub MUST be a module-level object with a dotted `factory`
-> path (T5). If your test needs the worker to do something new, add a named
+> path (V5). If your test needs the worker to do something new, add a named
 > adapter + `make_*` factory to `_subprocess_worker_support.py`, do not reach
 > for a monkeypatch that silently no-ops in the child.
 
@@ -882,7 +882,7 @@ prunes the registrations so each copy re-materialises its own on first
 `tools/parity.sh` is the behavior-preserving refactor oracle: a fixed set of
 gates, each GREEN on unchanged behaviour. The goldens were captured from the
 feature-complete base, so a refactor that moves any observable behaviour
-turns a gate RED (T8):
+turns a gate RED (V8):
 
 ```
 # The contract: on UNCHANGED behavior every gate is GREEN. The refactor is
@@ -1041,7 +1041,7 @@ should REDUCE it). **Update:** `--update` writes the current count as the new
 baseline — do this only when you have LEGITIMATELY reduced errors, never to
 paper over a regression.
 
-### 11.7.8 The never-bake-a-sibling-change rule (T8)
+### 11.7.8 The never-bake-a-sibling-change rule (V8)
 
 A golden re-capture is a CLAIM that the new bytes are correct. That claim is
 only reviewable if the re-capture contains ONLY the change under review.
@@ -1053,7 +1053,7 @@ only reviewable if the re-capture contains ONLY the change under review.
 > baseline — the next person sees a green gate and trusts a golden nobody
 > vetted. Re-capture the ONE gate your change legitimately moved
 > (`--only MOCK-GOLDEN`), review the diff, and commit the golden WITH the code
-> that justifies it (T8).
+> that justifies it (V8).
 
 > ⚠️ TRAP — a RED parity gate is INFORMATION, not a chore. A CONTRACT-HASH red
 > means an operator's epoch would spuriously roll; a MOCK-GOLDEN red means a
@@ -1064,7 +1064,7 @@ only reviewable if the re-capture contains ONLY the change under review.
 
 ---
 
-## 11.8 The five import contracts + the TID251 bans (T9)
+## 11.8 The five import contracts + the TID251 bans (V9)
 
 Two static gates keep the architecture from eroding: the import-linter
 library/driver contracts (`uv run lint-imports`) and the ruff TID251
@@ -1131,7 +1131,7 @@ instruction). Both tell you the fix directly.
 
 > ⛔ NEVER "fix" an import-contract or TID251 failure by loosening the
 > contract or deleting the ban. The failure is telling you a NEW edge would
-> break the architecture (T9) — a lib package started importing a driver, or
+> break the architecture (V9) — a lib package started importing a driver, or
 > a retired private path regrew. The fix is on YOUR side: move the shared code
 > to a public seam (the ban's `.msg` names it), or invert the dependency.
 > Editing `pyproject.toml` to permit the edge is editing the architecture, and
@@ -1147,7 +1147,7 @@ instruction). Both tell you the fix directly.
 
 ---
 
-## 11.9 Node behaviour-suite conventions (T10)
+## 11.9 Node behaviour-suite conventions (V10)
 
 The dashboard JS has its own behaviour suite under
 `src/zicato/dashboard/static/test/`, run by `make node-test` (and mirrored by
@@ -1177,7 +1177,7 @@ suspenders (the per-file exit-code signal OR the cumulative count).
 
 > ⚠️ TRAP — a green-looking tail line can hide a failing FILE. `make node-test`
 > is the canonical run and it propagates the exit code; if you ever run
-> `node run-all.mjs` by hand, check `echo $?`, not the last line. This is T10
+> `node run-all.mjs` by hand, check `echo $?`, not the last line. This is V10
 > and it is exactly the kind of thing a weaker agent trusts (the tail looks
 > green) and ships a broken suite behind.
 
@@ -1192,7 +1192,7 @@ models — the latter is the render-discipline backbone (the `noteProgress`
 cursor, the `core/sse.js` seq skip gate, the four run-states, the chrome
 pill's zero-DOM no-op beat).
 
-### 11.9.3 The mock_server parity pin (T10)
+### 11.9.3 The mock_server parity pin (V10)
 
 The two SERVED joins (round-timeline, racing-field) are computed on the
 server now (09-dashboard-and-query.md §9.2.5), but the node fixtures still
@@ -1215,7 +1215,7 @@ match (09-dashboard-and-query.md §9.16, step 3) — the mock is a parity
 witness, not a second implementation.
 
 > ⛔ NEVER re-derive a served join in prod JS to make a node test pass. If the
-> mock and the prod client disagree, the mock is wrong (T10) — it exists to
+> mock and the prod client disagree, the mock is wrong (V10) — it exists to
 > prove the client reads the server's answer, not to license the client to
 > compute its own. Fixing the divergence in `mock_server.mjs` (to mirror the
 > Python reader) is the correct move; re-deriving in `views/*.js` re-opens the
@@ -1319,7 +1319,7 @@ run the parity gates and oracles alongside it.
 Two disciplines govern every test change. They are the difference between a
 suite that catches regressions and one that rubber-stamps them.
 
-### 11.12.1 A regression test MUST fail with the fix stashed (T2)
+### 11.12.1 A regression test MUST fail with the fix stashed (V2)
 
 A test written to lock a bug fix is only a regression test if it FAILS
 against the buggy code. A test that passes both before and after the fix
@@ -1333,7 +1333,7 @@ touched.
 > trust to catch the regression's return — and the whole point of a casebook
 > regression test (§11.15) is that it catches the return.
 
-### 11.12.2 Never weaken an assertion — pin or justify (T3)
+### 11.12.2 Never weaken an assertion — pin or justify (V3)
 
 When a test goes red, there are exactly two honest responses: fix the code,
 or — if the new behaviour is CORRECT — update the assertion to the new value
@@ -1343,7 +1343,7 @@ the test's coverage.
 
 > ⛔ NEVER weaken an assertion to make a test pass. A pinned number
 > (`EXPECTED_FLOOR == 1.2`, a power-harness rate, a golden byte) moves ONLY
-> with a stated, measured reason in the commit (T3). If the convergence oracle
+> with a stated, measured reason in the commit (V3). If the convergence oracle
 > reds, either the loop broke (fix it) or the scalar formula legitimately
 > changed (re-derive `EXPECTED_FLOOR`, state the derivation, move the pin). If
 > a power-harness rate reds, re-derive it from the seeded model and justify it.
@@ -1546,7 +1546,7 @@ fix stashed. This is the template. Worked scenario: the client champion-scan
 (bug #4) — the server picked "first promoted" instead of the reigning
 (last-promoted) champion.
 
-**Step 1 — Reproduce the bug in a test that FAILS on the buggy code (T2).**
+**Step 1 — Reproduce the bug in a test that FAILS on the buggy code (V2).**
 Write the assertion for CORRECT behaviour first, against a fixture that
 distinguishes right from wrong. For bug #4 the distinguishing fixture is a
 TWO-promotion lineage — a single-promotion lineage reads identically either
@@ -1614,11 +1614,11 @@ uv run pytest tests/path::test_name -q      # MUST be GREEN
 
 Some contracts can only be proven by a REAL subprocess (worker isolation,
 budget escalation, config-crossing-the-boundary). These are `slow` /
-`integration` tests whose runtime IS the coverage (T1). The discipline is
+`integration` tests whose runtime IS the coverage (V1). The discipline is
 about staying bounded and leaving nothing behind.
 
 **Step 1 — Make the worker's behaviour a module-level importable adapter
-(T5).** Add a named adapter + `make_*` factory to
+(V5).** Add a named adapter + `make_*` factory to
 `tests/_subprocess_worker_support.py` (§11.5); its `worker_spec()` returns
 the dotted `factory` path. A closure or monkeypatch WILL NOT cross the
 process boundary — the child re-imports fresh.
@@ -1655,7 +1655,7 @@ worker SELF-aborts, exit 0) IS the test matrix: one proves the escalation
 layer, the other proves the cooperative budget.
 
 **Step 3 — Mark it `slow` / `integration`.** So the fast lane drops it and
-the marker documents that its runtime is intentional (T1). Never stub the
+the marker documents that its runtime is intentional (V1). Never stub the
 subprocess to speed it up — that deletes the coverage.
 
 **Step 4 — Set a hard timeout and assert NO LEAK.** The test must bound its

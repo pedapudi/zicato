@@ -593,7 +593,9 @@ def compute_contract_hash(inputs: ContractInputs) -> str:
     * **scoring** — ``json.load``, round every float to 6 decimal
       places, ``json.dumps(sort_keys=True)``.
     * **entrypoint** — the string verbatim.
-    * **mutable_trees** — sorted tuple of absolute path strings.
+    * **mutable_trees** — sorted tuple of NORMALIZED path strings
+      (`os.path.normpath` + POSIX; never filesystem-resolved, so the
+      hash does not depend on the process cwd or checkout — bug #10).
     * **proposer** — the resolved :class:`ProposerSpec` (agent id, sorted
       tools, per-skill normalized-body hashes sorted by name, custom
       ``agent.py`` source hash), serialized sorted-key.

@@ -115,7 +115,7 @@ forbidden_modules = ["zicato.dashboard"]
 ```
 — `pyproject.toml`
 
-**Why this matters (the WS-L hoist).** `zicato.query` was once a single
+**Why this matters (the query-layer hoist).** `zicato.query` was once a single
 monolithic `dashboard/state_reader.py` module — a driver-internal helper.
 It was hoisted OUT of the driver and split into per-view submodules so
 that (1) the Rust supervisor's read layer has a Python peer to keep parity
