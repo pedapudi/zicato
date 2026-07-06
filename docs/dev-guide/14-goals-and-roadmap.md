@@ -115,6 +115,86 @@ capability-mismatch → encode pipeline order in the coordinator; looping →
 exit conditions in the reviser) — treat that table as working hypotheses the
 first live epoch confirms or falsifies, not as promises.
 
+### 1.3 target_0 — the known-answer instrument, in detail
+
+The reason target_0 can be "the definition of done" (§1.1) is that its scalar is
+**hand-computable**. The example ships a deterministic harness and a scalar that
+lands on an exact floor
+(`examples/zicato_examples/target_0_convergence/`;
+`tests/test_convergence_known_answer.py`). The formula:
+
+```
+scalar(k, passes) = 1.0 * k  +  1.0 * (1 - passes/5)     # k = tokens, /5 = board size
+    v0 (3 tokens, 2/5 pass) = 3.6      — seeded baseline
+    v1 (2 tokens, 3/5 pass) = 2.4      — round 1, PROMOTED
+    v2 (3 tokens, 2/5 pass) = 3.6      — round 2, REJECTED (the negative control)
+    v3 (1 token,  4/5 pass) = 1.2      — round 3, PROMOTED = THE FLOOR
+```
+
+`test_gauntlet_converges_to_known_floor` runs three REAL rounds (real propose →
+apply → validate → subprocess workers → reduce → gate → persist, git backend,
+nothing tournament-side stubbed) and asserts the decision sequence is exactly
+`["promoted", "rejected", "promoted"]`, that each parent/child scalar equals the
+formula's value (`EXPECTED_V0 == 3.6`, `EXPECTED_V1 == 2.4`, `EXPECTED_FLOOR ==
+1.2`), and that the negative-control child (v2) *regresses* against its parent so
+the gate must refuse it. This is what "when improvement is real, the loop finds
+it; when a candidate is strictly worse, the gate refuses it" means as an
+executable claim, not a slogan.
+
+The three properties that make target_0 the instrument and not just a demo:
+
+1. **Exact, not approximate.** The floor is `1.2` on the nose, computed from the
+   shipped `builtin_scalar` — so any drift in the scoring path, the reducer, the
+   gate, or the worker boundary moves a pinned number and fails loudly. A test
+   that asserted "the scalar went down" would pass through a dozen silent bugs.
+2. **The negative control is first-class.** Round 2 is a challenger the gate MUST
+   reject; a loop that promoted everything would be caught here, not in
+   production. "Effective" requires both halves — find the win AND refuse the
+   regression.
+3. **No endpoint.** The whole thing runs with a scripted proposer and a
+   deterministic harness, so it is reproducible to the byte in CI. That is
+   exactly why Item 1 of the backlog (§3) exists: swap the scripted proposer for
+   a real one and ask whether a real proposer can find the same planted defects.
+
+> ✅ ALWAYS treat a red pinned number in the convergence oracle as a *contract
+> breach in the loop*, not a stale golden to re-capture. The floor is derivable
+> by hand; if it moved, either the derivation changed (update the doc AND the
+> comment) or a bug crept into the scoring/gate/worker path (fix the bug). See
+> 11-testing.md §"Goldens are hypotheses" for the general rule and
+> 12-bug-casebook.md §"Case 3" for what a silently-broken scalar path looks like.
+
+### 1.4 Rung 3 and why self-improvement is gated on soundness
+
+The escalation ladder (§1.2) ends at **zicato evolving zicato** — the whole
+soundness program exists to make that rung non-insane. The design already carries
+the seam: `RuntimeConfig.instance_id` "distinguishes nested instances when an
+outer zicato is optimizing an inner zicato (the target-3 dogfood plan)"
+(`src/zicato/core/runtime.py`), so workspaces, event streams, and lineage can be
+keyed per instance rather than colliding. But carrying the seam is not the same as
+being ready to use it.
+
+The reason rung 3 is *last*, stated plainly: **you do not point a self-improvement
+loop at its own decision procedure until that procedure's operating
+characteristics are proven and its promotion path has no second door.** If the
+inner loop's gate could be gamed (§6, "no gate-bypassing shortcuts"), an outer
+loop optimizing the inner one would find the game — that is what optimizers do.
+The A/A soundness proof (§2.3) and the single-promotion-door invariant are the
+two things that make "an optimizer pointed at the gate" safe rather than a
+runaway. Nothing on rung 3 begins until rungs 1–2 have produced live, audited
+improvement (§1.2).
+
+This is why the anti-goals (§6) are load-bearing and not merely tidy: every one of
+them is a door an inner optimizer would eventually walk through. A free-edit path,
+a silent default change, a health finding that auto-rolls an epoch — each is
+harmless-looking until something is *optimizing against it*. The discipline that
+feels like overkill at rung 0 is the precondition for rung 3.
+
+> ⚠️ TRAP — "the loop improved itself once" is not rung 3. A single lucky
+> self-improvement is a demo (§1's founding failure mode is exactly a loop that
+> *ran* convincingly while proving nothing). Rung 3 is the loop improving itself
+> under the standing soundness guarantees, audited, repeatedly — the measured
+> property, not the anecdote (invariant #1 of this chapter).
+
 ---
 
 ## 2. The current proof state
@@ -157,6 +237,135 @@ reality. Specifically unproven today:
 
 Until those run, the honest status line is: **the machine is proven; the
 world is modeled.** Do not claim more in any document or commit message.
+
+### 2.3 Reading the two proofs (so you can keep them green)
+
+"Keep both proofs green with unchanged pinned numbers" (§1.1) is only actionable
+if you know what each proof asserts and how to read a failure. This is the map.
+
+**The convergence oracle** (`tests/test_convergence_known_answer.py`) is the
+*existence* proof — walked in §1.3. Its failure modes and what they mean:
+
+| Failure | What it means |
+|---|---|
+| decision sequence ≠ `[promoted, rejected, promoted]` | the gate's yes/no changed — a scoring, reducer, or gate-threshold regression |
+| a child scalar ≠ its `EXPECTED_*` | the scalar path drifted (a reducer, a weight default, a worker-boundary desync — cf. `per_judge_weights` desync class, 03-contract-and-epochs.md §3.5) |
+| the negative control (v2) no longer regresses | the harness/scoring no longer distinguishes the worse candidate — the instrument itself is broken |
+
+**The operating-characteristics oracle** (`tests/test_decision_procedure_power.py`)
+is the *soundness* proof. It builds a seeded-noise world that mimics production
+(agents vary, judges are LLM-ish) and pins the decision procedure's behavior,
+naming BOTH the naive procedure's failures and the effective procedure's
+recoveries on the same draws. The load-bearing tests:
+
+- `test_aa_null_calibration_measures_the_noise_floor` — a generation dueling
+  ITSELF; the spread of the A/A `delta_scalar` IS the noise floor. This is where
+  the "the floor is measurable" claim lives.
+- `test_aa_effective_contract_false_promotion_rate_is_zero` — under the effective
+  contract, every A/A trial ends with the incumbent standing: **zero false
+  promotions**. The paired naive-contract test
+  (`test_margin_below_noise_floor_without_evidence_gate_is_unsound`, cited in
+  §2.1) promotes pure noise in a fraction of trials — the two together are the
+  soundness claim.
+- the planted-effect power sweep — effects at 0.5×/1×/3× the floor; power is
+  monotone and hits 1.0 at 3× (§1.1). The 0.5×-floor effect is made ~3σ by the
+  effective contract's per-duel averaging + replication, which is the whole
+  point: replication is the *power* device, the Bradley–Terry gate is the
+  *soundness* device (§2.1 facts #2–#3).
+
+Every statistical test PRINTS its rates and pins a bound, so a failure shows the
+measured number next to the threshold — the power-harness idiom (§5.4). A new
+decision surface ships in this file or it does not ship (§6, "no untestable
+statistics").
+
+> ⛔ NEVER "fix" a red oracle by loosening a pinned number or widening a bound to
+> match a new measurement. A pinned number is a hypothesis about the machine
+> (11-testing.md §"Goldens are hypotheses"); if it moved, either your change
+> altered the decision procedure (which is the thing under test — say so loudly
+> and re-derive) or you introduced a bug. The one legitimate reason to re-pin is a
+> *declared* decision-procedure change with its own design note and CHANGELOG
+> entry (§5.3) — never a quiet edit inside an unrelated PR.
+
+> ⚠️ TRAP — a green power suite proves the procedure is sound *under the seeded
+> noise model*, not under production noise. That gap is exactly what §3's backlog
+> exists to close: seeded noise is a MODEL of production noise (§2.2). A change
+> that keeps the suite green has preserved the modeled guarantee — it has not
+> verified the model. Do not report "proven under real conditions" from a green
+> CI run.
+
+### 2.4 Why endpoint-free proving is the discipline, not a limitation
+
+It is tempting to read "no model endpoint anywhere" (§2.1) as a weakness — proofs
+that avoid the real thing. It is the opposite: endpoint-free is what makes the
+proofs *proofs* rather than anecdotes. Three properties follow from it, and all
+three are load-bearing:
+
+- **Exact reproducibility.** A seeded harness produces the same draws every run,
+  so a pinned number is a real invariant, not a flaky threshold. The moment a
+  proof depends on a live endpoint it becomes non-reproducible, and a
+  non-reproducible "proof" is a story.
+- **Honest nulls.** The A/A null (§2.3) can only be trusted if the harness truly
+  injects the noise it claims and nothing else. A deterministic / seeded harness
+  lets the test *measure* the null it planted; a live endpoint's null is
+  unmeasurable (you cannot ask a serving model to be exactly as noisy as
+  yesterday).
+- **No hidden environmental leakage.** The seed discipline — "nothing about
+  process ids, tempdir names, or the clock leaks into the measurement" — is the
+  statistics-side twin of the contract hash's identity-vs-location rule
+  (03-contract-and-epochs.md §3.2.5; 12-bug-casebook.md §"Case 10"). A
+  measurement that varied with the tempdir would be as broken as a contract hash
+  that varied with the cwd.
+
+This is precisely why "no untestable statistics" (§6) is non-negotiable: a
+decision surface whose soundness can only be checked live has no reproducible
+null, so its guarantee is unfalsifiable in CI. The constraint *produced* good
+design — the stable-identifier seed threading exists because the alternative
+(seed from wall-clock / pid) failed the reproducibility bar. The seeded harness
+crossing the real subprocess-worker boundary intact (§2.1, the
+`test_noisy_adapter_seeded_draws_cross_the_worker_boundary` fact) is the proof
+that the discipline holds even through the process split that the live runs will
+use.
+
+> ✅ ALWAYS design a new decision surface so its operating characteristics are
+> checkable under a seeded harness in CI *before* writing it (§5.4). If you cannot
+> see how to null-test it cold, that is a design smell to resolve now — not a
+> "we'll verify it live later." The backlog's live items verify the *model
+> against reality*; they are not a substitute for a cold proof of the mechanism.
+
+### 2.5 Keeping §2 honest as live items land
+
+The proof state (§2.1 / §2.2) is a *living* claim, and the line between the two
+lists moves only in one direction and only with evidence. When a backlog item
+(§3) produces an audited live result, the discipline for updating this chapter:
+
+- **A claim moves from §2.2 to §2.1 only when a live run has *audited* it**, not
+  when the code is ready and not when one run happened to succeed. "Effective is a
+  measured property" (invariant #1) applies to the chapter's own claims: a single
+  live convergence is a data point, not a proof — the §2.1 entries are standing,
+  reproducible properties, and a live claim earns that status only when it is
+  repeatable and audited (§1's founding failure mode is exactly a loop trusted on
+  one convincing run).
+- **A live finding that contradicts an endpoint-free pinned number does NOT move
+  anything** — it is a stop-and-investigate (§3, standing rule 4). Either the
+  noise model was wrong (fix the model, re-derive the defaults, re-pin
+  deliberately) or the live wiring is broken (casebook time). The endpoint-free
+  proof is not weakened to accommodate a live anecdote.
+- **The honest status line updates with the lists.** Today it is "the machine is
+  proven; the world is modeled" (§2.2). As live items land, that sentence changes
+  — but only as far as the audited evidence supports, and never further in a
+  commit message or a report than the §2.1 list itself.
+
+This is the chapter's own version of "never make the loop's yes/no less
+trustworthy than you found it": never make the *proof state* claim more than the
+evidence holds. An over-claimed §2.1 is the same failure as an over-margined gate
+— a statement of confidence the measurements do not support.
+
+> ⚠️ TRAP — the temptation after a first successful live run is to move its claim
+> to §2.1 and relax. Resist it: §2.1 is the set of properties that must stay green
+> *forever*, so admitting a claim there is a commitment to keep proving it, not a
+> victory lap. A live property that cannot be made reproducible enough to stand in
+> §2.1 stays in §2.2 with its evidence noted — honestly partial beats falsely
+> settled.
 
 ---
 
@@ -409,6 +618,114 @@ Fix the harness first; the defect is precise and documented here.*
    is broken (bug-casebook time). Never adjust the pinned test to match the
    live anecdote.
 
+### 3.7 The backlog as a dependency graph
+
+The items are ORDERED because each one's result is *uninterpretable* without the
+ones before it. The ordering is not preference — it is the answer to "what would
+running this early actually prove?" (nothing, or worse, a false conclusion):
+
+```
+Item 1 (target_0 live convergence)  ─┐
+Item 3 (real A/A floor + margin)    ─┼─→ Item 5 (racing × BT × best-of-N shakeout)
+                                     │        │
+                                     └─→ Item 2 (target_1 dogfood)   Item 6 (screened economics)
+Item 4 (judge test–retest) ── informs Item 2's judge weights
+```
+
+| Item | Blocked on | Why running it early proves nothing |
+|---|---|---|
+| 1 — target_0 live convergence | operator go-ahead only | the cheapest first live signal; nothing depends on it *first*, but everything downstream assumes a proposer that works |
+| 3 — real A/A floor | a live harness for the target | a margin decision without a measured floor is guesswork; every later gate-criterion reads against this number |
+| 2 — target_1 dogfood | Items 1 + 3, AND the mock-null fix | uninterpretable while the harness is a structural null (a `1.000000` saturation, §3 Item 2) — you would be measuring the mock, not the loop |
+| 4 — judge test–retest | a live aux endpoint; ideally a settled live transcript | a synthetic judge can't tell you a live judge's self-consistency; feeds Item 2's `per_judge_weights` |
+| 5 — racing × BT × best-of-N | Items 1 + 3 | the composed stack under a real proposer's output distribution is meaningless without a working proposer and a real floor to size the budget |
+| 6 — screened economics | Item 5 running stably | a cost-per-accepted-improvement A/B needs a stable pipeline and two approved run budgets — the most expensive item, last |
+
+The dependency that trips people up: **Item 2 before its mock-null fix is the
+single most tempting early run** (the presentation agent is the "real" dogfood),
+and it is exactly the run that would produce a confident null. The pre-flight
+(`zicato board preflight`, verdict `ok`) is the hard entry gate precisely so the
+structural null cannot be run past accidentally. Treat a `warn` verdict as "the
+null is still here," not "close enough."
+
+> ✅ ALWAYS check an item's precondition list before proposing its run — and if a
+> precondition item has not produced an *audited* result, the dependent run is
+> premature no matter how ready the code looks. "Ready to run" and
+> "interpretable if run" are different questions; the ordering answers the second.
+
+### 3.8 The live-run artifact map — where each measurement lands
+
+Standing rule 3 says measurements land "where the instruments already put them —
+do not invent side-channel result files." This is that map, so a backlog item's
+"what to measure" is a lookup, not a scavenger hunt. Every artifact below is a
+canonical store an existing surface reads:
+
+| Measurement | Where it lands | Read by |
+|---|---|---|
+| A/A noise floor (Item 3) | `config.json` `noise_floor` (never hashed — 03-contract-and-epochs.md §3.6) | evolve-start margin check; loop-health detector |
+| pre-flight verdict (Item 2 gate) | `config.json` `preflight` (never hashed) | `detect_preflight_verdict` health finding |
+| per-round scalar / gate decision | `experiment.json` `outcome` + `journal.md` | dashboard lineage; epoch report |
+| generalization gap (Item 2) | `OutcomeRecord.train_loss` / `holdout_loss` / `generalization_gap` on `experiment.json` | gap detector; dashboard board-status |
+| evidence-gate resolution (Item 5) | `OutcomeRecord.evidence` (rating block + ci_history) | evidence cockpit view |
+| inconclusive dead-letters (Item 5) | `runtime/inconclusive/*.json` | operator inspects the hold rate |
+| best-of-N selection modes (Item 5) | the round log `round_log.jsonl` (`critique_selected.reason`) | proposal-session fold; 05-proposer.md §5.7 |
+| which mutation points the proposer touches (Item 2) | the fertility view over the index (mutation track records) | dashboard fertility surface |
+| judge test–retest (Item 4) | the `zicato board judges --test-retest` report | operator; `per_judge_weights` decision |
+
+Two operating rules ride on this map. First, the **dashboard is on and its URL
+reported before the first round settles** (§3's standing rule 2; default
+`http://127.0.0.1:7892`) — the racing ladder and evidence cockpit are the live
+views for Items 5–6, and a run whose URL was never surfaced is one the operator
+cannot supervise. Second, a measurement that would need a *new* file is a signal
+you are measuring the wrong thing: if the instrument that already exists cannot
+surface it, either extend that instrument (with its own test) or the measurement
+is not the one the item asked for.
+
+> ⚠️ TRAP — a **zero** dead-letter rate on Item 5 with a real proposer and a
+> ~38-run evidence budget is itself suspicious, not clean (§3 Item 5 gate
+> criteria; 04-evaluation-statistics.md §6). Some crownings *should* land
+> inconclusive under real noise; a rate of exactly zero suggests the pre-gate is
+> forcing promotions rather than holding them — the exact second-door failure §6
+> forbids. Read the dead-letter rate as a health signal, not a defect to drive to
+> zero.
+
+### 3.9 What "explicit operator go-ahead, per run" means
+
+"Agent teams verify via test suites and CI — a live run is an *operator decision*
+that an agent executes, never an agent initiative" (§3). This is the single most
+important operating boundary in the whole backlog, so its shape is precise:
+
+- **Per run, not per campaign.** Go-ahead for Item 1 is not go-ahead for Item 2. A
+  new run — even a re-run of the same item after a config change — is a new
+  decision. An agent that ran Item 3 does not get to "continue to Item 5"; it
+  reports Item 3's result and stops.
+- **Explicit, not inferred.** "The operator asked me to work on the live program"
+  is not go-ahead for a specific run. Go-ahead is the operator saying *run this
+  specific run now*, and it is recorded (in the run's provenance / the operator's
+  message), not assumed from context.
+- **What the agent DOES contribute:** everything up to the launch. The strongest
+  agent contribution to the live program is "a runbook item so precise the
+  operator's go-ahead is a formality" (§6) — preconditions verified, commands
+  ready, the dashboard-URL report drafted, the measurement plan written. The agent
+  makes the run *trivial to authorize and supervise*; it does not authorize it.
+- **The launch reports the dashboard URL immediately** (§3's standing rule 2;
+  default `http://127.0.0.1:7892`), before the first round settles, so the
+  operator can supervise from the first bracket.
+
+The reason this is a hard boundary and not a courtesy: live runs cost real money,
+occupy the workspace's runtime lock, and produce artifacts an operator may need to
+quarantine. An agent that starts one on its own initiative has spent the
+operator's money and locked their workspace without consent — and, at rung 3
+(§1.4), an agent that could self-authorize live runs is an optimizer that has
+found a way to spend unboundedly.
+
+> ⛔ NEVER start a live `evolve` (or any board-audit / judge-retest run that hits a
+> live endpoint) without recorded per-run operator go-ahead — even if a previous
+> run was authorized, even if the code is obviously ready, even if "it's just a
+> quick check." This is chapter invariant #2 and it has no fast path. Verify with
+> suites and seeded harnesses; hand the operator a run so precise that saying yes
+> is a formality; then wait for the yes.
+
 ---
 
 ## 4. The deliberately-deferred register
@@ -434,6 +751,120 @@ proposal (see §5).
 > partial implementation that "doesn't count" because it is small. Partial
 > implementations of deferred architecture are how a codebase grows two half
 > answers to one question.
+
+### 4.1 The un-deferral protocol, worked
+
+Re-opening a deferred item is a specific, bounded move — not "the deferral
+lapsed, so I'll just build it." The protocol:
+
+1. **Quote the frozen reasoning verbatim.** Name the item (D-number), paste its
+   reasoning, and address it head-on. A proposal that ignores the frozen
+   reasoning is asking the reviewer to re-derive the original decision — which is
+   exactly what the register exists to prevent.
+2. **Show the trigger fired, with evidence.** Each entry names a concrete
+   un-deferral trigger. The proposal must show it *actually happened* — a real
+   consumer, a real profile, a real measurement — not that it plausibly could.
+3. **Re-cost against today's code.** The frozen reasoning was true at decision
+   time; some of it may have changed (a boundary that was only CI-enforced may
+   now be shipped; a benchmark may need re-running). Re-ground every claim.
+4. **All-or-nothing, never a sliver.** A deferred *architecture* (D4 portfolio,
+   D1 wheel split) comes back as its own design pass, not a partial that "grows
+   into it." The trap above is the whole reason the register exists.
+
+**Worked example — un-deferring D2 (hybrid numeric/enum search).** The frozen
+reasoning: "every current target is text-dominant … building a numeric optimizer
+with no numeric-heavy surface to validate on produces untested machinery." The
+trigger: "a real target shows a numeric-heavy mutable surface where per-round LLM
+proposals demonstrably waste rounds vs a line search." A valid un-deferral
+proposal would:
+
+- **Quote D2's reasoning** and confirm it still holds structurally (the applier's
+  `set_numeric` / `set_enum` ops exist — 05-proposer.md §"The patch-op table" —
+  so the *mechanism* is there; only the *search* was deferred).
+- **Show the trigger, measured:** a shipped target whose mutation manifest is
+  ≥ N numeric points (thresholds, budgets, weights as first-class mutation
+  points), plus a live run (§3) showing the proposer spending rounds re-rolling
+  numeric values a line search would have swept — the "demonstrably waste rounds"
+  clause, with round counts.
+- **State the acceptance criterion up front** (§5.4): the numeric search finds
+  the same or better optimum in fewer harness runs than the LLM-proposed baseline
+  on that surface, measured on the same seeds, pinned as a test.
+- **Confine the change** to a search strategy over the existing numeric ops — it
+  does NOT touch the contract hash (a search strategy is a `RuntimeConfig`-shaped
+  concern, not a scoring rule; 03-contract-and-epochs.md §3.12) and does NOT
+  widen proposer visibility.
+
+An un-deferral that cannot show the trigger fired is a request to re-litigate the
+deferral — which the answer to is "the reasoning still holds; deferred."
+
+> ⛔ NEVER un-defer D4 (portfolio / quality-diversity) or D1 (wheel split) as a
+> "small" change. Both are flagged architectural: D4 changes what "champion"
+> means across the lineage, journal, dashboard, and gate; D1 changes packaging
+> boundaries the worker/dashboard spawns cross. Their un-deferral is a design
+> pass with the protected-incumbent and server-authority invariants renegotiated
+> explicitly (§4 rows D4/D1) — "bolting a population onto the single-champion data
+> model would be meta-lesson M1 committed on purpose" (12-bug-casebook.md §"The
+> meta-lessons").
+
+### 4.2 Deferred is not an anti-goal (and vice versa)
+
+Two categories of "we don't do this" live in this chapter, and confusing them is
+a real failure mode. They are opposites in their futures:
+
+| | Deferred register (§4) | Anti-goals (§6) |
+|---|---|---|
+| Might it ship someday? | **Yes** — when the un-deferral trigger fires | **No** — never, by design |
+| What re-opens it | evidence the trigger fired (§4.1) | nothing; it is a standing refusal |
+| Why it is here | the work is *not yet worth it* or *not yet validatable* | the work would *break a guarantee* the system exists to hold |
+| Example | hybrid numeric search (D2) — valuable once a numeric surface exists | a free-form source-edit path — dissolves the containment/auditability guarantees |
+
+A deferred item is a *timing* decision: the machinery is fine, the moment is
+wrong. An anti-goal is a *soundness* decision: the machinery itself would void a
+proof. So D2 (numeric search) can un-defer cleanly, but "let the model edit files
+directly" can never un-defer, no matter how convenient — it is not deferred, it is
+refused.
+
+> ⚠️ TRAP — do not propose an anti-goal as if it were a deferred item ("we could
+> add a free-edit path behind a flag, deferred for now"). An anti-goal has no
+> un-deferral trigger because there is no future state that makes it safe — the
+> guarantee it would break is not conditional. If your proposal's premise is "this
+> anti-goal is fine under condition X," the condition is the thing to scrutinize,
+> and the burden is a design note showing the guarantee survives (§5.3), not a
+> deferral entry.
+
+### 4.3 Adding a deferral (the register is bidirectional)
+
+The register grows in both directions: §4.1 removes entries, and sometimes a
+proposal's right outcome is a *new* deferral rather than a build or a rejection.
+Deferring well is a skill — a good deferral saves a future agent the whole
+investigation. A register-worthy deferral records three things:
+
+1. **The frozen reasoning, at decision time.** Not "we didn't get to it" but *why
+   it is not worth building now* — the specific cost/benefit or
+   not-yet-validatable argument, grounded in code as it stands (§5.1). D6's entry
+   is the model: it freezes the actual benchmark numbers
+   (`git_genstore.py::checkout_ephemeral`'s docstring) so a future agent does not
+   re-run them to rediscover "the cost says no."
+2. **The un-deferral trigger, concrete.** A future condition an agent can *check*,
+   not a vibe. "When a numeric-heavy surface exists" (D2), "when a live-run profile
+   shows checkout cost" (D6), "when an external library consumer exists" (D1) —
+   each is verifiable. A trigger like "when it seems worth it" is not a trigger; it
+   is a re-litigation invitation.
+3. **What a partial build would cost** (the §4 trap): naming why the sliver is
+   worse than nothing makes the all-or-nothing rule self-enforcing.
+
+The discipline that makes the register valuable: a deferral is a *decision with
+its reasoning attached*, so re-opening it (§4.1) engages the reasoning rather than
+starting over. A "deferred: TODO" with no reasoning is not a deferral — it is a
+gap wearing a deferral's clothes, and the next agent will re-investigate from
+scratch, which is exactly the waste the register exists to prevent.
+
+> ✅ ALWAYS write a deferral so the next agent can act on it without re-deriving
+> it: frozen reasoning, checkable trigger, partial-build cost. If you find yourself
+> unable to state a concrete trigger, the honest move is usually a *rejection* (it
+> will never be worth it — say so and why) or a *build* (it is worth it now), not a
+> deferral — a deferral with no trigger is an undecided question mislabeled as a
+> decision.
 
 ---
 
@@ -529,6 +960,138 @@ named test that fails today and passes after.
 5. **Acceptance** — the measurements and bounds, stated before code.
 6. **Cadence** — PR stack, oracle checkpoints, docs to sweep.
 
+### 5.7 A worked proposal (the template, filled in)
+
+To make §5.6 concrete, here is the template applied to a real doc-only backlog
+item: a **winner-resolution + rating layer under the schedulers** (Ranked Pairs /
+Bradley–Terry / maximal lotteries / Smith prune), currently design-only
+(`docs/design/SELECTION-THEORY.md`; nothing built). This is illustrative — not an
+endorsement to start it — but it shows the shape a reviewable proposal takes.
+
+1. **Premise (cited).** Today the gauntlet resolves a duel by scalar delta and
+   the racing structure by rung survival; the evidence gate adds a Bradley–Terry
+   *confidence* threshold (`recommended_scaffold_weights`,
+   03-contract-and-epochs.md §3.5). There is no separate *winner-resolution* pass
+   that turns a set of pairwise results into a ranking under a social-choice rule
+   — cite the resolver seam in `zicato.selection` and confirm by grep that no
+   Ranked-Pairs / Smith-set code exists. (If it turns out half-built, the item
+   shrinks from a feature to an extension — §5.1's actual save.)
+
+2. **Objection (and what it changed).** The strongest objection: "a
+   social-choice resolver over noisy pairwise results is a more elaborate way to
+   overfit the noise — argmax over a Smith set is still argmax." The resolution
+   must be the SELECTION-THEORY discipline: **replicate first, resolve second** —
+   the resolver runs over *replicated, gate-cleared* pairwise evidence, never raw
+   single duels, so it is a soundness-preserving *ordering* on top of the gate,
+   not a second promotion door (§6, "no gate-bypassing shortcuts"). If the
+   objection cannot be answered without weakening the gate, the item does not
+   ship.
+
+3. **Boundary check.** Does it widen proposer visibility? No — resolution is
+   evaluation-side. Does it touch contract identity? YES: a new resolution rule
+   changes what "winner" means, so it is a `TournamentStructure` param (folds into
+   the contract hash via the scoring recursion, 03-contract-and-epochs.md §3.2.3)
+   and needs the omit-at-default treatment (§3.4) so existing epochs do not roll.
+   → design note required (§5.3), stating the omit-at-default decision and the
+   epoch-roll semantics of opting in.
+
+4. **Slots audit.** Every artifact the resolver writes (a rating block, a
+   ci_history) already has a home on `OutcomeRecord.evidence` (03-contract... /
+   journal.py `_outcome_from_dict`); confirm one logical instance per generation
+   slot and an invalidation story on re-resolution (M1 — one slot, N logical
+   artifacts, 12-bug-casebook.md §"The meta-lessons").
+
+5. **Acceptance (stated before code).** In the power-harness idiom (§5.4): under
+   the A/A null the resolver promotes nothing (soundness preserved); on planted
+   effects it recovers the true order at ≥ the current procedure's power on the
+   same seeds; the naive resolver's failure (argmax over noisy pairs) is measured
+   on the same draws and pinned as documentation. A named test that fails today
+   and passes after.
+
+6. **Cadence.** Any confirmed resolver bug ships first (§5.5, fixes-first); the
+   rating layer stacks as a single-concern PR behind it; both oracles green at
+   the merge point with the new knob byte-identical at default-off; docs
+   (`SELECTION-THEORY.md`) land in the same PR.
+
+The point of the worked example: a reviewable proposal is *almost entirely*
+premise, objection, and acceptance — the code is the small part. A proposal that
+leads with the code has skipped the parts that decide whether it should exist.
+
+### 5.8 The fixes-first cadence, worked
+
+"Fixes first" (§5.5) is the cadence rule most often skipped under time pressure,
+and it has a precise shape worth spelling out because every bug in
+12-bug-casebook.md was found *while building a feature* — the feature exposed the
+bug, and the discipline is to land the fix independently before the feature that
+found it.
+
+The shape, using the casebook's pattern as the template:
+
+1. **Isolate the fix as its own leading PR.** When a feature branch surfaces a
+   confirmed bug (a wrong mounted tree, a replicate-slot reuse, a spurious roll),
+   the fix ships FIRST, on its own branch, before the feature. It is independently
+   valuable — a bug fix stands alone — and it keeps the feature PR reviewable (a
+   reviewer is not asked to distinguish "the fix" from "the feature" in one diff).
+   The program's two fix PRs both LED their phases (§5.5, the WS-F precedent).
+2. **The regression test must fail with the fix stashed.** This is meta-lesson M3
+   (12-bug-casebook.md §"The meta-lessons"): a regression test that passes whether
+   or not the fix is present pins nothing. *Demonstrate* the failure — stash the
+   fix, watch the test go red, restore it, watch it go green. A test asserted to
+   catch a bug it never saw fail is a test that will silently rot.
+3. **Then the feature stacks behind the fix**, single-concern, with a stated
+   dependency order (§5.5). Module moves / facade work sequence LAST so files do
+   not churn under active branches.
+4. **Both oracles green at the merge point** (§2.3), plus the byte-identical-at-
+   default check for every default-off knob the feature added (03-contract-and-
+   epochs.md §3.11 step 8 is the same discipline on the contract side).
+
+Why this order and not "fix and feature in one PR since they're related": a
+combined diff hides which change did what, so a later bisect cannot separate a
+fix regression from a feature regression — and the fix, being independently
+valuable, is held hostage to the feature's review. The casebook exists because
+these bugs were subtle; the cadence exists so the *next* subtle bug's fix is not
+buried in an unrelated feature diff.
+
+> ⛔ NEVER ship a regression test you have not watched fail with the fix removed.
+> "It would have caught the bug" is a hypothesis, and M3 makes it a demonstrated
+> one — the single most common way a regression test rots is being written against
+> a codebase where the bug is already fixed, so it is green from birth and pins the
+> wrong invariant (or none). Stash, red, restore, green — every time.
+
+### 5.9 Docs land with the change
+
+"Docs land with the change" (§5.5) is not politeness; a doc that describes a
+behavior the code no longer has is worse than no doc, because a reader trusts it.
+Three specific disciplines:
+
+- **CLI.md is a GENERATED artifact.** `docs/design/CLI.md` is regenerated from
+  `zicato --help` — the `--help` output is canonical, not the doc. On any CLI
+  change, regenerate; never hand-edit CLI.md to match. A hand-edit that drifts from
+  `--help` is a lie that looks authoritative.
+- **Sweep the design docs your change stales.** If a change moves a default, a
+  boundary, or an invariant a design doc asserts, that doc's claim is now false —
+  sweep it in the SAME PR (the `docs: sweep stale default claims` commits are the
+  precedent, §5.5). A stale claim in a design doc is a future agent's wrong premise
+  (§5.1).
+- **The dev guide is code-grounded too.** This guide's rule — "ground EVERY claim
+  in the branch's actual code; prefer symbol names + file paths over line numbers"
+  — applies to edits here as much as to the source docs. A chapter that describes a
+  `_canon_*` function the code no longer has is the same failure as a stale design
+  doc. When you change a subsystem this guide documents, the chapter is part of the
+  change's blast radius.
+
+The CHANGELOG is the fourth surface (§5.5, §6.1): a behavior-affecting default is a
+CHANGELOG entry with the pin spelled out, in the loud `⚠️ BREAKING DEFAULTS` idiom
+the noise-aware-defaults and contract-hash-fix entries established
+(03-contract-and-epochs.md §3.11 step 9). A default changed with no CHANGELOG entry
+is a casebook entry waiting to happen (§6, "no silent defaults changes").
+
+> ⚠️ TRAP — regenerating CLI.md is a mechanical step easy to forget in a CLI-flag
+> PR, and the drift is invisible until a reader follows the stale doc into a flag
+> that no longer exists. Make it part of the change, not a follow-up: the `--help`
+> output is the source of truth, so the doc is derived, and a derived artifact that
+> is not re-derived is stale by definition.
+
 ---
 
 ## 6. Anti-goals
@@ -593,6 +1156,60 @@ be checked cold — that constraint produced the stable-identifier seed
 discipline, and it is non-negotiable because it is the only thing that keeps
 the statistics chapter's facts *facts*.
 
+### 6.1 Anti-goals as a pre-merge checklist
+
+Each anti-goal is enforced by a mechanical check, not vigilance. Run this before
+you open a PR; a "no" on any row is a blocker, not a discussion:
+
+| Anti-goal | The mechanical check | Where it is enforced |
+|---|---|---|
+| No free-form source edits | every mutation goes through an enumerated mutation point + the validating applier's post-apply syntax gate | `zicato.mutation.applier`; `derive_generation` all-or-nothing (03-contract-and-epochs.md §3.9.2) |
+| No vendor coupling | the per-branch scan finds no model-vendor name / id / trailer in the diff or commit message; every LLM touch is the `CallLLM` seam | the vendor scan; `models_config.py` / `builder.json` own model selection, never code/mocks |
+| No silent default change | a changed behavioral default carries a CHANGELOG `⚠️ BREAKING DEFAULTS` entry with the pin spelled out; omit-at-default canonicalization so non-pinners roll deliberately | `CHANGELOG.md`; 03-contract-and-epochs.md §3.4 |
+| No gate-bypassing shortcut | no test hook, resume path, repair tool, dashboard control, or override writes the promoted spine directly | every champion-pointer write goes through the gate + confirmation stack (§6) |
+| No agent-initiated live run | the run has recorded explicit operator go-ahead; the launch reported its dashboard URL | §3's standing rules; the gate-live-runs discipline |
+| No untestable statistic | the new decision surface has a power-harness test (nulls first, planted deltas in floor units, printed rates + pinned bounds) that fails today and passes after | `tests/test_decision_procedure_power.py` (§2.3, §5.4) |
+
+The through-line: an anti-goal you can only enforce by *remembering* it is an
+anti-goal you will eventually violate. The reason each has a mechanical check is
+the same reason rung 3 exists (§1.4) — a rule an optimizer can route around is not
+a rule. If your change makes one of these checks harder to run automatically, that
+is itself a regression worth flagging.
+
+> ⛔ NEVER treat "it's just a comment / a test hook / an operator convenience" as a
+> carve-out for any row. The gate-bypass and vendor-coupling rows in particular
+> have "no exceptions" written into them (§6, §5.5): a second door voids the
+> soundness claims wholesale, and a single vendor string in a comment fails the
+> scan for the whole branch. The checklist has no asterisks.
+
+### 6.2 The anti-goals are the shape of the north star
+
+Read positively, each anti-goal is not a restriction bolted onto the system — it
+is a face of the one goal (§1). "Demonstrably effective" *is* the conjunction of
+these refusals:
+
+| Anti-goal | The property of the north star it protects |
+|---|---|
+| no free-form source edits | **auditability** — every change is enumerable, diffable-by-point, attributable (the fertility map, diff-complexity, patch journaling all key on the mutation surface) |
+| no vendor coupling | **portability** — the loop is a property of the mechanism, not of one endpoint; every LLM touch is the `CallLLM` seam |
+| no silent default changes | **comparability** — a default is part of the measured system, so changing one is a contract-visible act (03-contract-and-epochs.md §3.4) |
+| no gate-bypassing shortcuts | **soundness** — the whole claim is a claim about *the gate*; a second door voids it |
+| no agent-initiated live runs | **operator authority** — money and live epochs are operator decisions (§3.9) |
+| no untestable statistics | **falsifiability** — a guarantee that cannot be null-tested in CI is not a guarantee (§2.4) |
+
+The reframing matters because it changes how a proposal reads. A proposal that
+"works around" an anti-goal is not clever — it is proposing to give up the
+property in that row. "Let the model edit files directly" trades away
+auditability; "hard-code the model" trades away portability; "let the pre-gate
+force a promotion" trades away soundness. Once you see each anti-goal as *the goal
+wearing a No*, the refusals stop feeling like friction and start reading as the
+specification they are.
+
+> ✅ ALWAYS state, for any change that brushes an anti-goal, which property in the
+> table above it preserves and how. That is the same discipline as §1.1's two-proof
+> definition of done, applied to the refusals: if you cannot name the property your
+> change keeps intact, you are probably trading it away.
+
 ---
 
 ## 7. Where to go from here
@@ -605,6 +1222,30 @@ the statistics chapter's facts *facts*.
   overfitting-boundary rule in hand.
 - Anything else → 13-recipes.md for the mechanical how, and this chapter's
   §5 for whether and in what order.
+
+### 7.1 By task — the fuller map
+
+| If you are about to… | Read first | And do not skip |
+|---|---|---|
+| add a scoring / gate / selection rule | 04-evaluation-statistics.md §13, 06-tournament-and-selection.md | this chapter §5.4 (measured acceptance) + §2.3 (the power oracle) |
+| add a contract knob | 03-contract-and-epochs.md §3.11 | §3.4 (omit-at-default) — a missed registration mass-rolls the fleet |
+| widen what the proposer sees | 05-proposer.md §"The restricted-visibility envelope" | this chapter §5.3 (design-first) — an overfitting-boundary change needs a note before code |
+| touch storage / worktrees / caches | 07-runtime-and-durability.md | casebook cases 1, 2, 8, 9 (the identity-vs-location + slot-reuse classes) |
+| add a runtime tuning knob | 03-contract-and-epochs.md §3.12 | the choose-which table — a scoring rule mis-filed as runtime silently breaks comparability |
+| propose a live run | this chapter §3 (the item's preconditions) + §3.9 | the operator's per-run go-ahead — never an agent initiative |
+| re-open a deferred item | this chapter §4.1 | the frozen reasoning — engage it, don't re-derive it |
+| fix a bug a feature exposed | 12-bug-casebook.md (the class) | this chapter §5.5/§5.8 — fixes-first, and the test must fail with the fix stashed |
+
+### 7.2 A reading order for a new contributor
+
+If you are new to zicato and want the shortest path to *contributing without
+breaking a proof*: 01-orientation.md (what the loop is) → 02-architecture.md (the
+process split) → 04-evaluation-statistics.md (the noise doctrine — everything
+downstream is built on it) → this chapter §1–§2 (what "effective" means and what
+is proven) → the chapter for your subsystem. The one non-negotiable before any
+change to the loop's decision path: §1.1's two-proof definition of done. If you
+cannot state which of the two proofs your change is preserving and how, you are
+not ready to make it yet.
 
 The north star, restated once more in operational terms: **keep the two
 proofs green, move the endpoint-gated items through the runbook with the
