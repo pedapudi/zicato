@@ -29,6 +29,9 @@
 > | S8 | The supervisor opens `index.db` read-only, refuses a `user_version` that does not equal its pinned `EXPECTED_SCHEMA_VERSION`, and every index-backed endpoint degrades to an empty/`null` payload with a `note` rather than a 500. |
 > | S9 | The supervisor is the SOLE signaller of worker pids on the escalation path. The Python parent requests kills by writing markers; it never signals workers itself. |
 > | S10 | Every integrity-notary check (diff containment, promotion gate, divergence) is read-only and fail-open on the supervisor side: it alarms on positive observed evidence and reports nothing when the attestation cannot be made. |
+> | S11 | The two loops (`heartbeat_loop`, `runs_loop`) are the only active code. Each is a pure-decision-function-plumbed `tokio::time::interval` select-loop; `runs_loop` applies its per-run triggers in a FIXED priority order (confirmed-death reap → kill-request → deadline → staleness), and every escalation is mirrored to the in-memory action ring AND — when configured — the ledger. |
+> | S12 | The live surface never blocks and never leaks write intermediates: the filesystem watcher drops `*.tmp` atomic-write intermediates and per-file-debounces; the SSE broker is a bounded broadcast that drops a slow client rather than blocking the watcher or other clients. |
+> | S13 | The supervisor holds NO cached state across ticks except the explicitly-carried trackers (`SeqLiveness`, the integrity de-dup sets, the ledger tail) and the process-lifetime counters. `WorkspacePaths` is read fresh every tick and is the Rust twin of `zicato.runtime.paths`. |
 
 ---
 
@@ -796,7 +799,580 @@ uv run pytest tests/ -q                    # nothing else regressed
 
 ---
 
-## 8.14 Cross-references
+## 8.14 Anatomy of the two loops
+
+§8.2 named the two loops; this is how they actually run. `main.rs` wires them
+identically: build `WorkspacePaths` from the workspace root, build `Thresholds`
+from the CLI flags, spawn the filesystem watcher (100ms debounce), construct the
+shared trackers, open the ledger (if `--ledger-dir` was given) and stamp a
+`SupervisorStart` record, then `tokio::spawn` each loop on the shared `--interval`
+tick. Both loops select on a broadcast shutdown channel so a clean exit stops
+them together.
+
+```rust
+    let seq_liveness = Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new()));
+    ...
+    let fold_diagnostics = Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new());
+    ...
+    let led = Arc::new(zicato_supervisor::ledger::AuditLedger::open(dir));
+    ... led.append(zicato_supervisor::ledger::RecordKind::SupervisorStart, ...)
+    ...
+    let interval = Duration::from_secs(cli.interval.max(1));
+    tokio::spawn(async move {
+        watchdog::heartbeat_loop(hb_paths, thresholds, interval, hb_log, hb_seq, hb_shutdown).await
+    });
+    tokio::spawn(async move { watchdog::runs_loop(...).await });
+```
+— `crates/supervisor/src/main.rs` (abridged)
+
+The `SeqLiveness` tracker is a *shared* `Arc<Mutex>`: `heartbeat_loop` advances it
+(the only writer) and `/statusz` reads it without advancing, so both agree on the
+last seq-change age (S11). This is the structural half of the seq-first liveness
+of §8.3.
+
+### 8.14.1 `heartbeat_loop` — observe, classify, warn (never kill)
+
+```rust
+                let hb = reader::read_heartbeat(&paths);
+                let obs = match seq_liveness.lock() {
+                    Ok(mut tracker) => tracker.observe(hb.as_ref(), Utc::now(), &thresholds),
+                    Err(_) => continue,
+                };
+                match obs.action {
+                    HeartbeatAction::Nothing => {}
+                    HeartbeatAction::Warn => { warn!(?hb, ..., "heartbeat is stale (warn threshold)"); }
+                    HeartbeatAction::Stale => {
+                        // Deep-stale past the former kill threshold. We do NOT
+                        // signal the orchestrator: restart is an operator /
+                        // process-supervisor decision. Surface it loudly and move on.
+                        warn!(?hb, ..., "orchestrator heartbeat is deeply stale; NOT killing it ...");
+                    }
+                    HeartbeatAction::MissingHeartbeat => { tracing::debug!("no heartbeat file present"); }
+                }
+```
+— `crates/supervisor/src/watchdog.rs`, `heartbeat_loop` (abridged)
+
+There is no fourth arm. `decide_heartbeat` cannot produce a `Kill` (§8.3), so the
+loop that consumes it structurally cannot signal the orchestrator pid. That is
+invariant S2 enforced by exhaustiveness — a reviewer adding a kill would have to
+add a `HeartbeatAction` variant first, which is exactly the diff §8.3's `⛔ NEVER`
+tells you to reject.
+
+### 8.14.2 `runs_loop` — the fixed trigger priority (S11)
+
+Each tick, `runs_loop` first runs the enabled integrity scans (ledger transition
+observation, diff-containment, promotion-gate, divergence — §8.7/§8.8), computes
+the protected pid set (the heartbeat pid) and protected pgid set (its own +
+the orchestrator's groups), reads the pending kill-requests, reads the active
+runs, and then applies FOUR triggers in strict priority order:
+
+| Priority | Trigger | Fires when | State file |
+|---|---|---|---|
+| −1 (highest) | **confirmed orchestrator death** | `decide_orchestrator_dead` (pid identity fails, not a stale timestamp) AND runs exist | REMOVED (no orchestrator left to finalize) |
+| 0 | **kill-request** | the parent wrote `control/kill_requests/{run_id}` | LEFT for the orchestrator reaper; the marker is cleared |
+| 1 | **wall-clock deadline** | `decide_run_deadline` past the clamped `effective_deadline` | LEFT for the orchestrator reaper |
+| 2 | **staleness** | `decide_run` — `last_progress` not advancing past the run's own `2×budget` | REMOVED (so it is not re-escalated) |
+
+The ordering is not cosmetic. Trigger −1 `continue`s the whole tick (the
+orchestrator is gone; the per-run triggers are moot), and Trigger 0 `continue`s
+the per-run loop iteration (the parent already decided; do not also apply the
+deadline/staleness thresholds). The confirmed-death reaper does three things per
+run — the same vetted escalation the live triggers use, then the snapshot GC,
+then the state-file finalization the dead orchestrator can no longer do:
+
+```rust
+        // 1. Group-kill the orphaned worker, when there is a live, vetted pid.
+        if let Some(pid) = decide_run_kill_request(run, &protected) {
+            let target = resolve_kill_target(run, pid, protected_pgids);
+            ...
+            let out = escalate_target(target, thresholds.run_kill_grace).await;
+            record_action(log, ledger, Action { ..., trigger: Trigger::OrchestratorReap, ... });
+        }
+        // 2. GC the leaked ztw-snap-* ephemeral snapshot (prefix-guarded).
+        reap::reap_orphaned_snapshot(run);
+        // 3. Finalize the state file the dead orchestrator's reaper can no longer remove.
+        let run_file = paths.active_runs_dir().join(format!("{}.json", run.run_id));
+        ... std::fs::remove_file(&run_file) ...
+```
+— `crates/supervisor/src/watchdog.rs`, `reap_dead_orchestrator_runs` (abridged)
+
+> ⚠️ TRAP — the "leave the state file vs remove it" distinction is load-bearing
+> and easy to get backwards. The alive-orchestrator triggers (kill-request,
+> deadline) LEAVE `active_runs/{run_id}.json` because the orchestrator's own
+> reaper owns that lifecycle (it detects the dead worker, cleans up, and records
+> the run aborted — 06-tournament-and-selection.md §"The abort-cause decision
+> tree"). The staleness and confirmed-death paths REMOVE it, because leaving it
+> would make the supervisor re-escalate the same run every tick (staleness) or
+> leave a phantom active run behind a dead orchestrator (death). If you add a
+> trigger, decide its state-file ownership explicitly.
+
+### 8.14.3 The two graces, and `record_action` mirroring
+
+There are two distinct grace windows, and mixing them up changes kill timing:
+the **deadline / kill-request / reap** escalations use `thresholds.run_kill_grace`
+(the `--run-kill-grace` flag), while the **staleness** escalation uses the fixed
+`thresholds.grace` (5s in `main.rs`). Every escalation — from any trigger —
+funnels through `record_action`, which mirrors it into BOTH the in-memory action
+ring (`action_log`, surfaced on `/statusz`) AND, when a ledger is configured, the
+hash-chained ledger (`Trigger::{KillRequest, RunDeadline, RunStale,
+OrchestratorReap}` → a `WatchdogAction` record). That dual sink is why an
+escalation is visible both in the live operational surface and in the
+tamper-evident audit trail (§8.7, §8.19).
+
+### 8.14.4 The integrity-scan de-dup sets
+
+`runs_loop` carries three `HashSet`s across ticks so a STANDING violation alarms
+ONCE, not every tick: `quarantined` (diff-containment, keyed by `(epoch, gen)`),
+`gate_flagged` (promotion-gate, same key), and `divergence_seen` (keyed by
+`(code, gen)`), plus the stateful `TransitionObserver` (§8.17). These are the
+ONLY state the loop keeps across ticks besides the ledger tail — everything else
+is re-read fresh each tick (S13). A new integrity scan you add must carry its own
+de-dup set the same way, or it will re-alarm on a steady-state condition forever.
+
+---
+
+## 8.15 The reader and the path map
+
+`crates/supervisor/src/reader.rs` is the supervisor's entire input surface: it
+turns the runtime state files into typed snapshots, read FRESH each tick (S13).
+Its `WorkspacePaths` struct is the Rust twin of `zicato.runtime.paths` — the same
+path map, in the other language:
+
+- `heartbeat()`, `lock()`, `active_runs_dir()`, `active_tournament()` +
+  `active_tournament_log()`, `lineage()`, `control_dir()`, `current_epoch_marker()`,
+  and the `runtime` / `epochs` / `workspace` roots. `watcher.rs::classify` and
+  every reader resolve against these, so the Python and Rust sides agree on
+  *where every file lives* by construction.
+- `read_heartbeat` / `read_active_runs` / `read_kill_requests` /
+  `read_active_tournament` (folding the event log — §8.18) / `build_snapshot`
+  (the composite `/api/state` shape). Each is best-effort: a missing/malformed
+  file degrades to `None`/empty, never a panic (S8's file-side twin).
+
+Because every Python writer is atomic (tmp→fsync→rename — 07-runtime-and-
+durability.md §"The atomic-write contract"), the reader never needs a lock and
+never observes a torn record — it reads the whole file and deserializes it in one
+shot. That is the concrete meaning of §8.1's invariant S1: the supervisor shares
+no memory, no lock, no socket with the orchestrator; the atomic file rename IS
+the synchronization.
+
+> ✅ ALWAYS add a new runtime file's path to BOTH `zicato.runtime.paths` and
+> `WorkspacePaths`, and add its `ChangeKind` to `watcher.rs::classify`, in the
+> same commit. A path that exists on only one side is a file the supervisor
+> either cannot find or cannot notify on — the silent-skew class §8.12's
+> `grep BOTH languages` rule exists to catch.
+
+---
+
+## 8.16 The signal layer in depth
+
+`crates/supervisor/src/signal.rs` is where every kill actually happens. It is
+pure POSIX (`nix`), best-effort (a vanished pid is never an error), and every
+primitive is unit-tested without spawning where possible. Four pieces underlie
+the pid-safety guarantees of §8.4.
+
+### 8.16.1 `pid_start_time` and `pgid_of` — reading `/proc`
+
+The identity token is the process start time from `/proc/<pid>/stat` field 22,
+and the parsing has a real trap the code calls out:
+
+```rust
+    let raw = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // Field 2 (comm) is wrapped in parens and may itself contain ')' and
+    // spaces, so tokenize everything after the LAST ')'.
+    let rparen = raw.rfind(')')?;
+    let rest: Vec<&str> = raw[rparen + 1..].split_whitespace().collect();
+    // rest[0] is field 3 (state); field 22 (starttime) is rest[19].
+    rest.get(19)
+        .and_then(|s| s.parse::<u64>().ok().map(|t| t as f64))
+```
+— `crates/supervisor/src/signal.rs`, `pid_start_time`
+
+The `rfind(')')` is load-bearing: the `comm` field (field 2) is
+parenthesized and can itself contain `)` and spaces (a process named `foo) bar`),
+so tokenizing from the start would misalign every field. `pgid_of` reads field 5
+(`pgrp`) the same way, to fence the orchestrator's group out of the negatable
+set. The token is carried as `f64` to compare exactly against the Python writer's
+JSON float (`116371304.0`) — integer-valued, so equality is exact (the
+`state.rs` field comment and 07-runtime-and-durability.md §"`active_runs`" both
+pin this).
+
+`is_same_process(pid, expected_start_time)` is the composed check: not alive →
+`false`; alive with no recorded time → fall back to bare liveness (`true`); alive
+with an unreadable current time → `true` (cannot *disprove* identity, so do not
+manufacture a mismatch); alive with both known → `true` iff equal. This
+conservative bias is deliberate — the supervisor would rather fail to reap than
+kill an innocent recycled-pid process.
+
+### 8.16.2 `escalate_target` — the SIGTERM→grace→SIGKILL state machine
+
+```rust
+pub async fn escalate_target(target: KillTarget, grace: Duration) -> EscalationOutcome {
+    let leader = target.leader_pid();
+    if !is_alive(leader) {
+        return EscalationOutcome::AlreadyGone;
+    }
+    if let Err(e) = target.send_sigterm() { ...; return EscalationOutcome::Failed; }
+    let poll_interval = Duration::from_millis(100);
+    let mut elapsed = Duration::ZERO;
+    while elapsed < grace {
+        tokio::time::sleep(poll_interval).await;
+        elapsed += poll_interval;
+        if !is_alive(leader) { return EscalationOutcome::TerminatedGracefully; }
+    }
+    if !is_alive(leader) { return EscalationOutcome::TerminatedGracefully; }
+    match target.send_sigkill() { Ok(_) => EscalationOutcome::KilledForcefully, Err(_) => ... }
+}
+```
+— `crates/supervisor/src/signal.rs`, `escalate_target` (abridged)
+
+The four `EscalationOutcome` values (`AlreadyGone`, `TerminatedGracefully`,
+`KilledForcefully`, `Failed`) are what `record_action` stamps into the ledger and
+the ring. The whole machine tracks the group LEADER pid for liveness even in the
+group case: `KillTarget::Group { pgid, leader_pid }` sends `killpg(-pgid, …)` to
+the whole group but polls `leader_pid` for exit — "the group is considered gone
+once its leader exits", exactly like a single-pid kill.
+
+### 8.16.3 The group-kill guards, again from the primitive side
+
+`is_negatable_pgid` is the pure gate every group kill must pass (`pgid > 1`, not
+in the protected set) — §8.4's guard, here at the metal:
+
+```rust
+pub fn is_negatable_pgid(pgid: i32, protected: &std::collections::HashSet<i32>) -> bool {
+    if pgid <= 1 {
+        return false;
+    }
+    !protected.contains(&pgid)
+}
+```
+— `crates/supervisor/src/signal.rs`, `is_negatable_pgid`
+
+`resolve_kill_target` (in `watchdog.rs`) composes it with the pgid-equals-leader
+check (§8.4) and falls back to `KillTarget::Leader` — the always-safe single-pid
+kill — on any failure. `pgid <= 1` is the catastrophic case the guard closes:
+`killpg(0, …)` means "my own group" and `killpg(1, …)` is init's; either would
+signal the supervisor or the whole system.
+
+> ⛔ NEVER call `send_sigterm_group` / `send_sigkill_group` (or construct a
+> `KillTarget::Group`) without going through `resolve_kill_target`. The group
+> primitives explicitly "do not re-check" the vetting — they trust the caller
+> vetted the pgid through `is_negatable_pgid` AND confirmed the leader is alive
+> and identity-matched. A raw group send is how you turn a stray record into a
+> system-wide SIGKILL.
+
+---
+
+## 8.17 The ledger internals
+
+§8.7 gave the ledger's guarantees; this is the code behind them. Three functions
+carry the weight.
+
+### 8.17.1 `compute_digest` — the chained preimage
+
+```rust
+    let payload_bytes = serde_json::to_vec(payload).unwrap_or_default();
+    let mut preimage = Vec::with_capacity(payload_bytes.len() + 96);
+    preimage.extend_from_slice(&seq.to_be_bytes());
+    preimage.push(0x1f); // unit separator between fields
+    preimage.extend_from_slice(prev.as_bytes());
+    preimage.push(0x1f);
+    preimage.extend_from_slice(ts.as_bytes());
+    preimage.push(0x1f);
+    preimage.extend_from_slice(kind.as_str().as_bytes());
+    preimage.push(0x1f);
+    preimage.extend_from_slice(&payload_bytes);
+    sha256::hex_digest(&preimage)
+```
+— `crates/supervisor/src/ledger.rs`, `compute_digest`
+
+The `0x1f` unit separators between fields are what stop a boundary attack (moving
+bytes between `ts` and `kind` cannot produce the same preimage), and the digest
+covers `kind.as_str()` — the raw string, not an enum discriminant — which is why
+a new `RecordKind` is purely additive: an older verifier still hash-checks a
+record whose kind it does not recognize (§8.7's closed-enum-but-additive
+property). `prev` binds each record to its predecessor's digest; genesis links to
+`GENESIS_PREV` (64 zeros).
+
+### 8.17.2 `repair_torn_tail` — surgical, byte-level, trailing-only
+
+```rust
+    An unparseable line in the *middle* of the file cannot be a torn
+    append and is left in place for `verify_chain` to flag as a break.
+    Returns the number of bytes truncated, or `None` when the file is
+    absent, empty, or ends in a complete record. Best-effort: an I/O
+    failure leaves the file untouched (the ledger never blocks boot).
+```
+— `crates/supervisor/src/ledger.rs`, `repair_torn_tail`
+
+It operates on BYTES, not lines-as-strings, because a torn append can split a
+multi-byte UTF-8 character (a string read would fail outright). It finds the last
+non-empty line, trims trailing whitespace/newlines, and truncates iff that final
+record does not parse — the ONE shape that is provably a torn append (the writer
+emits exactly one `line + '\n'` per record and never rewrites earlier bytes). An
+interior tear is left for `verify_chain` to flag: this is the same torn-tail
+doctrine as `RoundLog` (07-runtime-and-durability.md §"Torn-tail tolerance is for
+APPEND-ONLY logs only") — "only the tail can be torn" is a theorem, not a general
+error-handling posture.
+
+### 8.17.3 `append` — best-effort tail, and `verify` reads fresh
+
+`append` computes the digest, serializes the record, then `write_line` (which
+`create(true).append(true)` opens, `write_all`, `flush`, `sync_all`). On ANY I/O
+error the in-memory tail is NOT advanced, so the next append retries the same
+`seq`/`prev` rather than chaining onto a record that never reached disk. `verify`
+re-reads the file FRESH (never the in-memory tail), so out-of-band tampering
+since the last append is caught — `verify_chain` checks three things per record:
+the digest recomputes, `prev` links to the prior digest, and `seq` is contiguous
+from 0. Any failure pins the break to a specific `seq`.
+
+### 8.17.4 `TransitionObserver` — record each decision once
+
+The observer (§8.7's "what feeds it") is stateful across ticks and de-duplicated:
+
+```rust
+pub struct TransitionObserver {
+    /// Generations whose resolved decision has already been recorded, keyed
+    /// by `(epoch_id, generation_id)`.
+    recorded_decisions: std::collections::HashSet<(String, String)>,
+    /// The last contract hash recorded, per epoch.
+    recorded_contract: std::collections::HashMap<String, String>,
+}
+```
+— `crates/supervisor/src/ledger.rs`, `TransitionObserver`
+
+A generation's decision is recorded once (the first time it resolves from
+in-flight), and a contract hash once per distinct value — "so a steady-state poll
+appends nothing". This is what keeps the ledger a low-frequency artifact (a
+handful of records per run), which in turn is what makes the fsync-per-append of
+§8.7 affordable.
+
+---
+
+## 8.18 The live surface: the filesystem watcher and SSE
+
+The supervisor's dashboard tier is fed by an inotify/FSEvents watcher and an SSE
+broker, both built to satisfy S12 (never block, never leak write intermediates).
+
+### 8.18.1 The watcher — debounce + the `.tmp` filter
+
+`watcher.rs::spawn` watches the `runtime` tree recursively, the `epochs` tree
+recursively (when present), and the workspace root non-recursively (for
+`current_epoch` / `lineage.json`). A dedicated thread drains raw `notify` events,
+debounces per-file, and classifies each path into a `ChangeKind`. The single most
+important filter is the atomic-write intermediate:
+
+```rust
+/// Whether `path` is an atomic-write intermediate (`*.tmp`). The Python
+/// side writes state files as `path.tmp` then renames to `path`; the
+/// `.tmp` create/modify/remove events are pure noise and must never
+/// reach an SSE client.
+fn is_tmp_path(path: &Path) -> bool { ... }
+```
+— `crates/supervisor/src/watcher.rs`, `is_tmp_path`
+
+This is the watcher's side of the two-language atomic-write contract: because the
+Python writer renames `path.tmp → path` (07-runtime-and-durability.md §"The
+atomic-write contract"), the `.tmp` events are noise and the REAL event is the
+rename into place. Emitting the `.tmp` intermediates would fan a write storm out
+to every SSE client. The per-file debounce (100ms) further collapses a rename
+storm. `classify` resolves each path against `WorkspacePaths` (§8.15) into
+`ChangeKind::{Heartbeat, ActiveRuns, ActiveTournament, Lineage, Lock, Epoch,
+Control, Unknown}` — the same tokens the SSE `state_change.kind` field carries.
+
+### 8.18.2 The SSE broker — snapshot then live, bounded, non-blocking
+
+```rust
+    let live = BroadcastStream::new(rx)
+        .filter_map(|res| async move { res.ok() })
+        .map(|ev| { ... SseEvent::default().event("state_change").data(payload) });
+    let merged = initial.chain(live);
+    Sse::new(merged).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text("ping"))
+```
+— `crates/supervisor/src/sse.rs`, `build_sse` (abridged)
+
+A new client gets a `snapshot` event (a full `build_snapshot` — §8.15) followed
+by live `state_change` events as files mutate, with a 15s keep-alive `ping`. The
+channel is a bounded `tokio::sync::broadcast`: a slow client that cannot keep up
+is DROPPED (`filter_map(res.ok())` discards its lag errors) rather than
+back-pressuring the watcher or other clients — S12. The `/events` route serves
+this; it is part of the full-dashboard tier, so it is absent under
+`--no-dashboard` (§8.9).
+
+### 8.18.3 `fold_stats` — the torn-write / seq-gap counters
+
+The active-tournament view is a single-writer append-only JSONL the supervisor
+folds on every read. Two failure modes were historically invisible, and
+`fold_stats.rs` makes them countable on `/statusz`:
+
+```rust
+//!   * **Torn writes** — a line that fails to parse as JSON. ... This is
+//!     the Rust-drops-vs-Python-raises divergence: the Python reader raises
+//!     on a bad line; the Rust reader swallows it. Counting it restores
+//!     visibility without changing the lenient behavior.
+//!   * **Non-monotonic `seq`** — ... A gap (or a backwards step) means the
+//!     writer lost events or republished out of order.
+```
+— `crates/supervisor/src/fold_stats.rs` (module docstring)
+
+`FoldDiagnostics` holds three `AtomicU64`s (`parse_failures`, `seq_gaps`,
+`folds`), shared by `Arc` and read by `/statusz`. They are cumulative
+*process-lifetime* counters — a restart starts them at zero, "the honest thing to
+report". The `folds` counter (incremented on every fold, even a clean one) lets a
+reader tell "0 folds, 0 problems" apart from "many folds, 0 problems". This is
+the deliberate design point where the Rust reader stays LENIENT (it drops a torn
+line, matching the fold's `filter_map`) while surfacing the divergence from the
+Python reader's raise — visibility without a behavior change.
+
+---
+
+## 8.19 The operational surface: `/statusz`
+
+`/statusz` (HTML) and `/statusz.json` are the watchdog's own minimal surface,
+mounted UNCONDITIONALLY — even under `--no-dashboard` — because a watchdog's
+health must be checkable in watchdog-only mode (§8.9). The `StatuszView` payload
+(`statusz.rs`) carries:
+
+| Field | Source | What it tells an operator |
+|---|---|---|
+| version / build / bound port / `uptime_seconds` | the supervisor process | the notary itself is alive and which build |
+| `orchestrator_uptime_seconds` | `heartbeat.started_at` | how long the audited loop has run (`None` when no heartbeat) |
+| `watchdog_actions` | the `action_log` ring (`WatchdogLog::snapshot`) | the recent SIGTERM/SIGKILL escalations, per trigger + outcome |
+| `fold_diagnostics` | `FoldDiagnostics::view` (§8.18.3) | cumulative torn-write / seq-gap counts over the tournament fold |
+| ledger chain status | `AuditLedger::verify` → `LedgerStatus` | `configured` + `intact` + `records`, and `first_break_seq` + `break_reason` on a break |
+
+The `action_log` (`action_log.rs`) is an in-memory ring buffer of the most recent
+escalations — the fast, always-available operational view that `record_action`
+writes alongside the ledger (§8.14.3). The two are complementary: the ring is
+process-lifetime and lossy (a bounded ring), the ledger is durable and
+hash-chained (§8.7). `GET /api/audit/verify` runs a full fresh chain walk on
+demand; like `/statusz`, it stays mounted even under `--no-dashboard`, so chain
+integrity is checkable without the dashboard tier.
+
+> ✅ ALWAYS surface a new supervisor-observed condition on BOTH `/statusz`
+> (the live view) and — when it is an integrity finding — the ledger (the
+> durable record). The `fold_diagnostics` counters are the model: a condition
+> the fold silently swallowed became a visible cumulative counter without
+> changing the lenient fold behavior. A finding that lands in only one place is
+> either invisible to a live operator or absent from the audit trail.
+
+---
+
+## 8.20 The integrity-notary scans in code
+
+§8.8 gave the three scans' contracts; this is the re-derivation code, because a
+notary that re-derives a rule WRONG is worse than no notary. All three read the
+index or the snapshots and never write.
+
+### 8.20.1 `check_row` — re-applying the gate's scalar rule (record #3)
+
+The promotion-gate notary re-derives exactly the gate's Rule 1 (06-tournament-
+and-selection.md §"Rule 1 — the scalar margin") and returns a four-way verdict:
+
+```rust
+pub fn check_row(row: &TournamentRow, promote_margin: f64) -> RowVerdict {
+    let decision = match &row.decision { Some(d) => d, None => return RowVerdict::NotAPromotion };
+    if !is_promote_decision(decision) { return RowVerdict::NotAPromotion; }
+    let delta = match row_delta_scalar(row) {
+        Some(d) => d,
+        None => return RowVerdict::SkippedNoEvidence,
+    };
+    // Supported iff the loss dropped by at least the margin.
+    if delta <= -promote_margin {
+        return RowVerdict::Supported;
+    }
+    ...
+    RowVerdict::Contradiction(Contradiction { ... })
+}
+```
+— `crates/supervisor/src/promotion_gate.rs`, `check_row` (abridged)
+
+`RowVerdict::{NotAPromotion, SkippedNoEvidence, Supported, Contradiction}` maps
+directly to the fail-open, direction-precise alarm of §8.8.2: a reject or unknown
+decision is not checked; a row with no usable scalar evidence is SKIPPED (never a
+false alarm); a promotion whose `delta_scalar <= -promote_margin` is Supported;
+and ONLY a promotion the scalars do not support is a Contradiction. The
+`promote_margin` is read from the epoch's `scoring.json`
+(`promote_margin_for_epoch`), defaulting to `DEFAULT_PROMOTE_MARGIN = 0.01` —
+which carries the same "must track `ScoringWeights.promote_margin`'s default"
+comment the Python side does (§8.12's shared-vocabulary list). `is_promote_decision`
+uses the SAME lenient decision mapping the lineage view uses, so the two never
+disagree about what counts as a promotion.
+
+> ⚠️ TRAP — the alarm is intentionally ONE-directional (promote-only). A reject
+> can be driven by the pass-rate or namespace-monotonicity rules even when the
+> scalar margin cleared, so a scalar-only recompute cannot prove a reject wrong.
+> Do not "symmetrize" the notary to alarm on rejects — you would manufacture
+> false alarms on every reject a non-scalar rule drove.
+
+### 8.20.2 The read-only SQLite open, in code (record #3/#4's substrate)
+
+Both the promotion-gate and divergence scans read through `index_db.rs`, which is
+where invariant S8's three layers live. The schema pin, verbatim:
+
+```rust
+/// Opening a database whose `user_version` does not
+/// match this constant returns [`IndexError::StaleSchema`] rather than
+/// risking a row decoded against the wrong schema.
+pub const EXPECTED_SCHEMA_VERSION: i64 = 10;
+```
+— `crates/supervisor/src/index_db.rs`
+
+`IndexError` has exactly three variants — `Absent` (the file is genuinely not
+there, so a route can attach a `note`), `Query` (there but a query failed), and
+`StaleSchema { .. }` — and every scan pattern-matches all three into "nothing to
+check, fail-open":
+
+```rust
+    let conn = match index_db::open(&paths.index_db()) {
+        Ok(c) => c,
+        Err(IndexError::Absent)
+        | Err(IndexError::Query(_))
+        | Err(IndexError::StaleSchema { .. }) => {
+            return PromotionGateView {
+                scanned: true,
+                ..Default::default()
+            };
+        }
+    };
+```
+— `crates/supervisor/src/promotion_gate.rs`, `scan_current_epoch`
+
+This is S8 and the null-degradation contract (§8.9) meeting at the scan layer: a
+stale or absent index degrades the notary to "scanned, no contradiction", never a
+false alarm and never a crash. `EXPECTED_SCHEMA_VERSION = 10` is the cross-
+language pin — bump it in lockstep with the Python `SCHEMA_VERSION` (07-runtime-
+and-durability.md §"`zicato reindex`"), and a cargo test in this module reds if
+they drift (§8.12's canonical "Python change requires Rust parity" example).
+
+### 8.20.3 The diff-containment mutable surface (record #2)
+
+The diff-containment scan (§8.8.1) re-derives the in-bounds surface from the
+registered `mutable_trees`, and the derivation is the exact twin of the Python
+in-band mirror's — a snapshot copies each mutable tree under its BASENAME, so
+inside a snapshot root the mutable surface is `snapshot/<basename>`:
+
+```rust
+/// When `mutable_trees` is empty the surface is the WHOLE snapshot ...
+/// every file is in-bounds ...
+pub fn mutable_basenames(mutable_trees: &[String]) -> BTreeSet<String> { ... }
+```
+— `crates/supervisor/src/diff_containment.rs`, `mutable_basenames`
+
+`is_in_bounds(rel, basenames)` is true iff `rel`'s first path component is a
+mutable basename; an EMPTY `basenames` means the whole snapshot is in-bounds
+(mirroring `mutable_subpaths`' fallback). A file OUTSIDE that surface that is not
+byte-identical parent↔child is a `DiffKind::{Changed, Added, Deleted}`
+`Violation` — a mutation that escaped its sandbox. Every failure mode is
+fail-open-to-alarm: an unreadable file is skipped, a missing parent snapshot
+yields *no* violation ("the attestation cannot be made"), never a false
+quarantine. This is the same coarse file-level v1 rule the Python
+`check_containment` blocking mirror enforces (§8.8.1) — the two MUST change
+together, because a skew means the alarm and the blocking gate disagree about
+what "escaped" means.
+
+---
+
+## 8.21 Cross-references
 
 - 07-runtime-and-durability.md — every file this chapter's loops read; the
   `ztw-snap-` checkout contract; the control protocol's Python half; the
