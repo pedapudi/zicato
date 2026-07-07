@@ -43,6 +43,10 @@ from zicato.analyzer.outcome_marginals import (
     run_operator_summarizer,
     sanitize_operator_marginals,
 )
+from zicato.analyzer.process_exemplars import (
+    ProcessExemplar,
+    extract_process_exemplars,
+)
 from zicato.analyzer.report import (
     generate_epoch_report,
     restamp_persisted_report,
@@ -58,6 +62,8 @@ __all__ = [
     "aggregate_outcome_marginals",
     "run_operator_summarizer",
     "sanitize_operator_marginals",
+    "ProcessExemplar",
+    "extract_process_exemplars",
     "generate_epoch_report",
     "restamp_persisted_report",
     "EpochReportData",

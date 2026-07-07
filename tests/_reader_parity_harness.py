@@ -21,7 +21,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from zicato.dashboard import state_reader as sr
+from zicato import query as sr
 
 # ---------------------------------------------------------------------------
 # The multi-epoch fixture

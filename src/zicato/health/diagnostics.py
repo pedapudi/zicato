@@ -16,23 +16,24 @@ Thresholds
 
 Every detector's tuning knob is a typed field of
 :class:`zicato.config.HealthConfig`, with a default and a documented
-meaning. An operator re-tunes between runs by setting the matching
-``ZICATO_HEALTH_*`` environment variable (read once by
-:func:`zicato.config.load_config`) or, when embedding zicato, by
+meaning. An operator re-tunes between runs in the ``health`` block of
+the workspace ``config.json`` (parsed by
+:func:`zicato.config.health_config_from_workspace`; the former
+``ZICATO_HEALTH_*`` env vars are deleted) or, when embedding zicato, by
 constructing a :class:`~zicato.config.HealthConfig` directly. This
 module never reads ``os.environ`` itself — every detector takes the
 config as an optional parameter.
 
-================================  =========================  =========
-HealthConfig field                Environment variable        Default
-================================  =========================  =========
-``scoring_window``                ``ZICATO_HEALTH_SCORING_WINDOW``       3
-``scoring_epsilon``               ``ZICATO_HEALTH_SCORING_EPSILON``   1e-6
-``no_expectations_fraction``      ``ZICATO_HEALTH_NO_EXPECTATIONS_FRACTION``   0.5
-``stalled_rejects``               ``ZICATO_HEALTH_STALLED_REJECTS``      3
-``generalization_gap_warn``       ``ZICATO_HEALTH_GENERALIZATION_GAP_WARN``   0.05
-``generalization_gap_crit``       ``ZICATO_HEALTH_GENERALIZATION_GAP_CRIT``   0.15
-================================  =========================  =========
+================================  =========
+HealthConfig / ``health`` key      Default
+================================  =========
+``scoring_window``                       3
+``scoring_epsilon``                   1e-6
+``no_expectations_fraction``           0.5
+``stalled_rejects``                      3
+``generalization_gap_warn``           0.05
+``generalization_gap_crit``           0.15
+================================  =========
 
 * ``scoring_window`` — how many of the most-recent tournaments
   :func:`detect_degenerate_scoring` inspects. The detector fires only
@@ -57,6 +58,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from zicato.config import HealthConfig, load_config
+from zicato.core.experiment import PLACEBO_HYPOTHESIS_MARKER
 from zicato.core.types import BoardEntry, LossProfile
 from zicato.util.iso_time import now_iso as _utcnow_iso
 
@@ -104,13 +106,15 @@ _DRIFT_NAMESPACE = "drift:"
 
 
 def _resolve_health_config(config: HealthConfig | None) -> HealthConfig:
-    """Return ``config`` if given, else load it from the environment once.
+    """Return ``config`` if given, else the typed-config default.
 
     Detectors accept an optional :class:`~zicato.config.HealthConfig` so
-    a caller that already holds a loaded config threads it in. When a
-    caller passes nothing, :func:`zicato.config.load_config` supplies the
-    env-sourced configuration — the single place the environment is
-    read.
+    a caller that already holds one threads it in — the orchestrator and
+    the ``zicato health`` command both build it from the workspace
+    ``config.json``'s ``health`` block via
+    :func:`zicato.config.health_config_from_workspace`. When a caller
+    passes nothing, :func:`zicato.config.load_config` supplies the
+    defaulted tree (plus any process-pinned overrides).
     """
     if config is not None:
         return config
@@ -133,7 +137,11 @@ class HealthFinding:
         finding. One of ``"degenerate_scoring"``,
         ``"non_differentiating_entry"``, ``"flat_drift_signal"``,
         ``"no_expectations"``, ``"stalled_loop"``,
-        ``"generalization_gap"``, ``"refresh_cadence"``.
+        ``"generalization_gap"``, ``"refresh_cadence"``,
+        ``"margin_below_noise_floor"``,
+        ``"preflight_signal_below_floor"``,
+        ``"preflight_saturated_contract"``, ``"noisy_judge"``,
+        ``"placebo_promoted"``.
     severity:
         ``"info"`` | ``"warning"`` | ``"critical"``. A loop is
         considered unhealthy when any ``"warning"`` or ``"critical"``
@@ -736,9 +744,361 @@ def detect_refresh_cadence(
     ]
 
 
+def detect_margin_below_noise_floor(
+    noise_floor: dict[str, Any] | None,
+    promote_margin: float | None,
+    evidence_gate_on: bool,
+) -> list[HealthFinding]:
+    """Warn when ``promote_margin`` sits inside the measured A/A noise.
+
+    The calibration half of the noise-aware decision procedure: when an
+    A/A audit (:mod:`zicato.tournament.calibration`) has measured the
+    epoch's noise floor and the contract's ``promote_margin`` is strictly
+    below it, a duel decided by the margin alone cannot distinguish a real
+    improvement from a re-roll of the same generation. With the evidence
+    gate ON the defer→replicate loop absorbs that noise, so the finding is
+    downgraded to an ``info`` observation; with the gate explicitly OFF it
+    is a ``warning`` — the loop is promoting/rejecting on noise.
+
+    Silent when no floor was ever measured (``noise_floor is None``), when
+    the floor record is malformed, or when the margin clears the floor.
+    """
+    if promote_margin is None:
+        return []
+    from zicato.tournament.calibration import margin_below_floor  # noqa: PLC0415
+
+    if not margin_below_floor(promote_margin, noise_floor):
+        return []
+    assert isinstance(noise_floor, dict)  # narrowed by margin_below_floor
+    max_abs = float(noise_floor.get("max_abs_delta", 0.0))
+    severity = "info" if evidence_gate_on else "warning"
+    gate_note = (
+        "the evidence gate is ON, so the defer→replicate loop still holds "
+        "promotions to CI separation"
+        if evidence_gate_on
+        else "the evidence gate is OFF — duels are decided by the margin alone"
+    )
+    return [
+        HealthFinding(
+            code="margin_below_noise_floor",
+            severity=severity,
+            summary=(
+                f"promote_margin {promote_margin:.6g} is below the measured A/A "
+                f"noise floor {max_abs:.6g}; {gate_note}"
+            ),
+            detail={
+                "promote_margin": promote_margin,
+                "noise_floor_max_abs_delta": max_abs,
+                "noise_floor_runs": noise_floor.get("runs"),
+                "noise_floor_generation_id": noise_floor.get("generation_id"),
+                "evidence_gate_on": evidence_gate_on,
+                "recommendation": (
+                    "raise promote_margin above the measured floor, or keep "
+                    "promote_confidence_threshold set so promotions replicate "
+                    "to CI separation"
+                ),
+            },
+        )
+    ]
+
+
+#: Pairwise test–retest disagreement rate above which a judge counts as
+#: noisy. Mirrors
+#: :data:`zicato.judge_runtime.reliability.NOISY_JUDGE_DISAGREEMENT_THRESHOLD`
+#: (kept as a plain value here so this module stays dependency-light).
+NOISY_JUDGE_DISAGREEMENT: float = 0.25
+
+
+def detect_noisy_judge(
+    reliabilities: list[Any],
+    threshold: float = NOISY_JUDGE_DISAGREEMENT,
+) -> list[HealthFinding]:
+    """Flag judges whose test–retest disagreement exceeds ``threshold``.
+
+    Input is the output of a judge test–retest probe
+    (:func:`zicato.judge_runtime.reliability.test_retest_board`) — one
+    record per judge, as :class:`JudgeReliability` objects or their
+    ``to_json`` dicts. A judge that returns different verdicts for a
+    byte-identical frozen transcript injects pure noise into every
+    ``custom:<judge_name>`` drift count it produces; the finding is a
+    ``warning`` (recommend-only) whose recommendation points at the
+    contract's routing knob for exactly this signal:
+    ``per_judge_weights`` (down-weight the judge) — or sharpening the
+    criterion until the retest stabilises.
+
+    One finding per noisy judge; silent for an empty probe or when every
+    judge's disagreement is at or below the threshold.
+    """
+    findings: list[HealthFinding] = []
+    for rel in reliabilities:
+        try:
+            rate = float(_attr_or_key(rel, "disagreement_rate") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if rate <= threshold:
+            continue
+        name = str(_attr_or_key(rel, "judge_name") or "")
+        k = _attr_or_key(rel, "k")
+        fired = _attr_or_key(rel, "fired")
+        findings.append(
+            HealthFinding(
+                code="noisy_judge",
+                severity="warning",
+                summary=(
+                    f"judge {name!r} disagreed with itself on {rate:.0%} of verdict "
+                    f"pairs over the SAME frozen transcript (fired {fired}/{k}) — "
+                    "its drift signal is noise, not judgement"
+                ),
+                detail={
+                    "judge_name": name,
+                    "k": k,
+                    "fired": fired,
+                    "disagreement_rate": rate,
+                    "threshold": threshold,
+                    "recommendation": (
+                        f"down-weight it (scoring per_judge_weights[{name!r}] below "
+                        "the default) or sharpen its criterion until test-retest "
+                        "stabilises (see zicato board judges --test-retest)"
+                    ),
+                },
+            )
+        )
+    return findings
+
+
+def _is_placebo_experiment(experiment: Any) -> bool:
+    """Whether an experiment record is the random-baseline placebo arm.
+
+    Keyed on the stable
+    :data:`zicato.core.experiment.PLACEBO_HYPOTHESIS_MARKER` prefix of
+    ``hypothesis.core_idea`` (the contract with the minting side,
+    :mod:`zicato.evolve.placebo`). Tolerant of typed records and plain
+    ``experiment.json`` dicts via the usual :func:`_attr_or_key` shim.
+    """
+    hypothesis = _attr_or_key(experiment, "hypothesis")
+    if hypothesis is None:
+        return False
+    core_idea = _attr_or_key(hypothesis, "core_idea")
+    return isinstance(core_idea, str) and core_idea.startswith(PLACEBO_HYPOTHESIS_MARKER)
+
+
+def detect_placebo_promoted(experiments: list[Any]) -> list[HealthFinding]:
+    """CRITICAL when a random-baseline (placebo) challenger was PROMOTED.
+
+    The placebo arm (OVERFITTING.md #7,
+    ``overfitting.random_baseline_every_n``) fields a semantics-preserving
+    no-op challenger the gate MUST reject — identical behaviour leaves no
+    improvement to clear the margin. A promoted placebo therefore means
+    the decision procedure is promoting noise: gate discrimination is
+    broken (margin inside the noise floor, a broken reducer, a rigged
+    gate) and every recent real "win" is suspect. One ``critical``
+    finding per promoted placebo generation.
+
+    Silent when no placebo experiments exist (the knob is off / no
+    cadence tick yet) or every placebo was rejected — the arm doing its
+    quiet calibration job.
+    """
+    findings: list[HealthFinding] = []
+    for exp in experiments:
+        if not _is_placebo_experiment(exp):
+            continue
+        outcome = _attr_or_key(exp, "outcome")
+        if outcome is None:
+            continue
+        decision = str(_attr_or_key(outcome, "tournament_decision") or "")
+        if decision != "promoted":
+            continue
+        generation_id = str(_attr_or_key(exp, "generation_id") or "")
+        findings.append(
+            HealthFinding(
+                code="placebo_promoted",
+                severity="critical",
+                summary=(
+                    f"random-baseline placebo {generation_id!r} was PROMOTED — a "
+                    "semantics-preserving no-op won a tournament, so the gate is "
+                    "promoting noise; recent promotions are suspect"
+                ),
+                detail={
+                    "generation_id": generation_id,
+                    "scalar_score_delta": _attr_or_key(outcome, "scalar_score_delta"),
+                    "recommendation": (
+                        "stop and audit the decision procedure: re-measure the "
+                        "noise floor (zicato board audit / board preflight), "
+                        "raise promote_margin above it, keep the evidence gate "
+                        "on, and re-examine recent promotions"
+                    ),
+                },
+            )
+        )
+    return findings
+
+
+def detect_preflight_verdict(preflight: dict[str, Any] | None) -> list[HealthFinding]:
+    """Re-surface a non-OK contract pre-flight verdict as a health finding.
+
+    The contract pre-flight (:mod:`zicato.epoch.preflight`) measures the
+    epoch's A/A noise floor AND its achievable signal (champion vs a
+    deliberately-degraded copy of itself) before rounds burn budget. Its
+    verdict persists onto the epoch record; this detector folds it into
+    every round's health report so the operator keeps seeing it for as
+    long as the contract stays un-fixed. Recommend-only — like every
+    finding, it never gates.
+
+    * verdict ``"refuse"`` → ``critical`` ``preflight_signal_below_floor``:
+      the measured achievable signal is at or below the measured noise
+      floor, so duels under this contract are decided by noise.
+    * verdict ``"warn"`` → ``warning`` ``preflight_saturated_contract``:
+      every probe — K A/A draws plus a deliberately-degraded tree —
+      scored identically (the historical ``1.000000`` signature); the
+      contract cannot discriminate candidates.
+
+    Silent when no pre-flight was ever run (``None``), when the record is
+    malformed, or when the verdict is ``"ok"``.
+    """
+    if not isinstance(preflight, dict):
+        return []
+    verdict = str(preflight.get("verdict", "") or "")
+    if verdict not in ("refuse", "warn"):
+        return []
+
+    def _num(key: str) -> float:
+        try:
+            return float(preflight.get(key, 0.0))
+        except (TypeError, ValueError):
+            return 0.0
+
+    signal = _num("signal")
+    floor = _num("noise_floor_max_abs_delta")
+    detail: dict[str, Any] = {
+        "verdict": verdict,
+        "signal": signal,
+        "noise_floor_max_abs_delta": floor,
+        "champion_scalars": preflight.get("champion_scalars"),
+        "degraded_scalar": preflight.get("degraded_scalar"),
+        "degraded_mutation_id": preflight.get("degraded_mutation_id"),
+        "generation_id": preflight.get("generation_id"),
+        "measured_at": preflight.get("measured_at"),
+    }
+    if verdict == "refuse":
+        detail["recommendation"] = (
+            "refusal recommended: the contract's achievable signal does not "
+            "clear its own noise floor — reduce evaluation noise (more "
+            "replicates, steadier judges) or strengthen the board before "
+            "running rounds"
+        )
+        return [
+            HealthFinding(
+                code="preflight_signal_below_floor",
+                severity="critical",
+                summary=(
+                    f"contract pre-flight: achievable signal {signal:.6g} is at/below "
+                    f"the measured A/A noise floor {floor:.6g} — duels under this "
+                    "contract are decided by noise (refusal recommended)"
+                ),
+                detail=detail,
+            )
+        ]
+    detail["recommendation"] = (
+        "add expectations / strengthen judges so the board can discriminate "
+        "candidates — even a deliberately-degraded tree scored identically "
+        "to the champion"
+    )
+    return [
+        HealthFinding(
+            code="preflight_saturated_contract",
+            severity="warning",
+            summary=(
+                "contract pre-flight: scalar spread was exactly zero across every "
+                "probe (K A/A draws + a deliberately-degraded tree) — the contract "
+                "cannot discriminate candidates (the 1.000000 saturation signature)"
+            ),
+            detail=detail,
+        )
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
+
+
+def detect_infra_outage(infra_outage: tuple[int, int] | None) -> list[HealthFinding]:
+    """Surface a round deferred by the endpoint-outage circuit (WS-H).
+
+    ``infra_outage`` is the ``(infra_aborted_runs, threshold)`` pair the
+    orchestrator observed when THIS round's infra-abort count crossed
+    :attr:`~zicato.core.runtime.RuntimeConfig.infra_abort_round_threshold`
+    and the round deferred instead of burning the experiment on
+    worst-case-scored aborts. A ``warning`` — the loop is healthy but the
+    ENDPOINT is not, and the operator should check it before the backoff
+    schedule spends the remaining rounds. ``None`` (every round the
+    circuit did not trip, including circuit-off) is silent — a runtime
+    event, unlike every other detector's disk-derived inputs, so the
+    orchestrator threads it in per round.
+    """
+    if infra_outage is None:
+        return []
+    aborted, threshold = infra_outage
+    return [
+        HealthFinding(
+            code="infra_outage",
+            severity="warning",
+            summary=(
+                f"round deferred: {aborted} infra-aborted run(s) reached the "
+                f"endpoint-outage threshold of {threshold} — the model endpoint "
+                "(or worker infrastructure) is failing; the experiment was kept "
+                "un-outcomed and the loop is backing off"
+            ),
+            detail={
+                "infra_aborted_runs": aborted,
+                "infra_abort_round_threshold": threshold,
+                "recommendation": (
+                    "check the harness/auxiliary endpoint health and credentials; "
+                    "the deferred round resumes (or discards cleanly) via the "
+                    "standard crash-resume reconciliation"
+                ),
+            },
+        )
+    ]
+
+
+def detect_token_budget_clip(token_clip: tuple[int, int] | None) -> list[HealthFinding]:
+    """Surface a round the per-round token budget clipped (WS-H).
+
+    ``token_clip`` is the ``(tokens_spent, max_tokens_per_round)`` pair
+    the orchestrator observed when the round's ledger latched its clip
+    flag — a scheduler stopped launching board units / replicate slots on
+    the spent budget and the round settled with what it had. A
+    ``warning``: the round's verdict rests on partial coverage (un-run
+    units scored as budget-exceeded losses), so the operator should size
+    the budget against the board before trusting a streak of clipped
+    rounds. ``None`` (every unclipped round, including budget-off) is
+    silent — a runtime event threaded per round by the orchestrator, like
+    :func:`detect_infra_outage`.
+    """
+    if token_clip is None:
+        return []
+    spent, budget = token_clip
+    return [
+        HealthFinding(
+            code="round_token_clipped",
+            severity="warning",
+            summary=(
+                f"round token-clipped: {spent} tokens spent reached the per-round "
+                f"budget of {budget} — further board units/replicates were not "
+                "scheduled and the round settled on partial coverage"
+            ),
+            detail={
+                "tokens_spent": spent,
+                "max_tokens_per_round": budget,
+                "recommendation": (
+                    "raise runtime.max_tokens_per_round (or shrink the board / "
+                    "replicates) so a full round fits the budget; a clipped round "
+                    "scores its un-run units as budget-exceeded losses"
+                ),
+            },
+        )
+    ]
 
 
 def assess_loop_health(
@@ -748,6 +1108,12 @@ def assess_loop_health(
     epoch_id: str,
     config: HealthConfig | None = None,
     max_generations_per_contract: int | None = None,
+    noise_floor: dict[str, Any] | None = None,
+    promote_margin: float | None = None,
+    evidence_gate_on: bool = True,
+    preflight: dict[str, Any] | None = None,
+    infra_outage: tuple[int, int] | None = None,
+    token_clip: tuple[int, int] | None = None,
 ) -> LoopHealth:
     """Run every detector and collect the findings into a :class:`LoopHealth`.
 
@@ -769,16 +1135,45 @@ def assess_loop_health(
         The epoch the report describes.
     config:
         The :class:`~zicato.config.HealthConfig` carrying the detector
-        thresholds. Defaults to the env-sourced configuration via
-        :func:`zicato.config.load_config`; resolved once here and passed
-        to every threshold-using detector so the environment is read at
-        most once per assessment.
+        thresholds. The orchestrator and the ``zicato health`` command
+        build it from the workspace ``config.json``'s ``health`` block
+        (:func:`zicato.config.health_config_from_workspace`); when
+        omitted, the typed-config default applies. Resolved once here
+        and passed to every threshold-using detector.
     max_generations_per_contract:
         The cadence ceiling from
         :attr:`~zicato.core.types.OverfittingConfig.max_generations_per_contract`,
         threaded through so :func:`detect_refresh_cadence` can surface a
         board-refresh recommendation. ``None`` (the default) disables the
         cadence detector entirely.
+    noise_floor, promote_margin, evidence_gate_on:
+        The epoch's measured A/A noise floor
+        (:meth:`zicato.tournament.calibration.NoiseFloor.to_json` dict, or
+        ``None`` when never measured), the contract's ``promote_margin``,
+        and whether the Bradley--Terry evidence gate resolves to ON —
+        threaded so :func:`detect_margin_below_noise_floor` can warn when
+        the margin sits inside measured noise. ``noise_floor=None`` or
+        ``promote_margin=None`` (the defaults) disable that detector.
+    preflight:
+        The epoch's persisted contract pre-flight verdict
+        (:meth:`zicato.epoch.preflight.PreflightReport.to_json` dict, or
+        ``None`` when never run) — threaded so
+        :func:`detect_preflight_verdict` can keep a REFUSE/saturation
+        verdict visible in every round's report. ``None`` (the default)
+        disables that detector.
+    infra_outage:
+        THIS round's endpoint-outage circuit trip, as an
+        ``(infra_aborted_runs, threshold)`` pair — threaded by the
+        orchestrator only for a round it DEFERRED on
+        :attr:`~zicato.core.runtime.RuntimeConfig.infra_abort_round_threshold`
+        (see :func:`detect_infra_outage`). ``None`` (the default) is
+        silent.
+    token_clip:
+        THIS round's per-round token-budget clip, as a
+        ``(tokens_spent, max_tokens_per_round)`` pair — threaded by the
+        orchestrator only for a round the budget actually clipped (see
+        :func:`detect_token_budget_clip`). ``None`` (the default) is
+        silent.
 
     Returns
     -------
@@ -787,6 +1182,16 @@ def assess_loop_health(
         ``"critical"`` severity.
     """
     health = _resolve_health_config(config)
+    # The random-baseline placebo arm is a CALIBRATION probe, not part of
+    # the optimization stream: an always-rejected control fielded every
+    # Nth round must not read as a stall, a flat-scoring window, or a
+    # mined-out contract. Split it out — the stream detectors see only the
+    # real experiments; the placebo experiments feed exactly one detector
+    # (a promoted placebo is the gate-discrimination alarm). With the knob
+    # off there are no placebo records and the split is the identity.
+    placebo_experiments = [exp for exp in experiments if _is_placebo_experiment(exp)]
+    if placebo_experiments:
+        experiments = [exp for exp in experiments if not _is_placebo_experiment(exp)]
     findings: list[HealthFinding] = []
     findings.extend(detect_degenerate_scoring(experiments, health))
     findings.extend(detect_non_differentiating_entry(losses_by_generation))
@@ -796,6 +1201,11 @@ def assess_loop_health(
     findings.extend(detect_stalled_loop(experiments, health))
     findings.extend(detect_generalization_gap(experiments, health))
     findings.extend(detect_refresh_cadence(experiments, max_generations_per_contract))
+    findings.extend(detect_margin_below_noise_floor(noise_floor, promote_margin, evidence_gate_on))
+    findings.extend(detect_preflight_verdict(preflight))
+    findings.extend(detect_placebo_promoted(placebo_experiments))
+    findings.extend(detect_infra_outage(infra_outage))
+    findings.extend(detect_token_budget_clip(token_clip))
 
     healthy = not any(finding.severity in ("warning", "critical") for finding in findings)
     return LoopHealth(
@@ -823,5 +1233,10 @@ __all__ = [
     "detect_dead_judge",
     "detect_stalled_loop",
     "detect_generalization_gap",
+    "detect_infra_outage",
+    "detect_noisy_judge",
+    "detect_placebo_promoted",
+    "detect_preflight_verdict",
     "detect_refresh_cadence",
+    "detect_token_budget_clip",
 ]

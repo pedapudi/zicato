@@ -378,10 +378,10 @@ def test_legacy_pass_exponent_is_rejected_loudly() -> None:
     """A retired ``pass_exponent`` key fails fast with the migration message,
     rather than being silently ignored by the field-enumerating loader (which
     would score linearly with no error, no warning, and no epoch roll)."""
-    from zicato.workspace_loader import _scoring_weights_from_dict
+    from zicato.workspace_loader import scoring_weights_from_dict
 
     with pytest.raises(ValueError, match="pass_exponent") as exc:
-        _scoring_weights_from_dict({"pass_weight": 2.0, "pass_exponent": 2.0})
+        scoring_weights_from_dict({"pass_weight": 2.0, "pass_exponent": 2.0})
     # The message points the operator at the replacement.
     assert "pass_transform" in str(exc.value)
     assert "pow" in str(exc.value)

@@ -24,10 +24,10 @@ import { el } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, section, empty, verdictPill, normaliseDecision, decisionFor } from '../ui.js';
+import { gatedSwap, section, empty, verdictPill, decisionFor, decisionOf } from '../ui.js';
 import { renderStructure, structurePill, structureDigest, isNonGauntlet, normalizeStructure, resolveNonGauntletSt } from './structure.js';
 import { deriveLiveStatus } from '../livestatus.js';
-import { epochRoundModel, roundModelDigest } from './rounds.js';
+import { roundsFromTimeline, roundModelDigest } from './rounds.js';
 
 // Does the LIVE run (active tournament / heartbeat) belong to the epoch being
 // VIEWED? The live topology is the ACTIVE epoch's — adopting it under a
@@ -62,8 +62,8 @@ export async function render(host, ctx, params) {
     gatedSwap(host, 'no-epoch', () => [el('h1', { class: 'dn-h1', text: 'Generations' }), empty('No epoch selected.')]);
     return;
   }
-  const [rows, traj, bracket] = await Promise.all([
-    D.generationsForEpoch(id), D.scoreTrajectory(id), D.bracket(id),
+  const [rows, traj, bracket, timeline] = await Promise.all([
+    D.generationsForEpoch(id), D.scoreTrajectory(id), D.bracket(id), D.roundTimeline(id),
   ]);
 
   // ── ROUND DRILL-DOWN (Task 4): the epoch timeline indexes rounds; a `round`
@@ -73,7 +73,7 @@ export async function render(host, ctx, params) {
   // full (all-rounds) Match-ups view is unchanged when no round is selected.
   const roundParam = (params && params.round != null) ? params.round : null;
   if (roundParam != null) {
-    await renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roundParam);
+    await renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roundParam, timeline);
     return;
   }
 
@@ -106,13 +106,13 @@ export async function render(host, ctx, params) {
   const experiments = (ep && Array.isArray(ep.experiments)) ? ep.experiments : [];
   const gens = rows.length
     ? rows.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted }))
-    : experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: normaliseDecision(x.outcome) === 'promoted' ? true : (normaliseDecision(x.outcome) === 'rejected' ? false : null) }));
+    : experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: x.promoted == null ? null : !!x.promoted }));
 
   const scalarByGen = new Map();
   if (traj && Array.isArray(traj.points)) for (const p of traj.points) if (svg.isNum(p.scalar)) scalarByGen.set(p.generation_id, p.scalar);
 
-  const champ = gens.find((g) => g.promoted) || gens.find((g) => !g.parent) || null;
-  const championId = champ ? champ.id : null;
+  // The REIGNING champion — the server-stamped pointer (never re-scanned).
+  const championId = (ep && ep.current_champion != null) ? String(ep.current_champion) : null;
   const champScalar = championId ? scalarByGen.get(championId) : null;
 
   // the match-ups (the actual gauntlet rounds), round-ordered by ran_at.
@@ -193,16 +193,16 @@ export async function render(host, ctx, params) {
 // Degrades when round_index is absent (the round model falls back to field
 // records / matchups / a single round 0), and when the selected round is out of
 // range it reads as an honest empty.
-async function renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roundParam) {
+async function renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roundParam, timeline) {
   const tournament = (ep && ep.tournament && typeof ep.tournament === 'object') ? ep.tournament : null;
   const structure = (tournament && tournament.structure) || 'gauntlet';
   const experiments = (ep && Array.isArray(ep.experiments)) ? ep.experiments : [];
   const gens = rows.length
     ? rows.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted, round_index: svg.isNum(g.round_index) ? g.round_index : null }))
-    : experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: normaliseDecision(x.outcome) === 'promoted' ? true : (normaliseDecision(x.outcome) === 'rejected' ? false : null), round_index: svg.isNum(x.round_index) ? x.round_index : null }));
+    : experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: x.promoted == null ? null : !!x.promoted, round_index: svg.isNum(x.round_index) ? x.round_index : null }));
   const scalarByGen = new Map();
   if (traj && Array.isArray(traj.points)) for (const p of traj.points) if (svg.isNum(p.scalar)) scalarByGen.set(p.generation_id, p.scalar);
-  const championId = (gens.find((g) => g.promoted) || gens.find((g) => !g.parent) || {}).id || null;
+  const championId = (ep && ep.current_champion != null) ? String(ep.current_champion) : null;
 
   // the live PROJECTED standing for an in-flight round's challenger (current
   // epoch only) — falls back to the projected scalar when no settled one exists.
@@ -212,7 +212,9 @@ async function renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roun
   // the live envelope (this epoch only) so a still-proposing NEW round is drillable
   // as its own in-flight round, not folded under the prior round (issue #16).
   const liveInflight = liveForThisEpoch ? liveAt : null;
-  const epochRounds = epochRoundModel({ gens, scalarBy: scalarByGen, bracket, structure, championId, projected: liveProjected, inflight: liveInflight });
+  // The SETTLED rounds come off the SERVED round timeline; only the live
+  // overlay (projected standings + the in-flight round) is applied here.
+  const epochRounds = roundsFromTimeline({ timeline, bracket, gens, scalarBy: scalarByGen, structure, championId, projected: liveProjected, inflight: liveInflight });
   const want = String(roundParam);
   const round = epochRounds.find((r) => String(r.round_index) === want) || null;
 
@@ -228,24 +230,26 @@ async function renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roun
   // rounds DO live in the record); racing is rebuilt by reconstructRacing.
   let st = null;
   if (isNonGauntlet(structure)) {
-    // the per-round field record → the completed-record fallback input (its
-    // `rounds` are authoritative for swiss/elim; empty for racing → ignored, the
-    // resolver reconstructs from the bracket instead).
-    const recordSt = (round && round.tournamentRef)
-      ? normalizeStructure({
-          structure: round.tournamentRef.structure || structure,
-          structure_params: round.tournamentRef.structure_params || (tournament && tournament.params) || {},
-          competitors: round.tournamentRef.competitors, rounds: round.tournamentRef.rounds,
-          standings: round.tournamentRef.standings,
-          champion_lineage: bracket && bracket.champion_lineage, source: 'index',
-        }, false)
-      : null;
+    // the settled record: RACING reads the SERVED racing-field payload (the
+    // per-challenger join lives server-side); swiss/elim read the round's own
+    // field record (its `rounds` are authoritative there).
+    const recordSt = structure === 'racing'
+      ? normalizeStructure(await D.racingField(id), false)
+      : ((round && round.tournamentRef)
+        ? normalizeStructure({
+            structure: round.tournamentRef.structure || structure,
+            structure_params: round.tournamentRef.structure_params || (tournament && tournament.params) || {},
+            competitors: round.tournamentRef.competitors, rounds: round.tournamentRef.rounds,
+            standings: round.tournamentRef.standings,
+            champion_lineage: bracket && bracket.champion_lineage, source: 'index',
+          }, false)
+        : null);
     const status = deriveLiveStatus({
       heartbeat: state.heartbeat, activeRuns: state.activeRuns, activeTournament: state.activeTournament,
     });
     const liveRaw = (liveForThisEpoch && status.running) ? await D.activeTournament() : null;
     const resolved = resolveNonGauntletSt({
-      structure, bracket, epochId: id, liveRaw,
+      structure, epochId: id, liveRaw,
       heartbeat: state.heartbeat, activeRuns: state.activeRuns,
       params: (tournament && tournament.params) || {},
       completedRecord: recordSt,
@@ -350,14 +354,17 @@ async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, 
   // adopted AND (for racing) the bracket reconstruction does not resolve.
   const liveRaw = (liveForThisEpoch && status.running) ? await D.activeTournament() : null;
 
-  // pre-fetch the completed per-tournament record (the recorded fallback). For
-  // RACING this is the SECOND fallback behind reconstructRacing (the aggregate
-  // field record carries `rounds: []`, but a per-challenger flattened record can
-  // still resolve a ladder); for swiss/elim it is the primary recorded source.
-  // It is cached + failure-tolerant, so probing it is cheap and keeps the
-  // resolver sync.
+  // pre-fetch the settled record. RACING reads the SERVED racing-field payload
+  // (`/api/epoch/{id}/racing-field` — the per-challenger join lives
+  // server-side); swiss/elim read the epoch's most-recent per-tournament
+  // structure record. Cached + failure-tolerant, so probing is cheap and keeps
+  // the resolver sync.
   let tournamentId = null;
-  {
+  let completedRecord = null;
+  if (structure === 'racing') {
+    completedRecord = normalizeStructure(await D.racingField(id), false);
+    if (completedRecord) tournamentId = 'racing:served';
+  } else {
     const tournaments = (bracket && Array.isArray(bracket.tournaments)) ? bracket.tournaments : [];
     const matchStruct = tournaments.filter((t) => t && t.structure === structure);
     const nonGaunt = tournaments.filter((t) => t && t.structure && t.structure !== 'gauntlet');
@@ -369,17 +376,16 @@ async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, 
       const last = matchups[matchups.length - 1];
       if (last && last.challenger) tournamentId = `${id}:${last.champion || ''}->${last.challenger}`;
     }
+    completedRecord = tournamentId ? normalizeStructure(await D.tournamentStructure(id, tournamentId), false) : null;
   }
-  const completedRecord = tournamentId ? normalizeStructure(await D.tournamentStructure(id, tournamentId), false) : null;
 
   const resolved = resolveNonGauntletSt({
-    structure, bracket, epochId: id, liveRaw,
+    structure, epochId: id, liveRaw,
     heartbeat: state.heartbeat, activeRuns: state.activeRuns,
     params, completedRecord,
   });
   const shown = resolved.st;
   const liveUsable = resolved.source === 'live';
-  if (resolved.source === 'reconstructed') tournamentId = 'racing:reconstructed';
   const shownStructure = (shown && shown.structure) || structure;
   const digest = JSON.stringify({
     id, structure: shownStructure, tournamentId, live: liveUsable, st: structureDigest(shown),
@@ -440,7 +446,7 @@ function fieldFlow(championId, champScalar, matchups, gates, total, promoted, ct
   // the challenger lanes (one per match-up), Δ-vs-champion + verdict + hypothesis.
   const challengers = matchups.map((m, i) => {
     const gate = gates && gates[i] ? gates[i] : null;
-    const verdict = normaliseDecision(m) || normaliseDecision(gate) || 'pending';
+    const verdict = decisionOf(m) || decisionOf(gate) || 'pending';
     const delta = svg.isNum(m.delta_scalar) ? m.delta_scalar
       : (gate && svg.isNum(gate.delta_scalar) ? gate.delta_scalar : null);
     const driver = gate && gate.primary_driver && gate.primary_driver.judge ? gate.primary_driver.judge : null;

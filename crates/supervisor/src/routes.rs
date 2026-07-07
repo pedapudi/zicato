@@ -104,6 +104,7 @@ pub fn router(state: AppState) -> Router {
             .route("/api/health", get(api_health))
             .route("/events", get(events))
             .route("/api/control/pause", post(control_pause))
+            .route("/api/control/resume", post(control_resume))
             .route("/api/control/skip-round", post(control_skip_round))
             .route("/api/control/kill/:run_id", post(control_kill))
             .route("/api/control/promote/:generation_id", post(control_promote))
@@ -344,11 +345,20 @@ async fn api_health_report(State(s): State<AppState>) -> Json<serde_json::Value>
 }
 
 async fn api_heartbeat(State(s): State<AppState>) -> Json<serde_json::Value> {
-    Json(
-        reader::read_heartbeat(&s.paths)
-            .map(|h| serde_json::to_value(h).unwrap_or(serde_json::Value::Null))
-            .unwrap_or(serde_json::Value::Null),
-    )
+    // Stamp the ONE typed liveness timestamp — `ts`, integer MILLISECONDS
+    // since the epoch, derived from `last_heartbeat` — mirroring the Python
+    // reader. The frontend ages the heartbeat off this field alone.
+    let value = reader::read_heartbeat(&s.paths)
+        .map(|h| {
+            let ts = h.last_heartbeat.map(|dt| dt.timestamp_millis());
+            let mut v = serde_json::to_value(h).unwrap_or(serde_json::Value::Null);
+            if let (Some(obj), Some(ms)) = (v.as_object_mut(), ts) {
+                obj.insert("ts".into(), serde_json::Value::from(ms));
+            }
+            v
+        })
+        .unwrap_or(serde_json::Value::Null);
+    Json(value)
 }
 
 #[derive(Serialize)]
@@ -455,6 +465,42 @@ async fn control_pause(State(s): State<AppState>, body: Option<Json<EmptyBody>>)
         serde_json::json!({"reason": reason, "ts": chrono::Utc::now()}),
     )
     .await
+}
+
+/// `POST /api/control/resume` — clear the `pause_epoch` flag file.
+///
+/// The dashboard's resume gesture: the orchestrator's `block_while_paused`
+/// polls the flag until it clears (and archives the pause episode itself),
+/// so resume is a plain atomic unlink — never a queued command file.
+/// Idempotent: resuming an unpaused workspace is an accepted no-op
+/// (`removed: false`), so a double-click / raced resume never errors.
+async fn control_resume(State(s): State<AppState>) -> Response {
+    if let Some(r) = forbidden_if_read_only(&s) {
+        return r;
+    }
+    let path = s.paths.control_dir().join("pause_epoch");
+    let removed = match tokio::fs::remove_file(&path).await {
+        Ok(_) => true,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        Err(e) => {
+            warn!(?path, error=%e, "resume: pause-flag unlink failed");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("unlink failed: {e}"),
+            )
+                .into_response();
+        }
+    };
+    (
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({
+            "accepted": true,
+            "removed": removed,
+            "path": path.display().to_string(),
+            "ts": chrono::Utc::now(),
+        })),
+    )
+        .into_response()
 }
 
 async fn control_skip_round(State(s): State<AppState>, body: Option<Json<EmptyBody>>) -> Response {

@@ -411,13 +411,14 @@ def test_overlap_enforcement_absent_is_byte_compatible(
 
 
 def test_jaccard_overlap_math() -> None:
-    from zicato.orchestrator import _jaccard, _max_overlap_with_accepted
+    from zicato.orchestrator import _max_overlap_with_accepted
+    from zicato.selection.diversity import jaccard
 
-    assert _jaccard(frozenset(), frozenset()) == 0.0
-    assert _jaccard(frozenset({"a"}), frozenset({"b"})) == 0.0
-    assert _jaccard(frozenset({"a", "b"}), frozenset({"a", "b"})) == 1.0
+    assert jaccard(frozenset(), frozenset()) == 0.0
+    assert jaccard(frozenset({"a"}), frozenset({"b"})) == 0.0
+    assert jaccard(frozenset({"a", "b"}), frozenset({"a", "b"})) == 1.0
     # |{a}| / |{a,b,c}| = 1/3
-    assert _jaccard(frozenset({"a", "b"}), frozenset({"a", "c"})) == pytest.approx(1 / 3)
+    assert jaccard(frozenset({"a", "b"}), frozenset({"a", "c"})) == pytest.approx(1 / 3)
 
     # Max overlap picks the most-overlapping accepted sibling and its index.
     accepted = [frozenset({"a"}), frozenset({"a", "b", "c"})]
@@ -429,14 +430,14 @@ def test_jaccard_overlap_math() -> None:
 
 
 def test_compute_field_diversity_summary() -> None:
-    from zicato.orchestrator import _compute_field_diversity
+    from zicato.selection.diversity import compute_field_diversity
 
     sets = [
         ("v1", frozenset({"a", "b"})),
         ("v2", frozenset({"a", "b"})),  # identical to v1
         ("v3", frozenset({"c"})),  # disjoint
     ]
-    block = _compute_field_diversity(sets, tolerance=0.5, soft_rejected_count=1)
+    block = compute_field_diversity(sets, tolerance=0.5, soft_rejected_count=1)
     assert block["field_size"] == 3
     assert block["distinct_ideas"] == 2  # {a,b} and {c}
     assert block["max_overlap"] == 1.0
@@ -447,7 +448,7 @@ def test_compute_field_diversity_summary() -> None:
     assert block["mean_overlap"] == pytest.approx(1 / 3)
 
     # A single-challenger field has no pairs: zero overlap, one idea.
-    solo = _compute_field_diversity([("v1", frozenset({"a"}))])
+    solo = compute_field_diversity([("v1", frozenset({"a"}))])
     assert solo["field_size"] == 1
     assert solo["distinct_ideas"] == 1
     assert solo["mean_overlap"] == 0.0

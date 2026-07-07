@@ -33,9 +33,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 log = logging.getLogger("zicato.epoch.contract")
 
@@ -61,8 +62,11 @@ class ContractInputs:
         The registered ``--adk`` entrypoint string, verbatim.
     mutable_trees:
         The registered ``--mutable-tree`` paths. Stored as a tuple of
-        strings; :func:`compute_contract_hash` sorts and absolutises
-        them so order and relative/absolute spelling do not matter.
+        strings; :func:`compute_contract_hash` sorts and *normalizes*
+        them (never filesystem-resolves — the hash must not depend on
+        the process cwd or the checkout's absolute path) so
+        registration order and ``.``/``..``/separator spelling do not
+        matter.
     proposer_path:
         Location of the proposer dir (``proposers/<name>/``) the epoch
         steers with, or ``None`` for the built-in default proposer.
@@ -111,12 +115,12 @@ def _canon_board(board_path: Path) -> str:
             board_path,
         )
         return ""
-    from zicato.board.jsonl import _entry_to_dict, load_board  # noqa: PLC0415
+    from zicato.board.jsonl import entry_to_dict, load_board  # noqa: PLC0415
 
     entries = load_board(board_path)
     canon_entries = [
         json.dumps(
-            _fold_entry_grading_source(_entry_to_dict(entry)),
+            _fold_entry_grading_source(entry_to_dict(entry)),
             sort_keys=True,
             ensure_ascii=False,
         )
@@ -144,7 +148,7 @@ def _fold_entry_grading_source(entry: dict[str, object]) -> dict[str, object]:
     Non-predicate expectations (text / regex / json_schema / rubric specs are not
     dotted plugins) and inline judges are left untouched, so a board that names
     no plugin canonicalizes byte-for-byte as before. Operates on a copy of the
-    nested dicts so the round-trip serializer (``_entry_to_dict``) is unaffected.
+    nested dicts so the round-trip serializer (``entry_to_dict``) is unaffected.
     """
     out = dict(entry)
     exp = out.get("expectation")
@@ -358,11 +362,11 @@ def _canon_scoring(scoring_path: Path) -> str:
             scoring_path,
         )
         return ""
-    from zicato.workspace_loader import _scoring_weights_from_dict  # noqa: PLC0415
+    from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
 
     raw = json.loads(scoring_path.read_text(encoding="utf-8"))
-    weights = _scoring_weights_from_dict(raw)
-    return json.dumps(_round_floats(_scoring_to_canon(weights)), sort_keys=True)
+    weights = scoring_weights_from_dict(raw)
+    return json.dumps(round_floats(scoring_to_canon(weights)), sort_keys=True)
 
 
 #: ``ScoringWeights`` fields that carry a dotted-spec pointing at an operator
@@ -386,10 +390,44 @@ _SCORING_PLUGIN_SPEC_FIELDS: frozenset[str] = frozenset(
 #: field, while a NON-default value still appears in the canonical form and
 #: rolls the epoch — exactly like any other weight change. Only purely-additive,
 #: default-off fields belong here.
-_SCORING_OMIT_AT_DEFAULT_FIELDS: frozenset[str] = frozenset({"diff_complexity_weight"})
+_SCORING_OMIT_AT_DEFAULT_FIELDS: frozenset[str] = frozenset(
+    {
+        "diff_complexity_weight",
+        # Opt-in cross-epoch experiment memory (EXPERIMENT-MEMORY.md §3.4):
+        # the nested ``ExperimentMemoryConfig`` compares by value against
+        # its ``default_factory()`` instance, so an all-default block is
+        # omitted (no retroactive roll) while any opt-in rolls the epoch.
+        "experiment_memory",
+        # Opt-in random-baseline (placebo) challenger cadence
+        # (OVERFITTING.md #7). Lives on the nested ``OverfittingConfig`` —
+        # the canonicalizer recurses through this same field-name set, so
+        # the nested field is omitted at its 0 default (no retroactive
+        # roll) and a non-zero cadence rolls the epoch.
+        "random_baseline_every_n",
+        # Opt-in integrity BLOCKING modes (default OFF — alarm-only parity
+        # with the supervisor's notary). Omitted at their False default so
+        # existing epochs never roll; opting either on selects champions
+        # under a stricter rule and rolls the epoch, which is correct.
+        "block_on_containment_violation",
+        "block_on_gate_contradiction",
+        # Opt-in pre-tournament candidate screening (tryouts). Both live on
+        # the nested ``ProposerQualityConfig`` — the canonicalizer recurses
+        # through this same field-name set (the ``random_baseline_every_n``
+        # precedent), so each is omitted at its default (0 / False; no
+        # retroactive roll) and a non-default value rolls the epoch.
+        "screen_entries",
+        "screen_veto_only",
+        # Opt-in process-exemplar channel (PROCESS-EXEMPLARS.md). Lives on
+        # the nested ``ProposerQualityConfig`` like the screen knobs and is
+        # omitted at its 0 default (no retroactive roll); a non-zero cap
+        # rolls the epoch — a proposer shown redacted process windows
+        # proposes under a different rule.
+        "process_exemplars",
+    }
+)
 
 
-def _scoring_to_canon(weights: object) -> dict[str, object]:
+def scoring_to_canon(weights: object) -> dict[str, object]:
     """Reduce a :class:`ScoringWeights` to a plain JSON-shaped dict.
 
     Every public field is included so the canonical form is complete
@@ -435,7 +473,7 @@ def _scoring_to_canon(weights: object) -> dict[str, object]:
             # into the scoring contract automatically (§4 of the data
             # model design): switching structures or bumping a param
             # changes this canonical form and rolls the epoch.
-            out[f.name] = _scoring_to_canon(value)
+            out[f.name] = scoring_to_canon(value)
         elif hasattr(value, "items"):
             out[f.name] = {k: _canon_value(v) for k, v in value.items()}
         elif isinstance(value, tuple):
@@ -461,14 +499,14 @@ def _canon_value(value: object) -> object:
     return value
 
 
-def _round_floats(value: object) -> object:
+def round_floats(value: object) -> object:
     """Recursively round every float in a JSON-shaped value to 6 dp."""
     if isinstance(value, float):
         return round(value, 6)
     if isinstance(value, dict):
-        return {k: _round_floats(v) for k, v in value.items()}
+        return {k: round_floats(v) for k, v in value.items()}
     if isinstance(value, list):
-        return [_round_floats(v) for v in value]
+        return [round_floats(v) for v in value]
     return value
 
 
@@ -478,14 +516,20 @@ def _canon_entrypoint(entrypoint: str) -> str:
 
 
 def _canon_mutable_trees(mutable_trees: tuple[str, ...]) -> str:
-    """Canonical form of the mutable trees: sorted absolute path strings.
+    """Canonical form of the mutable trees: sorted normalized path strings.
 
-    Each path is resolved to an absolute string and the result is
-    sorted, so the registration order and any relative/absolute spelling
-    differences do not move the hash. Adding or removing a tree does.
+    The identity being hashed is *which subtrees of the target are
+    mutable* — a property of the registration, not of where the checkout
+    happens to live. Paths are normalized (``.``/``..`` segments and
+    separators collapsed, POSIX-rendered) but NEVER resolved against the
+    filesystem: resolving folded the process cwd and the absolute
+    checkout path into the hash, so the same workspace hashed
+    differently when run from a different directory — or after being
+    moved — and spuriously rolled its epoch. Registration order does not
+    move the hash (sorted); adding or removing a tree does.
     """
-    resolved = sorted(str(Path(p).resolve()) for p in mutable_trees)
-    return "\n".join(resolved)
+    normalized = sorted(PurePosixPath(os.path.normpath(p)).as_posix() for p in mutable_trees)
+    return "\n".join(normalized)
 
 
 def _canon_proposer(proposer_path: Path | None) -> str:
@@ -549,7 +593,9 @@ def compute_contract_hash(inputs: ContractInputs) -> str:
     * **scoring** — ``json.load``, round every float to 6 decimal
       places, ``json.dumps(sort_keys=True)``.
     * **entrypoint** — the string verbatim.
-    * **mutable_trees** — sorted tuple of absolute path strings.
+    * **mutable_trees** — sorted tuple of NORMALIZED path strings
+      (`os.path.normpath` + POSIX; never filesystem-resolved, so the
+      hash does not depend on the process cwd or checkout — bug #10).
     * **proposer** — the resolved :class:`ProposerSpec` (agent id, sorted
       tools, per-skill normalized-body hashes sorted by name, custom
       ``agent.py`` source hash), serialized sorted-key.
@@ -727,4 +773,6 @@ __all__ = [
     "compute_component_hashes",
     "resolve_contract_inputs",
     "default_contract_paths",
+    "round_floats",
+    "scoring_to_canon",
 ]

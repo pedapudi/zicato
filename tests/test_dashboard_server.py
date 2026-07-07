@@ -10,6 +10,7 @@ stream connects and the conversation endpoints reconstruct transcripts.
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 import sys
 import types
@@ -34,10 +35,35 @@ def _write_json(path: Path, obj: object) -> None:
     _write(path, json.dumps(obj))
 
 
+@pytest.fixture(scope="session")
+def _workspace_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The populated fixture workspace, built ONCE per session.
+
+    Building the workspace means ~25 file writes plus a seeded SQLite
+    index; at one build per test that dominated this module's setup cost.
+    The template is immutable — tests receive a private ``copytree`` copy
+    via the function-scoped ``workspace`` fixture, so per-test hermeticity
+    (several tests write journals, loss files, control markers, heartbeats
+    into their workspace) is unchanged.
+    """
+    ws = tmp_path_factory.mktemp("dashboard-ws-template") / ".zicato"
+    _populate_workspace(ws)
+    return ws
+
+
 @pytest.fixture
-def workspace(tmp_path: Path) -> Path:
-    """A populated ``.zicato/`` workspace covering every endpoint's inputs."""
+def workspace(_workspace_template: Path, tmp_path: Path) -> Path:
+    """A populated ``.zicato/`` workspace covering every endpoint's inputs.
+
+    A private, writable copy of the session template.
+    """
     ws = tmp_path / ".zicato"
+    shutil.copytree(_workspace_template, ws)
+    return ws
+
+
+def _populate_workspace(ws: Path) -> Path:
+    """Write the fixture ``.zicato/`` tree covering every endpoint's inputs."""
     runtime = ws / "runtime"
     (runtime / "active_runs").mkdir(parents=True)
     (runtime / "control").mkdir(parents=True)
@@ -406,7 +432,16 @@ def test_active_tournament_matches_file(client: TestClient, workspace: Path) -> 
 def test_heartbeat_endpoint(client: TestClient) -> None:
     r = client.get("/api/heartbeat")
     assert r.status_code == 200
-    assert r.json()["phase"] == "tournament"
+    body = r.json()
+    assert body["phase"] == "tournament"
+    # THE one typed liveness timestamp: integer ms-epoch, stamped server-side
+    # from last_heartbeat (2026-05-16T04:30:00Z). The frontend ages the
+    # heartbeat off this field alone — no ISO parsing, no magnitude guessing.
+    import datetime as _dt
+
+    expected_ms = int(_dt.datetime(2026, 5, 16, 4, 30, tzinfo=_dt.UTC).timestamp() * 1000)
+    assert body["ts"] == expected_ms
+    assert isinstance(body["ts"], int)
 
 
 def test_read_heartbeat_dict_falls_back_to_mtime_for_unageable_stamp(tmp_path: Path) -> None:
@@ -417,7 +452,7 @@ def test_read_heartbeat_dict_falls_back_to_mtime_for_unageable_stamp(tmp_path: P
     import datetime as _dt
     import os
 
-    from zicato.dashboard.state_reader import WorkspacePaths, read_heartbeat_dict
+    from zicato.query import WorkspacePaths, read_heartbeat_dict
 
     ws = tmp_path / "ws"
     runtime = ws / ".zicato" / "runtime"
@@ -448,6 +483,10 @@ def test_read_heartbeat_dict_falls_back_to_mtime_for_unageable_stamp(tmp_path: P
     assert out is not None
     # The unageable stamp is replaced by the file mtime as an ISO-8601 string.
     assert out["last_heartbeat"] == "2026-06-03T03:06:04Z"
+    # ...and the typed ms-epoch `ts` is stamped from that same fallback.
+    import datetime as _dt2
+
+    assert out["ts"] == int(_dt2.datetime(2026, 6, 3, 3, 6, 4, tzinfo=_dt2.UTC).timestamp() * 1000)
     # Other fields pass through unchanged.
     assert out["phase"] == "tournament:round_0:final"
     assert out["pid"] == 4242
@@ -457,7 +496,7 @@ def test_read_heartbeat_dict_preserves_a_usable_stamp(tmp_path: Path) -> None:
     """A heartbeat that already carries a parseable ISO ``last_heartbeat`` is
     returned verbatim — the mtime fallback only fires for an unageable stamp.
     """
-    from zicato.dashboard.state_reader import WorkspacePaths, read_heartbeat_dict
+    from zicato.query import WorkspacePaths, read_heartbeat_dict
 
     ws = tmp_path / "ws"
     runtime = ws / ".zicato" / "runtime"
@@ -487,7 +526,7 @@ def test_standalone_harmonograf_url_injected_into_heartbeat(tmp_path: Path) -> N
     ``harmonograf_persistent`` flag) so the frontend's liveness gate reads true
     even with no active run.
     """
-    from zicato.dashboard.state_reader import WorkspacePaths, read_heartbeat_dict
+    from zicato.query import WorkspacePaths, read_heartbeat_dict
 
     ws = tmp_path / "ws"
     runtime = ws / ".zicato" / "runtime"
@@ -518,7 +557,7 @@ def test_live_evolve_heartbeat_url_wins_over_injected(tmp_path: Path) -> None:
     own server), the dashboard-injected persistent url must NOT overwrite it —
     the live server wins. The ``harmonograf_persistent`` flag is still set.
     """
-    from zicato.dashboard.state_reader import WorkspacePaths, read_heartbeat_dict
+    from zicato.query import WorkspacePaths, read_heartbeat_dict
 
     ws = tmp_path / "ws"
     runtime = ws / ".zicato" / "runtime"
@@ -548,7 +587,7 @@ def test_live_evolve_heartbeat_url_wins_over_injected(tmp_path: Path) -> None:
 
 def test_standalone_harmonograf_synthesizes_heartbeat_for_postmortem(tmp_path: Path) -> None:
     """No on-disk heartbeat + a persistent url ⇒ a synthetic heartbeat renders links."""
-    from zicato.dashboard.state_reader import WorkspacePaths, read_heartbeat_dict
+    from zicato.query import WorkspacePaths, read_heartbeat_dict
 
     ws = tmp_path / "ws"
     (ws / ".zicato" / "runtime").mkdir(parents=True)
@@ -563,7 +602,7 @@ def test_standalone_harmonograf_synthesizes_heartbeat_for_postmortem(tmp_path: P
 
 def test_no_injection_without_persistent_url(tmp_path: Path) -> None:
     """Without a persistent url, no heartbeat at all stays ``None`` (no synthesis)."""
-    from zicato.dashboard.state_reader import WorkspacePaths, read_heartbeat_dict
+    from zicato.query import WorkspacePaths, read_heartbeat_dict
 
     ws = tmp_path / "ws"
     (ws / ".zicato" / "runtime").mkdir(parents=True)
@@ -625,7 +664,7 @@ def test_lineage_round_index_read(tmp_path: Path) -> None:
     and OMITS the key (not null) when the stamp is absent — so a pre-feature
     experiment.json reads byte-identically and the dashboard's lineage fallback
     kicks in."""
-    from zicato.dashboard.state_reader import WorkspacePaths, build_lineage_view
+    from zicato.query import WorkspacePaths, build_lineage_view
 
     epoch_dir = tmp_path / "epochs" / "2026-06-02_e0"
     for gen in ("v0", "v1", "v2"):
@@ -768,7 +807,7 @@ def test_epoch_view(client: TestClient) -> None:
 
 def test_epoch_view_brief_falls_back_to_legacy_rubric_md(workspace: Path) -> None:
     """A pre-rename epoch with only ``rubric.md`` still populates ``brief``."""
-    from zicato.dashboard.state_reader import WorkspacePaths, build_epoch_view
+    from zicato.query import WorkspacePaths, build_epoch_view
 
     epoch_dir = workspace / "epochs" / "2026-05-16_e0"
     # Simulate an epoch frozen before the rename: rename brief.md back
@@ -781,7 +820,7 @@ def test_epoch_view_brief_falls_back_to_legacy_rubric_md(workspace: Path) -> Non
 
 def test_epoch_view_brief_prefers_brief_md_over_legacy(workspace: Path) -> None:
     """When both files exist, ``brief.md`` wins over the legacy name."""
-    from zicato.dashboard.state_reader import WorkspacePaths, build_epoch_view
+    from zicato.query import WorkspacePaths, build_epoch_view
 
     epoch_dir = workspace / "epochs" / "2026-05-16_e0"
     _write(epoch_dir / "rubric.md", "# legacy brief\nold\n")
@@ -796,7 +835,7 @@ def test_epoch_view_board_skips_board_meta_header(workspace: Path) -> None:
     A board.jsonl whose first line is a ``board_meta`` object must not
     surface that line as a spurious all-``—`` board row.
     """
-    from zicato.dashboard.state_reader import WorkspacePaths, build_epoch_view
+    from zicato.query import WorkspacePaths, build_epoch_view
 
     epoch_dir = workspace / "epochs" / "2026-05-16_e0"
     _write(
@@ -822,7 +861,7 @@ def test_epoch_view_board_skips_board_meta_header(workspace: Path) -> None:
     view = build_epoch_view(WorkspacePaths(workspace))
     # Only the real entry — the board_meta header is dropped.
     assert len(view["board"]) == 1
-    assert view["board"][0]["id"] == "waffles_single"
+    assert view["board"][0]["entry_id"] == "waffles_single"
     assert all(e.get("board_meta") is not True for e in view["board"])
 
 
@@ -833,7 +872,7 @@ def test_epoch_view_board_skips_board_meta_header(workspace: Path) -> None:
 
 def test_build_epochs_summary_distils_goal_from_brief(workspace: Path) -> None:
     """build_epochs_summary distils a one-line goal from each epoch brief."""
-    from zicato.dashboard.state_reader import WorkspacePaths, build_epochs_summary
+    from zicato.query import WorkspacePaths, build_epochs_summary
 
     epoch_dir = workspace / "epochs" / "2026-05-16_e0"
     _write(
@@ -852,7 +891,7 @@ def test_build_epochs_summary_distils_goal_from_brief(workspace: Path) -> None:
 
 def test_build_epochs_summary_goal_none_when_no_goal_section(workspace: Path) -> None:
     """A brief with no ``## Goal`` section yields a null goal, not an error."""
-    from zicato.dashboard.state_reader import WorkspacePaths, build_epochs_summary
+    from zicato.query import WorkspacePaths, build_epochs_summary
 
     epoch_dir = workspace / "epochs" / "2026-05-16_e0"
     _write(epoch_dir / "brief.md", "# Proposer brief\n\n## Preferred edits\n\nNo goal here.\n")
@@ -862,7 +901,7 @@ def test_build_epochs_summary_goal_none_when_no_goal_section(workspace: Path) ->
 
 def test_build_epochs_summary_reads_legacy_rubric_md(workspace: Path) -> None:
     """The goal distillation falls back to the legacy ``rubric.md`` name."""
-    from zicato.dashboard.state_reader import WorkspacePaths, build_epochs_summary
+    from zicato.query import WorkspacePaths, build_epochs_summary
 
     epoch_dir = workspace / "epochs" / "2026-05-16_e0"
     (epoch_dir / "brief.md").unlink()
@@ -891,7 +930,7 @@ def test_environment_includes_epochs_summary(client: TestClient) -> None:
 
 def test_epoch_view_includes_experiments_journal_analysis(workspace: Path) -> None:
     """build_epoch_view now carries experiments, journal, and analysis fields."""
-    from zicato.dashboard.state_reader import WorkspacePaths, build_epoch_view
+    from zicato.query import WorkspacePaths, build_epoch_view
 
     epoch_id = "2026-05-16_e0"
     epoch_dir = workspace / "epochs" / epoch_id
@@ -942,7 +981,7 @@ def test_epoch_view_includes_experiments_journal_analysis(workspace: Path) -> No
 
 def test_epoch_view_experiments_empty_without_gens(workspace: Path) -> None:
     """build_epoch_view yields an empty experiments list when no generation dirs exist."""
-    from zicato.dashboard.state_reader import WorkspacePaths, build_epoch_view
+    from zicato.query import WorkspacePaths, build_epoch_view
 
     # Remove all generation directories so the walker finds nothing.
     epoch_dir = workspace / "epochs" / "2026-05-16_e0"
@@ -963,7 +1002,7 @@ def test_epoch_view_experiments_empty_without_gens(workspace: Path) -> None:
 
 def test_epoch_view_analysis_html_available_flag(workspace: Path) -> None:
     """analysis_html_available is True when the HTML file exists."""
-    from zicato.dashboard.state_reader import WorkspacePaths, build_epoch_view
+    from zicato.query import WorkspacePaths, build_epoch_view
 
     epoch_dir = workspace / "epochs" / "2026-05-16_e0"
     _write(epoch_dir / "analysis.html", "<html><body>report</body></html>")
@@ -1016,7 +1055,7 @@ def test_compute_epoch_delta_summary_champion_spine_vs_gross() -> None:
     across the promoted hops — ``-10 + -15 = -25``. The gross net sums
     every recorded delta, promoted or not — ``-10 + 5 + -15 + 20 = 0``.
     """
-    from zicato.dashboard.state_reader import compute_epoch_delta_summary
+    from zicato.query import compute_epoch_delta_summary
 
     experiments = [
         # v0 is the baseline — no outcome, no delta.
@@ -1039,7 +1078,7 @@ def test_compute_epoch_delta_summary_t6_run8_shape() -> None:
     gross = sum of all five = ``+19.482`` — exactly the discrepancy the
     operator caught on the Epoch header.
     """
-    from zicato.dashboard.state_reader import compute_epoch_delta_summary
+    from zicato.query import compute_epoch_delta_summary
 
     experiments = [
         _exp(gen="v1", parent="v0", decision="promoted", delta=-14.429),
@@ -1061,7 +1100,7 @@ def test_compute_epoch_delta_summary_empty_and_lone_promotion() -> None:
     spine reads "—" until a second promotion lands. The gross figure
     still sums every recorded delta — it is the all-experiments view.
     """
-    from zicato.dashboard.state_reader import compute_epoch_delta_summary
+    from zicato.query import compute_epoch_delta_summary
 
     # An epoch with no promoted experiments at all.
     only_rejected = [
@@ -1098,7 +1137,7 @@ def test_compute_epoch_delta_summary_no_deltas_returns_none() -> None:
     written an outcome yet. Neither tile should read "0.000" — both
     must read "—" (no comparison possible yet).
     """
-    from zicato.dashboard.state_reader import compute_epoch_delta_summary
+    from zicato.query import compute_epoch_delta_summary
 
     experiments = [
         {"generation_id": "v0", "parent_generation_id": None},
@@ -1111,7 +1150,7 @@ def test_compute_epoch_delta_summary_no_deltas_returns_none() -> None:
 
 def test_compute_epoch_delta_summary_skips_malformed_entries() -> None:
     """Best-effort: non-dicts, missing ids, non-finite deltas are skipped."""
-    from zicato.dashboard.state_reader import compute_epoch_delta_summary
+    from zicato.query import compute_epoch_delta_summary
 
     experiments: list[dict[str, object]] = [
         # Wrong types — silently skipped.
@@ -1131,7 +1170,7 @@ def test_build_epoch_view_carries_delta_scalar_summary(workspace: Path) -> None:
     """build_epoch_view surfaces the spine/gross aggregates so the SPA
     can render the headline without re-walking experiments client-side.
     """
-    from zicato.dashboard.state_reader import WorkspacePaths, build_epoch_view
+    from zicato.query import WorkspacePaths, build_epoch_view
 
     epoch_dir = workspace / "epochs" / "2026-05-16_e0"
     # Three generations: one promoted, one rejected, one promoted —
@@ -1340,7 +1379,7 @@ def test_tournament_detail_surfaces_adk_session_ids(workspace: Path) -> None:
     when the ``loss_json`` column stores a matching ``adk_session_id``."""
     import json as _json
 
-    from zicato.dashboard.state_reader import WorkspacePaths, build_matchup_detail
+    from zicato.query import WorkspacePaths, build_matchup_detail
 
     # Patch the index to include real adk_session_id in loss_json.
     index_path = workspace / "index.db"
@@ -1371,7 +1410,7 @@ def test_tournament_detail_surfaces_adk_session_ids(workspace: Path) -> None:
 def test_tournament_detail_ab_grid_omits_absent_adk_session_id(workspace: Path) -> None:
     """An ``ab_grid`` cell without a valid ``adk_session_id`` in ``loss_json``
     simply omits the key — the cell is not malformed."""
-    from zicato.dashboard.state_reader import WorkspacePaths, build_matchup_detail
+    from zicato.query import WorkspacePaths, build_matchup_detail
 
     # The fixture index has loss_json = '{}' — no adk_session_id.
     paths = WorkspacePaths(workspace)
@@ -1482,7 +1521,7 @@ def _seed_loss_files(workspace: Path) -> None:
 def test_matchup_grid_reads_persisted_loss_files(workspace: Path) -> None:
     """``/api/matchup-grid`` reconstructs the per-entry A/B grid from
     the on-disk ``loss.json`` files — no SQLite index involved."""
-    from zicato.dashboard.state_reader import WorkspacePaths, build_matchup_grid
+    from zicato.query import WorkspacePaths, build_matchup_grid
 
     _seed_loss_files(workspace)
     paths = WorkspacePaths(workspace)
@@ -1518,7 +1557,7 @@ def test_matchup_grid_reads_persisted_loss_files(workspace: Path) -> None:
 def test_matchup_grid_scalar_breakdown_from_gen_scores(workspace: Path) -> None:
     """The scalar block composes from the two ``gen_score.json`` aggregates;
     ``components`` is the challenger-minus-champion delta of each term."""
-    from zicato.dashboard.state_reader import WorkspacePaths, build_matchup_grid
+    from zicato.query import WorkspacePaths, build_matchup_grid
 
     _seed_loss_files(workspace)
     paths = WorkspacePaths(workspace)
@@ -1603,7 +1642,7 @@ def test_matchup_grid_surfaces_continuous_score_and_metrics(workspace: Path) -> 
     """A scored entry carries ``parent_score`` / ``child_score`` plus the
     ``parent_metrics`` / ``child_metrics`` precision/recall decomposition;
     a bool-only entry carries ``None`` for all four (back-compat)."""
-    from zicato.dashboard.state_reader import WorkspacePaths, build_matchup_grid
+    from zicato.query import WorkspacePaths, build_matchup_grid
 
     _seed_scored_loss_files(workspace)
     paths = WorkspacePaths(workspace)
@@ -1630,7 +1669,7 @@ def test_matchup_grid_surfaces_continuous_score_and_metrics(workspace: Path) -> 
 def test_matchup_grid_scalar_carries_mean_score(workspace: Path) -> None:
     """The scalar block carries a per-generation ``mean_score`` summary
     (parent / child / delta) read from gen_score.json — never recomputed."""
-    from zicato.dashboard.state_reader import WorkspacePaths, build_matchup_grid
+    from zicato.query import WorkspacePaths, build_matchup_grid
 
     _seed_scored_loss_files(workspace)
     paths = WorkspacePaths(workspace)
@@ -1645,7 +1684,7 @@ def test_matchup_grid_scalar_carries_mean_score(workspace: Path) -> None:
 def test_matchup_grid_no_mean_score_when_absent(workspace: Path) -> None:
     """Back-compat: a gen_score.json without ``mean_score`` yields a
     scalar block with no ``mean_score`` key (degrades to today's view)."""
-    from zicato.dashboard.state_reader import WorkspacePaths, build_matchup_grid
+    from zicato.query import WorkspacePaths, build_matchup_grid
 
     _seed_loss_files(workspace)  # the pre-score seeder — no mean_score
     paths = WorkspacePaths(workspace)
@@ -1697,7 +1736,7 @@ def test_per_entry_for_generation_carries_score_from_loss_json(tmp_path: Path) -
     and surfaces a per-generation ``mean_score`` from gen_score.json."""
     import json as _json
 
-    from zicato.dashboard.state_reader import (
+    from zicato.query import (
         WorkspacePaths,
         build_per_entry_for_generation,
     )
@@ -1724,7 +1763,7 @@ def test_per_entry_for_generation_carries_score_from_loss_json(tmp_path: Path) -
 def test_per_entry_for_generation_back_compat_no_score(tmp_path: Path) -> None:
     """An index whose ``loss_json`` is ``{}`` (the pre-score default)
     yields ``score`` / ``metrics`` == None and ``mean_score`` == None."""
-    from zicato.dashboard.state_reader import (
+    from zicato.query import (
         WorkspacePaths,
         build_per_entry_for_generation,
     )
@@ -1775,7 +1814,7 @@ def test_matchup_grid_endpoint_invalid_id(client: TestClient) -> None:
 def test_matchup_grid_one_sided(workspace: Path) -> None:
     """An entry that ran on only one side still appears, with the missing
     side's loss reported as ``null``."""
-    from zicato.dashboard.state_reader import WorkspacePaths, build_matchup_grid
+    from zicato.query import WorkspacePaths, build_matchup_grid
 
     _seed_loss_files(workspace)
     # The challenger ran an extra entry the champion never did.
@@ -1973,6 +2012,52 @@ def test_control_pause_writes_marker(rw_client: TestClient, workspace: Path) -> 
     assert json.loads(marker.read_text())["reason"] == "test"
 
 
+def test_control_resume_deletes_pause_flag(rw_client: TestClient, workspace: Path) -> None:
+    """Resume atomically unlinks the pause flag; a second resume is a no-op."""
+    assert rw_client.post("/api/control/pause", json={"reason": "hold"}).status_code == 202
+    marker = workspace / "runtime" / "control" / "pause_epoch"
+    assert marker.exists()
+
+    r = rw_client.post("/api/control/resume")
+    assert r.status_code == 202
+    body = r.json()
+    assert body["accepted"] is True
+    assert body["removed"] is True
+    assert not marker.exists()
+
+    # Idempotent: resuming an unpaused workspace is an accepted no-op.
+    r = rw_client.post("/api/control/resume")
+    assert r.status_code == 202
+    assert r.json()["removed"] is False
+
+
+def test_control_resume_forbidden_when_read_only(client: TestClient, workspace: Path) -> None:
+    """A read-only dashboard must answer 403 and leave the flag intact."""
+    marker = workspace / "runtime" / "control" / "pause_epoch"
+    marker.write_text("{}", encoding="utf-8")
+    r = client.post("/api/control/resume")
+    assert r.status_code == 403
+    assert marker.exists()
+
+
+def test_paused_flag_surfaces_in_runtime_payloads(rw_client: TestClient, workspace: Path) -> None:
+    """Pause-flag presence rides /api/state (top-level) + the heartbeat dict."""
+    # Unpaused baseline.
+    snap = rw_client.get("/api/state").json()
+    assert snap["paused"] is False
+    assert snap["heartbeat"]["paused"] is False
+    hb = rw_client.get("/api/heartbeat").json()
+    assert hb["paused"] is False
+
+    # Paused: the flag flips both reads; resume flips them back.
+    assert rw_client.post("/api/control/pause").status_code == 202
+    snap = rw_client.get("/api/state").json()
+    assert snap["paused"] is True
+    assert snap["heartbeat"]["paused"] is True
+    assert rw_client.post("/api/control/resume").status_code == 202
+    assert rw_client.get("/api/state").json()["paused"] is False
+
+
 def test_control_kill_writes_per_run_marker(rw_client: TestClient, workspace: Path) -> None:
     r = rw_client.post("/api/control/kill/waffles_single")
     assert r.status_code == 202
@@ -2053,7 +2138,7 @@ async def test_sse_stream_emits_snapshot_then_change(workspace: Path) -> None:
     import asyncio
 
     from zicato.dashboard.sse import ChangeBroker, sse_event_stream
-    from zicato.dashboard.state_reader import WorkspacePaths
+    from zicato.query import WorkspacePaths
 
     paths = WorkspacePaths(workspace)
     broker = ChangeBroker(paths)
@@ -2097,7 +2182,7 @@ async def test_sse_frames_carry_progress_seq_and_terminal(workspace: Path) -> No
     import asyncio
 
     from zicato.dashboard.sse import ChangeBroker, sse_event_stream
-    from zicato.dashboard.state_reader import WorkspacePaths
+    from zicato.query import WorkspacePaths
     from zicato.runtime import progress_log
 
     # Seed the progress log: two genuine transitions then a terminal marker.
@@ -2151,7 +2236,7 @@ async def test_sse_coalesces_burst_into_one_state_change(workspace: Path) -> Non
     import asyncio
 
     from zicato.dashboard.sse import ChangeBroker, sse_event_stream
-    from zicato.dashboard.state_reader import WorkspacePaths
+    from zicato.query import WorkspacePaths
 
     paths = WorkspacePaths(workspace)
     broker = ChangeBroker(paths)
@@ -3028,7 +3113,7 @@ def test_active_tournament_entries_carry_generation_id(
     is implicit in the tournament-level ``parent_generation_id`` but a
     consumer should not have to re-derive it per-entry).
     """
-    from zicato.dashboard.state_reader import (
+    from zicato.query import (
         WorkspacePaths,
         read_active_tournament_dict,
     )
@@ -3079,7 +3164,7 @@ def test_empty_workspace_endpoints_do_not_500(tmp_path: Path, static_dir: Path) 
 
 def test_read_adk_session_id_from_events_camel(tmp_path: Path) -> None:
     """Reads ``sessionId`` (camelCase) from the first line of an events.jsonl."""
-    from zicato.dashboard.state_reader import read_adk_session_id_from_events
+    from zicato.query import read_adk_session_id_from_events
 
     p = tmp_path / "events.jsonl"
     _write(
@@ -3091,7 +3176,7 @@ def test_read_adk_session_id_from_events_camel(tmp_path: Path) -> None:
 
 def test_read_adk_session_id_from_events_snake(tmp_path: Path) -> None:
     """Reads ``session_id`` (snake_case) when ``sessionId`` is absent."""
-    from zicato.dashboard.state_reader import read_adk_session_id_from_events
+    from zicato.query import read_adk_session_id_from_events
 
     p = tmp_path / "events.jsonl"
     _write(
@@ -3103,21 +3188,21 @@ def test_read_adk_session_id_from_events_snake(tmp_path: Path) -> None:
 
 def test_read_adk_session_id_from_events_missing_file(tmp_path: Path) -> None:
     """A missing file degrades to ``""``."""
-    from zicato.dashboard.state_reader import read_adk_session_id_from_events
+    from zicato.query import read_adk_session_id_from_events
 
     assert read_adk_session_id_from_events(str(tmp_path / "no-such-file.jsonl")) == ""
 
 
 def test_read_adk_session_id_from_events_none_path() -> None:
     """A ``None`` path degrades to ``""``."""
-    from zicato.dashboard.state_reader import read_adk_session_id_from_events
+    from zicato.query import read_adk_session_id_from_events
 
     assert read_adk_session_id_from_events(None) == ""
 
 
 def test_read_adk_session_id_from_events_no_session_field(tmp_path: Path) -> None:
     """An events.jsonl with no session envelope key degrades to ``""``."""
-    from zicato.dashboard.state_reader import read_adk_session_id_from_events
+    from zicato.query import read_adk_session_id_from_events
 
     p = tmp_path / "events.jsonl"
     _write(p, json.dumps({"event_id": "e0", "run_id": "r0"}) + "\n")
@@ -3146,7 +3231,7 @@ def _seed_second_epoch(ws: Path) -> str:
 
 def test_build_workspace_view_returns_per_epoch_rows(workspace: Path) -> None:
     """build_workspace_view enumerates every epoch directory on disk."""
-    from zicato.dashboard.state_reader import WorkspacePaths, build_workspace_view
+    from zicato.query import WorkspacePaths, build_workspace_view
 
     _seed_second_epoch(workspace)
     view = build_workspace_view(WorkspacePaths(workspace))
@@ -3173,7 +3258,7 @@ def test_build_workspace_view_returns_per_epoch_rows(workspace: Path) -> None:
 
 def test_build_workspace_view_no_epochs_directory(tmp_path: Path) -> None:
     """A workspace without an ``epochs/`` dir degrades to an empty list."""
-    from zicato.dashboard.state_reader import WorkspacePaths, build_workspace_view
+    from zicato.query import WorkspacePaths, build_workspace_view
 
     ws = tmp_path / ".zicato"
     (ws / "runtime").mkdir(parents=True)
@@ -3185,7 +3270,7 @@ def test_build_workspace_view_no_epochs_directory(tmp_path: Path) -> None:
 
 def test_build_workspace_view_closed_flag_reads_config(workspace: Path) -> None:
     """A closed epoch surfaces ``closed: True``."""
-    from zicato.dashboard.state_reader import WorkspacePaths, build_workspace_view
+    from zicato.query import WorkspacePaths, build_workspace_view
 
     epoch_dir = workspace / "epochs" / "2026-05-16_e0"
     _write_json(epoch_dir / "config.json", {"closed": True})
@@ -3197,7 +3282,7 @@ def test_build_workspace_view_closed_flag_reads_config(workspace: Path) -> None:
 
 def test_build_contract_diff_no_predecessor(workspace: Path) -> None:
     """The first epoch on disk reports ``predecessor_epoch_id = None``."""
-    from zicato.dashboard.state_reader import WorkspacePaths, build_contract_diff
+    from zicato.query import WorkspacePaths, build_contract_diff
 
     diff = build_contract_diff(WorkspacePaths(workspace), "2026-05-16_e0")
     assert diff["epoch_id"] == "2026-05-16_e0"
@@ -3212,7 +3297,7 @@ def test_build_contract_diff_no_predecessor(workspace: Path) -> None:
 
 def test_build_contract_diff_flags_changed_components(workspace: Path) -> None:
     """Components with differing hashes between epochs are marked changed."""
-    from zicato.dashboard.state_reader import WorkspacePaths, build_contract_diff
+    from zicato.query import WorkspacePaths, build_contract_diff
 
     # Predecessor — the fixture's epoch.
     pred_dir = workspace / "epochs" / "2026-05-16_e0"
@@ -3251,7 +3336,7 @@ def test_build_contract_diff_flags_changed_components(workspace: Path) -> None:
 
 def test_build_contract_diff_missing_components_file(workspace: Path) -> None:
     """An absent ``contract_components.json`` does not raise — every row reads ``None``."""
-    from zicato.dashboard.state_reader import WorkspacePaths, build_contract_diff
+    from zicato.query import WorkspacePaths, build_contract_diff
 
     succ_id = _seed_second_epoch(workspace)
     diff = build_contract_diff(WorkspacePaths(workspace), succ_id)
@@ -3325,7 +3410,7 @@ def test_variant_t_mount_present_in_index_html() -> None:
 
 def test_build_workspace_view_promoted_count_reads_experiments(workspace: Path) -> None:
     """build_workspace_view counts a promoted generation from experiment.json."""
-    from zicato.dashboard.state_reader import WorkspacePaths, build_workspace_view
+    from zicato.query import WorkspacePaths, build_workspace_view
 
     epoch_dir = workspace / "epochs" / "2026-05-16_e0"
     gen_dir = epoch_dir / "generations" / "v1"
@@ -3453,15 +3538,15 @@ def test_epoch_view_scoped_to_non_current_epoch(client: TestClient, workspace: P
     current = client.get("/api/epoch").json()
     assert current["epoch_id"] == "2026-05-16_e0"
     assert current["contract_hash"] == "h1"
-    assert current["board"][0]["id"] == "waffles_single"
+    assert current["board"][0]["entry_id"] == "waffles_single"
 
     # scoped ⇒ the SECOND epoch's own contract / board.
     scoped = client.get(f"/api/epoch?epoch={e1}").json()
     assert scoped["epoch_id"] == e1
     assert scoped["contract_hash"] == "h2"
     assert scoped["closed"] is True
-    assert scoped["board"][0]["id"] == "second_board_entry"
-    assert scoped["board"][0]["id"] != "waffles_single"
+    assert scoped["board"][0]["entry_id"] == "second_board_entry"
+    assert scoped["board"][0]["entry_id"] != "waffles_single"
 
 
 def test_score_trajectory_scoped_to_non_current_epoch(client: TestClient, workspace: Path) -> None:

@@ -130,6 +130,7 @@ from zicato.core.runtime import (
     RuntimeConfig,
 )
 from zicato.core.scoring_config import (
+    ExperimentMemoryConfig,
     LadderConfig,
     OverfittingConfig,
     ProposerQualityConfig,
@@ -198,6 +199,7 @@ __all__ = [
     "OverfittingConfig",
     "LadderConfig",
     "ProposerQualityConfig",
+    "ExperimentMemoryConfig",
     "EpochConfig",
     "Generation",
     # Patterns

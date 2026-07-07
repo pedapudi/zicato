@@ -75,13 +75,22 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import tempfile
+import threading
 from collections.abc import Iterable, Sequence
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from zicato.core.types import Patch
-from zicato.epoch.genstore import PatchRecord, TreeEntry
+from zicato.epoch.genstore import (
+    EPHEMERAL_SCRATCH_DIRNAME,
+    EPHEMERAL_SNAPSHOT_PREFIX,
+    EphemeralCheckout,
+    PatchRecord,
+    TreeEntry,
+    discard_ephemeral_parent,
+)
 from zicato.epoch.snapshot_scope import gitignore_lines, is_artifact
 
 #: Sentinel line separating the human commit subject from the machine
@@ -104,6 +113,27 @@ _GIT_AUTHOR_EMAIL = "zicato@localhost"
 #: next (a contract roll), corrupting the new commit. The directory
 #: backend never produced these, so this guard is git-backend-specific.
 _GIT_ADMIN_BASENAMES = frozenset({".git", ".gitignore"})
+
+#: Per-repo locks serialising worktree ADMIN mutations (``worktree add`` /
+#: ``worktree prune``) within this process. git's own repo lock serialises
+#: the individual commands, but a PRUNE overlapping a concurrent ADD's
+#: multi-command window can collect the sibling's half-registered admin
+#: entry (observed: ``fatal: Invalid path .../.git/worktrees/<name>``).
+#: Production checkouts already run sequentially on the orchestrator's
+#: event-loop thread — and the workspace runtime lock guarantees a single
+#: orchestrator per workspace — so a process-local lock is sufficient to
+#: make the protocol's concurrent-checkout contract hold for threaded
+#: callers too. Keyed by resolved repo path; the registry itself is tiny
+#: (one entry per workspace this process touches).
+_REPO_WORKTREE_LOCKS: dict[str, threading.Lock] = {}
+_REPO_WORKTREE_LOCKS_GUARD = threading.Lock()
+
+
+def _worktree_admin_lock(repo: Path) -> threading.Lock:
+    """Return the process-wide worktree-admin lock for one repo path."""
+    key = str(Path(repo).resolve())
+    with _REPO_WORKTREE_LOCKS_GUARD:
+        return _REPO_WORKTREE_LOCKS.setdefault(key, threading.Lock())
 
 
 class GitCommandError(RuntimeError):
@@ -287,11 +317,121 @@ class GitGenerationStore:
         wt = self._worktree_path(epoch_id, generation_id)
         wt.parent.mkdir(parents=True, exist_ok=True)
         tag = self._generation_tag(epoch_id, generation_id)
-        # Prune any stale registration first (a crashed run can leave a
-        # worktree entry whose directory is gone).
-        self._git("worktree", "prune")
-        self._git("worktree", "add", "--detach", "--force", str(wt), tag)
+        with _worktree_admin_lock(self._repo):
+            # Prune any stale registration first (a crashed run can leave
+            # a worktree entry whose directory is gone).
+            self._git("worktree", "prune")
+            self._git("worktree", "add", "--detach", "--force", str(wt), tag)
         return wt
+
+    def checkout_ephemeral(
+        self,
+        epoch_id: str,
+        generation_id: str,
+        run_id: str,
+    ) -> EphemeralCheckout:
+        """Check the generation's tag out into a fresh PER-RUN ``git worktree``.
+
+        Design decision — per-run worktree vs shared worktree
+        ------------------------------------------------------
+        Two candidate designs were benchmarked (2026-07-01, tmpfs-free
+        local disk, ``git worktree add --detach`` from a tag, 16
+        threads):
+
+        * **(a) per-run ``git worktree add --detach``** (CHOSEN) — one
+          isolated checkout per run. Cost on a 60-file/~120 KB tree:
+          16 concurrent adds total 14–22 ms (per-add mean 7.6–10.5 ms,
+          max 20 ms under contention; 6.4 ms serial). On a
+          500-file/~2 MB tree: 16 concurrent adds total ~41 ms (per-add
+          mean ~28 ms, max 36 ms; 19 ms serial). git's internal repo
+          lock serialises the ref/administrative step only, so 16-way
+          contention costs under 1.5× a serial add — and the add is
+          3–18× FASTER than the ``shutil.copytree`` the directory
+          backend pays for the same tree (16 concurrent copies: ~70 ms
+          / ~525 ms respectively).
+        * **(b) shared per-generation worktree + per-run scratch
+          discipline** — zero per-run cost, but concurrent sibling runs
+          of the SAME generation share one tree, so a stray write that
+          ignores the scratch dir contaminates every concurrent
+          sibling's measurement AND persists into the shared worktree
+          for the rest of the epoch (a contract roll seeds the next
+          epoch's ``v0`` from the promoted head's worktree, so a
+          non-artifact stray file would even cross epochs). Lineage
+          itself is immune under git — children derive from the COMMIT,
+          not the worktree — but measurement isolation is exactly what
+          the ephemeral snapshot exists for.
+
+        At ≤ ~30 ms per run against runs that take seconds-to-minutes,
+        (a)'s isolation-parity with the shipped behaviour wins outright;
+        (b)'s only advantage is a cost that is already negligible.
+
+        Mechanics: the worktree is created INSIDE a ``ztw-snap-{run_id}-*``
+        mkdtemp parent under the OS temp dir — the exact shape the
+        supervisor's crash-reaper (``reap.rs::reapable_snapshot_root``)
+        GCs — named with the generation id so the basename matches the
+        shared worktree :meth:`snapshot_root` returns. A per-run
+        ``run-scratch`` sibling preserves the
+        :data:`~zicato.epoch.snapshot_scope.SCRATCH_DIR_ENV` contract.
+
+        The checkout is immediately DETACHED from the repo: the
+        worktree's ``.git`` pointer file is unlinked and the registration
+        pruned right after the add, leaving the run a plain throwaway
+        tree. That gives byte parity with the directory backend's view
+        (whose ``copytree`` filter skips ``.git``), keeps the worker from
+        reaching back into the private repo through the pointer, and
+        means NO cleanup path depends on git state — the run-end cleanup
+        (and the supervisor's crash-reaper) just remove the ``ztw-snap-*``
+        parent. The prune→add→detach→prune window is serialised per repo
+        by a process-local lock (:func:`_worktree_admin_lock`): git's own
+        repo lock covers each COMMAND, but a prune overlapping a
+        concurrent sibling's multi-command add window can collect the
+        half-registered admin entry. A registration orphaned by a crash
+        inside the window is collected by the next prune-before-add here
+        or in :meth:`_materialise_worktree`.
+
+        A third candidate — per-run ``git archive <tag>`` extracted via
+        :mod:`tarfile` (no shared admin state at all) — was benchmarked
+        and rejected: serial cost is ~1.5–2.5× a worktree add (9.5 ms vs
+        6.4 ms / 48 ms vs 19 ms on the small/large trees) and the
+        Python-side extraction serialises catastrophically under threads
+        (16 concurrent: ~163 ms / ~1.36 s total vs 14–41 ms for adds).
+        """
+        if not self.has_generation(epoch_id, generation_id):
+            raise FileNotFoundError(
+                f"checkout_ephemeral: generation {epoch_id}/{generation_id} "
+                f"has no commit in the generation repo"
+            )
+        parent = Path(tempfile.mkdtemp(prefix=f"{EPHEMERAL_SNAPSHOT_PREFIX}{run_id}-"))
+        # Keep the shared worktree's basename (the generation id) so any
+        # path the agent derives from ``__file__`` looks the same as it
+        # would under the canonical checkout.
+        working_dir = parent / self._worktree_path(epoch_id, generation_id).name
+        tag = self._generation_tag(epoch_id, generation_id)
+        try:
+            with _worktree_admin_lock(self._repo):
+                # Prune stale registrations from crashed runs first, then
+                # check out and immediately detach (see docstring). The
+                # lock serialises the whole admin window; the measured
+                # cost per checkout is milliseconds (docstring).
+                self._git("worktree", "prune")
+                self._git("worktree", "add", "--detach", "--force", str(working_dir), tag)
+                (working_dir / ".git").unlink(missing_ok=True)
+                self._git("worktree", "prune")
+        except GitCommandError as exc:
+            discard_ephemeral_parent(parent)
+            # OSError so callers' degrade-to-aborted-run handling (which
+            # already covers the directory backend's copytree failures)
+            # applies unchanged.
+            raise OSError(
+                f"checkout_ephemeral: worktree add failed for " f"{epoch_id}/{generation_id}: {exc}"
+            ) from exc
+        scratch_dir = parent / EPHEMERAL_SCRATCH_DIRNAME
+        scratch_dir.mkdir()
+
+        def _cleanup() -> None:
+            discard_ephemeral_parent(parent)
+
+        return EphemeralCheckout(working_dir=working_dir, scratch_dir=scratch_dir, cleanup=_cleanup)
 
     def has_generation(self, epoch_id: str, generation_id: str) -> bool:
         """Return ``True`` iff a generation commit/tag exists for the coordinate."""
@@ -448,6 +588,19 @@ class GitGenerationStore:
         )
         self._commit(message)
         self._tag_generation(epoch_id, child_generation_id)
+        # A RE-derive of the same child id (a proposer retry after failed
+        # post-apply validation, the best-of-N chosen-candidate re-derive, a
+        # crash-resume re-validate) moves the tag to the fresh commit — but a
+        # worktree materialised by an EARLIER attempt stays detached at the
+        # old commit, so ``snapshot_root`` would hand back a stale tree that
+        # no longer matches the commit just derived (the directory backend
+        # clears + rebuilds the child tree instead, so only this backend
+        # needs the refresh). Drop the stale checkout; ``snapshot_root``
+        # below re-materialises it from the moved tag (its ``worktree add``
+        # path prunes the orphaned registration first).
+        stale_worktree = self._worktree_path(epoch_id, child_generation_id)
+        if stale_worktree.is_dir():
+            shutil.rmtree(stale_worktree, ignore_errors=True)
         return self.snapshot_root(epoch_id, child_generation_id)
 
     def _replace_working_tree(self, new_tree: Path) -> None:
@@ -594,6 +747,61 @@ class GitGenerationStore:
             raise GitCommandError(argv[1:], proc.returncode, err)
         return proc.stdout
 
+    def parent_generation_id(self, epoch_id: str, generation_id: str) -> str | None:
+        """Read a generation's parent generation id from its commit metadata.
+
+        The lineage coordinate travels in the deriving commit's message
+        (:meth:`_format_commit_message`); this reads it straight back with
+        one ``git log`` — read-only, no worktree, no checkout. Returns
+        ``None`` for a seed generation (its metadata records no parent)
+        or a commit whose metadata block is missing/unparseable.
+
+        Raises :class:`FileNotFoundError` when the generation has no
+        commit, matching the other read-surface methods.
+        """
+        if not self.has_generation(epoch_id, generation_id):
+            raise FileNotFoundError(
+                f"parent_generation_id: generation {epoch_id}/{generation_id} "
+                f"has no commit in the generation repo"
+            )
+        meta = self._read_commit_meta(self._generation_tag(epoch_id, generation_id))
+        if not meta:
+            return None
+        parent = meta.get("parent_generation_id")
+        return parent if isinstance(parent, str) and parent else None
+
+    def diff_generations(
+        self, epoch_id: str, from_generation_id: str, to_generation_id: str
+    ) -> str:
+        """Unified diff between two generation commits — nearly free reads.
+
+        Runs a single read-only ``git diff`` between the two generations'
+        tags: git diffs the tree OBJECTS, so no worktree is materialised
+        and nothing in the repo changes. ``--no-ext-diff`` / ``--no-color``
+        pin the output to plain unified-diff text regardless of any
+        ambient git configuration. Returns the empty string when the two
+        trees are byte-identical (a derived child can legitimately equal
+        its parent — see :meth:`_commit`).
+
+        Raises :class:`FileNotFoundError` when either generation has no
+        commit, matching the other read-surface methods.
+        """
+        for gid in (from_generation_id, to_generation_id):
+            if not self.has_generation(epoch_id, gid):
+                raise FileNotFoundError(
+                    f"diff_generations: generation {epoch_id}/{gid} has no "
+                    f"commit in the generation repo"
+                )
+        from_tag = self._generation_tag(epoch_id, from_generation_id)
+        to_tag = self._generation_tag(epoch_id, to_generation_id)
+        return self._git(
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            f"refs/tags/{from_tag}",
+            f"refs/tags/{to_tag}",
+        )
+
     def list_patches(self, epoch_id: str, generation_id: str) -> PatchRecord:
         """Read a generation's applied patch set from its commit metadata.
 
@@ -601,11 +809,28 @@ class GitGenerationStore:
         :meth:`_format_commit_message`; this reads them straight back.
         A seed generation (no patches in its metadata block) yields an
         empty :class:`PatchRecord`.
+
+        A generation whose tag is GONE — pruned by
+        :func:`zicato.epoch.gc.prune_generations` — falls back to the
+        journal's ``experiment.json`` record (the same source the
+        directory backend reads), which GC never touches. The dashboard's
+        patch/mutation views therefore keep rendering a pruned
+        generation's patch metadata even after its source tree is
+        collected.
         """
         from zicato.epoch.journal import _patch_from_dict  # noqa: PLC0415
 
         if not self.has_generation(epoch_id, generation_id):
-            return PatchRecord(generation_id=generation_id, patches=())
+            from zicato.epoch.journal import read_experiment  # noqa: PLC0415
+
+            try:
+                experiment = read_experiment(self._workspace_root, epoch_id, generation_id)
+            except (FileNotFoundError, OSError, ValueError):
+                return PatchRecord(generation_id=generation_id, patches=())
+            return PatchRecord(
+                generation_id=generation_id,
+                patches=tuple(experiment.patches),
+            )
         tag = self._generation_tag(epoch_id, generation_id)
         meta = self._read_commit_meta(tag)
         if not meta:

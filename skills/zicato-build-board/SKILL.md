@@ -216,9 +216,11 @@ directly. The copilot's tools (conceptual):
 |---|---|
 | `edit_board_entry` | add / edit / remove one entry (input, expectation, tags, weight) |
 | `add_judge` | declare a process judge on an entry (name, mode, body, severity) |
-| `set_weights` | the loss knobs above + the gate thresholds |
-| `set_holdout` | the train/holdout split (`holdout`-tagged ids and/or fraction) |
-| `validate` | (read-only) re-runs board validation (ids unique + filesystem-safe, per-kind fields present, expectation `reads` valid for the kind, judge slugs unique, `disable_drift` tokens resolve) |
+| `set_weights` | the loss knobs above (drift/pass/per-kind/per-judge/severity) |
+| `set_namespace_weights` | the multi-objective namespace coefficients (`namespace_weights`) + the `diff_complexity_weight` parsimony term |
+| `set_holdout` | the train/holdout split (`holdout`-tagged ids and/or fraction) + the wider anti-overfitting block (Ladder, rotation, placebo cadence — detail in `zicato-build-tournament`) |
+| `validate` | (read-only) re-runs board validation (ids unique + filesystem-safe, per-kind fields present, expectation `reads` valid for the kind, judge slugs unique, `disable_drift` tokens resolve) — plus the statistical margin-vs-noise-floor rule when the epoch carries a measured A/A floor |
+| `preflight` | (read-only) measures whether THIS board can out-signal its own noise — the A/A floor vs a deliberate-degradation signal; a `warn` verdict means the board is saturated (cannot discriminate even a broken tree). CLI: `zicato board preflight` / `board audit` |
 
 The loop on every operator request:
 

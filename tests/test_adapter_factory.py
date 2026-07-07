@@ -102,3 +102,80 @@ def test_make_adapter_adk_missing_entrypoint_raises(
 def test_make_adapter_block_must_be_mapping() -> None:
     with pytest.raises(ValueError, match="must be a mapping"):
         make_adapter_from_config({"adapter": ["not", "a", "mapping"]})
+
+
+# ---------------------------------------------------------------------------
+# kind="import" — the generic factory shape, mirroring the worker's
+# ``_build_adapter`` branch so config.json can declare a non-ADK adapter.
+# ---------------------------------------------------------------------------
+
+
+def test_make_adapter_import_kind_calls_factory() -> None:
+    """kind='import' resolves the dotted factory and returns its product.
+
+    Uses the real stub-adapter factory the subprocess-worker tests already
+    ship, so the config-side branch is proven against the same importable
+    factory the worker-side branch resolves.
+    """
+    config = {
+        "adapter": {
+            "kind": "import",
+            "factory": "tests._subprocess_worker_support:make_stub_adapter",
+        }
+    }
+    adapter = make_adapter_from_config(config)
+    from tests._subprocess_worker_support import StubAdapter
+
+    assert isinstance(adapter, StubAdapter)
+    # The adapter round-trips: its worker_spec() is the same shape the
+    # worker's _build_adapter reconstructs from.
+    assert adapter.worker_spec() == {
+        "kind": "import",
+        "factory": "tests._subprocess_worker_support:make_stub_adapter",
+    }
+
+
+def test_make_adapter_import_kind_passes_positional_args() -> None:
+    config = {
+        "adapter": {
+            "kind": "import",
+            "factory": "tests._subprocess_worker_support:SleepingAdapter",
+            "args": [True],
+        }
+    }
+    adapter = make_adapter_from_config(config)
+    from tests._subprocess_worker_support import SleepingAdapter
+
+    assert isinstance(adapter, SleepingAdapter)
+    assert adapter._ignore_sigterm is True
+
+
+def test_make_adapter_import_missing_factory_raises() -> None:
+    with pytest.raises(ValueError, match="non-empty 'factory'"):
+        make_adapter_from_config({"adapter": {"kind": "import"}})
+
+
+def test_make_adapter_import_non_list_args_raises() -> None:
+    with pytest.raises(ValueError, match="'args' must be a list"):
+        make_adapter_from_config(
+            {
+                "adapter": {
+                    "kind": "import",
+                    "factory": "tests._subprocess_worker_support:make_stub_adapter",
+                    "args": "not-a-list",
+                }
+            }
+        )
+
+
+def test_make_adapter_import_non_callable_factory_raises() -> None:
+    with pytest.raises(ValueError, match="expected a callable"):
+        make_adapter_from_config(
+            {
+                "adapter": {
+                    "kind": "import",
+                    # A module-level non-callable attribute.
+                    "factory": "tests._subprocess_worker_support:__doc__",
+                }
+            }
+        )

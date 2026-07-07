@@ -12,7 +12,7 @@ Best-effort by design: when ``cargo`` is unavailable, or the crate is
 not present (e.g. an sdist that excluded ``crates/``), the hook logs a
 warning and leaves the wheel without the bundled binary. The CLI's
 ``_resolve_supervisor_binary`` still falls back to the
-``ZICATO_SUPERVISOR_BINARY`` env override, the system ``PATH``, and —
+``--supervisor-binary`` flag override, the system ``PATH``, and —
 for checkouts — the workspace ``target/`` walk.
 
 This hook never publishes anything; it only builds locally.

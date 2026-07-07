@@ -297,6 +297,16 @@ class OutcomeRecord:
     # dashboard's ``reason`` field), or a synthesised note. Empty unless
     # :attr:`operator_override` is ``True``.
     operator_override_reason: str = ""
+    # Evidence-gate (Bradley--Terry pre-gate) resolution for THIS round's
+    # crowning duel: the ``gate.rating`` block (both CIs, ``p_stronger``,
+    # ``threshold``, ``ci_overlap``, ``replicates_spent``, ``n_duels``,
+    # the terminal ``decision``) plus the per-refit ``ci_history`` trace the
+    # defer→replicate loop produced. ``None`` when the pre-gate never reached
+    # a credible terminal — the gate is off, the decision was a plain reject,
+    # or the fit never cleared the credibility floor — so older journals and
+    # gate-off rounds deserialize unchanged. RUNTIME evidence, not a contract
+    # input.
+    evidence: dict[str, Any] | None = None
 
 
 #: Hard cap on the number of settled prior experiments surfaced to the
@@ -308,6 +318,18 @@ class OutcomeRecord:
 #: rejections fill the remainder. See ``docs/design/EXPERIMENT-MEMORY.md``
 #: §3.3.
 EXPERIMENT_MEMORY_MAX_ENTRIES = 12
+
+#: Prefix stamped onto the ``hypothesis.core_idea`` of a random-baseline
+#: (placebo) challenger — the opt-in calibration arm of OVERFITTING.md #7
+#: (``overfitting.random_baseline_every_n``). The marker is the STABLE
+#: contract between the minting side (:mod:`zicato.evolve.placebo`) and
+#: every consumer that must recognise the arm: the health detector
+#: (:func:`zicato.health.diagnostics.detect_placebo_promoted` — a PROMOTED
+#: placebo is the alarm) and the loop-health input filter (placebo
+#: experiments are calibration probes, excluded from the optimization-
+#: stream detectors like stalled-loop / degenerate-scoring). Lives here in
+#: :mod:`zicato.core` so both sides import one dependency-light constant.
+PLACEBO_HYPOTHESIS_MARKER = "[placebo:random-baseline]"
 
 
 @dataclass(frozen=True, slots=True)

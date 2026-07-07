@@ -52,6 +52,45 @@ log = logging.getLogger("zicato.orchestrator")
 CallLLM = Callable[[str, str, str], Awaitable[str]]
 
 
+async def _sleep_for_backoff(seconds: float) -> None:
+    """The endpoint-outage backoff sleep — a seam so tests can stub it."""
+    await asyncio.sleep(seconds)
+
+
+def _infra_backoff_knobs(workspace_root: Path) -> tuple[float, float]:
+    """Read the endpoint-outage backoff ``(base_s, cap_s)`` for this workspace.
+
+    The evolve loop needs only these two scalars from the runtime block, so
+    it reads them directly off the workspace config (the same
+    ``runtime.infra_backoff_*`` keys :func:`zicato.runtime_factory
+    .make_runtime_config` threads onto :class:`~zicato.core.runtime
+    .RuntimeConfig`) rather than resolving a full config with its LLM
+    callables. Best-effort: any read failure falls back to the shared
+    dataclass defaults, clamped non-negative.
+    """
+    from zicato.core.runtime import (  # noqa: PLC0415
+        INFRA_BACKOFF_BASE_S_DEFAULT,
+        INFRA_BACKOFF_CAP_S_DEFAULT,
+    )
+
+    base, cap = INFRA_BACKOFF_BASE_S_DEFAULT, INFRA_BACKOFF_CAP_S_DEFAULT
+    try:
+        from zicato import workspace_loader  # noqa: PLC0415
+
+        runtime = (workspace_loader.load_workspace_config(workspace_root) or {}).get(
+            "runtime"
+        ) or {}
+        raw_base = runtime.get("infra_backoff_base_s")
+        raw_cap = runtime.get("infra_backoff_cap_s")
+        if raw_base is not None:
+            base = float(raw_base)
+        if raw_cap is not None:
+            cap = float(raw_cap)
+    except Exception as exc:  # noqa: BLE001 — the backoff must never fail the loop
+        log.debug("infra backoff knobs unavailable (%s); using defaults", exc)
+    return max(0.0, base), max(0.0, cap)
+
+
 def _epoch_round_base(workspace_root: Path, epoch_id: str | None) -> int:
     """The next ``round_index`` for ``epoch_id`` — one past its highest
     already-persisted round.
@@ -489,6 +528,12 @@ async def evolve_n_rounds(
         budget = WallClockBudgetPolicy(max_wall_clock_seconds)
         budget_stopped = False
         stop_reason = "completed"
+        # Endpoint-outage backoff state (WS-H): consecutive deferred rounds
+        # double the delay from base up to the cap; any settled round
+        # resets the streak. Knobs read once — workspace config is static
+        # for the life of one evolve invocation.
+        infra_backoff_base_s, infra_backoff_cap_s = _infra_backoff_knobs(workspace_root)
+        infra_deferral_streak = 0
         # The CUMULATIVE round index for the pinned epoch. The loop counter
         # ``round_idx`` is invocation-local (0..rounds-1, used only for the
         # "round X of N" budget messages); the PERSISTED ``round_index`` CONTINUES
@@ -640,6 +685,45 @@ async def evolve_n_rounds(
                 eid = epoch_id or current_epoch_id(workspace_root)
                 if eid:
                     regenerate_in_progress_html(workspace_root, eid)
+            if outcome.tournament_decision == _orch.DEFERRED_INFRA_DECISION:
+                # Endpoint-outage deferral (WS-H): the round burned NO
+                # experiment — it persists un-outcomed on disk. Back off
+                # (exponential, capped) instead of re-proposing straight
+                # into a dead endpoint, then hand the next round the SAME
+                # conservative reconciliation a crash-resume performs:
+                # resume the deferred generation in place when any board
+                # unit completed (the unit cache HITs the done work),
+                # discard it cleanly when none did. Deliberately skips
+                # BOTH stop-policies below — a deferral is evidence about
+                # the endpoint, not about the experiment stream, so it
+                # must neither count toward consecutive rejections nor
+                # reset/advance the degenerate-health streak.
+                infra_deferral_streak += 1
+                delay = min(
+                    infra_backoff_cap_s,
+                    infra_backoff_base_s * (2 ** (infra_deferral_streak - 1)),
+                )
+                log.warning(
+                    "evolve_n_rounds: round %d/%d deferred on the endpoint-outage "
+                    "circuit (deferral %d in a row); backing off %.1fs before the "
+                    "next round",
+                    round_idx + 1,
+                    rounds,
+                    infra_deferral_streak,
+                    delay,
+                )
+                if delay > 0 and round_idx + 1 < rounds:
+                    # No sleep after the FINAL round — there is nothing left
+                    # to back off for; the reconciliation below still runs
+                    # so the workspace is left clean for the next evolve.
+                    beater.update(phase=f"infra_backoff:round_{epoch_round_index}:{delay:g}s")
+                    beater.bump_now()
+                    await _sleep_for_backoff(delay)
+                _reconciled = prepare_resume(workspace_root, epoch_id or "")
+                resume_plan = None if _reconciled.classification == "clean" else _reconciled
+                epoch_round_index += 1
+                continue
+            infra_deferral_streak = 0
             if reject_policy.observe(promoted=outcome.tournament_decision == "promoted"):
                 log.warning(
                     "evolve_n_rounds: stopping after %d consecutive rejections (round %d/%d)",

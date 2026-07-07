@@ -52,7 +52,9 @@ from zicato.core.workspace import (
     scoring_path,
 )
 from zicato.epoch._storage import (
+    RECORD_FORMAT_VERSION,
     backend_for,
+    check_record_format,
     current_epoch_key,
     epoch_config_key,
     scoring_key,
@@ -127,7 +129,7 @@ def _make_epoch_id(workspace_root: Path, name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _scoring_to_dict(weights: ScoringWeights) -> dict[str, Any]:
+def scoring_to_dict(weights: ScoringWeights) -> dict[str, Any]:
     """Serialize :class:`ScoringWeights` to the frozen ``scoring.json`` shape.
 
     Field-enumerating (and recursive over the nested
@@ -148,13 +150,13 @@ def _scoring_to_dict(weights: ScoringWeights) -> dict[str, Any]:
 def _scoring_from_dict(d: dict[str, Any]) -> ScoringWeights:
     """Parse a frozen ``scoring.json`` dict back into :class:`ScoringWeights`.
 
-    The inverse of :func:`_scoring_to_dict`, field-enumerating via
+    The inverse of :func:`scoring_to_dict`, field-enumerating via
     :func:`zicato.epoch.contract_serde.jsonable_to_dataclass`: every field
     absent from a legacy ``scoring.json`` falls back to the dataclass
     default (so files written before a field landed load cleanly), and
     every present field — including the nested ``tournament`` /
     ``overfitting`` blocks — round-trips. Mirror of
-    :func:`zicato.workspace_loader._scoring_weights_from_dict`.
+    :func:`zicato.workspace_loader.scoring_weights_from_dict`.
     """
     from zicato.epoch.contract_serde import jsonable_to_dataclass  # noqa: PLC0415
     from zicato.workspace_loader import _reject_retired_pass_exponent  # noqa: PLC0415
@@ -168,12 +170,15 @@ def _scoring_from_dict(d: dict[str, Any]) -> ScoringWeights:
 
 def _config_to_dict(cfg: EpochConfig) -> dict[str, Any]:
     return {
+        # Record-format version (WS5): stamped at write, checked at read
+        # (absent-on-read reads as version 1 so pre-stamp epochs load).
+        "format_version": RECORD_FORMAT_VERSION,
         "id": cfg.id,
         "name": cfg.name,
         "created_at": cfg.created_at,
         "board_path": str(cfg.board_path),
         "brief_path": str(cfg.brief_path),
-        "scoring": _scoring_to_dict(cfg.scoring),
+        "scoring": scoring_to_dict(cfg.scoring),
         "closed": cfg.closed,
         "closed_at": cfg.closed_at,
         # ``None`` ⇒ pre-hash (legacy) epoch, written as null. Newly
@@ -183,6 +188,12 @@ def _config_to_dict(cfg: EpochConfig) -> dict[str, Any]:
         # ``None`` ⇒ built-in default proposer. Written as null so an
         # epoch that never configured a proposer round-trips cleanly.
         "proposer_path": str(cfg.proposer_path) if cfg.proposer_path is not None else None,
+        # Measured A/A noise floor (runtime measurement, never hashed).
+        # ``None`` ⇒ never measured; written as null so it round-trips.
+        "noise_floor": cfg.noise_floor,
+        # Contract pre-flight verdict (runtime measurement, never hashed).
+        # ``None`` ⇒ never run; written as null so it round-trips.
+        "preflight": cfg.preflight,
     }
 
 
@@ -204,6 +215,8 @@ def _config_from_dict(d: dict[str, Any]) -> EpochConfig:
     # proposer) so an epoch ``config.json`` written before the field
     # landed loads cleanly.
     raw_proposer = d.get("proposer_path")
+    raw_floor = d.get("noise_floor")
+    raw_preflight = d.get("preflight")
     return EpochConfig(
         id=d["id"],
         name=d["name"],
@@ -216,6 +229,12 @@ def _config_from_dict(d: dict[str, Any]) -> EpochConfig:
         contract_hash=(str(raw_hash) if (raw_hash := d.get("contract_hash")) else None),
         goal=str(d.get("goal", "")),
         proposer_path=Path(raw_proposer) if raw_proposer else None,
+        # ``noise_floor`` defaults to ``None`` (never measured) so epochs
+        # written before the calibration surface landed load cleanly.
+        noise_floor=raw_floor if isinstance(raw_floor, dict) else None,
+        # ``preflight`` defaults to ``None`` (never run) so epochs written
+        # before the pre-flight surface landed load cleanly.
+        preflight=raw_preflight if isinstance(raw_preflight, dict) else None,
     )
 
 
@@ -263,6 +282,9 @@ def load_epoch(workspace_root: Path, epoch_id: str) -> EpochConfig:
     raw = backend_for(workspace_root).read_json(epoch_config_key(epoch_id))
     if raw is None:
         raise FileNotFoundError(f"epoch {epoch_id!r} has no config.json under {workspace_root}")
+    # Record-format guard (WS5): absent ⇒ version 1 (pre-stamp epochs keep
+    # loading); a future incompatible version refuses with a clear error.
+    check_record_format(raw, f"epochs/{epoch_id}/config.json")
     return _config_from_dict(raw)
 
 
@@ -292,6 +314,10 @@ def list_epochs(workspace_root: Path) -> list[EpochConfig]:
             continue
         if raw is None:
             continue
+        # Record-format guard (WS5): a future incompatible config.json is a
+        # LOUD refusal, not a silent skip — unlike a torn in-progress write,
+        # the record is intact and the operator must know why it won't load.
+        check_record_format(raw, f"epochs/{epoch_id}/config.json")
         try:
             out.append(_config_from_dict(raw))
         except (KeyError, TypeError):
@@ -458,7 +484,7 @@ def new_epoch(
     # 4. Scoring weights — serialized from the in-memory ScoringWeights,
     # written atomically through the storage seam.
     target_scoring = scoring_path(workspace_root, epoch_id)
-    backend_for(workspace_root).write_json(scoring_key(epoch_id), _scoring_to_dict(weights))
+    backend_for(workspace_root).write_json(scoring_key(epoch_id), scoring_to_dict(weights))
 
     # 5. Contract hash over the frozen board/brief/scoring plus the
     # registered inner-harness identity. Computed from the just-written
@@ -534,6 +560,14 @@ def _close_epoch_prelude(
     from zicato.epoch import lineage as _lineage
 
     _lineage.mark_closed(workspace_root, epoch_id, cfg.closed_at)
+
+    # OPT-IN snapshot GC on close (the workspace ``storage_gc`` config
+    # block; absent = off, the default). Best-effort by construction —
+    # the hook logs-and-swallows internally, so closing an epoch can
+    # never fail because a source-tree prune hiccuped.
+    from zicato.epoch.gc import maybe_prune_on_epoch_close
+
+    maybe_prune_on_epoch_close(workspace_root, epoch_id)
     return epoch_id, analysis_path(workspace_root, epoch_id)
 
 
@@ -646,6 +680,50 @@ def set_epoch_goal(workspace_root: Path, epoch_id: str, goal: str) -> EpochConfi
     return cfg
 
 
+def set_epoch_noise_floor(
+    workspace_root: Path, epoch_id: str, noise_floor: dict[str, Any]
+) -> EpochConfig:
+    """Persist the measured A/A noise floor onto an existing epoch's config.
+
+    Mirrors :func:`set_epoch_goal`: loads the epoch's ``config.json``,
+    replaces the additive ``noise_floor`` field with the supplied
+    :meth:`zicato.tournament.calibration.NoiseFloor.to_json` dict, and
+    writes the config back. The floor is a RUNTIME measurement, never a
+    contract input — writing it does not touch ``contract_hash`` and never
+    rolls the epoch. Re-measuring overwrites the prior record.
+
+    Raises :class:`FileNotFoundError` if the epoch does not exist.
+    """
+    from dataclasses import replace
+
+    cfg = load_epoch(workspace_root, epoch_id)
+    cfg = replace(cfg, noise_floor=dict(noise_floor))
+    _write_config(workspace_root, cfg)
+    return cfg
+
+
+def set_epoch_preflight(
+    workspace_root: Path, epoch_id: str, preflight: dict[str, Any]
+) -> EpochConfig:
+    """Persist a contract pre-flight verdict onto an existing epoch's config.
+
+    Mirrors :func:`set_epoch_noise_floor`: loads the epoch's
+    ``config.json``, replaces the additive ``preflight`` field with the
+    supplied :meth:`zicato.epoch.preflight.PreflightReport.to_json` dict,
+    and writes the config back. The verdict is a RUNTIME measurement,
+    never a contract input — writing it does not touch ``contract_hash``
+    and never rolls the epoch. Re-running overwrites the prior record.
+
+    Raises :class:`FileNotFoundError` if the epoch does not exist.
+    """
+    from dataclasses import replace
+
+    cfg = load_epoch(workspace_root, epoch_id)
+    cfg = replace(cfg, preflight=dict(preflight))
+    _write_config(workspace_root, cfg)
+    return cfg
+
+
 def _write_stub_html_companion(
     workspace_root: Path,
     epoch_id: str,
@@ -685,4 +763,7 @@ __all__ = [
     "current_epoch_id",
     "load_epoch",
     "set_epoch_goal",
+    "set_epoch_noise_floor",
+    "set_epoch_preflight",
+    "scoring_to_dict",
 ]

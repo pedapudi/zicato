@@ -200,6 +200,10 @@ def test_cost_gauntlet() -> None:
 def test_cost_swiss() -> None:
     draft = TournamentDraft()
     draft.entries = _board(6)
+    # A 6-entry board now clears the (lowered, 8 -> 6) split floor; this
+    # test's subject is the swiss run arithmetic over the whole board, so
+    # pin the holdout split off.
+    _no_holdout(draft)
     ops.set_structure(draft, "swiss")
     ops.set_param(draft, "field_size", 4)
     ops.set_param(draft, "replicates", 2)
@@ -300,10 +304,12 @@ def test_cost_explicit_replicates_overrides_structure_default() -> None:
 
 def test_cost_unset_replicates_per_structure_defaults() -> None:
     # The per-structure default the estimator applies when ``replicates`` is
-    # unset, for EVERY structure: gauntlet=1, single_elim=2, double_elim=2,
-    # swiss=2, racing=1. (Each computed over an 8-board, field 4, holdout off.)
+    # unset, for EVERY structure: the base default is now 2 (the noise-aware
+    # posture) — gauntlet/elim/swiss inherit or pin it — while racing pins 1
+    # (its replication is intrinsic to the escalating board slices). (Each
+    # computed over an 8-board, field 4, holdout off.)
     expected = {
-        "gauntlet": 1,
+        "gauntlet": 2,
         "single_elim": 2,
         "double_elim": 2,
         "swiss": 2,
@@ -397,3 +403,700 @@ def test_validate_whole_board_holdout() -> None:
     ops.set_holdout(draft, tags=["e0", "e1", "e2"])
     codes = {w.code for w in ops.validate(draft)}
     assert "holdout_tags_cover_whole_board" in codes
+
+
+# ---------------------------------------------------------------------------
+# set_screening — the candidate-screen (tryouts) contract knobs
+# ---------------------------------------------------------------------------
+
+
+def test_set_screening() -> None:
+    import json
+
+    import pytest
+
+    draft = TournamentDraft()
+    assert draft.scoring.proposer_quality.screen_entries == 0
+    patch = ops.set_screening(draft, entries=2, veto_only=True)
+    assert draft.scoring.proposer_quality.screen_entries == 2
+    assert draft.scoring.proposer_quality.screen_veto_only is True
+    assert patch.changed["screen_entries"] == {"from": 0, "to": 2}
+    assert patch.changed["screen_veto_only"] == {"from": False, "to": True}
+
+    # No-op edit records nothing.
+    patch2 = ops.set_screening(draft, entries=2, veto_only=True)
+    assert patch2.changed == {}
+
+    # It survives the draft's serialized form (what the REST surface returns).
+    serialized = json.loads(json.dumps(draft.to_dict()))
+    assert serialized["scoring"]["proposer_quality"]["screen_entries"] == 2
+    assert serialized["scoring"]["proposer_quality"]["screen_veto_only"] is True
+
+    # A negative panel size is rejected, not silently coerced.
+    with pytest.raises(ValueError, match=">= 0"):
+        ops.set_screening(TournamentDraft(), entries=-1)
+
+
+def test_cost_includes_candidate_screen_runs_when_opted_in() -> None:
+    draft = TournamentDraft()
+    draft.entries = _board(10)
+    _no_holdout(draft)
+    ops.set_structure(draft, "gauntlet")
+    ops.set_param(draft, "field_size", 1)
+    ops.set_param(draft, "replicates", 1)
+
+    # Default (screen off): no candidate-screen line.
+    est_off = ops.estimate_cost(draft)
+    assert not any(line.label == "candidate-screen runs" for line in est_off.breakdown)
+
+    # Opted in: proposes 1 (gauntlet) × best_of_n 3 (default) × panel 2.
+    ops.set_screening(draft, entries=2)
+    est = ops.estimate_cost(draft)
+    screen_lines = [line for line in est.breakdown if line.label == "candidate-screen runs"]
+    assert len(screen_lines) == 1
+    assert screen_lines[0].runs == 1 * 3 * 2
+    assert est.board_runs_per_round == est_off.board_runs_per_round + 6
+
+
+def test_cost_screen_runs_scale_with_field_and_cap_at_board() -> None:
+    draft = TournamentDraft()
+    draft.entries = _board(3)
+    _no_holdout(draft)
+    ops.set_structure(draft, "racing")
+    ops.set_param(draft, "field_size", 4)
+    # Panel request larger than the board caps at the train-board size.
+    ops.set_screening(draft, entries=8)
+    est = ops.estimate_cost(draft)
+    screen_lines = [line for line in est.breakdown if line.label == "candidate-screen runs"]
+    assert len(screen_lines) == 1
+    # proposes 4 (racing field) × best_of_n 3 × panel min(8, 3) = 36.
+    assert screen_lines[0].runs == 4 * 3 * 3
+
+
+# ---------------------------------------------------------------------------
+# validate — the statistical margin-vs-noise-floor rule (REFUSE severity)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_margin_below_noise_floor_refuses_when_gate_off() -> None:
+    # Default contract: promote_margin 0.01, evidence gate OFF. A measured
+    # floor at/above the margin makes margin-only duels noise-decided.
+    draft = TournamentDraft()
+    draft.entries = _board(4)
+    warns = {w.code: w for w in ops.validate(draft, noise_floor_max_abs_delta=0.05)}
+    assert "margin_below_noise_floor" in warns
+    assert warns["margin_below_noise_floor"].severity == "refuse"
+    assert "0.05" in warns["margin_below_noise_floor"].message
+
+    # Exactly-at-floor also refuses (margin <= floor).
+    ops.set_gate(draft, promote_margin=0.05)
+    codes = {w.code for w in ops.validate(draft, noise_floor_max_abs_delta=0.05)}
+    assert "margin_below_noise_floor" in codes
+
+
+def test_validate_margin_rule_silent_when_gate_on_or_margin_clears() -> None:
+    draft = TournamentDraft()
+    draft.entries = _board(4)
+    # Evidence gate ON (threshold in (0,1)) silences the rule — the
+    # defer→replicate loop supplies the statistical resolution instead.
+    ops.set_param(draft, "promote_confidence_threshold", 0.8)
+    codes = {w.code for w in ops.validate(draft, noise_floor_max_abs_delta=0.05)}
+    assert "margin_below_noise_floor" not in codes
+
+    # Gate off but the margin clears the floor — silent.
+    ops.set_param(draft, "promote_confidence_threshold", None)
+    ops.set_gate(draft, promote_margin=0.06)
+    codes = {w.code for w in ops.validate(draft, noise_floor_max_abs_delta=0.05)}
+    assert "margin_below_noise_floor" not in codes
+
+
+def test_validate_margin_rule_silent_without_any_floor() -> None:
+    # No floor passed, no workspace: the rule cannot fire (no guessing).
+    draft = TournamentDraft()
+    draft.entries = _board(4)
+    codes = {w.code for w in ops.validate(draft)}
+    assert "margin_below_noise_floor" not in codes
+
+
+def test_validate_reads_measured_floor_off_the_epoch_record(tmp_path) -> None:
+    """With a workspace, validate() reads the CURRENT epoch's measured
+    ``noise_floor`` record (the `zicato board audit` shape) on its own."""
+    import json
+
+    from zicato.epoch.lifecycle import new_epoch, set_epoch_noise_floor
+
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    board = tmp_path / "board.jsonl"
+    board.write_text(
+        '{"id": "e1", "kind": "single_turn", "budget_s": 60, "input": "hi"}\n',
+        encoding="utf-8",
+    )
+    brief = tmp_path / "brief.md"
+    brief.write_text("# b\n", encoding="utf-8")
+    (ws / "config.json").write_text(json.dumps({"instance_id": "default"}), encoding="utf-8")
+    from zicato.core.types import ScoringWeights
+
+    cfg = new_epoch(ws, name="a", board_source=board, brief_source=brief, weights=ScoringWeights())
+
+    draft = TournamentDraft()
+    draft.entries = _board(4)
+    # No measurement yet: silent.
+    codes = {w.code for w in ops.validate(draft, ws)}
+    assert "margin_below_noise_floor" not in codes
+
+    set_epoch_noise_floor(ws, cfg.id, {"max_abs_delta": 0.2, "runs": 5})
+    warns = {w.code: w for w in ops.validate(draft, ws)}
+    assert "margin_below_noise_floor" in warns
+    assert warns["margin_below_noise_floor"].severity == "refuse"
+
+    # An explicit floor argument overrides the record.
+    codes = {w.code for w in ops.validate(draft, ws, noise_floor_max_abs_delta=0.001)}
+    assert "margin_below_noise_floor" not in codes
+
+
+# ---------------------------------------------------------------------------
+# preflight — the build-time statistical measurement (honest degrades)
+# ---------------------------------------------------------------------------
+
+
+def test_preflight_degrades_on_empty_board_and_missing_epoch(tmp_path) -> None:
+    import asyncio
+
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+
+    # Empty draft board: nothing to measure.
+    empty = TournamentDraft()
+    res = asyncio.run(ops.preflight(empty, ws))
+    assert res.available is False
+    assert "non-empty draft board" in res.reason
+    assert res.to_dict()["verdict"] is None
+
+    # A board but no current epoch: preflight needs a registered target.
+    draft = TournamentDraft()
+    draft.entries = _board(3)
+    res = asyncio.run(ops.preflight(draft, ws))
+    assert res.available is False
+    assert "registered target" in res.reason
+
+
+def test_preflight_degrades_without_seeded_baseline(tmp_path) -> None:
+    import asyncio
+    import json
+
+    from zicato.core.types import ScoringWeights
+    from zicato.epoch.lifecycle import new_epoch
+
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    board = tmp_path / "board.jsonl"
+    board.write_text(
+        '{"id": "e1", "kind": "single_turn", "budget_s": 60, "input": "hi"}\n',
+        encoding="utf-8",
+    )
+    brief = tmp_path / "brief.md"
+    brief.write_text("# b\n", encoding="utf-8")
+    (ws / "config.json").write_text(json.dumps({"instance_id": "default"}), encoding="utf-8")
+    new_epoch(ws, name="a", board_source=board, brief_source=brief, weights=ScoringWeights())
+
+    draft = TournamentDraft()
+    draft.entries = _board(3)
+    res = asyncio.run(ops.preflight(draft, ws))
+    assert res.available is False
+    assert "baseline" in res.reason
+
+
+def test_preflight_rejects_sub_two_runs(tmp_path) -> None:
+    import asyncio
+
+    import pytest
+
+    draft = TournamentDraft()
+    draft.entries = _board(3)
+    with pytest.raises(ValueError, match="at least 2"):
+        asyncio.run(ops.preflight(draft, tmp_path, runs=1))
+
+
+def test_preflight_measures_draft_contract_against_target0(tmp_path) -> None:
+    """The REAL measurement, against target_0's deterministic adapter with
+    the runtime call_llm config in config.json (the shape the builder relies
+    on — no explicit callables). Verdict OK; the epoch record is untouched
+    (a draft measurement never masquerades as the live epoch's)."""
+    import asyncio
+    import json
+    from pathlib import Path
+
+    import zicato_examples.target_0_convergence as _t0_pkg
+    from zicato.epoch.lifecycle import _scoring_from_dict, load_epoch, new_epoch
+
+    example_dir = Path(_t0_pkg.__file__).resolve().parent
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    (ws / "config.json").write_text(
+        json.dumps(
+            {
+                "instance_id": "default",
+                "adapter": {
+                    "kind": "import",
+                    "factory": "zicato_examples.target_0_convergence.harness:make_adapter",
+                },
+                "mutable_trees": [str(example_dir / "agent")],
+                "runtime": {
+                    "harness_call_llm": "zicato_examples.target_0_convergence.mocks:harness_llm",
+                    "auxiliary_call_llm": "zicato_examples.target_0_convergence.mocks:aux_llm",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    brief = tmp_path / "brief.md"
+    brief.write_text("# Pre-flight brief\n", encoding="utf-8")
+    weights = _scoring_from_dict(json.loads((example_dir / "scoring.json").read_text()))
+    cfg = new_epoch(
+        ws,
+        name="t0-builder-preflight",
+        board_source=example_dir / "board.jsonl",
+        brief_source=brief,
+        weights=weights,
+        auto_close_previous=False,
+        proposer_path=example_dir / "proposer",
+    )
+    # Seed v0 so there is a champion tree to probe.
+    from zicato import workspace_loader
+    from zicato.orchestrator import _ensure_baseline_snapshot
+
+    _ensure_baseline_snapshot(ws, cfg.id, workspace_loader.load_workspace_config(ws))
+
+    draft = TournamentDraft.from_workspace(ws)
+    res = asyncio.run(ops.preflight(draft, ws, runs=3))
+    assert res.available is True, res.reason
+    assert res.verdict == "ok"
+    assert res.report is not None
+    assert res.report["signal"] > 0.0
+    assert res.noise_floor is not None
+    assert res.noise_floor["max_abs_delta"] == 0.0
+
+    # RECOMMEND-ONLY and draft-scoped: nothing persisted onto the record.
+    record = load_epoch(ws, cfg.id)
+    assert record.preflight is None
+    assert record.noise_floor is None
+
+
+# ---------------------------------------------------------------------------
+# Full knob coverage — set_holdout (overfitting), set_gate (hard blocks),
+# set_namespace_weights, set_proposer_quality, set_experiment_memory
+# ---------------------------------------------------------------------------
+
+
+def test_set_holdout_full_overfitting_coverage() -> None:
+    draft = TournamentDraft()
+    patch = ops.set_holdout(
+        draft,
+        min_board_size_for_split=10,
+        rotate_holdout=False,
+        restrict_proposer_visibility=False,
+        random_baseline_every_n=5,
+        max_generations_per_contract=40,
+    )
+    of = draft.scoring.overfitting
+    assert of.min_board_size_for_split == 10
+    assert of.rotate_holdout is False
+    assert of.restrict_proposer_visibility is False
+    assert of.random_baseline_every_n == 5
+    assert of.max_generations_per_contract == 40
+    assert patch.changed["random_baseline_every_n"] == {"from": 0, "to": 5}
+    assert patch.changed["max_generations_per_contract"] == {"from": None, "to": 40}
+
+    # ``0`` clears the ceiling (None is reserved for "leave unchanged").
+    patch2 = ops.set_holdout(draft, max_generations_per_contract=0)
+    assert draft.scoring.overfitting.max_generations_per_contract is None
+    assert patch2.changed["max_generations_per_contract"] == {"from": 40, "to": None}
+
+    # No-op edit records nothing.
+    patch3 = ops.set_holdout(draft, rotate_holdout=False)
+    assert patch3.changed == {}
+
+
+def test_set_holdout_ladder_partial_mapping() -> None:
+    import pytest
+
+    draft = TournamentDraft()
+    patch = ops.set_holdout(draft, ladder={"budget": 8, "noise_scale": 0.1})
+    ladder = draft.scoring.overfitting.ladder
+    assert ladder.budget == 8
+    assert ladder.noise_scale == 0.1
+    assert ladder.enabled is True  # untouched by the partial mapping
+    assert patch.changed["ladder.budget"] == {"from": 16, "to": 8}
+
+    # An explicit threshold pins it; an explicit null resets to auto.
+    ops.set_holdout(draft, ladder={"threshold": 0.02})
+    assert draft.scoring.overfitting.ladder.threshold == 0.02
+    patch_auto = ops.set_holdout(draft, ladder={"threshold": None})
+    assert draft.scoring.overfitting.ladder.threshold is None
+    assert patch_auto.changed["ladder.threshold"] == {"from": 0.02, "to": None}
+
+    # Unknown ladder keys raise; invalid values hit the dataclass validator.
+    with pytest.raises(ValueError, match="unknown ladder key"):
+        ops.set_holdout(draft, ladder={"nope": 1})
+    with pytest.raises(ValueError, match="budget"):
+        ops.set_holdout(draft, ladder={"budget": -1})
+
+
+def test_set_holdout_invalid_values_rejected_by_dataclass() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="random_baseline_every_n"):
+        ops.set_holdout(TournamentDraft(), random_baseline_every_n=-1)
+    with pytest.raises(ValueError, match="holdout_fraction"):
+        ops.set_holdout(TournamentDraft(), fraction=1.5)
+
+
+def test_set_gate_full_coverage() -> None:
+    import pytest
+
+    draft = TournamentDraft()
+    patch = ops.set_gate(
+        draft,
+        block_on_containment_violation=True,
+        block_on_gate_contradiction=True,
+        regression_gate_enabled=True,
+        regression_test_command=["python", "-m", "unittest", "discover"],
+        regression_timeout_s=120,
+        namespace_monotonicity={"rubric:": True, "schema:": False},
+    )
+    sc = draft.scoring
+    assert sc.block_on_containment_violation is True
+    assert sc.block_on_gate_contradiction is True
+    assert sc.regression_gate_enabled is True
+    assert sc.regression_test_command == ("python", "-m", "unittest", "discover")
+    assert sc.regression_timeout_s == 120
+    assert dict(sc.namespace_monotonicity) == {"rubric:": True, "schema:": False}
+    assert patch.changed["block_on_containment_violation"]["to"] is True
+    assert patch.changed["regression_test_command"]["to"] == [
+        "python",
+        "-m",
+        "unittest",
+        "discover",
+    ]
+
+    # It survives the draft's serialized form (the REST envelope shape).
+    import json
+
+    serialized = json.loads(json.dumps(draft.to_dict()))
+    assert serialized["scoring"]["block_on_gate_contradiction"] is True
+    assert serialized["scoring"]["namespace_monotonicity"] == {"rubric:": True, "schema:": False}
+
+    with pytest.raises(ValueError, match="non-empty argv"):
+        ops.set_gate(TournamentDraft(), regression_test_command=[])
+    with pytest.raises(ValueError, match=">= 1"):
+        ops.set_gate(TournamentDraft(), regression_timeout_s=0)
+
+
+def test_set_namespace_weights() -> None:
+    import pytest
+
+    draft = TournamentDraft()
+    weights = {"drift:": 2.0, "rubric:": -0.5, "cost:": 0.0}
+    patch = ops.set_namespace_weights(draft, namespace_weights=weights, diff_complexity_weight=0.01)
+    assert dict(draft.scoring.namespace_weights) == weights
+    assert draft.scoring.diff_complexity_weight == 0.01
+    assert patch.changed["namespace_weights"]["to"] == weights
+    assert patch.changed["diff_complexity_weight"] == {"from": 0.0, "to": 0.01}
+
+    # No-op replacement records nothing.
+    patch2 = ops.set_namespace_weights(draft, namespace_weights=dict(weights))
+    assert patch2.changed == {}
+
+    with pytest.raises(ValueError, match=">= 0"):
+        ops.set_namespace_weights(TournamentDraft(), diff_complexity_weight=-0.1)
+
+
+def test_set_proposer_quality_composes_with_screening() -> None:
+    import pytest
+
+    draft = TournamentDraft()
+    ops.set_screening(draft, entries=2, veto_only=True)
+    patch = ops.set_proposer_quality(draft, best_of_n=5, critique_enabled=False)
+    quality = draft.scoring.proposer_quality
+    assert quality.best_of_n == 5
+    assert quality.critique_enabled is False
+    # COMPOSITION: the screen knobs set by set_screening are untouched.
+    assert quality.screen_entries == 2
+    assert quality.screen_veto_only is True
+    assert patch.changed["best_of_n"] == {"from": 3, "to": 5}
+
+    # And the reverse: set_screening leaves the quality knobs alone.
+    ops.set_screening(draft, entries=4)
+    assert draft.scoring.proposer_quality.best_of_n == 5
+
+    with pytest.raises(ValueError, match=">= 1"):
+        ops.set_proposer_quality(TournamentDraft(), best_of_n=0)
+
+
+def test_set_experiment_memory() -> None:
+    import json
+
+    draft = TournamentDraft()
+    assert draft.scoring.experiment_memory.cross_epoch is False
+    patch = ops.set_experiment_memory(draft, cross_epoch=True)
+    assert draft.scoring.experiment_memory.cross_epoch is True
+    assert patch.changed["cross_epoch"] == {"from": False, "to": True}
+    # No-op records nothing.
+    assert ops.set_experiment_memory(draft, cross_epoch=True).changed == {}
+    serialized = json.loads(json.dumps(draft.to_dict()))
+    assert serialized["scoring"]["experiment_memory"]["cross_epoch"] is True
+
+
+# ---------------------------------------------------------------------------
+# Honest cost meter — the evidence-gate confirm budget, the best-of-N
+# auxiliary line, and the placebo cadence
+# ---------------------------------------------------------------------------
+
+
+def test_cost_evidence_gate_confirm_budget_is_priced() -> None:
+    draft = TournamentDraft()
+    draft.entries = _board(10)
+    _no_holdout(draft)
+    ops.set_structure(draft, "gauntlet")
+    ops.set_param(draft, "field_size", 1)
+    ops.set_param(draft, "replicates", 1)
+
+    # Gate off: no crowning-confirm line.
+    est_off = ops.estimate_cost(draft)
+    assert not any("crowning-confirm" in line.label for line in est_off.breakdown)
+
+    # The recommended-scaffold gate: threshold 0.8, budget 32. Each
+    # replicate is a FRESH board sweep for BOTH contestants:
+    # 32 × 2 × 10 = 640 — the largest term by far (duels are 10).
+    ops.set_param(draft, "promote_confidence_threshold", 0.8)
+    ops.set_param(draft, "promote_confidence_replicates", 32)
+    est = ops.estimate_cost(draft)
+    confirm = [line for line in est.breakdown if "crowning-confirm" in line.label]
+    assert len(confirm) == 1
+    assert confirm[0].runs == 32 * 2 * 10
+    assert "per" in confirm[0].detail and "crowning" in confirm[0].detail
+    assert est.board_runs_per_round == est_off.board_runs_per_round + 640
+    # It IS the largest line on the meter.
+    assert confirm[0].runs == max(line.runs for line in est.breakdown)
+
+    # Unset budget defaults to the evidence gate's own default (3).
+    ops.set_param(draft, "promote_confidence_replicates", None)
+    est_default = ops.estimate_cost(draft)
+    confirm_default = next(
+        line for line in est_default.breakdown if "crowning-confirm" in line.label
+    )
+    assert confirm_default.runs == 3 * 2 * 10
+
+
+def test_cost_best_of_n_auxiliary_line_excluded_from_headline() -> None:
+    draft = TournamentDraft()
+    draft.entries = _board(10)
+    _no_holdout(draft)
+    ops.set_structure(draft, "gauntlet")
+    ops.set_param(draft, "field_size", 1)
+    ops.set_param(draft, "replicates", 1)
+
+    # Default best_of_n is 3: the auxiliary line appears (1 × 3 calls)…
+    est = ops.estimate_cost(draft)
+    aux = [line for line in est.breakdown if line.label == "best-of-N propose calls"]
+    assert len(aux) == 1
+    assert aux[0].runs == 1 * 3
+    assert "auxiliary" in aux[0].detail
+    # …but the headline counts only board runs (1 × 1 × 10 = 10).
+    assert est.board_runs_per_round == 10
+
+    # best_of_n 1 (the historical single sample): no line.
+    ops.set_proposer_quality(draft, best_of_n=1)
+    est1 = ops.estimate_cost(draft)
+    assert not any(line.label == "best-of-N propose calls" for line in est1.breakdown)
+
+    # A wider structure proposes field_size challengers: 4 × 3 = 12 calls.
+    ops.set_proposer_quality(draft, best_of_n=3)
+    ops.set_structure(draft, "racing")
+    ops.set_param(draft, "field_size", 4)
+    est4 = ops.estimate_cost(draft)
+    aux4 = next(line for line in est4.breakdown if line.label == "best-of-N propose calls")
+    assert aux4.runs == 4 * 3
+
+
+def test_cost_placebo_cadence_amortized() -> None:
+    draft = TournamentDraft()
+    draft.entries = _board(10)
+    _no_holdout(draft)
+    ops.set_structure(draft, "gauntlet")
+    ops.set_param(draft, "field_size", 1)
+    ops.set_param(draft, "replicates", 2)
+
+    est_off = ops.estimate_cost(draft)
+    assert not any("placebo" in line.label for line in est_off.breakdown)
+
+    # Every 4th round fields one extra no-op challenger: a full duel of
+    # replicates 2 × board 10 = 20 runs, amortized to ceil(20/4) = 5.
+    ops.set_holdout(draft, random_baseline_every_n=4)
+    est = ops.estimate_cost(draft)
+    placebo = [line for line in est.breakdown if "placebo" in line.label]
+    assert len(placebo) == 1
+    assert placebo[0].runs == 5
+    assert est.board_runs_per_round == est_off.board_runs_per_round + 5
+
+
+def test_cost_all_honest_terms_compose_with_the_screen_line() -> None:
+    """The full recommended-scaffold shape: screen + best-of-N + evidence
+    gate + placebo all on at once — every line present, and the headline is
+    exactly the sum of the board-run lines (the auxiliary line excluded)."""
+    draft = TournamentDraft()
+    draft.entries = _board(10)
+    _no_holdout(draft)
+    ops.set_structure(draft, "racing")
+    ops.set_param(draft, "field_size", 4)
+    ops.set_param(draft, "eta", 2)
+    ops.set_param(draft, "board_fraction", 0.4)
+    ops.set_param(draft, "replicates", 2)
+    ops.set_param(draft, "promote_confidence_threshold", 0.8)
+    ops.set_param(draft, "promote_confidence_replicates", 32)
+    ops.set_screening(draft, entries=2)
+    ops.set_holdout(draft, random_baseline_every_n=5)
+
+    est = ops.estimate_cost(draft)
+    labels = [line.label for line in est.breakdown]
+    assert any("candidate-screen" in label for label in labels)
+    assert "best-of-N propose calls" in labels
+    assert any("crowning-confirm" in label for label in labels)
+    assert any("placebo" in label for label in labels)
+
+    board_run_total = sum(
+        line.runs for line in est.breakdown if line.label != "best-of-N propose calls"
+    )
+    assert est.board_runs_per_round == board_run_total
+    # The evidence budget dominates: 32 × 2 × 10 = 640 of the total.
+    confirm = next(line for line in est.breakdown if "crowning-confirm" in line.label)
+    assert confirm.runs == 640
+    assert confirm.runs > est.board_runs_per_round / 2
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle — DraftStore named slots (fork / list / switch) + compare_drafts
+# ---------------------------------------------------------------------------
+
+
+def _slot_workspace(tmp_path) -> object:
+    """A minimal workspace with a live contract for DraftStore init."""
+    import json
+
+    from zicato.core.types import ScoringWeights
+    from zicato.epoch.lifecycle import new_epoch
+    from zicato.workspace.config_io import write_workspace_config
+
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    board = tmp_path / "board.jsonl"
+    board.write_text(
+        '{"id": "e1", "kind": "single_turn", "budget_s": 60, "input": "hi"}\n'
+        '{"id": "e2", "kind": "single_turn", "budget_s": 60, "input": "bye"}\n',
+        encoding="utf-8",
+    )
+    brief = tmp_path / "brief.md"
+    brief.write_text("# Brief\n", encoding="utf-8")
+    scoring = tmp_path / "scoring.json"
+    scoring.write_text(json.dumps({"drift_weight": 1.0}), encoding="utf-8")
+    write_workspace_config(
+        ws,
+        {
+            "instance_id": "default",
+            "contract": {
+                "board_path": str(board.resolve()),
+                "rubric_path": str(brief.resolve()),
+                "scoring_path": str(scoring.resolve()),
+            },
+        },
+    )
+    new_epoch(ws, name="a", board_source=board, brief_source=brief, weights=ScoringWeights())
+    return ws
+
+
+def test_draftstore_fork_switch_roundtrip(tmp_path) -> None:
+    import pytest
+
+    from zicato.builder.draft import DraftStore
+
+    ws = _slot_workspace(tmp_path)
+    store = DraftStore()
+    assert store.list_drafts() == []
+
+    # Build up some working state, then fork it into slot A.
+    working = store.get("s", ws)
+    ops.set_structure(working, "swiss")
+    forked = store.fork("s", "variant-a", ws)
+    assert store.list_drafts() == ["variant-a"]
+    # The fork inherits the working state and IS the session's draft now.
+    assert forked.scoring.tournament_structure.structure == "swiss"
+    assert store.get("s", ws) is forked
+
+    # Edits accumulate on the slot; fork B from A, edit B; switch back to A.
+    ops.set_param(forked, "field_size", 4)
+    forked_b = store.fork("s", "variant-b", ws)
+    ops.set_structure(forked_b, "racing")
+    assert store.list_drafts() == ["variant-a", "variant-b"]
+    back = store.switch("s", "variant-a")
+    assert back.scoring.tournament_structure.structure == "swiss"
+    assert back.scoring.tournament_structure.params["field_size"] == 4
+    # B kept its own state — the fork was a real copy, no shared mutation.
+    assert store.slot("variant-b").scoring.tournament_structure.structure == "racing"
+    assert store.slot("variant-a").scoring.tournament_structure.structure == "swiss"
+
+    # Errors: duplicate name, malformed name, unknown switch target.
+    with pytest.raises(ValueError, match="already exists"):
+        store.fork("s", "variant-a", ws)
+    with pytest.raises(ValueError, match="invalid draft name"):
+        store.fork("s", "no spaces!", ws)
+    with pytest.raises(ValueError, match="no draft named"):
+        store.switch("s", "nope")
+
+
+def test_draftstore_fork_board_edits_do_not_leak(tmp_path) -> None:
+    from zicato.builder.draft import DraftStore
+
+    ws = _slot_workspace(tmp_path)
+    store = DraftStore()
+    store.get("s", ws)
+    a = store.fork("s", "a", ws)
+    b = store.fork("s", "b", ws)
+    ops.edit_board_entry(b, _entry("extra"))
+    assert {e.id for e in b.entries} == {"e1", "e2", "extra"}
+    assert {e.id for e in a.entries} == {"e1", "e2"}
+
+
+def test_compare_drafts_keyed_diff() -> None:
+    a = TournamentDraft()
+    a.entries = _board(3)
+    b = TournamentDraft()
+    b.entries = _board(3)
+
+    # Identical drafts: nothing changed.
+    same = ops.compare_drafts(a, b)
+    assert same["changed_components"] == []
+    assert same["scoring"] == {}
+    assert same["board"] == {"added": [], "removed": [], "changed": []}
+
+    # Scoring diff is keyed on the contract-canonical scoring keys.
+    ops.set_structure(b, "swiss")
+    ops.set_gate(b, promote_margin=0.05)
+    # Board: b gains an entry, loses one, and edits one in place.
+    ops.edit_board_entry(b, _entry("extra"))
+    b.entries = [e for e in b.entries if e.id != "e0"]
+    import dataclasses as _dc
+
+    b.entries = [_dc.replace(e, input="changed") if e.id == "e1" else e for e in b.entries]
+    ops.set_brief(b, "different brief")
+
+    diff = ops.compare_drafts(a, b)
+    assert set(diff["changed_components"]) == {"scoring", "board", "brief"}
+    assert diff["scoring"]["promote_margin"] == {"a": 0.01, "b": 0.05}
+    assert diff["scoring"]["tournament_structure"]["a"]["structure"] == "gauntlet"
+    assert diff["scoring"]["tournament_structure"]["b"]["structure"] == "swiss"
+    assert diff["board"]["added"] == ["extra"]
+    assert diff["board"]["removed"] == ["e0"]
+    assert diff["board"]["changed"] == ["e1"]
+    assert diff["brief"]["changed"] is True
+    assert diff["proposer"]["changed"] is False

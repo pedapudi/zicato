@@ -8,10 +8,10 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from zicato.cli.common import write_workspace_config
 from zicato.core.types import ScoringWeights
 from zicato.dashboard.server import create_app
 from zicato.epoch.lifecycle import new_epoch
+from zicato.workspace.config_io import write_workspace_config
 
 
 @pytest.fixture()
@@ -182,3 +182,260 @@ def test_builder_endpoints_read_only_forbids_writes(workspace: Path, tmp_path: P
     assert op_resp.status_code == 403
     apply_resp = ro_client.post("/builder/apply", json={"confirm": True})
     assert apply_resp.status_code == 403
+
+
+def test_builder_op_preflight_degrades_honestly(client: TestClient) -> None:
+    """The fixture workspace has an epoch but no seeded baseline generation:
+    the preflight op returns 200 with an honest `available: false` + reason,
+    alongside the normal draft/cost/warnings/diff envelope."""
+    resp = client.post("/builder/op", json={"session": "pf1", "op": "preflight", "args": {}})
+    assert resp.status_code == 200
+    body = resp.json()
+    pf = body["preflight"]
+    assert pf["available"] is False
+    assert pf["verdict"] is None
+    assert pf["reason"]
+    assert "draft" in body
+    assert "cost" in body
+    assert "warnings" in body
+    assert "diff" in body
+
+
+def test_builder_op_preflight_bad_runs_is_400(client: TestClient) -> None:
+    resp = client.post(
+        "/builder/op", json={"session": "pf2", "op": "preflight", "args": {"runs": "nope"}}
+    )
+    assert resp.status_code == 400
+    assert "runs" in resp.json()["error"]
+    resp = client.post(
+        "/builder/op", json={"session": "pf2", "op": "preflight", "args": {"runs": 1}}
+    )
+    assert resp.status_code == 400
+
+
+def test_builder_op_envelope_carries_noise_floor_refuse_warning(
+    client: TestClient, workspace: Path
+) -> None:
+    """Once the epoch record carries a measured A/A floor, every op envelope's
+    warnings include the REFUSE-severity margin_below_noise_floor rule (the
+    fixture contract's default margin 0.01 with the evidence gate off)."""
+    from zicato.epoch.lifecycle import current_epoch_id, set_epoch_noise_floor
+
+    epoch_id = current_epoch_id(workspace)
+    assert epoch_id
+    set_epoch_noise_floor(workspace, epoch_id, {"max_abs_delta": 0.5, "runs": 5})
+
+    resp = client.post(
+        "/builder/op",
+        json={"session": "pf3", "op": "set_structure", "args": {"structure": "swiss"}},
+    )
+    assert resp.status_code == 200
+    warns = {w["code"]: w for w in resp.json()["warnings"]}
+    assert "margin_below_noise_floor" in warns
+    assert warns["margin_below_noise_floor"]["severity"] == "refuse"
+
+    # The draft snapshot GET carries it too (the Review pane's first paint).
+    snap = client.get("/builder/draft?session=pf3").json()
+    codes = {w["code"] for w in snap["warnings"]}
+    assert "margin_below_noise_floor" in codes
+
+
+def test_builder_op_full_knob_dispatch(client: TestClient) -> None:
+    """Every new knob-coverage op dispatches through /builder/op and lands on
+    the serialized draft: the extended holdout, the extended gate, namespace
+    weights, proposer quality, experiment memory."""
+    s = {"session": "knobs"}
+    r = client.post(
+        "/builder/op",
+        json={
+            **s,
+            "op": "set_holdout",
+            "args": {
+                "min_board_size_for_split": 12,
+                "rotate_holdout": False,
+                "random_baseline_every_n": 4,
+                "ladder": {"budget": 6},
+            },
+        },
+    )
+    assert r.status_code == 200
+    of = r.json()["draft"]["scoring"]["overfitting"]
+    assert of["min_board_size_for_split"] == 12
+    assert of["rotate_holdout"] is False
+    assert of["random_baseline_every_n"] == 4
+    assert of["ladder"]["budget"] == 6
+
+    r = client.post(
+        "/builder/op",
+        json={
+            **s,
+            "op": "set_gate",
+            "args": {
+                "monotonicity_scope": "aggregate",
+                "block_on_containment_violation": True,
+                "regression_gate_enabled": True,
+                "regression_test_command": ["pytest", "-q"],
+                "regression_timeout_s": 90,
+                "namespace_monotonicity": {"rubric:": True},
+            },
+        },
+    )
+    assert r.status_code == 200
+    sc = r.json()["draft"]["scoring"]
+    assert sc["pass_rate_monotonicity_scope"] == "aggregate"
+    assert sc["block_on_containment_violation"] is True
+    assert sc["regression_gate_enabled"] is True
+    assert sc["regression_test_command"] == ["pytest", "-q"]
+    assert sc["regression_timeout_s"] == 90
+    assert sc["namespace_monotonicity"] == {"rubric:": True}
+
+    r = client.post(
+        "/builder/op",
+        json={
+            **s,
+            "op": "set_namespace_weights",
+            "args": {
+                "namespace_weights": {"drift:": 1.0, "rubric:": -2.0},
+                "diff_complexity_weight": 0.005,
+            },
+        },
+    )
+    assert r.status_code == 200
+    sc = r.json()["draft"]["scoring"]
+    assert sc["namespace_weights"] == {"drift:": 1.0, "rubric:": -2.0}
+    assert sc["diff_complexity_weight"] == 0.005
+
+    r = client.post(
+        "/builder/op",
+        json={
+            **s,
+            "op": "set_proposer_quality",
+            "args": {"best_of_n": 4, "critique_enabled": False},
+        },
+    )
+    assert r.status_code == 200
+    pq = r.json()["draft"]["scoring"]["proposer_quality"]
+    assert pq["best_of_n"] == 4
+    assert pq["critique_enabled"] is False
+
+    r = client.post(
+        "/builder/op", json={**s, "op": "set_experiment_memory", "args": {"cross_epoch": True}}
+    )
+    assert r.status_code == 200
+    assert r.json()["draft"]["scoring"]["experiment_memory"]["cross_epoch"] is True
+
+
+def test_builder_op_knob_dispatch_errors_are_400(client: TestClient) -> None:
+    r = client.post(
+        "/builder/op",
+        json={"session": "kerr", "op": "set_gate", "args": {"regression_timeout_s": "soon"}},
+    )
+    assert r.status_code == 400
+    assert "integer" in r.json()["error"]
+    r = client.post(
+        "/builder/op",
+        json={"session": "kerr", "op": "set_holdout", "args": {"ladder": {"bogus": 1}}},
+    )
+    assert r.status_code == 400
+    assert "ladder" in r.json()["error"]
+    r = client.post(
+        "/builder/op",
+        json={"session": "kerr", "op": "set_proposer_quality", "args": {"best_of_n": 0}},
+    )
+    assert r.status_code == 400
+
+
+def test_builder_op_fork_switch_list_roundtrip(client: TestClient) -> None:
+    s = {"session": "life"}
+    # Build state, fork it, verify the slot list + the patch shape.
+    client.post("/builder/op", json={**s, "op": "set_structure", "args": {"structure": "swiss"}})
+    r = client.post("/builder/op", json={**s, "op": "fork", "args": {"name": "variant-a"}})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["patch"]["op"] == "fork"
+    assert body["drafts"] == ["variant-a"]
+    assert body["draft"]["scoring"]["tournament"]["structure"] == "swiss"
+
+    # Edit the slot, fork B, switch back to A — A's state is intact.
+    client.post(
+        "/builder/op",
+        json={**s, "op": "set_param", "args": {"key": "field_size", "value": 4}},
+    )
+    client.post("/builder/op", json={**s, "op": "fork", "args": {"name": "variant-b"}})
+    client.post("/builder/op", json={**s, "op": "set_structure", "args": {"structure": "racing"}})
+    r = client.post("/builder/op", json={**s, "op": "switch", "args": {"name": "variant-a"}})
+    body = r.json()
+    assert body["draft"]["scoring"]["tournament"]["structure"] == "swiss"
+    assert body["draft"]["scoring"]["tournament"]["params"]["field_size"] == 4
+    assert body["drafts"] == ["variant-a", "variant-b"]
+
+    r = client.post("/builder/op", json={**s, "op": "list_drafts", "args": {}})
+    assert r.json()["drafts"] == ["variant-a", "variant-b"]
+
+    # The GET snapshot carries the slot list too (the picker's first paint).
+    snap = client.get("/builder/draft?session=life").json()
+    assert snap["drafts"] == ["variant-a", "variant-b"]
+
+    # Errors: duplicate fork name, unknown switch target.
+    assert (
+        client.post(
+            "/builder/op", json={**s, "op": "fork", "args": {"name": "variant-a"}}
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post("/builder/op", json={**s, "op": "switch", "args": {"name": "nope"}}).status_code
+        == 400
+    )
+
+
+def test_builder_op_compare_keyed_diff(client: TestClient) -> None:
+    s = {"session": "cmp"}
+    client.post("/builder/op", json={**s, "op": "fork", "args": {"name": "base"}})
+    client.post("/builder/op", json={**s, "op": "fork", "args": {"name": "tuned"}})
+    client.post("/builder/op", json={**s, "op": "set_gate", "args": {"promote_margin": 0.07}})
+
+    r = client.post(
+        "/builder/op",
+        json={**s, "op": "compare", "args": {"name_a": "base", "name_b": "tuned"}},
+    )
+    assert r.status_code == 200
+    cmp = r.json()["compare"]
+    assert cmp["a"] == "base"
+    assert cmp["b"] == "tuned"
+    assert "scoring" in cmp["changed_components"]
+    assert cmp["scoring"]["promote_margin"] == {"a": 0.01, "b": 0.07}
+    assert cmp["board"] == {"added": [], "removed": [], "changed": []}
+
+    # "session" and "live" resolve as operands; the tuned session draft
+    # differs from the live contract (it carries the margin edit).
+    r = client.post(
+        "/builder/op",
+        json={**s, "op": "compare", "args": {"name_a": "live", "name_b": "session"}},
+    )
+    assert r.status_code == 200
+    assert "scoring" in r.json()["compare"]["changed_components"]
+
+    # An unknown operand is a clear 400.
+    r = client.post(
+        "/builder/op",
+        json={**s, "op": "compare", "args": {"name_a": "base", "name_b": "ghost"}},
+    )
+    assert r.status_code == 400
+    assert "ghost" in r.json()["error"]
+
+
+def test_builder_apply_writes_the_active_slot(client: TestClient, workspace: Path) -> None:
+    """The write path is unchanged: apply writes whichever draft the session
+    is on — fork/compare never write anything themselves."""
+    import json as _json
+
+    s = {"session": "slotapply"}
+    client.post("/builder/op", json={**s, "op": "fork", "args": {"name": "to-apply"}})
+    client.post("/builder/op", json={**s, "op": "set_structure", "args": {"structure": "swiss"}})
+    live_before = _json.loads((workspace.parent / "scoring.json").read_text(encoding="utf-8"))
+    assert "tournament" not in live_before  # forking wrote nothing
+    resp = client.post("/builder/apply", json={**s, "confirm": True})
+    assert resp.json()["confirmed"] is True
+    live = _json.loads((workspace.parent / "scoring.json").read_text(encoding="utf-8"))
+    assert live["tournament"]["structure"] == "swiss"

@@ -58,13 +58,45 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+import signal
 from pathlib import Path
 from typing import Any
 
 import click
 
-from zicato.config import IntegrationConfig, load_config
+from zicato.config import IntegrationConfig, load_config, pin_overrides
 from zicato.import_path import import_dotted_path
+
+
+def _pin_config_flags(
+    *,
+    parallelism: int | None,
+    harness_call_timeout_ms: int | None,
+    aux_call_timeout: float | None,
+    supervisor_binary: str | None,
+    harmonograf_url: str | None,
+) -> None:
+    """Pin the config-shadowing evolve flags via :func:`pin_overrides`.
+
+    Each flag shadows one typed-config knob; only explicitly-passed
+    flags (non-``None``) are pinned so a defaulted flag never overrides
+    the workspace ``config.json`` or the dataclass default. Pinning
+    happens once, at command startup, before any ``load_config()``
+    consumer runs.
+    """
+    pins: dict[str, dict[str, Any]] = {}
+    if parallelism is not None:
+        pins.setdefault("runtime", {})["parallelism"] = parallelism
+    if harness_call_timeout_ms is not None:
+        pins.setdefault("runtime", {})["harness_call_timeout_ms"] = harness_call_timeout_ms
+    if aux_call_timeout is not None:
+        pins.setdefault("aux", {})["call_timeout_s"] = aux_call_timeout
+    if supervisor_binary is not None:
+        pins.setdefault("integration", {})["supervisor_binary"] = supervisor_binary
+    if harmonograf_url is not None:
+        pins.setdefault("integration", {})["harmonograf_url"] = harmonograf_url
+    if pins:
+        pin_overrides(pins)
 
 
 def _resolve_supervisor_binary(config: IntegrationConfig | None = None) -> Path | None:
@@ -74,8 +106,8 @@ def _resolve_supervisor_binary(config: IntegrationConfig | None = None) -> Path 
 
     1. The ``supervisor_binary`` of
        :class:`~zicato.config.IntegrationConfig`, sourced from the
-       ``ZICATO_SUPERVISOR_BINARY`` environment variable (useful for
-       tests that point at a sentinel script).
+       ``--supervisor-binary`` flag pinned at command startup (useful
+       for tests that point at a sentinel script).
     2. The fresher of two checkout/install candidates:
 
        * the binary bundled inside the installed package at
@@ -102,10 +134,10 @@ def _resolve_supervisor_binary(config: IntegrationConfig | None = None) -> Path 
     Parameters
     ----------
     config:
-        The :class:`~zicato.config.IntegrationConfig` carrying the
-        env-sourced ``supervisor_binary``. When ``None`` it is loaded
-        via :func:`zicato.config.load_config` — the single place the
-        environment is read.
+        The :class:`~zicato.config.IntegrationConfig` carrying
+        ``supervisor_binary``. When ``None`` it is loaded via
+        :func:`zicato.config.load_config`, which layers any pinned
+        ``--supervisor-binary`` flag on top of the defaults.
 
     Returns ``None`` when nothing resolves — the caller prints a warning
     and proceeds without a dashboard.
@@ -188,6 +220,10 @@ async def _maybe_spawn_supervisor(
     ``disabled`` mirrors ``--no-dashboard``: with the dashboard
     suppressed there is nothing for the watchdog to guard the lifecycle
     of, so the supervisor is not spawned either.
+
+    ``start_new_session=True`` — see :func:`_maybe_spawn_dashboard` for
+    the full rationale; the same blast-radius isolation applies to the
+    watchdog child.
     """
     if disabled:
         return None
@@ -204,6 +240,7 @@ async def _maybe_spawn_supervisor(
             "--workspace",
             str(workspace_root),
             "--no-dashboard",
+            start_new_session=True,
         )
     except (OSError, FileNotFoundError) as exc:
         click.echo(
@@ -225,7 +262,7 @@ def _dashboard_spawn_argv(workspace_root: Path, host: str, port: int) -> list[st
     The ``zicato.dashboard.__main__`` entry point accepts ``--workspace``,
     ``--host`` and ``--port`` and calls :func:`zicato.dashboard.server.run`
     with the bundled static directory resolved by
-    :func:`zicato.cli.commands.dashboard.resolve_static_dir`. If the
+    :func:`zicato.dashboard.static_assets.resolve_static_dir`. If the
     dashboard's optional dependencies are absent the spawn fails cleanly
     and ``evolve`` continues without a dashboard (see
     :func:`_maybe_spawn_dashboard`).
@@ -281,6 +318,20 @@ async def _maybe_spawn_dashboard(
     refusing to run, exactly like the supervisor helper. The dashboard's
     URL is NOT printed here; :func:`_report_dashboard_url` prints it once
     the real bound port is known.
+
+    ``start_new_session=True`` is LOAD-BEARING blast-radius isolation:
+    the child becomes its own session/process-group leader, so a
+    group-directed signal aimed AT the child (``os.killpg`` from a
+    process-hygiene sweeper, a stray ``kill -- -PID``) can reach only the
+    dashboard and whatever the dashboard itself spawned — never the
+    evolve orchestrator or its sibling watchdog. Without it the child
+    shares evolve's own process group, and a group-kill targeted at the
+    dashboard takes the whole evolve invocation down with it (observed
+    live: a concurrently-running test session's leaked-dashboard reaper
+    group-killed the evolve loop within a second of startup, which
+    presented as "evolve with the dashboard hangs before the first
+    round"). Teardown is unaffected: :func:`_terminate_child` signals
+    the child pid directly.
     """
     if disabled:
         return None
@@ -295,7 +346,7 @@ async def _maybe_spawn_dashboard(
         pass
     argv = _dashboard_spawn_argv(workspace_root, _DASHBOARD_HOST, port)
     try:
-        proc = await asyncio.create_subprocess_exec(*argv)
+        proc = await asyncio.create_subprocess_exec(*argv, start_new_session=True)
     except (OSError, FileNotFoundError) as exc:
         click.echo(
             f"warning: failed to spawn the dashboard service ({exc}); dashboard disabled",
@@ -590,14 +641,70 @@ def _import_callable(dotted: str, *, kind: str) -> Any:
     "--max-wall-clock-seconds",
     default=None,
     type=click.IntRange(min=1),
-    envvar="ZICATO_MAX_WALL_CLOCK_SECONDS",
     help=(
         "Total wall-clock budget for this whole evolve invocation, in "
         "seconds. The loop stops cleanly between rounds once the budget "
         "is spent, and a single round that would overrun it is cancelled "
         "and recorded as aborted. Unset (the default) leaves the loop "
         "unbounded. Applies on top of each board entry's own "
-        "wall_clock_budget_seconds. Env var: ZICATO_MAX_WALL_CLOCK_SECONDS."
+        "wall_clock_budget_seconds."
+    ),
+)
+@click.option(
+    "--parallelism",
+    default=None,
+    type=click.IntRange(min=1),
+    help=(
+        "Maximum number of board units the tournament runner keeps in "
+        "flight at once. Shadows the runtime.parallelism config knob; "
+        "wins over the workspace config.json's runtime.parallelism. "
+        "Unset (the default) reads config.json, then the built-in "
+        "default of 4."
+    ),
+)
+@click.option(
+    "--harness-call-timeout-ms",
+    default=None,
+    type=click.IntRange(min=1),
+    help=(
+        "Per-LLM-call wall-clock budget, in milliseconds, for the inner "
+        "harness agent's calls. Shadows the "
+        "runtime.harness_call_timeout_ms config knob (default 1800000). "
+        "An explicit GOLDFIVE_AGENT_CALL_TIMEOUT_MS still wins — an "
+        "operator who tunes goldfive directly is not overridden."
+    ),
+)
+@click.option(
+    "--aux-call-timeout",
+    default=None,
+    type=click.FloatRange(min=0, min_open=True),
+    help=(
+        "Per-call wall-clock budget, in seconds, for every "
+        "auxiliary-LLM (proposer / judge / emulator / analysis) call. "
+        "Shadows the aux.call_timeout_s config knob (default 120)."
+    ),
+)
+@click.option(
+    "--supervisor-binary",
+    default=None,
+    type=click.Path(),
+    help=(
+        "Filesystem path to the zicato-supervisor watchdog binary. "
+        "Shadows the integration.supervisor_binary config knob. Unset "
+        "(the default) resolves the bundled / dev-checkout build, then "
+        "the system PATH."
+    ),
+)
+@click.option(
+    "--harmonograf-url",
+    default=None,
+    help=(
+        "URL of an external harmonograf server to stream this "
+        "invocation's telemetry to. Shadows the "
+        "integration.harmonograf_url config knob (also settable via the "
+        "workspace config.json's harmonograf_url; the flag wins). Unset "
+        "(the default) auto-launches a per-workspace harmonograf on a "
+        "free localhost port."
     ),
 )
 @click.option(
@@ -668,6 +775,11 @@ def evolve_cmd(
     auxiliary_dotted: str,
     max_consecutive_rejections: int,
     max_wall_clock_seconds: int | None,
+    parallelism: int | None,
+    harness_call_timeout_ms: int | None,
+    aux_call_timeout: float | None,
+    supervisor_binary: str | None,
+    harmonograf_url: str | None,
     tournament_structure: str | None,
     tournament_params: tuple[str, ...],
     no_auto_epoch: bool,
@@ -694,6 +806,21 @@ def evolve_cmd(
     """
     workspace_root = Path(workspace).resolve()
 
+    # Pin the config-shadowing flags process-wide, FIRST — every later
+    # load_config() in this invocation (the supervisor-binary resolver,
+    # the aux-timeout call sites, the runtime factory, the harmonograf
+    # resolver) then sees them; the tournament runner also threads the
+    # pins into every worker args file so the values cross the worker
+    # subprocess boundary. Only explicitly-passed flags are pinned, so
+    # a defaulted flag never masks the workspace config.json.
+    _pin_config_flags(
+        parallelism=parallelism,
+        harness_call_timeout_ms=harness_call_timeout_ms,
+        aux_call_timeout=aux_call_timeout,
+        supervisor_binary=supervisor_binary,
+        harmonograf_url=harmonograf_url,
+    )
+
     # Contract-mutating convenience: when --tournament-structure is set,
     # write the {structure, params} block into the live scoring.json
     # BEFORE the contract hash is computed, so it auto-rolls the epoch if
@@ -715,7 +842,45 @@ def evolve_cmd(
     # ended.
     stop_reason_out: list[str] = []
 
+    # SIGTERM teardown state (task #12). The children live in their OWN
+    # sessions (post-#72 blast-radius isolation), so an unhandled SIGTERM
+    # of evolve would orphan BOTH of them: the default disposition kills
+    # this process without unwinding ``_run``'s teardown. The handler
+    # below converts SIGTERM into a cooperative cancellation of the main
+    # task, which unwinds through the SAME ``_terminate_child`` teardown
+    # path the error/interrupt exit already uses (and through
+    # ``evolve_n_rounds``'s own ``finally`` — heartbeat stopped, workspace
+    # lock released, run marked terminal). SIGINT needs no handler:
+    # ``asyncio.run`` already maps Ctrl-C onto a main-task cancellation +
+    # ``KeyboardInterrupt``, which the same teardown path handles today.
+    sigterm_state = {"received": False}
+
     async def _run() -> list[Any]:
+        # Signal-handler discipline: the evolve command is fully async
+        # under ``asyncio.run``, so ``loop.add_signal_handler`` (not
+        # ``signal.signal``) is the correct seam — the callback runs on
+        # the loop, where cancelling the main task is safe. Installed
+        # BEFORE the children spawn so no window orphans a child.
+        loop = asyncio.get_running_loop()
+        main_task = asyncio.current_task()
+
+        def _on_sigterm() -> None:
+            if sigterm_state["received"]:
+                # Repeat SIGTERMs must not re-cancel the task mid-teardown
+                # (a second cancellation would interrupt the child reaping
+                # in flight). One signal, one orderly unwind.
+                return
+            sigterm_state["received"] = True
+            if main_task is not None:
+                main_task.cancel()
+
+        try:
+            loop.add_signal_handler(signal.SIGTERM, _on_sigterm)
+        except (NotImplementedError, RuntimeError):
+            # Platforms/loops without signal-handler support keep the
+            # default disposition — no worse than before this handler.
+            pass
+
         # The supervisor is now watchdog-only (spawned with
         # --no-dashboard); the dashboard UI is served by the separate
         # Python dashboard service. Both are children of this evolve
@@ -726,17 +891,19 @@ def evolve_cmd(
         # neither walks onto the other's port. The dashboard's URL is
         # reported only after reading the port it actually bound back
         # from runtime/dashboard.json — never assumed.
-        sup = await _maybe_spawn_supervisor(
-            workspace_root,
-            disabled=no_dashboard,
-        )
-        dash = await _maybe_spawn_dashboard(
-            workspace_root,
-            dashboard_port,
-            disabled=no_dashboard,
-        )
-        await _report_dashboard_url(workspace_root, dashboard_port, dash)
+        sup: asyncio.subprocess.Process | None = None
+        dash: asyncio.subprocess.Process | None = None
         try:
+            sup = await _maybe_spawn_supervisor(
+                workspace_root,
+                disabled=no_dashboard,
+            )
+            dash = await _maybe_spawn_dashboard(
+                workspace_root,
+                dashboard_port,
+                disabled=no_dashboard,
+            )
+            await _report_dashboard_url(workspace_root, dashboard_port, dash)
             result = await evolve_n_rounds(
                 rounds=rounds,
                 workspace_root=workspace_root,
@@ -751,10 +918,13 @@ def evolve_cmd(
                 stop_reason_out=stop_reason_out,
             )
         except BaseException:
-            # Genuine error path or an explicit interrupt (Ctrl-C raises
-            # KeyboardInterrupt, a BaseException). Clean up BOTH children:
-            # tear the dashboard down first so its port is freed before the
-            # watchdog notices it is gone.
+            # Genuine error path or an explicit interrupt — Ctrl-C raises
+            # KeyboardInterrupt, and a SIGTERM lands here as the handler's
+            # cooperative CancelledError. Clean up BOTH children: tear the
+            # dashboard down first so its port is freed before the
+            # watchdog notices it is gone. (Spawn-time failures land here
+            # too; ``_terminate_child(None)`` is a no-op for a child that
+            # never spawned.)
             await _terminate_child(dash)
             await _terminate_child(sup)
             raise
@@ -763,12 +933,23 @@ def evolve_cmd(
         # dashboard service running so the operator can inspect the final
         # state of the run (per repo convention every evolve launch serves
         # the dashboard and reports its URL). Announce that it is still up.
+        # The SIGTERM handler above applies to SIGNAL-interrupted exits
+        # only — it never fires on this path, so the served dashboard
+        # outliving the command is untouched.
         await _terminate_child(sup)
         _announce_dashboard_still_serving(workspace_root, dashboard_port, dash)
         return result
 
     try:
         outcomes = asyncio.run(_run())
+    except asyncio.CancelledError:
+        if sigterm_state["received"]:
+            # The SIGTERM path: both children were reaped by the teardown
+            # inside ``_run`` and the evolve loop's own ``finally`` released
+            # the workspace lock. Exit with the conventional fatal-signal
+            # status (128 + SIGTERM) instead of a cancellation traceback.
+            raise SystemExit(128 + signal.SIGTERM) from None
+        raise
     except (FileNotFoundError, RuntimeError) as exc:
         # FileNotFoundError: missing config / epoch marker.
         # RuntimeError: contract drift under --no-auto-epoch, or a

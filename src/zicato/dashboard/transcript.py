@@ -38,7 +38,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from zicato.analyzer.aggregator import _to_snake
+from zicato.query.paths import to_snake
 
 __all__ = ["Annotation", "Transcript", "Turn", "reconstruct_transcript"]
 
@@ -73,7 +73,7 @@ def _snake_deep(value: Any) -> Any:
     """
 
     if isinstance(value, dict):
-        return {_to_snake(k): _snake_deep(v) for k, v in value.items()}
+        return {to_snake(k): _snake_deep(v) for k, v in value.items()}
     if isinstance(value, list):
         return [_snake_deep(v) for v in value]
     return value
@@ -128,7 +128,7 @@ def _kind_and_payload(event: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     explicit = event.get("kind")
     if isinstance(explicit, str) and explicit:
         payload = event.get("payload")
-        return _to_snake(explicit), payload if isinstance(payload, dict) else {}
+        return to_snake(explicit), payload if isinstance(payload, dict) else {}
 
     for key, value in event.items():
         if key in _ENVELOPE_KEYS:

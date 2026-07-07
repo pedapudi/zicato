@@ -25,7 +25,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from zicato.dashboard.server import create_app
-from zicato.dashboard.state_reader import (
+from zicato.query import (
     WorkspacePaths,
     _normalize_tournament_statuses,
     build_bracket,

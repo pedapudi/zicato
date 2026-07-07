@@ -1,0 +1,124 @@
+"""``zicato config`` — introspect zicato's configuration surface.
+
+ADVANCED — off the happy path. Operator knobs live on CLI flags (each
+``--help`` names the config knob a flag shadows) and in the workspace
+``config.json`` (the ``health`` block, the ``runtime`` block, the
+``models`` block, ``harmonograf_url``). No environment variable is a
+configuration knob.
+
+``zicato config env`` prints the small MERITED set of environment
+variables zicato still deliberately touches — each one a
+process-boundary contract (harness contract, internal handoff, secrets
+boundary, external integration, CI/test toggle), sourced from
+:func:`zicato.config.describe_env_vars` so this command can never drift
+from the code.
+
+Standalone command file picked up by :mod:`zicato.cli.discovery`.
+"""
+
+from __future__ import annotations
+
+import json
+
+import click
+
+from zicato.config import describe_env_vars
+
+#: Render order + one-line meaning for each role label, so the report
+#: groups contracts of the same kind together and explains the label.
+_ROLE_HEADINGS: tuple[tuple[str, str], ...] = (
+    (
+        "harness-contract",
+        "set by zicato for the inner harness — part of the run contract",
+    ),
+    (
+        "internal-handoff",
+        "set and restored by zicato itself to hand a value across its own processes",
+    ),
+    (
+        "secrets-boundary",
+        "operator-NAMED variables so credentials stay in the environment, never in files",
+    ),
+    (
+        "external-integration",
+        "another tool's own variable that zicato defers to",
+    ),
+    (
+        "test-toggle",
+        "CI / test-suite switches; never read on an operator path",
+    ),
+)
+
+
+def render_env_report() -> str:
+    """Render the merited env-var set as grouped, labelled terminal text.
+
+    Kept as a free function (not inlined into the command) so tests can
+    assert on the rendered text without invoking the click runner.
+    """
+    infos = describe_env_vars()
+    lines: list[str] = []
+    lines.append("Environment variables zicato touches — the deliberate set.")
+    lines.append("")
+    lines.append(
+        "Operator knobs are NOT here: they live on CLI flags (see each "
+        "command's --help;\nevery flag names the config knob it shadows) "
+        "and in the workspace config.json\n(health / runtime / models "
+        "blocks, harmonograf_url). Everything below is a\nprocess-boundary "
+        "contract, kept on purpose."
+    )
+    for role, meaning in _ROLE_HEADINGS:
+        members = [info for info in infos if info.role == role]
+        if not members:
+            continue
+        lines.append("")
+        lines.append(click.style(f"[{role}]", bold=True) + f" — {meaning}")
+        for info in members:
+            lines.append(f"  {click.style(info.name, fg='cyan')}")
+            lines.append(f"      {info.description}")
+    return "\n".join(lines)
+
+
+@click.group(
+    name="config",
+    short_help="Advanced: introspect zicato's configuration surface.",
+)
+def config_group() -> None:
+    """Introspect zicato's configuration surface.
+
+    Operator knobs are CLI flags and workspace config.json blocks — not
+    environment variables. The subcommands here make that surface
+    discoverable without grepping the tree.
+    """
+
+
+@config_group.command(name="env")
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit the set as a JSON array instead of grouped text.",
+)
+def config_env_cmd(as_json: bool) -> None:
+    """List the environment variables zicato deliberately touches.
+
+    Since the env-var rationalization, NO environment variable is a
+    configuration knob. What remains — and is printed here — is the
+    small merited set of process-boundary contracts: the per-run
+    harness contract, the internal harmonograf handoff pair, the
+    secrets boundary (operator-named api_key_env variables and the
+    worker passthrough allowlist), goldfive's own timeout variable,
+    and the CI/test toggles.
+    """
+    if as_json:
+        payload = [
+            {"name": info.name, "role": info.role, "description": info.description}
+            for info in describe_env_vars()
+        ]
+        click.echo(json.dumps(payload, indent=2))
+        return
+    click.echo(render_env_report())
+
+
+__all__ = ["config_group", "render_env_report"]

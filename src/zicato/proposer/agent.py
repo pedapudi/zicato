@@ -44,10 +44,10 @@ optional ``google-adk`` extra.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from zicato.core.types import (
     Experiment,
@@ -59,6 +59,8 @@ from zicato.core.types import (
 from zicato.proposer.proposer import ExperimentValidator, propose_experiment
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
+    from zicato.index.query import MutationTrackRecord
+    from zicato.proposer.best_of_n import ScreenRunner
     from zicato.telemetry.meta_loop import MetaLoopEmitter
 
 
@@ -116,6 +118,69 @@ class ProposerContext:
     #: banded by its renderer; the agents only forward it. Empty (the
     #: default) omits the section, byte-identical to before this surface.
     failure_profile: str = ""
+    #: Pre-rendered, train-slice-only, REDACTED process-exemplar block —
+    #: the opt-in ``proposer_quality.process_exemplars`` channel
+    #: (``docs/design/PROCESS-EXEMPLARS.md``). Built by the orchestrator,
+    #: best-effort, from
+    #: :func:`~zicato.analyzer.process_exemplars.extract_process_exemplars`
+    #: (mechanical redaction: no entry ids, no task text, no model outputs)
+    #: rendered through
+    #: :func:`~zicato.proposer.prompts.render_process_exemplars`. When
+    #: non-empty, a ``## Process exemplars`` section is spliced into the
+    #: user prompt directly after the failure-mode profile so the proposer
+    #: sees HOW a detected failure unfolds — never WHICH entry it unfolded
+    #: on. Empty (the default — every knob-off round) omits the section,
+    #: byte-identical to before this surface.
+    process_exemplars: str = ""
+    #: Optional per-sample edit-class steering line — the best-of-N slate
+    #: diversifier (:data:`zicato.proposer.best_of_n.EDIT_CLASS_HINTS`). The
+    #: wrapper stamps a DISTINCT hint on each slate slot's context via
+    #: ``dataclasses.replace`` so the N samples explore different edit
+    #: strategies. A static instruction string carrying no board identity —
+    #: it composes with the restricted-visibility envelope untouched. Empty
+    #: (the default — every single-sample propose) renders no section.
+    sample_hint: str = ""
+    #: Optional seed for the repair-feedback loop's FIRST attempt — the
+    #: screen-informed revise channel (WS-R). The best-of-N wrapper stamps
+    #: the all-vetoed slate's COUNTS-ONLY veto summary here (never an entry
+    #: id — the restricted-visibility envelope) so the ONE bounded revise
+    #: re-sample starts as a genuine repair turn: both engines thread it
+    #: into the same ``feedback`` slot a validation failure would populate
+    #: on retry. Empty (the default — every non-revise propose) seeds
+    #: nothing and every prompt renders byte-identically.
+    revise_feedback: str = ""
+    #: Optional per-mutation-point track records (the fertility map —
+    #: :func:`zicato.index.query.mutation_point_track_record`), read
+    #: best-effort from the analytical index by the orchestrator, exactly
+    #: like ``prior_experiments``. The prompt renderer annotates each
+    #: manifest entry that has a record with one compact, BANDED advisory
+    #: line — aggregate counts + bucketed Δscalar only, labelled
+    #: "experiments touching this point" (multi-patch experiments confound
+    #: credit; never causal) — inside the restricted-visibility envelope.
+    #: ``None`` (the default) renders a byte-identical manifest.
+    mutation_track_records: Mapping[str, MutationTrackRecord] | None = None
+    #: Optional best-effort ROUND-LOG event emitter (WS8), threaded by the
+    #: orchestrator so the proposer stack can trace its sampling decisions
+    #: into the round's durable event log WITHOUT importing the log module
+    #: (the proposer stays decoupled from :mod:`zicato.epoch.round_log`).
+    #: Called as ``emitter(type_token, fields)`` — e.g.
+    #: ``("candidate_sampled", {"i": 0, "n": 3})`` from the best-of-N
+    #: wrapper. Emission is best-effort by contract: callers guard every
+    #: invocation so a raising emitter can never fail a propose step.
+    #: ``None`` (the default) emits nothing.
+    round_event_emitter: Callable[[str, dict[str, Any]], None] | None = None
+    #: Optional pre-tournament candidate-screen runner (tryouts; WS-S).
+    #: The orchestrator builds ONE closure per round — via
+    #: ``_build_candidate_screen_runner``, only when the contract opts in
+    #: (``proposer_quality.screen_entries > 0`` AND ``best_of_n > 1``) —
+    #: binding the rotating train panel, the parent baseline and the
+    #: frozen weights. The best-of-N wrapper calls it GUARDED once the
+    #: slate settles: veto-first (a catastrophic regression is
+    #: disqualified before the critic chooses), and any screen failure
+    #: degrades to an unscreened selection — screening can never fail a
+    #: propose. ``None`` (the default) screens nothing and the propose
+    #: path is byte-identical.
+    screen_candidates: ScreenRunner | None = None
 
 
 class ProposerAgent(Protocol):
@@ -167,6 +232,10 @@ class DefaultProposerAgent:
             skills=self.spec.skills,
             restrict_visibility=ctx.restrict_visibility,
             failure_profile=ctx.failure_profile,
+            process_exemplars=ctx.process_exemplars,
+            sample_hint=ctx.sample_hint,
+            mutation_track_records=ctx.mutation_track_records,
+            revise_feedback=ctx.revise_feedback,
         )
 
 

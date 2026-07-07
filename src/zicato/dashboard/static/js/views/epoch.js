@@ -11,10 +11,11 @@ import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { deriveLiveStatus } from '../livestatus.js';
-import { gatedSwap, section, empty, stat, renderMarkdown, normaliseDecision, densityTokens } from '../ui.js';
+import { gatedSwap, section, empty, stat, renderMarkdown, densityTokens } from '../ui.js';
 import { structurePill, isNonGauntlet, structureLabel, normalizeStructure, racingModel, swissOverviewModel, elimModel, resolveNonGauntletSt, structureDigest } from './structure.js';
-import { epochRoundModel, roundModelDigest, waterfallModel } from './rounds.js';
+import { roundsFromTimeline, roundModelDigest, waterfallSteps } from './rounds.js';
 import { boardStatusModel, boardStatusDigest, renderBoardStatus } from './boardstatus.js';
+import { loopVerdict, promotionRateLabel, costPerPromotionLabel, fmtDurationMs, noiseBandFor } from './home.js';
 
 // The user's last expand/collapse of the proposer brief, keyed by epoch. The
 // epoch view is digest-gated: a live heartbeat that moves ANY data rebuilds the
@@ -31,9 +32,10 @@ export async function render(host, ctx, params) {
   // contract via the epoch-SCOPED accessor (NEVER bare `D.epoch()`, which returns
   // the CURRENT epoch) so viewing e0 shows e0 even while e1 is live.
   const routeEpoch = (params && params.epochId) || null;
-  const [ep, lin, traj, bracket] = await Promise.all([
-    D.epoch(routeEpoch), D.lineage(), D.scoreTrajectory(routeEpoch), D.bracket(routeEpoch),
+  const [ep, traj, bracket] = await Promise.all([
+    D.epoch(routeEpoch), D.scoreTrajectory(routeEpoch), D.bracket(routeEpoch),
   ]);
+  // (the round timeline is fetched below once the epoch id is resolved.)
   if (!ep || ep.epoch_id == null) {
     gatedSwap(host, 'no-epoch', () => [el('h1', { class: 'dn-h1', text: 'Epoch' }), empty('No current epoch.')]);
     return;
@@ -42,14 +44,25 @@ export async function render(host, ctx, params) {
   const experiments = Array.isArray(ep.experiments) ? ep.experiments : [];
   const board = Array.isArray(ep.board) ? ep.board : [];
 
-  // SCOPE TO THE VIEWED EPOCH: /api/lineage spans the whole workspace, so filter
-  // to this epoch's generations (fall back to the scoped ep.experiments; dedupe
-  // by id) — otherwise a sibling epoch's gens leak into the heatmap + field count.
-  const lineageRows = (lin && Array.isArray(lin.generations)) ? lin.generations : [];
-  const scopedLineage = lineageRows.filter((g) => g && g.epoch_id === epochId);
+  // The LOOP-COMMUNICATION reads for this epoch: the promoted-lineage
+  // trajectory (promotion rate + uncertainty-honest verdict + noise floor),
+  // the tournament cost accounting, and the per-judge loss trend (the reader
+  // + endpoint shipped long ago with zero view consumers — this is its view).
+  // All null-degrade (the Rust supervisor serves none of the three) → the
+  // panels are simply omitted.
+  const [loopTraj, loopCost, judgeTrend] = await Promise.all([
+    D.trajectory(epochId), D.tournamentCost(epochId), D.perJudgeTrend(epochId),
+  ]);
+
+  // THE EPOCH-SCOPED GENERATIONS FEED (server-scoped `/api/lineage?epoch=`),
+  // falling back to the scoped ep.experiments; dedupe by id. The SETTLED round
+  // timeline is SERVED (`/api/epoch/{id}/round-timeline`).
+  const [scopedLineage, timeline] = await Promise.all([
+    D.generationsForEpoch(epochId), D.roundTimeline(epochId),
+  ]);
   const rawGens = scopedLineage.length
     ? scopedLineage.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: !!g.promoted, round_index: svg.isNum(g.round_index) ? g.round_index : null }))
-    : experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: normaliseDecision(x.outcome) === 'promoted', round_index: svg.isNum(x.round_index) ? x.round_index : null }));
+    : experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: x.promoted === true, round_index: svg.isNum(x.round_index) ? x.round_index : null }));
   const gens = [];
   const seenGen = new Set();
   for (const g of rawGens) {
@@ -78,11 +91,10 @@ export async function render(host, ctx, params) {
       if (svg.isNum(r.drift_loss)) lossLookup.set(`${r.entry_id}|${g.id}`, r.drift_loss);
     }
   });
-  for (const b of board) { const id = b.entry_id || b.id; if (id) entryIds.add(id); }
+  for (const b of board) { if (b.entry_id) entryIds.add(b.entry_id); }
 
-  // The reigning champion: the promoted (or seed) generation — round 0's seed.
-  const champ = gens.find((g) => g.promoted) || gens.find((g) => !g.parent) || null;
-  const championId = champ ? champ.id : null;
+  // The REIGNING champion — the server-stamped pointer (never re-scanned).
+  const championId = (ep && ep.current_champion != null) ? String(ep.current_champion) : null;
 
   // The configured tournament structure (§3.1) — surfaced as a one-line
   // header pill. Absent ⇒ no pill (a gauntlet epoch that predates the
@@ -133,12 +145,15 @@ export async function render(host, ctx, params) {
     const liveRaw = liveInflight;
     const liveForThisEpoch = !!liveInflight;
 
-    // pre-fetch the COMPLETED per-tournament record (the recorded fallback the
-    // resolver uses for swiss/elim, and the SECOND fallback behind
-    // reconstructRacing for racing). Same selection gens.js uses, so the recorded
-    // source is identical across the two callers. Cached + failure-tolerant.
+    // pre-fetch the SETTLED record. RACING reads the SERVED racing-field
+    // payload (the per-challenger join lives server-side); swiss/elim read the
+    // epoch's most-recent per-tournament structure record. Same selection
+    // gens.js uses, so the recorded source is identical across the two
+    // callers. Cached + failure-tolerant.
     let completedRecord = null;
-    {
+    if (structure === 'racing') {
+      completedRecord = normalizeStructure(await D.racingField(epochId), false);
+    } else {
       const tournaments = (bracket && Array.isArray(bracket.tournaments)) ? bracket.tournaments : [];
       const matchStruct = tournaments.filter((t) => t && t.structure === structure);
       const nonGaunt = tournaments.filter((t) => t && t.structure && t.structure !== 'gauntlet');
@@ -150,7 +165,7 @@ export async function render(host, ctx, params) {
     }
 
     const resolved = resolveNonGauntletSt({
-      structure, bracket, epochId, liveRaw: liveForThisEpoch ? liveRaw : null,
+      structure, epochId, liveRaw: liveForThisEpoch ? liveRaw : null,
       heartbeat: state.heartbeat, activeRuns: state.activeRuns,
       params: (tournament && tournament.params) || {},
       completedRecord,
@@ -171,12 +186,12 @@ export async function render(host, ctx, params) {
   }
 
   // ---- THE EPOCH ROUND MODEL (the champion-spine timeline's source) ----
-  // The epoch is N evolve rounds along the champion spine. Derive the rounds
-  // from per-gen round_index, else the per-round field records, else the
-  // gauntlet matchups, else a single round 0 (every run so far). The timeline
-  // SUBSUMES the old gauntlet reel + the non-gauntlet structure strip — one
-  // renderer for all structures, degrading to a single episode for --rounds 1.
-  const epochRounds = epochRoundModel({ gens, scalarBy: scalarByGen, bracket, structure, championId, projected: liveProjected, inflight: liveInflight });
+  // The SETTLED rounds are SERVED by /api/epoch/{id}/round-timeline; only the
+  // LIVE overlay (projected standings + the in-flight proposing round) is
+  // applied client-side. The timeline SUBSUMES the old gauntlet reel + the
+  // non-gauntlet structure strip — one renderer for all structures, degrading
+  // to a single episode for --rounds 1 (and an honest empty when unserved).
+  const epochRounds = roundsFromTimeline({ timeline, bracket, gens, scalarBy: scalarByGen, structure, championId, projected: liveProjected, inflight: liveInflight });
 
   // The BOARD-STATUS surface (train/holdout split + ladder + generalization
   // gap). Derived DEFENSIVELY from the epoch payload — graceful empty states
@@ -192,10 +207,15 @@ export async function render(host, ctx, params) {
     elimOver: elimOver ? structureDigest(elimOver.st) : null,
     gens: gens.map((g) => [g.id, g.parent, g.promoted, svg.isNum(g.round_index) ? g.round_index : null, scalarByGen.has(g.id) ? scalarByGen.get(g.id).toFixed(3) : null]),
     rounds: roundModelDigest(epochRounds),
-    waterfall: waterfallModel(epochRounds).map((s) => [s.round_index, svg.isNum(s.from) ? s.from.toFixed(2) : null, svg.isNum(s.to) ? s.to.toFixed(2) : null, s.promoted, s.gen]),
+    waterfall: waterfallSteps(timeline).map((s) => [s.round_index, svg.isNum(s.from) ? s.from.toFixed(2) : null, svg.isNum(s.to) ? s.to.toFixed(2) : null, s.promoted, s.gen]),
     loss: [...lossLookup.entries()].sort(),
-    board: board.map((b) => [b.entry_id || b.id, b.kind, b.weight, b.budget_s]),
+    board: board.map((b) => [b.entry_id, b.kind, b.weight, b.budget_s]),
     boardStatus: boardStatusDigest(boardStatus),
+    // loop-communication panels: content-gated on their own rounded folds so
+    // a no-op heartbeat (identical trajectory/cost/judge-trend) churns no DOM.
+    loopTraj: trajectoryPanelDigest(loopTraj),
+    loopCost: costPanelDigest(loopCost),
+    judgeTrend: judgeTrendDigest(judgeTrend),
   });
 
   gatedSwap(host, digest, () => {
@@ -321,10 +341,10 @@ export async function render(host, ctx, params) {
     // need ≥2 rounds to mean anything. A single-round epoch (every run so far)
     // has no descent to draw, so we skip both and show just the round's episode
     // card; rendering an empty h=220 waterfall + a one-node spine read as broken.
-    const waterfallSteps = waterfallModel(epochRounds);
-    if (!single && waterfallSteps.some((s) => svg.isNum(s.to) || svg.isNum(s.from))) {
+    const wfSteps = waterfallSteps(timeline);
+    if (!single && wfSteps.some((s) => svg.isNum(s.to) || svg.isNum(s.from))) {
       timelineCard.appendChild(el('div', { class: 'dn-roundtl-waterfall dn-figpane' }, [
-        svg.waterfall({ steps: waterfallSteps, onRound: drill, onCompetitor: open }),
+        svg.waterfall({ steps: wfSteps, onRound: drill, onCompetitor: open }),
       ]));
       timelineCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:6px 0 10px;', text:
         'the loss-floor descent across rounds — each step a promotion Δ (good = lower floor), a held round flat · the spine baseline is the champion floor · hover a step for its winning mutation' }));
@@ -341,6 +361,26 @@ export async function render(host, ctx, params) {
       ? 'Round timeline · ' + structureLabel(structure, params)
       : `Round timeline · the champion spine across ${epochRounds.length} rounds · ` + structureLabel(structure, params),
       timelineCard));
+
+    // ---- LOOP COMMUNICATION: the optimization trajectory + tournament cost ----
+    // Rendered only when the read resolved with content (absent endpoint /
+    // never-indexed workspace → byte-identical to today). The trajectory panel
+    // is UNCERTAINTY-HONEST: a below-noise-floor window reads "no detectable
+    // signal", and the measured floor is drawn as a band on the sparkline.
+    const trajPanel = buildTrajectoryPanel(loopTraj, {
+      onGen: (gid) => ctx.navigate('candidate', { epochId, gen: gid }),
+    });
+    if (trajPanel) nodes.push(section('Optimization trajectory · promoted lineage', trajPanel));
+    const costPanel = buildCostPanel(loopCost, {
+      onGen: (gid) => ctx.navigate('candidate', { epochId, gen: gid }),
+    });
+    if (costPanel) nodes.push(section('Tournament cost · wall-clock per promotion', costPanel));
+
+    // ---- the PER-JUDGE TREND: one sparkline per judge across the spine ----
+    // Consumes the long-shipped /api/epoch/{id}/per-judge-trend read (its
+    // first view consumer). Absent / empty → the panel is simply omitted.
+    const judgePanel = buildJudgeTrendPanel(judgeTrend);
+    if (judgePanel) nodes.push(section('Per-judge trend · weighted loss across the spine', judgePanel));
 
     // ---- COMPACT board entries × generations heatmap (stays here, fix #6) ----
     const rows = [...entryIds].sort().map((id) => ({ id, label: id }));
@@ -384,6 +424,215 @@ export function objectiveText(ep) {
   if (ep && typeof ep.goal === 'string' && ep.goal.trim()) return ep.goal.trim();
   const title = briefTitle(ep && ep.brief);
   return title || '(no objective recorded)';
+}
+
+// ---- LOOP COMMUNICATION panels (pure builders — node-testable) --------
+
+// The verdict WORD the trajectory panel prints (full honesty phrasing).
+function verdictLine(traj) {
+  const v = loopVerdict(traj);
+  if (v) return v;
+  if (traj && traj.verdict === 'improving') return { word: 'improving', cls: 'open' };
+  return null;
+}
+
+// The OPTIMIZATION-TRAJECTORY panel for one /api/epoch/{id}/trajectory read.
+// Null when the read is absent (Rust supervisor) or carries no points AND no
+// promotion stats — the epoch view is then byte-identical to today.
+export function buildTrajectoryPanel(traj, opts) {
+  if (!traj || typeof traj !== 'object') return null;
+  const points = Array.isArray(traj.points) ? traj.points : [];
+  const vals = points.map((p) => (p && svg.isNum(p.scalar) ? p.scalar : null));
+  const finite = vals.filter((v) => svg.isNum(v));
+  const promo = promotionRateLabel(traj);
+  if (!finite.length && !promo) return null;
+  const o = opts || {};
+  const card = el('div', { class: 'dn-panel dn-figpane dn-looptraj-pane' });
+
+  // the stat row: promotion rate + the honest verdict + the floor readout.
+  const rowKids = [];
+  if (promo) rowKids.push(stat(promo, 'promotion rate'));
+  const v = verdictLine(traj);
+  if (v) {
+    rowKids.push(el('div', { class: 'dn-stat' }, [
+      el('span', { class: 'v' }, [el('span', { class: 'dn-chip dn-chip-' + v.cls + ' dn-looptraj-verdict', text: v.word })]),
+      el('span', { class: 'k', text: 'trajectory' }),
+    ]));
+  }
+  const nf = traj.noise_floor;
+  if (nf && svg.isNum(nf.max_abs_delta)) {
+    rowKids.push(stat('±' + (Math.round(nf.max_abs_delta * 1000) / 1000), 'measured noise floor'));
+  }
+  if (svg.isNum(traj.recent_movement)) {
+    rowKids.push(stat(String(Math.round(traj.recent_movement * 1000) / 1000), 'recent movement'));
+  }
+  if (rowKids.length) card.appendChild(el('div', { class: 'dn-row', style: 'margin-bottom:8px;' }, rowKids));
+
+  // the promoted-lineage scalar sparkline with the noise-floor band.
+  if (finite.length >= 1) {
+    card.appendChild(svg.sparkline({
+      width: 420, height: 64, values: vals, markers: true, goodDirection: 'down',
+      responsive: true, noiseBand: noiseBandFor(traj, finite),
+    }));
+    const last = points[points.length - 1];
+    if (last && last.generation_id && o.onGen) {
+      // the spine ids as a compact clickable strip under the sparkline.
+      const strip = el('div', { class: 'dn-looptraj-strip dn-mono' });
+      for (const p of points) {
+        const gid = p && p.generation_id;
+        if (!gid) continue;
+        const b = el('button', { class: 'dn-looptraj-gen', type: 'button', text: String(gid) });
+        b.addEventListener('click', () => o.onGen(String(gid)));
+        strip.appendChild(b);
+      }
+      card.appendChild(strip);
+    }
+  }
+  card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
+    'the champion floor across the promoted lineage (lower = better) · the shaded band is the measured A/A noise floor — movement inside it is indistinguishable from a re-roll'
+    + (traj.verdict === 'no_signal' ? ' · recent movement sits below the floor: no detectable signal (below noise floor)' : '') }));
+  return card;
+}
+
+// Digest fold for the trajectory panel: rounded, timestamp-free.
+export function trajectoryPanelDigest(traj) {
+  if (!traj || typeof traj !== 'object') return null;
+  return [
+    (Array.isArray(traj.points) ? traj.points : []).map((p) => [
+      p && p.generation_id, p && svg.isNum(p.scalar) ? p.scalar.toFixed(3) : null,
+    ]),
+    traj.verdict || null,
+    svg.isNum(traj.promotion_rate) ? traj.promotion_rate.toFixed(3) : null,
+    svg.isNum(traj.challenger_count) ? traj.challenger_count : null,
+    (traj.noise_floor && svg.isNum(traj.noise_floor.max_abs_delta))
+      ? traj.noise_floor.max_abs_delta.toFixed(4) : null,
+    svg.isNum(traj.recent_movement) ? traj.recent_movement.toFixed(4) : null,
+  ];
+}
+
+// The TOURNAMENT-COST panel for one /api/epoch/{id}/cost read. Null when the
+// read is absent or the epoch recorded no runs at all.
+export function buildCostPanel(cost, opts) {
+  if (!cost || typeof cost !== 'object') return null;
+  const matchups = Array.isArray(cost.per_matchup) ? cost.per_matchup : [];
+  const totalRuns = svg.isNum(cost.total_run_count) ? cost.total_run_count : 0;
+  if (!matchups.length && totalRuns === 0) return null;
+  const o = opts || {};
+  const card = el('div', { class: 'dn-panel dn-loopcost-pane' });
+
+  const cpp = costPerPromotionLabel(cost);
+  card.appendChild(el('div', { class: 'dn-row', style: 'margin-bottom:8px;' }, [
+    stat(cpp || '—', 'cost / promotion'),
+    stat(fmtDurationMs(cost.total_runtime_ms || 0), 'total runtime'),
+    stat(String(totalRuns), 'runs'),
+    stat(String(cost.total_aborted_count || 0), 'aborted'),
+  ]));
+
+  if (matchups.length) {
+    const table = el('table', { class: 'dn-loopcost-table' });
+    const thead = el('thead', null, [el('tr', null, [
+      el('th', { text: 'challenger' }), el('th', { text: 'decision' }),
+      el('th', { text: 'runtime' }), el('th', { text: 'runs' }), el('th', { text: 'aborted' }),
+    ])]);
+    const tbody = el('tbody');
+    for (const m of matchups) {
+      if (!m || typeof m !== 'object') continue;
+      const gid = m.challenger_generation_id != null ? String(m.challenger_generation_id) : '—';
+      const genCell = el('td', { class: 'dn-mono' });
+      if (o.onGen && gid !== '—') {
+        const b = el('button', { class: 'dn-loopcost-gen', type: 'button', text: gid });
+        b.addEventListener('click', () => o.onGen(gid));
+        genCell.appendChild(b);
+      } else {
+        genCell.appendChild(el('span', { text: gid }));
+      }
+      tbody.appendChild(el('tr', { class: 'dn-loopcost-row', 'data-gen': gid }, [
+        genCell,
+        el('td', { class: m.decision === 'promoted' ? 'dn-good-t' : (m.decision === 'rejected' ? 'dn-faint' : ''), text: m.decision || '—' }),
+        el('td', { class: 'dn-mono', text: fmtDurationMs(m.runtime_ms || 0) }),
+        el('td', { class: 'dn-mono', text: String(m.run_count || 0) }),
+        el('td', { class: 'dn-mono' + ((m.aborted_count || 0) > 0 ? ' dn-bad-t' : ''), text: String(m.aborted_count || 0) }),
+      ]));
+    }
+    table.appendChild(thead);
+    table.appendChild(tbody);
+    card.appendChild(table);
+  }
+  card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;',
+    text: 'what a promotion costs in wall-clock — total challenger runtime ÷ promotions · per-challenger runtime/run/abort accounting' }));
+  return card;
+}
+
+// Digest fold for the cost panel: integers only, timestamp-free.
+export function costPanelDigest(cost) {
+  if (!cost || typeof cost !== 'object') return null;
+  return [
+    svg.isNum(cost.cost_per_promotion_ms) ? Math.round(cost.cost_per_promotion_ms) : null,
+    svg.isNum(cost.total_runtime_ms) ? Math.round(cost.total_runtime_ms) : 0,
+    cost.total_run_count || 0,
+    cost.total_aborted_count || 0,
+    (Array.isArray(cost.per_matchup) ? cost.per_matchup : []).map((m) => [
+      m && m.challenger_generation_id, m && m.decision,
+      m && svg.isNum(m.runtime_ms) ? Math.round(m.runtime_ms) : 0,
+      m && m.run_count, m && m.aborted_count,
+    ]),
+  ];
+}
+
+// ---- the PER-JUDGE TREND panel (pure builder — node-testable) ---------
+
+// One row per judge: name · a sparkline of its weighted loss across the spine
+// generations · the last value. Consumes the /api/epoch/{id}/per-judge-trend
+// shape verbatim ({generations: [spine ids], judges: [{judge_name,
+// by_generation}]}). Null when the read is absent (Rust supervisor), degraded
+// (note, empty judges), or carries no judge with a plottable value — the
+// epoch view is then byte-identical to today.
+export function buildJudgeTrendPanel(trend) {
+  if (!trend || typeof trend !== 'object') return null;
+  const gens = Array.isArray(trend.generations) ? trend.generations : [];
+  const judges = Array.isArray(trend.judges) ? trend.judges : [];
+  if (!gens.length || !judges.length) return null;
+  const rows = [];
+  for (const j of judges) {
+    if (!j || typeof j !== 'object' || !j.judge_name) continue;
+    const by = (j.by_generation && typeof j.by_generation === 'object') ? j.by_generation : {};
+    const vals = gens.map((g) => (svg.isNum(by[g]) ? by[g] : null));
+    if (!vals.some((v) => svg.isNum(v))) continue;
+    rows.push({ name: String(j.judge_name), vals });
+  }
+  if (!rows.length) return null;
+  const card = el('div', { class: 'dn-panel dn-judgetrend-pane' });
+  for (const r of rows) {
+    const finite = r.vals.filter((v) => svg.isNum(v));
+    const last = finite.length ? finite[finite.length - 1] : null;
+    card.appendChild(el('div', { class: 'dn-judgetrend-row', 'data-judge': r.name }, [
+      el('span', { class: 'dn-judgetrend-name', title: r.name, text: r.name }),
+      svg.sparkline({ width: 320, height: 26, values: r.vals, markers: true, goodDirection: 'down' }),
+      el('span', { class: 'dn-judgetrend-last', text: svg.isNum(last) ? last.toFixed(3) : '—' }),
+    ]));
+  }
+  card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;',
+    text: 'each judge’s weighted loss across the promoted spine (lower = better) · a diverging judge names WHICH pressure the loop is trading away' }));
+  return card;
+}
+
+// Digest fold for the per-judge trend: rounded per-judge series over the
+// spine, timestamp-free — a no-op beat is byte-identical, a new generation
+// column / a moved loss flips it.
+export function judgeTrendDigest(trend) {
+  if (!trend || typeof trend !== 'object') return null;
+  const gens = Array.isArray(trend.generations) ? trend.generations : [];
+  const judges = Array.isArray(trend.judges) ? trend.judges : [];
+  return [
+    gens.map((g) => String(g)),
+    judges.map((j) => [
+      j && j.judge_name,
+      gens.map((g) => {
+        const v = j && j.by_generation ? j.by_generation[g] : null;
+        return svg.isNum(v) ? v.toFixed(3) : null;
+      }),
+    ]),
+  ];
 }
 
 // The first H1 of a brief, with a leading "Epoch eN — "/"Epoch eN: " prefix

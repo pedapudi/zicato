@@ -31,9 +31,9 @@ import pytest
 from zicato.builder.config import BuilderAgentConfig, BuilderConfig
 from zicato.builder.copilot import CHAT_DISABLED_MESSAGE, run_copilot
 from zicato.builder.draft import DraftStore
-from zicato.cli.common import write_workspace_config
 from zicato.core.types import ScoringWeights
 from zicato.epoch.lifecycle import new_epoch
+from zicato.workspace.config_io import write_workspace_config
 
 
 def _seed_workspace(tmp_path: Path) -> Path:
@@ -260,7 +260,7 @@ async def test_copilot_apply_tool_only_dry_runs(tmp_path: Path) -> None:
     config = BuilderConfig(agent=BuilderAgentConfig(model="builder-copilot-model"))
 
     # Read the live contract config + board BEFORE the run to compare after.
-    from zicato.cli.common import read_workspace_config
+    from zicato.workspace.config_io import read_workspace_config
 
     before_config = read_workspace_config(ws)
     board_path = Path(before_config["contract"]["board_path"])
@@ -322,3 +322,123 @@ def test_model_resolves_from_builder_config_model_string(tmp_path: Path) -> None
     model = agent.model
     model_str = model if isinstance(model, str) else getattr(model, "model", None)
     assert model_str == "some-model-string"
+
+
+def test_default_builder_tools_registry_covers_every_op() -> None:
+    """ANTI-DRIFT PIN: the copilot's tool registry carries every builder op —
+    the write ops (incl. the knob-coverage ops), the read ops, and the
+    build-time statistical preflight. A new op added to operations.py /
+    the API dispatch without a copilot tool fails here."""
+    names = {t.__name__ for t in DEFAULT_BUILDER_TOOLS}
+    expected = {
+        # write ops
+        "set_structure",
+        "set_param",
+        "set_holdout",
+        "set_proposer",
+        "set_weights",
+        "set_gate",
+        "set_namespace_weights",
+        "set_proposer_quality",
+        "set_experiment_memory",
+        "set_screening",
+        "edit_board_entry",
+        "add_judge",
+        "remove_judge",
+        "set_brief",
+        # read ops
+        "estimate_cost",
+        "validate",
+        "preflight",
+        "preview_apply",
+        # the fork/compare lifecycle
+        "fork",
+        "switch",
+        "list_drafts",
+        "compare",
+    }
+    assert expected <= names, f"missing tools: {sorted(expected - names)}"
+
+
+@pytest.mark.asyncio
+async def test_preflight_tool_degrades_honestly_via_bound_context(tmp_path: Path) -> None:
+    """The async preflight tool runs inside a bound BuilderToolContext and
+    returns the honest degrade (the seeded workspace has no baseline
+    generation) alongside the recomputed warnings."""
+    import json as _json
+
+    from zicato.builder import copilot_tools
+    from zicato.builder.copilot_tools import BuilderToolContext, bind_builder_tool_context
+
+    ws = _seed_workspace(tmp_path)
+    store = DraftStore()
+    ctx = BuilderToolContext(session_id="s", store=store, workspace_root=ws)
+    with bind_builder_tool_context(ctx):
+        raw = await copilot_tools.preflight()
+    payload = _json.loads(raw)
+    assert payload["preflight"]["available"] is False
+    assert payload["preflight"]["reason"]
+    assert "warnings" in payload
+
+
+def test_new_knob_tools_edit_the_shared_draft(tmp_path: Path) -> None:
+    """The knob-coverage tools mutate the SAME session draft the form edits."""
+    import json as _json
+
+    from zicato.builder import copilot_tools
+    from zicato.builder.copilot_tools import BuilderToolContext, bind_builder_tool_context
+
+    ws = _seed_workspace(tmp_path)
+    store = DraftStore()
+    ctx = BuilderToolContext(session_id="s", store=store, workspace_root=ws)
+    with bind_builder_tool_context(ctx):
+        r1 = _json.loads(copilot_tools.set_proposer_quality(best_of_n=4))
+        r2 = _json.loads(copilot_tools.set_experiment_memory(cross_epoch=True))
+        r3 = _json.loads(copilot_tools.set_namespace_weights(diff_complexity_weight=0.01))
+        r4 = _json.loads(copilot_tools.set_holdout(ladder={"budget": 8}))
+        r5 = _json.loads(copilot_tools.set_gate(regression_timeout_s=0))
+    assert r1["patch"]["changed"]["best_of_n"]["to"] == 4
+    assert r2["patch"]["changed"]["cross_epoch"]["to"] is True
+    assert r3["patch"]["changed"]["diff_complexity_weight"]["to"] == 0.01
+    assert r4["patch"]["changed"]["ladder.budget"]["to"] == 8
+    # invalid values come back as an error the model can read, never a crash.
+    assert "error" in r5
+    draft = store.get("s", ws)
+    assert draft.scoring.proposer_quality.best_of_n == 4
+    assert draft.scoring.experiment_memory.cross_epoch is True
+    assert draft.scoring.overfitting.ladder.budget == 8
+
+
+def test_lifecycle_tools_fork_switch_compare(tmp_path: Path) -> None:
+    """The fork/switch/list/compare tools drive the SAME store the REST
+    endpoints use, through the bound context."""
+    import json as _json
+
+    from zicato.builder import copilot_tools
+    from zicato.builder.copilot_tools import BuilderToolContext, bind_builder_tool_context
+
+    ws = _seed_workspace(tmp_path)
+    store = DraftStore()
+    ctx = BuilderToolContext(session_id="s", store=store, workspace_root=ws)
+    with bind_builder_tool_context(ctx):
+        r1 = _json.loads(copilot_tools.fork("variant-a"))
+        assert r1["drafts"] == ["variant-a"]
+        _json.loads(copilot_tools.set_gate(promote_margin=0.07))
+        r2 = _json.loads(copilot_tools.fork("variant-b"))
+        assert r2["drafts"] == ["variant-a", "variant-b"]
+        r3 = _json.loads(copilot_tools.compare("variant-a", "variant-b"))
+        # forked before/after the margin edit: A carries it too? No — A was
+        # forked FIRST, then edited (the session was bound to A), then B
+        # forked from A. So A == B here; compare says identical.
+        assert r3["compare"]["changed_components"] == []
+        _json.loads(copilot_tools.set_structure("swiss"))
+        r4 = _json.loads(copilot_tools.compare("variant-a", "variant-b"))
+        assert "scoring" in r4["compare"]["changed_components"]
+        r5 = _json.loads(copilot_tools.switch("variant-a"))
+        assert r5["patch"]["op"] == "switch"
+        r6 = _json.loads(copilot_tools.list_drafts())
+        assert r6["drafts"] == ["variant-a", "variant-b"]
+        # errors surface as readable tool results, never exceptions.
+        assert "error" in _json.loads(copilot_tools.fork("variant-a"))
+        assert "error" in _json.loads(copilot_tools.switch("ghost"))
+        assert "error" in _json.loads(copilot_tools.compare("session", "ghost"))

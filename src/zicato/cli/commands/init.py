@@ -44,7 +44,10 @@ def init_cmd(workspace: str, instance_id: str, force: bool) -> None:
     This is the first of the two commands you run. It creates the
     workspace directory if it doesn't exist, writes an empty lineage
     DAG (lineage.json: {"nodes": [], "edges": []}), and writes
-    config.json containing {instance_id, created_at}. Run it once per
+    config.json containing {instance_id, created_at}. It also scaffolds
+    the operator's live scoring.json (next to the workspace, only when
+    absent) with the full recommended contract — racing field 4,
+    replicates 2, the evidence gate enabled explicitly. Run it once per
     project; then point `zicato evolve` at the same workspace.
 
     Refuses to overwrite an existing workspace unless --force is

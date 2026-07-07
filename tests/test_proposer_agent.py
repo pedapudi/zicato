@@ -130,6 +130,24 @@ async def test_skills_reach_the_system_prompt_sent_to_aux() -> None:
     assert "Proposer skills (composable guidance modules" in system_prompt
 
 
+@pytest.mark.asyncio
+async def test_revise_feedback_threads_into_the_engine_prompt() -> None:
+    """The context's revise channel seeds the FIRST engine attempt's repair
+    section (the best-of-N screen-informed revise path)."""
+    from dataclasses import replace
+
+    recorder = RecordingCallLLM(CannedCallLLM([_valid_response()]))
+    agent = DefaultProposerAgent(ProposerSpec.default())
+    ctx = replace(_context(recorder), revise_feedback="screen vetoed the whole slate")
+
+    await agent.propose(ctx)
+
+    assert len(recorder.calls) == 1
+    user_prompt = recorder.calls[0]["user"]
+    assert "Previous attempt was rejected" in user_prompt
+    assert "screen vetoed the whole slate" in user_prompt
+
+
 def test_build_agent_for_builtin_default_is_adk_tool_agent() -> None:
     # The DEFAULT proposer (no proposer dir configured) is the tool-using
     # ADK agent in builtin_default mode — NOT the skill-composed single-shot

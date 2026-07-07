@@ -233,10 +233,10 @@ const FIX = {
   '/api/score-trajectory': { points: [{ generation_id: 'v0', scalar: 70 }, { generation_id: 'v1', scalar: 72 }] },
 };
 FIX[`/api/generation/${EPOCH_ID}/v0/per-entry`] = { epoch_id: EPOCH_ID, generation_id: 'v0', entries: [
-  { entry_id: 'waffles_single', run_id: 'run_v0_waffles', drift_loss: 60.0, pass_fail: 0, runtime_ms: 180000 },
+  { entry_id: 'waffles_single', run_id: 'run_v0_waffles', drift_loss: 60.0, pass_fail: false, runtime_ms: 180000 },
 ] };
 FIX[`/api/generation/${EPOCH_ID}/v1/per-entry`] = { epoch_id: EPOCH_ID, generation_id: 'v1', entries: [
-  { entry_id: 'waffles_single', run_id: 'run_v1_waffles', drift_loss: 62.0, pass_fail: 0, runtime_ms: 180000 },
+  { entry_id: 'waffles_single', run_id: 'run_v1_waffles', drift_loss: 62.0, pass_fail: false, runtime_ms: 180000 },
 ] };
 FIX[`/api/round/${EPOCH_ID}/v0/v1/gate`] = { decision: 'rejected', delta_scalar: 5.0, rules: [] };
 FIX[`/api/run/${EPOCH_ID}/v1/waffles_single/expectations`] = { outcomes: [] };
@@ -244,7 +244,7 @@ FIX[`/api/run/${EPOCH_ID}/v1/waffles_single/per-judge`] = { judges: [] };
 // The run HEADER carries the adk_session_id the harmonograf link keys on.
 FIX[`/api/run/${EPOCH_ID}/v1/waffles_single/header`] = {
   epoch_id: EPOCH_ID, generation_id: 'v1', entry_id: 'waffles_single',
-  run_id: 'run_v1_waffles', drift_loss: 62.0, pass_fail: 0, runtime_ms: 180000,
+  run_id: 'run_v1_waffles', drift_loss: 62.0, pass_fail: false, runtime_ms: 180000,
   adk_session_id: ADK_SID,
 };
 

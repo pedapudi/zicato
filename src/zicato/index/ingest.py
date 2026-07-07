@@ -885,7 +885,7 @@ def _ingest_experiment_into(
     parent it challenged (``parent_generation_id``) and the tournament
     verdict (``outcome.tournament_decision``). This is the
     source-of-truth the dashboard lineage walker uses (see
-    ``state_reader._champion_lineage``), so writing it from here keeps
+    ``zicato.query._champion_lineage``), so writing it from here keeps
     the index aligned with disk even when the live dual-write fires
     BEFORE ``lineage.json`` is updated (the orchestrator writes
     experiment.json first, then appends to lineage — so a
@@ -1007,6 +1007,11 @@ def rebuild_index(workspace_root: Path, db_path: Path | None = None) -> Path:
     conn = sqlite3.connect(str(target))
     try:
         conn.execute("PRAGMA journal_mode=WAL")
+        # Same short lock wait every other index connection sets: a rebuild
+        # racing a live reader (dashboard / supervisor) should queue behind
+        # the lock briefly rather than fail immediately with
+        # "database is locked".
+        conn.execute("PRAGMA busy_timeout=5000")
         apply_schema(conn)
         _rebuild_all(conn, workspace_root)
         # The read-only Elo analytics fold runs AFTER every tournament has

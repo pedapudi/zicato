@@ -104,7 +104,14 @@ _DEFAULT_PROPOSER_INSTRUCTION = (
     "- call `read_mutable_file` / `grep_mutable` to inspect how a candidate "
     "target is used in the current generation's source;\n"
     "- call `read_journal` / `read_insights` to recall what prior rounds "
-    "already tried and what the analyzer observed.\n\n"
+    "already tried and what the analyzer observed;\n"
+    "- call `mutation_track_record` to see how experiments touching a "
+    "candidate target have fared this epoch (advisory aggregates — "
+    "experiments touching the point, not causal effects);\n"
+    "- call `read_parent_diff` to see exactly what the LAST promotion "
+    "changed, so you can build on it rather than blindly re-roll it;\n"
+    "- call `mutation_usage` to find where a candidate target's current "
+    "value/symbol is referenced across the snapshot before you change it.\n\n"
     "Then emit a SINGLE JSON object matching the schema in the user message "
     "— no prose, no markdown fences. The first character of your final "
     "response MUST be '{' and the last MUST be '}'."
@@ -167,6 +174,9 @@ def _render_task_text(spec: ProposerSpec, ctx: ProposerContext, feedback: str) -
         restrict_visibility=ctx.restrict_visibility,
         custom_judge_names=ctx.custom_judge_names or frozenset(),
         failure_profile=ctx.failure_profile,
+        process_exemplars=ctx.process_exemplars,
+        sample_hint=ctx.sample_hint,
+        mutation_track_records=ctx.mutation_track_records,
     )
     return f"{system_text}\n\n{user_text}"
 
@@ -426,10 +436,14 @@ class ADKProposerAgent:
             generation_root=generation_root,
             epoch_id=ctx.epoch_id,
             mutations=ctx.mutations,
+            generation_id=ctx.parent_generation_id,
         )
         mutations_by_id = {mp.id: mp for mp in ctx.mutations}
 
-        feedback = ""
+        # The revise channel seeds the FIRST attempt's feedback (empty for
+        # every non-revise call — byte-identical input); retries then
+        # overwrite it with their own concrete errors exactly as before.
+        feedback = ctx.revise_feedback
         attempt_errors: list[str] = []
         total_attempts = ctx.max_retries + 1
         for _attempt in range(total_attempts):

@@ -811,7 +811,7 @@ def test_entry_judge_specs_reads_judges_field() -> None:
 
 
 def test_entry_disable_drift_reads_context() -> None:
-    """``_entry_disable_drift`` reads the board-level set off ``entry.context``.
+    """``entry_disable_drift`` reads the board-level set off ``entry.context``.
 
     ``disable_drift`` is a board-LEVEL setting; the tournament runner
     stamps it onto each entry's ``context['disable_drift']`` (see
@@ -819,7 +819,7 @@ def test_entry_disable_drift_reads_context() -> None:
     that one channel — a comma / whitespace separated list of drift-kind
     wire strings.
     """
-    from zicato.adapters.adk import _entry_disable_drift
+    from zicato.adapters.adk import entry_disable_drift
 
     # comma-separated wire strings.
     comma = _EntryStub(
@@ -828,7 +828,7 @@ def test_entry_disable_drift_reads_context() -> None:
         wall_clock_budget_seconds=5,
         context={"disable_drift": "tool_error, agent_refusal"},
     )
-    assert _entry_disable_drift(comma) == ("tool_error", "agent_refusal")
+    assert entry_disable_drift(comma) == ("tool_error", "agent_refusal")
 
     # whitespace-separated wire strings (the form the runner stamps).
     spaced = _EntryStub(
@@ -837,22 +837,22 @@ def test_entry_disable_drift_reads_context() -> None:
         wall_clock_budget_seconds=5,
         context={"disable_drift": "tool_error agent_refusal"},
     )
-    assert _entry_disable_drift(spaced) == ("tool_error", "agent_refusal")
+    assert entry_disable_drift(spaced) == ("tool_error", "agent_refusal")
 
     # a plain BoardEntry with no disable_drift in context -> empty tuple.
     plain = BoardEntry(id="e", kind="single_turn", wall_clock_budget_seconds=5, input="x")
-    assert _entry_disable_drift(plain) == ()
+    assert entry_disable_drift(plain) == ()
 
 
-def test_entry_judge_only_reads_context() -> None:
-    """``_entry_judge_only`` reads the board-level flag off ``entry.context``.
+def testentry_judge_only_reads_context() -> None:
+    """``entry_judge_only`` reads the board-level flag off ``entry.context``.
 
     ``judge_only`` is a board-LEVEL setting; the tournament runner stamps
     it onto each entry's ``context['judge_only']`` as the wire string
     ``"true"`` (see ``zicato.tournament.runner._stamp_judge_only``). The
     adapter reads that one channel.
     """
-    from zicato.adapters.adk import _JUDGE_ONLY_CONTEXT_KEY, _entry_judge_only
+    from zicato.adapters.adk import _JUDGE_ONLY_CONTEXT_KEY, entry_judge_only
 
     on = _EntryStub(
         id="e",
@@ -860,7 +860,7 @@ def test_entry_judge_only_reads_context() -> None:
         wall_clock_budget_seconds=5,
         context={_JUDGE_ONLY_CONTEXT_KEY: "true"},
     )
-    assert _entry_judge_only(on) is True
+    assert entry_judge_only(on) is True
 
     off = _EntryStub(
         id="e",
@@ -868,11 +868,11 @@ def test_entry_judge_only_reads_context() -> None:
         wall_clock_budget_seconds=5,
         context={_JUDGE_ONLY_CONTEXT_KEY: "false"},
     )
-    assert _entry_judge_only(off) is False
+    assert entry_judge_only(off) is False
 
     # a plain BoardEntry with no judge_only in context -> False.
     plain = BoardEntry(id="e", kind="single_turn", wall_clock_budget_seconds=5, input="x")
-    assert _entry_judge_only(plain) is False
+    assert entry_judge_only(plain) is False
 
 
 @pytest.mark.asyncio
@@ -1016,9 +1016,9 @@ async def test_run_single_turn_judge_only_no_steering_empirical(
     from goldfive import InMemorySink
 
     from zicato.adapters.adk import (
-        _entry_judge_only,
         _goldfive_runtime,
         _judge_only_overrides,
+        entry_judge_only,
     )
 
     agent = LlmAgent(name="greeter", instruction="Make a presentation.", model="fake-model")
@@ -1036,7 +1036,7 @@ async def test_run_single_turn_judge_only_no_steering_empirical(
         input="Make a presentation about waffles.",
         context={"judge_only": "true"},
     )
-    assert _entry_judge_only(on_entry) is True
+    assert entry_judge_only(on_entry) is True
     sink_on = InMemorySink()
     gf_runtime = _goldfive_runtime()
     await goldfive.run(
@@ -1497,18 +1497,26 @@ def test_goldfive_runtime_raises_call_timeout_above_goldfive_default(
     goldfive runtime config it builds.
     """
     monkeypatch.delenv("GOLDFIVE_AGENT_CALL_TIMEOUT_MS", raising=False)
-    monkeypatch.delenv("ZICATO_HARNESS_CALL_TIMEOUT_MS", raising=False)
     runtime = _goldfive_runtime()
     assert runtime.agent.call_timeout_ms == 1_800_000
     assert runtime.agent.call_timeout_ms > 120_000
 
 
-def test_goldfive_runtime_honours_zicato_env_override(
+def test_goldfive_runtime_honours_pinned_flag_value(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``ZICATO_HARNESS_CALL_TIMEOUT_MS`` tunes the per-call budget."""
+    """A pinned ``--harness-call-timeout-ms`` value tunes the per-call budget.
+
+    The value is pinned exactly as the evolve CLI pins it (and as the
+    worker re-pins it from its args file); the deleted
+    ``ZICATO_HARNESS_CALL_TIMEOUT_MS`` env var is set too, to prove it
+    is ignored.
+    """
+    from zicato.config import pin_overrides
+
     monkeypatch.delenv("GOLDFIVE_AGENT_CALL_TIMEOUT_MS", raising=False)
-    monkeypatch.setenv("ZICATO_HARNESS_CALL_TIMEOUT_MS", "456000")
+    monkeypatch.setenv("ZICATO_HARNESS_CALL_TIMEOUT_MS", "123000")  # ignored
+    pin_overrides({"runtime": {"harness_call_timeout_ms": 456000}})
     runtime = _goldfive_runtime()
     assert runtime.agent.call_timeout_ms == 456000
 
@@ -1517,8 +1525,10 @@ def test_goldfive_runtime_defers_to_explicit_goldfive_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An explicit ``GOLDFIVE_AGENT_CALL_TIMEOUT_MS`` is not overridden."""
+    from zicato.config import pin_overrides
+
     monkeypatch.setenv("GOLDFIVE_AGENT_CALL_TIMEOUT_MS", "999000")
-    monkeypatch.setenv("ZICATO_HARNESS_CALL_TIMEOUT_MS", "111000")
+    pin_overrides({"runtime": {"harness_call_timeout_ms": 111000}})
     runtime = _goldfive_runtime()
     # goldfive's own env value wins; zicato does not override it.
     assert runtime.agent.call_timeout_ms == 999000
@@ -1530,7 +1540,6 @@ async def test_run_single_turn_forwards_runtime_to_goldfive_run(
 ) -> None:
     """``goldfive.run`` receives a ``runtime`` carrying the raised timeout."""
     monkeypatch.delenv("GOLDFIVE_AGENT_CALL_TIMEOUT_MS", raising=False)
-    monkeypatch.delenv("ZICATO_HARNESS_CALL_TIMEOUT_MS", raising=False)
     generation_root, entrypoint = inner_harness
     adapter = ADKHarnessAdapter(
         entrypoint=entrypoint,

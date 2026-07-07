@@ -25,6 +25,68 @@ from typing import Any
 #: switches on ``model``.
 CallLLM = Callable[[str, str, str], Awaitable[str]]
 
+#: Default first-deferral backoff (seconds) for the endpoint-outage circuit
+#: (:attr:`RuntimeConfig.infra_backoff_base_s`). Module-level so the evolve
+#: loop — which reads the raw workspace ``runtime`` block without building a
+#: full :class:`RuntimeConfig` — shares one source of truth with the factory.
+INFRA_BACKOFF_BASE_S_DEFAULT: float = 30.0
+
+#: Default ceiling (seconds) on the exponential infra backoff
+#: (:attr:`RuntimeConfig.infra_backoff_cap_s`). See the base default above.
+INFRA_BACKOFF_CAP_S_DEFAULT: float = 480.0
+
+
+class RoundTokenLedger:
+    """ONE round's mutable token accounting for ``max_tokens_per_round``.
+
+    The orchestrator mints a fresh ledger per round (when the knob is on)
+    and rebinds it onto the round's :class:`RuntimeConfig` via
+    ``dataclasses.replace``, so every runner seam that already receives
+    the config — the full/fast board-unit schedulers, the candidate
+    screen, the evidence-gate replicate duels — shares one tally with no
+    signature changes. Every FRESH board-unit run adds its
+    ``LossProfile.tokens_spent`` (cache hits spend nothing and add
+    nothing); the schedulers consult :meth:`check_and_clip` between board
+    units / replicate slots and stop scheduling once the budget is spent.
+
+    Token counts are OPPORTUNISTIC by the ``cost:`` namespace's contract
+    (a harness without token-accounting middleware reports 0), so a
+    ledger can only ever under-count — the budget is a best-effort
+    guard, never a hard metering guarantee.
+
+    Single-threaded by design: mutations happen on the orchestrator's
+    event loop with no awaits between read and write.
+    """
+
+    __slots__ = ("max_tokens", "spent", "clipped")
+
+    def __init__(self, max_tokens: int) -> None:
+        self.max_tokens = int(max_tokens)
+        self.spent = 0
+        self.clipped = False
+
+    def add(self, tokens: int) -> None:
+        """Fold one fresh run's (non-negative) token spend into the tally."""
+        self.spent += max(0, int(tokens))
+
+    @property
+    def exhausted(self) -> bool:
+        """True once the tally has reached a positive budget."""
+        return self.max_tokens > 0 and self.spent >= self.max_tokens
+
+    def check_and_clip(self) -> bool:
+        """Return :attr:`exhausted`, latching :attr:`clipped` when true.
+
+        The schedulers call this at every would-launch point; the latched
+        flag is how the orchestrator knows the round was token-clipped
+        (the health finding) without threading a result back through the
+        runner stack.
+        """
+        if self.exhausted:
+            self.clipped = True
+            return True
+        return False
+
 
 @dataclass(frozen=True, slots=True)
 class RuntimeConfig:
@@ -111,6 +173,61 @@ class RuntimeConfig:
         This is a RUNTIME tuning knob, NOT part of the frozen evaluation
         contract — flipping it does not roll the epoch. Must be in ``(0, 1]``
         when set.
+    supervisor_kill_wait_s:
+        Seconds the tournament parent waits for the SUPERVISOR to
+        escalate-kill an over-budget worker after the parent writes the
+        kill-request marker, BEFORE falling back to its own last-resort
+        SIGTERM→grace→SIGKILL escalation. The supervisor is the single
+        escalator: this window must comfortably exceed the supervisor's
+        SIGTERM→SIGKILL grace plus its watchdog tick so a healthy
+        supervisor always wins the kill. When NO supervisor is attached
+        (an ad-hoc run with no watchdog, or a supervisor that itself
+        died), this value is the ABORT-LATENCY FLOOR: every over-budget
+        run waits the full window before the parent's fallback reaps the
+        worker. The default (``20.0``) is generous on purpose — a few
+        extra seconds on an already-overrun run is cheap; a leaked worker
+        is not. Tests and supervisor-less harnesses shrink it to keep
+        that floor from dominating wall-clock time.
+    infra_abort_round_threshold:
+        Endpoint-outage circuit breaker (WS-H). ``0`` (the DEFAULT) is
+        OFF — an all-infra-aborted round settles exactly as today (the
+        aborted runs score worst-case and the child is rejected). When
+        ``>= 1``: after a gauntlet round's tournament settles, the
+        orchestrator counts the duel's INFRA-aborted runs
+        (:func:`zicato.core.loss.is_infra_abort_cause` — worker crashes,
+        parent/supervisor kills; never a genuine budget exhaustion) and,
+        at or above this threshold, the round DEFERS instead of burning
+        the experiment: the tournament's verdict is discarded, nothing
+        is journaled/finalized (the experiment persists un-outcomed, the
+        exact shape the conservative crash-resume already reconciles),
+        and the evolve loop backs off before the next round. A RUNTIME
+        tuning knob, NOT part of the frozen evaluation contract —
+        flipping it does not roll the epoch. Must be ``>= 0``.
+    infra_backoff_base_s:
+        First backoff delay (seconds) after a round defers on the infra
+        circuit; consecutive deferrals double it. Only consulted while
+        :attr:`infra_abort_round_threshold` is on. Must be ``>= 0``.
+    infra_backoff_cap_s:
+        Ceiling (seconds) on the exponential infra backoff. Must be
+        ``>= 0``.
+    max_tokens_per_round:
+        Per-round token budget (WS-H). ``0`` (the DEFAULT) is OFF —
+        byte-identical scheduling. When ``>= 1``, the orchestrator mints
+        a fresh :class:`RoundTokenLedger` per round; every fresh board
+        unit run (parent + child + evidence replicates + candidate
+        screen) folds its opportunistic ``cost:tokens_spent`` into the
+        tally, and once it is spent the schedulers stop LAUNCHING
+        further board units / replicate slots and the round settles with
+        what it has (un-run units record the same budget-exceeded losses
+        a matchup-deadline trip synthesizes; completed replicate slots
+        average as-is). A RUNTIME tuning knob, NOT part of the frozen
+        evaluation contract. Must be ``>= 0``.
+    token_ledger:
+        The ROUND-scoped mutable :class:`RoundTokenLedger`, rebound per
+        round by the orchestrator when :attr:`max_tokens_per_round` is
+        on (the ``inner_model`` live-object precedent). ``None`` — the
+        default, and every round with the knob off — disables every
+        ledger consultation. Never read from workspace config.
 
     Construction-time validation
     ----------------------------
@@ -141,6 +258,12 @@ class RuntimeConfig:
     scrub_worker_env: bool = False
     worker_env_passthrough: tuple[str, ...] = ()
     diversity_tolerance: float | None = None
+    supervisor_kill_wait_s: float = 20.0
+    infra_abort_round_threshold: int = 0
+    infra_backoff_base_s: float = INFRA_BACKOFF_BASE_S_DEFAULT
+    infra_backoff_cap_s: float = INFRA_BACKOFF_CAP_S_DEFAULT
+    max_tokens_per_round: int = 0
+    token_ledger: RoundTokenLedger | None = None
     #: The ADK model object (a ``BaseLlm``, typically a ``LiteLlm``) the inner
     #: ADK agents run on, built from a ``models.harness`` *model spec* (model +
     #: endpoint + api_key_env) via :func:`zicato.models_config.build_adk_model`.
@@ -164,6 +287,24 @@ class RuntimeConfig:
                 "RuntimeConfig.diversity_tolerance must be in (0, 1] or None, "
                 f"got {self.diversity_tolerance!r}; use None to disable "
                 "field-diversity enforcement"
+            )
+        if self.infra_abort_round_threshold < 0:
+            raise ValueError(
+                "RuntimeConfig.infra_abort_round_threshold must be >= 0, got "
+                f"{self.infra_abort_round_threshold!r}; use 0 to disable the "
+                "endpoint-outage circuit"
+            )
+        if self.infra_backoff_base_s < 0 or self.infra_backoff_cap_s < 0:
+            raise ValueError(
+                "RuntimeConfig.infra_backoff_base_s / infra_backoff_cap_s must "
+                f"be >= 0, got {self.infra_backoff_base_s!r} / "
+                f"{self.infra_backoff_cap_s!r}"
+            )
+        if self.max_tokens_per_round < 0:
+            raise ValueError(
+                "RuntimeConfig.max_tokens_per_round must be >= 0, got "
+                f"{self.max_tokens_per_round!r}; use 0 to disable the per-round "
+                "token budget"
             )
 
     def effective_judge_call_llm(self) -> CallLLM:

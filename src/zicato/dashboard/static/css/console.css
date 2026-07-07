@@ -683,6 +683,11 @@
   .dn-chip-live { color: var(--v2-caution); border-color: var(--v2-caution); }
   .dn-chip-open { color: var(--v2-good); border-color: var(--v2-good); }
   .dn-chip-closed { color: var(--v2-ink-faint); }
+  /* loop-communication verdict chips: a plateau is caution ink; a below-noise-
+   * floor "no detectable signal" is faint (the honest can't-tell state, never
+   * an alarm hue). */
+  .dn-chip-plateau { color: var(--v2-caution); border-color: var(--v2-caution); }
+  .dn-chip-nosignal { color: var(--v2-ink-faint); border-color: var(--v2-rule); }
 
   /* the overrideChip — operator-override provenance riding BESIDE a verdict
    * pill / status pill, NEVER recoloring it. Tone is earned by DIRECTION only
@@ -835,6 +840,10 @@
   .dn-spark-hero { width: 100%; height: auto; max-height: 140px; max-width: 1960px; }
   .dn-spark-line { stroke: var(--v2-ink); stroke-width: 1.4; vector-effect: non-scaling-stroke; }
   .dn-spark-band { fill: var(--v2-rule-soft); }
+  /* the MEASURED-NOISE band (opt-in via sparkline({noiseBand})): the epoch's
+   * A/A floor around the champion floor — movement inside it is
+   * indistinguishable from a re-roll, so it reads as recessed caution ink. */
+  .dn-spark-noise { fill: var(--v2-caution, var(--v2-rule)); opacity: 0.16; }
   .dn-spark-baseline { stroke: var(--v2-rule); stroke-width: 1; stroke-dasharray: 2 2; vector-effect: non-scaling-stroke; }
   .dn-spark-empty { stroke: var(--v2-rule); stroke-width: 1; stroke-dasharray: 2 3; }
   .dn-spark-dot { fill: var(--v2-ink); }
@@ -1076,17 +1085,37 @@
    * on the surrounding panel/page, so the table can be wide without any element
    * escaping its pane. */
   .dn-table-scroll { max-width: 100%; overflow-x: auto; }
-  .dn-md-table, .dn-board-table, .dn-scores-table {
+  .dn-md-table, .dn-board-table, .dn-scores-table, .dn-loopcost-table {
     border-collapse: collapse; width: 100%; font-size: calc(12px * var(--dt-font-scale, 1)); margin: 4px 0 12px; }
   .dn-md-table th, .dn-md-table td, .dn-board-table th, .dn-board-table td,
-  .dn-scores-table th, .dn-scores-table td {
+  .dn-scores-table th, .dn-scores-table td,
+  .dn-loopcost-table th, .dn-loopcost-table td {
     border: 1px solid var(--v2-rule); padding: 5px 9px; text-align: left; color: var(--v2-ink); }
-  .dn-md-table th, .dn-board-table th, .dn-scores-table th {
+  .dn-md-table th, .dn-board-table th, .dn-scores-table th, .dn-loopcost-table th {
     background: var(--v2-rule-soft); font-weight: 600; color: var(--v2-ink-soft); }
   .dn-md-table .dn-num, .dn-board-table .dn-num, .dn-scores-table .dn-num { text-align: right; }
   .dn-board-table tr { transition: background 0.12s; }
   .dn-board-table tr.dn-board-champ td { background: var(--v2-good-soft); }
   .dn-board-run { padding: 2px 7px; font-size: calc(10.5px * var(--dt-font-scale, 1)); }
+
+  /* ===================  loop communication (trajectory / cost / judges) ============= */
+
+  /* the promoted-spine id strip under the trajectory sparkline: each id is a
+   * quiet mono button routing to that candidate. */
+  .dn-looptraj-strip { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .dn-looptraj-gen, .dn-loopcost-gen {
+    background: none; border: none; padding: 0; cursor: pointer;
+    font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1));
+    color: var(--v2-accent); text-decoration: underline; text-underline-offset: 2px; }
+  .dn-looptraj-verdict { vertical-align: middle; }
+
+  /* the per-judge trend rows: name column + a sparkline lane + the last value. */
+  .dn-judgetrend-row { display: grid; grid-template-columns: minmax(120px, 18ch) 1fr 8ch;
+    gap: 12px; align-items: center; padding: 3px 0; }
+  .dn-judgetrend-name { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1));
+    color: var(--v2-ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dn-judgetrend-last { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1));
+    font-variant-numeric: tabular-nums; text-align: right; color: var(--v2-ink); }
 
   /* ===================  promote gate (stacked, no overlap — fix #1)  =================== */
 
@@ -1606,6 +1635,39 @@
     backdrop-filter: blur(6px);
     border-bottom: 1px solid var(--v2-rule);
   }
+
+  /* the ROUND-PIPELINE stepper (propose → apply → run → gate) in the live
+   * hero head — renders the server's /api/live/pipeline projection verbatim.
+   * done = muted filled pip; active = accent pip + label; pending = hollow. */
+  .dt-live-hero-pipe { display: inline-flex; align-items: center; margin-left: 14px; min-width: 0; }
+  .dt-pipe { display: inline-flex; align-items: center; gap: 6px;
+    font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
+  .dt-pipe-step { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .dt-pipe-dot { width: 7px; height: 7px; border-radius: 50%; border: 1px solid var(--v2-rule);
+    background: transparent; flex: none; }
+  .dt-pipe-done .dt-pipe-dot { background: var(--v2-ink-faint); border-color: var(--v2-ink-faint); }
+  .dt-pipe-done .dt-pipe-label { color: var(--v2-ink-soft); }
+  .dt-pipe-active .dt-pipe-dot { background: var(--v2-good); border-color: var(--v2-good); }
+  .dt-pipe-active .dt-pipe-label { color: var(--v2-ink); font-weight: 600; }
+  .dt-pipe-detail { margin-left: 2px; }
+  .dt-pipe-sep { color: var(--v2-rule); }
+  .dt-pipe-decision { margin-left: 4px; }
+
+  /* the topbar LOOP CONTROLS (pause/resume + skip-round). Same quiet chrome
+   * as the back control; the ARMED skip confirm reads in caution ink so the
+   * two-step is visually explicit. Hidden entirely when read-only / idle
+   * (the host is left empty by renderLoopControls). */
+  .dt-loopctl { display: inline-flex; align-items: center; }
+  .dt-loopctl-group { display: inline-flex; align-items: center; gap: 6px; }
+  .dt-loopctl-btn { display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
+    background: transparent; border: 1px solid var(--v2-rule); border-radius: 5px;
+    padding: 3px 8px; cursor: pointer; white-space: nowrap;
+    transition: background 0.15s, color 0.15s, border-color 0.15s; }
+  .dt-loopctl-btn:hover { color: var(--v2-paper); background: var(--v2-accent); border-color: var(--v2-accent); }
+  .dt-loopctl-resume { color: var(--v2-good); border-color: var(--v2-good); }
+  .dt-loopctl-skip.dt-loopctl-armed { color: var(--v2-caution); border-color: var(--v2-caution); }
+  .dt-loopctl-skip.dt-loopctl-armed:hover { color: var(--v2-paper); background: var(--v2-caution); }
 
   /* the top-left back / up control (THE BACK-BUTTON FIX) */
   .dt-back { display: inline-flex; align-items: center; gap: 5px;
@@ -2993,6 +3055,17 @@
   .dt-live-match-row { display: grid;
     grid-template-columns: max-content minmax(40px, 1fr) max-content max-content max-content;
     align-items: center; column-gap: 9px; border-radius: 4px; padding: 1px 2px; }
+  /* a row carrying the per-run kill cluster grows a sixth content column. */
+  .dt-live-match-row-kill {
+    grid-template-columns: max-content minmax(40px, 1fr) max-content max-content max-content max-content; }
+  .dt-live-kill-cluster { display: inline-flex; gap: 4px; }
+  .dt-live-kill { font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1));
+    color: var(--v2-ink-faint); background: transparent; border: 1px solid var(--v2-rule);
+    border-radius: 4px; padding: 0 5px; line-height: 1.5; cursor: pointer; white-space: nowrap;
+    transition: color 0.15s, border-color 0.15s, background 0.15s; }
+  .dt-live-kill:hover { color: var(--v2-bad); border-color: var(--v2-bad); }
+  .dt-live-kill.dt-live-kill-armed { color: var(--v2-bad); border-color: var(--v2-bad); }
+  .dt-live-kill.dt-live-kill-armed:hover { color: var(--v2-paper); background: var(--v2-bad); }
   .dt-live-match-row[tabindex] { cursor: pointer; }
   .dt-live-match-row[tabindex]:hover { background: var(--v2-rule-soft); }
   .dt-live-match-row:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 1px; }
@@ -3198,6 +3271,12 @@
   .dn-bld-num:focus { outline: 2px solid var(--v2-accent); outline-offset: 0; }
   .dn-bld-checkwrap { display: inline-flex; align-items: center; gap: 7px; font-size: calc(12px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); cursor: pointer; }
   .dn-bld-check { accent-color: var(--v2-accent); }
+  .dn-bld-select, .dn-bld-text { font-family: var(--v2-mono); font-size: calc(12px * var(--dt-font-scale, 1)); max-width: 100%;
+    background: var(--v2-paper); color: var(--v2-ink); border: 1px solid var(--v2-rule); border-radius: 4px; padding: 5px 8px; }
+  .dn-bld-text { width: 320px; }
+  .dn-bld-select:focus, .dn-bld-text:focus { outline: 2px solid var(--v2-accent); outline-offset: 0; }
+  .dn-bld-subhead { font-size: calc(12px * var(--dt-font-scale, 1)); font-weight: 600; color: var(--v2-ink-soft);
+    text-transform: uppercase; letter-spacing: 0.05em; margin: 16px 0 8px; }
 
   /* structure picker cards. */
   .dn-bld-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
@@ -3289,8 +3368,50 @@
   .dn-bld-warn { display: flex; gap: 7px; font-size: calc(11px * var(--dt-font-scale, 1)); line-height: 1.4; border-radius: 4px; padding: 6px 9px; }
   .dn-bld-warn-warning { background: var(--v2-bad-soft); color: var(--v2-ink); }
   .dn-bld-warn-info { background: var(--v2-rule-soft); color: var(--v2-ink-soft); }
+  /* refuse — the statistical-unsoundness tier (recommend-only, never a block):
+   * the bad-soft wash plus a hard bad border so it reads a notch above warning. */
+  .dn-bld-warn-refuse { background: var(--v2-bad-soft); color: var(--v2-ink); border: 1px solid var(--v2-bad); }
   .dn-bld-warn-glyph { flex: none; }
   .dn-bld-warn-msg { min-width: 0; }
+
+  /* the build-time statistical pre-flight (Review pane): verdict chip + reasons. */
+  .dn-bld-preflight { margin: 10px 0; }
+  .dn-bld-pf { margin-top: 8px; background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 4px; padding: 8px 11px; }
+  .dn-bld-pf-head { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+  .dn-bld-pf-chip { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); letter-spacing: 0.05em;
+    border-radius: 999px; padding: 2px 9px; border: 1px solid var(--v2-rule); }
+  .dn-bld-pf-ok { background: var(--v2-good-soft); border-color: var(--v2-good); }
+  .dn-bld-pf-warn { background: var(--v2-bad-soft); }
+  .dn-bld-pf-refuse { background: var(--v2-bad-soft); border-color: var(--v2-bad); }
+  .dn-bld-pf-unavailable { background: var(--v2-rule-soft); color: var(--v2-ink-faint); }
+  .dn-bld-pf-reasons { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px;
+    font-size: calc(11px * var(--dt-font-scale, 1)); line-height: 1.4; color: var(--v2-ink-soft); }
+  .dn-bld-refuses { display: flex; flex-direction: column; gap: 5px; margin: 8px 0; }
+  .dn-bld-refuses-empty { display: none; }
+
+  /* the draft-slot picker (fork/compare lifecycle) — a compact strip at the
+   * bottom of the section rail. */
+  .dn-bld-slots { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--v2-rule);
+    display: flex; flex-direction: column; gap: 6px; }
+  .dn-bld-slots-head { font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--v2-ink-faint); }
+  .dn-bld-slots-pick { width: 100%; }
+  .dn-bld-slots-forkrow { display: flex; gap: 5px; }
+  .dn-bld-slots-name { flex: 1; min-width: 0; width: auto; }
+
+  /* draft compare (Review pane): operand selects + the keyed diff table. */
+  .dn-bld-cmp { margin: 10px 0; }
+  .dn-bld-cmp-controls { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .dn-bld-cmp-vs { font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
+  .dn-bld-cmp-result { margin-top: 8px; background: var(--v2-panel); border: 1px solid var(--v2-rule);
+    border-radius: 4px; padding: 6px 9px; display: flex; flex-direction: column; gap: 3px; overflow-x: auto; }
+  .dn-bld-cmp-row { display: grid; grid-template-columns: minmax(120px, 1.2fr) 1fr 1fr; gap: 8px;
+    font-size: calc(11px * var(--dt-font-scale, 1)); line-height: 1.5; align-items: baseline; }
+  .dn-bld-cmp-headrow { color: var(--v2-ink-faint); border-bottom: 1px solid var(--v2-rule-soft); padding-bottom: 3px; }
+  .dn-bld-cmp-key { color: var(--v2-ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dn-bld-cmp-a { color: var(--v2-bad); overflow-wrap: anywhere; }
+  .dn-bld-cmp-b { color: var(--v2-good); overflow-wrap: anywhere; }
+  .dn-bld-cmp-same { margin: 6px 0 0; }
 
   /* the chat copilot pane — a FULL-HEIGHT docked column, not a content-sized
    * stub. The grid stretches it to the workspace height; it is a 3-row flex

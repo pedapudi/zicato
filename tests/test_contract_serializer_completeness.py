@@ -5,7 +5,7 @@ config dataclasses — is serialized by two code paths that MUST agree on
 which fields exist:
 
 * the contract-hash canonicalizer
-  (:func:`zicato.epoch.contract._scoring_to_canon`), which enumerates
+  (:func:`zicato.epoch.contract.scoring_to_canon`), which enumerates
   ``dataclasses.fields()`` and therefore covers every field; and
 * the frozen-epoch snapshot writer/parser/loader.
 
@@ -38,20 +38,21 @@ from typing import Any
 import pytest
 
 from zicato.core.types import (
+    ExperimentMemoryConfig,
     LadderConfig,
     OverfittingConfig,
     ProposerQualityConfig,
     ScoringWeights,
     TournamentStructure,
 )
-from zicato.epoch.contract import _round_floats, _scoring_to_canon
+from zicato.epoch.contract import round_floats, scoring_to_canon
 from zicato.epoch.contract_serde import (
     _persisted_key,
     dataclass_to_jsonable,
     jsonable_to_dataclass,
 )
-from zicato.epoch.lifecycle import _scoring_from_dict, _scoring_to_dict
-from zicato.workspace_loader import _scoring_weights_from_dict
+from zicato.epoch.lifecycle import _scoring_from_dict, scoring_to_dict
+from zicato.workspace_loader import scoring_weights_from_dict
 
 # Every contract dataclass whose frozen-snapshot serialization must be
 # field-complete. The structural tests below cover each one.
@@ -60,6 +61,7 @@ _CONTRACT_DATACLASSES = [
     OverfittingConfig,
     LadderConfig,
     ProposerQualityConfig,
+    ExperimentMemoryConfig,
 ]
 
 # A hand-curated, constraint-VALID non-default value for every field of
@@ -88,10 +90,17 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         "ladder": LadderConfig(enabled=False, threshold=0.25, budget=4, noise_scale=0.1),
         "rotate_holdout": False,
         "max_generations_per_contract": 9,
+        "random_baseline_every_n": 5,
     },
     "ProposerQualityConfig": {
         "best_of_n": 4,
         "critique_enabled": False,
+        "screen_entries": 3,
+        "screen_veto_only": True,
+        "process_exemplars": 2,
+    },
+    "ExperimentMemoryConfig": {
+        "cross_epoch": True,
     },
     "ScoringWeights": {
         "drift_weight": 2.5,
@@ -120,6 +129,7 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
             ladder=LadderConfig(threshold=0.27, budget=8),
         ),
         "proposer_quality": ProposerQualityConfig(best_of_n=5, critique_enabled=False),
+        "experiment_memory": ExperimentMemoryConfig(cross_epoch=True),
         "outcome_summarizer_spec": "pkg.mod:summarize_outcomes",
         "pass_transform": {"op": "pow", "exponent": 2.0},
         "drift_kind_aggregation": {
@@ -132,13 +142,17 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         # round-trip / drop-a-field guard this test exercises.
         "scalar_fn": "pkg.mod:my_scalar",
         "drift_reducer": "pkg.mod:my_drift_reducer",
+        # Opt-in integrity blocking modes (default OFF; omit-at-default in
+        # the canonicalizer — opting in rolls the epoch like any weight).
+        "block_on_containment_violation": True,
+        "block_on_gate_contradiction": True,
     },
 }
 
 
 def _canon(weights: ScoringWeights) -> str:
     """The contract-hash canonical string for one ScoringWeights."""
-    return json.dumps(_round_floats(_scoring_to_canon(weights)), sort_keys=True)
+    return json.dumps(round_floats(scoring_to_canon(weights)), sort_keys=True)
 
 
 def _distinct_value(cls: type, field_name: str) -> Any:
@@ -224,17 +238,17 @@ def test_generic_round_trip_identity(cls: type) -> None:
 
 
 def test_scoring_lifecycle_round_trip_every_field() -> None:
-    """``_scoring_from_dict(_scoring_to_dict(w)) == w`` with every field
+    """``_scoring_from_dict(scoring_to_dict(w)) == w`` with every field
     set to a non-default value — the lifecycle (epoch-creation) path."""
     w = _all_fields_nondefault(ScoringWeights)
-    assert _scoring_from_dict(_scoring_to_dict(w)) == w
+    assert _scoring_from_dict(scoring_to_dict(w)) == w
 
 
 def test_scoring_loader_round_trip_every_field() -> None:
-    """``_scoring_weights_from_dict(_scoring_to_dict(w)) == w`` — the
+    """``scoring_weights_from_dict(scoring_to_dict(w)) == w`` — the
     workspace-loader / canonicalizer read path."""
     w = _all_fields_nondefault(ScoringWeights)
-    assert _scoring_weights_from_dict(_scoring_to_dict(w)) == w
+    assert scoring_weights_from_dict(scoring_to_dict(w)) == w
 
 
 def test_lifecycle_parser_and_loader_agree() -> None:
@@ -242,8 +256,8 @@ def test_lifecycle_parser_and_loader_agree() -> None:
     ScoringWeights from the same dict — if they diverged on any field the
     frozen contract and the live contract would hash differently."""
     w = _all_fields_nondefault(ScoringWeights)
-    d = _scoring_to_dict(w)
-    assert _scoring_from_dict(d) == _scoring_weights_from_dict(d)
+    d = scoring_to_dict(w)
+    assert _scoring_from_dict(d) == scoring_weights_from_dict(d)
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +270,7 @@ def test_persist_load_rehash_no_spurious_roll_default() -> None:
     """A default ScoringWeights persists, loads, and re-hashes identically —
     the zero-churn guarantee for every epoch already on disk."""
     w = ScoringWeights()
-    reloaded = _scoring_weights_from_dict(_scoring_to_dict(w))
+    reloaded = scoring_weights_from_dict(scoring_to_dict(w))
     assert _canon(w) == _canon(reloaded)
 
 
@@ -276,8 +290,8 @@ def test_persist_load_rehash_no_spurious_roll_every_field() -> None:
     live_hash = _canon(w)
     # Persist exactly as new_epoch does, then re-read exactly as the
     # contract canonicalizer does on the next evolve.
-    frozen = _scoring_to_dict(w)
-    reloaded = _scoring_weights_from_dict(frozen)
+    frozen = scoring_to_dict(w)
+    reloaded = scoring_weights_from_dict(frozen)
     rolled_hash = _canon(reloaded)
     assert live_hash == rolled_hash, (
         "frozen contract hashes differently from the live contract after a "
@@ -294,7 +308,7 @@ def test_persist_load_rehash_no_roll_for_individual_nondefault_field() -> None:
         if not f.init:
             continue
         w = replace(base, **{f.name: _distinct_value(ScoringWeights, f.name)})
-        reloaded = _scoring_weights_from_dict(_scoring_to_dict(w))
+        reloaded = scoring_weights_from_dict(scoring_to_dict(w))
         assert _canon(w) == _canon(reloaded), (
             f"round-tripping a non-default {f.name!r} changed the contract hash — "
             f"the frozen serializer dropped or mangled it"
@@ -319,7 +333,7 @@ def test_nested_tournament_and_overfitting_survive_round_trip() -> None:
             ladder=LadderConfig(threshold=0.27, budget=4, noise_scale=0.1),
         ),
     )
-    reloaded = _scoring_from_dict(_scoring_to_dict(w))
+    reloaded = _scoring_from_dict(scoring_to_dict(w))
     assert reloaded == w
     assert _canon(w) == _canon(reloaded)
 
@@ -328,7 +342,7 @@ def test_tournament_block_uses_legacy_key() -> None:
     """The tournament structure is persisted under ``"tournament"`` (not
     ``"tournament_structure"``) — the shape the dashboard builder and every
     existing on-disk ``scoring.json`` rely on."""
-    snapshot = _scoring_to_dict(ScoringWeights())
+    snapshot = scoring_to_dict(ScoringWeights())
     assert "tournament" in snapshot
     assert "tournament_structure" not in snapshot
 
@@ -338,7 +352,7 @@ def test_legacy_scoring_json_loads_at_defaults() -> None:
     every absent field at its dataclass default — back-compat for epochs
     frozen before later fields landed."""
     legacy = {"drift_weight": 1.0, "pass_weight": 1.0, "promote_margin": 0.01}
-    w = _scoring_weights_from_dict(legacy)
+    w = scoring_weights_from_dict(legacy)
     assert w == ScoringWeights()
 
 
@@ -351,7 +365,7 @@ def test_continuous_score_adds_no_scoring_contract_field() -> None:
     scores is opt-in per board entry (the operator writes a float scorer),
     not via a ScoringWeights flag; back-compat is automatic via score=None.
     """
-    canon = _scoring_to_canon(ScoringWeights())
+    canon = scoring_to_canon(ScoringWeights())
     assert "score" not in canon
     assert "metrics" not in canon
     assert "mean_score" not in canon
@@ -360,3 +374,19 @@ def test_continuous_score_adds_no_scoring_contract_field() -> None:
     field_names = {f.name for f in fields(ScoringWeights)}
     assert "score" not in field_names
     assert "metrics" not in field_names
+
+
+def test_experiment_memory_omitted_from_canon_at_default() -> None:
+    """The opt-in cross-epoch memory knob is additive: an unset (or
+    explicitly-default) ``experiment_memory`` block is OMITTED from the
+    canonical scoring form, so every existing epoch keeps its hash; opting
+    in emits the block and rolls the epoch like any contract change."""
+    canon_default = scoring_to_canon(ScoringWeights())
+    assert "experiment_memory" not in canon_default
+
+    explicit_default = ScoringWeights(experiment_memory=ExperimentMemoryConfig())
+    assert _canon(explicit_default) == _canon(ScoringWeights())
+
+    opted_in = ScoringWeights(experiment_memory=ExperimentMemoryConfig(cross_epoch=True))
+    assert scoring_to_canon(opted_in)["experiment_memory"] == {"cross_epoch": True}
+    assert _canon(opted_in) != _canon(ScoringWeights())

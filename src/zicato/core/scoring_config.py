@@ -157,15 +157,30 @@ class OverfittingConfig:
         a cue that the contract should be refreshed (the operator rolls).
         ``None`` (default) imposes no ceiling. This never forces a surprising
         auto epoch-roll; it only recommends. Must be ``>= 1`` when set.
+    random_baseline_every_n:
+        Opt-in random-baseline challenger cadence (OVERFITTING.md §12 #7 —
+        the placebo arm). When ``> 0``, every Nth round the orchestrator
+        fields ONE additional challenger whose patch is a
+        semantics-preserving no-op (the mutation point's current value
+        re-emitted unchanged), hypothesis clearly marked as the baseline
+        arm. The gate MUST reject it — identical trees leave no
+        improvement to clear the margin — so a PROMOTED baseline is the
+        alarm: the loop emits a CRITICAL ``placebo_promoted`` health
+        finding (gate discrimination is broken; recent "wins" are
+        suspect). ``0`` (default) fields no baseline and the loop is
+        byte-identical. Like ``diff_complexity_weight``, the field is
+        omitted from the contract canonical form at its default so
+        existing epochs never roll retroactively. Must be ``>= 0``.
     """
 
     enabled: bool = True
     holdout_fraction: float = 0.3
-    min_board_size_for_split: int = 8
+    min_board_size_for_split: int = 6
     restrict_proposer_visibility: bool = True
     ladder: LadderConfig = field(default_factory=_default_ladder_config)
     rotate_holdout: bool = True
     max_generations_per_contract: int | None = None
+    random_baseline_every_n: int = 0
 
     def __post_init__(self) -> None:
         if not 0.0 < self.holdout_fraction < 1.0:
@@ -178,6 +193,10 @@ class OverfittingConfig:
             raise ValueError(
                 f"max_generations_per_contract must be >= 1 or None, got "
                 f"{self.max_generations_per_contract!r}"
+            )
+        if self.random_baseline_every_n < 0:
+            raise ValueError(
+                f"random_baseline_every_n must be >= 0, got {self.random_baseline_every_n!r}"
             )
 
     @classmethod
@@ -203,11 +222,13 @@ class ProposerQualityConfig:
     correct: a proposer that samples N candidates and self-critiques proposes
     *differently* than one that samples once.
 
-    The DEFAULT is byte-identical to today's single-sample proposer:
-    :attr:`best_of_n` ``= 1`` short-circuits the wrapper to a single inner
-    ``propose`` call with NO critique, so every epoch on disk and every
-    operator who never touches the knob behaves exactly as before this lever
-    existed. See ``docs/design/FUNCTIONALITY-RECOMMENDATIONS.md`` §4.1.
+    The DEFAULT samples a slate: :attr:`best_of_n` ``= 3`` — three candidate
+    experiments per propose-step with the self-critique pass selecting the
+    best (the top proposal-quality lever; a valid-but-mediocre single sample
+    was never reconsidered). Pin ``"proposer_quality": {"best_of_n": 1}`` for
+    the historical single-sample, no-critique proposer (scripted / mock
+    proposers do). Changing the value rolls the epoch, like every contract
+    field. See ``docs/design/FUNCTIONALITY-RECOMMENDATIONS.md`` §4.1.
 
     Overfitting discipline (LOAD-BEARING): the self-critique pass sees ONLY
     the SAME restricted prompt context the proposer itself sees (the
@@ -221,12 +242,15 @@ class ProposerQualityConfig:
     ------
     best_of_n:
         How many candidate experiments to sample per propose-step before
-        the critique pass picks the best. ``1`` (default) = today's single
-        sample, no critique. Must be ``>= 1``. Each sample is an independent
-        inner ``propose`` (the LLM's own sampling supplies the variety); a
-        candidate that the inner proposer cannot produce simply narrows the
-        slate, and an empty slate falls back to a final inner ``propose`` so
-        the step never silently yields nothing.
+        the critique pass picks the best. ``3`` (default) samples a slate;
+        ``1`` is the historical single sample with no critique. Must be
+        ``>= 1``. Each sample is an independent inner ``propose`` (the LLM's
+        own sampling supplies the variety, and each slate slot carries a
+        distinct edit-class hint — see
+        :data:`zicato.proposer.best_of_n.EDIT_CLASS_HINTS`); a candidate that
+        the inner proposer cannot produce simply narrows the slate, and an
+        empty slate falls back to a final inner ``propose`` so the step never
+        silently yields nothing.
     critique_enabled:
         When ``True`` (default) and ``best_of_n > 1``, a single cheap
         auxiliary-LLM self-critique pass scores the sampled candidates
@@ -236,24 +260,131 @@ class ProposerQualityConfig:
         falls back to the deterministic built-in heuristic (smallest diff
         that targets an observed failure mode) — no extra LLM call. With
         ``best_of_n == 1`` this flag is inert (no critique ever runs).
+    screen_entries:
+        Opt-in pre-tournament candidate screening (tryouts). When ``> 0``
+        AND ``best_of_n > 1``, each best-of-N slate candidate is RUN on a
+        small rotating panel of this many TRAIN board entries before the
+        selection pass — VETO-FIRST semantics: the screen only
+        disqualifies catastrophic regressions (a confirmed pass-flip on a
+        champion-passing entry, or a budget abort); it never ranks, and
+        the critic/heuristic still chooses among the survivors. ``0``
+        (default) is OFF — the orchestrator does not even construct a
+        screen callable, so the propose path is byte-identical. With
+        ``best_of_n == 1`` the knob is inert (there is no slate to
+        screen). Like ``random_baseline_every_n``, the field is omitted
+        from the contract canonical form at its default so existing
+        epochs never roll retroactively; a non-zero value rolls the
+        epoch, which is correct — a proposer whose slate is screened
+        selects differently. Must be ``>= 0``. See
+        :mod:`zicato.epoch.screen`.
+
+        The screen-informed revise pass RIDES this knob (no separate
+        lever, deliberately): when a screened slate ends all-vetoed, the
+        wrapper takes exactly one feedback-informed re-sample before
+        degrading to critic-over-all. An all-vetoed slate with no revise
+        wastes the whole propose step on a known-vetoed candidate, so
+        the single re-sample is the cheapest possible recovery — and a
+        contract that opted into paying for the screen has already
+        accepted that propose-step cost class. See
+        :meth:`zicato.proposer.best_of_n.BestOfNProposerAgent`.
+    screen_veto_only:
+        When ``True``, the screen's measurements feed NOTHING but the
+        veto: the critic prompt carries no ``## Screen measurements``
+        block and the deterministic heuristic ignores the panel scalar
+        tiebreak — the screen can only disqualify, never nudge the
+        ordering. ``False`` (default) lets the survivors' banded panel
+        counts advise the selection as a late tiebreak. Inert while
+        ``screen_entries == 0``. Omitted-at-default from the contract
+        canonical form, exactly like ``screen_entries``.
+    process_exemplars:
+        Opt-in drift-anchored process-exemplar channel
+        (``docs/design/PROCESS-EXEMPLARS.md``). When ``> 0``, each round
+        the orchestrator extracts (best-effort) up to this many
+        mechanically-REDACTED event windows from the champion's
+        TRAIN-slice ``events.jsonl`` files — one per detected pattern,
+        ±3 events around an anchor drift — and splices them into the
+        proposer prompt after the failure-mode profile, so the proposer
+        can see HOW a detected failure unfolds (the wandering plan step,
+        the looping tool call) without ever learning WHICH board entry
+        it unfolded on (no entry ids, no task text, no model outputs —
+        the doc's §3 redaction rules are enforced in code, never by an
+        LLM). ``0`` (default) is OFF — no extraction runs and the
+        proposer prompt is byte-identical. Unlike ``screen_entries``
+        this knob is NOT set by the scaffold: the screen is
+        evaluation-side, while exemplars widen the proposer-visibility
+        channel (OVERFITTING.md §11), so the operator opts in
+        deliberately under the doc's §5 harm-detection runbook. Omitted
+        from the contract canonical form at its 0 default so existing
+        epochs never roll retroactively; a non-zero cap rolls the epoch,
+        which is correct — a proposer shown process windows proposes
+        under a different rule. Must be ``>= 0``.
     """
 
-    best_of_n: int = 1
+    best_of_n: int = 3
     critique_enabled: bool = True
+    screen_entries: int = 0
+    screen_veto_only: bool = False
+    process_exemplars: int = 0
 
     def __post_init__(self) -> None:
         if self.best_of_n < 1:
             raise ValueError(f"best_of_n must be >= 1, got {self.best_of_n!r}")
+        if self.screen_entries < 0:
+            raise ValueError(f"screen_entries must be >= 0, got {self.screen_entries!r}")
+        if self.process_exemplars < 0:
+            raise ValueError(f"process_exemplars must be >= 0, got {self.process_exemplars!r}")
 
     @classmethod
     def defaults(cls) -> ProposerQualityConfig:
-        """The fully-defaulted (single-sample, today's behaviour) config."""
+        """The fully-defaulted (best-of-3 + self-critique) config."""
         return cls()
 
 
 def _default_proposer_quality_config() -> ProposerQualityConfig:
     """Default-factory for :attr:`ScoringWeights.proposer_quality`."""
     return ProposerQualityConfig.defaults()
+
+
+@dataclass(frozen=True, slots=True)
+class ExperimentMemoryConfig:
+    """Experiment-memory scoping: what settled history the proposer sees.
+
+    Part of the frozen evaluation contract — a field of
+    :class:`ScoringWeights`, like :class:`OverfittingConfig` — because
+    changing what history the proposer reads selects champions under a
+    different rule (EXPERIMENT-MEMORY.md §3.4). The field is
+    omitted-at-default from the contract canonicalizer
+    (``epoch/contract.py::_SCORING_OMIT_AT_DEFAULT_FIELDS``), so a
+    contract that never sets it hashes byte-identically to one that
+    predates it; a non-default value rolls the epoch normally.
+
+    Fields
+    ------
+    cross_epoch:
+        Opt-in cross-epoch transfer (EXPERIMENT-MEMORY.md §3.4 / §5.2).
+        ``False`` (default): the experiment-memory digest is same-epoch
+        only — byte-identical to the shipped behaviour. ``True``: settled
+        experiments from PRIOR epochs of the same workspace that share
+        the current epoch's ``contract_hash`` are appended to the digest,
+        marked ``same_contract=False``, with their ``scalar_score_delta``
+        omitted (the number does not transfer), rendered in a clearly
+        separated block, and admitted only into the budget left after
+        every same-epoch entry — same-epoch history always keeps priority
+        in the cap. Experiments under a DIFFERENT contract hash are never
+        surfaced regardless of this knob.
+    """
+
+    cross_epoch: bool = False
+
+    @classmethod
+    def defaults(cls) -> ExperimentMemoryConfig:
+        """The fully-defaulted (same-epoch-only) config."""
+        return cls()
+
+
+def _default_experiment_memory_config() -> ExperimentMemoryConfig:
+    """Default-factory for :attr:`ScoringWeights.experiment_memory`."""
+    return ExperimentMemoryConfig.defaults()
 
 
 # ---------------------------------------------------------------------------
@@ -480,7 +611,7 @@ class ScoringWeights:
     # the diff-complexity term is exactly absent and the scalar / contract hash
     # / every golden are byte-identical to a contract without this field (the
     # contract canonicalizer omits it at the default — see
-    # ``epoch/contract.py::_scoring_to_canon``). Set ``> 0`` to fold a
+    # ``epoch/contract.py::scoring_to_canon``). Set ``> 0`` to fold a
     # ``diff_complexity_weight * (added + removed + patches)`` component into the
     # challenger's scalar so a shorter-description edit is preferred.
     diff_complexity_weight: float = 0.0
@@ -513,10 +644,21 @@ class ScoringWeights:
     # into the contract hash through the existing scoring canonicalizer with
     # zero new plumbing (the canonicalizer recurses into nested frozen
     # dataclasses): changing the best-of-N count or the critique flag rolls
-    # the epoch. The DEFAULT (``best_of_n == 1``) is byte-identical to today's
-    # single-sample proposer. See :class:`ProposerQualityConfig`.
+    # the epoch. The DEFAULT (``best_of_n == 3``) samples a slate + critiques;
+    # pin ``best_of_n: 1`` for the historical single-sample proposer. See
+    # :class:`ProposerQualityConfig`.
     proposer_quality: ProposerQualityConfig = field(
         default_factory=_default_proposer_quality_config
+    )
+    # Experiment-memory scoping (EXPERIMENT-MEMORY.md §3.4): opt-in
+    # cross-epoch transfer of settled history under the SAME contract
+    # hash. Default-off ⇒ same-epoch-only, byte-identical digest; the
+    # contract canonicalizer omits the field at its default (see
+    # ``_SCORING_OMIT_AT_DEFAULT_FIELDS``) so existing epochs never roll
+    # retroactively, while opting in rolls the epoch like any other
+    # contract change. See :class:`ExperimentMemoryConfig`.
+    experiment_memory: ExperimentMemoryConfig = field(
+        default_factory=_default_experiment_memory_config
     )
     # Optional operator outcome-summarizer hook (Capability 2 of issue #18,
     # item 8). A dotted spec (``pkg.mod:fn`` / ``pkg.mod.fn``) resolved like
@@ -582,6 +724,35 @@ class ScoringWeights:
     # class). ``scalar_fn`` is Seam 2 — it runs in the orchestrator.
     drift_reducer: str = ""
     scalar_fn: str = ""
+    # Opt-in INTEGRITY BLOCKING modes (both default OFF — the alarm-only
+    # posture of the supervisor's integrity notary is the shipped baseline).
+    # Both are omitted from the contract canonical form at their default
+    # (``epoch/contract.py::_SCORING_OMIT_AT_DEFAULT_FIELDS``) so existing
+    # epochs never roll retroactively; opting in rolls the epoch normally.
+    #
+    # ``block_on_containment_violation``: before finalizing a GATE-DECIDED
+    # promotion, the orchestrator re-checks diff containment on the same
+    # rule surface the Rust supervisor attests out-of-band
+    # (``crates/supervisor/src/diff_containment.rs``): every file OUTSIDE
+    # the registered mutable trees must be byte-identical parent↔child.
+    # When ON, a violating child is REJECTED with a clear
+    # ``containment_violation`` reason instead of promoted-with-alarm.
+    # Fail-open like the supervisor: an unreadable snapshot skips the
+    # check (never a false quarantine). An explicit operator
+    # force-promote is NOT blocked — the override is recorded provenance,
+    # never silent.
+    block_on_containment_violation: bool = False
+    # ``block_on_gate_contradiction``: immediately before finalizing a
+    # GATE-DECIDED promotion, re-derive the gate's scalar rule
+    # (``delta_scalar <= -promote_margin`` — the supervisor's
+    # ``promotion_gate.rs check_row`` semantics, applied pre-persist) and
+    # REFUSE the promotion on contradiction. When OFF (default) a
+    # contradiction persists exactly as today and the supervisor's
+    # out-of-band scan raises the alarm. An explicit operator
+    # force-promote is NOT re-checked (same rationale as above); a
+    # promotion with no usable scalar evidence is skipped (fail-open,
+    # mirroring ``check_row``'s SkippedNoEvidence).
+    block_on_gate_contradiction: bool = False
 
     def __post_init__(self) -> None:
         """Validate the declarative transform specs fail-fast at construction.
@@ -666,3 +837,60 @@ class ScoringWeights:
         if raw_scope is not None and raw_scope not in ("per_entry", "aggregate"):
             data = {**data, "pass_rate_monotonicity_scope": cls().pass_rate_monotonicity_scope}
         return jsonable_to_dataclass(cls, data)
+
+
+def recommended_scaffold_weights() -> ScoringWeights:
+    """The FULL effective contract new-workspace scaffolds write out.
+
+    Shared by ``zicato init`` (which writes it to the operator's live
+    ``scoring.json``) and the tournament builder's blank draft, so both
+    scaffolds spell the SAME recommended contract explicitly instead of
+    leaning on invisible defaults: the racing structure (field 4, eta 2,
+    board_fraction 0.4), two averaged replicates per duel, and the
+    Bradley--Terry evidence gate ENABLED EXPLICITLY (threshold 0.8 with a
+    32-replicate budget). The gate is deliberately NOT a silent in-code
+    default — its CIs separate only after a long unbroken win streak (~37
+    duels on a two-contestant pair), so it needs an honest budget the
+    operator can see and price: under racing the crowning-pair replicates
+    amortize through the per-unit cache, and the builder's cost meter
+    reflects the ``replicates`` knob. Everything else is the dataclass
+    default; the field-enumerating serializer then writes every field, so
+    the generated ``scoring.json`` IS the effective contract.
+
+    A pure recommendation for NEW workspaces — the in-code default
+    structure when a contract says nothing remains the gauntlet, with no
+    pre-gate.
+    """
+    # Function-local import: core is the base layer; the selection package
+    # (which imports core) owns the recommended evidence-gate bar.
+    from zicato.selection.evidence_gate import (  # noqa: PLC0415
+        DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD,
+    )
+
+    return ScoringWeights(
+        tournament_structure=TournamentStructure(
+            structure="racing",
+            params={
+                "field_size": 4,
+                "eta": 2,
+                "board_fraction": 0.4,
+                "replicates": 2,
+                "promote_confidence_threshold": DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD,
+                # An honest defer→replicate budget: CI separation on a
+                # two-contestant crowning pair needs ~32+ decisive duels,
+                # each a cheap cache-amortized re-read under racing.
+                "promote_confidence_replicates": 32,
+            },
+        ),
+        # Pre-tournament candidate screening (tryouts), enabled EXPLICITLY
+        # like the evidence gate: each best-of-N slate candidate runs on a
+        # 2-entry rotating train panel before selection, and a candidate
+        # with a confirmed catastrophic regression (a pass-flip on a
+        # champion-passing entry, or a budget abort) is vetoed before it
+        # can reach the tournament. Veto-first: the screen never ranks —
+        # the critic still chooses among the survivors. The in-code
+        # default stays OFF (``screen_entries=0``); the scaffold is where
+        # an operator sees and prices the extra
+        # proposes × best_of_n × screen_entries panel runs.
+        proposer_quality=ProposerQualityConfig(screen_entries=2),
+    )

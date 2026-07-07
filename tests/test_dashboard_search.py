@@ -23,7 +23,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from zicato.dashboard.server import create_app
-from zicato.dashboard.state_reader import (
+from zicato.query import (
     SEARCH_LIMIT_PER_CATEGORY,
     WorkspacePaths,
     build_search_results,

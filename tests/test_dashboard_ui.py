@@ -491,7 +491,20 @@ def test_bundle_under_size_envelope(
     # byte-identical for normal data; the primitives only change OUT-of-box cases).
     # ~28 KB of real new render-discipline code. The envelope is raised to 1.24 MB
     # to cover it with headroom.
-    assert total < 1_240_000, f"bundle is {total} bytes, exceeds 1_240_000 envelope"
+    #
+    # The LOOP-COMMUNICATION surface (WS4-A) then adds: the trajectory / cost /
+    # per-judge-trend panels (epoch view) + the fleet-card promotion-rate and
+    # cost-per-promotion stats + the uncertainty-honest plateau/no-signal chip
+    # (home), reading the new /api/epoch/{id}/trajectory + /cost endpoints; the
+    # sparkline's opt-in measured-noise band; the topbar pause/resume + skip-round
+    # controls and the per-run kill buttons through the previously-dead
+    # postControl; and the authoritative /api/live/pipeline propose→apply→run→gate
+    # stepper in the live hero (server-side inference rendered verbatim). All
+    # digest-gated (a no-op beat is byte-identical) + back-compat (absent
+    # endpoints — the Rust supervisor — render byte-identical to today). ~30 KB of
+    # new loop-communication surface. The envelope is raised to 1.29 MB to cover
+    # it with headroom.
+    assert total < 1_290_000, f"bundle is {total} bytes, exceeds 1_290_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

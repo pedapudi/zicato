@@ -29,11 +29,11 @@ from zicato.core import (
 )
 from zicato.core.types import DriftCount, ExpectationResult
 from zicato.core.workspace import loss_profile_path
-from zicato.dashboard.state_reader import WorkspacePaths, build_per_entry_for_generation
 from zicato.epoch.journal import write_experiment
 from zicato.epoch.lifecycle import new_epoch
 from zicato.epoch.lineage import append_to_lineage
 from zicato.index.ingest import rebuild_index
+from zicato.query import WorkspacePaths, build_per_entry_for_generation
 from zicato.selection.strategy import rung_for_match_id
 from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
 from zicato.testing.fixtures import make_experiment, make_outcome_record
@@ -260,14 +260,20 @@ def test_run_single_stamps_match_id_onto_loss_json(monkeypatch, tmp_path) -> Non
     write_loss_profile(base, lpath)
     assert read_loss_profile(lpath).match_id == ""  # the worker left it blank
 
-    # Stub the subprocess machinery: no copytree, no spawn, a clean exit
+    # Stub the subprocess machinery: no checkout, no spawn, a clean exit
     # whose result file points at the pre-written loss.json.
+    from zicato.epoch.genstore import EphemeralCheckout
+
     monkeypatch.setattr(
         runner_mod,
-        "_make_ephemeral_snapshot",
-        lambda snapshot_root, run_id: (tmp_path / "snap", tmp_path / "scratch"),
+        "_checkout_run_snapshot",
+        lambda **kwargs: EphemeralCheckout(
+            working_dir=tmp_path / "snap",
+            scratch_dir=tmp_path / "scratch",
+            cleanup=lambda: None,
+        ),
     )
-    monkeypatch.setattr(runner_mod, "_discard_ephemeral_snapshot", lambda p: None)
+    monkeypatch.setattr(runner_mod, "_discard_run_snapshot", lambda c: None)
     monkeypatch.setattr(runner_mod, "_ingest_run_into_index", lambda *a, **k: None)
 
     class _Proc:

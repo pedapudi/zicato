@@ -13,6 +13,7 @@ injected callables, so it is fully unit-testable with synthetic
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -47,7 +48,21 @@ RunMatchup = Callable[[Matchup], Awaitable[MatchupResult]]
 #: through this callable, refits, and rechecks. ``None`` (the default) disables
 #: the loop entirely — the pre-gate then defers/inconclusive on its current
 #: evidence without scheduling any new duel.
+#:
+#: CONTRACT: every call must return an INDEPENDENT fresh draw of the pair,
+#: under a matchup id that is unique within the audit. The orchestrator's
+#: implementations satisfy both by running each evidence replicate ``j`` at
+#: the reserved replicate index
+#: :data:`~zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE` ``+ j``
+#: (both sides drawn fresh — never a cache replay of the canonical
+#: replicate-0 slots) and encoding that index in the matchup id
+#: (``bt-replicate:r{index}:{left}:{right}``). The driver refuses to append a
+#: result whose matchup id already appears in the audit: identical data
+#: re-presented to the fit would shrink the Bradley--Terry SE by repetition
+#: alone, letting duplicate duels "separate" CIs without new evidence.
 ReplicateDuel = Callable[[str, str], Awaitable[MatchupResult]]
+
+log = logging.getLogger("zicato.selection.driver")
 
 #: ``on_inconclusive(resolution)`` is called once, at the moment the pre-gate
 #: reaches the terminal ``inconclusive`` state, with the full
@@ -181,6 +196,31 @@ async def _apply_pre_gate(
     replicate_duel: ReplicateDuel | None,
     on_inconclusive: OnInconclusive | None,
 ) -> SelectionDecision:
+    """Run the pre-gate over a decision, returning only the folded decision.
+
+    Thin wrapper over :func:`confirm_promotion_with_evidence` for
+    :func:`resolve_tournament`, which does not consume the resolution
+    object itself (the orchestrator's ``on_inconclusive`` callback carries
+    it on the one terminal that needs recording).
+    """
+    confirmed, _resolution = await confirm_promotion_with_evidence(
+        decision,
+        champion=champion,
+        pre_gate=pre_gate,
+        replicate_duel=replicate_duel,
+        on_inconclusive=on_inconclusive,
+    )
+    return confirmed
+
+
+async def confirm_promotion_with_evidence(
+    decision: SelectionDecision,
+    *,
+    champion: Contestant,
+    pre_gate: EvidencePreGate,
+    replicate_duel: ReplicateDuel | None,
+    on_inconclusive: OnInconclusive | None = None,
+) -> tuple[SelectionDecision, EvidenceResolution | None]:
     """Run the Bradley--Terry pre-gate (+ defer→replicate loop) over a decision.
 
     Only a ``"promoted"`` decision with an identified crowning challenger is
@@ -203,23 +243,38 @@ async def _apply_pre_gate(
       replicate and refits; budget exhausted with overlapping CIs terminates
       ``inconclusive``.
 
-    Returns a decision with the pre-gate's verdict folded in: ``promoted``
-    (cleared on evidence) or a terminal hold — ``deferred`` (the closed enum's
-    token for "kept for analysis, lineage head unchanged") on an inconclusive
-    duel. The accumulated audit (including any replicate duels) is stamped on
-    ``matchups`` so the journal records the full evidence trail; on an
-    inconclusive terminal the ``on_inconclusive`` callback receives the full
-    :class:`EvidenceResolution` so the orchestrator can write the dead-letter
-    record.
+    Returns ``(decision, resolution)``. The decision carries the pre-gate's
+    verdict folded in: ``promoted`` (cleared on evidence) or a terminal hold —
+    ``deferred`` (the closed enum's token for "kept for analysis, lineage head
+    unchanged") on an inconclusive duel. The accumulated audit (including any
+    replicate duels) is stamped on ``matchups`` so the journal records the
+    full evidence trail. ``resolution`` is the terminal
+    :class:`EvidenceResolution` (verdict + CI history) when a credible
+    terminal was reached, or ``None`` on a pass-through (a non-promote
+    decision, or a fit that never reached credibility) — the caller journals
+    it as the round's evidence block. On an inconclusive terminal the
+    ``on_inconclusive`` callback additionally receives the same resolution so
+    the orchestrator can write the dead-letter record.
+
+    This is the shared crowning-confirmation used by BOTH selection shapes:
+    :func:`resolve_tournament` calls it (via :func:`_apply_pre_gate`) after a
+    multi-challenger structure resolves, and the orchestrator's gauntlet path
+    calls it directly on its single crowning duel — the same
+    defer→replicate→inconclusive adjudication regardless of structure.
     """
     promoted_id = decision.promoted_generation_id
     if decision.decision != "promoted" or promoted_id is None:
-        return decision
+        return decision, None
 
     parent_id = champion.generation_id
     audit: list[MatchupResult] = list(decision.matchups)
     ci_history: list[dict[str, Any]] = []
     replicates_spent = 0
+    # The audit must only ever accumulate DISTINCT draws: the replicate ids
+    # encode the reserved replicate index (see the ReplicateDuel contract),
+    # so a duplicate id is the same draw re-presented — appending it would
+    # shrink the fitted SE by pure repetition, never by new evidence.
+    seen_matchup_ids = {r.matchup_id for r in audit}
 
     while True:
         verdict = evidence_verdict(
@@ -256,15 +311,27 @@ async def _apply_pre_gate(
             if not verdict.credible:
                 # Never reached the credibility floor → no trustworthy fit to
                 # override the gate; the strategy's promotion stands verbatim.
-                return decision
+                return decision, None
             # Credible but unresolved with no way to spend more budget ⇒ the
             # hold is terminal: a dead-letter inconclusive, not a dangling defer.
             terminal = replace(verdict, decision="inconclusive")
             return _finalize(decision, terminal, audit, ci_history, promoted_id, on_inconclusive)
 
         extra = await replicate_duel(candidate.left_id, candidate.right_id)
-        audit.append(extra)
+        # The spend is counted regardless: the budget bounds duels RUN, and
+        # skipping the count on a duplicate would loop forever against a
+        # runner that keeps replaying one draw.
         replicates_spent += 1
+        if extra.matchup_id in seen_matchup_ids:
+            log.warning(
+                "evidence pre-gate: replicate duel returned an already-audited "
+                "draw (matchup_id %r) — not appended to the Bradley--Terry "
+                "audit; identical data must never separate CIs",
+                extra.matchup_id,
+            )
+            continue
+        seen_matchup_ids.add(extra.matchup_id)
+        audit.append(extra)
 
 
 def _finalize(
@@ -274,46 +341,54 @@ def _finalize(
     ci_history: list[dict[str, Any]],
     promoted_id: str,
     on_inconclusive: OnInconclusive | None,
-) -> SelectionDecision:
+) -> tuple[SelectionDecision, EvidenceResolution | None]:
     """Fold a terminal pre-gate verdict into the crowned decision.
 
     A ``promoted`` verdict keeps the crown; ``inconclusive`` maps to the
     closed enum's ``DEFERRED`` token (the experiment is kept for analysis, the
     lineage head unchanged) and fires ``on_inconclusive`` so the caller records
     the dead-letter entry. A ``credible=False`` pass-through keeps the original
-    decision verbatim (no fit to override it).
+    decision verbatim (no fit to override it). Returns the decision paired
+    with the terminal :class:`EvidenceResolution` (``None`` on pass-through).
     """
     from zicato.core import TournamentDecision  # noqa: PLC0415
 
     if not verdict.credible:
         # No trustworthy fit ⇒ the strategy's decision stands unchanged.
-        return decision
+        return decision, None
 
     resolution = EvidenceResolution(verdict=verdict, ci_history=tuple(ci_history))
 
     if verdict.decision == "promoted":
-        return replace(
-            decision,
-            promoted_generation_id=promoted_id,
-            decision=TournamentDecision.PROMOTED,
-            reason=verdict.reason,
-            matchups=tuple(audit),
+        return (
+            replace(
+                decision,
+                promoted_generation_id=promoted_id,
+                decision=TournamentDecision.PROMOTED,
+                reason=verdict.reason,
+                matchups=tuple(audit),
+            ),
+            resolution,
         )
 
     # Inconclusive terminal: lineage head unchanged, recorded to dead-letter.
     if on_inconclusive is not None:
         on_inconclusive(resolution)
-    return replace(
-        decision,
-        promoted_generation_id=None,
-        decision=TournamentDecision.DEFERRED,
-        reason=verdict.reason,
-        matchups=tuple(audit),
+    return (
+        replace(
+            decision,
+            promoted_generation_id=None,
+            decision=TournamentDecision.DEFERRED,
+            reason=verdict.reason,
+            matchups=tuple(audit),
+        ),
+        resolution,
     )
 
 
 __all__ = [
     "resolve_tournament",
+    "confirm_promotion_with_evidence",
     "RequestField",
     "RunMatchup",
     "ReplicateDuel",

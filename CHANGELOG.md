@@ -1,9 +1,76 @@
 # Changelog
 
+### Contract hash no longer depends on the process cwd or checkout path
+
+`_canon_mutable_trees` previously RESOLVED the registered mutable-tree
+paths against the process cwd, folding the absolute checkout path into
+the contract hash — the same workspace hashed differently when `evolve`
+ran from a different directory, or after the workspace moved, and
+spuriously rolled its epoch. Paths are now normalized (never
+filesystem-resolved). BREAKING: every existing epoch's contract hash
+moves once; the workspace auto-rolls on the next `evolve` (the standard
+contract-change behavior). The parity CONTRACT-HASH golden is
+re-captured and is now checkout-independent.
+
 All notable changes to zicato are recorded here. Format roughly follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
+
+### ⚠️ BREAKING DEFAULTS — noise-aware decision procedure (epochs auto-roll)
+
+**Existing workspaces whose contracts do not pin these knobs will AUTO-ROLL
+their epoch on the next `evolve`** — the flipped defaults change the
+contract's canonical form, so the contract hash changes and a fresh epoch
+opens (generations across epochs are not directly comparable; this is the
+intended contract-roll semantics, not a migration bug). Pin the old values
+in `scoring.json` to keep an epoch's contract byte-stable
+(`"tournament": {"params": {"replicates": 1}}`,
+`"proposer_quality": {"best_of_n": 1}`,
+`"overfitting": {"min_board_size_for_split": 8}` — see
+`examples/zicato_examples/target_0_convergence/scoring.json` for the
+canonical pinned deterministic contract).
+
+- **Per-duel `replicates` default 1 → 2** for gauntlet / single-elim /
+  double-elim / swiss (racing keeps 1 — its replication is intrinsic to the
+  escalating board slices). The gauntlet's full-A/B path (`run_tournament`)
+  now honors the structure's resolved replicates: two paired board runs,
+  per-replicate cache slots, per-entry losses averaged before the gate. A
+  duel decided by one paired run is decided by one noise draw; two averaged
+  runs is the cheapest hedge.
+- **Proposer `best_of_n` default 1 → 3** with the self-critique pass:
+  each propose-step samples a slate of three (each slot steered by a
+  distinct edit-class hint) and selects the best. Pin `best_of_n: 1` for
+  scripted / deterministic proposers.
+- **`overfitting.min_board_size_for_split` default 8 → 6**: boards of 6–7
+  entries now derive a holdout split.
+- **The Bradley–Terry evidence gate stays OPT-IN** (`promote_confidence_threshold`
+  absent ⇒ off) — deliberately. Measured (Tier-2 power harness): the gate
+  blocks **100% of A/A false promotes**, but on a two-contestant crowning
+  pair its CIs separate only after an **unbroken win streak of ~37 duels**
+  (mixed records never separate) — so a silent on-by-default gate with a
+  small budget would freeze every true promotion at `inconclusive`, and a
+  converging budget costs ~32×2×board fresh runs per crowning. The gate is
+  a **soundness** device; decision **power** is bought with per-duel
+  replication and a margin calibrated above the measured noise floor. When
+  enabled it now reaches BOTH selection shapes: the multi-challenger driver
+  AND the gauntlet crowning duel (previously unreachable under the default
+  structure).
+- **Scaffolds enable the gate explicitly**: `zicato init` writes the full
+  effective recommended contract (racing field 4 / eta 2 / board_fraction
+  0.4, replicates 2, `promote_confidence_threshold: 0.8`,
+  `promote_confidence_replicates: 32`) to the operator's live
+  `scoring.json` (only when absent), and the tournament builder's blank
+  draft opens on the same contract — the operator sees and prices the
+  gate rather than inheriting a silent freeze or silent noise.
+- **A/A noise-floor calibration is the default soundness surface**:
+  `zicato board audit` (and the opt-in `calibrate_noise_floor` workspace
+  knob) duels the champion against itself, persists the measured
+  `delta_scalar` spread on the epoch record, and `evolve` WARNS loudly —
+  with a `margin_below_noise_floor` health finding — when `promote_margin`
+  sits inside the measured noise while the evidence gate is off (measured:
+  a naive margin below the floor promotes pure noise — 20/60 A/A promotes
+  in the Tier-2 harness).
 
 ### Dashboard — decision-centric console (Variant T)
 - **Cross-epoch meta-loop ledger** on the home view: the fleet of epochs

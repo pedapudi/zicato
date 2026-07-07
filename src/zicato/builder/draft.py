@@ -23,12 +23,13 @@ contract so the builder opens showing exactly what is running.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from zicato.board.jsonl import _entry_to_dict
+from zicato.board.jsonl import entry_to_dict
 from zicato.board.split import HOLDOUT_TAG, split_board
 from zicato.core.types import (
     BoardEntry,
@@ -146,10 +147,16 @@ class TournamentDraft:
         (with judges / predicates / rubrics and any ``holdout`` tags), the
         proposer-brief text, and the configured proposer dir — so the
         builder opens pre-filled with what is running. A missing component
-        degrades to its default (empty board, empty brief, default scoring,
-        built-in proposer) rather than raising, so a freshly-``init``-ed
-        workspace with no epoch yet still yields an editable blank draft.
+        degrades to its default (empty board, empty brief, built-in
+        proposer) rather than raising, so a freshly-``init``-ed workspace
+        with no epoch yet still yields an editable draft. A missing scoring
+        contract degrades to the RECOMMENDED scaffold contract
+        (:func:`zicato.core.scoring_config.recommended_scaffold_weights` —
+        racing field 4, replicates 2, evidence gate on), the same full
+        effective contract ``zicato init`` writes, so a blank draft opens on
+        the noise-aware recommendation rather than the bare gauntlet.
         """
+        from zicato.core.scoring_config import recommended_scaffold_weights  # noqa: PLC0415
         from zicato.workspace_loader import (  # noqa: PLC0415
             load_current_board,
             load_current_brief,
@@ -160,7 +167,7 @@ class TournamentDraft:
         try:
             scoring = load_current_scoring(workspace_root)
         except FileNotFoundError:
-            scoring = ScoringWeights()
+            scoring = recommended_scaffold_weights()
 
         try:
             entries = list(load_current_board(workspace_root))
@@ -211,12 +218,12 @@ class TournamentDraft:
         train/holdout id partition so the UI can highlight the split
         without re-deriving it.
         """
-        from zicato.epoch.lifecycle import _scoring_to_dict  # noqa: PLC0415
+        from zicato.epoch.lifecycle import scoring_to_dict  # noqa: PLC0415
 
         train_ids, holdout_ids = split_board(self.entries, self.scoring.overfitting)
         return {
-            "scoring": _scoring_to_dict(self.scoring),
-            "board": [_entry_to_dict(e) for e in self.entries],
+            "scoring": scoring_to_dict(self.scoring),
+            "board": [entry_to_dict(e) for e in self.entries],
             "brief": self.brief,
             "proposer_path": str(self.proposer_path) if self.proposer_path is not None else None,
             "proposer": _proposer_to_dict(self.resolved_proposer()),
@@ -285,7 +292,7 @@ def _board_canon(entries: Sequence[BoardEntry]) -> str:
     import json
 
     return "\n".join(
-        json.dumps(_entry_to_dict(e), sort_keys=True, ensure_ascii=False)
+        json.dumps(entry_to_dict(e), sort_keys=True, ensure_ascii=False)
         for e in sorted(entries, key=lambda e: e.id)
     )
 
@@ -305,13 +312,33 @@ def _scoring_canon(weights: ScoringWeights) -> str:
     """Float-rounded, key-sorted scoring form, matching the contract hash."""
     import json
 
-    from zicato.epoch.contract import _round_floats, _scoring_to_canon  # noqa: PLC0415
+    from zicato.epoch.contract import round_floats, scoring_to_canon  # noqa: PLC0415
 
-    return json.dumps(_round_floats(_scoring_to_canon(weights)), sort_keys=True)
+    return json.dumps(round_floats(scoring_to_canon(weights)), sort_keys=True)
+
+
+#: Slot names are path/JSON-safe short slugs — same spirit as epoch ids.
+_SLOT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def _copy_draft(draft: TournamentDraft) -> TournamentDraft:
+    """A safe working copy of ``draft`` for a named slot.
+
+    ``scoring`` is a frozen dataclass and every operation REPLACES it (and
+    replaces board entries wholesale — entries themselves are never
+    mutated in place), so a shallow copy of the entries list is a real
+    fork: edits to either copy can never leak into the other.
+    """
+    return TournamentDraft(
+        scoring=draft.scoring,
+        entries=list(draft.entries),
+        brief=draft.brief,
+        proposer_path=draft.proposer_path,
+    )
 
 
 class DraftStore:
-    """In-memory store of editable drafts keyed by session id.
+    """In-memory store of editable drafts keyed by session id — plus SLOTS.
 
     Concurrent builder sessions (multiple browser tabs, the form and the
     copilot side by side) each get an independent :class:`TournamentDraft`
@@ -320,13 +347,28 @@ class DraftStore:
     :meth:`TournamentDraft.from_workspace`, so the builder always opens
     pre-filled with what is running.
 
-    The store is process-local and not persisted — drafts live only until
+    NAMED SLOTS are the fork/compare lifecycle: :meth:`fork` snapshots a
+    session's working draft into a named slot and binds the session TO
+    that slot (subsequent edits accumulate on it); :meth:`switch` rebinds
+    the session to another slot with its state intact; named drafts are
+    how an operator iterates on contract variants WITHOUT rolling the
+    epoch — the write path is untouched (``apply`` still writes whichever
+    draft the session is on).
+
+    Slots persist exactly the way session drafts do — in this
+    process-local store (drafts have never outlived the dashboard
+    process; slots inherit that contract rather than inventing a second
+    persistence story). Everything lives until
     :func:`zicato.builder.operations.apply` writes one to the workspace,
     or the process exits.
     """
 
     def __init__(self) -> None:
         self._drafts: dict[str, TournamentDraft] = {}
+        #: Named slots, store-global (shared across sessions — two tabs
+        #: naming the same slot see the same draft, exactly like two tabs
+        #: sharing a session id).
+        self._slots: dict[str, TournamentDraft] = {}
 
     def get(self, session_id: str, workspace_root: Path) -> TournamentDraft:
         """Return the draft for ``session_id``, initialising it if new.
@@ -350,6 +392,53 @@ class DraftStore:
     def has(self, session_id: str) -> bool:
         """``True`` iff ``session_id`` already has a draft in the store."""
         return session_id in self._drafts
+
+    # -- named slots (fork / list / switch) --------------------------------
+
+    def fork(self, session_id: str, name: str, workspace_root: Path) -> TournamentDraft:
+        """Snapshot the session's working draft into slot ``name`` and switch to it.
+
+        The fork is a COPY of the current working draft — the state the
+        operator has built up so far becomes the new slot's starting
+        point — and the session is bound to the slot, so subsequent edits
+        accumulate on it. Raises :class:`ValueError` on a malformed name
+        or a name already taken (fork never silently overwrites a
+        variant).
+        """
+        if not _SLOT_NAME_RE.match(name or ""):
+            raise ValueError(
+                f"invalid draft name {name!r}: use 1-64 chars of [A-Za-z0-9._-], "
+                "starting alphanumeric"
+            )
+        if name in self._slots:
+            raise ValueError(f"a draft named {name!r} already exists; switch to it instead")
+        forked = _copy_draft(self.get(session_id, workspace_root))
+        self._slots[name] = forked
+        self._drafts[session_id] = forked
+        return forked
+
+    def list_drafts(self) -> list[str]:
+        """The named slots, sorted."""
+        return sorted(self._slots)
+
+    def switch(self, session_id: str, name: str) -> TournamentDraft:
+        """Bind ``session_id`` to slot ``name`` (its state intact).
+
+        The session's previous working draft is left exactly where it was
+        (if it was a slot, that slot keeps every edit; a never-forked
+        working draft is simply left behind). Raises :class:`ValueError`
+        on an unknown name.
+        """
+        slot = self._slots.get(name)
+        if slot is None:
+            known = ", ".join(sorted(self._slots)) or "none"
+            raise ValueError(f"no draft named {name!r} (known: {known})")
+        self._drafts[session_id] = slot
+        return slot
+
+    def slot(self, name: str) -> TournamentDraft | None:
+        """The slot draft for ``name``, or ``None`` when absent."""
+        return self._slots.get(name)
 
 
 __all__ = [

@@ -53,7 +53,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from zicato.storage._atomic import atomic_claim
+from zicato.storage import atomic_claim
 from zicato.storage.base import StorageBackend
 from zicato.util.iso_time import now_iso as _utc_now_iso
 

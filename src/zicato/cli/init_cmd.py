@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from zicato.cli.common import (
+from zicato.workspace.config_io import (
     CONFIG_FILENAME,
     LINEAGE_FILENAME,
     workspace_is_initialized,
@@ -44,6 +44,12 @@ def initialize_workspace(
     * ``{workspace_root}/`` (directory)
     * ``{workspace_root}/config.json`` — ``{instance_id, created_at}``
     * ``{workspace_root}/lineage.json`` — empty DAG: ``{"nodes": [], "edges": []}``
+    * ``{workspace_root_parent}/scoring.json`` — the FULL recommended
+      effective contract (racing field 4, replicates 2, evidence gate on;
+      see :func:`zicato.core.scoring_config.recommended_scaffold_weights`),
+      written only when no ``scoring.json`` exists there yet (never
+      clobbered, not even with ``force`` — it is the operator's live
+      contract source, resolved by ``resolve_contract_inputs``).
     """
     if workspace_root.exists():
         if not force:
@@ -66,6 +72,21 @@ def initialize_workspace(
         "created_at": _utcnow_iso(),
     }
     write_workspace_config(workspace_root, config)
+
+    # Scaffold the operator's live scoring.json with the FULL effective
+    # contract — every field spelled out (the field-enumerating serializer),
+    # so the recommended noise-aware knobs are visible and editable rather
+    # than implicit. Lives at the default contract-source location
+    # (<workspace_root_parent>/scoring.json). Only written when absent: an
+    # existing contract is the operator's, never overwritten.
+    scoring_scaffold = workspace_root.resolve().parent / "scoring.json"
+    if not scoring_scaffold.exists():
+        from zicato.core.scoring_config import recommended_scaffold_weights  # noqa: PLC0415
+        from zicato.epoch.lifecycle import scoring_to_dict  # noqa: PLC0415
+
+        scoring_scaffold.write_text(
+            json.dumps(scoring_to_dict(recommended_scaffold_weights()), indent=2) + "\n"
+        )
 
     # Sanity check that the config file is actually on disk now.
     assert workspace_is_initialized(

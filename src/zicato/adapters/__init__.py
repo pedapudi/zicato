@@ -27,9 +27,17 @@ The :class:`ADKHarnessAdapter` import is lazy in two ways:
 
 from __future__ import annotations
 
+from zicato.adapters.adk import (
+    entry_disable_drift,
+    entry_judge_only,
+    rebind_tree_models_to_adk_model,
+)
 from zicato.adapters.base import HarnessAdapter, RunnableHarness
 
 __all__ = [
     "HarnessAdapter",
     "RunnableHarness",
+    "entry_disable_drift",
+    "entry_judge_only",
+    "rebind_tree_models_to_adk_model",
 ]

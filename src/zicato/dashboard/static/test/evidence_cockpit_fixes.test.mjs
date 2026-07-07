@@ -113,7 +113,7 @@ test('chrome: a LIVE run reads STATE + PHASE in the one pill (e.g. "LIVE · raci
   state.connected = true;
   state.activeTournament = { structure: 'racing', phase: 'running', competitors: [{ generation_id: 'v0' }] };
   state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0' }, { generation_id: 'v2', entry_id: 'b1' }];
-  state.setHeartbeat({ phase: 'tournament:round_0:rung0_m1', seq: 3, last_heartbeat: Date.now() });
+  state.setHeartbeat({ phase: 'tournament:round_0:rung0_m1', seq: 3, ts: Date.now() });
   state._changed();
   await new Promise((r) => setTimeout(r, 0));
   const pill = allByClass(root, 'dt-run-state')[0];
@@ -129,7 +129,7 @@ test('chrome: a frozen run shows "last seen Ns ago" INSIDE the one pill — no s
   await new Promise((r) => setTimeout(r, 0));
   state.connected = true;
   // a frozen heartbeat (120s old) — not alive → stale affordance shows.
-  state.setHeartbeat({ phase: 'tournament:round_0:final', last_heartbeat: Date.now() - 120_000 });
+  state.setHeartbeat({ phase: 'tournament:round_0:final', ts: Date.now() - 120_000 });
   state.activeTournament = { structure: 'racing', phase: 'running' };
   state.activeRuns = [];
   state._changed();
@@ -149,7 +149,7 @@ test('chrome: a NO-OP beat (same seq) churns ZERO DOM in the consolidated pill',
   state.activeTournament = { structure: 'racing', phase: 'running', competitors: [{ generation_id: 'v0' }] };
   state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0' }];
   const t0 = Date.now();
-  state.setHeartbeat({ phase: 'tournament:round_0:rung0_m1', seq: 4, last_heartbeat: t0 });
+  state.setHeartbeat({ phase: 'tournament:round_0:rung0_m1', seq: 4, ts: t0 });
   state._changed();
   await new Promise((r) => setTimeout(r, 0));
   const statusEl = allByClass(root, 'dt-status')[0];
@@ -158,7 +158,7 @@ test('chrome: a NO-OP beat (same seq) churns ZERO DOM in the consolidated pill',
   const labelNodeBefore = allByClass(pill, 'dt-run-label')[0].firstChild;
 
   // a NO-OP beat: same seq, a newer-but-same-bucket heartbeat ts.
-  state.setHeartbeat({ phase: 'tournament:round_0:rung0_m1', seq: 4, last_heartbeat: t0 + 500 });
+  state.setHeartbeat({ phase: 'tournament:round_0:rung0_m1', seq: 4, ts: t0 + 500 });
   state._changed();
   await new Promise((r) => setTimeout(r, 0));
   assertEqual(state.lastSeq, 4, 'the cursor is unchanged by the no-op beat');
@@ -174,7 +174,7 @@ test('chrome: a NO-OP beat (same seq) churns ZERO DOM in the consolidated pill',
 test('livestatus: `alive` is true for LIVE and STALLED, false for SETTLED and DEAD', () => {
   // LIVE — seq advancing, fresh heartbeat.
   const liveSt = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'tournament:round_0:rung0_m1', last_heartbeat: NOW - 1000 },
+    heartbeat: { phase: 'tournament:round_0:rung0_m1', ts: NOW - 1000 },
     activeRuns: [{ generation_id: 'v1' }], activeTournament: { structure: 'racing', phase: 'running' },
     seq: 12, terminal: false, lastSeqAdvanceAt: NOW - 1000,
   }, NOW);
@@ -184,7 +184,7 @@ test('livestatus: `alive` is true for LIVE and STALLED, false for SETTLED and DE
   // STALLED — seq frozen past budget, but the heartbeat STILL pulses (a long
   // reasoning call): the orchestrator is alive, so the hero must NOT flicker out.
   const stalledSt = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'tournament:round_0:rung0_m1', last_heartbeat: NOW - 1000 /* fresh pulse */ },
+    heartbeat: { phase: 'tournament:round_0:rung0_m1', ts: NOW - 1000 /* fresh pulse */ },
     activeRuns: [], activeTournament: { structure: 'swiss', phase: 'running' },
     seq: 5, terminal: false, lastSeqAdvanceAt: NOW - (livestatus.SEQ_STALL_BUDGET_MS + 5000),
   }, NOW);
@@ -193,7 +193,7 @@ test('livestatus: `alive` is true for LIVE and STALLED, false for SETTLED and DE
 
   // SETTLED — terminal.
   const settledSt = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'tournament:round_0:rung0_m1', last_heartbeat: NOW - 1000 },
+    heartbeat: { phase: 'tournament:round_0:rung0_m1', ts: NOW - 1000 },
     activeRuns: [{ generation_id: 'v1' }], activeTournament: { structure: 'racing', phase: 'running' },
     seq: 20, terminal: true, lastSeqAdvanceAt: NOW - 500,
   }, NOW);
@@ -201,7 +201,7 @@ test('livestatus: `alive` is true for LIVE and STALLED, false for SETTLED and DE
 
   // DEAD — seq frozen AND no fresh heartbeat.
   const deadSt = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'tournament:round_0:rung0_m1', last_heartbeat: NOW - (livestatus.STALE_HEARTBEAT_MS + 10_000) },
+    heartbeat: { phase: 'tournament:round_0:rung0_m1', ts: NOW - (livestatus.STALE_HEARTBEAT_MS + 10_000) },
     activeRuns: [], activeTournament: { structure: 'swiss', phase: 'running' },
     seq: 5, terminal: false, lastSeqAdvanceAt: NOW - (livestatus.SEQ_STALL_BUDGET_MS + 5000),
   }, NOW);
@@ -211,7 +211,7 @@ test('livestatus: `alive` is true for LIVE and STALLED, false for SETTLED and DE
 test('hero: a STALLED run (seq frozen, heartbeat still fresh) KEEPS the hero visible (dt-live-on)', () => {
   const c = new live.LiveController({});
   const at = { structure: 'racing', phase: 'running', epoch_id: 'e1', competitors: [{ generation_id: 'v0' }] };
-  const heartbeat = { phase: 'tournament:round_0:rung0_m1', epoch_id: 'e1', last_heartbeat: new Date().toISOString() };
+  const heartbeat = { phase: 'tournament:round_0:rung0_m1', epoch_id: 'e1', ts: Date.now() };
   // a STALLED status: running falls to false (no in-flight, phase still active),
   // but alive stays true because the heartbeat pulses.
   c.update({ status: { running: false, alive: true, structure: 'racing', runState: 'stalled' }, heartbeat, activeRuns: [], activeTournament: at });
@@ -252,7 +252,7 @@ function racingInflight(epochTag, hbEpochTag) {
       ],
       standings: [], partial_champion_agg: { scalar: 10.0 },
     },
-    heartbeat: { phase: 'tournament:rung1', epoch_id: hbEpochTag, last_heartbeat: new Date().toISOString() },
+    heartbeat: { phase: 'tournament:rung1', epoch_id: hbEpochTag, ts: Date.now() },
     activeRuns: [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r5', epoch_id: epochTag }],
   };
 }
@@ -274,7 +274,7 @@ test('matches: a FOREIGN-epoch run (known-different) does NOT light up a stale t
   // tournament in 'e1'; the heartbeat AND the only run are in 'e2' (a genuinely
   // foreign run) — the tournament has no corroborating run, so no matches show.
   const at = racingInflight('e1', 'e2').at;
-  const heartbeat = { phase: 'tournament:rung1', epoch_id: 'e2', last_heartbeat: new Date().toISOString() };
+  const heartbeat = { phase: 'tournament:rung1', epoch_id: 'e2', ts: Date.now() };
   const foreignRuns = [{ generation_id: 'v9', entry_id: 'bx', run_id: 'r9', epoch_id: 'e2' }];
   c.update({ status: { running: true, alive: true, structure: 'racing' }, heartbeat, activeRuns: foreignRuns, activeTournament: at });
   const empty = allByClass(c._matchesBody, 'dt-live-matches-empty')[0];
@@ -319,7 +319,7 @@ function racingSettledRoundsInflight(epochTag, runEpochTag) {
       ],
       standings: [],
     },
-    heartbeat: { phase: 'tournament:rung2', epoch_id: epochTag, last_heartbeat: new Date().toISOString() },
+    heartbeat: { phase: 'tournament:rung2', epoch_id: epochTag, ts: Date.now() },
     activeRuns: [{ generation_id: 'v7', entry_id: 'b0', run_id: 'r7', epoch_id: runEpochTag, boards_done: 2, boards_total: 8 }],
   };
 }
@@ -365,24 +365,27 @@ test('matches: a NO-OP beat over the synthesized all-settled fallback churns ZER
 // ════════════════════════════════════════════════════════════════════
 
 test('progress: a TERMINAL run reads 100% regardless of its elapsed/budget time-fraction', () => {
-  // the "1/1 tasks completed but 0%" bug: finished early, tiny elapsed/budget.
-  assertEqual(STRUCT.runProgressRatio({ tasks_completed: 1, tasks_total: 1, elapsed_seconds: 2, budget_seconds: 600 }), 1,
-    'all tasks complete ⇒ 100% (not the 0%-ish time fraction)');
+  // finished early, tiny elapsed/budget — completion wins over the time bar.
+  // ONE spelling on the wire: `status` (the canonical entry vocabulary) and
+  // `boards_done`/`boards_total` — the speculative tasks_*/done aliases no
+  // server ever wrote are DELETED and must NOT read terminal.
   assertEqual(STRUCT.runProgressRatio({ status: 'completed', elapsed_seconds: 5, budget_seconds: 600 }), 1, 'status:completed ⇒ 100%');
   assertEqual(STRUCT.runProgressRatio({ status: 'pass' }), 1, 'a terminal pass ⇒ 100%');
-  assertEqual(STRUCT.runProgressRatio({ done: true }), 1, 'done:true ⇒ 100%');
-  assertEqual(STRUCT.runProgressRatio({ boards_done: 8, boards_total: 8 }), 1, 'all boards scored ⇒ 100%');
-  // runIsTerminal mirrors the verdict.
-  assert(STRUCT.runIsTerminal({ tasks_completed: 1, tasks_total: 1 }), 'runIsTerminal true for all tasks done');
+  assertEqual(STRUCT.runProgressRatio({ boards_done: 8, boards_total: 8, elapsed_seconds: 2, budget_seconds: 600 }), 1,
+    'all boards scored ⇒ 100% (not the 0%-ish time fraction)');
+  // runIsTerminal mirrors the verdict — off the canonical fields only.
+  assert(STRUCT.runIsTerminal({ boards_done: 8, boards_total: 8 }), 'runIsTerminal true once every board scored');
+  assert(!STRUCT.runIsTerminal({ tasks_completed: 1, tasks_total: 1 }), 'the retired tasks_* alias never reads terminal');
+  assert(!STRUCT.runIsTerminal({ done: true }), 'the retired done flag never reads terminal');
 });
 
 test('progress: an in-flight (non-terminal) run still reads its live time/board fraction', () => {
   assertEqual(STRUCT.runProgressRatio({ progress: 0.4 }), 0.4, 'an explicit fraction is honoured');
   assertEqual(STRUCT.runProgressRatio({ elapsed_seconds: 30, budget_seconds: 120 }), 0.25, 'elapsed/budget fallback');
-  assertEqual(STRUCT.runProgressRatio({ tasks_completed: 1, tasks_total: 3, progress: 0.33 }), 0.33,
-    'a partial task count is NOT terminal → the live fraction reads through');
+  assertEqual(STRUCT.runProgressRatio({ boards_done: 1, boards_total: 3, progress: 0.33 }), 0.33,
+    'a partial board count is NOT terminal → the live fraction reads through');
   assertEqual(STRUCT.runProgressRatio({}), null, 'a bare run with no progress signal reads null (running…)');
-  assert(!STRUCT.runIsTerminal({ tasks_completed: 1, tasks_total: 3 }), 'runIsTerminal false while tasks remain');
+  assert(!STRUCT.runIsTerminal({ boards_done: 1, boards_total: 3 }), 'runIsTerminal false while boards remain');
   assert(!STRUCT.runIsTerminal({ status: 'running' }), 'runIsTerminal false for a running status');
 });
 
@@ -610,9 +613,9 @@ test('M9 · rungProgression: a wide / few-stage strip is UNCHANGED — the prior
 {
   const dagM10 = await import('../js/dag.js');
   const racedEntries = [
-    { entry_id: 'q3_metrics_outline', run_id: 'r0', drift_loss: 4.0, pass_fail: 1, wall_clock_budget_exceeded: false },
-    { entry_id: 'q3_metrics_outline', run_id: 'r1', drift_loss: 64.0, pass_fail: 0, wall_clock_budget_exceeded: false },
-    { entry_id: 'q3_metrics_outline', run_id: 'r2', drift_loss: 63.5, pass_fail: 0, wall_clock_budget_exceeded: false },
+    { entry_id: 'q3_metrics_outline', run_id: 'r0', drift_loss: 4.0, pass_fail: true, wall_clock_budget_exceeded: false },
+    { entry_id: 'q3_metrics_outline', run_id: 'r1', drift_loss: 64.0, pass_fail: false, wall_clock_budget_exceeded: false },
+    { entry_id: 'q3_metrics_outline', run_id: 'r2', drift_loss: 63.5, pass_fail: false, wall_clock_budget_exceeded: false },
   ];
   const panelBoxOf = (svgNode) =>
     svgNode.querySelectorAll('[class]').filter((n) =>

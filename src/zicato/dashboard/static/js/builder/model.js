@@ -71,18 +71,42 @@ const REPLICATES = {
   },
 };
 
+// The Bradley–Terry EVIDENCE GATE params — generic tournament params (they
+// live in the same opaque params map as field_size), so they apply to every
+// structure. The threshold is OPT-IN: setting 0 REMOVES the key from the
+// contract (removeAtZero) so an unset gate hashes byte-identically to a
+// contract that predates it. These are the recommended-scaffold's gate knobs
+// — the form could not display them before this spec existed.
+const EVIDENCE_THRESHOLD = {
+  key: 'promote_confidence_threshold', label: 'Evidence-gate threshold', def: 0,
+  min: 0, max: 0.99, step: 0.05, int: false, removeAtZero: true,
+  info: {
+    title: 'Evidence-gate threshold', def: 'unset (gate off); scaffold 0.8',
+    body: 'The Bradley–Terry pre-gate: crown only when P(challenger > champion) reaches this probability AND the rating confidence intervals separate. Soundness, not power — it stops noise-crownings but needs replicated evidence to say yes, so give it an honest replicate budget. 0 removes the param (gate off).',
+  },
+};
+const EVIDENCE_REPLICATES = {
+  key: 'promote_confidence_replicates', label: 'Evidence replicate budget', def: 3,
+  min: 0, step: 1, int: true,
+  info: {
+    title: 'Evidence replicate budget', def: '3; scaffold 32',
+    body: 'How many extra crowning-pair replicates the defer→replicate loop may spend chasing CI separation before going inconclusive. Each replicate is a FRESH board sweep for BOTH contestants (~budget × 2 × board runs, per confirmed crowning) — after the F2 fix this is typically the largest cost driver, so the cost meter prices it. CI separation on a near-tie needs ~32+ decisive duels.',
+  },
+};
+
 export function paramSpecsFor(structure) {
+  const evidence = [EVIDENCE_THRESHOLD, EVIDENCE_REPLICATES];
   switch (structure) {
     case 'gauntlet':
-      return [FIELD_SIZE, REPLICATES];
+      return [FIELD_SIZE, REPLICATES, ...evidence];
     case 'single_elim':
     case 'double_elim':
-      return [FIELD_SIZE, REPLICATES];
+      return [FIELD_SIZE, REPLICATES, ...evidence];
     case 'swiss':
       return [FIELD_SIZE, REPLICATES, {
         key: 'rounds_n', label: 'Rounds', def: 4, min: 1, step: 1, int: true,
         info: { title: 'Rounds (rounds_n)', def: '4', body: 'How many score-paired swiss rounds to play. More rounds sharpen the standings (each pairs nearer-ranked challengers) but cost rounds_n × pairings × board per epoch.' },
-      }];
+      }, ...evidence];
     case 'racing':
       return [FIELD_SIZE, REPLICATES, {
         key: 'eta', label: 'Cut factor (eta)', def: 2, min: 2, step: 1, int: true,
@@ -90,9 +114,9 @@ export function paramSpecsFor(structure) {
       }, {
         key: 'board_fraction', label: 'Rung-0 board fraction', def: 0.25, min: 0.05, max: 1, step: 0.05, int: false,
         info: { title: 'Rung-0 board fraction', def: '0.25', body: 'The fraction of the board the FIRST (cheapest) rung scores on. Smaller is cheaper but a thin first rung can cut a challenger on too little signal; the slice grows by eta each rung up to the full board.' },
-      }];
+      }, ...evidence];
     default:
-      return [FIELD_SIZE, REPLICATES];
+      return [FIELD_SIZE, REPLICATES, ...evidence];
   }
 }
 
@@ -205,14 +229,15 @@ function floatOf(params, key, def) {
 
 // The per-structure default `replicates` when params.replicates is UNSET — the
 // JS twin of zicato.selection.registry.STRUCTURE_DEFAULT_REPLICATES (itself
-// derived from each strategy's `_default_replicates`). swiss / elim default to
-// 2 (replication, not bracket shape, is their noise lever); gauntlet / racing
-// default to 1 (racing's replication is intrinsic to its escalating board
-// slices). The cost meter MUST resolve the default by structure, not a flat 1,
-// or it under-reports the schedule a structure actually runs — the Python
-// estimator and this twin must agree (the py↔js parity test pins it).
+// derived from each strategy's `_default_replicates`). The base default is 2
+// (the noise-aware posture — replication, not bracket shape, is the noise
+// lever), inherited by gauntlet / elim / swiss; racing pins 1 (its replication
+// is intrinsic to its escalating board slices). The cost meter MUST resolve
+// the default by structure, not a flat 1, or it under-reports the schedule a
+// structure actually runs — the Python estimator and this twin must agree
+// (the py↔js parity test pins it).
 export const STRUCTURE_DEFAULT_REPLICATES = {
-  gauntlet: 1, single_elim: 2, double_elim: 2, swiss: 2, racing: 1,
+  gauntlet: 2, single_elim: 2, double_elim: 2, swiss: 2, racing: 1,
 };
 export function defaultReplicatesFor(structure) {
   const d = STRUCTURE_DEFAULT_REPLICATES[structure];
@@ -226,7 +251,17 @@ function costLine(label, runs, detail) { return { label, runs, detail }; }
 // holdout split. Mirrors operations.estimate_cost (+ _racing_cost). Returns the
 // SAME { board_runs_per_round, breakdown:[{label,runs,detail}] } shape the
 // `/builder/op` cost envelope carries, so the preview renderer reads one shape.
-export function estimateCost(structure, params, trainCount, holdoutCount) {
+// `proposerQuality` (optional) is the contract's proposer_quality block —
+// when it opts into candidate screening (screen_entries > 0, best_of_n > 1)
+// the screen's tryout runs are added, mirroring the Python term exactly.
+// `overfitting` (optional) supplies random_baseline_every_n for the placebo
+// term. The HONEST-METER terms mirror the Python estimator one-for-one:
+// the candidate screen, the best-of-N propose calls (AUXILIARY LLM calls —
+// listed but excluded from the board-runs headline), the evidence gate's
+// crowning-confirm budget (budget × 2 × board when the threshold is set —
+// per confirmed crowning, typically the largest term under the scaffold's
+// 32-replicate budget), and the amortized placebo baseline.
+export function estimateCost(structure, params, trainCount, holdoutCount, proposerQuality, overfitting) {
   const boardSize = Math.max(0, trainCount || 0);
   const holdoutSize = Math.max(0, holdoutCount || 0);
   // Default `replicates` to the STRUCTURE's own default (swiss / elim default
@@ -268,6 +303,61 @@ export function estimateCost(structure, params, trainCount, holdoutCount) {
       `holdout ${holdoutSize} × replicates ${replicates}`));
     perRound += holdoutConfirm;
   }
+
+  // Pre-tournament candidate screening (tryouts) — the JS twin of the
+  // Python estimator's candidate-screen term: proposes × best_of_n ×
+  // panel, where the panel is capped at the train board. Off (no line)
+  // unless the contract opts in with screen_entries > 0 and a slate.
+  const pq = proposerQuality || {};
+  const screenEntries = Math.max(0, Number(pq.screen_entries) || 0);
+  const bestOfN = Math.max(1, Number(pq.best_of_n) || 1);
+  const proposes = (structure === 'gauntlet' || fieldSize <= 1) ? 1 : fieldSize;
+  if (screenEntries > 0 && bestOfN > 1) {
+    const panel = Math.min(screenEntries, boardSize);
+    const screenRuns = proposes * bestOfN * panel;
+    if (screenRuns) {
+      lines.push(costLine('candidate-screen runs', screenRuns,
+        `proposes ${proposes} × best_of_n ${bestOfN} × panel ${panel}`));
+      perRound += screenRuns;
+    }
+  }
+
+  // Best-of-N propose multiplier — auxiliary LLM CALLS, not board runs:
+  // listed on the meter (real spend) but EXCLUDED from the headline.
+  if (bestOfN > 1) {
+    lines.push(costLine('best-of-N propose calls', proposes * bestOfN,
+      `proposes ${proposes} × best_of_n ${bestOfN} — auxiliary LLM calls, not board runs (excluded from the headline)`));
+  }
+
+  // The evidence gate's crowning-confirm budget: budget × 2 contestants ×
+  // board FRESH sweeps chasing CI separation — per CONFIRMED crowning (an
+  // upper bound per round). Only when the threshold is set (the gate is
+  // opt-in; a threshold outside (0,1) reads as unset, mirroring
+  // read_promote_confidence_threshold).
+  const thr = Number(params && params.promote_confidence_threshold);
+  if (isFinite(thr) && thr > 0 && thr < 1) {
+    const rawBudget = Number(params && params.promote_confidence_replicates);
+    const budget = (isFinite(rawBudget) && rawBudget >= 0) ? Math.round(rawBudget) : 3;
+    const confirmRuns = budget * 2 * boardSize;
+    if (confirmRuns) {
+      lines.push(costLine('crowning-confirm runs (evidence gate)', confirmRuns,
+        `budget ${budget} × 2 contestants × board ${boardSize} — per confirmed crowning (upper bound)`));
+      perRound += confirmRuns;
+    }
+  }
+
+  // The placebo control arm: one extra no-op challenger every N rounds,
+  // amortized to per-round board runs.
+  const of = overfitting || {};
+  const baselineN = Math.max(0, Math.round(Number(of.random_baseline_every_n) || 0));
+  if (baselineN > 0) {
+    const placeboRuns = Math.ceil((replicates * boardSize) / baselineN);
+    if (placeboRuns) {
+      lines.push(costLine('placebo-baseline runs (amortized)', placeboRuns,
+        `1 no-op challenger every ${baselineN} rounds × replicates ${replicates} × board ${boardSize}`));
+      perRound += placeboRuns;
+    }
+  }
   return { board_runs_per_round: perRound, breakdown: lines };
 }
 
@@ -302,9 +392,18 @@ function racingCost(params, fieldSize, replicates, boardSize) {
 
 // Advisory warnings about a structure + params over a split. Mirrors
 // operations.validate (the checks that do NOT need the entry tag set: the
-// degenerate-field, racing rung-0, and bracket-replicates warnings). Returns
-// the SAME [{code, message, severity}] shape `/builder/op` carries.
-export function validateContract(structure, params, trainCount, holdoutCount, overfitting) {
+// degenerate-field, racing rung-0, and bracket-replicates warnings — plus the
+// STATISTICAL margin-vs-noise-floor rule when the caller supplies the
+// measured floor via `opts`). Returns the SAME [{code, message, severity}]
+// shape `/builder/op` carries.
+//
+// `opts` (optional): { promoteMargin, noiseFloor } — the contract's
+// promote_margin and the epoch's measured A/A floor (max |Δ|). When both are
+// known, the margin sitting at/below the floor WITH the evidence gate off
+// (params.promote_confidence_threshold unset / out of (0,1)) yields the
+// `refuse`-severity `margin_below_noise_floor` warning — the JS twin of the
+// Python rule. Recommend-only, like every warning here.
+export function validateContract(structure, params, trainCount, holdoutCount, overfitting, opts) {
   const warnings = [];
   const fieldSize = Math.max(1, intOf(params, 'field_size', 2));
   const replicates = Math.max(1, intOf(params, 'replicates', 1));
@@ -339,6 +438,19 @@ export function validateContract(structure, params, trainCount, holdoutCount, ov
       code: 'replicates_recommended_for_brackets', severity: 'warning',
       message: `structure '${structure}' with replicates=${replicates}: a single noisy run can flip a match verdict; replicates>=2 is recommended.`,
     });
+  }
+  const o = opts || {};
+  const floor = Number(o.noiseFloor);
+  const margin = Number(o.promoteMargin);
+  if (isFinite(floor) && floor >= 0 && isFinite(margin)) {
+    const thr = Number(params && params.promote_confidence_threshold);
+    const gateOn = isFinite(thr) && thr > 0 && thr < 1;
+    if (!gateOn && margin <= floor) {
+      warnings.push({
+        code: 'margin_below_noise_floor', severity: 'refuse',
+        message: `promote_margin ${margin} does not clear the measured A/A noise floor ${floor} and the evidence gate (promote_confidence_threshold) is off: a duel decided by the margin alone cannot distinguish a real improvement from a re-roll of the same tree. Raise promote_margin above the floor or enable the evidence gate. Recommend-only — apply is not blocked.`,
+      });
+    }
   }
   return warnings;
 }

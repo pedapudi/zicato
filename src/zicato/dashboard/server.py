@@ -42,7 +42,7 @@ from starlette.routing import Route
 
 from zicato.dashboard.endpoints import make_endpoints
 from zicato.dashboard.sse import ChangeBroker, sse_event_stream
-from zicato.dashboard.state_reader import WorkspacePaths
+from zicato.query import WorkspacePaths
 
 # Index-fallback when the static bundle is missing entirely, so an
 # operator still sees something useful at the document root.
@@ -121,7 +121,7 @@ def create_app(
         workspace paths so the state readers inject it into the heartbeat
         payload, lighting up the standalone deep-links into persisted
         harmonograf sessions. A live evolve's own heartbeat URL still wins
-        (see ``state_reader.read_heartbeat_dict``).
+        (see ``zicato.query.read_heartbeat_dict``).
     """
     paths = _resolve_workspace(workspace_root, harmonograf_url=harmonograf_url)
     static_dir = Path(static_dir)
@@ -214,6 +214,22 @@ def create_app(
             handlers["api_per_judge_trend"],
         ),
         Route(
+            "/api/epoch/{epoch_id}/trajectory",
+            handlers["api_epoch_trajectory"],
+        ),
+        Route(
+            "/api/epoch/{epoch_id}/cost",
+            handlers["api_epoch_cost"],
+        ),
+        Route(
+            "/api/epoch/{epoch_id}/racing-field",
+            handlers["api_epoch_racing_field"],
+        ),
+        Route(
+            "/api/epoch/{epoch_id}/round-timeline",
+            handlers["api_epoch_round_timeline"],
+        ),
+        Route(
             "/api/generation/{epoch_id}/{generation_id}/per-judge",
             handlers["api_per_judge_for_generation"],
         ),
@@ -245,6 +261,7 @@ def create_app(
         Route("/api/active-runs", handlers["api_active_runs"]),
         Route("/api/active-tournament", handlers["api_active_tournament"]),
         Route("/api/heartbeat", handlers["api_heartbeat"]),
+        Route("/api/live/pipeline", handlers["api_live_pipeline"]),
         Route("/api/tournaments", handlers["api_tournaments"]),
         Route(
             "/api/tournament-structure/{epoch_id}/{tournament_id}",
@@ -320,6 +337,7 @@ def create_app(
         ),
         Route("/events", events),
         Route("/api/control/pause", handlers["control_pause"], methods=["POST"]),
+        Route("/api/control/resume", handlers["control_resume"], methods=["POST"]),
         Route(
             "/api/control/skip-round",
             handlers["control_skip_round"],

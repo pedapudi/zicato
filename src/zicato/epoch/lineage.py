@@ -42,7 +42,12 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core.types import EpochConfig, Generation
-from zicato.epoch._storage import backend_for, lineage_key
+from zicato.epoch._storage import (
+    RECORD_FORMAT_VERSION,
+    backend_for,
+    check_record_format,
+    lineage_key,
+)
 
 
 def _empty() -> dict[str, Any]:
@@ -58,6 +63,11 @@ def _load_raw(workspace_root: Path) -> dict[str, Any]:
     wedging the loop. (This is intentionally more forgiving than the
     storage backend's default ``read_json``, which surfaces a decode
     error; lineage is reconstructible, so it absorbs the error here.)
+
+    One deliberate exception (WS5): a lineage stamped with a FUTURE
+    ``format_version`` is an INTACT record this build cannot promise to
+    interpret — collapsing it to the empty DAG would silently drop
+    history, so it refuses loudly instead.
     """
     backend = backend_for(workspace_root)
     try:
@@ -66,11 +76,17 @@ def _load_raw(workspace_root: Path) -> dict[str, Any]:
         return _empty()
     if not isinstance(d, dict) or "epochs" not in d:
         return _empty()
+    check_record_format(d, "lineage.json")
     return d
 
 
 def _save_raw(workspace_root: Path, raw: dict[str, Any]) -> None:
-    """Atomically write ``lineage.json`` through the storage backend."""
+    """Atomically write ``lineage.json`` through the storage backend.
+
+    Every save (re)stamps the record-format version — the whole document
+    is rewritten atomically on each mutation, so the stamp rides along.
+    """
+    raw["format_version"] = RECORD_FORMAT_VERSION
     backend_for(workspace_root).write_json(lineage_key(), raw)
 
 

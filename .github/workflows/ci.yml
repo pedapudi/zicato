@@ -33,8 +33,26 @@ jobs:
         # GITHUB_TOKEN is sufficient to clone a public repo.
         run: uv sync --all-extras --frozen
 
+      - name: Mypy cache
+        # Mypy's incremental cache turns the from-scratch whole-tree check
+        # into an incremental one on unchanged modules. Keyed on the
+        # dependency pins (pyproject + uv.lock) per Python version;
+        # restore-keys lets a run reuse the newest cache after a pin bump.
+        uses: actions/cache@v4
+        with:
+          path: .mypy_cache
+          key: mypy-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml', 'uv.lock') }}
+          restore-keys: |
+            mypy-${{ matrix.python-version }}-
+
       - name: Ruff
         run: uv run ruff check .
+
+      - name: Import contracts
+        # The library/driver boundaries ([tool.importlinter] in
+        # pyproject.toml): lib packages never import the drivers; only
+        # the declared driver->driver edges exist.
+        run: uv run lint-imports
 
       - name: Mypy
         run: uv run mypy src/zicato/

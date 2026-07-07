@@ -49,14 +49,20 @@ test('verdictPill: the five-state vocabulary each map to their own class', () =>
   }
 });
 
-// ── 2. normaliseDecision threads a real gate decision='deferred' ─────────────
-test('normaliseDecision: a gate carrying decision:"deferred" normalises to "deferred" (not pending/rejected)', () => {
-  assertEqual(ui.normaliseDecision({ decision: 'deferred' }), 'deferred', 'literal deferred threads through');
-  assertEqual(ui.normaliseDecision({ decision: 'promoted' }), 'promoted', 'promoted threads through');
-  assertEqual(ui.normaliseDecision({ decision: 'rejected' }), 'rejected', 'rejected threads through');
+// ── 2. decisionOf reads the SERVER-STAMPED decision token VERBATIM ───────────
+// The substring classifier (normaliseDecision) is DELETED: the server stamps
+// the canonical token and the client never re-classifies.
+test('decisionOf: a stamped decision:"deferred" reads back verbatim (not pending/rejected)', () => {
+  assertEqual(ui.decisionOf({ decision: 'deferred' }), 'deferred', 'literal deferred threads through');
+  assertEqual(ui.decisionOf({ decision: 'promoted' }), 'promoted', 'promoted threads through');
+  assertEqual(ui.decisionOf({ decision: 'rejected' }), 'rejected', 'rejected threads through');
   // the gate panel resolves an unresolved gate to 'pending', NOT 'rejected'
   // (Class-B), but a REAL deferred is its own state.
-  assertEqual(ui.normaliseDecision({}), null, 'no decision → null (caller defaults to pending)');
+  assertEqual(ui.decisionOf({}), null, 'no decision → null (caller defaults to pending)');
+  // the deleted re-derivation: a nested outcome is NEVER classified client-side.
+  assertEqual(ui.decisionOf({ outcome: { tournament_decision: 'promoted' } }), null,
+    'a raw nested outcome is NOT re-classified — only the stamped token counts');
+  assertEqual(ui.normaliseDecision, undefined, 'normaliseDecision (the substring classifier) is deleted');
 });
 
 // ── 3. overrideChip: each operator state + the back-compat absent path ───────

@@ -29,7 +29,6 @@ from click.testing import CliRunner
 from zicato.analyzer.report_data import gather_epoch_report_data
 from zicato.analyzer.report_sections import render_title_block
 from zicato.cli.commands.epoch import epoch_grp, repair_epoch_goals_cmd
-from zicato.cli.common import write_workspace_config
 from zicato.core.types import EpochConfig, ScoringWeights
 from zicato.epoch.lifecycle import (
     _config_from_dict,
@@ -47,6 +46,7 @@ from zicato.index.schema import (
     apply_schema,
     read_schema_version,
 )
+from zicato.workspace.config_io import write_workspace_config
 
 # ---------------------------------------------------------------------------
 # Fixtures

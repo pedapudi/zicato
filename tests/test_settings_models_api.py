@@ -14,8 +14,8 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from zicato.cli.common import write_workspace_config
 from zicato.dashboard.server import create_app
+from zicato.workspace.config_io import write_workspace_config
 
 _SECRET = "sk-leak-canary-value"
 _ENV_NAME = "ZICATO_SETTINGS_TEST_KEY"

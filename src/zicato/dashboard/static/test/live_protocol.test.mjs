@@ -114,7 +114,7 @@ function assertHeroResponsive(figure, heroClass, name) {
 }
 
 // the active-tournament epoch tag the hero scopes to (must match the heartbeat).
-function hb(extra) { return { phase: 'tournament:running', epoch_id: EPOCH, last_heartbeat: new Date().toISOString(), ...extra }; }
+function hb(extra) { return { phase: 'tournament:running', epoch_id: EPOCH, ts: Date.now(), ...extra }; }
 
 // ===========================================================================
 // RACING — the scalar track (single-round PRIMARY + hero) + the funnel (single

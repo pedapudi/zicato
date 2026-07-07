@@ -15,7 +15,7 @@ order uniform.
 
 The ordering primitives (:func:`natural_key`, :func:`epoch_sort_key`,
 :func:`epoch_created_at`) live here as the single definition;
-:mod:`zicato.dashboard.readers.paths` re-exports them for back-compat so
+:mod:`zicato.query.paths` re-exports them for back-compat so
 existing imports keep working.
 """
 
@@ -29,7 +29,7 @@ from typing import Any
 # Best-effort JSON read; missing / empty / malformed -> ``None``. Imported
 # lazily-stable here (same helper the dashboard's prior inline readers used,
 # so config.json parsing degrades identically).
-from zicato.storage._atomic import read_json
+from zicato.storage import read_json
 from zicato.workspace.layout import WorkspaceLayout
 
 _NUM_RUN = re.compile(r"(\d+)")

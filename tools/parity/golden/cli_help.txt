@@ -41,6 +41,7 @@ Advanced commands — off the happy path (inspection & debugging):
   board                 Advanced: inspect / hand-edit a per-epoch board.jsonl.
   builder               Advanced: launch the dashboard focused on the tournament
                         builder.
+  config                Advanced: introspect zicato's configuration surface.
   dashboard             Advanced: serve the dashboard for an existing workspace
                         (evolve auto-spawns it).
   epoch                 Advanced: inspect / force epochs (evolve auto-epochs for
@@ -123,9 +124,12 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  add     Append one validated board entry from a JSON file.
-  list    List the entries in the current epoch's board.
-  remove  Remove a board entry by id from the current epoch.
+  add        Append one validated board entry from a JSON file.
+  audit      Measure the board's A/A noise floor for the current epoch.
+  judges     List the board's judges; --test-retest measures reliability.
+  list       List the entries in the current epoch's board.
+  preflight  Contract pre-flight: prove the board can out-signal its noise.
+  remove     Remove a board entry by id from the current epoch.
 
 ===== zicato board add --help =====
 Usage: zicato board add [OPTIONS] ENTRY_PATH
@@ -136,6 +140,63 @@ Options:
   --workspace TEXT  Path to the zicato workspace root.  [default: .zicato]
   --help            Show this message and exit.
 
+===== zicato board audit --help =====
+Usage: zicato board audit [OPTIONS]
+
+  Measure the evaluation's A/A noise floor and record it on the epoch.
+
+  Runs the current champion against ITSELF --runs times (fresh draws through the
+  same board-unit workers every duel uses) and reports the delta_scalar spread —
+  the smallest difference the board can actually resolve. The measured floor is
+  persisted onto the epoch record (config.json's noise_floor field) so `zicato
+  evolve` can warn when promote_margin is below it while the evidence gate is
+  off.
+
+Options:
+  --workspace TEXT           Path to the zicato workspace root.  [default:
+                             .zicato]
+  --epoch TEXT               Epoch to audit (default: the current epoch).
+  --runs INTEGER RANGE       How many independent A/A draws of the champion to
+                             take.  [default: 5; x>=2]
+  --harness-call-llm TEXT    Dotted import path of the harness call_llm (e.g.
+                             mymodule:harness).  [required]
+  --auxiliary-call-llm TEXT  Dotted import path of the auxiliary call_llm (e.g.
+                             mymodule:aux).  [required]
+  --help                     Show this message and exit.
+
+===== zicato board judges --help =====
+Usage: zicato board judges [OPTIONS]
+
+  List the board's declared process judges; optionally retest them.
+
+  Without --test-retest: print every judge the board declares (name, mode,
+  severity, criterion/dotted-path). With --test-retest: build each judge through
+  the same runtime bridge real runs use and judge ONE frozen transcript
+  --retest-k times; report the per-judge test-retest disagreement rate. A judge
+  that disagrees with itself on identical input injects pure noise into every
+  custom:<judge_name> drift count it produces — the fix is a lower
+  per_judge_weights entry or a sharper criterion. Recommend-only; nothing is
+  gated.
+
+Options:
+  --workspace TEXT           Path to the zicato workspace root.  [default:
+                             .zicato]
+  --epoch TEXT               Epoch whose board to inspect (default: the current
+                             epoch).
+  --test-retest              Judge a frozen transcript k times per judge and
+                             report disagreement.
+  --retest-k INTEGER RANGE   How many times each judge re-judges the same frozen
+                             transcript.  [default: 3; x>=2]
+  --threshold FLOAT RANGE    Pairwise disagreement rate above which a judge is
+                             flagged noisy.  [default: 0.25; 0.0<=x<=1.0]
+  --transcript FILE          Frozen transcript file to re-judge (e.g. a settled
+                             reasoning trace saved from a prior run's events).
+                             Default: a synthetic fixture transcript.
+  --auxiliary-call-llm TEXT  Dotted import path of the judge/aux call_llm (e.g.
+                             mymodule:aux). Required with --test-retest — inline
+                             judges are LLM-backed.
+  --help                     Show this message and exit.
+
 ===== zicato board list --help =====
 Usage: zicato board list [OPTIONS]
 
@@ -144,6 +205,33 @@ Usage: zicato board list [OPTIONS]
 Options:
   --workspace TEXT  Path to the zicato workspace root.  [default: .zicato]
   --help            Show this message and exit.
+
+===== zicato board preflight --help =====
+Usage: zicato board preflight [OPTIONS]
+
+  Measure the contract's noise floor AND achievable signal; verdict.
+
+  Board-reflection v1. Two measurements: (a) the A/A noise floor — the champion
+  duels ITSELF --runs times (same draws `zicato board audit` takes); (b) the
+  scripted-perturbation duel — the champion vs a deliberately-degraded ephemeral
+  copy of itself (the FIRST enumerated mutation point blanked/scrambled in a
+  scratch tree; the real lineage is never touched). Verdict: REFUSE-recommended
+  when the achievable signal is at/below the floor; WARN when every probe scored
+  identically (a saturated contract — the 1.000000 signature); OK otherwise.
+  Recommend-only — never gates. The verdict persists onto the epoch record and
+  flows into the per-round health report.
+
+Options:
+  --workspace TEXT           Path to the zicato workspace root.  [default:
+                             .zicato]
+  --epoch TEXT               Epoch to pre-flight (default: the current epoch).
+  --runs INTEGER RANGE       How many independent A/A draws of the champion to
+                             take.  [default: 5; x>=2]
+  --harness-call-llm TEXT    Dotted import path of the harness call_llm (e.g.
+                             mymodule:harness).  [required]
+  --auxiliary-call-llm TEXT  Dotted import path of the auxiliary call_llm (e.g.
+                             mymodule:aux).  [required]
+  --help                     Show this message and exit.
 
 ===== zicato board remove --help =====
 Usage: zicato board remove [OPTIONS] ENTRY_ID
@@ -173,7 +261,42 @@ Options:
                                   [default: .zicato]
   --dashboard-port INTEGER RANGE  Port for the dashboard HTTP server.  [default:
                                   7892; 1<=x<=65535]
+  --static-dir DIRECTORY          Filesystem path to the dashboard static-asset
+                                  directory. Shadows the dashboard.static_dir
+                                  config knob. Unset (the default) serves the
+                                  bundled zicato/dashboard/static directory.
   --help                          Show this message and exit.
+
+===== zicato config --help =====
+Usage: zicato config [OPTIONS] COMMAND [ARGS]...
+
+  Introspect zicato's configuration surface.
+
+  Operator knobs are CLI flags and workspace config.json blocks — not
+  environment variables. The subcommands here make that surface discoverable
+  without grepping the tree.
+
+Options:
+  --help  Show this message and exit.
+
+Commands:
+  env  List the environment variables zicato deliberately touches.
+
+===== zicato config env --help =====
+Usage: zicato config env [OPTIONS]
+
+  List the environment variables zicato deliberately touches.
+
+  Since the env-var rationalization, NO environment variable is a configuration
+  knob. What remains — and is printed here — is the small merited set of
+  process-boundary contracts: the per-run harness contract, the internal
+  harmonograf handoff pair, the secrets boundary (operator-named api_key_env
+  variables and the worker passthrough allowlist), goldfive's own timeout
+  variable, and the CI/test toggles.
+
+Options:
+  --json  Emit the set as a JSON array instead of grouped text.
+  --help  Show this message and exit.
 
 ===== zicato dashboard --help =====
 Usage: zicato dashboard [OPTIONS]
@@ -186,13 +309,17 @@ Usage: zicato dashboard [OPTIONS]
   (Ctrl-C).
 
 Options:
-  --workspace PATH      Path to the zicato workspace root to serve.  [default:
-                        .zicato]
-  --host TEXT           Host/bind address for the dashboard HTTP server.
-                        [default: 127.0.0.1]
-  --port INTEGER RANGE  Port for the dashboard HTTP server.  [default: 7892;
-                        1<=x<=65535]
-  --help                Show this message and exit.
+  --workspace PATH        Path to the zicato workspace root to serve.  [default:
+                          .zicato]
+  --host TEXT             Host/bind address for the dashboard HTTP server.
+                          [default: 127.0.0.1]
+  --port INTEGER RANGE    Port for the dashboard HTTP server.  [default: 7892;
+                          1<=x<=65535]
+  --static-dir DIRECTORY  Filesystem path to the dashboard static-asset
+                          directory. Shadows the dashboard.static_dir config
+                          knob. Unset (the default) serves the bundled
+                          zicato/dashboard/static directory.
+  --help                  Show this message and exit.
 
 ===== zicato epoch --help =====
 Usage: zicato epoch [OPTIONS] COMMAND [ARGS]...
@@ -209,6 +336,7 @@ Options:
 
 Commands:
   close     Close an epoch and write its analysis.md.
+  gc        Prune settled-rejected generation source trees (dry-run by default).
   list      List every epoch in the workspace.
   new       Create a new epoch and make it current.
   set-goal  Set or overwrite the goal field on an existing epoch.
@@ -227,6 +355,34 @@ Usage: zicato epoch close [OPTIONS] [EPOCH_ID]
 Options:
   --workspace TEXT  Path to the zicato workspace directory.  [default: .zicato]
   --help            Show this message and exit.
+
+===== zicato epoch gc --help =====
+Usage: zicato epoch gc [OPTIONS] [EPOCH_ID]
+
+  Prune generation SOURCE TREES under an epoch; records survive.
+
+  Reclaims the disk held by settled-rejected generations' source trees
+  (directory-backend snapshot dirs; git-backend tags + worktrees, whose commits
+  then become collectable). Never touches lineage.json, the journal,
+  experiment/score records, or run telemetry — a pruned generation stays fully
+  analysable, it just no longer has a browsable source tree.
+
+  Promoted generations, in-flight generations, and the seed v0 are never pruned.
+  Select a retention policy with exactly one of --keep-last N / --keep-promoted-
+  only. Dry-run by default; pass --apply to execute. When EPOCH_ID is omitted,
+  the current epoch is targeted.
+
+Options:
+  --workspace TEXT      Path to the zicato workspace directory.  [default:
+                        .zicato]
+  --keep-last INTEGER   Keep the N newest generations in addition to the always-
+                        kept set (promoted chain, in-flight generations, v0);
+                        prune older settled-rejected trees.
+  --keep-promoted-only  Keep only the always-kept set; prune every settled-
+                        rejected generation's source tree.
+  --apply               Actually prune. Without this flag the command is a DRY
+                        RUN that prints the plan and removes nothing.
+  --help                Show this message and exit.
 
 ===== zicato epoch list --help =====
 Usage: zicato epoch list [OPTIONS]
@@ -354,8 +510,39 @@ Options:
                                   cancelled and recorded as aborted. Unset (the
                                   default) leaves the loop unbounded. Applies on
                                   top of each board entry's own
-                                  wall_clock_budget_seconds. Env var:
-                                  ZICATO_MAX_WALL_CLOCK_SECONDS.  [x>=1]
+                                  wall_clock_budget_seconds.  [x>=1]
+  --parallelism INTEGER RANGE     Maximum number of board units the tournament
+                                  runner keeps in flight at once. Shadows the
+                                  runtime.parallelism config knob; wins over the
+                                  workspace config.json's runtime.parallelism.
+                                  Unset (the default) reads config.json, then
+                                  the built-in default of 4.  [x>=1]
+  --harness-call-timeout-ms INTEGER RANGE
+                                  Per-LLM-call wall-clock budget, in
+                                  milliseconds, for the inner harness agent's
+                                  calls. Shadows the
+                                  runtime.harness_call_timeout_ms config knob
+                                  (default 1800000). An explicit
+                                  GOLDFIVE_AGENT_CALL_TIMEOUT_MS still wins — an
+                                  operator who tunes goldfive directly is not
+                                  overridden.  [x>=1]
+  --aux-call-timeout FLOAT RANGE  Per-call wall-clock budget, in seconds, for
+                                  every auxiliary-LLM (proposer / judge /
+                                  emulator / analysis) call. Shadows the
+                                  aux.call_timeout_s config knob (default 120).
+                                  [x>0]
+  --supervisor-binary PATH        Filesystem path to the zicato-supervisor
+                                  watchdog binary. Shadows the
+                                  integration.supervisor_binary config knob.
+                                  Unset (the default) resolves the bundled /
+                                  dev-checkout build, then the system PATH.
+  --harmonograf-url TEXT          URL of an external harmonograf server to
+                                  stream this invocation's telemetry to. Shadows
+                                  the integration.harmonograf_url config knob
+                                  (also settable via the workspace config.json's
+                                  harmonograf_url; the flag wins). Unset (the
+                                  default) auto-launches a per-workspace
+                                  harmonograf on a free localhost port.
   --tournament-structure [gauntlet|single_elim|double_elim|swiss|racing]
                                   Set the per-epoch tournament structure. This
                                   is a CONTRACT-MUTATING convenience: it writes
@@ -428,8 +615,10 @@ Usage: zicato init [OPTIONS]
   This is the first of the two commands you run. It creates the workspace
   directory if it doesn't exist, writes an empty lineage DAG (lineage.json:
   {"nodes": [], "edges": []}), and writes config.json containing {instance_id,
-  created_at}. Run it once per project; then point `zicato evolve` at the same
-  workspace.
+  created_at}. It also scaffolds the operator's live scoring.json (next to the
+  workspace, only when absent) with the full recommended contract — racing field
+  4, replicates 2, the evidence gate enabled explicitly. Run it once per
+  project; then point `zicato evolve` at the same workspace.
 
   Refuses to overwrite an existing workspace unless --force is passed (--force
   only rewrites config.json / lineage.json — it does not delete epoch artifacts

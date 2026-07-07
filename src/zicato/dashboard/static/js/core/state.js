@@ -6,7 +6,6 @@
 // `state:changed` on the bus.
 
 import { bus } from './bus.js';
-import { DEFAULT_MARGIN } from './format.js';
 
 // Rolling window the run-log tail keeps in memory.
 export const RUN_LOG_WINDOW = 200;
@@ -72,7 +71,6 @@ export class AppState {
     this.health = null;
     this.service = { version: '—', port: '—', build: '—' };
 
-    this.scoring = { margin: DEFAULT_MARGIN };
 
     // header epoch summary + full epoch contract.
     this.epoch = { id: '—', generation: '—', round: '—', startedAt: null };
@@ -193,7 +191,6 @@ export class AppState {
     if (snap.service) Object.assign(this.service, snap.service);
     if (snap.health) this.setHealth(snap.health);
     if (snap.run_log) this.setLogTail(snap.run_log);
-    if (snap.scoring) Object.assign(this.scoring, snap.scoring);
     if (snap.workspace) this.workspace = snap.workspace;
     if (Array.isArray(snap.epochs)) this.epochs = snap.epochs;
     this._foldEpoch(snap.epoch);

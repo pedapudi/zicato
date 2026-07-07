@@ -35,7 +35,7 @@ from pathlib import Path
 
 import click
 
-from zicato.cli.common import (
+from zicato.workspace.config_io import (
     read_workspace_config,
     workspace_is_initialized,
     write_workspace_config,

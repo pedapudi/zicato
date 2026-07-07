@@ -10,7 +10,7 @@ slotted, JSON-friendly, and carry the minimum information the supervisor
 and the dashboard need to render a live view of an in-progress epoch.
 
 Every writer is atomic (``.tmp`` + ``fsync`` + ``os.replace``); see
-:mod:`zicato.runtime._atomic`. Readers tolerate missing files and return
+:mod:`zicato.storage` (the atomic primitives). Readers tolerate missing files and return
 ``None`` so the supervisor can run against a workspace that has never
 booted an orchestrator.
 
@@ -155,8 +155,9 @@ class Heartbeat:
         progress log.
     harmonograf_url:
         Server address of the harmonograf console this run is streaming
-        telemetry to, when configured (via ``ZICATO_HARMONOGRAF_URL`` or
-        the workspace ``config.json``). Empty string when the run is
+        telemetry to, when configured (``zicato evolve --harmonograf-url``,
+        the workspace ``config.json``, or the auto-launch's internal
+        ``ZICATO_HARMONOGRAF_URL`` handoff). Empty string when the run is
         JSONL-only. The dashboard surfaces it as a "watch live" link.
         Optional — old readers ignore the field.
     harmonograf_meta_session:
@@ -292,13 +293,15 @@ class ActiveRun:
         on a platform without process groups); the supervisor then falls
         back to the single-pid kill.
     snapshot_path:
-        Absolute path-as-string to the run's ephemeral snapshot working
-        copy (the ``ztw-snap-*`` temp directory the runner copytrees the
-        code snapshot into for this run). The runner discards it on a
-        clean run-end, but if the ORCHESTRATOR dies mid-run the directory
-        is orphaned; recording it here lets the supervisor GC the
-        leftover ``ztw-snap-*`` tree after an orchestrator death. ``None``
-        for a legacy record, or a run that mounted no ephemeral snapshot.
+        Absolute path-as-string to the run's ephemeral snapshot checkout
+        (the ``ztw-snap-*`` temp directory the generation store
+        materialises the per-run code tree into — a ``copytree`` under
+        the directory backend, a detached ``git worktree`` under the git
+        backend). The runner discards it on a clean run-end, but if the
+        ORCHESTRATOR dies mid-run the directory is orphaned; recording it
+        here lets the supervisor GC the leftover ``ztw-snap-*`` tree
+        after an orchestrator death. ``None`` for a legacy record, or a
+        run that mounted no ephemeral snapshot.
     """
 
     run_id: str

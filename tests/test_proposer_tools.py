@@ -22,9 +22,12 @@ from zicato.proposer.tools import (
     bind_proposer_tool_context,
     grep_mutable,
     list_mutation_points,
+    mutation_track_record,
+    mutation_usage,
     read_insights,
     read_journal,
     read_mutable_file,
+    read_parent_diff,
 )
 from zicato.testing import make_mutation_point
 
@@ -266,4 +269,7 @@ def test_default_proposer_tools_are_the_read_only_set() -> None:
         grep_mutable,
         read_journal,
         read_insights,
+        mutation_track_record,
+        read_parent_diff,
+        mutation_usage,
     )

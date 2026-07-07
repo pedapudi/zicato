@@ -416,26 +416,28 @@ export function loading(text) {
   return el('p', { class: 'dn-empty', text: text || 'Loading…' });
 }
 
-export function normaliseDecision(outcome) {
-  if (!outcome || typeof outcome !== 'object') return null;
-  const raw = String(outcome.tournament_decision || outcome.decision || '').toLowerCase();
-  if (raw.includes('promot')) return 'promoted';
-  if (raw.includes('reject')) return 'rejected';
-  if (raw.includes('defer')) return 'deferred';
-  return raw || null;
+// The SERVER-STAMPED decision token off any payload record that carries one —
+// an epoch experiment (readers stamp `decision` via the canonical classifier),
+// a gate breakdown, or a tournament matchup row. Read VERBATIM: the server
+// owns the vocabulary (promoted / rejected / deferred); the client never
+// re-classifies a nested outcome or substring-matches free text. Absent /
+// non-string → null (the caller renders unknown/pending, never a guess).
+export function decisionOf(rec) {
+  const d = rec && typeof rec === 'object' ? rec.decision : null;
+  return (typeof d === 'string' && d) ? d : null;
 }
 
 // The ONE place that turns a generation's tri-state outcome into a decision
-// label. `promoted` is tri-state in lineage: `true` (won the gate), `false`
-// (lost), or `null`/absent (in-flight / not yet raced). The Class-B bug was
-// treating an ABSENT outcome as `'rejected'` ("dead branch") on candidates
-// that have not raced yet — so this NEVER defaults null/absent to rejected:
+// label. `promoted` is tri-state in lineage AND on the stamped experiment
+// records: `true` (won the gate), `false` (lost), or `null`/absent
+// (in-flight / not yet raced). The Class-B bug was treating an ABSENT outcome
+// as `'rejected'` ("dead branch") on candidates that have not raced yet — so
+// this NEVER defaults null/absent to rejected:
 //   * no parent                          → 'baseline' (the seed / loss floor)
 //   * promoted === true                  → 'promoted'
 //   * promoted === false                 → 'rejected'
-//   * a resolved NEGATIVE outcome/gate   → 'rejected'
-//   * a resolved POSITIVE outcome/gate   → 'promoted'
-//   * otherwise (promoted == null, no resolved decision) → 'pending'
+//   * a stamped exp/gate `decision`      → that token, verbatim
+//   * otherwise (promoted == null, no stamped decision) → 'pending'
 export function decisionFor(spec) {
   const s = spec || {};
   // A seed (no parent) defines the loss floor — it is the baseline, never a
@@ -443,17 +445,13 @@ export function decisionFor(spec) {
   if (s.baseline === true || (s.baseline == null && s.parent == null)) return 'baseline';
   if (s.promoted === true) return 'promoted';
   if (s.promoted === false) return 'rejected';
-  // promoted is null/absent — defer to any RESOLVED expectation / gate decision.
-  const resolved = resolvedDecision(s.exp, s.gate);
+  // promoted is null/absent — defer to the SERVER-STAMPED decision token.
+  const resolved = decisionOf(s.exp) || decisionOf(s.gate);
   if (resolved === 'promoted') return 'promoted';
   if (resolved === 'rejected') return 'rejected';
   if (resolved === 'deferred') return 'deferred';
   // genuinely unresolved (in-flight / not yet raced) → pending, NOT rejected.
   return 'pending';
-}
-
-function resolvedDecision(exp, gate) {
-  return normaliseDecision(exp && (exp.outcome || exp)) || normaliseDecision(gate);
 }
 
 export function verdictPill(decision) {

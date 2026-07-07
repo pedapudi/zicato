@@ -6,7 +6,7 @@ nested config dataclasses (:class:`~zicato.core.types.TournamentStructure`,
 :class:`~zicato.core.types.LadderConfig`) — is persisted to a per-epoch
 frozen ``scoring.json`` and later re-read to recompute the contract hash.
 The contract hash itself is derived by a *field-enumerating* canonicalizer
-(:func:`zicato.epoch.contract._scoring_to_canon`) that walks
+(:func:`zicato.epoch.contract.scoring_to_canon`) that walks
 ``dataclasses.fields()`` and therefore covers every field automatically.
 
 Historically the on-disk writer and parser were hand-maintained,

@@ -29,10 +29,10 @@ import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { attachHovercard } from '../hovercard.js';
 import { lifecycleDag, rungProgression } from '../dag.js';
-import { gatedSwap, section, subhead, empty, stat, verdictPill, overrideChip, overrideDigest, normaliseDecision, decisionFor, densityTokens, prText, metricsDigest } from '../ui.js';
+import { gatedSwap, section, subhead, empty, stat, verdictPill, overrideChip, overrideDigest, decisionFor, decisionOf, densityTokens, prText, metricsDigest } from '../ui.js';
 import { comparePicker, splitFrame } from '../compare.js';
-import { candidateProgression, inflightForActiveEpoch, inflightForEntryGen, runProgressRatio, liveMatchupsForCandidate, liveBelongsToEpoch, resolveNonGauntletSt, racingModel, structureDigest } from './structure.js';
-import { epochRoundModel, reignModel } from './rounds.js';
+import { candidateProgression, inflightForActiveEpoch, inflightForEntryGen, runProgressRatio, liveMatchupsForCandidate, liveBelongsToEpoch, resolveNonGauntletSt, racingModel, structureDigest, normalizeStructure } from './structure.js';
+import { roundsFromTimeline, reignModel } from './rounds.js';
 import { deriveLiveStatus } from '../livestatus.js';
 import { harmonografIsLive, harmonografLink, harmonografMini } from '../core/harmonograf.js';
 
@@ -51,13 +51,14 @@ export async function render(host, ctx, params, route) {
     return;
   }
   const epochId = routeEpoch || ep.epoch_id;
-  const [rows, traj, bracket] = await Promise.all([
+  const [rows, traj, bracket, timeline] = await Promise.all([
     D.generationsForEpoch(epochId), D.scoreTrajectory(epochId), D.bracket(epochId),
+    D.roundTimeline(epochId),
   ]);
   const experiments = Array.isArray(ep.experiments) ? ep.experiments : [];
   const genList = rows.length
     ? rows.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted }))
-    : experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: normaliseDecision(x.outcome) === 'promoted' ? true : (normaliseDecision(x.outcome) === 'rejected' ? false : null) }));
+    : experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: x.promoted == null ? null : !!x.promoted }));
   const allIds = genList.map((g) => g.id);
   const genId = (params.gen && allIds.includes(params.gen)) ? params.gen : (allIds[allIds.length - 1] || params.gen || null);
 
@@ -71,8 +72,9 @@ export async function render(host, ctx, params, route) {
   const scalarByGen = new Map();
   if (traj && Array.isArray(traj.points)) for (const p of traj.points) if (svg.isNum(p.scalar)) scalarByGen.set(p.generation_id, p.scalar);
 
-  const champ = genList.find((g) => g.promoted) || genList.find((g) => !g.parent) || null;
-  const championId = champ ? champ.id : null;
+  // The REIGNING champion — the server-stamped pointer on the epoch payload
+  // (the end of the promoted spine, or the seed). Never re-scanned client-side.
+  const championId = (ep && ep.current_champion != null) ? String(ep.current_champion) : null;
   const championScalar = championId ? scalarByGen.get(championId) : null;
   // The match-ups: the COMPLETED feed (bracket.matchups) UNION the LIVE published
   // rounds (current-epoch-scoped). A candidate running its FIRST round shows up
@@ -114,10 +116,10 @@ export async function render(host, ctx, params, route) {
 
   // the CHAMPION REIGN model (the "reign ribbon"): one bar per champion across
   // the epoch's rounds — shown on a candidate panel only when THAT generation
-  // became champion. Derived from the SAME epoch round model the timeline reads.
-  const reigns = reignModel(epochRoundModel({
-    gens: genList.map((g) => ({ id: g.id, parent: g.parent, promoted: g.promoted })),
-    scalarBy: scalarByGen, bracket, structure, championId,
+  // became champion. Read off the SERVED round timeline (same source as the
+  // epoch view); a null timeline yields no reigns (the ribbon is omitted).
+  const reigns = reignModel(roundsFromTimeline({
+    timeline, bracket, gens: genList, scalarBy: scalarByGen, structure, championId,
   }));
 
   // the live PROJECTED standing map ({gen: {scalar, boards_done, boards_total}})
@@ -126,26 +128,26 @@ export async function render(host, ctx, params, route) {
   const liveProjected = (at && liveForThisEpoch && at.projected && typeof at.projected === 'object') ? at.projected : {};
 
   // THE RACING FIELD MODEL — resolved through the SHARED resolveNonGauntletSt
-  // (live-first → reconstructRacing → recorded) so the candidate dossier's
+  // (live-first → the SERVED settled racing field) so the candidate dossier's
   // field-relative racing panels read the SAME `st` the Match-ups / epoch /
-  // per-round views do. The old path called reconstructRacing directly (settled
-  // only), so a LIVE racing run viewed from the dossier missed the in-flight
-  // rungs the other views showed — a live-only divergence. `at` is already in
-  // memory (state.activeTournament), so the resolver runs synchronously here.
+  // per-round views do. The settled ladder comes off
+  // `/api/epoch/{id}/racing-field` (the per-challenger join lives server-side
+  // now); absent (null) → the dossier renders its honest empty racing state.
   const racingSt = (String(structure) === 'racing')
     ? resolveNonGauntletSt({
-        structure: 'racing', bracket, epochId,
+        structure: 'racing', epochId,
         liveRaw: liveForThisEpoch ? at : null,
         heartbeat: state.heartbeat, activeRuns: state.activeRuns,
         params: (tournament && tournament.params) || {},
+        completedRecord: normalizeStructure(await D.racingField(epochId), false),
       }).st
     : null;
 
   // Resolve each side's full panel data (cached). Side B only when comparing.
   // The primary side (A) honours the entry drill-down param; the compare side
   // (B) reads its lifecycle clean.
-  const sideA = await resolveCandidate(epochId, genId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, params.entry || null, bracket, epochInflight, liveProjected);
-  const sideB = cmpId ? await resolveCandidate(epochId, cmpId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, null, bracket, epochInflight, liveProjected) : null;
+  const sideA = await resolveCandidate(epochId, genId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, params.entry || null, racingSt, epochInflight, liveProjected);
+  const sideB = cmpId ? await resolveCandidate(epochId, cmpId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, null, racingSt, epochInflight, liveProjected) : null;
 
   const digest = JSON.stringify({
     epochId, genId, cmpId, entry: params.entry || null, structure,
@@ -192,7 +194,7 @@ export async function render(host, ctx, params, route) {
 
 // Resolve one candidate's full panel data (all cached reads). `entryParam`
 // only applies to the primary (A) side's drill-down.
-async function resolveCandidate(epochId, genId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, entryParam, bracket, epochInflight, liveProjected) {
+async function resolveCandidate(epochId, genId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, entryParam, racingSt, epochInflight, liveProjected) {
   const node = genList.find((g) => g.id === genId) || { id: genId, parent: null, promoted: null };
   const baseline = !node.parent;
   const exp = experiments.find((x) => x.generation_id === genId) || null;
@@ -241,9 +243,9 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
   const deltaSigma = (svg.isNum(candidateSigma) && svg.isNum(championSigma)) ? candidateSigma - championSigma : null;
 
   // the candidate's PATH through the tournament rungs (rung 0 → rung 1 →
-  // racing-final, each Δ + won/cut) — relates board runs to the rounds even
-  // when the per-run records carry no rung tags. null for a gauntlet candidate.
-  const progression = candidateProgression(bracket, genId);
+  // racing-final, each Δ + survived/cut) — a pure projection of the SERVED
+  // racing field payload. null for a gauntlet candidate / when unserved.
+  const progression = candidateProgression(racingSt, genId);
 
   // fix #3 — EVERY matchup the candidate was in (as champion OR challenger).
   const mine = allMatchups.filter((m) => m.champion === genId || m.challenger === genId);
@@ -435,9 +437,9 @@ export function buildRadarModel({ primaryGate, championScalar, settledScalar, pr
   // (2) pass-rate axis — higher = better, so it maps directly (no inverse). The
   // candidate's pass-rate is read off its own per-board pass_fail; the champion's
   // is recovered from the gate's delta_pass_rate (delta = challenger − champion).
-  const passable = (Array.isArray(entries) ? entries : []).filter((e) => e && (e.pass_fail === 0 || e.pass_fail === 1 || e.pass_fail === true || e.pass_fail === false));
+  const passable = (Array.isArray(entries) ? entries : []).filter((e) => e && typeof e.pass_fail === 'boolean');
   if (passable.length) {
-    const candRate = passable.filter((e) => e.pass_fail === 1 || e.pass_fail === true).length / passable.length;
+    const candRate = passable.filter((e) => e.pass_fail === true).length / passable.length;
     const dpr = primaryGate && svg.isNum(primaryGate.delta_pass_rate) ? primaryGate.delta_pass_rate : null;
     const champRate = dpr != null ? Math.max(0, Math.min(1, candRate - dpr)) : null;
     if (champRate != null) {
@@ -480,35 +482,27 @@ export function buildRadarModel({ primaryGate, championScalar, settledScalar, pr
 // when its scalar is better.
 function deriveGateExplain(gate) {
   const rules = Array.isArray(gate.rules) ? gate.rules : [];
-  const decision = normaliseDecision(gate) || 'pending';
-  // the deciding rule: the first that fired, else the first failed, else the
-  // first non-pass — rules short-circuit in declared order.
-  const deciding = rules.find((r) => r && r.fired)
-    || rules.find((r) => r && String(r.status) === 'fail')
-    || rules.find((r) => r && String(r.status) !== 'pass' && String(r.status) !== 'not_reached')
-    || null;
+  const decision = decisionOf(gate) || 'pending';
+  // THE SERVER NAMES THE DECIDING RULE (`deciding_rule` — the one rule it set
+  // `fired` on). The client only looks the rule row up for its label/detail;
+  // it never re-infers the verdict from the rule list or scrapes free text.
+  const decidingId = (typeof gate.deciding_rule === 'string' && gate.deciding_rule) ? gate.deciding_rule : null;
+  const deciding = decidingId ? (rules.find((r) => r && r.id === decidingId) || null) : null;
   const deltaScalar = svg.isNum(gate.delta_scalar) ? gate.delta_scalar : null;
-  let margin = null, regressed = null;
-  if (deciding && deciding.detail) {
-    const det = String(deciding.detail);
-    // scalar-margin detail carries "needs ≤ -0.01" (the promote margin).
-    const mm = /needs\s*[≤<]=?\s*(-?\d+(?:\.\d+)?)/i.exec(det);
-    if (mm) margin = parseFloat(mm[1]);
-    // a monotonicity detail names the regressed predicate / namespace, e.g.
-    // "regressed `no_fabricated_numbers`" or "namespace `agent.tools` regressed".
-    const rb = /`([^`]+)`/.exec(det);
-    if (rb) regressed = rb[1];
-  }
+  // structured server fields — the promote margin + the regressed predicate /
+  // namespace a fired monotonicity rule named. Absent ⇒ unknown (never parsed
+  // out of the display-only `detail` string).
+  const margin = svg.isNum(gate.margin) ? gate.margin : null;
+  let regressed = (typeof gate.regressed_predicate === 'string' && gate.regressed_predicate) ? gate.regressed_predicate
+    : ((typeof gate.regressed_namespace === 'string' && gate.regressed_namespace) ? gate.regressed_namespace : null);
   // the gate's own primary_driver (a judge name) is the fallback regressed
-  // identifier when a monotonicity rule named no predicate in its detail.
+  // identifier when no monotonicity rule named one.
   if (!regressed && gate.primary_driver && gate.primary_driver.judge) regressed = gate.primary_driver.judge;
   return {
     decision,
-    decidingRule: deciding ? (deciding.id || null) : null,
-    decidingLabel: deciding ? (deciding.label || deciding.id || null) : null,
-    // The deciding rule's raw detail string, scope-agnostic — the gate
-    // tooltip prefers this over hard-coded per-entry wording so an
-    // aggregate-scope pass-rate detail renders verbatim.
+    decidingRule: decidingId,
+    decidingLabel: deciding ? (deciding.label || deciding.id || null) : (decidingId || null),
+    // The deciding rule's raw detail string, scope-agnostic — display only.
     detail: deciding ? (deciding.detail || null) : null,
     deltaScalar, margin, regressed,
     reason: gate.reason || null,
@@ -629,7 +623,7 @@ function candidateDigest(s) {
     // beat that advances progress repaints, but a no-op heartbeat stays equal.
     inflight: Array.isArray(s.inflight) ? s.inflight.map((r) => {
       const pr = runProgressRatio(r);
-      return [r.entry_id != null ? r.entry_id : (r.board_entry_id != null ? r.board_entry_id : r.entry || null),
+      return [r.entry_id != null ? r.entry_id : null,
         r.run_id || null, pr != null ? pr.toFixed(2) : null];
     }).sort() : null,
   };
@@ -775,7 +769,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     ])]));
     const tbody = el('tbody');
     for (const r of inflight) {
-      const eid = r.entry_id != null ? r.entry_id : (r.board_entry_id != null ? r.board_entry_id : (r.entry != null ? r.entry : '—'));
+      const eid = r.entry_id != null ? r.entry_id : '—';
       const pr = runProgressRatio(r);
       const pct = pr != null ? Math.round(pr * 100) : null;
       // a per-run harmonograf "execution ▸" link — liveness-gated (these are
@@ -1368,9 +1362,9 @@ function allMatchupsPanel(mine, genId, championId, ctx, epochId) {
   for (const m of mine) {
     const asChamp = m.champion === genId;
     // Class B: a match-up with no recorded decision is still racing — PENDING,
-    // not a default "rejected". `normaliseDecision` reads the matchup's own
+    // not a default "rejected". `decisionOf` reads the matchup's own stamped
     // decision field; absent ⇒ pending.
-    const dec = normaliseDecision(m) || 'pending';
+    const dec = decisionOf(m) || 'pending';
     const other = asChamp ? m.challenger : m.champion;
     const tr = el('tr', null, [
       el('td', null, [el('span', { class: 'dn-mono', text: `${m.champion} → ${m.challenger}` })]),
@@ -1798,8 +1792,8 @@ export function gatePanel(gate) {
   const card = el('div', { class: 'dn-panel dn-gate' });
   // Class B: a gate with no resolved decision is still pending, not rejected.
   // The backend emits decision:"deferred" verbatim until BOTH aggregates
-  // resolve — normaliseDecision threads it through to its caution-toned pill.
-  const decision = normaliseDecision(gate) || 'pending';
+  // resolve — decisionOf threads it through to its caution-toned pill.
+  const decision = decisionOf(gate) || 'pending';
   // operator-override provenance rides BESIDE the verdict (overrideChip) WITHOUT
   // recoloring it. Absent (gate-decided / pre-feature) → null → byte-identical.
   const ovChip = overrideChip(gate && gate.override);
@@ -1836,7 +1830,7 @@ export function gatePanel(gate) {
   // ONLY when gate.override is present; a gate-decided round → byte-identical.
   if (gate.override && gate.override.present) {
     const forcedAction = gate.override.action === 'promote' ? 'force-promoted' : 'force-rejected';
-    const gateSaid = normaliseDecision(gate) || 'deferred';
+    const gateSaid = decisionOf(gate) || 'deferred';
     card.appendChild(el('p', { class: 'dn-gate-override-cap dn-faint', style: 'font-size:11px;margin:6px 0 0;',
       text: 'gate said ' + gateSaid + ' · operator ' + forcedAction
         + (gate.override.reason ? ' — ' + gate.override.reason : '') }));

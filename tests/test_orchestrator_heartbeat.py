@@ -340,9 +340,9 @@ def test_evolve_n_rounds_refuses_when_workspace_locked(
     )
 
     # Plant a foreign lock for a definitely-alive pid (our parent).
-    from zicato.runtime._atomic import atomic_write_json
     from zicato.runtime.paths import ensure_runtime_dirs
     from zicato.runtime.paths import lock_path as _lp
+    from zicato.storage import atomic_write_json
 
     ensure_runtime_dirs(workspace)
     atomic_write_json(

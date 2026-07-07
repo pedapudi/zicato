@@ -42,9 +42,9 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core.types import MutationPoint
-from zicato.dashboard.state_reader import WorkspacePaths
 from zicato.epoch.genstore import GenerationStore, default_generation_store
 from zicato.mutation.enumerator import enumerate_mutations
+from zicato.query import WorkspacePaths
 
 #: The seed / baseline generation id. ``v0`` is the original tree every
 #: mutation-site diff is taken *against*.

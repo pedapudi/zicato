@@ -29,12 +29,18 @@ orchestrator.
 
 from __future__ import annotations
 
+import re
 import textwrap
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from typing import TYPE_CHECKING
 
 from zicato.analyzer.outcome_marginals import OutcomeMarginalSummary
+from zicato.analyzer.process_exemplars import ProcessExemplar
 from zicato.core.drift_kinds import GOLDFIVE_DRIFT_KINDS
 from zicato.core.types import MutationPoint, Pattern, PriorExperiment, ProposerSkill
+
+if TYPE_CHECKING:  # pragma: no cover - typing-only import
+    from zicato.index.query import MutationTrackRecord
 
 #: Hard ceiling on a single mutation point's rendered content. A
 #: ``replace`` patch MUST faithfully reproduce every part of the span it
@@ -307,16 +313,78 @@ def _render_content(content: str) -> str:
     )
 
 
-def render_mutation_block(mutations: Iterable[MutationPoint]) -> str:
-    """Render the mutation-point manifest into the user-prompt block."""
+def render_mutation_track_annotation(record: MutationTrackRecord) -> str:
+    """Render one mutation point's track record as a compact advisory line.
+
+    The proposer-facing surface of the mutation-point fertility map
+    (:func:`zicato.index.query.mutation_point_track_record`). BANDED and
+    aggregate-only, inside the restricted-visibility envelope:
+
+    * the touch / promotion counts are board-anonymous aggregates (they
+      count experiments, exactly like the pattern block's
+      ``entries_affected=N``);
+    * the Δscalar summary is coarsened through :func:`_bucket_scalar_delta`
+      — ``improved`` / ``flat`` / ``regressed`` bands, never the exact
+      experiment-level delta (the same memorization-resistance treatment
+      the experiment-memory digest applies; OVERFITTING.md §11.4);
+    * recency is a coarse ``recent`` / ``stale`` flag (the query's
+      documented last-K window), never a round number.
+
+    HONESTY (load-bearing): the line ALWAYS reads "experiments touching
+    this point" and names how many of them also touched other points
+    (multi-patch experiments confound per-point credit) — it is never
+    phrased as the point's causal effect.
+    """
+    n = record.experiments_touching
+    parts = [f"touched:{n}", f"promoted:{record.promoted}/{n}"]
+    if (
+        record.delta_min is not None
+        and record.delta_median is not None
+        and record.delta_max is not None
+    ):
+        parts.append(
+            f"Δscalar[best:{_bucket_scalar_delta(record.delta_min)} "
+            f"median:{_bucket_scalar_delta(record.delta_median)} "
+            f"worst:{_bucket_scalar_delta(record.delta_max)}]"
+        )
+    parts.append("recent" if record.recent_touching > 0 else "stale")
+    if record.confounded_experiments > 0:
+        basis = (
+            f"{record.confounded_experiments}/{n} also touched other points — " "credit confounded"
+        )
+    else:
+        basis = "each touched only this point"
+    return f"{' '.join(parts)} (experiments touching this point; {basis}; not causal)"
+
+
+def render_mutation_block(
+    mutations: Iterable[MutationPoint],
+    track_records: Mapping[str, MutationTrackRecord] | None = None,
+) -> str:
+    """Render the mutation-point manifest into the user-prompt block.
+
+    ``track_records`` — when supplied — annotates each manifest entry that
+    has one with its compact, banded track-record line
+    (:func:`render_mutation_track_annotation`): advisory context on how
+    experiments touching that point have fared this epoch. ``None`` / empty
+    (the default, and every point without a record) renders the manifest
+    byte-identically to before the surface existed.
+    """
 
     lines: list[str] = []
     items = list(mutations)
     if not items:
         return "(no mutation points available)"
+    records = track_records or {}
     for mp in items:
         meta_keys = sorted(mp.metadata.keys())
         meta_render = "; ".join(f"{k}={mp.metadata[k]}" for k in meta_keys) if meta_keys else "—"
+        record = records.get(mp.id)
+        track_line = (
+            f"  track record: {render_mutation_track_annotation(record)}\n"
+            if record is not None
+            else ""
+        )
         content = _render_content(mp.content)
         # Indent the full content under a "current content:" lead-in so
         # the model can see exactly what it is replacing.
@@ -325,6 +393,7 @@ def render_mutation_block(mutations: Iterable[MutationPoint]) -> str:
             f"- id={mp.id} kind={mp.kind} file={mp.file} "
             f"lines={mp.line_start}-{mp.line_end}\n"
             f"  metadata: {meta_render}\n"
+            f"{track_line}"
             f"  current content (full — a `replace` MUST preserve every part "
             f"you are not changing):\n{indented}"
         )
@@ -527,6 +596,52 @@ def render_failure_mode_profile(summary: OutcomeMarginalSummary) -> str:
     return "\n".join(lines)
 
 
+def render_process_exemplars(exemplars: Iterable[ProcessExemplar]) -> str:
+    """Render redacted process-exemplar windows into the prompt block body.
+
+    The prompt-side surface of the opt-in process-exemplar channel
+    (``docs/design/PROCESS-EXEMPLARS.md``;
+    :func:`zicato.analyzer.process_exemplars.extract_process_exemplars`).
+    Each exemplar renders as one bullet — the pattern it illustrates plus
+    its anchor label — followed by the window's events, one line each:
+    signed relative offset (the anchor is ``0``; never an absolute
+    sequence number), the payload case name, and the already-redacted
+    ``key=value`` fields the extractor's field policy admitted. This
+    function performs NO redaction of its own — every byte it renders was
+    already passed through the extractor's mechanical rules (allowlist,
+    anonymization, truncation, identity scrub); it only formats.
+
+    An empty iterable returns the EMPTY STRING — the proposer-side
+    sentinel for "omit this section entirely", exactly as the
+    failure-mode profile behaves — so a knob-off round renders a
+    byte-identical prompt.
+    """
+    items = list(exemplars)
+    if not items:
+        return ""
+    total = len(items)
+    blocks: list[str] = []
+    for i, ex in enumerate(items, start=1):
+        lines = [
+            f"- exemplar {i}/{total} — pattern {ex.pattern_kind} ({ex.anchor_label}):",
+        ]
+        for ev in ex.events:
+            parts = []
+            for name, value in ev.fields:
+                # Quote free-text values (they carry spaces) so field
+                # boundaries stay legible; closed-vocabulary values render
+                # bare. Purely cosmetic — the content is already redacted.
+                rendered = f'"{value}"' if re.search(r"\s", value) else value
+                parts.append(f"{name}={rendered}")
+            offset = f"{ev.offset:+d}" if ev.offset != 0 else " 0"
+            line = f"    {offset} {ev.case}"
+            if parts:
+                line = f"{line} {' '.join(parts)}"
+            lines.append(line)
+        blocks.append("\n".join(lines))
+    return "\n".join(blocks)
+
+
 def _band_prediction_accuracy(accuracy: float) -> str:
     """Coarsen a hypothesis prediction-accuracy fraction to a calibration band.
 
@@ -567,19 +682,23 @@ def _render_prior_experiment_line(pe: PriorExperiment, *, restrict: bool = False
     """
     ids = ", ".join(pe.modulating) if pe.modulating else "—"
     verdict = pe.decision.upper().replace("_", "-")
+    # A cross-contract entry is labelled with its SOURCE epoch so the
+    # provenance is unmistakable; a same-contract entry renders its bare
+    # generation id, byte-identical to before cross-epoch memory existed.
+    gen_label = pe.generation_id if pe.same_contract else f"{pe.epoch_id}::{pe.generation_id}"
     # A cross-contract entry's Δscalar is measured against a different
     # board and is not comparable, so it is omitted; an in-flight sibling
     # has no outcome yet.
     if pe.scalar_score_delta is not None and pe.same_contract:
         if restrict:
             head = (
-                f"- {pe.generation_id} {verdict} "
+                f"- {gen_label} {verdict} "
                 f"Δscalar={_bucket_scalar_delta(pe.scalar_score_delta)}  [{ids}]"
             )
         else:
-            head = f"- {pe.generation_id} {verdict} Δscalar={pe.scalar_score_delta:+.3f}  [{ids}]"
+            head = f"- {gen_label} {verdict} Δscalar={pe.scalar_score_delta:+.3f}  [{ids}]"
     else:
-        head = f"- {pe.generation_id} {verdict}  [{ids}]"
+        head = f"- {gen_label} {verdict}  [{ids}]"
     if pe.decision == "rejected" and pe.rejection_reason:
         head = f"{head}  ({pe.rejection_reason})"
     # Advisory hypothesis prediction-accuracy (diagnostic, never gates) —
@@ -607,15 +726,26 @@ def render_prior_experiments_block(
     proposer (forbidden-ids remains the only hard gate), it surfaces what
     has already been attempted so re-proposing a rejected direction is a
     deliberate choice rather than an accident of amnesia.
+
+    Cross-contract entries (``same_contract=False`` — a different epoch
+    under the SAME contract hash; EXPERIMENT-MEMORY.md §3.4) render in
+    their OWN clearly-separated block after the same-epoch blocks: they
+    carry directions (core idea + decision, epoch-tagged), never deltas —
+    a Δscalar measured under another epoch does not transfer. A digest
+    with no cross-contract entries renders byte-identically to before
+    cross-epoch memory existed.
     """
     items = list(prior)
     if not items:
         return ""
 
-    promoted = [pe for pe in items if pe.decision == "promoted"]
-    rejected = [pe for pe in items if pe.decision == "rejected"]
-    in_flight = [pe for pe in items if pe.decision == "in_flight"]
-    deferred = [pe for pe in items if pe.decision == "deferred"]
+    cross = [pe for pe in items if not pe.same_contract]
+    same = [pe for pe in items if pe.same_contract]
+
+    promoted = [pe for pe in same if pe.decision == "promoted"]
+    rejected = [pe for pe in same if pe.decision == "rejected"]
+    in_flight = [pe for pe in same if pe.decision == "in_flight"]
+    deferred = [pe for pe in same if pe.decision == "deferred"]
 
     blocks: list[str] = []
     if promoted:
@@ -633,6 +763,12 @@ def render_prior_experiments_block(
         body = "\n".join(_render_prior_experiment_line(pe, restrict=restrict) for pe in in_flight)
         blocks.append(
             f"Proposed this round, not yet evaluated (diversify away from these):\n{body}"
+        )
+    if cross:
+        body = "\n".join(_render_prior_experiment_line(pe, restrict=restrict) for pe in cross)
+        blocks.append(
+            "From PRIOR epochs under the same contract (cross-epoch memory — "
+            f"directions only, deltas do not transfer):\n{body}"
         )
 
     return "\n\n".join(blocks)
@@ -721,6 +857,9 @@ def render_user_prompt(
     restrict_visibility: bool = False,
     custom_judge_names: Iterable[str] = (),
     failure_profile: str = "",
+    process_exemplars: str = "",
+    sample_hint: str = "",
+    mutation_track_records: Mapping[str, MutationTrackRecord] | None = None,
 ) -> str:
     """Build the user prompt for one proposer call.
 
@@ -798,13 +937,48 @@ def render_user_prompt(
         only splices it. Empty (the default) omits the section entirely, so a
         caller that supplies no profile renders a byte-identical prompt to
         before this surface existed.
+    process_exemplars:
+        Optional pre-rendered, train-slice-only, REDACTED process-exemplar
+        block (the opt-in ``proposer_quality.process_exemplars`` channel —
+        ``docs/design/PROCESS-EXEMPLARS.md``; built by
+        :func:`render_process_exemplars` from the extractor's already-
+        redacted windows). When non-empty, a ``## Process exemplars``
+        section is spliced in DIRECTLY AFTER the failure-mode profile,
+        headed by a banner restating the redaction contract, so the
+        proposer can see HOW a detected failure unfolds — never WHICH
+        board entry it unfolded on. The string is already redacted by the
+        extractor's mechanical rules; this function only splices it.
+        Empty (the default — every knob-off round) omits the section
+        entirely, rendering a byte-identical prompt to before this
+        surface existed.
+    sample_hint:
+        Optional per-sample edit-class steering line (the best-of-N slate
+        diversifier — see :data:`zicato.proposer.best_of_n.EDIT_CLASS_HINTS`).
+        When non-empty, an ``## Edit-class hint (this sample)`` section is
+        prepended at the very top of the body so each slate slot explores a
+        DIFFERENT edit strategy rather than re-rolling one. A STATIC
+        instruction string carrying no board identity, so it composes with
+        the restricted-visibility envelope untouched. Empty (the default —
+        every single-sample call) omits the section entirely, rendering a
+        byte-identical prompt to before this surface existed.
+    mutation_track_records:
+        Optional per-mutation-point track records (the fertility map —
+        :func:`zicato.index.query.mutation_point_track_record`, assembled
+        best-effort by the orchestrator from the analytical index). Each
+        manifest entry with a record gains one compact, BANDED advisory
+        line (:func:`render_mutation_track_annotation`) — aggregate counts
+        and bucketed Δscalar only, honestly labelled as "experiments
+        touching this point" (multi-patch experiments confound credit;
+        never causal) — inside the restricted-visibility envelope. ``None``
+        / empty (the default) renders a byte-identical manifest to before
+        this surface existed.
     """
 
     body = USER_PROMPT_TEMPLATE.format(
         current_loss_summary=current_loss_summary.strip() or "(no loss summary)",
         metric_targets_block=render_metric_targets_block(custom_judge_names),
         pattern_block=render_pattern_block(patterns, restrict=restrict_visibility),
-        mutation_block=render_mutation_block(mutations),
+        mutation_block=render_mutation_block(mutations, track_records=mutation_track_records),
     )
     prior_block = render_prior_experiments_block(prior_experiments, restrict=restrict_visibility)
     if prior_block:
@@ -813,6 +987,22 @@ def render_user_prompt(
             f"failures, build on wins)\n\n{prior_block}\n\n"
         )
         body = prior_prefix + body
+    if process_exemplars.strip():
+        # Spliced so it lands DIRECTLY AFTER the failure-mode profile in the
+        # final prompt (prefixes stack in reverse prepend order). The banner
+        # restates the redaction contract so the model reads the windows as
+        # anonymized mechanism, not as named board evidence.
+        exemplars_prefix = (
+            "## Process exemplars (train slice — redacted event windows)\n"
+            "Redaction contract (PROCESS-EXEMPLARS.md): entry ids and task "
+            "text stripped, task ids\n"
+            "anonymized per window, free text truncated, model outputs "
+            "withheld. These show HOW a\n"
+            "detected failure unfolds — never WHICH board entry it unfolded "
+            "on.\n"
+            f"{process_exemplars.strip()}\n\n"
+        )
+        body = exemplars_prefix + body
     if failure_profile.strip():
         failure_prefix = (
             "## Failure-mode profile (this round, aggregate — train slice)\n"
@@ -822,6 +1012,11 @@ def render_user_prompt(
     if insights.strip():
         insights_prefix = f"## Recent telemetry insights\n{insights.strip()}\n\n"
         body = insights_prefix + body
+    if sample_hint.strip():
+        # The best-of-N slate diversifier: this sample's edit-class steering,
+        # read first so the slot's strategy frames everything below it.
+        hint_prefix = f"## Edit-class hint (this sample)\n{sample_hint.strip()}\n\n"
+        body = hint_prefix + body
     if feedback:
         sections = [
             "## Previous attempt was rejected",
@@ -868,6 +1063,8 @@ __all__ = [
     "USER_PROMPT_TEMPLATE",
     "render_failure_mode_profile",
     "render_metric_targets_block",
+    "render_process_exemplars",
+    "render_mutation_track_annotation",
     "render_pattern_block",
     "render_mutation_block",
     "render_prior_experiments_block",

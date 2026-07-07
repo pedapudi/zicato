@@ -315,7 +315,7 @@ def test_load_latest_insights_empty_when_no_md(tmp_path: Path) -> None:
     assert load_latest_insights(workspace, epoch_id) == ""
 
 
-def test_analyze_epoch_telemetry_timeout_bounded(tmp_path: Path, monkeypatch) -> None:
+def test_analyze_epoch_telemetry_timeout_bounded(tmp_path: Path) -> None:
     """A hung aux callable does not block past the configured budget."""
 
     workspace = tmp_path / ".zicato"
@@ -340,8 +340,11 @@ def test_analyze_epoch_telemetry_timeout_bounded(tmp_path: Path, monkeypatch) ->
         ],
     )
 
-    # 0.1 second timeout so the test runs fast.
-    monkeypatch.setenv("ZICATO_AUX_CALL_TIMEOUT", "0.1")
+    # 0.1 second timeout so the test runs fast — pinned the way the
+    # --aux-call-timeout flag pins it (the env binding is deleted).
+    from zicato.config import pin_overrides
+
+    pin_overrides({"aux": {"call_timeout_s": 0.1}})
 
     async def hung_aux(_system: str, _user: str, _model: str) -> str:
         await asyncio.sleep(5.0)

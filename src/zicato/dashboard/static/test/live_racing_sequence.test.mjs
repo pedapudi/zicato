@@ -61,7 +61,7 @@ function serialize(node) {
 function hasProjected(node) { return nodesByClass(node, 'dn-proj').length > 0; }
 
 // the heartbeat the hero scopes to (must match the active-tournament epoch).
-function hb(phase) { return { phase, epoch_id: EPOCH, last_heartbeat: new Date().toISOString() }; }
+function hb(phase) { return { phase, epoch_id: EPOCH, ts: Date.now() }; }
 
 // ===========================================================================
 // THE REALISTIC PUBLISHED SHAPES — what _publish_active_tournament writes over

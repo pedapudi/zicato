@@ -1,6 +1,6 @@
 ---
 name: zicato-build-tournament
-description: The tournament-builder copilot's guide to helping an operator assemble a whole zicato evaluation contract through a GUI — structure, field_size/replicates, per-structure params, the board & train/holdout split, the proposer, and the promote gate — as a DRAFT edited through tools and applied only on confirmation. Use when a copilot is walking an operator through building a tournament. Teaches the consequence-forward discipline: every choice carries a COST (board-runs) and a CONTRACT impact (applying rolls the epoch), so always surface cost + the epoch-roll before apply. Defers structure choice to zicato-design-tournament-structure, board craft to zicato-build-board, holdout detail to OVERFITTING.md, proposer to zicato-design-proposer, gate weights to SCORING.md.
+description: The tournament-builder copilot's guide to helping an operator assemble a whole zicato evaluation contract through a GUI — structure, field_size/replicates, per-structure params, the board & train/holdout split, the overfitting block, the proposer (quality/screen/memory), the weights, and the promote gate incl. the evidence gate — as a DRAFT edited through tools and applied only on confirmation. Use when a copilot is walking an operator through building a tournament. Teaches the consequence-forward discipline (every choice carries a COST in board-runs and a CONTRACT impact — applying rolls the epoch) AND the statistical-soundness discipline (the margin must clear the measured noise floor; preflight the draft before burning rounds). Defers structure choice to zicato-design-tournament-structure, board craft to zicato-build-board, holdout detail to OVERFITTING.md, proposer to zicato-design-proposer, gate weights to SCORING.md.
 ---
 
 # Building a zicato tournament (copilot guide)
@@ -157,6 +157,57 @@ boards where a single noisy entry flip shouldn't veto a strictly-better
 challenger). Disable the check entirely with `pass_rate_monotonicity=False`
 (there is no `off` scope value).
 
+## Statistical soundness — the knobs that decide whether a verdict means anything
+
+Cost and the epoch-roll are the *visible* consequences. The invisible one is
+whether the contract can **out-signal its own noise** — a contract that cannot
+produces verdicts decided by re-roll jitter, and every "win" is suspect. Four
+knob families carry this, and the copilot should teach them honestly:
+
+- **The margin must clear the measured noise floor.** `promote_margin` is a
+  noise threshold: a duel decided by the margin alone cannot distinguish a real
+  improvement from an A/A re-roll unless the margin exceeds the measured
+  `max |Δ|` of the champion duelling itself. Run the **`preflight`** tool (or
+  `zicato board preflight` / `zicato board audit` on the CLI) to measure the
+  floor and the achievable signal; `validate` then flags a margin at/below the
+  floor at `refuse` severity whenever the evidence gate is off. Recommend-only
+  — but a REFUSE verdict means "fix the noise or the board before burning
+  rounds", not "click apply anyway".
+- **The evidence gate buys soundness, not power.** The Bradley–Terry pre-gate
+  (`promote_confidence_threshold` + `promote_confidence_replicates`, set via
+  `set_param`) refuses to crown until P(challenger > champion) clears the bar
+  AND the rating CIs separate. It stops noise-crownings; it does NOT make a
+  weak signal strong. CI separation on a near-tie needs replicated evidence —
+  give it a realistic budget (the scaffold uses 32) and price it: each
+  replicate is a fresh board sweep for BOTH contestants, so the meter's
+  `crowning-confirm` line (~budget × 2 × board, per confirmed crowning) is
+  usually the largest term on the bill.
+- **The screen is veto-first tryouts, not a ranking.** `set_screening` runs
+  each best-of-N slate candidate on a small rotating train panel BEFORE
+  selection and disqualifies only confirmed catastrophic regressions; the
+  critic still chooses among the survivors. It cheaply removes obvious losers
+  from the field — it never nudges the ordering unless the operator lets it
+  (`veto_only=false`).
+- **The placebo is the gate-discrimination control.** `random_baseline_every_n`
+  (via `set_holdout`) fields one deliberately no-op challenger every N rounds.
+  The gate MUST reject it — a promoted placebo is the alarm that the gate
+  cannot tell signal from noise and recent promotions are suspect. Cheap
+  insurance (one amortized duel every N rounds) on any long run.
+- **Process exemplars widen what the proposer may see — opt in with eyes
+  open.** `set_proposer_quality(process_exemplars=N)` shows the proposer up
+  to N mechanically-redacted event windows per round (how a detected failure
+  *unfolds* — the wandering plan, the looping tool call), extracted from the
+  champion's train-slice telemetry. Redaction is enforced in code (no entry
+  ids, no task text, no model outputs), the extraction is free (read-side
+  only — no cost-meter impact), and the epoch rolls on any change — but
+  unlike the screen this knob touches the overfitting boundary directly,
+  which is why the scaffold leaves it at 0. Be honest with the operator:
+  enable it only under the harm-detection runbook in
+  `docs/design/PROCESS-EXEMPLARS.md` §5 — keep the placebo arm on, watch the
+  `generalization_gap` health finding every round, and set the knob back to
+  0 (rolling the epoch, rotating the holdout) if the gap widens while train
+  keeps improving.
+
 ## The copilot's operating contract — DRAFT, then apply
 
 The builder edits a **draft contract**, never the live epoch directly. The
@@ -165,12 +216,22 @@ copilot's tools (conceptual builder surface):
 | Tool | Edits the draft… |
 |---|---|
 | `set_structure` | the tournament structure |
-| `set_param KEY=VALUE` | one structure param (`field_size`, `replicates`, `rounds_n`, `eta`, …) |
-| `set_holdout` | the train/holdout split (fraction and/or `holdout`-tagged ids) |
+| `set_param KEY=VALUE` | one structure param (`field_size`, `replicates`, `rounds_n`, `eta`, …) — also the evidence gate (`promote_confidence_threshold`, `promote_confidence_replicates`; value `null` removes a key) |
+| `set_holdout` | the whole anti-overfitting block: the split (fraction and/or `holdout`-tagged ids), the Ladder governor (`ladder: {enabled, threshold, budget, noise_scale}`), `rotate_holdout`, `min_board_size_for_split`, `restrict_proposer_visibility`, the placebo cadence (`random_baseline_every_n`), the refresh ceiling (`max_generations_per_contract`; 0 clears) |
 | `set_proposer` | the proposer dir / tier |
-| `set_weights` | the scoring weights and gate thresholds (also surfaced in `zicato-build-board`) |
-| `estimate_cost` | (read-only) returns board-runs-per-round for the current draft |
-| `validate` | (read-only) checks the draft resolves (structure valid, params well-typed, holdout tags exist, proposer imports) |
+| `set_proposer_quality` | best-of-N slate size + the self-critique pass (`best_of_n`, `critique_enabled`) + the opt-in redacted process-exemplar channel (`process_exemplars`; 0 = off — see the soundness note above) |
+| `set_screening` | the pre-tournament candidate screen (`entries`, `veto_only`) — composes with `set_proposer_quality` on the same block |
+| `set_experiment_memory` | cross-epoch experiment-memory transfer (`cross_epoch`) |
+| `set_weights` | the loss-shaping weights (drift/pass/per-kind/per-judge/severity; also surfaced in `zicato-build-board`) |
+| `set_namespace_weights` | the multi-objective namespace coefficients + the `diff_complexity_weight` parsimony term |
+| `set_gate` | `promote_margin`, pass-rate monotonicity (+ its scope), `namespace_monotonicity`, the integrity blocks (`block_on_containment_violation`, `block_on_gate_contradiction`), and the regression-suite pre-gate (`regression_gate_enabled` / `_test_command` / `_timeout_s`) |
+| `edit_board_entry` / `add_judge` / `remove_judge` / `set_brief` | the board + brief (deep craft in `zicato-build-board`) |
+| `estimate_cost` | (read-only) board-runs-per-round for the current draft, incl. the evidence-gate confirm budget, screen runs, best-of-N auxiliary calls, and the placebo line |
+| `validate` | (read-only) advisory warnings, incl. the statistical margin-vs-noise-floor rule (`refuse` severity when a measured floor is known and the evidence gate is off) |
+| `preflight` | (read-only, spends the small K-draw measurement budget) measures the DRAFT contract's A/A noise floor + achievable signal against the registered target; verdict `ok`/`warn`/`refuse`, recommend-only; degrades honestly when the workspace has no registered target. CLI equivalents: `zicato board preflight`, `zicato board audit` |
+| `preview_apply` | (read-only) dry-run: the diff, the predicted contract hash, the cost |
+| `fork` / `switch` / `list_drafts` | NAMED draft slots — the fork/compare lifecycle. `fork name` snapshots the working draft into a slot and binds the session to it; `switch` moves between slots with their state intact. Iterating on contract variants never writes anything — only `apply` does |
+| `compare name_a name_b` | (read-only) keyed diff between any two drafts (`session` = the working draft, `live` = the running contract, or a slot name): differing contract-canonical scoring keys with both values, board ids added/removed/changed, brief, proposer |
 | `apply` | freezes the draft into the contract — **ROLLS THE EPOCH** |
 
 The loop the copilot runs on every operator request:
@@ -199,8 +260,13 @@ Two hard rules for the copilot:
 - **Start at gauntlet + a small discriminating board.** Add field-structure,
   replicates, and a holdout only once there is a real field and a real
   over-fitting risk to defend against.
+- **Preflight before the first run.** One `preflight` call answers whether the
+  contract can out-signal its noise at all; a `refuse` verdict caught in the
+  builder is rounds not wasted.
 - **Show cost before every commit.** The operator should never be surprised by
   the board-run bill; `estimate_cost` is cheap and read-only — call it freely.
+  With the evidence gate on, point at the `crowning-confirm` line explicitly —
+  it is usually the biggest number on the meter.
 - **Treat the holdout as the over-fitting insurance**, not a free add — it
   costs confirmation runs and has its own query budget (OVERFITTING.md). Default
   ~30%, adjust to the board's size and noise.

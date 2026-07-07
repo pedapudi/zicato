@@ -19,10 +19,12 @@ All synthetic — no live runs.
 from __future__ import annotations
 
 import asyncio
+import itertools
 
 from zicato.core.types import TournamentStructure
 from zicato.selection import Contestant, Matchup, MatchupResult, make_strategy
 from zicato.selection.driver import EvidencePreGate, EvidenceResolution, resolve_tournament
+from zicato.selection.evidence_gate import EVIDENCE_REPLICATE_BASE
 from zicato.tournament.gate import GateOutcome
 
 
@@ -47,18 +49,24 @@ def _result(m: Matchup, *, left_scalar: float, right_scalar: float) -> MatchupRe
     )
 
 
+_REPLICATE_SLOTS = itertools.count(EVIDENCE_REPLICATE_BASE)
+
+
 def _replicate_result(left_id: str, right_id: str, *, child_won: bool) -> MatchupResult:
     """One synthetic replicate duel between a seeded pair.
 
     The crowning pair is always (champion=left, challenger=right) in the driver
-    loop, so a child win is the lower (better) right scalar.
+    loop, so a child win is the lower (better) right scalar. Each call mints a
+    UNIQUE matchup id encoding a reserved replicate slot — the ReplicateDuel
+    contract the orchestrator's implementations satisfy; the driver's audit
+    guard drops a re-presented id rather than double-counting one draw.
     """
     if child_won:
         left_scalar, right_scalar, delta, dec = 1.0, 0.5, -0.5, "promoted"
     else:
         left_scalar, right_scalar, delta, dec = 0.5, 1.0, 0.5, "rejected"
     return MatchupResult(
-        matchup_id=f"replicate:{left_id}:{right_id}",
+        matchup_id=f"bt-replicate:r{next(_REPLICATE_SLOTS)}:{left_id}:{right_id}",
         left_id=left_id,
         right_id=right_id,
         left_agg={"scalar": left_scalar, "pass_rate": 1.0},
@@ -185,6 +193,54 @@ def test_pregate_inconclusive_fires_dead_letter_on_unresolvable_tie() -> None:
     assert res.verdict.ci_overlap is True
     # The CI history traced every refit step.
     assert len(res.ci_history) >= 2
+
+
+# ---------------------------------------------------------------------------
+# Duplicate draws never accumulate — identical data must not separate CIs
+# ---------------------------------------------------------------------------
+
+
+def test_pregate_drops_replicates_that_replay_an_audited_draw() -> None:
+    # A degenerate replicate runner that re-presents the SAME draw (one fixed
+    # matchup id — the pre-fix fast-mode cache-replay shape) must not let the
+    # audit grow by repetition: the duplicate is dropped, the budget is still
+    # spent (the loop terminates), and with the pair stuck below the
+    # credibility floor the strategy's verdict passes through verbatim — the
+    # fit never "separates" on one sample repeated.
+    s = make_strategy(TournamentStructure(structure="gauntlet"))
+    champ = _champion("v0")
+    challenger = _challenger("v1")
+    calls = {"n": 0}
+
+    async def request_field(n: int):
+        return champ, [challenger]
+
+    async def run_matchup(m: Matchup) -> MatchupResult:
+        return _result(m, left_scalar=1.0, right_scalar=0.4)
+
+    fixed = _replicate_result("v0", "v1", child_won=True)
+
+    async def replaying_replicate_duel(left_id: str, right_id: str) -> MatchupResult:
+        calls["n"] += 1
+        return fixed  # the same draw, every time
+
+    dec = asyncio.run(
+        resolve_tournament(
+            s,
+            request_field=request_field,
+            run_matchup=run_matchup,
+            pre_gate=EvidencePreGate(threshold=0.9, replicate_budget=10),
+            replicate_duel=replaying_replicate_duel,
+        )
+    )
+    # The whole budget was spent chasing evidence the runner never supplied...
+    assert calls["n"] == 10
+    # ...but only ONE copy of the draw entered the audit, the pair never
+    # reached the credibility floor, and the gate verdict passed through
+    # unchanged (never a repetition-driven "confirmed" crown).
+    assert dec.decision == "promoted"
+    assert dec.promoted_generation_id == "v1"
+    assert len(dec.matchups) == 1  # pass-through: the original decision's audit
 
 
 # ---------------------------------------------------------------------------

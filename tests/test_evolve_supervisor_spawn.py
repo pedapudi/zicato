@@ -2,16 +2,18 @@
 ``zicato.cli.commands.evolve``.
 
 ``zicato evolve`` spawns two children: the watchdog-only supervisor
-binary and the Python dashboard service. These tests use a sentinel
+binary and the Python dashboard service. These tests pin a sentinel
 shell script (instead of the real Rust binary) as the
-``ZICATO_SUPERVISOR_BINARY`` so the test runs without the supervisor
-crate being built, and assert the dashboard spawn argv.
+``integration.supervisor_binary`` config knob — exactly as the
+``--supervisor-binary`` flag pins it — so the test runs without the
+supervisor crate being built, and assert the dashboard spawn argv.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import sys
 from pathlib import Path
 
@@ -40,25 +42,41 @@ def _write_sentinel(tmp_path: Path) -> Path:
     return script
 
 
-def test_resolve_supervisor_binary_uses_env_override(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """``ZICATO_SUPERVISOR_BINARY`` short-circuits resolution."""
+def _pin_supervisor_binary(path: Path) -> None:
+    """Pin the watchdog binary exactly as ``--supervisor-binary`` does."""
+    from zicato.config import pin_overrides
+
+    pin_overrides({"integration": {"supervisor_binary": str(path)}})
+
+
+def test_resolve_supervisor_binary_uses_pinned_flag(tmp_path: Path) -> None:
+    """A pinned ``--supervisor-binary`` value short-circuits resolution."""
     sentinel = _write_sentinel(tmp_path)
-    monkeypatch.setenv("ZICATO_SUPERVISOR_BINARY", str(sentinel))
+    _pin_supervisor_binary(sentinel)
     resolved = _resolve_supervisor_binary()
     assert resolved == sentinel
+
+
+def test_resolve_supervisor_binary_ignores_deleted_env_var(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``ZICATO_SUPERVISOR_BINARY`` was deleted for ``--supervisor-binary``."""
+    sentinel = _write_sentinel(tmp_path)
+    monkeypatch.setenv("ZICATO_SUPERVISOR_BINARY", str(sentinel))
+    # Strip PATH so the deleted env var is the only way the sentinel
+    # could ever be found — it must not be.
+    monkeypatch.setenv("PATH", "/nonexistent")
+    assert _resolve_supervisor_binary() != sentinel
 
 
 def test_resolve_supervisor_binary_returns_none_when_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """If env override + bundled + PATH + dev-checkout all miss, returns ``None``."""
-    monkeypatch.delenv("ZICATO_SUPERVISOR_BINARY", raising=False)
-    # Point env at a non-executable; resolver should fall through.
+    """If flag pin + bundled + PATH + dev-checkout all miss, returns ``None``."""
+    # Pin a non-executable; resolver should fall through.
     not_executable = tmp_path / "not-exec"
     not_executable.write_text("")
-    monkeypatch.setenv("ZICATO_SUPERVISOR_BINARY", str(not_executable))
+    _pin_supervisor_binary(not_executable)
     # Strip PATH so the system zicato-supervisor (if any) is unreachable.
     monkeypatch.setenv("PATH", "/nonexistent")
     # The bundled (zicato/_bin/) and dev-checkout (target/release/)
@@ -122,9 +140,8 @@ def _fake_checkout(
     if dev_mtime is not None:
         _make_exec(dev, dev_mtime)
 
-    # No env override, and an empty PATH so a system zicato-supervisor never
-    # leaks into the resolution under test.
-    monkeypatch.delenv("ZICATO_SUPERVISOR_BINARY", raising=False)
+    # No flag pin (the autouse fixture cleared any), and an empty PATH so
+    # a system zicato-supervisor never leaks into the resolution under test.
     monkeypatch.setenv("PATH", str(tmp_path / "empty-path"))
     return bundled, dev
 
@@ -174,14 +191,14 @@ def test_resolve_dev_only_bundled_absent(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert _resolve_supervisor_binary() == dev
 
 
-def test_resolve_env_override_beats_dev_checkout(
+def test_resolve_pinned_flag_beats_dev_checkout(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """An explicit ``ZICATO_SUPERVISOR_BINARY`` short-circuits everything,
+    """A pinned ``--supervisor-binary`` short-circuits everything,
     even a present-and-newer dev-checkout build."""
     _bundled, _dev = _fake_checkout(monkeypatch, tmp_path, bundled_mtime=1000.0, dev_mtime=9000.0)
     override = _make_exec(tmp_path / "override" / "zicato-supervisor", 4242.0)
-    monkeypatch.setenv("ZICATO_SUPERVISOR_BINARY", str(override))
+    _pin_supervisor_binary(override)
     assert _resolve_supervisor_binary() == override
 
 
@@ -209,7 +226,7 @@ def test_supervisor_spawned_with_no_dashboard(
     supervisor must run watchdog-only.
     """
     sentinel = _write_sentinel(tmp_path)
-    monkeypatch.setenv("ZICATO_SUPERVISOR_BINARY", str(sentinel))
+    _pin_supervisor_binary(sentinel)
 
     captured: dict[str, tuple[str, ...]] = {}
 
@@ -236,7 +253,7 @@ def test_supervisor_spawned_with_no_dashboard(
 def test_spawn_and_terminate_round_trip(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Spawn the sentinel, observe it's running, terminate it cleanly."""
     sentinel = _write_sentinel(tmp_path)
-    monkeypatch.setenv("ZICATO_SUPERVISOR_BINARY", str(sentinel))
+    _pin_supervisor_binary(sentinel)
 
     async def _scenario() -> None:
         proc = await _maybe_spawn_supervisor(tmp_path, disabled=False)
@@ -338,3 +355,98 @@ def test_maybe_spawn_dashboard_missing_entrypoint_returns_none(
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _boom)
     proc = asyncio.run(_maybe_spawn_dashboard(tmp_path, 7892, disabled=False))
     assert proc is None
+
+
+# ---------------------------------------------------------------------------
+# Child process-group isolation (the evolve-with-dashboard "hang")
+# ---------------------------------------------------------------------------
+#
+# Both children MUST be spawned with ``start_new_session=True`` so each is
+# its own session/process-group leader. Without it the dashboard child
+# shares evolve's process group, and a group-directed signal aimed at the
+# CHILD (``os.killpg`` from a process-hygiene sweeper — e.g. this very test
+# suite's leaked-dashboard reaper running in a concurrent session — or a
+# stray ``kill -- -PID``) kills the whole evolve invocation. Observed live
+# as "evolve with the dashboard dies before the first round while a test
+# suite runs on the same host"; ``--no-dashboard`` was unaffected because
+# no marker child existed to aim at.
+
+
+def test_spawn_helpers_isolate_children_in_new_sessions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Both spawn helpers pass ``start_new_session=True``.
+
+    This is the exact kwarg whose absence let an external group-kill aimed
+    at the dashboard child take down the evolve orchestrator with it.
+    """
+    sentinel = _write_sentinel(tmp_path)
+    _pin_supervisor_binary(sentinel)
+
+    captured: list[dict[str, object]] = []
+
+    async def _fake_exec(*args: str, **kwargs: object):  # type: ignore[no-untyped-def]
+        captured.append(dict(kwargs))
+
+        class _FakeProc:
+            returncode: int | None = 0
+
+            async def wait(self) -> int:
+                return 0
+
+            def terminate(self) -> None:  # pragma: no cover - not reached
+                pass
+
+        return _FakeProc()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
+
+    async def _scenario() -> None:
+        await _maybe_spawn_supervisor(tmp_path, disabled=False)
+        await _maybe_spawn_dashboard(tmp_path, 7892, disabled=False)
+
+    asyncio.run(_scenario())
+    assert len(captured) == 2, "expected the supervisor and dashboard spawns"
+    for kwargs in captured:
+        assert kwargs.get("start_new_session") is True
+
+
+@pytest.mark.slow
+def test_group_kill_aimed_at_dashboard_child_cannot_reach_evolve(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A REAL spawned dashboard child leads its own process group, so a
+    group-kill aimed at it can never propagate to the spawning (evolve)
+    process — this test process stands in for evolve and must survive.
+
+    The child argv is swapped for a plain sleeper so no real server binds
+    a port; the process-group topology under test is identical.
+    """
+    import zicato.cli.commands.evolve as ev
+
+    monkeypatch.setattr(
+        ev,
+        "_dashboard_spawn_argv",
+        lambda *_a, **_k: [sys.executable, "-c", "import time; time.sleep(30)"],
+    )
+
+    async def _scenario() -> None:
+        proc = await _maybe_spawn_dashboard(tmp_path, 7892, disabled=False)
+        assert proc is not None
+        try:
+            child_pgid = os.getpgid(proc.pid)
+            # The load-bearing assertion: the child is NOT in our group.
+            # (Pre-fix this fails here — deliberately BEFORE any killpg, so
+            # a regression fails cleanly instead of killing the test run.)
+            assert child_pgid != os.getpgid(0)
+            # The exact hostile signal observed live: SIGKILL to the
+            # child's whole group. Only the child dies; we keep running.
+            os.killpg(child_pgid, signal.SIGKILL)
+            await asyncio.wait_for(proc.wait(), timeout=10)
+            assert proc.returncode == -signal.SIGKILL
+        finally:
+            if proc.returncode is None:  # pragma: no cover - cleanup path
+                proc.kill()
+                await proc.wait()
+
+    asyncio.run(_scenario())

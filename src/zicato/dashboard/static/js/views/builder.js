@@ -39,6 +39,8 @@ const SECTIONS = [
   { id: 'structure', label: 'Structure' },
   { id: 'field', label: 'Field & noise' },
   { id: 'board', label: 'Board & holdout' },
+  { id: 'overfitting', label: 'Overfitting' },
+  { id: 'weights', label: 'Weights' },
   { id: 'proposer', label: 'Proposer' },
   { id: 'gate', label: 'Gate' },
   { id: 'review', label: 'Review' },
@@ -48,6 +50,12 @@ let _draft = null;       // the live draft.to_dict()
 let _cost = null;        // last cost.to_dict()
 let _warnings = [];      // last warnings[]
 let _diff = null;        // last diff.to_dict()
+let _preflight = null;   // last preflight result (the op's `preflight` key)
+let _drafts = [];        // named fork slots (the fork/compare lifecycle)
+let _activeSlot = null;  // the slot the session is bound to ('' = unnamed)
+let _compare = null;     // last compare result (the op's `compare` key)
+let _cmpA = 'session';   // compare operand selections (persist across renders)
+let _cmpB = 'live';
 let _config = null;      // /builder/config public dict
 let _active = 'structure';
 let _busy = false;
@@ -123,6 +131,7 @@ function applySnapshot(snap) {
   _cost = snap.cost || _cost;
   _warnings = Array.isArray(snap.warnings) ? snap.warnings : [];
   _diff = snap.diff || _diff;
+  if (Array.isArray(snap.drafts)) _drafts = snap.drafts;
 }
 
 // Apply the {draft,patch,cost,warnings,diff} envelope the op / a chat patch
@@ -134,6 +143,14 @@ function applyOpResult(env, opts) {
   if (env.cost) _cost = env.cost;
   if (Array.isArray(env.warnings)) _warnings = env.warnings;
   if (env.diff) _diff = env.diff;
+  if (env.preflight) _preflight = env.preflight;
+  if (Array.isArray(env.drafts)) _drafts = env.drafts;
+  if (env.compare) _compare = env.compare;
+  if (env.patch && (env.patch.op === 'fork' || env.patch.op === 'switch')
+      && env.patch.changed && env.patch.changed.name) {
+    _activeSlot = env.patch.changed.name;
+  }
+  _renderRail();
   _renderCenter();
   _renderPreview();
   if (_chat && (opts && opts.fromChat) && env.patch) _chat.tagLastEdit(summarizePatch(env.patch));
@@ -171,19 +188,60 @@ function flashError(msg) { _flash = String(msg || ''); _renderCenter(); }
 // ── left rail ─────────────────────────────────────────────────────────
 
 function renderRail(host) {
-  const digest = JSON.stringify({ active: _active, done: SECTIONS.map((s) => sectionDone(s.id)) });
-  if (gatedSwap(host, 'rail|' + digest, () => SECTIONS.map((s) => {
-    const done = sectionDone(s.id);
-    const btn = el('button', {
-      class: 'dn-bld-railitem' + (s.id === _active ? ' dn-bld-railitem-active' : '') + (done ? ' dn-bld-railitem-done' : ''),
-      type: 'button', 'aria-current': s.id === _active ? 'step' : null,
-    }, [
-      el('span', { class: 'dn-bld-railglyph', 'aria-hidden': 'true', text: done ? '✓' : (s.id === _active ? '◆' : '◇') }),
-      el('span', { class: 'dn-bld-raillabel', text: s.label }),
-    ]);
-    btn.addEventListener('click', () => { _active = s.id; _renderRail(); _renderCenter(); _renderPreview(); });
-    return btn;
-  }))) { /* swapped */ }
+  const digest = JSON.stringify({
+    active: _active, done: SECTIONS.map((s) => sectionDone(s.id)),
+    drafts: _drafts, slot: _activeSlot,
+  });
+  if (gatedSwap(host, 'rail|' + digest, () => {
+    const items = SECTIONS.map((s) => {
+      const done = sectionDone(s.id);
+      const btn = el('button', {
+        class: 'dn-bld-railitem' + (s.id === _active ? ' dn-bld-railitem-active' : '') + (done ? ' dn-bld-railitem-done' : ''),
+        type: 'button', 'aria-current': s.id === _active ? 'step' : null,
+      }, [
+        el('span', { class: 'dn-bld-railglyph', 'aria-hidden': 'true', text: done ? '✓' : (s.id === _active ? '◆' : '◇') }),
+        el('span', { class: 'dn-bld-raillabel', text: s.label }),
+      ]);
+      btn.addEventListener('click', () => { _active = s.id; _renderRail(); _renderCenter(); _renderPreview(); });
+      return btn;
+    });
+    items.push(slotStrip());
+    return items;
+  })) { /* swapped */ }
+}
+
+// ── the draft-slot picker (fork/compare lifecycle) ─────────────────────
+//
+// Compact strip at the bottom of the rail: switch between named fork slots,
+// or fork the working draft into a new one. Slots are how operators iterate
+// on contract variants WITHOUT rolling the epoch — apply still writes only
+// the draft the session is on.
+function slotStrip() {
+  const wrap = el('div', { class: 'dn-bld-slots' });
+  wrap.appendChild(el('div', { class: 'dn-bld-slots-head', text: 'Drafts' }));
+  const cur = _activeSlot || '';
+  const sel = el('select', { class: 'dn-bld-select dn-bld-slots-pick', 'aria-label': 'Draft slot' }, [
+    el('option', { value: '', text: '(working draft)' }),
+    ..._drafts.map((n) => el('option', { value: n, text: n })),
+  ]);
+  sel.value = cur;
+  sel.setAttribute('value', cur);
+  sel.addEventListener('change', () => {
+    const v = sel.value != null ? sel.value : sel.getAttribute('value');
+    if (v && v !== _activeSlot) runOp('switch', { name: v });
+  });
+  wrap.appendChild(sel);
+  const nameIn = el('input', {
+    class: 'dn-bld-text dn-bld-slots-name', type: 'text',
+    placeholder: 'variant-name', 'aria-label': 'Fork name',
+  });
+  const forkBtn = el('button', { class: 'dn-bld-btn dn-bld-btn-fork', type: 'button', text: 'Fork' });
+  forkBtn.addEventListener('click', () => {
+    const v = String(nameIn.value != null ? nameIn.value : (nameIn.getAttribute('value') || '')).trim();
+    if (v) runOp('fork', { name: v });
+  });
+  wrap.appendChild(el('div', { class: 'dn-bld-slots-forkrow' }, [nameIn, forkBtn]));
+  return wrap;
 }
 
 // A section is "done" once the operator has visibly engaged its core contract
@@ -198,6 +256,8 @@ function sectionDone(id) {
     case 'structure': return !!ts.structure;
     case 'field': return !!(ts.params && Object.keys(ts.params).length);
     case 'board': return Array.isArray(d.board) && d.board.length > 0;
+    case 'overfitting': return !!sc.overfitting;
+    case 'weights': return sc.drift_weight != null;
     case 'proposer': return !!d.proposer;
     case 'gate': return sc.promote_margin != null;
     case 'review': return !!(_diff && _diff.rolls_epoch);
@@ -209,7 +269,10 @@ function sectionDone(id) {
 
 function renderCenter(host) {
   const d = _draft || {};
-  const digest = JSON.stringify({ active: _active, draft: d, busy: _busy, flash: _flash });
+  const digest = JSON.stringify({
+    active: _active, draft: d, busy: _busy, flash: _flash, pf: _preflight,
+    cmp: _compare, cmpSel: [_cmpA, _cmpB], drafts: _drafts,
+  });
   gatedSwap(host, 'center|' + digest, () => {
     const nodes = [];
     if (_flash) {
@@ -227,6 +290,8 @@ function renderCenter(host) {
       case 'structure': body = structureSection(d); break;
       case 'field': body = fieldSection(d); break;
       case 'board': body = boardSection(d); break;
+      case 'overfitting': body = overfittingSection(d); break;
+      case 'weights': body = weightsSection(d); break;
       case 'proposer': body = proposerSection(d); break;
       case 'gate': body = gateSection(d); break;
       case 'review': body = reviewSection(d); break;
@@ -246,6 +311,36 @@ function controlRow(labelText, info, control) {
     ]),
     el('div', { class: 'dn-bld-control' }, [control]),
   ]);
+}
+
+// A numeric input that commits through onCommit(number) on change. `attrs`
+// carries min/max/step/aria-label; non-finite input is ignored (never posts).
+function numInput(value, attrs, onCommit, opts) {
+  const o = opts || {};
+  const input = el('input', Object.assign({
+    class: 'dn-bld-num', type: 'number', value: String(value),
+  }, attrs || {}));
+  input.addEventListener('change', () => {
+    const raw = input.value != null ? input.value : input.getAttribute('value');
+    let n = Number(raw);
+    if (!isFinite(n)) return;
+    if (o.int) n = Math.round(n);
+    onCommit(n);
+  });
+  return input;
+}
+
+// A checkbox that commits through onToggle(boolean) on change, wrapped with
+// its caption. Follows the existing screen-toggle pattern (attribute-checked
+// so the mock DOM and the browser agree).
+function checkInput(checked, aria, caption, onToggle) {
+  const box = el('input', { class: 'dn-bld-check', type: 'checkbox', 'aria-label': aria });
+  if (checked) box.setAttribute('checked', 'checked');
+  box.addEventListener('change', () => {
+    const on = box.checked != null ? box.checked : (box.getAttribute('checked') != null);
+    onToggle(!!on);
+  });
+  return el('label', { class: 'dn-bld-checkwrap' }, [box, el('span', { text: caption })]);
 }
 
 function structureSection(d) {
@@ -285,12 +380,43 @@ function fieldSection(d) {
       let num = Number(raw);
       if (!isFinite(num)) return;
       if (spec.int) num = Math.round(num);
-      runOp('set_param', { key: spec.key, value: num });
+      // Opt-in params (the evidence-gate threshold): 0 REMOVES the key so an
+      // unset gate hashes byte-identically to a contract that predates it.
+      runOp('set_param', { key: spec.key, value: (spec.removeAtZero && num === 0) ? null : num });
     };
     input.addEventListener('change', commit);
     return controlRow(spec.label, spec.info, input);
   });
   if (!rows.length) rows.push(empty('This structure has no tunable field params.'));
+  // Pre-tournament candidate screening (tryouts) — a proposer_quality
+  // contract knob, so it drives the dedicated set_screening op rather
+  // than set_param. Rendered next to the replicates control: both are
+  // noise-vs-cost levers over the same board-unit runner.
+  const pq = ((d.scoring || {}).proposer_quality) || {};
+  const screen = el('input', {
+    class: 'dn-bld-num', type: 'number',
+    value: String(pq.screen_entries != null ? pq.screen_entries : 0),
+    min: '0', step: '1', 'aria-label': 'Candidate screen entries',
+  });
+  screen.addEventListener('change', () => {
+    const n = Number(screen.value != null ? screen.value : screen.getAttribute('value'));
+    if (!isFinite(n) || n < 0) return;
+    runOp('set_screening', { entries: Math.round(n) });
+  });
+  rows.push(controlRow('Candidate screen entries', {
+    title: 'Candidate screen entries', def: '0 (off); scaffold 2',
+    body: 'Pre-tournament tryout: each best-of-N slate candidate runs this many rotating champion-passing train entries BEFORE selection, and a confirmed catastrophic regression (pass-flip or budget blow-out) is vetoed. Veto-first — the screen disqualifies, it never ranks; the critic chooses among survivors. Costs proposes × best_of_n × entries extra runs per round; inert when best_of_n is 1.',
+  }, screen));
+  const vetoOnly = el('input', { class: 'dn-bld-check', type: 'checkbox', 'aria-label': 'Screen veto-only' });
+  if (pq.screen_veto_only) vetoOnly.setAttribute('checked', 'checked');
+  vetoOnly.addEventListener('change', () => {
+    const on = vetoOnly.checked != null ? vetoOnly.checked : (vetoOnly.getAttribute('checked') != null);
+    runOp('set_screening', { veto_only: !!on });
+  });
+  rows.push(controlRow('Screen veto-only', {
+    title: 'Screen veto-only', def: 'off',
+    body: 'When on, the screen may only disqualify: its panel counts feed neither the critic prompt nor the heuristic tiebreak. Keeps selection blind to the (selection-biased) tryout measurements while still catching catastrophic regressions.',
+  }, el('label', { class: 'dn-bld-checkwrap' }, [vetoOnly, el('span', { text: 'veto only — no selection tiebreak' })])));
   return section('Field & noise', ...rows);
 }
 
@@ -343,12 +469,140 @@ function boardSection(d) {
     rows.length ? el('div', { class: 'dn-bld-boardlist' }, rows) : empty('The board is empty — add entries via the board builder.'));
 }
 
+// ── Overfitting — the full anti-board-memorization contract ───────────
+//
+// The extended holdout knobs (all through the one set_holdout op): the
+// Ladder/Thresholdout governor, holdout rotation, the split floor, the
+// proposer-visibility restriction, and the placebo cadence.
+function overfittingSection(d) {
+  const of = ((d.scoring || {}).overfitting) || {};
+  const ladder = of.ladder || {};
+  const rows = [
+    controlRow('Overfitting guard', {
+      title: 'overfitting.enabled', def: 'on',
+      body: 'Master switch for the train/holdout machinery. Off, no holdout is ever derived (an explicit per-entry holdout tag still wins) and the loop behaves as if the guard never existed.',
+    }, checkInput(of.enabled !== false, 'Overfitting guard enabled', 'train/holdout split on',
+      (on) => runOp('set_holdout', { enabled: on }))),
+    controlRow('Split floor (min board size)', {
+      title: 'min_board_size_for_split', def: '6',
+      body: 'The smallest board at which the hash-derived holdout is attempted. Below it the holdout is empty (small boards are never starved of train entries); an explicit per-entry holdout tag overrides the floor.',
+    }, numInput(of.min_board_size_for_split != null ? of.min_board_size_for_split : 6,
+      { min: '0', step: '1', 'aria-label': 'Min board size for split' },
+      (n) => runOp('set_holdout', { min_board_size_for_split: n }), { int: true })),
+    controlRow('Rotate holdout', {
+      title: 'rotate_holdout', def: 'on',
+      body: 'Rotates the hash-derived holdout slice each epoch (the epoch id seeds the split), so no fixed slice is mined forever. Stable within an epoch; an explicit holdout tag is never rotated.',
+    }, checkInput(of.rotate_holdout !== false, 'Rotate holdout', 'rotate the holdout slice each epoch',
+      (on) => runOp('set_holdout', { rotate_holdout: on }))),
+    controlRow('Restrict proposer visibility', {
+      title: 'restrict_proposer_visibility', def: 'on',
+      body: 'Sanitises the proposer prompt at the render boundary: per-entry identities aggregate to counts/rates and experiment-memory deltas coarsen to improved/flat/regressed bands, so the proposer cannot memorise individual board entries.',
+    }, checkInput(of.restrict_proposer_visibility !== false, 'Restrict proposer visibility',
+      'band / aggregate what the proposer sees',
+      (on) => runOp('set_holdout', { restrict_proposer_visibility: on }))),
+    controlRow('Placebo cadence (rounds)', {
+      title: 'random_baseline_every_n', def: '0 (off)',
+      body: 'Every Nth round, field ONE extra challenger whose patch is a semantics-preserving no-op. The gate MUST reject it — a promoted placebo is the alarm that gate discrimination is broken and recent wins are suspect. The gate-discrimination control arm; costs one extra challenger per N rounds.',
+    }, numInput(of.random_baseline_every_n != null ? of.random_baseline_every_n : 0,
+      { min: '0', step: '1', 'aria-label': 'Random baseline every N rounds' },
+      (n) => runOp('set_holdout', { random_baseline_every_n: n }), { int: true })),
+    controlRow('Ladder governor', {
+      title: 'ladder.enabled', def: 'on',
+      body: 'The Ladder/Thresholdout governor over the holdout query: a new holdout signal is released only when the train-measured improvement clears the threshold, and each query charges a finite per-epoch budget. What keeps a reused holdout valid under an adaptive proposer.',
+    }, checkInput(ladder.enabled !== false, 'Ladder governor enabled', 'Ladder/Thresholdout holdout governor',
+      (on) => runOp('set_holdout', { ladder: { enabled: on } }))),
+    controlRow('Ladder query budget', {
+      title: 'ladder.budget', def: '16',
+      body: 'Per-epoch holdout-query budget. Each round that consults the holdout charges one; exhausted, no further holdout signals are released (the loop degrades to champion-stands). The finite budget is what keeps a reused holdout statistically valid under an adaptive proposer.',
+    }, numInput(ladder.budget != null ? ladder.budget : 16,
+      { min: '0', step: '1', 'aria-label': 'Ladder budget' },
+      (n) => runOp('set_holdout', { ladder: { budget: n } }), { int: true })),
+    controlRow('Ladder noise scale', {
+      title: 'ladder.noise_scale', def: '0 (parameter-free Ladder)',
+      body: 'Width of the noise band added to the Ladder release threshold. 0 is the parameter-free Ladder; reserved for DP-grade noise calibration.',
+    }, numInput(ladder.noise_scale != null ? ladder.noise_scale : 0,
+      { min: '0', step: '0.01', 'aria-label': 'Ladder noise scale' },
+      (n) => runOp('set_holdout', { ladder: { noise_scale: n } }))),
+  ];
+  return section('Overfitting',
+    el('p', { class: 'dn-lede', text: 'Anti-board-memorization: the train/holdout machinery, its Ladder query budget, holdout rotation, what the proposer may see, and the placebo control arm. Every knob is contract — a change rolls the epoch.' }),
+    ...rows);
+}
+
+// ── Weights — the loss-shaping + multi-objective coefficients ─────────
+//
+// set_weights had NO GUI before this section: the scalar's drift/pass
+// coefficients plus the per-namespace multi-objective weights (through the
+// dedicated set_namespace_weights op) and the opt-in parsimony term.
+function weightsSection(d) {
+  const sc = d.scoring || {};
+  const ns = sc.namespace_weights || {};
+  const rows = [
+    controlRow('Drift weight', {
+      title: 'drift_weight', def: '1.0',
+      body: 'Coefficient on the aggregated drift-loss term of the scalar.',
+    }, numInput(sc.drift_weight != null ? sc.drift_weight : 1,
+      { step: '0.1', 'aria-label': 'Drift weight' },
+      (n) => runOp('set_weights', { drift_weight: n }))),
+    controlRow('Pass weight', {
+      title: 'pass_weight', def: '1.0',
+      body: 'Coefficient on the (1 − pass_rate) miss term of the scalar.',
+    }, numInput(sc.pass_weight != null ? sc.pass_weight : 1,
+      { step: '0.1', 'aria-label': 'Pass weight' },
+      (n) => runOp('set_weights', { pass_weight: n }))),
+    controlRow('Diff-complexity weight', {
+      title: 'diff_complexity_weight', def: '0 (term absent)',
+      body: 'Opt-in MDL/parsimony coefficient: adds weight × (added + removed + patches) to the challenger scalar, biasing selection toward the smaller, more general edit (a shorter-description edit provably overfits the board less). 0 keeps the term exactly absent.',
+    }, numInput(sc.diff_complexity_weight != null ? sc.diff_complexity_weight : 0,
+      { min: '0', step: '0.001', 'aria-label': 'Diff complexity weight' },
+      (n) => runOp('set_namespace_weights', { diff_complexity_weight: n }))),
+  ];
+  const nsKeys = Object.keys(ns);
+  const nsRows = nsKeys.map((key) => controlRow('Namespace ' + key, {
+    title: 'namespace_weights["' + key + '"]', def: String(ns[key]),
+    body: 'Signed coefficient turning this namespace\'s per-run mean into a scalar component. Positive = higher is worse (drift, cost, schema); negative = higher is better (rubric — negation keeps the scalar lower-is-better); zero = tracked but unscored.',
+  }, numInput(ns[key], { step: '0.001', 'aria-label': 'Namespace weight ' + key }, (n) => {
+    const next = Object.assign({}, ns);
+    next[key] = n;
+    runOp('set_namespace_weights', { namespace_weights: next });
+  })));
+  return section('Weights',
+    el('p', { class: 'dn-lede', text: 'The loss-shaping coefficients: how drift, misses, and each metric namespace fold into the one scalar a duel compares. Contract fields — a change rolls the epoch.' }),
+    ...rows,
+    el('h3', { class: 'dn-bld-subhead', text: 'Namespace weights' }),
+    ...(nsRows.length ? nsRows : [empty('No namespace weights in this contract.')]));
+}
+
 function proposerSection(d) {
   const p = d.proposer || {};
   const skills = Array.isArray(p.skills) ? p.skills : [];
   const isAgent = !!p.has_custom_agent;
+  const pq = ((d.scoring || {}).proposer_quality) || {};
+  const em = ((d.scoring || {}).experiment_memory) || {};
   return section('Proposer',
     el('p', { class: 'dn-lede', text: 'Who proposes each challenger. A skill-composed default proposer, or a custom ADK agent dir. Read-only summary here — editing the proposer dir is a config change.' }),
+    controlRow('Best-of-N slate', {
+      title: 'best_of_n', def: '3',
+      body: 'How many candidate experiments each propose-step samples before the critique pass picks one. 1 is the historical single sample (no critique). Each extra sample is an auxiliary propose call, priced on the cost meter; the screen (Field & noise) then tries the slate out.',
+    }, numInput(pq.best_of_n != null ? pq.best_of_n : 3,
+      { min: '1', step: '1', 'aria-label': 'Best of N' },
+      (n) => runOp('set_proposer_quality', { best_of_n: n }), { int: true })),
+    controlRow('Self-critique', {
+      title: 'critique_enabled', def: 'on',
+      body: 'A single cheap auxiliary-LLM pass scores the sampled slate against a quality bar (grounded? targets a real failure mode? minimal diff?) and selects the best. Off, selection falls back to the deterministic smallest-relevant-diff heuristic — no extra LLM call. Inert at best_of_n 1.',
+    }, checkInput(pq.critique_enabled !== false, 'Critique enabled', 'auxiliary self-critique selects from the slate',
+      (on) => runOp('set_proposer_quality', { critique_enabled: on }))),
+    controlRow('Process exemplars', {
+      title: 'process_exemplars', def: '0 (off)',
+      body: 'Opt-in: show the proposer up to N mechanically-REDACTED event windows per round (how a detected failure unfolds — no entry ids, no task text, no model outputs). Read-side only — free on the cost meter — but it widens the proposer-visibility channel, so enable it only under the harm-detection runbook in PROCESS-EXEMPLARS.md §5 (watch the generalization_gap finding; set back to 0 if it widens while train improves).',
+    }, numInput(pq.process_exemplars != null ? pq.process_exemplars : 0,
+      { min: '0', step: '1', 'aria-label': 'Process exemplars' },
+      (n) => runOp('set_proposer_quality', { process_exemplars: n }), { int: true })),
+    controlRow('Cross-epoch memory', {
+      title: 'experiment_memory.cross_epoch', def: 'off',
+      body: 'Opts settled experiments from PRIOR epochs that share the current contract hash into the proposer\'s digest — banded, clearly separated, and only in the budget left after same-epoch history. Different-contract experiments are never surfaced.',
+    }, checkInput(!!em.cross_epoch, 'Cross-epoch experiment memory', 'surface settled prior-epoch experiments (same contract hash)',
+      (on) => runOp('set_experiment_memory', { cross_epoch: on }))),
     el('div', { class: 'dn-bld-panel' }, [
       el('div', { class: 'dn-bld-kv' }, [
         el('span', { class: 'dn-bld-k', text: 'mode' }),
@@ -387,16 +641,67 @@ function gateSection(d) {
     const on = mono.checked != null ? mono.checked : (mono.getAttribute('checked') != null);
     runOp('set_gate', { monotonicity: !!on });
   });
+  // the monotonicity SCOPE — a closed two-token select (per_entry / aggregate).
+  const curScope = sc.pass_rate_monotonicity_scope || 'per_entry';
+  const scope = el('select', { class: 'dn-bld-select', 'aria-label': 'Monotonicity scope' }, [
+    el('option', { value: 'per_entry', text: 'per entry — no champion-passed entry may flip' }),
+    el('option', { value: 'aggregate', text: 'aggregate — only the overall pass-rate may not drop' }),
+  ]);
+  scope.value = curScope;
+  scope.setAttribute('value', curScope);
+  scope.addEventListener('change', () => {
+    const v = scope.value != null ? scope.value : scope.getAttribute('value');
+    if (v === 'per_entry' || v === 'aggregate') runOp('set_gate', { monotonicity_scope: v });
+  });
+  // the regression-suite pre-gate: enable + argv + timeout.
+  const regCmd = el('input', {
+    class: 'dn-bld-text', type: 'text', 'aria-label': 'Regression test command',
+    value: Array.isArray(sc.regression_test_command) ? sc.regression_test_command.join(' ') : 'pytest tests/ -q',
+  });
+  regCmd.addEventListener('change', () => {
+    const raw = String(regCmd.value != null ? regCmd.value : regCmd.getAttribute('value') || '');
+    const argv = raw.split(/\s+/).filter(Boolean);
+    if (argv.length) runOp('set_gate', { regression_test_command: argv });
+  });
   return section('Promote gate',
     el('p', { class: 'dn-lede', text: 'What a challenger must clear to dethrone the champion and promote.' }),
     controlRow('Promote margin', {
       title: 'Promote margin', def: '0.0',
-      body: 'The minimum scalar improvement (champion loss − challenger loss) a challenger must clear to promote. A larger margin demands a more decisive win and resists noise; 0 promotes on any improvement.',
+      body: 'The minimum scalar improvement (champion loss − challenger loss) a challenger must clear to promote. A larger margin demands a more decisive win and resists noise; 0 promotes on any improvement. Must clear the measured A/A noise floor when the evidence gate is off — run the preflight (Review) to measure it.',
     }, margin),
     controlRow('Pass-rate monotonicity', {
       title: 'Pass-rate monotonicity', def: 'off',
       body: 'When on, a challenger may not regress the board pass-rate even if its weighted loss improves — every predicate the champion passed must still pass. Guards against trading a hard-pass away for an average-loss gain.',
-    }, el('label', { class: 'dn-bld-checkwrap' }, [mono, el('span', { text: 'require non-regressing pass-rate' })])));
+    }, el('label', { class: 'dn-bld-checkwrap' }, [mono, el('span', { text: 'require non-regressing pass-rate' })])),
+    controlRow('Monotonicity scope', {
+      title: 'pass_rate_monotonicity_scope', def: 'per_entry',
+      body: 'Granularity of the pass-rate check when it is on. per_entry rejects if ANY champion-passed entry flips to fail (right for invariant / regression-suite boards); aggregate rejects only when the overall pass-rate drops (right for sampled boards where one noisy flip should not veto a strictly-better challenger).',
+    }, scope),
+    controlRow('Block on containment violation', {
+      title: 'block_on_containment_violation', def: 'off (alarm-only)',
+      body: 'Before finalizing a gate-decided promotion, re-check diff containment (files outside the mutable trees must be byte-identical) and REJECT a violating child instead of promoting with an alarm. Fail-open on an unreadable snapshot; an explicit operator force-promote is never blocked.',
+    }, checkInput(!!sc.block_on_containment_violation, 'Block on containment violation', 'reject instead of alarm',
+      (on) => runOp('set_gate', { block_on_containment_violation: on }))),
+    controlRow('Block on gate contradiction', {
+      title: 'block_on_gate_contradiction', def: 'off (alarm-only)',
+      body: 'Re-derive the gate\'s scalar rule immediately before finalizing a promotion and REFUSE on contradiction (instead of persisting and letting the supervisor\'s out-of-band scan raise the alarm). Fail-open when there is no usable scalar evidence.',
+    }, checkInput(!!sc.block_on_gate_contradiction, 'Block on gate contradiction', 'refuse contradictory promotions',
+      (on) => runOp('set_gate', { block_on_gate_contradiction: on }))),
+    controlRow('Regression-suite gate', {
+      title: 'regression_gate_enabled', def: 'off',
+      body: 'Run the snapshot\'s own test suite BEFORE the scoring gate; a non-passing (or timed-out) suite hard-rejects the candidate regardless of scalar movement. Needs the snapshot to actually ship a suite.',
+    }, checkInput(!!sc.regression_gate_enabled, 'Regression gate enabled', 'run the snapshot test suite as a pre-gate',
+      (on) => runOp('set_gate', { regression_gate_enabled: on }))),
+    controlRow('Regression command', {
+      title: 'regression_test_command', def: 'pytest tests/ -q',
+      body: 'The argv used to invoke the regression suite (whitespace-split). Override for non-pytest suites, e.g. "python -m unittest discover".',
+    }, regCmd),
+    controlRow('Regression timeout (s)', {
+      title: 'regression_timeout_s', def: '600',
+      body: 'Wall-clock seconds the regression subprocess may take before it is killed; a timeout counts as a regression failure.',
+    }, numInput(sc.regression_timeout_s != null ? sc.regression_timeout_s : 600,
+      { min: '1', step: '1', 'aria-label': 'Regression timeout seconds' },
+      (n) => runOp('set_gate', { regression_timeout_s: n }), { int: true })));
 }
 
 function reviewSection(d) {
@@ -432,8 +737,163 @@ function reviewSection(d) {
         el('span', { class: 'dn-bld-v', text: changed.length ? changed.join(', ') : 'nothing' }),
       ]),
     ]),
+    preflightPanel(),
+    refuseWarningsPanel(),
+    comparePanel(),
     el('div', { class: 'dn-bld-applyrow' }, [dry, apply]),
     out);
+}
+
+// ── draft compare (the fork/compare lifecycle, Review pane) ────────────
+//
+// Two operand selects (the working draft, the live contract, or any fork
+// slot) + a keyed diff: differing contract-canonical scoring keys with both
+// values, board ids added/removed/changed, the brief, the proposer.
+function comparePanel() {
+  const names = ['session', 'live', ..._drafts];
+  const mkSel = (aria, cur, onPick) => {
+    const sel = el('select', { class: 'dn-bld-select', 'aria-label': aria },
+      names.map((n) => el('option', { value: n, text: n })));
+    sel.value = cur;
+    sel.setAttribute('value', cur);
+    sel.addEventListener('change', () => {
+      const v = sel.value != null ? sel.value : sel.getAttribute('value');
+      if (v) onPick(v);
+    });
+    return sel;
+  };
+  const selA = mkSel('Compare draft A', _cmpA, (v) => { _cmpA = v; });
+  const selB = mkSel('Compare draft B', _cmpB, (v) => { _cmpB = v; });
+  const btn = el('button', { class: 'dn-bld-btn dn-bld-btn-compare', type: 'button', text: 'Compare' });
+  btn.addEventListener('click', () => runOp('compare', { name_a: _cmpA, name_b: _cmpB }));
+  const kids = [
+    el('div', { class: 'dn-bld-cmp-controls' }, [selA, el('span', { class: 'dn-bld-cmp-vs', text: 'vs' }), selB, btn]),
+  ];
+  if (_compare) kids.push(compareResult(_compare));
+  return el('div', { class: 'dn-bld-cmp' }, [
+    el('h3', { class: 'dn-bld-subhead', text: 'Compare drafts' }),
+    ...kids,
+  ]);
+}
+
+function compareResult(cmp) {
+  const changed = cmp.changed_components || [];
+  if (!changed.length) {
+    return el('p', { class: 'dn-faint dn-bld-cmp-same', text: `${cmp.a} and ${cmp.b} describe the same contract.` });
+  }
+  const rows = [];
+  const scoring = cmp.scoring || {};
+  for (const key of Object.keys(scoring)) {
+    rows.push(el('div', { class: 'dn-bld-cmp-row' }, [
+      el('span', { class: 'dn-bld-cmp-key dn-mono', text: key }),
+      el('span', { class: 'dn-bld-cmp-a dn-mono', text: fmtCmp(scoring[key].a) }),
+      el('span', { class: 'dn-bld-cmp-b dn-mono', text: fmtCmp(scoring[key].b) }),
+    ]));
+  }
+  const board = cmp.board || {};
+  for (const [label, ids] of [['added', board.added], ['removed', board.removed], ['changed', board.changed]]) {
+    if (Array.isArray(ids) && ids.length) {
+      rows.push(el('div', { class: 'dn-bld-cmp-row' }, [
+        el('span', { class: 'dn-bld-cmp-key dn-mono', text: 'board.' + label }),
+        el('span', { class: 'dn-bld-cmp-b', text: ids.join(', ') }),
+      ]));
+    }
+  }
+  if (cmp.brief && cmp.brief.changed) {
+    rows.push(el('div', { class: 'dn-bld-cmp-row' }, [
+      el('span', { class: 'dn-bld-cmp-key dn-mono', text: 'brief' }),
+      el('span', { class: 'dn-bld-cmp-a', text: `${cmp.brief.a_chars} chars` }),
+      el('span', { class: 'dn-bld-cmp-b', text: `${cmp.brief.b_chars} chars` }),
+    ]));
+  }
+  if (cmp.proposer && cmp.proposer.changed) {
+    rows.push(el('div', { class: 'dn-bld-cmp-row' }, [
+      el('span', { class: 'dn-bld-cmp-key dn-mono', text: 'proposer' }),
+      el('span', { class: 'dn-bld-cmp-a dn-mono', text: cmp.proposer.a || 'builtin' }),
+      el('span', { class: 'dn-bld-cmp-b dn-mono', text: cmp.proposer.b || 'builtin' }),
+    ]));
+  }
+  return el('div', { class: 'dn-bld-cmp-result' }, [
+    el('div', { class: 'dn-bld-cmp-row dn-bld-cmp-headrow' }, [
+      el('span', { class: 'dn-bld-cmp-key', text: `changed: ${changed.join(', ')}` }),
+      el('span', { class: 'dn-bld-cmp-a', text: cmp.a }),
+      el('span', { class: 'dn-bld-cmp-b', text: cmp.b }),
+    ]),
+    ...rows,
+  ]);
+}
+
+function fmtCmp(v) {
+  if (v === undefined) return '—';
+  try { return JSON.stringify(v); } catch (e) { return String(v); }
+}
+
+// ── the build-time statistical pre-flight (Review pane) ────────────────
+//
+// A READ measurement, surfaced BEFORE apply: can the draft contract
+// out-signal its own noise? The op returns the normal envelope plus a
+// `preflight` result; the verdict chip + reasons render from module state
+// so a re-render (digest includes `pf`) keeps the last measurement
+// visible. Recommend-only — apply is never hard-blocked.
+
+function preflightPanel() {
+  const btn = el('button', {
+    class: 'dn-bld-btn dn-bld-btn-preflight', type: 'button',
+    text: _busy ? 'measuring…' : 'Run preflight',
+  });
+  btn.addEventListener('click', () => runOp('preflight', {}));
+  const kids = [
+    el('p', { class: 'dn-lede', text: 'Statistical pre-flight: measures the A/A noise floor and the achievable signal of this draft against the registered target, before any round is spent. Recommend-only.' }),
+    el('div', { class: 'dn-bld-applyrow' }, [btn]),
+  ];
+  if (_preflight) kids.push(preflightVerdict(_preflight));
+  return el('div', { class: 'dn-bld-preflight' }, kids);
+}
+
+function preflightVerdict(pf) {
+  const verdict = pf.available ? (pf.verdict || 'ok') : 'unavailable';
+  const chip = el('span', {
+    class: 'dn-bld-pf-chip dn-bld-pf-' + verdict,
+    text: verdict === 'unavailable' ? 'unavailable' : verdict.toUpperCase(),
+  });
+  const reasons = [];
+  if (!pf.available) {
+    reasons.push(pf.reason || 'preflight is unavailable for this workspace');
+  } else {
+    const r = pf.report || {};
+    reasons.push(`noise floor ${fmtSig(r.noise_floor_max_abs_delta)} (max |Δ| over ${r.noise_floor_runs != null ? r.noise_floor_runs : '?'} A/A draws)`);
+    reasons.push(`achievable signal ${fmtSig(r.signal)} (degraded point ${r.degraded_mutation_id || '?'})`);
+    if (verdict === 'refuse') reasons.push('the signal is at or below the floor — duels under this contract would be decided by noise');
+    if (verdict === 'warn') reasons.push('saturated: every probe scored identically — the board cannot discriminate even a deliberate degradation');
+    if (verdict === 'ok') reasons.push('the achievable signal clears the measured floor');
+  }
+  return el('div', { class: 'dn-bld-pf', role: 'status' }, [
+    el('div', { class: 'dn-bld-pf-head' }, [
+      el('span', { class: 'dn-bld-k', text: 'preflight verdict' }),
+      chip,
+    ]),
+    el('ul', { class: 'dn-bld-pf-reasons' }, reasons.map((t) => el('li', { text: t }))),
+  ]);
+}
+
+// REFUSE-severity validation warnings (e.g. margin_below_noise_floor) get a
+// dedicated slot in the Review pane so the statistical objection is in front
+// of the operator right where they apply — not only in the side preview.
+function refuseWarningsPanel() {
+  const refuses = (_warnings || []).filter((w) => w && w.severity === 'refuse');
+  if (!refuses.length) return el('div', { class: 'dn-bld-refuses dn-bld-refuses-empty' });
+  return el('div', { class: 'dn-bld-refuses', role: 'alert' }, refuses.map((w) => el('div', {
+    class: 'dn-bld-warn dn-bld-warn-refuse',
+  }, [
+    el('span', { class: 'dn-bld-warn-glyph', 'aria-hidden': 'true', text: '⛔' }),
+    el('span', { class: 'dn-bld-warn-msg', text: w.message || w.code || '' }),
+  ])));
+}
+
+function fmtSig(v) {
+  const n = Number(v);
+  if (!isFinite(n)) return '—';
+  return String(Math.round(n * 1e6) / 1e6);
 }
 
 let _confirmApply = false;

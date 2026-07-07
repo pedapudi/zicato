@@ -78,6 +78,12 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
             enabled=args.get("enabled"),
             fraction=args.get("fraction"),
             tags=args.get("tags"),
+            min_board_size_for_split=_opt_int(args, "min_board_size_for_split"),
+            rotate_holdout=_opt_bool(args, "rotate_holdout"),
+            restrict_proposer_visibility=_opt_bool(args, "restrict_proposer_visibility"),
+            random_baseline_every_n=_opt_int(args, "random_baseline_every_n"),
+            max_generations_per_contract=_opt_int(args, "max_generations_per_contract"),
+            ladder=args.get("ladder"),
         )
     if op == "set_proposer":
         return ops.set_proposer(draft, args.get("proposer_path"))
@@ -99,6 +105,35 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
             promote_margin=args.get("promote_margin"),
             monotonicity=args.get("monotonicity"),
             monotonicity_scope=args.get("monotonicity_scope"),
+            namespace_monotonicity=args.get("namespace_monotonicity"),
+            block_on_containment_violation=_opt_bool(args, "block_on_containment_violation"),
+            block_on_gate_contradiction=_opt_bool(args, "block_on_gate_contradiction"),
+            regression_gate_enabled=_opt_bool(args, "regression_gate_enabled"),
+            regression_test_command=args.get("regression_test_command"),
+            regression_timeout_s=_opt_int(args, "regression_timeout_s"),
+        )
+    if op == "set_namespace_weights":
+        return ops.set_namespace_weights(
+            draft,
+            namespace_weights=args.get("namespace_weights"),
+            diff_complexity_weight=args.get("diff_complexity_weight"),
+        )
+    if op == "set_proposer_quality":
+        return ops.set_proposer_quality(
+            draft,
+            best_of_n=_opt_int(args, "best_of_n"),
+            critique_enabled=_opt_bool(args, "critique_enabled"),
+            process_exemplars=_opt_int(args, "process_exemplars"),
+        )
+    if op == "set_experiment_memory":
+        return ops.set_experiment_memory(draft, cross_epoch=_opt_bool(args, "cross_epoch"))
+    if op == "set_screening":
+        raw_entries = args.get("entries")
+        raw_veto_only = args.get("veto_only")
+        return ops.set_screening(
+            draft,
+            entries=int(raw_entries) if raw_entries is not None else None,
+            veto_only=bool(raw_veto_only) if raw_veto_only is not None else None,
         )
     if op == "edit_board_entry":
         entry = validate_board_entry(args["entry"])
@@ -110,6 +145,44 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
     if op == "set_brief":
         return ops.set_brief(draft, str(args["text"]))
     raise ValueError(f"unknown builder op {op!r}")
+
+
+def _opt_int(args: dict[str, Any], key: str) -> int | None:
+    """Coerce an optional integer arg (absent / null ⇒ ``None``).
+
+    A non-integer raises :class:`ValueError` so the handler returns a
+    clear 400 instead of silently mis-typing a contract knob.
+    """
+    raw = args.get(key)
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{key!r} must be an integer, got {raw!r}") from exc
+
+
+def _opt_bool(args: dict[str, Any], key: str) -> bool | None:
+    """Coerce an optional boolean arg (absent / null ⇒ ``None``)."""
+    raw = args.get(key)
+    if raw is None:
+        return None
+    return bool(raw)
+
+
+def _runs_of(args: dict[str, Any]) -> int | None:
+    """Coerce the optional ``runs`` arg of the ``preflight`` op.
+
+    ``None`` (absent) defers to the op's default; a non-integer raises
+    :class:`ValueError` so the handler returns a clear 400.
+    """
+    raw = args.get("runs")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"preflight 'runs' must be an integer, got {raw!r}") from exc
 
 
 def _format_sse(frame: dict[str, Any]) -> str:
@@ -167,7 +240,7 @@ def make_builder_endpoints(
 
     def _op_response(draft: TournamentDraft, patch: ops.DraftPatch) -> JSONResponse:
         cost = ops.estimate_cost(draft)
-        warns = ops.validate(draft)
+        warns = ops.validate(draft, root)
         diff = draft.diff_vs_live(root)
         return JSONResponse(
             {
@@ -187,7 +260,7 @@ def make_builder_endpoints(
         session = request.query_params.get("session") or _DEFAULT_SESSION
         draft = draft_store.get(session, root)
         cost = ops.estimate_cost(draft)
-        warns = ops.validate(draft)
+        warns = ops.validate(draft, root)
         diff = draft.diff_vs_live(root)
         return JSONResponse(
             {
@@ -196,8 +269,22 @@ def make_builder_endpoints(
                 "cost": cost.to_dict(),
                 "warnings": [w.to_dict() for w in warns],
                 "diff": diff.to_dict(),
+                "drafts": draft_store.list_drafts(),
             }
         )
+
+    def _resolve_compare_draft(name: str, session: str) -> TournamentDraft:
+        """Resolve a compare operand: ``"session"`` (the working draft),
+        ``"live"`` (the workspace's current contract), or a named slot."""
+        if name == "session":
+            return draft_store.get(session, root)
+        if name == "live":
+            return TournamentDraft.from_workspace(root)
+        slot = draft_store.slot(name)
+        if slot is None:
+            known = ", ".join(["session", "live", *draft_store.list_drafts()])
+            raise ValueError(f"no draft named {name!r} (known: {known})")
+        return slot
 
     async def builder_op(request: Request) -> JSONResponse:
         forbidden = _forbidden()
@@ -215,6 +302,78 @@ def make_builder_endpoints(
             return JSONResponse({"error": "'args' must be a JSON object"}, status_code=400)
         session = _session_of(body, request)
         draft = draft_store.get(session, root)
+        if op in ("fork", "switch", "list_drafts", "compare"):
+            # The fork/compare LIFECYCLE ops act on the store's named slots
+            # rather than mutating draft fields, so they dispatch here. Their
+            # responses carry the normal envelope (the possibly-switched
+            # active draft) plus the slot list — and `compare` its keyed diff.
+            try:
+                extra: dict[str, Any] = {}
+                if op == "fork":
+                    draft = draft_store.fork(session, str(args["name"]), root)
+                    patch = ops.DraftPatch(op="fork", changed={"name": str(args["name"])})
+                elif op == "switch":
+                    draft = draft_store.switch(session, str(args["name"]))
+                    patch = ops.DraftPatch(op="switch", changed={"name": str(args["name"])})
+                elif op == "list_drafts":
+                    patch = ops.DraftPatch(op="list_drafts")
+                else:  # compare
+                    name_a = str(args["name_a"])
+                    name_b = str(args["name_b"])
+                    extra["compare"] = {
+                        "a": name_a,
+                        "b": name_b,
+                        **ops.compare_drafts(
+                            _resolve_compare_draft(name_a, session),
+                            _resolve_compare_draft(name_b, session),
+                        ),
+                    }
+                    patch = ops.DraftPatch(op="compare", changed={"a": name_a, "b": name_b})
+            except KeyError as exc:
+                return JSONResponse(
+                    {"error": f"missing arg {exc.args[0]!r} for op {op!r}"}, status_code=400
+                )
+            except ValueError as exc:
+                return JSONResponse({"error": str(exc)}, status_code=400)
+            return JSONResponse(
+                {
+                    "draft": draft.to_dict(),
+                    "patch": patch.to_dict(),
+                    "cost": ops.estimate_cost(draft).to_dict(),
+                    "warnings": [w.to_dict() for w in ops.validate(draft, root)],
+                    "diff": draft.diff_vs_live(root).to_dict(),
+                    "drafts": draft_store.list_drafts(),
+                    **extra,
+                }
+            )
+        if op == "preflight":
+            # The build-time statistical pre-flight — a READ op that spends
+            # the small K-draw measurement budget, so it rides the same
+            # read-only guard as the write ops. Its response carries the
+            # normal envelope PLUS the `preflight` result, and the warnings
+            # are recomputed against the JUST-MEASURED floor so the
+            # margin-vs-noise rule fires immediately.
+            try:
+                result = await ops.preflight(draft, root, runs=_runs_of(args))
+            except ValueError as exc:
+                return JSONResponse({"error": str(exc)}, status_code=400)
+            floor = None
+            if result.noise_floor is not None:
+                floor = result.noise_floor.get("max_abs_delta")
+            warns = ops.validate(
+                draft,
+                root,
+                noise_floor_max_abs_delta=floor if isinstance(floor, int | float) else None,
+            )
+            return JSONResponse(
+                {
+                    "draft": draft.to_dict(),
+                    "preflight": result.to_dict(),
+                    "cost": ops.estimate_cost(draft).to_dict(),
+                    "warnings": [w.to_dict() for w in warns],
+                    "diff": draft.diff_vs_live(root).to_dict(),
+                }
+            )
         try:
             patch = _dispatch_op(draft, op, args)
         except KeyError as exc:

@@ -141,7 +141,7 @@ def load_builder_skills(
     ``name`` / ``description`` / ``body`` match how proposer skills are
     parsed.
     """
-    from zicato.proposer.skills import _parse_frontmatter
+    from zicato.proposer.skills import parse_frontmatter
 
     roots = _builder_skills_roots(workspace_root)
     skills: list[ProposerSkill] = []
@@ -150,7 +150,7 @@ def load_builder_skills(
             md_path = root / name / "SKILL.md"
             if md_path.is_file():
                 text = md_path.read_text(encoding="utf-8")
-                parsed_name, description, body = _parse_frontmatter(text, stem=name)
+                parsed_name, description, body = parse_frontmatter(text, stem=name)
                 skills.append(ProposerSkill(name=parsed_name, description=description, body=body))
                 break
     return tuple(skills)

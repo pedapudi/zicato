@@ -268,6 +268,51 @@ def test_hash_stable_when_outcome_summarizer_spec_omitted(tmp_path: Path) -> Non
     assert h_omitted == h_explicit_default
 
 
+def test_hash_stable_when_screening_fields_at_default(tmp_path: Path) -> None:
+    # Candidate screening (screen_entries / screen_veto_only on the nested
+    # proposer_quality block) is omit-at-default like random_baseline_every_n:
+    # a contract that predates the fields hashes byte-identically to one that
+    # spells out the OFF defaults — no retroactive roll for existing epochs.
+    base = _write_contract(tmp_path)
+    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0}))
+    h_omitted = compute_contract_hash(base)
+    base.scoring_path.write_text(
+        json.dumps(
+            {
+                "drift_weight": 1.0,
+                "proposer_quality": {"screen_entries": 0, "screen_veto_only": False},
+            }
+        )
+    )
+    h_explicit_default = compute_contract_hash(base)
+    assert h_omitted == h_explicit_default
+
+
+def test_hash_changes_when_screening_opted_in(tmp_path: Path) -> None:
+    # Opting into screening selects champions under a different rule (a
+    # vetoed candidate never reaches the tournament), so a non-zero
+    # screen_entries — or flipping screen_veto_only — rolls the epoch,
+    # exactly like retuning any other contract weight.
+    base = _write_contract(tmp_path)
+    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0}))
+    h_default = compute_contract_hash(base)
+    base.scoring_path.write_text(
+        json.dumps({"drift_weight": 1.0, "proposer_quality": {"screen_entries": 2}})
+    )
+    h_on = compute_contract_hash(base)
+    base.scoring_path.write_text(
+        json.dumps(
+            {
+                "drift_weight": 1.0,
+                "proposer_quality": {"screen_entries": 2, "screen_veto_only": True},
+            }
+        )
+    )
+    h_veto_only = compute_contract_hash(base)
+    assert h_default != h_on
+    assert h_on != h_veto_only
+
+
 def test_hash_changes_on_ladder_knob_edit(tmp_path: Path) -> None:
     # The Ladder sub-config (OVERFITTING.md §12 #2) folds into the scoring
     # contract through OverfittingConfig — bumping a Ladder knob rolls the
@@ -357,7 +402,7 @@ def test_absent_overfitting_block_hashes_as_the_defaults(tmp_path: Path) -> None
                 "overfitting": {
                     "enabled": True,
                     "holdout_fraction": 0.3,
-                    "min_board_size_for_split": 8,
+                    "min_board_size_for_split": 6,
                     "restrict_proposer_visibility": True,
                 },
             }
@@ -792,3 +837,55 @@ def test_resolve_contract_inputs_proposer_path_absent_is_none(tmp_path: Path) ->
     )
     inputs = resolve_contract_inputs(workspace)
     assert inputs.proposer_path is None
+
+
+def test_contract_hash_is_cwd_and_checkout_invariant(tmp_path, monkeypatch):
+    """The hash must identify the CONTRACT, not the checkout.
+
+    Registration-relative mutable trees previously resolved against the
+    process cwd, folding the absolute checkout path into the hash — the
+    same workspace hashed differently run from a different directory (or
+    after being moved) and spuriously rolled its epoch.
+    """
+    from zicato.epoch.contract import ContractInputs, compute_contract_hash
+
+    board = tmp_path / "board.jsonl"
+    board.write_text("", encoding="utf-8")
+    brief = tmp_path / "brief.md"
+    brief.write_text("goal", encoding="utf-8")
+    scoring = tmp_path / "scoring.json"
+    scoring.write_text("{}", encoding="utf-8")
+
+    def compute_from(cwd):
+        monkeypatch.chdir(cwd)
+        return compute_contract_hash(
+            ContractInputs(
+                board_path=board,
+                brief_path=brief,
+                scoring_path=scoring,
+                entrypoint="pkg.mod:agent",
+                mutable_trees=("agent", "./skills/../skills"),
+            )
+        )
+
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    assert compute_from(tmp_path) == compute_from(other)
+
+    # Normalization unifies ./ and ../ spellings; ordering is irrelevant.
+    monkeypatch.chdir(tmp_path)
+    base = ContractInputs(
+        board_path=board,
+        brief_path=brief,
+        scoring_path=scoring,
+        entrypoint="pkg.mod:agent",
+        mutable_trees=("agent", "skills"),
+    )
+    spelled = ContractInputs(
+        board_path=board,
+        brief_path=brief,
+        scoring_path=scoring,
+        entrypoint="pkg.mod:agent",
+        mutable_trees=("./skills", "agent/"),
+    )
+    assert compute_contract_hash(base) == compute_contract_hash(spelled)

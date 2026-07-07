@@ -96,27 +96,6 @@ def _parse_failed_tests(output: str) -> tuple[str, ...]:
     return tuple(seen)
 
 
-def _has_tests_dir(snapshot_root: Path) -> bool:
-    """Return True if a ``tests/`` directory exists anywhere immediately
-    under ``snapshot_root`` (or as ``snapshot_root/tests`` itself).
-
-    The snapshot layout is ``snapshot_root/<mutable_tree_name>/...``
-    when the workspace registered one or more mutable trees; an adapter
-    that does not narrow can also drop tests directly at
-    ``snapshot_root/tests``. Both shapes are accepted; we return on the
-    first match.
-    """
-    direct = snapshot_root / "tests"
-    if direct.is_dir():
-        return True
-    if not snapshot_root.is_dir():
-        return False
-    for child in snapshot_root.iterdir():
-        if child.is_dir() and (child / "tests").is_dir():
-            return True
-    return False
-
-
 def _resolve_test_root(snapshot_root: Path) -> Path | None:
     """Find the directory whose ``tests/`` we want pytest to run in.
 
@@ -138,6 +117,37 @@ def _resolve_test_root(snapshot_root: Path) -> Path | None:
         if child.is_dir() and (child / "tests").is_dir():
             return child
     return None
+
+
+def _classify_completed_run(output: str, exit_code: int, elapsed_s: float) -> RegressionResult:
+    """Map a finished pytest run's stdout + exit code onto a result.
+
+    Pure parse/classification seam — no subprocess, no clock. The
+    subprocess-facing :func:`run_regression_suite` delegates here after
+    ``communicate()`` returns, and tests can drive the summary /
+    exit-code / failed-id mapping directly with canned output instead of
+    booting a real ``pytest`` child per case.
+    """
+    failed = _parse_failed_tests(output)
+
+    if exit_code == 0:
+        return RegressionResult(
+            passed=True,
+            failed_tests=(),
+            summary="all tests passed",
+            elapsed_s=elapsed_s,
+        )
+
+    if failed:
+        summary = f"{len(failed)} tests failed"
+    else:
+        summary = f"pytest exit code {exit_code}"
+    return RegressionResult(
+        passed=False,
+        failed_tests=failed,
+        summary=summary,
+        elapsed_s=elapsed_s,
+    )
 
 
 async def run_regression_suite(
@@ -202,27 +212,8 @@ async def run_regression_suite(
 
     elapsed = time.monotonic() - started
     output = stdout_bytes.decode("utf-8", errors="replace")
-    failed = _parse_failed_tests(output)
     exit_code = proc.returncode if proc.returncode is not None else -1
-
-    if exit_code == 0:
-        return RegressionResult(
-            passed=True,
-            failed_tests=(),
-            summary="all tests passed",
-            elapsed_s=elapsed,
-        )
-
-    if failed:
-        summary = f"{len(failed)} tests failed"
-    else:
-        summary = f"pytest exit code {exit_code}"
-    return RegressionResult(
-        passed=False,
-        failed_tests=failed,
-        summary=summary,
-        elapsed_s=elapsed,
-    )
+    return _classify_completed_run(output, exit_code, elapsed)
 
 
 __all__ = ["RegressionResult", "run_regression_suite"]

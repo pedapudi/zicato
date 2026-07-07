@@ -134,15 +134,15 @@ export function lineage() { return cachedJson('/api/lineage'); }
 
 // ---- epoch-scoped reads --------------------------------------------
 //
-// /api/lineage is workspace-GLOBAL (every generation across every epoch),
-// but each row carries `epoch_id`. The Console screens must show only the
-// gens of the epoch they are VIEWING — not always the current one — so the
-// cross-epoch leakage (Class A) is fixed at the read layer: filter the
-// global lineage to one epoch, deduped by generation id. Fall back to the
-// unfiltered list ONLY when NO row carries an epoch_id (a pre-feature
-// payload), so a single-epoch workspace keeps working unchanged.
+// The SERVER scopes the generations feed: `/api/lineage?epoch=<id>` returns
+// one epoch's generations (every row already carries the server-stamped
+// tri-state `promoted` + `epoch_id`). The residual client-side epoch filter
+// below is a SCOPING GUARD only — a degraded server (the Rust supervisor
+// ignores the query param) still answers with the global feed, and a
+// foreign-tagged row must not leak into the viewed epoch. It never
+// re-derives any per-row field.
 export async function generationsForEpoch(epochId) {
-  const lin = await lineage();
+  const lin = await cachedJson(epochId != null ? `/api/lineage?epoch=${enc(epochId)}` : '/api/lineage');
   const gens = (lin && Array.isArray(lin.generations)) ? lin.generations : [];
   if (!gens.length) return [];
   const anyTagged = gens.some((g) => g && g.epoch_id != null);
@@ -187,6 +187,15 @@ export function bracket(epochId) {
 // the live topology those signals do not.
 export async function activeTournament() {
   try { return await fetchJson('/api/active-tournament'); } catch (err) { return null; }
+}
+
+// The AUTHORITATIVE live round-pipeline projection (propose → apply → run →
+// gate), computed SERVER-side (build_round_pipeline) so the stepper never
+// re-derives loop position by parsing phase strings client-side. NEVER cached
+// — it moves on every heartbeat — and a failure (the Rust supervisor does not
+// serve it) degrades to null so the hero simply omits the stepper.
+export async function livePipeline() {
+  try { return await fetchJson('/api/live/pipeline'); } catch (err) { return null; }
 }
 
 // The actual configured tournament STRUCTURE for one tournament — the
@@ -261,8 +270,39 @@ export function fieldStatusSummary(fs) {
   };
 }
 
+// The SETTLED round timeline for one epoch — the champion-spine rounds + the
+// loss-floor waterfall, JOINED SERVER-SIDE (build_round_timeline). The old
+// four-endpoint client join is deleted; a null read (the endpoint absent —
+// e.g. the Rust supervisor) renders the honest empty timeline, never a
+// client-side re-derivation.
+export function roundTimeline(epochId) {
+  return cachedJson(`/api/epoch/${enc(epochId)}/round-timeline`);
+}
+// The SETTLED racing-field ladder for one epoch — the per-challenger racing
+// records joined into ONE rung/gate payload SERVER-SIDE (build_racing_field).
+// Returns null when absent or `present: false` (no racing records) so callers
+// fall through to their empty state without reconstructing anything.
+export async function racingField(epochId) {
+  const payload = await cachedJson(`/api/epoch/${enc(epochId)}/racing-field`);
+  return (payload && payload.present) ? payload : null;
+}
 export function perJudgeTrend(epochId) {
   return cachedJson(`/api/epoch/${enc(epochId)}/per-judge-trend`);
+}
+// The promoted-lineage OPTIMIZATION TRAJECTORY for one epoch — scalar points
+// along the winners spine + promotion_rate + the UNCERTAINTY-HONEST verdict
+// ("improving" / "plateaued" / "no_signal" when the recent movement sits below
+// the measured A/A noise floor) + the floor itself (build_optimization_
+// trajectory). Absent on the Rust supervisor → cachedJson null-degrades and
+// the panels are simply omitted.
+export function trajectory(epochId) {
+  return cachedJson(`/api/epoch/${enc(epochId)}/trajectory`);
+}
+// The wall-clock + run-count COST accounting for one epoch's tournament —
+// per-matchup runtime/runs/aborts + cost_per_promotion_ms (build_tournament_
+// cost). Null-degrades on the Rust supervisor like every accessor here.
+export function tournamentCost(epochId) {
+  return cachedJson(`/api/epoch/${enc(epochId)}/cost`);
 }
 export function perEntry(epochId, genId) {
   return cachedJson(`/api/generation/${enc(epochId)}/${enc(genId)}/per-entry`);

@@ -30,8 +30,22 @@ function freshDraft() {
       // (that is the Python ScoringWeights attribute name). The view must read
       // this exact key — the stuck-on-Gauntlet bug was reading the wrong one.
       tournament: { structure: 'gauntlet', params: { field_size: 2, replicates: 1 } },
-      overfitting: { enabled: true, holdout_fraction: 0.2, min_board_size_for_split: 8 },
+      overfitting: {
+        enabled: true, holdout_fraction: 0.2, min_board_size_for_split: 8,
+        rotate_holdout: true, restrict_proposer_visibility: true,
+        random_baseline_every_n: 0,
+        ladder: { enabled: true, threshold: null, budget: 16, noise_scale: 0 },
+      },
       promote_margin: 0, pass_rate_monotonicity: false,
+      pass_rate_monotonicity_scope: 'per_entry',
+      drift_weight: 1, pass_weight: 1, diff_complexity_weight: 0,
+      namespace_weights: { 'drift:': 1, 'rubric:': -1 },
+      namespace_monotonicity: { 'rubric:': true },
+      block_on_containment_violation: false, block_on_gate_contradiction: false,
+      regression_gate_enabled: false, regression_test_command: ['pytest', 'tests/', '-q'],
+      regression_timeout_s: 600,
+      proposer_quality: { best_of_n: 3, critique_enabled: true, screen_entries: 0, screen_veto_only: false },
+      experiment_memory: { cross_epoch: false },
     },
     board: [
       { id: 'waffles', kind: 'single_turn' },
@@ -46,6 +60,7 @@ function freshDraft() {
 
 let DRAFT = freshDraft();
 const OP_CALLS = [];
+let SLOTS = [];
 
 function envelope(patch) {
   return {
@@ -61,14 +76,51 @@ function envelope(patch) {
 function installBuilderFetch() {
   OP_CALLS.length = 0;
   DRAFT = freshDraft();
+  SLOTS = [];
   globalThis.fetch = async (path, init) => {
     const body = init && init.body ? JSON.parse(init.body) : {};
     if (path === '/builder/config') return jsonRes(CONFIG);
     if (path.startsWith('/builder/draft')) {
-      return jsonRes({ session: 'dashboard', draft: DRAFT, cost: envelope().cost, warnings: [], diff: envelope().diff });
+      return jsonRes({ session: 'dashboard', draft: DRAFT, cost: envelope().cost, warnings: [], diff: envelope().diff, drafts: SLOTS.slice() });
     }
     if (path === '/builder/op') {
       OP_CALLS.push(body);
+      // the fork/compare lifecycle ops: maintain the slot list + return the
+      // envelope with `drafts` (and `compare` for the compare op).
+      if (body.op === 'fork' || body.op === 'switch' || body.op === 'list_drafts' || body.op === 'compare') {
+        if (body.op === 'fork' && !SLOTS.includes(body.args.name)) SLOTS.push(body.args.name);
+        const env = envelope({ op: body.op, changed: body.args.name ? { name: body.args.name } : body.args });
+        env.drafts = SLOTS.slice();
+        if (body.op === 'compare') {
+          env.compare = {
+            a: body.args.name_a, b: body.args.name_b,
+            changed_components: ['scoring'],
+            scoring: { promote_margin: { a: 0.01, b: 0.07 } },
+            board: { added: [], removed: [], changed: [] },
+            brief: { changed: false, a_chars: 3, b_chars: 3 },
+            proposer: { changed: false, a: null, b: null },
+          };
+        }
+        return jsonRes(env);
+      }
+      // the preflight READ op: the normal envelope plus the `preflight` result
+      // (here the REFUSE case) and the just-measured-floor refuse warning.
+      if (body.op === 'preflight') {
+        const env = envelope({ op: 'preflight', changed: {} });
+        env.preflight = {
+          available: true, verdict: 'refuse', reason: '',
+          report: {
+            verdict: 'refuse', signal: 0.02, noise_floor_max_abs_delta: 0.14,
+            noise_floor_runs: 5, degraded_mutation_id: 'style_rules',
+          },
+          noise_floor: { max_abs_delta: 0.14, runs: 5 },
+        };
+        env.warnings = [{
+          code: 'margin_below_noise_floor', severity: 'refuse',
+          message: 'promote_margin 0 does not clear the measured A/A noise floor 0.14…',
+        }];
+        return jsonRes(env);
+      }
       // mutate the shared draft so the applied envelope is observably different.
       if (body.op === 'set_structure') DRAFT.scoring.tournament.structure = body.args.structure;
       if (body.op === 'set_param') DRAFT.scoring.tournament.params[body.args.key] = body.args.value;
@@ -137,7 +189,7 @@ test('builder view: renders the left-rail sections + the structure section', asy
   const host = globalThis.document.createElement('div');
   await view.render(host);
   const railItems = byClass(host, 'dn-bld-railitem');
-  assertEqual(railItems.length, 6, 'six contract sections in the left rail');
+  assertEqual(railItems.length, 8, 'eight contract sections in the left rail (incl. Overfitting + Weights)');
   // the structure section leads with the five structure cards.
   const cards = byClass(host, 'dn-bld-card');
   assertEqual(cards.length, 5, 'five structure picker cards');
@@ -535,11 +587,317 @@ test('estimateCost: an explicit replicates is honored verbatim over the structur
   assertEqual(est3.board_runs_per_round, 192, 'explicit replicates=3 → 192 (4 × 2 × 3 × 8)');
 });
 
+// ── full knob coverage: the new sections drive the new ops ────────────
+
+// helper: mount the view and switch to the rail section whose label matches.
+async function mountAt(label) {
+  installBuilderFetch();
+  globalThis.window.localStorage.clear();
+  const host = globalThis.document.createElement('div');
+  await view.render(host);
+  const rail = byClass(host, 'dn-bld-railitem').find((r) => r.textContent.includes(label));
+  assert(rail, `the ${label} rail item exists`);
+  rail.dispatchEvent(makeEvent('click'));
+  await tick();
+  return host;
+}
+
+function byAria(host, cls, aria) {
+  return byClass(host, cls).find((n) => n.getAttribute('aria-label') === aria);
+}
+
+test('builder view: the Overfitting section drives set_holdout (ladder, placebo, rotation)', async () => {
+  const host = await mountAt('Overfitting');
+  // the placebo cadence numeric posts random_baseline_every_n.
+  const placebo = byAria(host, 'dn-bld-num', 'Random baseline every N rounds');
+  assert(placebo, 'the placebo-cadence control renders');
+  placebo.value = '5';
+  placebo.dispatchEvent(makeEvent('change'));
+  await tick();
+  let call = OP_CALLS.find((c) => c.op === 'set_holdout' && c.args.random_baseline_every_n === 5);
+  assert(call, 'the placebo cadence posts set_holdout {random_baseline_every_n}');
+  // the ladder budget numeric posts a PARTIAL ladder mapping.
+  const budget = byAria(host, 'dn-bld-num', 'Ladder budget');
+  budget.value = '8';
+  budget.dispatchEvent(makeEvent('change'));
+  await tick();
+  call = OP_CALLS.find((c) => c.op === 'set_holdout' && c.args.ladder && c.args.ladder.budget === 8);
+  assert(call, 'the ladder budget posts set_holdout {ladder:{budget}}');
+  // the rotation checkbox posts rotate_holdout.
+  const rotate = byAria(host, 'dn-bld-check', 'Rotate holdout');
+  rotate.checked = false;
+  rotate.dispatchEvent(makeEvent('change'));
+  await tick();
+  call = OP_CALLS.find((c) => c.op === 'set_holdout' && c.args.rotate_holdout === false);
+  assert(call, 'the rotation toggle posts set_holdout {rotate_holdout:false}');
+});
+
+test('builder view: the Weights section drives set_weights + set_namespace_weights (full mapping)', async () => {
+  const host = await mountAt('Weights');
+  const drift = byAria(host, 'dn-bld-num', 'Drift weight');
+  assert(drift, 'the drift-weight control renders (set_weights has a GUI now)');
+  drift.value = '2';
+  drift.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_weights' && c.args.drift_weight === 2), 'drift weight posts set_weights');
+  // a namespace weight edit posts the WHOLE mapping with the one key changed.
+  const rubric = byAria(host, 'dn-bld-num', 'Namespace weight rubric:');
+  assert(rubric, 'per-namespace weight controls render');
+  rubric.value = '-2';
+  rubric.dispatchEvent(makeEvent('change'));
+  await tick();
+  const nsCall = OP_CALLS.find((c) => c.op === 'set_namespace_weights' && c.args.namespace_weights);
+  assert(nsCall, 'a namespace edit posts set_namespace_weights');
+  assertEqual(nsCall.args.namespace_weights['rubric:'], -2, 'the edited key carries the new value');
+  assertEqual(nsCall.args.namespace_weights['drift:'], 1, 'the untouched keys ride along (wholesale mapping)');
+  // the parsimony term posts diff_complexity_weight.
+  const mdl = byAria(host, 'dn-bld-num', 'Diff complexity weight');
+  mdl.value = '0.01';
+  mdl.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_namespace_weights' && c.args.diff_complexity_weight === 0.01),
+    'the MDL term posts set_namespace_weights {diff_complexity_weight}');
+});
+
+test('builder view: the Proposer section drives set_proposer_quality + set_experiment_memory', async () => {
+  const host = await mountAt('Proposer');
+  const bestOf = byAria(host, 'dn-bld-num', 'Best of N');
+  assert(bestOf, 'the best-of-N control renders');
+  bestOf.value = '5';
+  bestOf.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_proposer_quality' && c.args.best_of_n === 5),
+    'best-of-N posts set_proposer_quality');
+  const critique = byAria(host, 'dn-bld-check', 'Critique enabled');
+  critique.checked = false;
+  critique.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_proposer_quality' && c.args.critique_enabled === false),
+    'the critique toggle posts set_proposer_quality');
+  const mem = byAria(host, 'dn-bld-check', 'Cross-epoch experiment memory');
+  mem.checked = true;
+  mem.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_experiment_memory' && c.args.cross_epoch === true),
+    'the memory toggle posts set_experiment_memory');
+});
+
+test('builder view: the Gate section gains scope + blocking + regression controls', async () => {
+  const host = await mountAt('Gate');
+  // the monotonicity-scope select posts set_gate {monotonicity_scope}.
+  const scope = byAria(host, 'dn-bld-select', 'Monotonicity scope');
+  assert(scope, 'the scope select renders');
+  scope.value = 'aggregate';
+  scope.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_gate' && c.args.monotonicity_scope === 'aggregate'),
+    'the scope select posts set_gate');
+  const contain = byAria(host, 'dn-bld-check', 'Block on containment violation');
+  contain.checked = true;
+  contain.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_gate' && c.args.block_on_containment_violation === true),
+    'the containment block posts set_gate');
+  const regTimeout = byAria(host, 'dn-bld-num', 'Regression timeout seconds');
+  regTimeout.value = '90';
+  regTimeout.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_gate' && c.args.regression_timeout_s === 90),
+    'the regression timeout posts set_gate');
+  // the regression command splits into an argv list.
+  const regCmd = byAria(host, 'dn-bld-text', 'Regression test command');
+  regCmd.value = 'python -m unittest discover';
+  regCmd.dispatchEvent(makeEvent('change'));
+  await tick();
+  const cmdCall = OP_CALLS.find((c) => c.op === 'set_gate' && Array.isArray(c.args.regression_test_command));
+  assert(cmdCall, 'the regression command posts set_gate');
+  assertEqual(cmdCall.args.regression_test_command.join('|'), 'python|-m|unittest|discover', 'whitespace-split argv');
+});
+
+test('builder view: the evidence-gate params join Field & noise; threshold 0 REMOVES the key', async () => {
+  const host = await mountAt('Field');
+  const thr = byAria(host, 'dn-bld-num', 'Evidence-gate threshold');
+  const budget = byAria(host, 'dn-bld-num', 'Evidence replicate budget');
+  assert(thr, 'the evidence-gate threshold control renders');
+  assert(budget, 'the evidence replicate budget control renders');
+  thr.value = '0.8';
+  thr.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_param' && c.args.key === 'promote_confidence_threshold' && c.args.value === 0.8),
+    'a non-zero threshold posts set_param with the number');
+  thr.value = '0';
+  thr.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_param' && c.args.key === 'promote_confidence_threshold' && c.args.value === null),
+    'threshold 0 posts value:null — the key is REMOVED so the unset gate hashes identically');
+  budget.value = '32';
+  budget.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_param' && c.args.key === 'promote_confidence_replicates' && c.args.value === 32),
+    'the replicate budget posts set_param');
+});
+
+// ── the fork/compare lifecycle (slot picker + compare view) ────────────
+
+test('builder view: the rail slot strip forks the working draft and switches slots', async () => {
+  installBuilderFetch();
+  globalThis.window.localStorage.clear();
+  const host = globalThis.document.createElement('div');
+  await view.render(host);
+  // the compact picker rides at the bottom of the rail.
+  const strip = firstClass(host, 'dn-bld-slots');
+  assert(strip, 'the draft-slot strip renders in the rail');
+  // fork: type a name, click Fork → POST op fork {name}.
+  const nameIn = byAria(host, 'dn-bld-slots-name', 'Fork name');
+  assert(nameIn, 'the fork-name input renders');
+  nameIn.value = 'variant-a';
+  const forkBtn = firstClass(host, 'dn-bld-btn-fork');
+  forkBtn.dispatchEvent(makeEvent('click'));
+  await tick();
+  const forkCall = OP_CALLS.find((c) => c.op === 'fork');
+  assert(forkCall && forkCall.args.name === 'variant-a', 'fork posted with the typed name');
+  // the slot select now lists the fork and marks it active.
+  const pick = byAria(host, 'dn-bld-select', 'Draft slot') || firstClass(host, 'dn-bld-slots-pick');
+  assert(pick, 'the slot select renders');
+  assert(pick.children.some((o) => o.getAttribute('value') === 'variant-a'), 'the fork appears in the picker');
+  // fork made variant-a active already; add a second slot and switch back.
+  const nameIn2 = byAria(host, 'dn-bld-slots-name', 'Fork name');
+  nameIn2.value = 'variant-b';
+  firstClass(host, 'dn-bld-btn-fork').dispatchEvent(makeEvent('click'));
+  await tick();
+  const pick2 = byAria(host, 'dn-bld-select', 'Draft slot') || firstClass(host, 'dn-bld-slots-pick');
+  pick2.value = 'variant-a';
+  pick2.dispatchEvent(makeEvent('change'));
+  await tick();
+  const switchCall = OP_CALLS.find((c) => c.op === 'switch');
+  assert(switchCall && switchCall.args.name === 'variant-a', 'the picker posts op switch');
+});
+
+test('builder view: the Review compare panel posts op compare and renders the keyed diff', async () => {
+  const host = await mountAt('Review');
+  // seed a slot so the selects have a named operand.
+  const nameIn = byAria(host, 'dn-bld-slots-name', 'Fork name');
+  nameIn.value = 'tuned';
+  firstClass(host, 'dn-bld-btn-fork').dispatchEvent(makeEvent('click'));
+  await tick();
+  const selB = byAria(host, 'dn-bld-select', 'Compare draft B');
+  assert(selB, 'the compare operand selects render');
+  selB.value = 'tuned';
+  selB.dispatchEvent(makeEvent('change'));
+  await tick();
+  const cmpBtn = firstClass(host, 'dn-bld-btn-compare');
+  cmpBtn.dispatchEvent(makeEvent('click'));
+  await tick();
+  const cmpCall = OP_CALLS.find((c) => c.op === 'compare');
+  assert(cmpCall, 'the Compare button posts op compare');
+  assertEqual(cmpCall.args.name_a, 'session', 'operand A defaults to the working draft');
+  assertEqual(cmpCall.args.name_b, 'tuned', 'operand B follows the select');
+  // the keyed diff renders: the changed scoring key with both values.
+  const result = firstClass(host, 'dn-bld-cmp-result');
+  assert(result, 'the compare result panel renders');
+  assert(result.textContent.includes('promote_margin'), 'the differing scoring key is named');
+  assert(result.textContent.includes('0.01') && result.textContent.includes('0.07'), 'both values are shown');
+});
+
+// ── the build-time statistical pre-flight (Review pane) ────────────────
+
+test('builder view: the Review pane runs the preflight op and renders the verdict chip + refuse warnings', async () => {
+  installBuilderFetch();
+  globalThis.window.localStorage.clear();
+  const host = globalThis.document.createElement('div');
+  await view.render(host);
+  const rail = byClass(host, 'dn-bld-railitem').find((r) => r.textContent.includes('Review'));
+  rail.dispatchEvent(makeEvent('click'));
+  await tick();
+  // the preflight control renders BEFORE apply, with no verdict yet.
+  const pfBtn = byClass(host, 'dn-bld-btn-preflight')[0];
+  assert(pfBtn, 'the Review pane offers a Run-preflight control');
+  assertEqual(byClass(host, 'dn-bld-pf-chip').length, 0, 'no verdict chip before a measurement');
+  pfBtn.dispatchEvent(makeEvent('click'));
+  await tick();
+  const pfCall = OP_CALLS.find((c) => c.op === 'preflight');
+  assert(pfCall, 'the preflight op was posted through the same /builder/op dispatch');
+  // the REFUSE verdict chip + reasons render from the returned envelope.
+  const chip = byClass(host, 'dn-bld-pf-chip')[0];
+  assert(chip, 'a verdict chip rendered');
+  assert(chip.classList.contains('dn-bld-pf-refuse'), 'the chip carries the refuse class');
+  assert(chip.textContent.includes('REFUSE'), 'the chip names the verdict');
+  const reasons = firstClass(host, 'dn-bld-pf-reasons');
+  assert(reasons && reasons.textContent.includes('noise floor'), 'the reasons name the measured floor');
+  assert(reasons.textContent.includes('signal'), 'the reasons name the achievable signal');
+  // the REFUSE-severity validate warning surfaces in the Review pane itself.
+  const refuse = byClass(host, 'dn-bld-warn-refuse')[0];
+  assert(refuse && refuse.textContent.includes('noise floor'), 'the margin-vs-floor refuse warning renders beside apply');
+});
+
+test('validateContract twin: margin at/below a measured floor with the evidence gate off → refuse', () => {
+  // Gate off, margin 0.01 <= floor 0.05 → the refuse-severity rule fires.
+  const warns = builder.validateContract('gauntlet', {}, 6, 0, {}, { promoteMargin: 0.01, noiseFloor: 0.05 });
+  const hit = warns.find((w) => w.code === 'margin_below_noise_floor');
+  assert(hit, 'the margin_below_noise_floor rule fired');
+  assertEqual(hit.severity, 'refuse', 'the rule is refuse-severity');
+  // Evidence gate ON (threshold in (0,1)) silences it.
+  const gated = builder.validateContract('gauntlet', { promote_confidence_threshold: 0.8 }, 6, 0, {}, { promoteMargin: 0.01, noiseFloor: 0.05 });
+  assert(!gated.find((w) => w.code === 'margin_below_noise_floor'), 'the evidence gate silences the rule');
+  // Margin clearing the floor silences it.
+  const clear = builder.validateContract('gauntlet', {}, 6, 0, {}, { promoteMargin: 0.06, noiseFloor: 0.05 });
+  assert(!clear.find((w) => w.code === 'margin_below_noise_floor'), 'a clearing margin is silent');
+  // No floor known → silent (never guess).
+  const unknown = builder.validateContract('gauntlet', {}, 6, 0, {}, { promoteMargin: 0.01 });
+  assert(!unknown.find((w) => w.code === 'margin_below_noise_floor'), 'no measured floor, no rule');
+});
+
+// ── estimateCost: the honest-meter twins (evidence gate, best-of-N aux,
+//    placebo) — mirror the Python estimator's numbers exactly ───────────
+
+test('estimateCost twin: the evidence-gate crowning-confirm budget is priced (budget × 2 × board)', () => {
+  // Gate off: no line.
+  const off = builder.estimateCost('gauntlet', { field_size: 1, replicates: 1 }, 10, 0, { best_of_n: 1 });
+  assert(!off.breakdown.find((l) => l.label.includes('crowning-confirm')), 'no confirm line with the gate off');
+  // The scaffold gate: 32 × 2 × 10 = 640, added to the headline, largest term.
+  const on = builder.estimateCost('gauntlet', {
+    field_size: 1, replicates: 1,
+    promote_confidence_threshold: 0.8, promote_confidence_replicates: 32,
+  }, 10, 0, { best_of_n: 1 });
+  const confirm = on.breakdown.find((l) => l.label.includes('crowning-confirm'));
+  assert(confirm, 'the confirm line renders');
+  assertEqual(confirm.runs, 640, '32 × 2 × 10 = 640 (the py estimator value)');
+  assert(/crowning/.test(confirm.detail), 'the detail says it applies per confirmed crowning');
+  assertEqual(on.board_runs_per_round, off.board_runs_per_round + 640, 'the headline includes it');
+  // Unset budget defaults to 3 (the gate module default).
+  const def = builder.estimateCost('gauntlet', { field_size: 1, replicates: 1, promote_confidence_threshold: 0.8 }, 10, 0, { best_of_n: 1 });
+  assertEqual(def.breakdown.find((l) => l.label.includes('crowning-confirm')).runs, 60, 'unset budget → 3 × 2 × 10');
+});
+
+test('estimateCost twin: best-of-N propose calls are listed as auxiliary and EXCLUDED from the headline', () => {
+  const est = builder.estimateCost('gauntlet', { field_size: 1, replicates: 1 }, 10, 0, { best_of_n: 3 });
+  const aux = est.breakdown.find((l) => l.label === 'best-of-N propose calls');
+  assert(aux, 'the auxiliary line renders when best_of_n > 1');
+  assertEqual(aux.runs, 3, 'proposes 1 × best_of_n 3');
+  assert(/auxiliary/.test(aux.detail), 'labelled as auxiliary LLM calls');
+  assertEqual(est.board_runs_per_round, 10, 'the board-runs headline excludes the calls');
+  // A wide field proposes field_size challengers.
+  const wide = builder.estimateCost('racing', { field_size: 4 }, 10, 0, { best_of_n: 3 });
+  assertEqual(wide.breakdown.find((l) => l.label === 'best-of-N propose calls').runs, 12, '4 × 3');
+});
+
+test('estimateCost twin: the placebo cadence adds an amortized per-round line', () => {
+  const off = builder.estimateCost('gauntlet', { field_size: 1, replicates: 2 }, 10, 0, { best_of_n: 1 }, {});
+  assert(!off.breakdown.find((l) => l.label.includes('placebo')), 'no placebo line at cadence 0');
+  const on = builder.estimateCost('gauntlet', { field_size: 1, replicates: 2 }, 10, 0, { best_of_n: 1 },
+    { random_baseline_every_n: 4 });
+  const placebo = on.breakdown.find((l) => l.label.includes('placebo'));
+  assert(placebo, 'the placebo line renders');
+  assertEqual(placebo.runs, 5, 'ceil(2 × 10 / 4) = 5 (the py estimator value)');
+  assertEqual(on.board_runs_per_round, off.board_runs_per_round + 5, 'the headline includes it');
+});
+
 test('estimateCost: the per-structure default-replicates twin matches the Python map for every structure', () => {
   // The JS default-replicates map is the twin of the Python
   // STRUCTURE_DEFAULT_REPLICATES (derived from each strategy's
   // _default_replicates). Pin every structure so the two can never drift.
-  const expected = { gauntlet: 1, single_elim: 2, double_elim: 2, swiss: 2, racing: 1 };
+  // Base default 2 (noise-aware); racing pins 1 (intrinsic replication).
+  const expected = { gauntlet: 2, single_elim: 2, double_elim: 2, swiss: 2, racing: 1 };
   for (const [structure, def] of Object.entries(expected)) {
     assertEqual(builder.defaultReplicatesFor(structure), def, `${structure} default replicates`);
     // The UNSET-default estimate equals the explicit-default estimate.

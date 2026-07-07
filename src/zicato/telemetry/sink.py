@@ -45,12 +45,18 @@ from zicato.core.workspace import events_jsonl_path
 
 log = logging.getLogger("zicato.telemetry.sink")
 
-#: Environment variable an operator sets to stream a run's telemetry to
-#: a live harmonograf server in addition to the on-disk JSONL. The
-#: variable is read by :func:`zicato.config.load_config` into
-#: :attr:`zicato.config.IntegrationConfig.harmonograf_url`; this module
-#: no longer reads it directly. The name is kept here for the tests and
-#: log messages that reference it.
+#: INTERNAL HANDOFF CHANNEL — deliberately kept as an environment
+#: variable, and deliberately NOT an operator surface. Operators point
+#: zicato at an external harmonograf with ``zicato evolve
+#: --harmonograf-url`` (or the workspace ``config.json``'s
+#: ``harmonograf_url`` key); this variable exists so the evolve loop's
+#: AUTO-LAUNCH path (:mod:`zicato.evolve.lifecycle_services`) can
+#: broadcast the launched server's URL to every downstream consumer
+#: that re-resolves via :func:`resolve_harmonograf_url` — in-process
+#: call sites and the tournament worker subprocesses alike — without
+#: any further plumbing. The orchestrator restores the variable's prior
+#: state at shutdown (``_EnvVarRestorer``), so the handoff never leaks
+#: past the invocation that made it.
 HARMONOGRAF_URL_ENV = "ZICATO_HARMONOGRAF_URL"
 
 #: Environment variable carrying the *gRPC* dial target (a bare
@@ -142,14 +148,21 @@ def resolve_harmonograf_url(
 
     Resolution order, first non-empty wins:
 
-    1. The ``ZICATO_HARMONOGRAF_URL`` environment variable — carried by
-       :attr:`config.harmonograf_url <zicato.config.IntegrationConfig>`.
-    2. The ``harmonograf_url`` key of the workspace ``config.json``
+    1. :attr:`config.harmonograf_url
+       <zicato.config.IntegrationConfig.harmonograf_url>` — the operator
+       surface, set by the ``zicato evolve --harmonograf-url`` flag
+       (pinned into the typed config tree at command startup) or
+       programmatically by an embedding application.
+    2. The ``ZICATO_HARMONOGRAF_URL`` environment variable — the
+       INTERNAL auto-launch handoff channel (:data:`HARMONOGRAF_URL_ENV`),
+       set by the evolve loop when it launches a per-workspace
+       harmonograf so downstream re-resolvers (this function, in the
+       orchestrator process and in every tournament worker subprocess)
+       discover the launched URL. Not an operator knob.
+    3. The ``harmonograf_url`` key of the workspace ``config.json``
        (passed in as ``workspace_config``).
 
-    The environment variable takes precedence so an operator can point a
-    single run at a local harmonograf without editing the workspace
-    config. Returns the empty string when neither source supplies a URL.
+    Returns the empty string when no source supplies a URL.
 
     Empty-string semantics changed in #202: before, the orchestrator
     treated an empty URL as "JSONL-only telemetry" and shipped no live
@@ -158,7 +171,7 @@ def resolve_harmonograf_url(
     launches an in-process server in that case and writes the resulting
     URL back into ``ZICATO_HARMONOGRAF_URL`` so subsequent callers of
     this function (the tournament runner, the per-board worker) re-
-    resolve to the auto-launched URL via the env-var path above. This
+    resolve to the auto-launched URL via the handoff path above. This
     function itself does NOT trigger a launch — it remains a pure
     resolver.
 
@@ -167,15 +180,23 @@ def resolve_harmonograf_url(
     workspace_config:
         The workspace ``config.json`` as a dict, or ``None``.
     config:
-        The :class:`~zicato.config.IntegrationConfig` carrying the
-        env-sourced ``harmonograf_url``. When ``None`` it is loaded via
-        :func:`zicato.config.load_config` — the single place the
-        environment is read.
+        The :class:`~zicato.config.IntegrationConfig` carrying
+        ``harmonograf_url``. When ``None`` it is loaded via
+        :func:`zicato.config.load_config` (which layers any pinned
+        ``--harmonograf-url`` flag on top of the defaults).
     """
     integration = config if config is not None else load_config().integration
-    env = integration.harmonograf_url.strip()
-    if env:
-        return env
+    configured = integration.harmonograf_url.strip()
+    if configured:
+        return configured
+    # The INTERNAL auto-launch handoff (see HARMONOGRAF_URL_ENV): read
+    # deliberately from the process environment, not from load_config()
+    # — this is a broadcast channel between the evolve loop and its
+    # downstream consumers (including worker subprocesses), not part of
+    # the operator-facing configuration surface.
+    handoff = os.environ.get(HARMONOGRAF_URL_ENV, "").strip()
+    if handoff:
+        return handoff
     if workspace_config:
         cfg = workspace_config.get("harmonograf_url", "")
         if isinstance(cfg, str) and cfg.strip():

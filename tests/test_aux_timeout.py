@@ -3,8 +3,9 @@
 Each aux call site (proposer, judge, emulator turn, analysis pass)
 must surface a deterministic outcome when the LLM endpoint hangs past
 the configured budget. We exercise each with a hung-mock that sleeps
-forever and a near-zero ``ZICATO_AUX_CALL_TIMEOUT`` so the test
-completes in milliseconds.
+forever and a near-zero budget pinned the way the ``--aux-call-timeout``
+flag pins it (``zicato.config.pin_overrides``) so the test completes in
+milliseconds. The suite-wide autouse fixture clears pins between tests.
 """
 
 from __future__ import annotations
@@ -16,31 +17,32 @@ from pathlib import Path
 import pytest
 
 from zicato.aux_timeout import DEFAULT_AUX_CALL_TIMEOUT_S, aux_call_timeout_s
+from zicato.config import pin_overrides
+
+
+def _pin_aux_timeout(seconds: float) -> None:
+    """Pin the aux budget exactly as ``zicato evolve --aux-call-timeout`` does."""
+    pin_overrides({"aux": {"call_timeout_s": seconds}})
+
 
 # ---------------------------------------------------------------------------
 # Module-level config
 # ---------------------------------------------------------------------------
 
 
-def test_default_timeout_is_120s(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("ZICATO_AUX_CALL_TIMEOUT", raising=False)
+def test_default_timeout_is_120s() -> None:
     assert aux_call_timeout_s() == DEFAULT_AUX_CALL_TIMEOUT_S
 
 
-def test_env_override_parsed(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ZICATO_AUX_CALL_TIMEOUT", "5.5")
+def test_pinned_flag_value_wins() -> None:
+    """A pinned ``--aux-call-timeout`` value reaches the bare call-site form."""
+    _pin_aux_timeout(5.5)
     assert aux_call_timeout_s() == 5.5
 
 
-def test_env_override_invalid_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ZICATO_AUX_CALL_TIMEOUT", "not-a-number")
-    assert aux_call_timeout_s() == DEFAULT_AUX_CALL_TIMEOUT_S
-
-
-def test_env_override_nonpositive_falls_back(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("ZICATO_AUX_CALL_TIMEOUT", "0")
+def test_deleted_env_var_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``ZICATO_AUX_CALL_TIMEOUT`` was deleted for the flag; setting it is a no-op."""
+    monkeypatch.setenv("ZICATO_AUX_CALL_TIMEOUT", "5.5")
     assert aux_call_timeout_s() == DEFAULT_AUX_CALL_TIMEOUT_S
 
 
@@ -55,11 +57,9 @@ async def _hung_aux(system: str, user: str, model: str) -> str:
     return ""
 
 
-def test_proposer_timeout_raises_proposer_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_proposer_timeout_raises_proposer_error() -> None:
     """A hung aux LLM exhausts retries with ``auxiliary LLM call timed out`` errors."""
-    monkeypatch.setenv("ZICATO_AUX_CALL_TIMEOUT", "0.05")
+    _pin_aux_timeout(0.05)
 
     from zicato.core.types import MutationPoint
     from zicato.proposer.proposer import ProposerError, propose_experiment
@@ -98,11 +98,9 @@ def test_proposer_timeout_raises_proposer_error(
 # ---------------------------------------------------------------------------
 
 
-def test_rubric_timeout_returns_rubric_timeout_detail(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_rubric_timeout_returns_rubric_timeout_detail() -> None:
     """A hung rubric aux returns ``passed=False`` with detail ``rubric_judge_timeout``."""
-    monkeypatch.setenv("ZICATO_AUX_CALL_TIMEOUT", "0.05")
+    _pin_aux_timeout(0.05)
 
     from zicato.board.matchers import evaluate_expectation
     from zicato.board.predicates import Rubric
@@ -132,11 +130,9 @@ async def _harness_callable(system: str, user: str, model: str) -> str:
     return ""
 
 
-def test_emulator_timeout_aborts_with_emulator_timeout(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_emulator_timeout_aborts_with_emulator_timeout() -> None:
     """A hung emulator-side aux aborts the driver with ``emulator_timeout``."""
-    monkeypatch.setenv("ZICATO_AUX_CALL_TIMEOUT", "0.05")
+    _pin_aux_timeout(0.05)
 
     from zicato.core.types import BoardEntry, RuntimeConfig, UserPersona
     from zicato.emulator.emulator import EmulatedMultiTurnDriver
@@ -177,11 +173,9 @@ def test_emulator_timeout_aborts_with_emulator_timeout(
 # ---------------------------------------------------------------------------
 
 
-def test_analysis_timeout_substitutes_placeholder(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_analysis_timeout_substitutes_placeholder(tmp_path: Path) -> None:
     """A hung analysis aux writes ``analysis.md`` with a placeholder narrative."""
-    monkeypatch.setenv("ZICATO_AUX_CALL_TIMEOUT", "0.05")
+    _pin_aux_timeout(0.05)
 
     from zicato.core.workspace import analysis_path
     from zicato.epoch.analysis import generate_analysis

@@ -6,6 +6,16 @@ touching the repo or driving a workspace. The human-facing overview is
 [`README.md`](README.md); the full design lives under
 [`docs/design/`](docs/design/) (start with `ARCHITECTURE.md`).
 
+> **If you are CHANGING zicato's own code**, the authoritative reference is the
+> **development guide** at [`docs/dev-guide/`](docs/dev-guide/) — a 14-chapter,
+> code-grounded book (start at
+> [`docs/dev-guide/00-INDEX.md`](docs/dev-guide/00-INDEX.md), or the
+> [`zicato-dev-guide`](skills/zicato-dev-guide/SKILL.md) skill for the doorway).
+> It carries the 10 Golden Rules, the per-surface chapter map, the pre-commit
+> verification ladder, the master invariant index, and the ten shipped bugs as
+> teaching cases. The "Hard rules for agents" section below is the short form;
+> the guide is the long form and is kept honest against the code.
+
 ## What zicato is, in one paragraph
 
 zicato wraps an inner multi-agent harness in an **evolve loop**: it
@@ -53,7 +63,7 @@ Agent-driven workflows for operating zicato live under
 They are the recommended way to exercise the self-improvement loop:
 they encode the right command sequence, the artifacts to read, and the
 guardrails. See [`skills/README.md`](skills/README.md) for the catalog.
-To make them available to a Claude Code session, symlink or copy a
+To make them available to an agent/coding-assistant session, symlink or copy a
 skill into `.claude/skills/<name>/`.
 
 ## Hard rules for agents

@@ -60,27 +60,24 @@ mode up to ``P`` (challenger-only). The real-world ceiling on
 ``parallelism`` is almost always the LLM endpoint's own concurrency
 limit — size it against ``2 * parallelism`` for full mode.
 
-Per-run ephemeral working copies
---------------------------------
-The canonical generation snapshot
-(``epochs/{id}/generations/vN/snapshot/``) is treated as **immutable
-code**: it is the tree ``derive_generation`` copies forward to seed the
-next generation, so anything written into it accumulates across every
-generation and would eventually exhaust the disk. A target agent,
-however, may legitimately write near its own code — runtime ``output/``,
-scratch files, caches — and a meta-harness must be robust to that. So
-:func:`_run_single` never points a worker at the canonical snapshot
-directly. Instead it makes a per-run **ephemeral working copy** of the
-snapshot (a cheap, KB-sized ``copytree`` — code snapshots are small),
-points the worker at THAT copy, and discards it once the run finishes —
-on a clean exit, an abort, or a crash. Every runtime write the agent
-makes therefore lands in the throwaway per-run directory; the canonical
-snapshot stays code-only and small and ``derive_generation``'s
-``copytree`` stays cheap. The run's telemetry (``events.jsonl`` /
-``loss.json``) is unaffected — it is keyed on the workspace's
-``runs/{entry_id}/`` layout, not on the working copy. This is the same
-isolation a per-run ``git worktree`` would later give for free; a
-code-only ``copytree`` per run is the correct interim mechanism.
+Per-run ephemeral checkouts
+---------------------------
+The canonical generation source tree is treated as **immutable code**:
+it is what ``derive_generation`` derives the next generation from, so
+anything written into it accumulates across every generation and would
+eventually exhaust the disk. A target agent, however, may legitimately
+write near its own code — runtime ``output/``, scratch files, caches —
+and a meta-harness must be robust to that. So :func:`_run_single` never
+points a worker at the canonical tree directly. Instead it asks the
+workspace's :class:`~zicato.epoch.genstore.GenerationStore` for a
+per-run **ephemeral checkout** (the directory backend copies the
+KB-sized snapshot; the git backend checks out a per-run ``git
+worktree``), points the worker at THAT, and discards it once the run
+finishes — on a clean exit, an abort, or a crash. Every runtime write
+the agent makes therefore lands in the throwaway per-run directory; the
+canonical tree stays code-only and small. The run's telemetry
+(``events.jsonl`` / ``loss.json``) is unaffected — it is keyed on the
+workspace's ``runs/{entry_id}/`` layout, not on the working copy.
 
 * :func:`run_fast_mode` — autoresearch-style inline keep/discard.
   Only the child is run; comparison is against a previously-computed
@@ -149,6 +146,7 @@ from zicato.core import (
     ScoringWeights,
     Side,
 )
+from zicato.epoch.genstore import EphemeralCheckout
 from zicato.tournament.gate import GateOutcome, evaluate_gate
 
 # ``_load_ladder_state`` / ``_losses_for`` / ``_save_ladder_state`` are
@@ -210,21 +208,24 @@ from zicato.tournament.worker_transport import (  # noqa: F401
     _ABORTED_TASK_FAILURE_MULTIPLIER,
     _DISABLE_DRIFT_CONTEXT_KEY,
     _EPHEMERAL_SNAPSHOT_PREFIX,
+    _GENERATION_ID_CONTEXT_KEY,
     _INDEX_DB_RELPATH,
     _JUDGE_ONLY_CONTEXT_KEY,
     _PARENT_BUDGET_GRACE_S,
+    _REPLICATE_INDEX_CONTEXT_KEY,
     _SIGTERM_TO_SIGKILL_GRACE_S,
-    _SUPERVISOR_KILL_WAIT_S,
     _aborted_loss_profile,
     _adapter_spec,
     _callable_dotted_path,
-    _discard_ephemeral_snapshot,
+    _checkout_run_snapshot,
+    _config_pins,
+    _discard_run_snapshot,
     _drift_kind_wire,
+    _entry_replicate_index,
     _entry_to_dict,
     _index_db_path,
     _ingest_run_into_index,
     _load_worker_result,
-    _make_ephemeral_snapshot,
     _now_iso_utc,
     _resolve_harmonograf_grpc,
     _resolve_harmonograf_url,
@@ -234,6 +235,7 @@ from zicato.tournament.worker_transport import (  # noqa: F401
     _scrubbed_worker_env,
     _stamp_disable_drift,
     _stamp_judge_only,
+    _stamp_replicate_index,
     _telemetry_helpers,
     _terminate_worker,
     _weights_spec,
@@ -430,13 +432,15 @@ async def _run_single(
 
     Sequencing:
 
-    1. Make a per-run **ephemeral working copy** of the generation's
-       code snapshot (a cheap ``copytree`` into a system-temp directory)
-       and point the worker at THAT, never at the canonical
-       ``generations/vN/snapshot/``. Any runtime write the agent makes
-       near its own code lands in the throwaway copy, so the canonical
-       snapshot stays code-only and ``derive_generation`` does not carry
-       runtime output forward. See :func:`_make_ephemeral_snapshot`.
+    1. Make a per-run **ephemeral checkout** of the generation's code
+       snapshot (materialised by the workspace's generation store into a
+       system-temp directory — a ``copytree`` under the directory
+       backend, a per-run ``git worktree`` under the git backend) and
+       point the worker at THAT, never at the canonical source tree. Any
+       runtime write the agent makes near its own code lands in the
+       throwaway checkout, so the canonical tree stays code-only and
+       ``derive_generation`` does not carry runtime output forward. See
+       :func:`_checkout_run_snapshot`.
     2. Serialise the run's inputs (entry, adapter spec, call_llm dotted
        paths, scoring weights, sink/loss/result paths, and the ephemeral
        ``snapshot_root``) to a temp args file.
@@ -467,9 +471,21 @@ async def _run_single(
         generation_id=generation.id,
         entry_id=entry.id,
     )
-    from zicato.core.workspace import loss_profile_path  # noqa: PLC0415
-
-    loss_path = loss_profile_path(workspace_root, epoch_id, generation.id, entry.id)
+    # The worker writes its loss into the run's REPLICATE-keyed cache slot
+    # (the stamped replicate index; see _stamp_replicate_index). Replicate
+    # 0 — every single-replicate path — maps to the canonical
+    # ``runs/<entry>/loss.json``, byte-identical to before; replicate r>0
+    # maps to the sibling ``loss.r<r>.json`` so a later replicate's worker
+    # write can no longer CLOBBER the canonical file that doubles as
+    # replicate 0's cache slot (which silently replaced replicate 0's
+    # persisted sample with the last replicate's draw).
+    loss_path = _unit_loss_path(
+        workspace_root,
+        epoch_id,
+        generation.id,
+        entry.id,
+        _entry_replicate_index(entry),
+    )
     run_id = _run_id_for(generation, entry)
     budget_s = float(entry.wall_clock_budget_seconds)
 
@@ -497,9 +513,9 @@ async def _run_single(
     args_path = Path(args_name)
     result_path = Path(args_name[: -len(".json")] + ".result.json")
     spawn_started = time.monotonic()
-    # The per-run ephemeral snapshot working copy; assigned once the
-    # copytree below succeeds, discarded in this function's ``finally``.
-    ephemeral_snapshot: Path | None = None
+    # The per-run ephemeral snapshot checkout; assigned once the store
+    # checkout below succeeds, discarded in this function's ``finally``.
+    checkout: EphemeralCheckout | None = None
 
     # The run's final LossProfile — assigned on every exit path (clean
     # finish OR abort) so the ``finally`` block can fold the loss summary
@@ -509,15 +525,21 @@ async def _run_single(
 
     try:
         try:
-            # --- 1. Per-run ephemeral working copy of the code
-            # snapshot. The worker is pointed at this copy, never at the
-            # canonical ``generations/vN/snapshot/``, so any runtime
-            # write the agent makes near its own code lands here and is
-            # discarded with the copy — the canonical snapshot stays
-            # code-only and small.
-            ephemeral_snapshot, scratch_dir = _make_ephemeral_snapshot(
-                generation.snapshot_root, run_id
+            # --- 1. Per-run ephemeral checkout of the code snapshot,
+            # materialised by the workspace's generation store (a
+            # copytree under the directory backend, a per-run git
+            # worktree under the git backend). The worker is pointed at
+            # this checkout, never at the canonical source tree, so any
+            # runtime write the agent makes near its own code lands here
+            # and is discarded with the checkout — the canonical tree
+            # stays code-only and small.
+            checkout = _checkout_run_snapshot(
+                workspace_root=workspace_root,
+                epoch_id=epoch_id,
+                generation=generation,
+                run_id=run_id,
             )
+            ephemeral_snapshot, scratch_dir = checkout.working_dir, checkout.scratch_dir
             # The unified ``models`` block (runtime infra, NOT the contract)
             # is the source of truth for how each role reaches a provider in
             # the worker. For a configured role we pass its secret-free spec
@@ -535,13 +557,26 @@ async def _run_single(
                 # path (today's behavior). Ad-hoc callers (tests) that run a
                 # generation without a full workspace config still spawn.
                 _models = ModelsConfig()
+            # Run provenance for the harness under test: the worker mounts
+            # an EPHEMERAL snapshot copy with a throwaway name, so the
+            # session cannot recover WHICH generation it is measuring from
+            # its own root path. Stamp the generation id onto the
+            # serialised entry's context (the one channel that survives
+            # the worker round-trip — see _GENERATION_ID_CONTEXT_KEY);
+            # a seeded/deterministic harness derives its per-run noise
+            # from it. The in-process ``entry`` object is untouched.
+            entry_dict = _entry_to_dict(entry)
+            entry_dict["context"] = {
+                **entry_dict.get("context", {}),
+                _GENERATION_ID_CONTEXT_KEY: generation.id,
+            }
             args_payload = {
                 "workspace_root": str(workspace_root),
                 "epoch_id": epoch_id,
                 "generation_id": generation.id,
                 "snapshot_root": str(ephemeral_snapshot),
                 "scratch_dir": str(scratch_dir),
-                "entry": _entry_to_dict(entry),
+                "entry": entry_dict,
                 "adapter": _adapter_spec(adapter),
                 "harness_role": _role_worker_spec(
                     "harness", models=_models, fallback_callable=config.harness_call_llm
@@ -562,6 +597,14 @@ async def _run_single(
                 "harmonograf_url": (_hg_url := _resolve_harmonograf_url(workspace_root)),
                 "harmonograf_grpc": _resolve_harmonograf_grpc(workspace_root, _hg_url),
                 "weights": _weights_spec(weights),
+                # Process-pinned config overrides (CLI flags such as
+                # --harness-call-timeout-ms / --aux-call-timeout, pinned
+                # via zicato.config.pin_overrides). The worker re-pins
+                # them at startup so a flag whose knob is consumed
+                # INSIDE the worker (the adapter's per-call harness
+                # timeout, the judge/emulator aux budget) crosses the
+                # process boundary without an environment variable.
+                "config_pins": _config_pins(),
             }
             args_path.write_text(json.dumps(args_payload), encoding="utf-8")
         except (ValueError, OSError) as exc:
@@ -649,15 +692,17 @@ async def _run_single(
             # parent falls back to its own last-resort escalation so the
             # worker is never leaked. The fallback fires only AFTER the whole
             # supervisor window elapsed with the worker still alive, so it
-            # never races a healthy supervisor over the same pid.
+            # never races a healthy supervisor over the same pid. The window
+            # (config.supervisor_kill_wait_s) is the abort-latency floor when
+            # no supervisor is attached.
             try:
-                await asyncio.wait_for(proc.wait(), timeout=_SUPERVISOR_KILL_WAIT_S)
+                await asyncio.wait_for(proc.wait(), timeout=config.supervisor_kill_wait_s)
             except TimeoutError:
                 log.warning(
                     "run %s: supervisor did not reap the worker within %.0fs; "
                     "parent escalating as a last resort",
                     run_id,
-                    _SUPERVISOR_KILL_WAIT_S,
+                    config.supervisor_kill_wait_s,
                 )
                 await _terminate_worker(proc)
 
@@ -770,13 +815,13 @@ async def _run_single(
         final_loss = loss
         return final_loss
     finally:
-        # --- 7. Cleanup. Discard the per-run ephemeral snapshot working
-        # copy (every runtime write the agent made is inside it — it
+        # --- 7. Cleanup. Discard the per-run ephemeral snapshot
+        # checkout (every runtime write the agent made is inside it — it
         # must not survive the run); remove the temp args/result files;
         # if the worker was killed before it could remove its own
         # active_runs file, the parent removes it here. This block runs
         # on every exit path — clean finish, abort, or crash.
-        _discard_ephemeral_snapshot(ephemeral_snapshot)
+        _discard_run_snapshot(checkout)
         for tmp in (args_path, result_path):
             try:
                 if tmp.exists():
@@ -899,8 +944,21 @@ async def run_tournament(
     total_rounds: int = 0,
     force_fresh: bool = True,
     child_diff_size: dict[str, int] | None = None,
+    replicates: int = 1,
 ) -> TournamentResult:
     """Run a full A/B tournament. See module docstring.
+
+    ``replicates`` is the §9-lever-1 replication knob on the full A/B path
+    (mirroring :func:`run_matchup`): the paired board is run ``replicates``
+    times — each replicate on its own per-unit cache slot (the
+    ``(generation, entry, replicate)`` key) — and the per-entry drift losses
+    are averaged BEFORE aggregation via the same
+    :func:`~zicato.tournament.unit_cache._average_losses` the matchup runner
+    uses, so a noisy single run no longer decides a duel. ``1`` (this
+    function's own default; the orchestrator threads the structure's
+    resolved value) is the historical single-run path, byte-identical to
+    before the knob existed. The champion/child force-fresh semantics below
+    apply per replicate slot.
 
     ``child_diff_size`` is the OPT-IN parsimony / MDL input (OVERFITTING.md §5
     / §12 #4): the challenger generation's ``{added, removed, patches}`` diff
@@ -1035,18 +1093,28 @@ async def run_tournament(
         #
         # Both sides are persisted so a later fast round / structure can
         # reuse them.
-        parent_losses, child_losses = await _run_board_units_full(
-            adapter=adapter,
-            parent_gen=parent_gen,
-            child_gen=child_gen,
-            board=board,
-            weights=weights,
-            config=config,
-            workspace_root=workspace_root,
-            epoch_id=epoch_id,
-            force_fresh=force_fresh,
-            parent_force_fresh=champion_force_fresh,
-        )
+        replicate_count = max(1, replicates)
+        replicate_runs: list[tuple[dict[str, LossProfile], dict[str, LossProfile]]] = []
+        for replicate_index in range(replicate_count):
+            run_parent, run_child = await _run_board_units_full(
+                adapter=adapter,
+                parent_gen=parent_gen,
+                child_gen=child_gen,
+                board=board,
+                weights=weights,
+                config=config,
+                workspace_root=workspace_root,
+                epoch_id=epoch_id,
+                replicate_index=replicate_index,
+                force_fresh=force_fresh,
+                parent_force_fresh=champion_force_fresh,
+            )
+            replicate_runs.append((run_parent, run_child))
+        if replicate_count == 1:
+            parent_losses, child_losses = replicate_runs[0]
+        else:
+            parent_losses = _average_losses([r[0] for r in replicate_runs])
+            child_losses = _average_losses([r[1] for r in replicate_runs])
     finally:
         if rt is not None:
             state_mod, _ = rt
@@ -1130,10 +1198,14 @@ async def run_fast_mode(
 ) -> TournamentResult:
     """Inline keep/discard against a historical aggregate.
 
-    Runs only the child generation. Compares the result against the
-    caller-supplied ``parent_historical_agg`` — typically the parent's
-    last full-mode aggregate dict cached in the journal. Same gate
-    logic, so the decision shape is identical to full mode. Per-entry
+    Runs only the child generation, ONCE — fast mode is the explicit
+    cheap inline keep/discard and does not replicate (the contract's
+    ``replicates`` knob applies to the full A/B path and the structure
+    matchup runner; under fast mode the noise hedge is the evidence
+    gate's crowning confirmation instead). Compares the result against
+    the caller-supplied ``parent_historical_agg`` — typically the
+    parent's last full-mode aggregate dict cached in the journal. Same
+    gate logic, so the decision shape is identical to full mode. Per-entry
     losses contain only the child side; the parent tuple slot is left
     empty by storing the child's loss in both positions IS WRONG — we
     keep parent slot ``None``-equivalent by simply omitting parent
@@ -1305,6 +1377,7 @@ async def run_matchup(
     epoch_id: str,
     board_subset: tuple[str, ...] | None = None,
     replicates: int = 1,
+    replicate_base: int = 0,
     disable_drift: tuple[Any, ...] = (),
     judge_only: bool = False,
     round_index: int = 0,
@@ -1337,6 +1410,15 @@ async def run_matchup(
     enabling per-run rung attribution in the dashboard. Empty string (the
     default) leaves runs untagged, which is exactly what the gauntlet path
     (via :func:`run_tournament`) does.
+
+    ``replicate_base`` offsets every replicate's per-unit cache slot (and
+    the index stamped onto each entry for the harness's seeded noise draw):
+    replicate ``i`` runs at index ``replicate_base + i``. ``0`` (every
+    tournament matchup) is byte-identical to before the parameter existed;
+    the evidence pre-gate's replicate duels pass a RESERVED base
+    (:data:`zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE`) so each
+    evidence draw is a fresh sample of BOTH sides that never reads or
+    clobbers the canonical replicate-0 slots.
 
     ``fast`` is the structure-agnostic fast-mode champion-eval knob (the
     runtime ``--mode fast`` setting, threaded identically to
@@ -1398,6 +1480,7 @@ async def run_matchup(
         workspace_root=workspace_root,
         epoch_id=epoch_id,
         replicates=replicates,
+        replicate_base=replicate_base,
         match_id=match_id,
         fast=fast,
         matchup_budget_seconds=matchup_budget_seconds,

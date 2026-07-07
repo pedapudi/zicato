@@ -18,7 +18,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from zicato.dashboard.server import create_app
-from zicato.dashboard.state_reader import WorkspacePaths, build_gate_breakdown
+from zicato.query import WorkspacePaths, build_gate_breakdown
 
 EPOCH_ID = "2026-05-28_e0"
 
@@ -145,6 +145,11 @@ def test_gate_promoted_all_rules_pass(tmp_path: Path) -> None:
     # is satisfied here (challenger improved on every namespace).
     assert rules["namespace_monotonicity"]["status"] in {"pass", "disabled"}
     assert all(r["fired"] is False for r in result["rules"])
+    # STRUCTURED decision surface: nothing fired, margin is echoed verbatim.
+    assert result["deciding_rule"] is None
+    assert result["margin"] == pytest.approx(0.01)
+    assert result["regressed_predicate"] is None
+    assert result["regressed_namespace"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +192,12 @@ def test_gate_scalar_margin_rejection(tmp_path: Path) -> None:
     assert rules["namespace_monotonicity"]["status"] == "not_reached"
     # Only one rule fired.
     assert sum(1 for r in result["rules"] if r["fired"]) == 1
+    # STRUCTURED decision surface: the server NAMES the fired rule + margin so
+    # the frontend never re-infers it from the rule list / detail strings.
+    assert result["deciding_rule"] == "scalar_margin"
+    assert result["margin"] == pytest.approx(0.01)
+    assert result["regressed_predicate"] is None
+    assert result["regressed_namespace"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +247,11 @@ def test_gate_pass_rate_monotonicity_rejection(tmp_path: Path) -> None:
     assert "entry_y" not in rules["pass_rate_monotonicity"]["detail"]
     # The later namespace rule is not reached.
     assert rules["namespace_monotonicity"]["status"] == "not_reached"
+    # STRUCTURED decision surface: the fired monotonicity rule NAMES its
+    # regressed predicate — the frontend never regex-scrapes the detail.
+    assert result["deciding_rule"] == "pass_rate_monotonicity"
+    assert result["regressed_predicate"] == "entry_x"
+    assert result["regressed_namespace"] is None
 
 
 def test_gate_aggregate_scope_promotes_and_renders_rate_delta(tmp_path: Path) -> None:
@@ -566,7 +582,7 @@ def test_gate_endpoint_carries_scalars_and_live_keys(tmp_path: Path, static_dir:
 
 def test_provenance_parser_token_shapes() -> None:
     """The parser decomposes every documented token shape (incl. fail-open)."""
-    from zicato.dashboard.state_reader import _parse_scoring_provenance
+    from zicato.query import _parse_scoring_provenance
 
     # None / builtin -> quiet built-in (None additionally marks present=False).
     none_view = _parse_scoring_provenance(None)
@@ -601,7 +617,7 @@ def test_provenance_parser_token_shapes() -> None:
 def test_provenance_parser_flags_fail_open() -> None:
     """A ``(fallback: …)`` token is flagged fail-open with its reason, while
     the underlying pre-plugin token is still classified."""
-    from zicato.dashboard.state_reader import _parse_scoring_provenance
+    from zicato.query import _parse_scoring_provenance
 
     view = _parse_scoring_provenance("builtin (fallback: raised ValueError)")
     assert view["fail_open"] is True

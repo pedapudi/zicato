@@ -42,7 +42,8 @@ The server binds **two** ports: a browser-facing gRPC-Web port (the
 `grpc_target`, which the per-run / meta-loop sinks dial). Conflating the
 two — dialing the web port over native gRPC — silently drops all
 telemetry, so the split is load-bearing (see `telemetry/sink.py`
-`resolve_harmonograf_grpc_target` and the `ZICATO_HARMONOGRAF_GRPC` env).
+`resolve_harmonograf_grpc_target` and the internal `ZICATO_HARMONOGRAF_GRPC`
+handoff — set by the auto-launch lifecycle, not by operators).
 
 Failure isolation is absolute: a missing `harmonograf_server` dep, a
 port-bind failure, or any startup exception yields a **no-op handle**

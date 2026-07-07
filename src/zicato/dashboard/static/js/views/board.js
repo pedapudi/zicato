@@ -18,18 +18,18 @@ import { el, clearChildren } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, section, empty, stat, normaliseDecision, decisionFor, densityTokens, prText, metricsDigest, scoreFmt } from '../ui.js';
+import { gatedSwap, section, empty, stat, decisionFor, densityTokens, prText, metricsDigest, scoreFmt } from '../ui.js';
 
 // In-flight board-units for THIS entry, read from /api/active-runs (folded
 // into AppState by /api/environment). Each carries a generation_id / run_id /
 // progress; some payloads key the board unit as `entry_id`, others as
-// `board_entry_id` / `entry`. Filter to the one entry the board page is on.
+// the canonical `entry_id`. Filter to the one entry the board page is on.
 export function inflightForEntry(activeRuns, entryId) {
   const runs = Array.isArray(activeRuns) ? activeRuns : [];
   if (!entryId) return [];
   return runs.filter((r) => {
     if (!r || typeof r !== 'object') return false;
-    const e = r.entry_id != null ? r.entry_id : (r.board_entry_id != null ? r.board_entry_id : r.entry);
+    const e = r.entry_id;
     return e === entryId;
   });
 }
@@ -77,7 +77,7 @@ export async function render(host, ctx, params) {
   const [rows0, traj] = await Promise.all([D.generationsForEpoch(epochId), D.scoreTrajectory(epochId)]);
   const genList = rows0.length
     ? rows0.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted }))
-    : (Array.isArray(ep.experiments) ? ep.experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: normaliseDecision(x.outcome) === 'promoted' })) : []);
+    : (Array.isArray(ep.experiments) ? ep.experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: x.promoted === true })) : []);
 
   const scalarByGen = new Map();
   if (traj && Array.isArray(traj.points)) for (const p of traj.points) if (svg.isNum(p.scalar)) scalarByGen.set(p.generation_id, p.scalar);
@@ -91,7 +91,7 @@ export async function render(host, ctx, params) {
   const inflight = inflightForEntry(state.activeRuns, entryId);
   const runningByGen = new Map();
   for (const r of inflight) {
-    const g = r.generation_id || r.gen;
+    const g = r.generation_id;
     if (g != null && !runningByGen.has(g)) runningByGen.set(g, r);
   }
 
@@ -101,7 +101,7 @@ export async function render(host, ctx, params) {
   // transcript cache keys here. The transcript host stays gated on CONTENT, so
   // a re-read with no new turn is still a no-op repaint (scroll preserved).
   for (const r of inflight) {
-    const g = r.generation_id || r.gen;
+    const g = r.generation_id;
     if (g != null) D.invalidateRunTranscript(epochId, g, entryId, r.run_id || null);
   }
 
@@ -196,7 +196,7 @@ export async function render(host, ctx, params) {
     rows: rows.map((r) => [r.gen, svg.isNum(r.loss) ? r.loss.toFixed(3) : null, r.pass, r.timeout, r.promoted, r.runId, !!r.running, !!r.cached, r.sourceEpoch || null, svg.isNum(r.score) ? r.score.toFixed(3) : null, metricsDigest(r.metrics)]),
     inflight: inflight.map((r) => {
       const pr = progressRatio(r);
-      return [r.generation_id || r.gen || null, r.run_id || null, pr != null ? pr.toFixed(2) : null];
+      return [r.generation_id || null, r.run_id || null, pr != null ? pr.toFixed(2) : null];
     }),
   });
   // The transcript digest folds in ONLY the selected candidates and their
@@ -266,7 +266,7 @@ export async function render(host, ctx, params) {
       ])]));
       const tbody = el('tbody');
       for (const r of inflight) {
-        const gen = r.generation_id || r.gen || '—';
+        const gen = r.generation_id || '—';
         const pr = progressRatio(r);
         const pct = pr != null ? Math.round(pr * 100) : null;
         tbody.appendChild(el('tr', { class: 'dn-inflight-row' }, [

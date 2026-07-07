@@ -508,6 +508,19 @@ async def _run(args: dict[str, Any]) -> None:
     from zicato.runtime import state as state_mod  # noqa: PLC0415
     from zicato.telemetry import reducer as reducer_mod  # noqa: PLC0415
 
+    # Re-pin the orchestrator's process-pinned config overrides (CLI
+    # flags such as --harness-call-timeout-ms / --aux-call-timeout) in
+    # THIS fresh interpreter, before anything calls load_config(). The
+    # pins travelled in the args file — the flag-to-config bridge across
+    # the worker subprocess boundary; no environment variable involved.
+    # An absent / empty key (a legacy args file, or no flags pinned)
+    # leaves the worker on its own defaults.
+    config_pins = args.get("config_pins")
+    if config_pins:
+        from zicato.config import pin_overrides  # noqa: PLC0415
+
+        pin_overrides(config_pins)
+
     workspace_root = Path(args["workspace_root"])
     epoch_id = str(args["epoch_id"])
     generation_id = str(args["generation_id"])

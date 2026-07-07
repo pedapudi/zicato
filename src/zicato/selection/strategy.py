@@ -72,9 +72,11 @@ class Matchup:
         ids to evaluate on a board slice.
     replicates:
         How many paired board runs to average before scoring (``>= 1``).
-        ``1`` is the gauntlet's exact single-run path; bracket structures
-        default to ``>= 2`` because replication, not bracket shape, is the
-        noise lever.
+        The unpinned default is ``2`` for gauntlet / bracket / Swiss
+        structures (replication, not bracket shape, is the noise lever);
+        ``1`` is the historical single-run path a deterministic contract
+        pins explicitly (racing also pins ``1`` — its replication is
+        intrinsic to the escalating board slices).
     stage_index:
         The bracket round / Swiss round / racing rung this matchup belongs
         to — the WITHIN-tournament stage, a different axis from a generation's
@@ -298,20 +300,37 @@ class SelectionStrategy(ABC):
 
     #: The per-structure default ``replicates`` when ``params["replicates"]``
     #: is unset — the SINGLE SOURCE OF TRUTH for a structure's default
-    #: replication. The base default is ``1`` (the gauntlet's exact
-    #: single-run path, also racing's, whose replication is intrinsic to the
-    #: escalating board slices). Bracket / Swiss structures override it to
-    #: ``2`` (replication, not bracket shape, is their noise lever — see
-    #: SELECTION.md §8). EVERY consumer that needs "the default replicates
-    #: for this structure" reads it from here: the strategy ``__init__``
-    #: resolves ``params["replicates"]`` against it, and the builder cost
-    #: estimator reads it via
+    #: replication. The base default is ``2`` — the noise-aware posture:
+    #: evaluations are stochastic, so a duel decided by one paired run is
+    #: decided by one noise draw; two averaged runs is the cheapest hedge
+    #: (replication, not bracket shape, is the noise lever — see SELECTION.md
+    #: §8). The gauntlet and the bracket / Swiss structures inherit it;
+    #: racing pins ``1`` (its replication is intrinsic to the escalating
+    #: board slices). Pin ``"replicates": 1`` in the structure params for the
+    #: historical single-run duel (deterministic harnesses do). EVERY
+    #: consumer that needs "the default replicates for this structure" reads
+    #: it from here: the strategy ``__init__`` resolves
+    #: ``params["replicates"]`` against it, and the builder cost estimator
+    #: reads it via
     #: :data:`zicato.selection.registry.STRUCTURE_DEFAULT_REPLICATES` so the
     #: meter can never under-report by assuming a flat ``1``.
-    _default_replicates: ClassVar[int] = 1
+    _default_replicates: ClassVar[int] = 2
 
     def __init__(self, params: dict[str, Any] | None = None) -> None:
         self.params: dict[str, Any] = dict(params or {})
+
+    def replicates(self) -> int:
+        """The per-duel replicate count this strategy resolved.
+
+        Every concrete strategy resolves ``params["replicates"]`` against its
+        ``_default_replicates`` in ``__init__`` (into ``self._replicates``);
+        this is the public read the orchestrator uses to thread the SAME
+        resolved value into an execution path that does not run through
+        :class:`Matchup` objects (the gauntlet's ``run_tournament`` call).
+        Falls back to the class default for a strategy that has not stored
+        the attribute.
+        """
+        return int(getattr(self, "_replicates", self._default_replicates))
 
     @abstractmethod
     def field_size(self) -> int:

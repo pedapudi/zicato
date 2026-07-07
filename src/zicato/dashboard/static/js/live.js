@@ -173,9 +173,9 @@ export function liveSnapshot({ heartbeat, activeRuns, activeTournament, status }
     structure: (status && status.structure) || (at && at.structure) || null,
     running: !!(status && status.running),
     runs: runs.map((r) => ({
-      key: String(r.run_id || (String(r.generation_id || r.gen || '') + '|' + String(r.entry_id || r.board_entry_id || r.entry || ''))),
-      gen: r.generation_id || r.gen || null,
-      entry: r.entry_id || r.board_entry_id || r.entry || null,
+      key: String(r.run_id || (String(r.generation_id || '') + '|' + String(r.entry_id || ''))),
+      gen: r.generation_id || null,
+      entry: r.entry_id || null,
     })),
     rungs,
     lineageLen: (at && Array.isArray(at.champion_lineage)) ? at.champion_lineage.length : 0,
@@ -313,6 +313,48 @@ function rungStepperDigest({ stepIndex, stepCount } = {}) {
   return 'step|' + (stepIndex == null ? '?' : stepIndex) + '/' + (stepCount == null ? '?' : stepCount);
 }
 
+// ── the ROUND-PIPELINE stepper (WS4-A item 4) ─────────────────────────
+//
+// A compact propose → apply → run → gate stepper rendering the SERVER's
+// authoritative /api/live/pipeline projection VERBATIM — the reader owns
+// the phase-string inference; this builder never re-derives loop position
+// from phase tokens. One pip+label per step (done = filled/muted, active =
+// accent, pending = hollow), the active step's detail beside it, and the
+// gate decision word once the round settles. Pure: builds detached DOM.
+export function pipelineStepper(pipe) {
+  const steps = (pipe && Array.isArray(pipe.steps)) ? pipe.steps : [];
+  const wrap = el('div', { class: 'dt-pipe', role: 'img', 'aria-label': 'round pipeline' });
+  steps.forEach((s, i) => {
+    if (!s || !s.id) return;
+    const state = (s.state === 'done' || s.state === 'active') ? s.state : 'pending';
+    if (i > 0) wrap.appendChild(el('span', { class: 'dt-pipe-sep', 'aria-hidden': 'true', text: '→' }));
+    const node = el('span', { class: 'dt-pipe-step dt-pipe-' + state, 'data-step': String(s.id) }, [
+      el('span', { class: 'dt-pipe-dot', 'aria-hidden': 'true' }),
+      el('span', { class: 'dt-pipe-label', text: s.label || s.id }),
+      (state === 'active' && s.detail)
+        ? el('span', { class: 'dt-pipe-detail dn-faint', text: s.detail }) : null,
+    ].filter(Boolean));
+    wrap.appendChild(node);
+  });
+  if (pipe && pipe.decision) {
+    wrap.appendChild(el('span', {
+      class: 'dt-pipe-decision' + (pipe.decision === 'promoted' ? ' dn-good-t' : ' dn-faint'),
+      text: '· ' + pipe.decision,
+    }));
+  }
+  return wrap;
+}
+
+// The stepper digest: step states + the active detail + the decision — a
+// steady heartbeat re-serving the same projection is byte-identical (zero
+// DOM); a step advancing / a detail moving / the verdict landing flips it.
+export function pipelineStepperDigest(pipe) {
+  if (!pipe || !Array.isArray(pipe.steps)) return 'none';
+  return 'pipe|' + pipe.steps.map((s) => [
+    s && s.id, s && s.state, (s && s.state === 'active' && s.detail) ? s.detail : '',
+  ].join(':')).join('|') + '|' + (pipe.decision || '') + '|' + (pipe.running ? 'R' : '-');
+}
+
 // ── the activity ticker (append-only, capped, NEVER repaints) ─────────
 //
 // A compact streaming feed. New events are PREPENDED (newest on top), the list
@@ -406,7 +448,7 @@ function blockOutcomeGlyph(outcome) {
   }
 }
 
-export function liveMatchGroupedBlocks(blocks, onCompetitor) {
+export function liveMatchGroupedBlocks(blocks, onCompetitor, ctl) {
   const list = Array.isArray(blocks) ? blocks : [];
   const wrap = el('div', { class: 'dt-live-matches' });
   if (!list.length) {
@@ -418,12 +460,74 @@ export function liveMatchGroupedBlocks(blocks, onCompetitor) {
     block.appendChild(el('div', { class: 'dt-live-match-head', text: b.label || (b.match_id || 'match') }));
     const rows = el('div', { class: 'dt-live-match-rows' });
     for (const e of (Array.isArray(b.entries) ? b.entries : [])) {
-      rows.appendChild(liveMatchRow(e, onCompetitor));
+      rows.appendChild(liveMatchRow(e, onCompetitor, ctl));
     }
     block.appendChild(rows);
     wrap.appendChild(block);
   }
   return wrap;
+}
+
+// ── the per-run KILL affordance (WS4-A item 3d) ──────────────────────
+//
+// One small ✕ per IN-FLIGHT run on a competitor's row, posting the file-based
+// kill marker (postControl('kill/'+runId) at the call site). Confirm-on-click:
+// the first click ARMS ("kill?"), the second fires; an armed button auto-
+// disarms. Hidden entirely when the workspace is read-only (the caller passes
+// no ctl / canControl:false). Clicks never bubble into the row's competitor
+// navigation. Exported for the node behaviour tests.
+export function killRunButton(runInfo, onKill) {
+  const runId = String((runInfo && runInfo.run_id) || '');
+  const entry = (runInfo && runInfo.entry_id) ? String(runInfo.entry_id) : '';
+  const btn = el('button', {
+    class: 'dt-live-kill', type: 'button', 'data-run': runId,
+    title: 'kill run ' + runId + (entry ? ' (' + entry + ')' : '') + ' — the supervisor tears the unit down',
+    'aria-label': 'kill run ' + runId,
+    text: '✕',
+  });
+  let armed = false;
+  let timer = null;
+  const disarm = () => {
+    armed = false;
+    if (timer != null) { clearTimeout(timer); timer = null; }
+    patchText(btn, '✕');
+    btn.classList.remove('dt-live-kill-armed');
+  };
+  btn.addEventListener('click', (ev) => {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    if (!armed) {
+      armed = true;
+      patchText(btn, 'kill?');
+      btn.classList.add('dt-live-kill-armed');
+      timer = setTimeout(disarm, 4000);
+      return;
+    }
+    disarm();
+    if (onKill && runId) onKill(runId);
+  });
+  return btn;
+}
+
+// The in-flight runs that belong to each competitor generation, epoch-guarded
+// exactly like tournamentHasActiveRuns (a KNOWN-and-different epoch run never
+// lights up a stale tournament). Returns { '<gen>': [{run_id, entry_id}] }.
+export function runsByGeneration(activeRuns, at) {
+  const out = {};
+  const runs = Array.isArray(activeRuns) ? activeRuns : [];
+  const tEpoch = (at && at.epoch_id != null && String(at.epoch_id) !== '') ? String(at.epoch_id) : null;
+  for (const r of runs) {
+    if (!r || typeof r !== 'object' || !r.run_id) continue;
+    const rEpoch = (r.epoch_id != null && String(r.epoch_id) !== '') ? String(r.epoch_id) : null;
+    if (tEpoch != null && rEpoch != null && rEpoch !== tEpoch) continue;
+    const gen = r.generation_id != null ? r.generation_id : r.gen;
+    if (gen == null || String(gen) === '') continue;
+    const key = String(gen);
+    (out[key] = out[key] || []).push({
+      run_id: String(r.run_id),
+      entry_id: r.entry_id != null ? String(r.entry_id) : null,
+    });
+  }
+  return out;
 }
 
 // ── ONE dense competitor row — fixed columns, no far-right floating ──
@@ -441,14 +545,19 @@ export function liveMatchGroupedBlocks(blocks, onCompetitor) {
 // no projection the scalar column is a faint placeholder so the grid stays
 // aligned across rows; once a side SETTLES the trailing tag carries its verdict
 // glyph (✓/✗/⏱) instead of PROJ, and the boards column reads its final k/N.
-function liveMatchRow(e, onCompetitor) {
+function liveMatchRow(e, onCompetitor, ctl) {
   const queued = e.outcome === 'queued';
   const settled = e.outcome === 'win' || e.outcome === 'loss' || e.outcome === 'timeout';
   // PROJECTED — an in-flight side with a server-side projected scalar reads
   // "~proj" (dimmed/dashed) so the hero distinguishes a climbing projection
   // from a settled verdict.
   const proj = !!(e.projected && isNum(e.projected_scalar) && !settled);
-  const row = el('div', { class: 'dt-live-match-row' + (proj ? ' dt-proj' : ''), tabindex: onCompetitor ? '0' : null });
+  // the per-run KILL cluster (writable workspace + attributed in-flight runs).
+  const killRuns = (ctl && ctl.canControl && Array.isArray(e.runs)) ? e.runs.filter((r) => r && r.run_id) : [];
+  const row = el('div', {
+    class: 'dt-live-match-row' + (proj ? ' dt-proj' : '') + (killRuns.length ? ' dt-live-match-row-kill' : ''),
+    tabindex: onCompetitor ? '0' : null,
+  });
 
   // 1 — the competitor id (fixed-width mono column).
   const name = el('span', { class: 'dt-live-match-name dn-mono', text: String(e.id) });
@@ -496,6 +605,11 @@ function liveMatchRow(e, onCompetitor) {
   row.appendChild(scalar);
   row.appendChild(boards);
   row.appendChild(tag);
+  if (killRuns.length) {
+    const cluster = el('span', { class: 'dt-live-kill-cluster' });
+    for (const r of killRuns) cluster.appendChild(killRunButton(r, ctl.onKill));
+    row.appendChild(cluster);
+  }
   if (onCompetitor && e.id && e.id !== 'tbd') {
     row.addEventListener('click', () => onCompetitor(String(e.id)));
     row.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onCompetitor(String(e.id)); } });
@@ -524,12 +638,17 @@ export class LiveController {
   constructor(opts) {
     const o = opts || {};
     this.onCompetitor = typeof o.onCompetitor === 'function' ? o.onCompetitor : null;
+    // the per-run kill sink (postControl('kill/'+runId) at the shell); null
+    // (or canControl:false on update) hides every kill affordance.
+    this.onKill = typeof o.onKill === 'function' ? o.onKill : null;
+    this._canControl = false;
     this._seq = 0;
     this._prevSnap = null;
     this._funnelDigest = null;
     this._matchesDigest = null;
     this._metaKey = null;
     this._stepDigest = null;
+    this._pipeDigest = null;
     this.ticker = new ActivityTicker({ cap: o.cap || 40 });
     this._build();
   }
@@ -552,7 +671,12 @@ export class LiveController {
       this._pillText,
     ]);
     this._meta = el('span', { class: 'dt-live-hero-meta', text: '' });
-    const head = el('div', { class: 'dt-live-hero-head' }, [this._pill, this._meta]);
+    // the ROUND-PIPELINE stepper host (propose→apply→run→gate) — filled by
+    // updatePipeline() with the server's authoritative projection, digest-
+    // gated; empty (and invisible) when the endpoint is absent (Rust
+    // supervisor) or the pipeline is idle.
+    this._pipeHost = el('span', { class: 'dt-live-hero-pipe' });
+    const head = el('div', { class: 'dt-live-hero-head' }, [this._pill, this._meta, this._pipeHost]);
 
     // ── 2. THE RACE STATE — the PRIMARY, FULL-WIDTH viz ─────────────────
     // The scalar number-line fills the hero width (it IS the hero). A compact
@@ -588,7 +712,10 @@ export class LiveController {
 
   // Drive the hero from the current live state. Returns true when a run is live
   // (so the shell can toggle the hero's visibility class).
-  update({ status, heartbeat, activeRuns, activeTournament } = {}) {
+  update({ status, heartbeat, activeRuns, activeTournament, canControl } = {}) {
+    // whether the workspace accepts control POSTs (read_only:false) — gates
+    // the per-run kill affordances in the "what's running" rows.
+    if (canControl != null) this._canControl = !!canControl;
     const running = !!(status && status.running);
     // VISIBILITY gates on the orchestrator being ALIVE (a fresh heartbeat pulse:
     // LIVE or STALLED), NOT on `running` — `running` drops the instant the phase
@@ -604,7 +731,11 @@ export class LiveController {
     this._seq = seq;
     if (events.length) this.ticker.push(events);
     this._prevSnap = alive ? snap : null;
-    if (!alive) { this._funnelDigest = null; this._matchesDigest = null; this._metaKey = null; this._stepDigest = null; return false; }
+    if (!alive) {
+      this._funnelDigest = null; this._matchesDigest = null; this._metaKey = null; this._stepDigest = null;
+      this.updatePipeline(null);
+      return false;
+    }
 
     // ── tournament-level progress: the ONE rung-number source of truth ──
     // liveProgress reads the live TOPOLOGY (resolved rungs + the active rung),
@@ -652,6 +783,25 @@ export class LiveController {
     // completed / stale-foreign shows the honest placeholder.
     this._updateStructure(activeTournament, heartbeat, activeRuns);
     return true;
+  }
+
+  // Drive the round-pipeline stepper from the server's /api/live/pipeline
+  // projection. Digest-gated: a steady heartbeat re-serving the same
+  // projection writes ZERO DOM; a step advancing repaints. `null` (endpoint
+  // absent — the Rust supervisor — or the hero going idle) clears the host,
+  // degrading the head to exactly its pre-stepper reading.
+  updatePipeline(pipe) {
+    if (!this._pipeHost) return;
+    // an idle projection (all steps pending, nothing decided) reads as no
+    // stepper — the meta line already says "proposing …" etc. while filling.
+    const idle = !pipe || !Array.isArray(pipe.steps)
+      || (!pipe.decision && pipe.steps.every((s) => !s || (s.state !== 'active' && s.state !== 'done')));
+    const digest = idle ? 'none' : pipelineStepperDigest(pipe);
+    if (digest === this._pipeDigest && (idle || this._pipeHost.firstChild)) return;
+    this._pipeDigest = digest;
+    clear(this._pipeHost);
+    if (idle) return;
+    this._pipeHost.appendChild(pipelineStepper(pipe));
   }
 
   // Build the ONE muted metadata baseline as an ordered token list:
@@ -706,11 +856,28 @@ export class LiveController {
       const fb = runningEntriesFallbackBlock(at, activeRuns);
       if (fb) blocks = [fb];
     }
-    const digest = liveMatchBlocksDigest(blocks);
+    // ANNOTATE each competitor row with its attributed in-flight runs so the
+    // per-run kill affordance can render (epoch-guarded — a foreign-epoch run
+    // never earns a kill button on a stale tournament). Folded into the digest
+    // (alongside the canControl gate) so a run starting/finishing — or the
+    // workspace flipping writable — repaints, while a steady beat stays no-op.
+    const canKill = !!(this._canControl && this.onKill);
+    const byGen = canKill ? runsByGeneration(activeRuns, at) : {};
+    if (canKill) {
+      for (const b of blocks) {
+        for (const e of (Array.isArray(b.entries) ? b.entries : [])) {
+          if (e && e.id != null && byGen[String(e.id)]) e.runs = byGen[String(e.id)];
+        }
+      }
+    }
+    const runsKey = Object.keys(byGen).sort()
+      .map((g) => g + ':' + byGen[g].map((r) => r.run_id).sort().join('+')).join(',');
+    const digest = liveMatchBlocksDigest(blocks) + '|kill:' + (canKill ? runsKey : '-');
     if (digest === this._matchesDigest && this._matchesBody.firstChild) return; // no real change → no DOM.
     this._matchesDigest = digest;
     clear(this._matchesBody);
-    const node = liveMatchGroupedBlocks(blocks, this.onCompetitor || undefined);
+    const node = liveMatchGroupedBlocks(blocks, this.onCompetitor || undefined,
+      canKill ? { canControl: true, onKill: this.onKill } : undefined);
     if (node.classList) node.classList.add('dt-live-enter');
     this._matchesBody.appendChild(node);
   }

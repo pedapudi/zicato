@@ -91,7 +91,7 @@ export function previewNodes(model) {
     nodes.push(el('ul', { class: 'dn-bld-warnings' }, warnings.map((w) => el('li', {
       class: 'dn-bld-warn dn-bld-warn-' + (w.severity || 'warning'),
     }, [
-      el('span', { class: 'dn-bld-warn-glyph', 'aria-hidden': 'true', text: w.severity === 'info' ? 'ⓘ' : '⚠' }),
+      el('span', { class: 'dn-bld-warn-glyph', 'aria-hidden': 'true', text: w.severity === 'info' ? 'ⓘ' : (w.severity === 'refuse' ? '⛔' : '⚠') }),
       el('span', { class: 'dn-bld-warn-msg', text: w.message || w.code || '' }),
     ]))));
   } else {
@@ -113,7 +113,7 @@ export function costMeter(cost) {
   wrap.appendChild(el('div', { class: 'dn-bld-cost-bars' }, breakdown.map((line) => el('div', {
     class: 'dn-bld-cost-bar', title: `${line.label}: ${line.runs} · ${line.detail || ''}`,
   }, [
-    el('span', { class: 'dn-bld-cost-barfill', style: `width:${Math.round((line.runs / total) * 100)}%` }),
+    el('span', { class: 'dn-bld-cost-barfill', style: `width:${Math.min(100, Math.round((line.runs / total) * 100))}%` }),
     el('span', { class: 'dn-bld-cost-barlab', text: `${line.label} · ${line.runs}` }),
   ]))));
   return wrap;

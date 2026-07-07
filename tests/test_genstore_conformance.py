@@ -15,15 +15,21 @@ dashboard read surface (``list_tree`` / ``read_file`` / ``list_patches``).
 
 from __future__ import annotations
 
+import shutil
+import subprocess
+import tempfile
 import textwrap
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
 from zicato.core.types import Patch
 from zicato.epoch.genstore import (
+    EPHEMERAL_SNAPSHOT_PREFIX,
     DirectoryGenerationStore,
+    EphemeralCheckout,
     GenerationStore,
     PatchRecord,
     TreeEntry,
@@ -42,10 +48,62 @@ _BACKENDS: dict[str, Callable[[Path], GenerationStore]] = {
 
 
 @pytest.fixture(params=sorted(_BACKENDS), ids=sorted(_BACKENDS))
-def store(request: pytest.FixtureRequest, tmp_path: Path) -> GenerationStore:
-    """A fresh generation store, once per backend."""
-    factory = _BACKENDS[request.param]
-    return factory(tmp_path / "ws")
+def backend(request: pytest.FixtureRequest) -> str:
+    """The backend under test — the single parametrisation axis."""
+    return str(request.param)
+
+
+@pytest.fixture
+def store(backend: str, tmp_path: Path) -> GenerationStore:
+    """A fresh, EMPTY generation store, once per backend."""
+    return _BACKENDS[backend](tmp_path / "ws")
+
+
+@pytest.fixture(scope="session")
+def _seeded_ws_templates(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
+    """Per-backend workspace templates with ``e1/v0`` already seeded.
+
+    Seeding the git backend costs a dozen-plus ``git`` subprocess spawns
+    (init + identity + add + commit + tag + worktree). Building the seeded
+    workspace ONCE per backend and ``copytree``-ing it per test keeps every
+    test hermetic — each test still gets a private, writable workspace —
+    while dropping the per-test spawn storm. Tests whose contract IS the
+    seeding behaviour keep seeding a fresh store instead.
+    """
+    templates: dict[str, Path] = {}
+    for name, factory in _BACKENDS.items():
+        base = tmp_path_factory.mktemp(f"genstore-template-{name}")
+        ws = base / "ws"
+        factory(ws).seed_generation("e1", "v0", [_template_tree(base / "src")])
+        # A materialised git worktree registers its ABSOLUTE path inside the
+        # repo, which cannot survive relocation-by-copytree: drop the
+        # worktrees and prune the registrations so each copy re-materialises
+        # its own on first snapshot_root().
+        worktrees = ws / GitGenerationStore.WORKTREES_DIRNAME
+        if worktrees.is_dir():
+            shutil.rmtree(worktrees)
+            subprocess.run(
+                ["git", "worktree", "prune"],
+                cwd=str(ws / GitGenerationStore.REPO_DIRNAME),
+                check=True,
+                capture_output=True,
+            )
+        templates[name] = ws
+    return templates
+
+
+@pytest.fixture
+def seeded_store(
+    backend: str, _seeded_ws_templates: dict[str, Path], tmp_path: Path
+) -> GenerationStore:
+    """A store with ``e1/v0`` already seeded from :func:`_template_tree`.
+
+    A private copy of the session template — mutations (derives, new
+    worktrees) never leak between tests.
+    """
+    ws = tmp_path / "ws"
+    shutil.copytree(_seeded_ws_templates[backend], ws)
+    return _BACKENDS[backend](ws)
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +144,17 @@ def _mutable_tree(root: Path, *, instr: str = "original") -> Path:
         INSTR = """{instr}"""
         ''',
     )
+    return tree
+
+
+def _template_tree(root: Path) -> Path:
+    """The tree the session-scoped seeded templates are built from.
+
+    ``_mutable_tree`` (``instr="original"``) plus one never-mutated extra
+    file, so the read-surface tests can assert on a multi-file listing.
+    """
+    tree = _mutable_tree(root, instr="original")
+    _write(tree / "lib" / "util.py", "X = 1\n")
     return tree
 
 
@@ -157,10 +226,8 @@ def test_seed_generation_excludes_run_artifacts(store: GenerationStore, tmp_path
 # ---------------------------------------------------------------------------
 
 
-def test_derive_generation_applies_patch(store: GenerationStore, tmp_path: Path) -> None:
-    tree = _mutable_tree(tmp_path / "src", instr="original")
-    store.seed_generation("e1", "v0", [tree])
-
+def test_derive_generation_applies_patch(seeded_store: GenerationStore) -> None:
+    store = seeded_store
     child_root = store.derive_generation(
         "e1",
         "v0",
@@ -172,9 +239,9 @@ def test_derive_generation_applies_patch(store: GenerationStore, tmp_path: Path)
     assert "original" not in text
 
 
-def test_derive_generation_leaves_parent_untouched(store: GenerationStore, tmp_path: Path) -> None:
-    tree = _mutable_tree(tmp_path / "src", instr="original")
-    parent_root = store.seed_generation("e1", "v0", [tree])
+def test_derive_generation_leaves_parent_untouched(seeded_store: GenerationStore) -> None:
+    store = seeded_store
+    parent_root = store.snapshot_root("e1", "v0")
     store.derive_generation(
         "e1",
         "v0",
@@ -200,11 +267,9 @@ def test_derive_generation_raises_for_missing_parent(
 
 
 def test_derive_generation_all_or_nothing_on_bad_patch(
-    store: GenerationStore, tmp_path: Path
+    seeded_store: GenerationStore,
 ) -> None:
-    tree = _mutable_tree(tmp_path / "src")
-    store.seed_generation("e1", "v0", [tree])
-
+    store = seeded_store
     with pytest.raises(ValueError):
         store.derive_generation(
             "e1",
@@ -215,9 +280,8 @@ def test_derive_generation_all_or_nothing_on_bad_patch(
     assert store.has_generation("e1", "v1") is False
 
 
-def test_derive_generation_chain(store: GenerationStore, tmp_path: Path) -> None:
-    tree = _mutable_tree(tmp_path / "src", instr="gen0")
-    store.seed_generation("e1", "v0", [tree])
+def test_derive_generation_chain(seeded_store: GenerationStore) -> None:
+    store = seeded_store
     store.derive_generation(
         "e1",
         "v0",
@@ -240,11 +304,8 @@ def test_derive_generation_chain(store: GenerationStore, tmp_path: Path) -> None
 # ---------------------------------------------------------------------------
 
 
-def test_list_tree_returns_sorted_entries(store: GenerationStore, tmp_path: Path) -> None:
-    tree = _mutable_tree(tmp_path / "src")
-    _write(tree / "lib" / "util.py", "X = 1\n")
-    store.seed_generation("e1", "v0", [tree])
-
+def test_list_tree_returns_sorted_entries(seeded_store: GenerationStore) -> None:
+    store = seeded_store
     entries = store.list_tree("e1", "v0")
     assert all(isinstance(e, TreeEntry) for e in entries)
     paths = [e.path for e in entries]
@@ -263,32 +324,204 @@ def test_list_tree_raises_for_missing_generation(store: GenerationStore) -> None
         store.list_tree("e1", "v99")
 
 
-def test_read_file_returns_bytes(store: GenerationStore, tmp_path: Path) -> None:
-    tree = _mutable_tree(tmp_path / "src", instr="hello")
-    store.seed_generation("e1", "v0", [tree])
-    data = store.read_file("e1", "v0", "agent/prompts.py")
+def test_read_file_returns_bytes(seeded_store: GenerationStore) -> None:
+    data = seeded_store.read_file("e1", "v0", "agent/prompts.py")
     assert isinstance(data, bytes)
-    assert b"hello" in data
+    assert b"original" in data
 
 
-def test_read_file_rejects_traversal(store: GenerationStore, tmp_path: Path) -> None:
-    tree = _mutable_tree(tmp_path / "src")
-    store.seed_generation("e1", "v0", [tree])
+def test_read_file_rejects_traversal(seeded_store: GenerationStore) -> None:
     with pytest.raises(ValueError):
-        store.read_file("e1", "v0", "../../../etc/passwd")
+        seeded_store.read_file("e1", "v0", "../../../etc/passwd")
 
 
-def test_read_file_missing_file_raises(store: GenerationStore, tmp_path: Path) -> None:
-    tree = _mutable_tree(tmp_path / "src")
-    store.seed_generation("e1", "v0", [tree])
+def test_read_file_missing_file_raises(seeded_store: GenerationStore) -> None:
     with pytest.raises(FileNotFoundError):
-        store.read_file("e1", "v0", "agent/nonexistent.py")
+        seeded_store.read_file("e1", "v0", "agent/nonexistent.py")
 
 
-def test_list_patches_empty_for_seed(store: GenerationStore, tmp_path: Path) -> None:
-    tree = _mutable_tree(tmp_path / "src")
-    store.seed_generation("e1", "v0", [tree])
-    record = store.list_patches("e1", "v0")
+def test_list_patches_empty_for_seed(seeded_store: GenerationStore) -> None:
+    record = seeded_store.list_patches("e1", "v0")
     assert isinstance(record, PatchRecord)
     assert record.generation_id == "v0"
     assert record.patches == ()
+
+
+# ---------------------------------------------------------------------------
+# checkout_ephemeral — the per-run isolated working copy
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def _isolated_tempdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Redirect the system temp dir so ``ztw-snap-*`` parents land privately.
+
+    ``checkout_ephemeral`` MUST place its parent under
+    ``tempfile.gettempdir()`` (the supervisor's reaper guard depends on
+    that placement); patching ``tempfile.tempdir`` gives each test an
+    empty, private temp root to assert against.
+    """
+    isolated = tmp_path / "ztw-tmp"
+    isolated.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(isolated))
+    return isolated
+
+
+def _seeded(store: GenerationStore, tmp_path: Path) -> Path:
+    """Seed ``e1/v0`` and return its canonical snapshot root."""
+    tree = _mutable_tree(tmp_path / "src", instr="checkout-me")
+    return store.seed_generation("e1", "v0", [tree])
+
+
+def test_checkout_ephemeral_materialises_isolated_tree(
+    store: GenerationStore, tmp_path: Path, _isolated_tempdir: Path
+) -> None:
+    canonical = _seeded(store, tmp_path)
+    co = store.checkout_ephemeral("e1", "v0", "v0--entry_a")
+    try:
+        assert isinstance(co, EphemeralCheckout)
+        assert co.working_dir.is_dir()
+        assert co.working_dir.resolve() != canonical.resolve()
+        body = (co.working_dir / "agent" / "prompts.py").read_text(encoding="utf-8")
+        assert "checkout-me" in body
+        # Basename parity: __file__-derived paths look the same as under
+        # the canonical tree.
+        assert co.working_dir.name == canonical.name
+    finally:
+        co.cleanup()
+
+
+def test_checkout_ephemeral_parent_shape_is_reapable(
+    store: GenerationStore, tmp_path: Path, _isolated_tempdir: Path
+) -> None:
+    """The parent is ``{tempdir}/ztw-snap-{run_id}-*`` — the reaper's guard shape."""
+    _seeded(store, tmp_path)
+    run_id = "v0--entry_b"
+    co = store.checkout_ephemeral("e1", "v0", run_id)
+    try:
+        parent = co.working_dir.parent
+        assert parent.parent == _isolated_tempdir
+        assert parent.name.startswith(f"{EPHEMERAL_SNAPSHOT_PREFIX}{run_id}-")
+        # The scratch dir shares the parent so ONE cleanup (or the
+        # supervisor's reap of the parent) removes both.
+        assert co.scratch_dir.parent == parent
+        assert co.scratch_dir.is_dir()
+        assert list(co.scratch_dir.iterdir()) == []
+    finally:
+        co.cleanup()
+
+
+def test_checkout_ephemeral_contains_no_git_admin_files(
+    store: GenerationStore, tmp_path: Path, _isolated_tempdir: Path
+) -> None:
+    """The working tree carries no ``.git`` — a plain throwaway tree.
+
+    Parity across backends: the directory backend's copy filter skips
+    ``.git``; the git backend detaches its per-run worktree by unlinking
+    the pointer file. Either way the worker cannot reach a repository
+    through its mounted tree.
+    """
+    _seeded(store, tmp_path)
+    co = store.checkout_ephemeral("e1", "v0", "v0--entry_g")
+    try:
+        assert not (co.working_dir / ".git").exists()
+    finally:
+        co.cleanup()
+
+
+def test_checkout_ephemeral_stray_write_never_reaches_canonical(
+    store: GenerationStore, tmp_path: Path, _isolated_tempdir: Path
+) -> None:
+    _seeded(store, tmp_path)
+    co1 = store.checkout_ephemeral("e1", "v0", "v0--entry_a")
+    try:
+        (co1.working_dir / "stray.txt").write_text("pollution", encoding="utf-8")
+        (co1.working_dir / "agent" / "prompts.py").write_text("clobbered", encoding="utf-8")
+    finally:
+        co1.cleanup()
+    # The canonical tree (via the read surface) is untouched...
+    assert "checkout-me" in store.read_file("e1", "v0", "agent/prompts.py").decode("utf-8")
+    with pytest.raises(FileNotFoundError):
+        store.read_file("e1", "v0", "stray.txt")
+    # ...and a subsequent checkout of the SAME generation starts clean.
+    co2 = store.checkout_ephemeral("e1", "v0", "v0--entry_a")
+    try:
+        assert not (co2.working_dir / "stray.txt").exists()
+        body = (co2.working_dir / "agent" / "prompts.py").read_text(encoding="utf-8")
+        assert "checkout-me" in body
+    finally:
+        co2.cleanup()
+
+
+def test_checkout_ephemeral_cleanup_removes_parent_and_is_idempotent(
+    store: GenerationStore, tmp_path: Path, _isolated_tempdir: Path
+) -> None:
+    _seeded(store, tmp_path)
+    co = store.checkout_ephemeral("e1", "v0", "v0--entry_a")
+    parent = co.working_dir.parent
+    assert parent.is_dir()
+    co.cleanup()
+    assert not parent.exists()
+    co.cleanup()  # idempotent — a double cleanup must not raise
+    assert list(_isolated_tempdir.iterdir()) == []
+
+
+def test_checkout_ephemeral_missing_generation_raises(
+    store: GenerationStore, _isolated_tempdir: Path
+) -> None:
+    with pytest.raises(FileNotFoundError):
+        store.checkout_ephemeral("e1", "v99", "v99--entry_a")
+    # No half-made checkout parent is left behind.
+    assert list(_isolated_tempdir.iterdir()) == []
+
+
+def test_checkout_ephemeral_concurrent_same_generation_isolated(
+    store: GenerationStore, tmp_path: Path, _isolated_tempdir: Path
+) -> None:
+    """Concurrent checkouts of ONE generation are mutually isolated.
+
+    This is the champion-replicate shape: N runs of the same generation
+    in flight at once (and, for the git backend, N concurrent
+    ``worktree add`` calls contending on the repo lock).
+    """
+    _seeded(store, tmp_path)
+
+    def one(i: int) -> EphemeralCheckout:
+        return store.checkout_ephemeral("e1", "v0", f"v0--entry_{i}")
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        checkouts = list(ex.map(one, range(8)))
+    try:
+        roots = {c.working_dir.resolve() for c in checkouts}
+        assert len(roots) == 8, "every run must get its own tree"
+        for i, c in enumerate(checkouts):
+            (c.working_dir / "mine.txt").write_text(str(i), encoding="utf-8")
+        for i, c in enumerate(checkouts):
+            assert (c.working_dir / "mine.txt").read_text(encoding="utf-8") == str(i)
+    finally:
+        for c in checkouts:
+            c.cleanup()
+    assert list(_isolated_tempdir.iterdir()) == []
+
+
+def test_checkout_ephemeral_leaves_store_healthy(
+    store: GenerationStore, tmp_path: Path, _isolated_tempdir: Path
+) -> None:
+    """Checkout + cleanup must not perturb subsequent store transactions."""
+    _seeded(store, tmp_path)
+    co = store.checkout_ephemeral("e1", "v0", "v0--entry_a")
+    co.cleanup()
+    child_root = store.derive_generation(
+        "e1",
+        "v0",
+        "v1",
+        [_patch(pid="p1", mutation_id="instr", new_content='"""after-checkout"""')],
+    )
+    assert "after-checkout" in (child_root / "agent" / "prompts.py").read_text(encoding="utf-8")
+    # And the new child is itself checkout-able.
+    co2 = store.checkout_ephemeral("e1", "v1", "v1--entry_a")
+    try:
+        body = (co2.working_dir / "agent" / "prompts.py").read_text(encoding="utf-8")
+        assert "after-checkout" in body
+    finally:
+        co2.cleanup()

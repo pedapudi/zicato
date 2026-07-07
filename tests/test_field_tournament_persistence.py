@@ -11,7 +11,7 @@ reconstruct on its own. These tests pin the persistence path end to end:
   (:func:`zicato.index.ingest.ingest_field_tournament` +
   ``rebuild_index`` from the snapshot file),
 * the dashboard read path serving the field record for a completed swiss
-  epoch (:func:`zicato.dashboard.state_reader.build_bracket` /
+  epoch (:func:`zicato.query.build_bracket` /
   ``build_tournament_structure``).
 
 The field record is driven from a REAL :class:`SwissStrategy` resolved to
@@ -27,16 +27,16 @@ from pathlib import Path
 
 from zicato.core.types import TournamentStructure
 from zicato.core.workspace import field_tournament_path
-from zicato.dashboard.state_reader import (
-    WorkspacePaths,
-    build_bracket,
-    build_tournament_structure,
-)
 from zicato.index.ingest import ingest_field_tournament, rebuild_index
 from zicato.orchestrator import (
     _persist_field_tournament,
     _serialise_rounds,
     _serialise_standings,
+)
+from zicato.query import (
+    WorkspacePaths,
+    build_bracket,
+    build_tournament_structure,
 )
 from zicato.selection import make_strategy
 from zicato.selection.strategy import Contestant, MatchupResult

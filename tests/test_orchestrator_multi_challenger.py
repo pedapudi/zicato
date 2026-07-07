@@ -28,6 +28,7 @@ from pathlib import Path
 import pytest
 
 # Reuse the fully-mocked harness from the gauntlet orchestrator tests.
+from tests._contract_pins import pin_deterministic
 from tests.test_orchestrator import (
     _harness_call_llm,
     _install_stub_adapter_factory,
@@ -131,12 +132,18 @@ def _bootstrap_swiss_workspace(
         name="swiss-epoch",
         board_source=board_src,
         brief_source=brief_src,
-        weights=ScoringWeights(
-            promote_margin=0.01,
-            tournament_structure=TournamentStructure(
-                structure="swiss",
-                params={"field_size": field_size, "rounds_n": rounds_n, "replicates": 1},
-            ),
+        # Pinned deterministic knobs (single replicate, evidence gate off,
+        # single-sample proposer): the scripted proposers + canned per-gen
+        # losses assume one propose per slot and identical re-draws, so the
+        # noise-aware defaults are pinned back. See tests/_contract_pins.py.
+        weights=pin_deterministic(
+            ScoringWeights(
+                promote_margin=0.01,
+                tournament_structure=TournamentStructure(
+                    structure="swiss",
+                    params={"field_size": field_size, "rounds_n": rounds_n, "replicates": 1},
+                ),
+            )
         ),
         auto_close_previous=False,
     )
@@ -550,7 +557,7 @@ def test_field_status_records_applied_challengers(
     assert {by_gen["v1"]["seed"], by_gen["v2"]["seed"]} == {2, 3}
 
     # The structure endpoint surfaces field_status for the current epoch.
-    from zicato.dashboard.state_reader import WorkspacePaths, build_tournament_structure
+    from zicato.query import WorkspacePaths, build_tournament_structure
 
     paths = WorkspacePaths(workspace)
     struct = build_tournament_structure(paths, epoch_id, active.tournament_id)
@@ -603,7 +610,7 @@ def test_field_status_when_all_challengers_rejected(
     assert applied == []
 
     # The structure endpoint surfaces the all-rejected field post-hoc.
-    from zicato.dashboard.state_reader import WorkspacePaths, build_tournament_structure
+    from zicato.query import WorkspacePaths, build_tournament_structure
 
     paths = WorkspacePaths(workspace)
     struct = build_tournament_structure(paths, epoch_id, active.tournament_id)
@@ -794,7 +801,7 @@ def test_applied_inflight_challenger_lineage_reports_pending_then_settles(
     record. The dashboard's ``build_lineage_view`` is the /api/lineage
     source, so we assert through it.
     """
-    from zicato.dashboard.state_reader import WorkspacePaths, build_lineage_view
+    from zicato.query import WorkspacePaths, build_lineage_view
 
     workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2, rounds_n=1)
     _install_stub_adapter_factory(monkeypatch)

@@ -85,7 +85,7 @@ test('boardStatusModel: empty payload degrades to honest empties (no throw)', ()
 });
 
 test('boardStatusModel: a board with no board_split reads every entry as train', () => {
-  const m = bs.boardStatusModel({ board: [{ entry_id: 'b1' }, { id: 'b2' }] });
+  const m = bs.boardStatusModel({ board: [{ entry_id: 'b1' }, { entry_id: 'b2' }] });
   assertEqual(m.split.total, 2, 'falls back to the raw board');
   assertEqual(m.split.holdoutCount, 0, 'no holdout without a split block');
   assertEqual(m.split.configured, false, 'not configured');

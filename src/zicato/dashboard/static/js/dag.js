@@ -97,7 +97,7 @@ function perRunStack(e, x, cy, o, maxRight) {
 
   runs.forEach((rn, i) => {
     const ry = top + sparkH + pad + i * rowH + rowH - 3;
-    const dotCls = rn.pass_fail === 1 ? 'ezn-promoted' : (rn.wall_clock_budget_exceeded ? 'ezn-deferred' : 'ezn-rejected');
+    const dotCls = rn.pass_fail === true ? 'ezn-promoted' : (rn.wall_clock_budget_exceeded ? 'ezn-deferred' : 'ezn-rejected');
     const tag = rn.rung || (rn.match_id ? rn.match_id : null);
     const rowG = svgEl('g', { class: 'ezn-board-run ' + dotCls, 'data-cz': 'lc-board-run', 'data-run': rn.run_id || '' });
     rowG.appendChild(svgEl('circle', { cx: x + pad + 3, cy: ry - 3, r: 3, class: 'ezn-board-run-dot' }));
@@ -345,7 +345,7 @@ export function lifecycleDag(spec) {
       // of the disc (anchored at its end), so a label can NEVER overlap the
       // circle or the loss text. The rung-multiplicity badge sits to the RIGHT.
       const labelDX = -(r + 8);
-      const cls = e.pass_fail === 1 ? 'ezn-promoted' : (e.wall_clock_budget_exceeded ? 'ezn-deferred' : 'ezn-rejected');
+      const cls = e.pass_fail === true ? 'ezn-promoted' : (e.wall_clock_budget_exceeded ? 'ezn-deferred' : 'ezn-rejected');
       edgeLayer.appendChild(svgEl('path', { d: flow(X.patch + 0.065 * w, midY, X.board - r, y), class: 'ezn-edge ezn-edge-soft', fill: 'none' }));
       const contrib = (isNum(e.drift_loss) ? e.drift_loss : 0) / total;
       edgeLayer.appendChild(svgEl('path', { d: flow(X.board + r, y, X.agg - 0.05 * w, midY), class: 'ezn-edge ' + (cls === 'ezn-promoted' ? 'ezn-edge-good' : 'ezn-edge-bad'), 'stroke-width': Math.max(1, contrib * 12), fill: 'none' }));
@@ -397,7 +397,7 @@ export function lifecycleDag(spec) {
         + (cl != null ? ` · champion ${champId} ${fmt(cl, 1)} · Δ ${signedDelta(dLoss, 1)} (${worseBetter(dLoss)})` : '')
         + (raced ? ` · ${e.mult} runs — ` + e.runs.map((rn) => (rn.rung ? rn.rung + ': ' : '') + (isNum(rn.drift_loss) ? fmt(rn.drift_loss, 1) : '—')).join(' · ') + ' (representative = full-board run)' : '')
         + (e.wall_clock_budget_exceeded ? ' · timed out' : '')
-        + (e.pass_fail === 0 ? ' · failed' : e.pass_fail === 1 ? ' · passed' : ''));
+        + (e.pass_fail === false ? ' · failed' : e.pass_fail === true ? ' · passed' : ''));
       // a raced node toggles its expansion on click of the DISC (clicking a
       // per-run row still drills into that run/transcript); a gauntlet node
       // clicks straight through to its drill-down (unchanged).

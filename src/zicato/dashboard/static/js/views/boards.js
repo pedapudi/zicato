@@ -13,7 +13,7 @@ import { el } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, section, empty, stat, normaliseDecision, densityTokens } from '../ui.js';
+import { gatedSwap, section, empty, stat, densityTokens } from '../ui.js';
 import { inflightForActiveEpoch, inflightForEntryGen, runProgressRatio } from './structure.js';
 import { deriveLiveStatus } from '../livestatus.js';
 
@@ -38,7 +38,7 @@ export async function render(host, ctx, params) {
   const rows = await D.generationsForEpoch(epochId);
   const gens = rows.length
     ? rows.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted }))
-    : (Array.isArray(ep.experiments) ? ep.experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: normaliseDecision(x.outcome) === 'promoted' })) : []);
+    : (Array.isArray(ep.experiments) ? ep.experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: x.promoted === true })) : []);
 
   const perEntries = await Promise.all(gens.map((g) => D.perEntry(epochId, g.id)));
   const rowByGenEntry = new Map();
@@ -65,7 +65,7 @@ export async function render(host, ctx, params) {
   // per-entry in-flight tally (count + summed progress) for the trellis cells.
   const inflightByEntry = new Map();
   for (const r of epochInflight) {
-    const eid = r.entry_id != null ? r.entry_id : (r.board_entry_id != null ? r.board_entry_id : (r.entry != null ? r.entry : null));
+    const eid = r.entry_id != null ? r.entry_id : null;
     if (eid == null) continue;
     const pr = runProgressRatio(r);
     const cur = inflightByEntry.get(eid) || { count: 0, sumProgress: 0, hasProgress: false };
@@ -76,7 +76,7 @@ export async function render(host, ctx, params) {
 
   const digest = JSON.stringify({
     epochId,
-    board: board.map((b) => [b.entry_id || b.id, b.kind, b.weight, b.budget_s]),
+    board: board.map((b) => [b.entry_id, b.kind, b.weight, b.budget_s]),
     gens: gens.map((g) => g.id),
     loss: [...rowByGenEntry.entries()].map(([k, r]) => [k, svg.isNum(r.drift_loss) ? r.drift_loss.toFixed(3) : null, r.pass_fail, !!r.wall_clock_budget_exceeded]).sort(),
     // LIVE in-flight per entry — folded in so a beat that advances progress
@@ -111,15 +111,15 @@ function trellis(board, gens, rowByGenEntry, domain, epochId, ctx, inflightByEnt
     if (ka !== kb) return ka - kb;
     const wa = svg.isNum(a.weight) ? a.weight : 0; const wb = svg.isNum(b.weight) ? b.weight : 0;
     if (wa !== wb) return wb - wa;
-    return String(a.entry_id || a.id).localeCompare(String(b.entry_id || b.id));
+    return String(a.entry_id).localeCompare(String(b.entry_id));
   });
   const grid = el('div', { class: 'dn-trellis' });
   const genIds = gens.map((g) => g.id);
   for (const b of sorted) {
-    const eid = b.entry_id || b.id;
+    const eid = b.entry_id;
     const bars = genIds.map((g) => {
       const r = rowByGenEntry.get(`${g}|${eid}`);
-      return { label: g, value: r && svg.isNum(r.drift_loss) ? r.drift_loss : NaN, fail: r ? r.pass_fail === 0 : false, timeout: r ? !!r.wall_clock_budget_exceeded : false };
+      return { label: g, value: r && svg.isNum(r.drift_loss) ? r.drift_loss : NaN, fail: r ? r.pass_fail === false : false, timeout: r ? !!r.wall_clock_budget_exceeded : false };
     });
     const cells = genIds.map((g) => {
       const r = rowByGenEntry.get(`${g}|${eid}`);

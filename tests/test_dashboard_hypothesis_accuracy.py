@@ -30,13 +30,13 @@ from zicato.core import (
     OutcomeRecord,
 )
 from zicato.dashboard.server import create_app
-from zicato.dashboard.state_reader import (
+from zicato.epoch.html_report import _render_expected_vs_actual
+from zicato.epoch.journal import write_experiment
+from zicato.query import (
     WorkspacePaths,
     build_calibration_trend,
     build_hypothesis_accuracy,
 )
-from zicato.epoch.html_report import _render_expected_vs_actual
-from zicato.epoch.journal import write_experiment
 from zicato.testing.fixtures import make_experiment, make_hypothesis_spec
 
 EPOCH_ID = "2026-05-28_e0"

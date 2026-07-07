@@ -509,10 +509,10 @@ def test_scalar_fn_survives_worker_transport(tmp_path: Path) -> None:
 
 
 def test_new_fields_round_trip_through_scoring_serde(tmp_path: Path) -> None:
-    from zicato.workspace_loader import _scoring_weights_from_dict
+    from zicato.workspace_loader import scoring_weights_from_dict
 
     raw = {"scalar_fn": "p.m:s", "drift_reducer": "p.m:d"}
-    w = _scoring_weights_from_dict(raw)
+    w = scoring_weights_from_dict(raw)
     assert w.scalar_fn == "p.m:s"
     assert w.drift_reducer == "p.m:d"
 

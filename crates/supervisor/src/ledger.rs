@@ -145,6 +145,20 @@ impl AuditLedger {
     /// Open (or create) the ledger at `dir/audit_ledger.jsonl`, seeding the
     /// chain tail from any existing file so a restart continues the chain.
     ///
+    /// Boot sequence, in order:
+    ///
+    /// 1. **Torn-tail repair** ([`repair_torn_tail`]) — a crash mid-append
+    ///    can leave a trailing half-written line; it is truncated BEFORE
+    ///    anything reads or chains onto the file, so a post-crash chain
+    ///    verifies clean and the next append continues from the last
+    ///    complete record.
+    /// 2. **Verify-on-startup** — [`verify_chain`] walks the (repaired)
+    ///    file; a broken chain is surfaced as a WARN carrying
+    ///    `first_break_seq` + the reason. Alarm-only: the supervisor still
+    ///    starts, and appends still chain onto the persisted tail — the
+    ///    ledger records, it never gates.
+    /// 3. **Tail seeding** — as before.
+    ///
     /// Best-effort: a directory that cannot be created, or a file that cannot
     /// be read, degrades to an in-memory tail starting at genesis (the next
     /// append re-creates the file). The supervisor never fails to start over
@@ -154,6 +168,23 @@ impl AuditLedger {
             warn!(?dir, error=%e, "could not create audit-ledger dir; ledger degraded");
         }
         let path = dir.join(LEDGER_FILE);
+        if let Some(dropped) = repair_torn_tail(&path) {
+            warn!(
+                ?path,
+                dropped_bytes = dropped,
+                "audit-ledger torn tail truncated (crash mid-append); chain continues from the last complete record",
+            );
+        }
+        let report = verify_chain(&path);
+        if !report.intact {
+            warn!(
+                ?path,
+                first_break_seq = ?report.first_break_seq,
+                reason = ?report.break_reason,
+                records = report.records,
+                "audit-ledger chain verification FAILED at startup — possible tampering",
+            );
+        }
         let tail = Self::seed_tail(&path);
         Self {
             path,
@@ -236,13 +267,24 @@ impl AuditLedger {
     }
 
     /// Append-write `bytes` to the ledger file, creating it if needed.
+    ///
+    /// `sync_all` after the write: the ledger is a LOW-FREQUENCY audit
+    /// artifact (a handful of records per run), and durability is the
+    /// whole point of an audit trail — an escalation record that
+    /// evaporates on power loss defeats the notary. The fsync cost is
+    /// negligible at this write rate. The existing best-effort append
+    /// semantics are unchanged: on any I/O error (including the fsync)
+    /// the caller logs and does NOT advance the in-memory tail, so the
+    /// next append retries the same seq/prev; a half-written line left
+    /// by a crash is truncated by [`repair_torn_tail`] at the next open.
     fn write_line(&self, bytes: &[u8]) -> std::io::Result<()> {
         let mut f = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&self.path)?;
         f.write_all(bytes)?;
-        f.flush()
+        f.flush()?;
+        f.sync_all()
     }
 
     /// Walk the persisted chain and verify every record's digest and `prev`
@@ -265,6 +307,57 @@ pub struct VerifyReport {
     pub first_break_seq: Option<u64>,
     /// A human-readable reason for the first break, when any.
     pub break_reason: Option<String>,
+}
+
+/// Truncate a torn (half-written) FINAL line off the ledger file.
+///
+/// A crash between `write_all` and the bytes reaching disk can leave the
+/// file ending in a partial record — the one shape that is *provably* a
+/// torn append rather than tampering, because [`AuditLedger::append`]
+/// writes exactly one `line + '\n'` per record and never rewrites earlier
+/// bytes. Repairing it at open time means a post-crash chain verifies
+/// clean and the next append chains onto the last COMPLETE record instead
+/// of stacking a valid record after garbage (which would poison
+/// [`verify_chain`] forever).
+///
+/// Deliberately surgical: only the TRAILING unparseable line is dropped.
+/// An unparseable line in the *middle* of the file cannot be a torn
+/// append and is left in place for `verify_chain` to flag as a break.
+/// Returns the number of bytes truncated, or `None` when the file is
+/// absent, empty, or ends in a complete record. Best-effort: an I/O
+/// failure leaves the file untouched (the ledger never blocks boot).
+pub fn repair_torn_tail(path: &Path) -> Option<u64> {
+    // Operate on BYTES: a torn append can split a multi-byte UTF-8
+    // character, which would make a string read fail outright.
+    let bytes = std::fs::read(path).ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    // Find the byte offset where the final non-empty line starts.
+    let mut tail_start: Option<usize> = None;
+    let mut offset = 0usize;
+    for line in bytes.split_inclusive(|b| *b == b'\n') {
+        if line.iter().any(|b| !b.is_ascii_whitespace()) {
+            tail_start = Some(offset);
+        }
+        offset += line.len();
+    }
+    let start = tail_start?;
+    let mut tail = &bytes[start..];
+    while let [rest @ .., last] = tail {
+        if *last == b'\n' || last.is_ascii_whitespace() {
+            tail = rest;
+        } else {
+            break;
+        }
+    }
+    if serde_json::from_slice::<Record>(tail).is_ok() {
+        return None; // complete final record — nothing torn.
+    }
+    let file = std::fs::OpenOptions::new().write(true).open(path).ok()?;
+    file.set_len(start as u64).ok()?;
+    let _ = file.sync_all();
+    Some((bytes.len() - start) as u64)
 }
 
 /// Verify the hash-chain in the ledger file at `path`.
@@ -585,6 +678,134 @@ mod tests {
         let report = led.verify();
         assert!(report.intact);
         assert_eq!(report.records, 2);
+    }
+
+    // ---- torn-tail truncation + verify-on-startup -------------------
+
+    #[test]
+    fn torn_tail_is_truncated_on_reopen_and_chain_verifies_clean() {
+        let (_t, dir) = ledger_dir();
+        {
+            let led = AuditLedger::open(&dir);
+            led.append(RecordKind::SupervisorStart, serde_json::json!({"v": 1}));
+            led.append(RecordKind::WatchdogAction, serde_json::json!({"pid": 42}));
+            // Simulate a crash mid-append: a trailing half-written line.
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(led.path())
+                .unwrap();
+            f.write_all(b"{\"seq\":2,\"prev\":\"abc").unwrap();
+        }
+        let led2 = AuditLedger::open(&dir);
+        // The torn line is gone and the surviving chain verifies clean.
+        let report = led2.verify();
+        assert!(report.intact, "post-crash chain must verify: {report:?}");
+        assert_eq!(report.records, 2);
+        // The next append continues at seq 2, chaining onto record 1.
+        led2.append(
+            RecordKind::DecisionObserved,
+            serde_json::json!({"d": "promote"}),
+        );
+        let report = led2.verify();
+        assert!(report.intact);
+        assert_eq!(report.records, 3);
+        let text = std::fs::read_to_string(led2.path()).unwrap();
+        let recs: Vec<Record> = text
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(recs[2].seq, 2);
+        assert_eq!(recs[2].prev, recs[1].digest);
+    }
+
+    #[test]
+    fn torn_tail_repair_handles_invalid_utf8() {
+        // A torn append can split a multi-byte character; the repair
+        // must still truncate (a string read would fail outright).
+        let (_t, dir) = ledger_dir();
+        let led = AuditLedger::open(&dir);
+        led.append(RecordKind::SupervisorStart, serde_json::json!({}));
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(led.path())
+            .unwrap();
+        // 0xE2 0x82 is a truncated 3-byte UTF-8 sequence.
+        f.write_all(b"{\"seq\":1,\"ts\":\"\xE2\x82").unwrap();
+        drop(f);
+
+        assert!(repair_torn_tail(led.path()).is_some());
+        let report = verify_chain(led.path());
+        assert!(report.intact, "{report:?}");
+        assert_eq!(report.records, 1);
+    }
+
+    #[test]
+    fn repair_leaves_a_complete_tail_alone() {
+        let (_t, dir) = ledger_dir();
+        let led = AuditLedger::open(&dir);
+        led.append(RecordKind::SupervisorStart, serde_json::json!({}));
+        led.append(RecordKind::WatchdogAction, serde_json::json!({"pid": 9}));
+        let before = std::fs::read(led.path()).unwrap();
+        assert_eq!(repair_torn_tail(led.path()), None);
+        assert_eq!(
+            std::fs::read(led.path()).unwrap(),
+            before,
+            "no bytes may change"
+        );
+        // Absent / empty files are equally untouched.
+        assert_eq!(repair_torn_tail(&dir.join("no-such-file")), None);
+    }
+
+    #[test]
+    fn repair_only_truncates_the_trailing_line_not_midfile_garbage() {
+        // Garbage in the MIDDLE of the file cannot be a torn append —
+        // it must be LEFT for verify_chain to flag as a break.
+        let (_t, dir) = ledger_dir();
+        let led = AuditLedger::open(&dir);
+        led.append(RecordKind::SupervisorStart, serde_json::json!({}));
+        led.append(RecordKind::WatchdogAction, serde_json::json!({"pid": 1}));
+        let text = std::fs::read_to_string(led.path()).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        let tampered = format!("{}\nnot-a-record\n{}\n", lines[0], lines[1]);
+        std::fs::write(led.path(), tampered).unwrap();
+
+        assert_eq!(
+            repair_torn_tail(led.path()),
+            None,
+            "mid-file garbage is not a torn tail"
+        );
+        let report = verify_chain(led.path());
+        assert!(
+            !report.intact,
+            "mid-file garbage must stay a verify failure"
+        );
+    }
+
+    #[test]
+    fn open_survives_a_tampered_chain_and_still_appends() {
+        // Verify-on-startup is ALARM-ONLY: a broken chain is warned
+        // about, but the supervisor still opens the ledger and appends.
+        let (_t, dir) = ledger_dir();
+        {
+            let led = AuditLedger::open(&dir);
+            led.append(RecordKind::SupervisorStart, serde_json::json!({"v": 1}));
+            led.append(RecordKind::WatchdogAction, serde_json::json!({"pid": 42}));
+            let text = std::fs::read_to_string(led.path()).unwrap();
+            let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+            lines[0] = lines[0].replace("\"v\":1", "\"v\":2");
+            std::fs::write(led.path(), lines.join("\n") + "\n").unwrap();
+        }
+        let led2 = AuditLedger::open(&dir);
+        assert!(!led2.verify().intact);
+        // Appending still works and chains onto the persisted tail.
+        assert!(led2
+            .append(
+                RecordKind::DecisionObserved,
+                serde_json::json!({"d": "reject"})
+            )
+            .is_some());
+        let text = std::fs::read_to_string(led2.path()).unwrap();
+        assert_eq!(text.lines().count(), 3);
     }
 
     #[test]

@@ -11,8 +11,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from zicato.cli.commands.dashboard import resolve_static_dir
 from zicato.dashboard.server import run
+from zicato.dashboard.static_assets import resolve_static_dir
 
 
 def main() -> None:

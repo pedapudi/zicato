@@ -44,7 +44,7 @@ class SingleEliminationStrategy(SelectionStrategy):
     """Bracket over challengers, then a final champion-gate duel."""
 
     structure = "single_elim"
-    # Bracket structures default to replicated duels — the noise lever.
+    # Replicated duels — the noise lever (now also the base default).
     _default_replicates = 2
 
     def __init__(self, params: dict[str, Any] | None = None) -> None:

@@ -34,6 +34,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._contract_pins import pin_deterministic
 from tests.test_orchestrator import (
     _harness_call_llm,
     _install_stub_adapter_factory,
@@ -252,12 +253,15 @@ def _bootstrap(
         name=f"{structure}-epoch",
         board_source=board_src,
         brief_source=brief_src,
-        weights=ScoringWeights(
-            promote_margin=0.1,
-            tournament_structure=TournamentStructure(
-                structure=structure, params=_struct_params(structure, field_size)
-            ),
-            **({"overfitting": overfitting} if overfitting is not None else {}),
+        # Pinned deterministic knobs — see tests/_contract_pins.py.
+        weights=pin_deterministic(
+            ScoringWeights(
+                promote_margin=0.1,
+                tournament_structure=TournamentStructure(
+                    structure=structure, params=_struct_params(structure, field_size)
+                ),
+                **({"overfitting": overfitting} if overfitting is not None else {}),
+            )
         ),
         auto_close_previous=False,
     )

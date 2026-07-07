@@ -202,7 +202,6 @@ state.health                          — dashboard-service identity
 state.epoch           { id, generation, round, startedAt }
 state.epochDef        — full epoch contract
 state.epochs          — per-epoch goal summary [ { epoch_id, goal } ]
-state.scoring         { margin }
 state.workspace
 state.files / state.mutations         — Files-view scratch state
 ```
@@ -331,7 +330,7 @@ identity if a `key` is supplied.
   append-only activity-log drawer; the route shell (nav rail active
   state); the rebrand. Owns the footer.
 
-## 8. Routes (core/router.js)
+## 8. Routes (js/router.js)
 
 Hash routes; `#/overview` is default. Each is deep-linkable:
 - `#/overview`

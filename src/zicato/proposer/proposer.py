@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -51,6 +51,7 @@ from zicato.proposer.structured import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
+    from zicato.index.query import MutationTrackRecord
     from zicato.telemetry.meta_loop import MetaLoopEmitter
 
 #: An optional post-parse validation hook. The proposer calls it with a
@@ -103,6 +104,10 @@ async def propose_experiment(
     skills: tuple[ProposerSkill, ...] = (),
     restrict_visibility: bool = False,
     failure_profile: str = "",
+    process_exemplars: str = "",
+    sample_hint: str = "",
+    mutation_track_records: Mapping[str, MutationTrackRecord] | None = None,
+    revise_feedback: str = "",
 ) -> Experiment:
     """Compose prompts, call the auxiliary LLM, parse the response.
 
@@ -230,12 +235,57 @@ async def propose_experiment(
         this engine only forwards it. Empty (the default) omits the section,
         so a caller that supplies no profile renders a byte-identical prompt
         to before this surface existed.
+    process_exemplars:
+        Optional pre-rendered, train-slice-only, REDACTED process-exemplar
+        block (the opt-in ``proposer_quality.process_exemplars`` channel —
+        ``docs/design/PROCESS-EXEMPLARS.md``). When non-empty, a
+        ``## Process exemplars`` section is spliced into the user prompt
+        directly after the failure-mode profile so the proposer can see HOW
+        a detected failure unfolds — never WHICH entry it unfolded on. The
+        string is already mechanically redacted by its extractor + renderer
+        (:func:`~zicato.analyzer.process_exemplars.extract_process_exemplars`
+        / :func:`~zicato.proposer.prompts.render_process_exemplars`); this
+        engine only forwards it. Empty (the default) omits the section, so
+        a caller that supplies no exemplars renders a byte-identical prompt
+        to before this surface existed.
 
     Returns
     -------
     Experiment
         With outcome left as ``None`` (the tournament fills it in
         after the run).
+
+    sample_hint:
+        Optional per-sample edit-class steering line (the best-of-N slate
+        diversifier — :data:`zicato.proposer.best_of_n.EDIT_CLASS_HINTS`).
+        Threaded verbatim into :func:`render_user_prompt`, which prepends an
+        ``## Edit-class hint (this sample)`` section when non-empty. A static
+        instruction string carrying no board identity, so the restricted-
+        visibility envelope is untouched. Empty (the default) renders a
+        byte-identical prompt.
+
+    mutation_track_records:
+        Optional per-mutation-point track records (the fertility map —
+        :func:`zicato.index.query.mutation_point_track_record`), assembled
+        by the *caller* exactly like ``prior_experiments`` (the orchestrator
+        reads the index best-effort; the proposer stays a pure
+        prompt-assembler). Threaded into :func:`render_user_prompt`, which
+        annotates each manifest entry that has a record with one compact,
+        BANDED advisory line — aggregates only, labelled "experiments
+        touching this point" (never causal). ``None`` (the default) renders
+        a byte-identical manifest.
+
+    revise_feedback:
+        Optional SEED for the repair-feedback loop's first attempt — the
+        best-of-N screen-informed revise channel (WS-R). When non-empty,
+        the FIRST attempt already renders the repair section with this
+        string in the ``feedback`` slot, exactly as a retry after a
+        validation failure would; subsequent retries overwrite it with
+        their own concrete errors as usual. The wrapper stamps only the
+        screen's COUNTS-ONLY veto summary here (never an entry id), so
+        the restricted-visibility envelope is untouched. Empty (the
+        default) seeds nothing — every existing caller renders a
+        byte-identical first prompt.
 
     Raises
     ------
@@ -268,7 +318,10 @@ async def propose_experiment(
     # not exhausted on the first attempt.
     prior_experiments_list = list(prior_experiments)
 
-    feedback = ""
+    # The revise channel seeds the FIRST attempt's feedback (empty for every
+    # non-revise call, rendering a byte-identical prompt); retries then
+    # overwrite it with their own concrete errors exactly as before.
+    feedback = revise_feedback
     # Repair-turn carriers. Each failed attempt that produced a response
     # populates these so the NEXT attempt's prompt can echo the prior raw
     # output back and target the empty-vs-malformed failure mode. An
@@ -292,6 +345,9 @@ async def propose_experiment(
             restrict_visibility=restrict_visibility,
             custom_judge_names=custom_judge_names or frozenset(),
             failure_profile=failure_profile,
+            process_exemplars=process_exemplars,
+            sample_hint=sample_hint,
+            mutation_track_records=mutation_track_records,
         )
         # Meta-loop bookends: one paired ``proposer_call_started`` /
         # ``proposer_call_completed`` per attempt. ``invocation_id`` is
