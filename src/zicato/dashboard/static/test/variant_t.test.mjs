@@ -10217,6 +10217,69 @@ test('elimRadial double-elim: a WB->LB transfer arc STARTS at the source WB node
   assert(Math.abs((fy - cy) + (ty - cy)) < 0.2, `the start y is the equator-reflection of the target y (fy-cy=${(fy - cy).toFixed(2)}, ty-cy=${(ty - cy).toFixed(2)})`);
 });
 
+test('elimRadial double-elim: EVERY WB→LB transfer arc ANCHORS on real nodes — both endpoints sit on the outer node ring and the arc ENDS exactly on its LB re-entry node; the connector never floats out on a staggered rim (regression: floating demotion edges)', () => {
+  // The WB→LB demotion connector MUST visibly connect the two matches it links:
+  // an edge whose endpoints land where NO node is drawn floats in empty space.
+  // The pre-fix bug: each transfer arc placed BOTH its endpoints on a per-drop
+  // STAGGERED rim radius `stagger = rr(0) + li*step`, OUTSIDE the outer node ring.
+  // Only the first drop (li=0, stagger == rr(0)) happened to land on the ring; the
+  // SECOND-and-later drops began and ended a few px OUTSIDE it — detached from both
+  // the source-mirror and the destination LB node. So this fixture forces THREE
+  // drops (v2 + v4 off WB-R0, v3 off WB-R1) — the extra arcs are exactly the ones
+  // the old code floated.
+  const node = svg.elimRadial({
+    double: true,
+    rounds: [
+      { round_index: 0, label: 'R0', matches: [
+        { competitors: ['v1', 'v2'], winner: 'v1', bracket_slot: 'WB-R0-0' },
+        { competitors: ['v3', 'v4'], winner: 'v3', bracket_slot: 'WB-R0-1' },
+      ] },
+      { round_index: 1, label: 'R1', matches: [
+        { competitors: ['v1', 'v3'], winner: 'v1', bracket_slot: 'WB-R1-0' },
+      ] },
+      { round_index: 2, label: 'LB2', matches: [
+        { competitors: ['v2', 'v4'], winner: 'v2', bracket_slot: 'LB-R2-0' },
+      ] },
+      { round_index: 3, label: 'LB3', matches: [
+        { competitors: ['v2', 'v3'], winner: 'v2', bracket_slot: 'LB-R3-0' },
+      ] },
+    ],
+    championId: 'v2', benchmarkId: 'v0', gateState: 'crowned',
+  });
+  // default (non-mini) elimRadial: sz=340 → cx=cy=170 (the figure center).
+  const cx = 170, cy = 170;
+  // the real, rendered node anchors + the outer node ring rr(0) = the max node
+  // distance from center (every spoke draws its k=0 node on that ring).
+  const nodePts = allByClass(node, 'dn-elimradial-node').map((n) => ({ x: Number(n.getAttribute('cx')), y: Number(n.getAttribute('cy')) }));
+  assert(nodePts.length > 0, 'the radial renders node anchors');
+  const nodeR = Math.max(...nodePts.map((p) => Math.hypot(p.x - cx, p.y - cy)));
+  const onANode = (p) => nodePts.some((q) => Math.hypot(p.x - q.x, p.y - q.y) < 0.6);
+
+  const arcs = allByClass(node, 'dn-elimradial-transfer');
+  assert(arcs.length >= 2, `≥2 WB→LB transfer arcs render for a multi-drop bracket — the pre-fix float only surfaced on the 2nd+ arc (got ${arcs.length})`);
+
+  arcs.forEach((arc, k) => {
+    const d = arc.getAttribute('d') || '';
+    // d = `M{fx} {fy} A{r} {r} 0 {large} {sweep} {tx} {ty}`
+    const m = d.match(/^M([\-0-9.]+) ([\-0-9.]+) A[0-9.]+ [0-9.]+ 0 \d+ \d+ ([\-0-9.]+) ([\-0-9.]+)$/);
+    assert(m, `transfer arc #${k} path parses (d=${JSON.stringify(d)})`);
+    const start = { x: Number(m[1]), y: Number(m[2]) };
+    const end = { x: Number(m[3]), y: Number(m[4]) };
+    const startR = Math.hypot(start.x - cx, start.y - cy);
+    const endR = Math.hypot(end.x - cx, end.y - cy);
+    // (1) BOTH endpoints ON the outer node ring — never a staggered rim outside it.
+    assert(Math.abs(startR - nodeR) < 0.6, `arc #${k} START is ON the outer node ring (r=${startR.toFixed(1)} vs rr0=${nodeR.toFixed(1)}), not floating on a rim outside it`);
+    assert(Math.abs(endR - nodeR) < 0.6, `arc #${k} END is ON the outer node ring (r=${endR.toFixed(1)} vs rr0=${nodeR.toFixed(1)}), not floating on a rim outside it`);
+    // (2) the DESTINATION coincides EXACTLY with a real LB re-entry node — the edge
+    // visibly connects its target node (which always exists), never floats near it.
+    assert(onANode(end), `arc #${k} END (${end.x.toFixed(1)},${end.y.toFixed(1)}) coincides with a rendered LB node anchor — the destination exists and the arc terminates ON it`);
+    // (3) the source stays the equator-mirror of the destination (design intent):
+    // same x, y reflected across the equator — so the connector reads WB→LB.
+    assert(Math.abs(start.x - end.x) < 0.2 && Math.abs((start.y - cy) + (end.y - cy)) < 0.2,
+      `arc #${k} START is the equator-mirror of its END (WB source above ↔ LB node below)`);
+  });
+});
+
 test('swissOverview (single round): the lone-round bump centers ONE dot per competitor — no start/end+label stack on the left gutter (M7)', () => {
   // A one-round swiss (labels.length === 1) used to pin every competitor's start
   // dot, end dot, name label and #rank label onto a single x (padL) because

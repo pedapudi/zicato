@@ -2822,26 +2822,38 @@ export function elimRadial(opts) {
     svg.appendChild(lane);
   });
 
-  // double-elim: rim-hugging WB→LB transfer arcs (a dropped lane's second life).
+  // double-elim: WB→LB transfer arcs (a dropped lane's second life). Each arc
+  // CONNECTS TWO REAL NODES — it ENDS exactly on the dropped lane's outer LB node
+  // (its re-entry, on the lower arc) and STARTS on that node's equator-mirror, the
+  // source WB node position on the upper arc (WB upper ↔ LB lower are reflections
+  // across the horizontal equator, so in pol()'s convention the source angle is
+  // -a). BOTH endpoints sit EXACTLY on the outer node ring rr(0), so the connector
+  // begins and ends ON a node — never out in empty space. Per-drop separation rides
+  // the arc RADIUS (each successive drop nests a touch further in), NEVER the
+  // endpoints — so no stagger can drift an endpoint off its node. (The old code put
+  // the endpoints THEMSELVES on a staggered rim radius OUTSIDE the ring, so every
+  // arc past the first — and every arc in mini — began and ended at a radius where
+  // no node exists: the connector floated, detached from the source and the target.)
   if (isDouble) {
-    const transferR = R + (mini ? 3 : 8);
+    const nodeR = rr(0);   // the outer node ring — every spoke's outer (k=0) node
     let li = 0;
     const drops = gens.filter((g) => g.side === 'LB' && g.lostAt.size);
     drops.forEach((g) => {
       const a = angleOf.get(g.id);
       if (a == null) return;
-      // a short rim arc just outside the play area, hugging the rim (not a chord).
-      // anchor the START at the SOURCE WB node's angle — the equator-mirror of
-      // the LB node (WB on the upper arc, LB on the lower arc are reflections
-      // across the horizontal equator), so in pol()'s convention that source
-      // angle is just -a. (Was a constant aDeg-18, a bare rim point with no node.)
       const fromA = -a;
-      const stagger = transferR + li * (mini ? 2 : 4); li++;
-      const [fx, fy] = pol(stagger, fromA);
-      const [tx, ty] = pol(stagger, a);
-      const large = 0;
+      const [fx, fy] = pol(nodeR, fromA);   // source: the WB mirror, ON the node ring
+      const [tx, ty] = pol(nodeR, a);        // target: EXACTLY the dropped lane's outer LB node
+      // arcR == nodeR is the rim-hugging semicircle through the outward rim; a
+      // per-drop increment flattens (nests) each further arc a touch inside so two
+      // drops never overlap — carried by the RADIUS, not the endpoints.
+      const arcR = nodeR + li * (mini ? 2 : 4); li++;
+      // sweep to the OUTWARD side of the spoke: a downward chord (source upper →
+      // target lower) hugs the rim on the right for a right-tilted spoke (cos a ≥ 0)
+      // and on the left otherwise.
+      const sweep = Math.cos(a) >= 0 ? 1 : 0;
       svg.appendChild(svgEl('path', {
-        d: `M${fx.toFixed(1)} ${fy.toFixed(1)} A${stagger.toFixed(1)} ${stagger.toFixed(1)} 0 ${large} 1 ${tx.toFixed(1)} ${ty.toFixed(1)}`,
+        d: `M${fx.toFixed(1)} ${fy.toFixed(1)} A${arcR.toFixed(1)} ${arcR.toFixed(1)} 0 0 ${sweep} ${tx.toFixed(1)} ${ty.toFixed(1)}`,
         class: 'dn-elimradial-transfer', fill: 'none',
       }));
     });
