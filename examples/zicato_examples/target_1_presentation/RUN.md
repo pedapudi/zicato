@@ -303,24 +303,44 @@ reported itself healthy and "improving".
 Part 3 of the fix makes the contract able to tell a challenger from its
 champion:
 
-1. **`harness_llm` now reads `system`.** The mutated researcher
-   instruction changes the output: a baseline instruction lets the writer
-   slip in an uncited, fabricated figure; the proposer's citation-demanding
-   challenger instruction replaces it with a cited figure.
-2. **The mock judge now has TEETH.** `aux_llm`'s judge branch fires
-   (`pass=False`) on the fabricated-figure marker and passes on cited
-   output, so the declared `no_fabricated_numbers` (and sibling) inline
-   judges actually emit a `custom:<name>` drift.
+1. **`harness_llm` now reads `system` — and only the researcher carries the
+   marker.** The mutated researcher instruction changes the output: a
+   baseline instruction lets the writer slip in an uncited, fabricated
+   figure; the proposer's citation-demanding challenger instruction replaces
+   it with a cited figure. Only the RESEARCHER's output carries this tail —
+   the web_developer / reviewer / coordinator / debugger transcripts are
+   untailed — so a researcher-only mutation is the SOLE lever over the
+   judged marker (a coordinator or web_developer challenger can no longer
+   mask it by emitting the fabricated marker itself).
+2. **The mock judge now has TEETH — through the REAL inline runtime.**
+   `aux_llm`'s judge branch now answers BOTH judge protocols: the JSON
+   `{"pass": bool}` shape AND — the issue #84 fix — the `VIOLATION` / `OK`
+   one-line contract the real inline-criterion judge runtime
+   (`zicato.judge_runtime.builder._InlineCriterionJudge`) actually sends. It
+   fires (`VIOLATION`) on the fabricated-figure marker and passes (`OK`) on
+   cited output, so a declared `no_fabricated_numbers` (and sibling) inline
+   judge built through the production `judge_spec_to_goldfive` seam emits a
+   `custom:<name>` drift on a real run. Before the fix the mock recognised
+   ONLY the JSON shape, so the real runtime's `VIOLATION`/`OK` prompt fell
+   through to a neutral reply and the declared inline judges never fired.
 3. **The contract scores it.** `scoring.json` / `scoring.racing.json` add
    `per_judge_weights` for the inline judges, so the champion whose output
    trips `no_fabricated_numbers` scores strictly worse than the
    citation-demanding challenger — by well over `promote_margin`.
 
-`tests/test_example_target_1_discriminates.py` proves this end to end at
-the SCORING level (no live model, no ADK stack): the real mock output +
-real judge + real scoring aggregation yield a promotable `delta_scalar`.
-This rolls the epoch (the scoring contract changed) — expected for an
-example.
+`tests/test_example_target_1_discriminates.py` proves this end to end with
+no live model and no ADK stack. Its load-bearing case,
+`test_real_judge_runtime_discriminates_and_weight_is_load_bearing`, drives
+the real mock output → the real inline-judge runtime
+(`judge_spec_to_goldfive` + `mocks.aux_llm`) → the real reducer
+(`reduce_loss` over a genuine goldfive `events.jsonl`, which attributes the
+`custom:no_fabricated_numbers` drift) → the real scoring aggregation
+(`aggregate_generation_score`), and asserts a promotable `delta_scalar`
+whose magnitude actually DEPENDS on the `no_fabricated_numbers` per-judge
+weight. That test FAILS against the pre-fix mock (the real judge never
+fires, so `delta_scalar = 0`) and passes after — the claim is load-bearing,
+not decorative. The `per_judge_weights` in the scoring contract roll the
+epoch relative to a no-weights baseline — expected for an example.
 
 ## Where the artifacts live
 
@@ -385,15 +405,21 @@ Useful spot checks:
 
 These are deliberate:
 
-* **The contract now discriminates; the remaining zero-delta is the
-  passthrough gap.** Since issue #84 the mock harness reads the
-  instruction, the judge has teeth, and the scoring weights the inline
-  judges (§"Why it now discriminates") — so at the SCORING level a
-  researcher-instruction challenger promotes (proven deterministically by
-  `tests/test_example_target_1_discriminates.py`). What is STILL open is
-  the real goldfive/ADK path below: the harness's now-instruction-sensitive
-  output has to reach `final_output` intact for the *live* stack to score
-  the difference, and today it does not.
+* **The contract now discriminates through the real judge runtime; the
+  only remaining zero-delta cause is the live ADK planner passthrough.**
+  Since issue #84 the mock harness reads the instruction (and only the
+  researcher's output carries the marker), the declared inline judges fire
+  through the REAL `_InlineCriterionJudge` runtime + reducer, and the
+  scoring weights those judges (§"Why it now discriminates") — so the
+  deterministic harness + real judge + real reducer + real scoring already
+  promote a researcher-instruction challenger (proven by
+  `tests/test_example_target_1_discriminates.py`, whose end-to-end case
+  fails against the pre-fix mock). The ONE path STILL open is the live
+  goldfive/ADK stack below: the harness's now-instruction-sensitive output
+  has to reach `final_output` intact for the *live* planner to score the
+  difference, and today the `LLMPlanner` prose passthrough drops it. That
+  gap is endpoint-gated (it needs the live ADK stack), and it is the only
+  reason a *live* run still shows `delta_scalar = 0.0`.
 * **`harness_llm` returns prose, not JSON.** goldfive's `LLMPlanner`
   expects a planner-shaped JSON envelope; the mock returns slide-
   shaped prose. The planner falls back to its passthrough behaviour

@@ -122,16 +122,39 @@ def instruction_demands_citations(system: str) -> bool:
     return any(marker in lowered for marker in _QUALITY_DIRECTIVE_MARKERS)
 
 
+#: The research agent's stable self-identification. Every agent instruction in
+#: ``agent/agent.py`` opens with a distinct ``You are a …`` clause; only the
+#: research agent says ``You are a researcher``. The harness gates the
+#: factual-grounding tail on THIS marker so the ``researcher_instruction``
+#: mutation is the SOLE lever over the judged fabricated-metric marker
+#: (issue #84 A-3): the web_developer / reviewer / coordinator / debugger
+#: transcripts never carry the tail, so they cannot mask a researcher-only
+#: mutation by emitting the marker themselves. The two proposer-improved
+#: researcher instructions (mocks ``_PROPOSER_ROUNDS``) keep this opener too.
+_RESEARCHER_INSTRUCTION_MARKER = "you are a researcher"
+
+
+def _is_researcher_instruction(system: str) -> bool:
+    """Whether ``system`` is the research agent's (mutable) instruction."""
+    return _RESEARCHER_INSTRUCTION_MARKER in system.lower()
+
+
 async def harness_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
     """Return a canned response whose QUALITY depends on the instruction.
 
     Dispatches on lowercase-substring matches in ``user`` for the base deck,
     then — crucially — reads ``system`` (the agent's instruction, the
-    mutation surface) to decide whether the writer slips in a fabricated
-    metric or cites a provided figure. Before issue #84 this mock discarded
-    ``system`` entirely, so no instruction mutation could change a single byte
-    of output and every challenger tied its champion; reading it here is what
-    makes a mutation to the surface OBSERVABLE (and therefore scorable).
+    mutation surface). Only the RESEARCHER's output carries the
+    factual-grounding tail (a fabricated metric under the baseline
+    instruction, a cited figure under a citation-demanding one); every other
+    agent returns the base deck untailed. That makes the
+    ``researcher_instruction`` mutation the SOLE lever over the judged
+    ``no_fabricated_numbers`` marker (issue #84 A-3): a mutation to that one
+    surface is OBSERVABLE and scorable, and the web_developer / reviewer /
+    coordinator / debugger transcripts can never mask it by emitting the
+    marker themselves. Before issue #84 this mock discarded ``system``
+    entirely, so no instruction mutation could change a single byte of output
+    and every challenger tied its champion.
 
     Parameters
     ----------
@@ -152,7 +175,19 @@ async def harness_llm(system: str, user: str, model: str, **_kwargs: Any) -> str
         if needle in lowered:
             base = response
             break
-    # The mutation surface decides the factual grounding of the deck.
+    # Only the researcher's output carries the factual-grounding tail, so the
+    # researcher_instruction mutation is the SOLE lever over the judged
+    # fabricated-metric marker (issue #84 A-3). Other agents (web_developer /
+    # reviewer / coordinator / debugger) return the base deck UNTAILED —
+    # otherwise they would emit the fabricated marker regardless of a
+    # researcher-only mutation and the discrimination would collapse (the
+    # judged transcript would trip ``no_fabricated_numbers`` on the champion
+    # AND the citation-demanding challenger alike).
+    if not _is_researcher_instruction(system):
+        return base
+    # The (mutated) researcher instruction decides the factual grounding: a
+    # citation-demanding instruction cites a provided figure; the baseline
+    # slips in an uncited, fabricated metric.
     tail = _CITED_METRIC if instruction_demands_citations(system) else _FABRICATED_METRIC
     return f"{base}\n{tail}"
 
@@ -175,6 +210,16 @@ _JUDGE_FINGERPRINT_REASON = "pass"  # broad — judges vary; we narrow below
 #: tail the baseline (non-citation-demanding) researcher instruction produces.
 #: Its absence (the challenger's cited output) is what makes the judge pass.
 _JUDGE_VIOLATION_MARKER = "unverified estimate"
+#: Markers that fingerprint the REAL inline-criterion judge system prompt
+#: (``zicato.judge_runtime.builder._INLINE_SYSTEM_PROMPT``): it asks a strict
+#: reviewer to audit an agent's chain-of-thought against a single quality
+#: CRITERION and to answer starting with VIOLATION or OK. Requiring BOTH
+#: markers keeps this from colliding with the proposer / emulator / analysis /
+#: JSON-judge prompts (none of which ask to audit a "criterion" for a
+#: "violation"). Recognising THIS protocol — not just the JSON one — is the
+#: issue #84 fix that makes the declared inline judges fire through the real
+#: judge runtime instead of falling through to the neutral default reply.
+_INLINE_JUDGE_MARKERS: tuple[str, ...] = ("violation", "criterion")
 _EMULATOR_FINGERPRINT = "You are a simulated user"
 _ANALYSIS_FINGERPRINT_HEADLINE = "Headline movements"
 _ANALYSIS_FINGERPRINT_REVIEWER = "expert reviewer summarizing one epoch"
@@ -399,6 +444,15 @@ _EMULATOR_REPLIES: tuple[str, ...] = (
 )
 
 
+def _is_inline_judge_prompt(system_lower: str) -> bool:
+    """Whether ``system_lower`` is the real inline-criterion judge prompt.
+
+    ``system_lower`` is the already-lowercased judge system prompt. See
+    :data:`_INLINE_JUDGE_MARKERS` for why both markers are required.
+    """
+    return all(marker in system_lower for marker in _INLINE_JUDGE_MARKERS)
+
+
 async def aux_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
     """Return canned auxiliary responses keyed off the system prompt.
 
@@ -413,8 +467,13 @@ async def aux_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
     3. Emulator (system prompt mentions ``simulated user``) — returns
        a plausible next-turn user message. Never leaks expected
        answer shape.
-    4. Judge (system prompt is short and asks for ``pass`` /
-       ``reason``) — returns ``{"pass": true, "reason": "ok"}``.
+    4. Judge with TEETH — answers BOTH judge protocols that reach this
+       mock: (a) the REAL inline-criterion judge runtime
+       (``_INLINE_SYSTEM_PROMPT``: a one-line ``VIOLATION`` / ``OK``
+       reply) that a real ``zicato evolve`` drives, and (b) a JSON
+       ``{"pass": bool, "reason": str}`` prompt. It FIRES when the judged
+       text in ``user`` carries the fabricated-metric marker and passes
+       otherwise (issue #84).
     5. Default — a short acknowledgement string. Some call sites may
        not match the explicit fingerprints; the default keeps the
        smoke test from failing on an unrecognised prompt shape.
@@ -471,22 +530,42 @@ async def aux_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
         idx = min(agent_turns, len(_EMULATOR_REPLIES) - 1)
         return _EMULATOR_REPLIES[idx]
 
-    # 4. Judge (the canonical shape is a short system prompt asking for
-    # a JSON {"pass": bool, "reason": str}). We match generously on the
-    # judge response shape mentioned in the prompt.
+    # 4. Judge with TEETH (issue #84). The declared process judges
+    # (no_fabricated_numbers, incorporates_feedback, audience_appropriate)
+    # receive the run's reasoning/output in ``user``; the judge must FIRE when
+    # that text carries the uncited/fabricated-metric marker the baseline
+    # researcher instruction produces, and pass otherwise. Before the fix this
+    # branch was a rubber stamp (always pass) AND — worse — only recognised the
+    # JSON prompt, so the REAL inline-criterion judge runtime (which sends
+    # ``_INLINE_SYSTEM_PROMPT``, not JSON) fell through to the neutral default
+    # below: the declared inline judges NEVER fired on a real run and
+    # loop-health flagged them "never fired".
+    #
+    # TWO judge protocols reach this mock and BOTH must be answered:
+    #   (a) the REAL inline-criterion judge runtime
+    #       (``zicato.judge_runtime.builder._InlineCriterionJudge``) sends
+    #       ``_INLINE_SYSTEM_PROMPT`` — a one-line VIOLATION/OK contract — with
+    #       the audited reasoning embedded in ``user``. This is the protocol a
+    #       real ``zicato evolve`` drives, so answering it is what makes the
+    #       judge fire through the real runtime + reducer + scoring.
+    #   (b) a JSON judge prompt asking for ``{"pass": bool, "reason": str}``
+    #       (kept for any call site still on that shape — detect BOTH).
+    judged_text_violates = _JUDGE_VIOLATION_MARKER in user.lower()
+
+    # (a) Real inline-criterion judge: reply on the VIOLATION/OK contract the
+    #     runtime's ``_parse_inline_response`` parser expects (leading token).
+    #     Mirrors the ``VIOLATION`` / ``OK`` scripted endpoints the PR's own
+    #     ``tests/test_target_0_declared_judges.py`` already drives correctly.
+    if _is_inline_judge_prompt(sys_lower):
+        if judged_text_violates:
+            return "VIOLATION: output asserts an uncited/fabricated metric"
+        return "OK the reasoning only uses figures the stakeholder provided"
+
+    # (b) JSON judge protocol.
     if _JUDGE_FINGERPRINT_PASS in system or (
         "pass" in sys_lower and "reason" in sys_lower and "json" in sys_lower
     ):
-        # A judge with TEETH (issue #84). The declared inline judges
-        # (no_fabricated_numbers, incorporates_feedback, audience_appropriate)
-        # receive the run's reasoning/output in ``user``. Before the fix this
-        # branch unconditionally returned pass=True (a rubber stamp), so a
-        # declared judge NEVER emitted a custom:<name> drift and loop-health
-        # flagged it "never fired". Now it VIOLATES (pass=False) when the
-        # output carries the uncited/fabricated-metric marker the baseline
-        # instruction produces — so the judge fires on the champion and passes
-        # on the citation-demanding challenger, moving the scalar.
-        if _JUDGE_VIOLATION_MARKER in user.lower():
+        if judged_text_violates:
             return json.dumps(
                 {"pass": False, "reason": "output asserts an uncited/fabricated metric"}
             )

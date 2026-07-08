@@ -50,13 +50,19 @@ the champion through the unchanged promote gate.
 Both carry `per_judge_weights` for the declared inline judges
 (`no_fabricated_numbers`, `incorporates_feedback`, `audience_appropriate`)
 so those process judges actually MOVE the scalar when they fire. Together
-with `mocks.harness_llm` now reading the mutated instruction and
-`mocks.aux_llm`'s judge branch having teeth, a researcher-instruction
-mutation changes the output and is scored — the contract can distinguish a
-challenger from its champion (issue #84; before, every challenger tied and
-nothing could promote). `tests/test_example_target_1_discriminates.py`
-proves this at the scoring level; `RUN.md → "Why it now discriminates"`
-documents it and the remaining live-stack (`LLMPlanner` passthrough) gap.
+with `mocks.harness_llm` now reading the mutated instruction — where only
+the RESEARCHER's output carries the fabricated/cited marker, so a
+researcher-only mutation is the sole lever over it — and `mocks.aux_llm`
+now answering the REAL inline-judge runtime's `VIOLATION`/`OK` protocol
+(not just a JSON `{"pass": bool}` shape), a researcher-instruction mutation
+changes the output and is scored through the real judge runtime + reducer +
+scoring — the contract can distinguish a challenger from its champion
+(issue #84; before, every challenger tied and nothing could promote).
+`tests/test_example_target_1_discriminates.py` proves this end to end
+through the real judge runtime, reducer, and scoring (its end-to-end case
+fails against the pre-fix mock, where the real inline judge never fires);
+`RUN.md → "Why it now discriminates"` documents it and the remaining
+live-stack (`LLMPlanner` passthrough) gap.
 See
 [`RUN.md` → "Running a non-gauntlet tournament"](./RUN.md) for the two run
 recipes (point `evolve` at `scoring.racing.json`, or pass
