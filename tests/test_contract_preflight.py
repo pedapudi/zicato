@@ -421,3 +421,92 @@ def test_epoch_open_hook_persists_verdict(tmp_path: Path) -> None:
     # The shared A/A draws also persisted the noise floor.
     assert cfg.noise_floor is not None
     assert cfg.noise_floor["max_abs_delta"] == 0.0
+
+
+def test_preflight_voids_on_infra_abort_instead_of_persisting_a_poisoned_floor(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """An endpoint outage during the epoch's first round must VOID the
+    pre-flight (best-effort skip), not fold the aborted draws into a persisted
+    noise floor / verdict.
+
+    Regression for the issue-#84 review (Finding 1): the default-on pre-flight
+    is a new consumer of champion A/A draws; without the ``is_infra_abort_cause``
+    guard a transient outage poisons the epoch's floor and — under the hard
+    gate — would falsely disqualify a contract that an outage merely made
+    un-measurable. With the guard, ``run_contract_preflight`` raises
+    :class:`NoiseFloorInconclusive` (the caller's ``best_effort`` turns it into
+    a skip + re-measure next round); the default ``measure_noise_floor`` path
+    (``raise_on_infra_abort=False`` — the ``board audit`` surface) is unchanged.
+    """
+    import pytest
+
+    import zicato.tournament.runner as _runner_mod
+    from zicato.core.types import DriftCount, LossProfile
+    from zicato.tournament.calibration import NoiseFloorInconclusive, measure_noise_floor
+
+    async def _infra_abort_run_single(
+        *,
+        adapter: object,
+        generation: object,
+        entry: object,
+        weights: object,
+        config: object,
+        workspace_root: Path,
+        epoch_id: str,
+        side: str,
+        match_id: str = "",
+    ) -> LossProfile:
+        del adapter, weights, config, workspace_root, side, match_id
+        return LossProfile(
+            run_id=f"r-{generation.id}-{entry.id}",  # type: ignore[attr-defined]
+            entry_id=entry.id,  # type: ignore[attr-defined]
+            generation_id=generation.id,  # type: ignore[attr-defined]
+            epoch_id=epoch_id,
+            drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+            plan_revisions=0,
+            task_failure_ratio=1.0,
+            runtime_ms=100,
+            wall_clock_budget_exceeded=False,
+            expectation_result=None,
+            drift_loss=10.0,
+            pass_fail=None,
+            abort_cause="nonzero_exit:1",  # an is_infra_abort_cause class
+        )
+
+    monkeypatch.setattr(_runner_mod, "_run_single", _infra_abort_run_single)
+
+    # The strict pre-flight consumer VOIDS the measurement rather than persist
+    # an outage-derived floor.
+    workspace, epoch_id = _bootstrap(tmp_path)
+    with pytest.raises(NoiseFloorInconclusive):
+        _run_preflight(workspace, epoch_id)
+
+    # Backward-compat: the default calibration surface (board audit) still
+    # tolerates aborts and returns a floor — the guard is opt-in.
+    from zicato import adapter_factory, runtime_factory, workspace_loader
+
+    champion = _seed_baseline(workspace, epoch_id)
+    wc = workspace_loader.load_workspace_config(workspace)
+    adapter = adapter_factory.make_adapter_from_config(wc)
+    config = runtime_factory.make_runtime_config(
+        wc,
+        workspace_root=workspace,
+        harness_call_llm=t0_mocks.harness_llm,
+        auxiliary_call_llm=t0_mocks.aux_llm,
+    )
+    epoch_cfg = load_epoch(workspace, epoch_id)
+    floor = asyncio.run(
+        measure_noise_floor(
+            adapter=adapter,
+            generation=champion,  # type: ignore[arg-type]
+            board=workspace_loader.load_current_board(workspace),
+            weights=epoch_cfg.scoring,
+            config=config,
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            runs=3,
+        )
+    )
+    assert floor.runs == 3  # tolerated (raise_on_infra_abort defaults False)

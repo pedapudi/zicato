@@ -47,6 +47,20 @@ DEFAULT_CALIBRATION_RUNS: int = 5
 CALIBRATION_REPLICATE_BASE: int = 1000
 
 
+class NoiseFloorInconclusive(RuntimeError):
+    """An A/A noise-floor draw hit an INFRA abort — the measurement is void.
+
+    An infra abort (worker crash, endpoint outage) is NOT a measurement of the
+    generation, so folding its worst-case not-completed scalar into a floor
+    would let a transient outage poison the epoch — and, under a hard
+    pre-flight gate, falsely disqualify a contract that an outage merely made
+    un-measurable. Callers that opt into strict measurement
+    (``raise_on_infra_abort=True``) treat this as a best-effort skip: persist
+    nothing and re-measure on a later round once the endpoint is healthy. See
+    :func:`zicato.core.loss.is_infra_abort_cause`.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class NoiseFloor:
     """The measured A/A noise floor for one generation under one contract.
@@ -124,6 +138,7 @@ async def measure_noise_floor(
     runs: int = DEFAULT_CALIBRATION_RUNS,
     disable_drift: tuple[Any, ...] = (),
     judge_only: bool = False,
+    raise_on_infra_abort: bool = False,
 ) -> NoiseFloor:
     """Duel ``generation`` against itself ``runs`` times; measure the spread.
 
@@ -141,7 +156,16 @@ async def measure_noise_floor(
     an operator's margin must clear. Returns the :class:`NoiseFloor`; the
     caller decides whether to persist it
     (:func:`zicato.epoch.lifecycle.set_epoch_noise_floor`).
+
+    ``raise_on_infra_abort`` (default ``False``): when set, a draw that hits an
+    infra abort (:func:`~zicato.core.loss.is_infra_abort_cause` — a worker
+    crash / endpoint outage, never a genuine budget exhaustion) VOIDS the whole
+    measurement with :class:`NoiseFloorInconclusive` instead of folding the
+    outage's worst-case not-completed scalar into the floor. The default-on
+    contract pre-flight opts in (an outage must never disqualify a contract);
+    the tolerant default preserves the ``zicato board audit`` surface.
     """
+    from zicato.core.loss import is_infra_abort_cause  # noqa: PLC0415
     from zicato.tournament.scheduling import _run_board_units_fast  # noqa: PLC0415
     from zicato.tournament.scoring import aggregate_generation_score  # noqa: PLC0415
     from zicato.tournament.worker_transport import (  # noqa: PLC0415
@@ -178,6 +202,19 @@ async def measure_noise_floor(
             # fresh sample (and an idempotent re-read on a repeated audit).
             replicate_index=replicate_index,
         )
+        # An infra abort (endpoint outage, worker crash) is not a measurement
+        # of the generation — folding its worst-case not-completed scalar into
+        # the floor would let a transient outage poison the epoch. A strict
+        # consumer (the default-on pre-flight) opts to void the whole
+        # measurement instead of persisting an outage-derived floor.
+        if raise_on_infra_abort and any(
+            is_infra_abort_cause(getattr(lp, "abort_cause", None)) for lp in losses.values()
+        ):
+            raise NoiseFloorInconclusive(
+                f"A/A noise-floor draw {draw} hit an infra abort (endpoint outage / "
+                "worker crash); the measurement is inconclusive and must not be "
+                "persisted — an outage must never disqualify a contract."
+            )
         agg = aggregate_generation_score(list(losses.values()), weights)
         scalars.append(float(agg.get("scalar", 0.0)))
 

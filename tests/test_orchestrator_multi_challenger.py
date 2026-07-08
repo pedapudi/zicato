@@ -108,6 +108,12 @@ def _bootstrap_swiss_workspace(
                 # tags this fixture never writes.
                 "storage_backend": "directory",
                 "adapter": {"kind": "stub"},
+                # These fixtures assert TOURNAMENT-caching properties (the
+                # champion is never re-run in fast mode). The default-on
+                # achievable-signal pre-flight (issue #84) legitimately runs the
+                # champion for its A/A floor, which would pollute that run
+                # tracking — so opt out of the orthogonal probe here.
+                "runtime": {"preflight_gate": "off"},
             }
         )
     )

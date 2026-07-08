@@ -34,6 +34,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from zicato.epoch.preflight import PreflightRefusedError
 from zicato.runtime.heartbeat import HeartbeatBeater
 from zicato.runtime.lock import acquire_workspace_lock, release_workspace_lock
 from zicato.runtime.resume import ResumePlan, prepare_resume
@@ -628,38 +629,47 @@ async def evolve_n_rounds(
                     resume_plan=_resume_plan,
                 )
 
-            if not budget.enabled:
-                # Unbounded — run the round with no within-round ceiling.
-                outcome = await _run_round()
-            else:
-                remaining = budget.remaining_s()
-                try:
-                    # Layer-1 asyncio.wait_for guard: a round that would
-                    # push past the total budget is cancelled. This only
-                    # pre-empts cooperative async work — a round wedged
-                    # in a blocking call or CPU-bound loop is not
-                    # hard-killed here; that needs the L3 subprocess
-                    # worker. Same caveat as the per-entry budget. See
-                    # docs/design/ROBUSTNESS.md.
-                    outcome = await asyncio.wait_for(_run_round(), timeout=remaining)
-                except TimeoutError:
-                    # asyncio.wait_for raises the builtin TimeoutError
-                    # (asyncio.TimeoutError is an alias of it on 3.11+).
-                    assert max_wall_clock_seconds is not None
-                    parent_id = _orch._safe_resolve_parent(workspace_root, epoch_id)
-                    outcome = _budget_aborted_outcome(parent_id, max_wall_clock_seconds)
-                    outcomes.append(outcome)
-                    log.warning(
-                        "evolve_n_rounds: round %d aborted — evolve total wall-clock "
-                        "budget of %ds exceeded mid-round; stopping (round %d/%d)",
-                        round_idx,
-                        max_wall_clock_seconds,
-                        round_idx + 1,
-                        rounds,
-                    )
-                    budget_stopped = True
-                    stop_reason = "wall_clock_budget_mid_round"
-                    break
+            try:
+                if not budget.enabled:
+                    # Unbounded — run the round with no within-round ceiling.
+                    outcome = await _run_round()
+                else:
+                    remaining = budget.remaining_s()
+                    try:
+                        # Layer-1 asyncio.wait_for guard: a round that would
+                        # push past the total budget is cancelled. This only
+                        # pre-empts cooperative async work — a round wedged
+                        # in a blocking call or CPU-bound loop is not
+                        # hard-killed here; that needs the L3 subprocess
+                        # worker. Same caveat as the per-entry budget. See
+                        # docs/design/ROBUSTNESS.md.
+                        outcome = await asyncio.wait_for(_run_round(), timeout=remaining)
+                    except TimeoutError:
+                        # asyncio.wait_for raises the builtin TimeoutError
+                        # (asyncio.TimeoutError is an alias of it on 3.11+).
+                        assert max_wall_clock_seconds is not None
+                        parent_id = _orch._safe_resolve_parent(workspace_root, epoch_id)
+                        outcome = _budget_aborted_outcome(parent_id, max_wall_clock_seconds)
+                        outcomes.append(outcome)
+                        log.warning(
+                            "evolve_n_rounds: round %d aborted — evolve total wall-clock "
+                            "budget of %ds exceeded mid-round; stopping (round %d/%d)",
+                            round_idx,
+                            max_wall_clock_seconds,
+                            round_idx + 1,
+                            rounds,
+                        )
+                        budget_stopped = True
+                        stop_reason = "wall_clock_budget_mid_round"
+                        break
+            except PreflightRefusedError as exc:
+                # Achievable-signal HARD gate (issue #84,
+                # runtime.preflight_gate == "refuse"): the contract cannot
+                # out-signal its own noise. No round ran — stop cleanly BEFORE
+                # spending budget, with a clear reason (never a traceback).
+                log.warning("evolve_n_rounds: %s", exc)
+                stop_reason = "preflight_refused"
+                break
             outcomes.append(outcome)
             beater.update(
                 epoch_id=epoch_id or "",

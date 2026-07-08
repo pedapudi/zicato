@@ -44,13 +44,26 @@ Verdict
   smaller improvements a proposer will offer.
 * ``"ok"`` otherwise.
 
-The verdict is **recommend-only** — it never gates a run. It persists
-onto the epoch record (``config.json``'s additive ``preflight`` field,
-never hashed) and flows into the per-round loop-health report through
-:func:`zicato.health.diagnostics.detect_preflight_verdict`. Surfaces:
-``zicato board preflight`` (manual) and the opt-in epoch-open hook
-(``config.json``: ``"contract_preflight": K``), mirroring how the A/A
-noise-floor calibration is wired.
+The verdict persists onto the epoch record (``config.json``'s additive
+``preflight`` field, never hashed) and flows into the per-round
+loop-health report through
+:func:`zicato.health.diagnostics.detect_preflight_verdict`.
+
+Gating (issue #84). At evolve start the loop measures the pre-flight once
+per epoch (idempotent, best-effort) UNLESS the runtime opts out
+(:attr:`~zicato.core.runtime.RuntimeConfig.preflight_gate` ``== "off"``),
+and acts on the verdict per the gate mode:
+
+* ``"warn"`` (the DEFAULT) — a below-floor / saturated verdict is LOUDLY
+  warned and surfaced in every round's health report, but the run
+  proceeds (the recommend-only philosophy).
+* ``"refuse"`` — additionally raises :class:`PreflightRefusedError` on a
+  ``refuse`` verdict, stopping the run *before* it spends rounds.
+
+Surfaces: ``zicato board preflight`` (manual, always recommend-only) and
+the number of A/A draws K from the epoch-open hook
+(``config.json``: ``"contract_preflight": K``); absent, K defaults to
+:data:`~zicato.tournament.calibration.DEFAULT_CALIBRATION_RUNS`.
 """
 
 from __future__ import annotations
@@ -67,6 +80,7 @@ from zicato.core.mutation import MutationPoint, Patch
 from zicato.tournament.calibration import (
     DEFAULT_CALIBRATION_RUNS,
     NoiseFloor,
+    NoiseFloorInconclusive,
     measure_noise_floor,
 )
 
@@ -82,6 +96,21 @@ VERDICT_OK: str = "ok"
 VERDICT_WARN: str = "warn"
 #: The achievable signal is at or below the measured A/A noise floor.
 VERDICT_REFUSE: str = "refuse"
+
+
+class PreflightRefusedError(RuntimeError):
+    """Raised to STOP an evolve run whose contract cannot out-signal its noise.
+
+    Fired only when the operator opted into the HARD gate
+    (:attr:`~zicato.core.runtime.RuntimeConfig.preflight_gate` ``== "refuse"``)
+    AND the pre-flight measured a ``refuse`` verdict — the contract's
+    achievable signal is at or below its own A/A noise floor, so every duel
+    would be decided by noise. The default gate mode (``"warn"``) only warns
+    and never raises this; the run continues. Carried up through
+    ``evolve_n_rounds`` and reported as a clean stop reason (never a
+    traceback), so the operator sees why the run refused *before* rounds burn
+    budget.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,6 +282,7 @@ async def run_contract_preflight(
     mutation points — with no mutable surface there is nothing to degrade
     (and nothing for an evolve loop to optimize either).
     """
+    from zicato.core.loss import is_infra_abort_cause  # noqa: PLC0415
     from zicato.mutation.applier import apply_patches  # noqa: PLC0415
     from zicato.mutation.enumerator import enumerate_mutations  # noqa: PLC0415
     from zicato.orchestrator import _resolve_mutable_trees  # noqa: PLC0415
@@ -277,6 +307,13 @@ async def run_contract_preflight(
         runs=runs,
         disable_drift=disable_drift,
         judge_only=judge_only,
+        # Void the whole pre-flight rather than persist an outage-derived
+        # floor: a transient endpoint outage during the epoch's first round
+        # must not poison the floor (and, under the hard gate, falsely
+        # disqualify the contract). The caller's ``best_effort`` turns the
+        # raised :class:`NoiseFloorInconclusive` into a skip + re-measure next
+        # round.
+        raise_on_infra_abort=True,
     )
 
     # (b) The scripted-perturbation duel. FIRST enumerated point — the
@@ -317,6 +354,15 @@ async def run_contract_preflight(
             # calibration draws (1000..); a re-run is an idempotent HIT.
             replicate_index=PREFLIGHT_REPLICATE_BASE,
         )
+        # Same discipline as the A/A draws: a degraded-probe infra abort makes
+        # the signal un-measurable, not zero — void the pre-flight rather than
+        # persist a verdict derived from an outage.
+        if any(is_infra_abort_cause(getattr(lp, "abort_cause", None)) for lp in losses.values()):
+            raise NoiseFloorInconclusive(
+                "contract pre-flight: the degraded-perturbation draw hit an infra "
+                "abort (endpoint outage / worker crash); the achievable-signal "
+                "measurement is inconclusive and must not be persisted."
+            )
         agg = aggregate_generation_score(list(losses.values()), weights)
         degraded_scalar = float(agg.get("scalar", 0.0))
 
@@ -344,6 +390,7 @@ __all__ = [
     "VERDICT_OK",
     "VERDICT_REFUSE",
     "VERDICT_WARN",
+    "PreflightRefusedError",
     "PreflightReport",
     "degraded_content_for",
     "degraded_patch_for",

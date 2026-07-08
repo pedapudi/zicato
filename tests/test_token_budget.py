@@ -66,10 +66,15 @@ def _bootstrap_multi_entry_workspace(
     ``runtime.parallelism`` defaults to 1 here so the board units run
     sequentially and the between-unit budget check observes each unit's
     tally deterministically.
+
+    ``preflight_gate`` defaults to ``"off"``: these tests count the board
+    units / tokens a ROUND spends, and the default-on achievable-signal
+    pre-flight (issue #84) runs extra champion A/A units that would perturb
+    that accounting — an orthogonal probe this fixture opts out of.
     """
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
-    runtime_block = {"parallelism": 1, **(runtime or {})}
+    runtime_block = {"parallelism": 1, "preflight_gate": "off", **(runtime or {})}
     (workspace / "config.json").write_text(
         json.dumps(
             {

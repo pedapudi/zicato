@@ -1164,13 +1164,28 @@ Saturation is checked **first**, deliberately: a saturated contract trivially
 also has `signal == floor == 0`, and the saturation diagnosis is the
 actionable one.
 
-The verdict is **recommend-only** — it never gates a run. Persisted onto the
-epoch record (`config.json`'s additive `preflight` field, never hashed);
-re-surfaced every round through loop health (`detect_preflight_verdict`:
-critical `preflight_signal_below_floor` / warning
-`preflight_saturated_contract`). Surfaces: `zicato board preflight` and the
-opt-in epoch-open hook (`"contract_preflight": K`), mirroring the calibration
-wiring.
+The verdict persists onto the epoch record (`config.json`'s additive
+`preflight` field, never hashed); re-surfaced every round through loop health
+(`detect_preflight_verdict`: critical `preflight_signal_below_floor` / warning
+`preflight_saturated_contract`).
+
+**Gating at evolve start (issue #84).** The pre-flight is **default-on**: at
+evolve start the loop measures it once per epoch (idempotent, best-effort)
+unless the runtime opts out, and acts on the verdict per the runtime-only
+`RuntimeConfig.preflight_gate` knob (never rolls the epoch — a runtime tuning
+knob like `infra_abort_round_threshold`):
+
+| `preflight_gate` | On a below-floor (`refuse`) / saturated (`warn`) verdict |
+|---|---|
+| `"warn"` (**default**) | LOUD `log.warning` at evolve start + the per-round health finding; the run **proceeds** (recommend-only philosophy) |
+| `"refuse"` | additionally raises `PreflightRefusedError` on a `refuse` verdict — `evolve_n_rounds` catches it and stops with reason `preflight_refused` **before spending rounds**, no traceback |
+| `"off"` | skip the measurement entirely — byte-identical to the pre-#84 behavior (the escape hatch deterministic oracles use so the orthogonal probe never runs the champion) |
+
+Surfaces: `zicato board preflight` (manual, always recommend-only) + the
+epoch-open hook `"contract_preflight": K` still sets the number of A/A draws K
+(absent ⇒ `DEFAULT_CALIBRATION_RUNS`). Because the measurement runs the
+champion for its A/A floor, a fast-mode test asserting "the champion is never
+re-run" must set `runtime.preflight_gate: "off"`.
 
 Note the connection to 14-goals-and-roadmap.md: target_1's structural
 mock-null (`mocks.py` discards the system prompt, so no instruction patch can

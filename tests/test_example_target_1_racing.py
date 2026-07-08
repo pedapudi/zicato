@@ -233,6 +233,11 @@ def _bootstrap_racing_workspace(tmp_path: Path) -> tuple[Path, str]:
                 # never writes.
                 "storage_backend": "directory",
                 "adapter": {"kind": "stub"},
+                # This e2e asserts the racing tournament's champion-caching
+                # behaviour; opt out of the default-on achievable-signal
+                # pre-flight (issue #84) whose A/A floor legitimately runs the
+                # champion and would otherwise pollute that run tracking.
+                "runtime": {"preflight_gate": "off"},
             }
         )
     )

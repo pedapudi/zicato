@@ -174,6 +174,16 @@ def drive_mock_evolve(monkeypatch, tmp_path: Path) -> tuple[Path, str]:
 
     monkeypatch.setattr(_orchestrator_mod, "_resolve_or_launch_harmonograf", _no_launch)
 
+    # 3) Pin the epoch-id date. ``_make_epoch_id`` stamps ``datetime.now(UTC)``
+    #    into the epoch id, and that id is returned by ``rotation_seed`` to seed
+    #    the holdout split — so the racing rung's board slice (and therefore
+    #    every captured artifact) shifts from one calendar day to the next.
+    #    Freezing the date makes both goldens date-stable; ``normalize.py`` still
+    #    collapses the (now-constant) date prefix to ``<DATE>``.
+    import zicato.epoch.lifecycle as _lifecycle_mod
+
+    monkeypatch.setattr(_lifecycle_mod, "_today", lambda: "2026-01-01")
+
     workspace, epoch_id = _bootstrap_racing_workspace(tmp_path)
     _install_stub_adapter_factory(monkeypatch)
     _install_telemetry_stubs(

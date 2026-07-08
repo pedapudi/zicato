@@ -213,6 +213,33 @@ def test_trajectory_plateaued_without_floor_stays_plateaued(tmp_path: Path) -> N
     assert out["noise_floor"] is None
 
 
+def test_trajectory_zero_promotions_below_floor_reads_no_signal(tmp_path: Path) -> None:
+    # Issue #84: a 0/1 promotion-rate, all-Δ-zero run. Only the seed is on the
+    # promoted spine (0 promoted challengers) but a challenger WAS fielded and
+    # rejected. The single-point spine is too short to plateau, so the raw flag
+    # is not-plateaued — but with a MEASURED floor, calling that "improving"
+    # (nothing improved!) overstates the measurement. The honest verdict is
+    # "no detectable signal".
+    ws = _workspace(tmp_path, noise_floor=_floor(0.2))
+    _seed_index(ws / "index.db", scalars=[1.0], rejected=1)
+    out = build_optimization_trajectory(WorkspacePaths(ws), EPOCH)
+    assert out["promoted_count"] == 0
+    assert out["challenger_count"] == 1
+    assert out["plateaued"] is False  # spine too short to plateau
+    assert out["verdict"] == "no_signal"  # NOT "improving"
+
+
+def test_trajectory_zero_promotions_without_floor_is_not_fabricated(tmp_path: Path) -> None:
+    # The TRAP guard (DQ7): "no floor measured yet" is NOT "no signal". Without
+    # a measured floor, the 0-promotion run falls back to the raw observation
+    # (not-plateaued), never a fabricated no_signal.
+    ws = _workspace(tmp_path)  # no floor
+    _seed_index(ws / "index.db", scalars=[1.0], rejected=1)
+    out = build_optimization_trajectory(WorkspacePaths(ws), EPOCH)
+    assert out["promoted_count"] == 0
+    assert out["verdict"] != "no_signal"
+
+
 def test_trajectory_degrades_without_index(tmp_path: Path) -> None:
     # No index.db at all: the empty shape with a note — and the floor STILL
     # attached (it lives on the epoch config, not the index).

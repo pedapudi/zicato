@@ -384,7 +384,24 @@ def test_render_svg_score_trajectory_empty() -> None:
     assert "No generations" in svg
 
 
-def test_write_html_report_round_trip(tmp_path: Path) -> None:
+def test_write_html_report_round_trip(tmp_path: Path, monkeypatch) -> None:
+    # ``render_html_report`` stamps ``datetime.now(UTC)`` into the document, so
+    # the two renders below (``write_html_report`` then ``render_html_report``)
+    # differ whenever they straddle a one-second boundary — a latent flake that
+    # only trips under load (e.g. the xdist-parallel CI suite). Freeze the clock
+    # so the round-trip compares the report body, not the wall clock.
+    import zicato.epoch.html_report as _hr
+
+    _real_dt = _hr.datetime
+    _frozen = _real_dt(2026, 1, 1, tzinfo=_hr.UTC)
+
+    class _FrozenDatetime(_real_dt):  # type: ignore[misc,valid-type]
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[override]
+            return _frozen
+
+    monkeypatch.setattr(_hr, "datetime", _FrozenDatetime)
+
     generations, experiments = _build_mixed_lineage(4)
     ctx = _ctx(generations=generations, experiments=experiments)
     target = tmp_path / "analysis.html"

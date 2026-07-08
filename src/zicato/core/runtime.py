@@ -35,6 +35,22 @@ INFRA_BACKOFF_BASE_S_DEFAULT: float = 30.0
 #: (:attr:`RuntimeConfig.infra_backoff_cap_s`). See the base default above.
 INFRA_BACKOFF_CAP_S_DEFAULT: float = 480.0
 
+#: Valid values for :attr:`RuntimeConfig.preflight_gate`, weakest first.
+#: ``"off"`` — do not run the achievable-signal pre-flight (UNLESS a legacy
+#: ``contract_preflight: K`` key explicitly requests it, preserving pre-#84
+#: opt-in behaviour); with no such key — the common case, incl. deterministic
+#: oracles — ``"off"`` runs no pre-flight at all; ``"warn"`` (the DEFAULT) —
+#: measure it once per epoch at evolve start and LOUDLY warn on a
+#: below-noise-floor / saturated verdict, but never stop; ``"refuse"`` —
+#: additionally HARD-STOP the run before spending rounds when the verdict is
+#: ``refuse``. Cost: ``"warn"``/``"refuse"`` add ~K+1 champion board
+#: evaluations (the A/A draws + one degraded probe) once per epoch at evolve
+#: start; on a real endpoint that is real budget, counted against round 0.
+PREFLIGHT_GATE_MODES: tuple[str, ...] = ("off", "warn", "refuse")
+
+#: Default pre-flight gate mode — measure + warn, never block (recommend-only).
+PREFLIGHT_GATE_DEFAULT: str = "warn"
+
 
 class RoundTokenLedger:
     """ONE round's mutable token accounting for ``max_tokens_per_round``.
@@ -210,6 +226,32 @@ class RuntimeConfig:
     infra_backoff_cap_s:
         Ceiling (seconds) on the exponential infra backoff. Must be
         ``>= 0``.
+    preflight_gate:
+        Achievable-signal pre-flight gate mode (issue #84). One of
+        :data:`PREFLIGHT_GATE_MODES` — ``"off"`` | ``"warn"`` | ``"refuse"``.
+        At evolve start (round 0, once per epoch, idempotent, best-effort)
+        the loop measures the contract's A/A noise floor AND its achievable
+        signal (champion vs a deliberately-degraded copy of itself; see
+        :mod:`zicato.epoch.preflight`). ``"warn"`` (the DEFAULT) LOUDLY warns
+        when the achievable signal does not clear the noise floor (or the
+        contract is saturated) and lets the run proceed — matching the
+        recommend-only philosophy; ``"refuse"`` additionally HARD-STOPS the
+        run (``PreflightRefusedError``) before rounds burn budget on a
+        contract that cannot be optimized; ``"off"`` runs no pre-flight —
+        UNLESS a legacy ``contract_preflight: K`` key is present (which was the
+        pre-#84 opt-in, so ``"off"`` preserves that exact behaviour). With no
+        such key — the common case, incl. deterministic oracles that assert
+        their own known answer — ``"off"`` is byte-identical to pre-#84 (no
+        measurement). A RUNTIME tuning knob, NOT part of the frozen evaluation
+        contract — flipping it does not roll the epoch. The legacy
+        ``config.json`` ``"contract_preflight": K`` key still sets the number
+        of A/A draws K; absent, K defaults to ``DEFAULT_CALIBRATION_RUNS``.
+        COST: under ``"warn"``/``"refuse"`` the once-per-epoch measurement runs
+        ~K+1 champion board evaluations (the A/A draws + one degraded probe) at
+        evolve start; it is idempotent (persisted; a resume re-reads the record)
+        and skipped entirely on any infra abort (an outage never disqualifies a
+        contract), but on a real endpoint it is real budget counted against
+        round 0.
     max_tokens_per_round:
         Per-round token budget (WS-H). ``0`` (the DEFAULT) is OFF —
         byte-identical scheduling. When ``>= 1``, the orchestrator mints
@@ -263,6 +305,7 @@ class RuntimeConfig:
     infra_backoff_base_s: float = INFRA_BACKOFF_BASE_S_DEFAULT
     infra_backoff_cap_s: float = INFRA_BACKOFF_CAP_S_DEFAULT
     max_tokens_per_round: int = 0
+    preflight_gate: str = PREFLIGHT_GATE_DEFAULT
     token_ledger: RoundTokenLedger | None = None
     #: The ADK model object (a ``BaseLlm``, typically a ``LiteLlm``) the inner
     #: ADK agents run on, built from a ``models.harness`` *model spec* (model +
@@ -305,6 +348,11 @@ class RuntimeConfig:
                 "RuntimeConfig.max_tokens_per_round must be >= 0, got "
                 f"{self.max_tokens_per_round!r}; use 0 to disable the per-round "
                 "token budget"
+            )
+        if self.preflight_gate not in PREFLIGHT_GATE_MODES:
+            raise ValueError(
+                f"RuntimeConfig.preflight_gate must be one of {PREFLIGHT_GATE_MODES}, "
+                f"got {self.preflight_gate!r}"
             )
 
     def effective_judge_call_llm(self) -> CallLLM:
