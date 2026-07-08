@@ -442,15 +442,16 @@ async def evolve_once(
         judge_only=judge_only,
     )
 
-    # --- 2a'. Optional contract pre-flight (epoch-open step) --------------
-    # When the workspace opts in (config.json: ``"contract_preflight": K``)
-    # and this epoch has no persisted verdict yet, measure the A/A floor AND
-    # the achievable signal (champion vs a deliberately-degraded ephemeral
-    # copy of itself) and persist the verdict onto the epoch record.
-    # Recommend-only: a REFUSE/saturation verdict warns and flows into the
-    # per-round health report but never gates. ``zicato board preflight`` is
-    # the manual surface for the same measurement.
-    await _maybe_contract_preflight(
+    # --- 2a'. Achievable-signal contract pre-flight (epoch-open step) -----
+    # DEFAULT-ON (issue #84): unless runtime.preflight_gate == "off", measure
+    # the A/A floor AND the achievable signal (champion vs a deliberately-
+    # degraded ephemeral copy of itself) once per epoch and persist the
+    # verdict. A below-floor / saturated verdict is LOUDLY warned (inside the
+    # helper) and flows into the per-round health report. Under the opt-in
+    # HARD gate (preflight_gate == "refuse") a ``refuse`` verdict STOPS the
+    # run here — before rounds burn budget on a contract that cannot be
+    # optimized. ``zicato board preflight`` is the manual surface.
+    _preflight_verdict = await _maybe_contract_preflight(
         workspace_root=workspace_root,
         epoch_id=resolved_epoch_id,
         epoch_cfg=_epoch_cfg,
@@ -463,6 +464,23 @@ async def evolve_once(
         disable_drift=disable_drift,
         judge_only=judge_only,
     )
+    from zicato.epoch.preflight import (  # noqa: PLC0415
+        VERDICT_REFUSE,
+        PreflightRefusedError,
+    )
+
+    if (
+        str(getattr(config, "preflight_gate", "warn") or "warn") == "refuse"
+        and _preflight_verdict == VERDICT_REFUSE
+    ):
+        raise PreflightRefusedError(
+            f"contract pre-flight REFUSE for epoch {resolved_epoch_id}: the "
+            "contract's achievable signal is at or below its measured A/A "
+            "noise floor, so every duel would be decided by noise. Refusing "
+            "the run before it spends rounds (runtime.preflight_gate='refuse'). "
+            "Strengthen the board / reduce evaluation noise, or set "
+            "runtime.preflight_gate='warn' to proceed anyway."
+        )
 
     # --- 2b. Margin-vs-noise-floor sanity check (once per invocation) -----
     # When a measured floor exists and the contract's promote_margin sits
@@ -5020,32 +5038,66 @@ async def _maybe_contract_preflight(
     config: Any,
     disable_drift: tuple[Any, ...],
     judge_only: bool,
-) -> None:
-    """Run the opt-in contract pre-flight once per epoch (epoch-open step).
+) -> str | None:
+    """Measure the contract pre-flight once per epoch; return the verdict.
 
-    Mirrors :func:`_maybe_calibrate_noise_floor`: fires only when the
-    workspace config carries ``"contract_preflight": K`` (K >= 2 A/A
-    draws) AND the epoch record has no persisted pre-flight verdict yet,
-    so the measurement happens exactly once at epoch open and every later
-    round short-circuits on the record. Best-effort by contract — a
-    pre-flight failure must never abort the round; the verdict itself is
-    recommend-only (it flows into the per-round health report, never a
-    gate). ``zicato board preflight`` is the manual surface for the same
-    measurement.
+    DEFAULT-ON (issue #84): unless the runtime opts out
+    (:attr:`~zicato.core.runtime.RuntimeConfig.preflight_gate` ``== "off"``),
+    the achievable-signal pre-flight is measured once at evolve start — the
+    A/A noise floor AND the champion-vs-degraded-copy signal — and its
+    verdict persisted onto the epoch record. Idempotent: a later round (or a
+    resume) short-circuits on the persisted record and re-reports its verdict
+    without re-measuring. Best-effort by contract — a measurement failure
+    never aborts the round.
+
+    The number of A/A draws K is taken from the legacy ``config.json``
+    ``"contract_preflight": K`` key when present (K >= 2), else defaults to
+    :data:`~zicato.tournament.calibration.DEFAULT_CALIBRATION_RUNS`.
+
+    Returns the verdict string (``"ok"`` / ``"warn"`` / ``"refuse"``) when a
+    verdict is available (freshly measured or already persisted), else
+    ``None`` (skipped / measurement failed). The caller enforces the gate:
+    ``"warn"`` mode only warns (done here); ``"refuse"`` mode raises
+    :class:`~zicato.epoch.preflight.PreflightRefusedError` on a ``refuse``
+    verdict. ``zicato board preflight`` is the manual surface.
     """
+    from zicato.core.runtime import PREFLIGHT_GATE_DEFAULT  # noqa: PLC0415
+    from zicato.tournament.calibration import DEFAULT_CALIBRATION_RUNS  # noqa: PLC0415
+
+    gate_mode = str(
+        getattr(config, "preflight_gate", PREFLIGHT_GATE_DEFAULT) or PREFLIGHT_GATE_DEFAULT
+    )
     raw = workspace_config.get("contract_preflight")
-    if not raw:
-        return
-    try:
-        runs = int(raw)
-    except (TypeError, ValueError):
-        log.warning("contract_preflight=%r is not an integer; skipping pre-flight", raw)
-        return
-    if runs < 2:
-        log.warning("contract_preflight=%d needs at least 2 A/A draws; skipping pre-flight", runs)
-        return
-    if getattr(epoch_cfg, "preflight", None) is not None:
-        return
+    # Resolve K: an explicit (valid) ``contract_preflight`` key wins; else the
+    # calibration default. A malformed / too-small key disables the measurement.
+    runs: int | None
+    if raw:
+        try:
+            runs = int(raw)
+        except (TypeError, ValueError):
+            log.warning("contract_preflight=%r is not an integer; skipping pre-flight", raw)
+            runs = None
+        else:
+            if runs < 2:
+                log.warning(
+                    "contract_preflight=%d needs at least 2 A/A draws; skipping pre-flight", runs
+                )
+                runs = None
+    else:
+        runs = DEFAULT_CALIBRATION_RUNS
+
+    # Opted fully out AND no explicit request ⇒ skip entirely (byte-identical
+    # to the pre-#84 behaviour — the deterministic-oracle escape hatch).
+    if gate_mode == "off" and not raw:
+        return None
+
+    # Already measured ⇒ re-report the persisted verdict so the hard gate
+    # still applies on a resumed / later round without re-measuring.
+    existing = getattr(epoch_cfg, "preflight", None)
+    if isinstance(existing, dict):
+        return str(existing.get("verdict") or "") or None
+    if runs is None:
+        return None
 
     from zicato.epoch.lifecycle import (  # noqa: PLC0415
         load_epoch,
@@ -5054,6 +5106,7 @@ async def _maybe_contract_preflight(
     )
     from zicato.epoch.preflight import VERDICT_OK, run_contract_preflight  # noqa: PLC0415
 
+    verdict_holder: list[str] = []
     with best_effort(
         "contract pre-flight",
         on_error=lambda exc: log.warning("contract pre-flight skipped: %s", exc),
@@ -5071,6 +5124,7 @@ async def _maybe_contract_preflight(
             judge_only=judge_only,
         )
         set_epoch_preflight(workspace_root, epoch_id, report.to_json())
+        verdict_holder.append(report.verdict)
         # The pre-flight's step (a) IS the A/A calibration; persist the
         # floor too when the epoch has none yet (reload — the calibration
         # hook may have written one after ``epoch_cfg`` was loaded), so the
@@ -5087,19 +5141,33 @@ async def _maybe_contract_preflight(
                 report.noise_floor_max_abs_delta,
             )
         else:
+            # LOUD run-level warning: the achievable signal does not clear the
+            # measured noise floor (``refuse``) or the contract is saturated
+            # (``warn``). Whether this also STOPS the run is the caller's
+            # decision, per the runtime ``preflight_gate`` mode.
             log.warning(
-                "contract pre-flight verdict %r for epoch %s (%s): achievable "
-                "signal %.6g vs noise floor %.6g (degraded point %s → scalar "
-                "%.6g). Recommend-only — the run continues; see the per-round "
-                "health report / `zicato board preflight`.",
-                report.verdict,
+                "CONTRACT PRE-FLIGHT %s — epoch %s (%s): achievable signal "
+                "%.6g vs measured A/A noise floor %.6g (degraded point %s → "
+                "scalar %.6g). Under this contract every duel is decided by "
+                "noise, so no challenger can be distinguished from the "
+                "champion. %s See the per-round health report / "
+                "`zicato board preflight`.",
+                report.verdict.upper(),
                 epoch_id,
                 parent_gen.id,
                 report.signal,
                 report.noise_floor_max_abs_delta,
                 report.degraded_mutation_id,
                 report.degraded_scalar,
+                (
+                    "Set runtime.preflight_gate='refuse' to stop such a run "
+                    "before it spends rounds; strengthen the board / reduce "
+                    "evaluation noise to fix it."
+                    if gate_mode != "refuse"
+                    else "Refusing the run (runtime.preflight_gate='refuse')."
+                ),
             )
+    return verdict_holder[0] if verdict_holder else None
 
 
 def _warn_margin_below_noise_floor(workspace_root: Path, epoch_id: str) -> None:

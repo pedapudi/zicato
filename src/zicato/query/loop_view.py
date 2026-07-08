@@ -94,11 +94,14 @@ def build_optimization_trajectory(paths: WorkspacePaths, epoch_id: str) -> dict[
       with fewer than two resolved scalars.
     * ``noise_floor`` — the epoch's measured A/A floor (or ``None``).
     * ``verdict`` — the UNCERTAINTY-HONEST word the UI renders:
-      ``"improving"`` when not plateaued; ``"plateaued"`` when
-      plateaued and the recent movement is resolvable ABOVE the floor
-      (or no floor was measured); ``"no_signal"`` when plateaued but
-      the window's movement sits at/below the measured floor — the
-      data cannot distinguish that from an A/A re-roll.
+      ``"improving"`` when not plateaued AND the promoted spine actually
+      advanced; ``"plateaued"`` when plateaued and the recent movement is
+      resolvable ABOVE the floor (or no floor was measured); ``"no_signal"``
+      when plateaued but the window's movement sits at/below the measured
+      floor — the data cannot distinguish that from an A/A re-roll — OR when
+      challengers were fielded and NONE promoted while a floor was measured
+      (a 0-promotion, all-Δ-zero run reads as no detectable signal, never
+      "improving"; issue #84).
 
     Degrades to an empty shape (with the floor still attached) on a
     missing index / any sqlite failure — never raises.
@@ -132,7 +135,17 @@ def build_optimization_trajectory(paths: WorkspacePaths, epoch_id: str) -> dict[
     recent_movement = (max(window) - min(window)) if len(window) >= 2 else None
 
     floor = _epoch_noise_floor(paths, epoch_id)
-    if not traj.plateaued:
+    # Challengers were fielded and NONE promoted: the promoted spine is just
+    # the seed, so it has improved nothing. A short spine reads
+    # ``not plateaued`` only because it is too short to plateau (< the plateau
+    # window) — calling that "improving" overstates a loop that is going
+    # nowhere (issue #84: a 0/1 promotion-rate, all-Δ-zero run). With a
+    # MEASURED floor this is the noise-floor-honest "no detectable signal"
+    # (every challenger tied within the A/A spread), not "improving" (DQ7).
+    stuck_no_promotions = traj.challenger_count >= 1 and traj.promoted_count == 0
+    if floor is not None and stuck_no_promotions:
+        verdict = "no_signal"
+    elif not traj.plateaued:
         verdict = "improving"
     elif (
         floor is not None

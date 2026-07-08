@@ -44,13 +44,26 @@ Verdict
   smaller improvements a proposer will offer.
 * ``"ok"`` otherwise.
 
-The verdict is **recommend-only** — it never gates a run. It persists
-onto the epoch record (``config.json``'s additive ``preflight`` field,
-never hashed) and flows into the per-round loop-health report through
-:func:`zicato.health.diagnostics.detect_preflight_verdict`. Surfaces:
-``zicato board preflight`` (manual) and the opt-in epoch-open hook
-(``config.json``: ``"contract_preflight": K``), mirroring how the A/A
-noise-floor calibration is wired.
+The verdict persists onto the epoch record (``config.json``'s additive
+``preflight`` field, never hashed) and flows into the per-round
+loop-health report through
+:func:`zicato.health.diagnostics.detect_preflight_verdict`.
+
+Gating (issue #84). At evolve start the loop measures the pre-flight once
+per epoch (idempotent, best-effort) UNLESS the runtime opts out
+(:attr:`~zicato.core.runtime.RuntimeConfig.preflight_gate` ``== "off"``),
+and acts on the verdict per the gate mode:
+
+* ``"warn"`` (the DEFAULT) — a below-floor / saturated verdict is LOUDLY
+  warned and surfaced in every round's health report, but the run
+  proceeds (the recommend-only philosophy).
+* ``"refuse"`` — additionally raises :class:`PreflightRefusedError` on a
+  ``refuse`` verdict, stopping the run *before* it spends rounds.
+
+Surfaces: ``zicato board preflight`` (manual, always recommend-only) and
+the number of A/A draws K from the epoch-open hook
+(``config.json``: ``"contract_preflight": K``); absent, K defaults to
+:data:`~zicato.tournament.calibration.DEFAULT_CALIBRATION_RUNS`.
 """
 
 from __future__ import annotations
@@ -82,6 +95,21 @@ VERDICT_OK: str = "ok"
 VERDICT_WARN: str = "warn"
 #: The achievable signal is at or below the measured A/A noise floor.
 VERDICT_REFUSE: str = "refuse"
+
+
+class PreflightRefusedError(RuntimeError):
+    """Raised to STOP an evolve run whose contract cannot out-signal its noise.
+
+    Fired only when the operator opted into the HARD gate
+    (:attr:`~zicato.core.runtime.RuntimeConfig.preflight_gate` ``== "refuse"``)
+    AND the pre-flight measured a ``refuse`` verdict — the contract's
+    achievable signal is at or below its own A/A noise floor, so every duel
+    would be decided by noise. The default gate mode (``"warn"``) only warns
+    and never raises this; the run continues. Carried up through
+    ``evolve_n_rounds`` and reported as a clean stop reason (never a
+    traceback), so the operator sees why the run refused *before* rounds burn
+    budget.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -344,6 +372,7 @@ __all__ = [
     "VERDICT_OK",
     "VERDICT_REFUSE",
     "VERDICT_WARN",
+    "PreflightRefusedError",
     "PreflightReport",
     "degraded_content_for",
     "degraded_patch_for",

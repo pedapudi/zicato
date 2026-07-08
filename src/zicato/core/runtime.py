@@ -35,6 +35,17 @@ INFRA_BACKOFF_BASE_S_DEFAULT: float = 30.0
 #: (:attr:`RuntimeConfig.infra_backoff_cap_s`). See the base default above.
 INFRA_BACKOFF_CAP_S_DEFAULT: float = 480.0
 
+#: Valid values for :attr:`RuntimeConfig.preflight_gate`, weakest first.
+#: ``"off"`` — skip the achievable-signal pre-flight entirely (byte-identical
+#: to the pre-#84 behaviour); ``"warn"`` (the DEFAULT) — measure it once per
+#: epoch at evolve start and LOUDLY warn on a below-noise-floor / saturated
+#: verdict, but never stop; ``"refuse"`` — additionally HARD-STOP the run
+#: before spending rounds when the verdict is ``refuse``.
+PREFLIGHT_GATE_MODES: tuple[str, ...] = ("off", "warn", "refuse")
+
+#: Default pre-flight gate mode — measure + warn, never block (recommend-only).
+PREFLIGHT_GATE_DEFAULT: str = "warn"
+
 
 class RoundTokenLedger:
     """ONE round's mutable token accounting for ``max_tokens_per_round``.
@@ -210,6 +221,24 @@ class RuntimeConfig:
     infra_backoff_cap_s:
         Ceiling (seconds) on the exponential infra backoff. Must be
         ``>= 0``.
+    preflight_gate:
+        Achievable-signal pre-flight gate mode (issue #84). One of
+        :data:`PREFLIGHT_GATE_MODES` — ``"off"`` | ``"warn"`` | ``"refuse"``.
+        At evolve start (round 0, once per epoch, idempotent, best-effort)
+        the loop measures the contract's A/A noise floor AND its achievable
+        signal (champion vs a deliberately-degraded copy of itself; see
+        :mod:`zicato.epoch.preflight`). ``"warn"`` (the DEFAULT) LOUDLY warns
+        when the achievable signal does not clear the noise floor (or the
+        contract is saturated) and lets the run proceed — matching the
+        recommend-only philosophy; ``"refuse"`` additionally HARD-STOPS the
+        run (``PreflightRefusedError``) before rounds burn budget on a
+        contract that cannot be optimized; ``"off"`` skips the measurement
+        entirely (byte-identical to the pre-#84 behaviour — the escape hatch
+        for deterministic oracles that assert their own known answer). A
+        RUNTIME tuning knob, NOT part of the frozen evaluation contract —
+        flipping it does not roll the epoch. The legacy
+        ``config.json`` ``"contract_preflight": K`` key still sets the number
+        of A/A draws K; absent, K defaults to ``DEFAULT_CALIBRATION_RUNS``.
     max_tokens_per_round:
         Per-round token budget (WS-H). ``0`` (the DEFAULT) is OFF —
         byte-identical scheduling. When ``>= 1``, the orchestrator mints
@@ -263,6 +292,7 @@ class RuntimeConfig:
     infra_backoff_base_s: float = INFRA_BACKOFF_BASE_S_DEFAULT
     infra_backoff_cap_s: float = INFRA_BACKOFF_CAP_S_DEFAULT
     max_tokens_per_round: int = 0
+    preflight_gate: str = PREFLIGHT_GATE_DEFAULT
     token_ledger: RoundTokenLedger | None = None
     #: The ADK model object (a ``BaseLlm``, typically a ``LiteLlm``) the inner
     #: ADK agents run on, built from a ``models.harness`` *model spec* (model +
@@ -305,6 +335,11 @@ class RuntimeConfig:
                 "RuntimeConfig.max_tokens_per_round must be >= 0, got "
                 f"{self.max_tokens_per_round!r}; use 0 to disable the per-round "
                 "token budget"
+            )
+        if self.preflight_gate not in PREFLIGHT_GATE_MODES:
+            raise ValueError(
+                f"RuntimeConfig.preflight_gate must be one of {PREFLIGHT_GATE_MODES}, "
+                f"got {self.preflight_gate!r}"
             )
 
     def effective_judge_call_llm(self) -> CallLLM:

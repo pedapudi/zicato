@@ -186,6 +186,7 @@ def make_runtime_config(
     from zicato.core.runtime import (  # noqa: PLC0415
         INFRA_BACKOFF_BASE_S_DEFAULT,
         INFRA_BACKOFF_CAP_S_DEFAULT,
+        PREFLIGHT_GATE_DEFAULT,
     )
 
     infra_threshold_raw = runtime_dict.get("infra_abort_round_threshold")
@@ -205,6 +206,13 @@ def make_runtime_config(
     # mints one per round when the knob is on.
     max_tokens_raw = runtime_dict.get("max_tokens_per_round")
     max_tokens_per_round = int(max_tokens_raw) if max_tokens_raw is not None else 0
+
+    # Achievable-signal pre-flight gate (issue #84): opt-in runtime knob from
+    # the same ``runtime`` block. Absent ⇒ the default ``"warn"`` (measure at
+    # evolve start + LOUDLY warn on a below-floor / saturated verdict, never
+    # block). ``"refuse"`` hard-stops such a run; ``"off"`` skips the
+    # measurement. Validated by ``RuntimeConfig.__post_init__``.
+    preflight_gate = str(runtime_dict.get("preflight_gate", PREFLIGHT_GATE_DEFAULT))
 
     # Inner ADK agent model: when ``models.harness`` is a *model spec* (a
     # model string, optionally + endpoint/api_key_env), build the ADK model
@@ -243,6 +251,7 @@ def make_runtime_config(
         infra_backoff_base_s=infra_backoff_base_s,
         infra_backoff_cap_s=infra_backoff_cap_s,
         max_tokens_per_round=max_tokens_per_round,
+        preflight_gate=preflight_gate,
     )
 
 
