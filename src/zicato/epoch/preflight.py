@@ -80,6 +80,7 @@ from zicato.core.mutation import MutationPoint, Patch
 from zicato.tournament.calibration import (
     DEFAULT_CALIBRATION_RUNS,
     NoiseFloor,
+    NoiseFloorInconclusive,
     measure_noise_floor,
 )
 
@@ -281,6 +282,7 @@ async def run_contract_preflight(
     mutation points — with no mutable surface there is nothing to degrade
     (and nothing for an evolve loop to optimize either).
     """
+    from zicato.core.loss import is_infra_abort_cause  # noqa: PLC0415
     from zicato.mutation.applier import apply_patches  # noqa: PLC0415
     from zicato.mutation.enumerator import enumerate_mutations  # noqa: PLC0415
     from zicato.orchestrator import _resolve_mutable_trees  # noqa: PLC0415
@@ -305,6 +307,13 @@ async def run_contract_preflight(
         runs=runs,
         disable_drift=disable_drift,
         judge_only=judge_only,
+        # Void the whole pre-flight rather than persist an outage-derived
+        # floor: a transient endpoint outage during the epoch's first round
+        # must not poison the floor (and, under the hard gate, falsely
+        # disqualify the contract). The caller's ``best_effort`` turns the
+        # raised :class:`NoiseFloorInconclusive` into a skip + re-measure next
+        # round.
+        raise_on_infra_abort=True,
     )
 
     # (b) The scripted-perturbation duel. FIRST enumerated point — the
@@ -345,6 +354,15 @@ async def run_contract_preflight(
             # calibration draws (1000..); a re-run is an idempotent HIT.
             replicate_index=PREFLIGHT_REPLICATE_BASE,
         )
+        # Same discipline as the A/A draws: a degraded-probe infra abort makes
+        # the signal un-measurable, not zero — void the pre-flight rather than
+        # persist a verdict derived from an outage.
+        if any(is_infra_abort_cause(getattr(lp, "abort_cause", None)) for lp in losses.values()):
+            raise NoiseFloorInconclusive(
+                "contract pre-flight: the degraded-perturbation draw hit an infra "
+                "abort (endpoint outage / worker crash); the achievable-signal "
+                "measurement is inconclusive and must not be persisted."
+            )
         agg = aggregate_generation_score(list(losses.values()), weights)
         degraded_scalar = float(agg.get("scalar", 0.0))
 

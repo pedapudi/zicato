@@ -36,11 +36,16 @@ INFRA_BACKOFF_BASE_S_DEFAULT: float = 30.0
 INFRA_BACKOFF_CAP_S_DEFAULT: float = 480.0
 
 #: Valid values for :attr:`RuntimeConfig.preflight_gate`, weakest first.
-#: ``"off"`` — skip the achievable-signal pre-flight entirely (byte-identical
-#: to the pre-#84 behaviour); ``"warn"`` (the DEFAULT) — measure it once per
-#: epoch at evolve start and LOUDLY warn on a below-noise-floor / saturated
-#: verdict, but never stop; ``"refuse"`` — additionally HARD-STOP the run
-#: before spending rounds when the verdict is ``refuse``.
+#: ``"off"`` — do not run the achievable-signal pre-flight (UNLESS a legacy
+#: ``contract_preflight: K`` key explicitly requests it, preserving pre-#84
+#: opt-in behaviour); with no such key — the common case, incl. deterministic
+#: oracles — ``"off"`` runs no pre-flight at all; ``"warn"`` (the DEFAULT) —
+#: measure it once per epoch at evolve start and LOUDLY warn on a
+#: below-noise-floor / saturated verdict, but never stop; ``"refuse"`` —
+#: additionally HARD-STOP the run before spending rounds when the verdict is
+#: ``refuse``. Cost: ``"warn"``/``"refuse"`` add ~K+1 champion board
+#: evaluations (the A/A draws + one degraded probe) once per epoch at evolve
+#: start; on a real endpoint that is real budget, counted against round 0.
 PREFLIGHT_GATE_MODES: tuple[str, ...] = ("off", "warn", "refuse")
 
 #: Default pre-flight gate mode — measure + warn, never block (recommend-only).
@@ -232,13 +237,21 @@ class RuntimeConfig:
         contract is saturated) and lets the run proceed — matching the
         recommend-only philosophy; ``"refuse"`` additionally HARD-STOPS the
         run (``PreflightRefusedError``) before rounds burn budget on a
-        contract that cannot be optimized; ``"off"`` skips the measurement
-        entirely (byte-identical to the pre-#84 behaviour — the escape hatch
-        for deterministic oracles that assert their own known answer). A
-        RUNTIME tuning knob, NOT part of the frozen evaluation contract —
-        flipping it does not roll the epoch. The legacy
+        contract that cannot be optimized; ``"off"`` runs no pre-flight —
+        UNLESS a legacy ``contract_preflight: K`` key is present (which was the
+        pre-#84 opt-in, so ``"off"`` preserves that exact behaviour). With no
+        such key — the common case, incl. deterministic oracles that assert
+        their own known answer — ``"off"`` is byte-identical to pre-#84 (no
+        measurement). A RUNTIME tuning knob, NOT part of the frozen evaluation
+        contract — flipping it does not roll the epoch. The legacy
         ``config.json`` ``"contract_preflight": K`` key still sets the number
         of A/A draws K; absent, K defaults to ``DEFAULT_CALIBRATION_RUNS``.
+        COST: under ``"warn"``/``"refuse"`` the once-per-epoch measurement runs
+        ~K+1 champion board evaluations (the A/A draws + one degraded probe) at
+        evolve start; it is idempotent (persisted; a resume re-reads the record)
+        and skipped entirely on any infra abort (an outage never disqualifies a
+        contract), but on a real endpoint it is real budget counted against
+        round 0.
     max_tokens_per_round:
         Per-round token budget (WS-H). ``0`` (the DEFAULT) is OFF —
         byte-identical scheduling. When ``>= 1``, the orchestrator mints

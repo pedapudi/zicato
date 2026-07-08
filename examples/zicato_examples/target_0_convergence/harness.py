@@ -361,6 +361,19 @@ async def _emit_declared_judge_drifts(
     whole block, so a judge-free board (the convergence oracle's) emits a
     byte-identical event stream. Best-effort — a judge that raises never
     breaks the deterministic run. Returns the advanced sequence counter.
+
+    FIDELITY CAVEAT — this proves judge *plumbing*, not *firing fidelity*.
+    target_0 evaluates each judge ONCE over the synthesised ``final_output``;
+    a real ADK run dispatches judges per reasoning observation over incremental
+    chain-of-thought (which the deterministic harness has none of). So a judge
+    that fires here need not fire in a real run (and vice versa), and the count
+    is ≤1 per run where a real (esp. multi-turn) run can accumulate N>1. Use
+    target_0 to verify a declared judge is WIRED (invoked → paired frames →
+    reducer folds a ``custom:<name>`` metric), NOT to validate a judge's
+    firing decision, per-judge weighting, or severity/count magnitude. Note
+    also that an INLINE judge here consults ``config.effective_judge_call_llm``
+    — a live model in a real evolve run; the oracle board stays judge-free /
+    python-mode to keep G3's no-LLM guarantee.
     """
     judges = tuple(getattr(entry, "judges", ()) or ())
     if not judges:
