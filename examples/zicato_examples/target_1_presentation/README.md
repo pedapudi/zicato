@@ -45,7 +45,19 @@ Two scoring contracts ship side by side. `scoring.json` carries no
 per round). `scoring.racing.json` adds a `tournament` block selecting the
 **racing** (successive-halving) structure — a four-challenger field that
 the strategy races on escalating board slices before the survivor faces
-the champion through the unchanged promote gate. See
+the champion through the unchanged promote gate.
+
+Both carry `per_judge_weights` for the declared inline judges
+(`no_fabricated_numbers`, `incorporates_feedback`, `audience_appropriate`)
+so those process judges actually MOVE the scalar when they fire. Together
+with `mocks.harness_llm` now reading the mutated instruction and
+`mocks.aux_llm`'s judge branch having teeth, a researcher-instruction
+mutation changes the output and is scored — the contract can distinguish a
+challenger from its champion (issue #84; before, every challenger tied and
+nothing could promote). `tests/test_example_target_1_discriminates.py`
+proves this at the scoring level; `RUN.md → "Why it now discriminates"`
+documents it and the remaining live-stack (`LLMPlanner` passthrough) gap.
+See
 [`RUN.md` → "Running a non-gauntlet tournament"](./RUN.md) for the two run
 recipes (point `evolve` at `scoring.racing.json`, or pass
 `--tournament-structure racing` flags) and

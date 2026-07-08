@@ -10,6 +10,12 @@
     "confabulation_risk": 2.0,
     "looping_reasoning": 1.5
   },
+  "per_judge_weights": {
+    "file_findability": 2.0,
+    "no_fabricated_numbers": 3.0,
+    "incorporates_feedback": 1.5,
+    "audience_appropriate": 1.5
+  },
   "plan_revision_weight": 0.5,
   "runtime_weight": 0.0,
   "promote_margin": 0.01,

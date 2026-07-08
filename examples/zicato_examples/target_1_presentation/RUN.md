@@ -276,20 +276,51 @@ round:
 ]
 ```
 
-Both rounds are rejected on purpose: the deterministic mock means
-parent and child produce identical transcripts, so the tournament
-gate fires "insufficient margin". The end-to-end plumbing — propose →
-apply → snapshot → tournament → persist → journal — is exercised in
-full; only the score delta is necessarily zero.
+The end-to-end plumbing — propose → apply → snapshot → tournament →
+persist → journal — is exercised in full. The `delta_scalar: 0.0` you
+see through the *real goldfive/ADK stack* is now due SOLELY to the
+`LLMPlanner` passthrough gap (§"Limits"), NOT to a flat contract: the
+contract itself now discriminates (§"Why it now discriminates").
 
 The mock `aux_llm` rotates the proposed patch across rounds:
 
-* `v1` patches `researcher_instruction` (compact bullets).
+* `v1` patches `researcher_instruction` (compact bullets / citations).
 * `v2` patches `coordinator_instruction` (sharper routing).
 
 Both patches land in distinct generations and survive the post-apply
-validator, so the snapshot diff is real even when the gate refuses
-the promotion.
+validator, so the snapshot diff is real.
+
+## Why it now discriminates (issue #84)
+
+The bundled contract used to be **un-optimizable**: `mocks.harness_llm`
+discarded the system prompt, so an instruction mutation could not change
+a single byte of output, and `mocks.aux_llm`'s judge branch was a rubber
+stamp (always `pass=True`), so every declared inline judge produced zero
+`custom:<name>` drift. Every challenger tied its champion
+(`delta_scalar = 0.0`) and nothing could ever promote — yet the run
+reported itself healthy and "improving".
+
+Part 3 of the fix makes the contract able to tell a challenger from its
+champion:
+
+1. **`harness_llm` now reads `system`.** The mutated researcher
+   instruction changes the output: a baseline instruction lets the writer
+   slip in an uncited, fabricated figure; the proposer's citation-demanding
+   challenger instruction replaces it with a cited figure.
+2. **The mock judge now has TEETH.** `aux_llm`'s judge branch fires
+   (`pass=False`) on the fabricated-figure marker and passes on cited
+   output, so the declared `no_fabricated_numbers` (and sibling) inline
+   judges actually emit a `custom:<name>` drift.
+3. **The contract scores it.** `scoring.json` / `scoring.racing.json` add
+   `per_judge_weights` for the inline judges, so the champion whose output
+   trips `no_fabricated_numbers` scores strictly worse than the
+   citation-demanding challenger — by well over `promote_margin`.
+
+`tests/test_example_target_1_discriminates.py` proves this end to end at
+the SCORING level (no live model, no ADK stack): the real mock output +
+real judge + real scoring aggregation yield a promotable `delta_scalar`.
+This rolls the epoch (the scoring contract changed) — expected for an
+example.
 
 ## Where the artifacts live
 
@@ -354,23 +385,30 @@ Useful spot checks:
 
 These are deliberate:
 
+* **The contract now discriminates; the remaining zero-delta is the
+  passthrough gap.** Since issue #84 the mock harness reads the
+  instruction, the judge has teeth, and the scoring weights the inline
+  judges (§"Why it now discriminates") — so at the SCORING level a
+  researcher-instruction challenger promotes (proven deterministically by
+  `tests/test_example_target_1_discriminates.py`). What is STILL open is
+  the real goldfive/ADK path below: the harness's now-instruction-sensitive
+  output has to reach `final_output` intact for the *live* stack to score
+  the difference, and today it does not.
 * **`harness_llm` returns prose, not JSON.** goldfive's `LLMPlanner`
   expects a planner-shaped JSON envelope; the mock returns slide-
   shaped prose. The planner falls back to its passthrough behaviour
   and emits the warnings you see on stderr ("JSON parse failed: ...").
   The downstream sinks still record `events.jsonl` so the reducer
-  produces a `LossProfile` per entry — the values are uniformly zero,
-  but the artifact is real.
+  produces a `LossProfile` per entry — but the passthrough means the
+  scored `final_output` does not carry the harness's instruction-sensitive
+  text, so the *live-stack* delta stays zero. Closing this (a
+  planner-JSON-shaped mock harness) is the remaining work to make the
+  live run promote; the contract is already ready for it.
 * **Multi-turn entries abort with `TypeError`.** The scripted /
   emulated drivers expect a richer harness response than the mock
   produces; they record an aborted `RunResult` with the abort reason
   on the events stream. The reducer treats those as a zero-signal run
   and the tournament continues.
-* **Both rounds are rejected.** The gate's `promote_margin` (`0.01`
-  from `scoring.json`) means a child needs a strictly-better scalar to
-  promote. The mock's deterministic outputs mean parent and child are
-  byte-equivalent → zero delta → rejection. This is the correct
-  behaviour, not a bug.
 * **`analysis.md` is the stub form.** The CLI's `epoch close` does not
   thread a real auxiliary callable through; the close path writes the
   "_no auxiliary LLM was supplied_" stub plus the journal snapshot.

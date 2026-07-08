@@ -89,33 +89,72 @@ _HARNESS_DEFAULT = (
 )
 
 
-async def harness_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
-    """Return a canned response shaped like the agent's expected output.
+#: The mutation surface changes the OUTPUT (issue #84). A baseline researcher
+#: instruction lets the writer slip in an uncited, fabricated figure; the
+#: proposer's improved instruction (which demands a source citation per claim)
+#: replaces it with a cited figure that only reuses numbers the user provided.
+#: The ``no_fabricated_numbers`` process judge keys on the ``unverified
+#: estimate`` marker, so the two outputs score DIFFERENTLY — the whole point
+#: of a contract that can discriminate a challenger from its champion.
+_FABRICATED_METRIC = "Also: churn improved to 2.1% this quarter (unverified estimate)."
+_CITED_METRIC = "Net revenue retention held at 118% (source: the Q3 figures you provided)."
 
-    Dispatches on lowercase-substring matches in ``user``. The agent's
-    coordinator / researcher / writer all read this same callable; we
-    don't try to play a faithful multi-agent simulation, we just emit
-    text that exercises the predicates and produces a non-trivial
-    transcript for the reducer to score.
+#: Substrings that mark a researcher instruction as carrying the proposer's
+#: quality directive (a citation / compact-bullets demand). The v0 baseline
+#: instruction carries none of them; the improved challenger instructions do,
+#: so ``system`` — the mutated instruction — now changes the produced text.
+_QUALITY_DIRECTIVE_MARKERS: tuple[str, ...] = (
+    "citation",
+    "one factual claim",
+    "compact bullet",
+    "under twelve bullets",
+    "do not assert a metric",
+)
+
+
+def instruction_demands_citations(system: str) -> bool:
+    """Whether the (mutated) instruction carries the proposer's quality directive.
+
+    Public so the deterministic verification test can drive the same
+    baseline-vs-improved discrimination the harness applies.
+    """
+    lowered = system.lower()
+    return any(marker in lowered for marker in _QUALITY_DIRECTIVE_MARKERS)
+
+
+async def harness_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
+    """Return a canned response whose QUALITY depends on the instruction.
+
+    Dispatches on lowercase-substring matches in ``user`` for the base deck,
+    then — crucially — reads ``system`` (the agent's instruction, the
+    mutation surface) to decide whether the writer slips in a fabricated
+    metric or cites a provided figure. Before issue #84 this mock discarded
+    ``system`` entirely, so no instruction mutation could change a single byte
+    of output and every challenger tied its champion; reading it here is what
+    makes a mutation to the surface OBSERVABLE (and therefore scorable).
 
     Parameters
     ----------
     system, user, model:
-        Forwarded by :func:`goldfive.run` and the in-process inner
-        agents. Only ``user`` is inspected. ``system`` and ``model``
-        are accepted to satisfy the
-        ``Callable[[str, str, str], Awaitable[str]]`` contract.
+        Forwarded by :func:`goldfive.run` and the in-process inner agents.
+        ``system`` is the (possibly mutated) agent instruction; ``model`` is
+        accepted to satisfy the ``Callable[[str, str, str], Awaitable[str]]``
+        contract and ignored.
     _kwargs:
         Swallowed. Callers occasionally pass extras (e.g. a
         ``response_format`` hint); the mock ignores them so the smoke
         test does not break when a new kwarg is added upstream.
     """
-    _ = system, model
+    _ = model
     lowered = user.lower()
+    base = _HARNESS_DEFAULT
     for needle, response in _HARNESS_RESPONSES.items():
         if needle in lowered:
-            return response
-    return _HARNESS_DEFAULT
+            base = response
+            break
+    # The mutation surface decides the factual grounding of the deck.
+    tail = _CITED_METRIC if instruction_demands_citations(system) else _FABRICATED_METRIC
+    return f"{base}\n{tail}"
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +171,10 @@ _PROPOSER_FINGERPRINT = "improvement-proposer"
 _PROPOSER_FINGERPRINT_FALLBACK = "JSON object describing one experiment"
 _JUDGE_FINGERPRINT_PASS = "{'pass': bool"
 _JUDGE_FINGERPRINT_REASON = "pass"  # broad — judges vary; we narrow below
+#: The marker a firing process judge keys on — the ``_FABRICATED_METRIC``
+#: tail the baseline (non-citation-demanding) researcher instruction produces.
+#: Its absence (the challenger's cited output) is what makes the judge pass.
+_JUDGE_VIOLATION_MARKER = "unverified estimate"
 _EMULATOR_FINGERPRINT = "You are a simulated user"
 _ANALYSIS_FINGERPRINT_HEADLINE = "Headline movements"
 _ANALYSIS_FINGERPRINT_REVIEWER = "expert reviewer summarizing one epoch"
@@ -434,6 +477,19 @@ async def aux_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
     if _JUDGE_FINGERPRINT_PASS in system or (
         "pass" in sys_lower and "reason" in sys_lower and "json" in sys_lower
     ):
+        # A judge with TEETH (issue #84). The declared inline judges
+        # (no_fabricated_numbers, incorporates_feedback, audience_appropriate)
+        # receive the run's reasoning/output in ``user``. Before the fix this
+        # branch unconditionally returned pass=True (a rubber stamp), so a
+        # declared judge NEVER emitted a custom:<name> drift and loop-health
+        # flagged it "never fired". Now it VIOLATES (pass=False) when the
+        # output carries the uncited/fabricated-metric marker the baseline
+        # instruction produces — so the judge fires on the champion and passes
+        # on the citation-demanding challenger, moving the scalar.
+        if _JUDGE_VIOLATION_MARKER in user.lower():
+            return json.dumps(
+                {"pass": False, "reason": "output asserts an uncited/fabricated metric"}
+            )
         return json.dumps({"pass": True, "reason": "ok (mock)"})
 
     # 5. Fallback. Some call sites might not match — return a short
