@@ -46,6 +46,13 @@ class _FakeFinding:
 
     severity: str
     message: str
+    #: The real ``HealthFinding`` carries a stable ``code`` + ``summary`` +
+    #: structured ``detail``; defaulted here so the many existing tests that
+    #: build ``_FakeFinding(severity=, message=)`` keep working, while the
+    #: dead-judge warning test can set them.
+    code: str = ""
+    summary: str = ""
+    detail: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -213,6 +220,65 @@ def test_evolve_once_critical_finding_logs_warning(
     ]
     assert any("LOOP HEALTH CRITICAL" in m for m in warnings)
     assert any("no usable signal" in m for m in warnings)
+
+
+def test_evolve_once_dead_judge_finding_logs_loud_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A ``dead_judge`` finding is promoted to a LOUD run-level WARNING (issue #84).
+
+    A board-declared judge that produced no metric across the whole
+    generation is only a soft ``warning`` in the health report — easy to
+    miss. The orchestrator must surface it on the terminal so an operator
+    cannot mistake a never-invoked / unreachable judge for one that ran and
+    passed.
+    """
+    calls: list[tuple[Any, ...]] = []
+    health = _FakeLoopHealth(
+        healthy=False,
+        findings=(
+            _FakeFinding(
+                severity="WARNING",
+                message="2 board-declared judge(s) never fired",
+                code="dead_judge",
+                summary="2 board-declared judge(s) never fired across all 3 runs",
+                detail={"dead_judges": ["audience_appropriate", "no_fabricated_numbers"]},
+            ),
+        ),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="zicato.orchestrator"):
+        _, _, outcome = _run_one_round(monkeypatch, tmp_path, health=health, calls=calls)
+
+    # A dead judge is a WARNING, not a CRITICAL — the loop is not "no signal".
+    assert outcome.health_critical is False
+
+    warnings = [
+        rec.getMessage()
+        for rec in caplog.records
+        if rec.levelno >= logging.WARNING and rec.name == "zicato.orchestrator"
+    ]
+    assert any("DECLARED JUDGE NEVER FIRED" in m for m in warnings), warnings
+    # The dead judges are named so the operator knows which to fix.
+    assert any("audience_appropriate" in m for m in warnings)
+
+
+def test_evolve_once_no_dead_judge_warning_when_absent(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No ``dead_judge`` finding ⇒ no loud dead-judge warning."""
+    calls: list[tuple[Any, ...]] = []
+    health = _FakeLoopHealth(
+        healthy=True,
+        findings=(_FakeFinding(severity="INFO", message="all good", code="no_expectations"),),
+    )
+    with caplog.at_level(logging.WARNING, logger="zicato.orchestrator"):
+        _run_one_round(monkeypatch, tmp_path, health=health, calls=calls)
+    assert not any("DECLARED JUDGE NEVER FIRED" in rec.getMessage() for rec in caplog.records)
 
 
 def test_evolve_once_critical_persisted_in_report(

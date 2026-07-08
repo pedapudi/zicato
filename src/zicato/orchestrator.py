@@ -5250,6 +5250,14 @@ def _assess_and_persist_loop_health(
 
     summary, has_critical = _summarise_loop_health(health)
 
+    # Promote a "declared judge never fired" finding from a soft, buried
+    # health-report entry to a LOUD, operator-visible run-level warning:
+    # a judge declared on the board that produced no metric across a whole
+    # generation is indistinguishable, to the operator, from one that ran
+    # and passed — so it must be surfaced on the terminal, not only in the
+    # round's health JSON (issue #84).
+    _warn_dead_judges(epoch_id, round_n, health)
+
     with best_effort(
         "loop-health report write",
         on_error=lambda exc: log.debug(
@@ -5360,6 +5368,47 @@ def _warn_loop_no_signal(epoch_id: str, round_n: int, summary: str) -> None:
         round_n,
         summary or "degenerate scoring",
     )
+
+
+def _warn_dead_judges(epoch_id: str, round_n: int, health: Any) -> None:
+    """Emit a prominent stderr WARNING for any board-declared judge that never fired.
+
+    The ``dead_judge`` loop-health finding (a board-declared process judge
+    that produced no ``custom:<name>`` metric across the whole epoch) is a
+    recommend-only ``warning`` in the health report — easy to miss in the
+    per-round JSON. This lifts it to a run-level operator-facing WARNING on
+    the terminal: a declared judge that contributes no metric is either
+    mis-wired (the events it keys on are never emitted / the harness never
+    invokes it) or its criterion is unreachable, and an operator cannot
+    tell it apart from a judge that ran and passed. Fired every round the
+    finding is present (idempotent, best-effort).
+
+    Tolerant of the health sibling's exact shape: it scans ``.findings``
+    for the stable ``code == "dead_judge"`` and reads the finding's
+    ``detail["dead_judges"]`` / ``summary`` defensively, so a schema drift
+    never raises here.
+    """
+    for finding in getattr(health, "findings", ()) or ():
+        if str(getattr(finding, "code", "") or "") != "dead_judge":
+            continue
+        detail = getattr(finding, "detail", None)
+        dead = detail.get("dead_judges") if isinstance(detail, dict) else None
+        named = ", ".join(repr(str(n)) for n in dead) if isinstance(dead, list | tuple) else ""
+        summary = str(getattr(finding, "summary", "") or "")
+        log.warning(
+            "DECLARED JUDGE NEVER FIRED — epoch %s round %d: %s%s "
+            "A judge declared on the board produced no metric across the whole "
+            "generation: it is either mis-wired (the events it keys on are never "
+            "emitted, or the harness never invokes it) or its criterion is "
+            "unreachable — an operator cannot tell it apart from a judge that ran "
+            "and passed. Confirm each judge is wired to events that fire and its "
+            "criterion is reachable (see zicato-design-judges).",
+            epoch_id,
+            round_n,
+            summary or "a declared judge never fired",
+            f" (dead: {named})" if named else "",
+        )
+        return
 
 
 def _atomic_write_text(path: Path, text: str) -> None:

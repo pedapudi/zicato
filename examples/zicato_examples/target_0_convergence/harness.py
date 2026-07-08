@@ -277,6 +277,136 @@ def _drift_event(run_id: str, sequence: int, token: str) -> Any:
     return evt
 
 
+#: Map a judge verdict's severity string to the goldfive proto enum name.
+#: A judge declares its severity as ``info`` / ``warning`` / ``critical``;
+#: the paired ``custom`` drift frame carries it onto the wire so the
+#: reducer weighs it through ``severity_weights`` exactly like a real run.
+_JUDGE_SEVERITY_TO_PROTO = {
+    "info": "DRIFT_SEVERITY_INFO",
+    "warning": "DRIFT_SEVERITY_WARNING",
+    "critical": "DRIFT_SEVERITY_CRITICAL",
+}
+
+
+def _judge_drift_event_pair(
+    run_id: str,
+    judgement_seq: int,
+    drift_seq: int,
+    judge_name: str,
+    severity_str: str,
+    detail: str,
+) -> tuple[Any, Any]:
+    """Build the paired ``judgement_emitted`` + ``custom`` ``drift_detected`` frames.
+
+    A process judge that finds a violation emits a drift-flavoured
+    ``JudgementEmitted`` (``verdict_kind="drift"``, carrying ``judge_name``)
+    IMMEDIATELY followed by a ``custom``-kind ``DriftDetected`` — the exact
+    contiguous pair the reducer folds into a ``custom:<judge_name>``
+    :class:`~zicato.core.types.DriftCount` (see
+    :func:`zicato.telemetry.reducer.reduce_loss`). This is what goldfive
+    publishes on a real ADK run; the deterministic harness synthesises the
+    identical wire shape so declared judges are exercised end-to-end with
+    NO live LLM.
+    """
+    from goldfive.events import new_event  # noqa: PLC0415
+    from goldfive.pb.goldfive.v1 import types_pb2  # noqa: PLC0415
+
+    sev_enum = types_pb2.DriftSeverity.Value(
+        _JUDGE_SEVERITY_TO_PROTO.get(severity_str, "DRIFT_SEVERITY_INFO")
+    )
+    custom_kind = types_pb2.DriftKind.Value("DRIFT_KIND_CUSTOM")
+
+    # On ``judgement_emitted`` these are STRING fields (the reducer pairs on
+    # ``verdict_kind`` + ``judge_name``); on ``drift_detected`` they are the
+    # DriftKind / DriftSeverity ENUMs (like every other drift frame).
+    judgement = new_event(run_id, judgement_seq)
+    judgement.judgement_emitted.judge_name = judge_name
+    judgement.judgement_emitted.verdict_kind = "drift"
+    judgement.judgement_emitted.drift_kind = "custom"
+    judgement.judgement_emitted.severity = severity_str
+    if detail:
+        judgement.judgement_emitted.detail = detail
+
+    drift = new_event(run_id, drift_seq)
+    drift.drift_detected.kind = custom_kind
+    drift.drift_detected.severity = sev_enum
+    if detail:
+        drift.drift_detected.detail = detail
+    return judgement, drift
+
+
+async def _emit_declared_judge_drifts(
+    *,
+    entry: Any,
+    config: Any,
+    final_output: str,
+    run_id: str,
+    seq: int,
+    emit: Any,
+    sink_list: list[Any],
+) -> int:
+    """Invoke each of ``entry.judges`` on the run and emit paired frames.
+
+    The deterministic harness historically ignored ``entry.judges`` — it
+    hand-emitted only its own token drifts — so a board that declared a
+    process judge produced ZERO ``custom:<name>`` counts and loop-health
+    flagged the judge "never fired" even though the harness never invoked
+    it. This closes that invocation gap: every declared judge is built
+    through the SAME :func:`zicato.judge_runtime.judge_spec_to_goldfive`
+    seam a real ADK run uses and evaluated once over the synthesised
+    output; a drift-flavoured verdict is written to the wire as the paired
+    ``judgement_emitted`` + ``custom`` ``drift_detected`` frames.
+
+    Additive by construction: an entry with no declared judges skips the
+    whole block, so a judge-free board (the convergence oracle's) emits a
+    byte-identical event stream. Best-effort — a judge that raises never
+    breaks the deterministic run. Returns the advanced sequence counter.
+    """
+    judges = tuple(getattr(entry, "judges", ()) or ())
+    if not judges:
+        return seq
+
+    # Lazy imports: only a board that declares a judge pays for them, so
+    # `zicato --help` and the judge-free oracle path stay untouched.
+    from goldfive.judges import JudgeContext  # noqa: PLC0415
+
+    from zicato.judge_runtime import judge_spec_to_goldfive  # noqa: PLC0415
+
+    # Inline judges audit reasoning text via the auxiliary/judge endpoint;
+    # python judges are deterministic and ignore it. A missing accessor
+    # (an ad-hoc config) degrades to no aux — inline judges then no-signal
+    # (they catch their own errors), python judges still fire.
+    aux_accessor = getattr(config, "effective_judge_call_llm", None)
+    aux_call_llm = aux_accessor() if callable(aux_accessor) else None
+    ctx = JudgeContext(reasoning_text=final_output, transcript=(final_output,))
+
+    for spec in judges:
+        try:
+            live_judge = judge_spec_to_goldfive(spec, aux_call_llm)
+            verdict = await live_judge.evaluate(ctx)
+        except Exception as exc:  # noqa: BLE001 — a judge must never break a run
+            import logging  # noqa: PLC0415
+
+            logging.getLogger(__name__).debug(
+                "target_0 harness: judge %r evaluate raised %s; skipping",
+                getattr(spec, "name", "?"),
+                exc,
+            )
+            continue
+        if not getattr(verdict, "drift_emitted", False):
+            continue  # the judge ran and found nothing — not "never fired"
+        judge_name = str(getattr(live_judge, "name", "") or getattr(spec, "name", "") or "")
+        severity_str = str(getattr(verdict, "severity", "") or "info")
+        detail = str(getattr(verdict, "detail", "") or "")
+        judgement_evt, drift_evt = _judge_drift_event_pair(
+            run_id, seq + 1, seq + 2, judge_name, severity_str, detail
+        )
+        await emit(sink_list, judgement_evt)
+        await emit(sink_list, drift_evt)
+        seq += 2
+    return seq
+
+
 class _PolicySession:
     """One loaded generation: synthesise output + frames from the policy."""
 
@@ -331,6 +461,19 @@ class _PolicySession:
                 for token in tokens:
                     seq += 1
                     await emit(sink_list, _drift_event(run_id, seq, token))
+                # Invoke any board-declared process judges over the run's
+                # synthesised output and emit their paired judgement +
+                # custom-drift frames. No-op (byte-identical) when the entry
+                # declares no judges, so the convergence oracle is unaffected.
+                seq = await _emit_declared_judge_drifts(
+                    entry=entry,
+                    config=config,
+                    final_output=final_output,
+                    run_id=run_id,
+                    seq=seq,
+                    emit=emit,
+                    sink_list=sink_list,
+                )
                 seq += 1
                 await emit(
                     sink_list,
