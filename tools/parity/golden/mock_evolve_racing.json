@@ -48,7 +48,7 @@
         "holdout_loss": 0.4,
         "match_record": [
           {
-            "delta_scalar": -1.6,
+            "delta_scalar": -1.5999999999999999,
             "match_id": "rung0_m0",
             "opponent": "v0",
             "won": true
@@ -72,7 +72,7 @@
         "pass_rate_delta": 0.0,
         "ran_at": "<TS>",
         "rejection_reason": "",
-        "scalar_score_delta": -1.6,
+        "scalar_score_delta": -1.5999999999999999,
         "structure": "racing",
         "tournament_decision": "promoted",
         "train_loss": 0.4
@@ -123,7 +123,7 @@
         "holdout_loss": null,
         "match_record": [
           {
-            "delta_scalar": -1.2,
+            "delta_scalar": -1.1999999999999997,
             "match_id": "rung0_m1",
             "opponent": "v0",
             "won": true
@@ -141,10 +141,10 @@
         "pass_rate_delta": 0.0,
         "ran_at": "<TS>",
         "rejection_reason": "",
-        "scalar_score_delta": -1.2,
+        "scalar_score_delta": -1.1999999999999997,
         "structure": "racing",
         "tournament_decision": "rejected",
-        "train_loss": 0.8
+        "train_loss": 0.8000000000000002
       },
       "parent_generation_id": "v0",
       "patch_ids": [
@@ -245,7 +245,7 @@
         "holdout_loss": null,
         "match_record": [
           {
-            "delta_scalar": -0.3999999999999999,
+            "delta_scalar": -0.3999999999999997,
             "match_id": "rung0_m3",
             "opponent": "v0",
             "won": true
@@ -257,10 +257,10 @@
         "pass_rate_delta": 0.0,
         "ran_at": "<TS>",
         "rejection_reason": "",
-        "scalar_score_delta": -0.3999999999999999,
+        "scalar_score_delta": -0.3999999999999997,
         "structure": "racing",
         "tournament_decision": "rejected",
-        "train_loss": 1.6
+        "train_loss": 1.6000000000000003
       },
       "parent_generation_id": "v0",
       "patch_ids": [
@@ -297,12 +297,12 @@
           "pass_fail": true,
           "score": 1.0
         },
-        "transformers_lay_audience": {
+        "q3_metrics_outline": {
           "drift_loss": 2.0,
           "pass_fail": true,
           "score": 1.0
         },
-        "waffles_revision_scripted": {
+        "transformers_lay_audience": {
           "drift_loss": 2.0,
           "pass_fail": true,
           "score": 1.0
@@ -351,12 +351,12 @@
           "pass_fail": true,
           "score": 1.0
         },
-        "transformers_lay_audience": {
+        "q3_metrics_outline": {
           "drift_loss": 0.4,
           "pass_fail": true,
           "score": 1.0
         },
-        "waffles_revision_scripted": {
+        "transformers_lay_audience": {
           "drift_loss": 0.4,
           "pass_fail": true,
           "score": 1.0
@@ -400,12 +400,12 @@
           "pass_fail": true,
           "score": 1.0
         },
-        "transformers_lay_audience": {
+        "q3_metrics_outline": {
           "drift_loss": 0.8,
           "pass_fail": true,
           "score": 1.0
         },
-        "waffles_revision_scripted": {
+        "transformers_lay_audience": {
           "drift_loss": 0.8,
           "pass_fail": true,
           "score": 1.0
@@ -430,8 +430,8 @@
     },
     "v3": {
       "drift_loss_mean": 1.2,
-      "entry_count": 2,
-      "expectation_count": 2,
+      "entry_count": 3,
+      "expectation_count": 3,
       "generation_id": "v3",
       "mean_score": 1.0,
       "namespace_aggregates": {
@@ -444,6 +444,11 @@
       },
       "pass_rate": 1.0,
       "per_entry": {
+        "q3_metrics_outline": {
+          "drift_loss": 1.2,
+          "pass_fail": true,
+          "score": 1.0
+        },
         "transformers_lay_audience": {
           "drift_loss": 1.2,
           "pass_fail": true,
@@ -468,14 +473,14 @@
       "scalar_provenance": "builtin"
     },
     "v4": {
-      "drift_loss_mean": 1.6,
-      "entry_count": 2,
-      "expectation_count": 2,
+      "drift_loss_mean": 1.6000000000000003,
+      "entry_count": 3,
+      "expectation_count": 3,
       "generation_id": "v4",
       "mean_score": 1.0,
       "namespace_aggregates": {
         "cost:": 0.0,
-        "drift:": 1.6,
+        "drift:": 1.6000000000000003,
         "latency:": 0.0,
         "output:": 0.0,
         "rubric:": -0.0,
@@ -483,6 +488,11 @@
       },
       "pass_rate": 1.0,
       "per_entry": {
+        "q3_metrics_outline": {
+          "drift_loss": 1.6,
+          "pass_fail": true,
+          "score": 1.0
+        },
         "transformers_lay_audience": {
           "drift_loss": 1.6,
           "pass_fail": true,
@@ -494,10 +504,10 @@
           "score": 1.0
         }
       },
-      "scalar": 1.6,
+      "scalar": 1.6000000000000003,
       "scalar_components": {
         "cost": 0.0,
-        "drift": 1.6,
+        "drift": 1.6000000000000003,
         "latency": 0.0,
         "output": 0.0,
         "pass": 0.0,
