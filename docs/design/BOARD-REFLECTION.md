@@ -16,9 +16,20 @@
 > (`judge_runtime/reliability.py`, CLI `zicato board judges --test-retest`),
 > the placebo arm, the per-round `RoundLog`, per-judge loss decomposition on
 > disk (`LossProfile.per_judge_loss`), and the reserved replicate-base ledger.
-> **In build**: the run-artifact capture fix (result.json + judge_io.jsonl),
-> the `reflection/` engine (corpus, adjudicator, scorecards, findings),
-> `zicato reflect`, and the console Instrument lens.
+> **Shipped since (the capture + corpus tiers)**: the run-artifact capture fix
+> (`result.json` + `judge_io.jsonl` with the fidelity ladder, R1), and the
+> `reflection/` package's **corpus + pillars 1-2** (R2) — `reflection/plan.py`
+> (pre-registered `plan.json` with the stop/resume `executed` flag),
+> `reflection/corpus.py` (passive `ingest_lineage` referencing lineage
+> artifacts with zero LLM, plus the active `run_corpus` scheduler at
+> `REFLECTION_REPLICATE_BASE = 5000 + j`, infra-abort-voided and
+> cache-idempotent), and `reflection/analysis.py` (pure pillar-1 reliability —
+> consumed noise floor, seeded-bootstrap decision-flip, `detect_noisy_judge`-fed
+> judge self-consistency, cited placebo — and pillar-2 discrimination —
+> per-entry differentiation, entry×candidate matrix, greedy Pearson redundancy
+> clustering, closed-form power analysis, coverage).
+> **In build**: the `reflection/` engine's adjudicator + scorecards + findings
+> (pillars 3-4), `zicato reflect`, and the console Instrument lens.
 > **Endpoint-gated** (needs operator go-ahead + a live endpoint): live
 > meta-judge adjudication, run-twice decision-flip validation, the "quick
 > judge audit" preflight extension, the builder Validate panel, and the full

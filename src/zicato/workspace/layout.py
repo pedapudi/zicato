@@ -142,6 +142,37 @@ class WorkspaceLayout:
         """One epoch's ``generations/`` directory."""
         return self.epoch_dir(epoch_id) / "generations"
 
+    # -- board reflection ----------------------------------------------------
+
+    def reflections_dir(self, epoch_id: str) -> Path:
+        """One epoch's board-reflection subtree (``reflections/``).
+
+        Holds one sub-directory per reflection run, keyed by its
+        ``reflection_id`` — the frozen observation corpus + analysis a
+        board-reflection produces for the sealed contract (see
+        BOARD-REFLECTION.md's data model). Created lazily by the reflection
+        engine; readers tolerate its absence (an epoch that was never
+        reflected has no directory).
+        """
+        return self.epoch_dir(epoch_id) / "reflections"
+
+    def reflection_dir(self, epoch_id: str, reflection_id: str) -> Path:
+        """The directory holding ONE reflection run's artifacts."""
+        return self.reflections_dir(epoch_id) / reflection_id
+
+    def reflection_plan(self, epoch_id: str, reflection_id: str) -> Path:
+        """One reflection's pre-registered run plan (``plan.json``)."""
+        return self.reflection_dir(epoch_id, reflection_id) / "plan.json"
+
+    def reflection_corpus(self, epoch_id: str, reflection_id: str) -> Path:
+        """One reflection's observation corpus (``corpus.jsonl``).
+
+        One :class:`~zicato.reflection.corpus.ObservationRun` per line —
+        each REFERENCING the run artifacts under ``generations/`` rather
+        than copying them.
+        """
+        return self.reflection_dir(epoch_id, reflection_id) / "corpus.jsonl"
+
     # -- per-generation ------------------------------------------------------
 
     def generation_dir(self, epoch_id: str, generation_id: str) -> Path:

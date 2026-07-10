@@ -113,6 +113,37 @@ def generation_dir(workspace_root: Path, epoch_id: str, generation_id: str) -> P
     return _layout(workspace_root).generation_dir(epoch_id, generation_id)
 
 
+def reflections_dir(workspace_root: Path, epoch_id: str) -> Path:
+    """Return one epoch's board-reflection subtree (``reflections/``).
+
+    The parent of every per-reflection directory
+    (:func:`reflection_dir`). Beside the calibration / preflight helpers,
+    this is the storage seam board reflection's corpus + analysis persist
+    under (BOARD-REFLECTION.md's data model). Created lazily; readers
+    tolerate its absence.
+    """
+    return _layout(workspace_root).reflections_dir(epoch_id)
+
+
+def reflection_dir(workspace_root: Path, epoch_id: str, reflection_id: str) -> Path:
+    """Return the directory holding ONE reflection run's artifacts."""
+    return _layout(workspace_root).reflection_dir(epoch_id, reflection_id)
+
+
+def reflection_plan_path(workspace_root: Path, epoch_id: str, reflection_id: str) -> Path:
+    """Path to one reflection's pre-registered run plan (``plan.json``)."""
+    return _layout(workspace_root).reflection_plan(epoch_id, reflection_id)
+
+
+def reflection_corpus_path(workspace_root: Path, epoch_id: str, reflection_id: str) -> Path:
+    """Path to one reflection's observation corpus (``corpus.jsonl``).
+
+    One :class:`~zicato.reflection.corpus.ObservationRun` per line — each
+    REFERENCES the run artifacts under ``generations/`` (never copies).
+    """
+    return _layout(workspace_root).reflection_corpus(epoch_id, reflection_id)
+
+
 def run_dir(
     workspace_root: Path,
     epoch_id: str,
@@ -332,6 +363,10 @@ __all__ = [
     "epoch_dir",
     "generations_dir",
     "generation_dir",
+    "reflections_dir",
+    "reflection_dir",
+    "reflection_plan_path",
+    "reflection_corpus_path",
     "run_dir",
     "events_jsonl_path",
     "loss_profile_path",

@@ -1154,6 +1154,13 @@ floor?**
   mean(champion_scalars)|` is the contract's demonstrated **achievable
   signal**.
 
+Board reflection's **active observation corpus** reuses this exact discipline
+one reserved base higher: `reflection/corpus.py`'s `run_corpus` mirrors the
+preflight's `_stamp_replicate_index(board, 5000 + j)` +
+`_run_board_units_fast(..., replicate_index=5000 + j)` shape at
+`REFLECTION_REPLICATE_BASE` (5000), voiding any infra-aborted draw with
+`ReflectionDrawInconclusive` just as the preflight voids on `NoiseFloorInconclusive`.
+
 The pure verdict (`preflight_verdict`) encodes the two mirror pathologies:
 
 | Verdict | Condition | Pathology |
@@ -1531,6 +1538,7 @@ uv run pytest tests/test_gauntlet_evidence_gate_e2e.py tests/test_driver_evidenc
 | `PREFLIGHT_REPLICATE_BASE` | `2000` | `epoch/preflight.py` |
 | `SCREEN_REPLICATE_BASE` (+1 confirm) | `3000` / `3001` | `epoch/screen.py` |
 | `EVIDENCE_REPLICATE_BASE` | `4000` | `selection/evidence_gate.py` |
+| `REFLECTION_REPLICATE_BASE` | `5000` | `reflection/corpus.py` |
 | `MIN_CREDIBLE_DUELS` | `3` | `selection/evidence_gate.py` |
 | `CI_Z` | `1.959963984540054` | `selection/evidence_gate.py` |
 | `DEFAULT_REPLICATE_BUDGET` | `3` | `selection/evidence_gate.py` |
