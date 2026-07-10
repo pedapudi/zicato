@@ -173,6 +173,41 @@ class WorkspaceLayout:
         """
         return self.reflection_dir(epoch_id, reflection_id) / "corpus.jsonl"
 
+    def reflection_adjudication_dir(self, epoch_id: str, reflection_id: str) -> Path:
+        """One reflection's meta-judge adjudication subtree (``adjudication/``).
+
+        Holds one sub-directory per judge name, each with one JSON file per
+        adjudicated decision keyed by ``run_ref`` — the per-decision
+        meta-judge verdict (BOARD-REFLECTION.md's data model). The corpus is
+        frozen per ``reflection_id``, so a present file is a cache HIT: a
+        re-run of the same reflection re-reads it and spends no adjudicator
+        budget. Created lazily; readers tolerate its absence.
+        """
+        return self.reflection_dir(epoch_id, reflection_id) / "adjudication"
+
+    def reflection_adjudication(
+        self, epoch_id: str, reflection_id: str, judge_name: str, run_ref: str
+    ) -> Path:
+        """One adjudicated decision's verdict file.
+
+        ``adjudication/{judge_name}/{run_ref}.json`` where ``run_ref`` is
+        ``{candidate}:{entry}:r{replicate}`` — the stable key of the judge
+        decision under review.
+        """
+        return (
+            self.reflection_adjudication_dir(epoch_id, reflection_id)
+            / judge_name
+            / (f"{run_ref}.json")
+        )
+
+    def reflection_scorecards(self, epoch_id: str, reflection_id: str) -> Path:
+        """One reflection's aggregated per-judge scorecards (``scorecards.json``)."""
+        return self.reflection_dir(epoch_id, reflection_id) / "scorecards.json"
+
+    def reflection_findings(self, epoch_id: str, reflection_id: str) -> Path:
+        """One reflection's ranked findings + proposed edits (``findings.json``)."""
+        return self.reflection_dir(epoch_id, reflection_id) / "findings.json"
+
     # -- per-generation ------------------------------------------------------
 
     def generation_dir(self, epoch_id: str, generation_id: str) -> Path:

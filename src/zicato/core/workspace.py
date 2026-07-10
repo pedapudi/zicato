@@ -144,6 +144,38 @@ def reflection_corpus_path(workspace_root: Path, epoch_id: str, reflection_id: s
     return _layout(workspace_root).reflection_corpus(epoch_id, reflection_id)
 
 
+def reflection_adjudication_dir(workspace_root: Path, epoch_id: str, reflection_id: str) -> Path:
+    """Path to one reflection's meta-judge adjudication subtree (``adjudication/``)."""
+    return _layout(workspace_root).reflection_adjudication_dir(epoch_id, reflection_id)
+
+
+def reflection_adjudication_path(
+    workspace_root: Path,
+    epoch_id: str,
+    reflection_id: str,
+    judge_name: str,
+    run_ref: str,
+) -> Path:
+    """Path to one adjudicated decision's verdict file.
+
+    ``adjudication/{judge_name}/{run_ref}.json`` — file-exists is a cache
+    HIT (the corpus is frozen per ``reflection_id``).
+    """
+    return _layout(workspace_root).reflection_adjudication(
+        epoch_id, reflection_id, judge_name, run_ref
+    )
+
+
+def reflection_scorecards_path(workspace_root: Path, epoch_id: str, reflection_id: str) -> Path:
+    """Path to one reflection's aggregated ``scorecards.json``."""
+    return _layout(workspace_root).reflection_scorecards(epoch_id, reflection_id)
+
+
+def reflection_findings_path(workspace_root: Path, epoch_id: str, reflection_id: str) -> Path:
+    """Path to one reflection's ranked ``findings.json``."""
+    return _layout(workspace_root).reflection_findings(epoch_id, reflection_id)
+
+
 def run_dir(
     workspace_root: Path,
     epoch_id: str,
@@ -367,6 +399,10 @@ __all__ = [
     "reflection_dir",
     "reflection_plan_path",
     "reflection_corpus_path",
+    "reflection_adjudication_dir",
+    "reflection_adjudication_path",
+    "reflection_scorecards_path",
+    "reflection_findings_path",
     "run_dir",
     "events_jsonl_path",
     "loss_profile_path",

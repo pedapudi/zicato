@@ -28,8 +28,25 @@
 > judge self-consistency, cited placebo — and pillar-2 discrimination —
 > per-entry differentiation, entry×candidate matrix, greedy Pearson redundancy
 > clustering, closed-form power analysis, coverage).
-> **In build**: the `reflection/` engine's adjudicator + scorecards + findings
-> (pillars 3-4), `zicato reflect`, and the console Instrument lens.
+> **Shipped since (the adjudication tier, R3)**: the meta-judge engine —
+> `reflection/adjudicator.py` (the `observation_to_judge_context` fidelity glue
+> — verbatim `judge_io` > `result.json` > `events.jsonl` preview, reusing
+> `_freeze_context`; the `RuntimeConfig.adjudicator_call_llm` seam +
+> `effective_adjudicator_call_llm()`; HARD `assert_distinct_callables` + SOFT
+> model-string collusion warning; the strict-JSON protocol at
+> `ADJUDICATOR_PROMPT_VERSION = 1` with one retry then `verdict="ambiguous"`
+> that never raises; the idempotent `adjudication/{judge}/{run_ref}.json` cache
+> — file-exists = HIT; optional `k_adj` replication →
+> `adjudicator_self_agreement`), `reflection/scorecards.py` (the doc-schema
+> confusion matrices with AMBIGUOUS excluded from the rates and counted, the
+> `disagreement_rate` AND Fleiss `self_consistency_kappa` beside it — honestly
+> named, cross-judge `redundant_with` / `conflicts_with`, per-fidelity
+> grouping), and `reflection/findings.py` (ranked evidence-linked findings whose
+> `proposed_op` names a REAL builder op VALIDATED against its `inspect.signature`
+> at emit time — margin → `set_gate {promote_margin: 2.5× floor}`, judge-pruning
+> → `set_weights {per_judge_weights: {j: 0.0}}`), plus the scripted-double
+> adjudicators (`zicato/testing/adjudicators.py`).
+> **In build**: `zicato reflect` (R4) and the console Instrument lens (R5).
 > **Endpoint-gated** (needs operator go-ahead + a live endpoint): live
 > meta-judge adjudication, run-twice decision-flip validation, the "quick
 > judge audit" preflight extension, the builder Validate panel, and the full

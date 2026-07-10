@@ -59,3 +59,9 @@ __all__ = [
     "make_reflection_id",
     "new_plan",
 ]
+
+# NOTE: the adjudicator / scorecards / findings modules (pillars 3-4) are NOT
+# eagerly imported here — they pull goldfive lazily (via the reliability
+# context glue) and the builder op layer (via findings' signature validation),
+# so importing them at package-init would widen this package's import surface.
+# Import them from their submodules (``zicato.reflection.adjudicator`` etc.).

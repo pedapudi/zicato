@@ -136,6 +136,18 @@ class RuntimeConfig:
         the workspace ``models.judge`` block) it lets an operator point
         the judges at a separate endpoint/model from the rest of the
         auxiliary surface. Read via :meth:`effective_judge_call_llm`.
+    adjudicator_call_llm:
+        Optional LLM callable used by the board-reflection meta-judge
+        (the independent adjudicator that re-reads a captured transcript
+        and decides whether each judge got it right — pillar 3). ``None``
+        (the default) ⇒ the adjudicator falls back to
+        :attr:`auxiliary_call_llm`, mirroring :attr:`judge_call_llm`'s
+        fall-back onto the same surface. Read via
+        :meth:`effective_adjudicator_call_llm`. Independence is
+        load-bearing: the adjudication engine asserts this callable is
+        identity-distinct from the judge callable before adjudicating
+        (:func:`zicato.core.workspace.assert_distinct_callables`) — a
+        judge cannot grade its own homework.
     seed:
         Optional integer seed for any zicato-internal random number
         generators. Adapters may or may not honor it for the inner
@@ -331,6 +343,7 @@ class RuntimeConfig:
     seed: int | None = None
     parallelism: int = 4
     judge_call_llm: CallLLM | None = None
+    adjudicator_call_llm: CallLLM | None = None
     scrub_worker_env: bool = False
     worker_env_passthrough: tuple[str, ...] = ()
     diversity_tolerance: float | None = None
@@ -401,3 +414,20 @@ class RuntimeConfig:
         fall-back so every judge call site reads the same rule.
         """
         return self.judge_call_llm if self.judge_call_llm is not None else self.auxiliary_call_llm
+
+    def effective_adjudicator_call_llm(self) -> CallLLM:
+        """The callable the reflection adjudicator runs on.
+
+        :attr:`adjudicator_call_llm` when set, else the auxiliary surface
+        — the same fall-back rule as :meth:`effective_judge_call_llm`, so
+        a workspace that configures neither runs the adjudicator on the
+        auxiliary endpoint. Independence from the judge callable is
+        enforced by the adjudication engine
+        (:func:`zicato.core.workspace.assert_distinct_callables`), not
+        here: this accessor only resolves the fall-back.
+        """
+        return (
+            self.adjudicator_call_llm
+            if self.adjudicator_call_llm is not None
+            else self.auxiliary_call_llm
+        )
