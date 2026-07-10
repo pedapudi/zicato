@@ -147,6 +147,28 @@ def loss_profile_path(
     return _layout(workspace_root).loss(epoch_id, generation_id, entry_id)
 
 
+def run_result_path(
+    workspace_root: Path,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+) -> Path:
+    """Path to one run's persisted ``result.json`` (the RunResult capture).
+
+    The read twin of the worker's post-run write: the user-facing
+    transcript + final output the run produced, persisted beside
+    ``loss.json`` when :attr:`RuntimeConfig.persist_run_results` is on
+    (the default). The canonical replicate-0 slot; replicate ``r>0``
+    lives at the sibling ``result.r{n}.json``
+    (:func:`zicato.tournament.unit_cache.unit_result_path`). Readers
+    must tolerate absence — legacy runs, an opted-out runtime, or a
+    best-effort write that failed all leave no file
+    (:func:`zicato.tournament.unit_cache.read_run_result` returns
+    ``None`` in every such case).
+    """
+    return _layout(workspace_root).result(epoch_id, generation_id, entry_id)
+
+
 def experiment_json_path(workspace_root: Path, epoch_id: str, generation_id: str) -> Path:
     """Path to a generation's ``experiment.json`` (hypothesis + outcome)."""
     return _layout(workspace_root).experiment(epoch_id, generation_id)
@@ -313,6 +335,7 @@ __all__ = [
     "run_dir",
     "events_jsonl_path",
     "loss_profile_path",
+    "run_result_path",
     "experiment_json_path",
     "patches_dir",
     "patch_json_path",

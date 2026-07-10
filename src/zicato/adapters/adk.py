@@ -985,6 +985,10 @@ class ADKRunnableHarness:
             entry_judges=_entry_judge_specs(entry),
             disable_drift=entry_disable_drift(entry),
             aux_call_llm=config.effective_judge_call_llm(),
+            # Board reflection's verbatim-capture seam: the worker binds a
+            # per-run judge-I/O sink onto the config when persist_judge_io
+            # is on; None (the default) captures nothing (byte-identical).
+            io_sink=getattr(config, "judge_io_sink", None),
         )
         # Judge-only mode: spread in the no-steering overrides
         # (StaticPlanner + LiteralGoalDeriver) so goldfive judges without
@@ -1062,6 +1066,10 @@ class ADKRunnableHarness:
             entry_judges=_entry_judge_specs(entry),
             disable_drift=entry_disable_drift(entry),
             aux_call_llm=config.effective_judge_call_llm(),
+            # Board reflection's verbatim-capture seam: the worker binds a
+            # per-run judge-I/O sink onto the config when persist_judge_io
+            # is on; None (the default) captures nothing (byte-identical).
+            io_sink=getattr(config, "judge_io_sink", None),
         )
         agent = self._agent
         gf_runtime = _goldfive_runtime()
@@ -1158,6 +1166,10 @@ class ADKRunnableHarness:
             entry_judges=_entry_judge_specs(entry),
             disable_drift=entry_disable_drift(entry),
             aux_call_llm=config.effective_judge_call_llm(),
+            # Board reflection's verbatim-capture seam: the worker binds a
+            # per-run judge-I/O sink onto the config when persist_judge_io
+            # is on; None (the default) captures nothing (byte-identical).
+            io_sink=getattr(config, "judge_io_sink", None),
         )
         agent = self._agent
         gf_runtime = _goldfive_runtime()

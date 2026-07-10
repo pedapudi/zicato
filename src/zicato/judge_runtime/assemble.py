@@ -46,6 +46,7 @@ def assemble_judges(
     entry_judges: tuple[JudgeSpecLike, ...] | list[JudgeSpecLike] | None,
     disable_drift: tuple[Any, ...] | list[Any] | None,
     aux_call_llm: AuxCallLLM,
+    io_sink: Any = None,
 ) -> list[goldfive.Judge]:
     """Build the full goldfive judge list for one board-entry run.
 
@@ -64,6 +65,15 @@ def assemble_judges(
         Inline judges use it; python judges ignore it. Per the
         two-callable rule this is NOT the harness callable — judges
         must not run on the same LLM surface as the agent they grade.
+    io_sink:
+        Optional :class:`zicato.judge_runtime.io_capture.JudgeIOSink`
+        threaded into every CUSTOM inline judge built here (board
+        reflection's verbatim-capture seam; best-effort, never affects
+        a verdict). ``None`` (the default) captures nothing — the
+        assembled list is byte-identical to before the parameter
+        existed. goldfive's built-in judges are not wrapped (they are
+        not zicato ``JudgeSpec`` judges); python-mode judges are
+        inline-only for now (:mod:`zicato.judge_runtime.io_capture`).
 
     Returns
     -------
@@ -88,7 +98,7 @@ def assemble_judges(
         )
 
     for spec in entry_judges or ():
-        judge = judge_spec_to_goldfive(spec, aux_call_llm)
+        judge = judge_spec_to_goldfive(spec, aux_call_llm, io_sink=io_sink)
         judges.append(judge)
 
     return judges

@@ -188,8 +188,15 @@ def _load_args(args_path: Path) -> dict[str, Any]:
           "result_path": "<abs path the worker writes its result JSON to>",
           "instance_id": "default",
           "seed": null,
-          "harmonograf_url": ""
+          "harmonograf_url": "",
+          "persist_run_results": true,   # optional; ABSENT => true
+          "persist_judge_io": true       # optional; ABSENT => true
         }
+
+    ``persist_run_results`` / ``persist_judge_io`` are the board-reflection
+    capture knobs (runtime-only, never contract-hashed): result.json beside
+    loss.json and the judge_io.jsonl sidecar. Absent keys (legacy args
+    files) default to True — always-on with an opt-out.
     """
     with open(args_path, encoding="utf-8") as f:
         args: dict[str, Any] = json.load(f)
@@ -564,6 +571,29 @@ async def _run(args: dict[str, Any]) -> None:
     judge_role = args.get("judge_role")
     if isinstance(judge_role, dict) and (judge_role.get("dotted") or judge_role.get("models_role")):
         judge_call_llm = _resolve_role_call_llm(judge_role, role="judge")
+
+    # Capture knobs (board reflection's capture fix). Runtime-only,
+    # additive, NEVER contract-hashed. An ABSENT key — a legacy args file
+    # — defaults to True: the capture is always-on with an opt-out, so
+    # historical callers gain the artifacts without a flag. Both writes
+    # are best-effort: a capture failure never re-scores or aborts a run.
+    # With both knobs OFF the worker's behavior (files written, loss
+    # bytes, exit code) is byte-identical to before the knobs existed.
+    persist_run_results = bool(args.get("persist_run_results", True))
+    persist_judge_io = bool(args.get("persist_judge_io", True))
+    judge_io_sink: Any = None
+    if persist_judge_io:
+        from zicato.judge_runtime.io_capture import (  # noqa: PLC0415
+            JudgeIOFileSink,
+            judge_io_path_for_loss,
+        )
+
+        # One sink per run, appending beside the run's loss slot
+        # (judge_io.jsonl / judge_io.r{n}.jsonl) — the adapter reads it
+        # off the config (the token_ledger live-object precedent) and
+        # threads it into every custom inline judge it assembles.
+        judge_io_sink = JudgeIOFileSink(judge_io_path_for_loss(loss_path))
+
     config = RuntimeConfig(
         instance_id=str(args.get("instance_id", "default")),
         workspace_root=workspace_root,
@@ -572,6 +602,9 @@ async def _run(args: dict[str, Any]) -> None:
         seed=args.get("seed"),
         judge_call_llm=judge_call_llm,
         inner_model=inner_model,
+        persist_run_results=persist_run_results,
+        persist_judge_io=persist_judge_io,
+        judge_io_sink=judge_io_sink,
     )
 
     weights = _weights_from_args(args)
@@ -756,6 +789,30 @@ async def _run(args: dict[str, Any]) -> None:
 
         loss = _replace(loss, abort_cause=BUDGET_ABORT_CAUSE)
     reducer_mod.write_loss_profile(loss, loss_path)
+
+    # Persist the run's user-facing RunResult as result.json beside
+    # loss.json (board reflection's capture fix) — replicate-slotted like
+    # the loss, atomic (tmp+fsync+rename), and STRICTLY best-effort: a
+    # capture failure is logged and the run proceeds unchanged (loss.json
+    # is already on disk; the result file below and the exit code are
+    # untouched). The budget-abort path's synthesized RunResult flows
+    # through here too, so an aborted run's (empty) capture is honest.
+    # ``run_result is None`` is the legacy-stub path — no RunResult was
+    # ever produced, so there is nothing to persist.
+    if persist_run_results and run_result is not None:
+        with best_effort(
+            "worker run-result capture",
+            on_error=lambda exc: log.warning(
+                "worker could not persist result.json for %s: %s", run_id, exc
+            ),
+        ):
+            from zicato.storage import atomic_write_json  # noqa: PLC0415
+            from zicato.tournament.unit_cache import (  # noqa: PLC0415
+                run_result_to_payload,
+                unit_result_path,
+            )
+
+            atomic_write_json(unit_result_path(loss_path), run_result_to_payload(run_result))
 
     _write_result(
         result_path,

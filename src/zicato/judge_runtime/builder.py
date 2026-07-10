@@ -223,9 +223,18 @@ class _InlineCriterionJudge:
     point (no signal == no event). The steerer additionally bounds
     :meth:`evaluate` with its own 30s timeout, so a hung auxiliary
     endpoint degrades to "no signal" rather than wedging the run.
+
+    ``io_sink`` (optional, a
+    :class:`zicato.judge_runtime.io_capture.JudgeIOSink`) retains the
+    verbatim I/O of every evaluate call that reached the LLM — the exact
+    reasoning judged, the raw response, and the parsed verdict (firing
+    AND silent) — for board reflection. Strictly best-effort: a sink
+    failure is logged and swallowed, never changing the verdict. With
+    ``io_sink=None`` (the default, and every pre-existing caller) the
+    evaluate path is byte-identical to before the seam existed.
     """
 
-    __slots__ = ("name", "_criterion", "_severity_str", "_aux_call_llm")
+    __slots__ = ("name", "_criterion", "_severity_str", "_aux_call_llm", "_io_sink")
 
     def __init__(
         self,
@@ -234,6 +243,7 @@ class _InlineCriterionJudge:
         criterion: str,
         severity: Any,
         aux_call_llm: AuxCallLLM,
+        io_sink: Any = None,
     ) -> None:
         self.name: str = name
         self._criterion: str = criterion
@@ -241,6 +251,7 @@ class _InlineCriterionJudge:
         # the verdict-time path never sees the enum.
         self._severity_str: str = _severity_str(severity)
         self._aux_call_llm: AuxCallLLM = aux_call_llm
+        self._io_sink: Any = io_sink
 
     async def evaluate(self, ctx: JudgeContext) -> JudgeVerdict:
         """Audit ``ctx.reasoning_text`` against the criterion via the aux LLM."""
@@ -269,13 +280,42 @@ class _InlineCriterionJudge:
             return JudgeVerdict()
 
         violation, reason = _parse_inline_response(response)
+        detail = ""
+        if violation:
+            detail = f"{self._criterion}: {reason}" if reason else self._criterion
+        kind = _custom_kind_str() if violation else ""
+
+        # Verbatim I/O capture (board reflection). Best-effort by hard
+        # contract: ANY sink failure is logged and swallowed — capture
+        # must never change the verdict or crash the run. Recorded for
+        # firing AND silent verdicts; the silent ones are exactly the
+        # missed-fire candidates adjudication needs to re-read.
+        if self._io_sink is not None:
+            try:
+                self._io_sink.record(
+                    self.name,
+                    reasoning_text=reasoning_text,
+                    transcript_window=tuple(str(t) for t in (getattr(ctx, "transcript", ()) or ())),
+                    raw_response=str(response),
+                    drift_emitted=violation,
+                    kind=kind,
+                    severity=self._severity_str if violation else "",
+                    detail=detail,
+                )
+            except Exception as exc:  # noqa: BLE001 — capture must never affect the verdict
+                log.warning(
+                    "judge_runtime: inline judge %r io_sink raised %s (%s); capture skipped",
+                    self.name,
+                    type(exc).__name__,
+                    exc,
+                )
+
         if not violation:
             return JudgeVerdict()
 
-        detail = f"{self._criterion}: {reason}" if reason else self._criterion
         return JudgeVerdict(
             drift_emitted=True,
-            drift_kind=_custom_kind_str(),
+            drift_kind=kind,
             severity=self._severity_str,
             detail=detail,
         )
@@ -449,6 +489,7 @@ def _normalise_verdict(verdict: Any) -> JudgeVerdict:
 def judge_spec_to_goldfive(
     spec: JudgeSpecLike,
     aux_call_llm: AuxCallLLM,
+    io_sink: Any = None,
 ) -> goldfive.Judge:
     """Build a live goldfive :class:`~goldfive.judges.Judge` from ``spec``.
 
@@ -474,6 +515,15 @@ def judge_spec_to_goldfive(
         -> str``. Used only by inline judges; ignored for python judges
         (their code brings its own dependencies). The two-callable rule
         means this is NOT the harness callable.
+    io_sink:
+        Optional :class:`zicato.judge_runtime.io_capture.JudgeIOSink`.
+        INLINE judges emit each evaluate call's verbatim I/O through it
+        (best-effort — board reflection's capture seam); ``None`` (the
+        default) captures nothing and is byte-identical to before the
+        parameter existed. Ignored for ``python``-mode judges — capture
+        is inline-only for now: operator python judges have no
+        zicato-visible LLM call, so there is no raw response to retain
+        (see :mod:`zicato.judge_runtime.io_capture`'s scope note).
 
     Returns
     -------
@@ -514,6 +564,7 @@ def judge_spec_to_goldfive(
             criterion=criterion,
             severity=severity,
             aux_call_llm=aux_call_llm,
+            io_sink=io_sink,
         )
 
     if mode == "python":

@@ -178,6 +178,16 @@ class WorkspaceLayout:
         """One run's reducer ``loss.json`` output."""
         return self.run_dir(epoch_id, generation_id, entry_id) / "loss.json"
 
+    def result(self, epoch_id: str, generation_id: str, entry_id: str) -> Path:
+        """One run's persisted ``result.json`` (the RunResult capture).
+
+        The canonical (replicate 0) slot; replicate ``r>0`` maps to the
+        sibling ``result.r{n}.json`` via
+        :func:`zicato.tournament.unit_cache.unit_result_path`, exactly
+        mirroring how :meth:`loss` relates to ``loss.r{n}.json``.
+        """
+        return self.run_dir(epoch_id, generation_id, entry_id) / "result.json"
+
     def events(self, epoch_id: str, generation_id: str, entry_id: str) -> Path:
         """One run's goldfive event JSONL (``events.jsonl``)."""
         return self.run_dir(epoch_id, generation_id, entry_id) / "events.jsonl"
