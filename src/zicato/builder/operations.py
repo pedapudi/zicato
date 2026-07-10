@@ -761,6 +761,56 @@ def set_brief(draft: TournamentDraft, text: str) -> DraftPatch:
     )
 
 
+def set_board_meta(
+    draft: TournamentDraft,
+    *,
+    disable_drift: list[str] | None = None,
+    judge_only: bool | None = None,
+) -> DraftPatch:
+    """Set the board-level ``board_meta`` header (drift suppression + judge-only).
+
+    ``disable_drift`` replaces the whole suppression set wholesale (the
+    builder edits mappings/sets wholesale, like :func:`set_weights`);
+    each token is validated against the registered drift-kind set
+    (:func:`zicato.core.drift_kinds.validate_drift_kind`) and an unknown
+    token raises :class:`ValueError` listing the offender. ``judge_only``
+    toggles the board-level no-steering evaluation flag. ``None`` for
+    either means "leave unchanged"; an empty list is a REAL value (clear
+    the suppression set).
+
+    The header folds into the board's contract-hash canon, so a change
+    here rolls the epoch like any board edit. The header is written back
+    by ``apply`` only when non-default, byte-compatible with
+    :func:`zicato.board.jsonl.save_board`.
+
+    GUI note (invariant L2's documented exception): the board_meta form
+    control lands with the board-editor phase; until then this op is
+    reachable from the copilot and the REST dispatch only.
+    """
+    from goldfive import DriftKind  # noqa: PLC0415
+
+    from zicato.core.drift_kinds import validate_drift_kind  # noqa: PLC0415
+
+    changed: dict[str, Any] = {}
+    if disable_drift is not None:
+        kinds: list[DriftKind] = []
+        for token in disable_drift:
+            text = str(token)
+            validate_drift_kind(text)
+            kinds.append(DriftKind(text))
+        new_set = tuple(kinds)
+        if new_set != tuple(draft.disable_drift):
+            changed["disable_drift"] = {
+                "from": [str(getattr(k, "value", k)) for k in draft.disable_drift],
+                "to": [k.value for k in new_set],
+            }
+            draft.disable_drift = new_set
+    if judge_only is not None and judge_only != draft.judge_only:
+        changed["judge_only"] = {"from": draft.judge_only, "to": judge_only}
+        draft.judge_only = judge_only
+    return DraftPatch(op="set_board_meta", changed=changed)
+
+
 def _replace_entry(draft: TournamentDraft, updated: BoardEntry) -> None:
     """Replace the entry with ``updated.id`` in place."""
     for i, e in enumerate(draft.entries):
@@ -1221,6 +1271,7 @@ def compare_drafts(a: TournamentDraft, b: TournamentDraft) -> dict[str, Any]:
           "changed_components": ["scoring", "board", ...],
           "scoring": {key: {"a": ..., "b": ...}, ...},   # differing top-level keys
           "board": {"added": [ids], "removed": [ids], "changed": [ids]},
+          "board_meta": {"changed": bool, "a": {...}, "b": {...}},
           "brief": {"changed": bool, "a_chars": int, "b_chars": int},
           "proposer": {"changed": bool, "a": str|None, "b": str|None},
         }
@@ -1230,6 +1281,9 @@ def compare_drafts(a: TournamentDraft, b: TournamentDraft) -> dict[str, Any]:
     a phantom change the contract hash would not see. ``board`` is keyed
     by entry id: ``added`` = in ``b`` only, ``removed`` = in ``a`` only,
     ``changed`` = present in both with differing canonical content.
+    ``board_meta`` is the board-level header (disable_drift / judge_only)
+    — not per-entry, so it gets its own detail key and its own
+    ``changed_components`` entry when it differs.
     """
     import json as _json
 
@@ -1257,6 +1311,18 @@ def compare_drafts(a: TournamentDraft, b: TournamentDraft) -> dict[str, Any]:
     if added or removed or entry_changed:
         changed_components.append("board")
 
+    meta_a = {
+        "disable_drift": [str(getattr(k, "value", k)) for k in a.disable_drift],
+        "judge_only": a.judge_only,
+    }
+    meta_b = {
+        "disable_drift": [str(getattr(k, "value", k)) for k in b.disable_drift],
+        "judge_only": b.judge_only,
+    }
+    meta_changed = meta_a != meta_b
+    if meta_changed:
+        changed_components.append("board_meta")
+
     brief_changed = _brief_canon(a.brief) != _brief_canon(b.brief)
     if brief_changed:
         changed_components.append("brief")
@@ -1271,6 +1337,7 @@ def compare_drafts(a: TournamentDraft, b: TournamentDraft) -> dict[str, Any]:
         "changed_components": changed_components,
         "scoring": scoring_diff,
         "board": {"added": added, "removed": removed, "changed": entry_changed},
+        "board_meta": {"changed": meta_changed, "a": meta_a, "b": meta_b},
         "brief": {
             "changed": brief_changed,
             "a_chars": len(a.brief),
@@ -1459,7 +1526,14 @@ def _predicted_contract_hash(draft: TournamentDraft, workspace_root: Path) -> st
         board_file = tmp_dir / "board.jsonl"
         brief_file = tmp_dir / "brief.md"
         scoring_file = tmp_dir / "scoring.json"
-        save_board(list(draft.entries), board_file)
+        # Thread the board_meta header exactly as _write_contract will, so
+        # the dry-run's predicted hash equals the confirmed apply's hash.
+        save_board(
+            list(draft.entries),
+            board_file,
+            disable_drift=tuple(draft.disable_drift),
+            judge_only=draft.judge_only,
+        )
         brief_file.write_text(draft.brief, encoding="utf-8")
         import json as _json
 
@@ -1513,7 +1587,16 @@ def _write_contract(draft: TournamentDraft, workspace_root: Path) -> None:
     brief_target.parent.mkdir(parents=True, exist_ok=True)
     scoring_target.parent.mkdir(parents=True, exist_ok=True)
 
-    save_board(list(draft.entries), board_target)
+    # The board_meta header (disable_drift / judge_only) round-trips: the
+    # draft carries it from load_current_board_with_meta and it is written
+    # back here — a builder apply on a meta-carrying workspace must never
+    # strip the header from the live contract.
+    save_board(
+        list(draft.entries),
+        board_target,
+        disable_drift=tuple(draft.disable_drift),
+        judge_only=draft.judge_only,
+    )
     brief_target.write_text(draft.brief, encoding="utf-8")
     scoring_target.write_text(
         _json.dumps(scoring_to_dict(draft.scoring), indent=2) + "\n", encoding="utf-8"
@@ -1603,6 +1686,7 @@ __all__ = [
     "add_judge",
     "remove_judge",
     "set_brief",
+    "set_board_meta",
     "estimate_cost",
     "validate",
     "compare_drafts",

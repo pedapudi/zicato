@@ -232,7 +232,7 @@ Both front doors call the same ops and return the same envelope
 | `POST /builder/apply` | `builder_apply` | `{session, confirm}` → `ApplyResult.to_dict()` |
 | `POST /builder/chat` | `builder_chat` | `{session, message}` → SSE stream of copilot frames |
 
-`_dispatch_op` handles the 14 write ops; the read/lifecycle ops
+`_dispatch_op` handles the 15 write ops; the read/lifecycle ops
 (`fork`/`switch`/`list_drafts`/`compare`/`preflight`) are handled inline in the
 `builder_op` handler because they act on store slots or run async. A `read_only`
 server returns 403 for the POST ops and apply while keeping the GETs live — the
@@ -282,6 +282,7 @@ function name in every case.
 | `add_judge` | one entry's `judges` tuple | `entry_id`, `judge: JudgeSpec` |
 | `remove_judge` | one entry's `judges` tuple | `entry_id`, `name` |
 | `set_brief` | `draft.brief` | `text: str` |
+| `set_board_meta` | the board-level `board_meta` header (`draft.disable_drift` / `draft.judge_only`) | `disable_drift` (wholesale token list, validated; `[]` clears, `None` unchanged), `judge_only` |
 
 Three structural facts to internalize:
 
@@ -655,6 +656,21 @@ second one the builder owns:
 > does not produce — and the operator's "this rolls to X" promise breaks. This is
 > the builder's local instance of the contract-hash cwd/checkout hazard
 > (12-bug-casebook.md §"Bug #10").
+
+> ⚠️ TRAP — the draft must round-trip EVERY board-file component, not just the
+> entries. The board's optional `board_meta` header (`disable_drift` /
+> `judge_only`) is part of the contract, and `apply` rewrites the whole
+> `board.jsonl`: a draft loaded through the entries-only loader would silently
+> STRIP the header from the live contract on apply (the B0 bug).
+> `TournamentDraft.from_workspace` therefore loads via
+> `load_current_board_with_meta`, the draft carries `disable_drift` /
+> `judge_only` fields, and BOTH writers (`_write_contract` and
+> `_predicted_contract_hash`) pass them to `save_board`. The draft's
+> `_board_canon` prepends the header line only-when-non-default, mirroring
+> `save_board`'s emit rule (`zicato.board.jsonl.board_meta_to_dict` is the
+> shared header builder), so the diff agrees with the on-disk bytes the
+> contract hash sees. If you add another board-level header field, thread it
+> through all four seams in the same commit.
 
 ---
 

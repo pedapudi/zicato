@@ -346,6 +346,7 @@ def test_default_builder_tools_registry_covers_every_op() -> None:
         "add_judge",
         "remove_judge",
         "set_brief",
+        "set_board_meta",
         # read ops
         "estimate_cost",
         "validate",

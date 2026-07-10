@@ -231,7 +231,7 @@ def load_board(path: Path) -> list[BoardEntry]:
     return entries
 
 
-def _board_meta_to_dict(
+def board_meta_to_dict(
     disable_drift: tuple[DriftKind, ...],
     judge_only: bool,
 ) -> dict[str, Any]:
@@ -240,6 +240,11 @@ def _board_meta_to_dict(
     ``judge_only`` is emitted only when ``True`` so a board that sets
     only ``disable_drift`` (or that predates the judge-only flag) keeps
     a header that is byte-identical to the pre-judge_only format.
+
+    Public because the builder's board canonicalizer
+    (:func:`zicato.builder.draft._board_canon`) must emit the SAME header
+    object :func:`save_board` writes, so the draft diff agrees with the
+    on-disk bytes the contract hash sees.
     """
     out: dict[str, Any] = {
         _BOARD_META_KEY: True,
@@ -377,7 +382,7 @@ def save_board(
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     with tmp_path.open("w", encoding="utf-8") as fh:
         if disable_drift or judge_only:
-            fh.write(json.dumps(_board_meta_to_dict(disable_drift, judge_only), ensure_ascii=False))
+            fh.write(json.dumps(board_meta_to_dict(disable_drift, judge_only), ensure_ascii=False))
             fh.write("\n")
         for entry in entries:
             row = entry_to_dict(entry)
@@ -454,6 +459,7 @@ def remove_entry(path: Path, entry_id: str) -> None:
 
 __all__ = [
     "entry_to_dict",
+    "board_meta_to_dict",
     "load_board",
     "load_board_with_meta",
     "save_board",

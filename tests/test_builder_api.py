@@ -138,6 +138,38 @@ def test_builder_op_edit_board_entry(client: TestClient) -> None:
     assert "e3" in ids
 
 
+def test_builder_op_set_board_meta_dispatch(client: TestClient) -> None:
+    resp = client.post(
+        "/builder/op",
+        json={
+            "session": "meta1",
+            "op": "set_board_meta",
+            "args": {"disable_drift": ["off_topic"], "judge_only": True},
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["patch"]["op"] == "set_board_meta"
+    assert body["draft"]["board_meta"] == {"disable_drift": ["off_topic"], "judge_only": True}
+    # A board-level header change is a board change: it rolls the epoch.
+    assert "board" in body["diff"]["changed_components"]
+
+
+def test_builder_op_set_board_meta_bad_args_are_400(client: TestClient) -> None:
+    resp = client.post(
+        "/builder/op",
+        json={"session": "meta2", "op": "set_board_meta", "args": {"disable_drift": ["bogus"]}},
+    )
+    assert resp.status_code == 400
+    assert "unknown drift kind" in resp.json()["error"]
+    resp = client.post(
+        "/builder/op",
+        json={"session": "meta2", "op": "set_board_meta", "args": {"disable_drift": "off_topic"}},
+    )
+    assert resp.status_code == 400
+    assert "list" in resp.json()["error"]
+
+
 def test_builder_apply_dry_run(client: TestClient, workspace: Path) -> None:
     client.post(
         "/builder/op",

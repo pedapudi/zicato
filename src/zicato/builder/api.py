@@ -144,6 +144,15 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
         return ops.remove_judge(draft, str(args["entry_id"]), str(args["name"]))
     if op == "set_brief":
         return ops.set_brief(draft, str(args["text"]))
+    if op == "set_board_meta":
+        raw_disable = args.get("disable_drift")
+        if raw_disable is not None and not isinstance(raw_disable, list):
+            raise ValueError("'disable_drift' must be a list of drift-kind tokens or null")
+        return ops.set_board_meta(
+            draft,
+            disable_drift=[str(t) for t in raw_disable] if raw_disable is not None else None,
+            judge_only=_opt_bool(args, "judge_only"),
+        )
     raise ValueError(f"unknown builder op {op!r}")
 
 

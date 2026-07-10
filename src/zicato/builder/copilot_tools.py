@@ -482,6 +482,32 @@ def set_brief(text: str) -> str:
     return _result_json(_summary(patch))
 
 
+def set_board_meta(
+    disable_drift: list[str] | None = None,
+    judge_only: bool | None = None,
+) -> str:
+    """Set the board-level ``board_meta`` header (drift suppression + judge-only).
+
+    ``disable_drift`` replaces the whole board-level drift-suppression
+    set wholesale (lowercase drift-kind tokens, e.g. ``["off_topic"]``;
+    an empty list clears the set; ``null`` leaves it unchanged).
+    ``judge_only`` toggles no-steering evaluation (goldfive judges
+    observe without steering). A contract change — the header folds into
+    the board's contract hash, so it rolls the epoch. Unknown drift-kind
+    tokens are reported as an ``error``.
+    """
+    ctx = _active_context()
+    try:
+        patch = ops.set_board_meta(
+            ctx.draft(),
+            disable_drift=disable_drift,
+            judge_only=judge_only,
+        )
+    except ValueError as exc:
+        return _result_json({"error": str(exc)})
+    return _result_json(_summary(patch))
+
+
 # ---------------------------------------------------------------------------
 # Read tools — cost + validate + dry-run preview.
 # ---------------------------------------------------------------------------
@@ -663,6 +689,7 @@ DEFAULT_BUILDER_TOOLS = (
     add_judge,
     remove_judge,
     set_brief,
+    set_board_meta,
     estimate_cost,
     validate,
     preflight,
@@ -692,6 +719,7 @@ __all__ = [
     "add_judge",
     "remove_judge",
     "set_brief",
+    "set_board_meta",
     "estimate_cost",
     "validate",
     "preflight",

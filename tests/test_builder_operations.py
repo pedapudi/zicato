@@ -171,6 +171,59 @@ def test_add_duplicate_judge_raises() -> None:
         ops.add_judge(draft, "x1", j)
 
 
+def test_set_board_meta_changed_map() -> None:
+    draft = TournamentDraft()
+    patch = ops.set_board_meta(draft, disable_drift=["off_topic", "user_steer"], judge_only=True)
+    assert [str(k) for k in draft.disable_drift] == ["off_topic", "user_steer"]
+    assert draft.judge_only is True
+    assert patch.op == "set_board_meta"
+    assert patch.changed["disable_drift"] == {"from": [], "to": ["off_topic", "user_steer"]}
+    assert patch.changed["judge_only"] == {"from": False, "to": True}
+
+
+def test_set_board_meta_noop_and_none_leaves_unchanged() -> None:
+    draft = TournamentDraft()
+    ops.set_board_meta(draft, disable_drift=["off_topic"], judge_only=True)
+    # A re-issued identical edit is a no-op — an empty changed map.
+    patch = ops.set_board_meta(draft, disable_drift=["off_topic"], judge_only=True)
+    assert patch.changed == {}
+    # None means "leave unchanged"; an empty list is a REAL clear.
+    patch = ops.set_board_meta(draft, judge_only=False)
+    assert [str(k) for k in draft.disable_drift] == ["off_topic"]
+    assert draft.judge_only is False
+    assert list(patch.changed) == ["judge_only"]
+    patch = ops.set_board_meta(draft, disable_drift=[])
+    assert draft.disable_drift == ()
+    assert patch.changed["disable_drift"]["to"] == []
+
+
+def test_set_board_meta_bad_token_raises() -> None:
+    import pytest
+
+    draft = TournamentDraft()
+    with pytest.raises(ValueError, match="unknown drift kind"):
+        ops.set_board_meta(draft, disable_drift=["not_a_kind"])
+    # The failed edit did not corrupt the draft.
+    assert draft.disable_drift == ()
+
+
+def test_compare_drafts_board_meta_detail_key() -> None:
+    a = TournamentDraft()
+    b = TournamentDraft()
+    diff = ops.compare_drafts(a, b)
+    assert diff["board_meta"]["changed"] is False
+    assert "board_meta" not in diff["changed_components"]
+
+    ops.set_board_meta(b, disable_drift=["off_topic"], judge_only=True)
+    diff = ops.compare_drafts(a, b)
+    assert "board_meta" in diff["changed_components"]
+    assert diff["board_meta"] == {
+        "changed": True,
+        "a": {"disable_drift": [], "judge_only": False},
+        "b": {"disable_drift": ["off_topic"], "judge_only": True},
+    }
+
+
 def test_set_brief() -> None:
     draft = TournamentDraft()
     patch = ops.set_brief(draft, "new brief text")

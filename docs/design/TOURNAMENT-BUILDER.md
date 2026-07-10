@@ -83,8 +83,12 @@ operator always confirms apply in the form's Review section.
 ### 2.1 The tools
 
 The copilot tools wrap the same B1a operations the form uses (`set_structure`,
-`set_param`, `set_holdout`, `set_gate`, board edits, …), so the form and the
-chat speak one operation vocabulary. Each tool returns a compact JSON summary
+`set_param`, `set_holdout`, `set_gate`, board edits, `set_board_meta` for the
+board-level `disable_drift`/`judge_only` header, …), so the form and the
+chat speak one operation vocabulary. The draft round-trips the board's
+`board_meta` header end-to-end: `from_workspace` loads it, every apply writes
+it back, and the dry-run's predicted hash includes it — a builder apply can
+never strip `disable_drift`/`judge_only` from a live board. Each tool returns a compact JSON summary
 of its patch so the model can narrate the consequence (a cost jump, a new
 warning) on the next turn, and the SSE layer reuses that same patch shape to
 push a live frame to the form.
