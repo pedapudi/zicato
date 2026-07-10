@@ -83,8 +83,18 @@ class BuilderToolContext:
     workspace_root: Path
 
     def draft(self) -> TournamentDraft:
-        """Return this session's draft from the shared store."""
-        return self.store.get(self.session_id, self.workspace_root)
+        """Return this session's draft from the shared store.
+
+        Also records the current state onto the session's bounded undo
+        history (:meth:`DraftStore.remember`) — this is the copilot
+        front door's pre-op capture seam, mirroring ``builder_op``'s
+        remember-before-dispatch, so a form edit and a chat edit share
+        ONE undo history. ``remember`` dedups by field equality, so a
+        read tool fetching the draft records nothing.
+        """
+        draft = self.store.get(self.session_id, self.workspace_root)
+        self.store.remember(self.session_id)
+        return draft
 
 
 _TOOL_CONTEXT: contextvars.ContextVar[BuilderToolContext | None] = contextvars.ContextVar(
@@ -444,6 +454,54 @@ def edit_board_entry(entry: dict[str, Any]) -> str:
     return _result_json(_summary(patch))
 
 
+def remove_board_entry(entry_id: str) -> str:
+    """Remove a board entry by id — the delete beside edit_board_entry.
+
+    Returns the patch + updated cost / warnings, or an ``error`` when no
+    entry carries the id. A board change — it rolls the epoch.
+    """
+    ctx = _active_context()
+    try:
+        patch = ops.remove_board_entry(ctx.draft(), entry_id)
+    except ValueError as exc:
+        return _result_json({"error": str(exc)})
+    return _result_json(_summary(patch))
+
+
+def revert_to_live() -> str:
+    """Discard the session draft's edits: restore it from the LIVE contract.
+
+    Restores IN PLACE from a fresh read of the workspace's running
+    contract, so the session (and any slot it is bound to) lands exactly
+    on live. The pre-revert state is remembered first — `undo` brings
+    the discarded edits back. Writes nothing to the workspace.
+    """
+    ctx = _active_context()
+    draft = ctx.draft()  # records the pre-revert state for undo
+    patch = ops.restore_draft(draft, TournamentDraft.from_workspace(ctx.workspace_root))
+    return _result_json(_summary(patch))
+
+
+def undo() -> str:
+    """Undo the most recent draft edit (bounded 20-step history).
+
+    Both front doors — the form's op dispatch and every copilot write
+    tool — record the pre-op state onto one shared per-session history,
+    so this undoes the latest edit regardless of which door made it.
+    Restores in place; returns the patch + updated cost / warnings, or a
+    "nothing to undo" note when the history is exhausted. Writes nothing
+    to the workspace.
+    """
+    ctx = _active_context()
+    draft = ctx.store.get(ctx.session_id, ctx.workspace_root)
+    snapshot = ctx.store.pop_undo(ctx.session_id)
+    if snapshot is None:
+        patch = ops.DraftPatch(op="undo", note="nothing to undo")
+    else:
+        patch = ops.restore_draft(draft, snapshot, op="undo")
+    return _result_json(_summary(patch))
+
+
 def add_judge(entry_id: str, judge: dict[str, Any]) -> str:
     """Add a process judge to a board entry.
 
@@ -686,6 +744,7 @@ DEFAULT_BUILDER_TOOLS = (
     set_experiment_memory,
     set_screening,
     edit_board_entry,
+    remove_board_entry,
     add_judge,
     remove_judge,
     set_brief,
@@ -697,6 +756,8 @@ DEFAULT_BUILDER_TOOLS = (
     switch,
     list_drafts,
     compare,
+    revert_to_live,
+    undo,
     preview_apply,
 )
 
@@ -716,6 +777,7 @@ __all__ = [
     "set_experiment_memory",
     "set_screening",
     "edit_board_entry",
+    "remove_board_entry",
     "add_judge",
     "remove_judge",
     "set_brief",
@@ -727,5 +789,7 @@ __all__ = [
     "switch",
     "list_drafts",
     "compare",
+    "revert_to_live",
+    "undo",
     "preview_apply",
 ]

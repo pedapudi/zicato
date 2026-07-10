@@ -471,3 +471,305 @@ def test_builder_apply_writes_the_active_slot(client: TestClient, workspace: Pat
     assert resp.json()["confirmed"] is True
     live = _json.loads((workspace.parent / "scoring.json").read_text(encoding="utf-8"))
     assert live["tournament"]["structure"] == "swiss"
+
+
+# ---------------------------------------------------------------------------
+# REST-dispatch coverage for the previously untested ops (B1) + the new ops.
+# ---------------------------------------------------------------------------
+
+
+def test_builder_op_set_weights_scalar_and_each_mapping(client: TestClient) -> None:
+    s = {"session": "w1"}
+    r = client.post(
+        "/builder/op",
+        json={
+            **s,
+            "op": "set_weights",
+            "args": {
+                "drift_weight": 2.0,
+                "pass_weight": 3.0,
+                "default_judge_weight": 1.5,
+                "plan_revision_weight": 0.5,
+                "runtime_weight": 0.25,
+            },
+        },
+    )
+    assert r.status_code == 200
+    sc = r.json()["draft"]["scoring"]
+    assert sc["drift_weight"] == 2.0
+    assert sc["pass_weight"] == 3.0
+    assert sc["default_judge_weight"] == 1.5
+    assert sc["plan_revision_weight"] == 0.5
+    assert sc["runtime_weight"] == 0.25
+
+    # Each mapping field replaces the WHOLE mapping (wholesale semantics).
+    for field, first, second in (
+        ("per_kind_weights", {"single_turn": 2.0}, {"multi_turn_scripted": 3.0}),
+        ("per_judge_weights", {"j1": 1.0, "j2": 2.0}, {"j3": 4.0}),
+        ("severity_weights", {"warning": 1.0}, {"critical": 5.0}),
+    ):
+        r = client.post("/builder/op", json={**s, "op": "set_weights", "args": {field: first}})
+        assert r.status_code == 200
+        assert r.json()["draft"]["scoring"][field] == first
+        r = client.post("/builder/op", json={**s, "op": "set_weights", "args": {field: second}})
+        assert r.status_code == 200
+        # Wholesale: the first mapping's keys are GONE, not merged.
+        assert r.json()["draft"]["scoring"][field] == second
+
+
+def test_builder_op_set_proposer_dispatch(client: TestClient, tmp_path: Path) -> None:
+    pdir = tmp_path / "proposers" / "p1"
+    pdir.mkdir(parents=True)
+    r = client.post(
+        "/builder/op",
+        json={"session": "p1", "op": "set_proposer", "args": {"proposer_path": str(pdir)}},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["patch"]["changed"]["proposer_path"]["to"] == str(pdir)
+    assert body["draft"]["proposer_path"] == str(pdir)
+    assert "proposer" in body["diff"]["changed_components"]
+    # null clears back to the built-in default proposer.
+    r = client.post(
+        "/builder/op",
+        json={"session": "p1", "op": "set_proposer", "args": {"proposer_path": None}},
+    )
+    assert r.json()["draft"]["proposer_path"] is None
+
+
+def test_builder_op_set_screening_dispatch(client: TestClient) -> None:
+    r = client.post(
+        "/builder/op",
+        json={"session": "scr", "op": "set_screening", "args": {"entries": 3, "veto_only": True}},
+    )
+    assert r.status_code == 200
+    pq = r.json()["draft"]["scoring"]["proposer_quality"]
+    assert pq["screen_entries"] == 3
+    assert pq["screen_veto_only"] is True
+    # 400 path: negative entries.
+    r = client.post(
+        "/builder/op", json={"session": "scr", "op": "set_screening", "args": {"entries": -1}}
+    )
+    assert r.status_code == 400
+
+
+def test_builder_op_set_brief_dispatch(client: TestClient) -> None:
+    r = client.post(
+        "/builder/op",
+        json={"session": "br", "op": "set_brief", "args": {"text": "steer harder"}},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["draft"]["brief"] == "steer harder"
+    assert body["patch"]["changed"]["brief_chars"]["to"] == len("steer harder")
+    assert "brief" in body["diff"]["changed_components"]
+    # Missing arg is a clear 400, not a 500.
+    r = client.post("/builder/op", json={"session": "br", "op": "set_brief", "args": {}})
+    assert r.status_code == 400
+    assert "text" in r.json()["error"]
+
+
+def test_builder_op_add_and_remove_judge_dispatch(client: TestClient) -> None:
+    s = {"session": "jd"}
+    r = client.post(
+        "/builder/op",
+        json={
+            **s,
+            "op": "add_judge",
+            "args": {
+                "entry_id": "e1",
+                "judge": {
+                    "name": "tone",
+                    "mode": "inline",
+                    "body": "polite?",
+                    "severity": "warning",
+                },
+            },
+        },
+    )
+    assert r.status_code == 200
+    entry = next(e for e in r.json()["draft"]["board"] if e["id"] == "e1")
+    assert entry["judges"] == [
+        {"name": "tone", "mode": "inline", "body": "polite?", "severity": "warning"}
+    ]
+
+    # 400 paths: unknown entry, duplicate judge name, bad severity token.
+    r = client.post(
+        "/builder/op",
+        json={
+            **s,
+            "op": "add_judge",
+            "args": {"entry_id": "ghost", "judge": {"name": "x", "body": "b"}},
+        },
+    )
+    assert r.status_code == 400
+    r = client.post(
+        "/builder/op",
+        json={
+            **s,
+            "op": "add_judge",
+            "args": {"entry_id": "e1", "judge": {"name": "tone", "body": "again"}},
+        },
+    )
+    assert r.status_code == 400
+    assert "already has a judge" in r.json()["error"]
+    r = client.post(
+        "/builder/op",
+        json={
+            **s,
+            "op": "add_judge",
+            "args": {"entry_id": "e1", "judge": {"name": "n", "body": "b", "severity": "nope"}},
+        },
+    )
+    assert r.status_code == 400
+
+    r = client.post(
+        "/builder/op",
+        json={**s, "op": "remove_judge", "args": {"entry_id": "e1", "name": "tone"}},
+    )
+    assert r.status_code == 200
+    entry = next(e for e in r.json()["draft"]["board"] if e["id"] == "e1")
+    assert "judges" not in entry or entry["judges"] == []
+    # Removing an absent judge is a no-op with a note, not an error.
+    r = client.post(
+        "/builder/op",
+        json={**s, "op": "remove_judge", "args": {"entry_id": "e1", "name": "tone"}},
+    )
+    assert r.status_code == 200
+    assert "no judge named" in r.json()["patch"]["note"]
+    # Unknown entry IS an error.
+    r = client.post(
+        "/builder/op",
+        json={**s, "op": "remove_judge", "args": {"entry_id": "ghost", "name": "tone"}},
+    )
+    assert r.status_code == 400
+
+
+def test_builder_op_remove_board_entry_dispatch(client: TestClient) -> None:
+    s = {"session": "rmv"}
+    r = client.post(
+        "/builder/op", json={**s, "op": "remove_board_entry", "args": {"entry_id": "e2"}}
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["patch"]["changed"] == {"entry_id": "e2", "action": "removed"}
+    assert {e["id"] for e in body["draft"]["board"]} == {"e1"}
+    assert "board" in body["diff"]["changed_components"]
+    # Unknown id is a 400.
+    r = client.post(
+        "/builder/op", json={**s, "op": "remove_board_entry", "args": {"entry_id": "ghost"}}
+    )
+    assert r.status_code == 400
+    assert "ghost" in r.json()["error"]
+
+
+def test_builder_op_revert_to_live_restores_the_draft(client: TestClient) -> None:
+    s = {"session": "rvt"}
+    client.post("/builder/op", json={**s, "op": "set_structure", "args": {"structure": "swiss"}})
+    client.post("/builder/op", json={**s, "op": "remove_board_entry", "args": {"entry_id": "e1"}})
+    r = client.post("/builder/op", json={**s, "op": "revert_to_live", "args": {}})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["patch"]["op"] == "revert_to_live"
+    assert {e["id"] for e in body["draft"]["board"]} == {"e1", "e2"}
+    assert body["draft"]["scoring"]["tournament"]["structure"] == "gauntlet"
+    assert body["diff"]["changed_components"] == []
+    # A second revert is an honest no-op.
+    r = client.post("/builder/op", json={**s, "op": "revert_to_live", "args": {}})
+    assert "already matches" in r.json()["patch"]["note"]
+
+
+def test_builder_op_undo_pops_edits_and_reports_empty(client: TestClient) -> None:
+    s = {"session": "und"}
+    client.post("/builder/op", json={**s, "op": "set_structure", "args": {"structure": "swiss"}})
+    client.post(
+        "/builder/op",
+        json={**s, "op": "set_param", "args": {"key": "field_size", "value": 4}},
+    )
+
+    # Undo the field_size edit.
+    r = client.post("/builder/op", json={**s, "op": "undo", "args": {}})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["patch"]["op"] == "undo"
+    t = body["draft"]["scoring"]["tournament"]
+    assert t["structure"] == "swiss"
+    assert "field_size" not in (t.get("params") or {})
+
+    # Undo the structure edit.
+    r = client.post("/builder/op", json={**s, "op": "undo", "args": {}})
+    assert r.json()["draft"]["scoring"]["tournament"]["structure"] == "gauntlet"
+
+    # History exhausted: an honest note, never an error.
+    r = client.post("/builder/op", json={**s, "op": "undo", "args": {}})
+    assert r.status_code == 200
+    assert r.json()["patch"]["note"] == "nothing to undo"
+
+
+def test_builder_op_undo_covers_revert_to_live(client: TestClient) -> None:
+    s = {"session": "und2"}
+    client.post("/builder/op", json={**s, "op": "set_structure", "args": {"structure": "racing"}})
+    client.post("/builder/op", json={**s, "op": "revert_to_live", "args": {}})
+    # Undo brings the discarded pre-revert state back.
+    r = client.post("/builder/op", json={**s, "op": "undo", "args": {}})
+    assert r.json()["draft"]["scoring"]["tournament"]["structure"] == "racing"
+
+
+# ---------------------------------------------------------------------------
+# Read plumbing: the config vocab + the draft's proposer_dirs.
+# ---------------------------------------------------------------------------
+
+
+def test_builder_config_carries_server_derived_vocab(client: TestClient) -> None:
+    resp = client.get("/builder/config")
+    assert resp.status_code == 200
+    vocab = resp.json()["vocab"]
+    assert set(vocab) == {
+        "kinds",
+        "expectation_kinds",
+        "reads",
+        "judge_modes",
+        "severities",
+        "drift_kinds",
+    }
+    assert set(vocab["kinds"]) == {
+        "single_turn",
+        "multi_turn_scripted",
+        "multi_turn_emulated",
+        "synthetic_adversarial",
+        "synthetic_clean",
+    }
+    assert set(vocab["expectation_kinds"]) == {
+        "expected_text",
+        "regex",
+        "json_schema",
+        "predicate",
+        "rubric",
+    }
+    assert set(vocab["reads"]) == {"final_output", "conversation_end"}
+    assert set(vocab["judge_modes"]) == {"inline", "python"}
+    assert set(vocab["severities"]) == {"info", "warning", "critical"}
+    # Server-derived from the registered drift-kind set, sorted.
+    assert vocab["drift_kinds"] == sorted(vocab["drift_kinds"])
+    assert "off_topic" in vocab["drift_kinds"]
+    assert len(vocab["drift_kinds"]) >= 30
+
+
+def test_builder_draft_carries_proposer_dirs(client: TestClient, tmp_path: Path) -> None:
+    # No proposers/ dir yet: honest degrade to [].
+    resp = client.get("/builder/draft?session=pd")
+    assert resp.status_code == 200
+    assert resp.json()["proposer_dirs"] == []
+
+    base = tmp_path / "proposers"
+    (base / "agentful").mkdir(parents=True)
+    (base / "agentful" / "agent.py").write_text("# custom agent\n", encoding="utf-8")
+    (base / "skillful" / "skills").mkdir(parents=True)
+    (base / "not-a-proposer").mkdir()  # neither agent.py nor skills/
+    (base / "loose-file.txt").write_text("ignored", encoding="utf-8")
+
+    resp = client.get("/builder/draft?session=pd")
+    dirs = resp.json()["proposer_dirs"]
+    assert [d["name"] for d in dirs] == ["agentful", "skillful"]
+    assert dirs[0]["path"].endswith("proposers/agentful")
+    assert all(set(d) == {"name", "path"} for d in dirs)

@@ -88,7 +88,20 @@ board-level `disable_drift`/`judge_only` header, …), so the form and the
 chat speak one operation vocabulary. The draft round-trips the board's
 `board_meta` header end-to-end: `from_workspace` loads it, every apply writes
 it back, and the dry-run's predicted hash includes it — a builder apply can
-never strip `disable_drift`/`judge_only` from a live board. Each tool returns a compact JSON summary
+never strip `disable_drift`/`judge_only` from a live board.
+
+Board authoring is complete at the op layer: `edit_board_entry`
+(add/replace) has its delete twin `remove_board_entry`, and two restore ops
+walk edits back — `revert_to_live` (discard the session's edits, restore
+from the running contract) and step-`undo` (a bounded 20-snapshot
+per-session history recorded before every write at BOTH front doors, so a
+form edit and a chat edit share one undo stack). `validate` adds
+recommend-only board-authoring codes (duplicate/unsafe entry ids, malformed
+dotted paths — shape-checked only, never imported server-side —
+rubric/json-schema spec shape, budget outliers, the judge-only flag), and
+the read surface feeds the forms: `GET /builder/config` carries a
+server-derived enum `vocab`, `GET /builder/draft` carries discovered
+`proposer_dirs`. Each tool returns a compact JSON summary
 of its patch so the model can narrate the consequence (a cost jump, a new
 warning) on the next turn, and the SSE layer reuses that same patch shape to
 push a live frame to the form.

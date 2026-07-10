@@ -24,6 +24,7 @@ contract so the builder opens showing exactly what is running.
 from __future__ import annotations
 
 import re
+from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -376,6 +377,11 @@ def _scoring_canon(weights: ScoringWeights) -> str:
 #: Slot names are path/JSON-safe short slugs — same spirit as epoch ids.
 _SLOT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
+#: Bounded per-session undo depth. Deep enough for a whole authoring
+#: session's worth of missteps, small enough that history can never grow
+#: without bound in a long-lived dashboard process.
+_HISTORY_LIMIT = 20
+
 
 def _copy_draft(draft: TournamentDraft) -> TournamentDraft:
     """A safe working copy of ``draft`` for a named slot.
@@ -422,6 +428,12 @@ class DraftStore:
     persistence story). Everything lives until
     :func:`zicato.builder.operations.apply` writes one to the workspace,
     or the process exits.
+
+    UNDO HISTORY: :meth:`remember` records a bounded (20) per-session
+    deque of pre-op draft snapshots — the seam both front doors call
+    before a write op — and :meth:`pop_undo` hands the ``undo`` op the
+    newest snapshot that differs from the current state. History is
+    process-local like everything else here.
     """
 
     def __init__(self) -> None:
@@ -430,6 +442,11 @@ class DraftStore:
         #: naming the same slot see the same draft, exactly like two tabs
         #: sharing a session id).
         self._slots: dict[str, TournamentDraft] = {}
+        #: Per-session bounded undo history: value snapshots of the
+        #: session's draft, recorded by :meth:`remember` at both front
+        #: doors (the REST dispatch and the copilot's tool context)
+        #: BEFORE a write op mutates the draft. Newest last.
+        self._history: dict[str, deque[TournamentDraft]] = {}
 
     def get(self, session_id: str, workspace_root: Path) -> TournamentDraft:
         """Return the draft for ``session_id``, initialising it if new.
@@ -453,6 +470,47 @@ class DraftStore:
     def has(self, session_id: str) -> bool:
         """``True`` iff ``session_id`` already has a draft in the store."""
         return session_id in self._drafts
+
+    # -- undo history (remember / pop_undo) ---------------------------------
+
+    def remember(self, session_id: str) -> None:
+        """Snapshot the session's CURRENT draft state onto its undo history.
+
+        The recording seam for step-undo: both front doors call this with
+        the PRE-op state — ``builder_op`` right before a write-op
+        dispatch, and :meth:`BuilderToolContext.draft` on every copilot
+        tool's draft fetch. Dedups against the newest snapshot by field
+        equality, so a read tool (or a no-op edit) records nothing.
+        Bounded to 20 snapshots per session — the oldest falls off. A
+        session with no draft yet is a no-op (there is no state to
+        remember).
+        """
+        draft = self._drafts.get(session_id)
+        if draft is None:
+            return
+        history = self._history.setdefault(session_id, deque(maxlen=_HISTORY_LIMIT))
+        if history and history[-1] == draft:
+            return
+        history.append(_copy_draft(draft))
+
+    def pop_undo(self, session_id: str) -> TournamentDraft | None:
+        """Pop the newest history snapshot that DIFFERS from the current draft.
+
+        Snapshots equal (by field equality) to the session's current
+        state are discarded on the way down — they would make undo a
+        visible no-op. Returns ``None`` when the history is exhausted;
+        the caller renders that as a "nothing to undo" patch note. The
+        returned snapshot is a value copy — the caller restores it INTO
+        the session's live draft object (in place) so slot bindings stay
+        coherent.
+        """
+        history = self._history.get(session_id)
+        current = self._drafts.get(session_id)
+        while history:
+            snapshot = history.pop()
+            if current is None or snapshot != current:
+                return snapshot
+        return None
 
     # -- named slots (fork / list / switch) --------------------------------
 

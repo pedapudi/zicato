@@ -226,15 +226,18 @@ Both front doors call the same ops and return the same envelope
 
 | Method + route | Handler | What it does |
 |---|---|---|
-| `GET /builder/config` | `builder_config` | `load_builder_config(root).to_public_dict()` (secret-safe) |
-| `GET /builder/draft?session=ID` | `builder_draft` | the draft snapshot + cost/warnings/diff/slots |
+| `GET /builder/config` | `builder_config` | `load_builder_config(root).to_public_dict()` (secret-safe) + the server-derived `vocab` (entry kinds / expectation kinds / reads / judge modes / severities / drift kinds — the GUI never hardcodes an enum) |
+| `GET /builder/draft?session=ID` | `builder_draft` | the draft snapshot + cost/warnings/diff/slots + `proposer_dirs` (discovered `<workspace_parent>/proposers/*` candidates; degrades to `[]`) |
 | `POST /builder/op` | `builder_op` | `{session, op, args}` → dispatch → the shared envelope |
 | `POST /builder/apply` | `builder_apply` | `{session, confirm}` → `ApplyResult.to_dict()` |
 | `POST /builder/chat` | `builder_chat` | `{session, message}` → SSE stream of copilot frames |
 
-`_dispatch_op` handles the 15 write ops; the read/lifecycle ops
-(`fork`/`switch`/`list_drafts`/`compare`/`preflight`) are handled inline in the
-`builder_op` handler because they act on store slots or run async. A `read_only`
+`_dispatch_op` handles the 16 write ops; the read/lifecycle ops
+(`fork`/`switch`/`list_drafts`/`compare`/`revert_to_live`/`undo`/`preflight`)
+are handled inline in the `builder_op` handler because they act on store
+slots / the undo history or run async. `builder_op` also calls
+`store.remember(session)` immediately before every `_dispatch_op` write —
+one of the two pre-op capture seams behind the `undo` op (§10.6). A `read_only`
 server returns 403 for the POST ops and apply while keeping the GETs live — the
 dashboard's read-only mode never lets a viewer mutate a contract.
 
@@ -279,6 +282,7 @@ function name in every case.
 | `set_experiment_memory` | `scoring.experiment_memory.cross_epoch` | `cross_epoch: bool` |
 | `set_screening` | `scoring.proposer_quality.screen_entries` / `screen_veto_only` | `entries` (≥0), `veto_only` |
 | `edit_board_entry` | `draft.entries` (add/replace by id; validates first) | `entry: BoardEntry` |
+| `remove_board_entry` | `draft.entries` (delete by id; unknown id raises) | `entry_id` |
 | `add_judge` | one entry's `judges` tuple | `entry_id`, `judge: JudgeSpec` |
 | `remove_judge` | one entry's `judges` tuple | `entry_id`, `name` |
 | `set_brief` | `draft.brief` | `text: str` |
@@ -547,7 +551,29 @@ emits:
 | `racing_rung0_slice` | info | racing — surfaces the rung-0 slice size |
 | `replicates_recommended_for_brackets` | warning | bracket/swiss with `replicates < 2` |
 | `holdout_tags_cover_whole_board` | warning | every entry tagged holdout (no train entries) |
+| `duplicate_entry_id` | **refuse** | two entries share an id — `apply` would fail (`save_board` rejects duplicates) and run artifacts would collide |
+| `entry_id_unsafe` | warning | an entry id outside `^[A-Za-z0-9][A-Za-z0-9._-]*$` (ids become run directory names) |
+| `dotted_path_malformed` | warning | a predicate spec or python-judge body that does not LOOK like `pkg.module.attr` / `pkg.module:attr` — shape-check only (see the security note) |
+| `rubric_spec_invalid` | warning | a rubric spec that is not `{"rubric": str, "threshold": number\|null?, "scale": [lo, hi]?}` (mirrors the runtime parse in `board/rubric.py`) |
+| `json_schema_spec_invalid` | warning | a json_schema spec that is not valid JSON (or not an object/boolean) |
+| `entry_budget_outlier` | info | an entry's wall-clock budget > 10× the board median |
+| `judge_only_board` | info | the board_meta `judge_only` flag is set (judges observe, never steer) |
 | `margin_below_noise_floor` | **refuse** | see below |
+
+The board-authoring codes are **Python-only**: the JS twin
+(`builder/model.js::validateContract`) deliberately mirrors the entry-free
+subset only (its scope comment names the excluded codes), because the
+read-only frozen-contract preview it serves never has the full entry
+objects. Do not twin an entry-level code into the JS.
+
+> ⛔ NEVER import (or `find_spec`) an operator-supplied dotted path inside
+> `validate` — the `dotted_path_malformed` check is SHAPE-ONLY by design.
+> Resolving a module executes parent-package code, and a draft may be
+> copilot-authored, so a server-side import would hand the chat model an
+> arbitrary-code-execution path. The warning message points the operator at
+> `zicato board audit`, which exercises the path in the workspace's own
+> runtime context. The posture is recorded in `validate`'s docstring; keep
+> any future path/spec check on the shape side of that line.
 
 ### 10.5.1 The margin-vs-floor check — the one `refuse`
 
@@ -722,6 +748,37 @@ hash would not see.
 > `from_workspace`), in addition to slot names. If you add a resolvable name,
 > add it to BOTH the copilot's `compare` tool and any API compare path — the
 > two share the operator's mental model of "what can I compare against".
+
+### 10.6.1 Undo and revert — the two restore ops
+
+Two lifecycle ops let an operator walk edits back, and both are ops
+(invariant **L1** — the GUI's Undo/Reset buttons and the copilot's tools call
+the same functions, never a second edit path):
+
+- **`revert_to_live`** discards the session draft's edits by restoring it
+  from a fresh `TournamentDraft.from_workspace(root)`. The restore is
+  performed by `operations.restore_draft(draft, source)` — **in place**,
+  never a rebind, so a session bound to a named slot stays bound and the slot
+  itself sees the restored state. The pre-revert state is remembered first,
+  so `undo` brings the discarded edits back.
+- **`undo`** steps back one edit. `DraftStore` keeps a **bounded (20)
+  per-session history** of `_copy_draft` value snapshots; `store.remember(
+  session)` records the PRE-op state at BOTH front doors — `builder_op` calls
+  it immediately before every `_dispatch_op` write, and
+  `BuilderToolContext.draft()` (the accessor every copilot tool starts with)
+  does the same — so a form edit and a chat edit share ONE history and either
+  door can undo the other's edit. `remember` dedups against the newest
+  snapshot by field equality (a read tool records nothing); `pop_undo`
+  discards snapshots equal to the current state on the way down and hands
+  back the newest one that differs. An exhausted history yields a
+  `DraftPatch(op="undo", note="nothing to undo")` — never an error.
+
+> ✅ ALWAYS restore a draft IN PLACE (`operations.restore_draft`) rather than
+> rebinding the session to a fresh object. The store's session entry, a named
+> slot the session is on, and the copilot's bound context may all reference
+> the SAME draft object — a rebind silently detaches the session from its
+> slot and the next slot read shows stale state. This is the same reason the
+> ops mutate the draft rather than returning a new one.
 
 ---
 

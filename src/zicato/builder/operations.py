@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import dataclasses
 import math
+import re
+import statistics
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -705,6 +707,77 @@ def edit_board_entry(draft: TournamentDraft, entry: BoardEntry) -> DraftPatch:
     )
 
 
+def remove_board_entry(draft: TournamentDraft, entry_id: str) -> DraftPatch:
+    """Remove the board entry with ``entry_id`` — the delete beside
+    :func:`edit_board_entry`'s add/replace.
+
+    Raises :class:`ValueError` on an unknown id (a delete that silently
+    no-ops would hide a typo). Mutates the entries list in place; a board
+    change, so it rolls the epoch like any board edit.
+    """
+    index = next((i for i, e in enumerate(draft.entries) if e.id == entry_id), None)
+    if index is None:
+        raise ValueError(f"no board entry with id {entry_id!r}")
+    del draft.entries[index]
+    return DraftPatch(
+        op="remove_board_entry",
+        changed={"entry_id": entry_id, "action": "removed"},
+    )
+
+
+def restore_draft(
+    draft: TournamentDraft,
+    source: TournamentDraft,
+    *,
+    op: str = "revert_to_live",
+) -> DraftPatch:
+    """Restore ``draft``'s contract fields IN PLACE from ``source``.
+
+    The shared implementation behind the ``revert_to_live`` lifecycle op
+    (``source`` = a fresh :meth:`TournamentDraft.from_workspace`) and the
+    step-``undo`` op (``source`` = a :class:`DraftStore` history
+    snapshot). IN PLACE — never a rebind — so every live binding to the
+    draft object (the store's session entry, a named slot the session is
+    on, the copilot's bound context) sees the restored state; rebinding
+    would silently detach the session from its slot.
+
+    The patch's ``changed`` map reports the restored components through
+    the same canonicalizers the epoch-roll rule uses
+    (:func:`compare_drafts`), so a restore that only reorders entries —
+    canonically identical — honestly reports no change.
+    """
+    diff = compare_drafts(draft, source)
+    changed: dict[str, Any] = {}
+    for component in diff["changed_components"]:
+        if component == "scoring":
+            changed["scoring"] = diff["scoring"]
+        elif component == "board":
+            changed["board"] = diff["board"]
+        elif component == "board_meta":
+            changed["board_meta"] = {
+                "from": diff["board_meta"]["a"],
+                "to": diff["board_meta"]["b"],
+            }
+        elif component == "brief":
+            changed["brief_chars"] = {
+                "from": diff["brief"]["a_chars"],
+                "to": diff["brief"]["b_chars"],
+            }
+        elif component == "proposer":
+            changed["proposer_path"] = {
+                "from": diff["proposer"]["a"],
+                "to": diff["proposer"]["b"],
+            }
+    draft.scoring = source.scoring
+    draft.entries = list(source.entries)
+    draft.brief = source.brief
+    draft.proposer_path = source.proposer_path
+    draft.disable_drift = tuple(source.disable_drift)
+    draft.judge_only = source.judge_only
+    note = "" if changed else "draft already matches the restore source"
+    return DraftPatch(op=op, changed=changed, note=note)
+
+
 def add_judge(draft: TournamentDraft, entry_id: str, judge: JudgeSpec) -> DraftPatch:
     """Add a process judge to a board entry.
 
@@ -1114,6 +1187,15 @@ def validate(
     * ``replicates < 2`` is risky for a bracket structure (a single noisy
       run can flip a match verdict).
     * an explicit ``holdout`` tag referencing no entry, or every entry.
+    * BOARD-AUTHORING checks (all recommend-only):
+      ``duplicate_entry_id`` (refuse — ``apply`` would fail:
+      :func:`~zicato.board.jsonl.save_board` rejects duplicate ids);
+      ``entry_id_unsafe`` (ids become run directory names);
+      ``dotted_path_malformed`` (predicate specs + python judge bodies);
+      ``rubric_spec_invalid`` / ``json_schema_spec_invalid`` (the two
+      JSON-document expectation specs); ``entry_budget_outlier`` (info —
+      a wall-clock budget more than 10× the board median);
+      ``judge_only_board`` (info — the board_meta judge-only flag).
     * STATISTICAL: when a measured A/A noise floor is known — passed in
       explicitly (``noise_floor_max_abs_delta``, e.g. the floor a
       just-run :func:`preflight` measured) or read off the current
@@ -1123,6 +1205,14 @@ def validate(
       severity: every duel decided by the margin alone would be decided
       by noise. Recommend-only, like every warning here — apply is never
       hard-blocked.
+
+    SECURITY POSTURE — the dotted-path checks are SHAPE-ONLY. ``validate``
+    NEVER imports (or ``find_spec``s) an operator- or copilot-supplied
+    dotted path server-side: resolving a module executes parent-package
+    code, and a draft may be copilot-authored. The messages point the
+    operator at ``zicato board audit``, which exercises the paths in the
+    workspace's own runtime context. Keep any future path check on this
+    side of the line.
     """
     warnings: list[Warning] = []
     ts = draft.scoring.tournament_structure
@@ -1190,6 +1280,8 @@ def validate(
             )
         )
 
+    warnings.extend(_board_authoring_warnings(draft))
+
     floor = noise_floor_max_abs_delta
     if floor is None and workspace_root is not None:
         floor = _measured_noise_floor(workspace_root)
@@ -1216,6 +1308,202 @@ def validate(
             )
 
     return warnings
+
+
+#: Filesystem-safe entry ids — an id becomes a run directory name under
+#: ``runs/`` in the workspace.
+_SAFE_ENTRY_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+#: The SHAPE of a dotted import path (``pkg.module.attr`` or
+#: ``pkg.module:attr`` — the two forms :func:`zicato.import_path.
+#: import_dotted_path` accepts). Shape only: validate never resolves it.
+_DOTTED_PATH_RE = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*:[A-Za-z_][A-Za-z0-9_]*$"
+    r"|^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$"
+)
+
+#: How far above the board's median wall-clock budget an entry must sit
+#: before the ``entry_budget_outlier`` info fires.
+_BUDGET_OUTLIER_FACTOR = 10.0
+
+#: The message tail every dotted-path shape warning carries — the checks
+#: are shape-only by design (see the security posture in ``validate``'s
+#: docstring); runtime exercise belongs to ``zicato board audit``.
+_AUDIT_HINT = (
+    "Shape-check only — the builder never imports the path; run "
+    "`zicato board audit` to exercise it."
+)
+
+
+def _token(value: Any) -> str:
+    """The lowercase wire token of a StrEnum-ish field (or the raw str)."""
+    return str(getattr(value, "value", value))
+
+
+def _board_authoring_warnings(draft: TournamentDraft) -> list[Warning]:
+    """The board-entry authoring checks of :func:`validate`.
+
+    All recommend-only; the dotted-path checks are SHAPE-ONLY (no
+    server-side import — see the security posture in ``validate``'s
+    docstring).
+    """
+    warnings: list[Warning] = []
+
+    counts: dict[str, int] = {}
+    for entry in draft.entries:
+        counts[entry.id] = counts.get(entry.id, 0) + 1
+    duplicates = sorted(eid for eid, n in counts.items() if n > 1)
+    if duplicates:
+        warnings.append(
+            Warning(
+                "duplicate_entry_id",
+                f"duplicate board entry id(s): {', '.join(repr(d) for d in duplicates)} "
+                "— two entries share an id, so apply cannot save the board "
+                "(save_board rejects duplicate ids) and run artifacts would "
+                "collide. Recommend-only — apply is not blocked here, but it "
+                "will fail.",
+                severity="refuse",
+            )
+        )
+
+    for entry in draft.entries:
+        if not _SAFE_ENTRY_ID_RE.match(entry.id or ""):
+            warnings.append(
+                Warning(
+                    "entry_id_unsafe",
+                    f"entry id {entry.id!r} is not filesystem-safe (expected "
+                    "an alphanumeric start then [A-Za-z0-9._-]); ids become "
+                    "run directory names under runs/.",
+                )
+            )
+
+        expectation = entry.expectation
+        if expectation is not None:
+            exp_kind = _token(expectation.kind)
+            if exp_kind == "predicate" and not _DOTTED_PATH_RE.match(expectation.spec or ""):
+                warnings.append(
+                    Warning(
+                        "dotted_path_malformed",
+                        f"entry {entry.id!r}: predicate spec {expectation.spec!r} "
+                        "does not look like a dotted path ('pkg.module.attr' or "
+                        f"'pkg.module:attr'). {_AUDIT_HINT}",
+                    )
+                )
+            elif exp_kind == "rubric":
+                problem = _rubric_spec_problem(expectation.spec)
+                if problem:
+                    warnings.append(
+                        Warning(
+                            "rubric_spec_invalid",
+                            f"entry {entry.id!r}: rubric spec {problem} — expected a "
+                            'JSON object like {"rubric": <text>, "threshold": '
+                            '<number|null>, "scale": [lo, hi]}.',
+                        )
+                    )
+            elif exp_kind == "json_schema":
+                problem = _json_schema_spec_problem(expectation.spec)
+                if problem:
+                    warnings.append(
+                        Warning(
+                            "json_schema_spec_invalid",
+                            f"entry {entry.id!r}: json_schema spec {problem} — expected "
+                            "a JSON Schema document (a JSON object, or a bare "
+                            "true/false).",
+                        )
+                    )
+
+        for judge in entry.judges:
+            if _token(judge.mode) == "python" and not _DOTTED_PATH_RE.match(judge.body or ""):
+                warnings.append(
+                    Warning(
+                        "dotted_path_malformed",
+                        f"entry {entry.id!r}: python judge {judge.name!r} body "
+                        f"{judge.body!r} does not look like a dotted path "
+                        f"('pkg.module.attr' or 'pkg.module:attr'). {_AUDIT_HINT}",
+                    )
+                )
+
+    budgets = [e.wall_clock_budget_seconds for e in draft.entries]
+    if len(budgets) >= 2:
+        median = statistics.median(budgets)
+        if median > 0:
+            for entry in draft.entries:
+                if entry.wall_clock_budget_seconds > _BUDGET_OUTLIER_FACTOR * median:
+                    warnings.append(
+                        Warning(
+                            "entry_budget_outlier",
+                            f"entry {entry.id!r} has a wall-clock budget of "
+                            f"{entry.wall_clock_budget_seconds}s, more than 10× the "
+                            f"board median ({median:g}s) — it will dominate the "
+                            "round's wall-clock time.",
+                            severity="info",
+                        )
+                    )
+
+    if draft.judge_only:
+        warnings.append(
+            Warning(
+                "judge_only_board",
+                "board_meta sets judge_only: every run is evaluated by goldfive "
+                "judges WITHOUT steering — drift is observed, never corrected. "
+                "Intentional for judge-calibration boards; surfaced so a "
+                "left-over flag is noticed.",
+                severity="info",
+            )
+        )
+
+    return warnings
+
+
+def _rubric_spec_problem(spec: str) -> str:
+    """Why a rubric expectation spec is malformed, or ``""`` when it is fine.
+
+    Mirrors the runtime parse in :func:`zicato.board.rubric.
+    evaluate_rubric_judge` — JSON object with a string ``rubric``, an
+    optional numeric ``threshold`` and an optional 2-element numeric
+    ``scale`` — WITHOUT evaluating anything, so the authoring-time
+    warning agrees with the run-time failure mode.
+    """
+    import json  # noqa: PLC0415
+
+    try:
+        parsed = json.loads(spec)
+    except (json.JSONDecodeError, TypeError) as exc:
+        return f"is not valid JSON ({exc})"
+    if not isinstance(parsed, dict):
+        return f"must be a JSON object, got {type(parsed).__name__}"
+    rubric = parsed.get("rubric")
+    if not isinstance(rubric, str) or not rubric.strip():
+        return "is missing a non-empty string 'rubric'"
+    threshold = parsed.get("threshold")
+    if threshold is not None and (
+        isinstance(threshold, bool) or not isinstance(threshold, int | float)
+    ):
+        return f"'threshold' must be a number or null, got {threshold!r}"
+    scale = parsed.get("scale")
+    if scale is not None:
+        if not isinstance(scale, list) or len(scale) != 2:
+            return f"'scale' must be a 2-element [lo, hi] list, got {scale!r}"
+        if any(isinstance(v, bool) or not isinstance(v, int | float) for v in scale):
+            return f"'scale' entries must be numbers, got {scale!r}"
+    return ""
+
+
+def _json_schema_spec_problem(spec: str) -> str:
+    """Why a json_schema expectation spec is malformed, or ``""`` if fine.
+
+    A JSON Schema document is a JSON object (or, per the spec, a bare
+    boolean). Parse-and-shape only — no schema compilation here.
+    """
+    import json  # noqa: PLC0415
+
+    try:
+        parsed = json.loads(spec)
+    except (json.JSONDecodeError, TypeError) as exc:
+        return f"is not valid JSON ({exc})"
+    if not isinstance(parsed, dict | bool):
+        return f"must be a JSON object or boolean, got {type(parsed).__name__}"
+    return ""
 
 
 def _measured_noise_floor(workspace_root: Path) -> float | None:
@@ -1683,10 +1971,12 @@ __all__ = [
     "set_experiment_memory",
     "set_screening",
     "edit_board_entry",
+    "remove_board_entry",
     "add_judge",
     "remove_judge",
     "set_brief",
     "set_board_meta",
+    "restore_draft",
     "estimate_cost",
     "validate",
     "compare_drafts",

@@ -397,6 +397,14 @@ function racingCost(params, fieldSize, replicates, boardSize) {
 // measured floor via `opts`). Returns the SAME [{code, message, severity}]
 // shape `/builder/op` carries.
 //
+// SCOPE — deliberately the ENTRY-FREE subset. The board-entry authoring
+// codes are Python-only (they need the full entry objects, which this
+// read-only preview never has): duplicate_entry_id, entry_id_unsafe,
+// dotted_path_malformed, rubric_spec_invalid, json_schema_spec_invalid,
+// entry_budget_outlier, judge_only_board — plus the tag-set checks
+// holdout_tags_cover_whole_board. Those surface only through the backend
+// envelope (`/builder/op` / `/builder/draft`); do NOT twin them here.
+//
 // `opts` (optional): { promoteMargin, noiseFloor } — the contract's
 // promote_margin and the epoch's measured A/A floor (max |Δ|). When both are
 // known, the margin sitting at/below the floor WITH the evidence gate off

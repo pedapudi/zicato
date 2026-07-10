@@ -231,6 +231,61 @@ def test_set_brief() -> None:
     assert patch.changed["brief_chars"]["to"] == len("new brief text")
 
 
+def test_remove_board_entry() -> None:
+    import pytest
+
+    draft = TournamentDraft()
+    draft.entries = _board(3)
+    patch = ops.remove_board_entry(draft, "e1")
+    assert [e.id for e in draft.entries] == ["e0", "e2"]
+    assert patch.op == "remove_board_entry"
+    assert patch.changed == {"entry_id": "e1", "action": "removed"}
+    # Unknown id raises rather than silently no-oping (a typo'd delete).
+    with pytest.raises(ValueError, match="no board entry with id"):
+        ops.remove_board_entry(draft, "ghost")
+    assert [e.id for e in draft.entries] == ["e0", "e2"]
+
+
+def test_restore_draft_in_place_reports_components() -> None:
+    source = TournamentDraft()
+    source.entries = _board(2)
+    source.brief = "the source brief"
+
+    draft = TournamentDraft()
+    draft.entries = _board(3)
+    ops.set_structure(draft, "swiss")
+    ops.set_board_meta(draft, judge_only=True)
+
+    before_identity = draft
+    patch = ops.restore_draft(draft, source)
+    assert patch.op == "revert_to_live"
+    # IN PLACE: the object identity is unchanged — slot bindings stay live.
+    assert draft is before_identity
+    assert draft.scoring == source.scoring
+    assert [e.id for e in draft.entries] == ["e0", "e1"]
+    assert draft.brief == "the source brief"
+    assert draft.judge_only is False
+    # The changed map names the restored components.
+    assert set(patch.changed) == {"scoring", "board", "board_meta", "brief_chars"}
+    assert patch.changed["board"]["removed"] == ["e2"]
+
+    # Restoring again is an honest no-op with the note.
+    patch = ops.restore_draft(draft, source)
+    assert patch.changed == {}
+    assert "already matches" in patch.note
+
+    # The restored entries list is a COPY — mutating the draft afterwards
+    # never leaks back into the source (undo snapshots stay pristine).
+    ops.remove_board_entry(draft, "e0")
+    assert [e.id for e in source.entries] == ["e0", "e1"]
+
+
+def test_restore_draft_op_name_for_undo() -> None:
+    draft = TournamentDraft()
+    patch = ops.restore_draft(draft, TournamentDraft(), op="undo")
+    assert patch.op == "undo"
+
+
 # ---------------------------------------------------------------------------
 # estimate_cost
 # ---------------------------------------------------------------------------
@@ -1153,3 +1208,326 @@ def test_compare_drafts_keyed_diff() -> None:
     assert diff["board"]["changed"] == ["e1"]
     assert diff["brief"]["changed"] is True
     assert diff["proposer"]["changed"] is False
+
+
+# ---------------------------------------------------------------------------
+# validate: the board-authoring codes (all recommend-only; the dotted-path
+# checks are SHAPE-ONLY — validate never imports an operator-supplied path)
+# ---------------------------------------------------------------------------
+
+
+def _codes(draft: TournamentDraft) -> dict[str, list]:
+    out: dict[str, list] = {}
+    for w in ops.validate(draft):
+        out.setdefault(w.code, []).append(w)
+    return out
+
+
+def test_validate_duplicate_entry_id_refuses() -> None:
+    draft = TournamentDraft()
+    draft.entries = [_entry("dup"), _entry("dup"), _entry("ok")]
+    warns = _codes(draft)["duplicate_entry_id"]
+    assert len(warns) == 1
+    assert warns[0].severity == "refuse"
+    assert "'dup'" in warns[0].message
+    # A clean board does not fire it.
+    draft.entries = _board(3)
+    assert "duplicate_entry_id" not in _codes(draft)
+
+
+def test_validate_entry_id_unsafe() -> None:
+    draft = TournamentDraft()
+    draft.entries = [_entry("ok-id.1"), _entry("bad id/slash")]
+    warns = _codes(draft)["entry_id_unsafe"]
+    assert len(warns) == 1
+    assert warns[0].severity == "warning"
+    assert "bad id/slash" in warns[0].message
+
+
+def test_validate_dotted_path_malformed_predicate_and_judge() -> None:
+    import dataclasses as _dc
+
+    from goldfive import DriftSeverity as _Sev
+
+    from zicato.core.types import Expectation, ExpectationKind
+
+    draft = TournamentDraft()
+    good_pred = _dc.replace(
+        _entry("good-pred"),
+        expectation=Expectation(kind=ExpectationKind.PREDICATE, spec="pkg.mod:check"),
+    )
+    bad_pred = _dc.replace(
+        _entry("bad-pred"),
+        expectation=Expectation(kind=ExpectationKind.PREDICATE, spec="not a path!"),
+    )
+    bad_judge = _dc.replace(
+        _entry("bad-judge"),
+        judges=(
+            JudgeSpec(
+                name="pyjudge",
+                mode=JudgeMode.PYTHON,
+                body="also not a path",
+                severity=_Sev("warning"),
+            ),
+        ),
+    )
+    inline_judge = _dc.replace(
+        _entry("inline-judge"),
+        judges=(
+            JudgeSpec(
+                name="crit",
+                mode=JudgeMode.INLINE,
+                body="stays on topic (free text, never a path)",
+                severity=_Sev("warning"),
+            ),
+        ),
+    )
+    draft.entries = [good_pred, bad_pred, bad_judge, inline_judge]
+    warns = _codes(draft)["dotted_path_malformed"]
+    assert len(warns) == 2
+    assert all(w.severity == "warning" for w in warns)
+    joined = " ".join(w.message for w in warns)
+    assert "bad-pred" in joined and "bad-judge" in joined
+    # SECURITY: the message points at the runtime auditor, not an import.
+    assert all("zicato board audit" in w.message for w in warns)
+    # Dot-form paths are fine too.
+    dot_pred = _dc.replace(
+        _entry("dot-pred"),
+        expectation=Expectation(kind=ExpectationKind.PREDICATE, spec="pkg.mod.check"),
+    )
+    draft.entries = [dot_pred]
+    assert "dotted_path_malformed" not in _codes(draft)
+
+
+def test_validate_rubric_spec_invalid() -> None:
+    import dataclasses as _dc
+    import json as _json
+
+    from zicato.core.types import Expectation, ExpectationKind
+
+    def rubric_entry(eid: str, spec: str):
+        return _dc.replace(
+            _entry(eid),
+            expectation=Expectation(kind=ExpectationKind.RUBRIC, spec=spec),
+        )
+
+    draft = TournamentDraft()
+    good = _json.dumps({"rubric": "clear answer", "threshold": 7, "scale": [0, 10]})
+    draft.entries = [
+        rubric_entry("good", good),
+        rubric_entry("not-json", "not json {"),
+        rubric_entry("no-rubric", _json.dumps({"threshold": 7})),
+        rubric_entry("bad-threshold", _json.dumps({"rubric": "x", "threshold": "high"})),
+        rubric_entry("bad-scale", _json.dumps({"rubric": "x", "scale": [1, 2, 3]})),
+    ]
+    warns = _codes(draft)["rubric_spec_invalid"]
+    assert len(warns) == 4
+    assert all(w.severity == "warning" for w in warns)
+    named = " ".join(w.message for w in warns)
+    assert "good" not in named
+
+
+def test_validate_json_schema_spec_invalid() -> None:
+    import dataclasses as _dc
+    import json as _json
+
+    from zicato.core.types import Expectation, ExpectationKind
+
+    def schema_entry(eid: str, spec: str):
+        return _dc.replace(
+            _entry(eid),
+            expectation=Expectation(kind=ExpectationKind.JSON_SCHEMA, spec=spec),
+        )
+
+    draft = TournamentDraft()
+    draft.entries = [
+        schema_entry("good", _json.dumps({"type": "object"})),
+        schema_entry("good-bool", "true"),
+        schema_entry("broken", "{nope"),
+        schema_entry("wrong-shape", _json.dumps([1, 2])),
+    ]
+    warns = _codes(draft)["json_schema_spec_invalid"]
+    assert len(warns) == 2
+    assert all(w.severity == "warning" for w in warns)
+    named = " ".join(w.message for w in warns)
+    assert "broken" in named and "wrong-shape" in named
+
+
+def test_validate_entry_budget_outlier() -> None:
+    import dataclasses as _dc
+
+    draft = TournamentDraft()
+    draft.entries = [
+        _entry("a"),
+        _entry("b"),
+        _entry("c"),
+        _dc.replace(_entry("huge"), wall_clock_budget_seconds=6000),
+    ]
+    warns = _codes(draft)["entry_budget_outlier"]
+    assert len(warns) == 1
+    assert warns[0].severity == "info"
+    assert "huge" in warns[0].message
+    # 10x the median exactly is NOT an outlier (strictly greater fires).
+    draft.entries = [
+        _entry("a"),
+        _entry("b"),
+        _dc.replace(_entry("edge"), wall_clock_budget_seconds=600),
+    ]
+    assert "entry_budget_outlier" not in _codes(draft)
+
+
+def test_validate_judge_only_board() -> None:
+    draft = TournamentDraft()
+    draft.entries = _board(2)
+    assert "judge_only_board" not in _codes(draft)
+    ops.set_board_meta(draft, judge_only=True)
+    warns = _codes(draft)["judge_only_board"]
+    assert len(warns) == 1
+    assert warns[0].severity == "info"
+
+
+def test_validate_clean_board_fires_no_authoring_codes() -> None:
+    draft = TournamentDraft()
+    draft.entries = _board(4)
+    codes = set(_codes(draft))
+    assert not codes & {
+        "duplicate_entry_id",
+        "entry_id_unsafe",
+        "dotted_path_malformed",
+        "rubric_spec_invalid",
+        "json_schema_spec_invalid",
+        "entry_budget_outlier",
+        "judge_only_board",
+    }
+
+
+# ---------------------------------------------------------------------------
+# DraftStore undo history: remember / pop_undo
+# ---------------------------------------------------------------------------
+
+
+def test_draftstore_remember_dedups_and_pop_undo_restores(tmp_path) -> None:
+    from zicato.builder.draft import DraftStore
+
+    _seed_min_workspace(tmp_path)
+    ws = tmp_path / ".zicato"
+    store = DraftStore()
+    draft = store.get("s", ws)
+
+    # Nothing remembered yet: nothing to undo.
+    assert store.pop_undo("s") is None
+
+    store.remember("s")  # pre-op snapshot (gauntlet state)
+    ops.set_structure(draft, "swiss")
+    store.remember("s")  # a second, distinct snapshot
+    store.remember("s")  # dedup: identical to the top — records nothing
+    ops.set_gate(draft, promote_margin=0.09)
+
+    snap = store.pop_undo("s")
+    assert snap is not None
+    assert snap.scoring.tournament_structure.structure == "swiss"
+    assert snap.scoring.promote_margin != 0.09
+
+    ops.restore_draft(draft, snap, op="undo")
+    assert draft.scoring.tournament_structure.structure == "swiss"
+    assert draft.scoring.promote_margin == 0.01
+
+    # The next pop skips snapshots equal to the restored current state and
+    # hands back the original gauntlet draft.
+    snap2 = store.pop_undo("s")
+    assert snap2 is not None
+    assert snap2.scoring.tournament_structure.structure == "gauntlet"
+    ops.restore_draft(draft, snap2, op="undo")
+    assert store.pop_undo("s") is None
+
+
+def test_draftstore_history_is_bounded_to_twenty(tmp_path) -> None:
+    from zicato.builder.draft import DraftStore
+
+    _seed_min_workspace(tmp_path)
+    ws = tmp_path / ".zicato"
+    store = DraftStore()
+    draft = store.get("s", ws)
+
+    for i in range(30):
+        store.remember("s")
+        ops.set_gate(draft, promote_margin=0.01 + (i + 1) * 0.001)
+
+    popped = 0
+    while store.pop_undo("s") is not None:
+        # Restore nothing — just drain; every popped snapshot differs from
+        # the (untouched) current draft, so the drain counts the history.
+        popped += 1
+        break_guard = popped > 25
+        assert not break_guard
+    # deque(maxlen=20): the oldest ten snapshots fell off.
+    # (pop_undo drains one per call above; count the rest.)
+    remaining = 0
+    while store.pop_undo("s") is not None:
+        remaining += 1
+    assert popped + remaining <= 20
+
+
+def test_draftstore_undo_restores_in_place_keeps_slot_binding(tmp_path) -> None:
+    """The restore is IN PLACE: a session bound to a named slot stays bound,
+    and the slot itself sees the restored state."""
+    from zicato.builder.draft import DraftStore
+
+    _seed_min_workspace(tmp_path)
+    ws = tmp_path / ".zicato"
+    store = DraftStore()
+    store.get("s", ws)
+    forked = store.fork("s", "variant", ws)
+
+    store.remember("s")
+    ops.set_structure(forked, "racing")
+    snap = store.pop_undo("s")
+    assert snap is not None
+    ops.restore_draft(store.get("s", ws), snap, op="undo")
+
+    # Identity intact: the slot IS the session draft, and it was restored.
+    assert store.slot("variant") is store.get("s", ws)
+    assert store.slot("variant").scoring.tournament_structure.structure == "gauntlet"
+
+
+def _seed_min_workspace(tmp_path) -> None:
+    """A minimal registered workspace the DraftStore can init drafts from."""
+    import json as _json
+
+    from zicato.core.types import ScoringWeights as _SW
+    from zicato.epoch.lifecycle import new_epoch as _new_epoch
+    from zicato.workspace.config_io import write_workspace_config as _wcfg
+
+    ws = tmp_path / ".zicato"
+    ws.mkdir(exist_ok=True)
+    board = tmp_path / "board.jsonl"
+    board.write_text(
+        '{"id": "e1", "kind": "single_turn", "budget_s": 60, "input": "hi"}\n',
+        encoding="utf-8",
+    )
+    brief = tmp_path / "brief.md"
+    brief.write_text("# Brief\n", encoding="utf-8")
+    scoring = tmp_path / "scoring.json"
+    scoring.write_text(_json.dumps({"drift_weight": 1.0, "promote_margin": 0.01}), encoding="utf-8")
+    _wcfg(
+        ws,
+        {
+            "instance_id": "default",
+            "adk_entrypoint": "pkg.mod:agent",
+            "mutable_trees": [],
+            "source_roots": [],
+            "contract": {
+                "board_path": str(board.resolve()),
+                "rubric_path": str(brief.resolve()),
+                "scoring_path": str(scoring.resolve()),
+            },
+        },
+    )
+    _new_epoch(
+        workspace_root=ws,
+        name="alpha",
+        board_source=board,
+        brief_source=brief,
+        weights=_SW(),
+        entrypoint="pkg.mod:agent",
+    )
