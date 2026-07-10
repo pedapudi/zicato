@@ -649,6 +649,128 @@ def _upsert_tournament(conn: sqlite3.Connection, experiment: Experiment) -> None
     )
 
 
+def _upsert_reflection(
+    conn: sqlite3.Connection,
+    *,
+    reflection_id: str,
+    epoch_id: str,
+    created_at: str,
+    mode: str,
+    executed: bool,
+    noise_floor_max_abs_delta: float | None,
+    decision_flip_p: float | None,
+    n_findings: int,
+    n_judges: int,
+    verdict_counts: dict[str, int],
+) -> None:
+    """Upsert one ``reflections`` row (the board-reflection projection, v11).
+
+    The four-pillar bill-of-health summary of one reflection run, keyed on
+    ``reflection_id``. ``noise_floor_max_abs_delta`` / ``decision_flip_p`` are
+    the headline reliability numbers (``None`` when the reflection ran no
+    reliability pillar — a passive/ingest-only pass over a workspace with no
+    persisted floor). ``verdict_counts`` is the corpus-wide TP/FP/FN/TN/ambiguous
+    tally, stored as JSON. Every write is a keyed upsert so a re-ingest (or a
+    ``zicato reindex`` after the file was rewritten) is idempotent.
+    """
+    conn.execute(
+        "INSERT INTO reflections("
+        "reflection_id, epoch_id, created_at, mode, executed, "
+        "noise_floor_max_abs_delta, decision_flip_p, n_findings, n_judges, "
+        "verdict_counts_json) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(reflection_id) DO UPDATE SET "
+        "epoch_id = excluded.epoch_id, "
+        "created_at = excluded.created_at, "
+        "mode = excluded.mode, "
+        "executed = excluded.executed, "
+        "noise_floor_max_abs_delta = excluded.noise_floor_max_abs_delta, "
+        "decision_flip_p = excluded.decision_flip_p, "
+        "n_findings = excluded.n_findings, "
+        "n_judges = excluded.n_judges, "
+        "verdict_counts_json = excluded.verdict_counts_json",
+        (
+            reflection_id,
+            epoch_id,
+            created_at,
+            mode,
+            1 if executed else 0,
+            noise_floor_max_abs_delta,
+            decision_flip_p,
+            int(n_findings),
+            int(n_judges),
+            json.dumps(verdict_counts, sort_keys=True),
+        ),
+    )
+
+
+def _upsert_judge_scorecards(
+    conn: sqlite3.Connection,
+    reflection_id: str,
+    scorecards: list[dict[str, Any]],
+) -> None:
+    """Rewrite the ``judge_scorecards`` rows for one reflection.
+
+    Delete-then-insert keyed on ``reflection_id`` (the same idempotent shape
+    as :func:`_replace_judge_losses`) so a re-ingest after a scorecard set
+    shrinks can never leave a stale ``(reflection_id, judge_name)`` row behind.
+    Each ``scorecards`` dict is one :meth:`JudgeScorecard.to_json` — the
+    ``self_consistency_kappa`` field projects to the ``kappa`` column and
+    ``redundant_with`` to ``redundant_with_json``.
+    """
+    conn.execute("DELETE FROM judge_scorecards WHERE reflection_id = ?", (reflection_id,))
+    rows: list[tuple[Any, ...]] = []
+    for card in scorecards:
+        rows.append(
+            (
+                reflection_id,
+                str(card.get("judge_name", "")),
+                _opt_int_field(card.get("tp")),
+                _opt_int_field(card.get("fp")),
+                _opt_int_field(card.get("fn")),
+                _opt_int_field(card.get("tn")),
+                _opt_int_field(card.get("ambiguous")),
+                _opt_float_field(card.get("precision")),
+                _opt_float_field(card.get("recall")),
+                _opt_float_field(card.get("f1")),
+                _opt_float_field(card.get("severity_accuracy")),
+                _opt_float_field(card.get("disagreement_rate")),
+                _opt_float_field(card.get("self_consistency_kappa")),
+                1 if card.get("exercised") else 0,
+                json.dumps(card.get("redundant_with") or [], sort_keys=True),
+            )
+        )
+    if rows:
+        conn.executemany(
+            "INSERT INTO judge_scorecards("
+            "reflection_id, judge_name, tp, fp, fn, tn, ambiguous, "
+            "precision, recall, f1, severity_accuracy, disagreement_rate, kappa, "
+            "exercised, redundant_with_json) "
+            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+
+
+def _opt_int_field(value: Any) -> int | None:
+    """Coerce an optional integer scorecard field (``None`` / non-int ⇒ ``None``)."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    return None
+
+
+def _opt_float_field(value: Any) -> float | None:
+    """Coerce an optional float scorecard field (``None`` / non-number ⇒ ``None``)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    return None
+
+
 def _upsert_field_tournament(conn: sqlite3.Connection, record: dict[str, Any]) -> None:
     """Write the FIELD-level ``tournaments`` row for a settled tournament.
 
@@ -903,6 +1025,111 @@ def _ingest_experiment_into(
     return True
 
 
+def _load_json_file(path: Path) -> Any | None:
+    """Read and parse one JSON file; ``None`` on any defect (best-effort)."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+
+
+def _scorecard_list(raw: Any) -> list[dict[str, Any]]:
+    """Normalise a persisted scorecards artifact to a list of card dicts.
+
+    Tolerates either the wrapped ``{"scorecards": [...]}`` form the CLI
+    writes or a bare list, and skips any non-dict element.
+    """
+    if isinstance(raw, dict):
+        raw = raw.get("scorecards")
+    if not isinstance(raw, list):
+        return []
+    return [c for c in raw if isinstance(c, dict)]
+
+
+def _finding_list(raw: Any) -> list[dict[str, Any]]:
+    """Normalise a persisted findings artifact to a list of finding dicts."""
+    if isinstance(raw, dict):
+        raw = raw.get("findings")
+    if not isinstance(raw, list):
+        return []
+    return [f for f in raw if isinstance(f, dict)]
+
+
+def _ingest_reflection_into(
+    conn: sqlite3.Connection,
+    workspace_root: Path,
+    epoch_id: str,
+    reflection_id: str,
+) -> bool:
+    """Ingest one reflection's projection rows into an open connection.
+
+    Returns ``True`` when a ``plan.json`` was found and the ``reflections``
+    (+ ``judge_scorecards``) rows were upserted, ``False`` when the reflection
+    directory has no readable plan yet (nothing to project). The canonical
+    files are the source of truth; the index rows are a pure projection of
+    ``plan.json`` (identity + mode + executed), ``scorecards.json`` (per-judge
+    cards + the corpus verdict tally), ``findings.json`` (finding count), and
+    the derived ``summary.json`` (the consumed noise floor + decision-flip
+    headline). Every artifact is read best-effort — a reflection with a plan
+    but no scorecards (a ``--passive`` / ``--no-llm-adjudication`` run that
+    produced no adjudications) still projects a row with an empty judge set.
+    """
+    from zicato.core.workspace import (  # noqa: PLC0415
+        reflection_dir,
+        reflection_findings_path,
+        reflection_plan_path,
+        reflection_scorecards_path,
+    )
+
+    plan = _load_json_file(reflection_plan_path(workspace_root, epoch_id, reflection_id))
+    if not isinstance(plan, dict):
+        return False
+
+    scorecards = _scorecard_list(
+        _load_json_file(reflection_scorecards_path(workspace_root, epoch_id, reflection_id))
+    )
+    findings = _finding_list(
+        _load_json_file(reflection_findings_path(workspace_root, epoch_id, reflection_id))
+    )
+    summary = _load_json_file(
+        reflection_dir(workspace_root, epoch_id, reflection_id) / "summary.json"
+    )
+    summary = summary if isinstance(summary, dict) else {}
+
+    verdict_counts = {"tp": 0, "fp": 0, "fn": 0, "tn": 0, "ambiguous": 0}
+    for card in scorecards:
+        for key in verdict_counts:
+            val = card.get(key)
+            if isinstance(val, int) and not isinstance(val, bool):
+                verdict_counts[key] += val
+
+    _upsert_reflection(
+        conn,
+        reflection_id=str(plan.get("reflection_id") or reflection_id),
+        epoch_id=str(plan.get("epoch_id") or epoch_id),
+        created_at=str(plan.get("created_at") or ""),
+        mode=str(plan.get("mode") or ""),
+        executed=bool(plan.get("executed", False)),
+        noise_floor_max_abs_delta=_opt_float_field(summary.get("noise_floor_max_abs_delta")),
+        decision_flip_p=_opt_float_field(summary.get("decision_flip_p")),
+        n_findings=len(findings),
+        n_judges=len(scorecards),
+        verdict_counts=verdict_counts,
+    )
+    _upsert_judge_scorecards(conn, str(plan.get("reflection_id") or reflection_id), scorecards)
+    return True
+
+
+def _iter_reflection_dirs(workspace_root: Path, epoch_id: str) -> list[str]:
+    """Yield reflection ids that have a directory on disk under ``epoch_id``."""
+    from zicato.core.workspace import reflections_dir  # noqa: PLC0415
+
+    root = reflections_dir(workspace_root, epoch_id)
+    if not root.exists():
+        return []
+    return sorted(child.name for child in root.iterdir() if child.is_dir())
+
+
 def _upsert_generation_from_experiment(
     conn: sqlite3.Connection,
     experiment: Experiment,
@@ -1155,6 +1382,14 @@ def _rebuild_epoch(
     for record in _load_field_tournaments(workspace_root, epoch_id):
         _upsert_field_tournament(conn, record)
 
+    # Board-reflection projection (schema v11): re-derive each reflection's
+    # bill-of-health + judge-scorecard rows from its canonical
+    # ``plan.json`` / ``scorecards.json`` / ``findings.json`` / ``summary.json``
+    # so the Instrument lens survives a full rebuild. Files are canonical; the
+    # index is a projection, so a reflection is readable with no index at all.
+    for reflection_id in _iter_reflection_dirs(workspace_root, epoch_id):
+        _ingest_reflection_into(conn, workspace_root, epoch_id, reflection_id)
+
 
 def _open_for_write(workspace_root: Path, db_path: Path | None) -> tuple[sqlite3.Connection, Path]:
     """Open (creating + schema-applying if needed) the index for a write.
@@ -1273,6 +1508,33 @@ def ingest_field_tournament(
     conn, _ = _open_for_write(workspace_root, db_path)
     try:
         _upsert_field_tournament(conn, record)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def ingest_reflection(
+    workspace_root: Path,
+    db_path: Path | None,
+    epoch_id: str,
+    reflection_id: str,
+) -> None:
+    """Incrementally upsert one reflection's ``reflections`` + scorecard rows.
+
+    The live dual-write companion to :func:`ingest_experiment` for the
+    board-reflection projection: ``zicato reflect run`` calls it at finalize
+    (the moment ``findings.json`` lands) so the Instrument lens sees the new
+    reflection immediately, without a full ``zicato reindex``. Reads the
+    reflection's canonical files (``plan.json`` / ``scorecards.json`` /
+    ``findings.json`` / ``summary.json``) and projects them; a reflection with
+    no readable ``plan.json`` is silently skipped. Idempotent — every write is
+    a keyed upsert (scorecards are delete-then-insert keyed on
+    ``reflection_id``). When the database does not exist yet it is created with
+    the schema applied.
+    """
+    conn, _ = _open_for_write(workspace_root, db_path)
+    try:
+        _ingest_reflection_into(conn, workspace_root, epoch_id, reflection_id)
         conn.commit()
     finally:
         conn.close()
@@ -1709,6 +1971,7 @@ __all__ = [
     "ingest_run",
     "ingest_experiment",
     "ingest_field_tournament",
+    "ingest_reflection",
     "backfill_generations",
     "repair_epoch_goals",
     "backfill_tournament_fk",

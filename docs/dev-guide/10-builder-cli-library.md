@@ -888,6 +888,7 @@ and the advanced/debugging commands — instead of one flat list.
 | `health.py` | `health` | — |
 | `mutations.py` | `mutations` | — |
 | `propose.py` | `propose` | — |
+| `reflect.py` | `reflect` (group) | `run`, `report`, `apply` — board reflection (BOARD-REFLECTION.md R4); `apply` reaches the builder via `zicato.reflection.apply` (a library edge), not a direct `cli → builder` import |
 | `register.py` | `register` | — |
 | `tournament.py` | `tournament` | — |
 | `reindex.py` | `reindex`, `reindex-generations`, `repair-tournament-fk` | — |

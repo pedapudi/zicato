@@ -660,6 +660,87 @@ def _make_live_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
     }
 
 
+# A run_ref is the reflection adjudicator's stable ``{candidate}:{entry}:r{n}``
+# decision key (adjudicator.run_ref_for), so it carries ``:`` that the strict
+# ``_SAFE_ID`` rejects. This validator widens the alphabet to admit that one
+# separator while still blocking path-traversal (no ``/`` or ``..``).
+_SAFE_RUN_REF = re.compile(r"^[A-Za-z0-9._:-]{1,200}$")
+
+
+def _is_safe_run_ref(value: str) -> bool:
+    return (
+        bool(value)
+        and value not in (".", "..")
+        and ".." not in value
+        and _SAFE_RUN_REF.match(value) is not None
+    )
+
+
+def _make_reflection_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
+    """Instrument-lens surface — reflection bill-of-health / scorecards / x-ray.
+
+    Self-contained thin delegates over :mod:`zicato.query.reflection_view`
+    (index-first, file-fallback, DQ3 same-shape degrade). Kept in one factory
+    + its own routes block so the concurrent endpoints.py thinning (track U2)
+    merges additively.
+    """
+
+    async def api_reflections(request: Request) -> JSONResponse:
+        """Every reflection under the workspace (optional ``?epoch=`` scope)."""
+        try:
+            epoch_id = _epoch_query(request)
+        except (_BadEpoch, ValueError):
+            return JSONResponse({"reflections": []}, status_code=404)
+        return JSONResponse(query.list_reflections(paths, epoch_id))
+
+    async def api_reflection_summary(request: Request) -> JSONResponse:
+        reflection_id = request.path_params["reflection_id"]
+        if not _is_safe_id(reflection_id):
+            return JSONResponse(
+                {"reflection_id": reflection_id, "found": False, "pillars": {}, "findings": []},
+                status_code=200,
+            )
+        return JSONResponse(query.build_reflection_summary(paths, reflection_id))
+
+    async def api_reflection_scorecards(request: Request) -> JSONResponse:
+        reflection_id = request.path_params["reflection_id"]
+        if not _is_safe_id(reflection_id):
+            return JSONResponse({"reflection_id": reflection_id, "judges": []}, status_code=200)
+        return JSONResponse(query.build_judge_scorecards(paths, reflection_id))
+
+    async def api_reflection_xray(request: Request) -> JSONResponse:
+        reflection_id = request.path_params["reflection_id"]
+        judge_name = request.path_params["judge_name"]
+        run_ref = request.path_params["run_ref"]
+        if (
+            not _is_safe_id(reflection_id)
+            or not _is_safe_id(judge_name)
+            or not _is_safe_run_ref(run_ref)
+        ):
+            return JSONResponse(
+                {
+                    "reflection_id": reflection_id,
+                    "judge_name": judge_name,
+                    "run_ref": run_ref,
+                    "found": False,
+                    "transcript": {"fidelity": "unavailable", "turns": []},
+                    "judge_verdict": None,
+                    "adjudication": None,
+                },
+                status_code=200,
+            )
+        return JSONResponse(
+            query.build_adjudication_xray(paths, reflection_id, judge_name, run_ref)
+        )
+
+    return {
+        "api_reflections": api_reflections,
+        "api_reflection_summary": api_reflection_summary,
+        "api_reflection_scorecards": api_reflection_scorecards,
+        "api_reflection_xray": api_reflection_xray,
+    }
+
+
 def _make_tournament_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
     """Tournament surface — bracket, structure, matchups, gate."""
 
@@ -1267,6 +1348,7 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
     handlers.update(_make_judge_run_endpoints(paths))
     handlers.update(_make_live_endpoints(paths))
     handlers.update(_make_tournament_endpoints(paths))
+    handlers.update(_make_reflection_endpoints(paths))
     handlers.update(_make_files_endpoints(paths))
     handlers.update(_make_conversation_endpoints(paths))
     handlers.update(_make_control_endpoints(paths, read_only=read_only))

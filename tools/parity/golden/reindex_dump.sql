@@ -50,6 +50,24 @@ CREATE TABLE judge_losses (
       weight REAL,
       PRIMARY KEY (run_id, judge_name)
     );
+CREATE TABLE judge_scorecards (
+      reflection_id TEXT,
+      judge_name TEXT,
+      tp INTEGER,
+      fp INTEGER,
+      fn INTEGER,
+      tn INTEGER,
+      ambiguous INTEGER,
+      precision REAL,
+      recall REAL,
+      f1 REAL,
+      severity_accuracy REAL,
+      disagreement_rate REAL,
+      kappa REAL,
+      exercised INTEGER,
+      redundant_with_json TEXT,
+      PRIMARY KEY (reflection_id, judge_name)
+    );
 CREATE TABLE loss_profiles (
       run_id TEXT PRIMARY KEY,
       epoch_id TEXT,
@@ -86,6 +104,18 @@ INSERT INTO "patches" VALUES('<HEX32>','<DATE>_t1_racing','v1','researcher_instr
 INSERT INTO "patches" VALUES('<HEX32>','<DATE>_t1_racing','v2','coordinator_instruction','replace','Tightening the routing flow reduces redundant agent_transfer events and breaks reviewer loops.');
 INSERT INTO "patches" VALUES('<HEX32>','<DATE>_t1_racing','v3','researcher_instruction','replace','Per-bullet citations ground the writer''s numbers and cut fabricated metrics.');
 INSERT INTO "patches" VALUES('<HEX32>','<DATE>_t1_racing','v4','coordinator_instruction','replace','A hard turn budget halts the reviewer re-dispatch loop deterministically.');
+CREATE TABLE reflections (
+      reflection_id TEXT PRIMARY KEY,
+      epoch_id TEXT,
+      created_at TEXT,
+      mode TEXT,
+      executed INTEGER,
+      noise_floor_max_abs_delta REAL,
+      decision_flip_p REAL,
+      n_findings INTEGER,
+      n_judges INTEGER,
+      verdict_counts_json TEXT
+    );
 CREATE TABLE runs (
       run_id TEXT PRIMARY KEY,
       epoch_id TEXT,
@@ -102,7 +132,7 @@ CREATE TABLE schema_meta (
   key TEXT PRIMARY KEY,
   value TEXT
 );
-INSERT INTO "schema_meta" VALUES('schema_version','10');
+INSERT INTO "schema_meta" VALUES('schema_version','11');
 INSERT INTO "schema_meta" VALUES('description','zicato analytical index — derived, rebuildable from .zicato/ files');
 CREATE TABLE tournaments (
       tournament_id TEXT PRIMARY KEY,
@@ -136,4 +166,6 @@ CREATE INDEX idx_judge_losses_run ON judge_losses(run_id);
 CREATE INDEX idx_runs_tournament ON runs(tournament_id);
 CREATE INDEX idx_loss_tournament ON loss_profiles(tournament_id);
 CREATE INDEX idx_epochs_parent ON epochs(parent_epoch_id);
+CREATE INDEX idx_reflections_epoch ON reflections(epoch_id);
+CREATE INDEX idx_judge_scorecards_refl ON judge_scorecards(reflection_id);
 COMMIT;

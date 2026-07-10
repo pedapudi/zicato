@@ -46,7 +46,25 @@
 > at emit time — margin → `set_gate {promote_margin: 2.5× floor}`, judge-pruning
 > → `set_weights {per_judge_weights: {j: 0.0}}`), plus the scripted-double
 > adjudicators (`zicato/testing/adjudicators.py`).
-> **In build**: `zicato reflect` (R4) and the console Instrument lens (R5).
+> **Shipped since (the surfaces, R4)**: the `zicato reflect` CLI
+> (`cli/commands/reflect.py`, auto-discovered) — `run` (build the corpus by
+> referencing the lineage's artifacts with zero LLM, analyse the four pillars,
+> adjudicate when an independent meta-judge is supplied, and persist
+> `corpus.jsonl` / `adjudication/` / `scorecards.json` / `findings.json` /
+> `summary.json`; `--pre-register` writes `plan.json` and STOPS; `--passive`
+> and `--no-llm-adjudication` run the cheap zero-LLM tier; the default REFUSES
+> without `--adjudicator-call-llm` — the live-run gate never silently spends
+> budget), `report`, and `apply` (fork a BUILDER DRAFT + stage the finding's
+> `proposed_op` — never the sealed contract; `reflection/apply.py`); the index
+> projection (schema v11 additive — the `reflections` + `judge_scorecards`
+> tables, upserted at finalize AND re-derived by `zicato reindex`, with
+> tolerant readers that degrade on a stale/absent index — files canonical, the
+> index a projection); the dashboard-free `query/reflection_view.py`
+> (bill-of-health summary, scorecards, transcript x-ray, and the
+> reflection-independent entry×candidate matrix); and four thin dashboard
+> endpoints (`/api/reflections`, `/api/reflection/{id}/summary` / `/scorecards`
+> / `/xray/{judge}/{run_ref}`).
+> **In build**: the console Instrument lens (R5).
 > **Endpoint-gated** (needs operator go-ahead + a live endpoint): live
 > meta-judge adjudication, run-twice decision-flip validation, the "quick
 > judge audit" preflight extension, the builder Validate panel, and the full
@@ -364,10 +382,10 @@ zicato reflect [--workspace PATH]
   --max-wall-clock-seconds N       # budget ceiling
   --output PATH                    # report destination
 
-zicato reflect report <reflection_id>      # render a stored reflection report
-zicato reflect apply  <finding_id>         # fork a BUILDER DRAFT + apply the finding's
-                                           # proposed_op; the operator seals via the
-                                           # builder (sealing rolls the epoch)
+zicato reflect report <reflection_id>            # render a stored reflection report
+zicato reflect apply  <reflection_id> <finding_id>  # fork a BUILDER DRAFT + apply the finding's
+                                                 # proposed_op; the operator seals via the
+                                                 # builder (sealing rolls the epoch)
 ```
 
 The **builder's "validate" action calls `reflect`** on the draft contract: you are
