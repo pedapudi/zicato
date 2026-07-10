@@ -35,6 +35,15 @@ function clickable(node, fn) {
   return node;
 }
 
+// A centered "no data yet" placeholder label appended to `parent` (an <svg>)
+// and returned — the ~15 identical empty-state blocks every figure shared (U5).
+function emptyState(parent, width, height, label) {
+  const t = svgEl('text', { x: width / 2, y: height / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
+  t.textContent = label;
+  parent.appendChild(t);
+  return parent;
+}
+
 // ---- numeric helpers ------------------------------------------------
 
 export function isNum(v) { return typeof v === 'number' && isFinite(v); }
@@ -58,6 +67,50 @@ export function scale(domain, range) {
   const [r0, r1] = range;
   const span = d1 - d0 || 1;
   return (x) => r0 + ((x - d0) / span) * (r1 - r0);
+}
+
+// ── digestOpts — the SINGLE generic figure-opts digest (U5) ───────────
+//
+// The one content digest that replaced the per-figure hand-rolled `*Digest`
+// folds. Its rules are each LOAD-BEARING for the digest-gated no-op guarantee
+// (a no-op heartbeat must produce a byte-identical digest so the gate does
+// ZERO DOM writes):
+//   * FUNCTIONS ARE DROPPED — figure opts carry per-render callbacks
+//     (onCompetitor / onClick / onRound, a heatmap `value` accessor). A fresh
+//     closure every render would flip the digest on every beat; dropping them
+//     is the rule that keeps the gate quiet.
+//   * KEY-SORTED so object key order never perturbs the string.
+//   * a non-integer finite number rounds to 3dp — sub-precision jitter (a
+//     re-derived scalar wobbling in the 4th place) must NOT flip the digest.
+//   * NaN / undefined → null (a stable, JSON-safe sentinel; ±Infinity too).
+//   * `omit` names TOP-LEVEL opts keys to exclude (mode flags / volatile
+//     fields a given figure's fold deliberately ignored) so each wrapper keeps
+//     its own fold semantics.
+export function digestOpts(opts, omit = []) {
+  const drop = new Set(Array.isArray(omit) ? omit : []);
+  const norm = (v) => {
+    if (typeof v === 'function') return undefined; // DROPPED (load-bearing)
+    if (typeof v === 'number') return isFinite(v) ? (Number.isInteger(v) ? v : Number(v.toFixed(3))) : null;
+    if (v === undefined || v === null) return null;
+    if (Array.isArray(v)) return v.map((x) => { const n = norm(x); return n === undefined ? null : n; });
+    if (typeof v === 'object') {
+      const out = {};
+      for (const k of Object.keys(v).sort()) {
+        const n = norm(v[k]);
+        if (n !== undefined) out[k] = n; // a dropped function simply vanishes
+      }
+      return out;
+    }
+    return v; // string / boolean
+  };
+  const top = (opts && typeof opts === 'object') ? opts : {};
+  const root = {};
+  for (const k of Object.keys(top).sort()) {
+    if (drop.has(k)) continue;
+    const n = norm(top[k]);
+    if (n !== undefined) root[k] = n;
+  }
+  return JSON.stringify(root);
 }
 
 export function fmt(v, digits) {
@@ -476,10 +529,7 @@ export function bumps(opts) {
   const padX = 44; const spineY = h * 0.40; const challY = h * 0.80;
   const svg = svgEl('svg', { class: 'dn-bumps', width: '100%', height: h, viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMidYMid meet', role: 'img' });
   if (nodes.length === 0) {
-    const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no generations yet';
-    svg.appendChild(t);
-    return svg;
+    return emptyState(svg, w, h, 'no generations yet');
   }
   const maxX = Math.max(1, ...nodes.map((n) => n.x || 0));
   const X = scale([0, maxX], [padX, w - padX]);
@@ -892,10 +942,7 @@ export function pairedSlopegraph(opts) {
 
   const svg = svgEl('svg', { class: 'dn-pslope', width: '100%', height: h, viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMidYMin meet', role: 'img' });
   if (series.length === 0) {
-    const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no paired board duels yet';
-    svg.appendChild(t);
-    return svg;
+    return emptyState(svg, w, h, 'no paired board duels yet');
   }
   const allVals = [];
   for (const s of series) { if (isNum(s.a)) allVals.push(s.a); if (isNum(s.b)) allVals.push(s.b); }
@@ -1001,10 +1048,7 @@ export function survivalFunnel(opts) {
     viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMinYMin meet', role: 'img',
   }, o, w, h, 'dn-funnel-hero'));
   if (rungs.length === 0) {
-    const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no rungs yet';
-    svg.appendChild(t);
-    return svg;
+    return emptyState(svg, w, h, 'no rungs yet');
   }
   // CHAMPION / v0 BENCHMARK caption — make explicit that the field is raced vs
   // the reigning champion (v0), that every Δ is vs v0, and that v0 defends at
@@ -1275,10 +1319,7 @@ export function swissLadder(opts) {
     svg.appendChild(bt);
   }
   if (rounds.length === 0 && standings.length === 0) {
-    const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no swiss rounds yet';
-    svg.appendChild(t);
-    return svg;
+    return emptyState(svg, w, h, 'no swiss rounds yet');
   }
   const headTop = top + benchH;
   const colX = (j) => j * (colW + colGap) + 2;
@@ -1589,10 +1630,7 @@ export function elimFlow(opts) {
     viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMinYMin meet', role: 'img',
   }, o, w, h, 'dn-elimflow-hero'));
   if (!nCols || !gens.length) {
-    const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no bracket rounds yet';
-    svg.appendChild(t);
-    return svg;
+    return emptyState(svg, w, h, 'no bracket rounds yet');
   }
   const colX = (ci) => padL + ci * colW + 8;       // a round column's node x
   const gateX = padL + nCols * colW + 8;           // the champion-gate column x
@@ -1853,10 +1891,7 @@ export function swissOverview(opts) {
     viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMinYMin meet', role: 'img',
   });
   if (!series.length && !bars.length) {
-    const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no swiss rounds yet';
-    svg.appendChild(t);
-    return svg;
+    return emptyState(svg, w, h, 'no swiss rounds yet');
   }
 
   // panel (1): the standings BUMP CHART
@@ -2242,10 +2277,7 @@ export function racingScalarTrack(opts) {
     'aria-label': 'racing scalar track — lower is better, bigger marker = better',
   }, o, W, H, 'dn-scalartrack-hero'));
   if (!comps.length) {
-    const t = svgEl('text', { x: W / 2, y: H / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no challengers on the track yet';
-    svg.appendChild(t);
-    return svg;
+    return emptyState(svg, W, H, 'no challengers on the track yet');
   }
 
   // the axis line.
@@ -2349,27 +2381,13 @@ export function racingScalarTrack(opts) {
 
 // A stable digest of the racingScalarTrack model — changes ONLY when the visible
 // content does (so the digest-gated swap never re-renders on a no-op heartbeat).
+// A stable content digest of the racing model (U5: the generic digestOpts fold
+// — its 3dp number rounding subsumes the old per-scalar toFixed(3), so
+// sub-precision projection jitter still does not flip the gate). Mode flags
+// (mini/responsive) + the hover callback are dropped so the hero mini and the
+// full figure gate on content alone.
 export function racingScalarTrackDigest(opts) {
-  const o = opts || {};
-  const rungs = Array.isArray(o.rungs) ? o.rungs : [];
-  return JSON.stringify({
-    b: o.benchmarkId != null ? String(o.benchmarkId) : (o.championId != null ? String(o.championId) : null),
-    cs: isNum(o.championScalar) ? o.championScalar.toFixed(3) : null,
-    f: isNum(o.focusRung) ? o.focusRung : null,
-    r: rungs.map((r) => [r.match_id, r.label,
-      (r.competitors || []).map(String).join('/'),
-      (r.survivors || []).map(String).join('/'),
-      (r.cut || []).map(String).join('/'),
-      r.scalars ? Object.keys(r.scalars).sort().map((k) => k + ':' + (isNum(r.scalars[k]) ? r.scalars[k].toFixed(3) : '?')).join(',') : '',
-      r.deltas ? Object.keys(r.deltas).sort().map((k) => k + ':' + (isNum(r.deltas[k]) ? r.deltas[k].toFixed(3) : '?')).join(',') : '',
-      r.live_progress ? Object.keys(r.live_progress).sort().map((k) => {
-        const p = r.live_progress[k];
-        return k + ':' + (p.done || 0) + '/' + (p.total == null ? '?' : p.total) + ':' + (p.inflight || 0)
-          + (p.projected ? ':j' + (isNum(p.projected_scalar) ? p.projected_scalar.toFixed(3) : '?')
-            + '/' + (p.boards_done == null ? '?' : p.boards_done) + '/' + (p.boards_total == null ? '?' : p.boards_total) : '');
-      }).join(',') : '',
-      !!r.pending]),
-  });
+  return digestOpts(opts, ['mini', 'responsive', 'onCompetitor']);
 }
 
 // ── GAUNTLET FIELD BARS (the wave of challengers vs the champion standard) ──
@@ -2417,12 +2435,11 @@ export function gauntletFieldBars(opts) {
     if (c.lane && isNum(c.lane.projected_scalar)) return c.lane.projected_scalar;
     return null;
   };
-  const outcomeOf = (c, v) => {
-    if (c.outcome) return String(c.outcome);
-    if (champScalar == null || !isNum(v)) return 'pending';
-    if (Math.abs(v - champScalar) < 1e-9) return 'tied';
-    return v < champScalar ? 'cleared' : 'failed';
-  };
+  // The SERVER outcome is authoritative (U5/DQ1): a challenger's cleared /
+  // failed / tied verdict is decided server-side against the gate, never
+  // re-derived here. An absent outcome reads honestly as 'pending' (still on
+  // boards / undecided) rather than a client guess vs champScalar.
+  const outcomeOf = (c) => c.outcome ? String(c.outcome) : 'pending';
 
   const W = mini ? 360 : 600;
   const padL = mini ? 56 : 110;
@@ -2441,7 +2458,7 @@ export function gauntletFieldBars(opts) {
     const lane = c.lane && typeof c.lane === 'object' ? c.lane : null;
     const racing = !!(lane && (lane.inflight || lane.done)) && c.outcome == null;
     const projected = !!(lane && lane.projected && racing);
-    return { c, v, lane, racing, projected, outcome: outcomeOf(c, v), survivor: !!c.survivor };
+    return { c, v, lane, racing, projected, outcome: outcomeOf(c), survivor: !!c.survivor };
   });
   const [lo, hi] = (() => {
     const e = extent(vals.length ? vals : [0, 1]);
@@ -2455,10 +2472,7 @@ export function gauntletFieldBars(opts) {
     'aria-label': 'gauntlet field vs the champion standard — lower is better',
   }, o, W, H, 'dn-fieldbars-hero'));
   if (!field.length) {
-    const t = svgEl('text', { x: W / 2, y: H / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no challengers have entered the gauntlet';
-    svg.appendChild(t);
-    return svg;
+    return emptyState(svg, W, H, 'no challengers have entered the gauntlet');
   }
   const bandTop = top - 2;
   const bandBot = H - (mini ? 8 : 22);
@@ -2554,23 +2568,11 @@ export function gauntletFieldBars(opts) {
 }
 
 // A stable digest of the gauntletFieldBars model.
+// A stable content digest of the gauntlet field (U5: the generic digestOpts
+// fold). Mode flags + the hover callback are dropped so the hero mini and the
+// full figure gate on content alone.
 export function gauntletFieldBarsDigest(opts) {
-  const o = opts || {};
-  const field = Array.isArray(o.challengers) ? o.challengers : [];
-  return JSON.stringify({
-    c: o.championId != null ? String(o.championId) : null,
-    cs: isNum(o.championScalar) ? o.championScalar.toFixed(3) : null,
-    m: isNum(o.promoteMargin) ? o.promoteMargin.toFixed(3) : null,
-    f: field.map((c) => {
-      const lane = c && c.lane;
-      return [String(c.id),
-        isNum(c.scalar) ? c.scalar.toFixed(3) : (isNum(c.delta) ? 'd' + c.delta.toFixed(3) : '?'),
-        c.outcome || '', !!c.survivor,
-        lane ? (lane.done || 0) + '/' + (lane.total == null ? '?' : lane.total) + ':' + (lane.inflight || 0)
-          + (lane.projected ? ':j' + (isNum(lane.projected_scalar) ? lane.projected_scalar.toFixed(3) : '?')
-            + '/' + (lane.boards_done == null ? '?' : lane.boards_done) + '/' + (lane.boards_total == null ? '?' : lane.boards_total) : '') : ''];
-    }),
-  });
+  return digestOpts(opts, ['mini', 'responsive', 'onCompetitor']);
 }
 
 // ── RADAR SILHOUETTE (challenger vs champion across the gate's axes) ──
@@ -2614,10 +2616,7 @@ export function radarSilhouette(opts) {
     'aria-label': 'radar — challenger vs champion across the gate axes; outer = better',
   }, o, W, H, 'dn-radar-hero'));
   if (n < 3) {
-    const t = svgEl('text', { x: W / 2, y: H / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'not enough axes to plot';
-    svg.appendChild(t);
-    return svg;
+    return emptyState(svg, W, H, 'not enough axes to plot');
   }
   const angle = (i) => -Math.PI / 2 + i * 2 * Math.PI / n;
   const P = (i, r) => {
@@ -2748,18 +2747,12 @@ export function radarSilhouette(opts) {
 }
 
 // A stable digest of the radarSilhouette model.
+// A stable content digest of the radar (U5: the generic digestOpts fold — 3dp
+// rounding keeps a BT credible-interval tightening repainting while a no-op
+// beat stays byte-identical). `raw` (tooltip-only underlying values) + mode
+// flags + the hover callback are dropped.
 export function radarSilhouetteDigest(opts) {
-  const o = opts || {};
-  const axes = Array.isArray(o.axes) ? o.axes : [];
-  return JSON.stringify({
-    l: !!o.live,
-    a: axes.map((a) => [String(a.label), isNum(a.chal) ? a.chal.toFixed(3) : '?', isNum(a.champ) ? a.champ.toFixed(3) : '?',
-      // the BT credible-interval band (rounded radii, no timestamps) so a CI
-      // tightening repaints the radar but a no-op beat stays byte-identical.
-      // absent on every non-rating axis → no contribution (back-compat digest).
-      a.chalBand && isNum(a.chalBand.lo) && isNum(a.chalBand.hi)
-        ? [a.chalBand.lo.toFixed(3), a.chalBand.hi.toFixed(3)] : null]),
-  });
+  return digestOpts(opts, ['raw', 'mini', 'responsive', 'onAxis']);
 }
 
 // The elim epoch overview + Match-ups both render the BRACKET-AS-FLOW
@@ -2956,14 +2949,13 @@ export function proposingTracker(opts) {
 // digest-gate the tracker swap (a no-op heartbeat writes ZERO DOM). Folds in
 // the attempt count + final reason so a slot transitioning proposing → retry
 // → settled re-stamps, but a steady no-op tick does not.
+// A stable content digest of the proposing field-status list (U5: digestOpts
+// over the normalized rows; the 'prop|' prefix is kept as the stable namespace).
 export function proposingDigest(fieldStatus) {
-  const list = Array.isArray(fieldStatus) ? fieldStatus : [];
-  return 'prop|' + list.map((f) => {
-    if (!f) return '';
-    const att = (typeof f.attempts === 'number') ? f.attempts : '';
-    const reason = f.reason ? String(f.reason).slice(0, 48) : '';
-    return `${f.generation_id}:${f.status}:${att}:${reason}`;
-  }).join(',');
+  const list = (Array.isArray(fieldStatus) ? fieldStatus : []).map((f) => f
+    ? { g: f.generation_id, s: f.status, a: typeof f.attempts === 'number' ? f.attempts : null, r: f.reason ? String(f.reason).slice(0, 48) : '' }
+    : null);
+  return 'prop|' + digestOpts({ f: list });
 }
 
 // ── the FIELD-DIVERSITY MATRIX — challenger × mutation-site ──────────
@@ -3037,14 +3029,19 @@ export function diversityMatrix(opts) {
 // Digest for the diversity matrix — the membership (gid → sorted site ids) + the
 // highlighted pair, no floats / no timestamps. Empty (<2 members) → a stable
 // sentinel so the absent state is byte-identical beat-over-beat.
+// A stable content digest of the diversity matrix (U5: digestOpts over the
+// NORMALIZED members — the < 2 collapse to the 'divmtx|none' sentinel is
+// load-bearing: fewer than two members is "no matrix", a single stable state).
 export function diversityMatrixDigest(opts) {
   const o = opts || {};
   const members = (Array.isArray(o.membership) ? o.membership : [])
     .filter((m) => m && m.generation_id != null && Array.isArray(m.sites) && m.sites.length);
   if (members.length < 2) return 'divmtx|none';
   const pair = Array.isArray(o.highlightPair) ? o.highlightPair.map(String).slice().sort() : [];
-  return 'divmtx|' + members.map((m) => String(m.generation_id) + ':'
-    + m.sites.map(String).slice().sort().join('+')).join(',') + '|' + pair.join('~');
+  return 'divmtx|' + digestOpts({
+    m: members.map((m) => String(m.generation_id) + ':' + m.sites.map(String).slice().sort().join('+')),
+    pair,
+  });
 }
 
 // ── the CHAMPION-SPINE ROUND TIMELINE — the epoch overview hero ──────
@@ -3267,10 +3264,7 @@ export function waterfall(opts) {
     'aria-label': 'Loss-floor descent across rounds',
   });
   if (!steps.length) {
-    const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no rounds yet';
-    svg.appendChild(t);
-    return svg;
+    return emptyState(svg, w, h, 'no rounds yet');
   }
   // the loss domain spans every from/to floor; lower loss sits LOWER on the y
   // axis (a descent reads as a downward staircase).
@@ -3370,10 +3364,7 @@ export function reignGantt(opts) {
     'aria-label': 'Champion reign across rounds',
   });
   if (!reigns.length) {
-    const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no reign yet';
-    svg.appendChild(t);
-    return svg;
+    return emptyState(svg, w, h, 'no reign yet');
   }
   const maxRound = isNum(o.rounds) ? o.rounds
     : Math.max(1, ...reigns.map((r) => (isNum(r.toRound) ? r.toRound : 0)));
@@ -3477,10 +3468,7 @@ export function metaLoopLedger(opts) {
       viewBox: `0 0 ${W} ${h}`, preserveAspectRatio: 'xMidYMid meet', role: 'img',
       'aria-label': 'cross-epoch meta-loop ledger',
     }, o, W, h, 'dn-metaledger-hero'));
-    const t = svgEl('text', { x: W / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no epochs recorded yet';
-    svg.appendChild(t);
-    return svg;
+    return emptyState(svg, W, h, 'no epochs recorded yet');
   }
 
   // ---- effort-proportional x geometry: each epoch owns a band whose width ∝
@@ -3766,23 +3754,14 @@ export function metaLoopLedger(opts) {
 // per-component change set (incl. proposer + structure). Two ledgers that
 // render byte-identically MUST produce the same digest — the live (open) and
 // settled (closed) paths included.
+// A stable content digest of the meta-loop ledger (U5: digestOpts over the
+// NORMALIZED rows — the epoch_id filter + the absent-vs-empty collapse are
+// load-bearing: `{}` and `{epochs:[]}` must digest identically, and a
+// malformed `epochs` still yields a string).
 export function metaLoopLedgerDigest(opts) {
   const o = opts || {};
   const rows = (Array.isArray(o.epochs) ? o.epochs : []).filter((e) => e && e.epoch_id != null);
-  return JSON.stringify({
-    cur: o.currentEpochId != null ? String(o.currentEpochId) : null,
-    e: rows.map((e) => [
-      String(e.epoch_id),
-      isNum(e.floor) ? e.floor.toFixed(3) : null,
-      e.champion_gen != null ? String(e.champion_gen) : null,
-      isNum(e.champion_index) ? e.champion_index : null,
-      isNum(e.generation_count) ? e.generation_count : 0,
-      e.structure || 'gauntlet',
-      (e.open || e.closed === false) ? 'o' : 'c',
-      LEDGER_COMPONENTS.map((c) => (e.changed_components && e.changed_components[c]) ? 1 : 0).join(''),
-      e.soft ? 1 : 0,
-    ]),
-  });
+  return digestOpts({ currentEpochId: o.currentEpochId != null ? String(o.currentEpochId) : null, epochs: rows });
 }
 
 // ── the CALIBRATION TREND (DIAGNOSTIC) ───────────────────────────────────────
@@ -3815,10 +3794,7 @@ export function calibrationTrend(opts) {
   }, o, W, H, 'dn-caltrend-hero'));
 
   if (pts.length === 0) {
-    const t = svgEl('text', { x: W / 2, y: H / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no scored predictions yet';
-    svg.appendChild(t);
-    return svg;
+    return emptyState(svg, W, H, 'no scored predictions yet');
   }
 
   // the fraction band is a FIXED 0..1 (a calibration fraction, not a free scale)
@@ -3911,17 +3887,17 @@ export function calibrationTrend(opts) {
 // score_fraction, total_claims, decision). NO timestamps. Two trends that render
 // byte-identically MUST produce the same digest; a new scored generation (a
 // fraction moving past 2dp, a claim landing) flips it → repaint.
+// A stable content digest of the calibration trend (U5: digestOpts over the
+// NORMALIZED points — the generation_id filter + 3dp rounding keep sub-precision
+// score jitter from flipping the gate).
 export function calibrationTrendDigest(opts) {
   const o = opts || {};
-  const pts = (Array.isArray(o.points) ? o.points : []).filter((p) => p && p.generation_id != null);
-  return JSON.stringify({
-    rm: isNum(o.rolling_mean) ? o.rolling_mean.toFixed(3) : null,
-    ts: isNum(o.trend_sign) ? o.trend_sign : 0,
-    p: pts.map((p) => [
-      String(p.generation_id),
-      isNum(p.score_fraction) ? p.score_fraction.toFixed(3) : null,
-      isNum(p.total_claims) ? p.total_claims : 0,
-      p.decision == null ? null : String(p.decision),
-    ]),
-  });
+  const pts = (Array.isArray(o.points) ? o.points : []).filter((p) => p && p.generation_id != null)
+    .map((p) => ({
+      g: String(p.generation_id),
+      sf: isNum(p.score_fraction) ? p.score_fraction : null,
+      tc: isNum(p.total_claims) ? p.total_claims : 0,
+      d: p.decision == null ? null : String(p.decision),
+    }));
+  return digestOpts({ rm: isNum(o.rolling_mean) ? o.rolling_mean : null, ts: isNum(o.trend_sign) ? o.trend_sign : 0, p: pts });
 }

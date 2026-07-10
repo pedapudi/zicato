@@ -182,7 +182,7 @@ export function normalizeStructure(st, live) {
     // the epoch's champion succession; the LAST id is the reigning champion
     // (the promoted survivor of a settled racing tournament). Carried through
     // so the racing renderer can confirm the gate's crowned id.
-    champion_lineage: Array.isArray(st.champion_lineage) ? st.champion_lineage.map(String) : [],
+    champion_lineage: lineageStr(st),
     // the LIVE aggregate scalars + per-gen projection maps — carried through
     // (additively) so championScalarOf can anchor the racing scalar track /
     // gauntlet field bars on the champion's running scalar mid-race, not just on
@@ -604,7 +604,7 @@ export function elimModel(st) {
   const live = !!st.live;
   const isDouble = String(st.structure) === 'double_elim';
   const rounds = (Array.isArray(st.rounds) ? st.rounds : []);
-  const lineage = Array.isArray(st.champion_lineage) ? st.champion_lineage.map(String) : [];
+  const lineage = lineageStr(st);
   // a match carries its progressive live fields (done/total/inflight/queued) so
   // the bracket tree can fill in board-by-board; map every match through verbatim.
   const winners = splitBand(rounds, (slot) => !slot.startsWith('LB'));
@@ -645,11 +645,23 @@ export function elimModel(st) {
 // `bracket_side` stamped, so the ordering contract lives on the payload. The
 // figures read model.rounds / model.gen_states directly.)
 
+// The champion_lineage re-parsed to string ids — the ×5 identical guard the
+// figure models shared (U5). A non-array lineage degrades to [].
+function lineageStr(obj) {
+  return Array.isArray(obj && obj.champion_lineage) ? obj.champion_lineage.map(String) : [];
+}
+
+// The shared champion-gate CAPTION fragment (U5): the crowned / stands /
+// deciding phrase every figure's caption appends. An undecided gate → ''.
+function gateNoteFor(gateState, championId) {
+  return gateState === 'crowned' ? ` · champion-gate: ${championId} promoted ${CROWN.current}`
+    : gateState === 'stands' ? ' · champion-gate: champion stands'
+    : gateState === 'deciding' ? ' · champion-gate: deciding…' : '';
+}
+
 // The shared figure CAPTION for the bracket flow/radial figures.
 function bracketCaption(model) {
-  const gateNote = model.gateState === 'crowned' ? ` · champion-gate: ${model.championId} promoted ${CROWN.current}`
-    : model.gateState === 'stands' ? ' · champion-gate: champion stands'
-    : model.gateState === 'deciding' ? ' · champion-gate: deciding…' : '';
+  const gateNote = gateNoteFor(model.gateState, model.championId);
   return el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
     'each lane is a generation; two lanes converge at a match — the winner’s lane continues ↑, the loser’s ends with ✕ — and the champion’s lane reaches the gate ' + CROWN.current
     + (model.benchmarkId ? ' · ' + CROWN.former + ' = displaced incumbent' : '')
@@ -744,7 +756,7 @@ export function swissModel(st) {
   if (!st || String(st.structure) !== 'swiss') return null;
   const live = !!st.live;
   const rawRounds = Array.isArray(st.rounds) ? st.rounds : [];
-  const lineage = Array.isArray(st.champion_lineage) ? st.champion_lineage.map(String) : [];
+  const lineage = lineageStr(st);
 
   const rounds = rawRounds.map((r) => {
     const matches = Array.isArray(r.matches) ? r.matches : [];
@@ -926,9 +938,7 @@ function renderSwiss(st, ctx, epochId) {
       })
     : empty(model.live ? 'The swiss is being seeded — pairings fill in as runs land.' : 'No swiss rounds recorded yet.'));
   if (model.hasRounds) {
-    const gateNote = model.gateState === 'crowned' ? ` · champion-gate: ${model.championId} promoted ${CROWN.current}`
-      : model.gateState === 'stands' ? ' · champion-gate: champion stands'
-      : model.gateState === 'deciding' ? ' · champion-gate: deciding…' : '';
+    const gateNote = gateNoteFor(model.gateState, model.championId);
     lCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
       'each round pairs the field; Copeland points accumulate (win 1 / draw ½) · hover a pairing for its Δ scalar · ' + CROWN.current + ' = champion · ' + CROWN.former + ' = former champion (displaced incumbent) — the swiss leader must beat the incumbent at the champion-gate'
       + gateNote
@@ -1019,7 +1029,7 @@ export function racingModel(st) {
   if (!st || String(st.structure) !== 'racing') return null;
   const live = !!st.live;
   const rounds = Array.isArray(st.rounds) ? st.rounds : [];
-  const lineage = Array.isArray(st.champion_lineage) ? st.champion_lineage.map(String) : [];
+  const lineage = lineageStr(st);
   const firstMatch = (r) => (r && Array.isArray(r.matches) && r.matches[0]) ? r.matches[0] : {};
   const isFinal = (mid) => String(mid || '') === 'racing-final';
   const gateRound = rounds.find((r) => isFinal(firstMatch(r).match_id)) || null;
@@ -1693,7 +1703,7 @@ export function liveMatchBlocks(model) {
       const m0 = (Array.isArray(r.matches) && r.matches[0]) ? r.matches[0] : {};
       if (isFinal(m0.match_id) && Array.isArray(m0.competitors)) for (const g of m0.competitors) ids.add(String(g));
     }
-    const lineage = Array.isArray(model.champion_lineage) ? model.champion_lineage.map(String) : [];
+    const lineage = lineageStr(model);
     if (lineage.length) ids.add(lineage[lineage.length - 1]);
     return ids;
   })();
@@ -1932,10 +1942,7 @@ function renderRacing(st, ctx, epochId) {
       })
     : empty(live ? 'The race is being seeded — the first rung fills in as runs land.' : 'No rungs evaluated yet.'));
   if (rungs.length) {
-    const gateNote = gateState === 'crowned' ? ` · champion-gate: ${championId} promoted ${CROWN.current}`
-      : gateState === 'stands' ? ' · champion-gate: champion stands'
-      : gateState === 'deciding' ? ' · champion-gate: deciding…'
-      : '';
+    const gateNote = gateNoteFor(gateState, championId);
     trackCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
       (benchmarkId ? `every gen is plotted on a shared scalar number-line (lower = better); the dashed line is the champion v0 = ${benchmarkId} benchmark · ` : '')
       + 'marker size = inverse loss (bigger = better) — the survivor is the fattest dot, the cuts shrink away past the cut tick · click a competitor → open'
@@ -1992,7 +1999,7 @@ export function gauntletModel(st) {
   const rounds = Array.isArray(st.rounds) ? st.rounds : [];
   const standings = Array.isArray(st.standings) ? st.standings : [];
   const competitors = Array.isArray(st.competitors) ? st.competitors : [];
-  const lineage = Array.isArray(st.champion_lineage) ? st.champion_lineage.map(String) : [];
+  const lineage = lineageStr(st);
   const params = (st.structure_params && typeof st.structure_params === 'object') ? st.structure_params : {};
 
   // the champion id (the standard the wave is measured against) + its scalar.
