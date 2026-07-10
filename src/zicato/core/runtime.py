@@ -419,12 +419,19 @@ class RuntimeConfig:
         """The callable the reflection adjudicator runs on.
 
         :attr:`adjudicator_call_llm` when set, else the auxiliary surface
-        — the same fall-back rule as :meth:`effective_judge_call_llm`, so
-        a workspace that configures neither runs the adjudicator on the
-        auxiliary endpoint. Independence from the judge callable is
-        enforced by the adjudication engine
-        (:func:`zicato.core.workspace.assert_distinct_callables`), not
-        here: this accessor only resolves the fall-back.
+        — the same fall-back rule as :meth:`effective_judge_call_llm`.
+
+        This fall-back exists only so a config is CONSTRUCTIBLE without a
+        dedicated adjudicator callable; it is NOT a licence to adjudicate
+        on the auxiliary endpoint. Active adjudication REQUIRES a callable
+        distinct from every judge's: if the judges also run on the
+        auxiliary surface (the common case), the auxiliary fall-back is the
+        SAME object the judges use, and
+        :func:`zicato.reflection.adjudicator.adjudicate_corpus` refuses via
+        :func:`zicato.core.workspace.assert_distinct_callables` (a judge
+        cannot grade its own homework). Configure a real adjudicator (a
+        ``models`` block or ``--adjudicator-call-llm``) before adjudicating;
+        this accessor only resolves the construction-time fall-back.
         """
         return (
             self.adjudicator_call_llm

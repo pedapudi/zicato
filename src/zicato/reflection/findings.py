@@ -201,9 +201,13 @@ def derive_findings(
     findings: list[Finding] = []
 
     # --- calibration: promote margin below the noise floor -----------------
+    # Only when the floor is POSITIVE: a zero (or unmeasured-as-0) floor makes
+    # the 2.5x recommendation a useless 0.0, and "margin below a zero floor" is
+    # not evidence of promoting on noise — it is an absent measurement.
     if (
         promote_margin is not None
         and noise_floor_max_abs_delta is not None
+        and noise_floor_max_abs_delta > 0
         and promote_margin < noise_floor_max_abs_delta
     ):
         recommended = round(MARGIN_FLOOR_MULTIPLE * float(noise_floor_max_abs_delta), 6)

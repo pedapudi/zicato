@@ -75,6 +75,22 @@
 > disagreement rate (worst-unit kept as a secondary diagnostic);
 > `sigma_from_noise_floor()` derives the honest per-unit σ for the power
 > analysis; and the bootstrap seed folds the (parent, child) pair.
+> **Review round (R3 hardening, applied)**: the adjudication tier was hardened
+> too. The idempotent cache is now STALENESS-AWARE — a persisted verdict is a
+> HIT only when the adjudicator model, `ADJUDICATOR_PROMPT_VERSION`, the
+> requested `k_adj`, AND the currently-available fidelity tier all still match
+> (a model swap, prompt bump, replication change, or a preview→verbatim upgrade
+> re-adjudicates and overwrites; `from_json` defaults the new fields to
+> `0`/`""` so a pre-fix cache can never masquerade as fresh). The user prompt is
+> DE-ANCHORED — it no longer leaks the judge's own verdict or claimed severity,
+> so the meta-judge decides blind (`ADJUDICATOR_PROMPT_VERSION` bumped to 2,
+> which — with the new predicate — invalidates every v1 cache). The identity
+> guard re-raises an adjudication-specific actionable error, the single
+> parse-retry appends a corrective suffix naming the failure, the verbatim tier
+> uses the judge's exact `reasoning_text` (the window only as a fallback), the
+> cache writer routes through the fsync'd atomic JSON writer, and zero-variance
+> (all-fire / all-silent) judges are skipped from the redundancy/conflict
+> cross-correlation.
 > **In build**: the console Instrument lens (R5).
 > **Endpoint-gated** (needs operator go-ahead + a live endpoint): live
 > meta-judge adjudication, run-twice decision-flip validation, the "quick

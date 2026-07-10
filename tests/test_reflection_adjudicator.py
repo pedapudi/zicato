@@ -29,12 +29,14 @@ from zicato.reflection.adjudicator import (
     VERDICT_FP,
     VERDICT_TN,
     VERDICT_TP,
+    JudgeAdjudication,
     adjudicate_corpus,
     adjudicate_decision,
     observation_to_judge_context,
     read_adjudication,
     run_ref_for,
     warn_on_adjudicator_collusion,
+    write_adjudication,
 )
 from zicato.reflection.corpus import FIDELITY_PREVIEW, FIDELITY_VERBATIM, ingest_lineage
 from zicato.testing.adjudicators import (
@@ -504,8 +506,9 @@ def test_scripted_table_verdicts(tmp_path: Path) -> None:
         )
 
 
-def test_all_true_scripted_on_silent_and_fired(tmp_path: Path) -> None:
-    """AlwaysConfirm on a fired judge ⇒ TP; on a silent judge ⇒ TN."""
+def test_scripted_table_yields_tp_and_tn_per_decision(tmp_path: Path) -> None:
+    """A per-decision scripted table (the way to vary blind verdicts): fired +
+    should_fire ⇒ TP; silent + should_be_silent ⇒ TN."""
     workspace = tmp_path / ".zicato"
     loss_fired = _write_loss(workspace, "v1", "entryA", 0, drift=True)
     _plant_judge_io(loss_fired, judge_name="j", fired=True, reasoning=PLANTED)
@@ -513,10 +516,13 @@ def test_all_true_scripted_on_silent_and_fired(tmp_path: Path) -> None:
     _plant_judge_io(loss_silent, judge_name="j", fired=False, reasoning=CLEAN)
     corpus = _ingest(workspace, ["v1"], ["entryA", "entryB"])
 
+    # Blind, content-correct verdicts scripted per run_ref (the prompt no longer
+    # reveals the judge's action, so confirm/refute cannot vary per decision).
+    table = ScriptedTable({("j", "v1:entryA:r0"): True, ("j", "v1:entryB:r0"): False})
     results = _run(
         adjudicate_corpus(
             corpus=corpus,
-            config=_config(workspace, adjudicator=AlwaysConfirm()),
+            config=_config(workspace, adjudicator=table),
             epoch_id=EPOCH,
             reflection_id=REFL,
             adjudicator_model="m",
@@ -537,6 +543,266 @@ def test_double_protocol_markers_match_production() -> None:
     assert D.OBSERVED_SILENT == A.OBSERVED_SILENT
     assert D.TRANSCRIPT_OPEN == A.TRANSCRIPT_OPEN
     assert D.TRANSCRIPT_CLOSE == A.TRANSCRIPT_CLOSE
+    # Extended (review round): the strict-JSON verdict keys + severity vocabulary.
+    assert D.VERDICT_JSON_KEYS == A.VERDICT_JSON_KEYS
+    assert D.SEVERITY_VOCAB == A.SEVERITY_VOCAB
+
+
+# ---------------------------------------------------------------------------
+# ANCHORING — the de-anchored prompt leaks neither the verdict nor the severity
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_is_deanchored_no_verdict_no_severity(tmp_path: Path) -> None:
+    workspace = tmp_path / ".zicato"
+    loss_path = _write_loss(workspace, "v1", "entryA", 0, drift=True)
+    _plant_judge_io(loss_path, judge_name="j", fired=True, reasoning=PLANTED, severity="critical")
+    corpus = _ingest(workspace, ["v1"], ["entryA"])
+    decision = dict(corpus[0].judge_decisions[0])
+    assert decision["severity"] == "critical"  # the judge DID claim critical
+
+    double = SpanQuoting(should_fire=True)
+    _run(
+        adjudicate_decision(
+            obs=corpus[0],
+            judge_name="j",
+            decision=decision,
+            run_ref=run_ref_for(corpus[0]),
+            adjudicator_call_llm=double,
+            adjudicator_model="m",
+        )
+    )
+    prompt = double.prompts[0]
+    # The judge's action + its claimed severity are WITHHELD; the criterion stays.
+    assert "OBSERVED" not in prompt
+    assert "critical" not in prompt
+    assert "CRITERION" in prompt
+
+
+# ---------------------------------------------------------------------------
+# RETRY — the single parse-retry names the failure
+# ---------------------------------------------------------------------------
+
+
+def test_retry_appends_corrective_suffix(tmp_path: Path) -> None:
+    workspace = tmp_path / ".zicato"
+    loss_path = _write_loss(workspace, "v1", "entryA", 0, drift=False)
+    _plant_judge_io(loss_path, judge_name="j", fired=False, reasoning=PLANTED)
+    corpus = _ingest(workspace, ["v1"], ["entryA"])
+
+    double = MalformedThenValid(should_fire=True)
+    _run(
+        adjudicate_decision(
+            obs=corpus[0],
+            judge_name="j",
+            decision=dict(corpus[0].judge_decisions[0]),
+            run_ref=run_ref_for(corpus[0]),
+            adjudicator_call_llm=double,
+            adjudicator_model="m",
+        )
+    )
+    assert double.calls == 2
+    assert len(double.prompts) == 2
+    # The first attempt is the plain prompt; the retry names the parse failure.
+    assert "not valid JSON" not in double.prompts[0]
+    assert "not valid JSON" in double.prompts[1]
+    assert double.prompts[1].startswith(double.prompts[0])  # suffix appended, not rebuilt
+
+
+# ---------------------------------------------------------------------------
+# CACHE staleness — a stale verdict is re-adjudicated + overwritten
+# ---------------------------------------------------------------------------
+
+
+def _seed_cache(
+    workspace: Path,
+    *,
+    judge: str,
+    run_ref: str,
+    model: str,
+    prompt_version: int,
+    k_adj: int,
+    fidelity: str,
+) -> Path:
+    """Write a cache file matching the current request on every dim but the one
+    a staleness test perturbs (verdict body is a distinct sentinel)."""
+    path = reflection_adjudication_path(workspace, EPOCH, REFL, judge, run_ref)
+    write_adjudication(
+        path,
+        JudgeAdjudication(
+            judge_name=judge,
+            run_ref=run_ref,
+            observed="silent",
+            adjudicated="should_fire",
+            verdict=VERDICT_FN,
+            severity_match=None,
+            evidence_span="STALE-CACHED-SPAN",
+            meta_judge_rationale="stale",
+            meta_judge_model=model,
+            adjudicator_self_agreement=None,
+            operator_confirmed=None,
+            fidelity=fidelity,
+            prompt_version=prompt_version,
+            k_adj=k_adj,
+        ),
+    )
+    return path
+
+
+def _one_verbatim_corpus(workspace: Path):
+    loss_path = _write_loss(workspace, "v1", "entryA", 0, drift=False)
+    _plant_judge_io(loss_path, judge_name="j", fired=False, reasoning=PLANTED)
+    return _ingest(workspace, ["v1"], ["entryA"])
+
+
+def test_cache_hit_when_every_dimension_matches(tmp_path: Path) -> None:
+    # Positive control: a fully-matching cache is a HIT (zero adjudicator calls).
+    workspace = tmp_path / ".zicato"
+    corpus = _one_verbatim_corpus(workspace)
+    run_ref = run_ref_for(corpus[0])
+    _seed_cache(
+        workspace,
+        judge="j",
+        run_ref=run_ref,
+        model="m",
+        prompt_version=ADJUDICATOR_PROMPT_VERSION,
+        k_adj=1,
+        fidelity=FIDELITY_VERBATIM,
+    )
+    double = SpanQuoting(should_fire=True)
+    results = _run(
+        adjudicate_corpus(
+            corpus=corpus,
+            config=_config(workspace, adjudicator=double),
+            epoch_id=EPOCH,
+            reflection_id=REFL,
+            adjudicator_model="m",
+            workspace_root=workspace,
+        )
+    )
+    assert double.calls == 0  # HIT
+    assert results[0].evidence_span == "STALE-CACHED-SPAN"  # served from cache
+
+
+def test_cache_stale_on_model_swap(tmp_path: Path) -> None:
+    workspace = tmp_path / ".zicato"
+    corpus = _one_verbatim_corpus(workspace)
+    run_ref = run_ref_for(corpus[0])
+    _seed_cache(
+        workspace,
+        judge="j",
+        run_ref=run_ref,
+        model="model-A",
+        prompt_version=ADJUDICATOR_PROMPT_VERSION,
+        k_adj=1,
+        fidelity=FIDELITY_VERBATIM,
+    )
+    double = SpanQuoting(should_fire=True)
+    results = _run(
+        adjudicate_corpus(
+            corpus=corpus,
+            config=_config(workspace, adjudicator=double),
+            epoch_id=EPOCH,
+            reflection_id=REFL,
+            adjudicator_model="model-B",  # swapped
+            workspace_root=workspace,
+        )
+    )
+    assert double.calls == 1  # re-adjudicated
+    assert results[0].meta_judge_model == "model-B"
+    assert results[0].evidence_span != "STALE-CACHED-SPAN"
+    # Overwritten on disk.
+    on_disk = read_adjudication(reflection_adjudication_path(workspace, EPOCH, REFL, "j", run_ref))
+    assert on_disk is not None and on_disk.meta_judge_model == "model-B"
+
+
+def test_cache_stale_on_prompt_version_bump(tmp_path: Path) -> None:
+    workspace = tmp_path / ".zicato"
+    corpus = _one_verbatim_corpus(workspace)
+    run_ref = run_ref_for(corpus[0])
+    # A pre-fix (v1) cache — everything else matches the current request.
+    _seed_cache(
+        workspace,
+        judge="j",
+        run_ref=run_ref,
+        model="m",
+        prompt_version=ADJUDICATOR_PROMPT_VERSION - 1,
+        k_adj=1,
+        fidelity=FIDELITY_VERBATIM,
+    )
+    double = SpanQuoting(should_fire=True)
+    results = _run(
+        adjudicate_corpus(
+            corpus=corpus,
+            config=_config(workspace, adjudicator=double),
+            epoch_id=EPOCH,
+            reflection_id=REFL,
+            adjudicator_model="m",
+            workspace_root=workspace,
+        )
+    )
+    assert double.calls == 1  # re-adjudicated at the current prompt version
+    assert results[0].prompt_version == ADJUDICATOR_PROMPT_VERSION
+
+
+def test_cache_stale_on_k_adj_change_surfaces_self_agreement(tmp_path: Path) -> None:
+    workspace = tmp_path / ".zicato"
+    corpus = _one_verbatim_corpus(workspace)
+    run_ref = run_ref_for(corpus[0])
+    # Cached at k_adj=1 (single shot ⇒ no self-agreement).
+    _seed_cache(
+        workspace,
+        judge="j",
+        run_ref=run_ref,
+        model="m",
+        prompt_version=ADJUDICATOR_PROMPT_VERSION,
+        k_adj=1,
+        fidelity=FIDELITY_VERBATIM,
+    )
+    double = SpanQuoting(should_fire=True)
+    results = _run(
+        adjudicate_corpus(
+            corpus=corpus,
+            config=_config(workspace, adjudicator=double),
+            epoch_id=EPOCH,
+            reflection_id=REFL,
+            adjudicator_model="m",
+            k_adj=3,  # replication bumped
+            workspace_root=workspace,
+        )
+    )
+    assert double.calls == 3  # re-adjudicated with three replicates
+    assert results[0].k_adj == 3
+    assert results[0].adjudicator_self_agreement == 1.0  # now measured
+
+
+def test_cache_stale_on_fidelity_upgrade(tmp_path: Path) -> None:
+    workspace = tmp_path / ".zicato"
+    corpus = _one_verbatim_corpus(workspace)  # a verbatim judge_io sidecar exists
+    run_ref = run_ref_for(corpus[0])
+    # Cached at the weaker PREVIEW tier; the verbatim sidecar is now on disk.
+    _seed_cache(
+        workspace,
+        judge="j",
+        run_ref=run_ref,
+        model="m",
+        prompt_version=ADJUDICATOR_PROMPT_VERSION,
+        k_adj=1,
+        fidelity=FIDELITY_PREVIEW,
+    )
+    double = SpanQuoting(should_fire=True)
+    results = _run(
+        adjudicate_corpus(
+            corpus=corpus,
+            config=_config(workspace, adjudicator=double),
+            epoch_id=EPOCH,
+            reflection_id=REFL,
+            adjudicator_model="m",
+            workspace_root=workspace,
+        )
+    )
+    assert double.calls == 1  # re-adjudicated at the higher fidelity
+    assert results[0].fidelity == FIDELITY_VERBATIM
 
 
 def test_read_adjudication_tolerates_defects(tmp_path: Path) -> None:

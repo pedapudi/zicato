@@ -77,6 +77,7 @@ def _adj(judge: str, run_ref: str, verdict: str, span: str) -> JudgeAdjudication
         operator_confirmed=None,
         fidelity=FIDELITY_VERBATIM,
         prompt_version=1,
+        k_adj=1,
     )
 
 
@@ -144,6 +145,19 @@ def test_no_margin_finding_when_margin_clears_floor() -> None:
         noise_floor_max_abs_delta=0.10,
     )
     assert not [f for f in findings if "margin" in f.title.lower()]
+
+
+def test_no_margin_finding_when_floor_is_zero() -> None:
+    # NIT: a zero (unmeasured-as-0) floor yields no set_gate margin finding —
+    # the 2.5x recommendation would be a useless 0.0, and "below a zero floor"
+    # is an absent measurement, not evidence of promoting on noise.
+    findings = derive_findings(
+        scorecards=[],
+        adjudications=[],
+        promote_margin=-1.0,  # below zero, yet the floor is 0 ⇒ still no finding
+        noise_floor_max_abs_delta=0.0,
+    )
+    assert not [f for f in findings if f.pillar == "calibration"]
 
 
 def test_redundant_judge_emits_set_weights_zero() -> None:

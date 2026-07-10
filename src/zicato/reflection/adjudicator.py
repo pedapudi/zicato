@@ -63,7 +63,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -81,7 +80,18 @@ log = logging.getLogger("zicato.reflection.adjudicator")
 #: Version of the adjudicator prompt + JSON protocol. Stamped onto every
 #: :class:`JudgeAdjudication` so a corpus adjudicated under an older protocol is
 #: never silently mixed with a newer one. Bump when the prompt / schema changes.
-ADJUDICATOR_PROMPT_VERSION: int = 1
+#:
+#: v2 (review round): the user prompt is DE-ANCHORED — the judge's own verdict
+#: and its claimed severity were dropped so the adjudicator decides blind. With
+#: the staleness-aware cache predicate (:func:`adjudicate_corpus`) this bump
+#: correctly invalidates every pre-fix (v1) cached verdict.
+ADJUDICATOR_PROMPT_VERSION: int = 2
+
+#: The strict-JSON verdict keys the adjudicator must return + the severity
+#: vocabulary it may use. Pinned equal to the test doubles' inlined copies by a
+#: consistency test so neither the protocol shape nor the vocabulary can drift.
+VERDICT_JSON_KEYS: tuple[str, ...] = ("should_fire", "severity", "evidence_span", "rationale")
+SEVERITY_VOCAB: tuple[str, ...] = ("none", "info", "warning", "critical")
 
 #: ``format_version`` stamped onto every persisted adjudication file. A reader
 #: skips (returns ``None`` for) any other version — a verdict this reader
@@ -152,6 +162,7 @@ class JudgeAdjudication:
     operator_confirmed: bool | None
     fidelity: str
     prompt_version: int
+    k_adj: int
     raw_response: str | None = None
 
     def to_json(self) -> dict[str, Any]:
@@ -171,12 +182,20 @@ class JudgeAdjudication:
             "operator_confirmed": self.operator_confirmed,
             "fidelity": self.fidelity,
             "prompt_version": self.prompt_version,
+            "k_adj": self.k_adj,
             "raw_response": self.raw_response,
         }
 
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> JudgeAdjudication:
-        """Rebuild one verdict from its persisted dict."""
+        """Rebuild one verdict from its persisted dict.
+
+        ``prompt_version`` and ``k_adj`` default to ``0`` and ``meta_judge_model``
+        to ``""`` — NOT to the current live constants. A pre-fix cache file
+        carries none of these, and defaulting to today's values would MASK the
+        staleness the cache predicate exists to catch (a 0 / ``""`` can never
+        equal a live model / version / k, so the record is correctly re-derived).
+        """
         return cls(
             judge_name=str(data.get("judge_name", "")),
             run_ref=str(data.get("run_ref", "")),
@@ -190,7 +209,8 @@ class JudgeAdjudication:
             adjudicator_self_agreement=data.get("adjudicator_self_agreement"),
             operator_confirmed=data.get("operator_confirmed"),
             fidelity=str(data.get("fidelity", FIDELITY_PREVIEW)),
-            prompt_version=int(data.get("prompt_version", ADJUDICATOR_PROMPT_VERSION)),
+            prompt_version=int(data.get("prompt_version", 0)),
+            k_adj=int(data.get("k_adj", 0)),
             raw_response=data.get("raw_response"),
         )
 
@@ -221,7 +241,15 @@ def _verbatim_context(loss_path: Path, judge_name: str) -> tuple[Any, str] | Non
         inp = rec.get("input", {}) if isinstance(rec, dict) else {}
         reasoning = str(inp.get("reasoning_text", ""))
         window = tuple(str(t) for t in inp.get("transcript_window", ()) or ())
-        ctx = JudgeContext(reasoning_text=reasoning, transcript=window or (reasoning,))
+        # The verbatim context is the judge's EXACT ``reasoning_text`` — the
+        # precise bytes it graded (:func:`_context_text` flattens this one turn
+        # verbatim, so the adjudicator reads exactly what the judge read). The
+        # ``transcript_window`` is only a FALLBACK, used when the sidecar
+        # captured no reasoning_text (an empty judge input); it is the wider
+        # context, not the graded text, so it never displaces a present
+        # reasoning_text.
+        transcript = (reasoning,) if reasoning else (window or (reasoning,))
+        ctx = JudgeContext(reasoning_text=reasoning, transcript=transcript)
         return _freeze_context(ctx), FIDELITY_VERBATIM
     return None
 
@@ -345,20 +373,22 @@ def _build_user_prompt(
     *,
     judge_name: str,
     run_ref: str,
-    observed: str,
-    claimed_severity: str | None,
     claim: str,
     transcript_text: str,
 ) -> str:
-    """Assemble the adjudicator user prompt (machine-readable header + transcript)."""
-    if observed == OBSERVED_FIRED:
-        observed_line = f"fired at severity {claimed_severity or 'unspecified'}"
-    else:
-        observed_line = "stayed silent"
+    """Assemble the DE-ANCHORED adjudicator user prompt (header + transcript).
+
+    ANCHORING fix (v2): the prompt tells the adjudicator what the judge GUARDS
+    (its criterion / claim) but NEVER what it DID — the judge's own verdict and
+    its claimed severity are withheld so the meta-judge reads the transcript and
+    decides for itself, uncoloured by the very decision under review. The
+    severity in the reply is likewise the adjudicator's own blind judgment; the
+    verdict is joined against the judge's real ``observed`` in code
+    (:func:`_classify`), never leaked into the prompt.
+    """
     return (
         f"JUDGE UNDER REVIEW: {judge_name}\n"
         f"DECISION REF: {run_ref}\n"
-        f"THE JUDGE OBSERVED: {observed_line}\n"
         f"THE JUDGE'S CRITERION / CLAIM: {claim or '(none recorded)'}\n\n"
         "TRANSCRIPT (verbatim — the exact text the judge read):\n"
         f"{TRANSCRIPT_OPEN}\n{transcript_text}\n{TRANSCRIPT_CLOSE}\n\n"
@@ -391,21 +421,33 @@ def extract_verdict_json(text: str) -> dict[str, Any] | None:
     return body
 
 
+#: Corrective suffix appended to the user prompt on the single parse-retry — it
+#: names the failure so the model's second attempt is steered at the exact fault
+#: (a malformed first reply), rather than re-issuing the identical prompt.
+_RETRY_SUFFIX: str = (
+    "\n\nYour previous reply was not valid JSON and could not be parsed. "
+    "Reply with ONLY the strict JSON object described above — no prose, no code "
+    "fences, nothing before the opening brace or after the closing brace."
+)
+
+
 async def _adjudicate_once(
     call_llm: Any, system: str, user: str, model: str
 ) -> tuple[dict[str, Any] | None, str]:
     """One adjudication attempt with a single retry; ``(parsed|None, raw)``.
 
-    Calls the adjudicator, parses; on a malformed parse retries EXACTLY once.
-    Returns the parsed object (or ``None`` after two malformed responses) plus
-    the raw text of the last response — so the ambiguous verdict can retain the
-    exact bytes the model returned. Never raises on a malformed response.
+    Calls the adjudicator, parses; on a malformed parse retries EXACTLY once,
+    appending :data:`_RETRY_SUFFIX` to the user prompt so the retry names the
+    parse failure instead of silently re-issuing the same prompt. Returns the
+    parsed object (or ``None`` after two malformed responses) plus the raw text
+    of the last response — so the ambiguous verdict can retain the exact bytes
+    the model returned. Never raises on a malformed response.
     """
     raw = str(await call_llm(system, user, model))
     parsed = extract_verdict_json(raw)
     if parsed is not None:
         return parsed, raw
-    raw = str(await call_llm(system, user, model))
+    raw = str(await call_llm(system, user + _RETRY_SUFFIX, model))
     parsed = extract_verdict_json(raw)
     return parsed, raw
 
@@ -433,28 +475,34 @@ async def adjudicate_decision(
     adjudicator_call_llm: Any,
     adjudicator_model: str,
     k_adj: int = 1,
+    context: tuple[Any, str] | None = None,
 ) -> JudgeAdjudication:
     """Adjudicate ONE judge decision → a :class:`JudgeAdjudication`.
 
-    Reconstructs the judge's context (stamping fidelity), builds the strict-JSON
-    prompt, and calls the adjudicator ``k_adj`` times (each with its own single
-    retry). The reported verdict follows the majority ``should_fire``; when
-    every replicate is malformed the verdict is ``ambiguous`` with the raw
-    response retained. ``adjudicator_self_agreement`` (``1 − pairwise
-    disagreement`` over the replicates' ``should_fire`` outcomes) is reported
-    only when at least two replicates parsed; a single-shot adjudication reports
-    ``None``.
+    Reconstructs the judge's context (stamping fidelity) — or reuses a
+    ``context`` the caller already built (``(frozen_ctx, fidelity_tier)``, the
+    seam :func:`adjudicate_corpus` uses so the cache check and the miss path
+    share one reconstruction) — builds the DE-ANCHORED strict-JSON prompt, and
+    calls the adjudicator ``k_adj`` times (each with its own single retry). The
+    reported verdict follows the majority ``should_fire``; when every replicate
+    is malformed the verdict is ``ambiguous`` with the raw response retained.
+    ``adjudicator_self_agreement`` (``1 − pairwise disagreement`` over the
+    replicates' ``should_fire`` outcomes) is reported only when at least two
+    replicates parsed; a single-shot adjudication reports ``None``. The
+    requested ``k_adj`` is stamped on the verdict so the cache can detect a
+    replication-count change.
     """
-    ctx, fidelity = observation_to_judge_context(obs, judge_name)
+    if context is None:
+        context = observation_to_judge_context(obs, judge_name)
+    ctx, fidelity = context
     transcript_text = _context_text(ctx)
     observed = OBSERVED_FIRED if decision.get("fired") else OBSERVED_SILENT
     claimed_severity = decision.get("severity")
     claim = str(decision.get("claim") or "")
+    stamped_k_adj = int(k_adj)
     user = _build_user_prompt(
         judge_name=judge_name,
         run_ref=run_ref,
-        observed=observed,
-        claimed_severity=claimed_severity if isinstance(claimed_severity, str) else None,
         claim=claim,
         transcript_text=transcript_text,
     )
@@ -484,6 +532,7 @@ async def adjudicate_decision(
             operator_confirmed=None,
             fidelity=fidelity,
             prompt_version=ADJUDICATOR_PROMPT_VERSION,
+            k_adj=stamped_k_adj,
             raw_response=last_raw,
         )
 
@@ -521,6 +570,7 @@ async def adjudicate_decision(
         operator_confirmed=None,
         fidelity=fidelity,
         prompt_version=ADJUDICATOR_PROMPT_VERSION,
+        k_adj=stamped_k_adj,
         raw_response=None,
     )
 
@@ -531,11 +581,16 @@ async def adjudicate_decision(
 
 
 def write_adjudication(path: Path, adjudication: JudgeAdjudication) -> Path:
-    """Persist one verdict atomically (tmp + rename); return the path."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(adjudication.to_json(), indent=2, sort_keys=True), encoding="utf-8")
-    os.replace(tmp, path)
+    """Persist one verdict via the fsync'd atomic JSON writer; return the path.
+
+    Routes through :func:`zicato.storage.atomic_write_json` — the SAME durable
+    ``.tmp`` + ``fsync`` (file AND parent dir) + rename discipline R1's
+    ``result.json`` writer uses — so a cached verdict, like a captured run
+    result, survives power loss rather than resting on a bare rename.
+    """
+    from zicato.storage import atomic_write_json  # noqa: PLC0415
+
+    atomic_write_json(path, adjudication.to_json())
     return path
 
 
@@ -579,12 +634,21 @@ async def adjudicate_corpus(
     """Adjudicate every judge decision in the corpus, idempotently.
 
     Enforces independence FIRST — HARD
-    :func:`assert_distinct_callables` on the adjudicator vs judge callables,
-    then the SOFT model-string warning — before any adjudication runs. Then, for
-    every ``(judge_name, run_ref)`` decision, a present verdict file is a cache
-    HIT (re-read, ZERO adjudicator calls); a miss adjudicates and (when
-    ``persist``) writes. Because the corpus is frozen per ``reflection_id`` a
-    second pass over the same corpus makes NO adjudicator calls at all.
+    :func:`assert_distinct_callables` on the adjudicator vs judge callables
+    (re-raised with an adjudication-specific actionable message), then the SOFT
+    model-string warning — before any adjudication runs.
+
+    Then, for every ``(judge_name, run_ref)`` decision the judge context (and
+    its fidelity tier) is reconstructed ONCE, before the cache check, and reused
+    on the miss path. A cached verdict is a HIT only when it is STILL VALID for
+    the current request — same adjudicator model, same
+    :data:`ADJUDICATOR_PROMPT_VERSION`, same requested ``k_adj``, AND the same
+    fidelity tier currently available on disk. A model swap, a prompt-version
+    bump, a ``k_adj`` change, or a fidelity upgrade (a ``preview`` verdict now
+    that the ``verbatim`` sidecar exists) all MISS and re-adjudicate, overwriting
+    the stale file. Because the corpus is frozen per ``reflection_id``, a second
+    pass with the SAME parameters makes NO adjudicator calls at all (context
+    reconstruction is disk-only, never an LLM call).
     """
     from zicato.core.workspace import (  # noqa: PLC0415
         assert_distinct_callables,
@@ -593,7 +657,15 @@ async def adjudicate_corpus(
 
     adjudicator_call = config.effective_adjudicator_call_llm()
     judge_call = config.effective_judge_call_llm()
-    assert_distinct_callables(adjudicator_call, judge_call)  # HARD — refuses on identity
+    try:
+        assert_distinct_callables(adjudicator_call, judge_call)  # HARD — refuses on identity
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "the adjudicator and judge callables are identical — configure a distinct "
+            "adjudicator (a models block, or --adjudicator-call-llm on the CLI); an "
+            "adjudicator must not share the judges' endpoint, or the audit is not "
+            "independent (a judge cannot grade its own homework)"
+        ) from exc
     warn_on_adjudicator_collusion(adjudicator_model, judge_models)  # SOFT — warns, proceeds
 
     results: list[JudgeAdjudication] = []
@@ -603,14 +675,23 @@ async def adjudicate_corpus(
             judge_name = str(decision.get("judge_name", ""))
             if not judge_name:
                 continue
+            # Reconstruct the context (and current fidelity tier) ONCE — the
+            # cache-validity check needs the tier, and the miss path reuses it.
+            ctx_tier = observation_to_judge_context(obs, judge_name)
+            tier = ctx_tier[1]
             path = reflection_adjudication_path(
                 workspace_root, epoch_id, reflection_id, judge_name, run_ref
             )
-            if path.exists():
-                cached = read_adjudication(path)
-                if cached is not None:
-                    results.append(cached)
-                    continue
+            cached = read_adjudication(path) if path.exists() else None
+            if (
+                cached is not None
+                and cached.meta_judge_model == adjudicator_model
+                and cached.prompt_version == ADJUDICATOR_PROMPT_VERSION
+                and cached.k_adj == k_adj
+                and cached.fidelity == tier
+            ):
+                results.append(cached)
+                continue
             adjudication = await adjudicate_decision(
                 obs=obs,
                 judge_name=judge_name,
@@ -619,6 +700,7 @@ async def adjudicate_corpus(
                 adjudicator_call_llm=adjudicator_call,
                 adjudicator_model=adjudicator_model,
                 k_adj=k_adj,
+                context=ctx_tier,
             )
             if persist:
                 write_adjudication(path, adjudication)
@@ -635,8 +717,10 @@ __all__ = [
     "ADJUDICATOR_SYSTEM_PROMPT",
     "OBSERVED_FIRED",
     "OBSERVED_SILENT",
+    "SEVERITY_VOCAB",
     "TRANSCRIPT_CLOSE",
     "TRANSCRIPT_OPEN",
+    "VERDICT_JSON_KEYS",
     "VERDICT_AMBIGUOUS",
     "VERDICT_FN",
     "VERDICT_FP",

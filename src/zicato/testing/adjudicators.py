@@ -4,35 +4,44 @@ The board-reflection adjudicator
 (:mod:`zicato.reflection.adjudicator`) talks to a meta-judge through the
 standard ``CallLLM`` shape ``(system, user, model) -> str`` and expects a strict
 JSON verdict back. G3 forbids live endpoints, so these doubles stand in: each
-is a callable that parses the adjudicator's user prompt (the machine-readable
-``JUDGE UNDER REVIEW`` / ``DECISION REF`` / ``THE JUDGE OBSERVED`` header plus
-the ``<<<TRANSCRIPT … TRANSCRIPT>>>`` block) and returns a deterministic
-verdict.
+is a callable that parses the adjudicator's DE-ANCHORED user prompt (the
+machine-readable ``JUDGE UNDER REVIEW`` / ``DECISION REF`` header + the judge's
+criterion, plus the ``<<<TRANSCRIPT … TRANSCRIPT>>>`` block — the prompt never
+carries what the judge DID) and returns a deterministic verdict.
 
-* :class:`AlwaysConfirm` — AGREES with the judge (fired ⇒ should_fire, silent ⇒
-  should_be_silent): a judge that is always right ⇒ a TP/TN corpus.
-* :class:`AlwaysRefute` — DISAGREES with the judge (fired ⇒ should_be_silent,
-  silent ⇒ should_fire): a judge that is always wrong ⇒ an FP/FN corpus.
-* :class:`SpanQuoting` — quotes an EXACT substring of the transcript it saw into
-  ``evidence_span``, so a test can prove the adjudicator received the verbatim
-  ``judge_io`` bytes (the quoted span appears in the sidecar's
-  ``reasoning_text``).
+Because the prompt is de-anchored (v2), a double CANNOT know the judge's own
+verdict, so the confirm/refute doubles decide BLIND — exactly the discipline a
+real independent adjudicator obeys:
+
+* :class:`AlwaysConfirm` — always ``should_fire=True`` ("the transcript exhibits
+  the failure"): the correct meta-judge for a PLANTED-violation corpus (a judge
+  that fired ⇒ TP, one that stayed silent ⇒ FN).
+* :class:`AlwaysRefute` — always ``should_fire=False`` ("the transcript is
+  clean"): the correct meta-judge for a CLEAN corpus (a judge that fired ⇒ FP,
+  one that stayed silent ⇒ TN).
+* :class:`SpanQuoting` — a fixed blind verdict that quotes an EXACT substring of
+  the transcript it saw into ``evidence_span``, so a test can prove the
+  adjudicator received the verbatim ``judge_io`` bytes (the quoted span appears
+  in the sidecar's ``reasoning_text``).
 * :class:`ScriptedTable` — a per-``(judge_name, run_ref)`` verdict table for
-  hand-built oracle corpora.
+  hand-built oracle corpora (the way to script DIFFERENT verdicts per decision
+  now that the prompt no longer reveals the judge's action).
 * :class:`MalformedThenValid` — returns garbage on its first call and valid JSON
   thereafter, exercising the adjudicator's one-retry-then-ambiguous path.
 
 Every double counts its calls (``.calls``) so a test can assert the
-cache-idempotency invariant (second pass ⇒ zero adjudicator calls). All quote a
-verbatim span so any of them can ground a finding.
+cache-idempotency invariant (second pass ⇒ zero adjudicator calls) and records
+each user prompt it saw (``.prompts``) so a test can assert the retry appended
+its corrective suffix. All quote a verbatim span so any of them can ground a
+finding.
 """
 
 from __future__ import annotations
 
 import json
 
-# The adjudicator protocol markers, inlined so these test doubles carry NO
-# import edge into :mod:`zicato.reflection` (which reaches
+# The adjudicator protocol markers + JSON verdict shape, inlined so these test
+# doubles carry NO import edge into :mod:`zicato.reflection` (which reaches
 # :mod:`zicato.dashboard.transcript` for the preview-fidelity fallback — a
 # forbidden edge for anything the library import-linter contract covers, and
 # ``zicato.testing`` is covered). They mirror the constants of the same names in
@@ -42,21 +51,26 @@ OBSERVED_FIRED = "fired"
 OBSERVED_SILENT = "silent"
 TRANSCRIPT_OPEN = "<<<TRANSCRIPT"
 TRANSCRIPT_CLOSE = "TRANSCRIPT>>>"
+#: The strict-JSON verdict keys every double emits + the severity vocabulary it
+#: draws from — pinned equal to production so the protocol shape cannot drift.
+VERDICT_JSON_KEYS = ("should_fire", "severity", "evidence_span", "rationale")
+SEVERITY_VOCAB = ("none", "info", "warning", "critical")
 
 
 def _parse_header(user: str) -> dict[str, str]:
-    """Extract ``judge_name`` / ``run_ref`` / ``observed`` from the user prompt."""
+    """Extract ``judge_name`` / ``run_ref`` from the de-anchored user prompt.
+
+    The ``THE JUDGE OBSERVED`` line no longer exists (v2 de-anchoring), so the
+    doubles cannot — and must not — read the judge's action from the prompt.
+    """
     judge_name = ""
     run_ref = ""
-    observed = OBSERVED_SILENT
     for line in user.splitlines():
         if line.startswith("JUDGE UNDER REVIEW:"):
             judge_name = line.split(":", 1)[1].strip()
         elif line.startswith("DECISION REF:"):
             run_ref = line.split(":", 1)[1].strip()
-        elif line.startswith("THE JUDGE OBSERVED:"):
-            observed = OBSERVED_FIRED if "fired" in line else OBSERVED_SILENT
-    return {"judge_name": judge_name, "run_ref": run_ref, "observed": observed}
+    return {"judge_name": judge_name, "run_ref": run_ref}
 
 
 def _transcript_text(user: str) -> str:
@@ -81,47 +95,55 @@ def _verdict_json(*, should_fire: bool, severity: str, evidence_span: str, ratio
 
 
 class _BaseDouble:
-    """Shared call-counting + span-quoting for the scripted doubles."""
+    """Shared call-counting + prompt-recording + span-quoting for the doubles."""
 
     def __init__(self, *, severity: str = "warning", quote_len: int = 120) -> None:
         self.severity = severity
         self.quote_len = quote_len
         self.calls = 0
         self.last_transcript = ""
+        self.prompts: list[str] = []
 
     def _span(self, user: str) -> str:
+        self.prompts.append(user)
         text = _transcript_text(user)
         self.last_transcript = text
         return text[: self.quote_len]
 
 
 class AlwaysConfirm(_BaseDouble):
-    """Agrees with the judge: fired ⇒ should_fire, silent ⇒ should_be_silent."""
+    """Blind ``should_fire=True`` — "the transcript exhibits the failure".
+
+    The correct meta-judge for a PLANTED-violation corpus: a judge that fired ⇒
+    TP, one that stayed silent ⇒ FN. It cannot (and does not) read the judge's
+    action — the de-anchored prompt withholds it.
+    """
 
     async def __call__(self, system: str, user: str, model: str) -> str:
         self.calls += 1
-        header = _parse_header(user)
-        should_fire = header["observed"] == OBSERVED_FIRED
         return _verdict_json(
-            should_fire=should_fire,
+            should_fire=True,
             severity=self.severity,
             evidence_span=self._span(user),
-            rationale="the judge's decision is consistent with the transcript",
+            rationale="the transcript exhibits the failure this judge guards",
         )
 
 
 class AlwaysRefute(_BaseDouble):
-    """Disagrees with the judge: fired ⇒ should_be_silent, silent ⇒ should_fire."""
+    """Blind ``should_fire=False`` — "the transcript is clean".
+
+    The correct meta-judge for a CLEAN corpus: a judge that fired ⇒ FP, one that
+    stayed silent ⇒ TN. Blind by construction — the de-anchored prompt never
+    reveals what the judge did.
+    """
 
     async def __call__(self, system: str, user: str, model: str) -> str:
         self.calls += 1
-        header = _parse_header(user)
-        should_fire = header["observed"] == OBSERVED_SILENT
         return _verdict_json(
-            should_fire=should_fire,
+            should_fire=False,
             severity=self.severity,
             evidence_span=self._span(user),
-            rationale="the transcript contradicts the judge's decision",
+            rationale="the transcript is clean; the guarded failure is absent",
         )
 
 

@@ -55,6 +55,7 @@ def _adj(
         operator_confirmed=None,
         fidelity=fidelity,
         prompt_version=1,
+        k_adj=1,
     )
 
 
@@ -200,6 +201,64 @@ def test_cross_judge_redundant_and_conflict() -> None:
     assert [r["judge"] for r in cards["a"].redundant_with] == ["b"]
     assert [c["judge"] for c in cards["a"].conflicts_with] == ["c"]
     assert cards["a"].exercised is True
+
+
+def test_zero_variance_judges_not_flagged_redundant() -> None:
+    # REDUNDANCY fix: two ALWAYS-fire judges have zero-variance firing vectors —
+    # uncorrelatable, so NEITHER is redundant_with the other (the old x==y ⇒ 1.0
+    # Pearson convention would have clustered them).
+    corpus: list[ObservationRun] = []
+    for i in range(4):
+        corpus.append(
+            _obs(
+                "cand",
+                "e",
+                i,
+                [
+                    {"judge_name": "always_a", "fired": True},
+                    {"judge_name": "always_b", "fired": True},
+                ],
+            )
+        )
+    adjudications = [
+        _adj("always_a", "cand:e:r0", VERDICT_TP),
+        _adj("always_b", "cand:e:r0", VERDICT_TP),
+    ]
+    cards = {c.judge_name: c for c in build_scorecards(adjudications=adjudications, corpus=corpus)}
+    assert cards["always_a"].redundant_with == ()
+    assert cards["always_a"].conflicts_with == ()
+    assert cards["always_b"].redundant_with == ()
+
+
+def test_mixed_variance_still_correlates_around_a_constant_judge() -> None:
+    # The zero-variance SKIP is surgical: two VARYING judges still correlate; only
+    # the constant judge is excluded from every pairing.
+    a_pat = [True, False, True, False]
+    b_pat = [True, False, True, False]  # varies, identical to a ⇒ redundant
+    const = [True, True, True, True]  # zero variance ⇒ uncorrelatable
+    corpus: list[ObservationRun] = []
+    for i in range(4):
+        corpus.append(
+            _obs(
+                "cand",
+                "e",
+                i,
+                [
+                    {"judge_name": "a", "fired": a_pat[i]},
+                    {"judge_name": "b", "fired": b_pat[i]},
+                    {"judge_name": "const", "fired": const[i]},
+                ],
+            )
+        )
+    adjudications = [
+        _adj("a", "cand:e:r0", VERDICT_TP),
+        _adj("b", "cand:e:r0", VERDICT_TP),
+        _adj("const", "cand:e:r0", VERDICT_TP),
+    ]
+    cards = {c.judge_name: c for c in build_scorecards(adjudications=adjudications, corpus=corpus)}
+    assert [r["judge"] for r in cards["a"].redundant_with] == ["b"]  # varying pair still correlates
+    assert cards["const"].redundant_with == ()  # the constant judge is skipped everywhere
+    assert all(r["judge"] != "const" for r in cards["a"].redundant_with)
 
 
 def test_unexercised_judge_flagged() -> None:

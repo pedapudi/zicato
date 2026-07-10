@@ -186,10 +186,30 @@ def _firing_vectors(corpus: list[ObservationRun]) -> dict[str, dict[tuple[str, s
     return out
 
 
+def _is_zero_variance(values: list[float]) -> bool:
+    """Whether a firing vector never varies (all-fire or all-silent).
+
+    A constant vector has no variance, so its correlation with anything is
+    UNDEFINED — Pearson's denominator is zero. Two always-fire judges are not
+    "redundant" (they carry no shared SIGNAL, only a shared constant), and an
+    always-fire vs a varying judge is not a "conflict"; both are simply
+    uncorrelatable and must be skipped.
+    """
+    return len(set(values)) < 2
+
+
 def _cross_judge(
     vectors: dict[str, dict[tuple[str, str, int], int]], judge_name: str
 ) -> tuple[tuple[dict[str, Any], ...], tuple[dict[str, Any], ...]]:
-    """``(redundant_with, conflicts_with)`` for one judge vs every other."""
+    """``(redundant_with, conflicts_with)`` for one judge vs every other.
+
+    Zero-variance firing vectors (all-fire or all-silent judges, over the shared
+    runs) are skipped — they are uncorrelatable, not redundant, so they appear
+    in neither ``redundant_with`` nor ``conflicts_with``. This keeps a bank of
+    always-firing judges from reading as a mutually-redundant cluster (which the
+    ``x == y ⇒ 1.0`` convention in :func:`pearson`, kept for the entry
+    clustering in analysis.py, would otherwise produce).
+    """
     mine = vectors.get(judge_name, {})
     redundant: list[dict[str, Any]] = []
     conflicts: list[dict[str, Any]] = []
@@ -199,7 +219,11 @@ def _cross_judge(
         shared = sorted(set(mine) & set(theirs))
         if len(shared) < 2:
             continue
-        corr = pearson([float(mine[k]) for k in shared], [float(theirs[k]) for k in shared])
+        mine_vals = [float(mine[k]) for k in shared]
+        theirs_vals = [float(theirs[k]) for k in shared]
+        if _is_zero_variance(mine_vals) or _is_zero_variance(theirs_vals):
+            continue
+        corr = pearson(mine_vals, theirs_vals)
         if corr >= REDUNDANCY_CORR:
             redundant.append({"judge": other, "corr": corr})
         elif corr <= CONFLICT_CORR:

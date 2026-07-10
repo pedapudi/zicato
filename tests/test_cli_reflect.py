@@ -260,8 +260,12 @@ def test_active_run_with_scripted_adjudicator(
     scorecards = json.loads(reflection_scorecards_path(ws, epoch_id, rid).read_text())
     assert any(c["judge_name"] == "j" for c in scorecards["scorecards"])
     findings = json.loads(reflection_findings_path(ws, epoch_id, rid).read_text())
-    # The margin-below-floor finding carries a set_gate proposed_op.
-    margin = [f for f in findings["findings"] if f.get("proposed_op", {}).get("op") == "set_gate"]
+    # The margin-below-floor finding carries a set_gate proposed_op. (Some
+    # findings are recommendation-only with proposed_op=None — e.g. the blind
+    # adjudicator's FN on g1's clean run — so tolerate a null op.)
+    margin = [
+        f for f in findings["findings"] if (f.get("proposed_op") or {}).get("op") == "set_gate"
+    ]
     assert margin, findings
     # The reflection projected an index row.
     from zicato.index import query as iq
