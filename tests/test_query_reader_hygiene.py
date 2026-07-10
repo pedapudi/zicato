@@ -132,7 +132,14 @@ def test_per_judge_trend_never_creates_index_db(tmp_path: Path) -> None:
     ws = _base_workspace(tmp_path)
     paths = WorkspacePaths(ws)
     out = build_per_judge_trend(paths, EPOCH)
-    assert out == {"epoch_id": EPOCH, "generations": [], "judges": []}
+    # F5: an absent index now carries the harmonized degrade note (the
+    # generations spine still renders field-by-field).
+    assert out == {
+        "epoch_id": EPOCH,
+        "generations": [],
+        "judges": [],
+        "note": "index not built; run zicato reindex",
+    }
     assert not paths.index_db.exists()
 
 

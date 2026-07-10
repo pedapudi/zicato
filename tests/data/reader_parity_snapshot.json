@@ -1069,19 +1069,22 @@
     "generations": [
       "v0"
     ],
-    "judges": []
+    "judges": [],
+    "note": "index not built; run zicato reindex"
   },
   "per_judge_trend::e1": {
     "epoch_id": "e1",
     "generations": [
       "v0"
     ],
-    "judges": []
+    "judges": [],
+    "note": "index not built; run zicato reindex"
   },
   "per_judge_trend::e2": {
     "epoch_id": "e2",
     "generations": [],
-    "judges": []
+    "judges": [],
+    "note": "index not built; run zicato reindex"
   },
   "run_log": {
     "cursor": null,

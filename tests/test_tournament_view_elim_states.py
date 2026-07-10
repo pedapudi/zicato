@@ -46,6 +46,16 @@ def test_shared_fixture_pins_the_fold() -> None:
     assert got == fixture["expected"]
 
 
+def test_shared_fixture_malformed_competitors_case() -> None:
+    """F1: the DQ1 scalar contract — non-scalar competitors/winner (bool,
+    null, object, array) drop identically across all three folds. The Rust
+    and node twins assert the SAME fixture case."""
+    fixture = json.loads(_FIXTURE.read_text(encoding="utf-8"))
+    case = fixture["malformed_competitors_case"]
+    got = derive_elim_states(case["input_rounds"])
+    assert got == case["expected"]
+
+
 # ---------------------------------------------------------------------------
 # Named properties
 # ---------------------------------------------------------------------------

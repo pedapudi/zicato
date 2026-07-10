@@ -541,4 +541,22 @@ test('mock deriveElimStates matches the shared Python/Rust fixture byte-for-byte
   assertEqual(canon(got), canon(fixture.expected), 'the node mirror reproduces the served fold exactly');
 });
 
+// F1: the DQ1 scalar contract — non-scalar competitors/winner (bool, null,
+// object, array) drop identically across the Python, Rust, and node folds.
+test('mock deriveElimStates drops non-scalar competitors/winner per the shared fixture', async () => {
+  const fs = await import('node:fs');
+  const fixturePath = new URL('../../../../../tests/data/elim_states_fixture.json', import.meta.url);
+  const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf-8'));
+  const c = fixture.malformed_competitors_case;
+  const got = mock.deriveElimStates(c.input_rounds);
+  const canon = (v) => {
+    const sort = (x) => Array.isArray(x) ? x.map(sort)
+      : (x && typeof x === 'object')
+        ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, sort(x[k])]))
+        : x;
+    return JSON.stringify(sort(v));
+  };
+  assertEqual(canon(got), canon(c.expected), 'the node mirror drops non-scalars exactly like the twins');
+});
+
 await run();

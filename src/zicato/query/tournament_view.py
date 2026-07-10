@@ -823,16 +823,41 @@ def _round_sort_key(r: dict[str, Any], position: int) -> tuple[Any, int]:
     return (position, position)
 
 
+def _scalar_id(v: Any) -> str | None:
+    """A competitor/winner id under the DQ1 scalar contract, or ``None``.
+
+    Only a string or a real number is an id: a ``bool`` (an ``int``
+    subclass — dropped explicitly), ``dict``/``list``/``None``/other type
+    is NOT a scalar and reads as absent. Twinned line-for-line by the Rust
+    (``str|number``-only) and node folds so all three drop the same values.
+    """
+    if isinstance(v, str):
+        return v
+    if isinstance(v, int | float) and not isinstance(v, bool):
+        return str(v)
+    return None
+
+
 def _match_competitors(m: dict[str, Any]) -> list[str]:
     comps = m.get("competitors")
     if not isinstance(comps, list):
         return []
     out: list[str] = []
     for c in comps:
-        s = str(c) if c is not None else ""
+        s = _scalar_id(c)
         if s and s != "tbd":
             out.append(s)
     return out
+
+
+def _match_winner(m: dict[str, Any]) -> str | None:
+    """The decided winner id, or ``None`` (undecided / non-scalar).
+
+    A falsy id (``""``, ``0``) reads as undecided, matching the Rust
+    ``truthy`` gate and the node ``m.winner ? …`` guard.
+    """
+    s = _scalar_id(m.get("winner"))
+    return s or None
 
 
 def _match_pending(m: dict[str, Any], winner: str | None) -> bool:
@@ -915,14 +940,18 @@ def derive_elim_states(rounds: Any) -> dict[str, Any]:
         key_order: list[str] = []
         for m in matches_in:
             comps = _match_competitors(m)
-            winner = str(m["winner"]) if m.get("winner") else None
+            winner = _match_winner(m)
             key = str(m.get("bracket_slot") or "") + "|" + "/".join(sorted(comps))
             prev = by_key.get(key)
             if prev is None:
                 by_key[key] = m
                 key_order.append(key)
             else:
-                prev_winner = str(prev["winner"]) if prev.get("winner") else None
+                # F4: only a still-pending first-seen yields to a decided
+                # duplicate. Two DIFFERENT decided winners for the same slot
+                # is corrupt data — the first-seen (most-decided) one wins
+                # deterministically rather than flapping by iteration order.
+                prev_winner = _match_winner(prev)
                 if _match_pending(prev, prev_winner) and not _match_pending(m, winner):
                     by_key[key] = m
         deduped = [by_key[k] for k in key_order]
@@ -931,7 +960,7 @@ def derive_elim_states(rounds: Any) -> dict[str, Any]:
         out_matches: list[dict[str, Any]] = []
         for m in deduped:
             comps = _match_competitors(m)
-            winner = str(m["winner"]) if m.get("winner") else None
+            winner = _match_winner(m)
             pending = _match_pending(m, winner)
             is_lb = str(m.get("bracket_slot") or "").startswith("LB")
             if is_lb:

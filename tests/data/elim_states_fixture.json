@@ -1,5 +1,93 @@
 {
   "description": "shared elim-fold fixture: mis-ordered double-elim rounds with a duplicate match, a bye, a WB->LB drop, two true eliminations, and a pending projected grand final. Pinned by tests/test_tournament_view_elim_states.py (Python) and crates/supervisor/src/elim_states.rs (Rust).",
+  "malformed_competitors_case": {
+    "description": "the DQ1 scalar contract (F1): non-scalar competitor entries (bool/null/object/array) and a non-scalar winner (bool) are DROPPED identically by all three folds — a number id stringifies, the surviving pair yields one advance + one elimination, and the second match's bool winner reads as undecided (pending). The OUTPUT matches keep their raw competitors/winner verbatim (only derived state narrows).",
+    "input_rounds": [
+      {
+        "round_index": 0,
+        "matches": [
+          {
+            "match_id": "WB-R0-0",
+            "bracket_slot": "WB-R0-0",
+            "competitors": ["v1", 2, true, null, {}, [], "tbd", ""],
+            "winner": "v1"
+          },
+          {
+            "match_id": "WB-R0-1",
+            "bracket_slot": "WB-R0-1",
+            "competitors": ["v3", "v4"],
+            "winner": true
+          }
+        ]
+      }
+    ],
+    "expected": {
+      "gen_states": [
+        {
+          "advanced_rounds": [0],
+          "eliminated_at_round": null,
+          "generation_id": "v1",
+          "lb_entry_round": null,
+          "lost_rounds": [],
+          "played_rounds": [0],
+          "projected": null,
+          "side_by_round": {"0": "WB"}
+        },
+        {
+          "advanced_rounds": [],
+          "eliminated_at_round": 0,
+          "generation_id": "2",
+          "lb_entry_round": null,
+          "lost_rounds": [0],
+          "played_rounds": [0],
+          "projected": null,
+          "side_by_round": {"0": "WB"}
+        },
+        {
+          "advanced_rounds": [],
+          "eliminated_at_round": null,
+          "generation_id": "v3",
+          "lb_entry_round": null,
+          "lost_rounds": [],
+          "played_rounds": [0],
+          "projected": null,
+          "side_by_round": {"0": "WB"}
+        },
+        {
+          "advanced_rounds": [],
+          "eliminated_at_round": null,
+          "generation_id": "v4",
+          "lb_entry_round": null,
+          "lost_rounds": [],
+          "played_rounds": [0],
+          "projected": null,
+          "side_by_round": {"0": "WB"}
+        }
+      ],
+      "rounds": [
+        {
+          "bracket_side": "WB",
+          "matches": [
+            {
+              "bracket_slot": "WB-R0-0",
+              "competitors": ["v1", 2, true, null, {}, [], "tbd", ""],
+              "loser": "2",
+              "match_id": "WB-R0-0",
+              "winner": "v1"
+            },
+            {
+              "bracket_slot": "WB-R0-1",
+              "competitors": ["v3", "v4"],
+              "loser": null,
+              "match_id": "WB-R0-1",
+              "winner": true
+            }
+          ],
+          "round_index": 0
+        }
+      ]
+    }
+  },
   "expected": {
     "gen_states": [
       {

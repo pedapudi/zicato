@@ -77,8 +77,10 @@ def build_per_judge_trend(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any
     # presence then flipped LATER readers' degrade branches — the
     # order-contamination the U3 golden re-capture retired).
     judges: set[str] = set()
+    index_absent = True
     with open_index_ro_or_none(paths.index_db) as conn:
         if conn is not None:
+            index_absent = False
             try:
                 rows = conn.execute(
                     "SELECT DISTINCT jl.judge_name "
@@ -122,11 +124,19 @@ def build_per_judge_trend(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any
             }
         )
 
-    return {
+    out: dict[str, Any] = {
         "epoch_id": epoch_id,
         "generations": spine,
         "judges": judge_rows,
     }
+    if index_absent:
+        # Harmonize with the sibling readers (gate_view / loop_view /
+        # tournament_view / build_per_judge_for_generation): an ABSENT index
+        # carries the actionable degrade note. The generations spine still
+        # renders (field-by-field degrade) — a built-but-empty index gets no
+        # note, only a genuinely un-built one.
+        out["note"] = "index not built; run zicato reindex"
+    return out
 
 
 def build_per_judge_for_generation(

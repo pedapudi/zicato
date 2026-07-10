@@ -350,9 +350,13 @@ export function deriveElimStates(roundsIn) {
     .sort((a, b) => (a.k - b.k) || (a.i - b.i))
     .map((x) => x.r);
 
+  // DQ1 scalar contract: a string / finite-number id only — drop bool,
+  // object, array, null (the Python `_scalar_id` + Rust str|number twins).
+  const scalarId = (v) => (typeof v === 'string' ? v
+    : (typeof v === 'number' && Number.isFinite(v)) ? String(v) : null);
   const compsOf = (m) => (Array.isArray(m.competitors) ? m.competitors : [])
-    .filter((c) => c != null).map(String).filter((c) => c && c !== 'tbd');
-  const winnerOf = (m) => (m.winner ? String(m.winner) : null);
+    .map(scalarId).filter((c) => c && c !== 'tbd');
+  const winnerOf = (m) => (m.winner ? scalarId(m.winner) : null);
   const pendingOf = (m, winner) => !!m.pending || (!winner && !m.bye && !m.decision);
 
   const accs = new Map();   // gid → acc, insertion order = first seen

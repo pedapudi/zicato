@@ -330,6 +330,22 @@ mod tests {
         assert_eq!(got, fixture["expected"]);
     }
 
+    /// F1: the DQ1 scalar contract — non-scalar competitor entries
+    /// (bool/null/object/array) and a non-scalar winner (bool) drop
+    /// identically across all three folds. The Python and node twins
+    /// assert the SAME fixture case.
+    #[test]
+    fn shared_fixture_malformed_competitors_case() {
+        let fixture: Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/data/elim_states_fixture.json"
+        )))
+        .unwrap();
+        let case = &fixture["malformed_competitors_case"];
+        let got = derive_elim_states(&case["input_rounds"]);
+        assert_eq!(got, case["expected"]);
+    }
+
     #[test]
     fn a_loss_with_a_later_appearance_is_a_drop_not_an_elimination() {
         let rounds = json!([
