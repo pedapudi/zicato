@@ -560,7 +560,16 @@ def _render_report_md(
     flip = summary.get("decision_flip_p")
     lines.append("## Bill of health")
     lines.append(f"- noise floor (max |delta|): {floor if floor is not None else 'unmeasured'}")
-    lines.append(f"- P(gate decision flips): {flip if flip is not None else 'n/a'}")
+    if flip is not None:
+        lines.append(f"- P(gate decision flips): {flip}")
+    else:
+        # S2: the bootstrap was undefined (too few replicates / no observations);
+        # surface the reason rather than a fabricated 0.0.
+        reason = (
+            summary.get("pillars", {}).get("reliability", {}).get("decision_flip", {}) or {}
+        ).get("reason")
+        detail = f" ({reason})" if reason else ""
+        lines.append(f"- P(gate decision flips): n/a{detail}")
     validity = summary.get("pillars", {}).get("validity", {})
     agg_f1 = validity.get("aggregate_f1")
     agg_f1_str = agg_f1 if agg_f1 is not None else "n/a (no adjudication)"

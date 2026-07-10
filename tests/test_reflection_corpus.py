@@ -211,6 +211,30 @@ def test_passive_ingest_picks_up_calibration_replicate_slots(tmp_path: Path) -> 
     assert sorted(o.replicate for o in runs) == [0, 1000, 1001]
 
 
+def test_passive_ingest_reserved_base_allowlist_excludes_degraded_probes(tmp_path: Path) -> None:
+    """B1: r0/1000/4000/5000 are ingested; r2000 (preflight) + r3000 (screen) excluded."""
+    workspace = tmp_path / ".zicato"
+    for replicate in (0, 1000, 2000, 3000, 4000, 5000):
+        _write_loss(
+            workspace, "v1", "entryA", replicate, _loss(generation_id="v1", entry_id="entryA")
+        )
+
+    runs = ingest_lineage(
+        workspace_root=workspace,
+        epoch_id=EPOCH,
+        reflection_id="refl-x",
+        candidates=["v1"],
+        entries=["entryA"],
+        weights=ScoringWeights(),
+    )
+    ingested = sorted(o.replicate for o in runs)
+    # r1000 (calibration), r4000 (evidence), r5000 (reflection), r0 (duel) IN;
+    # r2000 (preflight degraded probe) + r3000 (screen base) OUT.
+    assert ingested == [0, 1000, 4000, 5000]
+    assert 2000 not in ingested
+    assert 3000 not in ingested
+
+
 def test_observation_run_json_round_trip() -> None:
     obs = ObservationRun(
         reflection_id="refl-x",

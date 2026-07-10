@@ -283,6 +283,25 @@ def _judge_decisions(
     )
 
 
+def _loss_aborted(loss: Any) -> bool:
+    """Whether a run aborted — the loss' own ``aborted`` flag, else ``abort_cause``.
+
+    Prefers an explicit ``aborted`` boolean on the loss-like object and falls
+    back to ``bool(abort_cause)``. NOTE: today's
+    :class:`~zicato.core.LossProfile` carries no ``aborted`` field (only
+    ``abort_cause: str | None`` + ``wall_clock_budget_exceeded``), so the
+    fall-back — ``abort_cause`` truthiness — is what fires in practice (a budget
+    abort sets ``abort_cause = BUDGET_ABORT_CAUSE``, an infra abort sets its own
+    cause). The ``aborted`` probe is a forward-compatible read for any loss-like
+    record that DOES expose the flag, so the corpus stays correct if one is
+    added later.
+    """
+    flag = getattr(loss, "aborted", None)
+    if flag is not None:
+        return bool(flag)
+    return bool(getattr(loss, "abort_cause", None))
+
+
 def _single_unit_scalar(loss: Any, weights: ScoringWeights) -> float:
     """The one-entry aggregate scalar — what the reliability bootstrap resamples."""
     from zicato.tournament.scoring import aggregate_generation_score  # noqa: PLC0415
@@ -328,7 +347,7 @@ def _build_observation(
         drift_loss=float(getattr(loss, "drift_loss", 0.0)),
         pass_fail=getattr(loss, "pass_fail", None),
         runtime_ms=int(getattr(loss, "runtime_ms", 0)),
-        aborted=bool(getattr(loss, "abort_cause", None)),
+        aborted=_loss_aborted(loss),
         abort_cause=getattr(loss, "abort_cause", None),
         fidelity=fidelity,
         has_result=result_present,
@@ -372,11 +391,52 @@ def _read_loss(loss_path: Path) -> Any | None:
         return None
 
 
-def _discover_replicate_losses(run_dir: Path) -> list[tuple[int, Path]]:
-    """Every persisted replicate loss under one run dir, ascending by index.
+def _is_ingestable_replicate(index: int) -> bool:
+    """Whether a replicate-base slot is honest evidence for the passive corpus.
 
-    ``loss.json`` → replicate 0; ``loss.r{n}.json`` → replicate ``n`` (the
-    calibration slots at 1000+, any prior reflection draws at 5000+, etc.).
+    The replicate-index namespace is partitioned by owner (see
+    :data:`REFLECTION_REPLICATE_BASE`). Passive ingest accepts ONLY the slots
+    whose provenance the ledger vouches for as a clean, non-degraded draw of the
+    REAL contract:
+
+      * ``0``            — the canonical tournament duel (``loss.json``).
+      * ``1000..1999``   — A/A noise-floor calibration (``CALIBRATION_REPLICATE_BASE``);
+                           free pillar-1 replicates of the real board.
+      * ``4000..4999``   — evidence gate (``EVIDENCE_REPLICATE_BASE``); both-sides-fresh
+                           clean draws of real trees.
+      * ``>= 5000``      — board reflection (this owner); prior reflection draws.
+
+    EXCLUDED — ``2000..3999``:
+
+      * ``2000`` (``PREFLIGHT_REPLICATE_BASE``) is the contract pre-flight's
+        DELIBERATELY-DEGRADED champion probe, cached under the champion's OWN
+        generation id — folding it in would poison the corpus with a
+        known-bad draw of a mutilated board.
+      * ``3000``/``3001`` (``SCREEN_REPLICATE_BASE``) are candidate-screen
+        bases — fast-mode probes, not clean duels; excluded defensively.
+
+    Any other unreserved slot (``1..999``) is excluded too: the corpus ingests
+    only slots the ledger names, never an unattributed one.
+    """
+    if index == 0:
+        return True
+    if 1000 <= index <= 1999:
+        return True
+    if 2000 <= index <= 3999:
+        return False
+    if 4000 <= index <= 4999:
+        return True
+    return index >= 5000
+
+
+def _discover_replicate_losses(run_dir: Path) -> list[tuple[int, Path]]:
+    """Every INGESTABLE persisted replicate loss under one run dir, ascending.
+
+    ``loss.json`` → replicate 0; ``loss.r{n}.json`` → replicate ``n``. Only
+    slots the reserved-base ledger vouches for are returned
+    (:func:`_is_ingestable_replicate`): r0, the calibration slots at 1000+, the
+    evidence slots at 4000+, and any prior reflection draws at 5000+ — never the
+    pre-flight's degraded r2000 probe or the 3000s screen bases.
     """
     found: list[tuple[int, Path]] = []
     canonical = run_dir / "loss.json"
@@ -386,7 +446,9 @@ def _discover_replicate_losses(run_dir: Path) -> list[tuple[int, Path]]:
         for path in run_dir.iterdir():
             match = _LOSS_REPLICATE_RE.match(path.name)
             if match:
-                found.append((int(match.group(1)), path))
+                index = int(match.group(1))
+                if _is_ingestable_replicate(index):
+                    found.append((index, path))
     return sorted(found)
 
 

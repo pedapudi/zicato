@@ -164,9 +164,16 @@ def noise_floor_summary(
     }
 
 
-def _bootstrap_seed(reflection_id: str) -> int:
-    """A stable 32-bit RNG seed from the plan's ``reflection_id``."""
-    digest = hashlib.sha256(reflection_id.encode("utf-8")).hexdigest()
+def _bootstrap_seed(reflection_id: str, parent_id: str, child_id: str) -> int:
+    """A stable 32-bit RNG seed folding the reflection + the specific pair.
+
+    Folding ``parent_id`` / ``child_id`` in (N1) makes every pair draw an
+    INDEPENDENT resample stream — two pairs adjudicated under the same
+    reflection no longer share a bootstrap trajectory, so their ``p_flip``
+    estimates are statistically independent rather than coupled through a
+    common seed.
+    """
+    digest = hashlib.sha256(f"{reflection_id}|{parent_id}|{child_id}".encode()).hexdigest()
     return int(digest[:8], 16)
 
 
@@ -174,18 +181,20 @@ def _candidate_scalar(
     unit_scalars: dict[tuple[str, str], list[float]],
     candidate: str,
     entries: list[str],
-    picker: Any,
+    resampler: Any,
 ) -> float:
-    """Candidate scalar = mean over its entries of one picked replicate scalar.
+    """Candidate scalar = mean over its entries of a per-unit resampled scalar.
 
-    ``picker`` is either ``statistics.fmean`` (the point estimate over all a
-    unit's replicates) or an ``rng.choice`` (one bootstrap resample).
+    ``resampler`` maps a unit's replicate-scalar list to a single scalar: the
+    point estimate uses :func:`statistics.fmean` (the mean of all K replicates);
+    a bootstrap resample uses a per-unit estimator (see
+    :func:`decision_flip_probability`).
     """
     per_entry: list[float] = []
     for entry in entries:
         scalars = unit_scalars.get((candidate, entry))
         if scalars:
-            per_entry.append(picker(scalars))
+            per_entry.append(resampler(scalars))
     return statistics.fmean(per_entry) if per_entry else 0.0
 
 
@@ -198,38 +207,98 @@ def decision_flip_probability(
     promote_margin: float,
     entries: list[str] | None = None,
     b: int = DEFAULT_BOOTSTRAP_B,
+    resample: str = "k_mean",
 ) -> dict[str, Any]:
     """Seeded-bootstrap probability the promote decision flips under re-draw.
 
     The pure gate-margin decision is ``child_scalar > parent_scalar -
     promote_margin`` (higher scalar = better, per the plan). The point-estimate
-    decision uses each unit's mean replicate scalar; each of ``b`` bootstrap
-    resamples draws ONE replicate scalar per unit (RNG seeded deterministically
-    from ``reflection_id``) and re-decides. ``P(flip)`` is the fraction of
-    resamples whose decision differs from the point estimate — the headline
-    decision-level reliability number.
+    decision uses each unit's MEAN replicate scalar (the base estimator is the
+    mean of K).
+
+    Each of ``b`` bootstrap resamples rebuilds every unit's scalar by the
+    ``resample`` estimator and re-decides; ``P(flip)`` is the fraction of
+    resamples whose decision differs from the point estimate.
+
+    ``resample`` (S1):
+
+    * ``"k_mean"`` (default) — draw ``K`` replicate scalars WITH REPLACEMENT and
+      AVERAGE them, exactly matching the base mean-of-K estimator. This is the
+      statistically honest bootstrap: it reproduces the sampling distribution of
+      the quantity the gate actually compares (a mean of K), so its variance —
+      and therefore ``p_flip`` — is calibrated, not inflated.
+    * ``"single"`` — draw ONE replicate scalar per unit (the old behavior). It
+      resamples the distribution of a SINGLE draw, whose variance is ``√K``×
+      larger than the mean-of-K the gate uses, so it systematically OVERSTATES
+      ``p_flip``. Retained only as the higher-variance reference the tests pin
+      the default against.
+
+    Returns ``p_flip=None`` with a ``reason`` (S2) when the bootstrap is
+    undefined: either candidate has NO observations, or ANY contributing
+    ``(candidate, entry)`` unit has fewer than two replicates (a single draw
+    carries no resample spread — a fabricated ``0.0`` would falsely read as
+    "perfectly reliable").
 
     Known-answer behavior: a margin far larger than the scalar spread ⇒
-    ``p_flip ≈ 0``; a margin below the spread ⇒ a materially positive
-    ``p_flip``; the same ``reflection_id`` ⇒ an identical ``p_flip``.
+    ``p_flip == 0``; a margin below the spread ⇒ a materially positive
+    ``p_flip`` that decreases as the margin grows; the same
+    ``(reflection_id, parent, child)`` ⇒ an identical ``p_flip``.
     """
     obs = [o for o in corpus if o.candidate_id in (parent_id, child_id)]
     entry_list = entries if entries is not None else _entries(obs)
     unit_scalars = _unit_scalars(obs)
 
-    def _decide(picker: Any) -> bool:
-        parent = _candidate_scalar(unit_scalars, parent_id, entry_list, picker)
-        child = _candidate_scalar(unit_scalars, child_id, entry_list, picker)
+    def _null(reason: str) -> dict[str, Any]:
+        return {
+            "p_flip": None,
+            "reason": reason,
+            "base_decision": None,
+            "b": b,
+            "parent_id": parent_id,
+            "child_id": child_id,
+            "promote_margin": promote_margin,
+            "fidelity_tiers": _fidelity_tiers(obs),
+        }
+
+    # S2 degeneracy guards — before any bootstrap.
+    contributing: list[list[float]] = []
+    for candidate in (parent_id, child_id):
+        present = [
+            unit_scalars[(candidate, entry)]
+            for entry in entry_list
+            if unit_scalars.get((candidate, entry))
+        ]
+        if not present:
+            return _null(f"candidate {candidate!r} has no observations for these entries")
+        contributing.extend(present)
+    if any(len(scalars) < 2 for scalars in contributing):
+        return _null(
+            "a contributing (candidate, entry) unit has fewer than two replicates; "
+            "the decision-flip bootstrap needs ≥2 draws per unit to resample"
+        )
+
+    def _decide(resampler: Any) -> bool:
+        parent = _candidate_scalar(unit_scalars, parent_id, entry_list, resampler)
+        child = _candidate_scalar(unit_scalars, child_id, entry_list, resampler)
         return child > parent - promote_margin
 
     base_decision = _decide(statistics.fmean)
-    rng = random.Random(_bootstrap_seed(reflection_id))
+    rng = random.Random(_bootstrap_seed(reflection_id, parent_id, child_id))
+
+    if resample == "single":
+        resampler: Any = rng.choice
+    else:
+
+        def resampler(scalars: list[float]) -> float:  # k-with-replacement mean
+            return statistics.fmean([rng.choice(scalars) for _ in range(len(scalars))])
+
     flips = 0
     for _ in range(b):
-        if _decide(rng.choice) != base_decision:
+        if _decide(resampler) != base_decision:
             flips += 1
     return {
         "p_flip": flips / b if b else 0.0,
+        "reason": None,
         "base_decision": "promote" if base_decision else "reject",
         "b": b,
         "parent_id": parent_id,
@@ -243,13 +312,16 @@ def judge_self_consistency(*, corpus: list[ObservationRun]) -> dict[str, Any]:
     """Feed the corpus' verbatim judge firings to ``detect_noisy_judge``.
 
     For each judge, the replicate re-judgements of each ``(candidate, entry)``
-    unit are a test-retest over near-identical input; the judge's reported
-    disagreement is the WORST such unit (one flip-flopping unit is enough to
-    inject noise), computed by the shipped
-    :func:`zicato.judge_runtime.reliability.pairwise_disagreement`. The result
-    is packed into :class:`~zicato.judge_runtime.reliability.JudgeReliability`
-    records and passed UNCHANGED to
-    :func:`zicato.health.diagnostics.detect_noisy_judge`.
+    unit are a test-retest over near-identical input. The disagreement rate fed
+    to the detector is POOLED (S3): total disagreeing verdict pairs summed over
+    all units, divided by the total unordered pairs summed over all units — the
+    natural per-judge dispersion, with the record's ``k`` / ``fired`` totals as
+    the SAME pooled totals. (The old worst-unit maximum let a single 2-draw flip
+    read as a 100%-noisy judge; it is retained as a secondary
+    ``worst_unit_disagreement`` diagnostic per judge, NOT fed to the detector.)
+    The pooled rate is packed into
+    :class:`~zicato.judge_runtime.reliability.JudgeReliability` and passed
+    UNCHANGED to :func:`zicato.health.diagnostics.detect_noisy_judge`.
     """
     from zicato.health.diagnostics import detect_noisy_judge  # noqa: PLC0415
     from zicato.judge_runtime.reliability import (  # noqa: PLC0415
@@ -269,30 +341,46 @@ def judge_self_consistency(*, corpus: list[ObservationRun]) -> dict[str, Any]:
             )
 
     per_judge_flags: dict[str, list[bool]] = {}
+    per_judge_disagree_pairs: dict[str, float] = {}
+    per_judge_total_pairs: dict[str, float] = {}
     per_judge_worst: dict[str, float] = {}
     for (name, _cand, _entry), flags in per_unit.items():
         per_judge_flags.setdefault(name, []).extend(flags)
-        if len(flags) >= 2:
-            rate = pairwise_disagreement(sum(flags), len(flags))
-            per_judge_worst[name] = max(per_judge_worst.get(name, 0.0), rate)
+        k = len(flags)
+        if k >= 2:
+            fired = sum(flags)
+            per_judge_disagree_pairs[name] = per_judge_disagree_pairs.get(name, 0.0) + fired * (
+                k - fired
+            )
+            per_judge_total_pairs[name] = per_judge_total_pairs.get(name, 0.0) + k * (k - 1) / 2.0
+            per_judge_worst[name] = max(
+                per_judge_worst.get(name, 0.0), pairwise_disagreement(fired, k)
+            )
 
     reliabilities: list[JudgeReliability] = []
     for name in sorted(per_judge_flags):
         flags = per_judge_flags[name]
+        total_pairs = per_judge_total_pairs.get(name, 0.0)
+        pooled = per_judge_disagree_pairs.get(name, 0.0) / total_pairs if total_pairs else 0.0
         reliabilities.append(
             JudgeReliability(
                 judge_name=name,
                 k=len(flags),
                 fired=sum(flags),
                 verdicts=tuple(flags),
-                disagreement_rate=per_judge_worst.get(name, 0.0),
+                disagreement_rate=pooled,
                 details=(),
             )
         )
 
     findings = detect_noisy_judge(reliabilities)
+    judges_out: list[dict[str, Any]] = []
+    for rel in reliabilities:
+        record = rel.to_json()
+        record["worst_unit_disagreement"] = per_judge_worst.get(rel.judge_name, 0.0)
+        judges_out.append(record)
     return {
-        "judges": [rel.to_json() for rel in reliabilities],
+        "judges": judges_out,
         "noisy_judge_findings": [
             {"code": f.code, "severity": f.severity, "summary": f.summary, "detail": f.detail}
             for f in findings
@@ -457,6 +545,34 @@ def _z_for_confidence(confidence: float) -> float:
     return statistics.NormalDist().inv_cdf(tail)
 
 
+def sigma_from_noise_floor(floor: dict[str, Any] | None) -> float | None:
+    """The PER-UNIT scalar σ for :func:`power_analysis`, from a persisted floor.
+
+    ⚠ ``power_analysis``'s ``sigma`` is the PER-UNIT scalar standard deviation
+    (the dispersion of ONE unit's replicate scalars). Neither field a persisted
+    :meth:`zicato.tournament.calibration.NoiseFloor.to_json` carries is that σ:
+
+    * ``delta_std`` is ALREADY the ``√2``-scaled SD of the child−parent
+      DIFFERENCE (``sqrt(2) * pstdev(scalars)``) — feeding it in as ``sigma``
+      double-counts the ``√2`` the formula itself applies.
+    * ``max_abs_delta`` is a RANGE (``max(scalars) - min(scalars)``), not a
+      standard deviation at all — feeding it in wildly overstates σ.
+
+    This helper computes the honest per-unit σ = ``pstdev(floor["scalars"])``
+    from the floor's raw A/A draw scalars, returning ``None`` when the floor is
+    absent or carries fewer than two scalars (σ undefined).
+    """
+    if not isinstance(floor, dict):
+        return None
+    scalars = floor.get("scalars")
+    if not isinstance(scalars, list | tuple):
+        return None
+    values = [float(x) for x in scalars if isinstance(x, int | float) and not isinstance(x, bool)]
+    if len(values) < 2:
+        return None
+    return statistics.pstdev(values)
+
+
 def power_analysis(
     *,
     sigma: float,
@@ -472,6 +588,11 @@ def power_analysis(
     so the two-sided minimum detectable difference at ``confidence`` is
     ``z * sigma * sqrt(2 / (k * n))``. Degenerate ``k <= 0`` / ``n <= 0`` ⇒
     ``inf`` (nothing is detectable with no data).
+
+    ⚠ ``sigma`` MUST be the PER-UNIT scalar SD. Do NOT pass a noise floor's
+    ``delta_std`` (already ``√2``-scaled — the formula re-applies the ``√2``) or
+    its ``max_abs_delta`` (a range, not an SD); both overstate σ and inflate the
+    MDE. Derive the correct σ with :func:`sigma_from_noise_floor`.
     """
     z = _z_for_confidence(confidence)
     if k <= 0 or n <= 0:
@@ -549,4 +670,5 @@ __all__ = [
     "placebo_outcomes",
     "power_analysis",
     "redundancy_clusters",
+    "sigma_from_noise_floor",
 ]

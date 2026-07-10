@@ -64,6 +64,17 @@
 > reflection-independent entry×candidate matrix); and four thin dashboard
 > endpoints (`/api/reflections`, `/api/reflection/{id}/summary` / `/scorecards`
 > / `/xray/{judge}/{run_ref}`).
+> **Review round (R2 hardening, applied)**: an adversarial review of the
+> corpus/analysis tier was applied. The passive ingest now honors a
+> reserved-base ALLOWLIST (r0 / calibration 1000s / evidence 4000s / reflection
+> 5000s ingested; the pre-flight's degraded r2000 probe and the 3000s screen
+> bases EXCLUDED); the decision-flip bootstrap resamples k-with-replacement +
+> mean (matching the base mean-of-K estimator) and returns `p_flip=None` + a
+> reason when a unit has <2 replicates or a candidate has no observations (never
+> a fabricated `0.0`); judge self-consistency feeds the detector a POOLED
+> disagreement rate (worst-unit kept as a secondary diagnostic);
+> `sigma_from_noise_floor()` derives the honest per-unit σ for the power
+> analysis; and the bootstrap seed folds the (parent, child) pair.
 > **In build**: the console Instrument lens (R5).
 > **Endpoint-gated** (needs operator go-ahead + a live endpoint): live
 > meta-judge adjudication, run-twice decision-flip validation, the "quick

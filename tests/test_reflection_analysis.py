@@ -23,6 +23,7 @@ from zicato.reflection.analysis import (
     placebo_outcomes,
     power_analysis,
     redundancy_clusters,
+    sigma_from_noise_floor,
 )
 from zicato.reflection.corpus import FIDELITY_PREVIEW, FIDELITY_VERBATIM, ObservationRun
 
@@ -119,20 +120,45 @@ def test_decision_flip_near_zero_when_margin_dwarfs_spread() -> None:
     assert out["base_decision"] == "promote"
 
 
-def test_decision_flip_material_when_margin_below_spread() -> None:
-    out = decision_flip_probability(
+def test_decision_flip_material_case_band_and_monotonic() -> None:
+    # S1: k-with-replacement mean resample. margin below the spread ⇒ a
+    # materially positive but bounded p_flip; growing the margin shrinks it.
+    def _p(margin: float) -> float:
+        out = decision_flip_probability(
+            corpus=_flip_corpus(),
+            reflection_id="refl-x",
+            parent_id="parent",
+            child_id="child",
+            promote_margin=margin,
+            b=4000,
+        )
+        return out["p_flip"]
+
+    p_small = _p(0.5)
+    p_large = _p(1.5)
+    assert 0.0 < p_small < 0.5  # material but not a coin flip
+    assert p_large < p_small  # monotone: a wider margin flips less often
+
+
+def test_decision_flip_k_mean_resample_below_single_pick() -> None:
+    # S1: the k-mean estimator matches the base mean-of-K, so its resample
+    # variance — and thus p_flip — is LOWER than the single-draw estimator's.
+    common = dict(
         corpus=_flip_corpus(),
         reflection_id="refl-x",
         parent_id="parent",
         child_id="child",
         promote_margin=0.5,
-        b=2000,
+        b=4000,
     )
-    # P(child_r < parent_r) over iid uniform{0,1,2,3} = 6/16 = 0.375 > 0.3.
-    assert out["p_flip"] > 0.3
+    k_mean = decision_flip_probability(resample="k_mean", **common)["p_flip"]  # type: ignore[arg-type]
+    single = decision_flip_probability(resample="single", **common)["p_flip"]  # type: ignore[arg-type]
+    assert k_mean < single
 
 
-def test_decision_flip_is_deterministic_under_reflection_id() -> None:
+def test_decision_flip_is_deterministic_under_pair_and_id() -> None:
+    # N1: the seed folds (reflection_id, parent, child); same triple ⇒ identical,
+    # a different reflection_id ⇒ an independent stream.
     kwargs = dict(
         corpus=_flip_corpus(),
         parent_id="parent",
@@ -145,6 +171,62 @@ def test_decision_flip_is_deterministic_under_reflection_id() -> None:
     c = decision_flip_probability(reflection_id="refl-seed-2", **kwargs)  # type: ignore[arg-type]
     assert a["p_flip"] == b["p_flip"]  # same id ⇒ identical
     assert a["p_flip"] != c["p_flip"]  # different id ⇒ different resample
+
+
+def test_decision_flip_seed_independent_across_pairs() -> None:
+    # N1: two different pairs under the SAME reflection_id draw independent
+    # streams — folding the pair ids in decouples their seeds.
+    corpus = [_obs("parent", "a", 5000 + rep, val) for rep, val in enumerate((0.0, 1.0, 2.0, 3.0))]
+    corpus += [_obs("child", "a", 5000 + rep, val) for rep, val in enumerate((0.0, 1.0, 2.0, 3.0))]
+    corpus += [_obs("other", "a", 5000 + rep, val) for rep, val in enumerate((0.0, 1.0, 2.0, 3.0))]
+    pair_a = decision_flip_probability(
+        corpus=corpus,
+        reflection_id="r",
+        parent_id="parent",
+        child_id="child",
+        promote_margin=0.5,
+        b=1500,
+    )
+    pair_b = decision_flip_probability(
+        corpus=corpus,
+        reflection_id="r",
+        parent_id="parent",
+        child_id="other",
+        promote_margin=0.5,
+        b=1500,
+    )
+    # Same underlying scalars, but the seed differs by child id ⇒ distinct draws.
+    assert pair_a["p_flip"] != pair_b["p_flip"]
+
+
+def test_decision_flip_none_when_unit_has_single_replicate() -> None:
+    # S2: a contributing unit with <2 replicates ⇒ p_flip=None + reason,
+    # never a fabricated 0.0.
+    corpus = [_obs("parent", "a", 5000, 1.0), _obs("child", "a", 5000, 2.0)]  # 1 replicate each
+    out = decision_flip_probability(
+        corpus=corpus,
+        reflection_id="refl-x",
+        parent_id="parent",
+        child_id="child",
+        promote_margin=0.5,
+    )
+    assert out["p_flip"] is None
+    assert "fewer than two replicates" in out["reason"]
+    assert out["base_decision"] is None
+
+
+def test_decision_flip_none_when_candidate_has_no_observations() -> None:
+    # S2: a candidate with zero observations ⇒ p_flip=None + reason.
+    corpus = [_obs("parent", "a", 5000, 1.0), _obs("parent", "a", 5001, 2.0)]  # no child at all
+    out = decision_flip_probability(
+        corpus=corpus,
+        reflection_id="refl-x",
+        parent_id="parent",
+        child_id="child",
+        promote_margin=0.5,
+    )
+    assert out["p_flip"] is None
+    assert "no observations" in out["reason"]
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +262,29 @@ def test_judge_self_consistency_silent_for_stable_judge() -> None:
     out = judge_self_consistency(corpus=corpus)
     assert out["judges"][0]["disagreement_rate"] == 0.0
     assert out["noisy_judge_findings"] == []
+
+
+def test_judge_self_consistency_pools_disagreement_across_units() -> None:
+    # S3: one flip-flopping unit + many stable units ⇒ the POOLED rate is small
+    # (diluted by the stable pairs), while worst_unit stays high. The old
+    # worst-unit maximum would have read the whole judge as ~100% noisy.
+    corpus: list[ObservationRun] = []
+    # Unit (v0, flipflop): [T, F] — 1 disagreeing pair of 1 total ⇒ worst 1.0.
+    corpus.append(_obs("v0", "flipflop", 5000, 0.0, judge_decisions=(_judge_decision("j", True),)))
+    corpus.append(_obs("v0", "flipflop", 5001, 0.0, judge_decisions=(_judge_decision("j", False),)))
+    # Four stable units (v1..v4, all silent): [F, F] each ⇒ 0 disagreeing of 1.
+    for i in range(1, 5):
+        corpus.append(
+            _obs(f"v{i}", "steady", 5000, 0.0, judge_decisions=(_judge_decision("j", False),))
+        )
+        corpus.append(
+            _obs(f"v{i}", "steady", 5001, 0.0, judge_decisions=(_judge_decision("j", False),))
+        )
+    out = judge_self_consistency(corpus=corpus)
+    card = out["judges"][0]
+    # Pooled: 1 disagreeing pair / 5 total pairs = 0.2; worst unit = 1.0.
+    assert card["disagreement_rate"] == 0.2
+    assert card["worst_unit_disagreement"] == 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -291,6 +396,29 @@ def test_power_analysis_closed_form_spot_checks() -> None:
 def test_power_analysis_degenerate_is_infinite() -> None:
     assert power_analysis(sigma=1.0, k=0, n=1)["min_detectable_delta"] == math.inf
     assert power_analysis(sigma=1.0, k=2, n=0)["min_detectable_delta"] == math.inf
+
+
+def test_sigma_from_noise_floor_is_per_unit_pstdev() -> None:
+    # S4: σ = pstdev(scalars), NOT delta_std (√2-scaled) or max_abs_delta (range).
+    import statistics as _stats
+
+    scalars = [1.0, 2.0, 3.0, 4.0]
+    floor = {
+        "scalars": scalars,
+        "delta_std": _stats.pstdev(scalars) * math.sqrt(2.0),  # the WRONG input
+        "max_abs_delta": 3.0,  # also WRONG (a range)
+    }
+    sigma = sigma_from_noise_floor(floor)
+    assert sigma == _stats.pstdev(scalars)
+    # It is emphatically not either mislabeled field.
+    assert sigma != floor["delta_std"]
+    assert sigma != floor["max_abs_delta"]
+
+
+def test_sigma_from_noise_floor_none_when_undefined() -> None:
+    assert sigma_from_noise_floor(None) is None
+    assert sigma_from_noise_floor({}) is None
+    assert sigma_from_noise_floor({"scalars": [1.0]}) is None  # <2 scalars ⇒ undefined
 
 
 # ---------------------------------------------------------------------------
