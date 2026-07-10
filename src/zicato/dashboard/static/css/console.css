@@ -549,9 +549,7 @@
  * padding, section gaps, panel padding, card min-widths, the reel's vertical
  * scale, a global font-size scale) are baked unconditionally onto the variant
  * root: every layout that breathes reads them, always at the cozy values. The
- * page-scale pill (`zoom` on the root) is the sizing control now. The shell
- * still stamps `data-t-density="cozy"` for any rule that keys on it, but it
- * never changes.
+ * page-scale pill (`zoom` on the root) is the sizing control now.
  */
 #variant-root[data-variant="T"] {
   --dt-rail: 288px;
@@ -980,33 +978,6 @@
   .dn-pslope-label { fill: var(--v2-ink-soft); font: 10px var(--v2-mono); }
   .dn-pslope-series:hover .dn-pslope-line { stroke-width: 2.6; }
   .dn-pslope-series:hover .dn-pslope-label { fill: var(--v2-accent); }
-
-  /* ===================  Tufte Sankey (fit-to-width)  =================== */
-
-  .dn-sankey { display: block; width: 100%; }
-  .dn-sankey-head { fill: var(--v2-ink-faint); font: 9.5px var(--v2-mono); text-transform: uppercase; letter-spacing: 0.08em; }
-  .dn-sankey-ribbon { opacity: 0.32; color: var(--v2-flat); stroke: none; transition: opacity 0.12s; }
-  .dn-sankey-ribbon.dn-good { color: var(--v2-good); }
-  .dn-sankey-ribbon.dn-bad { color: var(--v2-bad); }
-  .dn-sankey-ribbon.dn-flat { color: var(--v2-flat); }
-  .dn-sankey-node:hover .dn-sankey-ribbon,
-  .dn-sankey-ribbon:hover { opacity: 0.55; }
-  .dn-sankey-bar { fill: var(--v2-ink); }
-  .dn-sankey-node.dn-good .dn-sankey-bar { fill: var(--v2-good); }
-  .dn-sankey-node.dn-bad .dn-sankey-bar { fill: var(--v2-bad); }
-  .dn-sankey-node.dn-flat .dn-sankey-bar { fill: var(--v2-flat); }
-  .dn-sankey-node.dn-sankey-patch .dn-sankey-bar { fill: var(--v2-accent); }
-  .dn-sankey-label { fill: var(--v2-ink); font: 10.5px var(--v2-mono); }
-  /* the per-board loss VALUE, right-aligned to its own baseline (fix #5) */
-  .dn-sankey-value { fill: var(--v2-ink-soft); font: 10px var(--v2-mono); font-variant-numeric: tabular-nums; }
-  .dn-sankey-node.dn-good .dn-sankey-value { fill: var(--v2-good); }
-  .dn-sankey-node.dn-bad .dn-sankey-value { fill: var(--v2-bad); }
-  .dn-sankey-sub { fill: var(--v2-ink-faint); font: 9px var(--v2-mono); font-variant-numeric: tabular-nums; }
-  .dn-sankey-node { cursor: default; }
-  .dn-sankey-node[tabindex]:hover .dn-sankey-label { fill: var(--v2-accent); }
-  .dn-sankey-node[tabindex] { cursor: pointer; }
-  .dn-sankey-node[tabindex]:focus { outline: none; }
-  .dn-sankey-node[tabindex]:focus .dn-sankey-bar { stroke: var(--v2-accent); stroke-width: 1.5; }
 
   /* ===================  illustrative tournament marks  =================== */
 

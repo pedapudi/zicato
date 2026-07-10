@@ -39,7 +39,6 @@ import { syncTypefaceDropdowns, syncFontSizeSegments } from './typefacedropdown.
 import {
   COLOR_THEMES, DEFAULT_COLOR, normaliseColor, readColor, persistColor,
   TYPE_THEMES, DEFAULT_TYPE, normaliseType, readType, persistType,
-  DENSITY,
   SCALE_MIN, SCALE_MAX, SCALE_STEP, DEFAULT_SCALE, normaliseScale, readScale, persistScale,
   normaliseFontSize, readFontSize, persistFontSize, fontSizeScale,
   RAIL_MIN, RAIL_MAX, DEFAULT_RAIL, normaliseRail, readRail, persistRail, pageScaleOf,
@@ -81,7 +80,6 @@ let _loopCtlHost = null;      // topbar loop-control cluster (pause/resume/skip)
 let _lastLoopCtlDigest = null;
 let _pausedOverride = null;   // optimistic paused verdict after a control POST
 let _colorDropdown = null;     // the swatch-dropdown controller (Change 6)
-let _typeEl = [];
 let _scaleInput = null;
 let _scaleReadout = null;
 let _railHandle = null;        // the draggable rail-resize handle (Change 2)
@@ -146,8 +144,6 @@ export function applyTypeface(typeface, rootEl) {
   // Sync EVERY live typeface dropdown (top bar AND settings) — one source of
   // truth, so choosing in either place lockstep-updates the other.
   syncTypefaceDropdowns(t);
-  // Legacy: keep any old button-group refs in lockstep (now an empty no-op list).
-  for (const b of _typeEl) patchClass(b, 'dt-type-active', b.getAttribute('data-type') === t);
   return t;
 }
 
@@ -491,9 +487,6 @@ export function mountShell(root) {
   root.setAttribute('data-variant', 'T');
   root.setAttribute('data-t-theme', readColor());
   root.setAttribute('data-t-type', readType());
-  // density is fixed at the cozy baseline (no picker) — stamp it for any rule
-  // that still keys on it, but it never changes.
-  root.setAttribute('data-t-density', DENSITY);
   root.setAttribute('data-t-scale', String(readScale()));
   root.setAttribute('data-t-fontsize', readFontSize());
 
@@ -513,8 +506,6 @@ export function mountShell(root) {
   // typefacedropdown.js instance registry — now just the Settings one — so
   // choosing a face in Settings still applies live + persists, and any other
   // apply path (keyboard / restore) keeps the Settings picker in lockstep.
-  // `_typeEl` stays empty (the old button-group sync loop is now a no-op).
-  _typeEl = [];
 
   // The PAGE-WIDE SCALE pill: a draggable range slider that scales the WHOLE
   // page (text + diagrams) via `zoom` on the app root. With density removed this

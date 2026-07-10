@@ -346,11 +346,7 @@ test('density removed: no picker, no density APIs; cozy is the permanent baselin
   assertEqual(ui.densityTokens('compact').sizeScale, 1, 'a compact arg is ignored — still cozy');
   assertEqual(ui.densityTokens('roomy').heatCell, 16, 'a roomy arg is ignored — still cozy');
 
-  // the shell stamps the cozy baseline (never changes) on mount.
-  const root = mountLiveShell('#/');
-  assertEqual(root.getAttribute('data-t-density'), 'cozy', 'the mounted root carries the cozy baseline');
-
-  // and the CSS bakes the cozy --dt-* spacing tokens unconditionally on the root,
+  // the CSS bakes the cozy --dt-* spacing tokens unconditionally on the root,
   // with NO density-conditional selectors left.
   const css = readCss();
   assert(!/\[data-t-density="compact"\]/.test(css), 'no compact density selector in the CSS');

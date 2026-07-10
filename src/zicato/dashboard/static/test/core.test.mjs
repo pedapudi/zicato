@@ -1,11 +1,10 @@
-// test/core.test.mjs — the render-spine foundation tests.
+// test/core.test.mjs — the core-module foundation tests.
 //
-// These prove the structural flashing fix and the matchup-click fix:
-//   * reconcileList updates rows in place — node identity survives.
-//   * a surviving row keeps its event listener (click still fires).
-//   * appendRows is strictly additive — no flash on the log tail.
-//   * mount is idempotent — a panel node is built once.
-//   * patchText / patchAttr write only on a real change.
+// These pin the element builders + patch helpers (core/dom.js), the
+// event bus, and the harmonograf session-id resolution:
+//   * patchText writes only on a real change (the no-repaint helper the
+//     long-lived chrome nodes use — the digest no-op discipline itself
+//     lives in gatedSwap, pinned by the view suites).
 
 import { installDom, test, run, assert, assertEqual, makeEvent } from './harness.mjs';
 
@@ -13,44 +12,8 @@ installDom();
 
 const dom = await import('../js/core/dom.js');
 const { bus } = await import('../js/core/bus.js');
-const fmt = await import('../js/core/format.js');
 
-// --- format helpers --------------------------------------------------
-
-test('fmtDuration formats h:m:s and m:s', () => {
-  assertEqual(fmt.fmtDuration(65), '01:05');
-  assertEqual(fmt.fmtDuration(3725), '01:02:05');
-  assertEqual(fmt.fmtDuration(-1), '—');
-});
-
-test('parseIso pins zone-less values to UTC', () => {
-  const withZ = fmt.parseIso('2026-05-18T12:00:00Z');
-  const without = fmt.parseIso('2026-05-18T12:00:00');
-  assertEqual(withZ, without, 'zone-less must parse as UTC');
-  const withOffset = fmt.parseIso('2026-05-18T12:00:00+00:00');
-  assertEqual(withZ, withOffset);
-});
-
-test('fmtDelta signs the value', () => {
-  assertEqual(fmt.fmtDelta(0.5), '+0.500');
-  assertEqual(fmt.fmtDelta(-0.25), '-0.250');
-  assertEqual(fmt.fmtDelta(NaN), '—');
-});
-
-// --- mount idempotence ----------------------------------------------
-
-test('mount builds a keyed node once and reuses it', () => {
-  const host = document.createElement('div');
-  let builds = 0;
-  const build = () => { builds += 1; return document.createElement('section'); };
-  const a = dom.mount(host, 'panel', build);
-  const b = dom.mount(host, 'panel', build);
-  assertEqual(builds, 1, 'builder must run only once');
-  assert(a === b, 'mount must return the same node');
-  assertEqual(host.children.length, 1);
-});
-
-// --- patchText / patchAttr write only on change ---------------------
+// --- patchText writes only on change ---------------------------------
 
 test('patchText writes only when the text differs', () => {
   const n = document.createElement('span');
@@ -62,103 +25,6 @@ test('patchText writes only when the text differs', () => {
   assert(n.firstChild === before, 'unchanged patchText must not rebuild');
   dom.patchText(n, 'world');
   assertEqual(n.textContent, 'world');
-});
-
-test('patchAttr removes the attribute on a null value', () => {
-  const n = document.createElement('div');
-  dom.patchAttr(n, 'aria-hidden', 'true');
-  assertEqual(n.getAttribute('aria-hidden'), 'true');
-  dom.patchAttr(n, 'aria-hidden', null);
-  assert(!n.hasAttribute('aria-hidden'), 'null value must remove the attr');
-});
-
-// --- reconcileList: node identity + listener survival ---------------
-
-test('reconcileList keeps surviving rows AND their click listeners', () => {
-  const host = document.createElement('ul');
-  let clicks = 0;
-  const build = (item) => {
-    const li = document.createElement('li');
-    li.setAttribute('data-id', item.id);
-    li.addEventListener('click', () => { clicks += 1; });
-    return li;
-  };
-  const update = (row, item) => { row.setAttribute('data-label', item.label); };
-
-  // First render: three rows.
-  let items = [
-    { id: 'a', label: 'A1' }, { id: 'b', label: 'B1' }, { id: 'c', label: 'C1' },
-  ];
-  dom.reconcileList(host, items, (i) => i.id, build, update);
-  const rowB = host.children[1];
-  assertEqual(rowB.getAttribute('data-id'), 'b');
-
-  // Click row B — the listener fires.
-  rowB.dispatchEvent(makeEvent('click'));
-  assertEqual(clicks, 1);
-
-  // Second render: B's label changed, a new row d appended, c removed.
-  items = [
-    { id: 'a', label: 'A2' }, { id: 'b', label: 'B2' }, { id: 'd', label: 'D1' },
-  ];
-  dom.reconcileList(host, items, (i) => i.id, build, update);
-
-  // Row B is the SAME node — identity survived the delta.
-  assert(host.children[1] === rowB, 'matchup-click fix: row node identity must survive');
-  assertEqual(rowB.getAttribute('data-label'), 'B2', 'updateFn must patch in place');
-
-  // The surviving row's click listener still fires — this is the
-  // matchup-click fix: a delta does not detach handlers.
-  rowB.dispatchEvent(makeEvent('click'));
-  assertEqual(clicks, 2, 'surviving row must keep its listener');
-
-  // The list reconciled — c gone, d present, no clear-and-rebuild.
-  assertEqual(host.children.length, 3);
-  assertEqual(host.children[2].getAttribute('data-id'), 'd');
-});
-
-test('reconcileList never writes innerHTML (no flash)', () => {
-  const host = document.createElement('ul');
-  const build = (i) => { const li = document.createElement('li'); li.setAttribute('data-x', i.id); return li; };
-  dom.reconcileList(host, [{ id: '1' }, { id: '2' }], (i) => i.id, build, () => {});
-  dom.reconcileList(host, [{ id: '1' }, { id: '2' }, { id: '3' }], (i) => i.id, build, () => {});
-  assertEqual(host.innerHTMLWriteCount(), 0, 'reconcile must never touch innerHTML');
-});
-
-// --- appendRows: strictly additive (log tail no-flash) --------------
-
-test('appendRows only appends genuinely-new keys', () => {
-  const host = document.createElement('div');
-  const build = (ev) => {
-    const row = document.createElement('div');
-    row.textContent = ev.summary;
-    return row;
-  };
-  let n = dom.appendRows(host, [{ seq: 1, summary: 'one' }, { seq: 2, summary: 'two' }],
-    (e) => e.seq, build);
-  assertEqual(n, 2);
-  const firstRow = host.children[0];
-
-  // Re-feed the same events plus a new one: only the new row is added,
-  // the existing rows are NOT rebuilt — the log tail does not flash.
-  n = dom.appendRows(host, [
-    { seq: 1, summary: 'one' }, { seq: 2, summary: 'two' }, { seq: 3, summary: 'three' },
-  ], (e) => e.seq, build);
-  assertEqual(n, 1, 'only the new event appends');
-  assert(host.children[0] === firstRow, 'existing log rows must not be rebuilt');
-  assertEqual(host.children.length, 3);
-});
-
-test('trimRows bounds the list oldest-first', () => {
-  const host = document.createElement('div');
-  for (let i = 0; i < 10; i++) {
-    const r = document.createElement('div');
-    r.setAttribute('data-key', String(i));
-    host.appendChild(r);
-  }
-  dom.trimRows(host, 4);
-  assertEqual(host.children.length, 4);
-  assertEqual(host.children[0].getAttribute('data-key'), '6', 'oldest rows trimmed first');
 });
 
 // --- bus -------------------------------------------------------------

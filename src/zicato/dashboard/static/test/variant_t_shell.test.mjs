@@ -23,7 +23,7 @@ const {
 
 
 
-// ---- (a) the lifecycle DAG + sankey are fit-to-width responsive SVG ----
+// ---- (a) the lifecycle DAG is fit-to-width responsive SVG ----
 
 test('fit-to-width: the lifecycle DAG renders as a responsive SVG (width:100% + viewBox), with NO horizontal-scroll wrapper around the figure', async () => {
   freshState(); installFetch();
@@ -40,19 +40,6 @@ test('fit-to-width: the lifecycle DAG renders as a responsive SVG (width:100% + 
   // the unit builder honours the same contract directly.
   const direct = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries: [{ entry_id: 'b1', drift_loss: 10, pass_fail: false }], decision: 'rejected' });
   assertEqual(direct.getAttribute('width'), '100%', 'lifecycleDag() builds a width:100% SVG');
-});
-
-test('fit-to-width: the Tufte sankey renders as a responsive SVG (width:100% + viewBox)', () => {
-  const node = svg.sankey({
-    width: 720,
-    patch: [{ id: 'p', label: 'patch', value: 10 }],
-    drift: [{ id: 'd', label: 'drift', value: 10 }],
-    gate: [{ id: 'g', label: 'gate', value: 10 }],
-    links: [{ source: 'p', target: 'd', value: 10 }, { source: 'd', target: 'g', value: 10 }],
-  });
-  assertEqual(node.localName, 'svg', 'sankey builds an SVG');
-  assertEqual(node.getAttribute('width'), '100%', 'the sankey is width:100% (fit-to-width)');
-  assert((node.getAttribute('viewBox') || '').startsWith('0 0 '), 'the sankey carries a viewBox');
 });
 
 // ---- (a′) the per-board dot-plot + epoch heatmap are responsive too ----
@@ -207,7 +194,7 @@ test('page scale: the pill is keyboard-accessible — it is a focusable native r
   assert((range.getAttribute('aria-label') || '').length > 0, 'the slider carries an aria-label');
 });
 
-// ---- (d) scale COMPOSES with density (one does not reset the other) ----
+// ---- (d) scale survives the other appearance axes ----
 
 test('page scale: persists across re-applies and survives a colour/typeface change (the sole sizing axis)', () => {
   try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
@@ -222,9 +209,8 @@ test('page scale: persists across re-applies and survives a colour/typeface chan
   assertEqual(root.getAttribute('data-t-scale'), '85', 'switching colour/typeface left the page scale untouched');
   assertEqual(ui.readScale(), 85, 'the page scale is still persisted at 85%');
 
-  // re-apply a new scale — it lands and the cozy density baseline is untouched.
+  // re-apply a new scale — it lands.
   shell.applyScale(120, root);
-  assertEqual(root.getAttribute('data-t-density'), 'cozy', 'the density baseline stays cozy');
   assertEqual(root.getAttribute('data-t-scale'), '120', 'the new page scale applied');
   assertEqual(ui.readScale(), 120, 'scale persists independently');
 });
