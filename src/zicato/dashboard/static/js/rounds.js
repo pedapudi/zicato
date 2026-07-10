@@ -1,4 +1,4 @@
-// js/views/rounds.js — the EPOCH ROUND-TIMELINE consumer.
+// js/rounds.js — the EPOCH ROUND-TIMELINE consumer.
 //
 // Within ONE epoch the outer evolve loop runs N ROUNDS along a CHAMPION SPINE
 // (incoming champion + a freshly-minted field → tournament → gate). The
@@ -19,7 +19,7 @@
 // EMPTY settled list: the views render their honest empty state; the rounds
 // are never re-derived client-side.
 
-import { isNum } from '../svg.js';
+import { isNum } from './svg.js';
 
 // ── the timeline consumer ────────────────────────────────────────────
 //   timeline: the /api/epoch/{id}/round-timeline payload (or null).

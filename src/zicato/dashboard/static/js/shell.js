@@ -31,7 +31,7 @@ import { parseRoute, navigate, href, crumbTrail, up } from './router.js';
 import * as D from './data.js';
 import { invalidateLive, liveDataSignature } from './data.js';
 import { buildTree, treeDigest } from './tree.js';
-import { roundsForTree } from './views/rounds.js';
+import { roundsForTree } from './rounds.js';
 import { deriveLiveStatus, liveStatusDigest, treeLiveSet, staleLabel, runStateLabel } from './livestatus.js';
 import { LiveController } from './live.js';
 import { buildSwatchDropdown, syncSwatchDropdowns } from './swatchdropdown.js';

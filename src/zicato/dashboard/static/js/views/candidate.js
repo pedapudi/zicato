@@ -32,7 +32,7 @@ import { lifecycleDag, rungProgression } from '../dag.js';
 import { gatedSwap, section, subhead, empty, stat, verdictPill, overrideChip, overrideDigest, decisionFor, decisionOf, densityTokens, prText, metricsDigest } from '../ui.js';
 import { comparePicker, splitFrame } from '../compare.js';
 import { candidateProgression, inflightForActiveEpoch, inflightForEntryGen, runProgressRatio, liveMatchupsForCandidate, liveBelongsToEpoch, resolveNonGauntletSt, racingModel, structureDigest, normalizeStructure } from './structure.js';
-import { roundsFromTimeline, reignModel } from './rounds.js';
+import { roundsFromTimeline, reignModel } from '../rounds.js';
 import { deriveLiveStatus } from '../livestatus.js';
 import { harmonografIsLive, harmonografLink, harmonografMini } from '../core/harmonograf.js';
 

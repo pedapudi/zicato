@@ -55,8 +55,9 @@ module codes against are pinned in `js/CONTRACTS.md`.
 - `js/CONTRACTS.md` — the pinned frontend contracts (the API shape, the
   SSE delta types, the AppState shape, the routes).
 - `test/` — a dependency-free JS/DOM test harness. `harness.mjs` is a
-  minimal DOM + assertion runner; `variant_t.test.mjs` + `core.test.mjs`
-  verify the render spine, the figures, and the digest discipline. Run
+  minimal DOM + assertion runner; the `variant_t_*.test.mjs` suite
+  (shared fixtures in `fixtures.mjs`) + `core.test.mjs` verify the
+  render spine, the figures, and the digest discipline. Run
   with `node test/run-all.mjs`; also driven from
   `tests/test_dashboard_js.py`. The `test/` directory is a dev tool and
   is NOT shipped in the wheel.

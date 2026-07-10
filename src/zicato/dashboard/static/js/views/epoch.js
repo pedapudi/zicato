@@ -13,7 +13,7 @@ import * as svg from '../svg.js';
 import { deriveLiveStatus } from '../livestatus.js';
 import { gatedSwap, section, empty, stat, renderMarkdown, densityTokens } from '../ui.js';
 import { structurePill, isNonGauntlet, structureLabel, normalizeStructure, racingModel, swissOverviewModel, elimModel, resolveNonGauntletSt, structureDigest } from './structure.js';
-import { roundsFromTimeline, roundModelDigest, waterfallSteps } from './rounds.js';
+import { roundsFromTimeline, roundModelDigest, waterfallSteps } from '../rounds.js';
 import { boardStatusModel, boardStatusDigest, renderBoardStatus } from './boardstatus.js';
 import { loopVerdict, promotionRateLabel, costPerPromotionLabel, fmtDurationMs, noiseBandFor } from './home.js';
 

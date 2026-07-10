@@ -7,7 +7,7 @@
 // applied through the chat path updates the same shared draft; the chat pane
 // resize persists + clamps and the layout reflows without overlap; the
 // graceful-degrade path disables the chat input. Same harness style as
-// variant_t.test.mjs.
+// the variant_t_*.test.mjs suite.
 
 import { installDom, test, run, assert, assertEqual, makeEvent } from './harness.mjs';
 

@@ -27,7 +27,7 @@ import * as svg from '../svg.js';
 import { gatedSwap, section, empty, verdictPill, decisionFor, decisionOf } from '../ui.js';
 import { renderStructure, structurePill, structureDigest, isNonGauntlet, normalizeStructure, resolveNonGauntletSt } from './structure.js';
 import { deriveLiveStatus } from '../livestatus.js';
-import { roundsFromTimeline, roundModelDigest } from './rounds.js';
+import { roundsFromTimeline, roundModelDigest } from '../rounds.js';
 
 // Does the LIVE run (active tournament / heartbeat) belong to the epoch being
 // VIEWED? The live topology is the ACTIVE epoch's — adopting it under a

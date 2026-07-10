@@ -263,7 +263,7 @@ test('settings: the Settings typeface picker still APPLIES + PERSISTS (the sole 
 
 // The old accent-tinted, pulsing "light-up rail card" research-preview banner is
 // GONE from the Settings surface. The product-status mark is now a QUIET pill
-// pinned NEXT TO the wordmark in the top bar (asserted in variant_t.test.mjs),
+// pinned NEXT TO the wordmark in the top bar (asserted in the variant_t_* suite),
 // NOT a card that leads Settings — so the Settings host must carry no `dn-respreview`
 // banner and must lead directly with the section grid.
 test('settings: the old research-preview light-up card is gone from Settings', async () => {
