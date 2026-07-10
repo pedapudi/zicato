@@ -5,10 +5,10 @@
 // envelope (the structure schematic + a cost meter + a board/holdout strip + a
 // contract-impact pill + validation warnings, all computed server-side). The
 // SAME renderer is reused READ-ONLY by Settings → Contract, bound to the frozen
-// current contract (`/api/epoch`) — the frozen contract is the same shape, and
-// the cost / validation are recomputed CLIENT-SIDE (builder/model.js's pure
-// estimateCost / validateContract) from the contract alone, so the read-only
-// surface needs no `/builder/op` round-trip.
+// current contract (`/api/epoch`) — the frozen contract is the same shape. The
+// cost / validation there are the SERVER envelope from the builder draft fetch
+// (C6: no client-side re-estimate); when that envelope is unavailable the cost
+// panel degrades to an honest "unavailable" line (`costUnavailable`).
 //
 // One node array per render; the caller owns the host + the digest gate (so a
 // no-op heartbeat re-dispatch never rebuilds the DOM — render discipline).
@@ -74,8 +74,17 @@ export function previewNodes(model) {
   else fig = svg.valueDotPlot(sm); // gauntlet → the Δ dot-plot
   nodes.push(el('div', { class: 'dn-bld-figure' }, [fig]));
 
-  // The cost meter.
-  nodes.push(costMeter(cost));
+  // The cost meter — the SERVER cost envelope. A read-only contract preview
+  // whose envelope could not be fetched (the builder draft was unavailable)
+  // shows an honest "unavailable" line rather than a fabricated client-side
+  // re-estimate (C6).
+  if (m.costUnavailable) {
+    nodes.push(el('div', { class: 'dn-bld-cost dn-bld-cost-unavailable' }, [
+      el('span', { class: 'dn-bld-cost-lab', text: 'cost preview unavailable — the server cost envelope could not be fetched' }),
+    ]));
+  } else {
+    nodes.push(costMeter(cost));
+  }
 
   // The board / holdout strip.
   nodes.push(el('div', {

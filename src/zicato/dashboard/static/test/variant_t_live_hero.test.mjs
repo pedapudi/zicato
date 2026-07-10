@@ -6,6 +6,7 @@
 // verbatim); shared fixtures + helpers live in ./fixtures.mjs.
 
 import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent } from './harness.mjs';
+import { attachElimStates } from './mock_server.mjs';
 
 installDom();
 
@@ -249,7 +250,9 @@ test('live hero: a LIVE SWISS tournament shows the SWISS LADDER + round-based pr
 });
 
 // a LIVE single-elim tournament for the current epoch — bracket, NO funnel.
-const HERO_LIVE_ELIM_E3 = {
+// the served live payload carries gen_states (attach_elim_states on the server;
+// elimFlow renders the SERVED model verbatim per U3 — the old radial self-derived).
+const HERO_LIVE_ELIM_E3 = attachElimStates({
   structure: 'single_elim', phase: 'running', epoch_id: HERO_EPOCH,
   structure_params: { board_size: 4 },
   champion_lineage: ['v0'],
@@ -267,9 +270,9 @@ const HERO_LIVE_ELIM_E3 = {
     ] },
   ],
   standings: [],
-};
+});
 
-test('live hero: a LIVE SINGLE-ELIM tournament renders the RADIAL bracket, NOT the racing track or swiss ladder', () => {
+test('live hero: a LIVE SINGLE-ELIM tournament renders the elimFlow bracket, NOT the racing track or swiss ladder', () => {
   try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
   coreState.state.connected = true; coreState.state.connecting = false;
   coreState.state.setHeartbeat({ phase: 'tournament:round_0', generation_id: 'v1', epoch_id: HERO_EPOCH });
@@ -277,9 +280,10 @@ test('live hero: a LIVE SINGLE-ELIM tournament renders the RADIAL bracket, NOT t
   coreState.state.activeTournament = HERO_LIVE_ELIM_E3;
 
   const root = mountLiveShell('#/');
-  // single_elim hero is the concentric-ring RADIAL (the single-round primary).
-  const bracket = svgsByClass(root, 'dn-elimradial')[0];
-  assert(bracket, 'the live single-elim radial bracket rendered in the hero');
+  // single_elim hero is the elimFlow lane read (the radial was retired, C1).
+  const bracket = svgsByClass(root, 'dn-elimflow')[0];
+  assert(bracket, 'the live single-elim elimFlow bracket rendered in the hero');
+  assertEqual(svgsByClass(root, 'dn-elimradial').length, 0, 'the radial figure is retired (C1)');
   assertEqual(svgsByClass(root, 'dn-elimbracket').length, 0, 'the seat/box bracket tree is retired');
   assertEqual(svgsByClass(root, 'dn-scalartrack').length, 0, 'NO racing scalar track for a LIVE elim tournament');
   assertEqual(svgsByClass(root, 'dn-swissladder').length, 0, 'NO swiss ladder for a LIVE elim tournament');
@@ -311,7 +315,7 @@ test('live hero: racing STILL renders the scalar track (no swiss/elim regression
   coreState.state.activeTournament = foreignElim;
   root = mountLiveShell('#/');
   assertEqual(svgsByClass(root, 'dn-elimbracket').length, 0, 'NO elim bracket for a foreign-epoch tournament while the current epoch proposes');
-  assertEqual(svgsByClass(root, 'dn-elimradial').length, 0, 'NO elim radial either for a foreign-epoch tournament while proposing');
+  assertEqual(svgsByClass(root, 'dn-elimflow').length, 0, 'NO elim flow either for a foreign-epoch tournament while proposing');
   assertEqual(svgsByClass(root, 'dn-funnel').length, 0, 'no funnel either — honest empty');
   assert(allByClass(root, 'dt-live-hero-nofunnel').length >= 1, 'the hero shows the honest proposing/empty state');
   const heroText = (allByClass(root, 'dt-live-hero')[0] || {}).textContent || '';
@@ -638,7 +642,7 @@ test('board view (a): clicking "show inline" reveals the transcript and the butt
   // href carries the gen (clicking it OPENS that candidate's transcript).
   const closed = document.createElement('div');
   await board.render(closed, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single' });
-  assert(allByClass(closed, 'dn-xscript-grid').length === 0, 'no inline transcript pane while collapsed');
+  assert(allByClass(closed, 'dt-split').length === 0, 'no inline transcript pane while collapsed');
   const closedBtns = allByClass(closed, 'dn-board-run');
   assert(closedBtns.length && closedBtns.every((n) => (n.textContent || '').includes('show inline')), 'every candidate row button reads "show inline →" when collapsed');
   // the v1 candidate's button carries the v1 gen (clicking it OPENS that transcript).
@@ -650,7 +654,7 @@ test('board view (a): clicking "show inline" reveals the transcript and the butt
   freshState(); installFetch();
   const open = document.createElement('div');
   await board.render(open, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v1' });
-  assert(allByClass(open, 'dn-xscript-grid')[0], 'the inline transcript pane rendered for the selected candidate');
+  assert(allByClass(open, 'dt-split')[0], 'the inline transcript pane rendered for the selected candidate');
   const onBtn = allByClass(open, 'dn-board-run').find((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dn-linkbtn-on'));
   assert(onBtn, 'the selected candidate button is marked active (dn-linkbtn-on)');
   assert((onBtn.textContent || '').includes('showing'), 'the active button reads "showing ↓"');
@@ -678,7 +682,7 @@ test('board view (b): clicking the "showing" button again hides the transcript +
   freshState(); installFetch();
   const reloaded = document.createElement('div');
   await board.render(reloaded, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single' });
-  assert(allByClass(reloaded, 'dn-xscript-grid').length === 0, 'the inline transcript is hidden after toggling off');
+  assert(allByClass(reloaded, 'dt-split').length === 0, 'the inline transcript is hidden after toggling off');
   const backBtn = allByClass(reloaded, 'dn-board-run').find((n) => (n.textContent || '').includes('show inline'));
   assert(backBtn, 'the button returned to "show inline →" after the toggle');
   assert(allByClass(reloaded, 'dn-linkbtn-on').length === 0, 'no candidate button is marked active after toggling off');

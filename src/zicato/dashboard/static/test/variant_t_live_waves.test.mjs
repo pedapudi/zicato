@@ -737,8 +737,7 @@ test('Task 3 — elimFlow: an UNDECIDED match draws a "deciding" node + a SHORT 
   // a just-seeded WB-R0 head-to-head, undecided (no winner): v12 vs v13. In a
   // double-elim only the WINNER advances toward the gate and the loser drops to
   // the losers' bracket — so NEITHER lane may draw a full leg to the gate yet.
-  // The in-flight signal is the "deciding" match node + a short dashed stub
-  // (mirroring elimRadial's one-ring pending spoke).
+  // The in-flight signal is the "deciding" match node + a short dashed stub.
   const winners = [
     { round_index: 0, label: 'Round 1', matches: [
       { competitors: ['v12', 'v13'], winner: null, pending: true, bracket_slot: 'WB-R0-0' },

@@ -29,15 +29,14 @@ import {
 } from '../ui.js';
 import { DEFAULT_SETTINGS_SECTION } from '../router.js';
 import * as data from '../data.js';
-import { getModels, saveModels } from '../builder/api.js';
+import { getModels, saveModels, getDraft } from '../builder/api.js';
 // REUSE the builder's live-PREVIEW renderer (NOT a fork): the frozen current
 // contract is the same shape the builder draft has, so the Contract section
 // renders the SAME schematic + cost meter + board/holdout strip + validation
 // diagnostics READ-ONLY, bound to /api/epoch. The cost / validation are the
-// pure client-side twins of the backend's estimate (builder/model.js), so this
-// needs no `/builder/op` round-trip.
+// SERVER envelope from the builder draft fetch (C6: no client-side re-estimate);
+// absent that envelope the cost panel degrades to an honest "unavailable" line.
 import { previewNodes } from '../builder/preview.js';
-import { estimateCost, validateContract } from '../builder/model.js';
 // REUSE the SAME swatch-dropdown component the top bar renders (NOT a fork): the
 // settings theme picker is the very same control, so the two render identically
 // and stay in lockstep through the shared store (applyTheme → syncSwatchDropdowns).
@@ -167,9 +166,10 @@ async function renderSection() {
 // LEADS with the builder's live-PREVIEW visualization (the per-structure
 // schematic + cost meter + train/holdout strip + validation diagnostics),
 // reused READ-ONLY and bound to the FROZEN contract /api/epoch returns. The
-// cost / validation are recomputed CLIENT-SIDE (builder/model.js's pure
-// estimateCost / validateContract twins of the backend) from the contract +
-// its server-computed `board_split` counts — no `/builder/op` round-trip. The
+// cost / validation are the SERVER envelope from the builder draft fetch (C6:
+// no client-side re-estimate) — the draft initializes from the live workspace,
+// so its cost/warnings describe the current contract; when the draft is
+// unavailable the cost panel degrades to an honest "unavailable" line. The
 // text roll-up follows below; each row links into the builder to edit, so this
 // surface stays strictly read-only.
 
@@ -191,6 +191,14 @@ async function renderContract() {
   const trainCount = split.train_count != null ? split.train_count : board.length;
   const holdoutCount = split.holdout_count != null ? split.holdout_count : 0;
 
+  // The SERVER cost envelope + validation warnings — from the builder draft
+  // (C6: no client-side re-estimate). The draft initializes from the live
+  // workspace, so its cost/warnings describe the current contract; a failed
+  // fetch degrades the cost panel to an honest "unavailable" line.
+  const draft = await getDraft();
+  const cost = (draft && draft.cost && typeof draft.cost === 'object') ? draft.cost : null;
+  const warnings = (draft && Array.isArray(draft.warnings)) ? draft.warnings : [];
+
   const digest = JSON.stringify({
     epoch: c.epoch_id || null, board: board.length, structure, params,
     train: trainCount, hold: holdoutCount,
@@ -198,6 +206,10 @@ async function renderContract() {
     mono: !!scoring.pass_rate_monotonicity,
     holdFrac: overfitting.holdout_fraction, ofEnabled: overfitting.enabled,
     proposer: proposer ? (proposer.has_custom_agent ? 'agent' : 'skills') : null,
+    // the server envelope folds in so an unavailable→available transition (or a
+    // moved cost) repaints; null cost ⇒ the honest "unavailable" line.
+    cost: cost ? [cost.board_runs_per_round, (cost.breakdown || []).length] : null,
+    warn: warnings.length,
   });
 
   gatedSwap(_sectionHost, 'contract|' + digest, () => {
@@ -218,14 +230,12 @@ async function renderContract() {
         proposer ? (proposer.has_custom_agent ? 'custom ADK agent' : 'skill-composed default') : '—', 'builder'),
     ];
     // The read-only preview model: the SAME shape the builder's preview reads,
-    // but with no diff (nothing to apply) and the cost / warnings recomputed
-    // client-side from the frozen contract.
-    const cost = estimateCost(structure, params, trainCount, holdoutCount, scoring.proposer_quality, overfitting);
-    const warnings = validateContract(structure, params, trainCount, holdoutCount, overfitting,
-      { promoteMargin: scoring.promote_margin });
+    // but with no diff (nothing to apply) and the cost / warnings taken from the
+    // SERVER envelope (the builder draft fetch above). An absent envelope drives
+    // the honest "cost preview unavailable" line via `costUnavailable`.
     const preview = el('aside', { class: 'dn-set-preview dn-bld-preview', 'aria-label': 'Contract visualization' },
       previewNodes({
-        structure, params, cost, warnings,
+        structure, params, cost: cost || {}, warnings, costUnavailable: !cost,
         boardCount: board.length, trainCount, holdoutCount,
         readonly: true, heading: 'Contract at a glance',
       }));

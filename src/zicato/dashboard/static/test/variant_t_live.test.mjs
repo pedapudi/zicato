@@ -319,7 +319,7 @@ test('live-status: the chrome RUN badge lights for a live racing run and the sta
 
 // ---- (c) board-detail surfaces the in-flight runs for an entry ----
 
-test('board view: an entry mid-run with NO completed results renders its in-flight candidates (not empty)', async () => {
+test('board view: an entry mid-run with NO completed results renders its in-flight candidates as breakdown rows with a live progress column (not empty)', async () => {
   freshState(); installFetch();
   // no completed per-entry rows for this fresh entry, but two runs are live on it.
   const board = await import('../js/views/board.js');
@@ -331,13 +331,15 @@ test('board view: an entry mid-run with NO completed results renders its in-flig
   const host = document.createElement('div');
   await board.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single' });
 
-  const live = allByClass(host, 'dn-board-inflight')[0];
-  assert(live, 'a live in-flight panel rendered on the board view');
-  assert(host.textContent.includes('2 candidates running'), 'the panel reads "2 candidates running" (filtered to THIS entry)');
+  // C4: the running candidates surface as RUNNING rows in the breakdown table
+  // with a live-gated progress column — the separate in-flight table was merged.
+  assertEqual(allByClass(host, 'dn-board-inflight').length, 0, 'no separate in-flight table — merged into the breakdown (C4)');
+  assert(allByClass(host, 'dn-board-table').length >= 1, 'the breakdown table renders the running candidates');
+  assert(host.textContent.includes('2 running'), 'the breakdown title reads "2 running" (filtered to THIS entry)');
   assert(host.textContent.includes('v3') && host.textContent.includes('v4'), 'both in-flight candidates on this entry are listed');
   assert(!host.textContent.includes('v5'), 'a run on a DIFFERENT entry is excluded');
   const fills = allByClass(host, 'dn-progress-fill');
-  assert(fills.length >= 2, 'each in-flight candidate shows a progress bar');
+  assert(fills.length >= 2, 'each in-flight candidate shows a progress bar in the progress column');
   assert(host.textContent.includes('65%'), 'a candidate progress percentage is surfaced');
 
   coreState.state.activeRuns = [];

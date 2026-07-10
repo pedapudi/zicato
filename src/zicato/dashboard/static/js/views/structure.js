@@ -668,66 +668,40 @@ function renderBracket(st, ctx, epochId, structure) {
   const hasFigure = model.hasMatches !== false && model.winners.length;
   const isDouble = structure === 'double_elim';
 
-  // single_elim → the RADIAL bracket leads (single-elim.html opt 6): concentric
-  // rings narrowing to a center champion seat. double_elim → the orthogonal-pipe
-  // elimFlow combo leads (double-elim.html opt 7, the DEFAULT), with the radial
-  // (opt 8, {double:true}) offered as a NON-default toggle on the figure.
+  // Both structures render the SINGLE bracket-as-FLOW figure (elimFlow): the
+  // lane-convergence read to the champion gate; double_elim adds the WB/LB
+  // bands. The concentric-ring radial figure + its double-elim toggle were
+  // retired (C1) — one figpane per structure, no toggle.
   return isDouble
     ? renderDoubleElim(st, ctx, epochId, model, hasFigure, openGen)
     : renderSingleElim(st, ctx, epochId, model, hasFigure, openGen);
 }
 
-// single_elim — RADIAL bracket PRIMARY (the liked opt 6), the bracket-as-FLOW
-// (elimFlow) retained as a secondary companion view (who-converged-with-whom,
-// the lane convergence read).
+// single_elim — the bracket-as-FLOW (elimFlow) is the SINGLE figure: the
+// lane-convergence read (who-played-whom to the champion gate). The radial
+// companion was retired (C1) — one figpane, no toggle.
 function renderSingleElim(st, ctx, epochId, model, hasFigure, openGen) {
   const nodes = [];
 
-  // the PRIMARY figure: the concentric-ring radial bracket (consumes the SAME
-  // served rounds; its retirement is a later phase).
-  const radialCard = el('div', { class: 'dn-panel dn-figpane' });
-  radialCard.appendChild(hasFigure
-    ? svg.elimRadial({
-        rounds: model.rounds, championId: model.championId, benchmarkId: model.benchmarkId,
-        gateState: model.gateState, live: model.live, double: false, onCompetitor: openGen,
+  const flowCard = el('div', { class: 'dn-panel dn-figpane' });
+  flowCard.appendChild(hasFigure
+    ? svg.elimFlow({
+        rounds: model.rounds, gen_states: model.gen_states,
+        championId: model.championId, benchmarkId: model.benchmarkId,
+        gateState: model.gateState, live: model.live, onCompetitor: openGen,
       })
     : empty(model.live ? 'The bracket is being seeded — matches fill in as runs land.' : 'No bracket rounds recorded yet.'));
-  if (model.winners.length) {
-    const gateNote = model.gateState === 'crowned' ? ` · champion-gate: ${model.championId} promoted ${CROWN.current}`
-      : model.gateState === 'stands' ? ' · champion-gate: champion stands'
-      : model.gateState === 'deciding' ? ' · champion-gate: deciding…' : '';
-    radialCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
-      'rounds are concentric rings narrowing to the champion seat at the center; each spoke is a generation — the rings it survived read green, the ring it was eliminated at turns red ✕, and the survivor dashes into the center gate ' + CROWN.current
-      + (model.benchmarkId ? ' · ' + CROWN.former + ' = displaced incumbent' : '')
-      + gateNote
-      + (model.live ? ' · LIVE — still-racing spokes are dashed' : '') }));
-  }
-  nodes.push(section(model.live ? 'Bracket · LIVE — rings narrowing to the champion gate' : 'Bracket · rings narrowing to the champion gate', radialCard));
-
-  // SECONDARY: the bracket-as-FLOW (lane convergences) — the who-played-whom read
-  // the radial cannot show. Retained as a companion view below the radial.
-  if (hasFigure) {
-    const flowCard = el('div', { class: 'dn-panel dn-figpane' });
-    flowCard.appendChild(svg.elimFlow({
-      rounds: model.rounds, gen_states: model.gen_states,
-      championId: model.championId, benchmarkId: model.benchmarkId,
-      gateState: model.gateState, live: model.live, onCompetitor: openGen,
-    }));
-    flowCard.appendChild(bracketCaption(model));
-    nodes.push(section(model.live ? 'Bracket flow · LIVE — lane convergences, click a lane to open the candidate' : 'Bracket flow · lane convergences, click a lane to open the candidate', flowCard));
-  }
+  if (hasFigure) flowCard.appendChild(bracketCaption(model));
+  nodes.push(section(model.live ? 'Bracket flow · LIVE — lane convergences, click a lane to open the candidate' : 'Bracket flow · lane convergences, click a lane to open the candidate', flowCard));
 
   const standings = standingsTable(st, ctx, epochId, !!(st && st.live));
   if (standings) nodes.push(section('Standings', standings));
   return nodes;
 }
 
-// double_elim — the orthogonal-pipe FLOW combo is the DEFAULT figure (the liked
-// opt 7: WB/LB bands + life glyphs). The RADIAL ({double:true}, opt 8) is offered
-// as an OPTIONAL, NON-default variant via a small segmented toggle ON the figure
-// — both are rendered into the card, the radial hidden until the toggle flips it.
-// The toggle is pure client-side visibility (no data change) so it never
-// disturbs the digest-gated swap.
+// double_elim — the orthogonal-pipe FLOW combo is the single figure (WB/LB
+// bands + life glyphs). The optional radial variant + its segmented toggle
+// were retired (C1) — flow only, no dt-fig-switch.
 function renderDoubleElim(st, ctx, epochId, model, hasFigure, openGen) {
   const nodes = [];
   const flowCard = el('div', { class: 'dn-panel dn-figpane' });
@@ -739,41 +713,12 @@ function renderDoubleElim(st, ctx, epochId, model, hasFigure, openGen) {
     return nodes;
   }
 
-  // the segmented toggle: COMBO (default) ↔ RADIAL — a small control on the
-  // figure, mirroring the chrome's .dn-theme-switch idiom.
-  const flowPane = el('div', { class: 'dt-figview dt-figview-on' }, [
-    svg.elimFlow({
-      rounds: model.rounds, gen_states: model.gen_states,
-      championId: model.championId, benchmarkId: model.benchmarkId,
-      gateState: model.gateState, live: model.live, onCompetitor: openGen,
-    }),
-  ]);
-  const radialPane = el('div', { class: 'dt-figview' }, [
-    svg.elimRadial({
-      rounds: model.rounds, championId: model.championId, benchmarkId: model.benchmarkId,
-      gateState: model.gateState, live: model.live, double: true, onCompetitor: openGen,
-    }),
-  ]);
-  const comboBtn = el('button', { class: 'dt-fig-btn dt-fig-active', type: 'button', text: 'combo' });
-  const radialBtn = el('button', { class: 'dt-fig-btn', type: 'button', text: 'radial' });
-  const show = (which) => {
-    const combo = which === 'combo';
-    flowPane.classList.toggle('dt-figview-on', combo);
-    radialPane.classList.toggle('dt-figview-on', !combo);
-    comboBtn.classList.toggle('dt-fig-active', combo);
-    radialBtn.classList.toggle('dt-fig-active', !combo);
-  };
-  comboBtn.addEventListener('click', () => show('combo'));
-  radialBtn.addEventListener('click', () => show('radial'));
-  flowCard.appendChild(el('div', { class: 'dt-fig-switchrow' }, [
-    el('span', { class: 'dt-fig-switchlab', text: 'figure' }),
-    el('div', { class: 'dt-fig-switch' }, [comboBtn, radialBtn]),
-  ]));
-  flowCard.appendChild(flowPane);
-  flowCard.appendChild(radialPane);
+  flowCard.appendChild(svg.elimFlow({
+    rounds: model.rounds, gen_states: model.gen_states,
+    championId: model.championId, benchmarkId: model.benchmarkId,
+    gateState: model.gateState, live: model.live, onCompetitor: openGen,
+  }));
   flowCard.appendChild(bracketCaption(model));
-  flowCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:4px 0 0;', text:
-    'default: the winners’ + losers’ orthogonal-pipe combo · switch to “radial” for the concentric-ring (polar) view of the same bracket' }));
   nodes.push(section(model.live ? 'Bracket flow · LIVE — winners’ + losers’ lanes' : 'Bracket flow · winners’ + losers’ lanes', flowCard));
 
   const standings = standingsTable(st, ctx, epochId, !!(st && st.live));

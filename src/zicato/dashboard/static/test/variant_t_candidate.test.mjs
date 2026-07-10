@@ -465,7 +465,7 @@ test('board view: reachable from the tree and selecting a run shows the transcri
   const bhost = document.createElement('div');
   await board.render(bhost, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v1' });
   assert(bhost.textContent.includes('Board · waffles_single'), 'the per-board heading (still the board view)');
-  const xgrid = allByClass(bhost, 'dn-xscript-grid')[0];
+  const xgrid = allByClass(bhost, 'dt-split')[0];
   assert(xgrid, 'the INLINE side-by-side transcript pane rendered within the board view');
   const cols = allByClass(bhost, 'dn-xscript-col');
   assert(cols.length === 2, 'two candidates’ transcripts side by side');
@@ -758,7 +758,9 @@ for (const structure of ['swiss', 'single_elim']) {
     const bhost = document.createElement('div');
     await board.render(bhost, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v9' });
 
-    assert(bhost.textContent.includes('candidate running') || bhost.textContent.includes('candidates running'), `the live card renders under ${structure}`);
+    // C4: the running candidate surfaces via the breakdown's "N running" banner
+    // + its live progress column (the separate in-flight table was merged).
+    assert(bhost.textContent.includes('1 running'), `the breakdown surfaces the running candidate under ${structure}`);
     assert(bhost.textContent.includes(`${structure} live turn`), `the running candidate's live transcript renders under ${structure} (structure-agnostic)`);
     assert(allByClass(bhost, 'dn-xscript-live')[0], `the live marker renders under ${structure}`);
 
