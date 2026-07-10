@@ -7,9 +7,10 @@ from typing import Any
 
 from zicato.query._sqlite import (
     _IndexAbsent,
-    _open_index,
     _opt_json,
     _query,
+    _rget,
+    open_index_ro,
 )
 from zicato.query.epoch_view import (
     _normalize_structure,
@@ -74,7 +75,8 @@ def build_bracket(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[st
     """
     epoch_id = _resolve_epoch_id(paths, epoch_id)
     try:
-        conn = _open_index(paths.index_db)
+        with open_index_ro(paths.index_db) as conn:
+            return _bracket_from_conn(paths, conn, epoch_id)
     except _IndexAbsent:
         return {
             "epoch_id": epoch_id,
@@ -85,221 +87,223 @@ def build_bracket(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[st
     except sqlite3.Error:
         return {"epoch_id": epoch_id, "champion_lineage": [], "matchups": []}
 
-    try:
-        if epoch_id is None:
-            return {"epoch_id": None, "champion_lineage": [], "matchups": []}
 
-        gen_rows = _query(
-            conn,
-            "SELECT epoch_id, generation_id, parent_generation_id, promoted "
-            "FROM generations WHERE epoch_id = ?",
-            (epoch_id,),
-        )
-        generations = [
-            {
-                "generation_id": r["generation_id"],
-                "parent_generation_id": r["parent_generation_id"],
-                "promoted": bool(r["promoted"]),
-            }
-            for r in gen_rows
-        ]
-        champion_lineage = _champion_lineage(generations)
+def _bracket_from_conn(
+    paths: WorkspacePaths, conn: sqlite3.Connection, epoch_id: str | None
+) -> dict[str, Any]:
+    """The bracket body — reads the open connection, never closes it."""
+    if epoch_id is None:
+        return {"epoch_id": None, "champion_lineage": [], "matchups": []}
 
-        # Select the structure-aware columns alongside the legacy
-        # per-matchup ones. The v3 columns (structure / *_json) may be
-        # absent on an index that predates the migration — the SELECT is
-        # split so a missing-column error on the structure columns does
-        # not blank out the legacy matchups (back-compat: gauntlet reads
-        # must stay intact). ``_query`` swallows the sqlite error and
-        # returns [] for the structure-aware query in that case.
-        tour_rows = _query(
-            conn,
-            "SELECT t.tournament_id, t.parent_generation_id, t.child_generation_id, "
-            "t.decision, t.delta_scalar, t.rejection_reason, t.ran_at, "
-            "e.hypothesis_core_idea "
-            "FROM tournaments t "
-            "LEFT JOIN experiments e "
-            "ON e.epoch_id = t.epoch_id AND e.generation_id = t.child_generation_id "
-            "WHERE t.epoch_id = ? "
-            "ORDER BY t.ran_at ASC, t.tournament_id ASC",
-            (epoch_id,),
-        )
-        # The per-matchup ladder is the per-challenger crowning rows only.
-        # A FIELD-level row (``{epoch}:field:{...}``) is the whole-tournament
-        # structure record, not a champion-vs-challenger duel (it carries no
-        # parent/child), so it is excluded here — it surfaces through the
-        # structure-aware ``tournaments[]`` envelope below instead.
-        matchups = [
-            {
-                "champion": r["parent_generation_id"],
-                "challenger": r["child_generation_id"],
-                "decision": r["decision"],
-                "delta_scalar": r["delta_scalar"],
-                "rejection_reason": r["rejection_reason"],
-                "hypothesis_core_idea": r["hypothesis_core_idea"],
-                "ran_at": r["ran_at"],
-            }
-            for r in tour_rows
-            if not _is_field_tournament_id(r["tournament_id"])
-        ]
-
-        # Structure-aware envelope (§3.1). Read the v3 columns
-        # defensively: if they are absent (pre-migration index) the query
-        # returns [] and the structure degenerates to gauntlet — leaving
-        # the legacy ``matchups`` / ``champion_lineage`` byte-identical.
-        # The champion-eval columns are v8; a pre-v8 (or fixture) index lacks
-        # them, and a SELECT naming a missing column errors → _query returns []
-        # → the whole structure envelope degrades. So include them only when the
-        # table actually has them (PRAGMA), and read them defensively per-row.
-        _tcols = {row["name"] for row in _query(conn, "PRAGMA table_info(tournaments)", ())}
-        _champ_sel = (
-            ", champion_eval_mode, champion_run_ref"
-            if {"champion_eval_mode", "champion_run_ref"} <= _tcols
-            else ""
-        )
-        struct_rows = _query(
-            conn,
-            "SELECT tournament_id, structure, structure_params_json, "
-            "competitors_json, rounds_json, standings_json, ran_at, "
-            "parent_generation_id, child_generation_id, parent_scalar"
-            + _champ_sel
-            + " FROM tournaments WHERE epoch_id = ? ORDER BY ran_at ASC, tournament_id ASC",
-            (epoch_id,),
-        )
-
-        def _rget(row: sqlite3.Row, key: str) -> Any:
-            return row[key] if key in row.keys() else None
-
-        # The per-round CHAMPION (id + scalar + eval provenance: champion_eval_mode
-        # / champion_run_ref — cached vs re-run) is carried on the per-CHALLENGER
-        # rows: each has parent_generation_id = the round's champion. A FIELD row
-        # has an EMPTY parent (a field is a round, not a duel), so resolve a field
-        # record's champion from a sibling per-challenger row keyed by the
-        # CHALLENGER (whose child is one of the field's competitors).
-        champ_by_child: dict[str, dict[str, Any]] = {}
-        for r in struct_rows:
-            cg = r["child_generation_id"]
-            pg = r["parent_generation_id"]
-            if cg and pg:
-                champ_by_child[str(cg)] = {
-                    "id": str(pg),
-                    "scalar": r["parent_scalar"],
-                    "eval_mode": _rget(r, "champion_eval_mode"),
-                    "run_ref": _rget(r, "champion_run_ref"),
-                }
-
-        def _champion_for(row: sqlite3.Row, comps: list[Any]) -> dict[str, Any] | None:
-            # a per-challenger / gauntlet row carries the champion directly;
-            # a field row (empty parent) borrows from a competitor's sibling row.
-            cid = row["parent_generation_id"]
-            base = (
-                {
-                    "id": str(cid),
-                    "scalar": row["parent_scalar"],
-                    "eval_mode": _rget(row, "champion_eval_mode"),
-                    "run_ref": _rget(row, "champion_run_ref"),
-                }
-                if cid is not None and str(cid) != ""
-                else None
-            )
-            if base is None:
-                for c in comps:
-                    key = str(c.get("generation_id") if isinstance(c, dict) else c)
-                    if key in champ_by_child:
-                        base = dict(champ_by_child[key])
-                        break
-            if base is None:
-                return None
-            sc = base.get("scalar")
-            return {
-                "id": base["id"],
-                "scalar": coerce_float(sc),
-                "eval_mode": base.get("eval_mode") or "full",
-                "run_ref": base.get("run_ref"),
-            }
-
-        # FIELD-level rows (``{epoch}:field:{first_challenger}``) carry the
-        # whole round's settled structure — round pairings + Copeland
-        # standings + competitor field — for swiss / elim. When one exists
-        # for a structure, the per-challenger ``{epoch}:{parent}->{child}``
-        # rows of THAT structure are NOT the structure view's source (they
-        # flatten one challenger's crowning duel, the wrong shape for the
-        # ladder), so we drop them from the structure list and let the
-        # field record stand. The per-challenger rows remain in the index
-        # (the gauntlet matchup list + crowning columns still read them);
-        # they are merely excluded from this structure-aware envelope.
-        # Racing has no field record, so its per-challenger rows survive —
-        # ``reconstructRacing`` aggregates them on the read side.
-        field_structures = {
-            _normalize_structure(r["structure"])
-            for r in struct_rows
-            if _is_field_tournament_id(r["tournament_id"])
+    gen_rows = _query(
+        conn,
+        "SELECT epoch_id, generation_id, parent_generation_id, promoted "
+        "FROM generations WHERE epoch_id = ?",
+        (epoch_id,),
+    )
+    generations = [
+        {
+            "generation_id": r["generation_id"],
+            "parent_generation_id": r["parent_generation_id"],
+            "promoted": bool(r["promoted"]),
         }
-        tournaments: list[dict[str, Any]] = []
-        epoch_structure = "gauntlet"
-        epoch_structure_params: dict[str, Any] = {}
-        for r in struct_rows:
-            structure = _normalize_structure(r["structure"])
-            params = _opt_json(r["structure_params_json"])
-            params = params if isinstance(params, dict) else {}
-            # The epoch's structure is the contract-frozen value; every
-            # tournament in the epoch shares it, so the last non-gauntlet
-            # value wins (they should all agree).
-            if structure != "gauntlet":
-                epoch_structure = structure
-                epoch_structure_params = params
-            # Suppress a per-challenger row whose structure has a field
-            # record — the field record is the authoritative view.
-            if structure in field_structures and not _is_field_tournament_id(r["tournament_id"]):
-                continue
-            competitors = _opt_json(r["competitors_json"])
-            rounds = _opt_json(r["rounds_json"])
-            standings = _opt_json(r["standings_json"])
-            comp_list = competitors if isinstance(competitors, list) else []
-            # The per-round CHAMPION — id + loss + eval provenance (cached vs
-            # re-run) read CANONICALLY from the records, so the frontend reads the
-            # champion spine instead of reconstructing it.
-            tournaments.append(
-                {
-                    "tournament_id": r["tournament_id"],
-                    "structure": structure,
-                    "structure_params": params,
-                    "competitors": comp_list,
-                    "rounds": rounds if isinstance(rounds, list) else [],
-                    "standings": standings if isinstance(standings, list) else [],
-                    "champion": _champion_for(r, comp_list),
-                }
-            )
+        for r in gen_rows
+    ]
+    champion_lineage = _champion_lineage(generations)
 
-        # No tournament ROW resolved a non-gauntlet structure — e.g. a run torn
-        # down before any bracket completed leaves zero rows, so the scan above
-        # never overrides the gauntlet default. Fall back to the epoch's
-        # CONTRACT-FROZEN structure (scoring.json, then config.json's scoring)
-        # so the API agrees with the configured single_elim/swiss/racing rather
-        # than mislabelling the epoch gauntlet.
-        if epoch_structure == "gauntlet":
-            layout = layout_of(paths)
-            block = _tournament_block_from_scoring(_read_json_value(layout.scoring(epoch_id)))
-            if block is None:
-                cfg = _read_json_value(layout.epoch_config(epoch_id))
-                block = _tournament_block_from_scoring(
-                    cfg.get("scoring") if isinstance(cfg, dict) else None
-                )
-            if isinstance(block, dict) and block.get("structure"):
-                epoch_structure = block["structure"]
-                if not epoch_structure_params:
-                    epoch_structure_params = block.get("params") or {}
+    # Select the structure-aware columns alongside the legacy
+    # per-matchup ones. The v3 columns (structure / *_json) may be
+    # absent on an index that predates the migration — the SELECT is
+    # split so a missing-column error on the structure columns does
+    # not blank out the legacy matchups (back-compat: gauntlet reads
+    # must stay intact). ``_query`` swallows the sqlite error and
+    # returns [] for the structure-aware query in that case.
+    tour_rows = _query(
+        conn,
+        "SELECT t.tournament_id, t.parent_generation_id, t.child_generation_id, "
+        "t.decision, t.delta_scalar, t.rejection_reason, t.ran_at, "
+        "e.hypothesis_core_idea "
+        "FROM tournaments t "
+        "LEFT JOIN experiments e "
+        "ON e.epoch_id = t.epoch_id AND e.generation_id = t.child_generation_id "
+        "WHERE t.epoch_id = ? "
+        "ORDER BY t.ran_at ASC, t.tournament_id ASC",
+        (epoch_id,),
+    )
+    # The per-matchup ladder is the per-challenger crowning rows only.
+    # A FIELD-level row (``{epoch}:field:{...}``) is the whole-tournament
+    # structure record, not a champion-vs-challenger duel (it carries no
+    # parent/child), so it is excluded here — it surfaces through the
+    # structure-aware ``tournaments[]`` envelope below instead.
+    matchups = [
+        {
+            "champion": r["parent_generation_id"],
+            "challenger": r["child_generation_id"],
+            "decision": r["decision"],
+            "delta_scalar": r["delta_scalar"],
+            "rejection_reason": r["rejection_reason"],
+            "hypothesis_core_idea": r["hypothesis_core_idea"],
+            "ran_at": r["ran_at"],
+        }
+        for r in tour_rows
+        if not _is_field_tournament_id(r["tournament_id"])
+    ]
 
+    # Structure-aware envelope (§3.1). Read the v3 columns
+    # defensively: if they are absent (pre-migration index) the query
+    # returns [] and the structure degenerates to gauntlet — leaving
+    # the legacy ``matchups`` / ``champion_lineage`` byte-identical.
+    # The champion-eval columns are v8; a pre-v8 (or fixture) index lacks
+    # them, and a SELECT naming a missing column errors → _query returns []
+    # → the whole structure envelope degrades. So include them only when the
+    # table actually has them (PRAGMA), and read them defensively per-row.
+    _tcols = {row["name"] for row in _query(conn, "PRAGMA table_info(tournaments)", ())}
+    _champ_sel = (
+        ", champion_eval_mode, champion_run_ref"
+        if {"champion_eval_mode", "champion_run_ref"} <= _tcols
+        else ""
+    )
+    struct_rows = _query(
+        conn,
+        "SELECT tournament_id, structure, structure_params_json, "
+        "competitors_json, rounds_json, standings_json, ran_at, "
+        "parent_generation_id, child_generation_id, parent_scalar"
+        + _champ_sel
+        + " FROM tournaments WHERE epoch_id = ? ORDER BY ran_at ASC, tournament_id ASC",
+        (epoch_id,),
+    )
+
+    # ``_rget`` (tolerant additive-column read) is the shared accessor in
+    # ``zicato.query._sqlite``.
+
+    # The per-round CHAMPION (id + scalar + eval provenance: champion_eval_mode
+    # / champion_run_ref — cached vs re-run) is carried on the per-CHALLENGER
+    # rows: each has parent_generation_id = the round's champion. A FIELD row
+    # has an EMPTY parent (a field is a round, not a duel), so resolve a field
+    # record's champion from a sibling per-challenger row keyed by the
+    # CHALLENGER (whose child is one of the field's competitors).
+    champ_by_child: dict[str, dict[str, Any]] = {}
+    for r in struct_rows:
+        cg = r["child_generation_id"]
+        pg = r["parent_generation_id"]
+        if cg and pg:
+            champ_by_child[str(cg)] = {
+                "id": str(pg),
+                "scalar": r["parent_scalar"],
+                "eval_mode": _rget(r, "champion_eval_mode"),
+                "run_ref": _rget(r, "champion_run_ref"),
+            }
+
+    def _champion_for(row: sqlite3.Row, comps: list[Any]) -> dict[str, Any] | None:
+        # a per-challenger / gauntlet row carries the champion directly;
+        # a field row (empty parent) borrows from a competitor's sibling row.
+        cid = row["parent_generation_id"]
+        base = (
+            {
+                "id": str(cid),
+                "scalar": row["parent_scalar"],
+                "eval_mode": _rget(row, "champion_eval_mode"),
+                "run_ref": _rget(row, "champion_run_ref"),
+            }
+            if cid is not None and str(cid) != ""
+            else None
+        )
+        if base is None:
+            for c in comps:
+                key = str(c.get("generation_id") if isinstance(c, dict) else c)
+                if key in champ_by_child:
+                    base = dict(champ_by_child[key])
+                    break
+        if base is None:
+            return None
+        sc = base.get("scalar")
         return {
-            "epoch_id": epoch_id,
-            "structure": epoch_structure,
-            "structure_params": epoch_structure_params,
-            "champion_lineage": champion_lineage,
-            "matchups": matchups,
-            "tournaments": tournaments,
+            "id": base["id"],
+            "scalar": coerce_float(sc),
+            "eval_mode": base.get("eval_mode") or "full",
+            "run_ref": base.get("run_ref"),
         }
-    finally:
-        conn.close()
+
+    # FIELD-level rows (``{epoch}:field:{first_challenger}``) carry the
+    # whole round's settled structure — round pairings + Copeland
+    # standings + competitor field — for swiss / elim. When one exists
+    # for a structure, the per-challenger ``{epoch}:{parent}->{child}``
+    # rows of THAT structure are NOT the structure view's source (they
+    # flatten one challenger's crowning duel, the wrong shape for the
+    # ladder), so we drop them from the structure list and let the
+    # field record stand. The per-challenger rows remain in the index
+    # (the gauntlet matchup list + crowning columns still read them);
+    # they are merely excluded from this structure-aware envelope.
+    # Racing has no field record, so its per-challenger rows survive —
+    # ``reconstructRacing`` aggregates them on the read side.
+    field_structures = {
+        _normalize_structure(r["structure"])
+        for r in struct_rows
+        if _is_field_tournament_id(r["tournament_id"])
+    }
+    tournaments: list[dict[str, Any]] = []
+    epoch_structure = "gauntlet"
+    epoch_structure_params: dict[str, Any] = {}
+    for r in struct_rows:
+        structure = _normalize_structure(r["structure"])
+        params = _opt_json(r["structure_params_json"])
+        params = params if isinstance(params, dict) else {}
+        # The epoch's structure is the contract-frozen value; every
+        # tournament in the epoch shares it, so the last non-gauntlet
+        # value wins (they should all agree).
+        if structure != "gauntlet":
+            epoch_structure = structure
+            epoch_structure_params = params
+        # Suppress a per-challenger row whose structure has a field
+        # record — the field record is the authoritative view.
+        if structure in field_structures and not _is_field_tournament_id(r["tournament_id"]):
+            continue
+        competitors = _opt_json(r["competitors_json"])
+        rounds = _opt_json(r["rounds_json"])
+        standings = _opt_json(r["standings_json"])
+        comp_list = competitors if isinstance(competitors, list) else []
+        # The per-round CHAMPION — id + loss + eval provenance (cached vs
+        # re-run) read CANONICALLY from the records, so the frontend reads the
+        # champion spine instead of reconstructing it.
+        tournaments.append(
+            {
+                "tournament_id": r["tournament_id"],
+                "structure": structure,
+                "structure_params": params,
+                "competitors": comp_list,
+                "rounds": rounds if isinstance(rounds, list) else [],
+                "standings": standings if isinstance(standings, list) else [],
+                "champion": _champion_for(r, comp_list),
+            }
+        )
+
+    # No tournament ROW resolved a non-gauntlet structure — e.g. a run torn
+    # down before any bracket completed leaves zero rows, so the scan above
+    # never overrides the gauntlet default. Fall back to the epoch's
+    # CONTRACT-FROZEN structure (scoring.json, then config.json's scoring)
+    # so the API agrees with the configured single_elim/swiss/racing rather
+    # than mislabelling the epoch gauntlet.
+    if epoch_structure == "gauntlet":
+        layout = layout_of(paths)
+        block = _tournament_block_from_scoring(_read_json_value(layout.scoring(epoch_id)))
+        if block is None:
+            cfg = _read_json_value(layout.epoch_config(epoch_id))
+            block = _tournament_block_from_scoring(
+                cfg.get("scoring") if isinstance(cfg, dict) else None
+            )
+        if isinstance(block, dict) and block.get("structure"):
+            epoch_structure = block["structure"]
+            if not epoch_structure_params:
+                epoch_structure_params = block.get("params") or {}
+
+    return {
+        "epoch_id": epoch_id,
+        "structure": epoch_structure,
+        "structure_params": epoch_structure_params,
+        "champion_lineage": champion_lineage,
+        "matchups": matchups,
+        "tournaments": tournaments,
+    }
 
 
 def _verdict(parent: float | None, child: float | None) -> str:
@@ -315,7 +319,134 @@ def build_matchup_detail(paths: WorkspacePaths, generation_id: str) -> dict[str,
     """``GET /api/tournaments/:generation_id`` — full matchup detail."""
     epoch_id = read_current_epoch(paths)
     try:
-        conn = _open_index(paths.index_db)
+        with open_index_ro(paths.index_db) as conn:
+            tour = _query(
+                conn,
+                "SELECT t.tournament_id, t.parent_generation_id, t.child_generation_id, "
+                "t.decision, t.parent_scalar, t.child_scalar, t.delta_scalar, "
+                "t.rejection_reason, t.ran_at "
+                "FROM tournaments t WHERE t.child_generation_id = ? LIMIT 1",
+                (generation_id,),
+            )
+            tour_row = tour[0] if tour else None
+
+            exp = _query(
+                conn,
+                "SELECT hypothesis_core_idea, hypothesis_why, hypothesis_json, "
+                "tournament_decision, rejection_reason, scalar_score_delta, "
+                "drift_loss_delta, pass_rate_delta "
+                "FROM experiments WHERE generation_id = ? LIMIT 1",
+                (generation_id,),
+            )
+            exp_row = exp[0] if exp else None
+
+            champion = tour_row["parent_generation_id"] if tour_row else None
+
+            child_losses = _query(
+                conn,
+                "SELECT entry_id, drift_loss, pass_fail, loss_json FROM loss_profiles "
+                "WHERE generation_id = ? ORDER BY entry_id ASC",
+                (generation_id,),
+            )
+            parent_losses = (
+                _query(
+                    conn,
+                    "SELECT entry_id, drift_loss, pass_fail, loss_json FROM loss_profiles "
+                    "WHERE generation_id = ? ORDER BY entry_id ASC",
+                    (champion,),
+                )
+                if champion
+                else []
+            )
+            ab: dict[str, dict[str, Any]] = {}
+            for r in parent_losses:
+                key = r["entry_id"] or ""
+                cell = ab.setdefault(key, {"entry_id": r["entry_id"]})
+                cell["entry_id"] = r["entry_id"]
+                cell["parent_drift_loss"] = r["drift_loss"]
+                cell["parent_pass_fail"] = _opt_bool(r["pass_fail"])
+                lj = _opt_json(r["loss_json"])
+                if isinstance(lj, dict):
+                    sid = lj.get("adk_session_id")
+                    if isinstance(sid, str) and sid:
+                        cell["parent_adk_session_id"] = sid
+            for r in child_losses:
+                key = r["entry_id"] or ""
+                cell = ab.setdefault(key, {"entry_id": r["entry_id"]})
+                cell["entry_id"] = r["entry_id"]
+                cell["child_drift_loss"] = r["drift_loss"]
+                cell["child_pass_fail"] = _opt_bool(r["pass_fail"])
+                lj = _opt_json(r["loss_json"])
+                if isinstance(lj, dict):
+                    sid = lj.get("adk_session_id")
+                    if isinstance(sid, str) and sid:
+                        cell["child_adk_session_id"] = sid
+            ab_grid = []
+            for key in sorted(ab):
+                cell = ab[key]
+                cell.setdefault("parent_drift_loss", None)
+                cell.setdefault("child_drift_loss", None)
+                cell.setdefault("parent_pass_fail", None)
+                cell.setdefault("child_pass_fail", None)
+                cell["verdict"] = _verdict(cell["parent_drift_loss"], cell["child_drift_loss"])
+                ab_grid.append(cell)
+
+            patch_rows = _query(
+                conn,
+                "SELECT patch_id, mutation_id, op, rationale FROM patches "
+                "WHERE generation_id = ? ORDER BY patch_id ASC",
+                (generation_id,),
+            )
+            patches = [
+                {
+                    "patch_id": r["patch_id"],
+                    "mutation_id": r["mutation_id"],
+                    "op": r["op"],
+                    "rationale": r["rationale"],
+                }
+                for r in patch_rows
+            ]
+
+            decision = None
+            rejection_reason = None
+            if tour_row is not None:
+                decision = tour_row["decision"]
+                rejection_reason = tour_row["rejection_reason"]
+            if decision is None and exp_row is not None:
+                decision = exp_row["tournament_decision"]
+            if rejection_reason is None and exp_row is not None:
+                rejection_reason = exp_row["rejection_reason"]
+
+            delta_scalar = tour_row["delta_scalar"] if tour_row else None
+            if delta_scalar is None and exp_row is not None:
+                delta_scalar = exp_row["scalar_score_delta"]
+
+            detail: dict[str, Any] = {
+                "epoch_id": epoch_id,
+                "generation_id": generation_id,
+                "champion": champion,
+                "decision": decision,
+                "rejection_reason": rejection_reason,
+                "ran_at": tour_row["ran_at"] if tour_row else None,
+                "parent_scalar": tour_row["parent_scalar"] if tour_row else None,
+                "child_scalar": tour_row["child_scalar"] if tour_row else None,
+                "delta_scalar": delta_scalar,
+                "patches": patches,
+                "ab_grid": ab_grid,
+            }
+            if exp_row is not None:
+                if exp_row["drift_loss_delta"] is not None:
+                    detail["drift_loss_delta"] = exp_row["drift_loss_delta"]
+                if exp_row["pass_rate_delta"] is not None:
+                    detail["pass_rate_delta"] = exp_row["pass_rate_delta"]
+                detail["hypothesis"] = {
+                    "core_idea": exp_row["hypothesis_core_idea"],
+                    "why": exp_row["hypothesis_why"],
+                }
+                raw = _opt_json(exp_row["hypothesis_json"])
+                if raw is not None:
+                    detail["hypothesis"]["raw"] = raw
+            return detail
     except _IndexAbsent:
         return {
             "epoch_id": epoch_id,
@@ -345,137 +476,6 @@ def build_matchup_detail(paths: WorkspacePaths, generation_id: str) -> dict[str,
             "patches": [],
             "ab_grid": [],
         }
-
-    try:
-        tour = _query(
-            conn,
-            "SELECT t.tournament_id, t.parent_generation_id, t.child_generation_id, "
-            "t.decision, t.parent_scalar, t.child_scalar, t.delta_scalar, "
-            "t.rejection_reason, t.ran_at "
-            "FROM tournaments t WHERE t.child_generation_id = ? LIMIT 1",
-            (generation_id,),
-        )
-        tour_row = tour[0] if tour else None
-
-        exp = _query(
-            conn,
-            "SELECT hypothesis_core_idea, hypothesis_why, hypothesis_json, "
-            "tournament_decision, rejection_reason, scalar_score_delta, "
-            "drift_loss_delta, pass_rate_delta "
-            "FROM experiments WHERE generation_id = ? LIMIT 1",
-            (generation_id,),
-        )
-        exp_row = exp[0] if exp else None
-
-        champion = tour_row["parent_generation_id"] if tour_row else None
-
-        child_losses = _query(
-            conn,
-            "SELECT entry_id, drift_loss, pass_fail, loss_json FROM loss_profiles "
-            "WHERE generation_id = ? ORDER BY entry_id ASC",
-            (generation_id,),
-        )
-        parent_losses = (
-            _query(
-                conn,
-                "SELECT entry_id, drift_loss, pass_fail, loss_json FROM loss_profiles "
-                "WHERE generation_id = ? ORDER BY entry_id ASC",
-                (champion,),
-            )
-            if champion
-            else []
-        )
-        ab: dict[str, dict[str, Any]] = {}
-        for r in parent_losses:
-            key = r["entry_id"] or ""
-            cell = ab.setdefault(key, {"entry_id": r["entry_id"]})
-            cell["entry_id"] = r["entry_id"]
-            cell["parent_drift_loss"] = r["drift_loss"]
-            cell["parent_pass_fail"] = _opt_bool(r["pass_fail"])
-            lj = _opt_json(r["loss_json"])
-            if isinstance(lj, dict):
-                sid = lj.get("adk_session_id")
-                if isinstance(sid, str) and sid:
-                    cell["parent_adk_session_id"] = sid
-        for r in child_losses:
-            key = r["entry_id"] or ""
-            cell = ab.setdefault(key, {"entry_id": r["entry_id"]})
-            cell["entry_id"] = r["entry_id"]
-            cell["child_drift_loss"] = r["drift_loss"]
-            cell["child_pass_fail"] = _opt_bool(r["pass_fail"])
-            lj = _opt_json(r["loss_json"])
-            if isinstance(lj, dict):
-                sid = lj.get("adk_session_id")
-                if isinstance(sid, str) and sid:
-                    cell["child_adk_session_id"] = sid
-        ab_grid = []
-        for key in sorted(ab):
-            cell = ab[key]
-            cell.setdefault("parent_drift_loss", None)
-            cell.setdefault("child_drift_loss", None)
-            cell.setdefault("parent_pass_fail", None)
-            cell.setdefault("child_pass_fail", None)
-            cell["verdict"] = _verdict(cell["parent_drift_loss"], cell["child_drift_loss"])
-            ab_grid.append(cell)
-
-        patch_rows = _query(
-            conn,
-            "SELECT patch_id, mutation_id, op, rationale FROM patches "
-            "WHERE generation_id = ? ORDER BY patch_id ASC",
-            (generation_id,),
-        )
-        patches = [
-            {
-                "patch_id": r["patch_id"],
-                "mutation_id": r["mutation_id"],
-                "op": r["op"],
-                "rationale": r["rationale"],
-            }
-            for r in patch_rows
-        ]
-
-        decision = None
-        rejection_reason = None
-        if tour_row is not None:
-            decision = tour_row["decision"]
-            rejection_reason = tour_row["rejection_reason"]
-        if decision is None and exp_row is not None:
-            decision = exp_row["tournament_decision"]
-        if rejection_reason is None and exp_row is not None:
-            rejection_reason = exp_row["rejection_reason"]
-
-        delta_scalar = tour_row["delta_scalar"] if tour_row else None
-        if delta_scalar is None and exp_row is not None:
-            delta_scalar = exp_row["scalar_score_delta"]
-
-        detail: dict[str, Any] = {
-            "epoch_id": epoch_id,
-            "generation_id": generation_id,
-            "champion": champion,
-            "decision": decision,
-            "rejection_reason": rejection_reason,
-            "ran_at": tour_row["ran_at"] if tour_row else None,
-            "parent_scalar": tour_row["parent_scalar"] if tour_row else None,
-            "child_scalar": tour_row["child_scalar"] if tour_row else None,
-            "delta_scalar": delta_scalar,
-            "patches": patches,
-            "ab_grid": ab_grid,
-        }
-        if exp_row is not None:
-            if exp_row["drift_loss_delta"] is not None:
-                detail["drift_loss_delta"] = exp_row["drift_loss_delta"]
-            if exp_row["pass_rate_delta"] is not None:
-                detail["pass_rate_delta"] = exp_row["pass_rate_delta"]
-            detail["hypothesis"] = {
-                "core_idea": exp_row["hypothesis_core_idea"],
-                "why": exp_row["hypothesis_why"],
-            }
-            raw = _opt_json(exp_row["hypothesis_json"])
-            if raw is not None:
-                detail["hypothesis"]["raw"] = raw
-        return detail
-    finally:
-        conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -812,59 +812,56 @@ def _structure_from_index(
     case falls through to the next link in the resolution chain.
     """
     try:
-        conn = _open_index(paths.index_db)
-    except (_IndexAbsent, sqlite3.Error):
-        return None
-    try:
-        rows = _query(
-            conn,
-            "SELECT structure, structure_params_json, competitors_json, "
-            "rounds_json, standings_json FROM tournaments "
-            "WHERE epoch_id = ? AND tournament_id = ? LIMIT 1",
-            (epoch_id, tournament_id),
-        )
-        if not rows:
-            return None
-        r = rows[0]
-        params = _opt_json(r["structure_params_json"])
-        competitors = _opt_json(r["competitors_json"])
-        rounds = _opt_json(r["rounds_json"])
-        standings = _opt_json(r["standings_json"])
-        # ``field_status_json`` is a v5 column. A real index is migrated to
-        # v5 on open, but a hand-built / pre-migration index may lack the
-        # column — query it separately and degrade to an empty list rather
-        # than letting a missing column fail the whole resolution.
-        field_status: Any = None
-        try:
-            fs_rows = _query(
+        with open_index_ro(paths.index_db) as conn:
+            rows = _query(
                 conn,
-                "SELECT field_status_json FROM tournaments "
+                "SELECT structure, structure_params_json, competitors_json, "
+                "rounds_json, standings_json FROM tournaments "
                 "WHERE epoch_id = ? AND tournament_id = ? LIMIT 1",
                 (epoch_id, tournament_id),
             )
-            if fs_rows:
-                field_status = _opt_json(fs_rows[0]["field_status_json"])
-        except sqlite3.Error:
-            field_status = None
-        # A row that exists but carries no structure internals (a gauntlet
-        # row, or a NULL-backfilled pre-feature row) is not a useful
-        # structure read; fall through so the active/loss-file links can
-        # offer something richer.
-        if rounds is None and standings is None and competitors is None:
-            return None
-        return _structure_envelope(
-            epoch_id,
-            tournament_id,
-            "index",
-            structure=r["structure"],
-            structure_params=params,
-            competitors=competitors,
-            rounds=rounds,
-            standings=standings,
-            field_status=field_status,
-        )
-    finally:
-        conn.close()
+            if not rows:
+                return None
+            r = rows[0]
+            params = _opt_json(r["structure_params_json"])
+            competitors = _opt_json(r["competitors_json"])
+            rounds = _opt_json(r["rounds_json"])
+            standings = _opt_json(r["standings_json"])
+            # ``field_status_json`` is a v5 column. A real index is migrated to
+            # v5 on open, but a hand-built / pre-migration index may lack the
+            # column — query it separately and degrade to an empty list rather
+            # than letting a missing column fail the whole resolution.
+            field_status: Any = None
+            try:
+                fs_rows = _query(
+                    conn,
+                    "SELECT field_status_json FROM tournaments "
+                    "WHERE epoch_id = ? AND tournament_id = ? LIMIT 1",
+                    (epoch_id, tournament_id),
+                )
+                if fs_rows:
+                    field_status = _opt_json(fs_rows[0]["field_status_json"])
+            except sqlite3.Error:
+                field_status = None
+            # A row that exists but carries no structure internals (a gauntlet
+            # row, or a NULL-backfilled pre-feature row) is not a useful
+            # structure read; fall through so the active/loss-file links can
+            # offer something richer.
+            if rounds is None and standings is None and competitors is None:
+                return None
+            return _structure_envelope(
+                epoch_id,
+                tournament_id,
+                "index",
+                structure=r["structure"],
+                structure_params=params,
+                competitors=competitors,
+                rounds=rounds,
+                standings=standings,
+                field_status=field_status,
+            )
+    except (_IndexAbsent, sqlite3.Error):
+        return None
 
 
 def _structure_from_active(
@@ -1170,13 +1167,10 @@ def _enrich_diversity(
     if len(challengers) < 2:
         return result
     try:
-        conn = _open_index(paths.index_db)
+        with open_index_ro(paths.index_db) as conn:
+            mutation_sets = [(gid, _mutation_ids_for(conn, gid)) for gid in challengers]
     except (_IndexAbsent, sqlite3.Error):
         return result
-    try:
-        mutation_sets = [(gid, _mutation_ids_for(conn, gid)) for gid in challengers]
-    finally:
-        conn.close()
     # No challenger resolved any mutation ids (patchless / unindexed field):
     # there is no idea structure to summarise, so stay key-absent.
     if not any(ids for _gid, ids in mutation_sets):

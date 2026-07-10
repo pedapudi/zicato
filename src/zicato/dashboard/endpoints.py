@@ -330,12 +330,7 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         epoch_id = request.path_params["epoch_id"]
         if not _is_safe_id(epoch_id):
             return JSONResponse({"error": "invalid epoch id"}, status_code=400)
-        path = paths.epochs / epoch_id / "journal.md"
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (FileNotFoundError, OSError):
-            text = ""
-        return JSONResponse({"epoch_id": epoch_id, "journal": text})
+        return JSONResponse(query.read_epoch_journal(paths, epoch_id))
 
     async def api_epoch_journal_md(request: Request) -> Response:
         """Serve the raw ``journal.md`` markdown for one epoch.
@@ -351,10 +346,8 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         epoch_id = request.path_params["epoch_id"]
         if not _is_safe_id(epoch_id):
             return PlainTextResponse("invalid epoch id", status_code=400)
-        path = paths.epochs / epoch_id / "journal.md"
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (FileNotFoundError, OSError):
+        text = query.read_epoch_journal_md(paths, epoch_id)
+        if text is None:
             return PlainTextResponse(
                 f"journal.md not found for epoch {epoch_id}",
                 status_code=404,
@@ -365,47 +358,15 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         )
 
     async def api_epoch_analysis(request: Request) -> JSONResponse:
-        """Return the analysis report for one epoch.
+        """``GET /api/epoch/{id}/analysis`` — the analysis report payload.
 
-        Returns ``{ epoch_id, analysis_md, analysis_html_inline,
-        analysis_html_available }``. ``analysis_html_inline`` is the
-        paper-styled HTML fragment (self-contained inline CSS, inline
-        SVG figures) the dashboard can drop directly into the Epoch
-        view's Analysis section — same renderer as the standalone
-        ``analysis.html`` so both surfaces look like a paper. The raw
-        markdown ``analysis_md`` is still returned for backward
-        compatibility with older frontends that did their own minimal
-        rendering.
+        Shape + rendering semantics live on the reader
+        (:func:`zicato.query.build_epoch_analysis`).
         """
         epoch_id = request.path_params["epoch_id"]
         if not _is_safe_id(epoch_id):
             return JSONResponse({"error": "invalid epoch id"}, status_code=400)
-        analysis_md_path = paths.epochs / epoch_id / "analysis.md"
-        analysis_html_path = paths.epochs / epoch_id / "analysis.html"
-        try:
-            analysis_md = analysis_md_path.read_text(encoding="utf-8")
-        except (FileNotFoundError, OSError):
-            analysis_md = ""
-
-        analysis_html_inline = ""
-        if analysis_md.strip():
-            try:
-                from zicato.analyzer.report import render_report_html_fragment
-                from zicato.analyzer.report_data import gather_epoch_report_data
-
-                data = gather_epoch_report_data(paths.root, epoch_id)
-                analysis_html_inline = render_report_html_fragment(epoch_id, analysis_md, data=data)
-            except Exception:  # noqa: BLE001 — fragment is best-effort
-                analysis_html_inline = ""
-
-        return JSONResponse(
-            {
-                "epoch_id": epoch_id,
-                "analysis_md": analysis_md,
-                "analysis_html_inline": analysis_html_inline,
-                "analysis_html_available": analysis_html_path.is_file(),
-            }
-        )
+        return JSONResponse(query.build_epoch_analysis(paths, epoch_id))
 
     async def api_epoch_analysis_html(request: Request) -> Response:
         """Serve the raw ``analysis.html`` for an epoch.
@@ -517,30 +478,8 @@ def _make_judge_run_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         entry_id = request.path_params["entry_id"]
         if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id) or not _is_safe_id(entry_id):
             return JSONResponse({"run_id": None, "judges": []}, status_code=200)
-        # Read the entry's loss.json to recover the canonical run_id —
-        # that is the key the index's judge_losses table is bound to.
-        loss_path = (
-            paths.epochs
-            / epoch_id
-            / "generations"
-            / generation_id
-            / "runs"
-            / entry_id
-            / "loss.json"
-        )
-        run_id: str | None = None
-        try:
-            loss = json.loads(loss_path.read_text(encoding="utf-8"))
-            if isinstance(loss, dict):
-                raw_run = loss.get("run_id")
-                if isinstance(raw_run, str) and raw_run:
-                    run_id = raw_run
-        except (FileNotFoundError, OSError, json.JSONDecodeError, ValueError):
-            run_id = None
-        if run_id is None:
-            run_id = entry_id  # Best-effort fallback: directory name.
-        result = query.build_per_judge_for_run(paths, run_id)
-        return JSONResponse(result)
+        run_id = query.resolve_run_id_for_entry(paths, epoch_id, generation_id, entry_id)
+        return JSONResponse(query.build_per_judge_for_run(paths, run_id))
 
     async def api_run_expectations(request: Request) -> JSONResponse:
         """Expectation outcomes for one run (L4)."""
@@ -918,17 +857,14 @@ def _make_conversation_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         gen = request.query_params.get("gen")
         entry = request.query_params.get("entry")
         epoch_q = request.query_params.get("epoch")
-        events_path: Path | None = None
-        if gen and entry and _is_safe_id(gen) and _is_safe_id(entry):
-            epoch_for = epoch_q if (epoch_q and _is_safe_id(epoch_q)) else ""
-            events_path = query.resolve_transcript_events(
-                paths, epoch_for, gen, entry, run_id=run_id
-            )
-            if events_path is None:
-                # Strict to the entry's own run dir — never a sibling's.
-                events_path = query.find_generation_entry_events(paths, gen, entry)
-        if events_path is None:
-            events_path = query.find_run_events_path(paths, run_id)
+        triple_ok = bool(gen and entry and _is_safe_id(gen) and _is_safe_id(entry))
+        events_path = query.resolve_conversation(
+            paths,
+            run_id,
+            gen=gen if triple_ok else None,
+            entry=entry if triple_ok else None,
+            epoch=epoch_q if (epoch_q and _is_safe_id(epoch_q)) else "",
+        )
         if events_path is None:
             return JSONResponse({"error": f"no events for run {run_id}"}, status_code=404)
         try:
@@ -949,122 +885,48 @@ def _make_conversation_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
                 {"error": "transcript reconstruction unavailable"},
                 status_code=503,
             )
-        result = _build_matchup_conversations(paths, entry_id)
+        result = query.build_matchup_conversations(
+            paths, entry_id, reconstruct=reconstruct_transcript
+        )
         return JSONResponse(result)
 
     async def api_run_transcript(request: Request) -> Response:
         """Reconstruct the transcript for one ``(epoch, gen, entry)`` run.
 
-        Powers the L4 conversation diff: the focused-run side fetches the
-        transcript via this endpoint, and the compare side fetches it
-        again with the picker's selected generation. Returns the same
-        :class:`Transcript` ``.to_dict()`` shape as ``/api/conversation``
-        plus the resolved coordinates so the frontend can label the
-        column without a second lookup. Always answers 200 with an empty
-        transcript when the run is absent — the frontend renders a
-        graceful empty column rather than a hard 404, matching the
-        zero-turn-complete-run path the matchup endpoint already takes.
+        Powers the L4 conversation diff; resolution + coordinate-stamping
+        semantics live on the reader
+        (:func:`zicato.query.build_run_transcript`). Always answers 200 —
+        an invalid coordinate, an absent run, or a failed reconstruction
+        each degrade to the same-shaped empty transcript.
         """
         epoch_id = request.path_params["epoch_id"]
         generation_id = request.path_params["generation_id"]
         entry_id = request.path_params["entry_id"]
         if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id) or not _is_safe_id(entry_id):
             return JSONResponse(
-                {
-                    "epoch_id": epoch_id,
-                    "generation_id": generation_id,
-                    "entry_id": entry_id,
-                    "run_id": None,
-                    "turns": [],
-                    "annotations": [],
-                    "event_count": 0,
-                    "complete": False,
-                    "error": "invalid epoch/generation/entry id",
-                },
+                query.empty_run_transcript(
+                    epoch_id,
+                    generation_id,
+                    entry_id,
+                    error="invalid epoch/generation/entry id",
+                ),
                 status_code=200,
             )
-        if not _HAVE_TRANSCRIPT:
-            return JSONResponse(
-                {
-                    "epoch_id": epoch_id,
-                    "generation_id": generation_id,
-                    "entry_id": entry_id,
-                    "run_id": None,
-                    "turns": [],
-                    "annotations": [],
-                    "event_count": 0,
-                    "complete": False,
-                    "error": "transcript reconstruction unavailable",
-                },
-                status_code=200,
-            )
-        # PRIMARY resolution: the deterministic (epoch, gen, entry) triple
-        # → ``generations/<gen>/runs/<entry>/events.jsonl``, strict to this
-        # entry's OWN run directory (never a sibling's). An optional
-        # ``?run=`` / ``?match=`` disambiguator selects a specific rung when
-        # a gen×entry has multiple runs (successive-halving re-races);
-        # without one we DEFAULT to the entry's own canonical events file.
-        # This inverts the old run_id-first order: the triple — which the
-        # pane always knows — is now the primary key, eliminating the
-        # run_id-reuse / index-only / multiple-records failure class.
         run_q = request.query_params.get("run")
         match_q = request.query_params.get("match")
         run_q = run_q if (run_q and _is_safe_id(run_q)) else None
         match_q = match_q if (match_q and _is_safe_id(match_q)) else None
-        events_path = query.resolve_transcript_events(
-            paths,
-            epoch_id,
-            generation_id,
-            entry_id,
-            run_id=run_q,
-            match_id=match_q,
+        return JSONResponse(
+            query.build_run_transcript(
+                paths,
+                epoch_id,
+                generation_id,
+                entry_id,
+                run_id=run_q,
+                match_id=match_q,
+                reconstruct=reconstruct_transcript if _HAVE_TRANSCRIPT else None,
+            )
         )
-        if events_path is None:
-            # Genuine absence: no events.jsonl exists for this gen×entry at
-            # all. Return an honest empty 200 (the frontend renders the
-            # "could not be reconstructed" message) rather than a hard 404,
-            # matching the zero-turn-complete-run path.
-            return JSONResponse(
-                {
-                    "epoch_id": epoch_id,
-                    "generation_id": generation_id,
-                    "entry_id": entry_id,
-                    "run_id": run_q,
-                    "turns": [],
-                    "annotations": [],
-                    "event_count": 0,
-                    "complete": False,
-                },
-                status_code=200,
-            )
-        run_id = run_q or entry_id
-        try:
-            transcript = reconstruct_transcript(events_path, partial_ok=True)
-            payload = transcript.to_dict()
-        except Exception as exc:  # noqa: BLE001 — best-effort, never 500
-            return JSONResponse(
-                {
-                    "epoch_id": epoch_id,
-                    "generation_id": generation_id,
-                    "entry_id": entry_id,
-                    "run_id": run_id,
-                    "turns": [],
-                    "annotations": [],
-                    "event_count": 0,
-                    "complete": False,
-                    "error": f"transcript failed: {exc}",
-                },
-                status_code=200,
-            )
-        # The reconstructor sets its own run_id from the events stream;
-        # surface the directory-name run_id explicitly when the reducer
-        # produced no value (empty file).
-        if not payload.get("run_id"):
-            payload["run_id"] = run_id
-        payload["epoch_id"] = epoch_id
-        payload["generation_id"] = generation_id
-        payload["entry_id"] = entry_id
-        return JSONResponse(payload)
 
     # -- control endpoints (POST) ------------------------------------
 
@@ -1281,171 +1143,3 @@ def _dashboard_version() -> str:
         return version("zicato")
     except Exception:
         return "zicato-dashboard"
-
-
-def _build_matchup_conversations(paths: WorkspacePaths, entry_id: str) -> dict[str, Any]:
-    """Locate and reconstruct the champion + challenger conversations.
-
-    For a board entry, the active tournament names a champion-side
-    (``parent``) generation and a challenger-side (``child``) generation;
-    each ran the entry once. This finds both runs' ``events.jsonl`` files
-    and reconstructs both transcripts so the UI can render them side by
-    side.
-
-    Fast-mode caveat: in a fast-mode round the champion side is NOT
-    actually executed — its ``status_raw`` is ``"cached"`` and the per-
-    entry scalar is reused from the cached aggregate. The matching
-    transcript on disk is the one this generation produced when it was
-    the live challenger in its *original* tournament, persisted under
-    its own generation directory. The active-tournament's per-entry
-    ``generation_id`` (stamped by :func:`_normalize_tournament_statuses`
-    from the tournament-level parent / child fields) is the correct
-    lookup key — using it routes cached sides through the cached
-    generation's own runs directory, and live sides through the
-    in-progress round's runs directory, in one uniform code path.
-    """
-    result: dict[str, Any] = {"champion": None, "challenger": None}
-    tournament = query.read_active_tournament_dict(paths)
-    if not isinstance(tournament, dict):
-        return result
-
-    # Index per-(entry, side) so the side resolver can read both the
-    # generation_id and the producer's status spelling. The normalizer
-    # has already stamped a generation_id on every entry — but we keep a
-    # tournament-level fallback for older payloads (or a producer that
-    # writes only the tournament-level fields).
-    entries_index: dict[tuple[str, str], dict[str, Any]] = {}
-    raw_entries = tournament.get("entries")
-    if isinstance(raw_entries, list):
-        for entry in raw_entries:
-            if not isinstance(entry, dict):
-                continue
-            eid = entry.get("entry_id")
-            side = entry.get("side")
-            if isinstance(eid, str) and isinstance(side, str):
-                entries_index[(eid, side)] = entry
-
-    tournament_parent_gen = tournament.get("parent_generation_id")
-    tournament_child_gen = tournament.get("child_generation_id")
-
-    def _resolve_generation_id(side: str, fallback: Any) -> Any:
-        # Prefer the per-entry generation_id (stamped explicitly so a
-        # cached row can carry a generation distinct from the current
-        # round's champion-of-this-round id, if those ever differ). Fall
-        # back to the tournament-level field for legacy payloads.
-        entry = entries_index.get((entry_id, side))
-        if entry is not None:
-            gen_id = entry.get("generation_id")
-            if isinstance(gen_id, str) and gen_id:
-                return gen_id
-        return fallback
-
-    def _side(side: str, generation_id: Any) -> dict[str, Any] | None:
-        if not isinstance(generation_id, str) or not generation_id:
-            return None
-        located = query.find_generation_run(paths, generation_id, entry_id)
-        if located is None:
-            return {
-                "run_id": None,
-                "generation_id": generation_id,
-                "transcript": None,
-                "result": None,
-            }
-        run_id, events_path = located
-        transcript: Any = None
-        if _HAVE_TRANSCRIPT and reconstruct_transcript is not None:
-            try:
-                transcript = reconstruct_transcript(events_path, partial_ok=True).to_dict()
-            except Exception as exc:
-                transcript = {"error": f"transcript failed: {exc}"}
-        # Surface a small projection of the sibling ``loss.json`` so the
-        # frontend can render an honest "timed out" panel for a run that
-        # produced no transcript turns. Without this the dashboard's
-        # zero-turn complete-run path falls back to "This run produced
-        # no transcript turns" — accurate but useless to the operator.
-        result = _read_run_result(events_path.parent)
-        return {
-            "run_id": run_id,
-            "generation_id": generation_id,
-            "transcript": transcript,
-            "result": result,
-        }
-
-    champion_gen = _resolve_generation_id("parent", tournament_parent_gen)
-    challenger_gen = _resolve_generation_id("child", tournament_child_gen)
-    result["champion"] = _side("parent", champion_gen)
-    result["challenger"] = _side("child", challenger_gen)
-    return result
-
-
-def _read_run_result(run_dir: Path) -> dict[str, Any] | None:
-    """Project a sibling ``loss.json`` into a small dashboard-friendly shape.
-
-    The frontend needs enough to render an honest "what happened" panel
-    for a zero-turn complete run — wall-clock budget exceeded, runtime,
-    pass/fail verdict, expectation outcome, and the user-visible metric
-    counts (LLM calls, output chars, anything else loss.json already
-    publicly exposes). The full ``LossProfile`` would leak internal
-    fields (the drift scalar's weight breakdown, schema versioning, the
-    canonical adk session id) that the dashboard does not render today;
-    project to the subset that matters.
-
-    Returns ``None`` when the run directory has no readable
-    ``loss.json`` — the frontend then falls back to the existing
-    "This run produced no transcript turns" message.
-    """
-    if not isinstance(run_dir, Path):
-        return None
-    loss_path = run_dir / "loss.json"
-    if not loss_path.exists():
-        return None
-    try:
-        with open(loss_path, encoding="utf-8") as f:
-            loss = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(loss, dict):
-        return None
-
-    expectation: dict[str, Any] | None = None
-    raw_exp = loss.get("expectation_result")
-    if isinstance(raw_exp, dict):
-        expectation = {
-            "kind": str(raw_exp.get("kind") or ""),
-            "passed": bool(raw_exp.get("passed", False)),
-            "detail": str(raw_exp.get("detail") or ""),
-        }
-
-    metric_counts: list[dict[str, Any]] = []
-    raw_metrics = loss.get("metric_counts")
-    if isinstance(raw_metrics, list):
-        for m in raw_metrics:
-            if not isinstance(m, dict):
-                continue
-            name = m.get("name")
-            count = m.get("count")
-            if not isinstance(name, str) or count is None:
-                continue
-            try:
-                count_f = float(count)
-            except (TypeError, ValueError):
-                continue
-            metric_counts.append(
-                {
-                    "name": name,
-                    "count": count_f,
-                    "severity": str(m.get("severity") or ""),
-                }
-            )
-
-    pass_fail = loss.get("pass_fail")
-    return {
-        "wall_clock_budget_exceeded": bool(loss.get("wall_clock_budget_exceeded", False)),
-        "runtime_ms": int(loss.get("runtime_ms") or 0),
-        "pass_fail": None if pass_fail is None else bool(pass_fail),
-        "expectation_result": expectation,
-        "metric_counts": metric_counts,
-        "drift_loss": (
-            float(loss["drift_loss"]) if isinstance(loss.get("drift_loss"), int | float) else None
-        ),
-    }

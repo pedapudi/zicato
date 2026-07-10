@@ -25,6 +25,9 @@ from zicato.query._sqlite import (
     _opt_json,
     _query,
 )
+from zicato.query.conversations_view import (
+    build_matchup_conversations,
+)
 from zicato.query.decisions import (
     PROMOTED_DECISIONS as _PROMOTED_DECISIONS,
 )
@@ -46,6 +49,7 @@ from zicato.query.epoch_view import (
     _read_text_best_effort,
     _stable_unit,
     _tournament_block_from_scoring,
+    build_epoch_analysis,
     build_epoch_view,
     build_epochs_summary,
     compute_board_split,
@@ -68,6 +72,7 @@ from zicato.query.events_index import (
     find_generation_entry_events,
     find_generation_run,
     find_run_events_path,
+    read_run_result,
     resolve_transcript_events,
 )
 from zicato.query.gate_view import (
@@ -89,6 +94,10 @@ from zicato.query.hypothesis_view import (
     build_calibration_trend,
     build_hypothesis_accuracy,
 )
+from zicato.query.journal_view import (
+    read_epoch_journal,
+    read_epoch_journal_md,
+)
 from zicato.query.judge_view import (
     SEARCH_LIMIT_PER_CATEGORY,
     _collect_judge_names_from_board_file,
@@ -106,6 +115,7 @@ from zicato.query.judge_view import (
     build_run_header,
     build_search_results,
     build_workspace_identity,
+    resolve_run_id_for_entry,
 )
 from zicato.query.lineage_view import (
     build_lineage_view,
@@ -192,6 +202,11 @@ from zicato.query.tournament_view import (
     build_matchup_detail,
     build_matchup_grid,
     build_tournament_structure,
+)
+from zicato.query.transcript_view import (
+    build_run_transcript,
+    empty_run_transcript,
+    resolve_conversation,
 )
 
 __all__ = [
@@ -306,6 +321,8 @@ __all__ = [
     "build_round_pipeline",
     "build_per_judge_comparison",
     "build_per_judge_for_generation",
+    "build_epoch_analysis",
+    "build_matchup_conversations",
     "build_per_judge_for_run",
     "build_per_judge_trend",
     "build_run_header",
@@ -321,6 +338,8 @@ __all__ = [
     "compute_board_split",
     "compute_epoch_delta_summary",
     "find_generation_entry_events",
+    "build_run_transcript",
+    "empty_run_transcript",
     "find_generation_run",
     "find_run_events_path",
     "list_epoch_ids",
@@ -331,10 +350,15 @@ __all__ = [
     "read_adk_session_id_from_events",
     "read_current_epoch",
     "read_epoch_analysis_html",
+    "read_epoch_journal",
+    "read_epoch_journal_md",
+    "read_run_result",
     "read_heartbeat_dict",
     "read_lock_dict",
     "read_meta_loop_session_id",
     "read_paused",
+    "resolve_conversation",
+    "resolve_run_id_for_entry",
     "resolve_transcript_events",
     "to_snake",
 ]
