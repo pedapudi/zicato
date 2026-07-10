@@ -994,7 +994,6 @@ export class LiveController {
       const model = elimModel(st);
       if (!model || !model.hasMatches) return null;
       const isDouble = structure === 'double_elim';
-      const bands = model.winners.concat(Array.isArray(model.losers) ? model.losers : []);
       if (isDouble) {
         // DOUBLE-ELIM hero: the refined orthogonal-pipe elimFlow combo WITH the
         // WB/LB bands — the SAME figure the single-round page leads with by
@@ -1006,7 +1005,8 @@ export class LiveController {
         // the hero width (`responsive` → svg.dn-elimflow-hero cap governs), a wide
         // figure filling to its cap — matching racing's full-width treatment.
         const opts = {
-          winners: bands, championId: model.championId, benchmarkId: model.benchmarkId,
+          rounds: model.rounds, gen_states: model.gen_states,
+          championId: model.championId, benchmarkId: model.benchmarkId,
           live: model.live, gateState: model.gateState, responsive: true, onCompetitor,
         };
         return { node: elimFlow(opts), digest: 'elim|' + elimDigest(model) };
@@ -1015,7 +1015,7 @@ export class LiveController {
       // FULL-WIDTH HERO: aspect-locked + responsive; as a SQUARE figure the
       // svg.dn-elimradial-hero cap centres it under the cap (margin-inline:auto).
       const opts = {
-        rounds: bands, championId: model.championId, benchmarkId: model.benchmarkId,
+        rounds: model.rounds, championId: model.championId, benchmarkId: model.benchmarkId,
         gateState: model.gateState, live: model.live, double: false, mini: true,
         responsive: true, onCompetitor,
       };

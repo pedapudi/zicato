@@ -149,6 +149,23 @@ pub struct ActiveTournament {
     pub partial_aggregate: Option<serde_json::Value>,
     #[serde(default)]
     pub predicted_verdict: Option<String>,
+    /// The tournament structure token (`"single_elim"` / `"double_elim"` /
+    /// `"swiss"` / `"racing"` / `"gauntlet"`). Read so the elim fold
+    /// (`crate::elim_states`) knows when to attach the served elim model;
+    /// omitted from the payload when the producer never wrote it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structure: Option<String>,
+    /// The raw published `rounds[]` blob, passed through opaquely. For an
+    /// elim structure it is replaced by the CANONICALIZED copy (sorted /
+    /// deduped / `bracket_side`+`loser`-stamped) before serving — the
+    /// Rust half of the Python `attach_elim_states` wiring.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rounds: Option<serde_json::Value>,
+    /// The DERIVED per-generation elim states (`crate::elim_states`) —
+    /// never read from disk, always recomputed from `rounds` at serve
+    /// time, so a producer cannot ship a stale fold.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gen_states: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

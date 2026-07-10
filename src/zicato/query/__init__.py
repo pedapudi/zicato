@@ -198,10 +198,12 @@ from zicato.query.tournament_view import (
     _structure_from_loss_files,
     _tournament_id_for,
     _verdict,
+    attach_elim_states,
     build_bracket,
     build_matchup_detail,
     build_matchup_grid,
     build_tournament_structure,
+    derive_elim_states,
 )
 from zicato.query.transcript_view import (
     build_run_transcript,
@@ -298,6 +300,7 @@ __all__ = [
     "_tournament_id_for",
     "_utc_now",
     "_verdict",
+    "attach_elim_states",
     "build_bracket",
     "build_contract_diff",
     "build_drift_movements",
@@ -332,6 +335,7 @@ __all__ = [
     "build_snapshot",
     "build_tournament_cost",
     "build_tournament_structure",
+    "derive_elim_states",
     "build_workspace_identity",
     "build_workspace_view",
     "clamp_run_log_limit",

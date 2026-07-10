@@ -17,6 +17,7 @@ const {
   SE_STRUCT, SWISS_STRUCT, RACING_STRUCT, structFixture, installFixtureMap, LIVE_RACING,
   liveRacingField, liveElimField, RC_EPOCH, RACING_TOURNAMENTS, HERO_EPOCH,
 } = await import('./fixtures.mjs');
+const mock = await import('./mock_server.mjs');
 
 // ====================================================================
 // LIVE-STATUS — surfacing an ACTIVE run for ANY tournament structure
@@ -888,7 +889,7 @@ test('projected (elim): an in-flight match re-ranks standings on the projected s
     },
   });
   const model = STRUCT.buildLiveElimModel({
-    at, heartbeat: { phase: 'tournament:round_0:WB-R0-0', generation_id: 'v1' },
+    at: mock.attachElimStates(at), heartbeat: { phase: 'tournament:round_0:WB-R0-0', generation_id: 'v1' },
     activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.6 }],
     epochGens: ['v0', 'v1'],
   });
@@ -897,7 +898,7 @@ test('projected (elim): an in-flight match re-ranks standings on the projected s
   assertEqual(top.in_flight, true, 'the leading row is marked in-flight/projected');
   // the elim flow renders the projected treatment on the lane.
   const em = STRUCT.elimModel(model);
-  const node = svg.elimFlow({ winners: em.winners, championId: em.championId, benchmarkId: em.benchmarkId, live: true, gateState: em.gateState });
+  const node = svg.elimFlow({ rounds: em.rounds, gen_states: em.gen_states, championId: em.championId, benchmarkId: em.benchmarkId, live: true, gateState: em.gateState });
   assert(allByClass(node, 'dn-proj').length >= 1, 'the elim flow marks the in-flight lane/node dn-proj');
   assert(/~proj/.test(node.textContent), 'the projected elim lane reads ~proj');
 });
@@ -909,7 +910,7 @@ test('projected (standings table): an in-flight row renders the projected treatm
     projected: { v1: { scalar: 1.0, boards_done: 3, boards_total: 5, pass_rate: 1.0 } },
   });
   const model = STRUCT.buildLiveElimModel({
-    at, heartbeat: { phase: 'tournament:round_0:WB-R0-0', generation_id: 'v1' },
+    at: mock.attachElimStates(at), heartbeat: { phase: 'tournament:round_0:WB-R0-0', generation_id: 'v1' },
     activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.6 }],
     epochGens: ['v0', 'v1'],
   });
@@ -1009,13 +1010,13 @@ test('swiss (completed): a swiss winner that does NOT beat the incumbent is NOT 
 // ---- completed ELIM → the bracket-as-FLOW (elimBracket retired) -----
 
 test('elim (completed): single-elim → elimModel + the bracket-as-FLOW with a champion-gate', () => {
-  const st = STRUCT.normalizeStructure(SE_STRUCT, false);
+  const st = STRUCT.normalizeStructure(mock.attachElimStates({ ...SE_STRUCT }), false);
   const model = STRUCT.elimModel(st);
   assert(model && model.hasMatches, 'a single-elim model was derived');
   assertEqual(model.losers, null, 'single-elim has NO losers band');
   assertEqual(model.winners.length, 2, 'two winners-bracket rounds (semifinal + final)');
   assertEqual(typeof svg.elimBracket, 'undefined', 'the elimBracket renderer is deleted (retired)');
-  const node = svg.elimFlow({ winners: model.winners, championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState, onCompetitor() {} });
+  const node = svg.elimFlow({ rounds: model.rounds, gen_states: model.gen_states, championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState, onCompetitor() {} });
   assertEqual(node.localName, 'svg', 'the flow is an SVG');
   assertEqual(node.getAttribute('width'), '100%', 'fit-to-width');
   assert(node.textContent.includes('Semifinal') && node.textContent.includes('Final'), 'both rounds render as columns');
@@ -1032,10 +1033,10 @@ test('elim (completed): double-elim → ONE flow SVG carrying the losers’ band
   DE.rounds.push({ round_index: 2, label: 'LB Round 1', matches: [
     { match_id: 'LB-R0-0', competitors: ['v0', 'v2'], winner: 'v0', decision: 'rejected', bracket_slot: 'LB-R0-0', bye: false },
   ] });
-  const st = STRUCT.normalizeStructure(DE, false);
+  const st = STRUCT.normalizeStructure(mock.attachElimStates(DE), false);
   const model = STRUCT.elimModel(st);
   assert(Array.isArray(model.losers) && model.losers.length >= 1, 'double-elim carries a losers band in the model');
-  const node = svg.elimFlow({ winners: model.winners.concat(model.losers), championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState, onCompetitor() {} });
+  const node = svg.elimFlow({ rounds: model.rounds, gen_states: model.gen_states, championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState, onCompetitor() {} });
   assert(/LB Round 1|LB R/i.test(node.textContent), 'the losers’ bracket round renders as a re-converging lane column');
   assert(node.textContent.includes('Semifinal'), 'the winners band still renders');
 });

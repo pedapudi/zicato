@@ -8,6 +8,7 @@
 pub mod action_log;
 pub mod diff_containment;
 pub mod divergence;
+pub mod elim_states;
 pub mod epoch;
 pub mod fold_stats;
 pub mod index_db;

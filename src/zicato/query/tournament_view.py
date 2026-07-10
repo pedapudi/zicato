@@ -265,16 +265,22 @@ def _bracket_from_conn(
         # The per-round CHAMPION — id + loss + eval provenance (cached vs
         # re-run) read CANONICALLY from the records, so the frontend reads the
         # champion spine instead of reconstructing it.
+        # An elim record is enriched with the served elim model (sorted
+        # rounds + bracket_side/loser + gen_states) — the per-round minis
+        # read these entries by tournamentRef, so the model must ride here
+        # exactly as it does on /api/tournament-structure (DQ1).
         tournaments.append(
-            {
-                "tournament_id": r["tournament_id"],
-                "structure": structure,
-                "structure_params": params,
-                "competitors": comp_list,
-                "rounds": rounds if isinstance(rounds, list) else [],
-                "standings": standings if isinstance(standings, list) else [],
-                "champion": _champion_for(r, comp_list),
-            }
+            attach_elim_states(
+                {
+                    "tournament_id": r["tournament_id"],
+                    "structure": structure,
+                    "structure_params": params,
+                    "competitors": comp_list,
+                    "rounds": rounds if isinstance(rounds, list) else [],
+                    "standings": standings if isinstance(standings, list) else [],
+                    "champion": _champion_for(r, comp_list),
+                }
+            )
         )
 
     # No tournament ROW resolved a non-gauntlet structure — e.g. a run torn
@@ -770,23 +776,245 @@ def _structure_envelope(
 
     Every resolver (index / active / loss-files) projects its raw fields
     through here so the payload shape — and the type-guarded degrades —
-    live in exactly one place.
+    live in exactly one place. An elim envelope is enriched with the
+    served elim model (:func:`attach_elim_states` — sorted rounds +
+    ``bracket_side``/``loser`` + top-level ``gen_states``).
     """
-    return {
-        "epoch_id": epoch_id,
-        "tournament_id": tournament_id,
-        "structure": _normalize_structure(structure),
-        "structure_params": structure_params if isinstance(structure_params, dict) else {},
-        "competitors": competitors if isinstance(competitors, list) else [],
-        "rounds": rounds if isinstance(rounds, list) else [],
-        "standings": standings if isinstance(standings, list) else [],
-        "field_status": field_status if isinstance(field_status, list) else [],
-        "source": source,
-    }
+    return attach_elim_states(
+        {
+            "epoch_id": epoch_id,
+            "tournament_id": tournament_id,
+            "structure": _normalize_structure(structure),
+            "structure_params": structure_params if isinstance(structure_params, dict) else {},
+            "competitors": competitors if isinstance(competitors, list) else [],
+            "rounds": rounds if isinstance(rounds, list) else [],
+            "standings": standings if isinstance(standings, list) else [],
+            "field_status": field_status if isinstance(field_status, list) else [],
+            "source": source,
+        }
+    )
 
 
 def _empty_tournament_structure(epoch_id: str, tournament_id: str, source: str) -> dict[str, Any]:
     return _structure_envelope(epoch_id, tournament_id, source)
+
+
+# ---------------------------------------------------------------------------
+# The served ELIM MODEL — rounds canonicalized + per-generation states (DQ1)
+# ---------------------------------------------------------------------------
+
+_ELIM_STRUCTURES = frozenset({"single_elim", "double_elim"})
+
+
+def _round_sort_key(r: dict[str, Any], position: int) -> tuple[Any, int]:
+    """The temporal sort key: ``round_index`` (legacy) / ``stage_index``.
+
+    The persisted within-tournament stage key is ``stage_index``
+    (selection/strategy.py); ``round_index`` is accepted for records
+    written before the rename. A round with neither sorts stably by its
+    original position.
+    """
+    for key in ("round_index", "stage_index"):
+        v = r.get(key)
+        if isinstance(v, bool):  # bool is an int subclass — never a round index
+            continue
+        if isinstance(v, int | float):
+            return (v, position)
+    return (position, position)
+
+
+def _match_competitors(m: dict[str, Any]) -> list[str]:
+    comps = m.get("competitors")
+    if not isinstance(comps, list):
+        return []
+    out: list[str] = []
+    for c in comps:
+        s = str(c) if c is not None else ""
+        if s and s != "tbd":
+            out.append(s)
+    return out
+
+
+def _match_pending(m: dict[str, Any], winner: str | None) -> bool:
+    if m.get("pending"):
+        return True
+    return not winner and not m.get("bye") and not m.get("decision")
+
+
+def derive_elim_states(rounds: Any) -> dict[str, Any]:
+    """The SERVER-SIDE elim fold — the model the bracket figures render.
+
+    The client (``svg.js`` elimFlow, and its radial twin) used to derive
+    this whole model per render: re-sorting mis-ordered caller columns,
+    de-duplicating backend-duplicated matches, classifying each loss as an
+    elimination vs a winners→losers drop, and guarding against phantom
+    eliminations. That derivation was a DQ1 breach living behind an
+    under-specified payload; this fold is it, moved server-side, so every
+    consumer (Python service, Rust supervisor, the node mock) serves ONE
+    identical model. Ported line-for-line into
+    ``crates/supervisor/src/elim_states.rs`` — the shared fixture
+    ``tests/data/elim_states_fixture.json`` pins the two folds together.
+
+    Input: the raw ``rounds[]`` blob (each round ``{round_index? /
+    stage_index?, label?, matches: [{competitors, winner?, bye?,
+    decision?, pending?, bracket_slot?, projected?, ...}]}``).
+
+    Output ``{"rounds": [...], "gen_states": [...]}``:
+
+    * ``rounds`` — PRE-SORTED by round index (temporal WB → LB → GF; a
+      round without an index keeps its position). Every round gains
+      ``bracket_side`` (``"WB"``/``"LB"`` — LB when any match's
+      ``bracket_slot`` starts with ``LB``); its matches are DEDUPED (key =
+      ``bracket_slot`` + sorted competitors, keeping the MOST-DECIDED
+      duplicate) and each match gains ``loser`` (the non-winner of a
+      decided two-sided match; ``null`` = undecided / bye). Round
+      references below are COLUMN indices into this sorted array.
+    * ``gen_states`` — one record per competitor, first-seen order:
+      ``{generation_id, played_rounds, advanced_rounds, lost_rounds,
+      eliminated_at_round, side_by_round, lb_entry_round, projected}``.
+      The elimination-vs-drop rule is the client's, verbatim: a loss with
+      NO later appearance is an elimination there; a loss followed by a
+      later appearance is a winners→losers drop (the second life).
+      ``null`` = undecided (DQ2); ``side_by_round`` keys are stringified
+      column indices (JSON object keys).
+
+    Pure + best-effort: a malformed blob degrades to empty lists, never
+    raises (DQ3).
+    """
+    raw = [r for r in (rounds if isinstance(rounds, list) else []) if isinstance(r, dict)]
+    ordered = sorted(range(len(raw)), key=lambda i: _round_sort_key(raw[i], i))
+
+    played: dict[str, set[int]] = {}
+    advanced: dict[str, set[int]] = {}
+    lost_at: dict[str, set[int]] = {}
+    side_of: dict[str, dict[int, str]] = {}
+    lb_entry: dict[str, int | None] = {}
+    projected: dict[str, Any] = {}
+    order: list[str] = []
+
+    def _ensure(gid: str) -> None:
+        if gid not in played:
+            played[gid] = set()
+            advanced[gid] = set()
+            lost_at[gid] = set()
+            side_of[gid] = {}
+            lb_entry[gid] = None
+            order.append(gid)
+
+    out_rounds: list[dict[str, Any]] = []
+    for ci, ri in enumerate(ordered):
+        r = raw[ri]
+        matches_in = [m for m in r.get("matches") or [] if isinstance(m, dict)]
+
+        # ── DEDUPE (ex-client): a published round can carry the SAME match
+        # twice (identical bracket_slot + competitor pair). Key on the slot +
+        # the sorted competitor set; keep the MOST-DECIDED instance (a settled
+        # winner beats a still-pending duplicate). Distinct matches sharing a
+        # column keep distinct keys, so normal data passes through untouched.
+        by_key: dict[str, dict[str, Any]] = {}
+        key_order: list[str] = []
+        for m in matches_in:
+            comps = _match_competitors(m)
+            winner = str(m["winner"]) if m.get("winner") else None
+            key = str(m.get("bracket_slot") or "") + "|" + "/".join(sorted(comps))
+            prev = by_key.get(key)
+            if prev is None:
+                by_key[key] = m
+                key_order.append(key)
+            else:
+                prev_winner = str(prev["winner"]) if prev.get("winner") else None
+                if _match_pending(prev, prev_winner) and not _match_pending(m, winner):
+                    by_key[key] = m
+        deduped = [by_key[k] for k in key_order]
+
+        any_lb = False
+        out_matches: list[dict[str, Any]] = []
+        for m in deduped:
+            comps = _match_competitors(m)
+            winner = str(m["winner"]) if m.get("winner") else None
+            pending = _match_pending(m, winner)
+            is_lb = str(m.get("bracket_slot") or "").startswith("LB")
+            if is_lb:
+                any_lb = True
+            bye = bool(m.get("bye"))
+            loser: str | None = None
+            if winner and not bye and len(comps) >= 2:
+                loser = next((c for c in comps if c != winner), None)
+
+            proj_map = m.get("projected") if isinstance(m.get("projected"), dict) else None
+            for c in comps:
+                _ensure(c)
+                played[c].add(ci)
+                side_of[c][ci] = "LB" if is_lb else "WB"
+                if is_lb and lb_entry[c] is None:
+                    lb_entry[c] = ci
+                if proj_map and pending:
+                    p = proj_map.get(c)
+                    if (
+                        isinstance(p, dict)
+                        and isinstance(p.get("scalar"), int | float)
+                        and not isinstance(p.get("scalar"), bool)
+                    ):
+                        projected[c] = p
+                if pending:
+                    continue
+                if bye or (winner and c == winner):
+                    advanced[c].add(ci)
+                elif winner:
+                    lost_at[c].add(ci)
+
+            out_m = dict(m)
+            out_m["loser"] = loser
+            out_matches.append(out_m)
+
+        out_r = dict(r)
+        out_r["matches"] = out_matches
+        out_r["bracket_side"] = "LB" if any_lb else "WB"
+        out_rounds.append(out_r)
+
+    # ── ELIMINATION vs DROP (ex-client): eliminated at the first loss with
+    # no LATER appearance; an earlier loss followed by a later column is a
+    # winners→losers drop, never a termination (no phantom ✕ in the WB).
+    gen_states: list[dict[str, Any]] = []
+    for gid in order:
+        lost_sorted = sorted(lost_at[gid])
+        last_played = max(played[gid]) if played[gid] else -1
+        eliminated_at: int | None = None
+        for ci in lost_sorted:
+            if ci >= last_played:
+                eliminated_at = ci
+                break
+        gen_states.append(
+            {
+                "generation_id": gid,
+                "played_rounds": sorted(played[gid]),
+                "advanced_rounds": sorted(advanced[gid]),
+                "lost_rounds": lost_sorted,
+                "eliminated_at_round": eliminated_at,
+                "side_by_round": {str(ci): side for ci, side in sorted(side_of[gid].items())},
+                "lb_entry_round": lb_entry[gid],
+                "projected": projected.get(gid),
+            }
+        )
+
+    return {"rounds": out_rounds, "gen_states": gen_states}
+
+
+def attach_elim_states(payload: dict[str, Any]) -> dict[str, Any]:
+    """Enrich an elim payload with the served elim model, in place.
+
+    For a ``single_elim`` / ``double_elim`` payload carrying a ``rounds``
+    list: replaces ``rounds`` with the canonicalized (sorted / deduped /
+    ``loser``+``bracket_side``-stamped) copy and attaches the top-level
+    ``gen_states`` fold. Any other payload passes through untouched —
+    the enrichment is KEY-ABSENT for non-elim structures (additive).
+    """
+    structure = _normalize_structure(payload.get("structure"))
+    if structure in _ELIM_STRUCTURES and isinstance(payload.get("rounds"), list):
+        derived = derive_elim_states(payload["rounds"])
+        payload["rounds"] = derived["rounds"]
+        payload["gen_states"] = derived["gen_states"]
+    return payload
 
 
 def _scalar_pair(

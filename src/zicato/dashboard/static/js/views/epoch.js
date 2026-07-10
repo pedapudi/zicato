@@ -290,6 +290,8 @@ export async function render(host, ctx, params) {
             structure: r.tournamentRef.structure || structure,
             structure_params: r.tournamentRef.structure_params || params,
             competitors: r.tournamentRef.competitors, rounds: r.tournamentRef.rounds,
+            // the SERVED elim model rides the /api/tournaments record too.
+            gen_states: r.tournamentRef.gen_states,
             standings: r.tournamentRef.standings,
             champion_lineage: bracket && bracket.champion_lineage, source: 'index',
           }, false)
@@ -322,7 +324,8 @@ export async function render(host, ctx, params) {
       } else if (structure === 'single_elim' || structure === 'double_elim') {
         const m = single && elimOver ? elimOver.model : (stFromRef ? elimModel(stFromRef) : null);
         if (m && m.hasMatches !== false && m.winners.length) return svg.elimFlow({
-          winners: m.winners, championId: m.championId, benchmarkId: m.benchmarkId,
+          rounds: m.rounds, gen_states: m.gen_states,
+          championId: m.championId, benchmarkId: m.benchmarkId,
           gateState: m.gateState, live: m.live, onCompetitor: open,
         });
       }

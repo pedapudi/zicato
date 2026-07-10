@@ -16,6 +16,7 @@ const {
   FIXTURE, installFetch, freshState, allByClass, readCssAsync, readCss,
   svgsByClass, SE_STRUCT, structFixture, installFixtureMap,
 } = await import('./fixtures.mjs');
+const mock = await import('./mock_server.mjs');
 
 // ====================================================================
 // EVOLVE ROUNDS (champion-spine round model + timeline + drill-down + tree).
@@ -498,7 +499,8 @@ test('elimFlow convergence: two lanes meet at a match node; the winner continues
       { match_id: 'WB-R1-0', competitors: ['v0', 'v1'], winner: 'v1', decision: 'promoted', delta_scalar: -2.0, bracket_slot: 'WB-R1-0' },
     ] },
   ];
-  const node = svg.elimFlow({ winners, championId: 'v1', benchmarkId: 'v0', gateState: 'crowned', onCompetitor() {} });
+  const served = mock.deriveElimStates(winners);
+  const node = svg.elimFlow({ rounds: served.rounds, gen_states: served.gen_states, championId: 'v1', benchmarkId: 'v0', gateState: 'crowned', onCompetitor() {} });
   // a two-lane match CONVERGENCE node per decided match.
   const convs = allByClass(node, 'dn-elimflow-convnode');
   assert(convs.length >= 3, 'a convergence node per match (2 semis + 1 final)');
@@ -1451,7 +1453,8 @@ test('Task 3 — elimFlow: a DEGENERATE column with a DUPLICATE match (same brac
       { competitors: ['v7', 'v8'], winner: 'v7', decision: 'win', bracket_slot: 'WB-R0-1' },
     ] },
   ];
-  const flow = svg.elimFlow({ winners, championId: 'v5', benchmarkId: 'v6', gateState: 'crowned' });
+  const served = mock.deriveElimStates(winners);
+  const flow = svg.elimFlow({ rounds: served.rounds, gen_states: served.gen_states, championId: 'v5', benchmarkId: 'v6', gateState: 'crowned' });
   const nodes = allByClass(flow, 'dn-elimflow-convnode');
   // two DISTINCT matches → exactly two convergence nodes (the duplicate collapses).
   assertEqual(nodes.length, 2, `the duplicated WB-R0-0 collapses to one node; v7/v8 stays — 2 nodes total (got ${nodes.length})`);

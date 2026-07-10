@@ -7,7 +7,7 @@
 // dynamically importing this module, so the js/ module imports below only
 // ever evaluate against an installed DOM (same order as the monolith).
 
-import { roundTimelineFromFixtures, racingFieldFromFixtures, racingFieldFromBracket } from './mock_server.mjs';
+import { roundTimelineFromFixtures, racingFieldFromFixtures, racingFieldFromBracket, attachElimStates } from './mock_server.mjs';
 export { roundTimelineFromFixtures, racingFieldFromFixtures, racingFieldFromBracket };
 
 export const router = await import('../js/router.js');
@@ -311,6 +311,11 @@ export const RACING_STRUCT = {
 };
 
 export function structFixture(structure, payload, tournamentId) {
+  // PLAY THE SERVER: the real /api/tournaments + /api/tournament-structure
+  // payloads carry the served ELIM MODEL (attach_elim_states — sorted rounds
+  // + bracket_side/loser + gen_states); the fixture attaches it through the
+  // mock mirror so the views render exactly what the server serves.
+  const served = attachElimStates({ ...payload, structure });
   const gens = payload.competitors.map((c) => ({ generation_id: c.generation_id, epoch_id: EPOCH_ID, parent_generation_id: c.role === 'champion' ? '' : 'v0', promoted: c.role === 'champion' }));
   const F = {
     '/api/epoch': { epoch_id: EPOCH_ID, closed: false, goal: 'g', current_champion: 'v0', tournament: { structure, params: payload.structure_params },
@@ -319,8 +324,8 @@ export function structFixture(structure, payload, tournamentId) {
     '/api/score-trajectory': { points: gens.map((g, i) => ({ generation_id: g.generation_id, scalar: 70 + i })) },
     '/api/tournaments': { epoch_id: EPOCH_ID, structure, structure_params: payload.structure_params, champion_lineage: ['v0'],
       matchups: [{ champion: 'v0', challenger: 'v1', decision: 'rejected', delta_scalar: 1 }],
-      tournaments: [{ tournament_id: tournamentId, structure, structure_params: payload.structure_params, competitors: payload.competitors, rounds: payload.rounds, standings: payload.standings }] },
-    [`/api/tournament-structure/${EPOCH_ID}/${tournamentId}`]: payload,
+      tournaments: [{ tournament_id: tournamentId, structure, structure_params: payload.structure_params, competitors: payload.competitors, rounds: served.rounds, ...(served.gen_states ? { gen_states: served.gen_states } : {}), standings: payload.standings }] },
+    [`/api/tournament-structure/${EPOCH_ID}/${tournamentId}`]: served,
   };
   return F;
 }

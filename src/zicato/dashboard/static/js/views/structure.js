@@ -168,6 +168,12 @@ export function normalizeStructure(st, live) {
       (r && typeof r === 'object' && r.round_index == null && r.stage_index != null)
         ? { ...r, round_index: r.stage_index }
         : r),
+    // the SERVED per-generation elim states (derive_elim_states — sorted
+    // rounds + bracket_side/loser ride on `rounds` above). Carried through
+    // VERBATIM so the elim figures render the server's model and never
+    // re-derive eliminations client-side (DQ1). Absent for non-elim
+    // structures and under a payload that predates the fold.
+    gen_states: Array.isArray(st.gen_states) ? st.gen_states : null,
     standings: Array.isArray(st.standings) ? st.standings : [],
     // the per-challenger proposing-step outcomes (applied/rejected + reason),
     // carried through so the "Proposed field" section + the live tracker can
@@ -625,15 +631,19 @@ export function elimModel(st) {
   }
   const gateDelta = (finalMatch && svg.isNum(finalMatch.delta_scalar)) ? finalMatch.delta_scalar : null;
   const hasMatches = winners.some((r) => r.matches.length) || (losers && losers.some((r) => r.matches.length));
-  return { winners, losers, championId, benchmarkId, gateState, gateDelta, live, hasMatches };
+  // `rounds` + `gen_states` are the SERVED elim model (pre-sorted columns +
+  // per-generation states) the flow figure renders verbatim; the winners/
+  // losers bands remain only for the gate math above + the radial variant.
+  return {
+    rounds, gen_states: Array.isArray(st.gen_states) ? st.gen_states : [],
+    winners, losers, championId, benchmarkId, gateState, gateDelta, live, hasMatches,
+  };
 }
 
-// Build the elimRadial/elimFlow `rounds` (the elimModel-band shape both
-// renderers consume): the winners' band followed by the losers' band, each round
-// carrying its label + matches. ONE source, two renderers (radial ↔ flow).
-function elimBands(model) {
-  return model.winners.concat(Array.isArray(model.losers) ? model.losers : []);
-}
+// (elimBands — the winners.concat(losers) band re-assembly both renderers used
+// to consume — is DELETED: the server serves `rounds` pre-sorted with
+// `bracket_side` stamped, so the ordering contract lives on the payload. The
+// figures read model.rounds / model.gen_states directly.)
 
 // The shared figure CAPTION for the bracket flow/radial figures.
 function bracketCaption(model) {
@@ -649,9 +659,12 @@ function bracketCaption(model) {
 }
 
 function renderBracket(st, ctx, epochId, structure) {
-  const model = elimModel(st) || { winners: splitBand((st && st.rounds) || [], () => true), losers: null, live: !!(st && st.live) };
+  const model = elimModel(st) || {
+    rounds: (st && Array.isArray(st.rounds)) ? st.rounds : [],
+    gen_states: (st && Array.isArray(st.gen_states)) ? st.gen_states : [],
+    winners: splitBand((st && st.rounds) || [], () => true), losers: null, live: !!(st && st.live),
+  };
   const openGen = (gen) => { if (gen) ctx.navigate('candidate', { epochId, gen }); };
-  const bands = elimBands(model);
   const hasFigure = model.hasMatches !== false && model.winners.length;
   const isDouble = structure === 'double_elim';
 
@@ -660,21 +673,22 @@ function renderBracket(st, ctx, epochId, structure) {
   // elimFlow combo leads (double-elim.html opt 7, the DEFAULT), with the radial
   // (opt 8, {double:true}) offered as a NON-default toggle on the figure.
   return isDouble
-    ? renderDoubleElim(st, ctx, epochId, model, bands, hasFigure, openGen)
-    : renderSingleElim(st, ctx, epochId, model, bands, hasFigure, openGen);
+    ? renderDoubleElim(st, ctx, epochId, model, hasFigure, openGen)
+    : renderSingleElim(st, ctx, epochId, model, hasFigure, openGen);
 }
 
 // single_elim — RADIAL bracket PRIMARY (the liked opt 6), the bracket-as-FLOW
 // (elimFlow) retained as a secondary companion view (who-converged-with-whom,
 // the lane convergence read).
-function renderSingleElim(st, ctx, epochId, model, bands, hasFigure, openGen) {
+function renderSingleElim(st, ctx, epochId, model, hasFigure, openGen) {
   const nodes = [];
 
-  // the PRIMARY figure: the concentric-ring radial bracket.
+  // the PRIMARY figure: the concentric-ring radial bracket (consumes the SAME
+  // served rounds; its retirement is a later phase).
   const radialCard = el('div', { class: 'dn-panel dn-figpane' });
   radialCard.appendChild(hasFigure
     ? svg.elimRadial({
-        rounds: bands, championId: model.championId, benchmarkId: model.benchmarkId,
+        rounds: model.rounds, championId: model.championId, benchmarkId: model.benchmarkId,
         gateState: model.gateState, live: model.live, double: false, onCompetitor: openGen,
       })
     : empty(model.live ? 'The bracket is being seeded — matches fill in as runs land.' : 'No bracket rounds recorded yet.'));
@@ -695,7 +709,8 @@ function renderSingleElim(st, ctx, epochId, model, bands, hasFigure, openGen) {
   if (hasFigure) {
     const flowCard = el('div', { class: 'dn-panel dn-figpane' });
     flowCard.appendChild(svg.elimFlow({
-      winners: bands, championId: model.championId, benchmarkId: model.benchmarkId,
+      rounds: model.rounds, gen_states: model.gen_states,
+      championId: model.championId, benchmarkId: model.benchmarkId,
       gateState: model.gateState, live: model.live, onCompetitor: openGen,
     }));
     flowCard.appendChild(bracketCaption(model));
@@ -713,7 +728,7 @@ function renderSingleElim(st, ctx, epochId, model, bands, hasFigure, openGen) {
 // — both are rendered into the card, the radial hidden until the toggle flips it.
 // The toggle is pure client-side visibility (no data change) so it never
 // disturbs the digest-gated swap.
-function renderDoubleElim(st, ctx, epochId, model, bands, hasFigure, openGen) {
+function renderDoubleElim(st, ctx, epochId, model, hasFigure, openGen) {
   const nodes = [];
   const flowCard = el('div', { class: 'dn-panel dn-figpane' });
   if (!hasFigure) {
@@ -728,13 +743,14 @@ function renderDoubleElim(st, ctx, epochId, model, bands, hasFigure, openGen) {
   // figure, mirroring the chrome's .dn-theme-switch idiom.
   const flowPane = el('div', { class: 'dt-figview dt-figview-on' }, [
     svg.elimFlow({
-      winners: bands, championId: model.championId, benchmarkId: model.benchmarkId,
+      rounds: model.rounds, gen_states: model.gen_states,
+      championId: model.championId, benchmarkId: model.benchmarkId,
       gateState: model.gateState, live: model.live, onCompetitor: openGen,
     }),
   ]);
   const radialPane = el('div', { class: 'dt-figview' }, [
     svg.elimRadial({
-      rounds: bands, championId: model.championId, benchmarkId: model.benchmarkId,
+      rounds: model.rounds, championId: model.championId, benchmarkId: model.benchmarkId,
       gateState: model.gateState, live: model.live, double: true, onCompetitor: openGen,
     }),
   ]);
@@ -1567,7 +1583,12 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
     }
     const matches = (Array.isArray(r.matches) ? r.matches : []).map((m, mi) =>
       overlay(m, queued, entering, rungOpts ? Object.assign({ slot0: mi === 0 }, rungOpts) : null));
-    return { round_index: ri, label: r.label || (isRacing ? `Rung ${ri}` : `Round ${ri + 1}`), queued, matches };
+    // the rebuilt round keeps the SERVED elim-model stamp (`bracket_side`) —
+    // the overlay decorates in-flight matches, it never re-derives the model.
+    return {
+      round_index: ri, label: r.label || (isRacing ? `Rung ${ri}` : `Round ${ri + 1}`), queued, matches,
+      ...(r.bracket_side != null ? { bracket_side: r.bracket_side } : {}),
+    };
   });
 
   // BLOOM the standings from the applied FIELD: when the run is past proposing
@@ -1635,6 +1656,9 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
     structure_params: params,
     competitors,
     rounds,
+    // the SERVED per-generation elim states ride the live payload (the
+    // server folds them on /api/active-tournament); pass through verbatim.
+    gen_states: Array.isArray(at.gen_states) ? at.gen_states : null,
     standings,
     champion_lineage: Array.isArray(at.champion_lineage) ? at.champion_lineage : [],
     // carry the live champion aggregate + projection map so championScalarOf can

@@ -27,6 +27,7 @@ from zicato.query import (
     WorkspacePaths,
     build_epoch_analysis,
     build_matchup_conversations,
+    build_per_judge_trend,
     build_run_transcript,
     empty_run_transcript,
     read_epoch_journal,
@@ -108,26 +109,31 @@ def test_no_reader_hand_rolls_a_sqlite_connect() -> None:
 
     A bare ``sqlite3.connect`` in a reader defaults to WRITE mode (lock
     contention with the ingest writer; creates a stray db on a missing
-    path). The one allowed home is ``_sqlite.py`` itself — plus ONE
-    documented exemption: ``judge_view.build_per_judge_trend`` keeps its
-    legacy connect until U3's deliberate golden re-capture (the parity
-    golden is order-contaminated by its stray-file side effect; see the
-    KNOWN-BUG comment at the site). This pin counts occurrences so a NEW
-    bare connect anywhere still reds the suite.
+    path — whose presence then flips LATER readers' degrade branches).
+    The one allowed home is ``_sqlite.py`` itself.
     """
     import zicato.query as q
 
     pkg_dir = Path(q.__file__).parent
-    counts = {
-        p.name: p.read_text(encoding="utf-8").count("sqlite3.connect(")
+    offenders = [
+        p.name
         for p in sorted(pkg_dir.glob("*.py"))
-        if p.name != "_sqlite.py"
-    }
-    offenders = {name: n for name, n in counts.items() if n}
-    assert offenders == {"judge_view.py": 1}, (
-        f"bare sqlite3.connect in query readers beyond the one documented "
-        f"U3-scheduled exemption: {offenders}"
-    )
+        if p.name != "_sqlite.py" and "sqlite3.connect(" in p.read_text(encoding="utf-8")
+    ]
+    assert offenders == [], f"bare sqlite3.connect in query readers: {offenders}"
+
+
+def test_per_judge_trend_never_creates_index_db(tmp_path: Path) -> None:
+    """Regression: the old write-mode connect CREATED index.db; ro must not.
+
+    A missing index degrades field-by-field: empty ``judges``, the
+    lineage-derived ``generations`` spine, NO stray file left behind.
+    """
+    ws = _base_workspace(tmp_path)
+    paths = WorkspacePaths(ws)
+    out = build_per_judge_trend(paths, EPOCH)
+    assert out == {"epoch_id": EPOCH, "generations": [], "judges": []}
+    assert not paths.index_db.exists()
 
 
 # ---------------------------------------------------------------------------

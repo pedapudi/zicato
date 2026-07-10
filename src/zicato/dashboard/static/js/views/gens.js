@@ -240,6 +240,8 @@ async function renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roun
             structure: round.tournamentRef.structure || structure,
             structure_params: round.tournamentRef.structure_params || (tournament && tournament.params) || {},
             competitors: round.tournamentRef.competitors, rounds: round.tournamentRef.rounds,
+            // the SERVED elim model rides the /api/tournaments record too.
+            gen_states: round.tournamentRef.gen_states,
             standings: round.tournamentRef.standings,
             champion_lineage: bracket && bracket.champion_lineage, source: 'index',
           }, false)
@@ -262,6 +264,7 @@ async function renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roun
       structure: round.tournamentRef.structure || structure,
       structure_params: round.tournamentRef.structure_params || (tournament && tournament.params) || {},
       competitors: round.tournamentRef.competitors, rounds: round.tournamentRef.rounds,
+      gen_states: round.tournamentRef.gen_states,
       standings: round.tournamentRef.standings,
       champion_lineage: bracket && bracket.champion_lineage, source: 'index',
     }, false);

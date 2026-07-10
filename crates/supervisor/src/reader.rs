@@ -151,11 +151,20 @@ pub fn read_active_tournament(paths: &WorkspacePaths) -> Option<ActiveTournament
 pub fn read_active_tournament_with_stats(
     paths: &WorkspacePaths,
 ) -> (Option<ActiveTournament>, crate::fold_stats::FoldStats) {
-    match fold_active_tournament_value_with_stats(&paths.active_tournament_log()) {
-        (Some(value), stats) => (serde_json::from_value(value).ok(), stats),
-        // No event log → the compat path: a pre-RUNTIME-V2 snapshot file.
-        (None, stats) => (read_json(&paths.active_tournament()), stats),
+    let (mut tournament, stats) =
+        match fold_active_tournament_value_with_stats(&paths.active_tournament_log()) {
+            (Some(value), stats) => (serde_json::from_value(value).ok(), stats),
+            // No event log → the compat path: a pre-RUNTIME-V2 snapshot file.
+            (None, stats) => (read_json(&paths.active_tournament()), stats),
+        };
+    // The served ELIM MODEL rides the live payload (the Rust half of the
+    // Python `attach_elim_states` wiring): an elim tournament's rounds are
+    // canonicalized and the `gen_states` fold attached, so the dashboard
+    // renders the SAME model under either server (DQ1/DQ8).
+    if let Some(ref mut at) = tournament {
+        crate::elim_states::enrich_active_tournament(at);
     }
+    (tournament, stats)
 }
 
 /// Replay the event log into the folded envelope JSON `Value` (or `None`

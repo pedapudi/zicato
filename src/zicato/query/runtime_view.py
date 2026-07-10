@@ -270,14 +270,28 @@ def read_active_tournament_dict(paths: WorkspacePaths) -> dict[str, Any] | None:
     the orchestrator finished (written as ``completed``) never renders as
     ``queued`` in the dashboard. The producer's exact spelling is kept on
     each entry as ``status_raw``.
+
+    An elim (``single_elim`` / ``double_elim``) payload additionally
+    carries the served ELIM MODEL (``attach_elim_states``: canonicalized
+    rounds + top-level ``gen_states``), exactly as on the settled
+    structure record — the live figures read the model, never re-derive
+    it (DQ1). The Rust supervisor's ``read_active_tournament`` applies
+    the same fold (``crates/supervisor/src/elim_states.rs``).
     """
+    # Lazy import: tournament_view imports THIS module for the settled path.
+    from zicato.query.tournament_view import attach_elim_states  # noqa: PLC0415
+
     try:
         t = read_active_tournament(paths.root)
     except Exception:
         # Fall back to the raw file so a shape the typed reader rejects
         # still surfaces rather than vanishing.
-        return _normalize_tournament_statuses(_read_json_value(paths.active_tournament))
-    return _normalize_tournament_statuses(t.to_dict()) if t is not None else None
+        raw = _normalize_tournament_statuses(_read_json_value(paths.active_tournament))
+        return attach_elim_states(raw) if isinstance(raw, dict) else raw
+    if t is None:
+        return None
+    out = _normalize_tournament_statuses(t.to_dict())
+    return attach_elim_states(out) if isinstance(out, dict) else out
 
 
 def _compute_run_progress(

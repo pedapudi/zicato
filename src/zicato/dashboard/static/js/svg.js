@@ -1447,126 +1447,82 @@ export function swissLadder(opts) {
 //     displaced incumbent (benchmark) reads CROWN.former.
 //   * a still-pending (live) leg is drawn dashed (the pending convention).
 //
-// Derived PURELY from elimModel(st)'s winners rounds + competitors (single
-// source — no new data path). `opts`:
-//   { winners:[{label, matches:[{competitors, winner, decision, pending, bye}]}],
+// Reads the SERVED elim model verbatim (DQ1: the server computes, the client
+// renders): `rounds` arrive PRE-SORTED (temporal WB → LB → GF) with a per-round
+// `bracket_side`, per-match `loser`, and duplicates already collapsed; the
+// per-generation states (played / advanced / lost / eliminated-vs-dropped /
+// side / LB entry / projected) arrive as the top-level `gen_states` fold
+// (`derive_elim_states`, mirrored in the Rust supervisor + the node mock).
+// The client-side re-sort, dedupe, elimination-vs-drop pass, and phantom-✕
+// guards that used to live here are DELETED — this figure is geometry only.
+// `opts`:
+//   { rounds:[{label, bracket_side, matches:[{competitors, winner, loser,
+//       decision, pending, bye, projected}]}],
+//     gen_states:[{generation_id, played_rounds, advanced_rounds, lost_rounds,
+//       eliminated_at_round, side_by_round, lb_entry_round, projected}],
 //     championId, benchmarkId, gateState, live, onCompetitor(id) }
 export function elimFlow(opts) {
   const o = opts || {};
-  // COLUMN ORDER must be TEMPORAL (by round_index), not the caller's band
-  // concatenation order. The double-elim caller passes winners.concat(losers),
-  // which lists the GRAND FINAL (a winners' band) BEFORE the losers' bracket
-  // rounds — so the losers' columns rendered to the RIGHT of the gate-bound
-  // final, the winners→losers DROP edges pointed backwards, and a dropped lane's
-  // dots were left orphaned. Sorting by round_index restores WB → LB → GF order
-  // so every advancement / drop edge runs left-to-right into its real target.
-  const rounds = (Array.isArray(o.winners) ? o.winners : [])
-    .filter((r) => r && Array.isArray(r.matches))
-    .map((r, i) => ({ r, i }))
-    .sort((a, b) => {
-      const ra = isNum(a.r.round_index) ? a.r.round_index : a.i;
-      const rb = isNum(b.r.round_index) ? b.r.round_index : b.i;
-      return ra - rb || a.i - b.i;
-    })
-    .map((x) => x.r);
+  // COLUMN ORDER is the SERVED order — the server pre-sorts by round index
+  // (temporal WB → LB → GF), so column ci here == the round's index in the
+  // payload == the gen_states round references. No client re-sort.
+  const rounds = Array.isArray(o.rounds) ? o.rounds : [];
   const live = !!o.live;
   const champId = o.championId != null ? String(o.championId) : null;
   const benchId = o.benchmarkId != null ? String(o.benchmarkId) : null;
 
-  // ── derive each generation's per-round state from the winners rounds ──
-  // For each round we record, per competitor that PLAYED in it: advanced (won),
-  // eliminated (lost a decided match), or pending (the match is still in flight).
-  // R = rounds.length columns + 1 gate column.
   const nCols = rounds.length;
-  // gen id → { firstCol, lastCol, eliminatedAt, advancedThrough:Set, pendingAt:Set }
-  const genState = new Map();
-  const ensure = (id) => {
-    const k = String(id);
-    if (!genState.has(k)) genState.set(k, { id: k, played: new Set(), advanced: new Set(), lostAt: new Set(), eliminatedAt: null, pendingAt: new Set(),
-      // double-elim: which band columns a lane plays in, keyed by side, + the
-      // exact column it RE-ENTERS the losers' bracket (the first LB column it
-      // plays) so a WB→LB drop can route into that node's TOP.
-      sideOf: new Map(), lbEntryCol: null });
-    return genState.get(k);
-  };
-  // the per-round MATCHES (a two-lane convergence each): two competitors meet, the
-  // winner's lane continues, the loser's terminates. Captured here so the figure
-  // can draw the bracket-as-flow convergence node + carry the pairing onto HOVER.
-  const matchesByCol = rounds.map(() => []);
-  // double-elim: each column's bracket side (WB / LB), inferred from its matches'
-  // bracket_slot. A column with any LB-slotted match is an LB (losers') column.
-  const colSide = rounds.map(() => 'WB');
-  let anyLB = false;
-  rounds.forEach((r, ci) => {
-    for (const m of (Array.isArray(r.matches) ? r.matches : [])) {
+  // each column's bracket side + the match-node layer, read off the payload.
+  const colSide = rounds.map((r) => ((r && r.bracket_side) === 'LB' ? 'LB' : 'WB'));
+  const isDouble = colSide.indexOf('LB') >= 0;
+  // the per-round MATCHES (a two-lane convergence each): competitors + the
+  // SERVED winner/loser pair, with the live in-flight state per leg. A bye /
+  // placeholder (fewer than two named competitors) draws no convergence node.
+  const matchesByCol = rounds.map((r, ci) => (r && Array.isArray(r.matches) ? r.matches : [])
+    .map((m) => {
       const comps = (Array.isArray(m.competitors) ? m.competitors : []).map(String).filter((c) => c && c !== 'tbd');
+      if (comps.length < 2 || m.bye) return null;
       const winner = m.winner ? String(m.winner) : null;
       const pending = !!m.pending || (!winner && !m.bye && !m.decision);
-      const slot = String(m.bracket_slot || '');
-      const isLB = slot.startsWith('LB');
-      if (isLB) { colSide[ci] = 'LB'; anyLB = true; }
-      // a real two-lane convergence (not a bye / placeholder) is recorded for the
-      // match-node layer; a winner+loser pair, with the live state per leg.
-      if (comps.length >= 2 && !m.bye) {
-        const loser = winner ? comps.find((c) => c !== winner) || null : null;
-        matchesByCol[ci].push({ comps, winner, loser, pending, delta: isNum(m.delta_scalar) ? m.delta_scalar : null,
-          slot: m.bracket_slot || m.match_id || '', isLB,
-          // the per-side live PROJECTED standing on an in-flight match.
-          projected: (m.projected && typeof m.projected === 'object') ? m.projected : null });
-      }
-      for (const c of comps) {
-        const g = ensure(c);
-        g.played.add(ci);
-        g.sideOf.set(ci, isLB ? 'LB' : 'WB');
-        if (isLB && g.lbEntryCol == null) g.lbEntryCol = ci;
-        if (pending) { g.pendingAt.add(ci); continue; }
-        if (m.bye) { g.advanced.add(ci); continue; }
-        if (winner && c === winner) g.advanced.add(ci);
-        else if (winner) g.lostAt.add(ci);   // a decided loss in THIS column
-      }
-    }
-  });
-  // ROBUSTNESS: a published round can carry DEGENERATE/duplicate matches — the
-  // backend has been observed emitting the SAME match twice in one column (an
-  // identical bracket_slot + competitor pair, e.g. LB-R1-0 listed twice). Left
-  // alone, each duplicate draws its OWN convergence elbow + node STACKED on the
-  // first, so one match reads as two overlapping convergences. Dedupe each column
-  // by a stable match key (slot + sorted competitors — the match_id is already
-  // folded into `slot`), keeping the MOST-DECIDED instance (a settled winner beats
-  // a still-pending duplicate). Genuinely distinct matches that merely share a
-  // column (different competitors, or a different slot) keep distinct keys, so
-  // normal / non-duplicated data is byte-identical (no reassignment when nothing
-  // collapses).
-  matchesByCol.forEach((matches, ci) => {
-    if (matches.length < 2) return;
-    const byKey = new Map();
-    for (const m of matches) {
-      const key = String(m.slot) + '|' + m.comps.map(String).slice().sort().join('/');
-      const prev = byKey.get(key);
-      // keep the more-decided of a duplicate pair: a settled (non-pending) match
-      // wins over a pending one; otherwise the first-seen instance stays.
-      if (!prev || (prev.pending && !m.pending)) byKey.set(key, m);
-    }
-    if (byKey.size !== matches.length) matchesByCol[ci] = [...byKey.values()];
-  });
-  const isDouble = anyLB;
-  // ELIMINATION vs DROP (double-elim correctness): a generation is ELIMINATED at
-  // a column only when it lost there AND never plays again in a LATER column. An
-  // earlier loss that is followed by a later appearance is a winners→losers DROP
-  // (the "second life"), not a termination — so it must keep its lane, connect to
-  // its losers'-bracket entry by a drop edge, and NOT draw a phantom ✕ in the WB.
-  // A single-elim loss has no later column, so it stays a true elimination.
-  for (const g of genState.values()) {
-    const lost = [...g.lostAt].sort((a, b) => a - b);
-    const lastPlayed = g.played.size ? Math.max(...g.played) : -1;
-    for (const ci of lost) {
-      if (ci >= lastPlayed) { g.eliminatedAt = ci; break; }  // no later column → eliminated here
+      return { comps, winner, loser: m.loser != null ? String(m.loser) : null, pending,
+        delta: isNum(m.delta_scalar) ? m.delta_scalar : null,
+        slot: m.bracket_slot || m.match_id || '', isLB: colSide[ci] === 'LB',
+        // the per-side live PROJECTED standing on an in-flight match.
+        projected: (m.projected && typeof m.projected === 'object') ? m.projected : null };
+    })
+    .filter((m) => m));
+
+  // ── the per-generation states, read VERBATIM from the served fold ──
+  // gen id → { played, advanced, lostAt (Sets of column indices), eliminatedAt,
+  // sideOf (col → WB|LB), lbEntryCol }. `pendingAt` is the residue: a played
+  // column that is neither an advance nor a loss is still in flight.
+  const genState = new Map();
+  for (const gs of (Array.isArray(o.gen_states) ? o.gen_states : [])) {
+    if (!gs || gs.generation_id == null) continue;
+    const sideOf = new Map();
+    const sbr = (gs.side_by_round && typeof gs.side_by_round === 'object') ? gs.side_by_round : {};
+    for (const k of Object.keys(sbr)) sideOf.set(Number(k), sbr[k] === 'LB' ? 'LB' : 'WB');
+    const played = new Set(Array.isArray(gs.played_rounds) ? gs.played_rounds : []);
+    const advanced = new Set(Array.isArray(gs.advanced_rounds) ? gs.advanced_rounds : []);
+    const lostAt = new Set(Array.isArray(gs.lost_rounds) ? gs.lost_rounds : []);
+    const pendingAt = new Set([...played].filter((ci) => !advanced.has(ci) && !lostAt.has(ci)));
+    genState.set(String(gs.generation_id), {
+      id: String(gs.generation_id), played, advanced, lostAt, pendingAt,
+      eliminatedAt: isNum(gs.eliminated_at_round) ? gs.eliminated_at_round : null,
+      sideOf, lbEntryCol: isNum(gs.lb_entry_round) ? gs.lb_entry_round : null,
+    });
+  }
+  // per-generation live PROJECTED standing: the SERVED gen-state projection
+  // seeds it; a pending match's own `projected` map (the live overlay the
+  // client stamps from SSE-fresh board progress — in-flight DECORATION, not
+  // re-derivation) refreshes it, since the runner can write a projection
+  // after the server's last publish.
+  const projByGen = new Map();
+  for (const gs of (Array.isArray(o.gen_states) ? o.gen_states : [])) {
+    if (gs && gs.generation_id != null && gs.projected && isNum(gs.projected.scalar)) {
+      projByGen.set(String(gs.generation_id), gs.projected);
     }
   }
-  // per-generation live PROJECTED standing (from an in-flight match's
-  // `projected` map): the latest column's projected row wins. Drives the
-  // lane's "projected" treatment (dashed/~prefix) + scored sub-bar.
-  const projByGen = new Map();
   matchesByCol.forEach((matches) => {
     for (const m of matches) {
       if (!m.projected || !m.pending) continue;
@@ -1590,19 +1546,15 @@ export function elimFlow(opts) {
 
   // ── WB→LB DEMOTION EDGES (pre-pass) ──
   // A dropped lane (lost a WB column, plays again in a later LB column) threads
-  // from its WB-loss dot into its LB re-entry node. These connectors used to dip
-  // a half-row beneath the SOURCE lane and run across there — straight through the
-  // rows of every lane physically between the two columns, and, with two losers
-  // demoted from one node, across each other. We instead route ALL of them through
-  // a reserved CHANNEL below the whole stack, each on its own horizontal lane.
-  // Collected here (before geometry) so the channel count sizes the figure.
+  // from its WB-loss dot into its LB re-entry node, routed through a reserved
+  // CHANNEL below the whole stack, each on its own horizontal lane. Collected
+  // here (before geometry) so the channel count sizes the figure. Presentation
+  // ROUTING only — the drop/elimination CLASSIFICATION itself is served.
   const demotions = [];
   if (isDouble) for (const g of genState.values()) {
     const cols = [...g.played].sort((a, b) => a - b);
     for (const ci of cols) {
-      // a DROP is a non-terminal WB loss (lost here, but it is NOT the lane's true
-      // elimination column → it plays on). A lane that is LATER eliminated in the
-      // LB still made this WB→LB drop, so it must be collected too.
+      // a DROP is a non-terminal loss (served: lost here, not eliminated here).
       const dropped = g.lostAt.has(ci) && g.eliminatedAt !== ci;
       if (!dropped) continue;
       const nextCi = cols.find((c) => c > ci);

@@ -16,6 +16,7 @@ const {
   freshState, allByClass, svgsByClass, mountLiveShell, SE_STRUCT, RACING_STRUCT,
   installFixtureMap, liveRacingField, liveElimField, HERO_EPOCH,
 } = await import('./fixtures.mjs');
+const mock = await import('./mock_server.mjs');
 
 // ====================================================================
 // LIVE-RUN UX wave — five coordinated fixes on the live/structure/svg surface.
@@ -475,7 +476,8 @@ test('crown glyphs: the shared CROWN constant is ♛ current / ♔ former; no �
 
   // a crowned elim bracket-as-flow gate.
   const winners = [{ round_index: 0, label: 'Final', matches: [{ match_id: 'WB-R0-0', competitors: ['v0', 'v1'], winner: 'v1', decision: 'promoted', bracket_slot: 'WB-R0-0' }] }];
-  const bracket = svg.elimFlow({ winners, championId: 'v1', benchmarkId: 'v0', gateState: 'crowned' });
+  const servedCrown = mock.deriveElimStates(winners);
+  const bracket = svg.elimFlow({ rounds: servedCrown.rounds, gen_states: servedCrown.gen_states, championId: 'v1', benchmarkId: 'v0', gateState: 'crowned' });
   assert(bracket.textContent.includes('♛'), 'a crowned elim flow gate emits ♛');
   assert(!bracket.textContent.includes('♚'), 'a crowned elim flow gate does NOT emit ♚');
 
@@ -679,9 +681,9 @@ test('Task 2 — treeLiveSet: derives the running gen+entry ids from active-runs
 // ── Task 3 — the elim generations-across-rounds flow ──
 
 test('Task 3 — elimFlow: rounds as columns, one lane per generation; advancing lines + a terminating ✕, the crown at the gate', () => {
-  const model = STRUCT.elimModel(STRUCT.normalizeStructure(SE_STRUCT, false));
+  const model = STRUCT.elimModel(STRUCT.normalizeStructure(mock.attachElimStates({ ...SE_STRUCT }), false));
   const flow = svg.elimFlow({
-    winners: model.winners, championId: model.championId, benchmarkId: model.benchmarkId,
+    rounds: model.rounds, gen_states: model.gen_states, championId: model.championId, benchmarkId: model.benchmarkId,
     gateState: model.gateState, live: false, onCompetitor() {},
   });
   assertEqual(flow.getAttribute('class'), 'dn-elimflow', 'the flow is its own renderer (dn-elimflow)');
@@ -719,13 +721,13 @@ test('Task 3 — the elim figure is the bracket-as-FLOW (elimFlow), the seat/box
 
 test('Task 3 — a LIVE elim flow draws in-flight legs as DASHED (pending convention) from the published rounds', () => {
   const model = STRUCT.elimModel(STRUCT.buildLiveElimModel({
-    at: liveElimField(),
+    at: mock.attachElimStates(liveElimField()),
     heartbeat: { phase: 'tournament:round_0', epoch_id: HERO_EPOCH },
     activeRuns: [{ generation_id: 'v1', entry_id: 'b0', progress: 0.5 }],
     epochGens: ['v0', 'v1', 'v2', 'v3'],
   }));
   const flow = svg.elimFlow({
-    winners: model.winners, championId: model.championId, benchmarkId: model.benchmarkId,
+    rounds: model.rounds, gen_states: model.gen_states, championId: model.championId, benchmarkId: model.benchmarkId,
     gateState: model.gateState, live: true,
   });
   assert(allByClass(flow, 'dn-elimflow-seg-pending').length >= 1, 'an in-flight (pending) leg is drawn with the pending (dashed) class');
@@ -742,7 +744,8 @@ test('Task 3 — elimFlow: an UNDECIDED match draws a "deciding" node + a SHORT 
       { competitors: ['v12', 'v13'], winner: null, pending: true, bracket_slot: 'WB-R0-0' },
     ] },
   ];
-  const flow = svg.elimFlow({ winners, championId: 'v3', benchmarkId: 'v3', live: true });
+  const servedU = mock.deriveElimStates(winners);
+  const flow = svg.elimFlow({ rounds: servedU.rounds, gen_states: servedU.gen_states, championId: 'v3', benchmarkId: 'v3', live: true });
   // the undecided match node reads "deciding" — the figure's in-flight signal.
   assert(allByClass(flow, 'dn-elimflow-deciding').length >= 1, 'an undecided match node is marked deciding');
   // NO committed (good) advance is drawn while the match is undecided.
@@ -767,7 +770,8 @@ test('Task 3 — elimFlow: the over-long "Winners\'/Losers\' bracket" round labe
       { competitors: ['v0', 'v2'], winner: 'v0', decision: 'win', bracket_slot: 'LB-R0-0' },
     ] },
   ];
-  const flow = svg.elimFlow({ winners, championId: 'v1', benchmarkId: 'v0', gateState: 'crowned' });
+  const servedL = mock.deriveElimStates(winners);
+  const flow = svg.elimFlow({ rounds: servedL.rounds, gen_states: servedL.gen_states, championId: 'v1', benchmarkId: 'v0', gateState: 'crowned' });
   const cols = allByClass(flow, 'dn-elimflow-col').map((c) => c.textContent);
   assert(cols.includes('WB R0'), `the winners' bracket round compacts to "WB R0" (got ${JSON.stringify(cols)})`);
   assert(cols.includes('LB R0'), `the losers' bracket round compacts to "LB R0" (got ${JSON.stringify(cols)})`);
@@ -789,7 +793,8 @@ test('Task 3 — elimFlow: a lane ELIMINATED in a column draws NO phantom advanc
       { competitors: ['v3', 'v0'], winner: 'v3', decision: 'win', bracket_slot: 'WB-R1-0' },
     ] },
   ];
-  const flow = svg.elimFlow({ winners, championId: 'v3', benchmarkId: 'v0', gateState: 'crowned' });
+  const servedD = mock.deriveElimStates(winners);
+  const flow = svg.elimFlow({ rounds: servedD.rounds, gen_states: servedD.gen_states, championId: 'v3', benchmarkId: 'v0', gateState: 'crowned' });
   const segs = allByClass(flow, 'dn-elimflow-seg');
   const goodSegs = segs.filter((s) => (s.getAttribute('class') || '').includes('dn-elimflow-good'));
   assertEqual(goodSegs.length, 2, 'only the champion v3 advances (col0→col1, col1→gate) — the eliminated v1 draws no phantom segment');

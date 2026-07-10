@@ -26,6 +26,7 @@
 // LiveController) with inline fixtures — no live run, no network.
 
 import { installDom, test, run, assert, assertEqual } from './harness.mjs';
+const mock = await import('./mock_server.mjs');
 
 installDom();
 
@@ -80,7 +81,8 @@ function serialize(node) {
 // Render the single-round structure figure for a payload + return the figure host
 // (a div containing all sections). Drives the REAL renderStructure dispatch.
 function renderSingleRound(payload, liveFlag) {
-  const st = STRUCT.normalizeStructure(payload, !!liveFlag);
+  // PLAY THE SERVER: a served structure payload carries the elim model.
+  const st = STRUCT.normalizeStructure(mock.attachElimStates({ ...payload }), !!liveFlag);
   const host = document.createElement('div');
   for (const n of STRUCT.renderStructure(st, CTX, EPOCH)) if (n) host.appendChild(n);
   return host;
@@ -88,9 +90,11 @@ function renderSingleRound(payload, liveFlag) {
 
 // Drive a LiveController one tick + return its structure-figure host node.
 function heroFigure(controller, { activeTournament, heartbeat, activeRuns }) {
+  // PLAY THE SERVER: /api/active-tournament carries the served elim model.
+  const served = activeTournament ? mock.attachElimStates({ ...activeTournament }) : activeTournament;
   controller.update({
-    status: { running: true, structure: activeTournament && activeTournament.structure },
-    heartbeat, activeRuns: activeRuns || [], activeTournament,
+    status: { running: true, structure: served && served.structure },
+    heartbeat, activeRuns: activeRuns || [], activeTournament: served,
   });
   return controller._funnelHost;
 }

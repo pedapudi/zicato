@@ -155,13 +155,24 @@ function gauntletSchematic(ids) {
 
 function elimSchematic(ids) {
   // collapse the field into a single illustrative winners' round of pairings.
+  // The runtime figure reads the SERVED elim model (`rounds` + `gen_states`);
+  // this synthetic preview fabricates the same shape for its demo field —
+  // every lane pending, nobody advanced/eliminated.
   const matches = [];
   for (let i = 0; i < ids.length; i += 2) {
     const comps = [ids[i], ids[i + 1] || 'tbd'].filter(Boolean);
-    matches.push({ competitors: comps, winner: null, pending: true, bracket_slot: 'WB' + (i / 2 + 1) });
+    matches.push({ competitors: comps, winner: null, loser: null, pending: true, bracket_slot: 'WB' + (i / 2 + 1) });
   }
-  if (!matches.length) matches.push({ competitors: ids.slice(0, 1), winner: null, pending: true, bracket_slot: 'WB1' });
-  return { winners: [{ label: 'Round 1', matches }], championId: null, benchmarkId: 'v0' };
+  if (!matches.length) matches.push({ competitors: ids.slice(0, 1), winner: null, loser: null, pending: true, bracket_slot: 'WB1' });
+  const genStates = ids.map((id) => ({
+    generation_id: id,
+    played_rounds: [0], advanced_rounds: [], lost_rounds: [],
+    eliminated_at_round: null, side_by_round: { 0: 'WB' }, lb_entry_round: null, projected: null,
+  }));
+  return {
+    rounds: [{ label: 'Round 1', bracket_side: 'WB', matches }],
+    gen_states: genStates, championId: null, benchmarkId: 'v0',
+  };
 }
 
 function swissSchematic(ids, params) {

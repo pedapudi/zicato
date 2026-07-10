@@ -14,6 +14,7 @@ from zicato.query._sqlite import (
     _row_bool,
     _row_keys,
     open_index_ro,
+    open_index_ro_or_none,
 )
 from zicato.query.epoch_view import (
     _parse_board,
@@ -61,50 +62,37 @@ def build_per_judge_trend(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any
     every generation in directory order). The ``by_generation`` map is
     populated from :func:`zicato.index.query.judge_loss_trend` per judge.
 
-    Best-effort: a never-indexed workspace yields empty
-    ``generations`` / ``judges`` lists with a ``note``.
+    Best-effort: a never-indexed workspace yields empty ``judges`` (the
+    lineage-derived ``generations`` spine still renders — this reader
+    degrades field-by-field, not whole-payload).
     """
     from zicato.index.query import judge_loss_trend  # noqa: PLC0415
 
     # Discover the set of judges seen in this epoch by walking the
     # generations directly. The trend query is per-judge so we need a
-    # judge list before we can call it.
-    #
-    # KNOWN-BUG, deliberately kept for one more phase: this is the ONE
-    # remaining bare write-mode ``sqlite3.connect`` in the query layer
-    # (lock contention with the ingest writer; CREATES a stray empty
-    # ``index.db`` on a never-indexed workspace). The reader-parity
-    # golden is order-contaminated by that side effect (later captures
-    # see the stray file and take a different degrade branch), so the
-    # read-only fix lands with U3's deliberate golden re-capture — not
-    # in U2, whose contract is a byte-identical snapshot.
+    # judge list before we can call it. Routed through the READ-ONLY
+    # index discipline: the bare write-mode connect this replaced both
+    # contended for the write lock with the ingest writer AND created a
+    # stray empty ``index.db`` on a never-indexed workspace (whose
+    # presence then flipped LATER readers' degrade branches — the
+    # order-contamination the U3 golden re-capture retired).
     judges: set[str] = set()
-    try:
-        conn = sqlite3.connect(str(paths.index_db))
-        conn.row_factory = sqlite3.Row
-        try:
-            rows = conn.execute(
-                "SELECT DISTINCT jl.judge_name "
-                "FROM judge_losses AS jl "
-                "JOIN runs AS r ON r.run_id = jl.run_id "
-                "WHERE r.epoch_id = ? "
-                "ORDER BY jl.judge_name",
-                (epoch_id,),
-            ).fetchall()
-            for r in rows:
-                if isinstance(r["judge_name"], str):
-                    judges.add(r["judge_name"])
-        except sqlite3.Error:
-            pass
-        finally:
-            conn.close()
-    except Exception:  # noqa: BLE001
-        return {
-            "epoch_id": epoch_id,
-            "generations": [],
-            "judges": [],
-            "note": "index not built; run zicato reindex",
-        }
+    with open_index_ro_or_none(paths.index_db) as conn:
+        if conn is not None:
+            try:
+                rows = conn.execute(
+                    "SELECT DISTINCT jl.judge_name "
+                    "FROM judge_losses AS jl "
+                    "JOIN runs AS r ON r.run_id = jl.run_id "
+                    "WHERE r.epoch_id = ? "
+                    "ORDER BY jl.judge_name",
+                    (epoch_id,),
+                ).fetchall()
+                for r in rows:
+                    if isinstance(r["judge_name"], str):
+                        judges.add(r["judge_name"])
+            except sqlite3.Error:
+                pass
 
     # Resolve the spine — the promoted lineage when available, else
     # every generation in directory order. The L1 heatmap renders only
