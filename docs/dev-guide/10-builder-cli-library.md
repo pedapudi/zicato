@@ -29,7 +29,7 @@
 > | ID | Invariant |
 > |----|-----------|
 > | L1 | **One mutation surface.** Every editable contract change flows through exactly one function in `zicato/builder/operations.py`. The form, the copilot, and the REST dispatch all call the same op — never a second edit path. |
-> | L2 | **Full-coverage.** A new contract knob is not shipped until it has an op (`operations.py`) + a dispatch arm (`api.py::_dispatch_op`) + a copilot tool (`copilot_tools.py::DEFAULT_BUILDER_TOOLS`) + a GUI control-or-documented-exception + a cost line if it changes the schedule + a `validate` consideration if it can be unsound. The op↔dispatch↔copilot triple is machine-pinned. |
+> | L2 | **Full-coverage.** A new contract knob is not shipped until it has an op (`operations.py`) + a dispatch arm (`api.py::_dispatch_op`) + a copilot tool (`copilot_tools.py::DEFAULT_BUILDER_TOOLS`) + a GUI control-or-documented-exception + a cost line if it changes the schedule + a `validate` consideration if it can be unsound. Machine-pinned including the GUI surface — the op↔dispatch↔copilot triple by `test_default_builder_tools_registry_covers_every_op`, and the GUI-control-or-exception by `test_builder_gui_coverage.py`. |
 > | L3 | **The cost meter is honest and twinned.** Every board-run multiplier the runtime will spend gets a `CostLine`; auxiliary LLM calls are labelled and excluded from the board-runs headline; the Python estimator and the JS twin must agree (a py↔js parity test). |
 > | L4 | **Recommend-only.** The builder never hard-blocks `apply`. Even a `refuse`-severity warning or a `refuse` pre-flight verdict informs the operator — it never gates the write. |
 > | L5 | **The builder never rolls the epoch and never starts a live evolve.** `apply(confirm=True)` writes the contract source files and lets the auto-epoch machinery roll on the next resolve; the copilot's apply tool is always `confirm=False`. |
@@ -865,13 +865,13 @@ A new contract knob is not shipped until it lands on **six** surfaces:
 | 1 | the op | `operations.py` (a `set_*` function) | code review |
 | 2 | the dispatch arm | `api.py::_dispatch_op` (an `if op == "…":` arm) | `tests/test_builder_api.py` knob-dispatch tests |
 | 3 | the copilot tool | `copilot_tools.py::DEFAULT_BUILDER_TOOLS` | **`test_default_builder_tools_registry_covers_every_op`** (machine-pinned) |
-| 4 | a GUI control | `model.js::paramSpecsFor` / `views/builder.js` section | node suite + code review |
+| 4 | a GUI control (or a documented exception) | `model.js::paramSpecsFor` / `views/builder.js` / `builder/entry_form.js` section | **`test_builder_gui_coverage.py`** (machine-pinned) + node suite |
 | 5 | a cost line (if it changes the schedule) | `operations.py::estimate_cost` + `model.js::estimateCost` | py↔js parity test |
 | 6 | a `validate` consideration (if it can be unsound) | `operations.py::validate` | `tests/test_builder_operations.py` |
 
-Surfaces 1–3 are **mechanically pinned**. The dispatch is a flat if/elif chain
+Surfaces 1–4 are **mechanically pinned**. The dispatch is a flat if/elif chain
 that falls through to a raise, so an op missing its arm is a 400 the API tests
-catch; and the copilot registry is pinned by an explicit anti-drift test:
+catch; the copilot registry is pinned by an explicit anti-drift test:
 
 ```python
 # tests/test_builder_copilot.py — test_default_builder_tools_registry_covers_every_op
@@ -881,12 +881,32 @@ catch; and the copilot registry is pinned by an explicit anti-drift test:
     API dispatch without a copilot tool fails here."""
 ```
 
-Surfaces 4–6 are **discipline plus parity**: there is no single per-knob test
-that asserts "this knob has a GUI control AND a cost line AND a validate check",
-but the py↔js cost parity test pins any cost line you add to be mirrored, and
-the design doc (`docs/design/TOURNAMENT-BUILDER.md` §"The consequence-forward
-principle") makes the cost + epoch-roll surfacing a stated requirement of the
-two builder skills.
+and the GUI surface is pinned by a second registry-derived test:
+
+```python
+# tests/test_builder_gui_coverage.py — test_every_write_op_has_a_gui_control_or_exception
+    """THE PIN: every builder write / lifecycle op is reachable from the GUI.
+    Each mutating op must appear as runOp('<op>' / postOp('<op>' in the builder
+    frontend source, or carry a justified GUI_EXCEPTIONS entry. A new op added to
+    operations.py + the copilot registry without either reds here."""
+```
+
+`test_builder_gui_coverage.py` derives the write/lifecycle op set from
+`DEFAULT_BUILDER_TOOLS` (minus the pure-read tools — `estimate_cost`, `validate`,
+`preflight`, `list_drafts`, `compare`, `preview_apply`), reads `views/builder.js`
++ `builder/entry_form.js` as TEXT, and demands each op is wired as
+`runOp('<op>'` / `postOp('<op>'` OR justified in its `GUI_EXCEPTIONS` dict. The
+one standing exception today is `add_judge` (judge authoring rides the whole-entry
+`edit_board_entry` round-trip — the entry_form judges editor — rather than a
+second authoring path). A stale exception (an op that has since gained a control)
+reds just as loudly as a missing control, so the doctrine cannot rot in either
+direction.
+
+Surfaces 5–6 are **discipline plus parity**: there is no single per-knob test
+that asserts "this knob has a cost line AND a validate check", but the py↔js cost
+parity test pins any cost line you add to be mirrored, and the design doc
+(`docs/design/TOURNAMENT-BUILDER.md` §"The consequence-forward principle") makes
+the cost + epoch-roll surfacing a stated requirement of the two builder skills.
 
 > ⛔ NEVER add an op to `operations.py` and its `_dispatch_op` arm but skip the
 > copilot tool (invariant **L2**). `test_default_builder_tools_registry_covers_
@@ -894,12 +914,13 @@ two builder skills.
 > one-line addition to `DEFAULT_BUILDER_TOOLS` (and its module `__all__`), not a
 > weakening of the test.
 
-> ✅ ALWAYS decide surface 4's "GUI control-or-documented-exception" explicitly.
-> The GUI renders every `paramSpecsFor` spec as a number input; a boolean knob
-> is a hard-coded toggle in a section builder; a knob deliberately left
-> form-invisible (an advanced/rare lever) is a documented exception, not an
-> oversight. Write down which in the op docstring so the next author does not
-> "fix" a missing control that was a choice.
+> ✅ ALWAYS decide surface 4's "GUI control-or-documented-exception" explicitly —
+> `test_builder_gui_coverage.py` now forces the choice. The GUI renders every
+> `paramSpecsFor` spec as a number input; a boolean knob is a hard-coded toggle in
+> a section builder; a knob deliberately left form-invisible (an advanced/rare
+> lever) is an entry in that test's `GUI_EXCEPTIONS` dict with a one-line
+> justification, not an oversight. A new op with neither a control nor an
+> exception reds the pin, naming the op and the two remedies.
 
 The recipe that walks all six is §10.8.
 
@@ -936,9 +957,12 @@ knob. The steps generalize to any knob.
    as a number input keyed on `min`/`max`/`step`/`int`/`removeAtZero`). If it is
    a boolean or a scoring-block field, add a hard-coded control to the relevant
    section builder in `views/builder.js` (a `checkInput` toggle, a `numInput`,
-   or a `<select>`), wired to `runOp('set_…', {…})`. If the knob is deliberately
-   form-invisible, say so in the op docstring — invariant **L2**'s "documented
-   exception".
+   or a `<select>`), wired to `runOp('set_…', {…})` (or `postOp('set_…', {…})`
+   for the board-editor ops). If the knob is deliberately form-invisible, add it
+   to `tests/test_builder_gui_coverage.py::GUI_EXCEPTIONS` with a one-line
+   justification — invariant **L2**'s "documented exception". `runOp`/`postOp`
+   with the op string is what the coverage pin greps for, so wire the string
+   literally (never build the op name dynamically).
 5. **Add the cost line if it changes the schedule.** If the knob multiplies
    per-round board runs, add a `CostLine` in `operations.py::estimate_cost` AND
    the mirror term in `builder/model.js::estimateCost` in the SAME commit
@@ -964,6 +988,9 @@ knob. The steps generalize to any knob.
    - *copilot registry* is auto-covered by
      `test_default_builder_tools_registry_covers_every_op` — run it to confirm
      your tool is in the set;
+   - *GUI coverage* is auto-covered by
+     `test_builder_gui_coverage.py::test_every_write_op_has_a_gui_control_or_exception`
+     — run it to confirm your knob has a control (or a justified exception);
    - *cost parity* — if you added a cost line, the py↔js parity test in
      `src/zicato/dashboard/static/test/builder.test.mjs` must stay green.
 9. **Verify:**
@@ -977,8 +1004,10 @@ knob. The steps generalize to any knob.
    uv run ruff check src/zicato/builder/ && uv run mypy src/zicato/builder/
    ```
    If you skipped step 3, `test_default_builder_tools_registry_covers_every_op`
-   reds — the copilot cannot reach your knob. If you skipped step 5's JS mirror,
-   the node suite reds — a frozen-contract preview would quote the wrong price.
+   reds — the copilot cannot reach your knob. If you skipped step 4,
+   `test_builder_gui_coverage.py` reds — the knob has no GUI control and no
+   documented exception. If you skipped step 5's JS mirror, the node suite reds —
+   a frozen-contract preview would quote the wrong price.
 
 **Definition of done.** The knob is editable from a form control and a chat
 turn, it prices correctly on the meter (both implementations), `validate` warns

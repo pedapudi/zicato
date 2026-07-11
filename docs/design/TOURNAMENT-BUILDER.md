@@ -12,11 +12,30 @@
 > lives in the two builder skills.
 
 The **tournament builder** is the GUI for composing an epoch's evaluation
-contract — structure, field & noise, the board and its train/holdout split,
-the proposer, and the promote gate — as a **draft** that is edited live and
-applied only on explicit confirmation. It is the dashboard's flagship authoring
-surface: the place an operator turns a vague objective into a concrete,
-hashable contract without hand-editing JSON.
+contract — as a **draft** that is edited live and applied only on explicit
+confirmation. It is the dashboard's flagship authoring surface: the place an
+operator turns a vague objective into a concrete, hashable contract without
+hand-editing JSON. The GUI now authors **every** part of the contract:
+
+- **Structure & field/noise** — the five tournament structures, their per-
+  structure params (field size, replicates, the evidence gate, the racing
+  rungs incl. the `rung0_board_size` override), and candidate screening.
+- **The board itself** — a full inline board editor (add / edit / delete
+  entries per-kind, judges, expectations, the `board_meta` header, paste-JSONL
+  import) plus the train/holdout split and the anti-overfitting knobs incl. the
+  `max_generations_per_contract` board-refresh ceiling.
+- **The weighted loss** — the scalar coefficients (drift / pass / default-judge
+  / plan-revision / runtime), the severity / per-kind / per-judge weight maps
+  (per-judge seeded from the board's judges, with add-key rows), and the signed
+  namespace weights with an add-key row.
+- **The promote gate** — margin, pass-rate monotonicity + scope, the per-
+  namespace monotonicity map, the integrity blocks, and the regression pre-gate.
+- **The proposer** — a picker over discovered proposer dirs + the builtin
+  default + a free-text path, plus the proposer-quality levers and the brief.
+- **Lifecycle** — fork/compare draft slots, reset-to-live, and step-undo.
+
+Every write/lifecycle op has a GUI control (or a documented exception),
+machine-pinned by `tests/test_builder_gui_coverage.py` (§10.7 of the dev-guide).
 
 The defining decision, repeated because it is load-bearing: **the builder edits
 a draft, and applying that draft rolls the epoch.** A different structure, a
@@ -90,8 +109,9 @@ chat speak one operation vocabulary. The draft round-trips the board's
 it back, and the dry-run's predicted hash includes it — a builder apply can
 never strip `disable_drift`/`judge_only` from a live board.
 
-Board authoring is complete at the op layer: `edit_board_entry`
-(add/replace) has its delete twin `remove_board_entry`, and two restore ops
+Board authoring is complete at the op layer AND in the GUI: the inline board
+editor drives `edit_board_entry` (add/replace) and its delete twin
+`remove_board_entry`, and two restore ops
 walk edits back — `revert_to_live` (discard the session's edits, restore
 from the running contract) and step-`undo` (a bounded 20-snapshot
 per-session history recorded before every write at BOTH front doors, so a
