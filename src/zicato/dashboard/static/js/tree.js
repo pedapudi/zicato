@@ -54,7 +54,7 @@ export function treeDigest(model, route, toggles, live) {
         r.gateOutcome ? r.gateOutcome.kind + ':' + (r.gateOutcome.gen || '') : '',
         (Array.isArray(r.challengers) ? r.challengers : []).map((g) => g && g.id),
       ]) : [];
-      return [e.id, b.gens.map((g) => [g.id, !!g.promoted, !!g.currentChampion, !!g.formerChampion, !!g.orphan, Number.isInteger(g.round_index) ? g.round_index : null]), b.boards.map((x) => x.id), rounds];
+      return [e.id, b.gens.map((g) => [g.id, !!g.promoted, !!g.currentChampion, !!g.formerChampion, !!g.orphan, Number.isInteger(g.round_index) ? g.round_index : null]), b.boards.map((x) => x.id), rounds, !!b.hasReflections];
     }),
     sel: [route ? route.view : 'home', p.epochId || '', p.gen || '', p.entry || '', p.mutId || '', p.gen2 || ''],
     open: [...toggles].sort(),
@@ -274,6 +274,17 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
       selected: sel === 'mutations' && p.epochId === epoch.id,
       onSelect: () => ctx.navigate('mutations', { epochId: epoch.id }),
     }));
+
+    // Instrument lens (leaf) — a peer of Boards / Mutation surface, shown ONLY
+    // when the epoch has at least one reflection (board reflection is off the
+    // happy path; a bare epoch never grows the node).
+    if (bundle.hasReflections) {
+      tree.appendChild(leafRow({
+        depth: 2, kind: 'instrument', label: 'Instrument', glyph: '⌾', tag: null,
+        selected: sel === 'instrument' && p.epochId === epoch.id,
+        onSelect: () => ctx.navigate('instrument', { epochId: epoch.id }),
+      }));
+    }
 
     // Publication (leaf)
     tree.appendChild(leafRow({

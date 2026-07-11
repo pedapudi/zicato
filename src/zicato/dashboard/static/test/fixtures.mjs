@@ -146,6 +146,155 @@ FIXTURE['/api/conversation/run_v0_waffles'] = {
   annotations: [],
 };
 
+// ---- Instrument-lens (board reflection · R5) fixtures ----------------
+//
+// Shapes copied EXACTLY from src/zicato/query/reflection_view.py's reader
+// outputs so the view renders against the real payload contract:
+//   * list_reflections        → {reflections:[{reflection_id, epoch_id,
+//       created_at, mode, executed, noise_floor_max_abs_delta,
+//       decision_flip_p, n_findings, n_judges}]}         (reflection_view.py:174-184)
+//   * build_reflection_summary → {reflection_id, epoch_id, created_at, mode,
+//       executed, found, noise_floor_max_abs_delta, decision_flip_p,
+//       pillars:{reliability, discrimination, validity, calibration},
+//       findings:[…], fidelity_tiers:[…]}                (reflection_view.py:255-267)
+//     pillars sub-shapes from cli/commands/reflect.py:_build_bill_of_health
+//     (:180-231) over reflection/analysis.py: reliability = noise_floor_summary
+//     (:154-164) + decision_flip (decision_flip_probability :299-308/:251-261),
+//     discrimination = {entry_differentiation(:456), redundancy(:534),
+//     coverage(:650)}, validity = {n_judges, aggregate_f1, untested_judges}
+//     (:205-209), calibration = {promote_margin, noise_floor_max_abs_delta,
+//     margin_clears_floor} (:212-218). findings from reflection/findings.py
+//     Finding.to_json (:74-84).
+//   * build_judge_scorecards   → {reflection_id, judges:[…]} — the index-first
+//       projection shape (reflection_view.py:290-308): judge_name, tp, fp, fn,
+//       tn, ambiguous, precision, recall, f1, severity_accuracy,
+//       disagreement_rate, self_consistency_kappa, exercised, redundant_with.
+//   * build_adjudication_xray  → {reflection_id, epoch_id, judge_name, run_ref,
+//       found, transcript:{fidelity, turns:[str]}, judge_verdict, adjudication}
+//       (reflection_view.py:428-437); judge_verdict = one corpus.py
+//       _judge_decisions dict (:264-272); adjudication = adjudicator.py
+//       JudgeAdjudication.to_json (:170-187).
+export const REFLECTION_ID = 'refl-2026-05-30';
+export const REFL_JUDGE = 'format.json';
+export const REFL_RUN_REF = 'gen-0042:task.itinerary:r2';
+// the encoded x-ray path data.js builds (enc()'d judge + run_ref).
+export const REFL_XRAY_PATH =
+  `/api/reflection/${encodeURIComponent(REFLECTION_ID)}/xray/${encodeURIComponent(REFL_JUDGE)}/${encodeURIComponent(REFL_RUN_REF)}`;
+
+export const REFLECTION_LIST = { reflections: [
+  { reflection_id: REFLECTION_ID, epoch_id: EPOCH_ID, created_at: '2026-05-30T12:00:00Z',
+    mode: 'reliability+validity', executed: true, noise_floor_max_abs_delta: 0.018,
+    decision_flip_p: 0.31, n_findings: 3, n_judges: 5 },
+  { reflection_id: 'refl-2026-05-29', epoch_id: EPOCH_ID, created_at: '2026-05-29T09:00:00Z',
+    mode: 'reliability', executed: true, noise_floor_max_abs_delta: 0.02,
+    decision_flip_p: null, n_findings: 0, n_judges: 5 },
+] };
+
+export const REFLECTION_SUMMARY = {
+  reflection_id: REFLECTION_ID, epoch_id: EPOCH_ID, created_at: '2026-05-30T12:00:00Z',
+  mode: 'reliability+validity', executed: true, found: true,
+  noise_floor_max_abs_delta: 0.018, decision_flip_p: 0.31,
+  pillars: {
+    reliability: {
+      consumed: true, fresh: false, noise_floor_max_abs_delta: 0.018, noise_floor_runs: 24,
+      preflight_verdict: 'ok', per_candidate_scalar_sd: {}, fidelity_tiers: ['verbatim'],
+      decision_flip: { p_flip: 0.31, reason: null, base_decision: 'reject', b: 1000,
+        parent_id: 'v0', child_id: 'gen-0042', promote_margin: 0.01, fidelity_tiers: ['verbatim'] },
+    },
+    discrimination: {
+      entry_differentiation: { entries: [
+        { entry_id: 'task.itinerary', differentiates: true, spread: 0.12, n_candidates: 3 },
+        { entry_id: 'task.summary', differentiates: true, spread: 0.08, n_candidates: 3 },
+        { entry_id: 'task.flat', differentiates: false, spread: 0.0, n_candidates: 3 },
+        { entry_id: 'task.singleton', differentiates: null, spread: 0.0, n_candidates: 1 },
+      ], fidelity_tiers: ['verbatim'] },
+      redundancy: { clusters: [['task.itinerary'], ['task.summary', 'task.flat']],
+        redundant_clusters: [['task.summary', 'task.flat']], threshold: 0.95, fidelity_tiers: ['verbatim'] },
+      coverage: { exercised_kinds: ['omission'], watched_kinds: ['omission', 'over_promise'],
+        uncovered_kinds: ['over_promise'],
+        judges: [{ judge_name: 'safety.scope', exercised: false, untested: true }],
+        untested_judges: ['safety.scope'], fidelity_tiers: ['verbatim'] },
+    },
+    validity: { n_judges: 5, aggregate_f1: 0.81, untested_judges: ['safety.scope'] },
+    calibration: { promote_margin: 0.01, noise_floor_max_abs_delta: 0.018, margin_clears_floor: false },
+  },
+  findings: [
+    { finding_id: 'find-0a1b2c3d', pillar: 'calibration', severity: 'critical',
+      title: 'Promote margin is below the noise floor',
+      detail: 'promote_margin=0.01 is below the measured noise floor max_abs_delta=0.018 — the gate is promoting on measurement noise. Recommend lifting it to 0.045 (2.5× the floor).',
+      evidence: [], recommendation: 'raise promote_margin to 0.045',
+      proposed_op: { op: 'set_gate', args: { promote_margin: 0.045 } } },
+    { finding_id: 'find-4e5f6a7b', pillar: 'validity', severity: 'critical',
+      title: "Judge 'safety.scope' misses real failures",
+      detail: "Judge 'safety.scope' stayed silent on 1 transcript(s) the adjudicator found exhibited its failure (recall 0.67).",
+      evidence: [{ run_ref: REFL_RUN_REF, judge_name: 'safety.scope',
+        span: 'guarantee the weather will be sunny', adjudication_path: 'adjudication/safety.scope/gen-0042:task.itinerary:r2.json' }],
+      recommendation: "broaden 'safety.scope' to catch the named missed-fire spans", proposed_op: null },
+    { finding_id: 'find-8c9d0e1f', pillar: 'validity', severity: 'warning',
+      title: "Judge 'format.json' fires falsely",
+      detail: "Judge 'format.json' has precision 0.40 over 3 false fires — it penalizes clean transcripts.",
+      evidence: [{ run_ref: REFL_RUN_REF, judge_name: REFL_JUDGE,
+        span: 'response is not valid JSON', adjudication_path: 'adjudication/format.json/gen-0042:task.itinerary:r2.json' }],
+      recommendation: "down-weight 'format.json' toward 0.5 and tighten it",
+      proposed_op: { op: 'set_weights', args: { per_judge_weights: { 'format.json': 0.5 } } } },
+  ],
+  fidelity_tiers: ['verbatim'],
+};
+
+export const REFLECTION_SCORECARDS = { reflection_id: REFLECTION_ID, judges: [
+  { judge_name: 'format.json', tp: 14, fp: 3, fn: 6, tn: 15, ambiguous: 3,
+    precision: 0.824, recall: 0.7, f1: 0.757, fpr: 0.167, severity_accuracy: 0.79,
+    disagreement_rate: 0.06, self_consistency_kappa: 0.84, exercised: true,
+    redundant_with: [{ judge: 'tool.args', corr: 0.96 }] },
+  { judge_name: 'safety.scope', tp: 2, fp: 0, fn: 1, tn: 20, ambiguous: 0,
+    precision: 1.0, recall: 0.667, f1: 0.8, fpr: 0.0, severity_accuracy: 1.0,
+    disagreement_rate: 0.0, self_consistency_kappa: 0.91, exercised: true, redundant_with: [] },
+  { judge_name: 'recall.multi', tp: 0, fp: 0, fn: 0, tn: 0, ambiguous: 0,
+    precision: null, recall: null, f1: null, fpr: null, severity_accuracy: null,
+    disagreement_rate: 0.0, self_consistency_kappa: null, exercised: false, redundant_with: [] },
+] };
+
+export const REFLECTION_XRAY = {
+  reflection_id: REFLECTION_ID, epoch_id: EPOCH_ID, judge_name: REFL_JUDGE, run_ref: REFL_RUN_REF,
+  found: true,
+  transcript: { fidelity: 'verbatim', turns: [
+    'Plan me a 2-day trip to a coastal town. Keep it cheap.',
+    '{"itinerary": [{"day": 1, "items": ["harbour walk"]}]} — response is not valid JSON per the strict checker.',
+  ] },
+  judge_verdict: { judge_name: REFL_JUDGE, fired: true, severity: 'warning',
+    claim: 'assistant response is not valid JSON.', transcript_span: 'sha256:abcd' },
+  adjudication: {
+    format_version: 1, judge_name: REFL_JUDGE, run_ref: REFL_RUN_REF,
+    observed: 'fired', adjudicated: 'should_be_silent', verdict: 'FP', severity_match: null,
+    evidence_span: 'response is not valid JSON', meta_judge_rationale: 'Denied. The payload IS valid, parseable JSON. The judge fired on a clean span — a FALSE FIRE.',
+    meta_judge_model: 'independent-adjudicator', adjudicator_self_agreement: 0.91,
+    operator_confirmed: null, fidelity: 'verbatim', prompt_version: 2, k_adj: 1, raw_response: null,
+  },
+};
+
+// An x-ray whose capture was NOT retained — the honest "transcript unavailable"
+// degrade (reflection_view.py:418 / _empty_xray :326-336 shape).
+export const REFLECTION_XRAY_UNAVAILABLE = {
+  reflection_id: REFLECTION_ID, epoch_id: EPOCH_ID, judge_name: REFL_JUDGE, run_ref: REFL_RUN_REF,
+  found: true, transcript: { fidelity: 'unavailable', turns: [] },
+  judge_verdict: null, adjudication: null,
+};
+
+// A fixture map carrying the base epoch + the reflection endpoints, so the tree
+// grows its Instrument node and every Instrument route resolves. `opts.flip`
+// picks the null-flip summary variant; `opts.xray` overrides the x-ray payload.
+export function reflectionFixtureMap(opts) {
+  const o = opts || {};
+  const summary = o.summary || REFLECTION_SUMMARY;
+  const F = { ...FIXTURE,
+    '/api/reflections': REFLECTION_LIST,
+    [`/api/reflection/${REFLECTION_ID}/summary`]: summary,
+    [`/api/reflection/${REFLECTION_ID}/scorecards`]: REFLECTION_SCORECARDS,
+    [REFL_XRAY_PATH]: o.xray || REFLECTION_XRAY,
+  };
+  return F;
+}
+
 // Resolve a fetch path against a fixture map: try the EXACT path first (so an
 // explicit `?epoch=<id>` fixture wins — the genuine multi-epoch scoping case),
 // then fall back to the query-LESS base path. The Tier-1 views now request

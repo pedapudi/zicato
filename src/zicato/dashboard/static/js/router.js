@@ -25,7 +25,7 @@
 // breadcrumb, back button, and every view share one signature.
 
 export const PREFIX = '#';
-export const VIEWS = ['home', 'epoch', 'gens', 'candidate', 'diff', 'boards', 'board', 'mutations', 'publication', 'builder', 'settings'];
+export const VIEWS = ['home', 'epoch', 'gens', 'candidate', 'diff', 'boards', 'board', 'mutations', 'instrument', 'publication', 'builder', 'settings'];
 
 // The Settings section a bare `#/settings` opens. The tournament builder used
 // to be the default Settings section; now that the builder is its OWN view,
@@ -96,6 +96,13 @@ export function parseRoute(hash) {
       // patched it, stacked); a trailing gen pins ONE site×generation cell (that
       // single challenger's side-by-side diff).
       return { view: 'mutations', params: { epochId, mutId: parts[3] || null, gen: parts[4] || null }, cmp };
+    case 'instrument':
+      // …/instrument[/<reflectionId>[/<judge>[/<runRef>]]] — the Instrument lens
+      // (board reflection). Bare = the reflection LANDING (list); +reflectionId =
+      // the bill of health + judge audit; +judge+runRef = the adjudication x-ray.
+      // parts are already decodeURIComponent'd, so the run_ref's `:` separators
+      // arrive verbatim.
+      return { view: 'instrument', params: { epochId, reflectionId: parts[3] || null, judge: parts[4] || null, runRef: parts[5] || null }, cmp };
     case 'paper': case 'publication': case 'report':
       return { view: 'publication', params: { epochId }, cmp };
     default:
@@ -137,6 +144,18 @@ export function href(view, params, opts) {
       base = p.mutId
         ? (p.gen ? `${e}/mutations/${enc(p.mutId)}/${enc(p.gen)}` : `${e}/mutations/${enc(p.mutId)}`)
         : `${e}/mutations`;
+      break;
+    case 'instrument':
+      if (!e) { base = PREFIX + '/'; break; }
+      // append each present leg in order; enc() the run_ref so its `:` survives.
+      base = `${e}/instrument`;
+      if (p.reflectionId) {
+        base += '/' + enc(p.reflectionId);
+        if (p.judge) {
+          base += '/' + enc(p.judge);
+          if (p.runRef) base += '/' + enc(p.runRef);
+        }
+      }
       break;
     case 'publication': base = e ? `${e}/paper` : PREFIX + '/'; break;
     default: base = PREFIX + '/';
@@ -197,6 +216,13 @@ export function up(route) {
       // the site view steps up to the epoch.
       if (p.gen && p.mutId) return { view: 'mutations', params: { epochId: p.epochId, mutId: p.mutId } };
       if (p.mutId) return { view: 'mutations', params: { epochId: p.epochId } };
+      return { view: 'epoch', params: { epochId: p.epochId } };
+    case 'instrument':
+      // the x-ray (judge + run_ref) steps up to the bill of health; the bill of
+      // health (a reflection) steps up to the reflection LANDING; the landing
+      // steps up to the epoch.
+      if (p.reflectionId && p.runRef) return { view: 'instrument', params: { epochId: p.epochId, reflectionId: p.reflectionId } };
+      if (p.reflectionId) return { view: 'instrument', params: { epochId: p.epochId } };
       return { view: 'epoch', params: { epochId: p.epochId } };
     case 'publication': return { view: 'epoch', params: { epochId: p.epochId } };
     default: return { view: 'home', params: {} };
@@ -261,6 +287,19 @@ export function crumbTrail(route) {
         (p.mutId && p.gen) ? { label: p.mutId, view: 'mutations', params: { epochId: p.epochId, mutId: p.mutId } } : null,
         { label: (p.mutId && p.gen) ? p.gen : (p.mutId ? p.mutId : 'mutation surface'), current: true },
       ].filter(Boolean);
+    case 'instrument': {
+      const landing = { label: 'instrument', view: 'instrument', params: { epochId: p.epochId } };
+      if (p.reflectionId && p.runRef) {
+        return [home, epoch, landing,
+          { label: p.reflectionId, view: 'instrument', params: { epochId: p.epochId, reflectionId: p.reflectionId } },
+          { label: p.judge + ' · ' + p.runRef, current: true },
+        ].filter(Boolean);
+      }
+      if (p.reflectionId) {
+        return [home, epoch, landing, { label: p.reflectionId, current: true }].filter(Boolean);
+      }
+      return [home, epoch, { label: 'instrument', current: true }].filter(Boolean);
+    }
     case 'publication':
       return [home, epoch, { label: 'publication', current: true }].filter(Boolean);
     default:

@@ -53,11 +53,12 @@ import * as diff from './views/diff.js';
 import * as boards from './views/boards.js';
 import * as board from './views/board.js';
 import * as mutations from './views/mutations.js';
+import * as instrument from './views/instrument.js';
 import * as publication from './views/publication.js';
 import * as builder from './views/builder.js';
 import * as settings from './views/settings.js';
 
-const RENDERERS = { home, epoch, gens, candidate, diff, boards, board, mutations, publication, builder, settings };
+const RENDERERS = { home, epoch, gens, candidate, diff, boards, board, mutations, instrument, publication, builder, settings };
 
 export const THEMES = COLOR_THEMES.map((t) => t[0]);
 export const TYPEFACES = TYPE_THEMES.map((t) => t[0]);
@@ -748,7 +749,15 @@ export function mountShell(root) {
 // — so an existing epoch ALWAYS lists, and the empty state shows only when there
 // are genuinely zero epochs across all of them.
 export async function buildTreeModel(route) {
-  const [ws, lin, ep, brk] = await Promise.all([D.workspace(), D.lineage(), D.epoch(), D.bracket()]);
+  const [ws, lin, ep, brk, refl] = await Promise.all([D.workspace(), D.lineage(), D.epoch(), D.bracket(), D.reflections()]);
+  // Which epochs carry at least one reflection — ONE workspace-wide read of
+  // /api/reflections (each item is epoch-tagged), grouped here so the Instrument
+  // tree node shows only when the epoch actually has reflections. Cheaper than a
+  // per-epoch probe; the tree model already unions API sources this way.
+  const reflEpochs = new Set();
+  if (refl && Array.isArray(refl.reflections)) {
+    for (const r of refl.reflections) if (r && r.epoch_id != null) reflEpochs.add(String(r.epoch_id));
+  }
   const epochs = [];
   const seen = new Set();
   const current = (ws && ws.current_epoch_id) || (ep && ep.epoch_id) || null;
@@ -882,7 +891,7 @@ export async function buildTreeModel(route) {
       structure: epochStructure,
       championId: currentChampionId,
     });
-    byEpoch[id] = { gens: gensList, boards: boardList, rounds: treeRounds };
+    byEpoch[id] = { gens: gensList, boards: boardList, rounds: treeRounds, hasReflections: reflEpochs.has(String(id)) };
   }
   return { epochs, byEpoch, current };
 }
