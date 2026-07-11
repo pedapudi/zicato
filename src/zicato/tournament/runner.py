@@ -605,6 +605,14 @@ async def _run_single(
                 # timeout, the judge/emulator aux budget) crosses the
                 # process boundary without an environment variable.
                 "config_pins": _config_pins(),
+                # Board-reflection capture knobs (runtime-only, never
+                # contract-hashed; default True = always-on with an
+                # opt-out). The worker owns both writers — result.json
+                # beside loss.json and the judge_io.jsonl sidecar — so
+                # the knobs cross the process boundary in the args file,
+                # like config_pins.
+                "persist_run_results": bool(config.persist_run_results),
+                "persist_judge_io": bool(config.persist_judge_io),
             }
             args_path.write_text(json.dumps(args_payload), encoding="utf-8")
         except (ValueError, OSError) as exc:

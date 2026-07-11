@@ -844,3 +844,44 @@ def read_epoch_analysis_html(paths: WorkspacePaths, epoch_id: str) -> str | None
         return path.read_text(encoding="utf-8")
     except (FileNotFoundError, OSError):
         return None
+
+
+def build_epoch_analysis(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
+    """``GET /api/epoch/{id}/analysis`` — the analysis report payload.
+
+    Returns ``{epoch_id, analysis_md, analysis_html_inline,
+    analysis_html_available}``. ``analysis_html_inline`` is the
+    paper-styled HTML fragment (self-contained inline CSS, inline SVG
+    figures) the dashboard can drop directly into the Epoch view's
+    Analysis section — same renderer as the standalone ``analysis.html``
+    so both surfaces look like a paper. The raw markdown ``analysis_md``
+    is still returned for backward compatibility with older frontends
+    that did their own minimal rendering.
+
+    Best-effort (DQ3): a missing ``analysis.md`` reads as the empty
+    string; a failed fragment render degrades to ``""``; never raises.
+    """
+    analysis_md_path = paths.epochs / epoch_id / "analysis.md"
+    analysis_html_path = paths.epochs / epoch_id / "analysis.html"
+    try:
+        analysis_md = analysis_md_path.read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError):
+        analysis_md = ""
+
+    analysis_html_inline = ""
+    if analysis_md.strip():
+        try:
+            from zicato.analyzer.report import render_report_html_fragment  # noqa: PLC0415
+            from zicato.analyzer.report_data import gather_epoch_report_data  # noqa: PLC0415
+
+            data = gather_epoch_report_data(paths.root, epoch_id)
+            analysis_html_inline = render_report_html_fragment(epoch_id, analysis_md, data=data)
+        except Exception:  # noqa: BLE001 — fragment is best-effort
+            analysis_html_inline = ""
+
+    return {
+        "epoch_id": epoch_id,
+        "analysis_md": analysis_md,
+        "analysis_html_inline": analysis_html_inline,
+        "analysis_html_available": analysis_html_path.is_file(),
+    }

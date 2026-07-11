@@ -1026,9 +1026,88 @@ pin each one as a test dimension.
 
 ---
 
+## Case 11 — `judge_view` opened the index in WRITE mode on a read path
+
+**Fix commit:** `8a46888` — *refactor(query): one read-only index-connection
+discipline.*
+
+### Symptom
+
+Intermittent `database is locked` errors reading judge detail while an evolve
+run's ingester was writing the index — and, more insidiously, occasional golden
+drift on the reader-parity snapshot that no reader change explained.
+
+### Root cause
+
+`judge_view.py` carried two ad-hoc `sqlite3.connect(...)` calls; one opened the
+index in the default READ-WRITE mode. A read handler holding a writable
+connection (a) contends for the write lock with the live ingester (the lock
+contention), and (b) can create the `-wal`/`-shm` sidecars and a rollback
+journal on a database the reader has no business mutating — which perturbs the
+reindex-dump golden captured from that workspace (the golden-contamination
+twist). A read that can write is a read that can lie about what it read.
+
+### The fix
+
+Both connects route through the shared `open_index_ro` contextmanager
+(`query/_sqlite.py`) — `file:…?mode=ro` + `immutable` where applicable — the
+same discipline the other nine hand-copied lifecycle blocks now share. A reader
+physically CANNOT take the write lock or spawn a journal.
+
+### You are about to reintroduce this if…
+
+- you write `sqlite3.connect(db_path)` in a `query/*_view.py` reader instead of
+  `with open_index_ro(db_path) as conn:`;
+- you "just need a quick connection" and skip the `mode=ro` URI — the default is
+  read-WRITE, and a read handler must never hold it.
+
+---
+
+## Case 12 — the `elimFlow` defensive-guard family died with the served model
+
+**Fix commit:** `1621ebe` — *feat(tournaments): serve the elim model.*
+
+### Symptom
+
+Not a single crash — a slow accretion. `elimFlow` (and its retired radial twin)
+carried a re-sort of its caller's columns, a match de-dupe, an
+elimination-vs-drop classifier, and five guards against phantom `✕`
+eliminations. Each was added to patch a different malformed-payload sighting;
+together they were ~100 lines of client-side domain logic behind an
+under-specified payload — a standing DQ1 breach.
+
+### Root cause
+
+The payload handed the client raw `rounds[]` and asked it to DERIVE the
+elimination model per render. Because the payload never said which column was
+which, or whether a loss was terminal, every consumer (flow figure, radial
+figure) grew its OWN copy of the derivation plus defensive guards — and the two
+copies drifted.
+
+### The fix
+
+`derive_elim_states(rounds)` (09-dashboard-and-query.md §9.2.5) folds the model
+ONCE on the server — pre-sorted rounds, per-match `loser`, per-round
+`bracket_side`, and a top-level `gen_states` map — served by both the Python
+service and the Rust supervisor (parity-pinned by
+`tests/data/elim_states_fixture.json`). `elimFlow` now renders `gen_states`
+verbatim and DROPPED the whole guard family: serve the model, and the guards
+that only existed to survive an under-specified payload have nothing left to
+defend against.
+
+### You are about to reintroduce this if…
+
+- you add a defensive guard to a figure builder against a "malformed" backend
+  payload — that guard is a smell that the payload is under-specified; fix the
+  SERVER'S model, do not grow a client-side patch;
+- you add a client-side re-sort/de-dupe/re-classify step "because the data comes
+  in wrong" — the data coming in wrong is the bug, and it lives on the server.
+
+---
+
 ## The meta-lessons
 
-Ten bugs, three shapes. If you internalize nothing else from this chapter,
+Twelve bugs, three shapes. If you internalize nothing else from this chapter,
 internalize these.
 
 ### M1 — Shared mutable state behind per-X artifacts is THE recurring class

@@ -5,11 +5,11 @@
 > is the source of truth; if this document and the binary ever disagree,
 > trust `zicato --help` / `zicato help <command>`.
 >
-> *Last reconciled against the live `--help` on 2026-07-02.* Verified the
+> *Last reconciled against the live `--help` on 2026-07-10.* Verified the
 > full command set (`init`, `evolve`, and the advanced/debugging group:
 > `analyze-telemetry`, `board`, `builder`, `config`, `dashboard`, `epoch`,
-> `health`, `help`, `mutations`, `propose`, `regenerate-report`, `register`,
-> `reindex`, `reindex-generations`, `repair-epoch-goals`,
+> `health`, `help`, `mutations`, `propose`, `reflect`, `regenerate-report`,
+> `register`, `reindex`, `reindex-generations`, `repair-epoch-goals`,
 > `repair-judge-losses`, `repair-tournament-fk`, `repair-v0-baseline`,
 > `tournament`) and every option/default below by running
 > `uv run zicato <command> --help`. No phantom commands exist (there is no
@@ -584,6 +584,53 @@ zicato register [OPTIONS]
 | `--brief PATH` | `<workspace_parent>/brief.md` | Canonical proposer-brief path. |
 | `--scoring PATH` | `<workspace_parent>/scoring.json` | Canonical `scoring.json` path. |
 | `--proposer-path PATH` | — (builtin default proposer) | Proposer dir (`proposers/<name>/` — skills + optional `agent.py`). A contract input: configuring it (or editing a skill) rolls the epoch. |
+
+### `zicato reflect`
+
+Advanced: board reflection — Measurement System Analysis for the evaluation
+contract itself. Runs the four-pillar analysis over an observation corpus and
+emits ranked, evidence-linked findings, each carrying a proposed contract edit.
+Diagnose-and-recommend only: running it never rolls the epoch (only sealing a
+recommendation through the builder does). See
+[BOARD-REFLECTION.md](BOARD-REFLECTION.md). Three subcommands:
+
+```
+zicato reflect run [OPTIONS]
+zicato reflect report REFLECTION_ID [OPTIONS]
+zicato reflect apply REFLECTION_ID FINDING_ID [OPTIONS]
+```
+
+`reflect run` builds the observation corpus by REFERENCING the lineage's
+already-persisted run artifacts (loss / result / judge_io) with zero LLM
+budget; the only LLM spend is the independent meta-judge **adjudication**,
+gated behind `--adjudicator-call-llm`. The default (adjudication requested)
+REFUSES without an adjudicator callable — the live-run gate never silently
+spends budget. `--pre-register` writes `plan.json` and stops; `--passive` and
+`--no-llm-adjudication` run the cheap zero-LLM tier (reliability +
+discrimination + coverage only).
+
+| `reflect run` option | Default | Meaning |
+|---|---|---|
+| `--workspace TEXT` | `.zicato` | Workspace root. |
+| `--epoch TEXT` | current epoch | Contract to validate. |
+| `--candidate TEXT` | champion + lineage | Generation id in the candidate spread (repeatable). |
+| `--entries TEXT` | whole board | Board entry id to cover (repeatable). |
+| `--replicates INTEGER RANGE` | `3` (x>=1) | Replicate count recorded in the plan. |
+| `--adjudicator-call-llm TEXT` | unset | Dotted import path of the independent meta-judge `call_llm` (ACTIVE mode; must differ from every judge model). |
+| `--checks TEXT` | all | Comma-separated check subset. |
+| `--no-llm-adjudication` | off | Cheap tier: reliability + discrimination + coverage only, zero LLM. |
+| `--passive` | off | Ingest-only: reference existing lineage artifacts, zero LLM. |
+| `--pre-register` | off | Write `plan.json` and STOP (review before spending). |
+| `--k-adj INTEGER RANGE` | `1` (x>=1) | Adjudicator replication (self-agreement). |
+| `--max-wall-clock-seconds INTEGER` | unset | Budget ceiling (recorded intent). |
+| `--output TEXT` | stdout | Report destination. |
+
+`reflect report REFLECTION_ID` renders a stored reflection's report (Markdown,
+or `--json` for the raw dict). `reflect apply REFLECTION_ID FINDING_ID` forks a
+**builder draft** from the live contract and stages the finding's proposed op
+onto it — it never writes the sealed contract; the operator reviews and seals
+through the builder, which is the gated step that rolls the epoch. Both accept
+`--workspace` and `--epoch`.
 
 ### `zicato reindex`
 

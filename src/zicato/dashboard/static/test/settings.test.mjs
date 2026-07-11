@@ -83,7 +83,9 @@ function installFetch() {
       return jsonRes(MODELS_VIEW);
     }
     if (path.startsWith('/builder/draft')) {
-      return jsonRes({ session: 'dashboard', draft: { scoring: { tournament_structure: { structure: 'gauntlet', params: {} } }, board: [], holdout: { train_ids: [], holdout_ids: [] }, proposer: {} }, cost: { board_runs_per_round: 0, breakdown: [] }, warnings: [], diff: { changed_components: [], rolls_epoch: false } });
+      // the SERVER cost envelope for the current (swiss) contract — the same
+      // number the client used to re-estimate (C6: now served, not recomputed).
+      return jsonRes({ session: 'dashboard', draft: { scoring: { tournament_structure: { structure: 'gauntlet', params: {} } }, board: [], holdout: { train_ids: [], holdout_ids: [] }, proposer: {} }, cost: { board_runs_per_round: 12, breakdown: [{ label: 'swiss', runs: 12, detail: '3 rounds' }] }, warnings: [], diff: { changed_components: [], rolls_epoch: false } });
     }
     return jsonRes({});
   };
@@ -263,7 +265,7 @@ test('settings: the Settings typeface picker still APPLIES + PERSISTS (the sole 
 
 // The old accent-tinted, pulsing "light-up rail card" research-preview banner is
 // GONE from the Settings surface. The product-status mark is now a QUIET pill
-// pinned NEXT TO the wordmark in the top bar (asserted in variant_t.test.mjs),
+// pinned NEXT TO the wordmark in the top bar (asserted in the variant_t_* suite),
 // NOT a card that leads Settings — so the Settings host must carry no `dn-respreview`
 // banner and must lead directly with the section grid.
 test('settings: the old research-preview light-up card is gone from Settings', async () => {
@@ -310,12 +312,12 @@ test('settings: the Contract section renders the read-only builder PREVIEW from 
   const fig = firstClass(preview, 'dn-bld-figure');
   assert(fig, 'the schematic figure renders in the preview');
   assert(firstClass(fig, 'dn-swissladder'), 'the schematic is the swiss-ladder svg figure');
-  // the cost meter renders a board-runs-per-round number computed client-side.
-  // swiss: rounds_n 3 × pairings (field_size 4 // 2 = 2) × replicates 1 × board 2 = 12.
+  // the cost meter renders the SERVER cost envelope's board-runs-per-round (C6:
+  // the /builder/draft fetch, not a client re-estimate).
   const cost = firstClass(preview, 'dn-bld-cost');
   assert(cost, 'the cost meter renders');
   const costNum = firstClass(cost, 'dn-bld-cost-num');
-  assertEqual(costNum.textContent, '12', 'the board-runs/round is computed client-side from the contract');
+  assertEqual(costNum.textContent, '12', 'the board-runs/round comes from the server cost envelope');
   // the train / holdout strip renders from the server-computed board_split.
   const strip = firstClass(preview, 'dn-bld-previewstrip');
   assert(strip, 'the train/holdout strip renders');
@@ -326,6 +328,27 @@ test('settings: the Contract section renders the read-only builder PREVIEW from 
   // there are NO apply / dry-run controls anywhere in the contract preview.
   assertEqual(byClass(body, 'dn-bld-applyrow').length, 0, 'no apply / dry-run controls in the read-only contract preview');
   assertEqual(byClass(body, 'dn-bld-btn-apply').length, 0, 'no apply button in the read-only contract preview');
+});
+
+test('settings: the Contract cost panel degrades to an honest "unavailable" line when the server envelope cannot be fetched (C6)', async () => {
+  installFetch();
+  // make ONLY the draft fetch fail — getDraft() then returns null, so no client
+  // re-estimate stands in for the missing server envelope.
+  const base = globalThis.fetch;
+  globalThis.fetch = async (path, init) => {
+    if (String(path).startsWith('/builder/draft')) return { ok: false, status: 500, headers: { get: () => 'application/json' }, json: async () => ({ error: 'boom' }), text: async () => '{"error":"boom"}' };
+    return base(path, init);
+  };
+  const host = globalThis.document.createElement('div');
+  await settings.render(host, ctx, { section: 'contract' });
+  await tick();
+  const preview = firstClass(host, 'dn-set-preview');
+  assert(preview, 'the contract preview still renders (the schematic + strip degrade independently)');
+  // the cost panel reads the honest unavailable line, NOT a fabricated number.
+  const unavailable = firstClass(preview, 'dn-bld-cost-unavailable');
+  assert(unavailable, 'the cost panel shows the honest "unavailable" degrade');
+  assert(/unavailable/i.test(unavailable.textContent), 'the line names the envelope as unavailable');
+  assertEqual(byClass(preview, 'dn-bld-cost-num').length, 0, 'no fabricated board-runs/round number is shown');
 });
 
 test('settings: the Models section renders all four roles, each editable (toggle + fields)', async () => {

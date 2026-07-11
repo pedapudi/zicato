@@ -68,3 +68,52 @@ function splitSide(side, which) {
   col.appendChild(host);
   return col;
 }
+
+// ── SCROLL-PRESERVATION across a content-growth repaint ──────────────────────
+//
+// A split pane whose sides are constrained-scroll lists (transcripts, logs)
+// must not YANK the reader when a live beat rebuilds the pane. A side build
+// that creates a scroll container tags it `data-scroll-side="<side>"`; the
+// caller then wraps its digest-gated swap:
+//
+//     const st = captureScroll(host);
+//     const repainted = gatedSwap(host, digest, () => [ … splitFrame(…) … ]);
+//     if (repainted) restoreScroll(host, st);
+//
+// A column pinned to the BOTTOM (within a small slop) keeps following new
+// content (live-tail); any other column holds its exact prior offset. Guarded
+// for the test DOM (no layout → numeric scroll props absent). The per-side
+// exact-attribute query stays within the DOM stub's supported selector forms.
+const SPLIT_SIDES = ['left', 'right', 'a', 'b'];
+
+function splitScroller(host, side) {
+  if (!host) return null;
+  const found = host.querySelectorAll('[data-scroll-side="' + side + '"]');
+  return (found && found[0]) || null;
+}
+
+export function captureScroll(host) {
+  const out = {};
+  for (const side of SPLIT_SIDES) {
+    const s = splitScroller(host, side);
+    if (!s || typeof s.scrollTop !== 'number') continue;
+    const slop = 4;
+    const top = s.scrollTop;
+    const atBottom = typeof s.scrollHeight === 'number' && typeof s.clientHeight === 'number'
+      ? (s.scrollHeight - top - s.clientHeight) <= slop
+      : false;
+    out[side] = { scrollTop: top, atBottom };
+  }
+  return out;
+}
+
+export function restoreScroll(host, state) {
+  if (!state) return;
+  for (const side of SPLIT_SIDES) {
+    const prev = state[side];
+    if (!prev) continue;
+    const s = splitScroller(host, side);
+    if (!s || typeof s.scrollTop !== 'number') continue;
+    s.scrollTop = prev.atBottom && typeof s.scrollHeight === 'number' ? s.scrollHeight : prev.scrollTop;
+  }
+}

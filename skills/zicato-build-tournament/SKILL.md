@@ -222,15 +222,16 @@ copilot's tools (conceptual builder surface):
 | `set_proposer_quality` | best-of-N slate size + the self-critique pass (`best_of_n`, `critique_enabled`) + the opt-in redacted process-exemplar channel (`process_exemplars`; 0 = off — see the soundness note above) |
 | `set_screening` | the pre-tournament candidate screen (`entries`, `veto_only`) — composes with `set_proposer_quality` on the same block |
 | `set_experiment_memory` | cross-epoch experiment-memory transfer (`cross_epoch`) |
-| `set_weights` | the loss-shaping weights (drift/pass/per-kind/per-judge/severity; also surfaced in `zicato-build-board`) |
+| `set_weights` | the loss-shaping weights — the scalars (`drift_weight`, `pass_weight`, `default_judge_weight`, `plan_revision_weight`, `runtime_weight`) and the wholesale mappings (`severity_weights`, `per_kind_weights`, `per_judge_weights`); also surfaced in `zicato-build-board` |
 | `set_namespace_weights` | the multi-objective namespace coefficients + the `diff_complexity_weight` parsimony term |
 | `set_gate` | `promote_margin`, pass-rate monotonicity (+ its scope), `namespace_monotonicity`, the integrity blocks (`block_on_containment_violation`, `block_on_gate_contradiction`), and the regression-suite pre-gate (`regression_gate_enabled` / `_test_command` / `_timeout_s`) |
-| `edit_board_entry` / `add_judge` / `remove_judge` / `set_brief` | the board + brief (deep craft in `zicato-build-board`) |
+| `edit_board_entry` / `remove_board_entry` / `add_judge` / `remove_judge` / `set_board_meta` / `set_brief` | the board + its meta header + brief (deep craft in `zicato-build-board`); all reachable from the GUI's board editor too — see the note below |
 | `estimate_cost` | (read-only) board-runs-per-round for the current draft, incl. the evidence-gate confirm budget, screen runs, best-of-N auxiliary calls, and the placebo line |
 | `validate` | (read-only) advisory warnings, incl. the statistical margin-vs-noise-floor rule (`refuse` severity when a measured floor is known and the evidence gate is off) |
 | `preflight` | (read-only, spends the small K-draw measurement budget) measures the DRAFT contract's A/A noise floor + achievable signal against the registered target; verdict `ok`/`warn`/`refuse`, recommend-only; degrades honestly when the workspace has no registered target. CLI equivalents: `zicato board preflight`, `zicato board audit` |
 | `preview_apply` | (read-only) dry-run: the diff, the predicted contract hash, the cost |
 | `fork` / `switch` / `list_drafts` | NAMED draft slots — the fork/compare lifecycle. `fork name` snapshots the working draft into a slot and binds the session to it; `switch` moves between slots with their state intact. Iterating on contract variants never writes anything — only `apply` does |
+| `revert_to_live` / `undo` | the restore lifecycle. `revert_to_live` discards the session's edits and restores the running contract in place (GUI: the slot strip's two-click Reset-to-live); `undo` steps back one write op off a bounded per-session history shared by the form and the chat (GUI: the slot strip's Undo, which surfaces a "nothing to undo" note on an empty history) |
 | `compare name_a name_b` | (read-only) keyed diff between any two drafts (`session` = the working draft, `live` = the running contract, or a slot name): differing contract-canonical scoring keys with both values, board ids added/removed/changed, brief, proposer |
 | `apply` | freezes the draft into the contract — **ROLLS THE EPOCH** |
 
@@ -254,6 +255,21 @@ Two hard rules for the copilot:
   on apply, the copilot collects the operator's structure + board + holdout +
   proposer + gate changes into ONE draft and applies once, rather than rolling
   the epoch on each tweak.
+
+**The direct GUI.** Every write/lifecycle op above also has a form control in the
+builder view — the weight mappings (severity / per-kind / per-judge, each posting
+the WHOLE mapping) with add-key rows for new judge/namespace keys, the gate's
+namespace-monotonicity map, the overfitting refresh ceiling, the proposer picker
+(discovered dirs + builtin default + free-text path), and the slot strip's
+reset/undo. GUI coverage is machine-pinned by `tests/test_builder_gui_coverage.py`
+(the one standing exception is `add_judge`, which the board editor covers through
+the whole-entry `edit_board_entry` round-trip). The board is authored through a
+full **board editor** (the flagship GUI): a per-entry inline accordion covering
+the whole schema for its kind, an expectation sub-form, a judges list editor, a
+board-meta panel (`disable_drift` + `judge_only`), a paste-JSONL import, and a
+proposer-brief editor — each driving the SAME op as the copilot tool. The forms
+carry no client validation twin; a server `ValueError` renders verbatim inline.
+Deep board craft lives in `zicato-build-board`.
 
 ## A good build session
 

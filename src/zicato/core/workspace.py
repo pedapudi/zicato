@@ -113,6 +113,69 @@ def generation_dir(workspace_root: Path, epoch_id: str, generation_id: str) -> P
     return _layout(workspace_root).generation_dir(epoch_id, generation_id)
 
 
+def reflections_dir(workspace_root: Path, epoch_id: str) -> Path:
+    """Return one epoch's board-reflection subtree (``reflections/``).
+
+    The parent of every per-reflection directory
+    (:func:`reflection_dir`). Beside the calibration / preflight helpers,
+    this is the storage seam board reflection's corpus + analysis persist
+    under (BOARD-REFLECTION.md's data model). Created lazily; readers
+    tolerate its absence.
+    """
+    return _layout(workspace_root).reflections_dir(epoch_id)
+
+
+def reflection_dir(workspace_root: Path, epoch_id: str, reflection_id: str) -> Path:
+    """Return the directory holding ONE reflection run's artifacts."""
+    return _layout(workspace_root).reflection_dir(epoch_id, reflection_id)
+
+
+def reflection_plan_path(workspace_root: Path, epoch_id: str, reflection_id: str) -> Path:
+    """Path to one reflection's pre-registered run plan (``plan.json``)."""
+    return _layout(workspace_root).reflection_plan(epoch_id, reflection_id)
+
+
+def reflection_corpus_path(workspace_root: Path, epoch_id: str, reflection_id: str) -> Path:
+    """Path to one reflection's observation corpus (``corpus.jsonl``).
+
+    One :class:`~zicato.reflection.corpus.ObservationRun` per line — each
+    REFERENCES the run artifacts under ``generations/`` (never copies).
+    """
+    return _layout(workspace_root).reflection_corpus(epoch_id, reflection_id)
+
+
+def reflection_adjudication_dir(workspace_root: Path, epoch_id: str, reflection_id: str) -> Path:
+    """Path to one reflection's meta-judge adjudication subtree (``adjudication/``)."""
+    return _layout(workspace_root).reflection_adjudication_dir(epoch_id, reflection_id)
+
+
+def reflection_adjudication_path(
+    workspace_root: Path,
+    epoch_id: str,
+    reflection_id: str,
+    judge_name: str,
+    run_ref: str,
+) -> Path:
+    """Path to one adjudicated decision's verdict file.
+
+    ``adjudication/{judge_name}/{run_ref}.json`` — file-exists is a cache
+    HIT (the corpus is frozen per ``reflection_id``).
+    """
+    return _layout(workspace_root).reflection_adjudication(
+        epoch_id, reflection_id, judge_name, run_ref
+    )
+
+
+def reflection_scorecards_path(workspace_root: Path, epoch_id: str, reflection_id: str) -> Path:
+    """Path to one reflection's aggregated ``scorecards.json``."""
+    return _layout(workspace_root).reflection_scorecards(epoch_id, reflection_id)
+
+
+def reflection_findings_path(workspace_root: Path, epoch_id: str, reflection_id: str) -> Path:
+    """Path to one reflection's ranked ``findings.json``."""
+    return _layout(workspace_root).reflection_findings(epoch_id, reflection_id)
+
+
 def run_dir(
     workspace_root: Path,
     epoch_id: str,
@@ -145,6 +208,28 @@ def loss_profile_path(
 ) -> Path:
     """Path to the reducer's ``loss.json`` output for one run."""
     return _layout(workspace_root).loss(epoch_id, generation_id, entry_id)
+
+
+def run_result_path(
+    workspace_root: Path,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+) -> Path:
+    """Path to one run's persisted ``result.json`` (the RunResult capture).
+
+    The read twin of the worker's post-run write: the user-facing
+    transcript + final output the run produced, persisted beside
+    ``loss.json`` when :attr:`RuntimeConfig.persist_run_results` is on
+    (the default). The canonical replicate-0 slot; replicate ``r>0``
+    lives at the sibling ``result.r{n}.json``
+    (:func:`zicato.tournament.unit_cache.unit_result_path`). Readers
+    must tolerate absence — legacy runs, an opted-out runtime, or a
+    best-effort write that failed all leave no file
+    (:func:`zicato.tournament.unit_cache.read_run_result` returns
+    ``None`` in every such case).
+    """
+    return _layout(workspace_root).result(epoch_id, generation_id, entry_id)
 
 
 def experiment_json_path(workspace_root: Path, epoch_id: str, generation_id: str) -> Path:
@@ -310,9 +395,18 @@ __all__ = [
     "epoch_dir",
     "generations_dir",
     "generation_dir",
+    "reflections_dir",
+    "reflection_dir",
+    "reflection_plan_path",
+    "reflection_corpus_path",
+    "reflection_adjudication_dir",
+    "reflection_adjudication_path",
+    "reflection_scorecards_path",
+    "reflection_findings_path",
     "run_dir",
     "events_jsonl_path",
     "loss_profile_path",
+    "run_result_path",
     "experiment_json_path",
     "patches_dir",
     "patch_json_path",

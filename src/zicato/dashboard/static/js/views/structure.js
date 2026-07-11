@@ -5,7 +5,7 @@
 
 import { el, svgEl } from '../core/dom.js';
 import * as svg from '../svg.js';
-import { section, empty, stat, verdictPill, overrideChip, overrideDigest, overrideControlCell, pendingOverride, pendingOverrideDigest, clearPendingOverride } from '../ui.js';
+import { section, empty, stat, verdictPill, overrideChip, overrideDigest, overrideControlCell, pendingOverride, pendingOverrideDigest, clearPendingOverride, chip, hovercardBody, dataTable, deltaCell } from '../ui.js';
 import { structureStatusLabel } from '../livestatus.js';
 import { attachHovercard } from '../hovercard.js';
 import { state } from '../core/state.js';
@@ -168,6 +168,12 @@ export function normalizeStructure(st, live) {
       (r && typeof r === 'object' && r.round_index == null && r.stage_index != null)
         ? { ...r, round_index: r.stage_index }
         : r),
+    // the SERVED per-generation elim states (derive_elim_states — sorted
+    // rounds + bracket_side/loser ride on `rounds` above). Carried through
+    // VERBATIM so the elim figures render the server's model and never
+    // re-derive eliminations client-side (DQ1). Absent for non-elim
+    // structures and under a payload that predates the fold.
+    gen_states: Array.isArray(st.gen_states) ? st.gen_states : null,
     standings: Array.isArray(st.standings) ? st.standings : [],
     // the per-challenger proposing-step outcomes (applied/rejected + reason),
     // carried through so the "Proposed field" section + the live tracker can
@@ -176,7 +182,7 @@ export function normalizeStructure(st, live) {
     // the epoch's champion succession; the LAST id is the reigning champion
     // (the promoted survivor of a settled racing tournament). Carried through
     // so the racing renderer can confirm the gate's crowned id.
-    champion_lineage: Array.isArray(st.champion_lineage) ? st.champion_lineage.map(String) : [],
+    champion_lineage: lineageStr(st),
     // the LIVE aggregate scalars + per-gen projection maps — carried through
     // (additively) so championScalarOf can anchor the racing scalar track /
     // gauntlet field bars on the champion's running scalar mid-race, not just on
@@ -431,7 +437,7 @@ function diversitySection(st, ctx, epochId) {
   // the dual mean/max overlap meter against the tolerance marker.
   const meter = overlapMeter(meanO, maxO, tol);
   if (pair && pair.length === 2) {
-    attachHovercard(meter, () => el('div', { class: 'dn-hc-body' }, [
+    attachHovercard(meter, () => hovercardBody([
       el('div', { class: 'dn-hc-title', text: 'most-overlapping pair' }),
       el('div', { class: 'dn-hc-row dn-mono', text: pair[0] + ' ⇄ ' + pair[1] }),
       el('div', { class: 'dn-hc-row dn-faint', text: 'Jaccard ' + svg.fmt(maxO, 2)
@@ -598,7 +604,7 @@ export function elimModel(st) {
   const live = !!st.live;
   const isDouble = String(st.structure) === 'double_elim';
   const rounds = (Array.isArray(st.rounds) ? st.rounds : []);
-  const lineage = Array.isArray(st.champion_lineage) ? st.champion_lineage.map(String) : [];
+  const lineage = lineageStr(st);
   // a match carries its progressive live fields (done/total/inflight/queued) so
   // the bracket tree can fill in board-by-board; map every match through verbatim.
   const winners = splitBand(rounds, (slot) => !slot.startsWith('LB'));
@@ -625,21 +631,37 @@ export function elimModel(st) {
   }
   const gateDelta = (finalMatch && svg.isNum(finalMatch.delta_scalar)) ? finalMatch.delta_scalar : null;
   const hasMatches = winners.some((r) => r.matches.length) || (losers && losers.some((r) => r.matches.length));
-  return { winners, losers, championId, benchmarkId, gateState, gateDelta, live, hasMatches };
+  // `rounds` + `gen_states` are the SERVED elim model (pre-sorted columns +
+  // per-generation states) the flow figure renders verbatim; the winners/
+  // losers bands remain only for the gate math above + the radial variant.
+  return {
+    rounds, gen_states: Array.isArray(st.gen_states) ? st.gen_states : [],
+    winners, losers, championId, benchmarkId, gateState, gateDelta, live, hasMatches,
+  };
 }
 
-// Build the elimRadial/elimFlow `rounds` (the elimModel-band shape both
-// renderers consume): the winners' band followed by the losers' band, each round
-// carrying its label + matches. ONE source, two renderers (radial ↔ flow).
-function elimBands(model) {
-  return model.winners.concat(Array.isArray(model.losers) ? model.losers : []);
+// (elimBands — the winners.concat(losers) band re-assembly both renderers used
+// to consume — is DELETED: the server serves `rounds` pre-sorted with
+// `bracket_side` stamped, so the ordering contract lives on the payload. The
+// figures read model.rounds / model.gen_states directly.)
+
+// The champion_lineage re-parsed to string ids — the ×5 identical guard the
+// figure models shared (U5). A non-array lineage degrades to [].
+function lineageStr(obj) {
+  return Array.isArray(obj && obj.champion_lineage) ? obj.champion_lineage.map(String) : [];
+}
+
+// The shared champion-gate CAPTION fragment (U5): the crowned / stands /
+// deciding phrase every figure's caption appends. An undecided gate → ''.
+function gateNoteFor(gateState, championId) {
+  return gateState === 'crowned' ? ` · champion-gate: ${championId} promoted ${CROWN.current}`
+    : gateState === 'stands' ? ' · champion-gate: champion stands'
+    : gateState === 'deciding' ? ' · champion-gate: deciding…' : '';
 }
 
 // The shared figure CAPTION for the bracket flow/radial figures.
 function bracketCaption(model) {
-  const gateNote = model.gateState === 'crowned' ? ` · champion-gate: ${model.championId} promoted ${CROWN.current}`
-    : model.gateState === 'stands' ? ' · champion-gate: champion stands'
-    : model.gateState === 'deciding' ? ' · champion-gate: deciding…' : '';
+  const gateNote = gateNoteFor(model.gateState, model.championId);
   return el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
     'each lane is a generation; two lanes converge at a match — the winner’s lane continues ↑, the loser’s ends with ✕ — and the champion’s lane reaches the gate ' + CROWN.current
     + (model.benchmarkId ? ' · ' + CROWN.former + ' = displaced incumbent' : '')
@@ -649,71 +671,50 @@ function bracketCaption(model) {
 }
 
 function renderBracket(st, ctx, epochId, structure) {
-  const model = elimModel(st) || { winners: splitBand((st && st.rounds) || [], () => true), losers: null, live: !!(st && st.live) };
+  const model = elimModel(st) || {
+    rounds: (st && Array.isArray(st.rounds)) ? st.rounds : [],
+    gen_states: (st && Array.isArray(st.gen_states)) ? st.gen_states : [],
+    winners: splitBand((st && st.rounds) || [], () => true), losers: null, live: !!(st && st.live),
+  };
   const openGen = (gen) => { if (gen) ctx.navigate('candidate', { epochId, gen }); };
-  const bands = elimBands(model);
   const hasFigure = model.hasMatches !== false && model.winners.length;
   const isDouble = structure === 'double_elim';
 
-  // single_elim → the RADIAL bracket leads (single-elim.html opt 6): concentric
-  // rings narrowing to a center champion seat. double_elim → the orthogonal-pipe
-  // elimFlow combo leads (double-elim.html opt 7, the DEFAULT), with the radial
-  // (opt 8, {double:true}) offered as a NON-default toggle on the figure.
+  // Both structures render the SINGLE bracket-as-FLOW figure (elimFlow): the
+  // lane-convergence read to the champion gate; double_elim adds the WB/LB
+  // bands. The concentric-ring radial figure + its double-elim toggle were
+  // retired (C1) — one figpane per structure, no toggle.
   return isDouble
-    ? renderDoubleElim(st, ctx, epochId, model, bands, hasFigure, openGen)
-    : renderSingleElim(st, ctx, epochId, model, bands, hasFigure, openGen);
+    ? renderDoubleElim(st, ctx, epochId, model, hasFigure, openGen)
+    : renderSingleElim(st, ctx, epochId, model, hasFigure, openGen);
 }
 
-// single_elim — RADIAL bracket PRIMARY (the liked opt 6), the bracket-as-FLOW
-// (elimFlow) retained as a secondary companion view (who-converged-with-whom,
-// the lane convergence read).
-function renderSingleElim(st, ctx, epochId, model, bands, hasFigure, openGen) {
+// single_elim — the bracket-as-FLOW (elimFlow) is the SINGLE figure: the
+// lane-convergence read (who-played-whom to the champion gate). The radial
+// companion was retired (C1) — one figpane, no toggle.
+function renderSingleElim(st, ctx, epochId, model, hasFigure, openGen) {
   const nodes = [];
 
-  // the PRIMARY figure: the concentric-ring radial bracket.
-  const radialCard = el('div', { class: 'dn-panel dn-figpane' });
-  radialCard.appendChild(hasFigure
-    ? svg.elimRadial({
-        rounds: bands, championId: model.championId, benchmarkId: model.benchmarkId,
-        gateState: model.gateState, live: model.live, double: false, onCompetitor: openGen,
+  const flowCard = el('div', { class: 'dn-panel dn-figpane' });
+  flowCard.appendChild(hasFigure
+    ? svg.elimFlow({
+        rounds: model.rounds, gen_states: model.gen_states,
+        championId: model.championId, benchmarkId: model.benchmarkId,
+        gateState: model.gateState, live: model.live, onCompetitor: openGen,
       })
     : empty(model.live ? 'The bracket is being seeded — matches fill in as runs land.' : 'No bracket rounds recorded yet.'));
-  if (model.winners.length) {
-    const gateNote = model.gateState === 'crowned' ? ` · champion-gate: ${model.championId} promoted ${CROWN.current}`
-      : model.gateState === 'stands' ? ' · champion-gate: champion stands'
-      : model.gateState === 'deciding' ? ' · champion-gate: deciding…' : '';
-    radialCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
-      'rounds are concentric rings narrowing to the champion seat at the center; each spoke is a generation — the rings it survived read green, the ring it was eliminated at turns red ✕, and the survivor dashes into the center gate ' + CROWN.current
-      + (model.benchmarkId ? ' · ' + CROWN.former + ' = displaced incumbent' : '')
-      + gateNote
-      + (model.live ? ' · LIVE — still-racing spokes are dashed' : '') }));
-  }
-  nodes.push(section(model.live ? 'Bracket · LIVE — rings narrowing to the champion gate' : 'Bracket · rings narrowing to the champion gate', radialCard));
-
-  // SECONDARY: the bracket-as-FLOW (lane convergences) — the who-played-whom read
-  // the radial cannot show. Retained as a companion view below the radial.
-  if (hasFigure) {
-    const flowCard = el('div', { class: 'dn-panel dn-figpane' });
-    flowCard.appendChild(svg.elimFlow({
-      winners: bands, championId: model.championId, benchmarkId: model.benchmarkId,
-      gateState: model.gateState, live: model.live, onCompetitor: openGen,
-    }));
-    flowCard.appendChild(bracketCaption(model));
-    nodes.push(section(model.live ? 'Bracket flow · LIVE — lane convergences, click a lane to open the candidate' : 'Bracket flow · lane convergences, click a lane to open the candidate', flowCard));
-  }
+  if (hasFigure) flowCard.appendChild(bracketCaption(model));
+  nodes.push(section(model.live ? 'Bracket flow · LIVE — lane convergences, click a lane to open the candidate' : 'Bracket flow · lane convergences, click a lane to open the candidate', flowCard));
 
   const standings = standingsTable(st, ctx, epochId, !!(st && st.live));
   if (standings) nodes.push(section('Standings', standings));
   return nodes;
 }
 
-// double_elim — the orthogonal-pipe FLOW combo is the DEFAULT figure (the liked
-// opt 7: WB/LB bands + life glyphs). The RADIAL ({double:true}, opt 8) is offered
-// as an OPTIONAL, NON-default variant via a small segmented toggle ON the figure
-// — both are rendered into the card, the radial hidden until the toggle flips it.
-// The toggle is pure client-side visibility (no data change) so it never
-// disturbs the digest-gated swap.
-function renderDoubleElim(st, ctx, epochId, model, bands, hasFigure, openGen) {
+// double_elim — the orthogonal-pipe FLOW combo is the single figure (WB/LB
+// bands + life glyphs). The optional radial variant + its segmented toggle
+// were retired (C1) — flow only, no dt-fig-switch.
+function renderDoubleElim(st, ctx, epochId, model, hasFigure, openGen) {
   const nodes = [];
   const flowCard = el('div', { class: 'dn-panel dn-figpane' });
   if (!hasFigure) {
@@ -724,40 +725,12 @@ function renderDoubleElim(st, ctx, epochId, model, bands, hasFigure, openGen) {
     return nodes;
   }
 
-  // the segmented toggle: COMBO (default) ↔ RADIAL — a small control on the
-  // figure, mirroring the chrome's .dn-theme-switch idiom.
-  const flowPane = el('div', { class: 'dt-figview dt-figview-on' }, [
-    svg.elimFlow({
-      winners: bands, championId: model.championId, benchmarkId: model.benchmarkId,
-      gateState: model.gateState, live: model.live, onCompetitor: openGen,
-    }),
-  ]);
-  const radialPane = el('div', { class: 'dt-figview' }, [
-    svg.elimRadial({
-      rounds: bands, championId: model.championId, benchmarkId: model.benchmarkId,
-      gateState: model.gateState, live: model.live, double: true, onCompetitor: openGen,
-    }),
-  ]);
-  const comboBtn = el('button', { class: 'dt-fig-btn dt-fig-active', type: 'button', text: 'combo' });
-  const radialBtn = el('button', { class: 'dt-fig-btn', type: 'button', text: 'radial' });
-  const show = (which) => {
-    const combo = which === 'combo';
-    flowPane.classList.toggle('dt-figview-on', combo);
-    radialPane.classList.toggle('dt-figview-on', !combo);
-    comboBtn.classList.toggle('dt-fig-active', combo);
-    radialBtn.classList.toggle('dt-fig-active', !combo);
-  };
-  comboBtn.addEventListener('click', () => show('combo'));
-  radialBtn.addEventListener('click', () => show('radial'));
-  flowCard.appendChild(el('div', { class: 'dt-fig-switchrow' }, [
-    el('span', { class: 'dt-fig-switchlab', text: 'figure' }),
-    el('div', { class: 'dt-fig-switch' }, [comboBtn, radialBtn]),
-  ]));
-  flowCard.appendChild(flowPane);
-  flowCard.appendChild(radialPane);
+  flowCard.appendChild(svg.elimFlow({
+    rounds: model.rounds, gen_states: model.gen_states,
+    championId: model.championId, benchmarkId: model.benchmarkId,
+    gateState: model.gateState, live: model.live, onCompetitor: openGen,
+  }));
   flowCard.appendChild(bracketCaption(model));
-  flowCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:4px 0 0;', text:
-    'default: the winners’ + losers’ orthogonal-pipe combo · switch to “radial” for the concentric-ring (polar) view of the same bracket' }));
   nodes.push(section(model.live ? 'Bracket flow · LIVE — winners’ + losers’ lanes' : 'Bracket flow · winners’ + losers’ lanes', flowCard));
 
   const standings = standingsTable(st, ctx, epochId, !!(st && st.live));
@@ -783,7 +756,7 @@ export function swissModel(st) {
   if (!st || String(st.structure) !== 'swiss') return null;
   const live = !!st.live;
   const rawRounds = Array.isArray(st.rounds) ? st.rounds : [];
-  const lineage = Array.isArray(st.champion_lineage) ? st.champion_lineage.map(String) : [];
+  const lineage = lineageStr(st);
 
   const rounds = rawRounds.map((r) => {
     const matches = Array.isArray(r.matches) ? r.matches : [];
@@ -965,9 +938,7 @@ function renderSwiss(st, ctx, epochId) {
       })
     : empty(model.live ? 'The swiss is being seeded — pairings fill in as runs land.' : 'No swiss rounds recorded yet.'));
   if (model.hasRounds) {
-    const gateNote = model.gateState === 'crowned' ? ` · champion-gate: ${model.championId} promoted ${CROWN.current}`
-      : model.gateState === 'stands' ? ' · champion-gate: champion stands'
-      : model.gateState === 'deciding' ? ' · champion-gate: deciding…' : '';
+    const gateNote = gateNoteFor(model.gateState, model.championId);
     lCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
       'each round pairs the field; Copeland points accumulate (win 1 / draw ½) · hover a pairing for its Δ scalar · ' + CROWN.current + ' = champion · ' + CROWN.former + ' = former champion (displaced incumbent) — the swiss leader must beat the incumbent at the champion-gate'
       + gateNote
@@ -1058,7 +1029,7 @@ export function racingModel(st) {
   if (!st || String(st.structure) !== 'racing') return null;
   const live = !!st.live;
   const rounds = Array.isArray(st.rounds) ? st.rounds : [];
-  const lineage = Array.isArray(st.champion_lineage) ? st.champion_lineage.map(String) : [];
+  const lineage = lineageStr(st);
   const firstMatch = (r) => (r && Array.isArray(r.matches) && r.matches[0]) ? r.matches[0] : {};
   const isFinal = (mid) => String(mid || '') === 'racing-final';
   const gateRound = rounds.find((r) => isFinal(firstMatch(r).match_id)) || null;
@@ -1567,7 +1538,12 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
     }
     const matches = (Array.isArray(r.matches) ? r.matches : []).map((m, mi) =>
       overlay(m, queued, entering, rungOpts ? Object.assign({ slot0: mi === 0 }, rungOpts) : null));
-    return { round_index: ri, label: r.label || (isRacing ? `Rung ${ri}` : `Round ${ri + 1}`), queued, matches };
+    // the rebuilt round keeps the SERVED elim-model stamp (`bracket_side`) —
+    // the overlay decorates in-flight matches, it never re-derives the model.
+    return {
+      round_index: ri, label: r.label || (isRacing ? `Rung ${ri}` : `Round ${ri + 1}`), queued, matches,
+      ...(r.bracket_side != null ? { bracket_side: r.bracket_side } : {}),
+    };
   });
 
   // BLOOM the standings from the applied FIELD: when the run is past proposing
@@ -1635,6 +1611,9 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
     structure_params: params,
     competitors,
     rounds,
+    // the SERVED per-generation elim states ride the live payload (the
+    // server folds them on /api/active-tournament); pass through verbatim.
+    gen_states: Array.isArray(at.gen_states) ? at.gen_states : null,
     standings,
     champion_lineage: Array.isArray(at.champion_lineage) ? at.champion_lineage : [],
     // carry the live champion aggregate + projection map so championScalarOf can
@@ -1724,7 +1703,7 @@ export function liveMatchBlocks(model) {
       const m0 = (Array.isArray(r.matches) && r.matches[0]) ? r.matches[0] : {};
       if (isFinal(m0.match_id) && Array.isArray(m0.competitors)) for (const g of m0.competitors) ids.add(String(g));
     }
-    const lineage = Array.isArray(model.champion_lineage) ? model.champion_lineage.map(String) : [];
+    const lineage = lineageStr(model);
     if (lineage.length) ids.add(lineage[lineage.length - 1]);
     return ids;
   })();
@@ -1963,10 +1942,7 @@ function renderRacing(st, ctx, epochId) {
       })
     : empty(live ? 'The race is being seeded — the first rung fills in as runs land.' : 'No rungs evaluated yet.'));
   if (rungs.length) {
-    const gateNote = gateState === 'crowned' ? ` · champion-gate: ${championId} promoted ${CROWN.current}`
-      : gateState === 'stands' ? ' · champion-gate: champion stands'
-      : gateState === 'deciding' ? ' · champion-gate: deciding…'
-      : '';
+    const gateNote = gateNoteFor(gateState, championId);
     trackCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
       (benchmarkId ? `every gen is plotted on a shared scalar number-line (lower = better); the dashed line is the champion v0 = ${benchmarkId} benchmark · ` : '')
       + 'marker size = inverse loss (bigger = better) — the survivor is the fattest dot, the cuts shrink away past the cut tick · click a competitor → open'
@@ -2023,7 +1999,7 @@ export function gauntletModel(st) {
   const rounds = Array.isArray(st.rounds) ? st.rounds : [];
   const standings = Array.isArray(st.standings) ? st.standings : [];
   const competitors = Array.isArray(st.competitors) ? st.competitors : [];
-  const lineage = Array.isArray(st.champion_lineage) ? st.champion_lineage.map(String) : [];
+  const lineage = lineageStr(st);
   const params = (st.structure_params && typeof st.structure_params === 'object') ? st.structure_params : {};
 
   // the champion id (the standard the wave is measured against) + its scalar.
@@ -2230,18 +2206,9 @@ function standingsTable(st, ctx, epochId, live) {
   // that actually populate them (single_elim / double_elim / swiss).
   const showWL = structure !== 'racing';
   standings.sort((a, b) => (svg.isNum(a.rank) ? a.rank : 1e9) - (svg.isNum(b.rank) ? b.rank : 1e9));
-  const tbl = el('table', { class: 'dn-board-table dt-standings' });
-  tbl.appendChild(el('thead', null, [el('tr', null, [
-    el('th', { text: 'rank' }), el('th', { text: 'generation' }), el('th', { text: 'status' }),
-    el('th', { class: 'dn-num', text: 'scalar' }),
-    ...(showWL ? [el('th', { class: 'dn-num', text: 'W' }), el('th', { class: 'dn-num', text: 'L' })] : []),
-    el('th', { text: '' }),
-    el('th', { class: 'dn-ovr-col', text: 'override' }),
-  ])]));
-  const tbody = el('tbody');
   // running tally for the field-level caption ('gate said X · operator forced Y')
   const forced = { promote: 0, reject: 0, drained: 0 };
-  for (const s of standings) {
+  const standingRow = (s) => {
     let raw = String(s.status || '').toLowerCase();
     // LIVE — the verdicts have not committed; a standing tagged champion /
     // eliminated mid-run is the EVENTUAL outcome read from a half-finished
@@ -2264,11 +2231,11 @@ function standingsTable(st, ctx, epochId, live) {
     const bt = svg.isNum(s.boards_total) ? s.boards_total : null;
     const frac = (bd != null && bt != null && bt > 0) ? Math.min(1, bd / bt) : null;
     const scalarCell = proj
-      ? el('td', { class: 'dn-num dn-mono dt-proj-val', title: 'projected — boards still streaming in' }, [
+      ? { class: 'dn-num dn-mono dt-proj-val', title: 'projected — boards still streaming in', el: [
           el('span', { text: '~' + svg.fmt(s.projected_scalar, 1) }),
           el('span', { class: 'dt-proj-badge', text: 'proj' }),
-        ])
-      : el('td', { class: 'dn-num dn-mono', text: svg.isNum(s.scalar) ? svg.fmt(s.scalar, 1) : '—' });
+        ] }
+      : { class: 'dn-num dn-mono', text: svg.isNum(s.scalar) ? svg.fmt(s.scalar, 1) : '—' };
     // operator-override provenance rides BESIDE the status pill (overrideChip),
     // never recoloring the verdict — durable readback wins, else the optimistic
     // queued stamp, else (settled never-landed promote) drained. Absent → null.
@@ -2287,7 +2254,7 @@ function standingsTable(st, ctx, epochId, live) {
     const ovChip = overrideChip(ovProv);
     if (ovChip && ovProv) {
       const act = ovProv.action === 'promote' ? 'force-promoted' : 'force-rejected';
-      attachHovercard(ovChip, () => el('div', { class: 'dn-hc-body' }, [
+      attachHovercard(ovChip, () => hovercardBody([
         el('div', { class: 'dn-hc-title', text: 'operator override · ' + act }),
         (typeof ovProv.reason === 'string' && ovProv.reason)
           ? el('div', { class: 'dn-hc-row', text: ovProv.reason })
@@ -2304,26 +2271,37 @@ function standingsTable(st, ctx, epochId, live) {
     // the per-row diversity badge — soft-rejected reuses the DEFERRED pill
     // (held, not promoted); penalized reads as a caution chip. Absent → null.
     const divBadge = diversityBadge(divStatus ? divStatus[gidStr] : null);
-    tbody.appendChild(el('tr', { class: rowCls }, [
-      el('td', { class: 'dn-mono', text: svg.isNum(s.rank) ? String(s.rank) : '—' }),
-      el('td', { class: 'dn-mono', text: (s.generation_id || '—') + (status === 'champion' ? ' ' + CROWN.current : '') }),
-      el('td', null, [statusPill(status), ovChip, divBadge].filter(Boolean)),
-      scalarCell,
-      ...(showWL ? [
-        el('td', { class: 'dn-num dn-mono', text: svg.isNum(s.wins) ? String(s.wins) : '—' }),
-        el('td', { class: 'dn-num dn-mono', text: svg.isNum(s.losses) ? String(s.losses) : '—' }),
-      ] : []),
-      el('td', null, [
-        proj && frac != null ? el('span', { class: 'dt-proj-bar', title: bd + '/' + bt + ' boards scored' }, [
-          el('span', { class: 'dt-proj-bar-fill', style: 'width:' + Math.round(frac * 100) + '%;' }),
-        ]) : null,
-        proj && frac != null ? el('span', { class: 'dt-proj-bar-lab', text: bd + '/' + bt }) : null,
-        s.generation_id ? el('a', { class: 'dn-linkbtn', href: ctx.href('candidate', { epochId, gen: s.generation_id }), text: 'open →' }) : null,
-      ].filter(Boolean)),
-      el('td', { class: 'dn-ovr-col' }, [ctlCell].filter(Boolean)),
-    ]));
-  }
-  tbl.appendChild(tbody);
+    return {
+      class: rowCls,
+      cells: [
+        { class: 'dn-mono', text: svg.isNum(s.rank) ? String(s.rank) : '—' },
+        { class: 'dn-mono', text: (s.generation_id || '—') + (status === 'champion' ? ' ' + CROWN.current : '') },
+        { el: [statusPill(status), ovChip, divBadge] },
+        scalarCell,
+        ...(showWL ? [
+          { class: 'dn-num dn-mono', text: svg.isNum(s.wins) ? String(s.wins) : '—' },
+          { class: 'dn-num dn-mono', text: svg.isNum(s.losses) ? String(s.losses) : '—' },
+        ] : []),
+        { el: [
+          proj && frac != null ? el('span', { class: 'dt-proj-bar', title: bd + '/' + bt + ' boards scored' }, [
+            el('span', { class: 'dt-proj-bar-fill', style: 'width:' + Math.round(frac * 100) + '%;' }),
+          ]) : null,
+          proj && frac != null ? el('span', { class: 'dt-proj-bar-lab', text: bd + '/' + bt }) : null,
+          s.generation_id ? el('a', { class: 'dn-linkbtn', href: ctx.href('candidate', { epochId, gen: s.generation_id }), text: 'open →' }) : null,
+        ] },
+        { class: 'dn-ovr-col', el: ctlCell ? [ctlCell] : [] },
+      ],
+    };
+  };
+  const tbl = dataTable({
+    class: 'dn-board-table dt-standings',
+    columns: [
+      { label: 'rank' }, { label: 'generation' }, { label: 'status' }, { label: 'scalar', class: 'dn-num' },
+      ...(showWL ? [{ label: 'W', class: 'dn-num' }, { label: 'L', class: 'dn-num' }] : []),
+      { label: '' }, { label: 'override', class: 'dn-ovr-col' },
+    ],
+    rows: standings.map(standingRow),
+  });
   const caps = [];
   // a field-level DEFERRED caption — when at least one standing is held in
   // contention (the deferred pill state) and nothing has yet been crowned /
@@ -2388,15 +2366,15 @@ function diversityBadge(ds) {
     const p = verdictPill('deferred');
     p.textContent = 'soft-rejected';
     p.setAttribute('class', (p.getAttribute('class') || '') + ' dn-div-softrej');
-    attachHovercard(p, () => el('div', { class: 'dn-hc-body' }, [
+    attachHovercard(p, () => hovercardBody([
       el('div', { class: 'dn-hc-title', text: 'diversity · soft-rejected' }),
       el('div', { class: 'dn-hc-row dn-faint', text: 'idea overlap exceeded the diversity tolerance — held out of the field (not gate-rejected)' }),
     ]));
     return p;
   }
   if (ds === 'penalized') {
-    const c = el('span', { class: 'dn-chip dn-chip-live dn-div-penalized', text: 'div-penalized' });
-    attachHovercard(c, () => el('div', { class: 'dn-hc-body' }, [
+    const c = chip('live', 'div-penalized', 'dn-div-penalized');
+    attachHovercard(c, () => hovercardBody([
       el('div', { class: 'dn-hc-title', text: 'diversity · penalized' }),
       el('div', { class: 'dn-hc-row dn-faint', text: 'idea overlap incurred a diversity penalty but the challenger still entered the field' }),
     ]));

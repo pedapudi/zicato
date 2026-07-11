@@ -11,10 +11,15 @@ import { el } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, section, empty } from '../ui.js';
+import { gatedSwap, section, empty, fmt, chip,
+  loopVerdict, promotionRateLabel, costPerPromotionLabel, fmtDurationMs, noiseBandFor, loopStatsDigest } from '../ui.js';
 import { deriveLiveStatus } from '../livestatus.js';
 
-function fmt(v, d = 3) { return svg.isNum(v) ? v.toFixed(d) : '—'; }
+// The loop-communication helpers moved to ui.js (they were shared UPWARD by
+// epoch.js — a reverse view→view dependency). Re-exported here so existing
+// `home.loopVerdict`-style consumers (tests, shell.js's `* as home`) keep
+// resolving without churn.
+export { loopVerdict, promotionRateLabel, costPerPromotionLabel, fmtDurationMs, noiseBandFor, loopStatsDigest };
 
 export async function render(host, ctx) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Acquiring fleet telemetry…' }));
@@ -184,8 +189,8 @@ function fleetCard(row, isCurrent, ctx, sparkVals, live, loop, cost) {
   const verdict = loopVerdict(loop);
   const head = el('div', { class: 'dn-fleet-head' }, [
     el('span', { class: 'dn-fleet-id', text: row.epoch_id }),
-    verdict ? el('span', { class: 'dn-chip dn-chip-' + verdict.cls, text: verdict.word }) : null,
-    el('span', { class: 'dn-chip dn-chip-' + (liveHere ? 'live' : st), text: liveHere ? 'running' : st }),
+    verdict ? chip(verdict.cls, verdict.word) : null,
+    chip(liveHere ? 'live' : st, liveHere ? 'running' : st),
   ].filter(Boolean));
   const goal = el('div', { class: 'dn-fleet-goal', text: row.goal || '(no goal recorded)' });
   // The measured A/A noise floor renders as a band around the champion floor
@@ -212,72 +217,8 @@ function fleetCard(row, isCurrent, ctx, sparkVals, live, loop, cost) {
   }, [head, goal, hero, stats]);
 }
 
-// ---- loop-communication helpers (pure — node-testable) --------------
-
-// The verdict chip for one epoch's /api/epoch/{id}/trajectory read, or null
-// when there is nothing to flag ("improving" is the default state — no chip).
-// The below-noise-floor case renders the EXACT honest phrase, never a
-// confident "plateaued" the measurement cannot support.
-export function loopVerdict(traj) {
-  const v = traj && typeof traj === 'object' ? traj.verdict : null;
-  if (v === 'no_signal') {
-    return { word: 'no detectable signal (below noise floor)', cls: 'nosignal' };
-  }
-  if (v === 'plateaued') return { word: 'plateaued', cls: 'plateau' };
-  return null;
-}
-
-// "promoted/challengers · NN%" from the trajectory read, or null when the
-// epoch has no challengers yet (or the read degraded / is unavailable).
-export function promotionRateLabel(traj) {
-  if (!traj || typeof traj !== 'object') return null;
-  if (!svg.isNum(traj.promotion_rate) || !(traj.challenger_count > 0)) return null;
-  return (traj.promoted_count || 0) + '/' + traj.challenger_count
-    + ' · ' + Math.round(traj.promotion_rate * 100) + '%';
-}
-
-// cost_per_promotion_ms → a compact human duration, or null when nothing was
-// promoted yet (cost_per_promotion_ms is null) / the read is unavailable.
-export function costPerPromotionLabel(cost) {
-  const v = cost && typeof cost === 'object' ? cost.cost_per_promotion_ms : null;
-  return svg.isNum(v) ? fmtDurationMs(v) : null;
-}
-
-// A short duration: 850ms · 12.3s · 4.2m · 1.5h.
-export function fmtDurationMs(ms) {
-  if (!svg.isNum(ms) || ms < 0) return '—';
-  if (ms < 1000) return Math.round(ms) + 'ms';
-  const s = ms / 1000;
-  if (s < 90) return (Math.round(s * 10) / 10) + 's';
-  const m = s / 60;
-  if (m < 90) return (Math.round(m * 10) / 10) + 'm';
-  return (Math.round((m / 60) * 10) / 10) + 'h';
-}
-
-// The sparkline noiseBand spec for a trajectory read: the measured A/A floor
-// (± max_abs_delta) centred on the LAST plotted scalar — the champion floor.
-// Null when no floor was measured / no scalar is plotted (no band).
-export function noiseBandFor(traj, sparkVals) {
-  const nf = traj && typeof traj === 'object' ? traj.noise_floor : null;
-  const half = nf && svg.isNum(nf.max_abs_delta) ? nf.max_abs_delta : null;
-  const vals = (Array.isArray(sparkVals) ? sparkVals : []).filter((v) => svg.isNum(v));
-  if (!svg.isNum(half) || half <= 0 || !vals.length) return null;
-  return { center: vals[vals.length - 1], half };
-}
-
-// The digest fold for one epoch's loop stats: rounded, timestamp-free, so a
-// no-op heartbeat is byte-identical while a real rate/verdict/cost/floor move
-// flips it (the render-discipline contract).
-export function loopStatsDigest(traj, cost) {
-  return [
-    traj && traj.verdict ? String(traj.verdict) : null,
-    traj && svg.isNum(traj.promotion_rate) ? traj.promotion_rate.toFixed(3) : null,
-    traj && svg.isNum(traj.challenger_count) ? traj.challenger_count : null,
-    (traj && traj.noise_floor && svg.isNum(traj.noise_floor.max_abs_delta))
-      ? traj.noise_floor.max_abs_delta.toFixed(4) : null,
-    cost && svg.isNum(cost.cost_per_promotion_ms) ? Math.round(cost.cost_per_promotion_ms) : null,
-  ];
-}
+// (loop-communication helpers moved to ui.js — re-exported at the top of this
+// file for back-compat.)
 
 function miniStat(k, v, tone) {
   return el('div', { class: 'dn-mini' }, [
@@ -310,7 +251,7 @@ function healthPanel(hr) {
     for (const f of findings) {
       const sev = String((f && (f.severity || f.level)) || 'info').toLowerCase();
       body.appendChild(el('div', { class: 'dn-finding' }, [
-        el('span', { class: 'dn-chip dn-chip-' + (sev === 'critical' ? 'closed' : 'open'), text: sev }),
+        chip(sev === 'critical' ? 'closed' : 'open', sev),
         el('span', { class: 'dn-mono', style: 'margin-left:8px', text: f.detector || f.name || 'finding' }),
         el('div', { class: 'dn-faint', style: 'margin-top:4px', text: f.summary || f.message || '' }),
       ]));

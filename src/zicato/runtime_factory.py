@@ -207,6 +207,16 @@ def make_runtime_config(
     max_tokens_raw = runtime_dict.get("max_tokens_per_round")
     max_tokens_per_round = int(max_tokens_raw) if max_tokens_raw is not None else 0
 
+    # Board-reflection capture knobs: runtime-only, additive, never part of
+    # the frozen evaluation contract (never hashed). Absent ⇒ True — the
+    # capture is ALWAYS-ON with an opt-out (an opt-in would leave the
+    # reflection tier permanently starved of verbatim run artifacts). Both
+    # writers are best-effort inside the worker; flipping either knob never
+    # rolls the epoch and, when off, the worker is byte-identical to before
+    # the knobs existed.
+    persist_run_results = bool(runtime_dict.get("persist_run_results", True))
+    persist_judge_io = bool(runtime_dict.get("persist_judge_io", True))
+
     # Achievable-signal pre-flight gate (issue #84): opt-in runtime knob from
     # the same ``runtime`` block. Absent ⇒ the default ``"warn"`` (measure at
     # evolve start + LOUDLY warn on a below-floor / saturated verdict, never
@@ -252,6 +262,8 @@ def make_runtime_config(
         infra_backoff_cap_s=infra_backoff_cap_s,
         max_tokens_per_round=max_tokens_per_round,
         preflight_gate=preflight_gate,
+        persist_run_results=persist_run_results,
+        persist_judge_io=persist_judge_io,
     )
 
 

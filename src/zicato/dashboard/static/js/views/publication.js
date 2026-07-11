@@ -15,7 +15,7 @@ import { el } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, empty, subhead, renderMarkdown, decisionFor, densityTokens } from '../ui.js';
+import { gatedSwap, empty, subhead, renderMarkdown, decisionFor, densityTokens, dataTable, deltaCell } from '../ui.js';
 
 // Parse analysis_md into { eyebrow, title, meta:[{label,value}], abstract,
 // body } — the same marker scheme K uses.
@@ -217,20 +217,20 @@ function aggregateScoresFigure(gens, scalarByGen) {
     items: items.map((it) => ({ label: it.label + (it.promoted ? ' ♛' : ''), value: it.value })),
   }));
   // the table, sharing the same data
-  const tbl = el('table', { class: 'dn-md-table dn-scores-table' });
-  tbl.appendChild(el('thead', null, [el('tr', null, [el('th', { text: 'generation' }), el('th', { class: 'dn-num', text: 'scalar (loss)' }), el('th', { text: 'outcome' })])]));
-  const tbody = el('tbody');
-  for (const it of items) {
-    // Class B: an unscored candidate reads pending, never rejected.
-    const dec = decisionFor({ promoted: it.promoted, parent: it.parent });
-    const label = dec === 'promoted' ? 'promoted ♛' : dec === 'baseline' ? 'seed' : dec === 'pending' ? 'racing…' : dec;
-    tbody.appendChild(el('tr', null, [
-      el('td', { class: 'dn-mono', text: it.label }),
-      el('td', { class: 'dn-num dn-mono', text: svg.fmt(it.value, 2) }),
-      el('td', { text: label }),
-    ]));
-  }
-  tbl.appendChild(tbody);
+  const tbl = dataTable({
+    class: 'dn-md-table dn-scores-table',
+    columns: [{ label: 'generation' }, { label: 'scalar (loss)', class: 'dn-num' }, { label: 'outcome' }],
+    rows: items.map((it) => {
+      // Class B: an unscored candidate reads pending, never rejected.
+      const dec = decisionFor({ promoted: it.promoted, parent: it.parent });
+      const label = dec === 'promoted' ? 'promoted ♛' : dec === 'baseline' ? 'seed' : dec === 'pending' ? 'racing…' : dec;
+      return [
+        { class: 'dn-mono', text: it.label },
+        { class: 'dn-num dn-mono', text: svg.fmt(it.value, 2) },
+        { text: label },
+      ];
+    }),
+  });
   combined.appendChild(el('div', { class: 'dn-table-scroll' }, [tbl]));
   fig.appendChild(combined);
   fig.appendChild(el('figcaption', { class: 'dn-paper-figcap', text: 'Figure · aggregate generation scores — the summary bar chart and its table are one visual (lower scalar is better).' }));
@@ -262,27 +262,26 @@ function appendMatchupDetail(article, figures) {
     if (!rows.length) return;
     any = true;
     sec.appendChild(subhead(`${m.champion} → ${m.challenger}${m.decision ? ' · ' + m.decision : ''}`));
-    const tbl = el('table', { class: 'dn-md-table' });
-    tbl.appendChild(el('thead', null, [el('tr', null, [
-      el('th', { text: 'board entry' }), el('th', { class: 'dn-num', text: m.champion }),
-      el('th', { class: 'dn-num', text: m.challenger }), el('th', { class: 'dn-num', text: 'Δ' }), el('th', { text: 'verdict' }),
-    ])]));
-    const tbody = el('tbody');
-    for (const r of rows) {
-      const d = svg.isNum(r.delta) ? r.delta : (svg.isNum(r.child_drift_loss) && svg.isNum(r.parent_drift_loss) ? r.child_drift_loss - r.parent_drift_loss : NaN);
-      const vCls = r.verdict === 'improved' ? 'dn-good-t' : r.verdict === 'regressed' ? 'dn-bad-t' : '';
-      const tr = el('tr', null, [
-        el('td', { class: 'dn-mono', text: r.entry_id }),
-        el('td', { class: 'dn-num dn-mono', text: svg.isNum(r.parent_drift_loss) ? svg.fmt(r.parent_drift_loss, 1) : '—' }),
-        el('td', { class: 'dn-num dn-mono', text: svg.isNum(r.child_drift_loss) ? svg.fmt(r.child_drift_loss, 1) : '—' }),
-        el('td', { class: 'dn-num dn-mono ' + vCls, text: svg.isNum(d) ? svg.fmtSigned(d, 1) : '—' }),
-        el('td', { class: vCls, text: r.verdict || '—' }),
-      ]);
-      tr.style.cursor = 'pointer';
-      tr.addEventListener('click', () => ctx.navigate('board', { epochId, entry: r.entry_id, gen: m.challenger }));
-      tbody.appendChild(tr);
-    }
-    tbl.appendChild(tbody);
+    const tbl = dataTable({
+      class: 'dn-md-table',
+      columns: [{ label: 'board entry' }, { label: m.champion, class: 'dn-num' },
+        { label: m.challenger, class: 'dn-num' }, { label: 'Δ', class: 'dn-num' }, { label: 'verdict' }],
+      rows: rows.map((r) => {
+        const d = svg.isNum(r.delta) ? r.delta : (svg.isNum(r.child_drift_loss) && svg.isNum(r.parent_drift_loss) ? r.child_drift_loss - r.parent_drift_loss : NaN);
+        const vCls = r.verdict === 'improved' ? 'dn-good-t' : r.verdict === 'regressed' ? 'dn-bad-t' : '';
+        return {
+          style: 'cursor: pointer',
+          onClick: () => ctx.navigate('board', { epochId, entry: r.entry_id, gen: m.challenger }),
+          cells: [
+            { class: 'dn-mono', text: r.entry_id },
+            { class: 'dn-num dn-mono', text: svg.isNum(r.parent_drift_loss) ? svg.fmt(r.parent_drift_loss, 1) : '—' },
+            { class: 'dn-num dn-mono', text: svg.isNum(r.child_drift_loss) ? svg.fmt(r.child_drift_loss, 1) : '—' },
+            { class: 'dn-num dn-mono ' + vCls, text: svg.isNum(d) ? svg.fmtSigned(d, 1) : '—' },
+            { class: vCls, text: r.verdict || '—' },
+          ],
+        };
+      }),
+    });
     sec.appendChild(el('div', { class: 'dn-table-scroll' }, [tbl]));
   });
   if (any) article.appendChild(sec);

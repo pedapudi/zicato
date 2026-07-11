@@ -7,10 +7,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from zicato.query._sqlite import (
-    _IndexAbsent,
-    _open_index,
-)
+from zicato.query._sqlite import open_index_ro_or_none
 from zicato.query.decisions import (
     experiment_decision,
     promoted_tristate,
@@ -341,6 +338,80 @@ def find_generation_run(
     return None
 
 
+def read_run_result(run_dir: Path) -> dict[str, Any] | None:
+    """Project a run directory's ``loss.json`` into a small dashboard shape.
+
+    The frontend needs enough to render an honest "what happened" panel
+    for a zero-turn complete run — wall-clock budget exceeded, runtime,
+    pass/fail verdict, expectation outcome, and the user-visible metric
+    counts (LLM calls, output chars, anything else loss.json already
+    publicly exposes). The full ``LossProfile`` would leak internal
+    fields (the drift scalar's weight breakdown, schema versioning, the
+    canonical adk session id) that the dashboard does not render today;
+    project to the subset that matters.
+
+    Returns ``None`` when the run directory has no readable
+    ``loss.json`` — the frontend then falls back to the existing
+    "This run produced no transcript turns" message (DQ3 — the degrade
+    is the same-shaped ``None`` the happy caller already handles).
+    """
+    if not isinstance(run_dir, Path):
+        return None
+    loss_path = run_dir / "loss.json"
+    if not loss_path.exists():
+        return None
+    try:
+        with open(loss_path, encoding="utf-8") as f:
+            loss = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(loss, dict):
+        return None
+
+    expectation: dict[str, Any] | None = None
+    raw_exp = loss.get("expectation_result")
+    if isinstance(raw_exp, dict):
+        expectation = {
+            "kind": str(raw_exp.get("kind") or ""),
+            "passed": bool(raw_exp.get("passed", False)),
+            "detail": str(raw_exp.get("detail") or ""),
+        }
+
+    metric_counts: list[dict[str, Any]] = []
+    raw_metrics = loss.get("metric_counts")
+    if isinstance(raw_metrics, list):
+        for m in raw_metrics:
+            if not isinstance(m, dict):
+                continue
+            name = m.get("name")
+            count = m.get("count")
+            if not isinstance(name, str) or count is None:
+                continue
+            try:
+                count_f = float(count)
+            except (TypeError, ValueError):
+                continue
+            metric_counts.append(
+                {
+                    "name": name,
+                    "count": count_f,
+                    "severity": str(m.get("severity") or ""),
+                }
+            )
+
+    pass_fail = loss.get("pass_fail")
+    return {
+        "wall_clock_budget_exceeded": bool(loss.get("wall_clock_budget_exceeded", False)),
+        "runtime_ms": int(loss.get("runtime_ms") or 0),
+        "pass_fail": None if pass_fail is None else bool(pass_fail),
+        "expectation_result": expectation,
+        "metric_counts": metric_counts,
+        "drift_loss": (
+            float(loss["drift_loss"]) if isinstance(loss.get("drift_loss"), int | float) else None
+        ),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Phase-0 redesign: level-aligned views (L0 workspace, L1 contract diff)
 # ---------------------------------------------------------------------------
@@ -392,13 +463,8 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
 
     # Open the analytical index once for all epochs. Absent index = every
     # epoch surfaces a ``None`` best scalar but the row list still renders.
-    conn: sqlite3.Connection | None
-    try:
-        conn = _open_index(paths.index_db)
-    except (_IndexAbsent, sqlite3.Error):
-        conn = None
 
-    try:
+    with open_index_ro_or_none(paths.index_db) as conn:
         for epoch in iter_epochs(layout_of(paths)):
             epoch_dir = epoch.directory
             epoch_id = epoch.id
@@ -485,9 +551,6 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
             }
             rows.append(row)
             sparkline.append({"epoch_id": epoch_id, "scalar": best_scalar})
-    finally:
-        if conn is not None:
-            conn.close()
 
     # The cross-epoch COMPOSED META-LOOP LEDGER matrix (study opt 7): one
     # ordered row per epoch carrying the held floor, the champion that set it,
@@ -702,14 +765,8 @@ def build_meta_loop_ledger(paths: WorkspacePaths) -> dict[str, Any]:
     # true chronological predecessor.
     epoch_ids = list_epoch_ids(paths)
 
-    conn: sqlite3.Connection | None
-    try:
-        conn = _open_index(paths.index_db)
-    except (_IndexAbsent, sqlite3.Error):
-        conn = None
-
     layout = layout_of(paths)
-    try:
+    with open_index_ro_or_none(paths.index_db) as conn:
         prev_hashes: dict[str, str] = {}
         prev_structure: str | None = None
         for idx, epoch_id in enumerate(epoch_ids):
@@ -788,8 +845,5 @@ def build_meta_loop_ledger(paths: WorkspacePaths) -> dict[str, Any]:
 
             prev_hashes = cur_hashes
             prev_structure = structure
-    finally:
-        if conn is not None:
-            conn.close()
 
     return {"current_epoch_id": current, "epochs": rows}

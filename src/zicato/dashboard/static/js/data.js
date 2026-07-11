@@ -89,6 +89,11 @@ export function invalidateLive() {
       || key.startsWith('/api/tournament-structure/')
       || key.startsWith('/api/hypothesis-accuracy/')
       || key.startsWith('/api/calibration-trend')
+      // the reflection LIST (plural) — so a reflection completed while the
+      // dashboard is open surfaces on the next live bust. This prefix does NOT
+      // match the singular, IMMUTABLE `/api/reflection/<id>/…` reads (those
+      // start `/api/reflection/`, not `/api/reflections`), which stay cached.
+      || key.startsWith('/api/reflections')
       || key.startsWith('/api/tournaments')) {
       _cache.delete(key);
     }
@@ -341,6 +346,32 @@ export function analysis(epochId) {
 // The epoch contract delta (added / removed board entries, scoring moves).
 export function contractDiff(epochId) {
   return cachedJson(`/api/contract-diff/${enc(epochId)}`);
+}
+
+// ---- Instrument lens (board reflection) reads -----------------------
+//
+// Thin, cached, failure-tolerant GETs over query/reflection_view.py (the four
+// /api/reflection* endpoints). A completed reflection is IMMUTABLE, so caching
+// is safe and the views render fetch-once. Every reader degrades to a same-
+// shape empty payload server-side (DQ3), so a null here means a transport
+// failure only.
+
+// Every reflection under the workspace, or one epoch when scoped (newest first).
+export function reflections(epochId) {
+  return cachedJson(epochId != null ? `/api/reflections?epoch=${enc(epochId)}` : '/api/reflections');
+}
+// The four-pillar bill of health for one reflection (+ its ranked findings).
+export function reflectionSummary(reflectionId) {
+  return cachedJson(`/api/reflection/${enc(reflectionId)}/summary`);
+}
+// The per-judge confusion-matrix scorecards for one reflection.
+export function reflectionScorecards(reflectionId) {
+  return cachedJson(`/api/reflection/${enc(reflectionId)}/scorecards`);
+}
+// The transcript x-ray for ONE adjudicated decision (judge + run_ref). The
+// run_ref carries `:` — enc() keeps the path segment intact.
+export function reflectionXray(reflectionId, judge, runRef) {
+  return cachedJson(`/api/reflection/${enc(reflectionId)}/xray/${enc(judge)}/${enc(runRef)}`);
 }
 
 // The promote-gate decomposition for one round.

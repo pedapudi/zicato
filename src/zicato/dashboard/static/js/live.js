@@ -29,11 +29,11 @@ import { el, patchText, patchClass } from './core/dom.js';
 import {
   isNum, swissLadder, elimFlow,
   racingScalarTrack, racingScalarTrackDigest,
-  elimRadial, elimRadialDigest,
   gauntletFieldBars,
   proposingTracker, proposingDigest, CROWN,
 } from './svg.js';
 import { fieldStatus as readFieldStatus } from './data.js';
+import { gatedSwap } from './ui.js';
 import { runStateLabel } from './livestatus.js';
 import {
   racingModel, swissModel, elimModel, gauntletModel, gauntletModelDigest, normalizeStructure,
@@ -405,6 +405,17 @@ export class ActivityTicker {
     return added;
   }
 
+  // Clear EVERY row + the dedup memory (the alive→idle transition). Without
+  // this the finished run's rows persist in `_list`/`_seen` and the NEXT run's
+  // events prepend on top of the dead ones — the idle-leak. The empty
+  // placeholder is restored so the feed reads "waiting for activity…" again.
+  reset() {
+    while (this._list.firstChild) this._list.removeChild(this._list.firstChild);
+    this._count = 0;
+    this._seen.clear();
+    if (this._empty && !this._empty.parentNode) this.node.insertBefore(this._empty, this._list);
+  }
+
   _buildRow(ev) {
     return el('div', { class: 'dt-ticker-row dt-ticker-' + (ev.tone || 'neutral'), 'data-kind': ev.kind || '' }, [
       el('span', { class: 'dt-ticker-glyph', 'aria-hidden': 'true', text: glyphFor(ev) }),
@@ -644,10 +655,14 @@ export class LiveController {
     this._canControl = false;
     this._seq = 0;
     this._prevSnap = null;
+    // tracks the alive→idle edge so the ticker is cleared exactly once on the
+    // transition (not every idle beat).
+    this._wasAlive = false;
+    // the run-key set from the last ALIVE tick — the "pre-idle" set the idle→
+    // alive edge compares against so a flap of the SAME runs keeps the feed.
+    this._preIdleRuns = null;
     this._funnelDigest = null;
-    this._matchesDigest = null;
     this._metaKey = null;
-    this._stepDigest = null;
     this._pipeDigest = null;
     this.ticker = new ActivityTicker({ cap: o.cap || 40 });
     this._build();
@@ -727,15 +742,41 @@ export class LiveController {
 
     // ── the activity ticker: diff the snapshot, append the new events ──
     const snap = liveSnapshot({ status, heartbeat, activeRuns, activeTournament });
+    // On the idle→alive edge, clear the PREVIOUS run's dead rows BEFORE this
+    // tick's events land — but ONLY when the incoming run set is a genuinely NEW
+    // run (disjoint from the pre-idle set). A brief alive→idle→alive FLAP of the
+    // SAME still-running runs shares run keys with the pre-idle set, so the feed
+    // must survive it rather than momentarily blanking. Clearing here (not on the
+    // alive→idle edge) preserves a finishing run's completion events, which land
+    // in the same tick it settles.
+    if (alive && !this._wasAlive) {
+      const runKeys = snap.runs.map((r) => r.key);
+      const prior = this._preIdleRuns;
+      const carriedOver = !!(prior && runKeys.some((k) => prior.has(k)));
+      if (!carriedOver) this.ticker.reset();
+    }
     const { events, seq } = deriveActivity(this._prevSnap, snap, this._seq);
     this._seq = seq;
     if (events.length) this.ticker.push(events);
-    this._prevSnap = alive ? snap : null;
+    // KEEP the last snapshot even when idle (do NOT null it). Nulling forced the
+    // next alive tick to cold-start deriveActivity, which re-emits EVERY
+    // in-flight run as a phantom "matchup running" burst — the second half of
+    // the idle-leak. Keeping it means re-activation diffs against the true prior
+    // snapshot: genuinely-new runs still surface, already-running ones do not.
+    this._prevSnap = snap;
     if (!alive) {
-      this._funnelDigest = null; this._matchesDigest = null; this._metaKey = null; this._stepDigest = null;
+      this._wasAlive = false;
+      // _matchesDigest/_stepDigest are gone (those gates now ride gatedSwap's
+      // host-attribute digest); the funnel + meta line still use their vars.
+      this._funnelDigest = null; this._metaKey = null;
       this.updatePipeline(null);
       return false;
     }
+    this._wasAlive = true;
+    // Remember this alive tick's run set. Idle ticks return above without
+    // touching it, so at the next idle→alive edge it still holds the pre-idle
+    // run set the reset gate compares against.
+    this._preIdleRuns = new Set(snap.runs.map((r) => r.key));
 
     // ── tournament-level progress: the ONE rung-number source of truth ──
     // liveProgress reads the live TOPOLOGY (resolved rungs + the active rung),
@@ -763,14 +804,10 @@ export class LiveController {
 
     // ── 2. the rung STEPPER caps the race track (digest-gated swap) ──
     // structural progress: one pip per rung, completed filled, current active.
-    const stepDigest = rungStepperDigest(prog);
-    if (stepDigest !== this._stepDigest || !this._stepHost.firstChild) {
-      this._stepDigest = stepDigest;
-      clear(this._stepHost);
-      if (prog.stepCount != null && prog.stepCount > 0) {
-        this._stepHost.appendChild(rungStepper(prog));
-      }
-    }
+    // the second-idiom digest gate folded onto gatedSwap: the same firstChild +
+    // digest-attribute no-flash contract, so a steady tick writes ZERO DOM.
+    gatedSwap(this._stepHost, rungStepperDigest(prog),
+      () => (prog.stepCount != null && prog.stepCount > 0) ? rungStepper(prog) : null);
 
     // ── the MATCH-GROUPED "what's running" block: digest-gated on live CONTENT ──
     // (which matches exist + each board's progress BUCKET) so the DOM is rebuilt
@@ -872,14 +909,14 @@ export class LiveController {
     }
     const runsKey = Object.keys(byGen).sort()
       .map((g) => g + ':' + byGen[g].map((r) => r.run_id).sort().join('+')).join(',');
+    // the second-idiom digest gate folded onto gatedSwap (same no-flash contract).
     const digest = liveMatchBlocksDigest(blocks) + '|kill:' + (canKill ? runsKey : '-');
-    if (digest === this._matchesDigest && this._matchesBody.firstChild) return; // no real change → no DOM.
-    this._matchesDigest = digest;
-    clear(this._matchesBody);
-    const node = liveMatchGroupedBlocks(blocks, this.onCompetitor || undefined,
-      canKill ? { canControl: true, onKill: this.onKill } : undefined);
-    if (node.classList) node.classList.add('dt-live-enter');
-    this._matchesBody.appendChild(node);
+    gatedSwap(this._matchesBody, digest, () => {
+      const node = liveMatchGroupedBlocks(blocks, this.onCompetitor || undefined,
+        canKill ? { canControl: true, onKill: this.onKill } : undefined);
+      if (node.classList) node.classList.add('dt-live-enter');
+      return node;
+    });
   }
 
   _updateStructure(activeTournament, heartbeat, activeRuns) {
@@ -925,13 +962,12 @@ export class LiveController {
   // final tournament-viz design the single-round page leads with, rendered
   // RESPONSIVE so it scales aspect-locked to fill the hero width up to its
   // `svg.dn-*-hero` max-width cap — every structure matching the racing scalar
-  // track's full-width treatment (wide figures fill to their cap; square ones —
-  // the elim radial — centre under it). The hero and the full page agree on the
-  // model + read consistently.
+  // track's full-width treatment (wide figures fill to their cap). The hero and
+  // the full page agree on the model + read consistently.
   //
   //   racing      → racingScalarTrack({ mini, responsive })   (the single-round PRIMARY)
-  //   single_elim → elimRadial({ mini, responsive })          (square — centres under its cap)
-  //   double_elim → elimFlow combo ({ responsive }, WB/LB bands) (the single-round DEFAULT)
+  //   single_elim → elimFlow ({ responsive })                 (lane convergence)
+  //   double_elim → elimFlow ({ responsive }, WB/LB bands)    (the single-round DEFAULT)
   //   gauntlet    → gauntletFieldBars({ mini, responsive })   (the wave-vs-standard hero)
   //   swiss       → swissLadder({ responsive })               (no mini mode in the builder)
   //
@@ -993,33 +1029,20 @@ export class LiveController {
       const st = buildLiveElimModel({ at, heartbeat, activeRuns, epochGens: gens }) || normalizeStructure(at, true);
       const model = elimModel(st);
       if (!model || !model.hasMatches) return null;
-      const isDouble = structure === 'double_elim';
-      const bands = model.winners.concat(Array.isArray(model.losers) ? model.losers : []);
-      if (isDouble) {
-        // DOUBLE-ELIM hero: the refined orthogonal-pipe elimFlow combo WITH the
-        // WB/LB bands — the SAME figure the single-round page leads with by
-        // DEFAULT for double-elim. At hero size the WB/LB band split + life
-        // glyphs read more truthfully than a tiny radial (a mini radial would
-        // collapse two interleaved arcs into an unreadable knot), so we keep the
-        // combo for consistency-with-default AND legibility.
-        // FULL-WIDTH HERO: the WB/LB elimFlow combo scales aspect-locked to fill
-        // the hero width (`responsive` → svg.dn-elimflow-hero cap governs), a wide
-        // figure filling to its cap — matching racing's full-width treatment.
-        const opts = {
-          winners: bands, championId: model.championId, benchmarkId: model.benchmarkId,
-          live: model.live, gateState: model.gateState, responsive: true, onCompetitor,
-        };
-        return { node: elimFlow(opts), digest: 'elim|' + elimDigest(model) };
-      }
-      // SINGLE-ELIM hero: the concentric-ring radial — the single-round PRIMARY.
-      // FULL-WIDTH HERO: aspect-locked + responsive; as a SQUARE figure the
-      // svg.dn-elimradial-hero cap centres it under the cap (margin-inline:auto).
+      // ELIM hero: the orthogonal-pipe elimFlow — the SAME figure the single-
+      // round page leads with for BOTH single- and double-elim. double_elim's
+      // WB/LB band split + life glyphs fall straight out of the served model;
+      // single_elim is the plain lane convergence. The concentric-ring radial
+      // figure was retired (C1) — one figure for both structures.
+      // FULL-WIDTH HERO: the elimFlow scales aspect-locked to fill the hero
+      // width (`responsive` → svg.dn-elimflow-hero cap governs), a wide figure
+      // filling to its cap — matching racing's full-width treatment.
       const opts = {
-        rounds: bands, championId: model.championId, benchmarkId: model.benchmarkId,
-        gateState: model.gateState, live: model.live, double: false, mini: true,
-        responsive: true, onCompetitor,
+        rounds: model.rounds, gen_states: model.gen_states,
+        championId: model.championId, benchmarkId: model.benchmarkId,
+        live: model.live, gateState: model.gateState, responsive: true, onCompetitor,
       };
-      return { node: elimRadial(opts), digest: 'elim|' + elimRadialDigest(opts) };
+      return { node: elimFlow(opts), digest: 'elim|' + elimDigest(model) };
     }
     if (structure === 'gauntlet') {
       // GAUNTLET hero: the wave-of-challengers-vs-the-champion-standard field
@@ -1190,11 +1213,11 @@ function liveBelongsToEpoch(at, heartbeat) {
 // digest (ZERO DOM writes) but a real board landing / re-rank fires the swap.
 // `.toFixed(3)` the scalar; integer board counts.
 //
-// NOTE: racing + single-elim + gauntlet now digest via the NEW builders' own
-// `*Digest` (racingScalarTrackDigest / elimRadialDigest / gauntletModelDigest)
-// so the hero mini's swap compares the exact model those builders draw. Swiss +
-// double-elim still use these local model digests (swissLadder / the elimFlow
-// combo, which carry no companion `*Digest` export).
+// NOTE: racing + gauntlet digest via the NEW builders' own `*Digest`
+// (racingScalarTrackDigest / gauntletModelDigest) so the hero mini's swap
+// compares the exact model those builders draw. Swiss + elim (single + double,
+// both elimFlow) use these local model digests (swissDigest / elimDigest — the
+// elimFlow combo carries no companion `*Digest` export).
 function projMatch(m) {
   return m && m.projected ? Object.keys(m.projected).sort().map((g) => {
     const p = m.projected[g];

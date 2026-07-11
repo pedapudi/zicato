@@ -1,0 +1,443 @@
+{
+  "description": "shared elim-fold fixture: mis-ordered double-elim rounds with a duplicate match, a bye, a WB->LB drop, two true eliminations, and a pending projected grand final. Pinned by tests/test_tournament_view_elim_states.py (Python) and crates/supervisor/src/elim_states.rs (Rust).",
+  "malformed_competitors_case": {
+    "description": "the DQ1 scalar contract (F1): non-scalar competitor entries (bool/null/object/array) and a non-scalar winner (bool) are DROPPED identically by all three folds — a number id stringifies, the surviving pair yields one advance + one elimination, and the second match's bool winner reads as undecided (pending). The OUTPUT matches keep their raw competitors/winner verbatim (only derived state narrows).",
+    "input_rounds": [
+      {
+        "round_index": 0,
+        "matches": [
+          {
+            "match_id": "WB-R0-0",
+            "bracket_slot": "WB-R0-0",
+            "competitors": ["v1", 2, true, null, {}, [], "tbd", ""],
+            "winner": "v1"
+          },
+          {
+            "match_id": "WB-R0-1",
+            "bracket_slot": "WB-R0-1",
+            "competitors": ["v3", "v4"],
+            "winner": true
+          }
+        ]
+      }
+    ],
+    "expected": {
+      "gen_states": [
+        {
+          "advanced_rounds": [0],
+          "eliminated_at_round": null,
+          "generation_id": "v1",
+          "lb_entry_round": null,
+          "lost_rounds": [],
+          "played_rounds": [0],
+          "projected": null,
+          "side_by_round": {"0": "WB"}
+        },
+        {
+          "advanced_rounds": [],
+          "eliminated_at_round": 0,
+          "generation_id": "2",
+          "lb_entry_round": null,
+          "lost_rounds": [0],
+          "played_rounds": [0],
+          "projected": null,
+          "side_by_round": {"0": "WB"}
+        },
+        {
+          "advanced_rounds": [],
+          "eliminated_at_round": null,
+          "generation_id": "v3",
+          "lb_entry_round": null,
+          "lost_rounds": [],
+          "played_rounds": [0],
+          "projected": null,
+          "side_by_round": {"0": "WB"}
+        },
+        {
+          "advanced_rounds": [],
+          "eliminated_at_round": null,
+          "generation_id": "v4",
+          "lb_entry_round": null,
+          "lost_rounds": [],
+          "played_rounds": [0],
+          "projected": null,
+          "side_by_round": {"0": "WB"}
+        }
+      ],
+      "rounds": [
+        {
+          "bracket_side": "WB",
+          "matches": [
+            {
+              "bracket_slot": "WB-R0-0",
+              "competitors": ["v1", 2, true, null, {}, [], "tbd", ""],
+              "loser": "2",
+              "match_id": "WB-R0-0",
+              "winner": "v1"
+            },
+            {
+              "bracket_slot": "WB-R0-1",
+              "competitors": ["v3", "v4"],
+              "loser": null,
+              "match_id": "WB-R0-1",
+              "winner": true
+            }
+          ],
+          "round_index": 0
+        }
+      ]
+    }
+  },
+  "expected": {
+    "gen_states": [
+      {
+        "advanced_rounds": [
+          0,
+          1
+        ],
+        "eliminated_at_round": null,
+        "generation_id": "v1",
+        "lb_entry_round": null,
+        "lost_rounds": [],
+        "played_rounds": [
+          0,
+          1,
+          4
+        ],
+        "projected": {
+          "boards_done": 3,
+          "boards_total": 6,
+          "scalar": 0.42
+        },
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB",
+          "4": "WB"
+        }
+      },
+      {
+        "advanced_rounds": [
+          2,
+          3
+        ],
+        "eliminated_at_round": null,
+        "generation_id": "v2",
+        "lb_entry_round": 2,
+        "lost_rounds": [
+          0
+        ],
+        "played_rounds": [
+          0,
+          2,
+          3
+        ],
+        "projected": null,
+        "side_by_round": {
+          "0": "WB",
+          "2": "LB",
+          "3": "LB"
+        }
+      },
+      {
+        "advanced_rounds": [
+          0
+        ],
+        "eliminated_at_round": 3,
+        "generation_id": "v3",
+        "lb_entry_round": 3,
+        "lost_rounds": [
+          1,
+          3
+        ],
+        "played_rounds": [
+          0,
+          1,
+          3
+        ],
+        "projected": null,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB",
+          "3": "LB"
+        }
+      },
+      {
+        "advanced_rounds": [],
+        "eliminated_at_round": 2,
+        "generation_id": "v4",
+        "lb_entry_round": 2,
+        "lost_rounds": [
+          0,
+          2
+        ],
+        "played_rounds": [
+          0,
+          2
+        ],
+        "projected": null,
+        "side_by_round": {
+          "0": "WB",
+          "2": "LB"
+        }
+      },
+      {
+        "advanced_rounds": [
+          0
+        ],
+        "eliminated_at_round": null,
+        "generation_id": "v5",
+        "lb_entry_round": null,
+        "lost_rounds": [],
+        "played_rounds": [
+          0
+        ],
+        "projected": null,
+        "side_by_round": {
+          "0": "WB"
+        }
+      },
+      {
+        "advanced_rounds": [],
+        "eliminated_at_round": null,
+        "generation_id": "v0",
+        "lb_entry_round": null,
+        "lost_rounds": [],
+        "played_rounds": [
+          4
+        ],
+        "projected": null,
+        "side_by_round": {
+          "4": "WB"
+        }
+      }
+    ],
+    "rounds": [
+      {
+        "bracket_side": "WB",
+        "label": "Winners' bracket",
+        "matches": [
+          {
+            "bracket_slot": "WB-R0-0",
+            "competitors": [
+              "v1",
+              "v2"
+            ],
+            "loser": "v2",
+            "match_id": "WB-R0-0",
+            "winner": "v1"
+          },
+          {
+            "bracket_slot": "WB-R0-1",
+            "competitors": [
+              "v3",
+              "v4"
+            ],
+            "loser": "v4",
+            "match_id": "WB-R0-1",
+            "winner": "v3"
+          },
+          {
+            "bracket_slot": "WB-R0-2",
+            "bye": true,
+            "competitors": [
+              "v5"
+            ],
+            "loser": null,
+            "match_id": "WB-R0-2",
+            "winner": "v5"
+          }
+        ],
+        "round_index": 0
+      },
+      {
+        "bracket_side": "WB",
+        "label": "Winners' bracket",
+        "matches": [
+          {
+            "bracket_slot": "WB-R1-0",
+            "competitors": [
+              "v1",
+              "v3"
+            ],
+            "loser": "v3",
+            "match_id": "WB-R1-0",
+            "winner": "v1"
+          }
+        ],
+        "round_index": 1
+      },
+      {
+        "bracket_side": "LB",
+        "label": "Losers' bracket",
+        "matches": [
+          {
+            "bracket_slot": "LB-R2-0",
+            "competitors": [
+              "v2",
+              "v4"
+            ],
+            "loser": "v4",
+            "match_id": "LB-R2-0",
+            "winner": "v2"
+          }
+        ],
+        "round_index": 2
+      },
+      {
+        "bracket_side": "LB",
+        "label": "Losers' bracket",
+        "matches": [
+          {
+            "bracket_slot": "LB-R3-0",
+            "competitors": [
+              "v2",
+              "v3"
+            ],
+            "loser": "v3",
+            "match_id": "LB-R3-0",
+            "winner": "v2"
+          }
+        ],
+        "round_index": 3
+      },
+      {
+        "bracket_side": "WB",
+        "label": "Grand final",
+        "matches": [
+          {
+            "bracket_slot": "GF",
+            "competitors": [
+              "v0",
+              "v1"
+            ],
+            "loser": null,
+            "match_id": "GF",
+            "pending": true,
+            "projected": {
+              "v1": {
+                "boards_done": 3,
+                "boards_total": 6,
+                "scalar": 0.42
+              }
+            },
+            "winner": null
+          }
+        ],
+        "stage_index": 4
+      }
+    ]
+  },
+  "input_rounds": [
+    {
+      "label": "Losers' bracket",
+      "matches": [
+        {
+          "bracket_slot": "LB-R2-0",
+          "competitors": [
+            "v2",
+            "v4"
+          ],
+          "match_id": "LB-R2-0",
+          "pending": true,
+          "winner": null
+        },
+        {
+          "bracket_slot": "LB-R2-0",
+          "competitors": [
+            "v2",
+            "v4"
+          ],
+          "match_id": "LB-R2-0",
+          "winner": "v2"
+        }
+      ],
+      "round_index": 2
+    },
+    {
+      "label": "Winners' bracket",
+      "matches": [
+        {
+          "bracket_slot": "WB-R0-0",
+          "competitors": [
+            "v1",
+            "v2"
+          ],
+          "match_id": "WB-R0-0",
+          "winner": "v1"
+        },
+        {
+          "bracket_slot": "WB-R0-1",
+          "competitors": [
+            "v3",
+            "v4"
+          ],
+          "match_id": "WB-R0-1",
+          "winner": "v3"
+        },
+        {
+          "bracket_slot": "WB-R0-2",
+          "bye": true,
+          "competitors": [
+            "v5"
+          ],
+          "match_id": "WB-R0-2",
+          "winner": "v5"
+        }
+      ],
+      "round_index": 0
+    },
+    {
+      "label": "Winners' bracket",
+      "matches": [
+        {
+          "bracket_slot": "WB-R1-0",
+          "competitors": [
+            "v1",
+            "v3"
+          ],
+          "match_id": "WB-R1-0",
+          "winner": "v1"
+        }
+      ],
+      "round_index": 1
+    },
+    {
+      "label": "Losers' bracket",
+      "matches": [
+        {
+          "bracket_slot": "LB-R3-0",
+          "competitors": [
+            "v2",
+            "v3"
+          ],
+          "match_id": "LB-R3-0",
+          "winner": "v2"
+        }
+      ],
+      "round_index": 3
+    },
+    {
+      "label": "Grand final",
+      "matches": [
+        {
+          "bracket_slot": "GF",
+          "competitors": [
+            "v0",
+            "v1"
+          ],
+          "match_id": "GF",
+          "pending": true,
+          "projected": {
+            "v1": {
+              "boards_done": 3,
+              "boards_total": 6,
+              "scalar": 0.42
+            }
+          },
+          "winner": null
+        }
+      ],
+      "stage_index": 4
+    }
+  ]
+}

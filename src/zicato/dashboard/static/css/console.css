@@ -549,9 +549,7 @@
  * padding, section gaps, panel padding, card min-widths, the reel's vertical
  * scale, a global font-size scale) are baked unconditionally onto the variant
  * root: every layout that breathes reads them, always at the cozy values. The
- * page-scale pill (`zoom` on the root) is the sizing control now. The shell
- * still stamps `data-t-density="cozy"` for any rule that keys on it, but it
- * never changes.
+ * page-scale pill (`zoom` on the root) is the sizing control now.
  */
 #variant-root[data-variant="T"] {
   --dt-rail: 288px;
@@ -980,33 +978,6 @@
   .dn-pslope-label { fill: var(--v2-ink-soft); font: 10px var(--v2-mono); }
   .dn-pslope-series:hover .dn-pslope-line { stroke-width: 2.6; }
   .dn-pslope-series:hover .dn-pslope-label { fill: var(--v2-accent); }
-
-  /* ===================  Tufte Sankey (fit-to-width)  =================== */
-
-  .dn-sankey { display: block; width: 100%; }
-  .dn-sankey-head { fill: var(--v2-ink-faint); font: 9.5px var(--v2-mono); text-transform: uppercase; letter-spacing: 0.08em; }
-  .dn-sankey-ribbon { opacity: 0.32; color: var(--v2-flat); stroke: none; transition: opacity 0.12s; }
-  .dn-sankey-ribbon.dn-good { color: var(--v2-good); }
-  .dn-sankey-ribbon.dn-bad { color: var(--v2-bad); }
-  .dn-sankey-ribbon.dn-flat { color: var(--v2-flat); }
-  .dn-sankey-node:hover .dn-sankey-ribbon,
-  .dn-sankey-ribbon:hover { opacity: 0.55; }
-  .dn-sankey-bar { fill: var(--v2-ink); }
-  .dn-sankey-node.dn-good .dn-sankey-bar { fill: var(--v2-good); }
-  .dn-sankey-node.dn-bad .dn-sankey-bar { fill: var(--v2-bad); }
-  .dn-sankey-node.dn-flat .dn-sankey-bar { fill: var(--v2-flat); }
-  .dn-sankey-node.dn-sankey-patch .dn-sankey-bar { fill: var(--v2-accent); }
-  .dn-sankey-label { fill: var(--v2-ink); font: 10.5px var(--v2-mono); }
-  /* the per-board loss VALUE, right-aligned to its own baseline (fix #5) */
-  .dn-sankey-value { fill: var(--v2-ink-soft); font: 10px var(--v2-mono); font-variant-numeric: tabular-nums; }
-  .dn-sankey-node.dn-good .dn-sankey-value { fill: var(--v2-good); }
-  .dn-sankey-node.dn-bad .dn-sankey-value { fill: var(--v2-bad); }
-  .dn-sankey-sub { fill: var(--v2-ink-faint); font: 9px var(--v2-mono); font-variant-numeric: tabular-nums; }
-  .dn-sankey-node { cursor: default; }
-  .dn-sankey-node[tabindex]:hover .dn-sankey-label { fill: var(--v2-accent); }
-  .dn-sankey-node[tabindex] { cursor: pointer; }
-  .dn-sankey-node[tabindex]:focus { outline: none; }
-  .dn-sankey-node[tabindex]:focus .dn-sankey-bar { stroke: var(--v2-accent); stroke-width: 1.5; }
 
   /* ===================  illustrative tournament marks  =================== */
 
@@ -2015,13 +1986,14 @@
   /* an ORPHAN: a parentless stray that never scored (aborted run) — faintest */
   .dt-glyph-gen-orphan { color: var(--v2-ink-faint); opacity: 0.6; }
   .dt-glyph-board { color: var(--v2-accent); }
-  .dt-glyph-mutations, .dt-glyph-paper { color: var(--v2-ink-soft); }
+  .dt-glyph-mutations, .dt-glyph-paper, .dt-glyph-instrument { color: var(--v2-ink-soft); }
   .dt-leaf[data-kind="gen-champ"] .dt-text { color: var(--v2-good); }
   .dt-leaf[data-kind="gen-former"] .dt-text { color: var(--v2-ink-soft); }
   .dt-leaf[data-kind="gen-orphan"] .dt-text { color: var(--v2-ink-faint); }
   .dt-tag-gen-orphan { color: var(--v2-ink-faint); border-color: var(--v2-rule); font-style: italic; }
   .dt-leaf .dt-text { font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); }
   .dt-leaf[data-kind="mutations"] .dt-text,
+  .dt-leaf[data-kind="instrument"] .dt-text,
   .dt-leaf[data-kind="paper"] .dt-text { font-family: var(--v2-sans); font-size: calc(12px * var(--dt-font-scale, 1)); }
 
   /* the LIVE-ACTIVITY pulse (Task 2): a subtle clue on a running gen / board
@@ -2046,8 +2018,8 @@
   .ezn-node.ezn-clickable .ezn-node-box { stroke-dasharray: 3 2; }
   .ezn-node.ezn-clickable:hover .ezn-node-box { stroke: var(--v2-accent); stroke-width: 2; }
 
-  /* the inline side-by-side transcript pane (fix #5) */
-  .dn-xscript-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  /* the inline side-by-side transcript pane (fix #5) — the two-column frame is
+     now compare.js's .dt-split (C5); the per-column chrome below stays. */
   .dn-xscript-col { min-width: 0; border: 1px solid var(--v2-rule); border-radius: 4px;
     background: color-mix(in srgb, var(--v2-panel) 70%, var(--v2-paper)); padding: 8px 10px; }
   .dn-xscript-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
@@ -2573,63 +2545,6 @@
   .dn-fieldbars-bar.dn-proj { fill: var(--v2-projected-fill); opacity: 0.5; }
   .dn-fieldbars-name.dn-proj, .dn-fieldbars-val.dn-proj,
   .dn-scalartrack-name.dn-proj { fill: var(--v2-projected); }
-
-  /* ---- ELIM RADIAL (concentric bracket — rounds as rings to a center gate) ----
-   * Rounds are concentric rings narrowing to the champion seat at center. Each
-   * spoke's survived segments read --v2-good; the elimination segment --v2-bad +
-   * a red ✕; the survivor dashes accent into the seat. Double-elim splits WB
-   * (upper) / LB (lower) by a dashed equator with rim-hugging transfer arcs.
-   * All --v2-* tokens. */
-  .dn-elimradial-ring { stroke: var(--v2-rule-soft); stroke-width: 1; stroke-dasharray: 2 4;
-    vector-effect: non-scaling-stroke; }
-  .dn-elimradial-ring-outer { stroke: var(--v2-rule); stroke-dasharray: none; }
-  .dn-elimradial-equator { stroke: var(--v2-rule); stroke-dasharray: 3 4; opacity: 0.7;
-    vector-effect: non-scaling-stroke; }
-  .dn-elimradial-seg { stroke-width: 1.8; vector-effect: non-scaling-stroke; }
-  .dn-elimradial-seg.dn-good { stroke: var(--v2-good); }
-  .dn-elimradial-seg.dn-bad { stroke: var(--v2-bad); stroke-width: 2; }
-  .dn-elimradial-seg.dn-elimradial-gateline { stroke: var(--v2-accent); stroke-width: 1.6; stroke-dasharray: 4 3; }
-  .dn-elimradial-seg.dn-elimradial-pending { stroke: var(--v2-ink-faint); stroke-dasharray: 4 3; opacity: 0.7; }
-  .dn-elimradial-node { vector-effect: non-scaling-stroke; }
-  .dn-elimradial-node.dn-good { fill: var(--v2-good); }
-  .dn-elimradial-node.dn-bad { fill: var(--v2-bad); }
-  .dn-elimradial-cut { fill: var(--v2-bad); font: 700 10px var(--v2-sans); }
-  .dn-elimradial-transfer { stroke: var(--v2-caution); stroke-width: 1.1; stroke-dasharray: 3 3;
-    opacity: 0.65; vector-effect: non-scaling-stroke; }
-  .dn-elimradial-name { font: 9px var(--v2-mono); }
-  .dn-elimradial-name.dn-good { fill: var(--v2-good); }
-  .dn-elimradial-name.dn-bad { fill: var(--v2-bad); }
-  .dn-elimradial-name.dn-elimradial-former { fill: var(--v2-ink-faint); font-style: italic; }
-  .dn-elimradial-seat { fill: var(--v2-panel); stroke: var(--v2-accent); stroke-width: 1.5;
-    vector-effect: non-scaling-stroke; }
-  .dn-elimradial-seat.dn-good { stroke: var(--v2-good); }
-  .dn-elimradial-seatlab { fill: var(--v2-accent); font: 11px var(--v2-sans); }
-  .dn-elimradial-seatlab.dn-good { fill: var(--v2-good); }
-  .dn-elimradial-spoke { cursor: pointer; }
-  .dn-elimradial-spoke:hover .dn-elimradial-name { fill: var(--v2-accent); }
-  .dn-elimradial-spoke:focus-visible { outline: 2px solid var(--v2-accent); }
-  .dn-elimradial-gate { cursor: pointer; }
-  .dn-elimradial-gate:focus-visible { outline: 2px solid var(--v2-accent); }
-  .dn-elimradial-name.dn-proj { fill: var(--v2-projected); }
-  .dn-elimradial-seg.dn-elimradial-pending.dn-proj { stroke: var(--v2-projected-line); }
-
-  /* ---- FIGURE-VARIANT SWITCH (double-elim: combo ⟷ radial) ----
-   * A small segmented control ON the figure that flips between the DEFAULT
-   * orthogonal-pipe combo and the optional radial view of the SAME bracket.
-   * Mirrors the chrome's .dn-theme-switch idiom; pure client-side visibility
-   * (no data change → never disturbs the digest-gated swap). All --v2-* tokens. */
-  .dt-fig-switchrow { display: flex; align-items: center; gap: 7px; margin: 0 0 8px; }
-  .dt-fig-switchlab { font: 9px var(--v2-mono); letter-spacing: .08em; text-transform: uppercase;
-    color: var(--v2-ink-faint); }
-  .dt-fig-switch { display: inline-flex; border: 1px solid var(--v2-rule); border-radius: 5px; overflow: hidden; }
-  .dt-fig-btn { font: 9.5px var(--v2-mono); padding: 2px 9px; background: transparent;
-    color: var(--v2-ink-faint); border: none; cursor: pointer; transition: background 0.15s, color 0.15s;
-    border-right: 1px solid var(--v2-rule); }
-  .dt-fig-btn:last-child { border-right: none; }
-  .dt-fig-btn:hover { color: var(--v2-ink); }
-  .dt-fig-btn.dt-fig-active { background: var(--v2-accent); color: var(--v2-paper); }
-  .dt-figview { display: none; }
-  .dt-figview.dt-figview-on { display: block; }
 
   /* ---- RADAR SILHOUETTE (challenger vs champion across the gate axes) ----
    * Candidate = filled accent polygon; champion = dashed faint polygon; OUTER =
@@ -3185,9 +3100,6 @@
     /* the two balanced detail columns stack on a narrow viewport. */
     .dt-live-hero-detail { grid-template-columns: 1fr; }
   }
-  @media (max-width: 900px) {
-    .dn-xscript-grid { grid-template-columns: 1fr; }
-  }
   @media (max-width: 760px) {
     .dt-body { grid-template-columns: 1fr; }
     .dt-sidebar { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--v2-rule); }
@@ -3297,14 +3209,65 @@
     justify-content: center; min-width: 0; overflow: hidden; white-space: nowrap; }
   .dn-bld-split-hold { background: var(--v2-caution); color: var(--v2-paper); display: flex; align-items: center;
     justify-content: center; min-width: 0; overflow: hidden; white-space: nowrap; }
-  .dn-bld-boardlist { display: flex; flex-direction: column; gap: 3px; max-height: 320px; overflow-y: auto; }
-  .dn-bld-boardrow { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px;
+  .dn-bld-boardlist { display: flex; flex-direction: column; gap: 3px; max-height: 480px; overflow-y: auto; }
+  .dn-bld-boardrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px;
     padding: 5px 8px; border: 1px solid var(--v2-rule-soft); border-radius: 4px; }
-  .dn-bld-boardid { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  .dn-bld-boardkind { font-size: calc(9.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); font-family: var(--v2-mono); }
+  .dn-bld-boardrow-open { border-color: var(--v2-accent); }
+  .dn-bld-boardrow-main { display: flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
+  .dn-bld-boardrow-main:hover .dn-bld-boardid { color: var(--v2-accent); }
+  .dn-bld-boardid { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: none; max-width: 40%; }
+  .dn-bld-boardkind { font-size: calc(9.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); font-family: var(--v2-mono); flex: none; }
+  .dn-bld-boardbadges { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+  .dn-bld-judgebadge { display: inline-flex; align-items: center; gap: 3px; }
+  .dn-bld-judgebadge-x { border: none; background: transparent; color: var(--v2-ink-faint); cursor: pointer; font-family: var(--v2-mono); line-height: 1; padding: 0 1px; }
+  .dn-bld-judgebadge-x:hover { color: var(--v2-bad); }
   .dn-bld-holdtoggle { font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); padding: 2px 8px; border-radius: 9px;
     border: 1px solid var(--v2-rule); background: transparent; color: var(--v2-ink-soft); cursor: pointer; }
   .dn-bld-holdtoggle.dn-bld-held { background: var(--v2-caution); color: var(--v2-paper); border-color: var(--v2-caution); }
+
+  /* the inline board-entry editor (accordion). */
+  .dn-bld-boardrow-editor, .dn-bld-createeditor { margin: 2px 0 8px; }
+  .dn-bld-entryform { display: flex; flex-direction: column; gap: 9px; padding: 12px 13px;
+    background: var(--v2-panel); border: 1px solid var(--v2-accent); border-radius: 5px; }
+  .dn-bld-ef-row { display: grid; grid-template-columns: 130px minmax(0, 1fr); align-items: start; gap: 10px; }
+  .dn-bld-ef-label { font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); padding-top: 6px; }
+  .dn-bld-ef-control { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .dn-bld-ef-hint { font-size: calc(9.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
+  .dn-bld-ef-jsonhint { font-family: var(--v2-mono); }
+  .dn-bld-ef-sublabel { font-size: calc(10.5px * var(--dt-font-scale, 1)); font-weight: 600; color: var(--v2-ink-soft); margin-top: 4px; }
+  .dn-bld-area { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); width: 100%; box-sizing: border-box;
+    border: 1px solid var(--v2-rule); border-radius: 4px; background: var(--v2-paper); color: var(--v2-ink); padding: 5px 7px; resize: vertical; }
+  .dn-bld-ef-turn { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: start; margin-bottom: 4px; }
+  .dn-bld-ef-turnbtns { display: flex; gap: 2px; }
+  .dn-bld-ef-turnbtns .dn-bld-btn { padding: 3px 7px; }
+  .dn-bld-ef-driftgrid, .dn-bld-boardmeta-drift { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+  .dn-bld-ef-judge { border: 1px solid var(--v2-rule-soft); border-radius: 4px; padding: 8px; margin-bottom: 6px;
+    display: flex; flex-direction: column; gap: 6px; }
+  .dn-bld-ef-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+  .dn-bld-btn-save { border-color: var(--v2-accent); color: var(--v2-accent); }
+  .dn-bld-btn-save:hover { background: var(--v2-accent); color: var(--v2-paper); }
+  .dn-bld-btn-save[disabled] { opacity: 0.45; cursor: not-allowed; }
+  .dn-bld-btn-del { border-color: var(--v2-bad); color: var(--v2-bad); }
+  .dn-bld-ef-error { display: flex; align-items: flex-start; gap: 7px; padding: 8px 10px; border-radius: 4px;
+    background: var(--v2-bad-soft, var(--v2-panel)); border: 1px solid var(--v2-bad); color: var(--v2-ink); }
+  .dn-bld-ef-error-msg { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); }
+
+  /* board metadata + add + import + brief. */
+  .dn-bld-boardmeta { margin: 10px 0; display: flex; flex-direction: column; gap: 6px; }
+  .dn-bld-subhead-min { font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em; color: var(--v2-ink-faint); }
+  .dn-bld-addentry { margin-top: 8px; }
+  .dn-bld-addrow { display: flex; gap: 8px; align-items: center; }
+  .dn-bld-import { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
+  .dn-bld-import-area { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); width: 100%; box-sizing: border-box;
+    border: 1px solid var(--v2-rule); border-radius: 4px; background: var(--v2-paper); color: var(--v2-ink); padding: 6px 8px; resize: vertical; }
+  .dn-bld-import-report { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); }
+  .dn-bld-import-ok { color: var(--v2-good); }
+  .dn-bld-import-err { color: var(--v2-bad); }
+  .dn-bld-brief { margin: 8px 0 14px; display: flex; flex-direction: column; gap: 6px; }
+  .dn-bld-brief-area { width: 100%; box-sizing: border-box; border: 1px solid var(--v2-rule); border-radius: 4px;
+    background: var(--v2-paper); color: var(--v2-ink); padding: 7px 9px; resize: vertical; font-size: calc(11px * var(--dt-font-scale, 1)); }
+  .dn-bld-brief-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .dn-bld-brief-count { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
 
   /* proposer + review panels. */
   .dn-bld-panel { background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 4px; padding: 11px 13px; }
@@ -3398,6 +3361,22 @@
   .dn-bld-slots-pick { width: 100%; }
   .dn-bld-slots-forkrow { display: flex; gap: 5px; }
   .dn-bld-slots-name { flex: 1; min-width: 0; width: auto; }
+  /* the revert/undo lifecycle controls under the fork row. */
+  .dn-bld-slots-lifecycle { display: flex; flex-direction: column; gap: 4px; }
+  .dn-bld-slots-lifecyclerow { display: flex; gap: 5px; }
+  .dn-bld-slots-lifecyclerow .dn-bld-btn { flex: 1; }
+  .dn-bld-slots-undonote { font-size: calc(10px * var(--dt-font-scale, 1)); }
+
+  /* B3 mapping-editor add-key rows (weights + gate namespace-monotonicity). */
+  .dn-bld-addkeyrow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 4px 0; }
+  .dn-bld-addkey-k { flex: 1; min-width: 0; }
+  .dn-bld-addkey-v { width: 84px; flex: none; }
+  .dn-bld-nsmono { margin: 10px 0; display: flex; flex-direction: column; gap: 4px; }
+
+  /* B3 proposer picker + free-text path row. */
+  .dn-bld-proposer-picker { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+  .dn-bld-proposer-freerow { display: flex; gap: 6px; align-items: center; }
+  .dn-bld-proposer-path { flex: 1; min-width: 0; }
 
   /* draft compare (Review pane): operand selects + the keyed diff table. */
   .dn-bld-cmp { margin: 10px 0; }
@@ -3662,11 +3641,126 @@
     display: block; width: 100%; height: auto; max-width: 1100px;
   }
   /* square / centred figures: max-width caps BOTH dimensions cleanly (1:1). */
-  svg.dn-elimradial-hero {
-    display: block; width: 100%; height: auto;
-    max-width: 380px; margin-inline: auto;
-  }
   svg.dn-radar-hero {
     display: block; width: 100%; height: auto; max-width: 420px;
   }
+
+  /* ================================================================
+   * INSTRUMENT LENS (board reflection · R5) — dn-instr-* .
+   * Compact, theme-adaptive by construction: every colour resolves to a
+   * --v2-* role token (ground/panel/ink/rule/good/bad/caution/accent), so a
+   * theme swap restyles it wholesale with no per-theme rule here. Transliterates
+   * the reflection-viz-study bill-of-health / judge-audit / x-ray mockups.
+   * ================================================================ */
+  .dn-instr-apply {
+    display: inline-block; font-family: var(--v2-mono);
+    font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
+    background: var(--v2-paper); border: 1px solid var(--v2-rule); border-radius: 4px;
+    padding: 3px 7px; margin-top: 8px; user-select: all; white-space: nowrap;
+    max-width: 100%; overflow-x: auto;
+  }
+  .dn-instr-link { color: var(--v2-accent); text-decoration: none; }
+  .dn-instr-link:hover { text-decoration: underline; }
+
+  /* tone helpers — the shared verdict/severity colour set. */
+  .dn-instr-t-tp, .dn-instr-t-good { color: var(--v2-good); }
+  .dn-instr-t-fp, .dn-instr-t-bad { color: var(--v2-bad); }
+  .dn-instr-t-fn, .dn-instr-t-warn { color: var(--v2-caution); }
+  .dn-instr-t-tn, .dn-instr-t-amb, .dn-instr-t-faint { color: var(--v2-ink-faint); }
+
+  /* identity strip */
+  .dn-instr-ident { gap: 22px; flex-wrap: wrap; }
+  .dn-instr-kv { display: flex; flex-direction: column; gap: 2px; }
+  .dn-instr-k { font-size: calc(9.5px * var(--dt-font-scale, 1)); letter-spacing: .1em;
+    text-transform: uppercase; color: var(--v2-ink-faint); }
+  .dn-instr-v { font-size: calc(12.5px * var(--dt-font-scale, 1)); color: var(--v2-ink); }
+
+  /* the four-pillar quadrant */
+  .dn-instr-quad { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 720px) { .dn-instr-quad { grid-template-columns: 1fr; } }
+  .dn-instr-pillar { padding: 13px 15px; }
+  .dn-instr-pillar-name { font-size: calc(13.5px * var(--dt-font-scale, 1)); font-weight: 700;
+    color: var(--v2-ink); margin-bottom: 8px; }
+  .dn-instr-subs { display: grid; grid-template-columns: 1fr; gap: 3px; }
+  .dn-instr-sub { display: flex; justify-content: space-between; gap: 12px;
+    font-size: calc(11.5px * var(--dt-font-scale, 1));
+    border-bottom: 1px dashed var(--v2-rule-soft); padding-bottom: 2px; }
+  .dn-instr-sub-k { color: var(--v2-ink-faint); }
+  .dn-instr-sub-v { color: var(--v2-ink); font-weight: 600; text-align: right; }
+
+  /* findings list */
+  .dn-instr-findings { display: flex; flex-direction: column; gap: 10px; }
+  .dn-instr-finding { padding: 12px 15px; border-left: 3px solid var(--v2-rule); }
+  .dn-instr-finding.dn-instr-fs-crit { border-left-color: var(--v2-bad); }
+  .dn-instr-finding.dn-instr-fs-warn { border-left-color: var(--v2-caution); }
+  .dn-instr-finding.dn-instr-fs-info { border-left-color: var(--v2-ink-faint); }
+  .dn-instr-finding-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .dn-instr-finding-title { font-size: calc(13px * var(--dt-font-scale, 1)); font-weight: 600;
+    color: var(--v2-ink); flex: 1; }
+  .dn-instr-finding-count { font-size: calc(10.5px * var(--dt-font-scale, 1)); }
+  .dn-instr-finding-detail { font-size: calc(12px * var(--dt-font-scale, 1));
+    color: var(--v2-ink-soft); margin: 7px 0 0; line-height: 1.5; }
+  .dn-instr-finding-op { font-size: calc(11.5px * var(--dt-font-scale, 1)); margin-top: 6px; }
+  .dn-chip.dn-chip-instr-sev-crit { color: var(--v2-bad); border-color: var(--v2-bad); }
+  .dn-chip.dn-chip-instr-sev-warn { color: var(--v2-caution); border-color: var(--v2-caution); }
+  .dn-chip.dn-chip-instr-sev-info { color: var(--v2-ink-faint); border-color: var(--v2-rule); }
+
+  /* judge audit cards */
+  .dn-instr-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+  .dn-instr-card { padding: 13px 15px; }
+  .dn-instr-card-untested { opacity: .62; }
+  .dn-instr-card-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 9px; }
+  .dn-instr-card-name { font-size: calc(13px * var(--dt-font-scale, 1)); font-weight: 700; color: var(--v2-ink); }
+  .dn-instr-cm { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+  .dn-instr-cmcell { border: 1px solid currentColor; border-radius: 6px; padding: 7px 9px;
+    display: flex; flex-direction: column; gap: 1px;
+    background: color-mix(in srgb, currentColor 8%, transparent); }
+  .dn-instr-cm-lab { font-size: calc(10px * var(--dt-font-scale, 1)); font-weight: 700; letter-spacing: .05em; }
+  .dn-instr-cm-n { font-size: calc(19px * var(--dt-font-scale, 1)); font-weight: 700; }
+  .dn-instr-cm-cap { font-size: calc(9px * var(--dt-font-scale, 1)); }
+  .dn-instr-amb { font-size: calc(10px * var(--dt-font-scale, 1)); margin: 7px 0 0; line-height: 1.4; }
+  .dn-instr-metrics, .dn-instr-consistency { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 9px; }
+  .dn-instr-metric { display: flex; flex-direction: column; gap: 1px; }
+  .dn-instr-metric-k { font-size: calc(9.5px * var(--dt-font-scale, 1)); letter-spacing: .04em; }
+  .dn-instr-metric-v { font-size: calc(13px * var(--dt-font-scale, 1)); font-weight: 700;
+    font-family: var(--v2-mono); color: var(--v2-ink); }
+  .dn-instr-xchips, .dn-instr-evidence { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+  .dn-chip.dn-chip-instr-redundant { color: var(--v2-bad); border-color: var(--v2-bad); }
+  .dn-chip.dn-chip-instr-conflict { color: var(--v2-caution); border-color: var(--v2-caution); }
+  .dn-instr-echip { display: inline-flex; align-items: baseline; gap: 6px; text-decoration: none;
+    border: 1px solid currentColor; border-radius: 7px; padding: 3px 8px;
+    font-size: calc(10.5px * var(--dt-font-scale, 1)); max-width: 100%; }
+  .dn-instr-echip:hover { background: color-mix(in srgb, currentColor 12%, transparent); }
+  .dn-instr-echip-v { font-weight: 700; }
+  .dn-instr-echip-span { color: var(--v2-ink-soft); font-style: italic; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+
+  /* x-ray split */
+  .dn-instr-xray { display: grid; grid-template-columns: 1.3fr 1fr; gap: 12px; align-items: start; }
+  @media (max-width: 820px) { .dn-instr-xray { grid-template-columns: 1fr; } }
+  .dn-instr-xleft, .dn-instr-xright { padding: 13px 15px; }
+  .dn-instr-fidelity { font-size: calc(11px * var(--dt-font-scale, 1)); margin-bottom: 10px; }
+  .dn-instr-fidelity-tag { color: var(--v2-accent); font-weight: 600; }
+  .dn-instr-transcript { display: flex; flex-direction: column; gap: 9px; }
+  .dn-instr-turn { border: 1px solid var(--v2-rule); border-left: 3px solid var(--v2-rule);
+    border-radius: 8px; background: var(--v2-paper); padding: 9px 12px; }
+  .dn-instr-turn-role { font-size: calc(9px * var(--dt-font-scale, 1)); letter-spacing: .12em;
+    text-transform: uppercase; margin-bottom: 4px; }
+  .dn-instr-turn-body { font-size: calc(12.5px * var(--dt-font-scale, 1)); line-height: 1.55;
+    color: var(--v2-ink); white-space: pre-wrap; word-break: break-word; }
+  .dn-instr-span { border-radius: 3px; padding: 0 2px;
+    background: color-mix(in srgb, currentColor 20%, transparent);
+    box-shadow: inset 0 -2px 0 currentColor; }
+  .dn-instr-xsub { margin-bottom: 14px; }
+  .dn-instr-xsub-h { font-size: calc(9.5px * var(--dt-font-scale, 1)); letter-spacing: .12em;
+    text-transform: uppercase; color: var(--v2-ink-faint); margin-bottom: 6px; }
+  .dn-instr-xrow { display: flex; gap: 10px; align-items: baseline; }
+  .dn-instr-xsev { font-size: calc(11.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); }
+  .dn-instr-xclaim { font-size: calc(12px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
+    margin: 5px 0 0; line-height: 1.5; }
+  .dn-instr-xwhy { font-size: calc(12.5px * var(--dt-font-scale, 1)); color: var(--v2-ink);
+    margin: 4px 0 8px; line-height: 1.55; }
+  .dn-instr-xmeta { display: grid; grid-template-columns: 1fr; gap: 4px; }
+  .dn-instr-metakv { display: flex; justify-content: space-between; gap: 10px;
+    font-size: calc(11px * var(--dt-font-scale, 1)); }
 }

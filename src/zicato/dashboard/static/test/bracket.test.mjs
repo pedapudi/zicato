@@ -30,6 +30,7 @@ installDom();
 
 const svg = await import('../js/svg.js');
 const structure = await import('../js/views/structure.js');
+const mock = await import('./mock_server.mjs');
 
 // ---- SVG geometry readers ------------------------------------------------
 
@@ -164,12 +165,12 @@ test('single-elim bracket: dots/labels/edges connect each match into the next ro
       ] },
     ],
   };
-  const model = structure.elimModel(st);
+  const model = structure.elimModel(mock.attachElimStates(st));
   assertEqual(model.championId, 'v1', 'v1 is crowned');
   assertEqual(model.benchmarkId, 'v0', 'v0 is the benchmark/incumbent');
   assertEqual(model.gateState, 'crowned', 'the gate crowned the survivor');
   assert(model.losers == null, 'single-elim has no losers band');
-  const flow = svg.elimFlow({ winners: model.winners.concat(model.losers || []), championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState });
+  const flow = svg.elimFlow({ rounds: model.rounds, gen_states: model.gen_states, championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState });
 
   // columns: 0=R0, 1=R1, 2=Final ; gate after column 2.
   // v1 advances every round → a continuous good chain into the gate.
@@ -229,12 +230,12 @@ test('double-elim bracket: columns order WB→LB→GF, winners→losers DROP edg
       ] },
     ],
   };
-  const model = structure.elimModel(st);
+  const model = structure.elimModel(mock.attachElimStates(st));
   assertEqual(model.championId, 'v1', 'v1 promoted at the grand final');
   assertEqual(model.benchmarkId, 'v0', 'v0 is the benchmark/incumbent');
   assert(Array.isArray(model.losers) && model.losers.length === 2, 'the losers bracket has two rounds');
-  // the bands the caller passes (winners THEN losers — GF before LB on purpose).
-  const flow = svg.elimFlow({ winners: model.winners.concat(model.losers), championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState });
+  // the SERVED rounds (already sorted; the fixture above is round_index-keyed).
+  const flow = svg.elimFlow({ rounds: model.rounds, gen_states: model.gen_states, championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState });
 
   // COLUMNS, by round_index: 0=WB-R0, 1=WB-R1, 2=LB-R2, 3=LB-R3, 4=GF, gate after 4.
   // v1: WB-R0(c0)→WB-R1(c1)→GF(c4)→gate ; never touches the LB columns.
@@ -303,10 +304,10 @@ test('single-elim bracket: a BYE advances cleanly and does not desync the dot/la
       ] },
     ],
   };
-  const model = structure.elimModel(st);
+  const model = structure.elimModel(mock.attachElimStates(st));
   assertEqual(model.gateState, 'stands', 'the survivor lost the gate — champion stands');
   assertEqual(model.championId, null, 'no new champion crowned');
-  const flow = svg.elimFlow({ winners: model.winners.concat(model.losers || []), championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState });
+  const flow = svg.elimFlow({ rounds: model.rounds, gen_states: model.gen_states, championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState });
 
   // v3's BYE: a good dot at R0 that connects forward to its real R1 match.
   assert(dotAt(flow, 'v3', colX(0)) && dotAt(flow, 'v3', colX(0)).tone === 'good', 'v3 advances via the bye (good dot at R0)');
@@ -341,10 +342,10 @@ test('live elim bracket: the in-flight (pending) final maps the same as a settle
       ] },
     ],
   };
-  const lm = structure.elimModel(structure.normalizeStructure(live, true));
+  const lm = structure.elimModel(structure.normalizeStructure(mock.attachElimStates(live), true));
   assert(lm.live, 'the model is live');
   assertEqual(lm.gateState, 'deciding', 'a live bracket is deciding');
-  const flow = svg.elimFlow({ winners: lm.winners.concat(lm.losers || []), championId: lm.championId, benchmarkId: lm.benchmarkId, gateState: lm.gateState, live: true });
+  const flow = svg.elimFlow({ rounds: lm.rounds, gen_states: lm.gen_states, championId: lm.championId, benchmarkId: lm.benchmarkId, gateState: lm.gateState, live: true });
 
   // v1 won R0 (good), races the pending final (pending dot), connected R0→Final.
   assert(dotAt(flow, 'v1', colX(0)) && dotAt(flow, 'v1', colX(0)).tone === 'good', 'v1 won R0 (good)');
@@ -459,8 +460,8 @@ test('double-elim drop routing: ≥2 losers demoted route in their own channel b
       ] },
     ],
   };
-  const model = structure.elimModel(st);
-  const flow = svg.elimFlow({ winners: model.winners.concat(model.losers), championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState });
+  const model = structure.elimModel(mock.attachElimStates(st));
+  const flow = svg.elimFlow({ rounds: model.rounds, gen_states: model.gen_states, championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState });
 
   // collect the drop paths (raw `d`) so we can inspect their channel routing.
   const drops = [];
@@ -515,6 +516,47 @@ test('double-elim drop routing: ≥2 losers demoted route in their own channel b
   assert(segFromTo(flow, 'v2', colX(0), colX(2)) && segFromTo(flow, 'v2', colX(0), colX(2)).drop, 'v2 WB-R0→LB-R2 drop still connects dot→node');
   assert(segFromTo(flow, 'v4', colX(0), colX(2)) && segFromTo(flow, 'v4', colX(0), colX(2)).drop, 'v4 WB-R0→LB-R2 drop still connects dot→node');
   assert(segFromTo(flow, 'v3', colX(1), colX(3)) && segFromTo(flow, 'v3', colX(1), colX(3)).drop, 'v3 WB-R1→LB-R3 drop still connects dot→node');
+});
+
+
+// ---- THE SHARED FIXTURE PIN (node leg) -------------------------------------
+//
+// tests/data/elim_states_fixture.json pins the SERVER fold three ways: the
+// Python reader (tests/test_tournament_view_elim_states.py), the Rust
+// supervisor twin (crates/supervisor/src/elim_states.rs), and THIS mirror.
+// A divergence here is a bug in mock_server.mjs — never grounds to re-derive
+// the model in prod code.
+test('mock deriveElimStates matches the shared Python/Rust fixture byte-for-byte', async () => {
+  const fs = await import('node:fs');
+  const fixturePath = new URL('../../../../../tests/data/elim_states_fixture.json', import.meta.url);
+  const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf-8'));
+  const got = mock.deriveElimStates(fixture.input_rounds);
+  const canon = (v) => {
+    const sort = (x) => Array.isArray(x) ? x.map(sort)
+      : (x && typeof x === 'object')
+        ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, sort(x[k])]))
+        : x;
+    return JSON.stringify(sort(v));
+  };
+  assertEqual(canon(got), canon(fixture.expected), 'the node mirror reproduces the served fold exactly');
+});
+
+// F1: the DQ1 scalar contract — non-scalar competitors/winner (bool, null,
+// object, array) drop identically across the Python, Rust, and node folds.
+test('mock deriveElimStates drops non-scalar competitors/winner per the shared fixture', async () => {
+  const fs = await import('node:fs');
+  const fixturePath = new URL('../../../../../tests/data/elim_states_fixture.json', import.meta.url);
+  const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf-8'));
+  const c = fixture.malformed_competitors_case;
+  const got = mock.deriveElimStates(c.input_rounds);
+  const canon = (v) => {
+    const sort = (x) => Array.isArray(x) ? x.map(sort)
+      : (x && typeof x === 'object')
+        ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, sort(x[k])]))
+        : x;
+    return JSON.stringify(sort(v));
+  };
+  assertEqual(canon(got), canon(c.expected), 'the node mirror drops non-scalars exactly like the twins');
 });
 
 await run();

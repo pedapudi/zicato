@@ -19,10 +19,13 @@
 // panel or a standalone entry by changing only the route wiring.
 
 import { el, clearChildren, patchText } from '../core/dom.js';
-import { gatedSwap, section, empty } from '../ui.js';
+import { gatedSwap, section, empty, chip } from '../ui.js';
 import { infoPopover } from '../builder/popover.js';
 import { BuilderChat } from '../builder/chat.js';
 import { previewNodes } from '../builder/preview.js';
+import {
+  entryEditor, entryToBuffer, bufferToEntryJson, newEntryBuffer, HOLDOUT_TAG,
+} from '../builder/entry_form.js';
 import {
   STRUCTURES, STRUCTURE_GLYPH, paramSpecsFor, structureGlyphSvg,
   readChatWidth, persistChatWidth, readChatCollapsed, persistChatCollapsed,
@@ -56,10 +59,28 @@ let _activeSlot = null;  // the slot the session is bound to ('' = unnamed)
 let _compare = null;     // last compare result (the op's `compare` key)
 let _cmpA = 'session';   // compare operand selections (persist across renders)
 let _cmpB = 'live';
-let _config = null;      // /builder/config public dict
+let _config = null;      // /builder/config public dict (+ `vocab`)
 let _active = 'structure';
 let _busy = false;
 let _chat = null;
+
+// ── board-editor module state (B2) ────────────────────────────────────
+// Pinned across renders so the inline accordion survives a digest re-render:
+// the center digest folds these in, and renderCenter rebuilds the open editor
+// from the pinned buffer (module-state pin). VALUE edits mutate `_editBuffer`
+// in place (no re-render, focus kept); STRUCTURAL edits re-render off it.
+let _editId = null;            // id of the entry whose inline editor is open
+let _editBuffer = null;        // the working buffer (entry_form's plain-JSON shape)
+let _editCreate = false;       // true → a create-mode buffer (new entry, id unlocked)
+let _editError = '';           // verbatim server ValueError for the open editor
+let _confirmDeleteEntry = false; // two-click delete arm
+let _importText = '';          // paste-JSONL import textarea content
+let _importReport = [];        // per-line import results [{line, ok, error?}]
+let _briefDraft = null;        // uncommitted proposer-brief text (null → use draft.brief)
+let _proposerDirs = [];        // discovered proposer dirs [{name, path}] (from /builder/draft)
+let _confirmReset = false;     // two-click revert-to-live arm (slot strip)
+let _undoNote = '';            // the last undo's note (e.g. "nothing to undo")
+let _replacedNote = '';        // create-mode Save that replaced an existing id (F6 notice)
 
 // Re-render hooks set up per mount.
 let _renderCenter = () => {};
@@ -132,6 +153,7 @@ function applySnapshot(snap) {
   _warnings = Array.isArray(snap.warnings) ? snap.warnings : [];
   _diff = snap.diff || _diff;
   if (Array.isArray(snap.drafts)) _drafts = snap.drafts;
+  if (Array.isArray(snap.proposer_dirs)) _proposerDirs = snap.proposer_dirs;
 }
 
 // Apply the {draft,patch,cost,warnings,diff} envelope the op / a chat patch
@@ -149,6 +171,18 @@ function applyOpResult(env, opts) {
   if (env.patch && (env.patch.op === 'fork' || env.patch.op === 'switch')
       && env.patch.changed && env.patch.changed.name) {
     _activeSlot = env.patch.changed.name;
+  }
+  // The undo lifecycle op reports "nothing to undo" via the patch note when the
+  // session's snapshot history is empty — surface it beside the Undo button.
+  if (env.patch && env.patch.op === 'undo') _undoNote = env.patch.note || '';
+  else if (env.patch) _undoNote = '';
+  // A draft-IDENTITY change (switch to another slot, revert-to-live, or an undo
+  // step) swaps the board out from under any open inline editor: a buffer typed
+  // against the old draft would Save into the NEW one. Close the editor so the
+  // stale buffer can never post. (Fork is deliberately excluded — it COPIES the
+  // working draft, so the open editor still targets the same entries.)
+  if (env.patch && (env.patch.op === 'switch' || env.patch.op === 'revert_to_live' || env.patch.op === 'undo')) {
+    closeEditState();
   }
   _renderRail();
   _renderCenter();
@@ -191,6 +225,7 @@ function renderRail(host) {
   const digest = JSON.stringify({
     active: _active, done: SECTIONS.map((s) => sectionDone(s.id)),
     drafts: _drafts, slot: _activeSlot,
+    resetArm: _confirmReset, undoNote: _undoNote,
   });
   if (gatedSwap(host, 'rail|' + digest, () => {
     const items = SECTIONS.map((s) => {
@@ -241,7 +276,33 @@ function slotStrip() {
     if (v) runOp('fork', { name: v });
   });
   wrap.appendChild(el('div', { class: 'dn-bld-slots-forkrow' }, [nameIn, forkBtn]));
+  wrap.appendChild(lifecycleRow());
   return wrap;
+}
+
+// The revert/undo lifecycle controls under the fork row. Reset-to-live discards
+// every uncommitted edit by restoring the workspace's live contract IN PLACE
+// (two-click confirm — it throws away work); Undo steps back one write op. Both
+// drive an existing lifecycle op (L1). A `undo` with an empty history returns a
+// "nothing to undo" note, rendered here so the click is never silent.
+function lifecycleRow() {
+  const reset = el('button', {
+    class: 'dn-bld-btn dn-bld-btn-reset' + (_confirmReset ? ' dn-bld-btn-confirm' : ''),
+    type: 'button', 'aria-label': 'Reset to live',
+    text: _confirmReset ? 'Confirm — discard all edits' : 'Reset to live',
+  });
+  reset.addEventListener('click', () => {
+    if (!_confirmReset) { _confirmReset = true; _renderRail(); return; }
+    _confirmReset = false;
+    runOp('revert_to_live', {});
+  });
+  const undo = el('button', {
+    class: 'dn-bld-btn dn-bld-btn-undo', type: 'button', 'aria-label': 'Undo', text: 'Undo',
+  });
+  undo.addEventListener('click', () => { _confirmReset = false; runOp('undo', {}); });
+  const kids = [el('div', { class: 'dn-bld-slots-lifecyclerow' }, [reset, undo])];
+  if (_undoNote) kids.push(el('div', { class: 'dn-bld-slots-undonote dn-faint', role: 'status', text: _undoNote }));
+  return el('div', { class: 'dn-bld-slots-lifecycle' }, kids);
 }
 
 // A section is "done" once the operator has visibly engaged its core contract
@@ -272,6 +333,11 @@ function renderCenter(host) {
   const digest = JSON.stringify({
     active: _active, draft: d, busy: _busy, flash: _flash, pf: _preflight,
     cmp: _compare, cmpSel: [_cmpA, _cmpB], drafts: _drafts,
+    // the board-editor accordion state — pinned so the open editor survives a
+    // digest re-render and reflects structural edits to the buffer.
+    editId: _editId, editBuf: _editBuffer, editCreate: _editCreate,
+    editErr: _editError, delArm: _confirmDeleteEntry, replaced: _replacedNote,
+    imp: _importText, impRep: _importReport, brief: _briefDraft,
   });
   gatedSwap(host, 'center|' + digest, () => {
     const nodes = [];
@@ -341,6 +407,53 @@ function checkInput(checked, aria, caption, onToggle) {
     onToggle(!!on);
   });
   return el('label', { class: 'dn-bld-checkwrap' }, [box, el('span', { text: caption })]);
+}
+
+// A WHOLESALE-mapping numeric editor: one row per fixed `key`, each committing
+// the WHOLE mapping (the current mapping with that one key updated) through
+// `post(fullMapping)`. This is the op semantics — a mapping edit replaces the
+// whole mapping, never a per-key delta. `opts.def` is the value shown for a key
+// absent from `current` (a neutral display; an untouched absent key never
+// enters the posted mapping — only the edited key is added).
+function mappingNumRows(keys, current, opts, post) {
+  const o = opts || {};
+  return keys.map((key) => {
+    const has = current[key] != null;
+    const val = has ? current[key] : (o.def != null ? o.def : 0);
+    return controlRow(o.labelFor(key), o.infoFor(key), numInput(val,
+      { step: o.step || '0.1', 'aria-label': o.ariaFor(key) }, (n) => {
+        const next = Object.assign({}, current);
+        next[key] = n;
+        post(next);
+      }));
+  });
+}
+
+// A free-text ADD-KEY row: a key text field + a signed number + an Add button.
+// Fixes the iterate-existing-keys-only gap — an operator can introduce a NEW
+// mapping key the draft never carried. `onAdd(key, number)` assembles + posts
+// the whole mapping. Blank key or non-finite number is inert (never posts).
+function addKeyNumRow(opts, onAdd) {
+  const o = opts || {};
+  const keyIn = el('input', {
+    class: 'dn-bld-text dn-bld-addkey-k', type: 'text',
+    placeholder: o.placeholder || 'new key', 'aria-label': o.ariaKey,
+  });
+  const valIn = el('input', {
+    class: 'dn-bld-num dn-bld-addkey-v', type: 'number', step: o.step || '0.1',
+    value: o.defVal != null ? String(o.defVal) : '0', 'aria-label': o.ariaVal,
+  });
+  const btn = el('button', {
+    class: 'dn-bld-btn dn-bld-addkey-btn', type: 'button', text: 'Add', 'aria-label': o.ariaBtn || 'Add key',
+  });
+  btn.addEventListener('click', () => {
+    const k = String(keyIn.value != null ? keyIn.value : (keyIn.getAttribute('value') || '')).trim();
+    const raw = valIn.value != null ? valIn.value : valIn.getAttribute('value');
+    const n = Number(raw);
+    if (!k || !isFinite(n)) return;
+    onAdd(k, n);
+  });
+  return el('div', { class: 'dn-bld-addkeyrow' }, [keyIn, valIn, btn]);
 }
 
 function structureSection(d) {
@@ -424,26 +537,42 @@ function boardSection(d) {
   const board = Array.isArray(d.board) ? d.board : [];
   const holdout = d.holdout || { train_ids: [], holdout_ids: [] };
   const of = ((d.scoring || {}).overfitting) || {};
+  const vocab = (_config && _config.vocab) || {};
   const trainSet = new Set(holdout.train_ids || []);
   const holdSet = new Set(holdout.holdout_ids || []);
 
-  const rows = board.map((b) => {
+  const toggleHoldout = (id, held) => {
+    const next = held ? [...holdSet].filter((x) => x !== id) : [...holdSet, id];
+    runOp('set_holdout', { tags: next });
+  };
+
+  // one board row: id + kind + badges (clickable → open the inline accordion),
+  // a holdout toggle, and per-judge badges whose × posts remove_judge directly.
+  const rowNodes = [];
+  board.forEach((b) => {
     const id = b.id || b.entry_id;
     const held = holdSet.has(id);
+    const badges = entryBadges(b, id);
+    const main = el('div', {
+      class: 'dn-bld-boardrow-main', role: 'button', tabindex: '0',
+      'aria-label': 'Edit board entry ' + id,
+    }, [
+      el('span', { class: 'dn-bld-boardid', title: id, text: id }),
+      el('span', { class: 'dn-bld-boardkind', text: b.kind || '' }),
+      el('div', { class: 'dn-bld-boardbadges' }, badges),
+    ]);
+    main.addEventListener('click', () => openEdit(b));
     const toggle = el('button', {
       class: 'dn-bld-holdtoggle' + (held ? ' dn-bld-held' : ''), type: 'button',
       'aria-pressed': String(held), title: held ? 'held out (click to train on it)' : 'in train set (click to hold out)',
       text: held ? 'holdout' : 'train',
     });
-    toggle.addEventListener('click', () => {
-      const next = held ? [...holdSet].filter((x) => x !== id) : [...holdSet, id];
-      runOp('set_holdout', { tags: next });
-    });
-    return el('div', { class: 'dn-bld-boardrow' }, [
-      el('span', { class: 'dn-bld-boardid', title: id, text: id }),
-      el('span', { class: 'dn-bld-boardkind', text: b.kind || '' }),
-      toggle,
-    ]);
+    toggle.addEventListener('click', (ev) => { if (ev.stopPropagation) ev.stopPropagation(); toggleHoldout(id, held); });
+    rowNodes.push(el('div', { class: 'dn-bld-boardrow' + ((_editId === id && !_editCreate) ? ' dn-bld-boardrow-open' : '') }, [main, toggle]));
+    // the inline accordion editor rides directly under its row.
+    if (_editId === id && !_editCreate && _editBuffer) {
+      rowNodes.push(el('div', { class: 'dn-bld-boardrow-editor' }, [entryAccordion(vocab, /* editing */ true)]));
+    }
   });
 
   const fracVal = of.holdout_fraction != null ? of.holdout_fraction : 0.2;
@@ -458,6 +587,7 @@ function boardSection(d) {
 
   return section('Board & holdout',
     el('p', { class: 'dn-lede', text: 'The evaluation board and its train / holdout split. The winning challenger is re-scored on the holdout slice before it can promote.' }),
+    replacedNotice(),
     controlRow('Holdout fraction', {
       title: 'Holdout fraction', def: '0.2',
       body: 'Fraction of the board hash-partitioned into the holdout slice (when no explicit per-entry holdout tags are set). A larger holdout guards harder against overfitting but costs more confirm runs and shrinks the train field.',
@@ -466,7 +596,274 @@ function boardSection(d) {
       el('span', { class: 'dn-bld-split-train', style: `flex:${Math.max(1, trainSet.size)}`, text: `train ${trainSet.size}` }),
       el('span', { class: 'dn-bld-split-hold', style: `flex:${Math.max(0.001, holdSet.size)}`, text: `holdout ${holdSet.size}` }),
     ]),
-    rows.length ? el('div', { class: 'dn-bld-boardlist' }, rows) : empty('The board is empty — add entries via the board builder.'));
+    boardMetaPanel(d, vocab),
+    el('h3', { class: 'dn-bld-subhead', text: 'Entries' }),
+    rowNodes.length ? el('div', { class: 'dn-bld-boardlist' }, rowNodes)
+      : empty('The board is empty — use “Add entry” below to author the first entry.'),
+    addEntryControl(vocab),
+    importBox());
+}
+
+// The create-mode "replaced an existing id" notice (F6). A dismissable status
+// banner — NOT a confirm gate — so a create Save that landed on an existing id
+// (an id-matched replace, never a rename) is surfaced rather than silent.
+function replacedNotice() {
+  if (!_replacedNote) return null;
+  const note = el('div', { class: 'dn-bld-replaced-note', role: 'status' }, [
+    el('span', { class: 'dn-bld-replaced-msg', text: _replacedNote }),
+    el('button', { class: 'dn-bld-replaced-x', type: 'button', 'aria-label': 'Dismiss', text: '×' }),
+  ]);
+  note.lastChild.addEventListener('click', () => { _replacedNote = ''; _renderCenter(); });
+  return note;
+}
+
+// The row's at-a-glance badges: expectation kind, per-judge (removable), a
+// non-unit weight, the budget, and operator tags (never the holdout tag — the
+// toggle owns that). Uses ui.js's shared chip builder (U6).
+function entryBadges(entry, id) {
+  const out = [];
+  if (entry.expectation && entry.expectation.kind) out.push(chip('exp', 'exp:' + entry.expectation.kind));
+  const judges = Array.isArray(entry.judges) ? entry.judges : [];
+  for (const j of judges) {
+    const badge = el('span', { class: 'dn-chip dn-chip-judge dn-bld-judgebadge' }, [
+      el('span', { class: 'dn-bld-judgebadge-name', text: j.name || 'judge' }),
+      el('button', {
+        class: 'dn-bld-judgebadge-x', type: 'button', 'aria-label': 'Remove judge ' + (j.name || '') + ' from ' + id, text: '×',
+      }),
+    ]);
+    badge.lastChild.addEventListener('click', (ev) => {
+      if (ev.stopPropagation) ev.stopPropagation();
+      runOp('remove_judge', { entry_id: id, name: j.name });
+    });
+    out.push(badge);
+  }
+  if (entry.weight != null && Number(entry.weight) !== 1) out.push(chip('weight', 'w=' + entry.weight));
+  const budget = entry.budget_s != null ? entry.budget_s : entry.wall_clock_budget_seconds;
+  if (budget != null) out.push(chip('budget', budget + 's'));
+  const tags = (Array.isArray(entry.tags) ? entry.tags : []).filter((t) => t !== HOLDOUT_TAG);
+  for (const t of tags) out.push(chip('tag', t));
+  return out;
+}
+
+// Wire the pure entry_form editor to the module-state handlers. `editing`
+// distinguishes an existing-entry accordion (id locked, Delete + Duplicate)
+// from a create-mode buffer (id editable).
+function entryAccordion(vocab, editing) {
+  return entryEditor(_editBuffer, vocab, {
+    editing,
+    error: _editError,
+    deleteArmed: _confirmDeleteEntry,
+    onChange: () => { _confirmDeleteEntry = false; _renderCenter(); },
+    onSave: () => saveEntry(),
+    onCancel: () => { closeEditState(); _renderCenter(); },
+    onDelete: () => onDeleteEntry(),
+    onDuplicate: () => duplicateEntry(),
+  });
+}
+
+// The board-level board_meta header controls (drift suppression + judge-only)
+// — closes B0's documented GUI exception; both drive the set_board_meta op.
+function boardMetaPanel(d, vocab) {
+  const meta = d.board_meta || { disable_drift: [], judge_only: false };
+  const driftKinds = Array.isArray(vocab.drift_kinds) ? vocab.drift_kinds : [];
+  const cur = new Set(meta.disable_drift || []);
+  const boxes = driftKinds.map((dk) => checkInput(cur.has(dk), 'Disable drift ' + dk, dk, (on) => {
+    const next = new Set(cur);
+    if (on) next.add(dk); else next.delete(dk);
+    runOp('set_board_meta', { disable_drift: [...next] });
+  }));
+  const kids = [
+    el('h3', { class: 'dn-bld-subhead', text: 'Board metadata' }),
+    el('p', { class: 'dn-faint', text: 'Board-level header: drift kinds suppressed for every entry, and the judge-only flag (goldfive judges without steering). A change here rolls the epoch like any board edit.' }),
+    checkInput(!!meta.judge_only, 'Board judge-only', 'judge-only board — score on judges alone, no steering', (on) => runOp('set_board_meta', { judge_only: on })),
+  ];
+  if (boxes.length) {
+    kids.push(el('div', { class: 'dn-bld-subhead-min', text: 'Disable drift kinds' }));
+    kids.push(el('div', { class: 'dn-bld-boardmeta-drift' }, boxes));
+  }
+  return el('div', { class: 'dn-bld-boardmeta' }, kids);
+}
+
+// The Add-entry control: a kind picker + button seeds a create-mode buffer.
+// When a create-mode buffer is open, its editor renders here below the button.
+function addEntryControl(vocab) {
+  const kinds = Array.isArray(vocab.kinds) && vocab.kinds.length ? vocab.kinds
+    : ['single_turn', 'multi_turn_scripted', 'multi_turn_emulated', 'synthetic_adversarial', 'synthetic_clean'];
+  const sel = el('select', { class: 'dn-bld-select dn-bld-addkind', 'aria-label': 'New entry kind' },
+    kinds.map((k) => el('option', { value: k, text: k })));
+  const cur = kinds[0];
+  sel.value = cur;
+  sel.setAttribute('value', cur);
+  const btn = el('button', { class: 'dn-bld-btn dn-bld-btn-addentry', type: 'button', text: '+ Add entry', 'aria-label': 'Add entry' });
+  btn.addEventListener('click', () => {
+    const kind = sel.value != null ? sel.value : sel.getAttribute('value');
+    startCreate(kind);
+  });
+  const kids = [
+    el('div', { class: 'dn-bld-addrow' }, [sel, btn]),
+  ];
+  if (_editCreate && _editBuffer) {
+    kids.push(el('div', { class: 'dn-bld-boardrow-editor dn-bld-createeditor' }, [entryAccordion(vocab, /* editing */ false)]));
+  }
+  return el('div', { class: 'dn-bld-addentry' }, kids);
+}
+
+// The paste-JSONL import box: split lines client-side, route a board_meta
+// header line to set_board_meta, post one edit_board_entry per entry line,
+// report per-line results inline.
+function importBox() {
+  const area = el('textarea', {
+    class: 'dn-bld-import-area', 'aria-label': 'Paste board JSONL', rows: '4',
+    text: _importText,
+  });
+  const commit = () => { _importText = area.value != null ? area.value : (area.getAttribute('value') || ''); };
+  area.addEventListener('input', commit);
+  area.addEventListener('change', commit);
+  const btn = el('button', { class: 'dn-bld-btn dn-bld-import-btn', type: 'button', text: 'Import JSONL', 'aria-label': 'Import board JSONL' });
+  btn.addEventListener('click', () => runImport());
+  const kids = [
+    el('h3', { class: 'dn-bld-subhead', text: 'Import JSONL' }),
+    el('p', { class: 'dn-faint', text: 'One entry per line. A leading {"board_meta": true, …} header routes to the board-meta panel; each other line posts through edit_board_entry. Per-line errors report below — a bad line never blocks the good ones.' }),
+    area, btn,
+  ];
+  if (_importReport.length) {
+    kids.push(el('ul', { class: 'dn-bld-import-report' }, _importReport.map((r) => el('li', {
+      class: 'dn-bld-import-line ' + (r.ok ? 'dn-bld-import-ok' : 'dn-bld-import-err'),
+      text: `line ${r.line}: ${r.ok ? 'ok' : r.error}`,
+    }))));
+  }
+  return el('div', { class: 'dn-bld-import' }, kids);
+}
+
+// ── board-editor handlers ─────────────────────────────────────────────
+
+function closeEditState() {
+  _editId = null; _editBuffer = null; _editCreate = false;
+  _editError = ''; _confirmDeleteEntry = false;
+}
+
+// Test-only: reset the shared module state between mounts (mirrors
+// ui.js::_resetPendingOverrides). Forces render() to reload config + draft from
+// the current fetch mock so a test's own vocab/draft take effect. Not used by
+// the app.
+export function _resetBuilderForTest() {
+  closeEditState();
+  _importText = ''; _importReport = []; _briefDraft = null;
+  _proposerDirs = []; _confirmReset = false; _undoNote = ''; _replacedNote = '';
+  _config = null; _draft = null; _flash = '';
+  _active = 'structure'; _busy = false;
+}
+
+function openEdit(entry) {
+  const id = entry.id || entry.entry_id;
+  if (_editId === id && !_editCreate) { closeEditState(); _renderCenter(); return; } // toggle closed
+  // Seed the editor's heldOut from the entry's OWN tags only — NOT the holdSet,
+  // which folds in the hash-derived (rotating, fraction-based) holdout. Passing
+  // a hash-held flag here made the serializer stamp a literal `holdout` tag on
+  // Save (split.py rule 1: an explicit tag wins), collapsing the whole rotating
+  // holdout fraction onto this one entry. The train/holdout toggle stays the
+  // ONLY writer of the tag; entryToBuffer reads it from rawTags.
+  _editBuffer = entryToBuffer(entry);
+  _editId = id; _editCreate = false; _editError = ''; _confirmDeleteEntry = false;
+  _renderCenter();
+}
+
+function startCreate(kind) {
+  _editBuffer = newEntryBuffer(kind);
+  _editCreate = true; _editId = null; _editError = ''; _confirmDeleteEntry = false;
+  _replacedNote = '';
+  _renderCenter();
+}
+
+function duplicateEntry() {
+  if (!_editBuffer) return;
+  const clone = JSON.parse(JSON.stringify(_editBuffer));
+  clone.id = ''; // seed a create-mode buffer under a fresh id (replace-by-id never renames)
+  _editBuffer = clone; _editCreate = true; _editId = null; _editError = ''; _confirmDeleteEntry = false;
+  _renderCenter();
+}
+
+// Save posts the WHOLE buffer through the existing edit_board_entry op; a
+// server ValueError renders verbatim in the editor's inline strip (never the
+// global flash), and the editor stays open so the operator can fix it.
+async function saveEntry() {
+  if (_busy || !_editBuffer) return;
+  const wasCreate = _editCreate;
+  _busy = true; _editError = ''; _renderCenter();
+  try {
+    const env = await postOp('edit_board_entry', { entry: bufferToEntryJson(_editBuffer) });
+    if (env && env.error) { _editError = env.error; }
+    else if (env) {
+      // A create-mode Save whose id already existed REPLACED it in place (no
+      // rename on the id-matched op). Surface that verbatim so a fat-fingered
+      // duplicate-id create is never a silent clobber (F6 — no confirm gate).
+      const changed = (env.patch && env.patch.changed) || {};
+      _replacedNote = (wasCreate && changed.action === 'replaced')
+        ? 'replaced existing entry ' + (changed.entry_id || '') : '';
+      closeEditState(); applyOpResult(env);
+    }
+  } catch (err) {
+    _editError = (err && err.message) || String(err);
+  } finally {
+    _busy = false;
+    _renderCenter();
+  }
+}
+
+function onDeleteEntry() {
+  if (!_confirmDeleteEntry) { _confirmDeleteEntry = true; _renderCenter(); return; }
+  _confirmDeleteEntry = false;
+  if (_editId != null) deleteEntry(_editId);
+}
+
+async function deleteEntry(id) {
+  if (_busy) return;
+  _busy = true; _editError = ''; _renderCenter();
+  try {
+    const env = await postOp('remove_board_entry', { entry_id: id });
+    if (env && env.error) { _editError = env.error; }
+    else if (env) { closeEditState(); applyOpResult(env); }
+  } catch (err) {
+    _editError = (err && err.message) || String(err);
+  } finally {
+    _busy = false;
+    _renderCenter();
+  }
+}
+
+async function runImport() {
+  if (_busy) return;
+  const lines = String(_importText || '').split('\n').map((l) => l.trim());
+  const report = [];
+  _busy = true; _renderCenter();
+  let lineNo = 0;
+  for (const raw of lines) {
+    lineNo += 1;
+    if (!raw) continue;
+    let obj;
+    try { obj = JSON.parse(raw); } catch (e) {
+      report.push({ line: lineNo, ok: false, error: 'invalid JSON: ' + ((e && e.message) || 'parse error') });
+      continue;
+    }
+    try {
+      let env;
+      if (obj && obj.board_meta === true) {
+        env = await postOp('set_board_meta', {
+          disable_drift: Array.isArray(obj.disable_drift) ? obj.disable_drift : [],
+          judge_only: !!obj.judge_only,
+        });
+      } else {
+        env = await postOp('edit_board_entry', { entry: obj });
+      }
+      if (env && env.error) report.push({ line: lineNo, ok: false, error: env.error });
+      else { report.push({ line: lineNo, ok: true }); if (env) applyOpResult(env); }
+    } catch (err) {
+      report.push({ line: lineNo, ok: false, error: (err && err.message) || String(err) });
+    }
+  }
+  _importReport = report;
+  _busy = false;
+  _renderCenter();
 }
 
 // ── Overfitting — the full anti-board-memorization contract ───────────
@@ -494,6 +891,12 @@ function overfittingSection(d) {
       body: 'Rotates the hash-derived holdout slice each epoch (the epoch id seeds the split), so no fixed slice is mined forever. Stable within an epoch; an explicit holdout tag is never rotated.',
     }, checkInput(of.rotate_holdout !== false, 'Rotate holdout', 'rotate the holdout slice each epoch',
       (on) => runOp('set_holdout', { rotate_holdout: on }))),
+    controlRow('Max generations per contract', {
+      title: 'max_generations_per_contract', def: '0 (no ceiling)',
+      body: 'The board-refresh ceiling: after this many generations settle under ONE contract hash, the loop stops proposing against the stale board until the operator rolls the contract — a hard cap on how long a board is mined before it must be refreshed. ASYMMETRY: the op reserves None for "leave unchanged", so this form always sends an explicit integer, and 0 CLEARS the ceiling (unlimited generations). Set 0 to remove any cap; a positive value to impose one.',
+    }, numInput(of.max_generations_per_contract != null ? of.max_generations_per_contract : 0,
+      { min: '0', step: '1', 'aria-label': 'Max generations per contract' },
+      (n) => runOp('set_holdout', { max_generations_per_contract: n }), { int: true })),
     controlRow('Restrict proposer visibility', {
       title: 'restrict_proposer_visibility', def: 'on',
       body: 'Sanitises the proposer prompt at the render boundary: per-entry identities aggregate to counts/rates and experiment-memory deltas coarsen to improved/flat/regressed bands, so the proposer cannot memorise individual board entries.',
@@ -537,6 +940,7 @@ function overfittingSection(d) {
 function weightsSection(d) {
   const sc = d.scoring || {};
   const ns = sc.namespace_weights || {};
+  const vocab = (_config && _config.vocab) || {};
   const rows = [
     controlRow('Drift weight', {
       title: 'drift_weight', def: '1.0',
@@ -550,6 +954,24 @@ function weightsSection(d) {
     }, numInput(sc.pass_weight != null ? sc.pass_weight : 1,
       { step: '0.1', 'aria-label': 'Pass weight' },
       (n) => runOp('set_weights', { pass_weight: n }))),
+    controlRow('Default judge weight', {
+      title: 'default_judge_weight', def: '1.0',
+      body: 'The weight a process judge folds into the loss with when it is not named in per_judge_weights. The baseline every judge inherits.',
+    }, numInput(sc.default_judge_weight != null ? sc.default_judge_weight : 1,
+      { step: '0.1', 'aria-label': 'Default judge weight' },
+      (n) => runOp('set_weights', { default_judge_weight: n }))),
+    controlRow('Plan-revision weight', {
+      title: 'plan_revision_weight', def: '0.5',
+      body: 'Coefficient on the plan-revision drift term (how much the agent rewrote its own plan mid-run) in the scalar.',
+    }, numInput(sc.plan_revision_weight != null ? sc.plan_revision_weight : 0.5,
+      { step: '0.1', 'aria-label': 'Plan revision weight' },
+      (n) => runOp('set_weights', { plan_revision_weight: n }))),
+    controlRow('Runtime weight', {
+      title: 'runtime_weight', def: '0.0',
+      body: 'Coefficient on the wall-clock runtime term of the scalar — opt-in pressure toward faster runs (0 keeps runtime untracked in the loss).',
+    }, numInput(sc.runtime_weight != null ? sc.runtime_weight : 0,
+      { step: '0.1', 'aria-label': 'Runtime weight' },
+      (n) => runOp('set_weights', { runtime_weight: n }))),
     controlRow('Diff-complexity weight', {
       title: 'diff_complexity_weight', def: '0 (term absent)',
       body: 'Opt-in MDL/parsimony coefficient: adds weight × (added + removed + patches) to the challenger scalar, biasing selection toward the smaller, more general edit (a shorter-description edit provably overfits the board less). 0 keeps the term exactly absent.',
@@ -557,6 +979,68 @@ function weightsSection(d) {
       { min: '0', step: '0.001', 'aria-label': 'Diff complexity weight' },
       (n) => runOp('set_namespace_weights', { diff_complexity_weight: n }))),
   ];
+
+  // ── severity_weights — FIXED rows from vocab.severities (→ set_weights) ──
+  const sevKeys = Array.isArray(vocab.severities) ? vocab.severities : [];
+  const sev = sc.severity_weights || {};
+  const sevRows = mappingNumRows(sevKeys, sev, {
+    def: 1, step: '0.1',
+    labelFor: (k) => 'Severity ' + k,
+    ariaFor: (k) => 'Severity weight ' + k,
+    infoFor: (k) => ({
+      title: 'severity_weights["' + k + '"]', def: '1.0',
+      body: 'Multiplier on every drift observation of ' + k + ' severity before it folds into the loss. Raises or lowers how much a ' + k + '-severity finding costs a challenger. Edits post the whole severity_weights mapping.',
+    }),
+  }, (mapping) => runOp('set_weights', { severity_weights: mapping }));
+
+  // ── per_kind_weights — FIXED rows from vocab.kinds (→ set_weights) ───────
+  const kindKeys = Array.isArray(vocab.kinds) ? vocab.kinds : [];
+  const perKind = sc.per_kind_weights || {};
+  const kindRows = mappingNumRows(kindKeys, perKind, {
+    def: 1, step: '0.1',
+    labelFor: (k) => 'Kind ' + k,
+    ariaFor: (k) => 'Per-kind weight ' + k,
+    infoFor: (k) => ({
+      title: 'per_kind_weights["' + k + '"]', def: '1.0',
+      body: 'Weight on every ' + k + ' board entry\'s contribution to the aggregate loss (1.0 = neutral). Lets one entry kind pull harder on selection. Edits post the whole per_kind_weights mapping.',
+    }),
+  }, (mapping) => runOp('set_weights', { per_kind_weights: mapping }));
+
+  // ── per_judge_weights — rows SEEDED from the judges declared on the board
+  //    + a free-text add-key row (→ set_weights) ───────────────────────────
+  const perJudge = sc.per_judge_weights || {};
+  const board = Array.isArray(d.board) ? d.board : [];
+  const judgeNames = [];
+  const seen = new Set();
+  for (const b of board) {
+    for (const j of (Array.isArray(b.judges) ? b.judges : [])) {
+      const name = j && j.name;
+      if (name && !seen.has(name)) { seen.add(name); judgeNames.push(name); }
+    }
+  }
+  for (const key of Object.keys(perJudge)) {
+    if (!seen.has(key)) { seen.add(key); judgeNames.push(key); }
+  }
+  const judgeRows = mappingNumRows(judgeNames, perJudge, {
+    def: 1, step: '0.1',
+    labelFor: (k) => 'Judge ' + k,
+    ariaFor: (k) => 'Per-judge weight ' + k,
+    infoFor: (k) => ({
+      title: 'per_judge_weights["' + k + '"]', def: 'default_judge_weight',
+      body: 'The weight the ' + k + ' process judge folds into the loss with, overriding default_judge_weight for this judge. Seeded from the judges declared on the board. Edits post the whole per_judge_weights mapping.',
+    }),
+  }, (mapping) => runOp('set_weights', { per_judge_weights: mapping }));
+  judgeRows.push(addKeyNumRow({
+    placeholder: 'judge name', defVal: 1, step: '0.1',
+    ariaKey: 'New per-judge weight name', ariaVal: 'New per-judge weight value',
+    ariaBtn: 'Add per-judge weight',
+  }, (key, n) => {
+    const next = Object.assign({}, perJudge);
+    next[key] = n;
+    runOp('set_weights', { per_judge_weights: next });
+  }));
+
+  // ── namespace_weights — existing rows + the NAMESPACE ADD-KEY row ────────
   const nsKeys = Object.keys(ns);
   const nsRows = nsKeys.map((key) => controlRow('Namespace ' + key, {
     title: 'namespace_weights["' + key + '"]', def: String(ns[key]),
@@ -566,11 +1050,95 @@ function weightsSection(d) {
     next[key] = n;
     runOp('set_namespace_weights', { namespace_weights: next });
   })));
+  nsRows.push(addKeyNumRow({
+    placeholder: 'namespace: (trailing colon)', defVal: 1, step: '0.001',
+    ariaKey: 'New namespace weight key', ariaVal: 'New namespace weight value',
+    ariaBtn: 'Add namespace weight',
+  }, (key, n) => {
+    const next = Object.assign({}, ns);
+    next[key] = n;
+    runOp('set_namespace_weights', { namespace_weights: next });
+  }));
+
   return section('Weights',
     el('p', { class: 'dn-lede', text: 'The loss-shaping coefficients: how drift, misses, and each metric namespace fold into the one scalar a duel compares. Contract fields — a change rolls the epoch.' }),
     ...rows,
+    el('h3', { class: 'dn-bld-subhead', text: 'Severity weights' }),
+    ...(sevRows.length ? sevRows : [empty('No drift severities in the vocabulary.')]),
+    el('h3', { class: 'dn-bld-subhead', text: 'Per-kind weights' }),
+    ...(kindRows.length ? kindRows : [empty('No entry kinds in the vocabulary.')]),
+    el('h3', { class: 'dn-bld-subhead', text: 'Per-judge weights' }),
+    ...judgeRows,
     el('h3', { class: 'dn-bld-subhead', text: 'Namespace weights' }),
-    ...(nsRows.length ? nsRows : [empty('No namespace weights in this contract.')]));
+    ...nsRows);
+}
+
+// The proposer-brief editor: a monospace textarea + an explicit Save (the
+// brief is contract, so it commits through set_brief on its own gesture, never
+// on every keystroke) with a live char count. The uncommitted text is pinned
+// in module state so it survives a digest re-render.
+function briefEditor(d) {
+  const current = _briefDraft != null ? _briefDraft : (d.brief || '');
+  const read = (node) => (node.value != null ? node.value
+    : (node.getAttribute('value') != null ? node.getAttribute('value') : (node.textContent || '')));
+  const area = el('textarea', { class: 'dn-bld-brief-area dn-mono', 'aria-label': 'Proposer brief', rows: '6', text: current });
+  const count = el('span', { class: 'dn-bld-brief-count', text: current.length + ' chars' });
+  const commit = () => { _briefDraft = read(area); patchText(count, _briefDraft.length + ' chars'); };
+  area.addEventListener('input', commit);
+  area.addEventListener('change', commit);
+  const save = el('button', { class: 'dn-bld-btn dn-bld-brief-save', type: 'button', text: 'Save brief', 'aria-label': 'Save brief' });
+  save.addEventListener('click', () => {
+    const text = read(area);
+    _briefDraft = null;
+    runOp('set_brief', { text });
+  });
+  return el('div', { class: 'dn-bld-brief' }, [
+    el('h3', { class: 'dn-bld-subhead', text: 'Proposer brief' }),
+    el('p', { class: 'dn-faint', text: 'The operator’s brief to the proposer for this epoch. Explicit Save writes it (set_brief) — a brief change rolls the epoch.' }),
+    area,
+    el('div', { class: 'dn-bld-brief-foot' }, [count, save]),
+  ]);
+}
+
+// The proposer picker: a select over the discovered proposer dirs (from
+// /builder/draft's proposer_dirs) + the builtin default + a free-text path row,
+// all driving set_proposer. An explicit path outside the scanned set is
+// honored verbatim (the scan is a convenience, not a whitelist).
+function proposerPicker(d) {
+  const cur = d.proposer_path || '';
+  const dirs = Array.isArray(_proposerDirs) ? _proposerDirs : [];
+  const options = [el('option', { value: '', text: 'builtin default (skill-composed)' })];
+  const known = new Set();
+  for (const dir of dirs) {
+    options.push(el('option', { value: dir.path, text: dir.name + ' — ' + dir.path }));
+    known.add(dir.path);
+  }
+  // list the current path even if the scan didn't find it, so the select never
+  // silently drops the live value.
+  if (cur && !known.has(cur)) options.push(el('option', { value: cur, text: cur + ' (current)' }));
+  const sel = el('select', { class: 'dn-bld-select dn-bld-proposer-pick', 'aria-label': 'Proposer dir' }, options);
+  sel.value = cur;
+  sel.setAttribute('value', cur);
+  sel.addEventListener('change', () => {
+    const v = sel.value != null ? sel.value : sel.getAttribute('value');
+    runOp('set_proposer', { proposer_path: v ? v : null });
+  });
+  const pathIn = el('input', {
+    class: 'dn-bld-text dn-bld-proposer-path', type: 'text',
+    placeholder: '/path/to/proposer', value: cur, 'aria-label': 'Proposer path',
+  });
+  const setBtn = el('button', { class: 'dn-bld-btn dn-bld-proposer-set', type: 'button', text: 'Set path', 'aria-label': 'Set proposer path' });
+  setBtn.addEventListener('click', () => {
+    const raw = String(pathIn.value != null ? pathIn.value : (pathIn.getAttribute('value') || '')).trim();
+    runOp('set_proposer', { proposer_path: raw ? raw : null });
+  });
+  return el('div', { class: 'dn-bld-proposer-picker' }, [
+    controlRow('Proposer dir', {
+      title: 'proposer_path', def: 'builtin default',
+      body: 'Point the epoch at a proposer dir (one carrying an agent.py or a skills/ dir), or the builtin skill-composed default. The picker lists dirs discovered under <workspace>/../proposers/; the free-text row below sets any other path. Changing the proposer rolls the epoch.',
+    }, sel),
+    el('div', { class: 'dn-bld-proposer-freerow' }, [pathIn, setBtn]),
+  ]);
 }
 
 function proposerSection(d) {
@@ -580,7 +1148,9 @@ function proposerSection(d) {
   const pq = ((d.scoring || {}).proposer_quality) || {};
   const em = ((d.scoring || {}).experiment_memory) || {};
   return section('Proposer',
-    el('p', { class: 'dn-lede', text: 'Who proposes each challenger. A skill-composed default proposer, or a custom ADK agent dir. Read-only summary here — editing the proposer dir is a config change.' }),
+    el('p', { class: 'dn-lede', text: 'Who proposes each challenger: the skill-composed builtin default, a discovered proposer dir, or an explicit path — plus the proposer-quality levers (best-of-N slate, self-critique, cross-epoch memory). Changing the proposer or any lever is a contract edit — it rolls the epoch.' }),
+    proposerPicker(d),
+    briefEditor(d),
     controlRow('Best-of-N slate', {
       title: 'best_of_n', def: '3',
       body: 'How many candidate experiments each propose-step samples before the critique pass picks one. 1 is the historical single sample (no critique). Each extra sample is an auxiliary propose call, priced on the cost meter; the screen (Field & noise) then tries the slate out.',
@@ -623,6 +1193,46 @@ function proposerSection(d) {
           ].filter(Boolean))))
         : el('p', { class: 'dn-faint', text: 'No composed skills.' }),
     ]));
+}
+
+// The per-namespace strict-monotonicity gate mapping editor: a checkbox per
+// existing namespace + a text-key/bool add-key row, each committing the WHOLE
+// namespace_monotonicity mapping through set_gate (the op replaces it
+// wholesale). Closes the namespace_monotonicity GUI gap.
+function namespaceMonoPanel(sc) {
+  const cur = sc.namespace_monotonicity || {};
+  const rows = Object.keys(cur).map((key) => controlRow('Namespace ' + key, {
+    title: 'namespace_monotonicity["' + key + '"]', def: String(!!cur[key]),
+    body: 'When on, the ' + key + ' namespace\'s per-run mean may not regress on a promotion (a strict-monotonicity gate scoped to this namespace). Edits post the whole namespace_monotonicity mapping.',
+  }, checkInput(!!cur[key], 'Namespace monotonicity ' + key, key + ' may not regress', (on) => {
+    const next = Object.assign({}, cur);
+    next[key] = on;
+    runOp('set_gate', { namespace_monotonicity: next });
+  })));
+  const keyIn = el('input', {
+    class: 'dn-bld-text dn-bld-addkey-k', type: 'text',
+    placeholder: 'namespace: (trailing colon)', 'aria-label': 'New namespace monotonicity key',
+  });
+  const box = el('input', { class: 'dn-bld-check dn-bld-addkey-v', type: 'checkbox', 'aria-label': 'New namespace monotonicity value' });
+  box.setAttribute('checked', 'checked'); // default strict (may not regress)
+  const btn = el('button', { class: 'dn-bld-btn dn-bld-addkey-btn', type: 'button', text: 'Add', 'aria-label': 'Add namespace monotonicity key' });
+  btn.addEventListener('click', () => {
+    const k = String(keyIn.value != null ? keyIn.value : (keyIn.getAttribute('value') || '')).trim();
+    if (!k) return;
+    const on = box.checked != null ? box.checked : (box.getAttribute('checked') != null);
+    const next = Object.assign({}, cur);
+    next[k] = !!on;
+    runOp('set_gate', { namespace_monotonicity: next });
+  });
+  const addRow = el('div', { class: 'dn-bld-addkeyrow' }, [
+    keyIn, el('label', { class: 'dn-bld-checkwrap' }, [box, el('span', { text: 'may not regress' })]), btn,
+  ]);
+  return el('div', { class: 'dn-bld-nsmono' }, [
+    el('h3', { class: 'dn-bld-subhead', text: 'Namespace monotonicity' }),
+    el('p', { class: 'dn-faint', text: 'Per-namespace strict-monotonicity gates: each listed namespace\'s mean may not regress on a promotion. A change posts the whole mapping and rolls the epoch.' }),
+    ...(rows.length ? rows : [empty('No per-namespace monotonicity gates set.')]),
+    addRow,
+  ]);
 }
 
 function gateSection(d) {
@@ -677,6 +1287,7 @@ function gateSection(d) {
       title: 'pass_rate_monotonicity_scope', def: 'per_entry',
       body: 'Granularity of the pass-rate check when it is on. per_entry rejects if ANY champion-passed entry flips to fail (right for invariant / regression-suite boards); aggregate rejects only when the overall pass-rate drops (right for sampled boards where one noisy flip should not veto a strictly-better challenger).',
     }, scope),
+    namespaceMonoPanel(sc),
     controlRow('Block on containment violation', {
       title: 'block_on_containment_violation', def: 'off (alarm-only)',
       body: 'Before finalizing a gate-decided promotion, re-check diff containment (files outside the mutable trees must be byte-identical) and REJECT a violating child instead of promoting with an alarm. Fail-open on an unreadable snapshot; an explicit operator force-promote is never blocked.',

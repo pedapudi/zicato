@@ -404,9 +404,13 @@ test('home view: an open (live) epoch in the ledger does not change the settled 
   const dOpen = svg.metaLoopLedgerDigest({ epochs: openWs.ledger, currentEpochId: openWs.current_epoch_id });
   const dClosed = svg.metaLoopLedgerDigest({ epochs: closedWs.ledger, currentEpochId: closedWs.current_epoch_id });
   assert(dOpen !== dClosed, 'the open vs closed lifecycle is reflected in the ledger digest');
-  // but the STRUCTURAL content (floors, changes, champions) is otherwise identical:
-  const stripLifecycle = (d) => d.replace(/"o"|"c"/g, '"X"');
-  assertEqual(stripLifecycle(dOpen), stripLifecycle(dClosed), 'only the lifecycle bit differs');
+  // but the STRUCTURAL content (floors, changes, champions) is otherwise
+  // identical: pin the lifecycle fields to the SAME value in both and the
+  // digests must agree (digest-format-agnostic since U5's digestOpts fold).
+  const pinLifecycle = (ws) => ws.ledger.map((e) => ({ ...e, open: false, closed: true }));
+  const dOpenPinned = svg.metaLoopLedgerDigest({ epochs: pinLifecycle(openWs), currentEpochId: openWs.current_epoch_id });
+  const dClosedPinned = svg.metaLoopLedgerDigest({ epochs: pinLifecycle(closedWs), currentEpochId: closedWs.current_epoch_id });
+  assertEqual(dOpenPinned, dClosedPinned, 'only the lifecycle bit differs');
 });
 
 // ── zone-A floor labels: a paper halo so they don't read struck-through ──────

@@ -139,6 +139,8 @@ operator means by "better":
 | `per_kind_weights` | built-in `DriftKind` token | "this harness's `off_topic` matters 2× the others" |
 | `per_judge_weights` | judge `name` | telling *custom judges apart* — they all share the `custom` kind, so this is the only per-judge lever |
 | `default_judge_weight` | — | the fallback for a custom judge absent from `per_judge_weights` |
+| `plan_revision_weight` | — | how hard mid-run plan churn (the agent rewriting its own plan) weighs in the scalar |
+| `runtime_weight` | — | opt-in pressure toward faster runs (`0` keeps wall-clock out of the loss) |
 | `namespace_weights` | namespace prefix (`drift:`, `cost:`, `rubric:`, …) | the multi-objective scalar — signed coefficients fold each namespace into the scalar |
 | pass-rate monotonicity (`pass_rate_monotonicity` bool + `pass_rate_monotonicity_scope`) | the gate | "a challenger may never break an entry the champion passed" — `per_entry` scope (default; no individual passing entry may regress — invariant/regression boards) vs `aggregate` (only the board-wide pass-rate may not drop — sampled evaluation boards). The bool is the on/off switch; there is no `off` scope |
 
@@ -216,7 +218,7 @@ directly. The copilot's tools (conceptual):
 |---|---|
 | `edit_board_entry` | add / edit / remove one entry (input, expectation, tags, weight) |
 | `add_judge` | declare a process judge on an entry (name, mode, body, severity) |
-| `set_weights` | the loss knobs above (drift/pass/per-kind/per-judge/severity) |
+| `set_weights` | the loss knobs above — the scalars (`drift_weight`, `pass_weight`, `default_judge_weight`, `plan_revision_weight`, `runtime_weight`) and the wholesale maps (`severity_weights`, `per_kind_weights`, `per_judge_weights`) |
 | `set_namespace_weights` | the multi-objective namespace coefficients (`namespace_weights`) + the `diff_complexity_weight` parsimony term |
 | `set_holdout` | the train/holdout split (`holdout`-tagged ids and/or fraction) + the wider anti-overfitting block (Ladder, rotation, placebo cadence — detail in `zicato-build-tournament`) |
 | `validate` | (read-only) re-runs board validation (ids unique + filesystem-safe, per-kind fields present, expectation `reads` valid for the kind, judge slugs unique, `disable_drift` tokens resolve) — plus the statistical margin-vs-noise-floor rule when the epoch carries a measured A/A floor |
@@ -236,6 +238,37 @@ The loop on every operator request:
 The board copilot, like the tournament copilot, **never starts a live `zicato
 evolve`** — it produces a validated board, and the live run is the operator's
 separate explicit go-ahead (see [`../AGENTS.md`](../AGENTS.md)).
+
+## The direct GUI — the board editor
+
+Everything above is also reachable WITHOUT the copilot, through the dashboard's
+**board editor** (the Board section of the builder view). Each entry is a row
+that opens an **inline accordion form** covering the full schema for its kind:
+the common fields (id, kind, budget, weight, tags), the per-kind discriminant
+(single-turn input; scripted turns list; emulated persona; adversarial spec +
+required drift kinds), an optional **expectation** sub-form (per matcher — text/
+regex/JSON-schema textarea, dotted-path predicate, or a structured rubric that
+serializes to the JSON spec), and a **judges** list editor. A **board-meta
+panel** sets the board-level `disable_drift` + `judge_only` header, and a
+**paste-JSONL import** box bulk-loads entries (a leading `board_meta` header
+line routes to the meta panel).
+
+The editor drives the SAME ops the copilot's tools do — Save posts the whole
+entry through `edit_board_entry`, Delete through `remove_board_entry`, a judge
+badge's × through `remove_judge`, the meta panel through `set_board_meta`. The
+weighted loss has its own controls in the **Weights** section: the scalar rows
+plus wholesale mapping editors for `severity_weights` / `per_kind_weights` /
+`per_judge_weights` (the per-judge rows are SEEDED from the judges declared on
+the board, with a free-text add-key row for a judge not yet on it) and the signed
+`namespace_weights` with an add-key row — each posting the WHOLE mapping through
+`set_weights` / `set_namespace_weights`. It carries **no client-side validation
+twin**: the server's field-precise
+`ValueError` renders verbatim in an inline strip, and the editor stays open to
+fix it. The id is locked while editing (Duplicate seeds a fresh id), and the
+`holdout` tag is owned by the train/holdout toggle, never the tags input. When
+you help an operator over the GUI, name the CONTROL and the CONSEQUENCE (the
+board is contract — a save rolls the epoch), the same discipline as the copilot
+loop above.
 
 ## A good board build
 

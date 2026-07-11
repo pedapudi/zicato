@@ -3,9 +3,7 @@
     "champion_lineage": [],
     "epoch_id": "e0",
     "matchups": [],
-    "structure": "gauntlet",
-    "structure_params": {},
-    "tournaments": []
+    "note": "index not built; run zicato reindex"
   },
   "bracket::e1": {
     "champion_lineage": [],
@@ -17,9 +15,7 @@
     "champion_lineage": [],
     "epoch_id": "e2",
     "matchups": [],
-    "structure": "gauntlet",
-    "structure_params": {},
-    "tournaments": []
+    "note": "index not built; run zicato reindex"
   },
   "calibration_trend::e0": {
     "epoch_id": "e0",
@@ -188,7 +184,7 @@
     "epoch_id": "e0",
     "generation_id": "v0",
     "movements": [],
-    "note": "no tournament found for this generation"
+    "note": "index not built; run zicato reindex"
   },
   "drift_movements::e1::v0": {
     "challenger": "v0",
@@ -196,7 +192,7 @@
     "epoch_id": "e0",
     "generation_id": "v0",
     "movements": [],
-    "note": "no tournament found for this generation"
+    "note": "index not built; run zicato reindex"
   },
   "drift_movements::e1::v1": {
     "challenger": "v1",
@@ -204,7 +200,7 @@
     "epoch_id": "e0",
     "generation_id": "v1",
     "movements": [],
-    "note": "no tournament found for this generation"
+    "note": "index not built; run zicato reindex"
   },
   "environment": {
     "active_runs": [],
@@ -883,6 +879,7 @@
     "delta_scalar": null,
     "epoch_id": "e0",
     "generation_id": "v0",
+    "note": "index not built; run zicato reindex",
     "parent_scalar": null,
     "patches": [],
     "ran_at": null,
@@ -896,6 +893,7 @@
     "delta_scalar": null,
     "epoch_id": "e0",
     "generation_id": "v0",
+    "note": "index not built; run zicato reindex",
     "parent_scalar": null,
     "patches": [],
     "ran_at": null,
@@ -909,6 +907,7 @@
     "delta_scalar": null,
     "epoch_id": "e0",
     "generation_id": "v1",
+    "note": "index not built; run zicato reindex",
     "parent_scalar": null,
     "patches": [],
     "ran_at": null,
@@ -1053,39 +1052,39 @@
   "per_judge_for_generation::e0::v0": {
     "epoch_id": "e0",
     "generation_id": "v0",
-    "judges": [],
-    "note": "index not built; run zicato reindex"
+    "judges": []
   },
   "per_judge_for_generation::e1::v0": {
     "epoch_id": "e1",
     "generation_id": "v0",
-    "judges": [],
-    "note": "index not built; run zicato reindex"
+    "judges": []
   },
   "per_judge_for_generation::e1::v1": {
     "epoch_id": "e1",
     "generation_id": "v1",
-    "judges": [],
-    "note": "index not built; run zicato reindex"
+    "judges": []
   },
   "per_judge_trend::e0": {
     "epoch_id": "e0",
     "generations": [
       "v0"
     ],
-    "judges": []
+    "judges": [],
+    "note": "index not built; run zicato reindex"
   },
   "per_judge_trend::e1": {
     "epoch_id": "e1",
     "generations": [
       "v0"
     ],
-    "judges": []
+    "judges": [],
+    "note": "index not built; run zicato reindex"
   },
   "per_judge_trend::e2": {
     "epoch_id": "e2",
     "generations": [],
-    "judges": []
+    "judges": [],
+    "note": "index not built; run zicato reindex"
   },
   "run_log": {
     "cursor": null,
@@ -1094,6 +1093,7 @@
   },
   "score_trajectory::e0": {
     "epoch_id": "e0",
+    "note": "index not built; run zicato reindex",
     "points": [
       {
         "created_at": "2026-03-01T00:00:00Z",
@@ -1129,6 +1129,7 @@
   },
   "score_trajectory::e2": {
     "epoch_id": "e2",
+    "note": "index not built; run zicato reindex",
     "points": []
   },
   "search_empty": {

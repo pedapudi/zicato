@@ -343,3 +343,148 @@ def test_round_timeline_endpoint_and_empty_degrade(tmp_path: Path, static_dir: P
     # an unknown epoch degrades to the single-round shape over zero gens.
     empty = client.get("/api/epoch/never_ran/round-timeline").json()
     assert empty["rounds"][0]["challengers"] == [] if empty["rounds"] else True
+
+
+# ---------------------------------------------------------------------------
+# The served ELIM MODEL (U3) — the third served join the node mock mirrors.
+# ---------------------------------------------------------------------------
+#
+# The client's elimFlow/elimRadial used to derive the whole elim model per
+# render; ``derive_elim_states`` is that fold moved server-side, attached to
+# every payload the figures read: the /api/tournament-structure record, the
+# /api/tournaments entries (the per-round minis' tournamentRef), and the live
+# /api/active-tournament envelope. test/mock_server.mjs mirrors the fold
+# (``deriveElimStates``) exactly as it mirrors the racing-field/round-timeline
+# joins; the shared fixture tests/data/elim_states_fixture.json pins the
+# Python + Rust + mock folds byte-for-byte.
+
+
+def _elim_workspace(tmp_path: Path) -> Path:
+    """One settled single-elim tournament, rounds MIS-ORDERED on purpose."""
+    ws = _base_workspace(tmp_path)
+    rounds = [
+        # the final FIRST — the server must serve it sorted (WB rounds first).
+        {
+            "round_index": 1,
+            "label": "Final",
+            "matches": [
+                {
+                    "match_id": "F",
+                    "bracket_slot": "F",
+                    "competitors": ["v1", "v3"],
+                    "winner": "v1",
+                    "decision": "promoted",
+                }
+            ],
+        },
+        {
+            "round_index": 0,
+            "label": "Round 1",
+            "matches": [
+                {
+                    "match_id": "WB-R0-0",
+                    "bracket_slot": "WB-R0-0",
+                    "competitors": ["v1", "v2"],
+                    "winner": "v1",
+                }
+            ],
+        },
+    ]
+    conn = sqlite3.connect(ws / "index.db")
+    _index_schema(conn)
+    conn.executemany(
+        "INSERT INTO generations VALUES(?,?,?,?,?)",
+        [
+            (EPOCH, "v0", None, 1, "2026-06-01T00:00:00Z"),
+            (EPOCH, "v1", "v0", 1, "2026-06-01T01:00:00Z"),
+        ],
+    )
+    conn.execute(
+        "INSERT INTO tournaments VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            f"{EPOCH}:field:v1",
+            EPOCH,
+            "",
+            "v1",
+            "promoted",
+            None,
+            None,
+            None,
+            None,
+            "2026-06-01T02:00:00Z",
+            "single_elim",
+            json.dumps({}),
+            json.dumps([{"generation_id": "v1"}, {"generation_id": "v2"}, {"generation_id": "v3"}]),
+            json.dumps(rounds),
+            json.dumps([]),
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return ws
+
+
+def test_tournament_structure_serves_the_elim_model(tmp_path: Path, static_dir: Path) -> None:
+    """/api/tournament-structure carries sorted rounds + gen_states (DQ1)."""
+    ws = _elim_workspace(tmp_path)
+    client = TestClient(create_app(ws, static_dir, read_only=True))
+    payload = client.get(f"/api/tournament-structure/{EPOCH}/{EPOCH}:field:v1").json()
+    assert payload["structure"] == "single_elim"
+    # PRE-SORTED: the mis-ordered record serves Round 1 before the Final.
+    assert [r["round_index"] for r in payload["rounds"]] == [0, 1]
+    assert [r["bracket_side"] for r in payload["rounds"]] == ["WB", "WB"]
+    # the served per-match loser + the top-level gen_states fold.
+    assert payload["rounds"][0]["matches"][0]["loser"] == "v2"
+    states = {g["generation_id"]: g for g in payload["gen_states"]}
+    assert states["v1"]["advanced_rounds"] == [0, 1]
+    assert states["v2"]["eliminated_at_round"] == 0
+    assert states["v3"]["eliminated_at_round"] == 1
+
+
+def test_bracket_tournaments_carry_the_elim_model(tmp_path: Path, static_dir: Path) -> None:
+    """/api/tournaments entries (the tournamentRef source) carry gen_states."""
+    ws = _elim_workspace(tmp_path)
+    client = TestClient(create_app(ws, static_dir, read_only=True))
+    payload = client.get(f"/api/tournaments?epoch={EPOCH}").json()
+    (record,) = payload["tournaments"]
+    assert [r["round_index"] for r in record["rounds"]] == [0, 1]
+    assert {g["generation_id"] for g in record["gen_states"]} == {"v1", "v2", "v3"}
+
+
+def test_active_tournament_serves_the_elim_model(tmp_path: Path, static_dir: Path) -> None:
+    """The LIVE path: /api/active-tournament carries the same fold.
+
+    The Rust supervisor applies the identical enrichment
+    (crates/supervisor/src/elim_states.rs) so the two dashboards agree.
+    """
+    ws = _base_workspace(tmp_path)
+    _write_json(
+        ws / "runtime" / "active_tournament.json",
+        {
+            "structure": "single_elim",
+            "phase": "running",
+            "rounds": [
+                {
+                    "round_index": 0,
+                    "label": "Final",
+                    "matches": [
+                        {
+                            "match_id": "F",
+                            "bracket_slot": "F",
+                            "competitors": ["v0", "v1"],
+                            "winner": None,
+                            "pending": True,
+                        }
+                    ],
+                }
+            ],
+            "entries": [],
+        },
+    )
+    client = TestClient(create_app(ws, static_dir, read_only=True))
+    payload = client.get("/api/active-tournament").json()
+    assert payload["rounds"][0]["bracket_side"] == "WB"
+    assert payload["rounds"][0]["matches"][0]["loser"] is None
+    states = {g["generation_id"]: g for g in payload["gen_states"]}
+    assert states["v0"]["eliminated_at_round"] is None  # pending final: nobody out
+    assert states["v1"]["played_rounds"] == [0]

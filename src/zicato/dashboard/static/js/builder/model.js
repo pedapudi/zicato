@@ -114,6 +114,16 @@ export function paramSpecsFor(structure) {
       }, {
         key: 'board_fraction', label: 'Rung-0 board fraction', def: 0.25, min: 0.05, max: 1, step: 0.05, int: false,
         info: { title: 'Rung-0 board fraction', def: '0.25', body: 'The fraction of the board the FIRST (cheapest) rung scores on. Smaller is cheaper but a thin first rung can cut a challenger on too little signal; the slice grows by eta each rung up to the full board.' },
+      }, {
+        // OPT-IN absolute override of the rung-0 slice: 0 REMOVES the key
+        // (removeAtZero) so an unset override hashes byte-identically to a
+        // contract that predates it, and the rung-0 slice falls back to
+        // ceil(board_fraction × board). Both estimators (estimateCost's
+        // _racing_cost + validateContract) ALREADY read this key — this spec
+        // only surfaces the control (the L3 cost-relevant SPEC-only change).
+        key: 'rung0_board_size', label: 'Rung-0 board size (override)', def: 0,
+        min: 0, step: 1, int: true, removeAtZero: true,
+        info: { title: 'Rung-0 board size', def: 'unset (use the fraction)', body: 'An explicit entry COUNT for the first (cheapest) racing rung, overriding board_fraction. When > 0 the first rung scores exactly this many train entries (capped at the board); 0 removes the override and the rung-0 slice falls back to ceil(board_fraction × board). A larger rung-0 buys more signal on the cheapest rung at more cost.' },
       }, ...evidence];
     default:
       return [FIELD_SIZE, REPLICATES, ...evidence];
@@ -155,13 +165,24 @@ function gauntletSchematic(ids) {
 
 function elimSchematic(ids) {
   // collapse the field into a single illustrative winners' round of pairings.
+  // The runtime figure reads the SERVED elim model (`rounds` + `gen_states`);
+  // this synthetic preview fabricates the same shape for its demo field —
+  // every lane pending, nobody advanced/eliminated.
   const matches = [];
   for (let i = 0; i < ids.length; i += 2) {
     const comps = [ids[i], ids[i + 1] || 'tbd'].filter(Boolean);
-    matches.push({ competitors: comps, winner: null, pending: true, bracket_slot: 'WB' + (i / 2 + 1) });
+    matches.push({ competitors: comps, winner: null, loser: null, pending: true, bracket_slot: 'WB' + (i / 2 + 1) });
   }
-  if (!matches.length) matches.push({ competitors: ids.slice(0, 1), winner: null, pending: true, bracket_slot: 'WB1' });
-  return { winners: [{ label: 'Round 1', matches }], championId: null, benchmarkId: 'v0' };
+  if (!matches.length) matches.push({ competitors: ids.slice(0, 1), winner: null, loser: null, pending: true, bracket_slot: 'WB1' });
+  const genStates = ids.map((id) => ({
+    generation_id: id,
+    played_rounds: [0], advanced_rounds: [], lost_rounds: [],
+    eliminated_at_round: null, side_by_round: { 0: 'WB' }, lb_entry_round: null, projected: null,
+  }));
+  return {
+    rounds: [{ label: 'Round 1', bracket_side: 'WB', matches }],
+    gen_states: genStates, championId: null, benchmarkId: 'v0',
+  };
 }
 
 function swissSchematic(ids, params) {
@@ -396,6 +417,14 @@ function racingCost(params, fieldSize, replicates, boardSize) {
 // STATISTICAL margin-vs-noise-floor rule when the caller supplies the
 // measured floor via `opts`). Returns the SAME [{code, message, severity}]
 // shape `/builder/op` carries.
+//
+// SCOPE — deliberately the ENTRY-FREE subset. The board-entry authoring
+// codes are Python-only (they need the full entry objects, which this
+// read-only preview never has): duplicate_entry_id, entry_id_unsafe,
+// dotted_path_malformed, rubric_spec_invalid, json_schema_spec_invalid,
+// entry_budget_outlier, judge_only_board — plus the tag-set checks
+// holdout_tags_cover_whole_board. Those surface only through the backend
+// envelope (`/builder/op` / `/builder/draft`); do NOT twin them here.
 //
 // `opts` (optional): { promoteMargin, noiseFloor } — the contract's
 // promote_margin and the epoch's measured A/A floor (max |Δ|). When both are

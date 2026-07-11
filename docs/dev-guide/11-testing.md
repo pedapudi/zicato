@@ -1221,6 +1221,37 @@ witness, not a second implementation.
 > Python reader) is the correct move; re-deriving in `views/*.js` re-opens the
 > client/server drift the served join was created to close (DQ1).
 
+The mock now mirrors THREE served joins: round-timeline, racing-field, and the
+elim `gen_states` fold (`attachElimStates`, mirroring `derive_elim_states` —
+09-dashboard-and-query.md §9.2.5). The elim mirror's Python parity witness is
+the shared `tests/data/elim_states_fixture.json`, asserted by BOTH the Python
+`derive_elim_states` and the Rust `elim_states.rs` fold.
+
+### 11.9.4 The test-file map — the ex-monolith, split by view
+
+`variant_t.test.mjs` was a 10,828-line accretion monolith (374 tests). It was
+split MECHANICALLY (assertions verbatim, count unchanged) by dominant view into
+ten files, with the shared preamble (the `FIXTURE` map + `freshHb` / `installFetch`
+/ `allByClass` helpers) hoisted to `fixtures.mjs`:
+
+| file | covers |
+|---|---|
+| `variant_t_shell.test.mjs` | the chrome — tree / crumbs / status pill / containment |
+| `variant_t_structure.test.mjs` | the tournament-structure figures + standings |
+| `variant_t_candidate.test.mjs` | the candidate dossier |
+| `variant_t_epoch_scoping.test.mjs` | cross-epoch scoping (the fleet + per-epoch reads) |
+| `variant_t_figures.test.mjs` | the figure grammar (heatmaps / bars / radars) |
+| `variant_t_home_epoch.test.mjs` | home + epoch views |
+| `variant_t_lifecycle_dag.test.mjs` | the mutation surface + lifecycle DAG |
+| `variant_t_live.test.mjs` / `variant_t_live_hero.test.mjs` / `variant_t_live_waves.test.mjs` | the SSE-driven live hero / ticker / funnel transitions |
+
+`digest_opts.test.mjs` pins the four `digestOpts` rules (drop-functions,
+key-sort, 3dp rounding, NaN→null) directly; `bracket.test.mjs` re-pins its six
+topology tests on the served `gen_states` fixtures. When you split or rename a
+node test file, the runner (`run-all.mjs`) globs `*.test.mjs` so it needs no
+registration — but grep the split target for the assertion you rely on; the
+grouping is by DOMINANT view and a few assertions cross seams.
+
 ---
 
 ## 11.10 CI

@@ -16,13 +16,12 @@ static/
   app.js                — ES-module ENTRY POINT (foundation; do not edit in P2)
   js/
     core/               — the data/render spine (foundation; FROZEN in P2)
-      dom.js            — $, el, svgEl, clearChildren, patch helpers
+      dom.js            — el, svgEl, clearChildren, patch helpers
       state.js          — AppState: the single client state object
       api.js            — fetchJson, loadEnvironment, postControl
       sse.js            — EventSource wiring + delta dispatch
       router.js         — hash routing + deep links
       bus.js            — tiny pub/sub event bus
-      format.js         — fmtDelta, fmtDuration, parseIso, truncate, ...
       harmonograf.js    — harmonograf URL builders
     components/         — shared component library (foundation; FROZEN in P2)
       card.js, table.js, badge.js, diff.js, chart.js, empty.js
@@ -211,24 +210,23 @@ Mutation methods: `applySnapshot(snap)`, `applyEnvironment(env)`,
 `setHealth(h)`, `setLogTail(t)`, `mergeLogTail(batch)`,
 `setMatchupDetail(gen, d)`. State changes publish on the bus (§5).
 
-## 4. The render spine — incremental, keyed, no-flash
+## 4. The render spine — digest-gated, no-flash
 
-`core/dom.js` exports:
-- `$(id)`, `el(tag, props, children)`, `svgEl(...)`, `clearChildren(n)`.
-- `mount(host, key, builder)` — idempotent mount: builds the node once,
-  keyed by `data-node` = `key`; on re-call updates in place.
+The anti-flash mechanism is `gatedSwap` (ui.js): a view computes a cheap
+content digest; when the digest is unchanged the DOM is left strictly
+untouched (no builder run, no writes), and when it changed the panel's
+subtree is rebuilt and swapped in whole.
+
+`core/dom.js` exports the building blocks under that discipline:
+- `el(tag, props, children)`, `svgEl(...)`, `clearChildren(n)` —
+  element construction / explicit teardown for a rebuild.
 - `patchText(node, text)` — sets textContent only if changed.
-- `patchAttr(node, name, value)` — sets attribute only if changed.
-- `reconcileList(host, items, keyFn, buildFn, updateFn)` — keyed list
-  reconciliation: existing rows (matched by `data-key`) are updated in
-  place, new rows appended, gone rows removed. **No list is ever
-  cleared-and-rebuilt.** This is what makes click handlers survive a
-  delta and the log tail not flash.
+- `patchClass(node, name, on)` — toggles a class only if changed.
 
 Each view exposes `render(state, route)` and a `mount()` called once.
-A view's `render` is re-run after every state change but MUST route all
-DOM writes through `mount`/`patch*`/`reconcileList` so unchanged nodes
-are untouched. A view never sets `container.innerHTML`.
+A view's `render` is re-run after every state change but MUST gate all
+DOM writes on a digest (`gatedSwap`) or use the `patch*` helpers so
+unchanged nodes are untouched. A view never sets `container.innerHTML`.
 
 ## 5. The event bus — `core/bus.js`
 

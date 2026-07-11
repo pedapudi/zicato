@@ -326,3 +326,119 @@ export function racingFieldFromBracket(brk, epochId) {
   }
   return envelope(rounds, params, [], Array.isArray(brk.standings) ? brk.standings : []);
 }
+
+// ── the served ELIM MODEL mirror (`derive_elim_states`) ─────────────────────
+//
+// PLAYS THE SERVER for the elim fold the Python service attaches to the
+// settled structure record / the /api/tournaments entries / the live
+// active-tournament payload (zicato.query.tournament_view.derive_elim_states,
+// twinned in crates/supervisor/src/elim_states.rs, both pinned by the shared
+// fixture tests/data/elim_states_fixture.json + tests/test_dashboard_racing_
+// and_rounds.py's mirror pin). Node tests route their raw rounds fixtures
+// through HERE to build gen_states-bearing payloads — any divergence from the
+// Python fold is a bug in THIS mirror, never grounds to re-derive in prod.
+export function deriveElimStates(roundsIn) {
+  const raw = (Array.isArray(roundsIn) ? roundsIn : []).filter((r) => r && typeof r === 'object');
+  const sortKey = (r, i) => {
+    for (const key of ['round_index', 'stage_index']) {
+      const v = r[key];
+      if (typeof v === 'number' && Number.isFinite(v)) return v;
+    }
+    return i;
+  };
+  const ordered = raw.map((r, i) => ({ r, i, k: sortKey(r, i) }))
+    .sort((a, b) => (a.k - b.k) || (a.i - b.i))
+    .map((x) => x.r);
+
+  // DQ1 scalar contract: a string / finite-number id only — drop bool,
+  // object, array, null (the Python `_scalar_id` + Rust str|number twins).
+  const scalarId = (v) => (typeof v === 'string' ? v
+    : (typeof v === 'number' && Number.isFinite(v)) ? String(v) : null);
+  const compsOf = (m) => (Array.isArray(m.competitors) ? m.competitors : [])
+    .map(scalarId).filter((c) => c && c !== 'tbd');
+  const winnerOf = (m) => (m.winner ? scalarId(m.winner) : null);
+  const pendingOf = (m, winner) => !!m.pending || (!winner && !m.bye && !m.decision);
+
+  const accs = new Map();   // gid → acc, insertion order = first seen
+  const ensure = (gid) => {
+    if (!accs.has(gid)) accs.set(gid, { played: new Set(), advanced: new Set(), lost: new Set(), sideOf: new Map(), lbEntry: null, projected: null });
+    return accs.get(gid);
+  };
+
+  const outRounds = [];
+  ordered.forEach((r, ci) => {
+    const matchesIn = (Array.isArray(r.matches) ? r.matches : []).filter((m) => m && typeof m === 'object');
+    // DEDUPE: key = bracket_slot + sorted competitors; most-decided wins.
+    const byKey = new Map();
+    for (const m of matchesIn) {
+      const key = String(m.bracket_slot || '') + '|' + compsOf(m).slice().sort().join('/');
+      const prev = byKey.get(key);
+      if (!prev) { byKey.set(key, m); continue; }
+      if (pendingOf(prev, winnerOf(prev)) && !pendingOf(m, winnerOf(m))) byKey.set(key, m);
+    }
+    let anyLB = false;
+    const outMatches = [];
+    for (const m of byKey.values()) {
+      const comps = compsOf(m);
+      const winner = winnerOf(m);
+      const pending = pendingOf(m, winner);
+      const isLB = String(m.bracket_slot || '').startsWith('LB');
+      if (isLB) anyLB = true;
+      const bye = !!m.bye;
+      const loser = (winner && !bye && comps.length >= 2)
+        ? (comps.find((c) => c !== winner) ?? null) : null;
+      const projMap = (m.projected && typeof m.projected === 'object') ? m.projected : null;
+      for (const c of comps) {
+        const acc = ensure(c);
+        acc.played.add(ci);
+        acc.sideOf.set(ci, isLB ? 'LB' : 'WB');
+        if (isLB && acc.lbEntry == null) acc.lbEntry = ci;
+        if (projMap && pending) {
+          const p = projMap[c];
+          if (p && typeof p === 'object' && isNum(p.scalar)) acc.projected = p;
+        }
+        if (pending) continue;
+        if (bye || (winner && c === winner)) acc.advanced.add(ci);
+        else if (winner) acc.lost.add(ci);
+      }
+      outMatches.push({ ...m, loser });
+    }
+    outRounds.push({ ...r, matches: outMatches, bracket_side: anyLB ? 'LB' : 'WB' });
+  });
+
+  const genStates = [];
+  for (const [gid, acc] of accs) {
+    const lost = [...acc.lost].sort((a, b) => a - b);
+    const played = [...acc.played].sort((a, b) => a - b);
+    const lastPlayed = played.length ? played[played.length - 1] : -1;
+    let eliminatedAt = null;
+    for (const ci of lost) { if (ci >= lastPlayed) { eliminatedAt = ci; break; } }
+    const sideByRound = {};
+    for (const [k, side] of [...acc.sideOf.entries()].sort((a, b) => a[0] - b[0])) sideByRound[String(k)] = side;
+    genStates.push({
+      generation_id: gid,
+      played_rounds: played,
+      advanced_rounds: [...acc.advanced].sort((a, b) => a - b),
+      lost_rounds: lost,
+      eliminated_at_round: eliminatedAt,
+      side_by_round: sideByRound,
+      lb_entry_round: acc.lbEntry,
+      projected: acc.projected,
+    });
+  }
+  return { rounds: outRounds, gen_states: genStates };
+}
+
+// Enrich a structure payload the way the Python `attach_elim_states` does:
+// elim payloads gain the canonicalized rounds + gen_states; others pass
+// through untouched (KEY-ABSENT — additive).
+export function attachElimStates(payload) {
+  if (!payload || typeof payload !== 'object') return payload;
+  const structure = String(payload.structure || '');
+  if ((structure === 'single_elim' || structure === 'double_elim') && Array.isArray(payload.rounds)) {
+    const derived = deriveElimStates(payload.rounds);
+    payload.rounds = derived.rounds;
+    payload.gen_states = derived.gen_states;
+  }
+  return payload;
+}

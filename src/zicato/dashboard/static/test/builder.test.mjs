@@ -7,7 +7,7 @@
 // applied through the chat path updates the same shared draft; the chat pane
 // resize persists + clamps and the layout reflows without overlap; the
 // graceful-degrade path disables the chat input. Same harness style as
-// variant_t.test.mjs.
+// the variant_t_*.test.mjs suite.
 
 import { installDom, test, run, assert, assertEqual, makeEvent } from './harness.mjs';
 
@@ -20,7 +20,19 @@ installDom();
 // path is observable. A chat-disabled config is the default so the degrade
 // path is the baseline; a test flips `CONFIG.chat_enabled` before mount.
 
-const CONFIG = { chat_enabled: false, agent: { model: '' }, skills: ['zicato-build-tournament'] };
+const CONFIG = {
+  chat_enabled: false, agent: { model: '' }, skills: ['zicato-build-tournament'],
+  // the server-derived board-authoring vocabulary (the fixed-row mapping editors
+  // render their rows from these enums; the JS never hardcodes them).
+  vocab: {
+    kinds: ['single_turn', 'multi_turn_scripted', 'multi_turn_emulated', 'synthetic_adversarial', 'synthetic_clean'],
+    expectation_kinds: ['expected_text', 'regex', 'json_schema', 'predicate', 'rubric'],
+    reads: ['final_output', 'conversation_end'],
+    judge_modes: ['inline', 'python'],
+    severities: ['info', 'warning', 'critical'],
+    drift_kinds: ['tone', 'format'],
+  },
+};
 
 function freshDraft() {
   return {
@@ -33,12 +45,15 @@ function freshDraft() {
       overfitting: {
         enabled: true, holdout_fraction: 0.2, min_board_size_for_split: 8,
         rotate_holdout: true, restrict_proposer_visibility: true,
-        random_baseline_every_n: 0,
+        random_baseline_every_n: 0, max_generations_per_contract: null,
         ladder: { enabled: true, threshold: null, budget: 16, noise_scale: 0 },
       },
       promote_margin: 0, pass_rate_monotonicity: false,
       pass_rate_monotonicity_scope: 'per_entry',
       drift_weight: 1, pass_weight: 1, diff_complexity_weight: 0,
+      default_judge_weight: 1, plan_revision_weight: 0.5, runtime_weight: 0,
+      severity_weights: { info: 1, warning: 3, critical: 10 },
+      per_kind_weights: {}, per_judge_weights: {},
       namespace_weights: { 'drift:': 1, 'rubric:': -1 },
       namespace_monotonicity: { 'rubric:': true },
       block_on_containment_violation: false, block_on_gate_contradiction: false,
@@ -48,7 +63,7 @@ function freshDraft() {
       experiment_memory: { cross_epoch: false },
     },
     board: [
-      { id: 'waffles', kind: 'single_turn' },
+      { id: 'waffles', kind: 'single_turn', judges: [{ name: 'tone' }] },
       { id: 'picky', kind: 'multi_turn_emulated' },
     ],
     brief: 'be crisper',
@@ -61,6 +76,7 @@ function freshDraft() {
 let DRAFT = freshDraft();
 const OP_CALLS = [];
 let SLOTS = [];
+let UNDO_HAS_HISTORY = false;
 
 function envelope(patch) {
   return {
@@ -77,11 +93,13 @@ function installBuilderFetch() {
   OP_CALLS.length = 0;
   DRAFT = freshDraft();
   SLOTS = [];
+  UNDO_HAS_HISTORY = false;
   globalThis.fetch = async (path, init) => {
     const body = init && init.body ? JSON.parse(init.body) : {};
     if (path === '/builder/config') return jsonRes(CONFIG);
     if (path.startsWith('/builder/draft')) {
-      return jsonRes({ session: 'dashboard', draft: DRAFT, cost: envelope().cost, warnings: [], diff: envelope().diff, drafts: SLOTS.slice() });
+      return jsonRes({ session: 'dashboard', draft: DRAFT, cost: envelope().cost, warnings: [], diff: envelope().diff, drafts: SLOTS.slice(),
+        proposer_dirs: [{ name: 'critic-v2', path: '/ws/proposers/critic-v2' }] });
     }
     if (path === '/builder/op') {
       OP_CALLS.push(body);
@@ -101,6 +119,18 @@ function installBuilderFetch() {
             proposer: { changed: false, a: null, b: null },
           };
         }
+        return jsonRes(env);
+      }
+      // the revert/undo lifecycle ops. `undo` reports "nothing to undo" via the
+      // patch note when the mock's (empty) history has nothing to pop; a test
+      // sets UNDO_HAS_HISTORY to exercise the restore path.
+      if (body.op === 'revert_to_live') {
+        return jsonRes(envelope({ op: 'revert_to_live', changed: { scoring: {} } }));
+      }
+      if (body.op === 'undo') {
+        const env = envelope(UNDO_HAS_HISTORY
+          ? { op: 'undo', changed: { scoring: {} } }
+          : { op: 'undo', changed: {}, note: 'nothing to undo' });
         return jsonRes(env);
       }
       // the preflight READ op: the normal envelope plus the `preflight` result
@@ -905,6 +935,258 @@ test('estimateCost: the per-structure default-replicates twin matches the Python
     const explicit = builder.estimateCost(structure, { field_size: 4, replicates: def }, 8, 0);
     assertEqual(unset.board_runs_per_round, explicit.board_runs_per_round, `${structure}: unset == explicit-default`);
   }
+});
+
+// ── B3: the remaining knob GUI (weights scalars + mapping editors, gate
+//    namespace-monotonicity, overfitting ceiling, proposer picker, the
+//    revert/undo lifecycle, the rung0 param spec) ───────────────────────
+
+test('builder view: Weights adds the default-judge / plan-revision / runtime scalar rows (set_weights)', async () => {
+  const host = await mountAt('Weights');
+  for (const [aria, key, val] of [
+    ['Default judge weight', 'default_judge_weight', 2],
+    ['Plan revision weight', 'plan_revision_weight', 0.25],
+    ['Runtime weight', 'runtime_weight', 0.3],
+  ]) {
+    const input = byAria(host, 'dn-bld-num', aria);
+    assert(input, `the ${aria} control renders`);
+    input.value = String(val);
+    input.dispatchEvent(makeEvent('change'));
+    await tick();
+    const call = OP_CALLS.find((c) => c.op === 'set_weights' && c.args[key] === val);
+    assert(call, `${aria} posts set_weights {${key}}`);
+  }
+});
+
+test('builder view: Weights severity_weights editor renders FIXED vocab rows + posts the WHOLE mapping', async () => {
+  const host = await mountAt('Weights');
+  // one fixed row per vocab severity (info/warning/critical).
+  for (const sev of ['info', 'warning', 'critical']) {
+    assert(byAria(host, 'dn-bld-num', 'Severity weight ' + sev), 'severity row ' + sev + ' renders from vocab');
+  }
+  const warning = byAria(host, 'dn-bld-num', 'Severity weight warning');
+  warning.value = '5';
+  warning.dispatchEvent(makeEvent('change'));
+  await tick();
+  const call = OP_CALLS.find((c) => c.op === 'set_weights' && c.args.severity_weights);
+  assert(call, 'a severity edit posts set_weights {severity_weights}');
+  assertEqual(call.args.severity_weights.warning, 5, 'the edited key carries the new value');
+  assertEqual(call.args.severity_weights.info, 1, 'the untouched info rides along (WHOLE mapping)');
+  assertEqual(call.args.severity_weights.critical, 10, 'the untouched critical rides along (WHOLE mapping)');
+});
+
+test('builder view: Weights per_kind_weights editor renders FIXED vocab rows + posts set_weights', async () => {
+  const host = await mountAt('Weights');
+  for (const kind of ['single_turn', 'synthetic_clean']) {
+    assert(byAria(host, 'dn-bld-num', 'Per-kind weight ' + kind), 'per-kind row ' + kind + ' renders from vocab');
+  }
+  const st = byAria(host, 'dn-bld-num', 'Per-kind weight single_turn');
+  st.value = '1.5';
+  st.dispatchEvent(makeEvent('change'));
+  await tick();
+  const call = OP_CALLS.find((c) => c.op === 'set_weights' && c.args.per_kind_weights);
+  assert(call, 'a per-kind edit posts set_weights {per_kind_weights}');
+  assertEqual(call.args.per_kind_weights.single_turn, 1.5, 'the edited kind carries the new value');
+});
+
+test('builder view: Weights per_judge_weights is SEEDED from board judges + an add-key row creates a NEW key', async () => {
+  const host = await mountAt('Weights');
+  // the board declares a "tone" judge → the per-judge editor seeds a row for it.
+  const tone = byAria(host, 'dn-bld-num', 'Per-judge weight tone');
+  assert(tone, 'a per-judge row is seeded from the board judge "tone"');
+  tone.value = '0';
+  tone.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_weights' && c.args.per_judge_weights && c.args.per_judge_weights.tone === 0),
+    'editing the seeded judge posts set_weights {per_judge_weights}');
+  // the add-key row introduces a judge the mapping never carried.
+  const k = byAria(host, 'dn-bld-text', 'New per-judge weight name');
+  const v = byAria(host, 'dn-bld-num', 'New per-judge weight value');
+  const add = byAria(host, 'dn-bld-btn', 'Add per-judge weight');
+  assert(k && v && add, 'the per-judge add-key row renders');
+  k.value = 'terseness';
+  v.value = '2';
+  add.dispatchEvent(makeEvent('click'));
+  await tick();
+  const call = OP_CALLS.find((c) => c.op === 'set_weights' && c.args.per_judge_weights && 'terseness' in c.args.per_judge_weights);
+  assert(call, 'the add-key row posts a NEW per-judge key');
+  assertEqual(call.args.per_judge_weights.terseness, 2, 'the new key carries the typed value');
+});
+
+test('builder view: Weights namespace ADD-KEY row creates a NEW namespace key (iterate-existing gap closed)', async () => {
+  const host = await mountAt('Weights');
+  const k = byAria(host, 'dn-bld-text', 'New namespace weight key');
+  const v = byAria(host, 'dn-bld-num', 'New namespace weight value');
+  const add = byAria(host, 'dn-bld-btn', 'Add namespace weight');
+  assert(k && v && add, 'the namespace add-key row renders');
+  // blank key is inert (never posts).
+  add.dispatchEvent(makeEvent('click'));
+  await tick();
+  assert(!OP_CALLS.find((c) => c.op === 'set_namespace_weights' && c.args.namespace_weights && 'cost:' in c.args.namespace_weights),
+    'a blank add-key never posts');
+  k.value = 'cost:';
+  v.value = '0.4';
+  add.dispatchEvent(makeEvent('click'));
+  await tick();
+  const call = OP_CALLS.find((c) => c.op === 'set_namespace_weights' && c.args.namespace_weights && 'cost:' in c.args.namespace_weights);
+  assert(call, 'the add-key row posts a NEW namespace key through set_namespace_weights');
+  assertEqual(call.args.namespace_weights['cost:'], 0.4, 'the new key carries the typed value');
+  assertEqual(call.args.namespace_weights['drift:'], 1, 'the existing keys ride along (WHOLE mapping)');
+});
+
+test('builder view: the Gate namespace_monotonicity editor posts the WHOLE mapping + an add-key row adds a key', async () => {
+  const host = await mountAt('Gate');
+  // the existing rubric: row toggles.
+  const rubric = byAria(host, 'dn-bld-check', 'Namespace monotonicity rubric:');
+  assert(rubric, 'the seeded namespace-monotonicity row renders');
+  rubric.checked = false;
+  rubric.dispatchEvent(makeEvent('change'));
+  await tick();
+  let call = OP_CALLS.find((c) => c.op === 'set_gate' && c.args.namespace_monotonicity);
+  assert(call, 'toggling a namespace posts set_gate {namespace_monotonicity}');
+  assertEqual(call.args.namespace_monotonicity['rubric:'], false, 'the edited key flips');
+  // the add-key row adds a new namespace with the checkbox value.
+  const k = byAria(host, 'dn-bld-text', 'New namespace monotonicity key');
+  const add = byAria(host, 'dn-bld-btn', 'Add namespace monotonicity key');
+  assert(k && add, 'the namespace-monotonicity add-key row renders');
+  k.value = 'schema:';
+  add.dispatchEvent(makeEvent('click'));
+  await tick();
+  call = OP_CALLS.find((c) => c.op === 'set_gate' && c.args.namespace_monotonicity && 'schema:' in c.args.namespace_monotonicity);
+  assert(call, 'the add-key row posts a new namespace-monotonicity key');
+  assertEqual(call.args.namespace_monotonicity['schema:'], true, 'the new key defaults to strict (may not regress)');
+});
+
+test('builder view: the Overfitting section drives max_generations_per_contract (set_holdout)', async () => {
+  const host = await mountAt('Overfitting');
+  const ceiling = byAria(host, 'dn-bld-num', 'Max generations per contract');
+  assert(ceiling, 'the board-refresh ceiling control renders');
+  ceiling.value = '12';
+  ceiling.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_holdout' && c.args.max_generations_per_contract === 12),
+    'a positive ceiling posts set_holdout {max_generations_per_contract}');
+  // 0 CLEARS the ceiling (the op reserves None for "unchanged", so the form
+  // always sends an explicit integer — 0 is a real clear, never a no-send).
+  ceiling.value = '0';
+  ceiling.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_holdout' && c.args.max_generations_per_contract === 0),
+    '0 posts an explicit set_holdout {max_generations_per_contract: 0} (clears the ceiling)');
+});
+
+test('builder view: the Proposer picker lists discovered dirs + builtin default + a free-text path (set_proposer)', async () => {
+  const host = await mountAt('Proposer');
+  const pick = byAria(host, 'dn-bld-select', 'Proposer dir');
+  assert(pick, 'the proposer picker renders');
+  // the builtin default + the discovered dir are both options.
+  assert(pick.children.some((o) => o.getAttribute('value') === ''), 'the builtin default is an option');
+  assert(pick.children.some((o) => o.getAttribute('value') === '/ws/proposers/critic-v2'), 'the discovered dir is an option');
+  pick.value = '/ws/proposers/critic-v2';
+  pick.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_proposer' && c.args.proposer_path === '/ws/proposers/critic-v2'),
+    'picking a dir posts set_proposer with the path');
+  // selecting the builtin default posts null.
+  pick.value = '';
+  pick.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_proposer' && c.args.proposer_path === null),
+    'the builtin default posts set_proposer {proposer_path: null}');
+  // the free-text path row sets an arbitrary path.
+  const pathIn = byAria(host, 'dn-bld-text', 'Proposer path');
+  const setBtn = byAria(host, 'dn-bld-btn', 'Set proposer path');
+  assert(pathIn && setBtn, 'the free-text proposer-path row renders');
+  pathIn.value = '/custom/prop';
+  setBtn.dispatchEvent(makeEvent('click'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_proposer' && c.args.proposer_path === '/custom/prop'),
+    'the free-text row posts set_proposer with the typed path');
+});
+
+test('builder view: the Proposer lede no longer claims a read-only summary', async () => {
+  const host = await mountAt('Proposer');
+  const lede = firstClass(host, 'dn-lede');
+  assert(lede, 'the proposer section has a lede');
+  assert(!/read-only summary/i.test(lede.textContent), 'the misleading "Read-only summary here" lede is rewritten');
+});
+
+test('builder view: the slot strip Reset-to-live is TWO-click and posts revert_to_live', async () => {
+  installBuilderFetch();
+  globalThis.window.localStorage.clear();
+  const host = globalThis.document.createElement('div');
+  await view.render(host);
+  const reset = byAria(host, 'dn-bld-btn', 'Reset to live');
+  assert(reset, 'the reset-to-live button renders in the slot strip');
+  // first click ARMS (no op posted yet).
+  reset.dispatchEvent(makeEvent('click'));
+  await tick();
+  assert(!OP_CALLS.find((c) => c.op === 'revert_to_live'), 'the first click only arms — never one-click');
+  // the armed button now shows the confirm affordance.
+  const armed = byAria(host, 'dn-bld-btn', 'Reset to live');
+  assert(armed.classList.contains('dn-bld-btn-confirm'), 'the armed reset shows the confirm class');
+  armed.dispatchEvent(makeEvent('click'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'revert_to_live'), 'the confirming click posts revert_to_live');
+});
+
+test('builder view: the slot strip Undo posts undo; an empty history renders the "nothing to undo" note', async () => {
+  installBuilderFetch();
+  globalThis.window.localStorage.clear();
+  const host = globalThis.document.createElement('div');
+  await view.render(host);
+  const undo = byAria(host, 'dn-bld-btn', 'Undo');
+  assert(undo, 'the undo button renders in the slot strip');
+  undo.dispatchEvent(makeEvent('click'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'undo'), 'Undo posts the undo lifecycle op');
+  // the mock has no history → the "nothing to undo" note renders.
+  const note = firstClass(host, 'dn-bld-slots-undonote');
+  assert(note && /nothing to undo/i.test(note.textContent), 'the nothing-to-undo note renders when the history is empty');
+  // with history, a second undo clears the note (a restore happened).
+  UNDO_HAS_HISTORY = true;
+  byAria(host, 'dn-bld-btn', 'Undo').dispatchEvent(makeEvent('click'));
+  await tick();
+  assert(!firstClass(host, 'dn-bld-slots-undonote'), 'a successful undo clears the note');
+});
+
+test('builder view: a no-op re-render of the Weights section rebuilds ZERO DOM (digest-gated identity)', async () => {
+  const host = await mountAt('Weights');
+  const center = firstClass(host, 'dn-bld-center');
+  assert(center, 'the center pane is present');
+  const secBefore = firstClass(center, 'dn-section');
+  const writes = center.innerHTMLWriteCount();
+  // re-click the ALREADY-active Weights rail item → a full render pass with an
+  // IDENTICAL center digest must not rebuild the section (the render-discipline
+  // no-op guardrail).
+  const rail = byClass(host, 'dn-bld-railitem').find((r) => r.textContent.includes('Weights'));
+  rail.dispatchEvent(makeEvent('click'));
+  await tick();
+  const secAfter = firstClass(center, 'dn-section');
+  assert(secBefore === secAfter, 'a no-op section re-render preserves node identity (zero rebuild)');
+  assertEqual(center.innerHTMLWriteCount(), writes, 'a no-op section re-render writes ZERO additional DOM');
+});
+
+// ── model.js: the rung0_board_size racing param SPEC (L3 — spec only) ────
+
+test('paramSpecsFor: racing carries the rung0_board_size override spec (both estimators already read it)', () => {
+  const racing = builder.paramSpecsFor('racing');
+  const rung0 = racing.find((s) => s.key === 'rung0_board_size');
+  assert(rung0, 'the racing block declares a rung0_board_size spec');
+  assert(rung0.removeAtZero === true, '0 removes the key (unset hashes identically) — like the evidence-gate threshold');
+  assert(rung0.int === true, 'the rung-0 override is an integer entry count');
+  // a non-racing structure never carries it.
+  assert(!builder.paramSpecsFor('gauntlet').find((s) => s.key === 'rung0_board_size'),
+    'gauntlet does not carry the racing-only rung0 spec');
+});
+
+test('paramSpecsFor: the rung0 override does not perturb the cost twin (spec-only, arithmetic unchanged)', () => {
+  // both estimators already read rung0_board_size, so an explicit value moves
+  // the meter identically on both sides — the spec only surfaces the control.
+  const base = builder.estimateCost('racing', { field_size: 4, eta: 2, board_fraction: 0.25 }, 12, 0);
+  const withOverride = builder.estimateCost('racing', { field_size: 4, eta: 2, rung0_board_size: 6 }, 12, 0);
+  assert(base.board_runs_per_round !== withOverride.board_runs_per_round,
+    'the rung0 override moves the meter (the key was already read) — a live, not cosmetic, param');
 });
 
 await run();

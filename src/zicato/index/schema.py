@@ -42,7 +42,7 @@ import sqlite3
 #: Bump this whenever the table/column shape below changes. Stamped
 #: into ``PRAGMA user_version`` and the ``schema_meta`` table by
 #: :func:`apply_schema`.
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 
 class IndexSchemaNewerError(RuntimeError):
@@ -187,6 +187,40 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
       PRIMARY KEY (run_id, judge_name)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS reflections (
+      reflection_id TEXT PRIMARY KEY,
+      epoch_id TEXT,
+      created_at TEXT,
+      mode TEXT,
+      executed INTEGER,
+      noise_floor_max_abs_delta REAL,
+      decision_flip_p REAL,
+      n_findings INTEGER,
+      n_judges INTEGER,
+      verdict_counts_json TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS judge_scorecards (
+      reflection_id TEXT,
+      judge_name TEXT,
+      tp INTEGER,
+      fp INTEGER,
+      fn INTEGER,
+      tn INTEGER,
+      ambiguous INTEGER,
+      precision REAL,
+      recall REAL,
+      f1 REAL,
+      severity_accuracy REAL,
+      disagreement_rate REAL,
+      kappa REAL,
+      exercised INTEGER,
+      redundant_with_json TEXT,
+      PRIMARY KEY (reflection_id, judge_name)
+    )
+    """,
 )
 
 
@@ -199,6 +233,8 @@ _INDEX_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_runs_tournament ON runs(tournament_id)",
     "CREATE INDEX IF NOT EXISTS idx_loss_tournament ON loss_profiles(tournament_id)",
     "CREATE INDEX IF NOT EXISTS idx_epochs_parent ON epochs(parent_epoch_id)",
+    "CREATE INDEX IF NOT EXISTS idx_reflections_epoch ON reflections(epoch_id)",
+    "CREATE INDEX IF NOT EXISTS idx_judge_scorecards_refl ON judge_scorecards(reflection_id)",
 )
 
 
@@ -349,6 +385,22 @@ _V10_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("generations", "elo", "REAL"),
     ("generations", "elo_games", "INTEGER"),
 )
+
+
+#: Tables added in v11 (the board-reflection projection; BOARD-REFLECTION.md
+#: R4). ``reflections`` carries one row per reflection run (its four-pillar
+#: bill-of-health summary) and ``judge_scorecards`` one row per
+#: ``(reflection_id, judge_name)`` (the confusion-matrix scorecard). Unlike
+#: the earlier waves these are WHOLE NEW TABLES, not new columns, so the
+#: ``CREATE TABLE IF NOT EXISTS`` pass in :func:`apply_schema` materialises
+#: them on any open — a pre-existing v10 database simply gains the two empty
+#: tables, and a full ``zicato reindex`` re-derives their rows from each
+#: reflection's persisted ``plan.json`` / ``scorecards.json`` / ``findings.json``
+#: (files canonical; the index is a projection, so a reflection is readable
+#: with no index at all). The generations ``elo`` / ``elo_games`` stubs are
+#: untouched. No ``_migrate_inplace`` column-ALTER entry is needed for a whole
+#: new table.
+_V11_ADDED_TABLES: tuple[str, ...] = ("reflections", "judge_scorecards")
 
 
 def apply_schema(conn: sqlite3.Connection) -> None:

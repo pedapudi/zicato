@@ -24,18 +24,22 @@ contract so the builder opens showing exactly what is running.
 from __future__ import annotations
 
 import re
+from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from zicato.board.jsonl import entry_to_dict
+from zicato.board.jsonl import board_meta_to_dict, entry_to_dict
 from zicato.board.split import HOLDOUT_TAG, split_board
 from zicato.core.types import (
     BoardEntry,
     ProposerSpec,
     ScoringWeights,
 )
+
+if TYPE_CHECKING:
+    from goldfive import DriftKind
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,12 +134,24 @@ class TournamentDraft:
     proposer_path:
         Location of the proposer dir, or ``None`` for the built-in
         default proposer.
+    disable_drift:
+        The board-level ``board_meta`` header's drift-suppression set
+        (:class:`goldfive.DriftKind` members). Part of the contract:
+        the header line is written back by ``apply`` and folds into the
+        contract hash, so dropping it here would silently strip it from
+        the live board.
+    judge_only:
+        The board-level ``board_meta`` header's judge-only flag
+        (goldfive judges without steering). Same round-trip contract as
+        :attr:`disable_drift`.
     """
 
     scoring: ScoringWeights = field(default_factory=ScoringWeights)
     entries: list[BoardEntry] = field(default_factory=list)
     brief: str = ""
     proposer_path: Path | None = None
+    disable_drift: tuple[DriftKind, ...] = ()
+    judge_only: bool = False
 
     # -- construction -----------------------------------------------------
 
@@ -158,7 +174,7 @@ class TournamentDraft:
         """
         from zicato.core.scoring_config import recommended_scaffold_weights  # noqa: PLC0415
         from zicato.workspace_loader import (  # noqa: PLC0415
-            load_current_board,
+            load_current_board_with_meta,
             load_current_brief,
             load_current_epoch_config,
             load_current_scoring,
@@ -169,10 +185,17 @@ class TournamentDraft:
         except FileNotFoundError:
             scoring = recommended_scaffold_weights()
 
+        # The WITH-META loader: the board-level ``board_meta`` header
+        # (disable_drift / judge_only) is part of the contract, and
+        # ``apply`` writes the board back — loading entries alone would
+        # silently strip the header from the live contract on apply.
         try:
-            entries = list(load_current_board(workspace_root))
+            loaded, disable_drift, judge_only = load_current_board_with_meta(workspace_root)
+            entries = list(loaded)
         except FileNotFoundError:
             entries = []
+            disable_drift = ()
+            judge_only = False
 
         try:
             brief = load_current_brief(workspace_root).text
@@ -191,6 +214,8 @@ class TournamentDraft:
             entries=entries,
             brief=brief,
             proposer_path=proposer_path,
+            disable_drift=tuple(disable_drift),
+            judge_only=judge_only,
         )
 
     # -- read-side --------------------------------------------------------
@@ -224,6 +249,10 @@ class TournamentDraft:
         return {
             "scoring": scoring_to_dict(self.scoring),
             "board": [entry_to_dict(e) for e in self.entries],
+            "board_meta": {
+                "disable_drift": [_drift_token(k) for k in self.disable_drift],
+                "judge_only": self.judge_only,
+            },
             "brief": self.brief,
             "proposer_path": str(self.proposer_path) if self.proposer_path is not None else None,
             "proposer": _proposer_to_dict(self.resolved_proposer()),
@@ -244,7 +273,9 @@ class TournamentDraft:
         """
         live = TournamentDraft.from_workspace(workspace_root)
 
-        board_changed = _board_canon(self.entries) != _board_canon(live.entries)
+        board_changed = _board_canon(
+            self.entries, self.disable_drift, self.judge_only
+        ) != _board_canon(live.entries, live.disable_drift, live.judge_only)
         brief_changed = _brief_canon(self.brief) != _brief_canon(live.brief)
         scoring_changed = _scoring_canon(self.scoring) != _scoring_canon(live.scoring)
         proposer_changed = self.resolved_proposer() != live.resolved_proposer()
@@ -282,19 +313,45 @@ def _proposer_to_dict(spec: ProposerSpec) -> dict[str, Any]:
     }
 
 
-def _board_canon(entries: Sequence[BoardEntry]) -> str:
+def _drift_token(kind: Any) -> str:
+    """The lowercase wire token of a board-level drift kind."""
+    return str(getattr(kind, "value", kind))
+
+
+def _board_canon(
+    entries: Sequence[BoardEntry],
+    disable_drift: tuple[DriftKind, ...] = (),
+    judge_only: bool = False,
+) -> str:
     """Canonical, order-independent string form of a board for diffing.
 
     Reuses the contract canonicalizer's per-entry serialization so the
     diff agrees with the epoch-roll rule: reordering entries does not
     register a change; editing an entry's content does.
+
+    The board-level ``board_meta`` header is prepended ONLY when it is
+    non-default (``disable_drift`` non-empty or ``judge_only`` true),
+    mirroring :func:`zicato.board.jsonl.save_board`'s
+    emit-only-when-non-default rule — so this canon agrees with the
+    on-disk bytes the contract hash sees, and a default-meta draft canons
+    byte-identically to a board saved before the header existed.
     """
     import json
 
-    return "\n".join(
+    lines: list[str] = []
+    if disable_drift or judge_only:
+        lines.append(
+            json.dumps(
+                board_meta_to_dict(disable_drift, judge_only),
+                sort_keys=True,
+                ensure_ascii=False,
+            )
+        )
+    lines.extend(
         json.dumps(entry_to_dict(e), sort_keys=True, ensure_ascii=False)
         for e in sorted(entries, key=lambda e: e.id)
     )
+    return "\n".join(lines)
 
 
 def _brief_canon(text: str) -> str:
@@ -320,6 +377,11 @@ def _scoring_canon(weights: ScoringWeights) -> str:
 #: Slot names are path/JSON-safe short slugs — same spirit as epoch ids.
 _SLOT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
+#: Bounded per-session undo depth. Deep enough for a whole authoring
+#: session's worth of missteps, small enough that history can never grow
+#: without bound in a long-lived dashboard process.
+_HISTORY_LIMIT = 20
+
 
 def _copy_draft(draft: TournamentDraft) -> TournamentDraft:
     """A safe working copy of ``draft`` for a named slot.
@@ -328,12 +390,17 @@ def _copy_draft(draft: TournamentDraft) -> TournamentDraft:
     replaces board entries wholesale — entries themselves are never
     mutated in place), so a shallow copy of the entries list is a real
     fork: edits to either copy can never leak into the other.
+    ``disable_drift`` / ``judge_only`` are immutable values, carried
+    verbatim — a fork that dropped them would strip the board_meta header
+    from the variant.
     """
     return TournamentDraft(
         scoring=draft.scoring,
         entries=list(draft.entries),
         brief=draft.brief,
         proposer_path=draft.proposer_path,
+        disable_drift=draft.disable_drift,
+        judge_only=draft.judge_only,
     )
 
 
@@ -361,6 +428,12 @@ class DraftStore:
     persistence story). Everything lives until
     :func:`zicato.builder.operations.apply` writes one to the workspace,
     or the process exits.
+
+    UNDO HISTORY: :meth:`remember` records a bounded (20) per-session
+    deque of pre-op draft snapshots — the seam both front doors call
+    before a write op — and :meth:`pop_undo` hands the ``undo`` op the
+    newest snapshot that differs from the current state. History is
+    process-local like everything else here.
     """
 
     def __init__(self) -> None:
@@ -369,6 +442,11 @@ class DraftStore:
         #: naming the same slot see the same draft, exactly like two tabs
         #: sharing a session id).
         self._slots: dict[str, TournamentDraft] = {}
+        #: Per-session bounded undo history: value snapshots of the
+        #: session's draft, recorded by :meth:`remember` at both front
+        #: doors (the REST dispatch and the copilot's tool context)
+        #: BEFORE a write op mutates the draft. Newest last.
+        self._history: dict[str, deque[TournamentDraft]] = {}
 
     def get(self, session_id: str, workspace_root: Path) -> TournamentDraft:
         """Return the draft for ``session_id``, initialising it if new.
@@ -392,6 +470,47 @@ class DraftStore:
     def has(self, session_id: str) -> bool:
         """``True`` iff ``session_id`` already has a draft in the store."""
         return session_id in self._drafts
+
+    # -- undo history (remember / pop_undo) ---------------------------------
+
+    def remember(self, session_id: str) -> None:
+        """Snapshot the session's CURRENT draft state onto its undo history.
+
+        The recording seam for step-undo: both front doors call this with
+        the PRE-op state — ``builder_op`` right before a write-op
+        dispatch, and :meth:`BuilderToolContext.draft` on every copilot
+        tool's draft fetch. Dedups against the newest snapshot by field
+        equality, so a read tool (or a no-op edit) records nothing.
+        Bounded to 20 snapshots per session — the oldest falls off. A
+        session with no draft yet is a no-op (there is no state to
+        remember).
+        """
+        draft = self._drafts.get(session_id)
+        if draft is None:
+            return
+        history = self._history.setdefault(session_id, deque(maxlen=_HISTORY_LIMIT))
+        if history and history[-1] == draft:
+            return
+        history.append(_copy_draft(draft))
+
+    def pop_undo(self, session_id: str) -> TournamentDraft | None:
+        """Pop the newest history snapshot that DIFFERS from the current draft.
+
+        Snapshots equal (by field equality) to the session's current
+        state are discarded on the way down — they would make undo a
+        visible no-op. Returns ``None`` when the history is exhausted;
+        the caller renders that as a "nothing to undo" patch note. The
+        returned snapshot is a value copy — the caller restores it INTO
+        the session's live draft object (in place) so slot bindings stay
+        coherent.
+        """
+        history = self._history.get(session_id)
+        current = self._drafts.get(session_id)
+        while history:
+            snapshot = history.pop()
+            if current is None or snapshot != current:
+                return snapshot
+        return None
 
     # -- named slots (fork / list / switch) --------------------------------
 

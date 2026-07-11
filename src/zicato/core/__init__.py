@@ -78,6 +78,7 @@ from zicato.core.workspace import (
     loss_profile_path,
     rubric_path,
     run_dir,
+    run_result_path,
     scoring_path,
 )
 
@@ -144,6 +145,7 @@ __all__ = [
     "run_dir",
     "events_jsonl_path",
     "loss_profile_path",
+    "run_result_path",
     "experiment_json_path",
     "journal_path",
     "analysis_path",

@@ -31,7 +31,7 @@ import { parseRoute, navigate, href, crumbTrail, up } from './router.js';
 import * as D from './data.js';
 import { invalidateLive, liveDataSignature } from './data.js';
 import { buildTree, treeDigest } from './tree.js';
-import { roundsForTree } from './views/rounds.js';
+import { roundsForTree } from './rounds.js';
 import { deriveLiveStatus, liveStatusDigest, treeLiveSet, staleLabel, runStateLabel } from './livestatus.js';
 import { LiveController } from './live.js';
 import { buildSwatchDropdown, syncSwatchDropdowns } from './swatchdropdown.js';
@@ -39,10 +39,10 @@ import { syncTypefaceDropdowns, syncFontSizeSegments } from './typefacedropdown.
 import {
   COLOR_THEMES, DEFAULT_COLOR, normaliseColor, readColor, persistColor,
   TYPE_THEMES, DEFAULT_TYPE, normaliseType, readType, persistType,
-  DENSITY,
   SCALE_MIN, SCALE_MAX, SCALE_STEP, DEFAULT_SCALE, normaliseScale, readScale, persistScale,
   normaliseFontSize, readFontSize, persistFontSize, fontSizeScale,
   RAIL_MIN, RAIL_MAX, DEFAULT_RAIL, normaliseRail, readRail, persistRail, pageScaleOf,
+  gatedSwap,
 } from './ui.js';
 
 import * as home from './views/home.js';
@@ -53,11 +53,12 @@ import * as diff from './views/diff.js';
 import * as boards from './views/boards.js';
 import * as board from './views/board.js';
 import * as mutations from './views/mutations.js';
+import * as instrument from './views/instrument.js';
 import * as publication from './views/publication.js';
 import * as builder from './views/builder.js';
 import * as settings from './views/settings.js';
 
-const RENDERERS = { home, epoch, gens, candidate, diff, boards, board, mutations, publication, builder, settings };
+const RENDERERS = { home, epoch, gens, candidate, diff, boards, board, mutations, instrument, publication, builder, settings };
 
 export const THEMES = COLOR_THEMES.map((t) => t[0]);
 export const TYPEFACES = TYPE_THEMES.map((t) => t[0]);
@@ -81,7 +82,6 @@ let _loopCtlHost = null;      // topbar loop-control cluster (pause/resume/skip)
 let _lastLoopCtlDigest = null;
 let _pausedOverride = null;   // optimistic paused verdict after a control POST
 let _colorDropdown = null;     // the swatch-dropdown controller (Change 6)
-let _typeEl = [];
 let _scaleInput = null;
 let _scaleReadout = null;
 let _railHandle = null;        // the draggable rail-resize handle (Change 2)
@@ -103,7 +103,6 @@ let _settingsOpen = false;    // true while the drawer is open (gates Esc + the 
 // The last NON-settings route — the view the overlay paints over. A bare
 // `#/settings` loaded cold (no prior view) opens over Environment (home).
 let _underlyingRoute = { view: 'home', params: {}, cmp: null };
-let _lastCrumbDigest = null;
 let _lastStatusDigest = null;
 let _lastTreeDigest = null;
 // The signature of the live data AppState last folded in from /api/environment
@@ -146,8 +145,6 @@ export function applyTypeface(typeface, rootEl) {
   // Sync EVERY live typeface dropdown (top bar AND settings) — one source of
   // truth, so choosing in either place lockstep-updates the other.
   syncTypefaceDropdowns(t);
-  // Legacy: keep any old button-group refs in lockstep (now an empty no-op list).
-  for (const b of _typeEl) patchClass(b, 'dt-type-active', b.getAttribute('data-type') === t);
   return t;
 }
 
@@ -491,9 +488,6 @@ export function mountShell(root) {
   root.setAttribute('data-variant', 'T');
   root.setAttribute('data-t-theme', readColor());
   root.setAttribute('data-t-type', readType());
-  // density is fixed at the cozy baseline (no picker) — stamp it for any rule
-  // that still keys on it, but it never changes.
-  root.setAttribute('data-t-density', DENSITY);
   root.setAttribute('data-t-scale', String(readScale()));
   root.setAttribute('data-t-fontsize', readFontSize());
 
@@ -513,8 +507,6 @@ export function mountShell(root) {
   // typefacedropdown.js instance registry — now just the Settings one — so
   // choosing a face in Settings still applies live + persists, and any other
   // apply path (keyboard / restore) keeps the Settings picker in lockstep.
-  // `_typeEl` stays empty (the old button-group sync loop is now a no-op).
-  _typeEl = [];
 
   // The PAGE-WIDE SCALE pill: a draggable range slider that scales the WHOLE
   // page (text + diagrams) via `zoom` on the app root. With density removed this
@@ -757,7 +749,15 @@ export function mountShell(root) {
 // — so an existing epoch ALWAYS lists, and the empty state shows only when there
 // are genuinely zero epochs across all of them.
 export async function buildTreeModel(route) {
-  const [ws, lin, ep, brk] = await Promise.all([D.workspace(), D.lineage(), D.epoch(), D.bracket()]);
+  const [ws, lin, ep, brk, refl] = await Promise.all([D.workspace(), D.lineage(), D.epoch(), D.bracket(), D.reflections()]);
+  // Which epochs carry at least one reflection — ONE workspace-wide read of
+  // /api/reflections (each item is epoch-tagged), grouped here so the Instrument
+  // tree node shows only when the epoch actually has reflections. Cheaper than a
+  // per-epoch probe; the tree model already unions API sources this way.
+  const reflEpochs = new Set();
+  if (refl && Array.isArray(refl.reflections)) {
+    for (const r of refl.reflections) if (r && r.epoch_id != null) reflEpochs.add(String(r.epoch_id));
+  }
   const epochs = [];
   const seen = new Set();
   const current = (ws && ws.current_epoch_id) || (ep && ep.epoch_id) || null;
@@ -891,7 +891,7 @@ export async function buildTreeModel(route) {
       structure: epochStructure,
       championId: currentChampionId,
     });
-    byEpoch[id] = { gens: gensList, boards: boardList, rounds: treeRounds };
+    byEpoch[id] = { gens: gensList, boards: boardList, rounds: treeRounds, hasReflections: reflEpochs.has(String(id)) };
   }
   return { epochs, byEpoch, current };
 }
@@ -926,17 +926,21 @@ async function renderTree(route) {
 function renderCrumbs(route) {
   if (!_crumbHost) return;
   const trail = crumbTrail(route);
+  // The second-idiom digest gate folded onto gatedSwap (the same firstChild +
+  // digest-attribute no-flash contract the views use) — a pure clear-and-rebuild
+  // with no external invalidation, so it drops in cleanly.
   const digest = JSON.stringify(trail.map((c) => [c.label, c.view || '', c.current || false]));
-  if (digest === _lastCrumbDigest && _crumbHost.firstChild) return;
-  _lastCrumbDigest = digest;
-  clearChildren(_crumbHost);
-  trail.forEach((c, i) => {
-    if (i > 0) _crumbHost.appendChild(el('span', { class: 'dt-crumb-sep', 'aria-hidden': 'true', text: '›' }));
-    if (c.current || !c.view) {
-      _crumbHost.appendChild(el('span', { class: 'dt-crumb dt-crumb-current', 'aria-current': 'page', text: c.label }));
-    } else {
-      _crumbHost.appendChild(el('a', { class: 'dt-crumb', href: href(c.view, c.params), text: c.label }));
-    }
+  gatedSwap(_crumbHost, digest, () => {
+    const out = [];
+    trail.forEach((c, i) => {
+      if (i > 0) out.push(el('span', { class: 'dt-crumb-sep', 'aria-hidden': 'true', text: '›' }));
+      if (c.current || !c.view) {
+        out.push(el('span', { class: 'dt-crumb dt-crumb-current', 'aria-current': 'page', text: c.label }));
+      } else {
+        out.push(el('a', { class: 'dt-crumb', href: href(c.view, c.params), text: c.label }));
+      }
+    });
+    return out;
   });
 }
 

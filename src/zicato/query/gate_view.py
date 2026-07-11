@@ -8,8 +8,8 @@ from typing import Any
 
 from zicato.query._sqlite import (
     _IndexAbsent,
-    _open_index,
     _query,
+    open_index_ro,
 )
 from zicato.query.judge_view import build_per_judge_comparison
 from zicato.query.lineage_view import build_lineage_view
@@ -127,7 +127,22 @@ def build_score_trajectory(paths: WorkspacePaths, epoch_id: str | None = None) -
     ]
 
     try:
-        conn = _open_index(paths.index_db)
+        with open_index_ro(paths.index_db) as conn:
+            points: list[dict[str, Any]] = []
+            for g in ordered:
+                gid = g["generation_id"]
+                scalar, entry_count = _mean_drift_loss_per_generation(conn, g.get("epoch_id"), gid)
+                points.append(
+                    {
+                        "generation_id": gid,
+                        "parent_generation_id": g.get("parent_generation_id"),
+                        "promoted": g.get("promoted"),
+                        "scalar": scalar,
+                        "entry_count": entry_count,
+                        "created_at": g.get("created_at"),
+                    }
+                )
+            return {"epoch_id": epoch_id, "points": points}
     except _IndexAbsent:
         return {
             "epoch_id": epoch_id,
@@ -146,25 +161,6 @@ def build_score_trajectory(paths: WorkspacePaths, epoch_id: str | None = None) -
         }
     except sqlite3.Error:
         return {"epoch_id": epoch_id, "points": []}
-
-    try:
-        points: list[dict[str, Any]] = []
-        for g in ordered:
-            gid = g["generation_id"]
-            scalar, entry_count = _mean_drift_loss_per_generation(conn, g.get("epoch_id"), gid)
-            points.append(
-                {
-                    "generation_id": gid,
-                    "parent_generation_id": g.get("parent_generation_id"),
-                    "promoted": g.get("promoted"),
-                    "scalar": scalar,
-                    "entry_count": entry_count,
-                    "created_at": g.get("created_at"),
-                }
-            )
-        return {"epoch_id": epoch_id, "points": points}
-    finally:
-        conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -263,58 +259,54 @@ def build_drift_movements(paths: WorkspacePaths, generation_id: str) -> dict[str
         "movements": [],
     }
     try:
-        conn = _open_index(paths.index_db)
+        with open_index_ro(paths.index_db) as conn:
+            tour = _query(
+                conn,
+                "SELECT parent_generation_id, child_generation_id FROM tournaments "
+                "WHERE child_generation_id = ? LIMIT 1",
+                (generation_id,),
+            )
+            if not tour:
+                return {**empty, "note": "no tournament found for this generation"}
+            parent_id = tour[0]["parent_generation_id"]
+            child_id = tour[0]["child_generation_id"]
+
+            champion_counts = _drift_counts_for_generation(conn, epoch_id, parent_id)
+            challenger_counts = _drift_counts_for_generation(conn, epoch_id, child_id)
+
+            movements: list[dict[str, Any]] = []
+            for kind in sorted(set(champion_counts) | set(challenger_counts)):
+                champ = champion_counts.get(kind, 0)
+                chall = challenger_counts.get(kind, 0)
+                delta = chall - champ
+                if delta > 0:
+                    direction = "worsened"
+                elif delta < 0:
+                    direction = "improved"
+                else:
+                    direction = "unchanged"
+                movements.append(
+                    {
+                        "kind": kind,
+                        "champion_count": champ,
+                        "challenger_count": chall,
+                        "delta": delta,
+                        "direction": direction,
+                    }
+                )
+            # Biggest absolute movements first; ties broken alphabetically.
+            movements.sort(key=lambda m: (-abs(m["delta"]), m["kind"]))
+            return {
+                "epoch_id": epoch_id,
+                "generation_id": generation_id,
+                "champion": parent_id,
+                "challenger": child_id,
+                "movements": movements,
+            }
     except _IndexAbsent:
         return {**empty, "note": "index not built; run zicato reindex"}
     except sqlite3.Error:
         return empty
-
-    try:
-        tour = _query(
-            conn,
-            "SELECT parent_generation_id, child_generation_id FROM tournaments "
-            "WHERE child_generation_id = ? LIMIT 1",
-            (generation_id,),
-        )
-        if not tour:
-            return {**empty, "note": "no tournament found for this generation"}
-        parent_id = tour[0]["parent_generation_id"]
-        child_id = tour[0]["child_generation_id"]
-
-        champion_counts = _drift_counts_for_generation(conn, epoch_id, parent_id)
-        challenger_counts = _drift_counts_for_generation(conn, epoch_id, child_id)
-
-        movements: list[dict[str, Any]] = []
-        for kind in sorted(set(champion_counts) | set(challenger_counts)):
-            champ = champion_counts.get(kind, 0)
-            chall = challenger_counts.get(kind, 0)
-            delta = chall - champ
-            if delta > 0:
-                direction = "worsened"
-            elif delta < 0:
-                direction = "improved"
-            else:
-                direction = "unchanged"
-            movements.append(
-                {
-                    "kind": kind,
-                    "champion_count": champ,
-                    "challenger_count": chall,
-                    "delta": delta,
-                    "direction": direction,
-                }
-            )
-        # Biggest absolute movements first; ties broken alphabetically.
-        movements.sort(key=lambda m: (-abs(m["delta"]), m["kind"]))
-        return {
-            "epoch_id": epoch_id,
-            "generation_id": generation_id,
-            "champion": parent_id,
-            "challenger": child_id,
-            "movements": movements,
-        }
-    finally:
-        conn.close()
 
 
 def build_health_report(paths: WorkspacePaths) -> dict[str, Any]:

@@ -24,10 +24,10 @@ import { el } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, section, empty, verdictPill, decisionFor, decisionOf } from '../ui.js';
+import { gatedSwap, section, empty, verdictPill, decisionFor, decisionOf, dataTable, deltaCell } from '../ui.js';
 import { renderStructure, structurePill, structureDigest, isNonGauntlet, normalizeStructure, resolveNonGauntletSt } from './structure.js';
 import { deriveLiveStatus } from '../livestatus.js';
-import { roundsFromTimeline, roundModelDigest } from './rounds.js';
+import { roundsFromTimeline, roundModelDigest } from '../rounds.js';
 
 // Does the LIVE run (active tournament / heartbeat) belong to the epoch being
 // VIEWED? The live topology is the ACTIVE epoch's — adopting it under a
@@ -154,28 +154,29 @@ export async function render(host, ctx, params) {
     if (!gens.length) {
       tblCard.appendChild(empty('No generations recorded for this epoch.'));
     } else {
-      const tbl = el('table', { class: 'dn-board-table' });
-      tbl.appendChild(el('thead', null, [el('tr', null, [
-        el('th', { text: 'generation' }), el('th', { text: 'role' }), el('th', { text: 'parent' }),
-        el('th', { class: 'dn-num', text: 'scalar (loss)' }), el('th', { class: 'dn-num', text: 'Δ vs champion' }), el('th', { text: '' }),
-      ])]));
-      const tbody = el('tbody');
-      for (const g of gens) {
-        const sc = scalarByGen.get(g.id);
-        const baseline = !g.parent;
-        // Class B: an unscored candidate is PENDING, not rejected.
-        const decision = decisionFor({ promoted: g.promoted, parent: g.parent });
-        const delta = (svg.isNum(sc) && svg.isNum(champScalar) && !baseline) ? sc - champScalar : null;
-        tbody.appendChild(el('tr', { class: g.promoted ? 'dn-board-champ' : '' }, [
-          el('td', { class: 'dn-mono', text: g.id + (g.promoted ? ' ♛' : '') }),
-          el('td', null, [verdictPill(decision)]),
-          el('td', { class: 'dn-mono', text: g.parent || 'seed' }),
-          el('td', { class: 'dn-num dn-mono', text: svg.isNum(sc) ? svg.fmt(sc, 1) : '—' }),
-          el('td', { class: 'dn-num dn-mono ' + (delta > 0 ? 'dn-bad-t' : delta < 0 ? 'dn-good-t' : ''), text: svg.isNum(delta) ? svg.fmtSigned(delta, 1) : '—' }),
-          el('td', null, [el('a', { class: 'dn-linkbtn', href: ctx.href('candidate', { epochId: id, gen: g.id }), text: 'open →' })]),
-        ]));
-      }
-      tbl.appendChild(tbody);
+      const tbl = dataTable({
+        class: 'dn-board-table',
+        columns: [{ label: 'generation' }, { label: 'role' }, { label: 'parent' },
+          { label: 'scalar (loss)', class: 'dn-num' }, { label: 'Δ vs champion', class: 'dn-num' }, { label: '' }],
+        rows: gens.map((g) => {
+          const sc = scalarByGen.get(g.id);
+          const baseline = !g.parent;
+          // Class B: an unscored candidate is PENDING, not rejected.
+          const decision = decisionFor({ promoted: g.promoted, parent: g.parent });
+          const delta = (svg.isNum(sc) && svg.isNum(champScalar) && !baseline) ? sc - champScalar : null;
+          return {
+            class: g.promoted ? 'dn-board-champ' : '',
+            cells: [
+              { class: 'dn-mono', text: g.id + (g.promoted ? ' ♛' : '') },
+              { el: verdictPill(decision) },
+              { class: 'dn-mono', text: g.parent || 'seed' },
+              { class: 'dn-num dn-mono', text: svg.isNum(sc) ? svg.fmt(sc, 1) : '—' },
+              deltaCell(delta, { base: 'dn-num dn-mono', text: svg.isNum(delta) ? svg.fmtSigned(delta, 1) : '—' }),
+              { el: el('a', { class: 'dn-linkbtn', href: ctx.href('candidate', { epochId: id, gen: g.id }), text: 'open →' }) },
+            ],
+          };
+        }),
+      });
       tblCard.appendChild(tbl);
     }
     nodes.push(section('Roster · click a candidate to open its detail', tblCard));
@@ -240,6 +241,8 @@ async function renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roun
             structure: round.tournamentRef.structure || structure,
             structure_params: round.tournamentRef.structure_params || (tournament && tournament.params) || {},
             competitors: round.tournamentRef.competitors, rounds: round.tournamentRef.rounds,
+            // the SERVED elim model rides the /api/tournaments record too.
+            gen_states: round.tournamentRef.gen_states,
             standings: round.tournamentRef.standings,
             champion_lineage: bracket && bracket.champion_lineage, source: 'index',
           }, false)
@@ -262,6 +265,7 @@ async function renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roun
       structure: round.tournamentRef.structure || structure,
       structure_params: round.tournamentRef.structure_params || (tournament && tournament.params) || {},
       competitors: round.tournamentRef.competitors, rounds: round.tournamentRef.rounds,
+      gen_states: round.tournamentRef.gen_states,
       standings: round.tournamentRef.standings,
       champion_lineage: bracket && bracket.champion_lineage, source: 'index',
     }, false);

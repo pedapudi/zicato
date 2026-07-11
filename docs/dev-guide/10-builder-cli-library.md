@@ -29,7 +29,7 @@
 > | ID | Invariant |
 > |----|-----------|
 > | L1 | **One mutation surface.** Every editable contract change flows through exactly one function in `zicato/builder/operations.py`. The form, the copilot, and the REST dispatch all call the same op — never a second edit path. |
-> | L2 | **Full-coverage.** A new contract knob is not shipped until it has an op (`operations.py`) + a dispatch arm (`api.py::_dispatch_op`) + a copilot tool (`copilot_tools.py::DEFAULT_BUILDER_TOOLS`) + a GUI control-or-documented-exception + a cost line if it changes the schedule + a `validate` consideration if it can be unsound. The op↔dispatch↔copilot triple is machine-pinned. |
+> | L2 | **Full-coverage.** A new contract knob is not shipped until it has an op (`operations.py`) + a dispatch arm (`api.py::_dispatch_op`) + a copilot tool (`copilot_tools.py::DEFAULT_BUILDER_TOOLS`) + a GUI control-or-documented-exception + a cost line if it changes the schedule + a `validate` consideration if it can be unsound. Machine-pinned including the GUI surface — the op↔dispatch↔copilot triple by `test_default_builder_tools_registry_covers_every_op`, and the GUI-control-or-exception by `test_builder_gui_coverage.py`. |
 > | L3 | **The cost meter is honest and twinned.** Every board-run multiplier the runtime will spend gets a `CostLine`; auxiliary LLM calls are labelled and excluded from the board-runs headline; the Python estimator and the JS twin must agree (a py↔js parity test). |
 > | L4 | **Recommend-only.** The builder never hard-blocks `apply`. Even a `refuse`-severity warning or a `refuse` pre-flight verdict informs the operator — it never gates the write. |
 > | L5 | **The builder never rolls the epoch and never starts a live evolve.** `apply(confirm=True)` writes the contract source files and lets the auto-epoch machinery roll on the next resolve; the copilot's apply tool is always `confirm=False`. |
@@ -226,15 +226,18 @@ Both front doors call the same ops and return the same envelope
 
 | Method + route | Handler | What it does |
 |---|---|---|
-| `GET /builder/config` | `builder_config` | `load_builder_config(root).to_public_dict()` (secret-safe) |
-| `GET /builder/draft?session=ID` | `builder_draft` | the draft snapshot + cost/warnings/diff/slots |
+| `GET /builder/config` | `builder_config` | `load_builder_config(root).to_public_dict()` (secret-safe) + the server-derived `vocab` (entry kinds / expectation kinds / reads / judge modes / severities / drift kinds — the GUI never hardcodes an enum) |
+| `GET /builder/draft?session=ID` | `builder_draft` | the draft snapshot + cost/warnings/diff/slots + `proposer_dirs` (discovered `<workspace_parent>/proposers/*` candidates; degrades to `[]`) |
 | `POST /builder/op` | `builder_op` | `{session, op, args}` → dispatch → the shared envelope |
 | `POST /builder/apply` | `builder_apply` | `{session, confirm}` → `ApplyResult.to_dict()` |
 | `POST /builder/chat` | `builder_chat` | `{session, message}` → SSE stream of copilot frames |
 
-`_dispatch_op` handles the 14 write ops; the read/lifecycle ops
-(`fork`/`switch`/`list_drafts`/`compare`/`preflight`) are handled inline in the
-`builder_op` handler because they act on store slots or run async. A `read_only`
+`_dispatch_op` handles the 16 write ops; the read/lifecycle ops
+(`fork`/`switch`/`list_drafts`/`compare`/`revert_to_live`/`undo`/`preflight`)
+are handled inline in the `builder_op` handler because they act on store
+slots / the undo history or run async. `builder_op` also calls
+`store.remember(session)` immediately before every `_dispatch_op` write —
+one of the two pre-op capture seams behind the `undo` op (§10.6). A `read_only`
 server returns 403 for the POST ops and apply while keeping the GETs live — the
 dashboard's read-only mode never lets a viewer mutate a contract.
 
@@ -256,6 +259,79 @@ but never rolls the epoch (invariant **L5**).
 > supply it and every call fails — mirror the existing tools exactly. This is the
 > same contextvar-seam pattern the proposer tools use (see 05-proposer.md
 > §"The contextvar binding").
+
+### 10.1.4 The board editor — the flagship GUI (B2)
+
+Board authoring is the builder's largest form surface, and it is built on the
+same doctrine as every other control: **it drives existing ops only.** The
+Board section renders each entry as a clickable row (id + kind + at-a-glance
+badges) that toggles an **inline accordion editor** — there is no modal
+machinery in the console, and the accordion fits the `gatedSwap` + `section`
+idiom the rest of the view uses.
+
+The editor lives in `dashboard/static/js/builder/entry_form.js`, a **pure
+DOM-builder module** with no fetching and no module state of its own. It is a
+function of three things:
+
+- a **buffer** — a plain JSON object shaped exactly like what
+  `validate_board_entry` (core/board.py) accepts. `entryToBuffer(row)` reads a
+  `draft.board` row (note it carries the short-form `budget_s` the entry
+  serializer writes) into a buffer; `bufferToEntryJson(buffer)` emits the
+  canonical `wall_clock_budget_seconds` the `edit_board_entry` op parses;
+  `newEntryBuffer(kind)` seeds a create-mode buffer with the kind's
+  discriminants.
+- the server-derived **`vocab`** (from `GET /builder/config`) so the kind /
+  expectation-kind / reads / judge-mode / severity / drift-kind selects render
+  from the SAME enums the validators enforce — the JS never hardcodes an enum.
+- a **handler bag** (`onSave` / `onCancel` / `onDelete` / `onDuplicate` /
+  `onChange`) the view (`views/builder.js`) wires to its module state.
+
+**The whole-entry round-trip.** Save posts the WHOLE buffer through the
+existing `edit_board_entry` op (a replace-by-id) — there is no separate mutation
+path for individual fields, and no per-field ops. A judges-list edit, an
+expectation change, and a budget bump all ride the one whole-entry replace on
+Save. This is invariant **L1** in its most literal form: the flagship form adds
+zero ops. `tests/test_builder_api.py::test_builder_op_edit_board_entry_whole_entry_round_trip`
+pins the byte-stability per kind — the re-read row equals
+`entry_to_dict(validate_board_entry(payload))`, which is exactly the save/reopen
+loop the editor relies on. Delete drives `remove_board_entry` behind a two-click
+confirm; a per-judge badge's × drives `remove_judge` directly; the board-level
+`board_meta` panel (drift suppression + judge-only) drives `set_board_meta`,
+closing B0's documented GUI exception.
+
+**No client validation twin (invariant L4).** The form carries NO port of
+`BoardEntry.validate`. Save is gated only on the PRESENCE of an id (a
+presence-only enable/disable, never a semantic check); every structural
+objection is the server's field-precise `ValueError`, rendered verbatim in the
+editor's inline error strip — and the editor stays open so the operator can fix
+it. Failures route to the editor's own `_editError`, never the global flash. The
+one client-side check that IS present is a non-blocking convenience: the
+JSON-schema spec control shows a `JSON.parse` hint (`✓ parses` / `⚠ not valid
+JSON`) so an operator sees a typo before they post — it never disables Save.
+
+**Two controls that must not fight.** The `holdout` tag is owned by the
+train/holdout toggle, so `entryToBuffer` STRIPS it from the tags input on load
+and `bufferToEntryJson` RE-APPLIES it from the toggle state on save. If the form
+carried the tag in its comma input, editing an entry would silently move it in
+or out of the holdout — the strip/re-apply keeps the two controls disjoint.
+Similarly, the id is LOCKED when editing an existing entry (a replace-by-id
+would turn a rename into a silent duplicate); a **Duplicate** button seeds a
+create-mode buffer under a cleared id instead.
+
+**Why the editor survives a digest re-render.** The open buffer, the edited id,
+the create flag, and the inline error all live in `views/builder.js` MODULE
+STATE, and the center digest folds them in. `renderCenter` rebuilds the open
+editor from the pinned buffer on every render, so an unrelated re-render (an op
+result landing, a chat patch applying) never closes the editor or loses a typed
+value. VALUE edits mutate the buffer in place WITHOUT a re-render (focus is
+preserved); STRUCTURAL edits (kind switch, add/remove a judge or turn, toggle
+the expectation sub-form) mutate the buffer and call `onChange` so the view
+re-renders off it. The kind switch clears the inapplicable discriminant fields
+and keeps the common ones (a `single_turn`↔`synthetic_adversarial` switch keeps
+`input`). A paste-JSONL import box splits lines client-side, routes a
+`{"board_meta": true, …}` header line to `set_board_meta` and each entry line to
+`edit_board_entry`, and reports per-line results inline (a bad line never blocks
+the good ones).
 
 ---
 
@@ -279,9 +355,11 @@ function name in every case.
 | `set_experiment_memory` | `scoring.experiment_memory.cross_epoch` | `cross_epoch: bool` |
 | `set_screening` | `scoring.proposer_quality.screen_entries` / `screen_veto_only` | `entries` (≥0), `veto_only` |
 | `edit_board_entry` | `draft.entries` (add/replace by id; validates first) | `entry: BoardEntry` |
+| `remove_board_entry` | `draft.entries` (delete by id; unknown id raises) | `entry_id` |
 | `add_judge` | one entry's `judges` tuple | `entry_id`, `judge: JudgeSpec` |
 | `remove_judge` | one entry's `judges` tuple | `entry_id`, `name` |
 | `set_brief` | `draft.brief` | `text: str` |
+| `set_board_meta` | the board-level `board_meta` header (`draft.disable_drift` / `draft.judge_only`) | `disable_drift` (wholesale token list, validated; `[]` clears, `None` unchanged), `judge_only` |
 
 Three structural facts to internalize:
 
@@ -546,7 +624,29 @@ emits:
 | `racing_rung0_slice` | info | racing — surfaces the rung-0 slice size |
 | `replicates_recommended_for_brackets` | warning | bracket/swiss with `replicates < 2` |
 | `holdout_tags_cover_whole_board` | warning | every entry tagged holdout (no train entries) |
+| `duplicate_entry_id` | **refuse** | two entries share an id — `apply` would fail (`save_board` rejects duplicates) and run artifacts would collide |
+| `entry_id_unsafe` | warning | an entry id outside `^[A-Za-z0-9][A-Za-z0-9._-]*$` (ids become run directory names) |
+| `dotted_path_malformed` | warning | a predicate spec or python-judge body that does not LOOK like `pkg.module.attr` / `pkg.module:attr` — shape-check only (see the security note) |
+| `rubric_spec_invalid` | warning | a rubric spec that is not `{"rubric": str, "threshold": number\|null?, "scale": [lo, hi]?}` (mirrors the runtime parse in `board/rubric.py`) |
+| `json_schema_spec_invalid` | warning | a json_schema spec that is not valid JSON (or not an object/boolean) |
+| `entry_budget_outlier` | info | an entry's wall-clock budget > 10× the board median |
+| `judge_only_board` | info | the board_meta `judge_only` flag is set (judges observe, never steer) |
 | `margin_below_noise_floor` | **refuse** | see below |
+
+The board-authoring codes are **Python-only**: the JS twin
+(`builder/model.js::validateContract`) deliberately mirrors the entry-free
+subset only (its scope comment names the excluded codes), because the
+read-only frozen-contract preview it serves never has the full entry
+objects. Do not twin an entry-level code into the JS.
+
+> ⛔ NEVER import (or `find_spec`) an operator-supplied dotted path inside
+> `validate` — the `dotted_path_malformed` check is SHAPE-ONLY by design.
+> Resolving a module executes parent-package code, and a draft may be
+> copilot-authored, so a server-side import would hand the chat model an
+> arbitrary-code-execution path. The warning message points the operator at
+> `zicato board audit`, which exercises the path in the workspace's own
+> runtime context. The posture is recorded in `validate`'s docstring; keep
+> any future path/spec check on the shape side of that line.
 
 ### 10.5.1 The margin-vs-floor check — the one `refuse`
 
@@ -656,6 +756,21 @@ second one the builder owns:
 > the builder's local instance of the contract-hash cwd/checkout hazard
 > (12-bug-casebook.md §"Bug #10").
 
+> ⚠️ TRAP — the draft must round-trip EVERY board-file component, not just the
+> entries. The board's optional `board_meta` header (`disable_drift` /
+> `judge_only`) is part of the contract, and `apply` rewrites the whole
+> `board.jsonl`: a draft loaded through the entries-only loader would silently
+> STRIP the header from the live contract on apply (the B0 bug).
+> `TournamentDraft.from_workspace` therefore loads via
+> `load_current_board_with_meta`, the draft carries `disable_drift` /
+> `judge_only` fields, and BOTH writers (`_write_contract` and
+> `_predicted_contract_hash`) pass them to `save_board`. The draft's
+> `_board_canon` prepends the header line only-when-non-default, mirroring
+> `save_board`'s emit rule (`zicato.board.jsonl.board_meta_to_dict` is the
+> shared header builder), so the diff agrees with the on-disk bytes the
+> contract hash sees. If you add another board-level header field, thread it
+> through all four seams in the same commit.
+
 ---
 
 ## 10.6 Fork / compare — iterating on variants without rolling the epoch
@@ -707,6 +822,37 @@ hash would not see.
 > add it to BOTH the copilot's `compare` tool and any API compare path — the
 > two share the operator's mental model of "what can I compare against".
 
+### 10.6.1 Undo and revert — the two restore ops
+
+Two lifecycle ops let an operator walk edits back, and both are ops
+(invariant **L1** — the GUI's Undo/Reset buttons and the copilot's tools call
+the same functions, never a second edit path):
+
+- **`revert_to_live`** discards the session draft's edits by restoring it
+  from a fresh `TournamentDraft.from_workspace(root)`. The restore is
+  performed by `operations.restore_draft(draft, source)` — **in place**,
+  never a rebind, so a session bound to a named slot stays bound and the slot
+  itself sees the restored state. The pre-revert state is remembered first,
+  so `undo` brings the discarded edits back.
+- **`undo`** steps back one edit. `DraftStore` keeps a **bounded (20)
+  per-session history** of `_copy_draft` value snapshots; `store.remember(
+  session)` records the PRE-op state at BOTH front doors — `builder_op` calls
+  it immediately before every `_dispatch_op` write, and
+  `BuilderToolContext.draft()` (the accessor every copilot tool starts with)
+  does the same — so a form edit and a chat edit share ONE history and either
+  door can undo the other's edit. `remember` dedups against the newest
+  snapshot by field equality (a read tool records nothing); `pop_undo`
+  discards snapshots equal to the current state on the way down and hands
+  back the newest one that differs. An exhausted history yields a
+  `DraftPatch(op="undo", note="nothing to undo")` — never an error.
+
+> ✅ ALWAYS restore a draft IN PLACE (`operations.restore_draft`) rather than
+> rebinding the session to a fresh object. The store's session entry, a named
+> slot the session is on, and the copilot's bound context may all reference
+> the SAME draft object — a rebind silently detaches the session from its
+> slot and the next slot read shows stale state. This is the same reason the
+> ops mutate the draft rather than returning a new one.
+
 ---
 
 ## 10.7 The full-coverage invariant, and how it is enforced
@@ -719,13 +865,13 @@ A new contract knob is not shipped until it lands on **six** surfaces:
 | 1 | the op | `operations.py` (a `set_*` function) | code review |
 | 2 | the dispatch arm | `api.py::_dispatch_op` (an `if op == "…":` arm) | `tests/test_builder_api.py` knob-dispatch tests |
 | 3 | the copilot tool | `copilot_tools.py::DEFAULT_BUILDER_TOOLS` | **`test_default_builder_tools_registry_covers_every_op`** (machine-pinned) |
-| 4 | a GUI control | `model.js::paramSpecsFor` / `views/builder.js` section | node suite + code review |
+| 4 | a GUI control (or a documented exception) | `model.js::paramSpecsFor` / `views/builder.js` / `builder/entry_form.js` section | **`test_builder_gui_coverage.py`** (machine-pinned) + node suite |
 | 5 | a cost line (if it changes the schedule) | `operations.py::estimate_cost` + `model.js::estimateCost` | py↔js parity test |
 | 6 | a `validate` consideration (if it can be unsound) | `operations.py::validate` | `tests/test_builder_operations.py` |
 
-Surfaces 1–3 are **mechanically pinned**. The dispatch is a flat if/elif chain
+Surfaces 1–4 are **mechanically pinned**. The dispatch is a flat if/elif chain
 that falls through to a raise, so an op missing its arm is a 400 the API tests
-catch; and the copilot registry is pinned by an explicit anti-drift test:
+catch; the copilot registry is pinned by an explicit anti-drift test:
 
 ```python
 # tests/test_builder_copilot.py — test_default_builder_tools_registry_covers_every_op
@@ -735,12 +881,32 @@ catch; and the copilot registry is pinned by an explicit anti-drift test:
     API dispatch without a copilot tool fails here."""
 ```
 
-Surfaces 4–6 are **discipline plus parity**: there is no single per-knob test
-that asserts "this knob has a GUI control AND a cost line AND a validate check",
-but the py↔js cost parity test pins any cost line you add to be mirrored, and
-the design doc (`docs/design/TOURNAMENT-BUILDER.md` §"The consequence-forward
-principle") makes the cost + epoch-roll surfacing a stated requirement of the
-two builder skills.
+and the GUI surface is pinned by a second registry-derived test:
+
+```python
+# tests/test_builder_gui_coverage.py — test_every_write_op_has_a_gui_control_or_exception
+    """THE PIN: every builder write / lifecycle op is reachable from the GUI.
+    Each mutating op must appear as runOp('<op>' / postOp('<op>' in the builder
+    frontend source, or carry a justified GUI_EXCEPTIONS entry. A new op added to
+    operations.py + the copilot registry without either reds here."""
+```
+
+`test_builder_gui_coverage.py` derives the write/lifecycle op set from
+`DEFAULT_BUILDER_TOOLS` (minus the pure-read tools — `estimate_cost`, `validate`,
+`preflight`, `list_drafts`, `compare`, `preview_apply`), reads `views/builder.js`
++ `builder/entry_form.js` as TEXT, and demands each op is wired as
+`runOp('<op>'` / `postOp('<op>'` OR justified in its `GUI_EXCEPTIONS` dict. The
+one standing exception today is `add_judge` (judge authoring rides the whole-entry
+`edit_board_entry` round-trip — the entry_form judges editor — rather than a
+second authoring path). A stale exception (an op that has since gained a control)
+reds just as loudly as a missing control, so the doctrine cannot rot in either
+direction.
+
+Surfaces 5–6 are **discipline plus parity**: there is no single per-knob test
+that asserts "this knob has a cost line AND a validate check", but the py↔js cost
+parity test pins any cost line you add to be mirrored, and the design doc
+(`docs/design/TOURNAMENT-BUILDER.md` §"The consequence-forward principle") makes
+the cost + epoch-roll surfacing a stated requirement of the two builder skills.
 
 > ⛔ NEVER add an op to `operations.py` and its `_dispatch_op` arm but skip the
 > copilot tool (invariant **L2**). `test_default_builder_tools_registry_covers_
@@ -748,12 +914,13 @@ two builder skills.
 > one-line addition to `DEFAULT_BUILDER_TOOLS` (and its module `__all__`), not a
 > weakening of the test.
 
-> ✅ ALWAYS decide surface 4's "GUI control-or-documented-exception" explicitly.
-> The GUI renders every `paramSpecsFor` spec as a number input; a boolean knob
-> is a hard-coded toggle in a section builder; a knob deliberately left
-> form-invisible (an advanced/rare lever) is a documented exception, not an
-> oversight. Write down which in the op docstring so the next author does not
-> "fix" a missing control that was a choice.
+> ✅ ALWAYS decide surface 4's "GUI control-or-documented-exception" explicitly —
+> `test_builder_gui_coverage.py` now forces the choice. The GUI renders every
+> `paramSpecsFor` spec as a number input; a boolean knob is a hard-coded toggle in
+> a section builder; a knob deliberately left form-invisible (an advanced/rare
+> lever) is an entry in that test's `GUI_EXCEPTIONS` dict with a one-line
+> justification, not an oversight. A new op with neither a control nor an
+> exception reds the pin, naming the op and the two remedies.
 
 The recipe that walks all six is §10.8.
 
@@ -790,9 +957,12 @@ knob. The steps generalize to any knob.
    as a number input keyed on `min`/`max`/`step`/`int`/`removeAtZero`). If it is
    a boolean or a scoring-block field, add a hard-coded control to the relevant
    section builder in `views/builder.js` (a `checkInput` toggle, a `numInput`,
-   or a `<select>`), wired to `runOp('set_…', {…})`. If the knob is deliberately
-   form-invisible, say so in the op docstring — invariant **L2**'s "documented
-   exception".
+   or a `<select>`), wired to `runOp('set_…', {…})` (or `postOp('set_…', {…})`
+   for the board-editor ops). If the knob is deliberately form-invisible, add it
+   to `tests/test_builder_gui_coverage.py::GUI_EXCEPTIONS` with a one-line
+   justification — invariant **L2**'s "documented exception". `runOp`/`postOp`
+   with the op string is what the coverage pin greps for, so wire the string
+   literally (never build the op name dynamically).
 5. **Add the cost line if it changes the schedule.** If the knob multiplies
    per-round board runs, add a `CostLine` in `operations.py::estimate_cost` AND
    the mirror term in `builder/model.js::estimateCost` in the SAME commit
@@ -818,6 +988,9 @@ knob. The steps generalize to any knob.
    - *copilot registry* is auto-covered by
      `test_default_builder_tools_registry_covers_every_op` — run it to confirm
      your tool is in the set;
+   - *GUI coverage* is auto-covered by
+     `test_builder_gui_coverage.py::test_every_write_op_has_a_gui_control_or_exception`
+     — run it to confirm your knob has a control (or a justified exception);
    - *cost parity* — if you added a cost line, the py↔js parity test in
      `src/zicato/dashboard/static/test/builder.test.mjs` must stay green.
 9. **Verify:**
@@ -831,8 +1004,10 @@ knob. The steps generalize to any knob.
    uv run ruff check src/zicato/builder/ && uv run mypy src/zicato/builder/
    ```
    If you skipped step 3, `test_default_builder_tools_registry_covers_every_op`
-   reds — the copilot cannot reach your knob. If you skipped step 5's JS mirror,
-   the node suite reds — a frozen-contract preview would quote the wrong price.
+   reds — the copilot cannot reach your knob. If you skipped step 4,
+   `test_builder_gui_coverage.py` reds — the knob has no GUI control and no
+   documented exception. If you skipped step 5's JS mirror, the node suite reds —
+   a frozen-contract preview would quote the wrong price.
 
 **Definition of done.** The knob is editable from a form control and a chat
 turn, it prices correctly on the meter (both implementations), `validate` warns
@@ -888,6 +1063,7 @@ and the advanced/debugging commands — instead of one flat list.
 | `health.py` | `health` | — |
 | `mutations.py` | `mutations` | — |
 | `propose.py` | `propose` | — |
+| `reflect.py` | `reflect` (group) | `run`, `report`, `apply` — board reflection (BOARD-REFLECTION.md R4); `apply` reaches the builder via `zicato.reflection.apply` (a library edge), not a direct `cli → builder` import |
 | `register.py` | `register` | — |
 | `tournament.py` | `tournament` | — |
 | `reindex.py` | `reindex`, `reindex-generations`, `repair-tournament-fk` | — |

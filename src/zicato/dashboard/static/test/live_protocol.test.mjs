@@ -26,6 +26,7 @@
 // LiveController) with inline fixtures — no live run, no network.
 
 import { installDom, test, run, assert, assertEqual } from './harness.mjs';
+const mock = await import('./mock_server.mjs');
 
 installDom();
 
@@ -80,7 +81,8 @@ function serialize(node) {
 // Render the single-round structure figure for a payload + return the figure host
 // (a div containing all sections). Drives the REAL renderStructure dispatch.
 function renderSingleRound(payload, liveFlag) {
-  const st = STRUCT.normalizeStructure(payload, !!liveFlag);
+  // PLAY THE SERVER: a served structure payload carries the elim model.
+  const st = STRUCT.normalizeStructure(mock.attachElimStates({ ...payload }), !!liveFlag);
   const host = document.createElement('div');
   for (const n of STRUCT.renderStructure(st, CTX, EPOCH)) if (n) host.appendChild(n);
   return host;
@@ -88,9 +90,11 @@ function renderSingleRound(payload, liveFlag) {
 
 // Drive a LiveController one tick + return its structure-figure host node.
 function heroFigure(controller, { activeTournament, heartbeat, activeRuns }) {
+  // PLAY THE SERVER: /api/active-tournament carries the served elim model.
+  const served = activeTournament ? mock.attachElimStates({ ...activeTournament }) : activeTournament;
   controller.update({
-    status: { running: true, structure: activeTournament && activeTournament.structure },
-    heartbeat, activeRuns: activeRuns || [], activeTournament,
+    status: { running: true, structure: served && served.structure },
+    heartbeat, activeRuns: activeRuns || [], activeTournament: served,
   });
   return controller._funnelHost;
 }
@@ -301,7 +305,8 @@ test('gauntlet — the live hero renders the field-bars mini (the default-struct
 });
 
 // ===========================================================================
-// SINGLE-ELIM — radial (single-round PRIMARY + hero) + flow (secondary).
+// SINGLE-ELIM — elimFlow (single-round figure + hero). The radial figure was
+// retired (C1); single- and double-elim both render the elimFlow lane read.
 // ===========================================================================
 
 const ELIM_SETTLED = {
@@ -334,37 +339,37 @@ function elimLive(stage) {
   return r;
 }
 
-test('single-elim — single-round radial renders each lifecycle stage (in-flight semifinal cut → live final → settled crown)', () => {
+test('single-elim — single-round elimFlow renders each lifecycle stage (in-flight semifinal cut → live final → settled crown)', () => {
   // live: a decided semifinal eliminates a lane (✕), the final is still deciding.
   const f = renderSingleRound(elimLive('inflight'), true);
-  const radial = svgsByClass(f, 'dn-elimradial')[0];
-  assert(radial, 'live: the radial bracket renders');
-  assert(/✕/.test(textOf(radial)), 'live: a decided semifinal cut shows ✕ in the radial');
-  assert(nodesByClass(radial, 'dn-elimradial-pending').length >= 1, 'live: the in-flight final reads as pending (not falsely decided)');
+  const flow = svgsByClass(f, 'dn-elimflow')[0];
+  assert(flow, 'live: the elimFlow bracket renders');
+  assert(/✕/.test(textOf(flow)), 'live: a decided semifinal cut shows ✕ in the flow');
+  assert(nodesByClass(flow, 'dn-elimflow-conv-pending').length >= 1, 'live: the in-flight final reads as pending (not falsely decided)');
 
-  // settled: the survivor reaches the center gate with a crown, no pending spokes.
+  // settled: the survivor reaches the gate, no pending convergences remain.
   const s = renderSingleRound(ELIM_SETTLED, false);
-  const radialS = svgsByClass(s, 'dn-elimradial')[0];
-  assert(radialS, 'settled: the radial bracket renders');
-  assert(nodesByClass(radialS, 'dn-elimradial-pending').length === 0, 'settled: NO pending spokes remain (committed)');
-  assert(/✕/.test(textOf(radialS)), 'settled: the eliminated lanes still read ✕');
+  const flowS = svgsByClass(s, 'dn-elimflow')[0];
+  assert(flowS, 'settled: the elimFlow bracket renders');
+  assert(nodesByClass(flowS, 'dn-elimflow-conv-pending').length === 0, 'settled: NO pending convergences remain (committed)');
+  assert(/✕/.test(textOf(flowS)), 'settled: the eliminated lanes still read ✕');
 });
 
-test('single-elim — live hero renders the radial mini + emits the ✕ elimination glyph', () => {
+test('single-elim — live hero renders the elimFlow mini + emits the ✕ elimination glyph', () => {
   const c = new live.LiveController({});
   const figHost = heroFigure(c, { activeTournament: elimLive('inflight'), heartbeat: hb({ phase: 'tournament:round_1' }),
     activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1' }] });
-  const radial = svgsByClass(figHost, 'dn-elimradial')[0];
-  assert(radial, 'hero: the single-elim mini is the radial');
-  assert(/✕/.test(textOf(radial)), 'hero: the decided semifinal emits ✕');
+  const flow = svgsByClass(figHost, 'dn-elimflow')[0];
+  assert(flow, 'hero: the single-elim mini is the elimFlow');
+  assert(/✕/.test(textOf(flow)), 'hero: the decided semifinal emits ✕');
   assertEqual(svgsByClass(figHost, 'dn-scalartrack').length, 0, 'hero: no racing scalar track for an elim run');
-  // FULL-WIDTH HERO: the radial scales aspect-locked; as a SQUARE figure its
-  // svg.dn-elimradial-hero cap centres it under the cap (margin-inline:auto).
-  assertHeroResponsive(radial, 'dn-elimradial-hero', 'single-elim hero');
+  // FULL-WIDTH HERO: the elimFlow fills the width (aspect-locked) via width:100%
+  // + the svg.dn-elimflow-hero cap.
+  assertHeroResponsive(flow, 'dn-elimflow-hero', 'single-elim hero');
 });
 
 // ===========================================================================
-// DOUBLE-ELIM — the elimFlow combo (single-round PRIMARY + hero) + radial toggle.
+// DOUBLE-ELIM — the elimFlow combo (single-round figure + hero).
 // ===========================================================================
 
 const DELIM_SETTLED = {
@@ -402,16 +407,16 @@ function delimLive() {
   return r;
 }
 
-test('double-elim — single-round elimFlow combo renders the WB→LB drop + the live GF, and the radial toggle is offered', () => {
+test('double-elim — single-round elimFlow combo renders the WB→LB drop + the live GF (C1: no radial toggle)', () => {
   const f = renderSingleRound(delimLive(), true);
   const flow = svgsByClass(f, 'dn-elimflow')[0];
   assert(flow, 'live: the double-elim flow renders');
   // the WB→LB drop connector is present (a rounded path, marked a drop).
   const dropSegs = nodesByClass(flow, 'dn-elimflow-seg-drop');
   assert(dropSegs.length >= 1, 'live: at least one WB→LB drop connector is drawn (the second-life edge)');
-  // the radial is ALSO offered (the non-default toggle / companion).
-  const radial = svgsByClass(f, 'dn-elimradial')[0];
-  assert(radial, 'the radial double-elim view is offered alongside the flow');
+  // C1: the radial figure + its combo/radial toggle were retired — flow only.
+  assertEqual(svgsByClass(f, 'dn-elimradial').length, 0, 'no radial figure remains (C1)');
+  assertEqual(nodesByClass(f, 'dt-fig-switch').length, 0, 'no figure-variant toggle remains (C1)');
 
   const s = renderSingleRound(DELIM_SETTLED, false);
   const flowS = svgsByClass(s, 'dn-elimflow')[0];
@@ -419,12 +424,12 @@ test('double-elim — single-round elimFlow combo renders the WB→LB drop + the
   assert(/✕/.test(textOf(flowS)), 'settled: the true (second-loss) eliminations read ✕');
 });
 
-test('double-elim — live hero KEEPS the elimFlow combo (not the radial)', () => {
+test('double-elim — live hero renders the elimFlow combo', () => {
   const c = new live.LiveController({});
   const figHost = heroFigure(c, { activeTournament: delimLive(), heartbeat: hb({ phase: 'tournament:round_4' }),
     activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1' }] });
   assert(svgsByClass(figHost, 'dn-elimflow')[0], 'hero: the double-elim mini is the elimFlow combo (WB/LB drops visible)');
-  assertEqual(svgsByClass(figHost, 'dn-elimradial').length, 0, 'hero: the radial is the single-elim mini, NOT double-elim');
+  assertEqual(svgsByClass(figHost, 'dn-elimradial').length, 0, 'hero: no radial figure remains (C1)');
   // FULL-WIDTH HERO: the WB/LB flow combo fills the width (aspect-locked) like
   // racing's scalar track — width:100% + the svg.dn-elimflow-hero cap.
   assertHeroResponsive(svgsByClass(figHost, 'dn-elimflow')[0], 'dn-elimflow-hero', 'double-elim hero');
@@ -516,7 +521,7 @@ test('swiss — live hero renders the swiss ladder mini', () => {
 // classes (racing is asserted in live_racing_sequence.test.mjs).
 const NONRACING_HERO_CASES = [
   ['swiss', () => swissLive('projected'), 'tournament:round_1', 'dn-swissladder', 'dn-swissladder-hero'],
-  ['single_elim', () => elimLive('inflight'), 'tournament:round_1', 'dn-elimradial', 'dn-elimradial-hero'],
+  ['single_elim', () => elimLive('inflight'), 'tournament:round_1', 'dn-elimflow', 'dn-elimflow-hero'],
   ['double_elim', () => delimLive(), 'tournament:round_4', 'dn-elimflow', 'dn-elimflow-hero'],
   ['gauntlet', () => gauntletLive('projected'), 'tournament:round_0', 'dn-fieldbars', 'dn-fieldbars-hero'],
 ];
@@ -558,7 +563,7 @@ test('full-width hero — a no-op heartbeat repeat churns NO hero-figure DOM for
 const CONVERGENCE_CASES = [
   ['racing', RACING_SETTLED, 'dn-scalartrack'],
   ['gauntlet', GAUNTLET_SETTLED, 'dn-fieldbars'],
-  ['single_elim', ELIM_SETTLED, 'dn-elimradial'],
+  ['single_elim', ELIM_SETTLED, 'dn-elimflow'],
   ['double_elim', DELIM_SETTLED, 'dn-elimflow'],
   ['swiss', SWISS_SETTLED, 'dn-swissladder'],
 ];
@@ -967,6 +972,36 @@ test('hero redesign — render discipline: a no-op heartbeat churns ZERO DOM (th
   assert(c._matchesBody.firstChild === matchesNode0, 'the "what\'s running" match rows node identity is preserved');
   assert(c.ticker._list === tickerList0, 'the activity ticker list is the same node');
   assertEqual(nodesByClass(c.ticker.node, 'dt-ticker-row').length, tickerRows0, 'a no-op tick appends NO new activity rows (zero DOM churn)');
+});
+
+test('hero redesign F10: an alive→idle→alive flap of the SAME runs keeps the feed; a NEW run set resets it', () => {
+  const c = new live.LiveController({});
+  const at = JSON.parse(JSON.stringify(HERO_RUNG2_AT));
+  const beat = hb({ phase: 'tournament:round_1:rung1_m0' });
+  // spy on the ticker reset so we can pin the gate decision precisely.
+  let resets = 0;
+  const origReset = c.ticker.reset.bind(c.ticker);
+  c.ticker.reset = () => { resets += 1; origReset(); };
+  const tick = (alive, runs) => c.update({
+    status: { running: alive, alive, structure: 'racing', inFlight: runs.length },
+    heartbeat: beat, activeRuns: runs, activeTournament: at,
+  });
+  const runsA = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1' }];
+  // 1. the cold-start ALIVE tick resets once and lists the running matchup.
+  tick(true, runsA);
+  assertEqual(resets, 1, 'the cold-start alive tick resets the feed once');
+  const rowsAlive = nodesByClass(c.ticker.node, 'dt-ticker-row').length;
+  assert(rowsAlive >= 1, 'the alive feed lists the running matchup');
+  // 2. IDLE (a heartbeat stall) — the SAME runs are still in flight.
+  tick(false, runsA);
+  // 3. ALIVE again, SAME runs → NO reset (a flap must not blank a running feed).
+  tick(true, runsA);
+  assertEqual(resets, 1, 'the SAME-runs alive→idle→alive flap does NOT reset the ticker');
+  assert(nodesByClass(c.ticker.node, 'dt-ticker-row').length >= rowsAlive, 'the still-running feed survives the flap (no momentary blank)');
+  // 4. IDLE, then ALIVE with a DISJOINT run set → a genuine new run resets.
+  tick(false, runsA);
+  tick(true, [{ generation_id: 'v9', entry_id: 'b3', run_id: 'r9' }]);
+  assertEqual(resets, 2, 'a NEW (disjoint) run set after an idle gap resets the feed');
 });
 
 await run();

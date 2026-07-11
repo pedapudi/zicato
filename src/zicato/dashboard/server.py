@@ -335,6 +335,21 @@ def create_app(
             "/api/run/{epoch_id}/{generation_id}/{entry_id}/transcript",
             handlers["api_run_transcript"],
         ),
+        # Instrument-lens (board-reflection) surface — self-contained block so
+        # the concurrent endpoints.py thinning (track U2) merges additively.
+        Route("/api/reflections", handlers["api_reflections"]),
+        Route(
+            "/api/reflection/{reflection_id}/summary",
+            handlers["api_reflection_summary"],
+        ),
+        Route(
+            "/api/reflection/{reflection_id}/scorecards",
+            handlers["api_reflection_scorecards"],
+        ),
+        Route(
+            "/api/reflection/{reflection_id}/xray/{judge_name}/{run_ref}",
+            handlers["api_reflection_xray"],
+        ),
         Route("/events", events),
         Route("/api/control/pause", handlers["control_pause"], methods=["POST"]),
         Route("/api/control/resume", handlers["control_resume"], methods=["POST"]),

@@ -504,7 +504,26 @@ def test_bundle_under_size_envelope(
     # endpoints — the Rust supervisor — render byte-identical to today). ~30 KB of
     # new loop-communication surface. The envelope is raised to 1.29 MB to cover
     # it with headroom.
-    assert total < 1_290_000, f"bundle is {total} bytes, exceeds 1_290_000 envelope"
+    #
+    # The BUILDER KNOB-GUI completion (B3) then closes the remaining copilot-only
+    # contract knobs in the builder view: the weights scalar rows (default-judge /
+    # plan-revision / runtime) + the severity / per-kind / per-judge mapping
+    # editors (fixed vocab rows + a per-judge/namespace add-key row that fixes the
+    # iterate-existing-only gap), the gate's namespace-monotonicity mapping editor,
+    # the overfitting board-refresh ceiling, the proposer picker (discovered dirs +
+    # builtin default + a free-text path) with a rewritten lede, the slot strip's
+    # revert-to-live + undo lifecycle controls, and the racing rung0_board_size
+    # param spec — plus their scoped CSS. ~8 KB of new control surface; the
+    # envelope is raised to 1.31 MB to cover it with headroom.
+    #
+    # The INSTRUMENT LENS (R5) then lands the board-reflection view alongside the
+    # B3 knob GUI in the same program integration: views/instrument.js (the
+    # reflection landing / bill-of-health / judge-audit / transcript x-ray), its
+    # router/tree/shell registration, the reflection data accessors, and the
+    # scoped dn-instr-* CSS — ~22 KB. Each wave's raise accounted only for its
+    # own additions, so the merged program needs the union: the envelope is
+    # raised to 1.35 MB to cover both with headroom.
+    assert total < 1_350_000, f"bundle is {total} bytes, exceeds 1_350_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

@@ -142,6 +142,72 @@ class WorkspaceLayout:
         """One epoch's ``generations/`` directory."""
         return self.epoch_dir(epoch_id) / "generations"
 
+    # -- board reflection ----------------------------------------------------
+
+    def reflections_dir(self, epoch_id: str) -> Path:
+        """One epoch's board-reflection subtree (``reflections/``).
+
+        Holds one sub-directory per reflection run, keyed by its
+        ``reflection_id`` — the frozen observation corpus + analysis a
+        board-reflection produces for the sealed contract (see
+        BOARD-REFLECTION.md's data model). Created lazily by the reflection
+        engine; readers tolerate its absence (an epoch that was never
+        reflected has no directory).
+        """
+        return self.epoch_dir(epoch_id) / "reflections"
+
+    def reflection_dir(self, epoch_id: str, reflection_id: str) -> Path:
+        """The directory holding ONE reflection run's artifacts."""
+        return self.reflections_dir(epoch_id) / reflection_id
+
+    def reflection_plan(self, epoch_id: str, reflection_id: str) -> Path:
+        """One reflection's pre-registered run plan (``plan.json``)."""
+        return self.reflection_dir(epoch_id, reflection_id) / "plan.json"
+
+    def reflection_corpus(self, epoch_id: str, reflection_id: str) -> Path:
+        """One reflection's observation corpus (``corpus.jsonl``).
+
+        One :class:`~zicato.reflection.corpus.ObservationRun` per line —
+        each REFERENCING the run artifacts under ``generations/`` rather
+        than copying them.
+        """
+        return self.reflection_dir(epoch_id, reflection_id) / "corpus.jsonl"
+
+    def reflection_adjudication_dir(self, epoch_id: str, reflection_id: str) -> Path:
+        """One reflection's meta-judge adjudication subtree (``adjudication/``).
+
+        Holds one sub-directory per judge name, each with one JSON file per
+        adjudicated decision keyed by ``run_ref`` — the per-decision
+        meta-judge verdict (BOARD-REFLECTION.md's data model). The corpus is
+        frozen per ``reflection_id``, so a present file is a cache HIT: a
+        re-run of the same reflection re-reads it and spends no adjudicator
+        budget. Created lazily; readers tolerate its absence.
+        """
+        return self.reflection_dir(epoch_id, reflection_id) / "adjudication"
+
+    def reflection_adjudication(
+        self, epoch_id: str, reflection_id: str, judge_name: str, run_ref: str
+    ) -> Path:
+        """One adjudicated decision's verdict file.
+
+        ``adjudication/{judge_name}/{run_ref}.json`` where ``run_ref`` is
+        ``{candidate}:{entry}:r{replicate}`` — the stable key of the judge
+        decision under review.
+        """
+        return (
+            self.reflection_adjudication_dir(epoch_id, reflection_id)
+            / judge_name
+            / (f"{run_ref}.json")
+        )
+
+    def reflection_scorecards(self, epoch_id: str, reflection_id: str) -> Path:
+        """One reflection's aggregated per-judge scorecards (``scorecards.json``)."""
+        return self.reflection_dir(epoch_id, reflection_id) / "scorecards.json"
+
+    def reflection_findings(self, epoch_id: str, reflection_id: str) -> Path:
+        """One reflection's ranked findings + proposed edits (``findings.json``)."""
+        return self.reflection_dir(epoch_id, reflection_id) / "findings.json"
+
     # -- per-generation ------------------------------------------------------
 
     def generation_dir(self, epoch_id: str, generation_id: str) -> Path:
@@ -177,6 +243,16 @@ class WorkspaceLayout:
     def loss(self, epoch_id: str, generation_id: str, entry_id: str) -> Path:
         """One run's reducer ``loss.json`` output."""
         return self.run_dir(epoch_id, generation_id, entry_id) / "loss.json"
+
+    def result(self, epoch_id: str, generation_id: str, entry_id: str) -> Path:
+        """One run's persisted ``result.json`` (the RunResult capture).
+
+        The canonical (replicate 0) slot; replicate ``r>0`` maps to the
+        sibling ``result.r{n}.json`` via
+        :func:`zicato.tournament.unit_cache.unit_result_path`, exactly
+        mirroring how :meth:`loss` relates to ``loss.r{n}.json``.
+        """
+        return self.run_dir(epoch_id, generation_id, entry_id) / "result.json"
 
     def events(self, epoch_id: str, generation_id: str, entry_id: str) -> Path:
         """One run's goldfive event JSONL (``events.jsonl``)."""

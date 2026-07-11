@@ -35,6 +35,15 @@ function clickable(node, fn) {
   return node;
 }
 
+// A centered "no data yet" placeholder label appended to `parent` (an <svg>)
+// and returned — the ~15 identical empty-state blocks every figure shared (U5).
+function emptyState(parent, width, height, label) {
+  const t = svgEl('text', { x: width / 2, y: height / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
+  t.textContent = label;
+  parent.appendChild(t);
+  return parent;
+}
+
 // ---- numeric helpers ------------------------------------------------
 
 export function isNum(v) { return typeof v === 'number' && isFinite(v); }
@@ -58,6 +67,50 @@ export function scale(domain, range) {
   const [r0, r1] = range;
   const span = d1 - d0 || 1;
   return (x) => r0 + ((x - d0) / span) * (r1 - r0);
+}
+
+// ── digestOpts — the SINGLE generic figure-opts digest (U5) ───────────
+//
+// The one content digest that replaced the per-figure hand-rolled `*Digest`
+// folds. Its rules are each LOAD-BEARING for the digest-gated no-op guarantee
+// (a no-op heartbeat must produce a byte-identical digest so the gate does
+// ZERO DOM writes):
+//   * FUNCTIONS ARE DROPPED — figure opts carry per-render callbacks
+//     (onCompetitor / onClick / onRound, a heatmap `value` accessor). A fresh
+//     closure every render would flip the digest on every beat; dropping them
+//     is the rule that keeps the gate quiet.
+//   * KEY-SORTED so object key order never perturbs the string.
+//   * a non-integer finite number rounds to 3dp — sub-precision jitter (a
+//     re-derived scalar wobbling in the 4th place) must NOT flip the digest.
+//   * NaN / undefined → null (a stable, JSON-safe sentinel; ±Infinity too).
+//   * `omit` names TOP-LEVEL opts keys to exclude (mode flags / volatile
+//     fields a given figure's fold deliberately ignored) so each wrapper keeps
+//     its own fold semantics.
+export function digestOpts(opts, omit = []) {
+  const drop = new Set(Array.isArray(omit) ? omit : []);
+  const norm = (v) => {
+    if (typeof v === 'function') return undefined; // DROPPED (load-bearing)
+    if (typeof v === 'number') return isFinite(v) ? (Number.isInteger(v) ? v : Number(v.toFixed(3))) : null;
+    if (v === undefined || v === null) return null;
+    if (Array.isArray(v)) return v.map((x) => { const n = norm(x); return n === undefined ? null : n; });
+    if (typeof v === 'object') {
+      const out = {};
+      for (const k of Object.keys(v).sort()) {
+        const n = norm(v[k]);
+        if (n !== undefined) out[k] = n; // a dropped function simply vanishes
+      }
+      return out;
+    }
+    return v; // string / boolean
+  };
+  const top = (opts && typeof opts === 'object') ? opts : {};
+  const root = {};
+  for (const k of Object.keys(top).sort()) {
+    if (drop.has(k)) continue;
+    const n = norm(top[k]);
+    if (n !== undefined) root[k] = n;
+  }
+  return JSON.stringify(root);
 }
 
 export function fmt(v, digits) {
@@ -476,10 +529,7 @@ export function bumps(opts) {
   const padX = 44; const spineY = h * 0.40; const challY = h * 0.80;
   const svg = svgEl('svg', { class: 'dn-bumps', width: '100%', height: h, viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMidYMid meet', role: 'img' });
   if (nodes.length === 0) {
-    const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no generations yet';
-    svg.appendChild(t);
-    return svg;
+    return emptyState(svg, w, h, 'no generations yet');
   }
   const maxX = Math.max(1, ...nodes.map((n) => n.x || 0));
   const X = scale([0, maxX], [padX, w - padX]);
@@ -892,10 +942,7 @@ export function pairedSlopegraph(opts) {
 
   const svg = svgEl('svg', { class: 'dn-pslope', width: '100%', height: h, viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMidYMin meet', role: 'img' });
   if (series.length === 0) {
-    const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no paired board duels yet';
-    svg.appendChild(t);
-    return svg;
+    return emptyState(svg, w, h, 'no paired board duels yet');
   }
   const allVals = [];
   for (const s of series) { if (isNum(s.a)) allVals.push(s.a); if (isNum(s.b)) allVals.push(s.b); }
@@ -1001,10 +1048,7 @@ export function survivalFunnel(opts) {
     viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMinYMin meet', role: 'img',
   }, o, w, h, 'dn-funnel-hero'));
   if (rungs.length === 0) {
-    const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no rungs yet';
-    svg.appendChild(t);
-    return svg;
+    return emptyState(svg, w, h, 'no rungs yet');
   }
   // CHAMPION / v0 BENCHMARK caption — make explicit that the field is raced vs
   // the reigning champion (v0), that every Δ is vs v0, and that v0 defends at
@@ -1275,10 +1319,7 @@ export function swissLadder(opts) {
     svg.appendChild(bt);
   }
   if (rounds.length === 0 && standings.length === 0) {
-    const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no swiss rounds yet';
-    svg.appendChild(t);
-    return svg;
+    return emptyState(svg, w, h, 'no swiss rounds yet');
   }
   const headTop = top + benchH;
   const colX = (j) => j * (colW + colGap) + 2;
@@ -1447,126 +1488,82 @@ export function swissLadder(opts) {
 //     displaced incumbent (benchmark) reads CROWN.former.
 //   * a still-pending (live) leg is drawn dashed (the pending convention).
 //
-// Derived PURELY from elimModel(st)'s winners rounds + competitors (single
-// source — no new data path). `opts`:
-//   { winners:[{label, matches:[{competitors, winner, decision, pending, bye}]}],
+// Reads the SERVED elim model verbatim (DQ1: the server computes, the client
+// renders): `rounds` arrive PRE-SORTED (temporal WB → LB → GF) with a per-round
+// `bracket_side`, per-match `loser`, and duplicates already collapsed; the
+// per-generation states (played / advanced / lost / eliminated-vs-dropped /
+// side / LB entry / projected) arrive as the top-level `gen_states` fold
+// (`derive_elim_states`, mirrored in the Rust supervisor + the node mock).
+// The client-side re-sort, dedupe, elimination-vs-drop pass, and phantom-✕
+// guards that used to live here are DELETED — this figure is geometry only.
+// `opts`:
+//   { rounds:[{label, bracket_side, matches:[{competitors, winner, loser,
+//       decision, pending, bye, projected}]}],
+//     gen_states:[{generation_id, played_rounds, advanced_rounds, lost_rounds,
+//       eliminated_at_round, side_by_round, lb_entry_round, projected}],
 //     championId, benchmarkId, gateState, live, onCompetitor(id) }
 export function elimFlow(opts) {
   const o = opts || {};
-  // COLUMN ORDER must be TEMPORAL (by round_index), not the caller's band
-  // concatenation order. The double-elim caller passes winners.concat(losers),
-  // which lists the GRAND FINAL (a winners' band) BEFORE the losers' bracket
-  // rounds — so the losers' columns rendered to the RIGHT of the gate-bound
-  // final, the winners→losers DROP edges pointed backwards, and a dropped lane's
-  // dots were left orphaned. Sorting by round_index restores WB → LB → GF order
-  // so every advancement / drop edge runs left-to-right into its real target.
-  const rounds = (Array.isArray(o.winners) ? o.winners : [])
-    .filter((r) => r && Array.isArray(r.matches))
-    .map((r, i) => ({ r, i }))
-    .sort((a, b) => {
-      const ra = isNum(a.r.round_index) ? a.r.round_index : a.i;
-      const rb = isNum(b.r.round_index) ? b.r.round_index : b.i;
-      return ra - rb || a.i - b.i;
-    })
-    .map((x) => x.r);
+  // COLUMN ORDER is the SERVED order — the server pre-sorts by round index
+  // (temporal WB → LB → GF), so column ci here == the round's index in the
+  // payload == the gen_states round references. No client re-sort.
+  const rounds = Array.isArray(o.rounds) ? o.rounds : [];
   const live = !!o.live;
   const champId = o.championId != null ? String(o.championId) : null;
   const benchId = o.benchmarkId != null ? String(o.benchmarkId) : null;
 
-  // ── derive each generation's per-round state from the winners rounds ──
-  // For each round we record, per competitor that PLAYED in it: advanced (won),
-  // eliminated (lost a decided match), or pending (the match is still in flight).
-  // R = rounds.length columns + 1 gate column.
   const nCols = rounds.length;
-  // gen id → { firstCol, lastCol, eliminatedAt, advancedThrough:Set, pendingAt:Set }
-  const genState = new Map();
-  const ensure = (id) => {
-    const k = String(id);
-    if (!genState.has(k)) genState.set(k, { id: k, played: new Set(), advanced: new Set(), lostAt: new Set(), eliminatedAt: null, pendingAt: new Set(),
-      // double-elim: which band columns a lane plays in, keyed by side, + the
-      // exact column it RE-ENTERS the losers' bracket (the first LB column it
-      // plays) so a WB→LB drop can route into that node's TOP.
-      sideOf: new Map(), lbEntryCol: null });
-    return genState.get(k);
-  };
-  // the per-round MATCHES (a two-lane convergence each): two competitors meet, the
-  // winner's lane continues, the loser's terminates. Captured here so the figure
-  // can draw the bracket-as-flow convergence node + carry the pairing onto HOVER.
-  const matchesByCol = rounds.map(() => []);
-  // double-elim: each column's bracket side (WB / LB), inferred from its matches'
-  // bracket_slot. A column with any LB-slotted match is an LB (losers') column.
-  const colSide = rounds.map(() => 'WB');
-  let anyLB = false;
-  rounds.forEach((r, ci) => {
-    for (const m of (Array.isArray(r.matches) ? r.matches : [])) {
+  // each column's bracket side + the match-node layer, read off the payload.
+  const colSide = rounds.map((r) => ((r && r.bracket_side) === 'LB' ? 'LB' : 'WB'));
+  const isDouble = colSide.indexOf('LB') >= 0;
+  // the per-round MATCHES (a two-lane convergence each): competitors + the
+  // SERVED winner/loser pair, with the live in-flight state per leg. A bye /
+  // placeholder (fewer than two named competitors) draws no convergence node.
+  const matchesByCol = rounds.map((r, ci) => (r && Array.isArray(r.matches) ? r.matches : [])
+    .map((m) => {
       const comps = (Array.isArray(m.competitors) ? m.competitors : []).map(String).filter((c) => c && c !== 'tbd');
+      if (comps.length < 2 || m.bye) return null;
       const winner = m.winner ? String(m.winner) : null;
       const pending = !!m.pending || (!winner && !m.bye && !m.decision);
-      const slot = String(m.bracket_slot || '');
-      const isLB = slot.startsWith('LB');
-      if (isLB) { colSide[ci] = 'LB'; anyLB = true; }
-      // a real two-lane convergence (not a bye / placeholder) is recorded for the
-      // match-node layer; a winner+loser pair, with the live state per leg.
-      if (comps.length >= 2 && !m.bye) {
-        const loser = winner ? comps.find((c) => c !== winner) || null : null;
-        matchesByCol[ci].push({ comps, winner, loser, pending, delta: isNum(m.delta_scalar) ? m.delta_scalar : null,
-          slot: m.bracket_slot || m.match_id || '', isLB,
-          // the per-side live PROJECTED standing on an in-flight match.
-          projected: (m.projected && typeof m.projected === 'object') ? m.projected : null });
-      }
-      for (const c of comps) {
-        const g = ensure(c);
-        g.played.add(ci);
-        g.sideOf.set(ci, isLB ? 'LB' : 'WB');
-        if (isLB && g.lbEntryCol == null) g.lbEntryCol = ci;
-        if (pending) { g.pendingAt.add(ci); continue; }
-        if (m.bye) { g.advanced.add(ci); continue; }
-        if (winner && c === winner) g.advanced.add(ci);
-        else if (winner) g.lostAt.add(ci);   // a decided loss in THIS column
-      }
-    }
-  });
-  // ROBUSTNESS: a published round can carry DEGENERATE/duplicate matches — the
-  // backend has been observed emitting the SAME match twice in one column (an
-  // identical bracket_slot + competitor pair, e.g. LB-R1-0 listed twice). Left
-  // alone, each duplicate draws its OWN convergence elbow + node STACKED on the
-  // first, so one match reads as two overlapping convergences. Dedupe each column
-  // by a stable match key (slot + sorted competitors — the match_id is already
-  // folded into `slot`), keeping the MOST-DECIDED instance (a settled winner beats
-  // a still-pending duplicate). Genuinely distinct matches that merely share a
-  // column (different competitors, or a different slot) keep distinct keys, so
-  // normal / non-duplicated data is byte-identical (no reassignment when nothing
-  // collapses).
-  matchesByCol.forEach((matches, ci) => {
-    if (matches.length < 2) return;
-    const byKey = new Map();
-    for (const m of matches) {
-      const key = String(m.slot) + '|' + m.comps.map(String).slice().sort().join('/');
-      const prev = byKey.get(key);
-      // keep the more-decided of a duplicate pair: a settled (non-pending) match
-      // wins over a pending one; otherwise the first-seen instance stays.
-      if (!prev || (prev.pending && !m.pending)) byKey.set(key, m);
-    }
-    if (byKey.size !== matches.length) matchesByCol[ci] = [...byKey.values()];
-  });
-  const isDouble = anyLB;
-  // ELIMINATION vs DROP (double-elim correctness): a generation is ELIMINATED at
-  // a column only when it lost there AND never plays again in a LATER column. An
-  // earlier loss that is followed by a later appearance is a winners→losers DROP
-  // (the "second life"), not a termination — so it must keep its lane, connect to
-  // its losers'-bracket entry by a drop edge, and NOT draw a phantom ✕ in the WB.
-  // A single-elim loss has no later column, so it stays a true elimination.
-  for (const g of genState.values()) {
-    const lost = [...g.lostAt].sort((a, b) => a - b);
-    const lastPlayed = g.played.size ? Math.max(...g.played) : -1;
-    for (const ci of lost) {
-      if (ci >= lastPlayed) { g.eliminatedAt = ci; break; }  // no later column → eliminated here
+      return { comps, winner, loser: m.loser != null ? String(m.loser) : null, pending,
+        delta: isNum(m.delta_scalar) ? m.delta_scalar : null,
+        slot: m.bracket_slot || m.match_id || '', isLB: colSide[ci] === 'LB',
+        // the per-side live PROJECTED standing on an in-flight match.
+        projected: (m.projected && typeof m.projected === 'object') ? m.projected : null };
+    })
+    .filter((m) => m));
+
+  // ── the per-generation states, read VERBATIM from the served fold ──
+  // gen id → { played, advanced, lostAt (Sets of column indices), eliminatedAt,
+  // sideOf (col → WB|LB), lbEntryCol }. `pendingAt` is the residue: a played
+  // column that is neither an advance nor a loss is still in flight.
+  const genState = new Map();
+  for (const gs of (Array.isArray(o.gen_states) ? o.gen_states : [])) {
+    if (!gs || gs.generation_id == null) continue;
+    const sideOf = new Map();
+    const sbr = (gs.side_by_round && typeof gs.side_by_round === 'object') ? gs.side_by_round : {};
+    for (const k of Object.keys(sbr)) sideOf.set(Number(k), sbr[k] === 'LB' ? 'LB' : 'WB');
+    const played = new Set(Array.isArray(gs.played_rounds) ? gs.played_rounds : []);
+    const advanced = new Set(Array.isArray(gs.advanced_rounds) ? gs.advanced_rounds : []);
+    const lostAt = new Set(Array.isArray(gs.lost_rounds) ? gs.lost_rounds : []);
+    const pendingAt = new Set([...played].filter((ci) => !advanced.has(ci) && !lostAt.has(ci)));
+    genState.set(String(gs.generation_id), {
+      id: String(gs.generation_id), played, advanced, lostAt, pendingAt,
+      eliminatedAt: isNum(gs.eliminated_at_round) ? gs.eliminated_at_round : null,
+      sideOf, lbEntryCol: isNum(gs.lb_entry_round) ? gs.lb_entry_round : null,
+    });
+  }
+  // per-generation live PROJECTED standing: the SERVED gen-state projection
+  // seeds it; a pending match's own `projected` map (the live overlay the
+  // client stamps from SSE-fresh board progress — in-flight DECORATION, not
+  // re-derivation) refreshes it, since the runner can write a projection
+  // after the server's last publish.
+  const projByGen = new Map();
+  for (const gs of (Array.isArray(o.gen_states) ? o.gen_states : [])) {
+    if (gs && gs.generation_id != null && gs.projected && isNum(gs.projected.scalar)) {
+      projByGen.set(String(gs.generation_id), gs.projected);
     }
   }
-  // per-generation live PROJECTED standing (from an in-flight match's
-  // `projected` map): the latest column's projected row wins. Drives the
-  // lane's "projected" treatment (dashed/~prefix) + scored sub-bar.
-  const projByGen = new Map();
   matchesByCol.forEach((matches) => {
     for (const m of matches) {
       if (!m.projected || !m.pending) continue;
@@ -1590,19 +1587,15 @@ export function elimFlow(opts) {
 
   // ── WB→LB DEMOTION EDGES (pre-pass) ──
   // A dropped lane (lost a WB column, plays again in a later LB column) threads
-  // from its WB-loss dot into its LB re-entry node. These connectors used to dip
-  // a half-row beneath the SOURCE lane and run across there — straight through the
-  // rows of every lane physically between the two columns, and, with two losers
-  // demoted from one node, across each other. We instead route ALL of them through
-  // a reserved CHANNEL below the whole stack, each on its own horizontal lane.
-  // Collected here (before geometry) so the channel count sizes the figure.
+  // from its WB-loss dot into its LB re-entry node, routed through a reserved
+  // CHANNEL below the whole stack, each on its own horizontal lane. Collected
+  // here (before geometry) so the channel count sizes the figure. Presentation
+  // ROUTING only — the drop/elimination CLASSIFICATION itself is served.
   const demotions = [];
   if (isDouble) for (const g of genState.values()) {
     const cols = [...g.played].sort((a, b) => a - b);
     for (const ci of cols) {
-      // a DROP is a non-terminal WB loss (lost here, but it is NOT the lane's true
-      // elimination column → it plays on). A lane that is LATER eliminated in the
-      // LB still made this WB→LB drop, so it must be collected too.
+      // a DROP is a non-terminal loss (served: lost here, not eliminated here).
       const dropped = g.lostAt.has(ci) && g.eliminatedAt !== ci;
       if (!dropped) continue;
       const nextCi = cols.find((c) => c > ci);
@@ -1637,10 +1630,7 @@ export function elimFlow(opts) {
     viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMinYMin meet', role: 'img',
   }, o, w, h, 'dn-elimflow-hero'));
   if (!nCols || !gens.length) {
-    const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no bracket rounds yet';
-    svg.appendChild(t);
-    return svg;
+    return emptyState(svg, w, h, 'no bracket rounds yet');
   }
   const colX = (ci) => padL + ci * colW + 8;       // a round column's node x
   const gateX = padL + nCols * colW + 8;           // the champion-gate column x
@@ -1786,8 +1776,8 @@ export function elimFlow(opts) {
         // (won its match). A still-undecided (pending) head-to-head is committed
         // NOWHERE — drawing a leg to the gate would imply BOTH competitors of one
         // match advance, which is nonsense in a double-elim (one wins, one drops
-        // to the losers' bracket). So, mirroring elimRadial's pending spoke, a
-        // pending lane draws only a SHORT dashed "racing this match" stub; the
+        // to the losers' bracket). So a pending lane draws only a SHORT
+        // dashed "racing this match" stub; the
         // real forward edge appears when the match resolves.
         const atFinal = ci === nCols - 1;
         let toX = null;
@@ -1901,10 +1891,7 @@ export function swissOverview(opts) {
     viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMinYMin meet', role: 'img',
   });
   if (!series.length && !bars.length) {
-    const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no swiss rounds yet';
-    svg.appendChild(t);
-    return svg;
+    return emptyState(svg, w, h, 'no swiss rounds yet');
   }
 
   // panel (1): the standings BUMP CHART
@@ -2290,10 +2277,7 @@ export function racingScalarTrack(opts) {
     'aria-label': 'racing scalar track — lower is better, bigger marker = better',
   }, o, W, H, 'dn-scalartrack-hero'));
   if (!comps.length) {
-    const t = svgEl('text', { x: W / 2, y: H / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no challengers on the track yet';
-    svg.appendChild(t);
-    return svg;
+    return emptyState(svg, W, H, 'no challengers on the track yet');
   }
 
   // the axis line.
@@ -2365,7 +2349,7 @@ export function racingScalarTrack(opts) {
     // data-marker labels are middle-anchored at m.x; a far marker (sitting at padL
     // or W−padR) would clip half its label past the viewBox edge — axis/bench labels
     // are edge-anchored and safe, data markers are not. Measure the label (9px mono
-    // ⇒ ~0.6em/char, the same face elimRadial clamps against) and pull its x inboard
+    // ⇒ ~0.6em/char) and pull its x inboard
     // so the whole label stays in [edge, W−edge]. A no-op for any marker that fits.
     const labW = labText.length * (mini ? 5 : 5.4);
     const labEdge = mini ? 2 : 3;
@@ -2397,27 +2381,13 @@ export function racingScalarTrack(opts) {
 
 // A stable digest of the racingScalarTrack model — changes ONLY when the visible
 // content does (so the digest-gated swap never re-renders on a no-op heartbeat).
+// A stable content digest of the racing model (U5: the generic digestOpts fold
+// — its 3dp number rounding subsumes the old per-scalar toFixed(3), so
+// sub-precision projection jitter still does not flip the gate). Mode flags
+// (mini/responsive) + the hover callback are dropped so the hero mini and the
+// full figure gate on content alone.
 export function racingScalarTrackDigest(opts) {
-  const o = opts || {};
-  const rungs = Array.isArray(o.rungs) ? o.rungs : [];
-  return JSON.stringify({
-    b: o.benchmarkId != null ? String(o.benchmarkId) : (o.championId != null ? String(o.championId) : null),
-    cs: isNum(o.championScalar) ? o.championScalar.toFixed(3) : null,
-    f: isNum(o.focusRung) ? o.focusRung : null,
-    r: rungs.map((r) => [r.match_id, r.label,
-      (r.competitors || []).map(String).join('/'),
-      (r.survivors || []).map(String).join('/'),
-      (r.cut || []).map(String).join('/'),
-      r.scalars ? Object.keys(r.scalars).sort().map((k) => k + ':' + (isNum(r.scalars[k]) ? r.scalars[k].toFixed(3) : '?')).join(',') : '',
-      r.deltas ? Object.keys(r.deltas).sort().map((k) => k + ':' + (isNum(r.deltas[k]) ? r.deltas[k].toFixed(3) : '?')).join(',') : '',
-      r.live_progress ? Object.keys(r.live_progress).sort().map((k) => {
-        const p = r.live_progress[k];
-        return k + ':' + (p.done || 0) + '/' + (p.total == null ? '?' : p.total) + ':' + (p.inflight || 0)
-          + (p.projected ? ':j' + (isNum(p.projected_scalar) ? p.projected_scalar.toFixed(3) : '?')
-            + '/' + (p.boards_done == null ? '?' : p.boards_done) + '/' + (p.boards_total == null ? '?' : p.boards_total) : '');
-      }).join(',') : '',
-      !!r.pending]),
-  });
+  return digestOpts(opts, ['mini', 'responsive', 'onCompetitor']);
 }
 
 // ── GAUNTLET FIELD BARS (the wave of challengers vs the champion standard) ──
@@ -2465,12 +2435,11 @@ export function gauntletFieldBars(opts) {
     if (c.lane && isNum(c.lane.projected_scalar)) return c.lane.projected_scalar;
     return null;
   };
-  const outcomeOf = (c, v) => {
-    if (c.outcome) return String(c.outcome);
-    if (champScalar == null || !isNum(v)) return 'pending';
-    if (Math.abs(v - champScalar) < 1e-9) return 'tied';
-    return v < champScalar ? 'cleared' : 'failed';
-  };
+  // The SERVER outcome is authoritative (U5/DQ1): a challenger's cleared /
+  // failed / tied verdict is decided server-side against the gate, never
+  // re-derived here. An absent outcome reads honestly as 'pending' (still on
+  // boards / undecided) rather than a client guess vs champScalar.
+  const outcomeOf = (c) => c.outcome ? String(c.outcome) : 'pending';
 
   const W = mini ? 360 : 600;
   const padL = mini ? 56 : 110;
@@ -2489,7 +2458,7 @@ export function gauntletFieldBars(opts) {
     const lane = c.lane && typeof c.lane === 'object' ? c.lane : null;
     const racing = !!(lane && (lane.inflight || lane.done)) && c.outcome == null;
     const projected = !!(lane && lane.projected && racing);
-    return { c, v, lane, racing, projected, outcome: outcomeOf(c, v), survivor: !!c.survivor };
+    return { c, v, lane, racing, projected, outcome: outcomeOf(c), survivor: !!c.survivor };
   });
   const [lo, hi] = (() => {
     const e = extent(vals.length ? vals : [0, 1]);
@@ -2503,10 +2472,7 @@ export function gauntletFieldBars(opts) {
     'aria-label': 'gauntlet field vs the champion standard — lower is better',
   }, o, W, H, 'dn-fieldbars-hero'));
   if (!field.length) {
-    const t = svgEl('text', { x: W / 2, y: H / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no challengers have entered the gauntlet';
-    svg.appendChild(t);
-    return svg;
+    return emptyState(svg, W, H, 'no challengers have entered the gauntlet');
   }
   const bandTop = top - 2;
   const bandBot = H - (mini ? 8 : 22);
@@ -2602,293 +2568,11 @@ export function gauntletFieldBars(opts) {
 }
 
 // A stable digest of the gauntletFieldBars model.
+// A stable content digest of the gauntlet field (U5: the generic digestOpts
+// fold). Mode flags + the hover callback are dropped so the hero mini and the
+// full figure gate on content alone.
 export function gauntletFieldBarsDigest(opts) {
-  const o = opts || {};
-  const field = Array.isArray(o.challengers) ? o.challengers : [];
-  return JSON.stringify({
-    c: o.championId != null ? String(o.championId) : null,
-    cs: isNum(o.championScalar) ? o.championScalar.toFixed(3) : null,
-    m: isNum(o.promoteMargin) ? o.promoteMargin.toFixed(3) : null,
-    f: field.map((c) => {
-      const lane = c && c.lane;
-      return [String(c.id),
-        isNum(c.scalar) ? c.scalar.toFixed(3) : (isNum(c.delta) ? 'd' + c.delta.toFixed(3) : '?'),
-        c.outcome || '', !!c.survivor,
-        lane ? (lane.done || 0) + '/' + (lane.total == null ? '?' : lane.total) + ':' + (lane.inflight || 0)
-          + (lane.projected ? ':j' + (isNum(lane.projected_scalar) ? lane.projected_scalar.toFixed(3) : '?')
-            + '/' + (lane.boards_done == null ? '?' : lane.boards_done) + '/' + (lane.boards_total == null ? '?' : lane.boards_total) : '') : ''];
-    }),
-  });
-}
-
-// ── ELIM RADIAL (concentric bracket — rounds as rings to a center gate) ──
-//
-// The FINAL liked single-elim study figure (single-elim.html opt 6), plus an
-// OPT-IN double-elim mode (double-elim.html opt 8). Rounds are CONCENTRIC RINGS
-// narrowing toward the champion seat at the CENTER; each competitor is a spoke
-// from the outer ring inward. The per-round segments a gen SURVIVED render
-// --good; the segment where it was ELIMINATED turns --bad capped with a red ✕;
-// the survivor stays good to the gate ring then dashes accent into the center.
-// In double-elim mode the winners' bracket owns the UPPER arc (accent, ●●) and
-// the losers' bracket the LOWER arc (caution, ●○), split by a dashed equator; a
-// WB→LB drop is a RIM-HUGGING transfer arc (never a chord across the center).
-//
-// FOUR lifecycle states (mirroring funnelRunner): a still-pending (live) spoke
-// segment dashes (queued/in-flight); a spoke with a projected standing reads
-// dn-proj; a settled spoke is solid with its final survive/eliminate verdict.
-//
-// CONVERGENCE: a settled spoke renders byte-identically via the live or the
-// completed path.
-//
-// opts: {
-//   rounds: [{ label, matches:[{ competitors:[id], winner, decision, pending,
-//                                bracket_slot, projected:{id:{scalar,...}} }] }],
-//   championId, benchmarkId, gateState, live, double (bool: double-elim mode),
-//   mini|compact, onCompetitor(id)
-// }
-// The model is the SAME elimModel shape elimFlow consumes; this is a polar
-// alternative renderer (so a caller can swap radial ↔ flow on the same data).
-export function elimRadial(opts) {
-  const o = opts || {};
-  const rounds = (Array.isArray(o.rounds) ? o.rounds : []).filter((r) => r && Array.isArray(r.matches));
-  const mini = !!(o.mini || o.compact);
-  const live = !!o.live;
-  const champId = o.championId != null ? String(o.championId) : null;
-  const benchId = o.benchmarkId != null ? String(o.benchmarkId) : null;
-  const isDouble = !!o.double;
-
-  // ── derive each gen's per-round state (advanced / eliminated / pending) and
-  // its bracket side, from the rounds — the same way elimFlow does. ──
-  const colsSorted = rounds
-    .map((r, i) => ({ r, i, ri: isNum(r.round_index) ? r.round_index : i }))
-    .sort((a, b) => a.ri - b.ri || a.i - b.i)
-    .map((x) => x.r);
-  const nCols = colsSorted.length;
-  const genState = new Map();
-  const ensure = (id) => {
-    const k = String(id);
-    if (!genState.has(k)) genState.set(k, { id: k, played: new Set(), advanced: new Set(), lostAt: new Set(), pendingAt: new Set(), eliminatedAt: null, side: 'WB', proj: null });
-    return genState.get(k);
-  };
-  const projByGen = new Map();
-  colsSorted.forEach((r, ci) => {
-    for (const m of (Array.isArray(r.matches) ? r.matches : [])) {
-      const comps = (Array.isArray(m.competitors) ? m.competitors : []).map(String).filter((c) => c && c !== 'tbd');
-      const winner = m.winner ? String(m.winner) : null;
-      const pending = !!m.pending || (!winner && !m.bye && !m.decision);
-      const isLB = String(m.bracket_slot || '').startsWith('LB');
-      const projMatch = (m.projected && typeof m.projected === 'object') ? m.projected : null;
-      for (const c of comps) {
-        const g = ensure(c);
-        g.played.add(ci);
-        if (isLB) g.side = 'LB';
-        if (projMatch && pending && projMatch[c] && isNum(projMatch[c].scalar)) projByGen.set(c, projMatch[c]);
-        if (pending) { g.pendingAt.add(ci); continue; }
-        if (m.bye) { g.advanced.add(ci); continue; }
-        if (winner && c === winner) g.advanced.add(ci);
-        else if (winner) g.lostAt.add(ci);
-      }
-    }
-  });
-  for (const g of genState.values()) {
-    const lost = [...g.lostAt].sort((a, b) => a - b);
-    const lastPlayed = g.played.size ? Math.max(...g.played) : -1;
-    for (const ci of lost) { if (ci >= lastPlayed) { g.eliminatedAt = ci; break; } }
-    if (projByGen.has(g.id)) g.proj = projByGen.get(g.id);
-  }
-  const gens = [...genState.values()];
-
-  const sz = mini ? 200 : 340;
-  const W = sz; const H = sz;
-  const cx = W / 2; const cy = H / 2;
-  const labelPad = mini ? 22 : 40;
-  const R = Math.min(cx, cy) - labelPad;
-  const rings = Math.max(2, nCols + 1);             // one ring per round + the center gate ring
-  const rr = (k) => R * (1 - k / rings) + (mini ? 5 : 8);
-
-  const svg = svgEl('svg', applyResponsive({
-    class: 'dn-elimradial', width: '100%', height: H,
-    viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'xMidYMid meet', role: 'img',
-    'aria-label': 'radial bracket — rounds as rings narrowing to the champion gate',
-  }, o, W, H, 'dn-elimradial-hero'));
-  if (!nCols || !gens.length) {
-    const t = svgEl('text', { x: W / 2, y: H / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no bracket rounds yet';
-    svg.appendChild(t);
-    return svg;
-  }
-
-  // the concentric ring guides.
-  for (let k = 0; k < rings; k++) {
-    svg.appendChild(svgEl('circle', { cx, cy, r: rr(k), class: 'dn-elimradial-ring' + (k === 0 ? ' dn-elimradial-ring-outer' : ''), fill: 'none' }));
-  }
-
-  // angular placement. Single-elim: spokes spread full circle. Double-elim: WB
-  // on the UPPER arc, LB on the LOWER arc, split by a dashed equator.
-  const ang = (frac) => (-90 + frac * 360) * Math.PI / 180;
-  const pol = (r, a) => [cx + r * Math.cos(a), cy + r * Math.sin(a)];
-  if (isDouble) {
-    // the WB↔LB equator (the horizontal diameter a drop must cross).
-    svg.appendChild(svgEl('line', { x1: cx - R - (mini ? 4 : 10), y1: cy, x2: cx + R + (mini ? 4 : 10), y2: cy, class: 'dn-elimradial-equator' }));
-  }
-
-  // order spokes: survivors / champion first (deepest reach), then earlier-out.
-  const reach = (g) => (g.eliminatedAt == null ? nCols + 1 : g.eliminatedAt);
-  gens.sort((a, b) => reach(b) - reach(a) || (a.id === champId ? -1 : b.id === champId ? 1 : 0) || a.id.localeCompare(b.id));
-
-  // assign each spoke an angle. Double-elim: split by side onto two half-arcs.
-  const angleOf = new Map();
-  if (isDouble) {
-    const wb = gens.filter((g) => g.side !== 'LB');
-    const lb = gens.filter((g) => g.side === 'LB');
-    // WB upper arc: 290°→430° (upper-left→top→upper-right); LB lower arc: 110°→250°.
-    const place = (list, a0, a1) => list.forEach((g, i) => {
-      const f = list.length > 1 ? (i + 0.5) / list.length : 0.5;
-      angleOf.set(g.id, ((a0 + (a1 - a0) * f) - 90) * Math.PI / 180);
-    });
-    place(wb, 290, 430);
-    place(lb, 110, 250);
-  } else {
-    gens.forEach((g, i) => angleOf.set(g.id, ang((i + 0.0) / gens.length)));
-  }
-
-  // each spoke: per-round survival segments + node dots + the loss ✕ / gate dash.
-  gens.forEach((g) => {
-    const a = angleOf.get(g.id);
-    const isChamp = champId != null && g.id === champId;
-    const isFormer = benchId != null && g.id === benchId && !isChamp;
-    const eliminated = g.eliminatedAt != null;
-    const proj = !eliminated && g.proj && isNum(g.proj.scalar) ? g.proj : null;
-    // # of survived (advanced) rings = won segments before elimination/gate.
-    const surv = eliminated ? g.eliminatedAt : Math.max(g.advanced.size, g.played.size ? Math.max(...g.played) + 1 : 0);
-    const lane = svgEl('g', { class: 'dn-elimradial-spoke' + (proj ? ' dn-proj' : ''), tabindex: o.onCompetitor ? '0' : null });
-
-    // green (survived) segments rr(k) → rr(k+1).
-    for (let k = 0; k < surv; k++) {
-      const [sx, sy] = pol(rr(k), a); const [ex, ey] = pol(rr(k + 1), a);
-      lane.appendChild(svgEl('line', { x1: sx, y1: sy, x2: ex, y2: ey, class: 'dn-elimradial-seg dn-good' }));
-    }
-    // node dots at each survived ring (each cleared round reads as a beat).
-    for (let k = 0; k <= surv && k < rings; k++) {
-      const [dx, dy] = pol(rr(k), a);
-      lane.appendChild(svgEl('circle', { cx: dx, cy: dy, r: mini ? 1.6 : 2, class: 'dn-elimradial-node dn-good' }));
-    }
-    const pendingSpoke = !eliminated && (g.pendingAt.size > 0) && !isChamp;
-    if (eliminated) {
-      // the LOSS segment (--bad) capped with a red ✕.
-      const [sx, sy] = pol(rr(surv), a); const [ex, ey] = pol(rr(Math.min(surv + 1, rings)), a);
-      lane.appendChild(svgEl('line', { x1: sx, y1: sy, x2: ex, y2: ey, class: 'dn-elimradial-seg dn-bad' }));
-      lane.appendChild(svgEl('circle', { cx: sx, cy: sy, r: mini ? 1.8 : 2.2, class: 'dn-elimradial-node dn-bad' }));
-      const xm = svgEl('text', { x: ex, y: ey + 3.2, class: 'dn-elimradial-cut dn-bad', 'text-anchor': 'middle' });
-      xm.textContent = '✕';
-      lane.appendChild(xm);
-    } else if (isChamp) {
-      // the survivor reaches the gate ring (good) then dashes accent into center.
-      const [gx, gy] = pol(rr(surv), a);
-      lane.appendChild(svgEl('line', { x1: gx, y1: gy, x2: cx, y2: cy, class: 'dn-elimradial-seg dn-elimradial-gateline' }));
-    } else if (pendingSpoke) {
-      // a still-racing spoke: a dashed (in-flight) segment toward the next ring.
-      const [sx, sy] = pol(rr(surv), a); const [ex, ey] = pol(rr(Math.min(surv + 1, rings)), a);
-      lane.appendChild(svgEl('line', { x1: sx, y1: sy, x2: ex, y2: ey, class: 'dn-elimradial-seg dn-elimradial-pending' + (proj ? ' dn-proj' : '') }));
-    }
-
-    // the outer spoke label. The radial origin + per-quadrant vertical nudge set
-    // where the text STARTS; but `text-anchor:start/end` then grows the text
-    // HORIZONTALLY, and for cardinal-E/W spokes (|cos a|≈1) the origin already
-    // sits at cx ± (R-ish) so the run spills past the box. labelPad is a RADIAL
-    // gutter — it never bounds horizontal extent — so measure the label's real
-    // width and clamp its x inward to keep the whole [x0,x1] span in the viewBox.
-    const [lx0, ly] = pol(rr(0) + (mini ? 4 : 7), a);
-    const ca = Math.cos(a); const sa = Math.sin(a);
-    const anchor = ca < -0.3 ? 'end' : (ca > 0.3 ? 'start' : 'middle');
-    const ldy = sa < -0.3 ? -2 : (sa > 0.3 ? 9 : 3);
-    const lblCls = 'dn-elimradial-name ' + (eliminated ? 'dn-bad' : isChamp ? 'dn-good' : isFormer ? 'dn-elimradial-former' : 'dn-good') + (proj ? ' dn-proj' : '');
-    const lblText = shortLabel(g.id, mini ? 5 : 8) + (isChamp ? ' ' + CROWN.current : isFormer ? ' ' + CROWN.former : '') + (proj ? ' ~' : '');
-    // the name is 9px mono ⇒ ~0.6em/char; clamp x so the start/end/middle run
-    // never crosses [edge, W-edge]. A no-op for any spoke that already fits.
-    const lblW = lblText.length * (mini ? 5 : 5.4);
-    const edge = mini ? 2 : 3;
-    const lx = anchor === 'start' ? Math.min(lx0, W - edge - lblW)
-      : anchor === 'end' ? Math.max(lx0, edge + lblW)
-      : Math.max(edge + lblW / 2, Math.min(lx0, W - edge - lblW / 2));
-    const tip = `${g.id}`
-      + (isChamp ? ` · champion ${CROWN.current}` : isFormer ? ' · former champion' : eliminated ? ` · eliminated at ${colsSorted[g.eliminatedAt] ? (colsSorted[g.eliminatedAt].label || 'R' + g.eliminatedAt) : 'R' + g.eliminatedAt}` : pendingSpoke ? ' · racing' : ' · advanced')
-      + (proj ? ` · projected scalar ~${fmt(proj.scalar, 2)} (boards streaming)` : '')
-      + (isDouble ? ` · ${g.side === 'LB' ? "losers' bracket ●○" : "winners' bracket ●●"}` : '');
-    const lbl = hov(svgEl('text', { x: lx, y: ly + ldy, class: lblCls, 'text-anchor': anchor }), tip);
-    lbl.textContent = lblText;
-    lane.appendChild(lbl);
-    clickable(lane, o.onCompetitor && (() => o.onCompetitor(g.id)));
-    svg.appendChild(lane);
-  });
-
-  // double-elim: WB→LB transfer arcs (a dropped lane's second life). Each arc
-  // CONNECTS TWO REAL NODES — it ENDS exactly on the dropped lane's outer LB node
-  // (its re-entry, on the lower arc) and STARTS on that node's equator-mirror, the
-  // source WB node position on the upper arc (WB upper ↔ LB lower are reflections
-  // across the horizontal equator, so in pol()'s convention the source angle is
-  // -a). BOTH endpoints sit EXACTLY on the outer node ring rr(0), so the connector
-  // begins and ends ON a node — never out in empty space. Per-drop separation rides
-  // the arc RADIUS (each successive drop nests a touch further in), NEVER the
-  // endpoints — so no stagger can drift an endpoint off its node. (The old code put
-  // the endpoints THEMSELVES on a staggered rim radius OUTSIDE the ring, so every
-  // arc past the first — and every arc in mini — began and ended at a radius where
-  // no node exists: the connector floated, detached from the source and the target.)
-  if (isDouble) {
-    const nodeR = rr(0);   // the outer node ring — every spoke's outer (k=0) node
-    let li = 0;
-    const drops = gens.filter((g) => g.side === 'LB' && g.lostAt.size);
-    drops.forEach((g) => {
-      const a = angleOf.get(g.id);
-      if (a == null) return;
-      const fromA = -a;
-      const [fx, fy] = pol(nodeR, fromA);   // source: the WB mirror, ON the node ring
-      const [tx, ty] = pol(nodeR, a);        // target: EXACTLY the dropped lane's outer LB node
-      // arcR == nodeR is the rim-hugging semicircle through the outward rim; a
-      // per-drop increment flattens (nests) each further arc a touch inside so two
-      // drops never overlap — carried by the RADIUS, not the endpoints.
-      const arcR = nodeR + li * (mini ? 2 : 4); li++;
-      // sweep to the OUTWARD side of the spoke: a downward chord (source upper →
-      // target lower) hugs the rim on the right for a right-tilted spoke (cos a ≥ 0)
-      // and on the left otherwise.
-      const sweep = Math.cos(a) >= 0 ? 1 : 0;
-      svg.appendChild(svgEl('path', {
-        d: `M${fx.toFixed(1)} ${fy.toFixed(1)} A${arcR.toFixed(1)} ${arcR.toFixed(1)} 0 0 ${sweep} ${tx.toFixed(1)} ${ty.toFixed(1)}`,
-        class: 'dn-elimradial-transfer', fill: 'none',
-      }));
-    });
-  }
-
-  // the CENTER champion gate.
-  const gateState = o.gateState || (live ? 'deciding' : (champId ? 'crowned' : 'pending'));
-  const crowned = gateState === 'crowned' && !!champId;
-  const seatR = mini ? 11 : 14;
-  const gateG = svgEl('g', { class: 'dn-elimradial-gate', tabindex: (champId && o.onCompetitor) ? '0' : null });
-  gateG.appendChild(svgEl('circle', { cx, cy, r: seatR, class: 'dn-elimradial-seat' + (crowned ? ' dn-good' : '') }));
-  const gt = hov(svgEl('text', { x: cx, y: cy + (mini ? 3.6 : 4.5), class: 'dn-elimradial-seatlab' + (crowned ? ' dn-good' : ''), 'text-anchor': 'middle' }),
-    crowned ? `${champId} · crowned champion ${CROWN.current}`
-      : gateState === 'stands' ? 'champion stands'
-        : gateState === 'deciding' ? 'gate deciding…' : 'champion gate');
-  gt.textContent = crowned ? CROWN.current : gateState === 'deciding' ? '…' : CROWN.former;
-  gateG.appendChild(gt);
-  clickable(gateG, (champId && o.onCompetitor) && (() => o.onCompetitor(champId)));
-  svg.appendChild(gateG);
-  return svg;
-}
-
-// A stable digest of the elimRadial model.
-export function elimRadialDigest(opts) {
-  const o = opts || {};
-  const rounds = Array.isArray(o.rounds) ? o.rounds : [];
-  return JSON.stringify({
-    c: o.championId != null ? String(o.championId) : null,
-    b: o.benchmarkId != null ? String(o.benchmarkId) : null,
-    g: o.gateState || null, d: !!o.double,
-    r: rounds.map((r) => [r.round_index, r.label,
-      (Array.isArray(r.matches) ? r.matches : []).map((m) => [m.match_id, (m.competitors || []).map(String).join('/'), m.winner, m.decision, m.bracket_slot, m.bye, !!m.pending,
-        m.projected ? Object.keys(m.projected).sort().map((k) => k + ':' + (isNum(m.projected[k].scalar) ? m.projected[k].scalar.toFixed(3) : '?')).join(',') : '']),
-    ]),
-  });
+  return digestOpts(opts, ['mini', 'responsive', 'onCompetitor']);
 }
 
 // ── RADAR SILHOUETTE (challenger vs champion across the gate's axes) ──
@@ -2932,10 +2616,7 @@ export function radarSilhouette(opts) {
     'aria-label': 'radar — challenger vs champion across the gate axes; outer = better',
   }, o, W, H, 'dn-radar-hero'));
   if (n < 3) {
-    const t = svgEl('text', { x: W / 2, y: H / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'not enough axes to plot';
-    svg.appendChild(t);
-    return svg;
+    return emptyState(svg, W, H, 'not enough axes to plot');
   }
   const angle = (i) => -Math.PI / 2 + i * 2 * Math.PI / n;
   const P = (i, r) => {
@@ -3066,173 +2747,16 @@ export function radarSilhouette(opts) {
 }
 
 // A stable digest of the radarSilhouette model.
+// A stable content digest of the radar (U5: the generic digestOpts fold — 3dp
+// rounding keeps a BT credible-interval tightening repainting while a no-op
+// beat stays byte-identical). `raw` (tooltip-only underlying values) + mode
+// flags + the hover callback are dropped.
 export function radarSilhouetteDigest(opts) {
-  const o = opts || {};
-  const axes = Array.isArray(o.axes) ? o.axes : [];
-  return JSON.stringify({
-    l: !!o.live,
-    a: axes.map((a) => [String(a.label), isNum(a.chal) ? a.chal.toFixed(3) : '?', isNum(a.champ) ? a.champ.toFixed(3) : '?',
-      // the BT credible-interval band (rounded radii, no timestamps) so a CI
-      // tightening repaints the radar but a no-op beat stays byte-identical.
-      // absent on every non-rating axis → no contribution (back-compat digest).
-      a.chalBand && isNum(a.chalBand.lo) && isNum(a.chalBand.hi)
-        ? [a.chalBand.lo.toFixed(3), a.chalBand.hi.toFixed(3)] : null]),
-  });
+  return digestOpts(opts, ['raw', 'mini', 'responsive', 'onAxis']);
 }
 
 // The elim epoch overview + Match-ups both render the BRACKET-AS-FLOW
 // (`elimFlow`) — the seat/box bracket tree (`elimBracket`) is retired.
-
-// ---- Tufte Sankey (fit-to-width) — the causal patch→drift→gate flow -
-export function layoutSankey(spec) {
-  const colW = spec.nodeW || 150;
-  const top = spec.top || 30;
-  const colHeight = spec.colHeight || 360;
-  const minNodeH = spec.minNodeH || 22;
-  const gap = spec.nodeGap || 12;
-  const totalW = spec.width || 720;
-
-  const stages = ['patch', 'drift', 'gate'];
-  const cols = { patch: spec.patch || [], drift: spec.drift || [], gate: spec.gate || [] };
-  const links = spec.links || [];
-
-  // Fit to width: three columns + two gaps fill the container exactly.
-  const colGap = Math.max(40, (totalW - 3 * colW) / 2);
-
-  const throughput = (nodeId) => {
-    let t = 0;
-    for (const l of links) if (l.source === nodeId || l.target === nodeId) t += Math.abs(l.value || 0);
-    return t;
-  };
-
-  const positioned = new Map();
-  const nodesOut = [];
-  stages.forEach((stage, si) => {
-    const list = cols[stage];
-    const x = si * (colW + colGap);
-    const raw = list.map((n) => Math.max(0.0001, n.value != null ? Math.abs(n.value) : throughput(n.id)));
-    const total = raw.reduce((a, b) => a + b, 0) || 1;
-    const avail = colHeight - gap * Math.max(0, list.length - 1);
-    const heights = raw.map((r) => Math.max(minNodeH, (r / total) * avail));
-    const blockH = heights.reduce((a, b) => a + b, 0) + gap * Math.max(0, list.length - 1);
-    let y = top + Math.max(0, (colHeight - blockH) / 2);
-    list.forEach((n, i) => {
-      const h = heights[i];
-      const node = { id: n.id, stage, x, y, h, w: colW, label: n.label != null ? n.label : n.id, sub: n.sub || '', cls: n.cls || '', value: n.value, ref: n.ref || null, _outCursor: 0, _inCursor: 0 };
-      positioned.set(n.id, node);
-      nodesOut.push(node);
-      y += h + gap;
-    });
-  });
-
-  const linksOut = [];
-  const outSum = new Map();
-  const inSum = new Map();
-  for (const l of links) {
-    outSum.set(l.source, (outSum.get(l.source) || 0) + Math.abs(l.value || 0));
-    inSum.set(l.target, (inSum.get(l.target) || 0) + Math.abs(l.value || 0));
-  }
-  for (const l of links) {
-    const s = positioned.get(l.source);
-    const t = positioned.get(l.target);
-    if (!s || !t) continue;
-    const v = Math.abs(l.value || 0) || 0.0001;
-    const sBand = s.h * (v / (outSum.get(l.source) || v));
-    const tBand = t.h * (v / (inSum.get(l.target) || v));
-    const sx = s.x + s.w;
-    const tx = t.x;
-    const sy = s.y + s._outCursor + sBand / 2;
-    const ty = t.y + t._inCursor + tBand / 2;
-    s._outCursor += sBand;
-    t._inCursor += tBand;
-    linksOut.push({ id: l.id || `${l.source}__${l.target}`, source: l.source, target: l.target, sx, sy, tx, ty, hwS: Math.max(0.6, sBand / 2), hwT: Math.max(0.6, tBand / 2), value: l.value, cls: l.cls || '' });
-  }
-  const box = { x: 0, y: 0, w: totalW, h: colHeight + top * 2 };
-  return { nodes: nodesOut, links: linksOut, box };
-}
-
-// Render a fit-to-width Tufte Sankey to an <svg>. Reads the layout above.
-// opts: same as layoutSankey + { onNode }.
-export function sankey(opts) {
-  const o = opts || {};
-  const { nodes, links, box } = layoutSankey(o);
-  const svg = svgEl('svg', {
-    class: 'dn-sankey', width: '100%', height: box.h,
-    viewBox: `0 0 ${box.w} ${box.h}`, preserveAspectRatio: 'xMidYMid meet', role: 'img',
-  });
-  if (nodes.length === 0) {
-    const t = svgEl('text', { x: box.w / 2, y: box.h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no causal flow yet';
-    svg.appendChild(t);
-    return svg;
-  }
-  const stageHead = { patch: 'PATCH', drift: 'PER-BOARD DRIFT', gate: 'GATE' };
-  const byStage = {};
-  for (const n of nodes) (byStage[n.stage] = byStage[n.stage] || []).push(n);
-  for (const stage of Object.keys(byStage)) {
-    const x = byStage[stage][0].x + byStage[stage][0].w / 2;
-    const t = svgEl('text', { x, y: 14, class: 'dn-sankey-head', 'text-anchor': 'middle' });
-    t.textContent = stageHead[stage] || stage;
-    svg.appendChild(t);
-  }
-  // ribbons (drawn first, behind nodes) — thin filled paths.
-  const linkLayer = svgEl('g', { class: 'dn-sankey-links' });
-  for (const l of links) {
-    const mx = (l.sx + l.tx) / 2;
-    const d = `M ${l.sx} ${l.sy - l.hwS} `
-      + `C ${mx} ${l.sy - l.hwS}, ${mx} ${l.ty - l.hwT}, ${l.tx} ${l.ty - l.hwT} `
-      + `L ${l.tx} ${l.ty + l.hwT} `
-      + `C ${mx} ${l.ty + l.hwT}, ${mx} ${l.sy + l.hwS}, ${l.sx} ${l.sy + l.hwS} Z`;
-    linkLayer.appendChild(hov(svgEl('path', { d, class: 'dn-sankey-ribbon ' + (l.cls || ''), fill: 'currentColor' }), `${l.source} → ${l.target}: ${fmt(l.value, 1)}`));
-  }
-  svg.appendChild(linkLayer);
-  // nodes — thin bars + direct in-place labels. FIX #5: the per-board node's
-  // LABEL and its loss VALUE must never overlap. The label sits on the top
-  // baseline (truncated short so it cannot run under the value); the loss value
-  // "picky_stakeholder_emu…" and its "642" can never collide.
-  const nodeLayer = svgEl('g', { class: 'dn-sankey-nodes' });
-  for (const n of nodes) {
-    const g = svgEl('g', { class: 'dn-sankey-node ' + (n.cls || ''), tabindex: o.onNode ? '0' : null });
-    g.appendChild(hov(svgEl('rect', { x: n.x, y: n.y, width: 6, height: n.h, rx: 1, class: 'dn-sankey-bar' }), `${n.label}${isNum(n.value) ? ' · ' + fmt(n.value, 1) : ''}`));
-    const anchor = n.stage === 'gate' ? 'end' : 'start';
-    const lx = n.stage === 'gate' ? n.x - 6 : n.x + 12;
-    const ty = n.y + n.h / 2;
-    // Drift (middle) nodes carry a numeric loss value; reserve room for it by
-    // truncating the label harder, and right-align the value to the node's far
-    // edge so the two strings sit on the same baseline without overlapping.
-    const hasValue = n.stage === 'drift' && isNum(n.value);
-    const lbl = svgEl('text', { x: lx, y: ty - 1, class: 'dn-sankey-label', 'text-anchor': anchor });
-    lbl.textContent = shortLabel(String(n.label), hasValue ? 16 : 22);
-    g.appendChild(lbl);
-    if (hasValue) {
-      const vx = n.x + n.w; // far (right) edge of this column's node band
-      const val = svgEl('text', { x: vx, y: ty - 1, class: 'dn-sankey-value', 'text-anchor': 'end' });
-      val.textContent = fmt(n.value, 0);
-      g.appendChild(val);
-    }
-    if (n.sub) {
-      const sub = svgEl('text', { x: lx, y: ty + 11, class: 'dn-sankey-sub', 'text-anchor': anchor });
-      sub.textContent = shortLabel(String(n.sub), 24);
-      g.appendChild(sub);
-    }
-    clickable(g, o.onNode && (() => o.onNode(n)));
-    nodeLayer.appendChild(g);
-  }
-  svg.appendChild(nodeLayer);
-  return svg;
-}
-
-// ---- small-multiple wrapper -----------------------------------------
-
-export function smallMultiple(caption, mark, sub) {
-  return el('figure', { class: 'dn-sm' }, [
-    el('figcaption', { class: 'dn-sm-cap' }, [
-      el('span', { class: 'dn-sm-title', text: caption == null ? '' : String(caption) }),
-      sub ? el('span', { class: 'dn-sm-sub', text: String(sub) }) : null,
-    ]),
-    mark,
-  ]);
-}
 
 // ---- SIDE-BY-SIDE line diff (champion baseline | challenger new) ----
 // opts: { baseline: string, challenger: string, leftLabel, rightLabel }
@@ -3425,14 +2949,13 @@ export function proposingTracker(opts) {
 // digest-gate the tracker swap (a no-op heartbeat writes ZERO DOM). Folds in
 // the attempt count + final reason so a slot transitioning proposing → retry
 // → settled re-stamps, but a steady no-op tick does not.
+// A stable content digest of the proposing field-status list (U5: digestOpts
+// over the normalized rows; the 'prop|' prefix is kept as the stable namespace).
 export function proposingDigest(fieldStatus) {
-  const list = Array.isArray(fieldStatus) ? fieldStatus : [];
-  return 'prop|' + list.map((f) => {
-    if (!f) return '';
-    const att = (typeof f.attempts === 'number') ? f.attempts : '';
-    const reason = f.reason ? String(f.reason).slice(0, 48) : '';
-    return `${f.generation_id}:${f.status}:${att}:${reason}`;
-  }).join(',');
+  const list = (Array.isArray(fieldStatus) ? fieldStatus : []).map((f) => f
+    ? { g: f.generation_id, s: f.status, a: typeof f.attempts === 'number' ? f.attempts : null, r: f.reason ? String(f.reason).slice(0, 48) : '' }
+    : null);
+  return 'prop|' + digestOpts({ f: list });
 }
 
 // ── the FIELD-DIVERSITY MATRIX — challenger × mutation-site ──────────
@@ -3506,14 +3029,19 @@ export function diversityMatrix(opts) {
 // Digest for the diversity matrix — the membership (gid → sorted site ids) + the
 // highlighted pair, no floats / no timestamps. Empty (<2 members) → a stable
 // sentinel so the absent state is byte-identical beat-over-beat.
+// A stable content digest of the diversity matrix (U5: digestOpts over the
+// NORMALIZED members — the < 2 collapse to the 'divmtx|none' sentinel is
+// load-bearing: fewer than two members is "no matrix", a single stable state).
 export function diversityMatrixDigest(opts) {
   const o = opts || {};
   const members = (Array.isArray(o.membership) ? o.membership : [])
     .filter((m) => m && m.generation_id != null && Array.isArray(m.sites) && m.sites.length);
   if (members.length < 2) return 'divmtx|none';
   const pair = Array.isArray(o.highlightPair) ? o.highlightPair.map(String).slice().sort() : [];
-  return 'divmtx|' + members.map((m) => String(m.generation_id) + ':'
-    + m.sites.map(String).slice().sort().join('+')).join(',') + '|' + pair.join('~');
+  return 'divmtx|' + digestOpts({
+    m: members.map((m) => String(m.generation_id) + ':' + m.sites.map(String).slice().sort().join('+')),
+    pair,
+  });
 }
 
 // ── the CHAMPION-SPINE ROUND TIMELINE — the epoch overview hero ──────
@@ -3736,10 +3264,7 @@ export function waterfall(opts) {
     'aria-label': 'Loss-floor descent across rounds',
   });
   if (!steps.length) {
-    const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no rounds yet';
-    svg.appendChild(t);
-    return svg;
+    return emptyState(svg, w, h, 'no rounds yet');
   }
   // the loss domain spans every from/to floor; lower loss sits LOWER on the y
   // axis (a descent reads as a downward staircase).
@@ -3839,10 +3364,7 @@ export function reignGantt(opts) {
     'aria-label': 'Champion reign across rounds',
   });
   if (!reigns.length) {
-    const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no reign yet';
-    svg.appendChild(t);
-    return svg;
+    return emptyState(svg, w, h, 'no reign yet');
   }
   const maxRound = isNum(o.rounds) ? o.rounds
     : Math.max(1, ...reigns.map((r) => (isNum(r.toRound) ? r.toRound : 0)));
@@ -3946,10 +3468,7 @@ export function metaLoopLedger(opts) {
       viewBox: `0 0 ${W} ${h}`, preserveAspectRatio: 'xMidYMid meet', role: 'img',
       'aria-label': 'cross-epoch meta-loop ledger',
     }, o, W, h, 'dn-metaledger-hero'));
-    const t = svgEl('text', { x: W / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no epochs recorded yet';
-    svg.appendChild(t);
-    return svg;
+    return emptyState(svg, W, h, 'no epochs recorded yet');
   }
 
   // ---- effort-proportional x geometry: each epoch owns a band whose width ∝
@@ -4235,23 +3754,14 @@ export function metaLoopLedger(opts) {
 // per-component change set (incl. proposer + structure). Two ledgers that
 // render byte-identically MUST produce the same digest — the live (open) and
 // settled (closed) paths included.
+// A stable content digest of the meta-loop ledger (U5: digestOpts over the
+// NORMALIZED rows — the epoch_id filter + the absent-vs-empty collapse are
+// load-bearing: `{}` and `{epochs:[]}` must digest identically, and a
+// malformed `epochs` still yields a string).
 export function metaLoopLedgerDigest(opts) {
   const o = opts || {};
   const rows = (Array.isArray(o.epochs) ? o.epochs : []).filter((e) => e && e.epoch_id != null);
-  return JSON.stringify({
-    cur: o.currentEpochId != null ? String(o.currentEpochId) : null,
-    e: rows.map((e) => [
-      String(e.epoch_id),
-      isNum(e.floor) ? e.floor.toFixed(3) : null,
-      e.champion_gen != null ? String(e.champion_gen) : null,
-      isNum(e.champion_index) ? e.champion_index : null,
-      isNum(e.generation_count) ? e.generation_count : 0,
-      e.structure || 'gauntlet',
-      (e.open || e.closed === false) ? 'o' : 'c',
-      LEDGER_COMPONENTS.map((c) => (e.changed_components && e.changed_components[c]) ? 1 : 0).join(''),
-      e.soft ? 1 : 0,
-    ]),
-  });
+  return digestOpts({ currentEpochId: o.currentEpochId != null ? String(o.currentEpochId) : null, epochs: rows });
 }
 
 // ── the CALIBRATION TREND (DIAGNOSTIC) ───────────────────────────────────────
@@ -4284,10 +3794,7 @@ export function calibrationTrend(opts) {
   }, o, W, H, 'dn-caltrend-hero'));
 
   if (pts.length === 0) {
-    const t = svgEl('text', { x: W / 2, y: H / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no scored predictions yet';
-    svg.appendChild(t);
-    return svg;
+    return emptyState(svg, W, H, 'no scored predictions yet');
   }
 
   // the fraction band is a FIXED 0..1 (a calibration fraction, not a free scale)
@@ -4380,17 +3887,17 @@ export function calibrationTrend(opts) {
 // score_fraction, total_claims, decision). NO timestamps. Two trends that render
 // byte-identically MUST produce the same digest; a new scored generation (a
 // fraction moving past 2dp, a claim landing) flips it → repaint.
+// A stable content digest of the calibration trend (U5: digestOpts over the
+// NORMALIZED points — the generation_id filter + 3dp rounding keep sub-precision
+// score jitter from flipping the gate).
 export function calibrationTrendDigest(opts) {
   const o = opts || {};
-  const pts = (Array.isArray(o.points) ? o.points : []).filter((p) => p && p.generation_id != null);
-  return JSON.stringify({
-    rm: isNum(o.rolling_mean) ? o.rolling_mean.toFixed(3) : null,
-    ts: isNum(o.trend_sign) ? o.trend_sign : 0,
-    p: pts.map((p) => [
-      String(p.generation_id),
-      isNum(p.score_fraction) ? p.score_fraction.toFixed(3) : null,
-      isNum(p.total_claims) ? p.total_claims : 0,
-      p.decision == null ? null : String(p.decision),
-    ]),
-  });
+  const pts = (Array.isArray(o.points) ? o.points : []).filter((p) => p && p.generation_id != null)
+    .map((p) => ({
+      g: String(p.generation_id),
+      sf: isNum(p.score_fraction) ? p.score_fraction : null,
+      tc: isNum(p.total_claims) ? p.total_claims : 0,
+      d: p.decision == null ? null : String(p.decision),
+    }));
+  return digestOpts({ rm: isNum(o.rolling_mean) ? o.rolling_mean : null, ts: isNum(o.trend_sign) ? o.trend_sign : 0, p: pts });
 }
