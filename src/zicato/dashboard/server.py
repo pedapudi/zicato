@@ -347,6 +347,10 @@ def create_app(
             handlers["api_reflection_scorecards"],
         ),
         Route(
+            "/api/reflection/{reflection_id}/practices",
+            handlers["api_reflection_practices"],
+        ),
+        Route(
             "/api/reflection/{reflection_id}/xray/{judge_name}/{run_ref}",
             handlers["api_reflection_xray"],
         ),

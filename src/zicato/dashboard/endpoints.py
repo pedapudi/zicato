@@ -647,6 +647,20 @@ def _make_reflection_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
             return JSONResponse({"reflection_id": reflection_id, "judges": []}, status_code=200)
         return JSONResponse(query.build_judge_scorecards(paths, reflection_id))
 
+    async def api_reflection_practices(request: Request) -> JSONResponse:
+        reflection_id = request.path_params["reflection_id"]
+        if not _is_safe_id(reflection_id):
+            return JSONResponse(
+                {
+                    "reflection_id": reflection_id,
+                    "found": False,
+                    "checks": [],
+                    "verdict_counts": {"sound": 0, "attend": 0, "unsound": 0, "unmeasured": 0},
+                },
+                status_code=200,
+            )
+        return JSONResponse(query.build_practice_review(paths, reflection_id))
+
     async def api_reflection_xray(request: Request) -> JSONResponse:
         reflection_id = request.path_params["reflection_id"]
         judge_name = request.path_params["judge_name"]
@@ -676,6 +690,7 @@ def _make_reflection_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         "api_reflections": api_reflections,
         "api_reflection_summary": api_reflection_summary,
         "api_reflection_scorecards": api_reflection_scorecards,
+        "api_reflection_practices": api_reflection_practices,
         "api_reflection_xray": api_reflection_xray,
     }
 

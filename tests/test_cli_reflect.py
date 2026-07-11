@@ -434,3 +434,57 @@ def test_apply_non_actionable_finding_errors(workspace: tuple[Path, str]) -> Non
     )
     assert result.exit_code != 0
     assert "no proposed_op" in result.output or "recommendation only" in result.output
+
+
+# ---------------------------------------------------------------------------
+# practice review — persisted by run (free), plus the cheap `practices` tier
+# ---------------------------------------------------------------------------
+
+
+def test_passive_run_persists_practices(workspace: tuple[Path, str], doubles_module: str) -> None:
+    ws, epoch_id = workspace
+    result = _run(
+        [
+            "reflect",
+            "run",
+            "--workspace",
+            str(ws),
+            "--epoch",
+            epoch_id,
+            "--candidate",
+            "g0",
+            "--candidate",
+            "g1",
+            "--passive",
+            "--adjudicator-call-llm",
+            f"{doubles_module}:counter",
+        ]
+    )
+    assert result.exit_code == 0, result.output
+    refl_root = ws / "epochs" / epoch_id / "reflections"
+    rid = next(iter(refl_root.iterdir())).name
+    practices = json.loads((refl_root / rid / "practices.json").read_text())
+    assert "checks" in practices and "verdict_counts" in practices
+    assert len(practices["checks"]) == 11
+    # The rendered report carries a Practice review section.
+    assert "Practice review" in result.output
+
+
+def test_reflect_practices_subcommand_no_corpus(workspace: tuple[Path, str]) -> None:
+    ws, epoch_id = workspace
+    result = _run(["reflect", "practices", "--workspace", str(ws), "--epoch", epoch_id, "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert len(payload["checks"]) == 11
+    # No corpus / scorecards ⇒ the corpus-dependent checks report unmeasured honestly.
+    by_id = {c["check_id"]: c for c in payload["checks"]}
+    assert by_id["loss_monoculture"]["verdict"] == "unmeasured"
+    assert by_id["weight_revisit"]["verdict"] == "unmeasured"
+    # The measured noise floor (0.5 in the fixture) powers the statistical checks.
+    assert by_id["statistical_power"]["verdict"] != "unmeasured"
+
+
+def test_reflect_practices_in_group_help() -> None:
+    result = _run(["reflect", "--help"])
+    assert result.exit_code == 0
+    assert "practices" in result.output

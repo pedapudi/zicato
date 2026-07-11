@@ -176,6 +176,11 @@ def reflection_findings_path(workspace_root: Path, epoch_id: str, reflection_id:
     return _layout(workspace_root).reflection_findings(epoch_id, reflection_id)
 
 
+def reflection_practices_path(workspace_root: Path, epoch_id: str, reflection_id: str) -> Path:
+    """Path to one reflection's practice review (``practices.json``)."""
+    return _layout(workspace_root).reflection_practices(epoch_id, reflection_id)
+
+
 def run_dir(
     workspace_root: Path,
     epoch_id: str,
@@ -403,6 +408,7 @@ __all__ = [
     "reflection_adjudication_path",
     "reflection_scorecards_path",
     "reflection_findings_path",
+    "reflection_practices_path",
     "run_dir",
     "events_jsonl_path",
     "loss_profile_path",

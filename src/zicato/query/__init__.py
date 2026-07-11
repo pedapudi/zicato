@@ -149,6 +149,7 @@ from zicato.query.racing_view import (
 from zicato.query.reflection_view import (
     build_adjudication_xray,
     build_judge_scorecards,
+    build_practice_review,
     build_reflection_summary,
     entry_candidate_matrix,
     list_reflections,
@@ -328,6 +329,7 @@ __all__ = [
     "build_racing_field",
     "build_reflection_summary",
     "build_judge_scorecards",
+    "build_practice_review",
     "build_adjudication_xray",
     "entry_candidate_matrix",
     "list_reflections",

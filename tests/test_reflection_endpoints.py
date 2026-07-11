@@ -18,6 +18,7 @@ from zicato.core.workspace import (
     reflection_dir,
     reflection_findings_path,
     reflection_plan_path,
+    reflection_practices_path,
     reflection_scorecards_path,
 )
 from zicato.dashboard.server import create_app
@@ -86,6 +87,25 @@ def _seed(workspace: Path) -> None:
     )
     reflection_findings_path(workspace, EPOCH, REFL).write_text(
         json.dumps({"reflection_id": REFL, "findings": [{"finding_id": "f1"}]}), encoding="utf-8"
+    )
+    reflection_practices_path(workspace, EPOCH, REFL).write_text(
+        json.dumps(
+            {
+                "checks": [
+                    {
+                        "check_id": "oracle_mix",
+                        "verdict": "sound",
+                        "headline": "the board mixes structured oracles",
+                        "evidence": {},
+                        "rationale": "weak oracles saturate",
+                        "proposed_op": None,
+                        "unmeasured_reason": None,
+                    }
+                ],
+                "verdict_counts": {"sound": 1, "attend": 0, "unsound": 0, "unmeasured": 0},
+            }
+        ),
+        encoding="utf-8",
     )
     (reflection_dir(workspace, EPOCH, REFL) / "summary.json").write_text(
         json.dumps(
@@ -181,6 +201,22 @@ def test_api_reflection_scorecards(client: TestClient) -> None:
     body = r.json()
     assert body["judges"][0]["judge_name"] == "j"
     assert body["judges"][0]["f1"] == 1.0
+
+
+def test_api_reflection_practices(client: TestClient) -> None:
+    r = client.get(f"/api/reflection/{REFL}/practices")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["found"] is True
+    assert body["checks"][0]["check_id"] == "oracle_mix"
+    assert body["verdict_counts"]["sound"] == 1
+
+
+def test_api_reflection_practices_malformed_id_degrades(client: TestClient) -> None:
+    r = client.get("/api/reflection/..%2Fetc/practices")
+    assert r.status_code in (200, 404)
+    if r.status_code == 200:
+        assert r.json()["found"] is False
 
 
 def test_api_reflection_xray(client: TestClient) -> None:

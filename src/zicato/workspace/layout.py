@@ -208,6 +208,15 @@ class WorkspaceLayout:
         """One reflection's ranked findings + proposed edits (``findings.json``)."""
         return self.reflection_dir(epoch_id, reflection_id) / "findings.json"
 
+    def reflection_practices(self, epoch_id: str, reflection_id: str) -> Path:
+        """One reflection's practice review (``practices.json``).
+
+        The narrative layer above the four pillars — the ``PracticeReview``
+        (:mod:`zicato.reflection.practices`) persisted beside ``findings.json``.
+        File-canonical; readers degrade on its absence.
+        """
+        return self.reflection_dir(epoch_id, reflection_id) / "practices.json"
+
     # -- per-generation ------------------------------------------------------
 
     def generation_dir(self, epoch_id: str, generation_id: str) -> Path:
