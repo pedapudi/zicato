@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Racing funnel — four-option study</title>
+</head>
+<body>
+
+<style>
+  :root{
+    --paper:#1e1f1a; --panel:#25261f; --ink:#f2f1e9; --faint:#8d8b78;
+    --rule:rgba(242,241,233,.16); --rule-soft:rgba(242,241,233,.08);
+    --accent:#a8df3e; --accent-dim:rgba(168,223,62,.14);
+    --bad:#f25577; --proj:#d9a94a; --crown:#e5d76e;
+  }
+  @media (prefers-color-scheme: light){
+    :root{
+      --paper:#f4f3ea; --panel:#fdfcf5; --ink:#26261d; --faint:#7b7962;
+      --rule:rgba(38,38,29,.22); --rule-soft:rgba(38,38,29,.09);
+      --accent:#5f940f; --accent-dim:rgba(95,148,15,.12);
+      --bad:#c22553; --proj:#9c6f14; --crown:#8f7a00;
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#1e1f1a; --panel:#25261f; --ink:#f2f1e9; --faint:#8d8b78;
+    --rule:rgba(242,241,233,.16); --rule-soft:rgba(242,241,233,.08);
+    --accent:#a8df3e; --accent-dim:rgba(168,223,62,.14);
+    --bad:#f25577; --proj:#d9a94a; --crown:#e5d76e;
+  }
+  :root[data-theme="light"]{
+    --paper:#f4f3ea; --panel:#fdfcf5; --ink:#26261d; --faint:#7b7962;
+    --rule:rgba(38,38,29,.22); --rule-soft:rgba(38,38,29,.09);
+    --accent:#5f940f; --accent-dim:rgba(95,148,15,.12);
+    --bad:#c22553; --proj:#9c6f14; --crown:#8f7a00;
+  }
+  html,body{background:var(--paper);color:var(--ink);}
+  body{
+    font-family:ui-monospace,"SF Mono","Cascadia Code","JetBrains Mono",Menlo,Consolas,monospace;
+    font-size:13px; line-height:1.55; margin:0; padding:34px 22px 46px;
+  }
+  .wrap{max-width:1060px;margin:0 auto;}
+  .eyebrow{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--faint);}
+  h1{font-size:21px;font-weight:600;margin:.35em 0 .2em;letter-spacing:-.01em;text-wrap:balance;}
+  .lede{color:var(--faint);max-width:66ch;margin:0 0 6px;}
+  .datum{display:inline-block;border:1px solid var(--rule);border-radius:3px;padding:2px 9px;
+         font-size:11px;color:var(--faint);margin-top:10px;}
+  .datum b{color:var(--ink);font-weight:600;}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:18px;margin-top:26px;}
+  .card{background:var(--panel);border:1px solid var(--rule);border-radius:4px;padding:16px 16px 14px;}
+  .card h2{font-size:13px;font-weight:600;margin:0;}
+  .card h2 .opt{color:var(--accent);margin-right:.6em;}
+  .kin{font-size:10.5px;color:var(--faint);margin:2px 0 10px;}
+  .kin b{color:var(--ink);font-weight:600;}
+  figure{margin:0;background:var(--paper);border:1px solid var(--rule-soft);border-radius:3px;overflow-x:auto;}
+  svg{display:block;width:100%;height:auto;}
+  .thesis{margin:10px 0 6px;max-width:60ch;}
+  .tr{display:flex;gap:14px;font-size:11px;color:var(--faint);}
+  .tr span b{font-weight:600;}
+  .tr .plus b{color:var(--accent);} .tr .minus b{color:var(--bad);}
+  footer{margin-top:30px;border-top:1px solid var(--rule);padding-top:14px;color:var(--faint);
+         font-size:11.5px;max-width:78ch;}
+  footer b{color:var(--ink);}
+  /* ---- shared SVG vocabulary (mirrors the console's dn- grammar) ---- */
+  .lane{stroke:var(--ink);stroke-width:1;opacity:.55;fill:none;}
+  .lane-w{stroke:var(--accent);stroke-width:1.4;opacity:.95;fill:none;}
+  .hair{stroke:var(--rule);stroke-width:1;fill:none;}
+  .band{fill:var(--accent-dim);stroke:var(--accent);stroke-opacity:.3;stroke-width:1;}
+  .cut{stroke:var(--bad);stroke-width:1.2;opacity:.7;}
+  .dot{fill:var(--accent);}
+  .dot-dim{fill:none;stroke:var(--faint);stroke-width:1;}
+  .seat{fill:none;stroke:var(--crown);stroke-width:1.2;}
+  .lbl{fill:var(--faint);font-size:9px;font-family:inherit;}
+  .lbl-s{fill:var(--faint);font-size:8px;font-family:inherit;}
+  .lbl-i{fill:var(--ink);font-size:9px;font-weight:600;font-family:inherit;}
+  .crown{fill:var(--crown);font-size:11px;font-family:inherit;}
+  .cutlbl{fill:var(--bad);opacity:.75;font-size:8.5px;font-family:inherit;}
+</style>
+
+<div class="wrap">
+  <div class="eyebrow">zicato console · design study</div>
+  <h1>The racing funnel, four ways</h1>
+  <p class="lede">Same figure, four visual grammars. Every option renders the identical served
+  model — no data or contract change; the winner replaces <code>survivalFunnel</code>'s render
+  body only (digest, callbacks, and tests stay put).</p>
+  <span class="datum">One dataset everywhere: field of <b>8</b> · rungs <b>8 → 4 → 2 → 1</b> ·
+  winner <b>g3</b> → champion gate</span>
+
+  <div class="grid">
+
+    <!-- ══════════════ A · TAPERED STREAM ══════════════ -->
+    <div class="card">
+      <h2><span class="opt">A</span>Tapered stream</h2>
+      <div class="kin">speaks the language of: <b>the loss-floor waterfall</b> (area/silhouette)</div>
+      <figure><svg viewBox="0 0 460 240" role="img" aria-label="Option A tapered stream">
+        <path class="band" d="M30,68 L120,68 L150,94 L240,94 L270,107 L340,107 L370,113.5 L410,113.5
+                              L410,126.5 L370,126.5 L340,133 L270,133 L240,146 L150,146 L120,172 L30,172 Z"/>
+        <line class="hair" x1="135" y1="56" x2="135" y2="184"/>
+        <line class="hair" x1="255" y1="56" x2="255" y2="184"/>
+        <line class="hair" x1="355" y1="56" x2="355" y2="184"/>
+        <text class="lbl" x="75" y="52" text-anchor="middle">R0 · 8</text>
+        <text class="lbl" x="195" y="52" text-anchor="middle">R1 · 4</text>
+        <text class="lbl" x="305" y="52" text-anchor="middle">R2 · 2</text>
+        <text class="cutlbl" x="135" y="198" text-anchor="middle">✕ 4</text>
+        <text class="cutlbl" x="255" y="198" text-anchor="middle">✕ 2</text>
+        <text class="cutlbl" x="355" y="198" text-anchor="middle">✕ 1</text>
+        <circle class="seat" cx="431" cy="120" r="11"/>
+        <text class="crown" x="431" y="124" text-anchor="middle">♛</text>
+        <text class="lbl-i" x="431" y="145" text-anchor="middle">g3</text>
+        <text class="lbl-s" x="431" y="156" text-anchor="middle">gate</text>
+      </svg></figure>
+      <p class="thesis">The field is one shrinking mass. Attrition reads as a single converging
+      silhouette; individuals dissolve into the shape.</p>
+      <div class="tr"><span class="plus"><b>+</b> calmest; instant gestalt</span>
+      <span class="minus"><b>−</b> you can't follow a specific generation through</span></div>
+    </div>
+
+    <!-- ══════════════ B · BRACKET RAIL ══════════════ -->
+    <div class="card">
+      <h2><span class="opt">B</span>Bracket rail</h2>
+      <div class="kin">speaks the language of: <b>elimFlow</b> (lanes &amp; pipes)</div>
+      <figure><svg viewBox="0 0 460 240" role="img" aria-label="Option B bracket rail">
+        <line class="hair" x1="140" y1="38" x2="140" y2="202"/>
+        <line class="hair" x1="260" y1="38" x2="260" y2="202"/>
+        <line class="hair" x1="380" y1="38" x2="380" y2="202"/>
+        <text class="lbl" x="140" y="30" text-anchor="middle">R0 · 8→4</text>
+        <text class="lbl" x="260" y="30" text-anchor="middle">R1 · 4→2</text>
+        <text class="lbl" x="380" y="30" text-anchor="middle">R2 · 2→1</text>
+        <!-- start names -->
+        <text class="lbl-s" x="26" y="53" text-anchor="end">g1</text><text class="lbl-s" x="26" y="73" text-anchor="end">g2</text>
+        <text class="lbl-s" x="26" y="93" text-anchor="end">g3</text><text class="lbl-s" x="26" y="113" text-anchor="end">g4</text>
+        <text class="lbl-s" x="26" y="133" text-anchor="end">g5</text><text class="lbl-s" x="26" y="153" text-anchor="end">g6</text>
+        <text class="lbl-s" x="26" y="173" text-anchor="end">g7</text><text class="lbl-s" x="26" y="193" text-anchor="end">g8</text>
+        <!-- cut at R0: g2,g4,g6,g8 terminate before x=140 -->
+        <line class="lane" x1="30" y1="70" x2="128" y2="70"/><path class="cut" d="M129,66 l8,8 M137,66 l-8,8"/>
+        <line class="lane" x1="30" y1="110" x2="128" y2="110"/><path class="cut" d="M129,106 l8,8 M137,106 l-8,8"/>
+        <line class="lane" x1="30" y1="150" x2="128" y2="150"/><path class="cut" d="M129,146 l8,8 M137,146 l-8,8"/>
+        <line class="lane" x1="30" y1="190" x2="128" y2="190"/><path class="cut" d="M129,186 l8,8 M137,186 l-8,8"/>
+        <!-- survivors elbow inward after R0: g1→90 g3→110 g5→130 g7→150 -->
+        <polyline class="lane" points="30,50 140,50 162,90 248,90"/><path class="cut" d="M249,86 l8,8 M257,86 l-8,8"/>
+        <polyline class="lane-w" points="30,90 140,90 162,110 260,110 282,112 368,112"/>
+        <polyline class="lane" points="30,130 140,130 162,130 248,130"/><path class="cut" d="M249,126 l8,8 M257,126 l-8,8"/>
+        <polyline class="lane" points="30,170 140,170 162,150 260,150 282,128 368,128"/><path class="cut" d="M369,124 l8,8 M377,124 l-8,8"/>
+        <!-- winner continues -->
+        <polyline class="lane-w" points="380,112 398,120 414,120"/>
+        <circle class="seat" cx="428" cy="120" r="11"/>
+        <text class="crown" x="428" y="124" text-anchor="middle">♛</text>
+        <text class="lbl-i" x="428" y="145" text-anchor="middle">g3</text>
+      </svg></figure>
+      <p class="thesis">Every generation is a rail you can trace from start to its exact cut.
+      The winner's rail carries the accent the whole way.</p>
+      <div class="tr"><span class="plus"><b>+</b> per-generation traceability; pure line-work</span>
+      <span class="minus"><b>−</b> busiest at large fields (16+ lanes)</span></div>
+    </div>
+
+    <!-- ══════════════ C · DOT LADDER ══════════════ -->
+    <div class="card">
+      <h2><span class="opt">C</span>Dot ladder</h2>
+      <div class="kin">speaks the language of: <b>racingScalarTrack</b> (markers) — its shelf-mate on this very panel</div>
+      <figure><svg viewBox="0 0 460 240" role="img" aria-label="Option C dot ladder">
+        <text class="lbl" x="70" y="34" text-anchor="middle">R0 · 8</text>
+        <text class="lbl" x="180" y="34" text-anchor="middle">R1 · 4</text>
+        <text class="lbl" x="290" y="34" text-anchor="middle">R2 · 2</text>
+        <text class="lbl" x="400" y="34" text-anchor="middle">gate</text>
+        <!-- splines: survivors -->
+        <path class="lane" d="M70,50 C125,50 125,90 180,90"/>
+        <path class="lane-w" d="M70,90 C125,90 125,110 180,110"/>
+        <path class="lane" d="M70,130 C125,130 125,130 180,130"/>
+        <path class="lane" d="M70,170 C125,170 125,150 180,150"/>
+        <path class="lane-w" d="M180,110 C235,110 235,110 290,110"/>
+        <path class="lane" d="M180,150 C235,150 235,130 290,130"/>
+        <path class="lane-w" d="M290,110 C345,110 345,120 384,120"/>
+        <!-- col 0: all 8 -->
+        <circle class="dot" cx="70" cy="50" r="4.5"/><circle class="dot" cx="70" cy="90" r="4.5"/>
+        <circle class="dot" cx="70" cy="130" r="4.5"/><circle class="dot" cx="70" cy="170" r="4.5"/>
+        <circle class="dot-dim" cx="70" cy="70" r="4"/><circle class="dot-dim" cx="70" cy="110" r="4"/>
+        <circle class="dot-dim" cx="70" cy="150" r="4"/><circle class="dot-dim" cx="70" cy="190" r="4"/>
+        <path class="cut" d="M92,66 l7,7 M99,66 l-7,7"/><path class="cut" d="M92,106 l7,7 M99,106 l-7,7"/>
+        <path class="cut" d="M92,146 l7,7 M99,146 l-7,7"/><path class="cut" d="M92,186 l7,7 M99,186 l-7,7"/>
+        <!-- col 1: 4 -->
+        <circle class="dot" cx="180" cy="90" r="4.5"/><circle class="dot" cx="180" cy="110" r="4.5"/>
+        <circle class="dot" cx="180" cy="130" r="4.5"/><circle class="dot" cx="180" cy="150" r="4.5"/>
+        <path class="cut" d="M212,86 l7,7 M219,86 l-7,7"/><path class="cut" d="M212,126 l7,7 M219,126 l-7,7"/>
+        <!-- col 2: 2 -->
+        <circle class="dot" cx="290" cy="110" r="4.5"/><circle class="dot" cx="290" cy="130" r="4.5"/>
+        <path class="cut" d="M322,126 l7,7 M329,126 l-7,7"/>
+        <!-- gate -->
+        <circle class="seat" cx="400" cy="120" r="11"/><circle class="dot" cx="400" cy="120" r="4.5"/>
+        <text class="crown" x="400" y="105" text-anchor="middle">♛</text>
+        <text class="lbl-i" x="400" y="145" text-anchor="middle">g3</text>
+        <text class="lbl-s" x="70" y="212" text-anchor="middle">hollow = never advanced</text>
+      </svg></figure>
+      <p class="thesis">Each generation is a marker hopping rungs — the same dot vocabulary as the
+      scalar track stacked directly above it, so the panel finally reads as one instrument.</p>
+      <div class="tr"><span class="plus"><b>+</b> visual kinship with its panel-mate; scales well</span>
+      <span class="minus"><b>−</b> attrition <i>shape</i> is implied, not drawn</span></div>
+    </div>
+
+    <!-- ══════════════ D · RADIAL SIEVE ══════════════ -->
+    <div class="card">
+      <h2><span class="opt">D</span>Radial sieve</h2>
+      <div class="kin">speaks the language of: <b>elimRadial</b> (rings converging to the seat)</div>
+      <figure><svg viewBox="0 0 460 240" role="img" aria-label="Option D radial sieve">
+        <circle class="hair" cx="230" cy="122" r="92"/>
+        <circle class="hair" cx="230" cy="122" r="62"/>
+        <circle class="hair" cx="230" cy="122" r="38"/>
+        <text class="lbl-s" x="20" y="60">R0 · 8  (outer)</text>
+        <text class="lbl-s" x="20" y="74">R1 · 4</text>
+        <text class="lbl-s" x="20" y="88">R2 · 2</text>
+        <text class="lbl-s" x="20" y="102">seat · 1</text>
+        <!-- cuts at R0 ring -->
+        <path class="cut" d="M191,33 l8,8 M199,33 l-8,8"/>
+        <path class="cut" d="M191,203 l8,8 M199,203 l-8,8"/>
+        <path class="cut" d="M141,153 l8,8 M149,153 l-8,8"/>
+        <path class="cut" d="M141,83 l8,8 M149,83 l-8,8"/>
+        <!-- survivors' spokes inward -->
+        <line class="lane" x1="265.2" y1="37" x2="253.7" y2="64.7"/>
+        <line class="lane-w" x1="315"   y1="86.8" x2="287.3" y2="98.3"/>
+        <line class="lane" x1="315"   y1="157.2" x2="287.3" y2="145.7"/>
+        <line class="lane" x1="265.2" y1="207" x2="253.7" y2="179.3"/>
+        <!-- entry dots for survivors -->
+        <circle class="dot" cx="265.2" cy="37" r="4"/><circle class="dot" cx="315" cy="86.8" r="4"/>
+        <circle class="dot" cx="315" cy="157.2" r="4"/><circle class="dot" cx="265.2" cy="207" r="4"/>
+        <!-- R1 ring: g1,g5 cut; g3,g7 continue -->
+        <path class="cut" d="M249.7,60.7 l8,8 M257.7,60.7 l-8,8"/>
+        <path class="cut" d="M249.7,175.3 l8,8 M257.7,175.3 l-8,8"/>
+        <line class="lane-w" x1="287.3" y1="98.3" x2="265.1" y2="107.5"/>
+        <line class="lane" x1="287.3" y1="145.7" x2="265.1" y2="136.5"/>
+        <circle class="dot" cx="287.3" cy="98.3" r="4"/><circle class="dot" cx="287.3" cy="145.7" r="4"/>
+        <!-- R2 ring: g7 cut; g3 to seat -->
+        <path class="cut" d="M261.1,132.5 l8,8 M269.1,132.5 l-8,8"/>
+        <circle class="dot" cx="265.1" cy="107.5" r="4"/>
+        <line class="lane-w" x1="265.1" y1="107.5" x2="240.5" y2="117.5"/>
+        <circle class="seat" cx="230" cy="122" r="12"/>
+        <text class="crown" x="230" y="126" text-anchor="middle">♛</text>
+        <text class="lbl-i" x="230" y="150" text-anchor="middle">g3</text>
+      </svg></figure>
+      <p class="thesis">The halving becomes a sieve: each ring passes half the field toward the
+      center seat. A true sibling of the restored radial bracket.</p>
+      <div class="tr"><span class="plus"><b>+</b> matches the figure you like most; compact</span>
+      <span class="minus"><b>−</b> rung progress bars fit awkwardly on arcs; two radials on one epoch may compete</span></div>
+    </div>
+
+  </div>
+
+  <footer>
+    <b>Picking:</b> reply with a letter — or a mix ("B's rails with C's dot terminals").
+    The chosen option replaces <code>survivalFunnel</code>'s render body only: served model,
+    digest, callbacks, live progress behavior, and the frozen geometry-test contract all stay.
+    Live/in-flight treatment (projected amber, progress sub-bars) carries over to any option unchanged.
+  </footer>
+</div>
+
+</body>
+</html>
