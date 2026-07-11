@@ -42,6 +42,7 @@ import {
   SCALE_MIN, SCALE_MAX, SCALE_STEP, DEFAULT_SCALE, normaliseScale, readScale, persistScale,
   normaliseFontSize, readFontSize, persistFontSize, fontSizeScale,
   RAIL_MIN, RAIL_MAX, DEFAULT_RAIL, normaliseRail, readRail, persistRail, pageScaleOf,
+  gatedSwap,
 } from './ui.js';
 
 import * as home from './views/home.js';
@@ -101,7 +102,6 @@ let _settingsOpen = false;    // true while the drawer is open (gates Esc + the 
 // The last NON-settings route — the view the overlay paints over. A bare
 // `#/settings` loaded cold (no prior view) opens over Environment (home).
 let _underlyingRoute = { view: 'home', params: {}, cmp: null };
-let _lastCrumbDigest = null;
 let _lastStatusDigest = null;
 let _lastTreeDigest = null;
 // The signature of the live data AppState last folded in from /api/environment
@@ -917,17 +917,21 @@ async function renderTree(route) {
 function renderCrumbs(route) {
   if (!_crumbHost) return;
   const trail = crumbTrail(route);
+  // The second-idiom digest gate folded onto gatedSwap (the same firstChild +
+  // digest-attribute no-flash contract the views use) — a pure clear-and-rebuild
+  // with no external invalidation, so it drops in cleanly.
   const digest = JSON.stringify(trail.map((c) => [c.label, c.view || '', c.current || false]));
-  if (digest === _lastCrumbDigest && _crumbHost.firstChild) return;
-  _lastCrumbDigest = digest;
-  clearChildren(_crumbHost);
-  trail.forEach((c, i) => {
-    if (i > 0) _crumbHost.appendChild(el('span', { class: 'dt-crumb-sep', 'aria-hidden': 'true', text: '›' }));
-    if (c.current || !c.view) {
-      _crumbHost.appendChild(el('span', { class: 'dt-crumb dt-crumb-current', 'aria-current': 'page', text: c.label }));
-    } else {
-      _crumbHost.appendChild(el('a', { class: 'dt-crumb', href: href(c.view, c.params), text: c.label }));
-    }
+  gatedSwap(_crumbHost, digest, () => {
+    const out = [];
+    trail.forEach((c, i) => {
+      if (i > 0) out.push(el('span', { class: 'dt-crumb-sep', 'aria-hidden': 'true', text: '›' }));
+      if (c.current || !c.view) {
+        out.push(el('span', { class: 'dt-crumb dt-crumb-current', 'aria-current': 'page', text: c.label }));
+      } else {
+        out.push(el('a', { class: 'dt-crumb', href: href(c.view, c.params), text: c.label }));
+      }
+    });
+    return out;
   });
 }
 

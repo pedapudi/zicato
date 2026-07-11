@@ -286,11 +286,11 @@ test('matches: a NO-OP beat over the same live matches churns ZERO DOM', () => {
   const { at, heartbeat, activeRuns } = racingInflight('e1', 'e2');
   c.update({ status: { running: true, alive: true, structure: 'racing' }, heartbeat, activeRuns, activeTournament: at });
   const firstNode = c._matchesBody.firstChild;
-  const digestBefore = c._matchesDigest;
+  const digestBefore = c._matchesBody.getAttribute('data-t-digest');
   assert(firstNode && digestBefore, 'the matches block mounted');
   // an identical second tick → same digest → no rebuild (node identity preserved).
   c.update({ status: { running: true, alive: true, structure: 'racing' }, heartbeat, activeRuns, activeTournament: at });
-  assertEqual(c._matchesDigest, digestBefore, 'a no-op tick yields the SAME matches digest');
+  assertEqual(c._matchesBody.getAttribute('data-t-digest'), digestBefore, 'a no-op tick yields the SAME matches digest');
   assert(c._matchesBody.firstChild === firstNode, 'a no-op tick preserves the matches node (no flash)');
 });
 
@@ -353,10 +353,10 @@ test('matches: a NO-OP beat over the synthesized all-settled fallback churns ZER
   const { at, heartbeat, activeRuns } = racingSettledRoundsInflight('e1', 'e1');
   c.update({ status: { running: true, alive: true, structure: 'racing' }, heartbeat, activeRuns, activeTournament: at });
   const firstNode = c._matchesBody.firstChild;
-  const digestBefore = c._matchesDigest;
+  const digestBefore = c._matchesBody.getAttribute('data-t-digest');
   assert(firstNode && digestBefore, 'the fallback block mounted');
   c.update({ status: { running: true, alive: true, structure: 'racing' }, heartbeat, activeRuns, activeTournament: at });
-  assertEqual(c._matchesDigest, digestBefore, 'a no-op tick yields the SAME fallback digest');
+  assertEqual(c._matchesBody.getAttribute('data-t-digest'), digestBefore, 'a no-op tick yields the SAME fallback digest');
   assert(c._matchesBody.firstChild === firstNode, 'a no-op tick preserves the fallback node (no flash)');
 });
 

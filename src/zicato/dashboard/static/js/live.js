@@ -33,6 +33,7 @@ import {
   proposingTracker, proposingDigest, CROWN,
 } from './svg.js';
 import { fieldStatus as readFieldStatus } from './data.js';
+import { gatedSwap } from './ui.js';
 import { runStateLabel } from './livestatus.js';
 import {
   racingModel, swissModel, elimModel, gauntletModel, gauntletModelDigest, normalizeStructure,
@@ -404,6 +405,17 @@ export class ActivityTicker {
     return added;
   }
 
+  // Clear EVERY row + the dedup memory (the alive→idle transition). Without
+  // this the finished run's rows persist in `_list`/`_seen` and the NEXT run's
+  // events prepend on top of the dead ones — the idle-leak. The empty
+  // placeholder is restored so the feed reads "waiting for activity…" again.
+  reset() {
+    while (this._list.firstChild) this._list.removeChild(this._list.firstChild);
+    this._count = 0;
+    this._seen.clear();
+    if (this._empty && !this._empty.parentNode) this.node.insertBefore(this._empty, this._list);
+  }
+
   _buildRow(ev) {
     return el('div', { class: 'dt-ticker-row dt-ticker-' + (ev.tone || 'neutral'), 'data-kind': ev.kind || '' }, [
       el('span', { class: 'dt-ticker-glyph', 'aria-hidden': 'true', text: glyphFor(ev) }),
@@ -643,10 +655,11 @@ export class LiveController {
     this._canControl = false;
     this._seq = 0;
     this._prevSnap = null;
+    // tracks the alive→idle edge so the ticker is cleared exactly once on the
+    // transition (not every idle beat).
+    this._wasAlive = false;
     this._funnelDigest = null;
-    this._matchesDigest = null;
     this._metaKey = null;
-    this._stepDigest = null;
     this._pipeDigest = null;
     this.ticker = new ActivityTicker({ cap: o.cap || 40 });
     this._build();
@@ -726,15 +739,29 @@ export class LiveController {
 
     // ── the activity ticker: diff the snapshot, append the new events ──
     const snap = liveSnapshot({ status, heartbeat, activeRuns, activeTournament });
+    // On the idle→alive edge (a fresh run begins), clear the PREVIOUS run's dead
+    // rows BEFORE this tick's events land — so they never leak into the new
+    // run's feed. Clearing here (not on the alive→idle edge) preserves the
+    // finishing run's completion events, which land in the same tick it settles.
+    if (alive && !this._wasAlive) this.ticker.reset();
     const { events, seq } = deriveActivity(this._prevSnap, snap, this._seq);
     this._seq = seq;
     if (events.length) this.ticker.push(events);
-    this._prevSnap = alive ? snap : null;
+    // KEEP the last snapshot even when idle (do NOT null it). Nulling forced the
+    // next alive tick to cold-start deriveActivity, which re-emits EVERY
+    // in-flight run as a phantom "matchup running" burst — the second half of
+    // the idle-leak. Keeping it means re-activation diffs against the true prior
+    // snapshot: genuinely-new runs still surface, already-running ones do not.
+    this._prevSnap = snap;
     if (!alive) {
-      this._funnelDigest = null; this._matchesDigest = null; this._metaKey = null; this._stepDigest = null;
+      this._wasAlive = false;
+      // _matchesDigest/_stepDigest are gone (those gates now ride gatedSwap's
+      // host-attribute digest); the funnel + meta line still use their vars.
+      this._funnelDigest = null; this._metaKey = null;
       this.updatePipeline(null);
       return false;
     }
+    this._wasAlive = true;
 
     // ── tournament-level progress: the ONE rung-number source of truth ──
     // liveProgress reads the live TOPOLOGY (resolved rungs + the active rung),
@@ -762,14 +789,10 @@ export class LiveController {
 
     // ── 2. the rung STEPPER caps the race track (digest-gated swap) ──
     // structural progress: one pip per rung, completed filled, current active.
-    const stepDigest = rungStepperDigest(prog);
-    if (stepDigest !== this._stepDigest || !this._stepHost.firstChild) {
-      this._stepDigest = stepDigest;
-      clear(this._stepHost);
-      if (prog.stepCount != null && prog.stepCount > 0) {
-        this._stepHost.appendChild(rungStepper(prog));
-      }
-    }
+    // the second-idiom digest gate folded onto gatedSwap: the same firstChild +
+    // digest-attribute no-flash contract, so a steady tick writes ZERO DOM.
+    gatedSwap(this._stepHost, rungStepperDigest(prog),
+      () => (prog.stepCount != null && prog.stepCount > 0) ? rungStepper(prog) : null);
 
     // ── the MATCH-GROUPED "what's running" block: digest-gated on live CONTENT ──
     // (which matches exist + each board's progress BUCKET) so the DOM is rebuilt
@@ -871,14 +894,14 @@ export class LiveController {
     }
     const runsKey = Object.keys(byGen).sort()
       .map((g) => g + ':' + byGen[g].map((r) => r.run_id).sort().join('+')).join(',');
+    // the second-idiom digest gate folded onto gatedSwap (same no-flash contract).
     const digest = liveMatchBlocksDigest(blocks) + '|kill:' + (canKill ? runsKey : '-');
-    if (digest === this._matchesDigest && this._matchesBody.firstChild) return; // no real change → no DOM.
-    this._matchesDigest = digest;
-    clear(this._matchesBody);
-    const node = liveMatchGroupedBlocks(blocks, this.onCompetitor || undefined,
-      canKill ? { canControl: true, onKill: this.onKill } : undefined);
-    if (node.classList) node.classList.add('dt-live-enter');
-    this._matchesBody.appendChild(node);
+    gatedSwap(this._matchesBody, digest, () => {
+      const node = liveMatchGroupedBlocks(blocks, this.onCompetitor || undefined,
+        canKill ? { canControl: true, onKill: this.onKill } : undefined);
+      if (node.classList) node.classList.add('dt-live-enter');
+      return node;
+    });
   }
 
   _updateStructure(activeTournament, heartbeat, activeRuns) {

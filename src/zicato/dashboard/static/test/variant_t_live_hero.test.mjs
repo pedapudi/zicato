@@ -54,6 +54,26 @@ const HERO_LIVE_RACING = {
   standings: [],
 };
 
+// ---- ActivityTicker.reset() — the idle-leak fix ----
+
+test('ActivityTicker.reset(): clears every row AND the dedup memory (idle-leak fix), restoring the empty placeholder', () => {
+  const t = new live.ActivityTicker({ cap: 40 });
+  t.push([{ id: 'a1', kind: 'matchup', text: 'run one · started' },
+          { id: 'a2', kind: 'run', text: 'run one · completed' }]);
+  assertEqual(allByClass(t.node, 'dt-ticker-row').length, 2, 'two rows from the finished run');
+  assertEqual(allByClass(t.node, 'dt-ticker-empty').length, 0, 'the empty placeholder is hidden while rows exist');
+
+  t.reset();
+  assertEqual(allByClass(t.node, 'dt-ticker-row').length, 0, 'reset clears the finished run’s rows (no leak into the next run)');
+  assertEqual(allByClass(t.node, 'dt-ticker-empty').length, 1, 'reset restores the "waiting for activity…" placeholder');
+
+  // the dedup memory is cleared too, so a re-used id from the next run re-adds
+  // (without the clear, a recycled id would be silently swallowed).
+  const added = t.push([{ id: 'a1', kind: 'matchup', text: 'run two · started' }]);
+  assertEqual(added, 1, 'reset cleared the dedup set — the recycled id lands as a fresh row');
+  assertEqual(allByClass(t.node, 'dt-ticker-row').length, 1, 'the next run starts from a clean, one-row feed');
+});
+
 // ---- (a) the live hero + funnel render; the ticker lists events ----
 
 test('live hero: an active-tournament (racing, running) renders the live hero + scalar track and the activity ticker lists events', () => {
