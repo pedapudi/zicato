@@ -91,7 +91,30 @@
 > cache writer routes through the fsync'd atomic JSON writer, and zero-variance
 > (all-fire / all-silent) judges are skipped from the redundancy/conflict
 > cross-correlation.
-> **In build**: the console Instrument lens (R5).
+> **Shipped since (the Instrument lens MVP, R5)**: the console **Instrument
+> lens** (`dashboard/static/js/views/instrument.js`, registered in
+> `shell.js`/`router.js`/`tree.js`) transliterates the **bill-of-health +
+> judge-audit + x-ray** mockups from `reflection-viz-study/` — a reflection
+> LANDING (the epoch's reflections as a dataTable), the four-pillar BILL OF
+> HEALTH (reliability floor + decision-flip P with an honest "n/a — insufficient
+> replication" for a null `p_flip`, discrimination differentiating-entries +
+> coverage tallies, validity aggregate-F1 + ambiguous pile, calibration
+> margin-to-noise) over the ranked findings (each with its copyable `zicato
+> reflect apply <id> <finding_id>` invocation — recommend-only, the CLI is the
+> apply path), the per-judge JUDGE AUDIT scorecards (the 2×2 confusion matrix +
+> P/R/F1/FPR + severity accuracy + the honestly-labelled disagreement rate AND
+> self-consistency κ + redundancy/conflict chips, untested judges greyed "never
+> fired"), and the adjudication X-RAY (the fidelity-labelled transcript with the
+> `evidence_span` highlighted on a text match, the judge verdict vs the
+> meta-judge adjudication + model + prompt version + self-agreement, an honest
+> "transcript unavailable" when the capture was not retained). The view is
+> SERVER-AUTHORITATIVE (it renders the reader payloads and derives no rate / κ /
+> verdict; the arc gauge + top-line pillar VERDICT of the mockup are deferred —
+> the reader carries no pillar score) and digest-gated (a completed reflection is
+> immutable ⇒ fetch-once, a no-op repaint rebuilds zero DOM). The tree grows an
+> "Instrument" node under an epoch only when it has reflections. The remaining
+> FIVE viz-study mockups (noise-cloud / coherence / waterfall / corpus-grid /
+> the compact status ribbon) stay the deferred component spec.
 > **Endpoint-gated** (needs operator go-ahead + a live endpoint): live
 > meta-judge adjudication, run-twice decision-flip validation, the "quick
 > judge audit" preflight extension, the builder Validate panel, and the full

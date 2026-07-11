@@ -67,7 +67,7 @@ server + the JS). Nothing in the library knows the driver exists.
 | `src/zicato/dashboard/static_assets.py` | `resolve_static_dir` — the bundle-resolution seam | 50 lines |
 | `src/zicato/dashboard/static/js/core/` | `sse.js` (the seq gate), `api.js` (`postControl`), `state.js` (`noteProgress`, `AppState`), `dom.js`, `bus.js` | — |
 | `src/zicato/dashboard/static/js/` | `router.js`, `shell.js` (dispatch + chrome + loop controls), `live.js` (the live engine + `pipelineStepper`), `livestatus.js` (the four run-states), `data.js` (null-degrading accessors), `svg.js` (the figure grammar), `ui.js` (`gatedSwap`) | — |
-| `src/zicato/dashboard/static/js/views/` | one module per page: `home.js`, `epoch.js`, `gens.js`, `candidate.js`, `board(s).js`, `mutations.js`, `diff.js`, … each an `async render(host, ctx, params)` | — |
+| `src/zicato/dashboard/static/js/views/` | one module per page: `home.js`, `epoch.js`, `gens.js`, `candidate.js`, `board(s).js`, `mutations.js`, `instrument.js` (the board-reflection lens — landing / bill-of-health / judge-audit / x-ray), `diff.js`, … each an `async render(host, ctx, params)` | — |
 
 Two orientation facts before anything else:
 
@@ -720,6 +720,10 @@ chapter leans on:
 | `build_round_timeline` | `/api/epoch/{id}/round-timeline` | `{rounds[], waterfall[]}` | empty rounds list |
 | `build_snapshot` | `/api/state`, SSE `snapshot` | see above | each field independently `None` |
 | `read_active_runs_view` | `/api/active-runs` | `[{run_id, progress, elapsed_seconds, budget_seconds, …}]` | `[]` |
+| `list_reflections` (`query/reflection_view.py`) | `/api/reflections[?epoch=]` | `{reflections:[{reflection_id, epoch_id, created_at, mode, executed, noise_floor_max_abs_delta, decision_flip_p, n_findings, n_judges}]}` | `{reflections: []}` |
+| `build_reflection_summary` | `/api/reflection/{id}/summary` | `{found, pillars:{reliability, discrimination, validity, calibration}, findings[], fidelity_tiers}` | `found: false` same-shape empty |
+| `build_judge_scorecards` | `/api/reflection/{id}/scorecards` | `{judges:[{judge_name, tp/fp/fn/tn, ambiguous, precision, recall, f1, disagreement_rate, self_consistency_kappa, exercised, redundant_with}]}` | `{judges: []}` |
+| `build_adjudication_xray` | `/api/reflection/{id}/xray/{judge}/{run_ref}` | `{found, transcript:{fidelity, turns[]}, judge_verdict, adjudication}` | `found: false` + `fidelity: unavailable` |
 
 ---
 
@@ -814,6 +818,24 @@ root-relative references resolve. The catch-all MUST stay last:
 > in order; anything after the fallback is dead. A new API route goes into
 > the `routes` list above the builder/settings splice; the fallback is the
 > terminal.
+
+The **client** hash-route grammar (`router.js` `parseRoute`/`href`, one entry
+per `VIEWS` member) mirrors the same coordinate nesting under `#/e/<epochId>/`:
+
+| Hash route | View | Renders |
+|---|---|---|
+| `#/e/<id>/gens` · `/gen/<gen>[/<entry>]` · `/gen/<gen>/diff[/<mutId>]` | `gens` / `candidate` / `diff` | generations, the candidate dossier, the patch diff |
+| `#/e/<id>/boards` · `/board/<entry>[/<gen>]` | `boards` / `board` | the board trellis / one board + inline transcript |
+| `#/e/<id>/mutations[/<mutId>[/<gen>]]` | `mutations` | the mutation surface + side-by-side diff |
+| `#/e/<id>/instrument[/<reflectionId>[/<judge>[/<runRef>]]]` | `instrument` | board-reflection: landing → bill of health + judge audit → adjudication x-ray (the `run_ref`'s `:` is `enc()`'d into the last leg) |
+| `#/e/<id>/paper` | `publication` | the ACM publication |
+
+A new view registers in FOUR places (the `instrument` lens is the worked
+example): `router.js` (`VIEWS` + `parseRoute`/`href`/`up`/`crumbTrail`),
+`shell.js` (`RENDERERS`), a `views/<name>.js` module, and — when it hangs off
+the epoch — a `tree.js` leaf gated on a cheap model flag (the Instrument node
+shows only when `byEpoch[id].hasReflections`, folded from ONE workspace-wide
+`/api/reflections` read in `buildTreeModel`).
 
 ---
 
