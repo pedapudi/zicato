@@ -115,6 +115,17 @@
 > "Instrument" node under an epoch only when it has reflections. The remaining
 > FIVE viz-study mockups (noise-cloud / coherence / waterfall / corpus-grid /
 > the compact status ribbon) stay the deferred component spec.
+> **Shipped since (the practice review)**: the narrative layer above the four
+> pillars — `reflection/practices.py`'s `review_practices` (a pure, zero-LLM
+> `PracticeReview` over the contract + history + reflection artifacts; eleven
+> checks in the four-verdict `sound`/`attend`/`unsound`/`unmeasured` vocabulary,
+> each composing the loop-health detector / analysis function that owns its
+> signal rather than re-deriving it, each `proposed_op` signature-validated like
+> the findings), persisted as `practices.json`, wired into `reflect run` (free on
+> both tiers) + a `reflect practices` cheap contract+history subcommand +
+> `reflect report`'s Practice-review section, and surfaced through
+> `query/reflection_view.build_practice_review` +
+> `/api/reflection/{id}/practices` (file-first, DQ3 degrade).
 > **Endpoint-gated** (needs operator go-ahead + a live endpoint): live
 > meta-judge adjudication, run-twice decision-flip validation, the "quick
 > judge audit" preflight extension, the builder Validate panel, and the full
@@ -213,6 +224,93 @@ Operating decisions for this design:
 - **Loss-weight fitting is deferred** (see Non-goals): fitting the instrument
   overfits exactly as the proposer overfits the board; it needs its own
   reference-set train/validate split and is out of scope for the MVP.
+
+## Practice review — the narrative layer above the pillars
+
+The four pillars answer **what the numbers say** about one contract: how noisy,
+how discriminating, how valid, how calibrated. The **practice review** answers a
+different question — **what you should change about *how* you evaluate**. It reads
+the contract, the operating history, and (when present) the reflection artifacts
+and diagnoses **(anti-)best practices**: not "judge X has precision 0.4" but "your
+board's oracles are all substring matches, which saturate — the issue-#84 class."
+
+Both directions matter, and this is the design's editorial stance: **an
+affirmation of sound practice teaches as much as a deficiency flag.** A review
+that only ever complains trains the operator to dread it; a review that also says
+"your margin clears the measured floor 3.1× — sound" teaches *why* that is the
+thing to keep doing. So `sound` verdicts are **reported, never suppressed.**
+
+**Placement — the free passive tier.** The practice review makes **zero LLM
+calls**: it is a pure read over the contract (`board` / `scoring` / `epoch`), the
+operating history (`experiments`, the persisted `noise_floor` / `preflight`), and
+the reflection artifacts (`scorecards` / the corpus term-contributions) when a
+`reflect run` produced them. It therefore rides the same passive, always-free tier
+as continuous reflection — and a dedicated `zicato reflect practices` runs the
+contract+history checks on **any** epoch instantly, with no corpus at all.
+
+**Composition, not re-derivation.** Where a loop-health detector or an analysis
+function already owns a signal, the practice check **calls it and translates its
+finding** — `statistical_power` consumes `power_analysis` (fed by
+`sigma_from_noise_floor`), `placebo_outcomes` composes `detect_placebo_promoted`,
+`generalization_trend` composes `detect_generalization_gap`, `promotion_hygiene`
+composes `detect_margin_below_noise_floor`. The practice verdict *follows* the
+detector; it never re-implements the arithmetic (so a threshold change in the
+detector moves the practice verdict with it — no drift).
+
+### The verdict vocabulary
+
+| verdict | meaning |
+|---|---|
+| `sound` | the practice is correct — an affirmation, reported to teach, not suppressed |
+| `attend` | a soft deficiency worth the operator's attention; not yet unsound |
+| `unsound` | an anti-practice the noise doctrine / overfitting program names as wrong |
+| `unmeasured` | the check's inputs are absent — reported honestly with what is missing, **never a fabricated verdict** |
+
+An `unmeasured` verdict is a first-class outcome: a check that lacks its noise
+floor, its scorecards, or its corpus says so (and names the missing input) rather
+than inventing a `sound`/`unsound` it cannot support. Honesty over coverage.
+
+### The check catalog
+
+Each check's rationale is one line grounded in the noise doctrine
+(04-evaluation-statistics.md) or the overfitting program (OVERFITTING.md); the
+grounding section is cited in the check's docstring. Thresholds are module
+constants in `reflection/practices.py` with rationale comments.
+
+| id | verdict inputs | rationale (one line) | remediation |
+|---|---|---|---|
+| `oracle_mix` | board expectation kinds | all-`expected_text`/`regex` oracles saturate — the issue-#84 weak-oracle class (ch.04 §3) | authoring only (name the board editor) |
+| `judge_criterion_quality` | inline judge bodies; `scorecards` | underspecified criteria breed ambiguous adjudications (ch.04 §10) | authoring only (edit the judge body) |
+| `statistical_power` | `noise_floor`→σ, replicates, train board size, `promote_margin` | when the min detectable Δ exceeds the margin the loop is theater at this power (ch.04 §3, §13) | `set_param` — bump `replicates` to clear the MDD (cap 8) |
+| `overfitting_posture` | `overfitting`, `proposer_quality`, board size, promotions | memorization defense must scale with a splittable board (OVERFITTING.md §4/§6/§7) | `set_holdout` / `set_screening` |
+| `loss_monoculture` | corpus term-contributions (or namespace/judge weights) | a monoculture loss optimizes one blind spot (ch.04 §1.5) | `set_namespace_weights` (advisory sketch) |
+| `budget_sanity` | entry wall-clock budgets | a >10×-median entry dominates the round's wall-clock (builder validate heuristic) | authoring only (retune the budget) |
+| `calibration_freshness` | `noise_floor` age vs lineage, `promote_margin` | a stale floor calibrates today's gate against yesterday's noise (ch.04 §3, §4) | re-run `zicato board audit` |
+| `placebo_outcomes` | placebo `experiments`, cadence | a rejected placebo proves gate discrimination; a promoted one disproves it (ch.04 §11) | `set_holdout` (set/keep the placebo cadence) |
+| `generalization_trend` | holdout/train gap over lineage, rotation | a widening holdout gap is board memorization (OVERFITTING.md §6/§7) | roll the epoch / `set_holdout` rotation |
+| `promotion_hygiene` | promotions, evidence gate, margin vs floor, holdout | a promotion on a sub-floor margin with no evidence gate promotes noise (ch.04 §3, §6) | `set_gate` — lift `promote_margin` clear of the floor |
+| `weight_revisit` | default-weighted judges, `scorecards` reliabilities | a judge left at default weight despite divergent measured reliability mis-weights the loss (ch.04 §10) | `set_weights` (advisory `per_judge_weights`) |
+
+### Output shape and the apply path
+
+The review is a `PracticeReview` (`reflection/practices.py`) — a list of
+`PracticeCheck` results, each `{check_id, verdict, headline (one sentence, numbers
+inline), evidence, rationale (one line), proposed_op, unmeasured_reason}`. A
+`proposed_op` — present only for the mechanically-fixable checks — names a REAL
+builder op and is VALIDATED against that op's signature at emit time via the same
+`validate_proposed_op` the findings use, so a payload the builder would reject
+never ships. The apply path is identical to the findings': the operator carries a
+proposed op to a **builder draft** and seals it there (sealing rolls the epoch);
+the review, like everything reflection produces, is **recommend-only** and
+operator-facing (never crosses into the proposer envelope).
+
+The review persists as `practices.json` in the reflection directory (the file is
+canonical; the reader degrades on its absence). `reflect run` writes it on both
+the passive and the full tier — it is free. `reflect report` renders a **Practice
+review** section: the `sound` affirmations **first** (the pedagogical stance
+above — you read what you are doing right before the deficiencies, so the
+deficiencies land against that baseline), then the `attend`/`unsound` deficiencies
+ranked worst-first, then the `unmeasured` checks each listing the input it needs.
 
 ## The protocol (sound experiment design)
 
@@ -632,6 +730,33 @@ rendered with the console's quiet precision, **not clutter**. The
 spiral-as-convergence motif, the theme system, and the digest-gated / SSE
 machinery carry over unchanged. **Reflection is a new grammar on the existing
 design language, not a new language.**
+
+**UI language — reuse the console's existing grammars, do not invent chrome.**
+The Instrument-lens surfaces (the bill of health, the practice review, the judge
+audit) MUST be built from the grammars the console already speaks — not a new
+component vocabulary bolted on beside them:
+
+- **The practice review reuses the loop-health findings panel's list treatment.**
+  A practice check is a loop-health finding in a different domain; it renders as
+  the same verdict-led list row (headline, one-line rationale, evidence), not as
+  a bespoke card grid.
+- **Per-judge / per-check trends reuse the per-judge trend panel's card
+  treatment** — the same card the console already uses for a judge's history, not
+  a new tile shape.
+- **Figures carry a `dn-faint` caption**, the console's established quiet-caption
+  treatment — never a heavier frame invented for reflection.
+- **Tags / chips are ONLY for semantic state the console already pills** — a
+  `verdict` (sound/attend/unsound/unmeasured) or a `severity`. These map onto the
+  console's existing pill palette. Everything else is text.
+- **Metadata is a caption line, never a per-row tag.** Fidelity tier, adjudicator
+  model, prompt version, and the like belong in a single `dn-faint` caption under
+  a figure — not scattered as a chip on every row (which would read as semantic
+  state it is not).
+- **Navigation lives in the shell** — the hash router's routes and the tree
+  sidebar. The lens never grows an internal navigation rail of its own; a
+  reflection is reached the way every other view is reached.
+
+(A companion agent implements the lens rework against exactly this text.)
 
 ## The proposer envelope — reflection output is operator-only
 
