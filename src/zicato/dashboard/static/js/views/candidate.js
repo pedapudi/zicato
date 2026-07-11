@@ -29,7 +29,7 @@ import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { attachHovercard } from '../hovercard.js';
 import { lifecycleDag, rungProgression } from '../dag.js';
-import { gatedSwap, section, subhead, empty, stat, verdictPill, overrideChip, overrideDigest, decisionFor, decisionOf, densityTokens, prText, metricsDigest } from '../ui.js';
+import { gatedSwap, section, subhead, empty, stat, verdictPill, pill, overrideChip, overrideDigest, decisionFor, decisionOf, densityTokens, prText, metricsDigest, truncate, hovercardBody, dataTable, deltaCell } from '../ui.js';
 import { comparePicker, splitFrame } from '../compare.js';
 import { candidateProgression, inflightForActiveEpoch, inflightForEntryGen, runProgressRatio, liveMatchupsForCandidate, liveBelongsToEpoch, resolveNonGauntletSt, racingModel, structureDigest, normalizeStructure } from './structure.js';
 import { roundsFromTimeline, reignModel } from '../rounds.js';
@@ -763,36 +763,37 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
       ]) : null,
       sfrac != null ? el('span', { class: 'dt-proj-bar-lab', text: sbd + '/' + sbt + ' scored' }) : null,
     ].filter(Boolean)));
-    const tbl = el('table', { class: 'dn-board-table dn-inflight-table' });
-    tbl.appendChild(el('thead', null, [el('tr', null, [
-      el('th', { text: 'board' }), el('th', { text: 'run' }), el('th', { text: 'progress' }), el('th', { text: 'execution' }),
-    ])]));
-    const tbody = el('tbody');
-    for (const r of inflight) {
-      const eid = r.entry_id != null ? r.entry_id : '—';
-      const pr = runProgressRatio(r);
-      const pct = pr != null ? Math.round(pr * 100) : null;
-      // a per-run harmonograf "execution ▸" link — liveness-gated (these are
-      // in-flight runs, so the auto-launched server is up) and stop-propagated
-      // so the cell click does not also navigate the row. Renders nothing when
-      // not live / no harmonograf url (harmonografMini returns null).
-      const exec = harmonografMini(r, 'execution', 'open this run’s harmonograf trace');
-      if (exec) exec.addEventListener('click', (ev) => ev.stopPropagation());
-      const row = el('tr', { class: 'dn-inflight-row' }, [
-        el('td', { class: 'dn-mono', text: String(eid) }),
-        el('td', { class: 'dn-mono dn-faint', text: r.run_id ? String(r.run_id) : 'pending' }),
-        el('td', null, [
-          el('span', { class: 'dn-progress' }, [
-            el('span', { class: 'dn-progress-fill', style: 'width:' + (pct != null ? pct : 6) + '%' + (pct == null ? ';opacity:0.4' : '') }),
-          ]),
-          el('span', { class: 'dn-mono dn-faint dn-progress-pct', text: pct != null ? ' ' + pct + '%' : ' running…' }),
-        ]),
-        el('td', null, [exec || el('span', { class: 'dn-faint', text: '—' })]),
-      ]);
-      if (eid !== '—') { row.style.cursor = 'pointer'; row.addEventListener('click', () => ctx.navigate('board', { epochId, entry: eid, gen: genId })); }
-      tbody.appendChild(row);
-    }
-    tbl.appendChild(tbody);
+    const tbl = dataTable({
+      class: 'dn-board-table dn-inflight-table',
+      columns: [{ label: 'board' }, { label: 'run' }, { label: 'progress' }, { label: 'execution' }],
+      rows: inflight.map((r) => {
+        const eid = r.entry_id != null ? r.entry_id : '—';
+        const pr = runProgressRatio(r);
+        const pct = pr != null ? Math.round(pr * 100) : null;
+        // a per-run harmonograf "execution ▸" link — liveness-gated (these are
+        // in-flight runs, so the auto-launched server is up) and stop-propagated
+        // so the cell click does not also navigate the row. Renders nothing when
+        // not live / no harmonograf url (harmonografMini returns null).
+        const exec = harmonografMini(r, 'execution', 'open this run’s harmonograf trace');
+        if (exec) exec.addEventListener('click', (ev) => ev.stopPropagation());
+        const row = {
+          class: 'dn-inflight-row',
+          cells: [
+            { class: 'dn-mono', text: String(eid) },
+            { class: 'dn-mono dn-faint', text: r.run_id ? String(r.run_id) : 'pending' },
+            { el: [
+              el('span', { class: 'dn-progress' }, [
+                el('span', { class: 'dn-progress-fill', style: 'width:' + (pct != null ? pct : 6) + '%' + (pct == null ? ';opacity:0.4' : '') }),
+              ]),
+              el('span', { class: 'dn-mono dn-faint dn-progress-pct', text: pct != null ? ' ' + pct + '%' : ' running…' }),
+            ] },
+            { el: exec || el('span', { class: 'dn-faint', text: '—' }) },
+          ],
+        };
+        if (eid !== '—') { row.style = 'cursor: pointer'; row.onClick = () => ctx.navigate('board', { epochId, entry: eid, gen: genId }); }
+        return row;
+      }),
+    });
     liveCard.appendChild(tbl);
     host.appendChild(section('Live · boards running for this candidate', liveCard));
   }
@@ -1284,24 +1285,25 @@ function racingFieldPanels(st, epochId, genId, championId, scalarByGen, liveProj
     el('span', { class: 'dn-pill dn-promoted', text: candRank > 0 ? `rank ${candRank} / ${fieldSize}` : `field of ${fieldSize}` }),
     el('span', { class: 'dn-faint', text: ` · ${survivorCount} of ${fieldSize} survived the cuts` }),
   ]));
-  const stbl = el('table', { class: 'dn-board-table dn-racing-standings' });
-  stbl.appendChild(el('thead', null, [el('tr', null, [
-    el('th', { text: '#' }), el('th', { text: 'racer' }), el('th', { class: 'dn-num', text: 'scalar' }), el('th', { text: 'status' }),
-  ])]));
-  const stbody = el('tbody');
-  list.forEach((f, i) => {
-    const isCand = String(f.id) === String(genId);
-    const isChamp = String(f.id) === String(championId);
-    const row = el('tr', { class: isCand ? 'dn-racing-cand-row' : '' }, [
-      el('td', { class: 'dn-mono dn-faint', text: String(i + 1) }),
-      el('td', null, [el('span', { class: 'dn-mono' + (isCand ? ' dn-racing-cand' : ''), text: f.id + (isChamp ? ' ♛' : '') })]),
-      el('td', { class: 'dn-num dn-mono', text: svg.isNum(f.scalar) ? svg.fmt(f.scalar, 1) : '—' }),
-      el('td', null, [el('span', { class: 'dn-pill dn-' + (f.survived ? 'promoted' : 'rejected'), text: f.survived ? 'racing' : ('✂ rung ' + f.cut_rung) })]),
-    ]);
-    if (!isCand) { row.style.cursor = 'pointer'; row.addEventListener('click', () => ctx.navigate('candidate', { epochId, gen: f.id }, opts)); }
-    stbody.appendChild(row);
+  const stbl = dataTable({
+    class: 'dn-board-table dn-racing-standings',
+    columns: [{ label: '#' }, { label: 'racer' }, { label: 'scalar', class: 'dn-num' }, { label: 'status' }],
+    rows: list.map((f, i) => {
+      const isCand = String(f.id) === String(genId);
+      const isChamp = String(f.id) === String(championId);
+      const row = {
+        class: isCand ? 'dn-racing-cand-row' : '',
+        cells: [
+          { class: 'dn-mono dn-faint', text: String(i + 1) },
+          { el: el('span', { class: 'dn-mono' + (isCand ? ' dn-racing-cand' : ''), text: f.id + (isChamp ? ' ♛' : '') }) },
+          { class: 'dn-num dn-mono', text: svg.isNum(f.scalar) ? svg.fmt(f.scalar, 1) : '—' },
+          { el: pill(f.survived ? 'promoted' : 'rejected', f.survived ? 'racing' : ('✂ rung ' + f.cut_rung)) },
+        ],
+      };
+      if (!isCand) { row.style = 'cursor: pointer'; row.onClick = () => ctx.navigate('candidate', { epochId, gen: f.id }, opts); }
+      return row;
+    }),
   });
-  stbl.appendChild(stbody);
   standCard.appendChild(stbl);
   standCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text: 'lower scalar = better · ✂ = the rung a racer was cut at · click a racer → its dossier' }));
   wrap.appendChild(section('Field standings · candidate vs the whole field', standCard));
@@ -1309,35 +1311,33 @@ function racingFieldPanels(st, epochId, genId, championId, scalarByGen, liveProj
   // (2) RUNG LADDER — entered / cut / survived per rung; the candidate's rank
   // among the survivors at each rung it reached (the field-narrowing story).
   const ladderCard = el('div', { class: 'dn-panel' });
-  const ltbl = el('table', { class: 'dn-board-table dn-racing-ladder' });
-  ltbl.appendChild(el('thead', null, [el('tr', null, [
-    el('th', { text: 'rung' }), el('th', { class: 'dn-num', text: 'entered' }), el('th', { class: 'dn-num', text: 'cut' }),
-    el('th', { class: 'dn-num', text: 'survived' }), el('th', { text: 'candidate' }),
-  ])]));
-  const lbody = el('tbody');
-  model.rungs.forEach((r, ri) => {
-    const competitors = (r.competitors || []).map(String);
-    const entered = competitors.length;
-    const cutN = (r.cut || []).length;
-    const survived = (r.survivors || []).length || (entered - cutN);
-    const inThisRung = competitors.indexOf(String(genId)) >= 0;
-    // the candidate's rank among the racers in this rung, by scalar.
-    let candRungRank = null;
-    if (inThisRung) {
-      const ranked = competitors
-        .map((c) => ({ id: c, scalar: scalarOf(c) }))
-        .sort((a, b) => (svg.isNum(a.scalar) ? a.scalar : Infinity) - (svg.isNum(b.scalar) ? b.scalar : Infinity));
-      candRungRank = ranked.findIndex((x) => String(x.id) === String(genId)) + 1;
-    }
-    lbody.appendChild(el('tr', null, [
-      el('td', { class: 'dn-mono', text: r.label || ('Rung ' + ri) }),
-      el('td', { class: 'dn-num dn-mono', text: String(entered) }),
-      el('td', { class: 'dn-num dn-mono ' + (cutN ? 'dn-bad-t' : ''), text: cutN ? ('✂ ' + cutN) : '0' }),
-      el('td', { class: 'dn-num dn-mono dn-good-t', text: String(survived) }),
-      el('td', { class: 'dn-mono', text: candRungRank ? ('#' + candRungRank + ' of ' + entered) : '—' }),
-    ]));
+  const ltbl = dataTable({
+    class: 'dn-board-table dn-racing-ladder',
+    columns: [{ label: 'rung' }, { label: 'entered', class: 'dn-num' }, { label: 'cut', class: 'dn-num' },
+      { label: 'survived', class: 'dn-num' }, { label: 'candidate' }],
+    rows: model.rungs.map((r, ri) => {
+      const competitors = (r.competitors || []).map(String);
+      const entered = competitors.length;
+      const cutN = (r.cut || []).length;
+      const survived = (r.survivors || []).length || (entered - cutN);
+      const inThisRung = competitors.indexOf(String(genId)) >= 0;
+      // the candidate's rank among the racers in this rung, by scalar.
+      let candRungRank = null;
+      if (inThisRung) {
+        const ranked = competitors
+          .map((c) => ({ id: c, scalar: scalarOf(c) }))
+          .sort((a, b) => (svg.isNum(a.scalar) ? a.scalar : Infinity) - (svg.isNum(b.scalar) ? b.scalar : Infinity));
+        candRungRank = ranked.findIndex((x) => String(x.id) === String(genId)) + 1;
+      }
+      return [
+        { class: 'dn-mono', text: r.label || ('Rung ' + ri) },
+        { class: 'dn-num dn-mono', text: String(entered) },
+        { class: 'dn-num dn-mono ' + (cutN ? 'dn-bad-t' : ''), text: cutN ? ('✂ ' + cutN) : '0' },
+        { class: 'dn-num dn-mono dn-good-t', text: String(survived) },
+        { class: 'dn-mono', text: candRungRank ? ('#' + candRungRank + ' of ' + entered) : '—' },
+      ];
+    }),
   });
-  ltbl.appendChild(lbody);
   ladderCard.appendChild(ltbl);
   ladderCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text: 'how the candidate fared as the field narrowed rung by rung' }));
   wrap.appendChild(section('Rung ladder · how it fared as the field narrowed', ladderCard));
@@ -1353,32 +1353,31 @@ function allMatchupsPanel(mine, genId, championId, ctx, epochId) {
     card.appendChild(empty('This candidate did not run in any tournament round (it may be the seed and undefeated, or rounds are not yet recorded).'));
     return card;
   }
-  const tbl = el('table', { class: 'dn-board-table' });
-  tbl.appendChild(el('thead', null, [el('tr', null, [
-    el('th', { text: 'round' }), el('th', { text: 'role' }), el('th', { text: 'decision' }),
-    el('th', { class: 'dn-num', text: 'Δ scalar' }), el('th', { text: 'hypothesis' }),
-  ])]));
-  const tbody = el('tbody');
-  for (const m of mine) {
-    const asChamp = m.champion === genId;
-    // Class B: a match-up with no recorded decision is still racing — PENDING,
-    // not a default "rejected". `decisionOf` reads the matchup's own stamped
-    // decision field; absent ⇒ pending.
-    const dec = decisionOf(m) || 'pending';
-    const other = asChamp ? m.challenger : m.champion;
-    const tr = el('tr', null, [
-      el('td', null, [el('span', { class: 'dn-mono', text: `${m.champion} → ${m.challenger}` })]),
-      el('td', null, [el('span', { class: 'dn-pill dn-' + (asChamp ? 'promoted' : 'rejected'), text: asChamp ? 'champion' : 'challenger' })]),
-      el('td', null, [el('span', { class: 'dn-pill dn-' + dec, text: dec })]),
-      el('td', { class: 'dn-num dn-mono ' + (m.delta_scalar > 0 ? 'dn-bad-t' : m.delta_scalar < 0 ? 'dn-good-t' : ''), text: svg.isNum(m.delta_scalar) ? svg.fmtSigned(m.delta_scalar, 2) : '—' }),
-      el('td', { class: 'dn-faint', text: m.hypothesis_core_idea ? clip(m.hypothesis_core_idea, 64) : '—' }),
-    ]);
-    // clicking a match-up row compares the two candidates side by side (S).
-    tr.style.cursor = 'pointer';
-    tr.addEventListener('click', () => ctx.navigate('candidate', { epochId, gen: genId }, { cmp: other }));
-    tbody.appendChild(tr);
-  }
-  tbl.appendChild(tbody);
+  const tbl = dataTable({
+    class: 'dn-board-table',
+    columns: [{ label: 'round' }, { label: 'role' }, { label: 'decision' },
+      { label: 'Δ scalar', class: 'dn-num' }, { label: 'hypothesis' }],
+    rows: mine.map((m) => {
+      const asChamp = m.champion === genId;
+      // Class B: a match-up with no recorded decision is still racing —
+      // PENDING, not a default "rejected". `decisionOf` reads the matchup's own
+      // stamped decision field; absent ⇒ pending.
+      const dec = decisionOf(m) || 'pending';
+      const other = asChamp ? m.challenger : m.champion;
+      return {
+        // clicking a match-up row compares the two candidates side by side (S).
+        style: 'cursor: pointer',
+        onClick: () => ctx.navigate('candidate', { epochId, gen: genId }, { cmp: other }),
+        cells: [
+          { el: el('span', { class: 'dn-mono', text: `${m.champion} → ${m.challenger}` }) },
+          { el: pill(asChamp ? 'promoted' : 'rejected', asChamp ? 'champion' : 'challenger') },
+          { el: pill(dec, dec) },
+          deltaCell(m.delta_scalar, { base: 'dn-num dn-mono', text: svg.isNum(m.delta_scalar) ? svg.fmtSigned(m.delta_scalar, 2) : '—' }),
+          { class: 'dn-faint', text: m.hypothesis_core_idea ? truncate(m.hypothesis_core_idea, 64) : '—' },
+        ],
+      };
+    }),
+  });
   card.appendChild(tbl);
   card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:10px 0 0;', text: genId === championId
     ? `as champion, ${genId} defended ${mine.length} round${mine.length === 1 ? '' : 's'} · click a round → compare the two candidates side by side`
@@ -1802,7 +1801,7 @@ export function gatePanel(gate) {
   if (ovChip && gate && gate.override) {
     const ov = gate.override;
     const act = ov.action === 'promote' ? 'force-promoted' : 'force-rejected';
-    attachHovercard(ovChip, () => el('div', { class: 'dn-hc-body' }, [
+    attachHovercard(ovChip, () => hovercardBody([
       el('div', { class: 'dn-hc-title', text: 'operator override · ' + act }),
       ov.reason ? el('div', { class: 'dn-hc-row', text: ov.reason })
         : el('div', { class: 'dn-hc-row dn-faint', text: 'no reason recorded' }),
@@ -1948,47 +1947,45 @@ export function buildPredictionScorecard(scorecard) {
   ].filter(Boolean)));
 
   // ── the per-movement matrix: one row per claim, predicted → observed + glyph ──
-  const tbl = el('table', { class: 'dn-board-table dn-predtable' });
-  tbl.appendChild(el('thead', null, [el('tr', null, [
-    el('th', { text: 'movement' }),
-    el('th', { text: 'predicted' }),
-    el('th', { text: 'observed' }),
-    el('th', { class: 'dn-num', text: '' }),
-  ])]));
-  const body = el('tbody');
   // predicted claims first (they carry the verdict), then unpredicted context.
   const ordered = [...predicted, ...claims.filter((c) => c && c.unpredicted)];
-  for (const c of ordered) {
-    const v = predictionVerdict(c);
-    const pred = c.unpredicted
-      ? '—'
-      : dirArrow(c.predicted_direction) + (c.predicted_magnitude ? ' ' + String(c.predicted_magnitude) : '');
-    const obs = dirArrow(c.observed_direction)
-      + (svg.isNum(c.from_rate) && svg.isNum(c.to_rate)
-        ? ' ' + svg.fmt(c.from_rate, 2) + '→' + svg.fmt(c.to_rate, 2) : '');
-    const glyph = el('span', { class: 'dn-pred-glyph dn-' + v.tone, text: v.glyph,
-      'aria-label': v.label });
-    // hover-level detail (signed error · note · kind) lives in the hovercard
-    // singleton, OUTSIDE the gated render — the glyph node stays stable.
-    attachHovercard(glyph, () => el('div', { class: 'dn-hc-body' }, [
-      el('div', { class: 'dn-hc-title', text: (c.target || 'movement') + ' · ' + v.label }),
-      el('div', { class: 'dn-hc-row', text: 'kind · ' + (c.kind || '—') }),
-      c.unpredicted
-        ? el('div', { class: 'dn-hc-row dn-faint', text: 'realised movement the proposer did not claim' })
-        : el('div', { class: 'dn-hc-row', text: 'predicted · ' + (c.predicted_direction || '—')
-          + (c.predicted_magnitude ? ' (' + c.predicted_magnitude + ')' : '') }),
-      svg.isNum(c.signed_error)
-        ? el('div', { class: 'dn-hc-row', text: 'signed error · ' + svg.fmtSigned(c.signed_error, 3) }) : null,
-      c.note ? el('div', { class: 'dn-hc-row dn-faint', text: String(c.note) }) : null,
-    ].filter(Boolean)));
-    body.appendChild(el('tr', { class: 'dn-predrow' + (c.unpredicted ? ' dn-predrow-unp' : '') }, [
-      el('td', { class: 'dn-mono', text: c.target || '—' }),
-      el('td', { class: 'dn-faint', text: pred }),
-      el('td', { text: obs }),
-      el('td', { class: 'dn-num' }, [glyph]),
-    ]));
-  }
-  tbl.appendChild(body);
+  const tbl = dataTable({
+    class: 'dn-board-table dn-predtable',
+    columns: [{ label: 'movement' }, { label: 'predicted' }, { label: 'observed' }, { label: '', class: 'dn-num' }],
+    rows: ordered.map((c) => {
+      const v = predictionVerdict(c);
+      const pred = c.unpredicted
+        ? '—'
+        : dirArrow(c.predicted_direction) + (c.predicted_magnitude ? ' ' + String(c.predicted_magnitude) : '');
+      const obs = dirArrow(c.observed_direction)
+        + (svg.isNum(c.from_rate) && svg.isNum(c.to_rate)
+          ? ' ' + svg.fmt(c.from_rate, 2) + '→' + svg.fmt(c.to_rate, 2) : '');
+      const glyph = el('span', { class: 'dn-pred-glyph dn-' + v.tone, text: v.glyph,
+        'aria-label': v.label });
+      // hover-level detail (signed error · note · kind) lives in the hovercard
+      // singleton, OUTSIDE the gated render — the glyph node stays stable.
+      attachHovercard(glyph, () => hovercardBody([
+        el('div', { class: 'dn-hc-title', text: (c.target || 'movement') + ' · ' + v.label }),
+        el('div', { class: 'dn-hc-row', text: 'kind · ' + (c.kind || '—') }),
+        c.unpredicted
+          ? el('div', { class: 'dn-hc-row dn-faint', text: 'realised movement the proposer did not claim' })
+          : el('div', { class: 'dn-hc-row', text: 'predicted · ' + (c.predicted_direction || '—')
+            + (c.predicted_magnitude ? ' (' + c.predicted_magnitude + ')' : '') }),
+        svg.isNum(c.signed_error)
+          ? el('div', { class: 'dn-hc-row', text: 'signed error · ' + svg.fmtSigned(c.signed_error, 3) }) : null,
+        c.note ? el('div', { class: 'dn-hc-row dn-faint', text: String(c.note) }) : null,
+      ]));
+      return {
+        class: 'dn-predrow' + (c.unpredicted ? ' dn-predrow-unp' : ''),
+        cells: [
+          { class: 'dn-mono', text: c.target || '—' },
+          { class: 'dn-faint', text: pred },
+          { text: obs },
+          { class: 'dn-num', el: glyph },
+        ],
+      };
+    }),
+  });
   card.appendChild(tbl);
 
   // ── the EXPLICIT diagnostic caption (the non-negotiable disclaimer) ──
@@ -2007,7 +2004,7 @@ function predRateChip(pr) {
   if (!predicted && observed == null) return null;
   return el('div', { class: 'dn-stat dn-predrate' }, [
     el('span', { class: 'v', text: observed == null ? (predicted || '—') : observed }),
-    el('span', { class: 'k', text: 'pass-rate Δ · ' + (predicted ? 'claimed “' + clip(predicted, 24) + '”' : 'observed') }),
+    el('span', { class: 'k', text: 'pass-rate Δ · ' + (predicted ? 'claimed “' + truncate(predicted, 24) + '”' : 'observed') }),
   ]);
 }
 
@@ -2211,8 +2208,6 @@ export function tournamentContext(rec) {
   // unknown shape: surface the raw match_id if we have one, else nothing.
   return mid || null;
 }
-
-function clip(s, n) { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
 
 function passLabel(pf) {
   if (pf === 1 || pf === true) return 'pass';

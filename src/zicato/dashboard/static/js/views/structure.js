@@ -5,7 +5,7 @@
 
 import { el, svgEl } from '../core/dom.js';
 import * as svg from '../svg.js';
-import { section, empty, stat, verdictPill, overrideChip, overrideDigest, overrideControlCell, pendingOverride, pendingOverrideDigest, clearPendingOverride } from '../ui.js';
+import { section, empty, stat, verdictPill, overrideChip, overrideDigest, overrideControlCell, pendingOverride, pendingOverrideDigest, clearPendingOverride, chip, hovercardBody, dataTable, deltaCell } from '../ui.js';
 import { structureStatusLabel } from '../livestatus.js';
 import { attachHovercard } from '../hovercard.js';
 import { state } from '../core/state.js';
@@ -437,7 +437,7 @@ function diversitySection(st, ctx, epochId) {
   // the dual mean/max overlap meter against the tolerance marker.
   const meter = overlapMeter(meanO, maxO, tol);
   if (pair && pair.length === 2) {
-    attachHovercard(meter, () => el('div', { class: 'dn-hc-body' }, [
+    attachHovercard(meter, () => hovercardBody([
       el('div', { class: 'dn-hc-title', text: 'most-overlapping pair' }),
       el('div', { class: 'dn-hc-row dn-mono', text: pair[0] + ' ⇄ ' + pair[1] }),
       el('div', { class: 'dn-hc-row dn-faint', text: 'Jaccard ' + svg.fmt(maxO, 2)
@@ -2206,18 +2206,9 @@ function standingsTable(st, ctx, epochId, live) {
   // that actually populate them (single_elim / double_elim / swiss).
   const showWL = structure !== 'racing';
   standings.sort((a, b) => (svg.isNum(a.rank) ? a.rank : 1e9) - (svg.isNum(b.rank) ? b.rank : 1e9));
-  const tbl = el('table', { class: 'dn-board-table dt-standings' });
-  tbl.appendChild(el('thead', null, [el('tr', null, [
-    el('th', { text: 'rank' }), el('th', { text: 'generation' }), el('th', { text: 'status' }),
-    el('th', { class: 'dn-num', text: 'scalar' }),
-    ...(showWL ? [el('th', { class: 'dn-num', text: 'W' }), el('th', { class: 'dn-num', text: 'L' })] : []),
-    el('th', { text: '' }),
-    el('th', { class: 'dn-ovr-col', text: 'override' }),
-  ])]));
-  const tbody = el('tbody');
   // running tally for the field-level caption ('gate said X · operator forced Y')
   const forced = { promote: 0, reject: 0, drained: 0 };
-  for (const s of standings) {
+  const standingRow = (s) => {
     let raw = String(s.status || '').toLowerCase();
     // LIVE — the verdicts have not committed; a standing tagged champion /
     // eliminated mid-run is the EVENTUAL outcome read from a half-finished
@@ -2240,11 +2231,11 @@ function standingsTable(st, ctx, epochId, live) {
     const bt = svg.isNum(s.boards_total) ? s.boards_total : null;
     const frac = (bd != null && bt != null && bt > 0) ? Math.min(1, bd / bt) : null;
     const scalarCell = proj
-      ? el('td', { class: 'dn-num dn-mono dt-proj-val', title: 'projected — boards still streaming in' }, [
+      ? { class: 'dn-num dn-mono dt-proj-val', title: 'projected — boards still streaming in', el: [
           el('span', { text: '~' + svg.fmt(s.projected_scalar, 1) }),
           el('span', { class: 'dt-proj-badge', text: 'proj' }),
-        ])
-      : el('td', { class: 'dn-num dn-mono', text: svg.isNum(s.scalar) ? svg.fmt(s.scalar, 1) : '—' });
+        ] }
+      : { class: 'dn-num dn-mono', text: svg.isNum(s.scalar) ? svg.fmt(s.scalar, 1) : '—' };
     // operator-override provenance rides BESIDE the status pill (overrideChip),
     // never recoloring the verdict — durable readback wins, else the optimistic
     // queued stamp, else (settled never-landed promote) drained. Absent → null.
@@ -2263,7 +2254,7 @@ function standingsTable(st, ctx, epochId, live) {
     const ovChip = overrideChip(ovProv);
     if (ovChip && ovProv) {
       const act = ovProv.action === 'promote' ? 'force-promoted' : 'force-rejected';
-      attachHovercard(ovChip, () => el('div', { class: 'dn-hc-body' }, [
+      attachHovercard(ovChip, () => hovercardBody([
         el('div', { class: 'dn-hc-title', text: 'operator override · ' + act }),
         (typeof ovProv.reason === 'string' && ovProv.reason)
           ? el('div', { class: 'dn-hc-row', text: ovProv.reason })
@@ -2280,26 +2271,37 @@ function standingsTable(st, ctx, epochId, live) {
     // the per-row diversity badge — soft-rejected reuses the DEFERRED pill
     // (held, not promoted); penalized reads as a caution chip. Absent → null.
     const divBadge = diversityBadge(divStatus ? divStatus[gidStr] : null);
-    tbody.appendChild(el('tr', { class: rowCls }, [
-      el('td', { class: 'dn-mono', text: svg.isNum(s.rank) ? String(s.rank) : '—' }),
-      el('td', { class: 'dn-mono', text: (s.generation_id || '—') + (status === 'champion' ? ' ' + CROWN.current : '') }),
-      el('td', null, [statusPill(status), ovChip, divBadge].filter(Boolean)),
-      scalarCell,
-      ...(showWL ? [
-        el('td', { class: 'dn-num dn-mono', text: svg.isNum(s.wins) ? String(s.wins) : '—' }),
-        el('td', { class: 'dn-num dn-mono', text: svg.isNum(s.losses) ? String(s.losses) : '—' }),
-      ] : []),
-      el('td', null, [
-        proj && frac != null ? el('span', { class: 'dt-proj-bar', title: bd + '/' + bt + ' boards scored' }, [
-          el('span', { class: 'dt-proj-bar-fill', style: 'width:' + Math.round(frac * 100) + '%;' }),
-        ]) : null,
-        proj && frac != null ? el('span', { class: 'dt-proj-bar-lab', text: bd + '/' + bt }) : null,
-        s.generation_id ? el('a', { class: 'dn-linkbtn', href: ctx.href('candidate', { epochId, gen: s.generation_id }), text: 'open →' }) : null,
-      ].filter(Boolean)),
-      el('td', { class: 'dn-ovr-col' }, [ctlCell].filter(Boolean)),
-    ]));
-  }
-  tbl.appendChild(tbody);
+    return {
+      class: rowCls,
+      cells: [
+        { class: 'dn-mono', text: svg.isNum(s.rank) ? String(s.rank) : '—' },
+        { class: 'dn-mono', text: (s.generation_id || '—') + (status === 'champion' ? ' ' + CROWN.current : '') },
+        { el: [statusPill(status), ovChip, divBadge] },
+        scalarCell,
+        ...(showWL ? [
+          { class: 'dn-num dn-mono', text: svg.isNum(s.wins) ? String(s.wins) : '—' },
+          { class: 'dn-num dn-mono', text: svg.isNum(s.losses) ? String(s.losses) : '—' },
+        ] : []),
+        { el: [
+          proj && frac != null ? el('span', { class: 'dt-proj-bar', title: bd + '/' + bt + ' boards scored' }, [
+            el('span', { class: 'dt-proj-bar-fill', style: 'width:' + Math.round(frac * 100) + '%;' }),
+          ]) : null,
+          proj && frac != null ? el('span', { class: 'dt-proj-bar-lab', text: bd + '/' + bt }) : null,
+          s.generation_id ? el('a', { class: 'dn-linkbtn', href: ctx.href('candidate', { epochId, gen: s.generation_id }), text: 'open →' }) : null,
+        ] },
+        { class: 'dn-ovr-col', el: ctlCell ? [ctlCell] : [] },
+      ],
+    };
+  };
+  const tbl = dataTable({
+    class: 'dn-board-table dt-standings',
+    columns: [
+      { label: 'rank' }, { label: 'generation' }, { label: 'status' }, { label: 'scalar', class: 'dn-num' },
+      ...(showWL ? [{ label: 'W', class: 'dn-num' }, { label: 'L', class: 'dn-num' }] : []),
+      { label: '' }, { label: 'override', class: 'dn-ovr-col' },
+    ],
+    rows: standings.map(standingRow),
+  });
   const caps = [];
   // a field-level DEFERRED caption — when at least one standing is held in
   // contention (the deferred pill state) and nothing has yet been crowned /
@@ -2364,15 +2366,15 @@ function diversityBadge(ds) {
     const p = verdictPill('deferred');
     p.textContent = 'soft-rejected';
     p.setAttribute('class', (p.getAttribute('class') || '') + ' dn-div-softrej');
-    attachHovercard(p, () => el('div', { class: 'dn-hc-body' }, [
+    attachHovercard(p, () => hovercardBody([
       el('div', { class: 'dn-hc-title', text: 'diversity · soft-rejected' }),
       el('div', { class: 'dn-hc-row dn-faint', text: 'idea overlap exceeded the diversity tolerance — held out of the field (not gate-rejected)' }),
     ]));
     return p;
   }
   if (ds === 'penalized') {
-    const c = el('span', { class: 'dn-chip dn-chip-live dn-div-penalized', text: 'div-penalized' });
-    attachHovercard(c, () => el('div', { class: 'dn-hc-body' }, [
+    const c = chip('live', 'div-penalized', 'dn-div-penalized');
+    attachHovercard(c, () => hovercardBody([
       el('div', { class: 'dn-hc-title', text: 'diversity · penalized' }),
       el('div', { class: 'dn-hc-row dn-faint', text: 'idea overlap incurred a diversity penalty but the challenger still entered the field' }),
     ]));

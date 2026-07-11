@@ -109,6 +109,24 @@ test('mutation surface: generation columns order by CREATION order (v0,v1,v2,…
     `generation columns in creation order, not lexical (got ${JSON.stringify(cols)})`);
 });
 
+// ---- §9.15-step-7 no-op identity: the renderView scaffold is digest-gated ----
+
+test('mutation surface: a no-op re-render does NOT clear-and-rebuild the DOM (renderView digest gate)', async () => {
+  freshState(); installFetch();
+  const mutations = await import('../js/views/mutations.js');
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  await mutations.render(host, ctx, { epochId: EPOCH_ID, mutId: 'oversight_policy' });
+  const digest1 = host.getAttribute('data-t-digest');
+  const first = host.firstChild;
+  const writes1 = host.innerHTMLWriteCount();
+  assert(host.children.length > 0, 'the mutation surface painted');
+  await mutations.render(host, ctx, { epochId: EPOCH_ID, mutId: 'oversight_policy' });
+  assertEqual(host.getAttribute('data-t-digest'), digest1, 'digest unchanged on the no-op repaint');
+  assert(host.firstChild === first, 'no clear-and-rebuild on the no-op repaint (firstChild identity)');
+  assertEqual(host.innerHTMLWriteCount(), writes1, 'no innerHTML writes on the no-op repaint');
+});
+
 // ---- BUG 1 (b): clicking the SITE row label renders ALL generations ----
 
 test('mutation surface: clicking the SITE row label renders ALL generations that patched the site, stacked', async () => {

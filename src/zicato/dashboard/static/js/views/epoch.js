@@ -11,11 +11,11 @@ import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { deriveLiveStatus } from '../livestatus.js';
-import { gatedSwap, section, empty, stat, renderMarkdown, densityTokens } from '../ui.js';
+import { gatedSwap, section, empty, stat, renderMarkdown, densityTokens, chip, dataTable,
+  loopVerdict, promotionRateLabel, costPerPromotionLabel, fmtDurationMs, noiseBandFor } from '../ui.js';
 import { structurePill, isNonGauntlet, structureLabel, normalizeStructure, racingModel, swissOverviewModel, elimModel, resolveNonGauntletSt, structureDigest } from './structure.js';
 import { roundsFromTimeline, roundModelDigest, waterfallSteps } from '../rounds.js';
 import { boardStatusModel, boardStatusDigest, renderBoardStatus } from './boardstatus.js';
-import { loopVerdict, promotionRateLabel, costPerPromotionLabel, fmtDurationMs, noiseBandFor } from './home.js';
 
 // The user's last expand/collapse of the proposer brief, keyed by epoch. The
 // epoch view is digest-gated: a live heartbeat that moves ANY data rebuilds the
@@ -458,7 +458,7 @@ export function buildTrajectoryPanel(traj, opts) {
   const v = verdictLine(traj);
   if (v) {
     rowKids.push(el('div', { class: 'dn-stat' }, [
-      el('span', { class: 'v' }, [el('span', { class: 'dn-chip dn-chip-' + v.cls + ' dn-looptraj-verdict', text: v.word })]),
+      el('span', { class: 'v' }, [chip(v.cls, v.word, 'dn-looptraj-verdict')]),
       el('span', { class: 'k', text: 'trajectory' }),
     ]));
   }
@@ -532,33 +532,30 @@ export function buildCostPanel(cost, opts) {
   ]));
 
   if (matchups.length) {
-    const table = el('table', { class: 'dn-loopcost-table' });
-    const thead = el('thead', null, [el('tr', null, [
-      el('th', { text: 'challenger' }), el('th', { text: 'decision' }),
-      el('th', { text: 'runtime' }), el('th', { text: 'runs' }), el('th', { text: 'aborted' }),
-    ])]);
-    const tbody = el('tbody');
-    for (const m of matchups) {
-      if (!m || typeof m !== 'object') continue;
-      const gid = m.challenger_generation_id != null ? String(m.challenger_generation_id) : '—';
-      const genCell = el('td', { class: 'dn-mono' });
-      if (o.onGen && gid !== '—') {
-        const b = el('button', { class: 'dn-loopcost-gen', type: 'button', text: gid });
-        b.addEventListener('click', () => o.onGen(gid));
-        genCell.appendChild(b);
-      } else {
-        genCell.appendChild(el('span', { text: gid }));
-      }
-      tbody.appendChild(el('tr', { class: 'dn-loopcost-row', 'data-gen': gid }, [
-        genCell,
-        el('td', { class: m.decision === 'promoted' ? 'dn-good-t' : (m.decision === 'rejected' ? 'dn-faint' : ''), text: m.decision || '—' }),
-        el('td', { class: 'dn-mono', text: fmtDurationMs(m.runtime_ms || 0) }),
-        el('td', { class: 'dn-mono', text: String(m.run_count || 0) }),
-        el('td', { class: 'dn-mono' + ((m.aborted_count || 0) > 0 ? ' dn-bad-t' : ''), text: String(m.aborted_count || 0) }),
-      ]));
-    }
-    table.appendChild(thead);
-    table.appendChild(tbody);
+    const table = dataTable({
+      class: 'dn-loopcost-table',
+      columns: [{ label: 'challenger' }, { label: 'decision' }, { label: 'runtime' }, { label: 'runs' }, { label: 'aborted' }],
+      rows: matchups.filter((m) => m && typeof m === 'object').map((m) => {
+        const gid = m.challenger_generation_id != null ? String(m.challenger_generation_id) : '—';
+        let genEl;
+        if (o.onGen && gid !== '—') {
+          genEl = el('button', { class: 'dn-loopcost-gen', type: 'button', text: gid });
+          genEl.addEventListener('click', () => o.onGen(gid));
+        } else {
+          genEl = el('span', { text: gid });
+        }
+        return {
+          class: 'dn-loopcost-row', dataset: { gen: gid },
+          cells: [
+            { class: 'dn-mono', el: genEl },
+            { class: m.decision === 'promoted' ? 'dn-good-t' : (m.decision === 'rejected' ? 'dn-faint' : ''), text: m.decision || '—' },
+            { class: 'dn-mono', text: fmtDurationMs(m.runtime_ms || 0) },
+            { class: 'dn-mono', text: String(m.run_count || 0) },
+            { class: 'dn-mono' + ((m.aborted_count || 0) > 0 ? ' dn-bad-t' : ''), text: String(m.aborted_count || 0) },
+          ],
+        };
+      }),
+    });
     card.appendChild(table);
   }
   card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;',

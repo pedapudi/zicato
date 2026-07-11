@@ -136,9 +136,14 @@ test('board trellis (LIVE): in-flight cells light up from state.activeRuns (curr
 
   // a NO-OP beat (identical live state) must NOT rebuild the trellis DOM.
   const trellisBefore = allByClass(host, 'dn-trellis')[0];
+  const firstChildBefore = host.firstChild;
+  const writesBefore = host.innerHTMLWriteCount();
   await boards.render(host, { navigate() {}, href: router.href }, { epochId: LIVE_UX_EPOCH });
   assertEqual(host.getAttribute('data-t-digest'), digestAfterFirst, 'a no-op beat leaves the digest unchanged');
   assert(allByClass(host, 'dn-trellis')[0] === trellisBefore, 'a no-op beat does NOT rebuild the trellis (node identity preserved)');
+  // §9.15-step-7 no-op identity: the renderView scaffold must not clear-and-rebuild.
+  assert(host.firstChild === firstChildBefore, 'no clear-and-rebuild on the no-op beat (host firstChild identity)');
+  assertEqual(host.innerHTMLWriteCount(), writesBefore, 'no innerHTML writes on the no-op beat');
 
   // FOREIGN-epoch run ignored — no lit cell.
   freshState();

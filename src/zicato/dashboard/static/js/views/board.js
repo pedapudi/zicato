@@ -18,7 +18,7 @@ import { el, clearChildren } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, section, empty, stat, decisionFor, densityTokens, prText, metricsDigest, scoreFmt } from '../ui.js';
+import { gatedSwap, section, empty, stat, decisionFor, densityTokens, prText, metricsDigest, scoreFmt, pill, dataTable, deltaCell } from '../ui.js';
 import { splitFrame, captureScroll, restoreScroll } from '../compare.js';
 
 // In-flight board-units for THIS entry, read from /api/active-runs (folded
@@ -293,7 +293,6 @@ export async function render(host, ctx, params) {
 
     // tabular breakdown — rows select the inline transcript (no route away).
     const tblCard = el('div', { class: 'dn-panel' });
-    const tbl = el('table', { class: 'dn-board-table' });
     // the continuous-score column (#18) only appears when AT LEAST ONE
     // candidate scored this board; a wholly bool-only board keeps the
     // pre-score column set so the table reads exactly as before.
@@ -301,57 +300,60 @@ export async function render(host, ctx, params) {
     // the live-gated progress column appears only while a candidate is running
     // on this entry (C4); a wholly settled board keeps the pre-C4 column set.
     const anyLive = inflight.length > 0;
-    tbl.appendChild(el('thead', null, [el('tr', null, [
-      el('th', { text: 'candidate' }), el('th', { class: 'dn-num', text: 'drift loss' }),
-      el('th', { text: 'predicate' }),
-      anyLive ? el('th', { text: 'progress' }) : null,
-      anyScored ? el('th', { class: 'dn-num', text: 'score' }) : null,
-      anyScored ? el('th', { text: 'P / R' }) : null,
-      el('th', { text: 'budget' }), el('th', { text: 'transcript' }),
-    ].filter(Boolean))]));
-    const tbody = el('tbody');
-    for (const r of rows.slice().sort((a, b) => (svg.isNum(b.loss) ? b.loss : -1) - (svg.isNum(a.loss) ? a.loss : -1))) {
-      const isSel = r.gen === selGen;
-      // A RUNNING candidate is selectable too: its events.jsonl is already
-      // growing on disk, so its (epoch, gen, entry) transcript resolves live.
-      const selectable = r.ran || r.running;
-      const pct = r.running && r.progress != null ? Math.round(r.progress * 100) : null;
-      tbody.appendChild(el('tr', { class: (r.promoted ? 'dn-board-champ' : '') + (isSel ? ' dn-board-sel' : '') + (r.running ? ' dn-board-running' : '') }, [
-        el('td', { class: 'dn-mono' }, [
-          el('span', { text: r.gen + (r.promoted ? ' ♛' : '') }),
-          r.cached ? el('span', { class: 'dn-cached-badge-mark', title: r.sourceEpoch ? 'cached · from ' + r.sourceEpoch : 'cached champion result',
-            text: r.sourceEpoch ? ' cached · ' + r.sourceEpoch : ' cached' }) : null,
-        ].filter(Boolean)),
-        el('td', { class: 'dn-num dn-mono', text: svg.isNum(r.loss) ? svg.fmt(r.loss, 1) : (r.running ? 'running' : '—') }),
-        el('td', { class: passClass(r.pass), text: r.running && !r.ran ? 'live' : passLabel(r.pass) }),
-        // live-gated progress column (C4): a running row shows its board
-        // progress bar; a settled row leaves an em-dash. Absent entirely when
-        // nothing is in flight (anyLive false).
-        anyLive ? el('td', { class: 'dn-board-progress-cell dn-inflight-row' }, r.running
-          ? [
-              el('span', { class: 'dn-progress' }, [
-                el('span', { class: 'dn-progress-fill', style: 'width:' + (pct != null ? pct : 6) + '%' + (pct == null ? ';opacity:0.4' : '') }),
-              ]),
-              el('span', { class: 'dn-mono dn-faint dn-progress-pct', text: pct != null ? ' ' + pct + '%' : ' running…' }),
-            ]
-          : [el('span', { class: 'dn-faint', text: '—' })]) : null,
-        // continuous score + precision/recall (#18): only when this board has
-        // a scored candidate. A bool-only row leaves these cells '—' / '·'
-        // beside its pass/fail predicate above (which stays the verdict).
-        anyScored ? el('td', { class: 'dn-num dn-mono dn-score-cell', text: svg.isNum(r.score) ? scoreFmt(r.score, 2) : '—' }) : null,
-        anyScored ? el('td', { class: 'dn-mono dn-faint dn-pr-cell', text: prText(r.metrics) || '·' }) : null,
-        el('td', { class: 'dn-mono', text: r.timeout ? 'timed out' : 'ok' }),
-        el('td', null, [selectable
-          // TOGGLE: an already-selected candidate's button collapses its inline
-          // transcript — its href drops the gen (back to the bare board route),
-          // so clicking "showing ↓" closes it and a reload won't reopen it. A
-          // RUNNING candidate reads "watch live →" so the operator knows the
-          // transcript will stream as new turns land.
-          ? el('a', { class: 'dn-linkbtn dn-board-run' + (isSel ? ' dn-linkbtn-on' : '') + (r.running ? ' dn-board-run-live' : ''), href: ctx.href('board', isSel ? { epochId, entry: entryId } : { epochId, entry: entryId, gen: r.gen }), text: isSel ? 'showing ↓' : (r.running ? 'watch live →' : 'show inline →') })
-          : el('span', { class: 'dn-faint', text: 'no run' })]),
-      ]));
-    }
-    tbl.appendChild(tbody);
+    const tbl = dataTable({
+      class: 'dn-board-table',
+      columns: [
+        { label: 'candidate' }, { label: 'drift loss', class: 'dn-num' }, { label: 'predicate' },
+        anyLive ? { label: 'progress' } : null,
+        anyScored ? { label: 'score', class: 'dn-num' } : null,
+        anyScored ? { label: 'P / R' } : null,
+        { label: 'budget' }, { label: 'transcript' },
+      ],
+      rows: rows.slice().sort((a, b) => (svg.isNum(b.loss) ? b.loss : -1) - (svg.isNum(a.loss) ? a.loss : -1)).map((r) => {
+        const isSel = r.gen === selGen;
+        // A RUNNING candidate is selectable too: its events.jsonl is already
+        // growing on disk, so its (epoch, gen, entry) transcript resolves live.
+        const selectable = r.ran || r.running;
+        const pct = r.running && r.progress != null ? Math.round(r.progress * 100) : null;
+        return {
+          class: (r.promoted ? 'dn-board-champ' : '') + (isSel ? ' dn-board-sel' : '') + (r.running ? ' dn-board-running' : ''),
+          cells: [
+            { class: 'dn-mono', el: [
+              el('span', { text: r.gen + (r.promoted ? ' ♛' : '') }),
+              r.cached ? el('span', { class: 'dn-cached-badge-mark', title: r.sourceEpoch ? 'cached · from ' + r.sourceEpoch : 'cached champion result',
+                text: r.sourceEpoch ? ' cached · ' + r.sourceEpoch : ' cached' }) : null,
+            ] },
+            { class: 'dn-num dn-mono', text: svg.isNum(r.loss) ? svg.fmt(r.loss, 1) : (r.running ? 'running' : '—') },
+            { class: passClass(r.pass), text: r.running && !r.ran ? 'live' : passLabel(r.pass) },
+            // live-gated progress column (C4): a running row shows its board
+            // progress bar; a settled row leaves an em-dash. Absent entirely
+            // when nothing is in flight (anyLive false).
+            anyLive ? { class: 'dn-board-progress-cell dn-inflight-row', el: r.running
+              ? [
+                  el('span', { class: 'dn-progress' }, [
+                    el('span', { class: 'dn-progress-fill', style: 'width:' + (pct != null ? pct : 6) + '%' + (pct == null ? ';opacity:0.4' : '') }),
+                  ]),
+                  el('span', { class: 'dn-mono dn-faint dn-progress-pct', text: pct != null ? ' ' + pct + '%' : ' running…' }),
+                ]
+              : [el('span', { class: 'dn-faint', text: '—' })] } : null,
+            // continuous score + precision/recall (#18): only when this board
+            // has a scored candidate. A bool-only row leaves these cells '—' /
+            // '·' beside its pass/fail predicate above (which stays the verdict).
+            anyScored ? { class: 'dn-num dn-mono dn-score-cell', text: svg.isNum(r.score) ? scoreFmt(r.score, 2) : '—' } : null,
+            anyScored ? { class: 'dn-mono dn-faint dn-pr-cell', text: prText(r.metrics) || '·' } : null,
+            { class: 'dn-mono', text: r.timeout ? 'timed out' : 'ok' },
+            { el: selectable
+              // TOGGLE: an already-selected candidate's button collapses its
+              // inline transcript — its href drops the gen (back to the bare
+              // board route), so clicking "showing ↓" closes it and a reload
+              // won't reopen it. A RUNNING candidate reads "watch live →" so the
+              // operator knows the transcript will stream as new turns land.
+              ? el('a', { class: 'dn-linkbtn dn-board-run' + (isSel ? ' dn-linkbtn-on' : '') + (r.running ? ' dn-board-run-live' : ''), href: ctx.href('board', isSel ? { epochId, entry: entryId } : { epochId, entry: entryId, gen: r.gen }), text: isSel ? 'showing ↓' : (r.running ? 'watch live →' : 'show inline →') })
+              : el('span', { class: 'dn-faint', text: 'no run' }) },
+          ],
+        };
+      }),
+    });
     tblCard.appendChild(tbl);
     nodes.push(section('Breakdown · select a candidate to read its transcript inline'
       + (inflight.length ? ` · ${inflight.length} running` : ''), tblCard));
@@ -413,7 +415,7 @@ function transcriptColumn(sel, conv, championId, side) {
   const pillCls = decisionFor({ promoted: sel.promoted, parent: sel.parent });
   col.appendChild(el('div', { class: 'dn-xscript-head' }, [
     el('span', { class: 'dn-mono', text: sel.gen + (sel.promoted ? ' ♛' : '') }),
-    el('span', { class: 'dn-pill dn-' + pillCls, text: role }),
+    pill(pillCls, role),
     // A RUNNING candidate gets a live marker so the operator reads the column
     // as a streaming transcript (it repaints as new turns land), not a final one.
     sel.running ? el('span', { class: 'dn-pill dn-live dn-xscript-live' }, [

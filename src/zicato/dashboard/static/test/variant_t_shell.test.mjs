@@ -84,6 +84,24 @@ test('contained: the publication view’s wide tables carry their OWN contained 
   for (const s of figSvgs) assertEqual(s.getAttribute('width'), '100%', 'each paper figure SVG is width:100% (contained within the paper column)');
 });
 
+// ---- §9.15-step-7 no-op identity: the publication view is digest-gated ----
+
+test('publication: a no-op re-render does NOT clear-and-rebuild the DOM (digest gate)', async () => {
+  freshState(); installFetch();
+  const publication = await import('../js/views/publication.js');
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  await publication.render(host, ctx, { epochId: EPOCH_ID });
+  const digest1 = host.getAttribute('data-t-digest');
+  const first = host.firstChild;
+  const writes1 = host.innerHTMLWriteCount();
+  assert(host.children.length > 0, 'the publication painted');
+  await publication.render(host, ctx, { epochId: EPOCH_ID });
+  assertEqual(host.getAttribute('data-t-digest'), digest1, 'digest unchanged on the no-op repaint');
+  assert(host.firstChild === first, 'no clear-and-rebuild on the no-op repaint (firstChild identity)');
+  assertEqual(host.innerHTMLWriteCount(), writes1, 'no innerHTML writes on the no-op repaint');
+});
+
 // ---- (c) the lifecycle DAG DERIVES its height from the board-node count ----
 
 test('lifecycle DAG height is DERIVED from the (deduped) board-node count, not a passed token, and it stays fit-to-width', () => {

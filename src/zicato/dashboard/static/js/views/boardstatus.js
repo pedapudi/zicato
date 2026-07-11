@@ -20,7 +20,7 @@
 
 import { el } from '../core/dom.js';
 import * as svg from '../svg.js';
-import { section, empty } from '../ui.js';
+import { section, empty, truncate, hovercardBody } from '../ui.js';
 import { attachHovercard } from '../hovercard.js';
 
 // The doc the popovers point at for "what does this mean" detail.
@@ -202,7 +202,7 @@ function splitPanel(split, opts) {
     const chip = el('span', {
       class: 'dn-bs-chip' + (held ? ' dn-bs-holdout' : ' dn-bs-train'),
       tabindex: '0',
-      text: shorten(r.entryId, 16),
+      text: truncate(r.entryId, 16),
     });
     attachHovercard(chip, () => entryCard(r));
     if (typeof opts.onEntry === 'function') {
@@ -232,7 +232,7 @@ function entryCard(r) {
   } else {
     lines.push(el('div', { class: 'dn-hc-row', text: 'played every round; the only slice the proposer sees' }));
   }
-  return el('div', { class: 'dn-hc-body' }, lines);
+  return hovercardBody(lines);
 }
 
 // 2 — WHERE / WHEN: the played-at legend + the Ladder budget remaining.
@@ -305,7 +305,7 @@ function ladderCard(ladder) {
     lines.push(el('div', { class: 'dn-hc-row dn-faint', text: 'No holdout step recorded yet.' }));
   }
   lines.push(el('a', { class: 'dn-hc-link', href: DOC_HREF, text: 'overfitting design →' }));
-  return el('div', { class: 'dn-hc-body' }, lines);
+  return hovercardBody(lines);
 }
 
 // 3 — GENERALIZATION-GAP TREND: train vs holdout loss across the lineage as a
@@ -317,7 +317,7 @@ function gapPanel(gap) {
   ]);
   const note = el('span', { class: 'dn-faint dn-bs-gap-note', text:
     'a WIDENING gap (holdout loss pulling above train) = overfitting' });
-  attachHovercard(note, () => el('div', { class: 'dn-hc-body' }, [
+  attachHovercard(note, () => hovercardBody([
     el('div', { class: 'dn-hc-title', text: 'Generalization gap' }),
     el('div', { class: 'dn-hc-row', text:
       'The gap is holdout loss minus train loss. A champion that keeps improving'
@@ -357,9 +357,4 @@ function gapRow(label, values, lineClass) {
     el('span', { class: 'dn-bs-gap-lab', text: label }),
     el('span', { class: 'dn-bs-gap-spark' }, [spark]),
   ]);
-}
-
-function shorten(s, n) {
-  const str = s == null ? '' : String(s);
-  return str.length > n ? str.slice(0, n - 1) + '…' : str;
 }

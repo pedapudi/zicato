@@ -8,6 +8,13 @@
 
 import { el, clearChildren } from './core/dom.js';
 import { href } from './router.js';
+import { isNum, fmt, fmtSigned } from './svg.js';
+import * as D from './data.js';
+
+// svg.js owns the canonical numeric formatters (isNum/fmt/fmtSigned). ui.js
+// re-exports them so a view can pull "one formatter home" from ui.js without a
+// second svg.js import; the definitions live in svg.js and never fork.
+export { isNum, fmt, fmtSigned };
 
 // ---- continuous per-entry score + precision/recall (#18) -------------
 //
@@ -17,12 +24,26 @@ import { href } from './router.js';
 // fields are absent (the bool-only / pre-score path) so a board with no scores
 // reads exactly as before.
 
-// finite-number guard (local so ui.js stays free of an svg.js import).
-function _isNum(v) { return typeof v === 'number' && Number.isFinite(v); }
+// finite-number guard — the svg.js canonical (aliased so the many local call
+// sites below read unchanged).
+const _isNum = isNum;
 
 // format a 0–1 score (or any finite number) to N decimals; '—' when absent.
+// A thin wrapper over the canonical fmt (svg.js) at the 2-decimal default this
+// score axis uses.
 export function scoreFmt(v, n) {
-  return _isNum(v) ? v.toFixed(_isNum(n) ? n : 2) : '—';
+  return _isNum(v) ? fmt(v, _isNum(n) ? n : 2) : '—';
+}
+
+// truncate(s, n) — the ONE clip/shorten home. Coerces to string, returns the
+// first n-1 chars + '…' when longer than n, else the string verbatim. Replaces
+// the four hand-copied clip/shorten helpers (dag.js / candidate.js /
+// boardstatus.js and builder.js's '—'-defaulting variant via the `fallback`
+// option).
+export function truncate(s, n, opts) {
+  const o = opts || {};
+  const str = (s == null) ? (o.fallback != null ? o.fallback : '') : String(s);
+  return str.length > n ? str.slice(0, n - 1) + '…' : str;
 }
 
 // a compact precision/recall tag from a per-entry `metrics` map:
@@ -787,6 +808,195 @@ function inline(s) {
   }
   if (last < str.length) out.push(str.slice(last));
   return out.length ? out : [str];
+}
+
+// ---- chip + hovercard-body builders ---------------------------------
+//
+// chip(cls, word) — the ONE `dn-chip dn-chip-<cls>` span builder, folding the
+// five inlined `el('span', { class: 'dn-chip dn-chip-' + x, text: w })` sites.
+// `cls` is the tone suffix (live / open / closed / a verdict class); `word` the
+// label. An optional third `extra` string appends further classes verbatim (the
+// `dn-looptraj-verdict` / `dn-div-penalized` modifier sites).
+export function chip(cls, word, extra) {
+  const c = 'dn-chip dn-chip-' + cls + (extra ? ' ' + extra : '');
+  return el('span', { class: c, text: word == null ? '' : String(word) });
+}
+
+// pill(cls, word) — the `dn-pill dn-<cls>` span with a CUSTOM word. This is the
+// sibling of verdictPill: verdictPill(decision) colours by a decision AND
+// derives the label from it ('seed (v0)' / 'racing…'), whereas these sites want
+// the decision COLOUR under a caller-chosen word (a role / 'champion' / a raw
+// token) — swapping them onto verdictPill would silently rewrite that label. An
+// optional `extra` appends further classes verbatim.
+export function pill(cls, word, extra) {
+  const c = 'dn-pill dn-' + cls + (extra ? ' ' + extra : '');
+  return el('span', { class: c, text: word == null ? '' : String(word) });
+}
+
+// hovercardBody(...children) — the `dn-hc-body` wrapper the seven hovercard
+// sites build by hand. Falsy children are dropped (matching the `.filter(Boolean)`
+// some sites already applied); a single array argument is also accepted (the
+// two `lines`-array sites).
+export function hovercardBody(...children) {
+  const kids = (children.length === 1 && Array.isArray(children[0])) ? children[0] : children;
+  return el('div', { class: 'dn-hc-body' }, kids.filter(Boolean));
+}
+
+// ---- dataTable — the generic el()-based table builder ---------------
+//
+// Folds the ~14 hand-rolled thead/tbody scaffolds. `spec`:
+//   * class    — the table's class (default 'dn-board-table')
+//   * columns  — [{label, class?}] (falsy entries dropped, so a conditional
+//                column composes via `cond && {label:…}`); `class` lands on the
+//                <th> (e.g. 'dn-num').
+//   * rows     — [row]; a row is either an array of cells OR
+//                {class?, dataset?, style?, onClick?, cells:[…]} for a per-row
+//                class / data-attrs / inline style / whole-row click handler.
+//   * A CELL is one of: a string (plain <td> text); {text, class?} (a classed
+//     text cell — the sign-coloured delta cell rides this shape via deltaCell);
+//     {el, class?} (an el-returning cell factory — `el` may be one node or an
+//     array, so a composed cell with a control/badge composes); null → empty <td>.
+// No querySelector; strictly within the DOM-stub budget.
+function _cellNode(c) {
+  if (c == null) return el('td');
+  if (typeof c === 'string' || typeof c === 'number') return el('td', null, [String(c)]);
+  const attrs = {};
+  if (c.class) attrs.class = c.class;
+  if (c.title != null) attrs.title = c.title;
+  const props = Object.keys(attrs).length ? attrs : null;
+  if (c.el != null) return el('td', props, Array.isArray(c.el) ? c.el.filter(Boolean) : [c.el]);
+  return el('td', props, [c.text == null ? '' : String(c.text)]);
+}
+export function dataTable(spec) {
+  const s = spec || {};
+  const cols = (s.columns || []).filter(Boolean);
+  const thead = el('thead', null, [el('tr', null, cols.map((col) =>
+    el('th', col.class ? { class: col.class } : null, [col.label == null ? '' : String(col.label)])))]);
+  const rows = (s.rows || []).filter(Boolean);
+  const tbody = el('tbody', null, rows.map((r) => {
+    const cells = Array.isArray(r) ? r : (r.cells || []);
+    const attrs = {};
+    if (!Array.isArray(r)) {
+      if (r.class) attrs.class = r.class;
+      if (r.dataset) attrs.dataset = r.dataset;
+      if (r.style) attrs.style = r.style;
+      if (typeof r.onClick === 'function') attrs.onclick = r.onClick;
+    }
+    // Falsy cells are DROPPED (matching the hand tables' `.filter(Boolean)` for
+    // conditional columns) — an intentionally blank cell is `{text:''}` as an
+    // object, which survives the filter.
+    return el('tr', Object.keys(attrs).length ? attrs : null, cells.filter(Boolean).map(_cellNode));
+  }));
+  return el('table', { class: s.class || 'dn-board-table' }, [thead, tbody]);
+}
+
+// deltaCell(value) — the sign-coloured delta cell spec (gens / publication /
+// candidate matchup rows). Positive → `dn-bad-t` (a regression), negative →
+// `dn-good-t` (an improvement), non-finite → neither. Returns a {class, text}
+// cell for dataTable; `opts.text` overrides the rendered label (some sites show
+// a pre-formatted string), `opts.base` sets the base class (default 'dn-num').
+export function deltaCell(value, opts) {
+  const o = opts || {};
+  const cls = [o.base || 'dn-num'];
+  if (isNum(value)) { if (value > 0) cls.push(o.badClass || 'dn-bad-t'); else if (value < 0) cls.push(o.goodClass || 'dn-good-t'); }
+  return { class: cls.join(' '), text: o.text != null ? o.text : fmtSigned(value) };
+}
+
+// ---- loop-communication helpers (pure — moved here from home.js) -----
+//
+// These read one epoch's /api/epoch/{id}/trajectory (+ cost) and shape the
+// verdict chip / promotion-rate / cost / noise-band the fleet cards AND the
+// epoch view both render. They lived in home.js, which made epoch.js import
+// UPWARD from a sibling view (a reverse dependency); the shared home is ui.js.
+export function loopVerdict(traj) {
+  const v = traj && typeof traj === 'object' ? traj.verdict : null;
+  if (v === 'no_signal') return { word: 'no detectable signal (below noise floor)', cls: 'nosignal' };
+  if (v === 'plateaued') return { word: 'plateaued', cls: 'plateau' };
+  return null;
+}
+export function promotionRateLabel(traj) {
+  if (!traj || typeof traj !== 'object') return null;
+  if (!isNum(traj.promotion_rate) || !(traj.challenger_count > 0)) return null;
+  return (traj.promoted_count || 0) + '/' + traj.challenger_count
+    + ' · ' + Math.round(traj.promotion_rate * 100) + '%';
+}
+export function costPerPromotionLabel(cost) {
+  const v = cost && typeof cost === 'object' ? cost.cost_per_promotion_ms : null;
+  return isNum(v) ? fmtDurationMs(v) : null;
+}
+export function fmtDurationMs(ms) {
+  if (!isNum(ms) || ms < 0) return '—';
+  if (ms < 1000) return Math.round(ms) + 'ms';
+  const s = ms / 1000;
+  if (s < 90) return (Math.round(s * 10) / 10) + 's';
+  const m = s / 60;
+  if (m < 90) return (Math.round(m * 10) / 10) + 'm';
+  return (Math.round((m / 60) * 10) / 10) + 'h';
+}
+export function noiseBandFor(traj, sparkVals) {
+  const nf = traj && typeof traj === 'object' ? traj.noise_floor : null;
+  const half = nf && isNum(nf.max_abs_delta) ? nf.max_abs_delta : null;
+  const vals = (Array.isArray(sparkVals) ? sparkVals : []).filter((v) => isNum(v));
+  if (!isNum(half) || half <= 0 || !vals.length) return null;
+  return { center: vals[vals.length - 1], half };
+}
+export function loopStatsDigest(traj, cost) {
+  return [
+    traj && traj.verdict ? String(traj.verdict) : null,
+    traj && isNum(traj.promotion_rate) ? traj.promotion_rate.toFixed(3) : null,
+    traj && isNum(traj.challenger_count) ? traj.challenger_count : null,
+    (traj && traj.noise_floor && isNum(traj.noise_floor.max_abs_delta))
+      ? traj.noise_floor.max_abs_delta.toFixed(4) : null,
+    cost && isNum(cost.cost_per_promotion_ms) ? Math.round(cost.cost_per_promotion_ms) : null,
+  ];
+}
+
+// ---- renderView — the ONE view scaffold ----------------------------
+//
+// The eleven data views repeated the same opening: paint a first-paint
+// placeholder into an empty host, (optionally) resolve the route epoch via
+// D.epoch and gate on its absence, fetch the view's data, fold a content
+// digest, and gatedSwap. renderView captures that spine; a view supplies only
+// the parts that differ via `spec`:
+//   * loading   — first-paint placeholder text (uses the orphaned loading()).
+//   * epoch     — truthy ⇒ resolve `await D.epoch(spec.routeEpoch ?? null)` and
+//                 gate: an absent epoch (falsy or epoch_id == null) paints
+//                 [h1(title), empty(emptyText)] under a stable 'no-epoch' digest
+//                 and returns. `spec.routeEpoch` is the caller's resolved route
+//                 param (null ⇒ current epoch); the resolved id is passed on.
+//   * title / emptyText — the no-epoch gate's heading + line.
+//   * guard({ep, epochId}) — OPTIONAL secondary gate run after the epoch
+//                 resolves: return `{digest, build}` to paint that gate + stop
+//                 (e.g. board.js's "no entry selected"), or null to proceed.
+//   * load(ctxObj) — async; returns the view's `data`. ctxObj carries
+//                 {ep, epochId, ctx, params}. A no-epoch view (epoch falsy)
+//                 gets {ep:null, epochId:null, …}.
+//   * digest(data) — the content digest (timestamp-free) for gatedSwap.
+//   * build(data)  — the node(s) to paint. Passed straight to gatedSwap.
+// A view whose flow genuinely diverges (parallel-fused fetches, multiple hosts,
+// a non-epoch gate) keeps its hand-rolled scaffold.
+export async function renderView(host, ctx, spec) {
+  if (!host) return;
+  const s = spec || {};
+  if (!host.firstChild) host.appendChild(loading(s.loading));
+  let ep = null;
+  let epochId = null;
+  if (s.epoch) {
+    const routeEpoch = s.routeEpoch != null ? s.routeEpoch : null;
+    ep = await D.epoch(routeEpoch);
+    if (!ep || ep.epoch_id == null) {
+      gatedSwap(host, s.emptyDigest || 'no-epoch', () =>
+        [el('h1', { class: 'dn-h1', text: s.title || 'Epoch' }), empty(s.emptyText || 'No current epoch.')]);
+      return;
+    }
+    epochId = routeEpoch != null ? routeEpoch : ep.epoch_id;
+  }
+  if (s.guard) {
+    const g = s.guard({ ep, epochId });
+    if (g) { gatedSwap(host, g.digest, g.build); return; }
+  }
+  const data = await s.load({ ep, epochId, ctx, params: s.params || null });
+  gatedSwap(host, s.digest(data), () => s.build(data));
 }
 
 export { href };

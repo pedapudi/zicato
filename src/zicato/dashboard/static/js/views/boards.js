@@ -13,7 +13,7 @@ import { el } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, section, empty, stat, densityTokens } from '../ui.js';
+import { section, empty, stat, densityTokens, renderView } from '../ui.js';
 import { inflightForActiveEpoch, inflightForEntryGen, runProgressRatio } from './structure.js';
 import { deriveLiveStatus } from '../livestatus.js';
 
@@ -24,16 +24,12 @@ const KIND_LABEL = {
 };
 
 export async function render(host, ctx, params) {
-  if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading board trellis…' }));
-  const epochParam = (params && params.epochId) || null;
-
   // Class A: scope to the viewed epoch (route param first).
-  const ep = await D.epoch(epochParam);
-  const epochId = epochParam || (ep && ep.epoch_id) || null;
-  if (!ep || ep.epoch_id == null) {
-    gatedSwap(host, 'no-epoch', () => [el('h1', { class: 'dn-h1', text: 'Boards' }), empty('No current epoch.')]);
-    return;
-  }
+  const epochParam = (params && params.epochId) || null;
+  await renderView(host, ctx, {
+    loading: 'Reading board trellis…',
+    epoch: true, routeEpoch: epochParam, title: 'Boards',
+    load: async ({ ep, epochId }) => {
   const board = Array.isArray(ep.board) ? ep.board : [];
   const rows = await D.generationsForEpoch(epochId);
   const gens = rows.length
@@ -74,17 +70,19 @@ export async function render(host, ctx, params) {
     inflightByEntry.set(eid, cur);
   }
 
-  const digest = JSON.stringify({
-    epochId,
-    board: board.map((b) => [b.entry_id, b.kind, b.weight, b.budget_s]),
-    gens: gens.map((g) => g.id),
-    loss: [...rowByGenEntry.entries()].map(([k, r]) => [k, svg.isNum(r.drift_loss) ? r.drift_loss.toFixed(3) : null, r.pass_fail, !!r.wall_clock_budget_exceeded]).sort(),
-    // LIVE in-flight per entry — folded in so a beat that advances progress
-    // repaints the lit cells, but a no-op heartbeat leaves the digest equal.
-    inflight: [...inflightByEntry.entries()].map(([eid, v]) => [eid, v.count, v.hasProgress ? v.sumProgress.toFixed(2) : null]).sort(),
-  });
-
-  gatedSwap(host, digest, () => {
+      return { epochId, board, gens, rowByGenEntry, domain, inflightByEntry };
+    },
+    digest: (d) => JSON.stringify({
+      epochId: d.epochId,
+      board: d.board.map((b) => [b.entry_id, b.kind, b.weight, b.budget_s]),
+      gens: d.gens.map((g) => g.id),
+      loss: [...d.rowByGenEntry.entries()].map(([k, r]) => [k, svg.isNum(r.drift_loss) ? r.drift_loss.toFixed(3) : null, r.pass_fail, !!r.wall_clock_budget_exceeded]).sort(),
+      // LIVE in-flight per entry — folded in so a beat that advances progress
+      // repaints the lit cells, but a no-op heartbeat leaves the digest equal.
+      inflight: [...d.inflightByEntry.entries()].map(([eid, v]) => [eid, v.count, v.hasProgress ? v.sumProgress.toFixed(2) : null]).sort(),
+    }),
+    build: (d) => {
+    const { epochId, board, gens, rowByGenEntry, domain, inflightByEntry } = d;
     const nodes = [];
     nodes.push(el('div', { class: 'dn-pagehead' }, [
       el('h1', { class: 'dn-h1', text: `Boards · ${epochId}` }),
@@ -100,6 +98,7 @@ export async function render(host, ctx, params) {
 
     nodes.push(section('Board trellis · drift loss across candidates', trellis(board, gens, rowByGenEntry, domain, epochId, ctx, inflightByEntry)));
     return nodes;
+    },
   });
 }
 

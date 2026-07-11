@@ -22,70 +22,64 @@
 import { el, svgEl } from '../core/dom.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, section, empty, stat } from '../ui.js';
+import { section, empty, stat, renderView } from '../ui.js';
 
 export async function render(host, ctx, params) {
-  if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading mutation surface…' }));
   const pinned = params && params.mutId;
   // The two-affordance selection. A bare mutId pins the SITE (the whole row →
   // ALL generations that patched it, stacked). A mutId PLUS a gen pins ONE cell
   // (that single challenger's side-by-side diff for that site).
   const pinnedGen = (params && params.gen) || null;
-
   // Class A: the mutation surface is keyed by the VIEWED epoch (route param
   // first), so opening a non-current epoch reads ITS surface.
   const routeEpoch = (params && params.epochId) || null;
-  const ep = await D.epoch(routeEpoch);
-  if (!ep || ep.epoch_id == null) {
-    gatedSwap(host, 'no-epoch', () => [el('h1', { class: 'dn-h1', text: 'Mutation surface' }), empty('No current epoch.')]);
-    return;
-  }
-  const epochId = routeEpoch || ep.epoch_id;
 
-  const mut = await D.mutations(epochId);
-  // Generation columns in CREATION order (v0, v1, … v9, v10, v11), not the
-  // lexical string order (v0, v1, v10, v11, … v2, v3) the raw id list sorts to —
-  // the numeric vN suffix IS the mint order.
-  const genNum = (g) => { const m = /(\d+)\s*$/.exec(String(g || '')); return m ? parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER; };
-  const gens = ((mut && Array.isArray(mut.generations)) ? mut.generations : [])
-    .slice().sort((a, b) => genNum(a) - genNum(b) || String(a).localeCompare(String(b)));
-  const sites = (mut && Array.isArray(mut.mutations)) ? mut.mutations : [];
+  await renderView(host, ctx, {
+    loading: 'Reading mutation surface…',
+    epoch: true, routeEpoch, title: 'Mutation surface',
+    load: async ({ epochId }) => {
+      const mut = await D.mutations(epochId);
+      // Generation columns in CREATION order (v0, v1, … v9, v10, v11), not the
+      // lexical string order the raw id list sorts to — the numeric vN suffix
+      // IS the mint order.
+      const genNum = (g) => { const m = /(\d+)\s*$/.exec(String(g || '')); return m ? parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER; };
+      const gens = ((mut && Array.isArray(mut.generations)) ? mut.generations : [])
+        .slice().sort((a, b) => genNum(a) - genNum(b) || String(a).localeCompare(String(b)));
+      const sites = (mut && Array.isArray(mut.mutations)) ? mut.mutations : [];
 
-  const patchedBySite = new Map();
-  for (const s of sites) patchedBySite.set(s.mutation_id, new Set(Array.isArray(s.patched_generation_ids) ? s.patched_generation_ids : []));
+      const patchedBySite = new Map();
+      for (const s of sites) patchedBySite.set(s.mutation_id, new Set(Array.isArray(s.patched_generation_ids) ? s.patched_generation_ids : []));
 
-  // The pinned site → its baseline STRING (one call) + per-generation patches.
-  // When a single CELL is pinned (pinnedGen), fetch ONLY that generation's
-  // patches; when the SITE row is pinned, fetch every generation that patched it.
-  const pinnedSite = pinned ? sites.find((s) => s.mutation_id === pinned) : null;
-  let detail = null;
-  const patchesByGen = new Map();
-  if (pinnedSite) {
-    detail = await D.mutationDetail(epochId, pinned);
-    const allTouched = [...(patchedBySite.get(pinned) || [])];
-    // a cell selection narrows to the single generation (if it actually patched
-    // the site); a site selection keeps every generation, stacked.
-    const touched = pinnedGen
-      ? allTouched.filter((g) => String(g) === String(pinnedGen))
-      : allTouched;
-    const all = await Promise.all(touched.map((g) => D.patches(epochId, g)));
-    touched.forEach((g, i) => patchesByGen.set(g, (all[i] && Array.isArray(all[i].patches)) ? all[i].patches : []));
-  }
-
-  // baseline content (STRING) — never the object.
-  const baselineStr = (detail && detail.baseline && typeof detail.baseline.content === 'string')
-    ? detail.baseline.content : null;
-
-  const digest = JSON.stringify({
-    epochId, gens,
-    sites: sites.map((s) => [s.mutation_id, s.file, s.role, s.line_start, s.line_end, (s.patched_generation_ids || []).join(',')]),
-    pinned: pinned || null,
-    pinnedGen: pinnedGen || null,
-    baselineLen: baselineStr == null ? -1 : baselineStr.length,
-    patched: pinnedSite ? [...patchesByGen.keys()] : null,
-  });
-
-  gatedSwap(host, digest, () => {
+      // The pinned site → its baseline STRING (one call) + per-generation
+      // patches. A single CELL (pinnedGen) fetches ONLY that generation's
+      // patches; the SITE row fetches every generation that patched it.
+      const pinnedSite = pinned ? sites.find((s) => s.mutation_id === pinned) : null;
+      let detail = null;
+      const patchesByGen = new Map();
+      if (pinnedSite) {
+        detail = await D.mutationDetail(epochId, pinned);
+        const allTouched = [...(patchedBySite.get(pinned) || [])];
+        const touched = pinnedGen
+          ? allTouched.filter((g) => String(g) === String(pinnedGen))
+          : allTouched;
+        const all = await Promise.all(touched.map((g) => D.patches(epochId, g)));
+        touched.forEach((g, i) => patchesByGen.set(g, (all[i] && Array.isArray(all[i].patches)) ? all[i].patches : []));
+      }
+      // baseline content (STRING) — never the object.
+      const baselineStr = (detail && detail.baseline && typeof detail.baseline.content === 'string')
+        ? detail.baseline.content : null;
+      return { epochId, gens, sites, patchedBySite, pinnedSite, detail, patchesByGen, baselineStr };
+    },
+    digest: (d) => JSON.stringify({
+      epochId: d.epochId, gens: d.gens,
+      sites: d.sites.map((s) => [s.mutation_id, s.file, s.role, s.line_start, s.line_end, (s.patched_generation_ids || []).join(',')]),
+      pinned: pinned || null,
+      pinnedGen: pinnedGen || null,
+      baselineLen: d.baselineStr == null ? -1 : d.baselineStr.length,
+      patched: d.pinnedSite ? [...d.patchesByGen.keys()] : null,
+    }),
+    build: (d) => {
+      const { epochId, gens, sites, patchedBySite, pinnedSite, detail, patchesByGen, baselineStr } = d;
     const nodes = [];
     nodes.push(el('div', { class: 'dn-pagehead' }, [
       el('h1', { class: 'dn-h1', text: 'Mutation surface · site × generation' }),
@@ -110,6 +104,7 @@ export async function render(host, ctx, params) {
     ]);
     nodes.push(section('Mutation surface + side-by-side diff', combined));
     return nodes;
+    },
   });
 }
 

@@ -12,6 +12,7 @@
 import { svgEl } from './core/dom.js';
 import { isNum, fmt, CROWN } from './svg.js';
 import { attachHovercard } from './hovercard.js';
+import { truncate } from './ui.js';
 
 export function verdictClass(verdict) {
   const v = String(verdict || '').toLowerCase();
@@ -23,7 +24,6 @@ export function verdictClass(verdict) {
   return 'ezn-neutral';
 }
 
-function clip(s, n) { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
 
 // A signed Δ, formatted with an explicit sign + a worse/better word — the
 // gate convention is challenger − champion, so POSITIVE = worse (loss rose).
@@ -45,8 +45,8 @@ function flow(x1, y1, x2, y2) {
 function rectNode(layer, cx, cy, w, h, label, sub, cls) {
   const g = svgEl('g', { class: 'ezn-node ' + (cls || ''), 'data-cz': 'lc-step' }, [
     svgEl('rect', { x: cx - w / 2, y: cy - h / 2, width: w, height: h, rx: 6, class: 'ezn-node-box' }),
-    svgEl('text', { x: cx, y: cy - (sub ? 5 : 0), class: 'ezn-node-id' }, [clip(label, 18)]),
-    sub ? svgEl('text', { x: cx, y: cy + 12, class: 'ezn-node-sub' }, [clip(sub, 22)]) : null,
+    svgEl('text', { x: cx, y: cy - (sub ? 5 : 0), class: 'ezn-node-id' }, [truncate(label, 18)]),
+    sub ? svgEl('text', { x: cx, y: cy + 12, class: 'ezn-node-sub' }, [truncate(sub, 22)]) : null,
   ].filter(Boolean));
   layer.appendChild(g);
   return g;
@@ -102,7 +102,7 @@ function perRunStack(e, x, cy, o, maxRight) {
     const rowG = svgEl('g', { class: 'ezn-board-run ' + dotCls, 'data-cz': 'lc-board-run', 'data-run': rn.run_id || '' });
     rowG.appendChild(svgEl('circle', { cx: x + pad + 3, cy: ry - 3, r: 3, class: 'ezn-board-run-dot' }));
     // rung label (only when the backend tagged it — never fabricated).
-    if (tag) rowG.appendChild(svgEl('text', { x: x + pad + 12, y: ry, class: 'ezn-board-run-rung', 'text-anchor': 'start' }, [clip(tag, 12)]));
+    if (tag) rowG.appendChild(svgEl('text', { x: x + pad + 12, y: ry, class: 'ezn-board-run-rung', 'text-anchor': 'start' }, [truncate(tag, 12)]));
     rowG.appendChild(svgEl('text', { x: x + panelW - pad, y: ry, class: 'ezn-board-run-loss', 'text-anchor': 'end' }, [isNum(rn.drift_loss) ? fmt(rn.drift_loss, 1) : '—']));
     attachHovercard(rowG, (tag ? tag + ' — ' : '') + 'loss ' + (isNum(rn.drift_loss) ? fmt(rn.drift_loss, 2) : '—'));
     if (o.onRun || o.onEntry) {
@@ -163,9 +163,9 @@ export function rungProgression(spec) {
       : v.includes('decid') || v.includes('live') ? 'ezn-running' : 'ezn-neutral';
     const g = svgEl('g', { class: 'ezn-rungprog-stage ' + cls, 'data-cz': 'lc-rungprog-stage', 'data-kind': st.kind || 'rung' });
     g.appendChild(svgEl('circle', { cx: x, cy: midY, r: 7, class: 'ezn-rungprog-dot' }));
-    g.appendChild(svgEl('text', { x, y: 14, class: 'ezn-rungprog-label', 'text-anchor': 'middle' }, [clip(st.label || ('rung ' + i), labelCap)]));
+    g.appendChild(svgEl('text', { x, y: 14, class: 'ezn-rungprog-label', 'text-anchor': 'middle' }, [truncate(st.label || ('rung ' + i), labelCap)]));
     const sub = isNum(st.delta) ? (st.delta >= 0 ? '+' : '') + fmt(st.delta, 1) + ' Δ' : (st.verdict || '');
-    g.appendChild(svgEl('text', { x, y: midY + 20, class: 'ezn-rungprog-sub', 'text-anchor': 'middle' }, [clip(sub, labelCap)]));
+    g.appendChild(svgEl('text', { x, y: midY + 20, class: 'ezn-rungprog-sub', 'text-anchor': 'middle' }, [truncate(sub, labelCap)]));
     if (st.verdict) attachHovercard(g, (st.label || 'rung') + ' — ' + st.verdict + (isNum(st.delta) ? ' (Δ ' + fmt(st.delta, 2) + ')' : ''));
     svg.appendChild(g);
   });
@@ -360,7 +360,7 @@ export function lifecycleDag(spec) {
       const children = [
         svgEl('circle', { cx: X.board, cy: y, r, class: 'ezn-board-disc' }),
         // label to the LEFT of the disc, vertically centred, never on the circle.
-        svgEl('text', { x: X.board + labelDX, y: y + 3, class: 'ezn-board-label', 'text-anchor': 'end' }, [clip(e.entry_id, 18)]),
+        svgEl('text', { x: X.board + labelDX, y: y + 3, class: 'ezn-board-label', 'text-anchor': 'end' }, [truncate(e.entry_id, 18)]),
         // representative loss INSIDE the disc.
         svgEl('text', { x: X.board, y: y + 3, class: 'ezn-board-loss', 'text-anchor': 'middle' }, [isNum(e.drift_loss) ? fmt(e.drift_loss, 0) : '—']),
       ];
