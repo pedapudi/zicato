@@ -260,6 +260,79 @@ but never rolls the epoch (invariant **L5**).
 > same contextvar-seam pattern the proposer tools use (see 05-proposer.md
 > §"The contextvar binding").
 
+### 10.1.4 The board editor — the flagship GUI (B2)
+
+Board authoring is the builder's largest form surface, and it is built on the
+same doctrine as every other control: **it drives existing ops only.** The
+Board section renders each entry as a clickable row (id + kind + at-a-glance
+badges) that toggles an **inline accordion editor** — there is no modal
+machinery in the console, and the accordion fits the `gatedSwap` + `section`
+idiom the rest of the view uses.
+
+The editor lives in `dashboard/static/js/builder/entry_form.js`, a **pure
+DOM-builder module** with no fetching and no module state of its own. It is a
+function of three things:
+
+- a **buffer** — a plain JSON object shaped exactly like what
+  `validate_board_entry` (core/board.py) accepts. `entryToBuffer(row)` reads a
+  `draft.board` row (note it carries the short-form `budget_s` the entry
+  serializer writes) into a buffer; `bufferToEntryJson(buffer)` emits the
+  canonical `wall_clock_budget_seconds` the `edit_board_entry` op parses;
+  `newEntryBuffer(kind)` seeds a create-mode buffer with the kind's
+  discriminants.
+- the server-derived **`vocab`** (from `GET /builder/config`) so the kind /
+  expectation-kind / reads / judge-mode / severity / drift-kind selects render
+  from the SAME enums the validators enforce — the JS never hardcodes an enum.
+- a **handler bag** (`onSave` / `onCancel` / `onDelete` / `onDuplicate` /
+  `onChange`) the view (`views/builder.js`) wires to its module state.
+
+**The whole-entry round-trip.** Save posts the WHOLE buffer through the
+existing `edit_board_entry` op (a replace-by-id) — there is no separate mutation
+path for individual fields, and no per-field ops. A judges-list edit, an
+expectation change, and a budget bump all ride the one whole-entry replace on
+Save. This is invariant **L1** in its most literal form: the flagship form adds
+zero ops. `tests/test_builder_api.py::test_builder_op_edit_board_entry_whole_entry_round_trip`
+pins the byte-stability per kind — the re-read row equals
+`entry_to_dict(validate_board_entry(payload))`, which is exactly the save/reopen
+loop the editor relies on. Delete drives `remove_board_entry` behind a two-click
+confirm; a per-judge badge's × drives `remove_judge` directly; the board-level
+`board_meta` panel (drift suppression + judge-only) drives `set_board_meta`,
+closing B0's documented GUI exception.
+
+**No client validation twin (invariant L4).** The form carries NO port of
+`BoardEntry.validate`. Save is gated only on the PRESENCE of an id (a
+presence-only enable/disable, never a semantic check); every structural
+objection is the server's field-precise `ValueError`, rendered verbatim in the
+editor's inline error strip — and the editor stays open so the operator can fix
+it. Failures route to the editor's own `_editError`, never the global flash. The
+one client-side check that IS present is a non-blocking convenience: the
+JSON-schema spec control shows a `JSON.parse` hint (`✓ parses` / `⚠ not valid
+JSON`) so an operator sees a typo before they post — it never disables Save.
+
+**Two controls that must not fight.** The `holdout` tag is owned by the
+train/holdout toggle, so `entryToBuffer` STRIPS it from the tags input on load
+and `bufferToEntryJson` RE-APPLIES it from the toggle state on save. If the form
+carried the tag in its comma input, editing an entry would silently move it in
+or out of the holdout — the strip/re-apply keeps the two controls disjoint.
+Similarly, the id is LOCKED when editing an existing entry (a replace-by-id
+would turn a rename into a silent duplicate); a **Duplicate** button seeds a
+create-mode buffer under a cleared id instead.
+
+**Why the editor survives a digest re-render.** The open buffer, the edited id,
+the create flag, and the inline error all live in `views/builder.js` MODULE
+STATE, and the center digest folds them in. `renderCenter` rebuilds the open
+editor from the pinned buffer on every render, so an unrelated re-render (an op
+result landing, a chat patch applying) never closes the editor or loses a typed
+value. VALUE edits mutate the buffer in place WITHOUT a re-render (focus is
+preserved); STRUCTURAL edits (kind switch, add/remove a judge or turn, toggle
+the expectation sub-form) mutate the buffer and call `onChange` so the view
+re-renders off it. The kind switch clears the inapplicable discriminant fields
+and keeps the common ones (a `single_turn`↔`synthetic_adversarial` switch keeps
+`input`). A paste-JSONL import box splits lines client-side, routes a
+`{"board_meta": true, …}` header line to `set_board_meta` and each entry line to
+`edit_board_entry`, and reports per-line results inline (a bad line never blocks
+the good ones).
+
 ---
 
 ## 10.2 The op inventory

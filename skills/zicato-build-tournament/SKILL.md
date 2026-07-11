@@ -225,7 +225,7 @@ copilot's tools (conceptual builder surface):
 | `set_weights` | the loss-shaping weights (drift/pass/per-kind/per-judge/severity; also surfaced in `zicato-build-board`) |
 | `set_namespace_weights` | the multi-objective namespace coefficients + the `diff_complexity_weight` parsimony term |
 | `set_gate` | `promote_margin`, pass-rate monotonicity (+ its scope), `namespace_monotonicity`, the integrity blocks (`block_on_containment_violation`, `block_on_gate_contradiction`), and the regression-suite pre-gate (`regression_gate_enabled` / `_test_command` / `_timeout_s`) |
-| `edit_board_entry` / `add_judge` / `remove_judge` / `set_brief` | the board + brief (deep craft in `zicato-build-board`) |
+| `edit_board_entry` / `remove_board_entry` / `add_judge` / `remove_judge` / `set_board_meta` / `set_brief` | the board + its meta header + brief (deep craft in `zicato-build-board`); all reachable from the GUI's board editor too — see the note below |
 | `estimate_cost` | (read-only) board-runs-per-round for the current draft, incl. the evidence-gate confirm budget, screen runs, best-of-N auxiliary calls, and the placebo line |
 | `validate` | (read-only) advisory warnings, incl. the statistical margin-vs-noise-floor rule (`refuse` severity when a measured floor is known and the evidence gate is off) |
 | `preflight` | (read-only, spends the small K-draw measurement budget) measures the DRAFT contract's A/A noise floor + achievable signal against the registered target; verdict `ok`/`warn`/`refuse`, recommend-only; degrades honestly when the workspace has no registered target. CLI equivalents: `zicato board preflight`, `zicato board audit` |
@@ -254,6 +254,15 @@ Two hard rules for the copilot:
   on apply, the copilot collects the operator's structure + board + holdout +
   proposer + gate changes into ONE draft and applies once, rather than rolling
   the epoch on each tweak.
+
+**The direct GUI.** Every `set_*` control above also has a form in the builder
+view, and the board is authored through a full **board editor** (the flagship
+GUI): a per-entry inline accordion covering the whole schema for its kind, an
+expectation sub-form, a judges list editor, a board-meta panel
+(`disable_drift` + `judge_only`), a paste-JSONL import, and a proposer-brief
+editor — each driving the SAME op as the copilot tool. The forms carry no
+client validation twin; a server `ValueError` renders verbatim inline. Deep
+board craft lives in `zicato-build-board`.
 
 ## A good build session
 

@@ -19,10 +19,13 @@
 // panel or a standalone entry by changing only the route wiring.
 
 import { el, clearChildren, patchText } from '../core/dom.js';
-import { gatedSwap, section, empty } from '../ui.js';
+import { gatedSwap, section, empty, chip } from '../ui.js';
 import { infoPopover } from '../builder/popover.js';
 import { BuilderChat } from '../builder/chat.js';
 import { previewNodes } from '../builder/preview.js';
+import {
+  entryEditor, entryToBuffer, bufferToEntryJson, newEntryBuffer, HOLDOUT_TAG,
+} from '../builder/entry_form.js';
 import {
   STRUCTURES, STRUCTURE_GLYPH, paramSpecsFor, structureGlyphSvg,
   readChatWidth, persistChatWidth, readChatCollapsed, persistChatCollapsed,
@@ -56,10 +59,24 @@ let _activeSlot = null;  // the slot the session is bound to ('' = unnamed)
 let _compare = null;     // last compare result (the op's `compare` key)
 let _cmpA = 'session';   // compare operand selections (persist across renders)
 let _cmpB = 'live';
-let _config = null;      // /builder/config public dict
+let _config = null;      // /builder/config public dict (+ `vocab`)
 let _active = 'structure';
 let _busy = false;
 let _chat = null;
+
+// ── board-editor module state (B2) ────────────────────────────────────
+// Pinned across renders so the inline accordion survives a digest re-render:
+// the center digest folds these in, and renderCenter rebuilds the open editor
+// from the pinned buffer (module-state pin). VALUE edits mutate `_editBuffer`
+// in place (no re-render, focus kept); STRUCTURAL edits re-render off it.
+let _editId = null;            // id of the entry whose inline editor is open
+let _editBuffer = null;        // the working buffer (entry_form's plain-JSON shape)
+let _editCreate = false;       // true → a create-mode buffer (new entry, id unlocked)
+let _editError = '';           // verbatim server ValueError for the open editor
+let _confirmDeleteEntry = false; // two-click delete arm
+let _importText = '';          // paste-JSONL import textarea content
+let _importReport = [];        // per-line import results [{line, ok, error?}]
+let _briefDraft = null;        // uncommitted proposer-brief text (null → use draft.brief)
 
 // Re-render hooks set up per mount.
 let _renderCenter = () => {};
@@ -272,6 +289,11 @@ function renderCenter(host) {
   const digest = JSON.stringify({
     active: _active, draft: d, busy: _busy, flash: _flash, pf: _preflight,
     cmp: _compare, cmpSel: [_cmpA, _cmpB], drafts: _drafts,
+    // the board-editor accordion state — pinned so the open editor survives a
+    // digest re-render and reflects structural edits to the buffer.
+    editId: _editId, editBuf: _editBuffer, editCreate: _editCreate,
+    editErr: _editError, delArm: _confirmDeleteEntry,
+    imp: _importText, impRep: _importReport, brief: _briefDraft,
   });
   gatedSwap(host, 'center|' + digest, () => {
     const nodes = [];
@@ -424,26 +446,42 @@ function boardSection(d) {
   const board = Array.isArray(d.board) ? d.board : [];
   const holdout = d.holdout || { train_ids: [], holdout_ids: [] };
   const of = ((d.scoring || {}).overfitting) || {};
+  const vocab = (_config && _config.vocab) || {};
   const trainSet = new Set(holdout.train_ids || []);
   const holdSet = new Set(holdout.holdout_ids || []);
 
-  const rows = board.map((b) => {
+  const toggleHoldout = (id, held) => {
+    const next = held ? [...holdSet].filter((x) => x !== id) : [...holdSet, id];
+    runOp('set_holdout', { tags: next });
+  };
+
+  // one board row: id + kind + badges (clickable → open the inline accordion),
+  // a holdout toggle, and per-judge badges whose × posts remove_judge directly.
+  const rowNodes = [];
+  board.forEach((b) => {
     const id = b.id || b.entry_id;
     const held = holdSet.has(id);
+    const badges = entryBadges(b, id);
+    const main = el('div', {
+      class: 'dn-bld-boardrow-main', role: 'button', tabindex: '0',
+      'aria-label': 'Edit board entry ' + id,
+    }, [
+      el('span', { class: 'dn-bld-boardid', title: id, text: id }),
+      el('span', { class: 'dn-bld-boardkind', text: b.kind || '' }),
+      el('div', { class: 'dn-bld-boardbadges' }, badges),
+    ]);
+    main.addEventListener('click', () => openEdit(b, held));
     const toggle = el('button', {
       class: 'dn-bld-holdtoggle' + (held ? ' dn-bld-held' : ''), type: 'button',
       'aria-pressed': String(held), title: held ? 'held out (click to train on it)' : 'in train set (click to hold out)',
       text: held ? 'holdout' : 'train',
     });
-    toggle.addEventListener('click', () => {
-      const next = held ? [...holdSet].filter((x) => x !== id) : [...holdSet, id];
-      runOp('set_holdout', { tags: next });
-    });
-    return el('div', { class: 'dn-bld-boardrow' }, [
-      el('span', { class: 'dn-bld-boardid', title: id, text: id }),
-      el('span', { class: 'dn-bld-boardkind', text: b.kind || '' }),
-      toggle,
-    ]);
+    toggle.addEventListener('click', (ev) => { if (ev.stopPropagation) ev.stopPropagation(); toggleHoldout(id, held); });
+    rowNodes.push(el('div', { class: 'dn-bld-boardrow' + ((_editId === id && !_editCreate) ? ' dn-bld-boardrow-open' : '') }, [main, toggle]));
+    // the inline accordion editor rides directly under its row.
+    if (_editId === id && !_editCreate && _editBuffer) {
+      rowNodes.push(el('div', { class: 'dn-bld-boardrow-editor' }, [entryAccordion(vocab, /* editing */ true)]));
+    }
   });
 
   const fracVal = of.holdout_fraction != null ? of.holdout_fraction : 0.2;
@@ -466,7 +504,244 @@ function boardSection(d) {
       el('span', { class: 'dn-bld-split-train', style: `flex:${Math.max(1, trainSet.size)}`, text: `train ${trainSet.size}` }),
       el('span', { class: 'dn-bld-split-hold', style: `flex:${Math.max(0.001, holdSet.size)}`, text: `holdout ${holdSet.size}` }),
     ]),
-    rows.length ? el('div', { class: 'dn-bld-boardlist' }, rows) : empty('The board is empty — add entries via the board builder.'));
+    boardMetaPanel(d, vocab),
+    el('h3', { class: 'dn-bld-subhead', text: 'Entries' }),
+    rowNodes.length ? el('div', { class: 'dn-bld-boardlist' }, rowNodes)
+      : empty('The board is empty — use “Add entry” below to author the first entry.'),
+    addEntryControl(vocab),
+    importBox());
+}
+
+// The row's at-a-glance badges: expectation kind, per-judge (removable), a
+// non-unit weight, the budget, and operator tags (never the holdout tag — the
+// toggle owns that). Uses ui.js's shared chip builder (U6).
+function entryBadges(entry, id) {
+  const out = [];
+  if (entry.expectation && entry.expectation.kind) out.push(chip('exp', 'exp:' + entry.expectation.kind));
+  const judges = Array.isArray(entry.judges) ? entry.judges : [];
+  for (const j of judges) {
+    const badge = el('span', { class: 'dn-chip dn-chip-judge dn-bld-judgebadge' }, [
+      el('span', { class: 'dn-bld-judgebadge-name', text: j.name || 'judge' }),
+      el('button', {
+        class: 'dn-bld-judgebadge-x', type: 'button', 'aria-label': 'Remove judge ' + (j.name || '') + ' from ' + id, text: '×',
+      }),
+    ]);
+    badge.lastChild.addEventListener('click', (ev) => {
+      if (ev.stopPropagation) ev.stopPropagation();
+      runOp('remove_judge', { entry_id: id, name: j.name });
+    });
+    out.push(badge);
+  }
+  if (entry.weight != null && Number(entry.weight) !== 1) out.push(chip('weight', 'w=' + entry.weight));
+  const budget = entry.budget_s != null ? entry.budget_s : entry.wall_clock_budget_seconds;
+  if (budget != null) out.push(chip('budget', budget + 's'));
+  const tags = (Array.isArray(entry.tags) ? entry.tags : []).filter((t) => t !== HOLDOUT_TAG);
+  for (const t of tags) out.push(chip('tag', t));
+  return out;
+}
+
+// Wire the pure entry_form editor to the module-state handlers. `editing`
+// distinguishes an existing-entry accordion (id locked, Delete + Duplicate)
+// from a create-mode buffer (id editable).
+function entryAccordion(vocab, editing) {
+  return entryEditor(_editBuffer, vocab, {
+    editing,
+    error: _editError,
+    deleteArmed: _confirmDeleteEntry,
+    onChange: () => { _confirmDeleteEntry = false; _renderCenter(); },
+    onSave: () => saveEntry(),
+    onCancel: () => { closeEditState(); _renderCenter(); },
+    onDelete: () => onDeleteEntry(),
+    onDuplicate: () => duplicateEntry(),
+  });
+}
+
+// The board-level board_meta header controls (drift suppression + judge-only)
+// — closes B0's documented GUI exception; both drive the set_board_meta op.
+function boardMetaPanel(d, vocab) {
+  const meta = d.board_meta || { disable_drift: [], judge_only: false };
+  const driftKinds = Array.isArray(vocab.drift_kinds) ? vocab.drift_kinds : [];
+  const cur = new Set(meta.disable_drift || []);
+  const boxes = driftKinds.map((dk) => checkInput(cur.has(dk), 'Disable drift ' + dk, dk, (on) => {
+    const next = new Set(cur);
+    if (on) next.add(dk); else next.delete(dk);
+    runOp('set_board_meta', { disable_drift: [...next] });
+  }));
+  const kids = [
+    el('h3', { class: 'dn-bld-subhead', text: 'Board metadata' }),
+    el('p', { class: 'dn-faint', text: 'Board-level header: drift kinds suppressed for every entry, and the judge-only flag (goldfive judges without steering). A change here rolls the epoch like any board edit.' }),
+    checkInput(!!meta.judge_only, 'Board judge-only', 'judge-only board — score on judges alone, no steering', (on) => runOp('set_board_meta', { judge_only: on })),
+  ];
+  if (boxes.length) {
+    kids.push(el('div', { class: 'dn-bld-subhead-min', text: 'Disable drift kinds' }));
+    kids.push(el('div', { class: 'dn-bld-boardmeta-drift' }, boxes));
+  }
+  return el('div', { class: 'dn-bld-boardmeta' }, kids);
+}
+
+// The Add-entry control: a kind picker + button seeds a create-mode buffer.
+// When a create-mode buffer is open, its editor renders here below the button.
+function addEntryControl(vocab) {
+  const kinds = Array.isArray(vocab.kinds) && vocab.kinds.length ? vocab.kinds
+    : ['single_turn', 'multi_turn_scripted', 'multi_turn_emulated', 'synthetic_adversarial', 'synthetic_clean'];
+  const sel = el('select', { class: 'dn-bld-select dn-bld-addkind', 'aria-label': 'New entry kind' },
+    kinds.map((k) => el('option', { value: k, text: k })));
+  const cur = kinds[0];
+  sel.value = cur;
+  sel.setAttribute('value', cur);
+  const btn = el('button', { class: 'dn-bld-btn dn-bld-btn-addentry', type: 'button', text: '+ Add entry', 'aria-label': 'Add entry' });
+  btn.addEventListener('click', () => {
+    const kind = sel.value != null ? sel.value : sel.getAttribute('value');
+    startCreate(kind);
+  });
+  const kids = [
+    el('div', { class: 'dn-bld-addrow' }, [sel, btn]),
+  ];
+  if (_editCreate && _editBuffer) {
+    kids.push(el('div', { class: 'dn-bld-boardrow-editor dn-bld-createeditor' }, [entryAccordion(vocab, /* editing */ false)]));
+  }
+  return el('div', { class: 'dn-bld-addentry' }, kids);
+}
+
+// The paste-JSONL import box: split lines client-side, route a board_meta
+// header line to set_board_meta, post one edit_board_entry per entry line,
+// report per-line results inline.
+function importBox() {
+  const area = el('textarea', {
+    class: 'dn-bld-import-area', 'aria-label': 'Paste board JSONL', rows: '4',
+    text: _importText,
+  });
+  const commit = () => { _importText = area.value != null ? area.value : (area.getAttribute('value') || ''); };
+  area.addEventListener('input', commit);
+  area.addEventListener('change', commit);
+  const btn = el('button', { class: 'dn-bld-btn dn-bld-import-btn', type: 'button', text: 'Import JSONL', 'aria-label': 'Import board JSONL' });
+  btn.addEventListener('click', () => runImport());
+  const kids = [
+    el('h3', { class: 'dn-bld-subhead', text: 'Import JSONL' }),
+    el('p', { class: 'dn-faint', text: 'One entry per line. A leading {"board_meta": true, …} header routes to the board-meta panel; each other line posts through edit_board_entry. Per-line errors report below — a bad line never blocks the good ones.' }),
+    area, btn,
+  ];
+  if (_importReport.length) {
+    kids.push(el('ul', { class: 'dn-bld-import-report' }, _importReport.map((r) => el('li', {
+      class: 'dn-bld-import-line ' + (r.ok ? 'dn-bld-import-ok' : 'dn-bld-import-err'),
+      text: `line ${r.line}: ${r.ok ? 'ok' : r.error}`,
+    }))));
+  }
+  return el('div', { class: 'dn-bld-import' }, kids);
+}
+
+// ── board-editor handlers ─────────────────────────────────────────────
+
+function closeEditState() {
+  _editId = null; _editBuffer = null; _editCreate = false;
+  _editError = ''; _confirmDeleteEntry = false;
+}
+
+// Test-only: reset the shared module state between mounts (mirrors
+// ui.js::_resetPendingOverrides). Forces render() to reload config + draft from
+// the current fetch mock so a test's own vocab/draft take effect. Not used by
+// the app.
+export function _resetBuilderForTest() {
+  closeEditState();
+  _importText = ''; _importReport = []; _briefDraft = null;
+  _config = null; _draft = null; _flash = '';
+  _active = 'structure'; _busy = false;
+}
+
+function openEdit(entry, held) {
+  const id = entry.id || entry.entry_id;
+  if (_editId === id && !_editCreate) { closeEditState(); _renderCenter(); return; } // toggle closed
+  _editBuffer = entryToBuffer(entry, { heldOut: held });
+  _editId = id; _editCreate = false; _editError = ''; _confirmDeleteEntry = false;
+  _renderCenter();
+}
+
+function startCreate(kind) {
+  _editBuffer = newEntryBuffer(kind);
+  _editCreate = true; _editId = null; _editError = ''; _confirmDeleteEntry = false;
+  _renderCenter();
+}
+
+function duplicateEntry() {
+  if (!_editBuffer) return;
+  const clone = JSON.parse(JSON.stringify(_editBuffer));
+  clone.id = ''; // seed a create-mode buffer under a fresh id (replace-by-id never renames)
+  _editBuffer = clone; _editCreate = true; _editId = null; _editError = ''; _confirmDeleteEntry = false;
+  _renderCenter();
+}
+
+// Save posts the WHOLE buffer through the existing edit_board_entry op; a
+// server ValueError renders verbatim in the editor's inline strip (never the
+// global flash), and the editor stays open so the operator can fix it.
+async function saveEntry() {
+  if (_busy || !_editBuffer) return;
+  _busy = true; _editError = ''; _renderCenter();
+  try {
+    const env = await postOp('edit_board_entry', { entry: bufferToEntryJson(_editBuffer) });
+    if (env && env.error) { _editError = env.error; }
+    else if (env) { closeEditState(); applyOpResult(env); }
+  } catch (err) {
+    _editError = (err && err.message) || String(err);
+  } finally {
+    _busy = false;
+    _renderCenter();
+  }
+}
+
+function onDeleteEntry() {
+  if (!_confirmDeleteEntry) { _confirmDeleteEntry = true; _renderCenter(); return; }
+  _confirmDeleteEntry = false;
+  if (_editId != null) deleteEntry(_editId);
+}
+
+async function deleteEntry(id) {
+  if (_busy) return;
+  _busy = true; _editError = ''; _renderCenter();
+  try {
+    const env = await postOp('remove_board_entry', { entry_id: id });
+    if (env && env.error) { _editError = env.error; }
+    else if (env) { closeEditState(); applyOpResult(env); }
+  } catch (err) {
+    _editError = (err && err.message) || String(err);
+  } finally {
+    _busy = false;
+    _renderCenter();
+  }
+}
+
+async function runImport() {
+  if (_busy) return;
+  const lines = String(_importText || '').split('\n').map((l) => l.trim());
+  const report = [];
+  _busy = true; _renderCenter();
+  let lineNo = 0;
+  for (const raw of lines) {
+    lineNo += 1;
+    if (!raw) continue;
+    let obj;
+    try { obj = JSON.parse(raw); } catch (e) {
+      report.push({ line: lineNo, ok: false, error: 'invalid JSON: ' + ((e && e.message) || 'parse error') });
+      continue;
+    }
+    try {
+      let env;
+      if (obj && obj.board_meta === true) {
+        env = await postOp('set_board_meta', {
+          disable_drift: Array.isArray(obj.disable_drift) ? obj.disable_drift : [],
+          judge_only: !!obj.judge_only,
+        });
+      } else {
+        env = await postOp('edit_board_entry', { entry: obj });
+      }
+      if (env && env.error) report.push({ line: lineNo, ok: false, error: env.error });
+      else { report.push({ line: lineNo, ok: true }); if (env) applyOpResult(env); }
+    } catch (err) {
+      report.push({ line: lineNo, ok: false, error: (err && err.message) || String(err) });
+    }
+  }
+  _importReport = report;
+  _busy = false;
+  _renderCenter();
 }
 
 // ── Overfitting — the full anti-board-memorization contract ───────────
@@ -573,6 +848,33 @@ function weightsSection(d) {
     ...(nsRows.length ? nsRows : [empty('No namespace weights in this contract.')]));
 }
 
+// The proposer-brief editor: a monospace textarea + an explicit Save (the
+// brief is contract, so it commits through set_brief on its own gesture, never
+// on every keystroke) with a live char count. The uncommitted text is pinned
+// in module state so it survives a digest re-render.
+function briefEditor(d) {
+  const current = _briefDraft != null ? _briefDraft : (d.brief || '');
+  const read = (node) => (node.value != null ? node.value
+    : (node.getAttribute('value') != null ? node.getAttribute('value') : (node.textContent || '')));
+  const area = el('textarea', { class: 'dn-bld-brief-area dn-mono', 'aria-label': 'Proposer brief', rows: '6', text: current });
+  const count = el('span', { class: 'dn-bld-brief-count', text: current.length + ' chars' });
+  const commit = () => { _briefDraft = read(area); patchText(count, _briefDraft.length + ' chars'); };
+  area.addEventListener('input', commit);
+  area.addEventListener('change', commit);
+  const save = el('button', { class: 'dn-bld-btn dn-bld-brief-save', type: 'button', text: 'Save brief', 'aria-label': 'Save brief' });
+  save.addEventListener('click', () => {
+    const text = read(area);
+    _briefDraft = null;
+    runOp('set_brief', { text });
+  });
+  return el('div', { class: 'dn-bld-brief' }, [
+    el('h3', { class: 'dn-bld-subhead', text: 'Proposer brief' }),
+    el('p', { class: 'dn-faint', text: 'The operator’s brief to the proposer for this epoch. Explicit Save writes it (set_brief) — a brief change rolls the epoch.' }),
+    area,
+    el('div', { class: 'dn-bld-brief-foot' }, [count, save]),
+  ]);
+}
+
 function proposerSection(d) {
   const p = d.proposer || {};
   const skills = Array.isArray(p.skills) ? p.skills : [];
@@ -581,6 +883,7 @@ function proposerSection(d) {
   const em = ((d.scoring || {}).experiment_memory) || {};
   return section('Proposer',
     el('p', { class: 'dn-lede', text: 'Who proposes each challenger. A skill-composed default proposer, or a custom ADK agent dir. Read-only summary here — editing the proposer dir is a config change.' }),
+    briefEditor(d),
     controlRow('Best-of-N slate', {
       title: 'best_of_n', def: '3',
       body: 'How many candidate experiments each propose-step samples before the critique pass picks one. 1 is the historical single sample (no critique). Each extra sample is an auxiliary propose call, priced on the cost meter; the screen (Field & noise) then tries the slate out.',

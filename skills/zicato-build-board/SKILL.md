@@ -237,6 +237,31 @@ The board copilot, like the tournament copilot, **never starts a live `zicato
 evolve`** — it produces a validated board, and the live run is the operator's
 separate explicit go-ahead (see [`../AGENTS.md`](../AGENTS.md)).
 
+## The direct GUI — the board editor
+
+Everything above is also reachable WITHOUT the copilot, through the dashboard's
+**board editor** (the Board section of the builder view). Each entry is a row
+that opens an **inline accordion form** covering the full schema for its kind:
+the common fields (id, kind, budget, weight, tags), the per-kind discriminant
+(single-turn input; scripted turns list; emulated persona; adversarial spec +
+required drift kinds), an optional **expectation** sub-form (per matcher — text/
+regex/JSON-schema textarea, dotted-path predicate, or a structured rubric that
+serializes to the JSON spec), and a **judges** list editor. A **board-meta
+panel** sets the board-level `disable_drift` + `judge_only` header, and a
+**paste-JSONL import** box bulk-loads entries (a leading `board_meta` header
+line routes to the meta panel).
+
+The editor drives the SAME ops the copilot's tools do — Save posts the whole
+entry through `edit_board_entry`, Delete through `remove_board_entry`, a judge
+badge's × through `remove_judge`, the meta panel through `set_board_meta`. It
+carries **no client-side validation twin**: the server's field-precise
+`ValueError` renders verbatim in an inline strip, and the editor stays open to
+fix it. The id is locked while editing (Duplicate seeds a fresh id), and the
+`holdout` tag is owned by the train/holdout toggle, never the tags input. When
+you help an operator over the GUI, name the CONTROL and the CONSEQUENCE (the
+board is contract — a save rolls the epoch), the same discipline as the copilot
+loop above.
+
 ## A good board build
 
 - **Design for discrimination first.** A board that can't tell candidates apart
