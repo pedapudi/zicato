@@ -2243,25 +2243,28 @@
   .dn-funnel-head { fill: var(--v2-ink-faint); font: 10px var(--v2-mono);
     text-transform: uppercase; letter-spacing: 0.05em; }
   .dn-funnel-sub { fill: var(--v2-ink-faint); font: 9.5px var(--v2-mono); }
-  /* the flowing band — a QUIET accent tint (reduced-opacity fill + a hairline
-     stroke) so the narrowing reads as one calm current, matching how the
-     cleaner figures tint. The inter-rung LINK shares the fill (no stroke), so
-     the discrete rungs merge into one converging silhouette; the band's own
-     vertical edges at each junction double as the hairline rung separators. */
-  .dn-funnel-band, .dn-funnel-link {
-    fill: color-mix(in srgb, var(--v2-accent) 11%, transparent); }
-  .dn-funnel-band { stroke: color-mix(in srgb, var(--v2-accent) 28%, transparent);
-    stroke-width: 1; vector-effect: non-scaling-stroke; }
-  /* a pending (live, undecided) stage is neutral — nobody is cut yet */
-  .dn-funnel-band.dn-funnel-pending { fill: var(--v2-rule-soft);
-    stroke: var(--v2-rule); stroke-dasharray: 4 3; }
-  .dn-funnel-link.dn-funnel-link-pending { fill: var(--v2-rule-soft); }
-  .dn-funnel-band.dn-funnel-gateflow.dn-good { fill: color-mix(in srgb, var(--v2-good) 13%, transparent);
-    stroke: color-mix(in srgb, var(--v2-good) 40%, transparent); }
-  /* eliminated dead-end branches peeling off below the lane — a quiet hairline
-     rule (the ✕ glyph is the mark; the lane just dims), like elimFlow's loss. */
-  .dn-funnel-deadedge { stroke: color-mix(in srgb, var(--v2-bad) 55%, transparent);
-    stroke-width: 1; vector-effect: non-scaling-stroke; opacity: 0.4; stroke-dasharray: 2 3; }
+  /* the DOT LADDER — one filled accent dot per competitor alive entering a rung,
+     thin converging cubic-bezier SPLINES between a lane's rung dots (the
+     racingScalarTrack marker language). Non-winner lanes read dimmed; the WINNER's
+     dots + splines carry the accent emphasis end-to-end (dn-funnel-win). */
+  .dn-funnel-dot { fill: var(--v2-accent); opacity: 0.55; vector-effect: non-scaling-stroke; }
+  .dn-funnel-dot.dn-good { fill: var(--v2-good); }
+  .dn-funnel-dot.dn-bad { fill: var(--v2-bad); opacity: 0.7; }
+  /* a pending (live, undecided) rung is neutral — nobody is cut yet */
+  .dn-funnel-dot.dn-funnel-pending { fill: var(--v2-rule); opacity: 0.7; }
+  .dn-funnel-dot.dn-proj { fill: var(--v2-projected); opacity: var(--v2-projected-op); }
+  .dn-funnel-spline { fill: none; stroke: var(--v2-accent); stroke-width: 1;
+    opacity: 0.4; vector-effect: non-scaling-stroke; }
+  /* the winner's lane pops to full accent, end-to-end (dots + every spline). */
+  .dn-funnel-win .dn-funnel-dot { opacity: 1; }
+  .dn-funnel-win .dn-funnel-spline,
+  .dn-funnel-spline.dn-funnel-win-line { opacity: 0.95; stroke-width: 1.4; }
+  /* a cut drops a dim ✕ in the gap after its rung dot (the dn-bad polish idiom —
+     opacity 0.7, no strikethrough; the ✕ IS the mark). */
+  .dn-funnel-cut { fill: var(--v2-bad); font: 10px var(--v2-mono); opacity: 0.7; }
+  /* a live lane's "k/N boards" / "~proj" progress label near the active dot. */
+  .dn-funnel-prog { fill: var(--v2-ink-faint); font: 9px var(--v2-mono); }
+  .dn-funnel-prog.dn-proj { fill: var(--v2-projected); }
   /* competitor labels — survivors (good ↑), cuts (bad ✕), racing (neutral). The
      ✕ glyph + bad colour already mark a cut, so NO strikethrough — a line
      through the name reads as the connector slashing the text. A cut name is
@@ -2322,8 +2325,6 @@
   .dn-proj { opacity: var(--v2-projected-op); }
   text.dn-proj, .dn-funnel-name.dn-proj, .dn-swissladder-pairlab.dn-proj,
   .dn-swissladder-standlab.dn-proj, .dn-elimflow-name.dn-proj { fill: var(--v2-projected); }
-  .dn-funnel-band.dn-proj { fill: var(--v2-projected-soft);
-    stroke: var(--v2-projected-line); stroke-dasharray: var(--v2-projected-dash); }
   .dn-elimflow-convnode.dn-proj, .dn-elimflow-dot.dn-proj { fill: var(--v2-projected); }
   .dn-elimflow-conv.dn-proj { stroke: var(--v2-projected-line); stroke-dasharray: var(--v2-projected-dash); }
   /* the scored board-progress sub-bar drawn INSIDE an SVG figure. */
@@ -2952,10 +2953,10 @@
     from { opacity: 0; transform: translateY(4px); }
     to   { opacity: 1; transform: translateY(0); }
   }
-  /* the surviving funnel band + each runner ease their position/width as the
-   * field thins (the band narrows, survivors slide forward, cuts peel off). */
-  .dn-funnel-band, .dn-funnel-link { transition: opacity 0.3s ease; }
-  .dn-funnel-runner, .dn-funnel-deadedge { transition: opacity 0.3s ease, transform 0.3s ease; }
+  /* the dot ladder eases as the field thins (dots fade in, splines converge,
+   * cuts recede). */
+  .dn-funnel-spline, .dn-funnel-dot { transition: opacity 0.3s ease; }
+  .dn-funnel-runner, .dn-funnel-cut { transition: opacity 0.3s ease, transform 0.3s ease; }
   /* swiss/elim live figures ease their value/position changes the same way. */
   .dn-swissladder-pair, .dn-swissladder-stand, .dn-swissladder-edge { transition: opacity 0.3s ease, transform 0.3s ease; }
   .dn-elimflow-lane, .dn-elimflow-seg, .dn-elimflow-conv { transition: opacity 0.3s ease; }
@@ -3157,7 +3158,7 @@
     .dt-live-enter { animation: none; }
     .dt-ticker-row { animation: none; }
     .dn-inflight-pulse { animation: none; }
-    .dn-funnel-band, .dn-funnel-link, .dn-funnel-runner, .dn-funnel-deadedge, .dn-funnel-bar,
+    .dn-funnel-spline, .dn-funnel-dot, .dn-funnel-runner, .dn-funnel-cut, .dn-funnel-bar,
     .dn-swissladder-pair, .dn-swissladder-stand, .dn-swissladder-edge, .dn-swissladder-bar,
     .dn-elimflow-lane, .dn-elimflow-seg, .dn-elimflow-conv,
     .dt-rungstep-pip, .dt-live-match-fill, .dn-hm-cell { transition: none; }

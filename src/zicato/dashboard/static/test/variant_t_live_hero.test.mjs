@@ -524,7 +524,7 @@ test('live motion: prefers-reduced-motion suppresses the live animation classes/
   assert(rm.includes('.dt-live-enter') && /\.dt-live-enter[^;{}]*\{?[^}]*animation: none/.test(rm) || rm.includes('.dt-live-enter'), 'the funnel/ladder entrance is suppressed under reduced motion');
   assert(rm.includes('.dt-ticker-row'), 'the ticker-row slide-in is suppressed under reduced motion');
   assert(rm.includes('.dt-rungstep-pip'), 'the rung-stepper pip transition is suppressed under reduced motion');
-  assert(/\.dn-funnel-band/.test(rm) && /\.dn-funnel-bar/.test(rm), 'the funnel band + progress-bar transitions are suppressed under reduced motion');
+  assert(/\.dn-funnel-spline/.test(rm) && /\.dn-funnel-bar/.test(rm), 'the funnel spline/dot + progress-bar transitions are suppressed under reduced motion');
   // sanity: the un-gated rules DO carry motion (so reduced-motion is a real gate).
   assert(/\.dt-ticker-row \{[^}]*animation: dt-ticker-in/.test(css), 'the ticker row animates by default (gated off only under reduced motion)');
   assert(/@keyframes dt-live-fade/.test(css) && /@keyframes dt-ticker-in/.test(css), 'the live keyframes are defined');
