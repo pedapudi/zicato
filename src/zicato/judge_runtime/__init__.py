@@ -20,6 +20,13 @@ This package is the runtime bridge between the two:
   ``disable_drift`` suppressed) plus the entry's custom
   :class:`JudgeSpec` judges. The ADK adapter passes the result straight
   into ``goldfive.run(..., judges=...)``.
+* :mod:`zicato.judge_runtime.io_capture` is the verbatim judge-I/O
+  capture seam for board reflection: an optional
+  :class:`~zicato.judge_runtime.io_capture.JudgeIOSink` threaded through
+  the builder retains each inline judge call's exact input + raw
+  response + verdict as a ``judge_io.jsonl`` sidecar beside the run's
+  ``loss.json``. Best-effort by contract; ``None`` (the default)
+  captures nothing and changes nothing.
 
 The enum->string boundary (zicato carries :class:`goldfive.DriftKind` /
 :class:`goldfive.DriftSeverity` enum members; goldfive's
@@ -36,6 +43,12 @@ from zicato.judge_runtime.disable import (
     builtin_judge_names_to_suppress,
     default_judges_minus,
 )
+from zicato.judge_runtime.io_capture import (
+    JudgeIOFileSink,
+    JudgeIOSink,
+    judge_io_path_for_loss,
+    read_judge_io,
+)
 from zicato.judge_runtime.reliability import (
     JudgeReliability,
     test_retest,
@@ -43,12 +56,16 @@ from zicato.judge_runtime.reliability import (
 )
 
 __all__ = [
+    "JudgeIOFileSink",
+    "JudgeIOSink",
     "JudgeReliability",
     "JudgeSpecLike",
     "assemble_judges",
     "builtin_judge_names_to_suppress",
     "default_judges_minus",
+    "judge_io_path_for_loss",
     "judge_spec_to_goldfive",
+    "read_judge_io",
     "test_retest",
     "test_retest_board",
 ]

@@ -146,6 +146,13 @@ from zicato.query.paths import (
 from zicato.query.racing_view import (
     build_racing_field,
 )
+from zicato.query.reflection_view import (
+    build_adjudication_xray,
+    build_judge_scorecards,
+    build_reflection_summary,
+    entry_candidate_matrix,
+    list_reflections,
+)
 from zicato.query.rounds_view import (
     build_round_timeline,
 )
@@ -319,6 +326,11 @@ __all__ = [
     "build_meta_loop_ledger",
     "build_optimization_trajectory",
     "build_racing_field",
+    "build_reflection_summary",
+    "build_judge_scorecards",
+    "build_adjudication_xray",
+    "entry_candidate_matrix",
+    "list_reflections",
     "build_round_timeline",
     "build_per_entry_for_generation",
     "build_round_pipeline",

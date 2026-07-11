@@ -960,6 +960,96 @@ def elo_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
     )
 
 
+def _select_if_table(
+    db_path: Path, table: str, sql: str, params: Sequence[Any] = ()
+) -> list[sqlite3.Row]:
+    """Run a read query, tolerating BOTH a missing index and a missing table.
+
+    The board-reflection tables land in schema v11; a pre-v11 index opened
+    read-only (without a migrating write) simply lacks them. This selector
+    probes ``sqlite_master`` for ``table`` first and returns ``[]`` when it is
+    absent — so a reflection reader degrades on a stale index rather than
+    raising ``no such table`` (the additive-migration back-compat contract the
+    other optional-column selectors already honour).
+    """
+    try:
+        conn = open_index(db_path)
+    except IndexNotBuiltError:
+        return []
+    try:
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table,),
+        ).fetchone()
+        if exists is None:
+            return []
+        return list(conn.execute(sql, tuple(params)).fetchall())
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+
+
+def reflections_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
+    """Return every indexed reflection under ``epoch_id``, newest first.
+
+    The read side of the board-reflection projection (schema v11). Each row
+    carries the reflection's four-pillar bill-of-health summary
+    (``noise_floor_max_abs_delta`` / ``decision_flip_p`` / ``n_findings`` /
+    ``n_judges`` / ``verdict_counts_json``) plus its identity
+    (``mode`` / ``executed``). A never-indexed workspace — or one whose index
+    predates v11 — yields ``[]`` (the ``reflections`` table is simply absent,
+    which :func:`_select` tolerates), and the CLI/readers fall back to the
+    canonical files. The index is a projection; a reflection is readable with
+    no index at all.
+    """
+    return _select_if_table(
+        db_path,
+        "reflections",
+        "SELECT reflection_id, epoch_id, created_at, mode, executed, "
+        "noise_floor_max_abs_delta, decision_flip_p, n_findings, n_judges, "
+        "verdict_counts_json FROM reflections WHERE epoch_id = ? "
+        "ORDER BY created_at DESC, reflection_id DESC",
+        (epoch_id,),
+    )
+
+
+def reflection_row(db_path: Path, reflection_id: str) -> sqlite3.Row | None:
+    """Return one reflection's summary row, or ``None`` when absent.
+
+    ``None`` on a missing index, a pre-v11 index (no ``reflections`` table),
+    or an unknown ``reflection_id`` — the reader degrades rather than raises,
+    and the caller falls back to the canonical ``plan.json`` / ``findings.json``.
+    """
+    rows = _select_if_table(
+        db_path,
+        "reflections",
+        "SELECT reflection_id, epoch_id, created_at, mode, executed, "
+        "noise_floor_max_abs_delta, decision_flip_p, n_findings, n_judges, "
+        "verdict_counts_json FROM reflections WHERE reflection_id = ?",
+        (reflection_id,),
+    )
+    return rows[0] if rows else None
+
+
+def judge_scorecards_for_reflection(db_path: Path, reflection_id: str) -> list[sqlite3.Row]:
+    """Return every judge scorecard row for one reflection, by judge name.
+
+    The per-judge confusion-matrix projection (schema v11). A never-indexed
+    or pre-v11 workspace yields ``[]``; the reader falls back to the canonical
+    ``scorecards.json`` on disk.
+    """
+    return _select_if_table(
+        db_path,
+        "judge_scorecards",
+        "SELECT reflection_id, judge_name, tp, fp, fn, tn, ambiguous, "
+        "precision, recall, f1, severity_accuracy, disagreement_rate, kappa, "
+        "exercised, redundant_with_json FROM judge_scorecards "
+        "WHERE reflection_id = ? ORDER BY judge_name",
+        (reflection_id,),
+    )
+
+
 def index_counts(db_path: Path) -> dict[str, int]:
     """Return a per-table row-count summary of the index.
 
@@ -1014,5 +1104,8 @@ __all__ = [
     "prior_experiments_for_epoch",
     "tournaments_for_epoch",
     "elo_for_epoch",
+    "reflections_for_epoch",
+    "reflection_row",
+    "judge_scorecards_for_reflection",
     "index_counts",
 ]

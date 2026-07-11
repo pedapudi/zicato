@@ -136,6 +136,18 @@ class RuntimeConfig:
         the workspace ``models.judge`` block) it lets an operator point
         the judges at a separate endpoint/model from the rest of the
         auxiliary surface. Read via :meth:`effective_judge_call_llm`.
+    adjudicator_call_llm:
+        Optional LLM callable used by the board-reflection meta-judge
+        (the independent adjudicator that re-reads a captured transcript
+        and decides whether each judge got it right — pillar 3). ``None``
+        (the default) ⇒ the adjudicator falls back to
+        :attr:`auxiliary_call_llm`, mirroring :attr:`judge_call_llm`'s
+        fall-back onto the same surface. Read via
+        :meth:`effective_adjudicator_call_llm`. Independence is
+        load-bearing: the adjudication engine asserts this callable is
+        identity-distinct from the judge callable before adjudicating
+        (:func:`zicato.core.workspace.assert_distinct_callables`) — a
+        judge cannot grade its own homework.
     seed:
         Optional integer seed for any zicato-internal random number
         generators. Adapters may or may not honor it for the inner
@@ -270,6 +282,40 @@ class RuntimeConfig:
         on (the ``inner_model`` live-object precedent). ``None`` — the
         default, and every round with the knob off — disables every
         ledger consultation. Never read from workspace config.
+    persist_run_results:
+        Persist each run's :class:`~zicato.core.RunResult` (the
+        user-facing transcript + final output) as ``result.json`` beside
+        the run's ``loss.json`` (replicate-slotted ``result.r{n}.json``,
+        see :func:`zicato.tournament.unit_cache.unit_result_path`).
+        DEFAULT ``True`` — always-on with an opt-out, because the
+        artifact is small text and an opt-in would leave board
+        reflection's passive tier permanently starved of verbatim
+        transcripts (BOARD-REFLECTION.md's capture gap). The write is
+        best-effort and atomic; a capture failure NEVER re-scores or
+        aborts a run. A RUNTIME tuning knob, additive, NEVER part of the
+        frozen evaluation contract (never hashed) — flipping it does not
+        roll the epoch.
+    persist_judge_io:
+        Persist every inline judge ``evaluate`` call's verbatim I/O (the
+        exact reasoning text judged + the raw LLM response + the parsed
+        verdict) as an append-only ``judge_io.jsonl`` sidecar beside the
+        run's ``loss.json`` (``judge_io.r{n}.jsonl`` per replicate; see
+        :mod:`zicato.judge_runtime.io_capture`). DEFAULT ``True`` for
+        the same always-on-with-opt-out rationale as
+        :attr:`persist_run_results`; best-effort (a capture failure
+        never changes a verdict or aborts a run). A RUNTIME tuning knob,
+        additive, NEVER contract-hashed — flipping it does not roll the
+        epoch.
+    judge_io_sink:
+        The LIVE judge-I/O sink object (the
+        :class:`zicato.judge_runtime.io_capture.JudgeIOSink` protocol)
+        the worker binds per run when :attr:`persist_judge_io` is on —
+        the ``token_ledger`` / ``inner_model`` live-object precedent.
+        ``None`` (the default, and every run with the knob off) disables
+        capture entirely: the judge path is byte-identical to before the
+        seam existed. Never read from workspace config. Typed ``Any`` so
+        :mod:`zicato.core` carries no import dependency on the capture
+        module.
 
     Construction-time validation
     ----------------------------
@@ -297,6 +343,7 @@ class RuntimeConfig:
     seed: int | None = None
     parallelism: int = 4
     judge_call_llm: CallLLM | None = None
+    adjudicator_call_llm: CallLLM | None = None
     scrub_worker_env: bool = False
     worker_env_passthrough: tuple[str, ...] = ()
     diversity_tolerance: float | None = None
@@ -317,6 +364,9 @@ class RuntimeConfig:
     #: configured; the adapter falls back to its guarded shim rebind. Typed
     #: ``Any`` so :mod:`zicato.core` carries no import dependency on ADK.
     inner_model: Any = None
+    persist_run_results: bool = True
+    persist_judge_io: bool = True
+    judge_io_sink: Any = None
 
     def __post_init__(self) -> None:
         """Validate the cheap scalar invariants (``parallelism`` + tolerance)."""
@@ -364,3 +414,27 @@ class RuntimeConfig:
         fall-back so every judge call site reads the same rule.
         """
         return self.judge_call_llm if self.judge_call_llm is not None else self.auxiliary_call_llm
+
+    def effective_adjudicator_call_llm(self) -> CallLLM:
+        """The callable the reflection adjudicator runs on.
+
+        :attr:`adjudicator_call_llm` when set, else the auxiliary surface
+        — the same fall-back rule as :meth:`effective_judge_call_llm`.
+
+        This fall-back exists only so a config is CONSTRUCTIBLE without a
+        dedicated adjudicator callable; it is NOT a licence to adjudicate
+        on the auxiliary endpoint. Active adjudication REQUIRES a callable
+        distinct from every judge's: if the judges also run on the
+        auxiliary surface (the common case), the auxiliary fall-back is the
+        SAME object the judges use, and
+        :func:`zicato.reflection.adjudicator.adjudicate_corpus` refuses via
+        :func:`zicato.core.workspace.assert_distinct_callables` (a judge
+        cannot grade its own homework). Configure a real adjudicator (a
+        ``models`` block or ``--adjudicator-call-llm``) before adjudicating;
+        this accessor only resolves the construction-time fall-back.
+        """
+        return (
+            self.adjudicator_call_llm
+            if self.adjudicator_call_llm is not None
+            else self.auxiliary_call_llm
+        )

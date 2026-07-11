@@ -1061,6 +1061,7 @@ like a port-number registry.
 | `2000` | `2000` (single draw) | contract pre-flight | `zicato.epoch.preflight.PREFLIGHT_REPLICATE_BASE` | the degraded-copy probe draw (cached under the CHAMPION's id) |
 | `3000` | `3000` + confirm at `3001` | candidate screen | `zicato.epoch.screen.SCREEN_REPLICATE_BASE` | tryout panel runs (`3000`); the confirm-before-veto re-run (`3001`) |
 | `4000` | `4000 .. 4000+budget-1` | evidence gate | `zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE` | independent evidence draws of BOTH sides of the crowning pair |
+| `5000` | `5000 .. 5000+K-1` | board reflection (claimed; constant lands with `reflection/corpus.py`) | `zicato.reflection.corpus.REFLECTION_REPLICATE_BASE` | active observation-corpus replicates (BOARD-REFLECTION.md); infra-abort draws voided |
 
 Design properties of the ledger:
 
@@ -1082,7 +1083,8 @@ Design properties of the ledger:
 If you are building a new out-of-tournament evaluation (a new probe, a new
 audit, a new confirmation loop), follow this procedure exactly:
 
-1. **Pick the next free thousand** (the next would be `5000`). Do not squat in
+1. **Pick the next free thousand** (`5000` is claimed by board reflection; the
+   next free base is `6000`). Do not squat in
    an owner's range and do not subdivide an existing owner's range without
    that owner's module adopting the sub-slot explicitly (the screen's `+1`
    confirm slot is declared in `SCREEN_REPLICATE_BASE`'s own docstring).
@@ -1151,6 +1153,13 @@ floor?**
   id at `PREFLIGHT_REPLICATE_BASE` (2000). `|degraded_scalar −
   mean(champion_scalars)|` is the contract's demonstrated **achievable
   signal**.
+
+Board reflection's **active observation corpus** reuses this exact discipline
+one reserved base higher: `reflection/corpus.py`'s `run_corpus` mirrors the
+preflight's `_stamp_replicate_index(board, 5000 + j)` +
+`_run_board_units_fast(..., replicate_index=5000 + j)` shape at
+`REFLECTION_REPLICATE_BASE` (5000), voiding any infra-aborted draw with
+`ReflectionDrawInconclusive` just as the preflight voids on `NoiseFloorInconclusive`.
 
 The pure verdict (`preflight_verdict`) encodes the two mirror pathologies:
 
@@ -1529,6 +1538,7 @@ uv run pytest tests/test_gauntlet_evidence_gate_e2e.py tests/test_driver_evidenc
 | `PREFLIGHT_REPLICATE_BASE` | `2000` | `epoch/preflight.py` |
 | `SCREEN_REPLICATE_BASE` (+1 confirm) | `3000` / `3001` | `epoch/screen.py` |
 | `EVIDENCE_REPLICATE_BASE` | `4000` | `selection/evidence_gate.py` |
+| `REFLECTION_REPLICATE_BASE` | `5000` | `reflection/corpus.py` |
 | `MIN_CREDIBLE_DUELS` | `3` | `selection/evidence_gate.py` |
 | `CI_Z` | `1.959963984540054` | `selection/evidence_gate.py` |
 | `DEFAULT_REPLICATE_BUDGET` | `3` | `selection/evidence_gate.py` |

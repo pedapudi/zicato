@@ -245,6 +245,67 @@ class AbortingAdapter:
         }
 
 
+class _CompletingSession:
+    """Rich ``run(entry, sinks, config)`` session that completes normally.
+
+    Returns a completed :class:`~zicato.core.RunResult` with a real
+    ``final_output`` + two-turn ``transcript`` — the shape the result.json
+    capture persists. Additionally exercises the worker-bound judge-I/O
+    sink when one rides the config (``config.judge_io_sink``): it records
+    one scripted judge call, standing in for the inline judge's emission
+    (the real emission path is unit-tested against
+    ``_InlineCriterionJudge`` directly; this proves the WORKER threaded a
+    live sink to the session's config and that the sidecar lands beside
+    ``loss.json``).
+    """
+
+    async def run(self, entry: Any, sinks: Any, config: Any) -> Any:
+        del sinks
+        from zicato.core import RunResult  # noqa: PLC0415
+
+        sink = getattr(config, "judge_io_sink", None)
+        if sink is not None:
+            sink.record(
+                "stub_judge",
+                reasoning_text="the exact reasoning under judgement",
+                transcript_window=("turn one", "turn two"),
+                raw_response="OK looks fine",
+                drift_emitted=False,
+                kind="",
+                severity="",
+                detail="",
+            )
+        return RunResult(
+            run_id=f"complete-{entry.id}",
+            entry_id=entry.id,
+            final_output="final answer text",
+            transcript=("intermediate turn", "final answer text"),
+            runtime_ms=7,
+            aborted=False,
+            abort_reason="",
+        )
+
+
+class CompletingAdapter:
+    """Adapter whose rich-shape session completes with a full RunResult."""
+
+    name = "stub"
+
+    def load(self, generation_root: Path) -> _CompletingSession:
+        del generation_root
+        return _CompletingSession()
+
+    def mutation_points(self, source_roots: Any = None) -> list[Any]:
+        del source_roots
+        return []
+
+    def worker_spec(self) -> dict[str, Any]:
+        return {
+            "kind": "import",
+            "factory": "tests._subprocess_worker_support:make_completing_adapter",
+        }
+
+
 class _ConfigProbeSession:
     """A session that records the WORKER process's resolved typed config.
 
@@ -389,6 +450,11 @@ def make_emitting_then_sleeping_adapter() -> EmittingThenSleepingAdapter:
 def make_aborting_adapter() -> AbortingAdapter:
     """Factory for the adapter whose session returns an aborted RunResult."""
     return AbortingAdapter()
+
+
+def make_completing_adapter() -> CompletingAdapter:
+    """Factory for the adapter whose session completes with a full RunResult."""
+    return CompletingAdapter()
 
 
 def pid_marker_path() -> Path:
