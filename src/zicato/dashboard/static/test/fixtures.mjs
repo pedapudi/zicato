@@ -261,6 +261,41 @@ export const REFLECTION_SCORECARDS = { reflection_id: REFLECTION_ID, judges: [
     redundant_with: [], conflicts_with: [], exercised: false, ambiguous_pile: false },
 ] };
 
+// The practice-review narrative layer. Shape copied EXACTLY from
+// build_practice_review (reflection_view.py:351-381): {reflection_id, epoch_id,
+// found, checks:[…], verdict_counts:{…}}, each check the PracticeCheck.to_json
+// shape (practices.py:145-154): {check_id, verdict, headline, evidence:{…},
+// rationale, proposed_op:{op,args}|null, unmeasured_reason:str|null}. A mix of
+// all four verdicts — a sound affirmation, an unsound with a proposed_op, an
+// attend, and an unmeasured naming its missing input.
+export const REFLECTION_PRACTICES = {
+  reflection_id: REFLECTION_ID, epoch_id: EPOCH_ID, found: true,
+  checks: [
+    { check_id: 'statistical_power', verdict: 'unsound',
+      headline: 'The min detectable Δ (0.052) exceeds the promote margin (0.010) — the loop is theater at this power.',
+      evidence: { sigma: 0.018, replicates: 3, board_size: 4, promote_margin: 0.01, min_detectable_delta: 0.052 },
+      rationale: 'when the min detectable Δ exceeds the margin the loop is theater at this power (ch.04 §3, §13).',
+      proposed_op: { op: 'set_param', args: { replicates: 6 } }, unmeasured_reason: null },
+    { check_id: 'promotion_hygiene', verdict: 'sound',
+      headline: 'The margin clears the measured noise floor 3.1× with an evidence gate on — promotions are earned.',
+      evidence: { promote_margin: 0.045, noise_floor: 0.0145, ratio: 3.1, evidence_gate: true },
+      rationale: 'a promotion on a sub-floor margin with no evidence gate promotes noise (ch.04 §3, §6).',
+      proposed_op: null, unmeasured_reason: null },
+    { check_id: 'oracle_mix', verdict: 'attend',
+      headline: '3 of 4 board entries declare only substring/regex oracles — they saturate (the issue-#84 class).',
+      evidence: { n_entries: 4, n_weak_oracle_entries: 3 },
+      rationale: 'all-expected_text/regex oracles saturate — the issue-#84 weak-oracle class (ch.04 §3).',
+      proposed_op: null, unmeasured_reason: null },
+    { check_id: 'loss_monoculture', verdict: 'unmeasured',
+      headline: 'Loss term-contribution balance could not be assessed.',
+      evidence: {},
+      rationale: 'a monoculture loss optimizes one blind spot (ch.04 §1.5).',
+      proposed_op: null,
+      unmeasured_reason: 'no corpus term-contributions (run `zicato reflect run` for the loss decomposition)' },
+  ],
+  verdict_counts: { sound: 1, attend: 1, unsound: 1, unmeasured: 1 },
+};
+
 export const REFLECTION_XRAY = {
   reflection_id: REFLECTION_ID, epoch_id: EPOCH_ID, judge_name: REFL_JUDGE, run_ref: REFL_RUN_REF,
   found: true,
@@ -297,6 +332,7 @@ export function reflectionFixtureMap(opts) {
     '/api/reflections': REFLECTION_LIST,
     [`/api/reflection/${REFLECTION_ID}/summary`]: summary,
     [`/api/reflection/${REFLECTION_ID}/scorecards`]: REFLECTION_SCORECARDS,
+    [`/api/reflection/${REFLECTION_ID}/practices`]: o.practices || REFLECTION_PRACTICES,
     [REFL_XRAY_PATH]: o.xray || REFLECTION_XRAY,
   };
   return F;

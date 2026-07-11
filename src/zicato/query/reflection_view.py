@@ -127,6 +127,15 @@ def _summary_from_file(paths: WorkspacePaths, epoch_id: str, reflection_id: str)
     return raw if isinstance(raw, dict) else {}
 
 
+def _practices_from_file(
+    paths: WorkspacePaths, epoch_id: str, reflection_id: str
+) -> dict[str, Any] | None:
+    from zicato.core.workspace import reflection_practices_path  # noqa: PLC0415
+
+    raw = _load_json(reflection_practices_path(paths.root, epoch_id, reflection_id))
+    return raw if isinstance(raw, dict) else None
+
+
 # ---------------------------------------------------------------------------
 # list_reflections — every reflection under a workspace (or one epoch)
 # ---------------------------------------------------------------------------
@@ -321,6 +330,55 @@ def build_judge_scorecards(paths: WorkspacePaths, reflection_id: str) -> dict[st
         return {"reflection_id": reflection_id, "judges": judges}
 
     return {"reflection_id": reflection_id, "judges": []}
+
+
+# ---------------------------------------------------------------------------
+# build_practice_review — the narrative layer above the four pillars
+# ---------------------------------------------------------------------------
+
+
+def _empty_practice_review(reflection_id: str) -> dict[str, Any]:
+    return {
+        "reflection_id": reflection_id,
+        "epoch_id": None,
+        "found": False,
+        "checks": [],
+        "verdict_counts": {"sound": 0, "attend": 0, "unsound": 0, "unmeasured": 0},
+        "note": "no such reflection / practice review",
+    }
+
+
+def build_practice_review(paths: WorkspacePaths, reflection_id: str) -> dict[str, Any]:
+    """The practice review for one reflection — FILE-first, DQ3 same-shape degrade.
+
+    Projects the canonical ``practices.json`` (the ``PracticeReview.to_json``
+    shape: ``{checks, verdict_counts}``) written by ``zicato reflect run``. An
+    unknown reflection, or one that predates the practice review (no
+    ``practices.json``), degrades to a same-shape empty payload with
+    ``found: False`` rather than raising — the file is canonical and this reader
+    needs no index row.
+    """
+    epoch_id = _resolve_epoch(paths, reflection_id)
+    if epoch_id is None:
+        return _empty_practice_review(reflection_id)
+    raw = _practices_from_file(paths, epoch_id, reflection_id)
+    if raw is None:
+        payload = _empty_practice_review(reflection_id)
+        payload["epoch_id"] = epoch_id
+        return payload
+    checks = raw.get("checks")
+    counts = raw.get("verdict_counts")
+    return {
+        "reflection_id": reflection_id,
+        "epoch_id": epoch_id,
+        "found": True,
+        "checks": checks if isinstance(checks, list) else [],
+        "verdict_counts": (
+            counts
+            if isinstance(counts, dict)
+            else {"sound": 0, "attend": 0, "unsound": 0, "unmeasured": 0}
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -535,6 +593,7 @@ def _opt_json_list(value: Any) -> list[Any]:
 __all__ = [
     "build_adjudication_xray",
     "build_judge_scorecards",
+    "build_practice_review",
     "build_reflection_summary",
     "entry_candidate_matrix",
     "list_reflections",

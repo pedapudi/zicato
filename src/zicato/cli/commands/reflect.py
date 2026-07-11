@@ -37,6 +37,7 @@ import click
 from zicato.core.workspace import (
     reflection_dir,
     reflection_findings_path,
+    reflection_practices_path,
     reflection_scorecards_path,
 )
 
@@ -148,6 +149,42 @@ def _resolve_candidates(
             "`zicato evolve` round (or seed a baseline) before reflecting"
         )
     return ordered, champion_id, parent_id
+
+
+def _load_epoch_experiments(workspace_root: Path, epoch_id: str) -> list[dict[str, Any]]:
+    """Every generation's ``experiment.json`` under the epoch, lineage order (oldest first).
+
+    The operating-history input to the practice review — the same raw-dict shape
+    the loop-health detectors accept. Unparseable / missing files are skipped.
+    """
+    from zicato.core.workspace import experiment_json_path  # noqa: PLC0415
+    from zicato.epoch.lineage import load_lineage  # noqa: PLC0415
+
+    gen_ids: list[str] = []
+    try:
+        lineage = load_lineage(workspace_root)
+        for entry in lineage.get("epochs", []):
+            if entry.get("id") != epoch_id:
+                continue
+            for g in entry.get("generations", []):
+                gid = g.get("id")
+                if isinstance(gid, str):
+                    gen_ids.append(gid)
+            break
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    out: list[dict[str, Any]] = []
+    for gid in gen_ids:
+        path = experiment_json_path(workspace_root, epoch_id, gid)
+        try:
+            d = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(d, dict):
+            d.setdefault("generation_id", gid)
+            out.append(d)
+    return out
 
 
 def _board_entries_and_judges(board_file: Path) -> tuple[list[Any], list[str], list[str]]:
@@ -470,6 +507,27 @@ def run_cmd(
         reflection_dir(workspace_root, resolved_epoch, reflection_id) / "summary.json",
         summary,
     )
+
+    # --- Practice review (free: pure contract + history + corpus read) ------
+    from zicato.reflection import practices as practices_mod  # noqa: PLC0415
+
+    experiments = _load_epoch_experiments(workspace_root, resolved_epoch)
+    review = practices_mod.review_practices(
+        board_entries=board,
+        board_meta=None,
+        weights=weights,
+        epoch_cfg=epoch_cfg,
+        experiments=experiments,
+        scorecards=[c.to_json() for c in scorecards],
+        corpus_stats=practices_mod.summarize_corpus(corpus),
+        noise_floor=noise_floor,
+        preflight=preflight,
+    )
+    _write_json(
+        reflection_practices_path(workspace_root, resolved_epoch, reflection_id),
+        review.to_json(),
+    )
+
     plan_mod.write_plan(workspace_root, reflection_plan.mark_executed())
 
     # --- Project into the index (best-effort) -------------------------------
@@ -482,7 +540,10 @@ def run_cmd(
 
     # --- Report -------------------------------------------------------------
     report_md = _render_report_md(
-        summary, [c.to_json() for c in scorecards], [f.to_json() for f in derived]
+        summary,
+        [c.to_json() for c in scorecards],
+        [f.to_json() for f in derived],
+        review.to_json().get("checks", []),
     )
     if output_path:
         Path(output_path).write_text(report_md, encoding="utf-8")
@@ -544,16 +605,71 @@ def _run_adjudication(
     return adjudications, cards
 
 
+_VERDICT_LABEL = {
+    "sound": "SOUND",
+    "attend": "ATTEND",
+    "unsound": "UNSOUND",
+    "unmeasured": "UNMEASURED",
+}
+
+
+def _render_practice_section(practices: list[dict[str, Any]]) -> list[str]:
+    """The 'Practice review' section: affirmations first, then deficiencies, then unmeasured.
+
+    Affirmations (``sound``) lead — the doc's editorial stance is that sound
+    practice teaches as much as a deficiency flag, so the operator reads what
+    they are doing right before the deficiencies land against that baseline.
+    Then ``unsound`` above ``attend`` (worst-first), then ``unmeasured`` with the
+    input each needs.
+    """
+    lines: list[str] = ["## Practice review"]
+    if not practices:
+        lines.append("(no practice review)")
+        lines.append("")
+        return lines
+    counts: dict[str, int] = {}
+    for c in practices:
+        counts[str(c.get("verdict"))] = counts.get(str(c.get("verdict")), 0) + 1
+    lines.append(
+        "verdicts: "
+        + ", ".join(f"{counts.get(v, 0)} {v}" for v in ("sound", "attend", "unsound", "unmeasured"))
+    )
+    lines.append("")
+    band = {"sound": 0, "unsound": 1, "attend": 2, "unmeasured": 3}
+    order = {c.get("check_id"): i for i, c in enumerate(practices)}
+    ranked = sorted(
+        practices,
+        key=lambda c: (band.get(str(c.get("verdict")), 9), order.get(c.get("check_id"), 99)),
+    )
+    for c in ranked:
+        verdict = str(c.get("verdict"))
+        label = _VERDICT_LABEL.get(verdict, verdict.upper())
+        lines.append(f"### [{label}] {c.get('check_id')}")
+        lines.append(str(c.get("headline", "")))
+        lines.append(f"- why it matters: {c.get('rationale', '')}")
+        reason = c.get("unmeasured_reason")
+        if reason:
+            lines.append(f"- missing input: {reason}")
+        op = c.get("proposed_op")
+        if op:
+            lines.append(f"- proposed op: `{op.get('op')}` {json.dumps(op.get('args', {}))}")
+        lines.append("")
+    return lines
+
+
 def _render_report_md(
     summary: dict[str, Any],
     scorecards: list[dict[str, Any]],
     findings: list[dict[str, Any]],
+    practices: list[dict[str, Any]] | None = None,
 ) -> str:
-    """Render the analyzer-style Markdown report (findings + scorecards + pillars)."""
+    """Render the analyzer-style Markdown report (practices + findings + scorecards + pillars)."""
     lines: list[str] = []
     rid = summary.get("reflection_id", "?")
     lines.append(f"# Reflection report — {rid}")
     lines.append("")
+    if practices:
+        lines.extend(_render_practice_section(practices))
 
     # Pillar summary.
     floor = summary.get("noise_floor_max_abs_delta")
@@ -649,19 +765,79 @@ def report_cmd(reflection_id: str, workspace: str, epoch_id: str | None, as_json
     findings = _load_json_or(
         reflection_findings_path(workspace_root, resolved_epoch, reflection_id), {}
     )
+    practices = _load_json_or(
+        reflection_practices_path(workspace_root, resolved_epoch, reflection_id), {}
+    )
     cards = scorecards.get("scorecards", []) if isinstance(scorecards, dict) else []
     finds = findings.get("findings", []) if isinstance(findings, dict) else []
+    checks = practices.get("checks", []) if isinstance(practices, dict) else []
 
     if as_json:
         click.echo(
             json.dumps(
-                {"summary": summary, "scorecards": cards, "findings": finds},
+                {
+                    "summary": summary,
+                    "scorecards": cards,
+                    "findings": finds,
+                    "practices": checks,
+                },
                 indent=2,
                 sort_keys=True,
             )
         )
         return
-    click.echo(_render_report_md(summary if isinstance(summary, dict) else {}, cards, finds))
+    click.echo(
+        _render_report_md(summary if isinstance(summary, dict) else {}, cards, finds, checks)
+    )
+
+
+@reflect_grp.command(
+    "practices",
+    short_help="Cheap tier: the practice review over the contract + history (no corpus).",
+)
+@click.option("--workspace", default=".zicato", show_default=True, help="Workspace root.")
+@click.option("--epoch", "epoch_id", default=None, help="Contract to review (default: current).")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit the raw review dict.")
+def practices_cmd(workspace: str, epoch_id: str | None, as_json: bool) -> None:
+    """Run the practice review WITHOUT a reflection corpus — contract + history only.
+
+    The instant, always-free tier: a pure read over the epoch's board / scoring /
+    lineage. The checks that need a reflection corpus or scorecards
+    (``loss_monoculture`` / ``judge_criterion_quality`` / ``weight_revisit``)
+    honestly report ``unmeasured`` naming the missing input — run ``zicato
+    reflect run`` for those. Nothing is persisted (there is no reflection id);
+    the review is printed.
+    """
+    from zicato.core.workspace import board_path as _board_path  # noqa: PLC0415
+    from zicato.epoch.lifecycle import load_epoch  # noqa: PLC0415
+    from zicato.reflection import practices as practices_mod  # noqa: PLC0415
+
+    workspace_root, resolved_epoch = _resolve_workspace_epoch(workspace, epoch_id)
+    try:
+        epoch_cfg = load_epoch(workspace_root, resolved_epoch)
+    except FileNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+    board_file = _board_path(workspace_root, resolved_epoch)
+    if not board_file.exists():
+        raise click.ClickException(f"no board at {board_file}")
+    board, _entry_ids, _judges = _board_entries_and_judges(board_file)
+
+    review = practices_mod.review_practices(
+        board_entries=board,
+        board_meta=None,
+        weights=epoch_cfg.scoring,
+        epoch_cfg=epoch_cfg,
+        experiments=_load_epoch_experiments(workspace_root, resolved_epoch),
+        scorecards=None,
+        corpus_stats=None,
+        noise_floor=getattr(epoch_cfg, "noise_floor", None),
+        preflight=getattr(epoch_cfg, "preflight", None),
+    )
+    payload = review.to_json()
+    if as_json:
+        click.echo(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    click.echo("\n".join(_render_practice_section(payload.get("checks", []))))
 
 
 @reflect_grp.command("apply", short_help="Carry a finding's proposed edit to a builder draft.")

@@ -691,9 +691,11 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  apply   Carry a finding's proposed edit to a builder draft.
-  report  Render a stored reflection's report.
-  run     Build + analyse an observation corpus; emit ranked findings.
+  apply      Carry a finding's proposed edit to a builder draft.
+  practices  Cheap tier: the practice review over the contract + history (no
+             corpus).
+  report     Render a stored reflection's report.
+  run        Build + analyse an observation corpus; emit ranked findings.
 
 ===== zicato reflect apply --help =====
 Usage: zicato reflect apply [OPTIONS] REFLECTION_ID FINDING_ID
@@ -706,6 +708,24 @@ Usage: zicato reflect apply [OPTIONS] REFLECTION_ID FINDING_ID
 Options:
   --workspace TEXT  Workspace root.  [default: .zicato]
   --epoch TEXT      Epoch owning the reflection.
+  --help            Show this message and exit.
+
+===== zicato reflect practices --help =====
+Usage: zicato reflect practices [OPTIONS]
+
+  Run the practice review WITHOUT a reflection corpus — contract + history only.
+
+  The instant, always-free tier: a pure read over the epoch's board / scoring /
+  lineage. The checks that need a reflection corpus or scorecards
+  (``loss_monoculture`` / ``judge_criterion_quality`` / ``weight_revisit``)
+  honestly report ``unmeasured`` naming the missing input — run ``zicato reflect
+  run`` for those. Nothing is persisted (there is no reflection id); the review
+  is printed.
+
+Options:
+  --workspace TEXT  Workspace root.  [default: .zicato]
+  --epoch TEXT      Contract to review (default: current).
+  --json            Emit the raw review dict.
   --help            Show this message and exit.
 
 ===== zicato reflect report --help =====

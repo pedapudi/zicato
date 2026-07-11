@@ -1379,6 +1379,39 @@ A live surface ships only if it ticks every box:
 > The activity-log drawer is the one deliberately append-only surface (new
 > rows prepended, survivors untouched) — it too never rebuilds.
 
+### 9.7.7 The console-grammar discipline — reuse grammars, don't invent chrome
+
+Render discipline (§9.7) keeps a view from *flashing*; this rule keeps a view
+from *drifting off the design language*. A new surface speaks the console's
+existing grammars — it does not bolt a fresh component vocabulary on beside
+them. Three durable rules, each load-bearing for "one console, not a fleet of
+mini-apps":
+
+- **Tags/chips are ONLY for a semantic state the console already pills** — a
+  `verdict` or a `severity` (the `chip`/`verdictPill` family). Everything else is
+  text. A metric, a count, a relation, a model name is **not** semantic state, so
+  it never earns a chip.
+- **Metadata is a caption.** Fidelity tier, adjudicator model, prompt version,
+  self-agreement, a verdict tally — all ride ONE `dn-faint` caption line under
+  the relevant figure or section, never a per-row tag (which would read as
+  semantic state it is not).
+- **Navigation lives in the shell** — the hash router's routes and the tree
+  sidebar. A view never grows an internal navigation rail of its own; every
+  surface is reached the way every other view is reached.
+
+> 🧭 The motivating case is the **Instrument-lens rework** (board reflection).
+> The first cut imported the generated-UI idiosyncrasies the operator flagged —
+> an internal left rail and overly-extensive per-row tags (a bespoke severity
+> chip per finding, redundancy/conflict chip strips, boxed evidence chips, a
+> metadata KV strip). The rework deleted all of it: findings and the practice
+> review became the loop-health findings panel's quiet verdict-led rows (a tone
+> glyph + a headline + a `dn-faint` rationale); the judge scorecards rendered
+> rates as the `dn-stat` idiom and the redundancy/conflict relations as one faint
+> inline sentence; evidence became inline x-ray links; metadata collapsed to a
+> caption; and the ONE surviving pill is the adjudication verdict. Nav rode the
+> routes + tree, never a lens-local rail. See
+> `docs/design/CONSOLE-DESIGN-LANGUAGE.md` and BOARD-REFLECTION.md §"UI language".
+
 ---
 
 ## 9.8 Uncertainty-honest rendering — verdicts relative to the noise floor

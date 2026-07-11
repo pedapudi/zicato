@@ -368,6 +368,11 @@ export function reflectionSummary(reflectionId) {
 export function reflectionScorecards(reflectionId) {
   return cachedJson(`/api/reflection/${enc(reflectionId)}/scorecards`);
 }
+// The practice review (the narrative layer above the four pillars) for one
+// reflection — the same immutable, cacheable read as the summary/scorecards.
+export function reflectionPractices(reflectionId) {
+  return cachedJson(`/api/reflection/${enc(reflectionId)}/practices`);
+}
 // The transcript x-ray for ONE adjudicated decision (judge + run_ref). The
 // run_ref carries `:` — enc() keeps the path segment intact.
 export function reflectionXray(reflectionId, judge, runRef) {

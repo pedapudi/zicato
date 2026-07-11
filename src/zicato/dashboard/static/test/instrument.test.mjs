@@ -14,7 +14,7 @@ const {
   router, tree, shell, data, EPOCH_ID,
   installFixtureMap, freshState, allByClass,
   REFLECTION_ID, REFL_JUDGE, REFL_RUN_REF, REFLECTION_SUMMARY, REFLECTION_XRAY_UNAVAILABLE,
-  reflectionFixtureMap,
+  REFLECTION_PRACTICES, reflectionFixtureMap,
 } = await import('./fixtures.mjs');
 
 const instrument = await import('../js/views/instrument.js');
@@ -134,16 +134,107 @@ test('bill of health: null p_flip renders the honest "insufficient replication" 
   assert(!/\bnull%\b/.test(t) && !t.includes('NaN'), 'never fabricates a percent from null');
 });
 
-test('bill of health: findings carry a severity chip + a copyable apply invocation', async () => {
+test('bill of health: findings are DE-TAGGED quiet rows — a tone glyph + word, no severity chip', async () => {
   fresh();
   installFixtureMap(reflectionFixtureMap());
   const host = document.createElement('div');
   await instrument.render(host, CTX, { epochId: EPOCH_ID, reflectionId: REFLECTION_ID });
-  assert(allByClass(host, 'dn-instr-finding').length === 3, 'three findings rendered');
-  assert(hasClass(host, 'dn-chip-instr-sev-crit'), 'a critical severity chip');
+  // findings render as the loop-health row grammar (dn-instr-frow), NOT a chip
+  // per row. Three findings + the four practice-review rows = seven frows.
+  const frows = allByClass(host, 'dn-instr-frow');
+  assert(frows.length === 3 + 4, 'three finding rows + four practice rows, one grammar');
+  // the de-tagging: NO bespoke severity chip survives.
+  assert(!hasClass(host, 'dn-chip-instr-sev-crit'), 'no severity chip (de-tagged to a glyph/tone)');
+  assert(allByClass(host, 'dn-instr-mark').length >= 3, 'each row leads with a tone glyph');
+  assert(hasClass(host, 'dn-instr-fs-bad'), 'the critical finding carries the bad tone accent');
+  const t = textOf(host);
+  assert(t.includes('critical'), 'the severity word is present as tone-coloured text (not a chip)');
+  // the copyable apply invocation stays — but only for an ACTIONABLE finding
+  // (one with a proposed_op; reflect apply refuses a null-op finding).
   const applies = allByClass(host, 'dn-instr-apply');
-  assert(applies.length >= 3, 'each finding shows its apply invocation');
   assert(applies.some((n) => (n.textContent || '').includes(`zicato reflect apply ${REFLECTION_ID} find-0a1b2c3d`)), 'the exact CLI invocation with reflection_id + finding_id');
+});
+
+test('bill of health: evidence renders as inline x-ray links in the row prose, not chip strips', async () => {
+  fresh();
+  installFixtureMap(reflectionFixtureMap());
+  const host = document.createElement('div');
+  await instrument.render(host, CTX, { epochId: EPOCH_ID, reflectionId: REFLECTION_ID });
+  const evLine = allByClass(host, 'dn-instr-frow-ev');
+  assert(evLine.length >= 1, 'a finding with evidence shows an inline evidence line');
+  const target = router.href('instrument', { epochId: EPOCH_ID, reflectionId: REFLECTION_ID, judge: REFL_JUDGE, runRef: REFL_RUN_REF });
+  const links = allByClass(host, 'dn-instr-link');
+  assert(links.some((a) => a.getAttribute('href') === target), 'an inline evidence link points at the x-ray route');
+});
+
+test('bill of health: metadata (fidelity) is a dn-faint caption, not per-row tags', async () => {
+  fresh();
+  installFixtureMap(reflectionFixtureMap());
+  const host = document.createElement('div');
+  await instrument.render(host, CTX, { epochId: EPOCH_ID, reflectionId: REFLECTION_ID });
+  const caps = allByClass(host, 'dn-instr-cap');
+  assert(caps.some((c) => (c.textContent || '').includes('verbatim')), 'the fidelity tier rides an identity caption line');
+  assert(!hasClass(host, 'dn-instr-kv'), 'the old tag-like identity strip is gone');
+});
+
+// ====================================================================
+// PRACTICE REVIEW — the narrative layer (affirmation-first + fallbacks).
+// ====================================================================
+test('practice review: renders as loop-health rows, affirmation-FIRST ordering', async () => {
+  fresh();
+  installFixtureMap(reflectionFixtureMap());
+  const host = document.createElement('div');
+  await instrument.render(host, CTX, { epochId: EPOCH_ID, reflectionId: REFLECTION_ID });
+  // the four practice rows are the SAME grammar as findings (dn-instr-frow).
+  const panel = allByClass(host, 'dn-instr-list-panel')[0];
+  assert(panel, 'the practice-review panel rendered (shared list-panel grammar)');
+  const rows = allByClass(panel, 'dn-instr-frow');
+  assertEqual(rows.length, 4, 'four practice rows');
+  // affirmations (sound) FIRST, then unsound > attend > unmeasured.
+  const verdicts = rows.map((r) => {
+    const v = allByClass(r, 'dn-instr-frow-verdict')[0];
+    return (v && v.textContent || '').trim();
+  });
+  assertDeep(verdicts, ['sound', 'unsound', 'attend', 'unmeasured'], 'sound leads; unsound above attend; unmeasured last');
+  const t = textOf(host);
+  assert(t.includes('1 sound · 1 attend · 1 unsound · 1 unmeasured'), 'the verdict tally caption');
+});
+
+test('practice review: an unmeasured check names its missing input faint', async () => {
+  fresh();
+  installFixtureMap(reflectionFixtureMap());
+  const host = document.createElement('div');
+  await instrument.render(host, CTX, { epochId: EPOCH_ID, reflectionId: REFLECTION_ID });
+  const missing = allByClass(host, 'dn-instr-frow-missing');
+  assert(missing.length === 1, 'exactly the unmeasured row shows a missing-input line');
+  assert((missing[0].textContent || '').includes('no corpus term-contributions'), 'names the missing input');
+});
+
+test('practice review: a proposed_op renders as copyable JSON + an "apply via the builder" note', async () => {
+  fresh();
+  installFixtureMap(reflectionFixtureMap());
+  const host = document.createElement('div');
+  await instrument.render(host, CTX, { epochId: EPOCH_ID, reflectionId: REFLECTION_ID });
+  const t = textOf(host);
+  // practice checks are NOT a `reflect apply` target — the op is copyable JSON.
+  assert(t.includes('"op":"set_param"') || t.includes('"op": "set_param"'), 'the proposed op is copyable JSON');
+  assert(t.includes('apply via the builder'), 'the faint "apply via the builder" note (no CLI apply for practice checks)');
+  // a NO-proposed-op practice row (the sound affirmation) shows neither.
+  const rows = allByClass(host, 'dn-instr-frow');
+  const soundRow = rows.find((r) => ((allByClass(r, 'dn-instr-frow-verdict')[0] || {}).textContent || '').trim() === 'sound');
+  assert(soundRow, 'the sound row exists');
+  assert(!allByClass(soundRow, 'dn-instr-apply').length, 'a proposed_op-less row shows no copyable op');
+});
+
+test('practice review: an empty review degrades to the honest CLI prompt', async () => {
+  fresh();
+  const empty = { reflection_id: REFLECTION_ID, epoch_id: EPOCH_ID, found: false, checks: [], verdict_counts: { sound: 0, attend: 0, unsound: 0, unmeasured: 0 } };
+  installFixtureMap(reflectionFixtureMap({ practices: empty }));
+  const host = document.createElement('div');
+  await instrument.render(host, CTX, { epochId: EPOCH_ID, reflectionId: REFLECTION_ID });
+  const t = textOf(host);
+  assert(t.includes('No practice review'), 'honest empty state');
+  assert(t.includes('zicato reflect run') || t.includes('zicato reflect practices'), 'points at a CLI entry point');
 });
 
 // ====================================================================
@@ -178,15 +269,28 @@ test('judge audit: an unexercised judge is greyed "never fired" with no matrix',
   assert(t.includes('recall.multi'), 'names the untested judge');
 });
 
-test('judge audit: FP/FN evidence chips link into the x-ray route', async () => {
+test('judge audit: the FP/FN pile is inline x-ray links (not chip strips)', async () => {
   fresh();
   installFixtureMap(reflectionFixtureMap());
   const host = document.createElement('div');
   await instrument.render(host, CTX, { epochId: EPOCH_ID, reflectionId: REFLECTION_ID });
-  const chips = allByClass(host, 'dn-instr-echip');
-  assert(chips.length >= 1, 'at least one evidence chip');
+  assert(!hasClass(host, 'dn-instr-echip'), 'the boxed evidence chips are gone (de-tagged)');
+  const evLine = allByClass(host, 'dn-instr-card-ev');
+  assert(evLine.length >= 1, 'a card with adjudicated evidence shows an inline pile line');
   const target = router.href('instrument', { epochId: EPOCH_ID, reflectionId: REFLECTION_ID, judge: REFL_JUDGE, runRef: REFL_RUN_REF });
-  assert(chips.some((c) => c.getAttribute('href') === target), 'a chip links to the x-ray route (enc run_ref)');
+  const links = allByClass(host, 'dn-instr-link');
+  assert(links.some((c) => c.getAttribute('href') === target), 'an inline link goes to the x-ray route (enc run_ref)');
+});
+
+test('judge audit: redundancy/conflict collapse to ONE faint inline sentence (no chips)', async () => {
+  fresh();
+  installFixtureMap(reflectionFixtureMap());
+  const host = document.createElement('div');
+  await instrument.render(host, CTX, { epochId: EPOCH_ID, reflectionId: REFLECTION_ID });
+  assert(!hasClass(host, 'dn-instr-xchips'), 'no redundancy/conflict chip strip');
+  const t = textOf(host);
+  assert(t.includes('fires with tool.args'), 'redundancy reads as an inline "fires with" sentence');
+  assert(t.includes('conflicts with safety.scope'), 'conflict reads as an inline "conflicts with" sentence');
 });
 
 // ====================================================================
@@ -284,11 +388,11 @@ test('judge audit F4: an evidence chip reads its verdict from the payload, not t
   installFixtureMap(reflectionFixtureMap({ summary }));
   const host = document.createElement('div');
   await instrument.render(host, CTX, { epochId: EPOCH_ID, reflectionId: REFLECTION_ID });
-  const chips = allByClass(host, 'dn-instr-echip');
-  assert(chips.length >= 1, 'an evidence chip rendered on the format.json card');
-  assert(chips.some((c) => (c.textContent || '').includes('FN')), 'the chip reads FN (from evidence.verdict)');
+  const links = allByClass(host, 'dn-instr-card-ev');
+  assert(links.length >= 1, 'an inline evidence line rendered on the format.json card');
+  const t = textOf(host);
+  assert(t.includes('FN'), 'the inline link reads FN (from evidence.verdict)');
   assert(hasClass(host, 'dn-instr-t-fn'), 'the FN tone is applied (not the FP the title regex would pick)');
-  assert(!chips.some((c) => (c.textContent || '').includes('FP')), 'no FP chip fabricated from the "falsely" title');
 });
 
 // ====================================================================

@@ -596,6 +596,7 @@ recommendation through the builder does). See
 
 ```
 zicato reflect run [OPTIONS]
+zicato reflect practices [OPTIONS]
 zicato reflect report REFLECTION_ID [OPTIONS]
 zicato reflect apply REFLECTION_ID FINDING_ID [OPTIONS]
 ```
@@ -624,6 +625,14 @@ discrimination + coverage only).
 | `--k-adj INTEGER RANGE` | `1` (x>=1) | Adjudicator replication (self-agreement). |
 | `--max-wall-clock-seconds INTEGER` | unset | Budget ceiling (recorded intent). |
 | `--output TEXT` | stdout | Report destination. |
+
+`reflect practices` runs the **practice review** — the narrative layer above the
+four pillars — on the contract + operating history alone, WITHOUT a reflection
+corpus (the instant, always-free tier). The checks that need a corpus or
+scorecards report `unmeasured` honestly; `--json` emits the raw review. Accepts
+`--workspace` and `--epoch`. (A full `reflect run` also persists the review as
+`practices.json` and renders it in the report — there it can measure the
+corpus-dependent checks too.)
 
 `reflect report REFLECTION_ID` renders a stored reflection's report (Markdown,
 or `--json` for the raw dict). `reflect apply REFLECTION_ID FINDING_ID` forks a
