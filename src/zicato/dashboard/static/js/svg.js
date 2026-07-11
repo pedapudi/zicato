@@ -1056,9 +1056,12 @@ export function survivalFunnel(opts) {
   const benchId = o.benchmarkId != null ? String(o.benchmarkId)
     : (o.championId != null ? String(o.championId) : null);
   if (benchId) {
-    const bt = hov(svgEl('text', { x: 2, y: benchY, class: 'dn-funnel-bench' }),
-      `champion v0 = ${benchId} · the field is raced vs this benchmark; every Δ is vs v0 · v0 defends at the champion-gate`);
-    bt.textContent = `▸ vs champion v0 = ${shortLabel(benchId, 18)} · every Δ is vs v0`;
+    // routed through edgeText (no hand-clamp): the caption keeps its full extent
+    // inside the viewBox, flipping inward at the edge like the cleaner figures.
+    const bt = hov(edgeText({
+      x: 2, y: benchY, anchor: 'start', viewW: w, pad: 2, fontPx: 9.5, cls: 'dn-funnel-bench',
+      text: `▸ vs champion v0 = ${fitLabel(benchId, 18 * 9.5 * CHAR_EM, 9.5)} · every Δ is vs v0`,
+    }), `champion v0 = ${benchId} · the field is raced vs this benchmark; every Δ is vs v0 · v0 defends at the champion-gate`);
     svg.appendChild(bt);
   }
   const midY = top + laneH / 2;
@@ -1073,6 +1076,10 @@ export function survivalFunnel(opts) {
   // ── the flowing band: one trapezoid per stage, narrowing at each cut ──
   // entering width = |competitors|; leaving width = |survivors| (the field
   // carried to the next stage). A pending (live, undecided) stage keeps a
+  // A short CONNECTOR (dn-funnel-link) bridges each rung's leave-edge into the
+  // next rung's enter-edge across the stage gap, so the discrete trapezoids read
+  // as ONE converging silhouette rather than stepped blocks.
+  let prevGeo = null;
   rungs.forEach((rung, j) => {
     // the FULL entering field of this rung (every lane racing it), per the shared
     // contract: live_progress keys ∪ competitors ∪ survivors/cut, minus the
@@ -1088,21 +1095,37 @@ export function survivalFunnel(opts) {
     const x1 = x0 + stageW;
     const hIn = bandHalf(enterN);
     const hOut = bandHalf(leaveN);
+    // the inter-rung connector: a trapezoid from the previous rung's leave-edge
+    // (x1_prev, ±hOut_prev) to this rung's enter-edge (x0, ±hIn), filling the
+    // stage gap so the funnel converges as one continuous shape. Drawn behind
+    // the bands (a separate class → it never perturbs the band-polygon count).
+    if (prevGeo) {
+      svg.appendChild(svgEl('polygon', {
+        points: `${prevGeo.x1},${midY - prevGeo.hOut} ${x0},${midY - hIn} ${x0},${midY + hIn} ${prevGeo.x1},${midY + prevGeo.hOut}`,
+        class: 'dn-funnel-link' + (prevGeo.pending || pending ? ' dn-funnel-link-pending' : ''),
+      }));
+    }
     const cls = 'dn-funnel-band' + (pending ? ' dn-funnel-pending' : '');
     // a trapezoid: left edge full enter-height, right edge narrowed to leave-height.
     svg.appendChild(hov(svgEl('polygon', {
       points: `${x0},${midY - hIn} ${x1},${midY - hOut} ${x1},${midY + hOut} ${x0},${midY + hIn}`,
       class: cls,
     }), `${rung.label || 'rung ' + j}: ${enterN} in → ${pending ? '…' : leaveN + ' survive'}${isNum(rung.board_fraction) ? ` · ${(rung.board_fraction * 100).toFixed(0)}% board` : ''}`));
+    prevGeo = { x1, hOut, pending };
     // stage label + board fraction above the band — on the dedicated header /
-    // sub baselines (headY / subY), CENTRED on this stage's column x, so they
-    // never overlap each other, an adjacent column, or the benchmark line.
-    const head = svgEl('text', { x: x0 + stageW / 2, y: headY, class: 'dn-funnel-head', 'text-anchor': 'middle' });
-    head.textContent = shortLabel(rung.label || `Rung ${j}`, 16);
-    svg.appendChild(head);
-    const sub = svgEl('text', { x: x0 + stageW / 2, y: subY, class: 'dn-funnel-sub', 'text-anchor': 'middle' });
-    sub.textContent = `${enterN} field` + (isNum(rung.board_fraction) ? ` · ${(rung.board_fraction * 100).toFixed(0)}/100 board` : '');
-    svg.appendChild(sub);
+    // sub baselines (headY / subY), CENTRED on this stage's column x, routed
+    // through the fit primitives so a long label truncates to the stage column
+    // and stays inside the viewBox (no hand-clamp). The sub is the fainter,
+    // secondary tier (dn-funnel-sub), matching swissLadder's label discipline.
+    svg.appendChild(fitInto({
+      x: x0 + stageW / 2, y: headY, anchor: 'middle', viewW: w, pad: 2,
+      maxPx: stageW - 8, fontPx: 10, cls: 'dn-funnel-head', text: rung.label || `Rung ${j}`,
+    }));
+    svg.appendChild(fitInto({
+      x: x0 + stageW / 2, y: subY, anchor: 'middle', viewW: w, pad: 2,
+      maxPx: stageW - 8, fontPx: 9.5, cls: 'dn-funnel-sub',
+      text: `${enterN} field` + (isNum(rung.board_fraction) ? ` · ${(rung.board_fraction * 100).toFixed(0)}/100 board` : ''),
+    }));
 
     // ── the surviving runners ride INSIDE the band (↑), clickable ──
     // a LIVE racing rung carries a per-lane `live_progress` map; an active
@@ -1189,12 +1212,16 @@ export function survivalFunnel(opts) {
       class: 'dn-funnel-band dn-funnel-gateflow' + (crowned ? ' dn-good' : ''),
     }));
   }
-  const gHead = svgEl('text', { x: gx + gateW / 2, y: headY, class: 'dn-funnel-head', 'text-anchor': 'middle' });
-  gHead.textContent = 'champion-gate';
-  svg.appendChild(gHead);
-  const gSub = svgEl('text', { x: gx + gateW / 2, y: subY, class: 'dn-funnel-sub', 'text-anchor': 'middle' });
-  gSub.textContent = benchId ? 'full board · vs champion v0' : 'full board · vs champion';
-  svg.appendChild(gSub);
+  // the gate head/sub are fixed captions (not column-bounded), routed through
+  // edgeText so they stay viewbox-safe without truncating the "vs champion v0".
+  svg.appendChild(edgeText({
+    x: gx + gateW / 2, y: headY, anchor: 'middle', viewW: w, pad: 2, fontPx: 10,
+    cls: 'dn-funnel-head', text: 'champion-gate',
+  }));
+  svg.appendChild(edgeText({
+    x: gx + gateW / 2, y: subY, anchor: 'middle', viewW: w, pad: 2, fontPx: 9.5,
+    cls: 'dn-funnel-sub', text: benchId ? 'full board · vs champion v0' : 'full board · vs champion',
+  }));
 
   const clickId = champId || seatId;
   const gateG = svgEl('g', { class: 'dn-funnel-gate', tabindex: (clickId && o.onCompetitor) ? '0' : null });
@@ -1218,8 +1245,10 @@ export function survivalFunnel(opts) {
     label = 'tbd';
     tip = 'awaiting the final survivor';
   }
-  const gt = hov(svgEl('text', { x: gx + gateW / 2, y: midY + 4, class: 'dn-funnel-gatelab' + (crowned ? ' dn-good' : ''), 'text-anchor': 'middle' }), tip);
-  gt.textContent = label;
+  const gt = hov(fitInto({
+    x: gx + gateW / 2, y: midY + 4, anchor: 'middle', viewW: w, pad: 2, maxPx: gateW - 10, fontPx: 11,
+    cls: 'dn-funnel-gatelab' + (crowned ? ' dn-good' : ''), text: label,
+  }), tip);
   gateG.appendChild(gt);
   clickable(gateG, (clickId && o.onCompetitor) && (() => o.onCompetitor(clickId)));
   svg.appendChild(gateG);
@@ -1262,7 +1291,9 @@ function funnelRunner(svg, o, sid, rung, j, x, cy, verdict, lane, barW, cap) {
   // A projected lane draws it in the projected (dashed/amber) treatment; a plain
   // live lane keeps the accent in-flight bar.
   if (lane && (lane.inflight || lane.done || projected)) {
-    const bw = Math.max(20, barW || 80);
+    // thin the sub-bar to the racingScalarTrack sub-bar weight (~40-48px) rather
+    // than letting it span the whole band — a quieter in-flight cue.
+    const bw = Math.min(48, Math.max(20, barW || 80));
     // prefer the scored boards_done/boards_total when present (the projected
     // standing's own progress); else the live activeRuns done/total tally.
     const sd = isNum(lane.boards_done) ? lane.boards_done : lane.done;
@@ -1776,8 +1807,8 @@ export function elimFlow(opts) {
         // (won its match). A still-undecided (pending) head-to-head is committed
         // NOWHERE — drawing a leg to the gate would imply BOTH competitors of one
         // match advance, which is nonsense in a double-elim (one wins, one drops
-        // to the losers' bracket). So a pending lane draws only a SHORT
-        // dashed "racing this match" stub; the
+        // to the losers' bracket). So, mirroring elimRadial's pending spoke, a
+        // pending lane draws only a SHORT dashed "racing this match" stub; the
         // real forward edge appears when the match resolves.
         const atFinal = ci === nCols - 1;
         let toX = null;
@@ -2349,7 +2380,7 @@ export function racingScalarTrack(opts) {
     // data-marker labels are middle-anchored at m.x; a far marker (sitting at padL
     // or W−padR) would clip half its label past the viewBox edge — axis/bench labels
     // are edge-anchored and safe, data markers are not. Measure the label (9px mono
-    // ⇒ ~0.6em/char) and pull its x inboard
+    // ⇒ ~0.6em/char, the same face elimRadial clamps against) and pull its x inboard
     // so the whole label stays in [edge, W−edge]. A no-op for any marker that fits.
     const labW = labText.length * (mini ? 5 : 5.4);
     const labEdge = mini ? 2 : 3;
@@ -2573,6 +2604,286 @@ export function gauntletFieldBars(opts) {
 // full figure gate on content alone.
 export function gauntletFieldBarsDigest(opts) {
   return digestOpts(opts, ['mini', 'responsive', 'onCompetitor']);
+}
+
+// ── ELIM RADIAL (concentric bracket — rounds as rings to a center gate) ──
+//
+// The FINAL liked single-elim study figure (single-elim.html opt 6), plus an
+// OPT-IN double-elim mode (double-elim.html opt 8). Rounds are CONCENTRIC RINGS
+// narrowing toward the champion seat at the CENTER; each competitor is a spoke
+// from the outer ring inward. The per-round segments a gen SURVIVED render
+// --good; the segment where it was ELIMINATED turns --bad capped with a red ✕;
+// the survivor stays good to the gate ring then dashes accent into the center.
+// In double-elim mode the winners' bracket owns the UPPER arc (accent, ●●) and
+// the losers' bracket the LOWER arc (caution, ●○), split by a dashed equator; a
+// WB→LB drop is a RIM-HUGGING transfer arc (never a chord across the center).
+//
+// FOUR lifecycle states (mirroring funnelRunner): a still-pending (live) spoke
+// segment dashes (queued/in-flight); a spoke with a projected standing reads
+// dn-proj; a settled spoke is solid with its final survive/eliminate verdict.
+//
+// CONVERGENCE: a settled spoke renders byte-identically via the live or the
+// completed path.
+//
+// Reads the SERVED elim model verbatim (DQ1: the server computes, the client
+// renders) — the SAME served model elimFlow consumes, so a caller can swap
+// radial ↔ flow on the same payload. Rounds arrive PRE-SORTED with a per-round
+// `bracket_side`; the per-generation states (played / advanced / lost /
+// eliminated-vs-dropped / side / LB entry / projected) arrive as the top-level
+// `gen_states` fold (`derive_elim_states`). NO client-side elimination
+// derivation — this figure is polar GEOMETRY only.
+// opts: {
+//   rounds:[{label, round_index, bracket_side, matches:[{competitors, winner,
+//     loser, decision, pending, bye, bracket_slot, projected}]}],
+//   gen_states:[{generation_id, played_rounds, advanced_rounds, lost_rounds,
+//     eliminated_at_round, side_by_round, lb_entry_round, projected}],
+//   championId, benchmarkId, gateState, live, double (bool: double-elim mode),
+//   mini|compact, onCompetitor(id)
+// }
+export function elimRadial(opts) {
+  const o = opts || {};
+  const rounds = (Array.isArray(o.rounds) ? o.rounds : []).filter((r) => r && Array.isArray(r.matches));
+  const mini = !!(o.mini || o.compact);
+  const live = !!o.live;
+  const champId = o.championId != null ? String(o.championId) : null;
+  const benchId = o.benchmarkId != null ? String(o.benchmarkId) : null;
+  const isDouble = !!o.double;
+
+  // COLUMN ORDER is the SERVED order — the server pre-sorts by round index
+  // (temporal WB → LB → GF), so column ci here == the round's index in the
+  // payload == the gen_states round references. No client re-sort.
+  const nCols = rounds.length;
+
+  // ── the per-generation states, read VERBATIM from the served fold ──
+  // (the server's derive_elim_states owns the elimination-vs-drop classification
+  // + bracket side; this figure is polar GEOMETRY only — no client re-derive).
+  // gen id → { played, advanced, lostAt (Sets of column indices), pendingAt,
+  // eliminatedAt, side (overall arc side), proj }.
+  const genState = new Map();
+  for (const gs of (Array.isArray(o.gen_states) ? o.gen_states : [])) {
+    if (!gs || gs.generation_id == null) continue;
+    const played = new Set(Array.isArray(gs.played_rounds) ? gs.played_rounds : []);
+    const advanced = new Set(Array.isArray(gs.advanced_rounds) ? gs.advanced_rounds : []);
+    const lostAt = new Set(Array.isArray(gs.lost_rounds) ? gs.lost_rounds : []);
+    // pendingAt is the residue: a played column that is neither an advance nor a
+    // loss is still in flight.
+    const pendingAt = new Set([...played].filter((ci) => !advanced.has(ci) && !lostAt.has(ci)));
+    genState.set(String(gs.generation_id), {
+      id: String(gs.generation_id), played, advanced, lostAt, pendingAt,
+      eliminatedAt: isNum(gs.eliminated_at_round) ? gs.eliminated_at_round : null,
+      // the radial arc side is the OVERALL side: a lane that ever entered the
+      // losers' bracket (served lb_entry_round) sits on the lower arc.
+      side: isNum(gs.lb_entry_round) ? 'LB' : 'WB', proj: null,
+    });
+  }
+  // per-generation live PROJECTED standing: the SERVED gen-state projection seeds
+  // it; a pending match's own `projected` map (the live overlay the client stamps
+  // from SSE-fresh board progress — in-flight DECORATION, not re-derivation)
+  // refreshes it, since the runner can write a projection after the last publish.
+  const projByGen = new Map();
+  for (const gs of (Array.isArray(o.gen_states) ? o.gen_states : [])) {
+    if (gs && gs.generation_id != null && gs.projected && isNum(gs.projected.scalar)) {
+      projByGen.set(String(gs.generation_id), gs.projected);
+    }
+  }
+  for (const r of rounds) {
+    for (const m of (Array.isArray(r.matches) ? r.matches : [])) {
+      const pending = !!m.pending || (!m.winner && !m.bye && !m.decision);
+      const projMatch = (m.projected && typeof m.projected === 'object') ? m.projected : null;
+      if (!projMatch || !pending) continue;
+      for (const c of (Array.isArray(m.competitors) ? m.competitors : []).map(String)) {
+        if (projMatch[c] && isNum(projMatch[c].scalar)) projByGen.set(c, projMatch[c]);
+      }
+    }
+  }
+  for (const g of genState.values()) { if (projByGen.has(g.id)) g.proj = projByGen.get(g.id); }
+  const gens = [...genState.values()];
+
+  const sz = mini ? 200 : 340;
+  const W = sz; const H = sz;
+  const cx = W / 2; const cy = H / 2;
+  const labelPad = mini ? 22 : 40;
+  const R = Math.min(cx, cy) - labelPad;
+  const rings = Math.max(2, nCols + 1);             // one ring per round + the center gate ring
+  const rr = (k) => R * (1 - k / rings) + (mini ? 5 : 8);
+
+  const svg = svgEl('svg', applyResponsive({
+    class: 'dn-elimradial', width: '100%', height: H,
+    viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'xMidYMid meet', role: 'img',
+    'aria-label': 'radial bracket — rounds as rings narrowing to the champion gate',
+  }, o, W, H, 'dn-elimradial-hero'));
+  if (!nCols || !gens.length) {
+    const t = svgEl('text', { x: W / 2, y: H / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
+    t.textContent = 'no bracket rounds yet';
+    svg.appendChild(t);
+    return svg;
+  }
+
+  // the concentric ring guides.
+  for (let k = 0; k < rings; k++) {
+    svg.appendChild(svgEl('circle', { cx, cy, r: rr(k), class: 'dn-elimradial-ring' + (k === 0 ? ' dn-elimradial-ring-outer' : ''), fill: 'none' }));
+  }
+
+  // angular placement. Single-elim: spokes spread full circle. Double-elim: WB
+  // on the UPPER arc, LB on the LOWER arc, split by a dashed equator.
+  const ang = (frac) => (-90 + frac * 360) * Math.PI / 180;
+  const pol = (r, a) => [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+  if (isDouble) {
+    // the WB↔LB equator (the horizontal diameter a drop must cross).
+    svg.appendChild(svgEl('line', { x1: cx - R - (mini ? 4 : 10), y1: cy, x2: cx + R + (mini ? 4 : 10), y2: cy, class: 'dn-elimradial-equator' }));
+  }
+
+  // order spokes: survivors / champion first (deepest reach), then earlier-out.
+  const reach = (g) => (g.eliminatedAt == null ? nCols + 1 : g.eliminatedAt);
+  gens.sort((a, b) => reach(b) - reach(a) || (a.id === champId ? -1 : b.id === champId ? 1 : 0) || a.id.localeCompare(b.id));
+
+  // assign each spoke an angle. Double-elim: split by side onto two half-arcs.
+  const angleOf = new Map();
+  if (isDouble) {
+    const wb = gens.filter((g) => g.side !== 'LB');
+    const lb = gens.filter((g) => g.side === 'LB');
+    // WB upper arc: 290°→430° (upper-left→top→upper-right); LB lower arc: 110°→250°.
+    const place = (list, a0, a1) => list.forEach((g, i) => {
+      const f = list.length > 1 ? (i + 0.5) / list.length : 0.5;
+      angleOf.set(g.id, ((a0 + (a1 - a0) * f) - 90) * Math.PI / 180);
+    });
+    place(wb, 290, 430);
+    place(lb, 110, 250);
+  } else {
+    gens.forEach((g, i) => angleOf.set(g.id, ang((i + 0.0) / gens.length)));
+  }
+
+  // each spoke: per-round survival segments + node dots + the loss ✕ / gate dash.
+  gens.forEach((g) => {
+    const a = angleOf.get(g.id);
+    const isChamp = champId != null && g.id === champId;
+    const isFormer = benchId != null && g.id === benchId && !isChamp;
+    const eliminated = g.eliminatedAt != null;
+    const proj = !eliminated && g.proj && isNum(g.proj.scalar) ? g.proj : null;
+    // # of survived (advanced) rings = won segments before elimination/gate.
+    const surv = eliminated ? g.eliminatedAt : Math.max(g.advanced.size, g.played.size ? Math.max(...g.played) + 1 : 0);
+    const lane = svgEl('g', { class: 'dn-elimradial-spoke' + (proj ? ' dn-proj' : ''), tabindex: o.onCompetitor ? '0' : null });
+
+    // green (survived) segments rr(k) → rr(k+1).
+    for (let k = 0; k < surv; k++) {
+      const [sx, sy] = pol(rr(k), a); const [ex, ey] = pol(rr(k + 1), a);
+      lane.appendChild(svgEl('line', { x1: sx, y1: sy, x2: ex, y2: ey, class: 'dn-elimradial-seg dn-good' }));
+    }
+    // node dots at each survived ring (each cleared round reads as a beat).
+    for (let k = 0; k <= surv && k < rings; k++) {
+      const [dx, dy] = pol(rr(k), a);
+      lane.appendChild(svgEl('circle', { cx: dx, cy: dy, r: mini ? 1.6 : 2, class: 'dn-elimradial-node dn-good' }));
+    }
+    const pendingSpoke = !eliminated && (g.pendingAt.size > 0) && !isChamp;
+    if (eliminated) {
+      // the LOSS segment (--bad) capped with a red ✕.
+      const [sx, sy] = pol(rr(surv), a); const [ex, ey] = pol(rr(Math.min(surv + 1, rings)), a);
+      lane.appendChild(svgEl('line', { x1: sx, y1: sy, x2: ex, y2: ey, class: 'dn-elimradial-seg dn-bad' }));
+      lane.appendChild(svgEl('circle', { cx: sx, cy: sy, r: mini ? 1.8 : 2.2, class: 'dn-elimradial-node dn-bad' }));
+      const xm = svgEl('text', { x: ex, y: ey + 3.2, class: 'dn-elimradial-cut dn-bad', 'text-anchor': 'middle' });
+      xm.textContent = '✕';
+      lane.appendChild(xm);
+    } else if (isChamp) {
+      // the survivor reaches the gate ring (good) then dashes accent into center.
+      const [gx, gy] = pol(rr(surv), a);
+      lane.appendChild(svgEl('line', { x1: gx, y1: gy, x2: cx, y2: cy, class: 'dn-elimradial-seg dn-elimradial-gateline' }));
+    } else if (pendingSpoke) {
+      // a still-racing spoke: a dashed (in-flight) segment toward the next ring.
+      const [sx, sy] = pol(rr(surv), a); const [ex, ey] = pol(rr(Math.min(surv + 1, rings)), a);
+      lane.appendChild(svgEl('line', { x1: sx, y1: sy, x2: ex, y2: ey, class: 'dn-elimradial-seg dn-elimradial-pending' + (proj ? ' dn-proj' : '') }));
+    }
+
+    // the outer spoke label. The radial origin + per-quadrant vertical nudge set
+    // where the text STARTS; but `text-anchor:start/end` then grows the text
+    // HORIZONTALLY, and for cardinal-E/W spokes (|cos a|≈1) the origin already
+    // sits at cx ± (R-ish) so the run spills past the box. labelPad is a RADIAL
+    // gutter — it never bounds horizontal extent — so measure the label's real
+    // width and clamp its x inward to keep the whole [x0,x1] span in the viewBox.
+    const [lx0, ly] = pol(rr(0) + (mini ? 4 : 7), a);
+    const ca = Math.cos(a); const sa = Math.sin(a);
+    const anchor = ca < -0.3 ? 'end' : (ca > 0.3 ? 'start' : 'middle');
+    const ldy = sa < -0.3 ? -2 : (sa > 0.3 ? 9 : 3);
+    const lblCls = 'dn-elimradial-name ' + (eliminated ? 'dn-bad' : isChamp ? 'dn-good' : isFormer ? 'dn-elimradial-former' : 'dn-good') + (proj ? ' dn-proj' : '');
+    const lblText = shortLabel(g.id, mini ? 5 : 8) + (isChamp ? ' ' + CROWN.current : isFormer ? ' ' + CROWN.former : '') + (proj ? ' ~' : '');
+    // the name is 9px mono ⇒ ~0.6em/char; clamp x so the start/end/middle run
+    // never crosses [edge, W-edge]. A no-op for any spoke that already fits.
+    const lblW = lblText.length * (mini ? 5 : 5.4);
+    const edge = mini ? 2 : 3;
+    const lx = anchor === 'start' ? Math.min(lx0, W - edge - lblW)
+      : anchor === 'end' ? Math.max(lx0, edge + lblW)
+      : Math.max(edge + lblW / 2, Math.min(lx0, W - edge - lblW / 2));
+    const tip = `${g.id}`
+      + (isChamp ? ` · champion ${CROWN.current}` : isFormer ? ' · former champion' : eliminated ? ` · eliminated at ${rounds[g.eliminatedAt] ? (rounds[g.eliminatedAt].label || 'R' + g.eliminatedAt) : 'R' + g.eliminatedAt}` : pendingSpoke ? ' · racing' : ' · advanced')
+      + (proj ? ` · projected scalar ~${fmt(proj.scalar, 2)} (boards streaming)` : '')
+      + (isDouble ? ` · ${g.side === 'LB' ? "losers' bracket ●○" : "winners' bracket ●●"}` : '');
+    const lbl = hov(svgEl('text', { x: lx, y: ly + ldy, class: lblCls, 'text-anchor': anchor }), tip);
+    lbl.textContent = lblText;
+    lane.appendChild(lbl);
+    clickable(lane, o.onCompetitor && (() => o.onCompetitor(g.id)));
+    svg.appendChild(lane);
+  });
+
+  // double-elim: WB→LB transfer arcs (a dropped lane's second life). Each arc
+  // CONNECTS TWO REAL NODES — it ENDS exactly on the dropped lane's outer LB node
+  // (its re-entry, on the lower arc) and STARTS on that node's equator-mirror, the
+  // source WB node position on the upper arc (WB upper ↔ LB lower are reflections
+  // across the horizontal equator, so in pol()'s convention the source angle is
+  // -a). BOTH endpoints sit EXACTLY on the outer node ring rr(0), so the connector
+  // begins and ends ON a node — never out in empty space. Per-drop separation rides
+  // the arc RADIUS (each successive drop nests a touch further in), NEVER the
+  // endpoints — so no stagger can drift an endpoint off its node. (The old code put
+  // the endpoints THEMSELVES on a staggered rim radius OUTSIDE the ring, so every
+  // arc past the first — and every arc in mini — began and ended at a radius where
+  // no node exists: the connector floated, detached from the source and the target.)
+  if (isDouble) {
+    const nodeR = rr(0);   // the outer node ring — every spoke's outer (k=0) node
+    let li = 0;
+    const drops = gens.filter((g) => g.side === 'LB' && g.lostAt.size);
+    drops.forEach((g) => {
+      const a = angleOf.get(g.id);
+      if (a == null) return;
+      const fromA = -a;
+      const [fx, fy] = pol(nodeR, fromA);   // source: the WB mirror, ON the node ring
+      const [tx, ty] = pol(nodeR, a);        // target: EXACTLY the dropped lane's outer LB node
+      // arcR == nodeR is the rim-hugging semicircle through the outward rim; a
+      // per-drop increment flattens (nests) each further arc a touch inside so two
+      // drops never overlap — carried by the RADIUS, not the endpoints.
+      const arcR = nodeR + li * (mini ? 2 : 4); li++;
+      // sweep to the OUTWARD side of the spoke: a downward chord (source upper →
+      // target lower) hugs the rim on the right for a right-tilted spoke (cos a ≥ 0)
+      // and on the left otherwise.
+      const sweep = Math.cos(a) >= 0 ? 1 : 0;
+      svg.appendChild(svgEl('path', {
+        d: `M${fx.toFixed(1)} ${fy.toFixed(1)} A${arcR.toFixed(1)} ${arcR.toFixed(1)} 0 0 ${sweep} ${tx.toFixed(1)} ${ty.toFixed(1)}`,
+        class: 'dn-elimradial-transfer', fill: 'none',
+      }));
+    });
+  }
+
+  // the CENTER champion gate.
+  const gateState = o.gateState || (live ? 'deciding' : (champId ? 'crowned' : 'pending'));
+  const crowned = gateState === 'crowned' && !!champId;
+  const seatR = mini ? 11 : 14;
+  const gateG = svgEl('g', { class: 'dn-elimradial-gate', tabindex: (champId && o.onCompetitor) ? '0' : null });
+  gateG.appendChild(svgEl('circle', { cx, cy, r: seatR, class: 'dn-elimradial-seat' + (crowned ? ' dn-good' : '') }));
+  const gt = hov(svgEl('text', { x: cx, y: cy + (mini ? 3.6 : 4.5), class: 'dn-elimradial-seatlab' + (crowned ? ' dn-good' : ''), 'text-anchor': 'middle' }),
+    crowned ? `${champId} · crowned champion ${CROWN.current}`
+      : gateState === 'stands' ? 'champion stands'
+        : gateState === 'deciding' ? 'gate deciding…' : 'champion gate');
+  gt.textContent = crowned ? CROWN.current : gateState === 'deciding' ? '…' : CROWN.former;
+  gateG.appendChild(gt);
+  clickable(gateG, (champId && o.onCompetitor) && (() => o.onCompetitor(champId)));
+  svg.appendChild(gateG);
+  return svg;
+}
+
+// A stable content digest of the elimRadial model (U5: the generic digestOpts
+// fold — the same served model elimFlow gates on). Mode flags + the hover
+// callback are dropped so the hero mini and the full figure gate on content
+// alone; championId / benchmarkId / gateState / double / live / rounds /
+// gen_states stay in the fold.
+export function elimRadialDigest(opts) {
+  return digestOpts(opts, ['mini', 'compact', 'responsive', 'onCompetitor']);
 }
 
 // ── RADAR SILHOUETTE (challenger vs champion across the gate's axes) ──

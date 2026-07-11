@@ -2243,25 +2243,33 @@
   .dn-funnel-head { fill: var(--v2-ink-faint); font: 10px var(--v2-mono);
     text-transform: uppercase; letter-spacing: 0.05em; }
   .dn-funnel-sub { fill: var(--v2-ink-faint); font: 9.5px var(--v2-mono); }
-  /* the flowing band — a soft accent fill so the narrowing reads as a current */
-  .dn-funnel-band { fill: color-mix(in srgb, var(--v2-accent) 18%, transparent);
-    stroke: color-mix(in srgb, var(--v2-accent) 45%, transparent); stroke-width: 1;
-    vector-effect: non-scaling-stroke; }
+  /* the flowing band — a QUIET accent tint (reduced-opacity fill + a hairline
+     stroke) so the narrowing reads as one calm current, matching how the
+     cleaner figures tint. The inter-rung LINK shares the fill (no stroke), so
+     the discrete rungs merge into one converging silhouette; the band's own
+     vertical edges at each junction double as the hairline rung separators. */
+  .dn-funnel-band, .dn-funnel-link {
+    fill: color-mix(in srgb, var(--v2-accent) 11%, transparent); }
+  .dn-funnel-band { stroke: color-mix(in srgb, var(--v2-accent) 28%, transparent);
+    stroke-width: 1; vector-effect: non-scaling-stroke; }
   /* a pending (live, undecided) stage is neutral — nobody is cut yet */
   .dn-funnel-band.dn-funnel-pending { fill: var(--v2-rule-soft);
     stroke: var(--v2-rule); stroke-dasharray: 4 3; }
-  .dn-funnel-band.dn-funnel-gateflow.dn-good { fill: color-mix(in srgb, var(--v2-good) 20%, transparent);
-    stroke: color-mix(in srgb, var(--v2-good) 55%, transparent); }
-  /* eliminated dead-end branches peeling off below the lane */
-  .dn-funnel-deadedge { stroke: var(--v2-bad); stroke-width: 1.1;
-    vector-effect: non-scaling-stroke; opacity: 0.55; stroke-dasharray: 2 2; }
+  .dn-funnel-link.dn-funnel-link-pending { fill: var(--v2-rule-soft); }
+  .dn-funnel-band.dn-funnel-gateflow.dn-good { fill: color-mix(in srgb, var(--v2-good) 13%, transparent);
+    stroke: color-mix(in srgb, var(--v2-good) 40%, transparent); }
+  /* eliminated dead-end branches peeling off below the lane — a quiet hairline
+     rule (the ✕ glyph is the mark; the lane just dims), like elimFlow's loss. */
+  .dn-funnel-deadedge { stroke: color-mix(in srgb, var(--v2-bad) 55%, transparent);
+    stroke-width: 1; vector-effect: non-scaling-stroke; opacity: 0.4; stroke-dasharray: 2 3; }
   /* competitor labels — survivors (good ↑), cuts (bad ✕), racing (neutral). The
      ✕ glyph + bad colour already mark a cut, so NO strikethrough — a line
-     through the name reads as the connector slashing the text. */
+     through the name reads as the connector slashing the text. A cut name is
+     DIMMED (the ✕ carries the signal), matching elimFlow's dimmed-loss idiom. */
   .dn-funnel-name { fill: var(--v2-ink-soft); font: 11px var(--v2-mono); }
   .dn-funnel-name.dn-good { fill: var(--v2-good); font-weight: 600; }
-  .dn-funnel-name.dn-bad { fill: var(--v2-bad); }
-  .dn-funnel-name.dn-out { opacity: 0.8; }
+  .dn-funnel-name.dn-bad { fill: var(--v2-bad); opacity: 0.7; }
+  .dn-funnel-name.dn-out { opacity: 0.65; }
   .dn-funnel-name.dn-racing { fill: var(--v2-ink-soft); }
   /* per-lane in-flight board-progress bar under an actively-racing lane (LIVE) */
   .dn-funnel-bar-bg { fill: var(--v2-rule-soft); opacity: 0.6; }
@@ -2269,10 +2277,13 @@
   .dn-funnel-bar-live { fill: var(--v2-accent); }
   .dn-funnel-runner:hover .dn-funnel-name,
   .dn-funnel-runner:focus .dn-funnel-name { fill: var(--v2-accent); outline: none; }
-  /* the terminal champion-gate seat */
-  .dn-funnel-gatebox { fill: var(--v2-rule-soft); stroke: var(--v2-rule); stroke-width: 1; }
-  .dn-funnel-gatebox.dn-good { stroke: var(--v2-good); stroke-width: 1.4;
-    fill: color-mix(in srgb, var(--v2-good) 10%, transparent); }
+  /* the terminal champion-gate seat — a hairline seat aligned with elimFlow's
+     gate vocabulary (soft tint + a crown glyph); crowned reads --v2-good. */
+  .dn-funnel-gatebox { fill: var(--v2-rule-soft);
+    stroke: color-mix(in srgb, var(--v2-rule) 80%, transparent); stroke-width: 1;
+    vector-effect: non-scaling-stroke; }
+  .dn-funnel-gatebox.dn-good { stroke: var(--v2-good); stroke-width: 1.2;
+    fill: color-mix(in srgb, var(--v2-good) 9%, transparent); }
   .dn-funnel-gatelab { fill: var(--v2-ink-soft); font: 11px var(--v2-mono); }
   .dn-funnel-gatelab.dn-good { fill: var(--v2-good); font-weight: 700; }
   .dn-funnel-gate:hover .dn-funnel-gatelab,
@@ -2545,6 +2556,63 @@
   .dn-fieldbars-bar.dn-proj { fill: var(--v2-projected-fill); opacity: 0.5; }
   .dn-fieldbars-name.dn-proj, .dn-fieldbars-val.dn-proj,
   .dn-scalartrack-name.dn-proj { fill: var(--v2-projected); }
+
+  /* ---- ELIM RADIAL (concentric bracket — rounds as rings to a center gate) ----
+   * Rounds are concentric rings narrowing to the champion seat at center. Each
+   * spoke's survived segments read --v2-good; the elimination segment --v2-bad +
+   * a red ✕; the survivor dashes accent into the seat. Double-elim splits WB
+   * (upper) / LB (lower) by a dashed equator with rim-hugging transfer arcs.
+   * All --v2-* tokens. */
+  .dn-elimradial-ring { stroke: var(--v2-rule-soft); stroke-width: 1; stroke-dasharray: 2 4;
+    vector-effect: non-scaling-stroke; }
+  .dn-elimradial-ring-outer { stroke: var(--v2-rule); stroke-dasharray: none; }
+  .dn-elimradial-equator { stroke: var(--v2-rule); stroke-dasharray: 3 4; opacity: 0.7;
+    vector-effect: non-scaling-stroke; }
+  .dn-elimradial-seg { stroke-width: 1.8; vector-effect: non-scaling-stroke; }
+  .dn-elimradial-seg.dn-good { stroke: var(--v2-good); }
+  .dn-elimradial-seg.dn-bad { stroke: var(--v2-bad); stroke-width: 2; }
+  .dn-elimradial-seg.dn-elimradial-gateline { stroke: var(--v2-accent); stroke-width: 1.6; stroke-dasharray: 4 3; }
+  .dn-elimradial-seg.dn-elimradial-pending { stroke: var(--v2-ink-faint); stroke-dasharray: 4 3; opacity: 0.7; }
+  .dn-elimradial-node { vector-effect: non-scaling-stroke; }
+  .dn-elimradial-node.dn-good { fill: var(--v2-good); }
+  .dn-elimradial-node.dn-bad { fill: var(--v2-bad); }
+  .dn-elimradial-cut { fill: var(--v2-bad); font: 700 10px var(--v2-sans); }
+  .dn-elimradial-transfer { stroke: var(--v2-caution); stroke-width: 1.1; stroke-dasharray: 3 3;
+    opacity: 0.65; vector-effect: non-scaling-stroke; }
+  .dn-elimradial-name { font: 9px var(--v2-mono); }
+  .dn-elimradial-name.dn-good { fill: var(--v2-good); }
+  .dn-elimradial-name.dn-bad { fill: var(--v2-bad); }
+  .dn-elimradial-name.dn-elimradial-former { fill: var(--v2-ink-faint); font-style: italic; }
+  .dn-elimradial-seat { fill: var(--v2-panel); stroke: var(--v2-accent); stroke-width: 1.5;
+    vector-effect: non-scaling-stroke; }
+  .dn-elimradial-seat.dn-good { stroke: var(--v2-good); }
+  .dn-elimradial-seatlab { fill: var(--v2-accent); font: 11px var(--v2-sans); }
+  .dn-elimradial-seatlab.dn-good { fill: var(--v2-good); }
+  .dn-elimradial-spoke { cursor: pointer; }
+  .dn-elimradial-spoke:hover .dn-elimradial-name { fill: var(--v2-accent); }
+  .dn-elimradial-spoke:focus-visible { outline: 2px solid var(--v2-accent); }
+  .dn-elimradial-gate { cursor: pointer; }
+  .dn-elimradial-gate:focus-visible { outline: 2px solid var(--v2-accent); }
+  .dn-elimradial-name.dn-proj { fill: var(--v2-projected); }
+  .dn-elimradial-seg.dn-elimradial-pending.dn-proj { stroke: var(--v2-projected-line); }
+
+  /* ---- FIGURE-VARIANT SWITCH (double-elim: combo ⟷ radial) ----
+   * A small segmented control ON the figure that flips between the DEFAULT
+   * orthogonal-pipe combo and the optional radial view of the SAME bracket.
+   * Mirrors the chrome's .dn-theme-switch idiom; pure client-side visibility
+   * (no data change → never disturbs the digest-gated swap). All --v2-* tokens. */
+  .dt-fig-switchrow { display: flex; align-items: center; gap: 7px; margin: 0 0 8px; }
+  .dt-fig-switchlab { font: 9px var(--v2-mono); letter-spacing: .08em; text-transform: uppercase;
+    color: var(--v2-ink-faint); }
+  .dt-fig-switch { display: inline-flex; border: 1px solid var(--v2-rule); border-radius: 5px; overflow: hidden; }
+  .dt-fig-btn { font: 9.5px var(--v2-mono); padding: 2px 9px; background: transparent;
+    color: var(--v2-ink-faint); border: none; cursor: pointer; transition: background 0.15s, color 0.15s;
+    border-right: 1px solid var(--v2-rule); }
+  .dt-fig-btn:last-child { border-right: none; }
+  .dt-fig-btn:hover { color: var(--v2-ink); }
+  .dt-fig-btn.dt-fig-active { background: var(--v2-accent); color: var(--v2-paper); }
+  .dt-figview { display: none; }
+  .dt-figview.dt-figview-on { display: block; }
 
   /* ---- RADAR SILHOUETTE (challenger vs champion across the gate axes) ----
    * Candidate = filled accent polygon; champion = dashed faint polygon; OUTER =
@@ -2886,7 +2954,7 @@
   }
   /* the surviving funnel band + each runner ease their position/width as the
    * field thins (the band narrows, survivors slide forward, cuts peel off). */
-  .dn-funnel-band { transition: opacity 0.3s ease; }
+  .dn-funnel-band, .dn-funnel-link { transition: opacity 0.3s ease; }
   .dn-funnel-runner, .dn-funnel-deadedge { transition: opacity 0.3s ease, transform 0.3s ease; }
   /* swiss/elim live figures ease their value/position changes the same way. */
   .dn-swissladder-pair, .dn-swissladder-stand, .dn-swissladder-edge { transition: opacity 0.3s ease, transform 0.3s ease; }
@@ -3089,7 +3157,7 @@
     .dt-live-enter { animation: none; }
     .dt-ticker-row { animation: none; }
     .dn-inflight-pulse { animation: none; }
-    .dn-funnel-band, .dn-funnel-runner, .dn-funnel-deadedge, .dn-funnel-bar,
+    .dn-funnel-band, .dn-funnel-link, .dn-funnel-runner, .dn-funnel-deadedge, .dn-funnel-bar,
     .dn-swissladder-pair, .dn-swissladder-stand, .dn-swissladder-edge, .dn-swissladder-bar,
     .dn-elimflow-lane, .dn-elimflow-seg, .dn-elimflow-conv,
     .dt-rungstep-pip, .dt-live-match-fill, .dn-hm-cell { transition: none; }
@@ -3641,6 +3709,10 @@
     display: block; width: 100%; height: auto; max-width: 1100px;
   }
   /* square / centred figures: max-width caps BOTH dimensions cleanly (1:1). */
+  svg.dn-elimradial-hero {
+    display: block; width: 100%; height: auto;
+    max-width: 380px; margin-inline: auto;
+  }
   svg.dn-radar-hero {
     display: block; width: 100%; height: auto; max-width: 420px;
   }
