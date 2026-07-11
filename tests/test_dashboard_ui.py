@@ -515,7 +515,15 @@ def test_bundle_under_size_envelope(
     # revert-to-live + undo lifecycle controls, and the racing rung0_board_size
     # param spec — plus their scoped CSS. ~8 KB of new control surface; the
     # envelope is raised to 1.31 MB to cover it with headroom.
-    assert total < 1_310_000, f"bundle is {total} bytes, exceeds 1_310_000 envelope"
+    #
+    # The INSTRUMENT LENS (R5) then lands the board-reflection view alongside the
+    # B3 knob GUI in the same program integration: views/instrument.js (the
+    # reflection landing / bill-of-health / judge-audit / transcript x-ray), its
+    # router/tree/shell registration, the reflection data accessors, and the
+    # scoped dn-instr-* CSS — ~22 KB. Each wave's raise accounted only for its
+    # own additions, so the merged program needs the union: the envelope is
+    # raised to 1.35 MB to cover both with headroom.
+    assert total < 1_350_000, f"bundle is {total} bytes, exceeds 1_350_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
