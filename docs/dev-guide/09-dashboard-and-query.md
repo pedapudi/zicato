@@ -436,6 +436,48 @@ the heartbeat `phase` string to decide propose→apply→run→gate position.
 That inference is now server-side (§9.11); the JS renders the verdict
 verbatim.
 
+**Elim gen-states (ex-`elimFlow` per-render derivation).** The bracket
+figures (`svg.js` `elimFlow`, and the retired radial twin) each used to
+derive the whole elimination model *per render*: re-sorting the mis-ordered
+`winners.concat(losers)` columns their caller handed them, de-duplicating
+backend-duplicated matches, classifying every loss as an *elimination* vs a
+winners→losers *drop* (the second life), and carrying five defensive guards
+against phantom eliminations in an under-specified payload. That was a DQ1
+breach — the client computing a domain conclusion. `derive_elim_states(rounds)`
+is that fold moved server-side, served as a top-level `gen_states` join:
+
+```python
+def derive_elim_states(rounds: Any) -> dict[str, Any]:
+    """The SERVER-SIDE elim fold — the model the bracket figures render.
+
+    ... this fold is it, moved server-side, so every consumer (Python
+    service, Rust supervisor, the node mock) serves ONE identical model.
+    Ported line-for-line into ``crates/supervisor/src/elim_states.rs`` — the
+    shared fixture ``tests/data/elim_states_fixture.json`` pins the two folds
+    together.
+
+    Output ``{"rounds": [...], "gen_states": [...]}``:
+    * ``rounds`` — PRE-SORTED by round index; every round gains
+      ``bracket_side`` (WB/LB) and its matches are DEDUPED + gain ``loser``.
+    * ``gen_states`` — one record per competitor: ``{generation_id,
+      played_rounds, advanced_rounds, lost_rounds, eliminated_at_round,
+      side_by_round, lb_entry_round, projected}``. The elimination-vs-drop
+      rule is the client's, verbatim.
+    """
+```
+— `src/zicato/query/tournament_view.py`
+
+This one is the model example of the doctrine's hardest form: the fold is
+served by BOTH servers, so it ships **twice** — the Python `derive_elim_states`
+and the Rust `elim_states.rs` port — pinned isomorphic by the shared
+`tests/data/elim_states_fixture.json` (a Python↔Rust parity fixture, not a
+client golden). A client-side re-derivation fallback is *forbidden*: `elimFlow`
+now renders `gen_states` verbatim, having dropped its ~100 derivation lines +
+the caller re-sort + the dedupe + the elimination-vs-drop pass + the phantom-✕
+guards. Every one of those guards existed only because the payload was
+under-specified; serving the model retired the whole family at once
+(12-bug-casebook.md).
+
 The tell that a join moved server-side but the CLIENT still cross-checks it
 is the node `mock_server.mjs`, which re-derives the two served joins from
 fixture maps "exactly as the Python readers do" — and pins that any
@@ -795,8 +837,16 @@ factories into one `name -> handler` dict:
 
 Each factory closes over `paths` and returns a small dict of async
 handlers. A handler is thin by construction: validate the coordinate, then
-wrap the reader in a `JSONResponse`. `_make_live_endpoints` is the model —
-`api_live_pipeline` is one line over `build_round_pipeline`:
+wrap the reader in a `JSONResponse`. This is now the WHOLE surface: the seven
+endpoint blobs that used to assemble a payload inline in `endpoints.py`
+(`_build_matchup_conversations`, the `api_conversation` resolver chain,
+`api_run_transcript`, the journal file-reads, …) were hoisted into `query`
+readers — `conversations_view.py`, `transcript_view.py`, `journal_view.py` (+
+their homes) — each with a DQ3 degrade+shape test, leaving `endpoints.py` a
+sheet of validate-then-delegate one-liners (~1451→~1000 lines) and the readers
+sharing the ONE `open_index_ro` connection discipline (`query/_sqlite.py`; §9.3).
+`_make_live_endpoints` is the model — `api_live_pipeline` is one line over
+`build_round_pipeline`:
 
 ```python
     async def api_live_pipeline(_request: Request) -> JSONResponse:
@@ -1469,35 +1519,83 @@ degeneracy is handled at the scale level too.
 > ("a SINGLE round has no horizontal travel: center the lone column"),
 > `roundTimeline`, and `calibrationTrend` are the worked precedents.
 
-### 9.9.3 The `*Digest` twins — figures fold their own content
+### 9.9.3 The `digestOpts` convention — ONE generic figure-opts fold
 
-Every heavy figure exports a `*Digest` that folds ONLY what it draws, so a
-view can gate the figure swap without diffing the SVG. The rule is the same
-as §9.7.4 — round to rendered precision, exclude timestamps:
+Every heavy figure participates in the render discipline (§9.7): a view gates
+the figure swap on a `*Digest` that folds ONLY what the figure draws, so a
+no-op heartbeat diffs a string instead of the SVG. There used to be ~8
+hand-written per-figure `*Digest` functions (~130 LOC) that each re-implemented
+the same fold by hand — round to rendered precision, drop timestamps, sort keys.
+`digestOpts(opts, omit)` is that fold, generic and in ONE place; the ~7
+surviving `*Digest` exports (`racingScalarTrackDigest`, `gauntletFieldBarsDigest`,
+`radarSilhouetteDigest`, `proposingDigest`, `diversityMatrixDigest`,
+`metaLoopLedgerDigest`, `calibrationTrendDigest`) are now thin wrappers that add
+only their own load-bearing normalization (a namespace prefix, an
+absent-vs-empty collapse) and an `omit` list.
 
 ```javascript
-// The content DIGEST for the meta-loop ledger — the home view gates its DOM
-// swap on this so a no-op SSE heartbeat (identical ledger) churns nothing. It
-// quantizes the floor to 3 dp (the rendered precision) and folds every field
-// the figure draws: floor, champion, champion_index (the tick POSITION → a
-// position change regates the DOM), effort, structure, lifecycle, and the
-// per-component change set (incl. proposer + structure). Two ledgers that
-// render byte-identically MUST produce the same digest ...
+// ── digestOpts — the SINGLE generic figure-opts digest (U5) ───────────
+//   * FUNCTIONS ARE DROPPED — figure opts carry per-render callbacks
+//     (onCompetitor / onClick / onRound, a heatmap `value` accessor). A fresh
+//     closure every render would flip the digest on every beat; dropping them
+//     is the rule that keeps the gate quiet.
+//   * KEY-SORTED so object key order never perturbs the string.
+//   * a non-integer finite number rounds to 3dp — sub-precision jitter (a
+//     re-derived scalar wobbling in the 4th place) must NOT flip the digest.
+//   * NaN / undefined → null (a stable, JSON-safe sentinel; ±Infinity too).
+//   * `omit` names TOP-LEVEL opts keys to exclude (mode flags / volatile
+//     fields a given figure's fold deliberately ignored).
+export function digestOpts(opts, omit = []) { ... }
 ```
-— `src/zicato/dashboard/static/js/svg.js`, `metaLoopLedgerDigest`
+— `src/zicato/dashboard/static/js/svg.js`, `digestOpts`
+
+The **drop-functions** rule is the one that is easy to miss and load-bearing:
+figure opts carry per-render callbacks and mode accessors; a fresh closure each
+render would flip the digest every beat and defeat the gate. Because the fold is
+now generic, that rule is written once and every figure inherits it.
 
 The governing property, stated for `metaLoopLedger`: "the figure is a pure
 function of the model — the live (in-flight, dashed) and the settled render
 are byte-identical for the same row data". Purity is what makes the digest
-sound: two byte-identical renders MUST fold to the same digest, so the home
-view gates on `metaLoopLedgerDigest` and a no-op heartbeat churns no DOM.
+sound: two byte-identical renders MUST fold to the same digest, so a view gates
+on the figure's `*Digest` and a no-op heartbeat churns no DOM.
 
-> ⚠️ TRAP — a figure's `*Digest` must fold EVERY field the figure draws,
+> ⚠️ TRAP — a figure's fold must include EVERY field the figure draws,
 > including positional ones (a tick's index, not just its value). If the
-> figure moves a mark when a value's RANK changes but the digest folds only
+> figure moves a mark when a value's RANK changes but the fold sees only
 > the value, a rank change that leaves the value equal will not regate the
 > DOM and the figure lies. `metaLoopLedgerDigest` folds `champion_index` (the
-> tick position) for exactly this reason.
+> tick position) for exactly this reason — `digestOpts` gives it the fold, the
+> wrapper decides WHAT to feed it.
+
+### 9.9.4 The shared view-composition builders — `ui.js`
+
+The figure grammar lives in `svg.js`; the DOM-composition grammar the views
+share lives in `ui.js`. These builders each fold a copy-paste class the views
+used to hand-roll; adopting one is the default, hand-rolling is the exception a
+review should question.
+
+| builder | folds | notes |
+|---|---|---|
+| `renderView(host, ctx, spec)` | the ~11-view opening: first-paint placeholder (`loading()`), optional `await D.epoch` + no-epoch gate, an optional secondary `guard`, digest fold, `gatedSwap` | a view whose flow genuinely diverges (parallel-fused fetches, multiple hosts, a non-epoch gate, conditional sub-render dispatch) keeps its hand scaffold |
+| `dataTable(spec)` | the ~14 hand-rolled `thead`/`tbody` scaffolds | per-cell `{class,text}` / `{el}` / `{title}`; conditional columns + cells via `filter(Boolean)`; row-level `class`/`dataset`/`style`/`onClick`. `deltaCell(v)` is the sign-coloured Δ cell |
+| `chip(cls, word)` / `pill(cls, word)` | the inline `dn-chip` / `dn-pill` spans | `pill` is the custom-word sibling of `verdictPill` (which derives its own label) |
+| `hovercardBody(...children)` | the 7 `dn-hc-body` wrappers | accepts a single array too (the `lines`-array sites) |
+| `truncate(s, n)` | the four clip/shorten copies (dag / candidate / boardstatus) | the ONE string-truncate; `svg.fmt`/`fmtSigned`/`isNum` stay the numeric home, re-exported from `ui.js` |
+| `emptyState(parent, w, h, label)` | the ~13 centred "no data yet" SVG placeholders | `svg.js`-side (a figure primitive, U5) |
+
+> ✅ ALWAYS reach for the shared builder first. The `dn-`/`dt-` class names are
+> STABLE (the class-literal test refs route around, they do not churn), so a
+> builder that emits the same classes is a drop-in. A genuinely divergent site
+> is extracted with an explicit option/parameter, never by papering over the
+> difference — and if it still resists a faithful extraction it is LEFT and
+> listed, never forced into a subtle render break. The geometry/null-semantics
+> `svg.js` helpers deferred for exactly that reason (`champBench`, `gateOf`,
+> `progressSubBar`, `scalarOf`+padded-extent, the edge-clamp→`edgeText`/`fitInto`
+> migration, `structure.js`'s `gateState` machine) are the standing worked
+> example: `champId` alone is `o.championId ? …` at some sites and
+> `o.championId != null ? …` at others — a single helper would silently
+> mis-handle a `'0'`/`0` id.
 
 ---
 
