@@ -161,7 +161,7 @@ def _evidence(
     epoch_id: str | None,
     reflection_id: str | None,
 ) -> tuple[dict[str, Any], ...]:
-    """Evidence chips (run_ref + span + verdict path) for a judge's verdict pile."""
+    """Evidence chips (run_ref + span + verdict + verdict path) for a judge's pile."""
     out: list[dict[str, Any]] = []
     for a in adjudications:
         if a.judge_name == judge_name and a.verdict == verdict:
@@ -170,6 +170,9 @@ def _evidence(
                     "run_ref": a.run_ref,
                     "judge_name": judge_name,
                     "span": a.evidence_span,
+                    # The adjudicated verdict (FP / FN) rides each chip so the UI
+                    # colours it from the data rather than regexing the title.
+                    "verdict": verdict,
                     "adjudication_path": _adjudication_ref(
                         judge_name,
                         a.run_ref,

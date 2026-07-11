@@ -340,15 +340,16 @@ function judgeAudit(judges, findings, d, ctx) {
     return el('div', { class: 'dn-panel' }, [empty('No judge scorecards — no adjudication ran for this reflection (the zero-LLM tier reads reliability + discrimination only).')]);
   }
   // evidence chips per judge come from the FINDINGS payload (the scorecards
-  // carry counts only). Group by judge + tag the verdict from the finding kind.
+  // carry counts only). Each evidence dict carries its OWN adjudicated `verdict`
+  // (findings.py stamps it from the adjudication, e.g. FP / FN) — read it
+  // directly. A title/id regex would MISLABEL a chip whenever the wording and
+  // the verdict diverge (a "fires falsely"-titled finding can carry an FN span).
   const evidenceByJudge = new Map();
   for (const f of findings) {
-    const v = /missed/i.test(f.finding_id) || /misses/i.test(f.title || '') ? 'FN'
-      : (/false/i.test(f.title || '') || /false_fire/i.test(f.finding_id)) ? 'FP' : null;
-    if (!v) continue;
     for (const ev of (f.evidence || [])) {
       const name = ev.judge_name;
-      if (!name) continue;
+      const v = ev.verdict;
+      if (!name || !v) continue;
       if (!evidenceByJudge.has(name)) evidenceByJudge.set(name, []);
       evidenceByJudge.get(name).push({ verdict: v, run_ref: ev.run_ref, span: ev.span });
     }
@@ -484,10 +485,17 @@ function transcriptPane(transcript, span, tone) {
     return pane;
   }
   const body = el('div', { class: 'dn-instr-transcript' });
+  // Highlight the evidence span in the FIRST turn it occurs in only — the span
+  // is one adjudicated location, so a `found` latch stops a common substring
+  // from lighting up in every later turn too.
+  let found = false;
   turns.forEach((t, i) => {
+    const text = String(t);
+    const useSpan = !found && span && text.indexOf(span) >= 0;
+    if (useSpan) found = true;
     body.appendChild(el('div', { class: 'dn-instr-turn' }, [
       el('div', { class: 'dn-instr-turn-role dn-faint', text: 'turn ' + (i + 1) }),
-      el('div', { class: 'dn-instr-turn-body' }, highlightSpan(String(t), span, tone)),
+      el('div', { class: 'dn-instr-turn-body' }, useSpan ? highlightSpan(text, span, tone) : [text]),
     ]));
   });
   pane.appendChild(body);

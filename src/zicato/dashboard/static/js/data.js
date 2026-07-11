@@ -89,6 +89,11 @@ export function invalidateLive() {
       || key.startsWith('/api/tournament-structure/')
       || key.startsWith('/api/hypothesis-accuracy/')
       || key.startsWith('/api/calibration-trend')
+      // the reflection LIST (plural) — so a reflection completed while the
+      // dashboard is open surfaces on the next live bust. This prefix does NOT
+      // match the singular, IMMUTABLE `/api/reflection/<id>/…` reads (those
+      // start `/api/reflection/`, not `/api/reflections`), which stay cached.
+      || key.startsWith('/api/reflections')
       || key.startsWith('/api/tournaments')) {
       _cache.delete(key);
     }

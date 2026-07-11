@@ -67,6 +67,14 @@ function setKind(buf, kind) {
     buf.adversarial_agent_spec = keep.adversarial_agent_spec != null ? keep.adversarial_agent_spec : '';
     buf.required_drift_kinds = Array.isArray(keep.required_drift_kinds) ? keep.required_drift_kinds : [];
   }
+  // A single_turn entry has no conversation to read at its end — validate rejects
+  // `reads:'conversation_end'` for it. Clamp a stale reads carried over from a
+  // multi-turn buffer so the kind switch never strands the operator at a
+  // guaranteed-reject Save (the reads select disables the option, but the buffer
+  // value must be corrected too).
+  if (kind === 'single_turn' && buf.expectation && buf.expectation.reads === 'conversation_end') {
+    buf.expectation.reads = 'final_output';
+  }
 }
 
 export function newEntryBuffer(kind) {

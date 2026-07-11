@@ -974,4 +974,34 @@ test('hero redesign — render discipline: a no-op heartbeat churns ZERO DOM (th
   assertEqual(nodesByClass(c.ticker.node, 'dt-ticker-row').length, tickerRows0, 'a no-op tick appends NO new activity rows (zero DOM churn)');
 });
 
+test('hero redesign F10: an alive→idle→alive flap of the SAME runs keeps the feed; a NEW run set resets it', () => {
+  const c = new live.LiveController({});
+  const at = JSON.parse(JSON.stringify(HERO_RUNG2_AT));
+  const beat = hb({ phase: 'tournament:round_1:rung1_m0' });
+  // spy on the ticker reset so we can pin the gate decision precisely.
+  let resets = 0;
+  const origReset = c.ticker.reset.bind(c.ticker);
+  c.ticker.reset = () => { resets += 1; origReset(); };
+  const tick = (alive, runs) => c.update({
+    status: { running: alive, alive, structure: 'racing', inFlight: runs.length },
+    heartbeat: beat, activeRuns: runs, activeTournament: at,
+  });
+  const runsA = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1' }];
+  // 1. the cold-start ALIVE tick resets once and lists the running matchup.
+  tick(true, runsA);
+  assertEqual(resets, 1, 'the cold-start alive tick resets the feed once');
+  const rowsAlive = nodesByClass(c.ticker.node, 'dt-ticker-row').length;
+  assert(rowsAlive >= 1, 'the alive feed lists the running matchup');
+  // 2. IDLE (a heartbeat stall) — the SAME runs are still in flight.
+  tick(false, runsA);
+  // 3. ALIVE again, SAME runs → NO reset (a flap must not blank a running feed).
+  tick(true, runsA);
+  assertEqual(resets, 1, 'the SAME-runs alive→idle→alive flap does NOT reset the ticker');
+  assert(nodesByClass(c.ticker.node, 'dt-ticker-row').length >= rowsAlive, 'the still-running feed survives the flap (no momentary blank)');
+  // 4. IDLE, then ALIVE with a DISJOINT run set → a genuine new run resets.
+  tick(false, runsA);
+  tick(true, [{ generation_id: 'v9', entry_id: 'b3', run_id: 'r9' }]);
+  assertEqual(resets, 2, 'a NEW (disjoint) run set after an idle gap resets the feed');
+});
+
 await run();

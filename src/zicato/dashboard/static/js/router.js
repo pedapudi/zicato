@@ -307,5 +307,9 @@ export function crumbTrail(route) {
   }
 }
 
-function enc(s) { return encodeURIComponent(s == null ? '' : String(s)); }
+// encodeURIComponent leaves `~` un-escaped, but the hash splits its structural
+// path from the `~cmp` suffix at the FIRST `~` — so a segment value containing
+// `~` (e.g. an entry id) would truncate the route. Escape it to %7E here;
+// parseRoute's per-segment `dec` (decodeURIComponent) restores it verbatim.
+function enc(s) { return encodeURIComponent(s == null ? '' : String(s)).replace(/~/g, '%7E'); }
 function dec(s) { try { return s == null ? null : decodeURIComponent(s); } catch { return s || null; } }

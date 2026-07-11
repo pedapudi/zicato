@@ -82,6 +82,7 @@ function installFetch() {
     if (path === '/builder/op') {
       OP_CALLS.push(body);
       const a = body.args || {};
+      let changed = a;
       if (body.op === 'edit_board_entry') {
         const e = a.entry || {};
         if (String(e.id || '').startsWith('bad')) {
@@ -89,6 +90,8 @@ function installFetch() {
         }
         const row = entryToRow(e);
         const idx = DRAFT.board.findIndex((x) => x.id === row.id);
+        // mirror operations.edit_board_entry's DraftPatch.changed shape.
+        changed = { entry_id: row.id, action: idx >= 0 ? 'replaced' : 'added' };
         if (idx >= 0) DRAFT.board[idx] = row; else DRAFT.board.push(row);
       } else if (body.op === 'remove_board_entry') {
         DRAFT.board = DRAFT.board.filter((x) => x.id !== a.entry_id);
@@ -101,7 +104,7 @@ function installFetch() {
       } else if (body.op === 'set_brief') {
         DRAFT.brief = String(a.text || '');
       }
-      return jsonRes(envelope({ op: body.op, changed: a }));
+      return jsonRes(envelope({ op: body.op, changed }));
     }
     return jsonRes({});
   };
@@ -465,6 +468,100 @@ test('board editor: the proposer brief editor posts set_brief with the char coun
   await tick();
   const call = OP_CALLS.find((c) => c.op === 'set_brief');
   assert(call && call.args.text === 'be MUCH crisper', 'Save brief posts set_brief with the text');
+});
+
+// ── F7: switching to single_turn clamps a stale conversation_end reads ──
+
+test('entry_form F7: switching to single_turn clamps conversation_end reads to final_output', () => {
+  const buf = ef.newEntryBuffer('multi_turn_emulated');
+  buf.id = 'c'; buf.expectation = { kind: 'expected_text', spec: 'x', reads: 'conversation_end' };
+  const node = editor(buf, {});
+  const kindSel = byAria(node, 'Entry kind');
+  kindSel.value = 'single_turn';
+  kindSel.dispatchEvent(makeEvent('change'));
+  assertEqual(buf.kind, 'single_turn', 'the kind switched to single_turn');
+  assertEqual(buf.expectation.reads, 'final_output',
+    'the conversation_end reads is clamped to final_output (no guaranteed-reject Save)');
+});
+
+// ── F1: a hash-held entry saved with NO tag must not gain a holdout tag ──
+
+test('board editor F1: saving a hash-held entry with no tag never stamps a holdout tag', async () => {
+  const host = await mountBoard();
+  // a HASH-derived holdout entry: it sits in holdout_ids but carries NO explicit
+  // holdout tag (the rotating, fraction-based slice — not a per-entry decision).
+  DRAFT.board.push({ id: 'hashheld', kind: 'single_turn', budget_s: 60, input: 'q' });
+  DRAFT.holdout = { train_ids: ['waffles'], holdout_ids: ['picky', 'hashheld'] };
+  await view.render(host);
+  const row = byClass(host, 'dn-bld-boardrow-main').find((r) => r.textContent.includes('hashheld'));
+  assert(row, 'the hash-held row renders');
+  row.dispatchEvent(makeEvent('click'));
+  await tick();
+  assert(firstClass(host, 'dn-bld-entryform'), 'the editor opened for the hash-held entry');
+  // save with NO edits — the toggle was never touched.
+  byAria(host, 'Save entry').dispatchEvent(makeEvent('click'));
+  await tick();
+  const call = OP_CALLS.find((c) => c.op === 'edit_board_entry' && c.args.entry.id === 'hashheld');
+  assert(call, 'Save posted edit_board_entry for the hash-held entry');
+  const tags = call.args.entry.tags || [];
+  assert(!tags.includes('holdout'),
+    'the hash-held entry saves untagged — the rotating holdout is not collapsed onto it');
+});
+
+// ── F2: a draft-identity op (switch) closes the open editor ──
+
+test('board editor F2: a slot switch closes the open editor (no stale buffer into a new draft)', async () => {
+  view._resetBuilderForTest();
+  OP_CALLS.length = 0;
+  DRAFT = freshDraft();
+  globalThis.window.localStorage.clear();
+  globalThis.fetch = async (path, init) => {
+    const body = init && init.body ? JSON.parse(init.body) : {};
+    if (path === '/builder/config') return jsonRes(CONFIG);
+    if (path.startsWith('/builder/draft')) {
+      return jsonRes({ session: 'dashboard', draft: DRAFT, cost: envelope().cost, warnings: [], diff: envelope().diff, drafts: ['variant-a'], proposer_dirs: [] });
+    }
+    if (path === '/builder/op') {
+      OP_CALLS.push(body);
+      return jsonRes(envelope({ op: body.op, changed: body.args || {} }));
+    }
+    return jsonRes({});
+  };
+  const host = globalThis.document.createElement('div');
+  await view.render(host);
+  byClass(host, 'dn-bld-railitem').find((r) => r.textContent.includes('Board')).dispatchEvent(makeEvent('click'));
+  await tick();
+  byClass(host, 'dn-bld-boardrow-main').find((r) => r.textContent.includes('waffles')).dispatchEvent(makeEvent('click'));
+  await tick();
+  assert(firstClass(host, 'dn-bld-entryform'), 'the editor opened');
+  const sel = byAria(host, 'Draft slot');
+  assert(sel, 'the slot picker renders');
+  sel.value = 'variant-a';
+  sel.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'switch'), 'the slot pick posted the switch op');
+  assert(!firstClass(host, 'dn-bld-entryform'), 'the editor CLOSED on the draft-identity switch');
+});
+
+// ── F6: a create-mode Save that replaces an existing id surfaces a notice ──
+
+test('board editor F6: a create Save onto an existing id shows a visible replaced notice', async () => {
+  const host = await mountBoard();
+  const kindSel = byAria(host, 'New entry kind');
+  kindSel.value = 'single_turn';
+  byAria(host, 'Add entry').dispatchEvent(makeEvent('click'));
+  await tick();
+  const idInput = byAria(host, 'Entry id');
+  idInput.value = 'waffles'; // an id ALREADY on the board
+  idInput.dispatchEvent(makeEvent('input'));
+  byAria(host, 'Entry input').value = 'clobber';
+  byAria(host, 'Entry input').dispatchEvent(makeEvent('change'));
+  await tick();
+  byAria(host, 'Save entry').dispatchEvent(makeEvent('click'));
+  await tick();
+  const notice = firstClass(host, 'dn-bld-replaced-note');
+  assert(notice, 'a replaced notice rendered');
+  assert(/replaced existing entry waffles/.test(notice.textContent), 'the notice names the replaced id');
 });
 
 await run();
