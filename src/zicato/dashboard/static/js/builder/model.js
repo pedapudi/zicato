@@ -114,6 +114,16 @@ export function paramSpecsFor(structure) {
       }, {
         key: 'board_fraction', label: 'Rung-0 board fraction', def: 0.25, min: 0.05, max: 1, step: 0.05, int: false,
         info: { title: 'Rung-0 board fraction', def: '0.25', body: 'The fraction of the board the FIRST (cheapest) rung scores on. Smaller is cheaper but a thin first rung can cut a challenger on too little signal; the slice grows by eta each rung up to the full board.' },
+      }, {
+        // OPT-IN absolute override of the rung-0 slice: 0 REMOVES the key
+        // (removeAtZero) so an unset override hashes byte-identically to a
+        // contract that predates it, and the rung-0 slice falls back to
+        // ceil(board_fraction × board). Both estimators (estimateCost's
+        // _racing_cost + validateContract) ALREADY read this key — this spec
+        // only surfaces the control (the L3 cost-relevant SPEC-only change).
+        key: 'rung0_board_size', label: 'Rung-0 board size (override)', def: 0,
+        min: 0, step: 1, int: true, removeAtZero: true,
+        info: { title: 'Rung-0 board size', def: 'unset (use the fraction)', body: 'An explicit entry COUNT for the first (cheapest) racing rung, overriding board_fraction. When > 0 the first rung scores exactly this many train entries (capped at the board); 0 removes the override and the rung-0 slice falls back to ceil(board_fraction × board). A larger rung-0 buys more signal on the cheapest rung at more cost.' },
       }, ...evidence];
     default:
       return [FIELD_SIZE, REPLICATES, ...evidence];

@@ -138,6 +138,79 @@ def test_builder_op_edit_board_entry(client: TestClient) -> None:
     assert "e3" in ids
 
 
+# One entry per kind, in the exact whole-entry JSON the board editor's
+# bufferToEntryJson posts. Each must round-trip byte-stably through
+# edit_board_entry → the entry serializer the draft.board view reads.
+_ROUND_TRIP_ENTRIES = {
+    "single_turn": {
+        "id": "rt_single",
+        "kind": "single_turn",
+        "wall_clock_budget_seconds": 60,
+        "input": "make a presentation",
+    },
+    "multi_turn_scripted": {
+        "id": "rt_scripted",
+        "kind": "multi_turn_scripted",
+        "wall_clock_budget_seconds": 120,
+        "turns": [{"user": "hello"}, {"user": "and then?"}],
+        "max_turns": 4,
+    },
+    "multi_turn_emulated": {
+        "id": "rt_emulated",
+        "kind": "multi_turn_emulated",
+        "wall_clock_budget_seconds": 360,
+        "user_persona": {"goal": "g", "constraints": "c", "stop_when": "s"},
+        "max_turns": 6,
+    },
+    "synthetic_adversarial": {
+        "id": "rt_adversarial",
+        "kind": "synthetic_adversarial",
+        "wall_clock_budget_seconds": 90,
+        "input": "attack",
+        "adversarial_agent_spec": "pkg.mod:bad_agent",
+        "required_drift_kinds": ["off_topic"],
+    },
+    "synthetic_clean": {
+        "id": "rt_clean",
+        "kind": "synthetic_clean",
+        "wall_clock_budget_seconds": 60,
+        "input": "clean",
+    },
+}
+
+
+@pytest.mark.parametrize("kind", sorted(_ROUND_TRIP_ENTRIES))
+def test_builder_op_edit_board_entry_whole_entry_round_trip(client: TestClient, kind: str) -> None:
+    """A whole-entry edit_board_entry per kind round-trips byte-stably.
+
+    The board editor posts the whole entry; the server validates + serializes
+    it through the SAME entry serializer the draft.board view reads. The
+    re-read row must equal entry_to_dict(validate_board_entry(payload)) — the
+    exact byte-stability the flagship editor relies on for a save/reopen loop.
+    """
+    from zicato.board.jsonl import entry_to_dict
+    from zicato.core.board import validate_board_entry
+
+    payload = _ROUND_TRIP_ENTRIES[kind]
+    resp = client.post(
+        "/builder/op",
+        json={"session": f"rt_{kind}", "op": "edit_board_entry", "args": {"entry": payload}},
+    )
+    assert resp.status_code == 200, resp.text
+    board = resp.json()["draft"]["board"]
+    row = next(e for e in board if e["id"] == payload["id"])
+    expected = entry_to_dict(validate_board_entry(payload))
+    assert row == expected, f"{kind}: re-read row diverged from the entry serializer"
+    # A second identical edit is idempotent — the re-read row is byte-identical.
+    resp2 = client.post(
+        "/builder/op",
+        json={"session": f"rt_{kind}", "op": "edit_board_entry", "args": {"entry": payload}},
+    )
+    assert resp2.status_code == 200
+    row2 = next(e for e in resp2.json()["draft"]["board"] if e["id"] == payload["id"])
+    assert row2 == expected, f"{kind}: a re-issued identical edit is not byte-stable"
+
+
 def test_builder_op_set_board_meta_dispatch(client: TestClient) -> None:
     resp = client.post(
         "/builder/op",
