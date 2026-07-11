@@ -1056,9 +1056,12 @@ export function survivalFunnel(opts) {
   const benchId = o.benchmarkId != null ? String(o.benchmarkId)
     : (o.championId != null ? String(o.championId) : null);
   if (benchId) {
-    const bt = hov(svgEl('text', { x: 2, y: benchY, class: 'dn-funnel-bench' }),
-      `champion v0 = ${benchId} · the field is raced vs this benchmark; every Δ is vs v0 · v0 defends at the champion-gate`);
-    bt.textContent = `▸ vs champion v0 = ${shortLabel(benchId, 18)} · every Δ is vs v0`;
+    // routed through edgeText (no hand-clamp): the caption keeps its full extent
+    // inside the viewBox, flipping inward at the edge like the cleaner figures.
+    const bt = hov(edgeText({
+      x: 2, y: benchY, anchor: 'start', viewW: w, pad: 2, fontPx: 9.5, cls: 'dn-funnel-bench',
+      text: `▸ vs champion v0 = ${fitLabel(benchId, 18 * 9.5 * CHAR_EM, 9.5)} · every Δ is vs v0`,
+    }), `champion v0 = ${benchId} · the field is raced vs this benchmark; every Δ is vs v0 · v0 defends at the champion-gate`);
     svg.appendChild(bt);
   }
   const midY = top + laneH / 2;
@@ -1073,6 +1076,10 @@ export function survivalFunnel(opts) {
   // ── the flowing band: one trapezoid per stage, narrowing at each cut ──
   // entering width = |competitors|; leaving width = |survivors| (the field
   // carried to the next stage). A pending (live, undecided) stage keeps a
+  // A short CONNECTOR (dn-funnel-link) bridges each rung's leave-edge into the
+  // next rung's enter-edge across the stage gap, so the discrete trapezoids read
+  // as ONE converging silhouette rather than stepped blocks.
+  let prevGeo = null;
   rungs.forEach((rung, j) => {
     // the FULL entering field of this rung (every lane racing it), per the shared
     // contract: live_progress keys ∪ competitors ∪ survivors/cut, minus the
@@ -1088,21 +1095,37 @@ export function survivalFunnel(opts) {
     const x1 = x0 + stageW;
     const hIn = bandHalf(enterN);
     const hOut = bandHalf(leaveN);
+    // the inter-rung connector: a trapezoid from the previous rung's leave-edge
+    // (x1_prev, ±hOut_prev) to this rung's enter-edge (x0, ±hIn), filling the
+    // stage gap so the funnel converges as one continuous shape. Drawn behind
+    // the bands (a separate class → it never perturbs the band-polygon count).
+    if (prevGeo) {
+      svg.appendChild(svgEl('polygon', {
+        points: `${prevGeo.x1},${midY - prevGeo.hOut} ${x0},${midY - hIn} ${x0},${midY + hIn} ${prevGeo.x1},${midY + prevGeo.hOut}`,
+        class: 'dn-funnel-link' + (prevGeo.pending || pending ? ' dn-funnel-link-pending' : ''),
+      }));
+    }
     const cls = 'dn-funnel-band' + (pending ? ' dn-funnel-pending' : '');
     // a trapezoid: left edge full enter-height, right edge narrowed to leave-height.
     svg.appendChild(hov(svgEl('polygon', {
       points: `${x0},${midY - hIn} ${x1},${midY - hOut} ${x1},${midY + hOut} ${x0},${midY + hIn}`,
       class: cls,
     }), `${rung.label || 'rung ' + j}: ${enterN} in → ${pending ? '…' : leaveN + ' survive'}${isNum(rung.board_fraction) ? ` · ${(rung.board_fraction * 100).toFixed(0)}% board` : ''}`));
+    prevGeo = { x1, hOut, pending };
     // stage label + board fraction above the band — on the dedicated header /
-    // sub baselines (headY / subY), CENTRED on this stage's column x, so they
-    // never overlap each other, an adjacent column, or the benchmark line.
-    const head = svgEl('text', { x: x0 + stageW / 2, y: headY, class: 'dn-funnel-head', 'text-anchor': 'middle' });
-    head.textContent = shortLabel(rung.label || `Rung ${j}`, 16);
-    svg.appendChild(head);
-    const sub = svgEl('text', { x: x0 + stageW / 2, y: subY, class: 'dn-funnel-sub', 'text-anchor': 'middle' });
-    sub.textContent = `${enterN} field` + (isNum(rung.board_fraction) ? ` · ${(rung.board_fraction * 100).toFixed(0)}/100 board` : '');
-    svg.appendChild(sub);
+    // sub baselines (headY / subY), CENTRED on this stage's column x, routed
+    // through the fit primitives so a long label truncates to the stage column
+    // and stays inside the viewBox (no hand-clamp). The sub is the fainter,
+    // secondary tier (dn-funnel-sub), matching swissLadder's label discipline.
+    svg.appendChild(fitInto({
+      x: x0 + stageW / 2, y: headY, anchor: 'middle', viewW: w, pad: 2,
+      maxPx: stageW - 8, fontPx: 10, cls: 'dn-funnel-head', text: rung.label || `Rung ${j}`,
+    }));
+    svg.appendChild(fitInto({
+      x: x0 + stageW / 2, y: subY, anchor: 'middle', viewW: w, pad: 2,
+      maxPx: stageW - 8, fontPx: 9.5, cls: 'dn-funnel-sub',
+      text: `${enterN} field` + (isNum(rung.board_fraction) ? ` · ${(rung.board_fraction * 100).toFixed(0)}/100 board` : ''),
+    }));
 
     // ── the surviving runners ride INSIDE the band (↑), clickable ──
     // a LIVE racing rung carries a per-lane `live_progress` map; an active
@@ -1189,12 +1212,16 @@ export function survivalFunnel(opts) {
       class: 'dn-funnel-band dn-funnel-gateflow' + (crowned ? ' dn-good' : ''),
     }));
   }
-  const gHead = svgEl('text', { x: gx + gateW / 2, y: headY, class: 'dn-funnel-head', 'text-anchor': 'middle' });
-  gHead.textContent = 'champion-gate';
-  svg.appendChild(gHead);
-  const gSub = svgEl('text', { x: gx + gateW / 2, y: subY, class: 'dn-funnel-sub', 'text-anchor': 'middle' });
-  gSub.textContent = benchId ? 'full board · vs champion v0' : 'full board · vs champion';
-  svg.appendChild(gSub);
+  // the gate head/sub are fixed captions (not column-bounded), routed through
+  // edgeText so they stay viewbox-safe without truncating the "vs champion v0".
+  svg.appendChild(edgeText({
+    x: gx + gateW / 2, y: headY, anchor: 'middle', viewW: w, pad: 2, fontPx: 10,
+    cls: 'dn-funnel-head', text: 'champion-gate',
+  }));
+  svg.appendChild(edgeText({
+    x: gx + gateW / 2, y: subY, anchor: 'middle', viewW: w, pad: 2, fontPx: 9.5,
+    cls: 'dn-funnel-sub', text: benchId ? 'full board · vs champion v0' : 'full board · vs champion',
+  }));
 
   const clickId = champId || seatId;
   const gateG = svgEl('g', { class: 'dn-funnel-gate', tabindex: (clickId && o.onCompetitor) ? '0' : null });
@@ -1218,8 +1245,10 @@ export function survivalFunnel(opts) {
     label = 'tbd';
     tip = 'awaiting the final survivor';
   }
-  const gt = hov(svgEl('text', { x: gx + gateW / 2, y: midY + 4, class: 'dn-funnel-gatelab' + (crowned ? ' dn-good' : ''), 'text-anchor': 'middle' }), tip);
-  gt.textContent = label;
+  const gt = hov(fitInto({
+    x: gx + gateW / 2, y: midY + 4, anchor: 'middle', viewW: w, pad: 2, maxPx: gateW - 10, fontPx: 11,
+    cls: 'dn-funnel-gatelab' + (crowned ? ' dn-good' : ''), text: label,
+  }), tip);
   gateG.appendChild(gt);
   clickable(gateG, (clickId && o.onCompetitor) && (() => o.onCompetitor(clickId)));
   svg.appendChild(gateG);
@@ -1262,7 +1291,9 @@ function funnelRunner(svg, o, sid, rung, j, x, cy, verdict, lane, barW, cap) {
   // A projected lane draws it in the projected (dashed/amber) treatment; a plain
   // live lane keeps the accent in-flight bar.
   if (lane && (lane.inflight || lane.done || projected)) {
-    const bw = Math.max(20, barW || 80);
+    // thin the sub-bar to the racingScalarTrack sub-bar weight (~40-48px) rather
+    // than letting it span the whole band — a quieter in-flight cue.
+    const bw = Math.min(48, Math.max(20, barW || 80));
     // prefer the scored boards_done/boards_total when present (the projected
     // standing's own progress); else the live activeRuns done/total tally.
     const sd = isNum(lane.boards_done) ? lane.boards_done : lane.done;
