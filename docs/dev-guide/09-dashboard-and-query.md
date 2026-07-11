@@ -438,7 +438,9 @@ That inference is now server-side (§9.11); the JS renders the verdict
 verbatim.
 
 **Elim gen-states (ex-`elimFlow` per-render derivation).** The bracket
-figures (`svg.js` `elimFlow`, and the retired radial twin) each used to
+figures — `svg.js` `elimFlow` (the lane-flow read) and its `elimRadial`
+twin (the concentric-ring read; single_elim's primary + double_elim's
+optional toggle) — each used to
 derive the whole elimination model *per render*: re-sorting the mis-ordered
 `winners.concat(losers)` columns their caller handed them, de-duplicating
 backend-duplicated matches, classifying every loss as an *elimination* vs a
@@ -472,12 +474,15 @@ This one is the model example of the doctrine's hardest form: the fold is
 served by BOTH servers, so it ships **twice** — the Python `derive_elim_states`
 and the Rust `elim_states.rs` port — pinned isomorphic by the shared
 `tests/data/elim_states_fixture.json` (a Python↔Rust parity fixture, not a
-client golden). A client-side re-derivation fallback is *forbidden*: `elimFlow`
-now renders `gen_states` verbatim, having dropped its ~100 derivation lines +
-the caller re-sort + the dedupe + the elimination-vs-drop pass + the phantom-✕
-guards. Every one of those guards existed only because the payload was
-under-specified; serving the model retired the whole family at once
-(12-bug-casebook.md).
+client golden). A client-side re-derivation fallback is *forbidden*: BOTH
+bracket renderers — `elimFlow` (lane-flow) and `elimRadial` (concentric
+rings) — now render `gen_states` verbatim, having dropped the ~100 derivation
+lines + the caller re-sort + the dedupe + the elimination-vs-drop pass + the
+phantom-✕ guards. Every one of those guards existed only because the payload
+was under-specified; serving the model retired the whole family at once
+(12-bug-casebook.md). (`elimRadial` was briefly cut as a redundant figure and
+then restored by operator veto — it kept its served-model reads across the
+round-trip, so the "server computes, client renders" contract holds for both.)
 
 The tell that a join moved server-side but the CLIENT still cross-checks it
 is the node `mock_server.mjs`, which re-derives the two served joins from

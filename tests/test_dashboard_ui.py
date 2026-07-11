@@ -523,7 +523,16 @@ def test_bundle_under_size_envelope(
     # scoped dn-instr-* CSS — ~22 KB. Each wave's raise accounted only for its
     # own additions, so the merged program needs the union: the envelope is
     # raised to 1.35 MB to cover both with headroom.
-    assert total < 1_350_000, f"bundle is {total} bytes, exceeds 1_350_000 envelope"
+    #
+    # The ELIM-RADIAL RESTORE then brings back the concentric-ring bracket figure
+    # the U4 cut (C1) had retired: svg.elimRadial + elimRadialDigest, the
+    # dn-elimradial-* + dt-fig-switch CSS, the svg.dn-elimradial-hero cap, and the
+    # structure.js radial-primary/flow-companion + double-elim combo/radial toggle
+    # arrangements. The C1 cut was VETOED after the fact — the operator kept
+    # elimRadial as a visual — so the ~6 KB of source/CSS comes back (now reading
+    # the SERVED gen_states verbatim, no client re-derivation). The envelope is
+    # raised to 1.37 MB to cover it with headroom.
+    assert total < 1_370_000, f"bundle is {total} bytes, exceeds 1_370_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

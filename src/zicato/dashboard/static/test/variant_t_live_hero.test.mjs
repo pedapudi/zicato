@@ -271,7 +271,7 @@ test('live hero: a LIVE SWISS tournament shows the SWISS LADDER + round-based pr
 
 // a LIVE single-elim tournament for the current epoch — bracket, NO funnel.
 // the served live payload carries gen_states (attach_elim_states on the server;
-// elimFlow renders the SERVED model verbatim per U3 — the old radial self-derived).
+// the radial renders the SERVED model verbatim per U3 — no client re-derivation).
 const HERO_LIVE_ELIM_E3 = attachElimStates({
   structure: 'single_elim', phase: 'running', epoch_id: HERO_EPOCH,
   structure_params: { board_size: 4 },
@@ -292,7 +292,7 @@ const HERO_LIVE_ELIM_E3 = attachElimStates({
   standings: [],
 });
 
-test('live hero: a LIVE SINGLE-ELIM tournament renders the elimFlow bracket, NOT the racing track or swiss ladder', () => {
+test('live hero: a LIVE SINGLE-ELIM tournament renders the RADIAL bracket, NOT the racing track or swiss ladder', () => {
   try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
   coreState.state.connected = true; coreState.state.connecting = false;
   coreState.state.setHeartbeat({ phase: 'tournament:round_0', generation_id: 'v1', epoch_id: HERO_EPOCH });
@@ -300,10 +300,9 @@ test('live hero: a LIVE SINGLE-ELIM tournament renders the elimFlow bracket, NOT
   coreState.state.activeTournament = HERO_LIVE_ELIM_E3;
 
   const root = mountLiveShell('#/');
-  // single_elim hero is the elimFlow lane read (the radial was retired, C1).
-  const bracket = svgsByClass(root, 'dn-elimflow')[0];
-  assert(bracket, 'the live single-elim elimFlow bracket rendered in the hero');
-  assertEqual(svgsByClass(root, 'dn-elimradial').length, 0, 'the radial figure is retired (C1)');
+  // single_elim hero is the concentric-ring RADIAL (the single-round primary).
+  const bracket = svgsByClass(root, 'dn-elimradial')[0];
+  assert(bracket, 'the live single-elim radial bracket rendered in the hero');
   assertEqual(svgsByClass(root, 'dn-elimbracket').length, 0, 'the seat/box bracket tree is retired');
   assertEqual(svgsByClass(root, 'dn-scalartrack').length, 0, 'NO racing scalar track for a LIVE elim tournament');
   assertEqual(svgsByClass(root, 'dn-swissladder').length, 0, 'NO swiss ladder for a LIVE elim tournament');
@@ -335,7 +334,7 @@ test('live hero: racing STILL renders the scalar track (no swiss/elim regression
   coreState.state.activeTournament = foreignElim;
   root = mountLiveShell('#/');
   assertEqual(svgsByClass(root, 'dn-elimbracket').length, 0, 'NO elim bracket for a foreign-epoch tournament while the current epoch proposes');
-  assertEqual(svgsByClass(root, 'dn-elimflow').length, 0, 'NO elim flow either for a foreign-epoch tournament while proposing');
+  assertEqual(svgsByClass(root, 'dn-elimradial').length, 0, 'NO elim radial either for a foreign-epoch tournament while proposing');
   assertEqual(svgsByClass(root, 'dn-funnel').length, 0, 'no funnel either — honest empty');
   assert(allByClass(root, 'dt-live-hero-nofunnel').length >= 1, 'the hero shows the honest proposing/empty state');
   const heroText = (allByClass(root, 'dt-live-hero')[0] || {}).textContent || '';

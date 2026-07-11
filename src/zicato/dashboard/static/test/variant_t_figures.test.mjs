@@ -672,8 +672,7 @@ function pinnedAspect(node) {
   return m ? [Number(m[1]), Number(m[2])] : null;
 }
 
-// the structure builders + the opts that produce a non-empty figure (the
-// elimRadial builder was retired in C1).
+// the eight structure builders + the opts that produce a non-empty figure.
 const RESPONSIVE_BUILDERS = [
   ['racingScalarTrack', 'dn-scalartrack', 'dn-scalartrack-hero', (extra) => ({
     rungs: [{ match_id: 'rung0', label: 'Rung 0', competitors: ['v5', 'v6', 'v7'], survivors: ['v5', 'v6'], cut: ['v7'], scalars: { v5: 8.1, v6: 8.4, v7: 9.9 } }],
@@ -685,6 +684,10 @@ const RESPONSIVE_BUILDERS = [
   })],
   ['elimFlow', 'dn-elimflow', 'dn-elimflow-hero', (extra) => ({
     winners: [{ label: 'R0', round_index: 0, matches: [{ match_id: 'm0', competitors: ['v1', 'v2'], winner: 'v1' }] }],
+    championId: 'v1', benchmarkId: 'v0', gateState: 'crowned', ...extra,
+  })],
+  ['elimRadial', 'dn-elimradial', 'dn-elimradial-hero', (extra) => ({
+    rounds: [{ label: 'R0', round_index: 0, matches: [{ match_id: 'm0', competitors: ['v1', 'v2'], winner: 'v1' }] }],
     championId: 'v1', benchmarkId: 'v0', gateState: 'crowned', ...extra,
   })],
   ['gauntletFieldBars', 'dn-fieldbars', 'dn-fieldbars-hero', (extra) => ({
@@ -1160,6 +1163,42 @@ test('H5: swissLadder in-flight pairing keeps the primary label to `a v b` — t
   assert(allByClass(node, 'dn-swissladder-bar-live')[0], 'the in-flight pairing still shows its live progress bar');
 });
 
+test('elimRadial H6: cardinal-E/W spoke labels never overrun the viewBox (horizontal extent clamped inside the box, not just the radial labelPad)', () => {
+  // Eight distinct 8-char ids in one round ⇒ eight evenly-spaced spokes, so two
+  // land at EXACTLY cardinal East (frac .25) and West (frac .75) where the label
+  // origin sits at cx ± (R-ish) and `text-anchor:start/end` grows the text
+  // horizontally past the box. Before the fix the East 8-char label runs to ~358
+  // (W=340) and the West label clips at x<0; the radial labelPad never bounds it.
+  // The radial reads the SERVED model (rounds + gen_states) verbatim, so the
+  // fixture is enriched via deriveElimStates the way the server does.
+  const ids = ['genaaaaa', 'genbbbbb', 'genccccc', 'genddddd', 'geneeeee', 'genfffff', 'genggggg', 'genhhhhh'];
+  const matches = [];
+  for (let i = 0; i < ids.length; i += 2) matches.push({ match_id: 'm' + i, competitors: [ids[i], ids[i + 1]], winner: ids[i] });
+  const served = mock.deriveElimStates([{ label: 'R0', round_index: 0, matches }]);
+  const node = svg.elimRadial({
+    rounds: served.rounds, gen_states: served.gen_states,
+    championId: ids[0], benchmarkId: 'v0', gateState: 'crowned',
+  });
+  const W = Number((node.getAttribute('viewBox') || '0 0 0 0').split(/\s+/)[2]);
+  assert(W > 0, 'the radial figure keeps a numeric viewBox width');
+  const labels = allByClass(node, 'dn-elimradial-name');
+  assert(labels.length >= 8, `every spoke renders a name label — got ${labels.length}`);
+  // 9px mono ⇒ ~0.6em/char; reproduce the rendered horizontal span [x0,x1].
+  const charW = 5.4;
+  let worst = null;
+  for (const t of labels) {
+    const x = Number(t.getAttribute('x'));
+    const anchor = t.getAttribute('text-anchor') || 'start';
+    const w = (t.textContent || '').length * charW;
+    const x0 = anchor === 'end' ? x - w : anchor === 'middle' ? x - w / 2 : x;
+    const x1 = anchor === 'end' ? x : anchor === 'middle' ? x + w / 2 : x + w;
+    if (worst == null || x0 < worst.x0 || x1 > worst.x1) worst = { id: (t.textContent || '').trim(), anchor, x0, x1 };
+    // FAILS before the fix on the cardinal-E (x1>W) and cardinal-W (x0<0) spokes.
+    assert(x0 >= -0.01 && x1 <= W + 0.01,
+      `spoke label '${(t.textContent || '').trim()}' (anchor=${anchor}) stays inside the box: [${x0.toFixed(1)}, ${x1.toFixed(1)}] within [0, ${W}]`);
+  }
+});
+
 test('H7: swissLadder standings — a crowded double-digit rank (crown + ~proj) shrinks the id so it never overlaps the right-anchored points value', () => {
   // Ten competitors → the 10th row carries a TWO-digit rank. Make it the
   // champion (crown) AND projected (` ~proj`) with an exactly-9-char id — the
@@ -1276,6 +1315,100 @@ test('waterfall H10: on an improved step the crown ♛ is lifted clear of the fl
     // the crown is ABOVE the label (smaller y) by a clear margin so the ♛ does
     // not overprint the floor number (old gap was 2px; this requires ≥ 8px).
     assert(flY - crY >= 8, `the crown clears the floor label at cx=${cx} (gap ${(flY - crY).toFixed(1)}px ≥ 8)`);
+  });
+});
+
+test('elimRadial double-elim: a WB->LB transfer arc STARTS at the source WB node angle (the equator-mirror of the LB node), not a bare constant-offset rim point', () => {
+  // v3 loses in the WB (R0) then drops into an LB-slotted match (R1) and loses
+  // again — so its spoke sits on the LB (lower) arc and it qualifies as a drop.
+  // The radial reads the SERVED gen_states verbatim, so the fixture is enriched
+  // via deriveElimStates (the WB/LB side + drop classification are the server's).
+  const served = mock.deriveElimStates([
+    { label: 'R0', round_index: 0, matches: [{ match_id: 'm0', competitors: ['v1', 'v3'], winner: 'v1' }] },
+    { label: 'LB1', round_index: 1, matches: [{ match_id: 'm1', bracket_slot: 'LB1', competitors: ['v3', 'v2'], winner: 'v2' }] },
+  ]);
+  const node = svg.elimRadial({
+    double: true, rounds: served.rounds, gen_states: served.gen_states,
+    championId: 'v1', benchmarkId: 'v0', gateState: 'crowned',
+  });
+  // default (non-mini) elimRadial: sz=340 -> cx=cy=170 (the equator is y=cy).
+  const cx = 170; const cy = 170;
+  const arcs = allByClass(node, 'dn-elimradial-transfer');
+  assert(arcs.length >= 1, `at least one WB->LB transfer arc renders for the dropped lane — got ${arcs.length}`);
+  const d = arcs[0].getAttribute('d') || '';
+  // d = `M{fx} {fy} A{r} {r} 0 {large} 1 {tx} {ty}`
+  const m = d.match(/^M([\-0-9.]+) ([\-0-9.]+) A[0-9.]+ [0-9.]+ 0 \d+ \d+ ([\-0-9.]+) ([\-0-9.]+)$/);
+  assert(m, `transfer arc path parses (got d=${JSON.stringify(d)})`);
+  const fx = Number(m[1]); const fy = Number(m[2]); const tx = Number(m[3]); const ty = Number(m[4]);
+  // the LB node (arc TARGET) is on the lower half; its source WB node is the
+  // reflection across the equator: same x, mirrored y. The pre-fix constant
+  // -18deg offset breaks BOTH (cos(a-18) != cos(a), and fy stays below cy).
+  assert(ty > cy, `sanity: the LB node target is on the lower (LB) arc, y>cy (ty=${ty}, cy=${cy})`);
+  assert(fy < cy, `the arc START is on the upper (WB) arc — its source WB node — not the LB-side rim (fy=${fy}, cy=${cy})`);
+  assert(Math.abs(fx - tx) < 0.2, `the WB source node sits directly above the LB node: start x mirrors target x (fx=${fx}, tx=${tx})`);
+  assert(Math.abs((fy - cy) + (ty - cy)) < 0.2, `the start y is the equator-reflection of the target y (fy-cy=${(fy - cy).toFixed(2)}, ty-cy=${(ty - cy).toFixed(2)})`);
+});
+
+test('elimRadial double-elim: EVERY WB→LB transfer arc ANCHORS on real nodes — both endpoints sit on the outer node ring and the arc ENDS exactly on its LB re-entry node; the connector never floats out on a staggered rim (regression: floating demotion edges)', () => {
+  // The WB→LB demotion connector MUST visibly connect the two matches it links:
+  // an edge whose endpoints land where NO node is drawn floats in empty space.
+  // The pre-fix bug: each transfer arc placed BOTH its endpoints on a per-drop
+  // STAGGERED rim radius `stagger = rr(0) + li*step`, OUTSIDE the outer node ring.
+  // Only the first drop (li=0, stagger == rr(0)) happened to land on the ring; the
+  // SECOND-and-later drops began and ended a few px OUTSIDE it — detached from both
+  // the source-mirror and the destination LB node. So this fixture forces THREE
+  // drops (v2 + v4 off WB-R0, v3 off WB-R1) — the extra arcs are exactly the ones
+  // the old code floated. Served model (deriveElimStates) drives the side/drop read.
+  const served = mock.deriveElimStates([
+    { round_index: 0, label: 'R0', matches: [
+      { competitors: ['v1', 'v2'], winner: 'v1', bracket_slot: 'WB-R0-0' },
+      { competitors: ['v3', 'v4'], winner: 'v3', bracket_slot: 'WB-R0-1' },
+    ] },
+    { round_index: 1, label: 'R1', matches: [
+      { competitors: ['v1', 'v3'], winner: 'v1', bracket_slot: 'WB-R1-0' },
+    ] },
+    { round_index: 2, label: 'LB2', matches: [
+      { competitors: ['v2', 'v4'], winner: 'v2', bracket_slot: 'LB-R2-0' },
+    ] },
+    { round_index: 3, label: 'LB3', matches: [
+      { competitors: ['v2', 'v3'], winner: 'v2', bracket_slot: 'LB-R3-0' },
+    ] },
+  ]);
+  const node = svg.elimRadial({
+    double: true, rounds: served.rounds, gen_states: served.gen_states,
+    championId: 'v2', benchmarkId: 'v0', gateState: 'crowned',
+  });
+  // default (non-mini) elimRadial: sz=340 → cx=cy=170 (the figure center).
+  const cx = 170, cy = 170;
+  // the real, rendered node anchors + the outer node ring rr(0) = the max node
+  // distance from center (every spoke draws its k=0 node on that ring).
+  const nodePts = allByClass(node, 'dn-elimradial-node').map((n) => ({ x: Number(n.getAttribute('cx')), y: Number(n.getAttribute('cy')) }));
+  assert(nodePts.length > 0, 'the radial renders node anchors');
+  const nodeR = Math.max(...nodePts.map((p) => Math.hypot(p.x - cx, p.y - cy)));
+  const onANode = (p) => nodePts.some((q) => Math.hypot(p.x - q.x, p.y - q.y) < 0.6);
+
+  const arcs = allByClass(node, 'dn-elimradial-transfer');
+  assert(arcs.length >= 2, `≥2 WB→LB transfer arcs render for a multi-drop bracket — the pre-fix float only surfaced on the 2nd+ arc (got ${arcs.length})`);
+
+  arcs.forEach((arc, k) => {
+    const d = arc.getAttribute('d') || '';
+    // d = `M{fx} {fy} A{r} {r} 0 {large} {sweep} {tx} {ty}`
+    const m = d.match(/^M([\-0-9.]+) ([\-0-9.]+) A[0-9.]+ [0-9.]+ 0 \d+ \d+ ([\-0-9.]+) ([\-0-9.]+)$/);
+    assert(m, `transfer arc #${k} path parses (d=${JSON.stringify(d)})`);
+    const start = { x: Number(m[1]), y: Number(m[2]) };
+    const end = { x: Number(m[3]), y: Number(m[4]) };
+    const startR = Math.hypot(start.x - cx, start.y - cy);
+    const endR = Math.hypot(end.x - cx, end.y - cy);
+    // (1) BOTH endpoints ON the outer node ring — never a staggered rim outside it.
+    assert(Math.abs(startR - nodeR) < 0.6, `arc #${k} START is ON the outer node ring (r=${startR.toFixed(1)} vs rr0=${nodeR.toFixed(1)}), not floating on a rim outside it`);
+    assert(Math.abs(endR - nodeR) < 0.6, `arc #${k} END is ON the outer node ring (r=${endR.toFixed(1)} vs rr0=${nodeR.toFixed(1)}), not floating on a rim outside it`);
+    // (2) the DESTINATION coincides EXACTLY with a real LB re-entry node — the edge
+    // visibly connects its target node (which always exists), never floats near it.
+    assert(onANode(end), `arc #${k} END (${end.x.toFixed(1)},${end.y.toFixed(1)}) coincides with a rendered LB node anchor — the destination exists and the arc terminates ON it`);
+    // (3) the source stays the equator-mirror of the destination (design intent):
+    // same x, y reflected across the equator — so the connector reads WB→LB.
+    assert(Math.abs(start.x - end.x) < 0.2 && Math.abs((start.y - cy) + (end.y - cy)) < 0.2,
+      `arc #${k} START is the equator-mirror of its END (WB source above ↔ LB node below)`);
   });
 });
 
