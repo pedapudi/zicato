@@ -447,104 +447,70 @@ test('survival funnel: the SVG narrows N→…→1, marks cuts ✕ / survivors �
   assertEqual(node.getAttribute('width'), '100%', 'fit-to-width (width:100%)');
   assert((node.getAttribute('viewBox') || '').startsWith('0 0 '), 'carries a responsive viewBox (no pan/zoom)');
 
-  // the flow narrows: each stage is a trapezoid whose right edge ∝ survivors.
-  const bands = node.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('dn-funnel-band') && n.localName === 'polygon');
-  assert(bands.length >= 2, 'one flowing band per rung (the field narrows stage to stage)');
+  // the DOT LADDER: a dot per competitor alive entering each rung (rung0 4 +
+  // rung1 2), replacing the old per-rung band polygon.
+  const dots = node.querySelectorAll('[class]').filter((n) => n.localName === 'circle' && (n.getAttribute('class') || '').split(/\s+/).includes('dn-funnel-dot'));
+  assert(dots.length >= 6, `a dot per competitor entering each rung (rung0 4 + rung1 2) — got ${dots.length}`);
   const txt = node.textContent;
   assert(txt.includes('Rung 0') && txt.includes('Rung 1'), 'each stage is labelled by rung');
   assert(txt.includes('25/100 board') || txt.includes('25'), 'a stage encodes its board fraction (successive halving reads)');
   assert(txt.includes('✕'), 'eliminated competitors are marked cut (✕)');
   assert(txt.includes('↑'), 'survivors are marked (↑)');
-  // every cut competitor peels off as a labelled dead-end branch.
-  const deadEdges = node.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('dn-funnel-deadedge'));
-  assert(deadEdges.length >= 3, 'eliminated competitors peel off as dead-end branches (v1,v2 at rung0 + v4 at rung1)');
+  // every cut competitor drops a ✕ at its cut rung (the dead-end branch idiom).
+  const cutMarks = node.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dn-funnel-cut'));
+  assert(cutMarks.length >= 3, 'each eliminated competitor drops a ✕ (v1,v2 at rung0 + v4 at rung1)');
   // the terminal champion-gate crowns the survivor.
   assert(txt.includes('champion-gate'), 'a terminal champion-gate stage rendered');
   assert(txt.includes('♛ v3'), 'the crowned survivor is shown (♛ v3)');
   assert(!txt.includes('tbd'), 'a settled gate is not the empty tbd skeleton');
 });
 
-// REGRESSION: the eliminated dead-end branches must START on the band's lower
-// edge (peel off the funnel) — NOT at the wide-edge depth `midY+hIn` placed at
-// the middle x, which leaves each connector dangling below the band in empty
-// space. Recompute the band's lower-edge y at the elbow x and assert the path
-// touches it; assert cut rows don't overlap; assert each stage's cuts anchor to
-// THAT stage's x-range.
-test('survival funnel: dead-end branches anchor ON the band lower edge at the elbow x (no detached cut connectors), per-stage + non-overlapping', () => {
+// The DOT-LADDER redesign: the WINNER lane is emphasised end-to-end
+// (dn-funnel-win) and its spline reaches the champion-gate; each cut drops a ✕
+// at its rung dot and grows no forward spline; the ladder draws NO band polygons.
+// (Replaces the old band-lower-edge dead-end-branch geometry pin — the bands are
+// gone; the survival signal is now the continuing/converging spline.)
+test('survival funnel: the WINNER lane is emphasised end-to-end + reaches the gate; cuts drop a ✕ and grow no forward spline; NO band polygons', () => {
   const rungs = [
     { label: 'Rung 0', competitors: ['v1', 'v2', 'v3', 'v4'], survivors: ['v3', 'v4'], cut: ['v1', 'v2'], board_fraction: 0.25, deltas: { v1: 25, v2: 3.3, v3: -0.16, v4: 0.002 } },
     { label: 'Rung 1', competitors: ['v3', 'v4'], survivors: ['v3'], cut: ['v4'], board_fraction: 0.5, deltas: { v3: 1.0, v4: 1.25 } },
   ];
   const node = svg.survivalFunnel({ rungs, championId: 'v3', gateState: 'crowned', gateDelta: -32.19, onCompetitor() {} });
 
-  // mirror the renderer's geometry constants (svg.js survivalFunnel).
-  const stageW = 150, stageGap = 20, top = 56, laneH = 132, deadH = 18;
-  const midY = top + laneH / 2;
-  const stageX = (j) => j * (stageW + stageGap) + 2;
-  const field0 = Math.max(1, rungs[0].competitors.length);
-  const bandHalf = (n) => Math.max(6, (laneH / 2) * (Math.max(0, n) / field0));
+  // the champion-gate seat x, mirrored from the renderer (svg.js survivalFunnel).
+  const stageW = 150, stageGap = 20;
+  const gx = rungs.length * stageW + Math.max(0, rungs.length - 1) * stageGap + stageGap + 2;
+  const top = 56, laneH = 132, midY = top + laneH / 2;
 
-  // expected start point of each cut branch: ON the band's lower edge at elbowX.
-  const expected = []; // {x, y, stageX0, stageX1, branchY}
-  rungs.forEach((rung, j) => {
-    const x0 = stageX(j);
-    const x1 = x0 + stageW;
-    const hIn = bandHalf(rung.competitors.length);
-    const hOut = bandHalf(rung.survivors.length);
-    rung.cut.forEach((_cid, i) => {
-      const elbowX = x0 + stageW * 0.5;
-      const f = (elbowX - x0) / stageW;
-      const edgeY = midY + hIn + (hOut - hIn) * f;
-      const branchY = top + laneH + 6 + i * deadH;
-      expected.push({ x: elbowX, y: edgeY, x0, x1, branchY, stage: j });
-    });
+  // the winner v3's lane carries the emphasis class end-to-end.
+  const lanes = node.querySelectorAll('[class]')
+    .filter((n) => n.localName === 'g' && (n.getAttribute('class') || '').split(/\s+/).includes('dn-funnel-runner'));
+  const win = lanes.find((g) => (g.getAttribute('class') || '').split(/\s+/).includes('dn-funnel-win'));
+  assert(win, 'the crowned survivor v3 lane carries the dn-funnel-win emphasis');
+  assert((win.textContent || '').trim().startsWith('v3'), 'the emphasised lane is v3');
+
+  // the winner's spline reaches the champion-gate seat (its last point x ≈ gx).
+  const winSplines = win.querySelectorAll('[class]')
+    .filter((n) => n.localName === 'path' && (n.getAttribute('class') || '').split(/\s+/).includes('dn-funnel-spline'));
+  assert(winSplines.length >= 1, 'the winner lane draws converging splines');
+  const reachesGate = winSplines.some((p) => {
+    const m = (p.getAttribute('d') || '').match(/([-\d.]+),([-\d.]+)\s*$/);
+    return m && Math.abs(parseFloat(m[1]) - gx) < 1.0 && Math.abs(parseFloat(m[2]) - midY) < 1.0;
   });
+  assert(reachesGate, `the winner's spline reaches the champion-gate seat at (x≈${gx}, y≈${midY})`);
 
-  const deadEdges = node.querySelectorAll('[class]')
-    .filter((n) => (n.getAttribute('class') || '').includes('dn-funnel-deadedge'));
-  assertEqual(deadEdges.length, expected.length, 'one dead-end branch per cut (v1,v2 @ rung0 + v4 @ rung1)');
+  // each cut drops exactly one ✕ (v1,v2 @ rung0 + v4 @ rung1) and NO band polygon
+  // is drawn (the redesign removed the trapezoid bands).
+  const cutMarks = node.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dn-funnel-cut'));
+  assertEqual(cutMarks.length, 3, 'one ✕ per cut (v1,v2 @ rung0 + v4 @ rung1)');
+  const bands = node.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dn-funnel-band'));
+  assertEqual(bands.length, 0, 'the dot ladder draws NO band polygons');
 
-  // parse the "M x,y V branchY H stub" start point out of each path's d.
-  const starts = deadEdges.map((p) => {
-    const d = p.getAttribute('d') || '';
-    const m = d.match(/^M\s*([-\d.]+),([-\d.]+)\s*V\s*([-\d.]+)/);
-    assert(m, `dead-edge path is "M x,y V ..." (got: ${d})`);
-    return { x: parseFloat(m[1]), y: parseFloat(m[2]), branchY: parseFloat(m[3]) };
-  }).sort((a, b) => a.y - b.y || a.x - b.x);
-  const exp = expected.slice().sort((a, b) => a.y - b.y || a.x - b.x);
-
-  const TOL = 0.01;
-  exp.forEach((e, i) => {
-    const s = starts[i];
-    // THE FIX: the connector touches the band's lower edge (not midY+hIn at the
-    // middle). At elbowX the lower edge is HIGHER than midY+hIn whenever the band
-    // narrows (hOut<hIn), so the buggy start y would be strictly below this.
-    assert(Math.abs(s.x - e.x) < TOL, `branch ${i} starts at the elbow x (${e.x}); got ${s.x}`);
-    assert(Math.abs(s.y - e.y) < TOL, `branch ${i} starts ON the band lower edge y=${e.y.toFixed(3)} (touches the band), got ${s.y.toFixed(3)}`);
-    assert(Math.abs(s.branchY - e.branchY) < TOL, `branch ${i} drops to its cut row branchY=${e.branchY}; got ${s.branchY}`);
-  });
-
-  // the buggy anchor (midY+hIn at the elbow) sat BELOW the true edge for the
-  // narrowing rung-0 band — assert we are not regressing to it.
-  const rung0hIn = bandHalf(rungs[0].competitors.length);
-  const rung0Buggy = midY + rung0hIn;
-  const rung0Edge = exp.find((e) => e.stage === 0).y;
-  assert(rung0Edge < rung0Buggy - TOL, 'sanity: the band lower edge at the elbow is ABOVE the old midY+hIn anchor (so the old code left a gap)');
-  starts.forEach((s, i) => assert(Math.abs(s.y - rung0Buggy) > TOL || exp[i].stage !== 0, 'no rung-0 branch anchors at the stale midY+hIn depth'));
-
-  // cut rows do not overlap: distinct branchY values stepped by deadH within a stage.
-  const byStage = {};
-  exp.forEach((e) => { (byStage[e.stage] ||= []).push(e.branchY); });
-  Object.values(byStage).forEach((ys) => {
-    const uniq = new Set(ys);
-    assertEqual(uniq.size, ys.length, 'cut rows within a stage have distinct branchY (no overlap)');
-    ys.slice().sort((a, b) => a - b).forEach((y, k, arr) => { if (k) assert(arr[k] - arr[k - 1] >= deadH - TOL, 'consecutive cut rows are spaced ≥ deadH apart'); });
-  });
-
-  // each stage's cuts anchor to THAT stage's x-range (no drift into the gap).
-  exp.forEach((e, i) => {
-    assert(e.x >= e.x0 - TOL && e.x <= e.x1 + TOL, `branch ${i} (stage ${e.stage}) anchors within its own stage's x-range [${e.x0}, ${e.x1}]`);
-  });
+  // the dots converge toward the vertical centre: the entering rung spreads its
+  // dots off midY (a real spread, not a stack).
+  const dots = node.querySelectorAll('[class]').filter((n) => n.localName === 'circle' && (n.getAttribute('class') || '').split(/\s+/).includes('dn-funnel-dot'));
+  const spread = Math.max(...dots.map((c) => Math.abs(parseFloat(c.getAttribute('cy')) - midY)));
+  assert(spread > 6, `the entering rung spreads its dots vertically off the centre line (max |Δy|=${spread.toFixed(1)})`);
 });
 
 // (a) the racing epoch strip renders the funnel from the per-challenger records.
@@ -693,8 +659,9 @@ test('survival funnel: a GAUNTLET epoch renders the round timeline with NO embed
 // (f) the funnel marks are themed via CSS tokens (legible across all 13 themes).
 test('survival funnel: marks are token-themed in the scoped stylesheet (legible across the 13 themes)', () => {
   const css = readCss();
-  assert(/\.dn-funnel-band\s*\{/.test(css), '.dn-funnel-band is styled');
-  assert(/\.dn-funnel-band[^}]*var\(--v2-/.test(css), 'the flow band reads a --v2-* token (theme-aware)');
+  assert(/\.dn-funnel-dot\s*\{/.test(css), '.dn-funnel-dot is styled');
+  assert(/\.dn-funnel-dot[^}]*var\(--v2-/.test(css), 'the ladder dot reads a --v2-* token (theme-aware)');
+  assert(/\.dn-funnel-spline[^}]*var\(--v2-/.test(css), 'the converging spline reads a --v2-* token (theme-aware)');
   assert(/\.dn-funnel-name\.dn-good[^}]*var\(--v2-good\)/.test(css), 'survivors use the --v2-good token');
   assert(/\.dn-funnel-name\.dn-bad[^}]*var\(--v2-bad\)/.test(css), 'cuts use the --v2-bad token');
   assert(/\.dn-funnel-gatebox\.dn-good[^}]*var\(--v2-good\)/.test(css), 'the crowned gate uses the --v2-good token');

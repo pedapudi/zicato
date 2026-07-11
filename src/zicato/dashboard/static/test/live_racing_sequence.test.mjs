@@ -335,9 +335,12 @@ test('sequence — the SURVIVAL FUNNEL renders the WHOLE rung sequence mid-fligh
   // Rung 0 shows its narrowing: two survivors (↑) + two cuts (✕).
   assert(/v1 ↑/.test(t) && /v2 ↑/.test(t), 'funnel: Rung 0 survivors v1,v2 ride the band (↑)');
   assert(/v3 ✕/.test(t) && /v4 ✕/.test(t), 'funnel: Rung 0 cuts v3,v4 peel off (✕)');
-  // exactly one band polygon per rung + one converging gate-flow polygon.
-  const bands = nodesByClass(funnel, 'dn-funnel-band').filter((n) => n.localName === 'polygon');
-  assertEqual(bands.length, 3, 'funnel: 2 rung bands + 1 gate-flow band');
+  // the DOT LADDER: a dot per competitor alive entering each rung + converging
+  // splines carrying the survivors forward (replaces the old band-polygon count).
+  const dots = nodesByClass(funnel, 'dn-funnel-dot');
+  assert(dots.length >= 4, `funnel: a dot per competitor entering each rung (≥ the rung-0 field) — got ${dots.length}`);
+  const splines = nodesByClass(funnel, 'dn-funnel-spline').filter((n) => n.localName === 'path');
+  assert(splines.length >= 2, `funnel: converging splines carry the rung-0 survivors (v1,v2) forward — got ${splines.length}`);
 });
 
 test('sequence — the EPOCH round-timeline figure (single round) renders the full rung sequence', () => {
@@ -365,7 +368,12 @@ test('sequence — each rung renders its FULL field (the union of every champion
   assertEqual(rung1.competitors.slice().sort().join(','), 'v1,v2', 'rung 1 field = both survivors');
   const funnel = funnelFor(rm);
   const t = textOf(funnel);
-  assert(/v1 ·/.test(t) && /v2 ·/.test(t), 'funnel: BOTH rung-1 lanes (v1, v2) render as racing runners');
+  assert(/v1/.test(t) && /v2/.test(t), 'funnel: BOTH rung-1 lanes (v1, v2) are named');
+  // per-competitor lanes (the bracket rail replaces per-rung runner rows): both
+  // survivors carry a lane whose text leads with their id.
+  const runners = nodesByClass(funnel, 'dn-funnel-runner').map((g) => textOf(g).trim());
+  assert(runners.some((s) => /^v1\b/.test(s)) && runners.some((s) => /^v2\b/.test(s)),
+    `funnel: BOTH rung-1 survivor lanes (v1, v2) render as lanes — got ${JSON.stringify(runners)}`);
   // the scalar-track focuses the DEEPEST rung with competitors → rung 1; both
   // lanes plot as markers.
   const track = trackFor(rm);

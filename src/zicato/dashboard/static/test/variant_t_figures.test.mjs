@@ -718,7 +718,7 @@ test('responsive: every structure builder defaults to a FIXED figure (no hero cl
     // the fixed render still keeps a height attr (its intrinsic pixel height).
     assert(node.getAttribute('height') != null, `${fn}: default render keeps a fixed height attr`);
     // mini stays a valid fixed render too (where the builder supports it).
-    if (fn !== 'survivalFunnel' && fn !== 'elimFlow' && fn !== 'swissLadder') {
+    if (fn !== 'elimFlow' && fn !== 'swissLadder') {
       const m = svg[fn](mk({ mini: true }));
       assert(!(m.getAttribute('class') || '').split(/\s+/).includes(heroCls), `${fn}: mini render is NOT a hero either`);
       assert(m.getAttribute('height') != null, `${fn}: mini render keeps a fixed height`);
@@ -792,6 +792,53 @@ test('racing FULL-FIELD: survivalFunnel renders BOTH survivors of a multi-surviv
   for (const id of ['v5', 'v7']) assert(runners.some((t) => t.startsWith(id)), `the funnel shows survivor ${id} riding the band — got ${JSON.stringify(runners)}`);
   assert(!runners.some((t) => /^v0\b/.test(t)), 'benchmark v0 is never a funnel runner');
 });
+
+test('survival funnel: rung headers read the TRANSITION form ("Rung 0 · 4→2") — the entering→leaving field per rung', () => {
+  const rungs = [
+    { label: 'Rung 0', competitors: ['v1', 'v2', 'v3', 'v4'], survivors: ['v3', 'v4'], cut: ['v1', 'v2'], board_fraction: 0.25 },
+    { label: 'Rung 1', competitors: ['v3', 'v4'], survivors: ['v3'], cut: ['v4'], board_fraction: 0.5, pending: false },
+  ];
+  const node = svg.survivalFunnel({ rungs, championId: 'v3', benchmarkId: 'v0', gateState: 'crowned', onCompetitor() {} });
+  const heads = allByClass(node, 'dn-funnel-head').map((n) => (n.textContent || '').trim());
+  assert(heads.some((t) => t === 'Rung 0 · 4→2'), `rung-0 header reads the transition form "Rung 0 · 4→2" — got ${JSON.stringify(heads)}`);
+  assert(heads.some((t) => t === 'Rung 1 · 2→1'), `rung-1 header reads "Rung 1 · 2→1" — got ${JSON.stringify(heads)}`);
+  assert(heads.some((t) => /champion-gate/.test(t)), 'the champion-gate header still renders');
+  // a PENDING rung leaves the transition open ("…").
+  const live = svg.survivalFunnel({
+    rungs: [{ label: 'Rung 0', competitors: ['v1', 'v2', 'v3'], survivors: [], cut: [], board_fraction: 0.25, pending: true }],
+    championId: null, benchmarkId: 'v0', live: true, onCompetitor() {},
+  });
+  const liveHeads = allByClass(live, 'dn-funnel-head').map((n) => (n.textContent || '').trim());
+  assert(liveHeads.some((t) => /→…$/.test(t)), `a pending rung leaves the transition open (…) — got ${JSON.stringify(liveHeads)}`);
+});
+
+test('survival funnel: MINI drops the rail names + rung headers but keeps the dots + splines (responsive/mini convention)', () => {
+  const rungs = [
+    { label: 'Rung 0', competitors: ['v1', 'v2', 'v3', 'v4'], survivors: ['v3', 'v4'], cut: ['v1', 'v2'], board_fraction: 0.25 },
+    { label: 'Rung 1', competitors: ['v3', 'v4'], survivors: ['v3'], cut: ['v4'], board_fraction: 0.5 },
+  ];
+  const full = svg.survivalFunnel({ rungs, championId: 'v3', benchmarkId: 'v0', gateState: 'crowned', onCompetitor() {} });
+  const mini = svg.survivalFunnel({ rungs, championId: 'v3', benchmarkId: 'v0', gateState: 'crowned', mini: true, onCompetitor() {} });
+
+  // FULL carries the rail names + headers + bench line.
+  assert(allByClass(full, 'dn-funnel-name').length >= 4, 'full render names every competitor on the bracket rail');
+  assert(allByClass(full, 'dn-funnel-head').length >= 3, 'full render carries rung + gate headers');
+  assert(allByClass(full, 'dn-funnel-bench').length >= 1, 'full render carries the champion/benchmark caption');
+
+  // MINI drops the names + headers + bench, but KEEPS the dot ladder + splines.
+  assertEqual(allByClass(mini, 'dn-funnel-name').length, 0, 'mini drops the bracket-rail names');
+  assertEqual(allByClass(mini, 'dn-funnel-head').length, 0, 'mini drops the rung headers');
+  assertEqual(allByClass(mini, 'dn-funnel-bench').length, 0, 'mini drops the benchmark caption');
+  assert(allByClass(mini, 'dn-funnel-dot').length >= 6, 'mini keeps the dot ladder (a dot per entrant per rung)');
+  assert(allByClass(mini, 'dn-funnel-spline').length >= 1, 'mini keeps the converging splines');
+  // the winner emphasis survives at mini scale.
+  assert(node0HasWin(mini), 'mini keeps the winner-lane emphasis (dn-funnel-win)');
+  // mini stays a fixed render (a real height, no responsive hero).
+  assert(mini.getAttribute('height') != null, 'mini keeps a fixed pixel height');
+});
+function node0HasWin(node) {
+  return node.querySelectorAll('[class]').some((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dn-funnel-win'));
+}
 
 test('no-scalar layout: an early in-flight rung with NO recoverable scalar spreads its lanes across the axis by index (not piled at x=padL)', () => {
   // every lane is in-flight with no committed/delta/projected scalar yet → no
@@ -1262,34 +1309,32 @@ test('H8 valueBars: the worst-judge (full-width) value is inset + end-anchored s
   assert(sx > x0 && sx < plotEnd, `the short-bar value (${sx}) is placed to the right of its short bar, inside the plot`);
 });
 
-test('survival funnel (H9): a long cut id is bounded to the stage band — the cut name + ✕ never overflows past x1', () => {
-  const longId = 'challenger_xy9'; // 14 chars — wider than the default 13-char cap
+test('survival funnel (H9): a long cut id is fit to the bracket-rail gutter — truncated with an ellipsis, never clipping the viewBox', () => {
+  const longId = 'challenger_xy9'; // 14 chars — wider than the rail gutter budget
   const rungs = [
     { label: 'Rung 0', competitors: [longId, 'v2', 'v3'], survivors: ['v3'], cut: [longId, 'v2'], board_fraction: 0.5, deltas: { v3: -1 } },
   ];
   const node = svg.survivalFunnel({ rungs, championId: 'v3', benchmarkId: 'v0', gateState: 'crowned', onCompetitor() {} });
 
-  // mirror the renderer's cut-label geometry (svg.js survivalFunnel).
-  const stageW = 150, GLYPH = 6.2;
-  const x0 = 0 * (stageW + 20) + 2;      // stage 0 left edge (stageX(0))
-  const x1 = x0 + stageW;                 // band right edge
-  const labelX = x0 + stageW * 0.5 + 12;  // elbowX + 12
+  // the LEFT-EDGE bracket-rail gutter budget, mirrored from the renderer.
+  const stageW = 150, dotR = 4.5, CHAR_EM = 0.6, fontPx = 11;
+  const dotX0 = 2 + stageW / 2;            // dotX(0) — the first dot column
 
-  const cutLabels = allByClass(node, 'dn-funnel-name').filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dn-bad'));
-  assert(cutLabels.length >= 1, 'at least one cut label rendered');
-  const longLabel = cutLabels.find((n) => parseFloat(n.getAttribute('x')) >= labelX - 0.01 && (n.textContent || '').indexOf('✕') >= 0
-    && ((n.textContent || '').startsWith('challenger') || (n.textContent || '').indexOf('…') >= 0));
-  assert(longLabel, 'the long cut id rendered as a struck (✕) label anchored in the stage band');
+  // cut competitors carry a dn-bad rail name (the cut-count style pin).
+  const cutNames = allByClass(node, 'dn-funnel-name').filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dn-bad'));
+  assert(cutNames.length >= 1, 'the cut competitors carry dn-bad rail names');
+  const longLabel = cutNames.find((n) => (n.textContent || '').indexOf('…') >= 0);
+  assert(longLabel, 'the over-long cut id is truncated with an ellipsis to fit the rail gutter');
 
-  // THE FIX: the cut name + ✕ must fit LEFT of the band's right edge x1.
-  const txt = (longLabel.textContent || '');
-  const estRight = labelX + txt.length * GLYPH;
-  assert(estRight <= x1 + 0.5, `the cut label "${txt}" (anchored at x=${labelX}) must end at or before the band edge x1=${x1}; estimated right edge ${estRight.toFixed(1)} overflows the stage band`);
-  // the long id is truncated (ellipsised), not shown in full, to make room for the band.
-  assert(txt.indexOf('…') >= 0, `the over-long cut id is truncated with an ellipsis to fit the band — got "${txt}"`);
-  // a SHORT cut id (v2) is untouched — the fix only bites over-long ids.
-  const shortLbl = cutLabels.find((n) => (n.textContent || '').replace(/[^\w]/g, '').indexOf('v2') === 0);
+  // THE FIX: the fitted rail name is left-anchored at x≈4 and its rendered width
+  // stays LEFT of the first dot column (never clips the viewBox / runs into the dots).
+  const railW = (longLabel.textContent || '').length * fontPx * CHAR_EM;
+  assert(4 + railW <= dotX0 + 0.5, `the fitted rail name "${longLabel.textContent}" (w≈${railW.toFixed(1)}) stays left of the first dot column x=${dotX0}`);
+  // a SHORT cut id (v2) is untouched — the fit only bites over-long ids.
+  const shortLbl = cutNames.find((n) => (n.textContent || '').replace(/[^\w]/g, '').indexOf('v2') === 0);
   assert(shortLbl && (shortLbl.textContent || '').indexOf('…') < 0, 'a short cut id (v2) renders in full (no regression to common-data labels)');
+  // the cut still drops a ✕ mark at its rung dot (the dot-gap cut idiom).
+  assert(node.textContent.includes('✕'), 'the cut competitor drops a ✕ mark');
 });
 
 test('waterfall H10: on an improved step the crown ♛ is lifted clear of the floor label (no overprint at the same cx)', () => {
@@ -1690,56 +1735,54 @@ test('duelFlow L1: a 3-integer-digit improving Δ (-128.4) at max keeps its outb
 // half-height to 6, so it used to draw a thin sliver into a champion-gate with
 // no runner feeding it (a disconnected/degenerate flow). A crowned gate whose
 // survivors array is empty but champion IS seated must still draw its flow.
-test('survival funnel: NO gate-flow sliver when the last rung is all-cut with no crown (lastLeave===0 && !crowned), but a crowned empty-survivor gate still flows', () => {
-  const gateflowOf = (node) => node.querySelectorAll('[class]')
-    .filter((n) => n.localName === 'polygon'
-      && (n.getAttribute('class') || '').split(/\s+/).includes('dn-funnel-gateflow'));
+test('survival funnel: an all-cut/uncrowned last rung feeds NO spline into the gate, but a crowned survivor’s winner-spline reaches it', () => {
+  // the splines that TERMINATE at the champion-gate seat x (the winner-flow).
+  const gateSplinesOf = (node, rungsLen) => {
+    const stageW = 150, stageGap = 20;
+    const gx = rungsLen * stageW + Math.max(0, rungsLen - 1) * stageGap + stageGap + 2;
+    return node.querySelectorAll('[class]')
+      .filter((n) => n.localName === 'path' && (n.getAttribute('class') || '').split(/\s+/).includes('dn-funnel-spline'))
+      .filter((p) => { const m = (p.getAttribute('d') || '').match(/([-\d.]+),([-\d.]+)\s*$/); return m && Math.abs(parseFloat(m[1]) - gx) < 1.0; });
+  };
 
   // last rung settled: all four lanes cut, nobody survives, gate not crowned.
   const allCut = svg.survivalFunnel({
     rungs: [{ label: 'Rung 0', competitors: ['v1', 'v2', 'v3', 'v4'], survivors: [], cut: ['v1', 'v2', 'v3', 'v4'], deltas: { v1: 7, v2: 8, v3: 9, v4: 10 } }],
     championId: null, onCompetitor() {},
   });
-  assert(svg.survivalFunnel && allCut.localName === 'svg', 'the funnel still renders the rung band');
-  assertEqual(gateflowOf(allCut).length, 0, 'no converging gate-flow polygon is drawn into an unfed, uncrowned gate (the bandHalf(0) sliver is suppressed)');
+  assert(allCut.localName === 'svg', 'the funnel still renders the rung dots');
+  assertEqual(gateSplinesOf(allCut, 1).length, 0, 'no spline is drawn into an unfed, uncrowned gate (there is no winner)');
 
-  // positive control: a crowned gate whose last rung carries the seated champion
-  // (empty survivors, championId set, gateState crowned) STILL flows into the gate.
+  // positive control: a crowned survivor's winner-spline reaches the gate seat.
   const crowned = svg.survivalFunnel({
     rungs: [{ label: 'Rung 0', competitors: ['v1', 'v3'], survivors: ['v3'], cut: ['v1'], deltas: { v1: 5, v3: -2 } }],
     championId: 'v3', gateState: 'crowned', gateDelta: -2, onCompetitor() {},
   });
-  assertEqual(gateflowOf(crowned).length, 1, 'a settled/crowned gate still draws its converging flow (the guard only fires on all-cut/no-crown)');
+  assertEqual(gateSplinesOf(crowned, 1).length, 1, 'the crowned survivor’s winner-spline reaches the champion-gate seat');
 });
 
-test('survival funnel L3: 2-3 survivors leaving a NARROW band (wide entering field, hOut<8) are spread to legible rows, not stacked on one y', () => {
-  // A wide rung-0 field (24 lanes) narrowing to just 2 survivors drives the band
-  // half-height hOut to its floor (6 < 8). The old per-lane y used
-  // Math.max(1, 2*hOut-16) as the TOTAL span, which floors to 1px here → the two
-  // survivor runners stacked on ~the same baseline. They must instead spread by a
-  // legible row pitch. (Wide bands keep their natural spread — see the field0=2
-  // and 4-lane funnel tests above, which this fix leaves byte-identical.)
+test('survival funnel L3: a wide entering field renders one dot per entrant, spread across the ladder (dot-ladder, not stacked on one y)', () => {
+  // A wide rung-0 field (24 lanes) narrowing to just 2 survivors. In the dot
+  // ladder every entrant is a dot spread symmetrically about the centre line —
+  // the entering rung is the widest column, not a single stacked row.
   const competitors = Array.from({ length: 24 }, (_, i) => `v${i + 1}`);
   const survivors = ['v1', 'v2'];
   const cut = competitors.filter((c) => !survivors.includes(c));
   const rungs = [{ label: 'Rung 0', competitors, survivors, cut }];
   const node = svg.survivalFunnel({ rungs, championId: 'v1', benchmarkId: 'v0', gateState: 'crowned', onCompetitor() {} });
 
-  // mirror the renderer geometry to confirm this fixture actually hits hOut<8.
-  const laneH = 132, field0 = competitors.length;
-  const hOut = Math.max(6, (laneH / 2) * (survivors.length / field0));
-  assert(hOut < 8, `fixture drives a NARROW leaving band (hOut=${hOut.toFixed(2)} < 8) — the degenerate trigger`);
-
-  // read each survivor runner's text-baseline y (the runner text is at cy+3).
-  const ys = survivors.map((id) => {
-    const t = allByClass(node, 'dn-funnel-name').find((n) => (n.textContent || '').trim().startsWith(id));
-    assert(t, `survivor ${id} rides the band as a runner`);
-    return parseFloat(t.getAttribute('y'));
-  });
-  const sep = Math.abs(ys[1] - ys[0]);
-  // the old span-floored-to-1 placement gave ~1px; the fix floors the per-lane
-  // step to a ~12px row pitch. Require a clearly-legible gap (≥10px).
-  assert(sep >= 10, `the two survivors in the narrow band are vertically separated (Δy ${sep.toFixed(1)}px ≥ 10), not stacked on one baseline (ys ${JSON.stringify(ys)})`);
+  const dots = allByClass(node, 'dn-funnel-dot');
+  assert(dots.length >= 24, `one dot per entrant (24) — got ${dots.length}`);
+  const cys = dots.map((c) => parseFloat(c.getAttribute('cy'))).filter((y) => isFinite(y));
+  const uniq = new Set(cys.map((y) => y.toFixed(1)));
+  assert(uniq.size >= 12, `the entrant dots occupy many distinct rows (≥12), not one stacked baseline — got ${uniq.size}`);
+  const span = Math.max(...cys) - Math.min(...cys);
+  assert(span > 60, `the spread covers a real vertical span (${span.toFixed(1)}px > 60), not a stack`);
+  // the 2 survivors read good (accent); the 22 cuts read dn-bad.
+  const good = dots.filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dn-good'));
+  const bad = dots.filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dn-bad'));
+  assert(good.length >= 2, `both survivors render a good (accent) dot — got ${good.length}`);
+  assert(bad.length >= 22, `the 22 cuts render dn-bad dots — got ${bad.length}`);
 });
 
 test('heatmap: rotated column headers (long labels, last column) stay inside the viewBox — no top/right clip', () => {
