@@ -1,40 +1,63 @@
-// js/views/instrument.js — the Instrument lens (board reflection · R5).
+// js/views/instrument.js — the Instrument lens (board reflection).
 //
 // Reflection treats `board + scoring + judges + gate` as a MEASUREMENT
-// INSTRUMENT and audits it. This view is the minimal transliteration of the
-// docs/design/reflection-viz-study/ visual spec — the bill-of-health,
-// judge-audit, and x-ray mockups (the other five mockups are the deferred
-// component spec). Three modes, keyed by the route depth
+// INSTRUMENT and audits it. This view is the console-native surface for the
+// bill-of-health, practice-review, judge-audit, and x-ray reads. Three modes,
+// keyed by the route depth
 // (#/e/<epochId>/instrument[/<reflectionId>[/<judge>[/<runRef>]]]):
 //
 //   * LANDING  (no reflection)          — a dataTable of the epoch's reflections.
-//   * BILL OF HEALTH (reflectionId)     — the four-pillar quadrant + ranked
-//                                         findings + the per-judge audit cards.
+//   * BILL OF HEALTH (reflectionId)     — the practice-review narrative + the
+//                                         four-pillar quadrant + ranked findings
+//                                         + the per-judge audit cards.
 //   * X-RAY    (judge + run_ref)        — the annotated transcript + the judge
 //                                         verdict vs the meta-judge adjudication.
+//
+// DESIGN LANGUAGE: the lens speaks the console's existing grammars — it does
+// NOT invent chrome (the operator's critique of the generated-UI idiosyncrasies:
+// the left rail and the overly-extensive tags). So: the practice review and the
+// findings render as the loop-health findings panel's QUIET verdict-led rows
+// (a tone glyph + a headline + a dn-faint rationale — NOT a chip per row); the
+// judge scorecards render rates as the dn-stat idiom (NOT labelled tags), the
+// redundancy/conflict relations as ONE faint inline sentence, and the evidence
+// as inline x-ray links (NOT chip strips); metadata (fidelity tier / adjudicator
+// model / prompt version / self-agreement) is a single dn-faint CAPTION under
+// the relevant figure (NEVER a per-row tag). Tags/chips are reserved for the ONE
+// semantic state the console already pills: the adjudication VERDICT on the x-ray.
+// Navigation lives in the shell (the hash routes + the tree) — the lens grows no
+// internal nav rail of its own.
 //
 // SERVER AUTHORITY: the view RENDERS reader payloads and computes NO domain
 // conclusions. It never derives a rate / κ / verdict — query/reflection_view.py
 // owns every metric (precision/recall/F1/FPR, aggregate_f1, decision-flip P,
-// margin_clears_floor, the confusion matrix, the ranked findings, the verdict).
-// The only aggregation done here is DISPLAY tallying of the reader's own
-// per-item booleans/counts (e.g. "N of M entries differentiate" from the
-// per-entry `differentiates` flags) — never a withheld number reconstructed.
+// margin_clears_floor, the confusion matrix, the ranked findings, the practice
+// verdicts). The only aggregation done here is DISPLAY tallying of the reader's
+// own per-item booleans/counts — never a withheld number reconstructed.
 //
 // A completed reflection is IMMUTABLE ⇒ the view is fetch-once, digest-folded,
 // and gatedSwap-painted (renderView): two identical fetches rebuild ZERO DOM.
 
 import { el } from '../core/dom.js';
 import * as D from '../data.js';
-import { section, empty, chip, dataTable, renderView, isNum, fmt } from '../ui.js';
+import { section, empty, chip, dataTable, renderView, stat, isNum, fmt } from '../ui.js';
 
 // ---- small local coercions (display-only) ---------------------------
 function num(v, d) { return isNum(v) ? fmt(v, isNum(d) ? d : 3) : '—'; }
 function pct(v) { return isNum(v) ? Math.round(v * 100) + '%' : '—'; }
 function yn(v) { return v === true ? 'yes' : v === false ? 'no' : '—'; }
 
-// The verdict → tone class (TP good · FP bad · FN caution · TN/ambiguous faint).
-// The vocabulary is the server's (adjudicator.py); the view only colours it.
+// The console's quiet-caption treatment — the ONE home for metadata (fidelity,
+// model, prompt version) and figure legends. Never a heavier frame.
+function caption(text) { return el('p', { class: 'dn-faint dn-instr-cap', text: String(text) }); }
+
+// A small tone-coloured status mark — the loop-health findings panel's
+// verdict-led lead, rendered as a glyph rather than a chip box (the de-tagging).
+function toneMark(tone) {
+  return el('span', { class: 'dn-instr-mark dn-instr-t-' + tone, 'aria-hidden': 'true', text: '●' });
+}
+
+// The adjudication verdict → tone (TP good · FP bad · FN caution · TN/ambiguous
+// faint). The vocabulary is the server's (adjudicator.py); the view only colours.
 function verdictTone(verdict) {
   const v = String(verdict || '').toUpperCase();
   if (v === 'TP') return 'tp';
@@ -43,11 +66,21 @@ function verdictTone(verdict) {
   if (v === 'TN') return 'tn';
   return 'amb';
 }
+// Finding severity → a tone in the shared dn-instr-t-* set (bad/warn/faint).
 function severityTone(sev) {
   const s = String(sev || '').toLowerCase();
-  if (s === 'critical') return 'crit';
+  if (s === 'critical') return 'bad';
   if (s === 'warning') return 'warn';
-  return 'info';
+  return 'faint';
+}
+// Practice verdict → tone. sound affirms (good), unsound is the anti-practice
+// (bad), attend is a soft deficiency (warn), unmeasured is honest-absent (faint).
+function practiceTone(verdict) {
+  const v = String(verdict || '').toLowerCase();
+  if (v === 'sound') return 'good';
+  if (v === 'unsound') return 'bad';
+  if (v === 'attend') return 'warn';
+  return 'faint';
 }
 
 // ---- entry point ----------------------------------------------------
@@ -72,10 +105,12 @@ export async function render(host, ctx, params) {
         return { mode: 'xray', epochId, reflectionId, judge, runRef, xray: data };
       }
       if (reflectionId) {
-        const [summary, scorecards] = await Promise.all([
-          D.reflectionSummary(reflectionId), D.reflectionScorecards(reflectionId),
+        const [summary, scorecards, practices] = await Promise.all([
+          D.reflectionSummary(reflectionId),
+          D.reflectionScorecards(reflectionId),
+          D.reflectionPractices(reflectionId),
         ]);
-        return { mode: 'bill', epochId, reflectionId, summary, scorecards };
+        return { mode: 'bill', epochId, reflectionId, summary, scorecards, practices };
       }
       const list = await D.reflections(epochId);
       return { mode: 'landing', epochId, list };
@@ -107,12 +142,20 @@ function digestFor(d) {
       isNum(j.f1) ? j.f1.toFixed(3) : null,
       isNum(j.self_consistency_kappa) ? j.self_consistency_kappa.toFixed(3) : null,
     ]);
+    const pr = d.practices || {};
     return JSON.stringify({
       m: 'bill', id: d.reflectionId, found: !!s.found,
       p: s.pillars || {},
       flip: isNum(s.decision_flip_p) ? s.decision_flip_p.toFixed(4) : null,
       findings: (s.findings || []).map((f) => [f.finding_id, f.severity, f.title, (f.evidence || []).length, f.proposed_op && f.proposed_op.op]),
       cards,
+      // the practice-review narrative — folded so a new/changed check repaints
+      // while a no-op re-serve stays byte-identical.
+      pfound: !!pr.found,
+      prac: (Array.isArray(pr.checks) ? pr.checks : []).map((c) => [
+        c.check_id, c.verdict, c.headline, c.rationale,
+        c.proposed_op && c.proposed_op.op, c.unmeasured_reason || null,
+      ]),
     });
   }
   // x-ray
@@ -178,31 +221,30 @@ function buildLanding(d, ctx) {
 }
 
 // ====================================================================
-// BILL OF HEALTH — the four-pillar quadrant + findings + judge audit.
-// (Transliterates bill-of-health.html's boh-quad sub-rows + the judge-audit
-//  scorecard. The mockup's arc GAUGE + top-line VERDICT are DEFERRED: the
-//  reader carries no 0–1 pillar score / verdict, and server-authority forbids
-//  synthesising one client-side.)
+// BILL OF HEALTH — the practice-review narrative + the four-pillar quadrant
+// + findings + judge audit. (The mockup's arc GAUGE + top-line VERDICT are
+//  DEFERRED: the reader carries no 0–1 pillar score / verdict, and
+//  server-authority forbids synthesising one client-side.)
 // ====================================================================
 function buildBill(d, ctx) {
   const s = d.summary || {};
   const nodes = [];
   nodes.push(el('div', { class: 'dn-pagehead' }, [
     el('h1', { class: 'dn-h1' }, ['Bill of health · ', el('span', { class: 'dn-mono', text: d.reflectionId })]),
-    el('p', { class: 'dn-lede', text: 'The one-screen verdict on the instrument: four pillars — reliability (consistent?), discrimination (tells candidates apart?), validity (correct, per adjudication?), calibration (margin tuned?) — over the ranked findings and the per-judge audit.' }),
+    el('p', { class: 'dn-lede', text: 'The one-screen verdict on the instrument: what you should change about how you evaluate (the practice review), then four pillars — reliability (consistent?), discrimination (tells candidates apart?), validity (correct, per adjudication?), calibration (margin tuned?) — over the ranked findings and the per-judge audit.' }),
   ]));
   if (!s.found) {
     nodes.push(section('Bill of health', el('div', { class: 'dn-panel' }, [empty('No such reflection (it may not be indexed yet).')])));
     return nodes;
   }
 
-  // identity strip
-  nodes.push(el('div', { class: 'dn-panel dn-row dn-instr-ident' }, [
-    identKv('created', s.created_at || '—'),
-    identKv('mode', s.mode || '—'),
-    identKv('executed', yn(s.executed)),
-    identKv('fidelity', (s.fidelity_tiers || []).join(' · ') || '—'),
-  ]));
+  // identity as ONE dn-faint caption line (metadata is a caption, never tags).
+  nodes.push(caption(
+    `created ${s.created_at || '—'} · mode ${s.mode || '—'} · executed ${yn(s.executed)} · ${(s.fidelity_tiers || []).join(' · ') || 'fidelity —'}`,
+  ));
+
+  // ── the PRACTICE REVIEW — the narrative layer above the four pillars. ──
+  nodes.push(section('Practice review · how you evaluate', practiceReview(d.practices)));
 
   const pl = s.pillars || {};
   const quad = el('div', { class: 'dn-instr-quad' }, [
@@ -211,23 +253,20 @@ function buildBill(d, ctx) {
     pillarCard('Validity', validityRows(pl.validity || {}, d.scorecards)),
     pillarCard('Calibration', calibrationRows(pl.calibration || {})),
   ]);
-  nodes.push(section('Four-pillar quadrant', quad));
+  const quadWrap = el('div', {}, [
+    quad,
+    caption('four pillars over this contract · reliability = consistent · discrimination = tells candidates apart · validity = correct per adjudication · calibration = margin tuned to the measured noise floor'),
+  ]);
+  nodes.push(section('Four-pillar quadrant', quadWrap));
 
   // findings
   const findings = Array.isArray(s.findings) ? s.findings : [];
-  nodes.push(section('Findings', findingsList(findings, d.reflectionId)));
+  nodes.push(section('Findings', findingsList(findings, d.reflectionId, ctx, d.epochId)));
 
   // judge audit
   const judges = (d.scorecards && Array.isArray(d.scorecards.judges)) ? d.scorecards.judges : [];
   nodes.push(section('Judge audit', judgeAudit(judges, findings, d, ctx)));
   return nodes;
-}
-
-function identKv(k, v) {
-  return el('div', { class: 'dn-instr-kv' }, [
-    el('span', { class: 'dn-instr-k', text: k }),
-    el('span', { class: 'dn-instr-v dn-mono', text: v }),
-  ]);
 }
 
 function pillarCard(name, rows) {
@@ -249,8 +288,7 @@ function reliabilityRows(rel, s) {
   if (isNum(s.decision_flip_p)) {
     rows.push(['decision-flip P', pct(s.decision_flip_p), s.decision_flip_p > 0 ? 'warn' : 'good']);
   } else {
-    // null p_flip — surface the honest reason (S2). "insufficient replication"
-    // is the standing reason; the reader's own `reason` string rides the title.
+    // null p_flip — surface the honest reason (never a fabricated 0.0).
     rows.push(['decision-flip P', 'n/a — insufficient replication', 'faint']);
     if (flip && flip.reason) rows.push(['flip reason', String(flip.reason), 'faint']);
   }
@@ -302,36 +340,122 @@ function calibrationRows(cal) {
   return rows;
 }
 
-// ---- findings list --------------------------------------------------
-function findingsList(findings, reflectionId) {
+// ---- the practice review (the loop-health findings panel's row grammar) ----
+//
+// A practice check is a loop-health finding in a different domain, so it renders
+// as the same quiet verdict-led row — NOT a bespoke card grid. Order follows the
+// committed editorial policy: affirmations (`sound`) FIRST (a sound practice
+// teaches as much as a deficiency flag), then `unsound` above `attend`
+// (worst-first), then `unmeasured` last with the missing input named faint.
+const _PRACTICE_BAND = { sound: 0, unsound: 1, attend: 2, unmeasured: 3 };
+
+function practiceReview(review) {
+  const checks = (review && Array.isArray(review.checks)) ? review.checks : [];
+  if (!review || !review.found || !checks.length) {
+    return el('div', { class: 'dn-panel' }, [
+      empty('No practice review for this reflection.'),
+      el('p', { class: 'dn-faint', style: 'font-size:12px;margin:6px 0 0;' }, [
+        'Generate one with ', el('code', { class: 'dn-instr-apply', text: 'zicato reflect run' }),
+        ' (or the instant ', el('code', { class: 'dn-instr-apply', text: 'zicato reflect practices' }), ' contract+history tier).',
+      ]),
+    ]);
+  }
+  const ranked = checks.map((c, i) => [c, i]).sort((a, b) => {
+    const ba = _PRACTICE_BAND[a[0].verdict]; const bb = _PRACTICE_BAND[b[0].verdict];
+    return (ba === undefined ? 9 : ba) - (bb === undefined ? 9 : bb) || a[1] - b[1];
+  }).map((x) => x[0]);
+
+  const panel = el('div', { class: 'dn-panel dn-instr-list-panel' });
+  const vc = review.verdict_counts || {};
+  panel.appendChild(caption(
+    `${vc.sound || 0} sound · ${vc.attend || 0} attend · ${vc.unsound || 0} unsound · ${vc.unmeasured || 0} unmeasured`,
+  ));
+  for (const c of ranked) panel.appendChild(practiceRow(c));
+  return panel;
+}
+
+function practiceRow(c) {
+  const tone = practiceTone(c.verdict);
+  const row = el('div', { class: 'dn-instr-frow dn-instr-fs-' + tone });
+  row.appendChild(el('div', { class: 'dn-instr-frow-head' }, [
+    toneMark(tone),
+    el('span', { class: 'dn-instr-frow-verdict dn-instr-t-' + tone, text: String(c.verdict || '') }),
+    el('span', { class: 'dn-instr-frow-title', text: c.headline || c.check_id }),
+  ]));
+  if (c.rationale) row.appendChild(el('p', { class: 'dn-faint dn-instr-frow-why', text: String(c.rationale) }));
+  // unmeasured: name the missing input faint (honesty over coverage).
+  if (String(c.verdict).toLowerCase() === 'unmeasured' && c.unmeasured_reason) {
+    row.appendChild(el('p', { class: 'dn-faint dn-instr-frow-missing', text: 'missing input · ' + String(c.unmeasured_reason) }));
+  }
+  // a proposed op — practice checks ride practices.json, NOT findings.json, and
+  // `reflect apply` is finding-only (it takes a finding_id and reads
+  // findings.json), so there is no CLI apply target: render the op as copyable
+  // JSON with a faint "apply via the builder" note.
+  const op = c.proposed_op;
+  if (op && op.op) {
+    row.appendChild(el('code', {
+      class: 'dn-instr-apply', title: 'copy the proposed op — apply it via the builder',
+      text: JSON.stringify({ op: op.op, args: op.args || {} }),
+    }));
+    row.appendChild(el('span', { class: 'dn-faint dn-instr-applynote', text: 'apply via the builder (practice checks are not a reflect apply target)' }));
+  }
+  return row;
+}
+
+// ---- findings list (the same loop-health row grammar) ---------------
+function findingsList(findings, reflectionId, ctx, epochId) {
   if (!findings.length) {
     return el('div', { class: 'dn-panel' }, [empty('No findings — the instrument reads healthy on every pillar this reflection measured.')]);
   }
-  const wrap = el('div', { class: 'dn-instr-findings' });
-  for (const f of findings) {
-    const tone = severityTone(f.severity);
-    const row = el('div', { class: 'dn-panel dn-instr-finding dn-instr-fs-' + tone });
-    row.appendChild(el('div', { class: 'dn-instr-finding-head' }, [
-      chip('instr-sev-' + tone, String(f.severity || 'info')),
-      el('span', { class: 'dn-instr-finding-title', text: f.title || f.finding_id }),
-      el('span', { class: 'dn-instr-finding-count dn-faint', text: (f.evidence || []).length + ' evidence' }),
+  const panel = el('div', { class: 'dn-panel dn-instr-list-panel' });
+  for (const f of findings) panel.appendChild(findingRow(f, reflectionId, ctx, epochId));
+  return panel;
+}
+
+function findingRow(f, reflectionId, ctx, epochId) {
+  const tone = severityTone(f.severity);
+  const row = el('div', { class: 'dn-instr-frow dn-instr-fs-' + tone });
+  row.appendChild(el('div', { class: 'dn-instr-frow-head' }, [
+    toneMark(tone),
+    el('span', { class: 'dn-instr-frow-verdict dn-instr-t-' + tone, text: String(f.severity || 'info') }),
+    el('span', { class: 'dn-instr-frow-title', text: f.title || f.finding_id }),
+  ]));
+  if (f.detail) row.appendChild(el('p', { class: 'dn-faint dn-instr-frow-why', text: String(f.detail) }));
+
+  // evidence as inline links in the row's prose (NOT a chip strip). Each links
+  // into the adjudication x-ray for that (judge, run_ref).
+  const ev = Array.isArray(f.evidence) ? f.evidence : [];
+  if (ev.length) {
+    const kids = ['evidence · '];
+    ev.forEach((e, i) => {
+      if (i) kids.push(' · ');
+      const label = (e.verdict ? e.verdict + ' ' : '') + (e.span ? String(e.span) : String(e.run_ref || ''));
+      if (e.judge_name && e.run_ref) {
+        kids.push(el('a', {
+          class: 'dn-instr-link dn-instr-t-' + verdictTone(e.verdict),
+          href: ctx.href('instrument', { epochId, reflectionId, judge: e.judge_name, runRef: e.run_ref }),
+          title: 'open the adjudication x-ray for ' + e.run_ref, text: label,
+        }));
+      } else {
+        kids.push(label);
+      }
+    });
+    row.appendChild(el('p', { class: 'dn-faint dn-instr-frow-ev' }, kids));
+  }
+
+  // a proposed op — an inline faint mono phrase — plus the copyable CLI apply
+  // invocation (the CLI IS the apply path for findings; recommend-only MVP).
+  if (f.proposed_op && f.proposed_op.op) {
+    row.appendChild(el('p', { class: 'dn-faint dn-instr-frow-op' }, [
+      'proposed op · ',
+      el('span', { class: 'dn-mono', text: f.proposed_op.op + '(' + Object.keys(f.proposed_op.args || {}).join(', ') + ')' }),
     ]));
-    if (f.detail) row.appendChild(el('p', { class: 'dn-instr-finding-detail', text: String(f.detail) }));
-    if (f.proposed_op && f.proposed_op.op) {
-      row.appendChild(el('div', { class: 'dn-instr-finding-op' }, [
-        el('span', { class: 'dn-faint', text: 'proposed op · ' }),
-        el('span', { class: 'dn-mono', text: f.proposed_op.op + '(' + Object.keys(f.proposed_op.args || {}).join(', ') + ')' }),
-      ]));
-    }
-    // the CLI is the apply path — a copyable mono invocation (no apply button in
-    // this recommend-only MVP).
     row.appendChild(el('code', {
       class: 'dn-instr-apply', title: 'copy — apply this finding to a builder draft via the CLI',
       text: `zicato reflect apply ${reflectionId} ${f.finding_id}`,
     }));
-    wrap.appendChild(row);
   }
-  return wrap;
+  return row;
 }
 
 // ---- judge audit (per-judge scorecard cards) ------------------------
@@ -339,11 +463,11 @@ function judgeAudit(judges, findings, d, ctx) {
   if (!judges.length) {
     return el('div', { class: 'dn-panel' }, [empty('No judge scorecards — no adjudication ran for this reflection (the zero-LLM tier reads reliability + discrimination only).')]);
   }
-  // evidence chips per judge come from the FINDINGS payload (the scorecards
-  // carry counts only). Each evidence dict carries its OWN adjudicated `verdict`
+  // evidence per judge comes from the FINDINGS payload (the scorecards carry
+  // counts only). Each evidence dict carries its OWN adjudicated `verdict`
   // (findings.py stamps it from the adjudication, e.g. FP / FN) — read it
-  // directly. A title/id regex would MISLABEL a chip whenever the wording and
-  // the verdict diverge (a "fires falsely"-titled finding can carry an FN span).
+  // directly. A title/id regex would MISLABEL whenever the wording and the
+  // verdict diverge (a "fires falsely"-titled finding can carry an FN span).
   const evidenceByJudge = new Map();
   for (const f of findings) {
     for (const ev of (f.evidence || [])) {
@@ -366,87 +490,76 @@ function scorecard(j, evidence, d, ctx) {
   const card = el('div', { class: 'dn-panel dn-instr-card' + (untested ? ' dn-instr-card-untested' : '') });
   card.appendChild(el('div', { class: 'dn-instr-card-head' }, [
     el('span', { class: 'dn-instr-card-name dn-mono', text: j.judge_name }),
-    untested ? chip('instr-sev-warn', 'never fired') : null,
+    // untested: greyed treatment + a faint "never fired" label (NOT a chip).
+    untested ? el('span', { class: 'dn-faint dn-instr-card-flag', text: 'never fired' }) : null,
   ].filter(Boolean)));
 
   if (untested) {
-    card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:12px;margin:6px 0 0;', text: 'This judge never fired across the corpus — its kind was not exercised, so precision/recall cannot be validated here.' }));
+    card.appendChild(el('p', { class: 'dn-faint dn-instr-card-note', text: 'This judge never fired across the corpus — its kind was not exercised, so precision/recall cannot be validated here.' }));
     return card;
   }
 
-  // the 2×2 confusion matrix + ambiguous pile.
-  const cm = el('div', { class: 'dn-instr-cm' }, [
+  // the 2×2 confusion matrix — the figure carries the information (tone grammar:
+  // TP green · FP red · FN caution · TN faint), with the ambiguous pile as a
+  // dn-faint caption beneath it.
+  card.appendChild(el('div', { class: 'dn-instr-cm' }, [
     cmCell('TP', j.tp, 'correct fire', 'tp'),
     cmCell('FP', j.fp, 'false fire', 'fp'),
     cmCell('FN', j.fn, 'missed fire', 'fn'),
     cmCell('TN', j.tn, 'correct silence', 'tn'),
-  ]);
-  card.appendChild(cm);
-  card.appendChild(el('p', { class: 'dn-instr-amb dn-faint', text: `+${isNum(j.ambiguous) ? j.ambiguous : 0} ambiguous (excluded from the rates — a large pile is itself a finding: the criterion is underspecified)` }));
+  ]));
+  card.appendChild(caption(`+${isNum(j.ambiguous) ? j.ambiguous : 0} ambiguous · excluded from the rates (a large pile is itself a finding — the criterion is underspecified)`));
 
-  // the derived rates (reader-owned) + severity accuracy.
-  const metrics = el('div', { class: 'dn-instr-metrics' }, [
-    metric('precision', num(j.precision, 2)),
-    metric('recall', num(j.recall, 2)),
-    metric('F1', num(j.f1, 2)),
-    metric('FPR', num(j.fpr, 2)),
-    metric('severity acc', num(j.severity_accuracy, 2)),
-  ]);
-  card.appendChild(metrics);
-
+  // the reader-owned rates as a quiet stat row (the dn-stat idiom, NOT tags).
+  card.appendChild(el('div', { class: 'dn-row dn-instr-stats' }, [
+    stat(num(j.precision, 2), 'precision'),
+    stat(num(j.recall, 2), 'recall'),
+    stat(num(j.f1, 2), 'F1'),
+    stat(num(j.fpr, 2), 'FPR'),
+    stat(num(j.severity_accuracy, 2), 'severity acc'),
+  ]));
   // self-consistency — the pairwise disagreement rate AND the chance-corrected
   // Fleiss κ, HONESTLY LABELLED (never one masquerading as the other).
-  card.appendChild(el('div', { class: 'dn-instr-consistency' }, [
-    metric('disagreement rate', num(j.disagreement_rate, 2)),
-    metric('self-consistency κ', num(j.self_consistency_kappa, 2)),
+  card.appendChild(el('div', { class: 'dn-row dn-instr-stats' }, [
+    stat(num(j.disagreement_rate, 2), 'disagreement rate'),
+    stat(num(j.self_consistency_kappa, 2), 'self-consistency κ'),
   ]));
 
-  // redundancy / conflict chips.
+  // redundancy / conflict → ONE faint inline sentence (NOT chips).
   const rw = Array.isArray(j.redundant_with) ? j.redundant_with : [];
   const cw = Array.isArray(j.conflicts_with) ? j.conflicts_with : [];
-  if (rw.length || cw.length) {
-    const chips = el('div', { class: 'dn-instr-xchips' });
-    for (const r of rw) chips.appendChild(chip('instr-redundant', 'redundant · ' + (r.judge || '?') + (isNum(r.corr) ? ' ' + fmt(r.corr, 2) : '')));
-    for (const c of cw) chips.appendChild(chip('instr-conflict', 'conflict · ' + (c.judge || '?') + (isNum(c.corr) ? ' ' + fmt(c.corr, 2) : '')));
-    card.appendChild(chips);
-  }
+  const phrases = [];
+  for (const r of rw) phrases.push('fires with ' + (r.judge || '?') + (isNum(r.corr) ? ' (r=' + fmt(r.corr, 2) + ')' : ''));
+  for (const c of cw) phrases.push('conflicts with ' + (c.judge || '?') + (isNum(c.corr) ? ' (r=' + fmt(c.corr, 2) + ')' : ''));
+  if (phrases.length) card.appendChild(caption(phrases.join(' · ')));
 
-  // evidence chips on the FP/FN piles → the x-ray route.
+  // the FP/FN evidence pile as inline x-ray links in prose (NOT a chip strip).
   if (evidence.length) {
-    const chips = el('div', { class: 'dn-instr-evidence' });
-    for (const ev of evidence) {
-      const tone = verdictTone(ev.verdict);
-      chips.appendChild(el('a', {
-        class: 'dn-instr-echip dn-instr-t-' + tone,
+    const kids = ['spans · '];
+    evidence.forEach((ev, i) => {
+      if (i) kids.push(' · ');
+      const label = (ev.verdict || '') + ' ' + (ev.span ? String(ev.span) : String(ev.run_ref || ''));
+      kids.push(el('a', {
+        class: 'dn-instr-link dn-instr-t-' + verdictTone(ev.verdict),
         href: ctx.href('instrument', { epochId: d.epochId, reflectionId: d.reflectionId, judge: j.judge_name, runRef: ev.run_ref }),
-        title: 'open the adjudication x-ray for ' + ev.run_ref,
-      }, [
-        el('span', { class: 'dn-instr-echip-v', text: ev.verdict }),
-        el('span', { class: 'dn-instr-echip-span', text: ev.span ? String(ev.span) : ev.run_ref }),
-      ]));
-    }
-    card.appendChild(chips);
+        title: 'open the adjudication x-ray for ' + ev.run_ref, text: label,
+      }));
+    });
+    card.appendChild(el('p', { class: 'dn-faint dn-instr-card-ev' }, kids));
   }
   return card;
 }
 
-function cmCell(label, n, caption, tone) {
+function cmCell(label, n, capText, tone) {
   return el('div', { class: 'dn-instr-cmcell dn-instr-t-' + tone }, [
     el('span', { class: 'dn-instr-cm-lab', text: label }),
     el('span', { class: 'dn-instr-cm-n', text: isNum(n) ? String(n) : '0' }),
-    el('span', { class: 'dn-instr-cm-cap dn-faint', text: caption }),
-  ]);
-}
-function metric(k, v) {
-  return el('div', { class: 'dn-instr-metric' }, [
-    el('span', { class: 'dn-instr-metric-k dn-faint', text: k }),
-    el('span', { class: 'dn-instr-metric-v', text: v }),
+    el('span', { class: 'dn-instr-cm-cap dn-faint', text: capText }),
   ]);
 }
 
 // ====================================================================
 // X-RAY — the annotated transcript (left) + judge vs adjudication (right).
-// (Transliterates xray.html's inline-annotated-transcript split.)
 // ====================================================================
 function buildXray(d, ctx) {
   const x = d.xray || {};
@@ -475,10 +588,8 @@ function buildXray(d, ctx) {
 
 function transcriptPane(transcript, span, tone) {
   const pane = el('div', { class: 'dn-instr-xleft dn-panel' });
-  pane.appendChild(el('div', { class: 'dn-instr-fidelity' }, [
-    el('span', { class: 'dn-faint', text: 'transcript · ' }),
-    el('span', { class: 'dn-instr-fidelity-tag', text: fidelityLabel(transcript.fidelity) }),
-  ]));
+  // the fidelity tier is metadata → a dn-faint caption, not a highlighted tag.
+  pane.appendChild(caption('transcript · ' + fidelityLabel(transcript.fidelity)));
   const turns = Array.isArray(transcript.turns) ? transcript.turns : [];
   if (transcript.fidelity === 'unavailable' || !turns.length) {
     pane.appendChild(el('p', { class: 'dn-empty', text: 'Transcript unavailable — the verbatim judge_io / result.json capture was not retained for this run (the events-preview tier needs the dashboard reconstructor and is not read here).' }));
@@ -529,7 +640,8 @@ function verdictPane(jv, adj) {
     jv && jv.claim ? el('p', { class: 'dn-instr-xclaim', text: String(jv.claim) }) : null,
   ].filter(Boolean)));
 
-  // the meta-judge ADJUDICATION.
+  // the meta-judge ADJUDICATION. The VERDICT keeps ONE pill (verdict IS the
+  // semantic state the console pills); everything else is a dn-faint caption.
   if (!adj) {
     pane.appendChild(el('div', { class: 'dn-instr-xsub' }, [
       el('div', { class: 'dn-instr-xsub-h', text: 'adjudication' }),
@@ -538,26 +650,19 @@ function verdictPane(jv, adj) {
     return pane;
   }
   const tone = verdictTone(adj.verdict);
+  // fidelity · meta-judge model · prompt version · self-agreement — ONE caption.
+  const metaBits = [fidelityLabel(adj.fidelity)];
+  if (adj.meta_judge_model) metaBits.push('meta-judge ' + adj.meta_judge_model);
+  if (isNum(adj.prompt_version)) metaBits.push('prompt v' + adj.prompt_version);
+  if (isNum(adj.adjudicator_self_agreement)) metaBits.push('self-agreement ' + fmt(adj.adjudicator_self_agreement, 2));
   pane.appendChild(el('div', { class: 'dn-instr-xsub' }, [
     el('div', { class: 'dn-instr-xsub-h' }, [
       'adjudication ', chip('instr-verdict-' + tone, String(adj.verdict || 'ambiguous')),
     ]),
     adj.meta_judge_rationale ? el('p', { class: 'dn-instr-xwhy', text: String(adj.meta_judge_rationale) }) : null,
-    el('div', { class: 'dn-instr-xmeta' }, [
-      metaKv('model', adj.meta_judge_model || '—'),
-      metaKv('prompt version', isNum(adj.prompt_version) ? String(adj.prompt_version) : '—'),
-      metaKv('fidelity', fidelityLabel(adj.fidelity)),
-      isNum(adj.adjudicator_self_agreement) ? metaKv('self-agreement', fmt(adj.adjudicator_self_agreement, 2)) : null,
-    ].filter(Boolean)),
+    caption(metaBits.join(' · ')),
   ].filter(Boolean)));
   return pane;
-}
-
-function metaKv(k, v) {
-  return el('div', { class: 'dn-instr-metakv' }, [
-    el('span', { class: 'dn-faint', text: k }),
-    el('span', { class: 'dn-mono', text: v }),
-  ]);
 }
 
 function fidelityLabel(fidelity) {

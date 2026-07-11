@@ -271,6 +271,31 @@ Crucially it is a **transient overlay, not part of the digest-gated render**
 (§6) — showing/hiding only toggles a class, so it can never trigger a repaint
 loop.
 
+### 4.4 Tags, captions, and where navigation lives
+
+A durable discipline for any new surface: **reuse the grammars Console already
+speaks; do not invent chrome beside them.** Three rules:
+
+- **Tags/chips are ONLY for a semantic state the console already pills** — a
+  `verdict` or a `severity` (the `chip` / `verdictPill` family, coloured by a
+  ROLE token). Everything else is text. A metric, a count, a relation, or a
+  model name is not semantic state and never earns a chip.
+- **Metadata is a caption.** Fidelity tier, adjudicator model, prompt version,
+  self-agreement, a verdict tally — all ride ONE `dn-faint` caption line under
+  the relevant figure or section, never a per-row tag.
+- **Navigation lives in the shell** — the hash router's routes and the tree
+  sidebar. A view never grows an internal navigation rail of its own.
+
+The motivating case is the **Instrument-lens rework** (board reflection). Its
+first cut imported the generated-UI idiosyncrasies the operator flagged — an
+internal left rail and overly-extensive per-row tags. The rework deleted all of
+it: findings + the practice review became the loop-health findings panel's quiet
+verdict-led rows (a tone glyph + a headline + a `dn-faint` rationale); scorecard
+rates became the `dn-stat` idiom; redundancy/conflict became one faint inline
+sentence; evidence became inline x-ray links; metadata collapsed to a caption;
+the ONE surviving pill is the adjudication verdict; nav rode the routes + tree.
+See BOARD-REFLECTION.md §"UI language" and dev-guide ch. 09 §9.7.7.
+
 ## 5. Layout and interaction principles
 
 - **Fit-to-width panes.** Every figure scales to its pane (§4.2); no figure
