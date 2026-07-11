@@ -3360,6 +3360,22 @@
   .dn-bld-slots-pick { width: 100%; }
   .dn-bld-slots-forkrow { display: flex; gap: 5px; }
   .dn-bld-slots-name { flex: 1; min-width: 0; width: auto; }
+  /* the revert/undo lifecycle controls under the fork row. */
+  .dn-bld-slots-lifecycle { display: flex; flex-direction: column; gap: 4px; }
+  .dn-bld-slots-lifecyclerow { display: flex; gap: 5px; }
+  .dn-bld-slots-lifecyclerow .dn-bld-btn { flex: 1; }
+  .dn-bld-slots-undonote { font-size: calc(10px * var(--dt-font-scale, 1)); }
+
+  /* B3 mapping-editor add-key rows (weights + gate namespace-monotonicity). */
+  .dn-bld-addkeyrow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 4px 0; }
+  .dn-bld-addkey-k { flex: 1; min-width: 0; }
+  .dn-bld-addkey-v { width: 84px; flex: none; }
+  .dn-bld-nsmono { margin: 10px 0; display: flex; flex-direction: column; gap: 4px; }
+
+  /* B3 proposer picker + free-text path row. */
+  .dn-bld-proposer-picker { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+  .dn-bld-proposer-freerow { display: flex; gap: 6px; align-items: center; }
+  .dn-bld-proposer-path { flex: 1; min-width: 0; }
 
   /* draft compare (Review pane): operand selects + the keyed diff table. */
   .dn-bld-cmp { margin: 10px 0; }

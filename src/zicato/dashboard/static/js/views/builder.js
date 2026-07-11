@@ -77,6 +77,9 @@ let _confirmDeleteEntry = false; // two-click delete arm
 let _importText = '';          // paste-JSONL import textarea content
 let _importReport = [];        // per-line import results [{line, ok, error?}]
 let _briefDraft = null;        // uncommitted proposer-brief text (null → use draft.brief)
+let _proposerDirs = [];        // discovered proposer dirs [{name, path}] (from /builder/draft)
+let _confirmReset = false;     // two-click revert-to-live arm (slot strip)
+let _undoNote = '';            // the last undo's note (e.g. "nothing to undo")
 
 // Re-render hooks set up per mount.
 let _renderCenter = () => {};
@@ -149,6 +152,7 @@ function applySnapshot(snap) {
   _warnings = Array.isArray(snap.warnings) ? snap.warnings : [];
   _diff = snap.diff || _diff;
   if (Array.isArray(snap.drafts)) _drafts = snap.drafts;
+  if (Array.isArray(snap.proposer_dirs)) _proposerDirs = snap.proposer_dirs;
 }
 
 // Apply the {draft,patch,cost,warnings,diff} envelope the op / a chat patch
@@ -167,6 +171,10 @@ function applyOpResult(env, opts) {
       && env.patch.changed && env.patch.changed.name) {
     _activeSlot = env.patch.changed.name;
   }
+  // The undo lifecycle op reports "nothing to undo" via the patch note when the
+  // session's snapshot history is empty — surface it beside the Undo button.
+  if (env.patch && env.patch.op === 'undo') _undoNote = env.patch.note || '';
+  else if (env.patch) _undoNote = '';
   _renderRail();
   _renderCenter();
   _renderPreview();
@@ -208,6 +216,7 @@ function renderRail(host) {
   const digest = JSON.stringify({
     active: _active, done: SECTIONS.map((s) => sectionDone(s.id)),
     drafts: _drafts, slot: _activeSlot,
+    resetArm: _confirmReset, undoNote: _undoNote,
   });
   if (gatedSwap(host, 'rail|' + digest, () => {
     const items = SECTIONS.map((s) => {
@@ -258,7 +267,33 @@ function slotStrip() {
     if (v) runOp('fork', { name: v });
   });
   wrap.appendChild(el('div', { class: 'dn-bld-slots-forkrow' }, [nameIn, forkBtn]));
+  wrap.appendChild(lifecycleRow());
   return wrap;
+}
+
+// The revert/undo lifecycle controls under the fork row. Reset-to-live discards
+// every uncommitted edit by restoring the workspace's live contract IN PLACE
+// (two-click confirm — it throws away work); Undo steps back one write op. Both
+// drive an existing lifecycle op (L1). A `undo` with an empty history returns a
+// "nothing to undo" note, rendered here so the click is never silent.
+function lifecycleRow() {
+  const reset = el('button', {
+    class: 'dn-bld-btn dn-bld-btn-reset' + (_confirmReset ? ' dn-bld-btn-confirm' : ''),
+    type: 'button', 'aria-label': 'Reset to live',
+    text: _confirmReset ? 'Confirm — discard all edits' : 'Reset to live',
+  });
+  reset.addEventListener('click', () => {
+    if (!_confirmReset) { _confirmReset = true; _renderRail(); return; }
+    _confirmReset = false;
+    runOp('revert_to_live', {});
+  });
+  const undo = el('button', {
+    class: 'dn-bld-btn dn-bld-btn-undo', type: 'button', 'aria-label': 'Undo', text: 'Undo',
+  });
+  undo.addEventListener('click', () => { _confirmReset = false; runOp('undo', {}); });
+  const kids = [el('div', { class: 'dn-bld-slots-lifecyclerow' }, [reset, undo])];
+  if (_undoNote) kids.push(el('div', { class: 'dn-bld-slots-undonote dn-faint', role: 'status', text: _undoNote }));
+  return el('div', { class: 'dn-bld-slots-lifecycle' }, kids);
 }
 
 // A section is "done" once the operator has visibly engaged its core contract
@@ -363,6 +398,53 @@ function checkInput(checked, aria, caption, onToggle) {
     onToggle(!!on);
   });
   return el('label', { class: 'dn-bld-checkwrap' }, [box, el('span', { text: caption })]);
+}
+
+// A WHOLESALE-mapping numeric editor: one row per fixed `key`, each committing
+// the WHOLE mapping (the current mapping with that one key updated) through
+// `post(fullMapping)`. This is the op semantics — a mapping edit replaces the
+// whole mapping, never a per-key delta. `opts.def` is the value shown for a key
+// absent from `current` (a neutral display; an untouched absent key never
+// enters the posted mapping — only the edited key is added).
+function mappingNumRows(keys, current, opts, post) {
+  const o = opts || {};
+  return keys.map((key) => {
+    const has = current[key] != null;
+    const val = has ? current[key] : (o.def != null ? o.def : 0);
+    return controlRow(o.labelFor(key), o.infoFor(key), numInput(val,
+      { step: o.step || '0.1', 'aria-label': o.ariaFor(key) }, (n) => {
+        const next = Object.assign({}, current);
+        next[key] = n;
+        post(next);
+      }));
+  });
+}
+
+// A free-text ADD-KEY row: a key text field + a signed number + an Add button.
+// Fixes the iterate-existing-keys-only gap — an operator can introduce a NEW
+// mapping key the draft never carried. `onAdd(key, number)` assembles + posts
+// the whole mapping. Blank key or non-finite number is inert (never posts).
+function addKeyNumRow(opts, onAdd) {
+  const o = opts || {};
+  const keyIn = el('input', {
+    class: 'dn-bld-text dn-bld-addkey-k', type: 'text',
+    placeholder: o.placeholder || 'new key', 'aria-label': o.ariaKey,
+  });
+  const valIn = el('input', {
+    class: 'dn-bld-num dn-bld-addkey-v', type: 'number', step: o.step || '0.1',
+    value: o.defVal != null ? String(o.defVal) : '0', 'aria-label': o.ariaVal,
+  });
+  const btn = el('button', {
+    class: 'dn-bld-btn dn-bld-addkey-btn', type: 'button', text: 'Add', 'aria-label': o.ariaBtn || 'Add key',
+  });
+  btn.addEventListener('click', () => {
+    const k = String(keyIn.value != null ? keyIn.value : (keyIn.getAttribute('value') || '')).trim();
+    const raw = valIn.value != null ? valIn.value : valIn.getAttribute('value');
+    const n = Number(raw);
+    if (!k || !isFinite(n)) return;
+    onAdd(k, n);
+  });
+  return el('div', { class: 'dn-bld-addkeyrow' }, [keyIn, valIn, btn]);
 }
 
 function structureSection(d) {
@@ -644,6 +726,7 @@ function closeEditState() {
 export function _resetBuilderForTest() {
   closeEditState();
   _importText = ''; _importReport = []; _briefDraft = null;
+  _proposerDirs = []; _confirmReset = false; _undoNote = '';
   _config = null; _draft = null; _flash = '';
   _active = 'structure'; _busy = false;
 }
@@ -769,6 +852,12 @@ function overfittingSection(d) {
       body: 'Rotates the hash-derived holdout slice each epoch (the epoch id seeds the split), so no fixed slice is mined forever. Stable within an epoch; an explicit holdout tag is never rotated.',
     }, checkInput(of.rotate_holdout !== false, 'Rotate holdout', 'rotate the holdout slice each epoch',
       (on) => runOp('set_holdout', { rotate_holdout: on }))),
+    controlRow('Max generations per contract', {
+      title: 'max_generations_per_contract', def: '0 (no ceiling)',
+      body: 'The board-refresh ceiling: after this many generations settle under ONE contract hash, the loop stops proposing against the stale board until the operator rolls the contract — a hard cap on how long a board is mined before it must be refreshed. ASYMMETRY: the op reserves None for "leave unchanged", so this form always sends an explicit integer, and 0 CLEARS the ceiling (unlimited generations). Set 0 to remove any cap; a positive value to impose one.',
+    }, numInput(of.max_generations_per_contract != null ? of.max_generations_per_contract : 0,
+      { min: '0', step: '1', 'aria-label': 'Max generations per contract' },
+      (n) => runOp('set_holdout', { max_generations_per_contract: n }), { int: true })),
     controlRow('Restrict proposer visibility', {
       title: 'restrict_proposer_visibility', def: 'on',
       body: 'Sanitises the proposer prompt at the render boundary: per-entry identities aggregate to counts/rates and experiment-memory deltas coarsen to improved/flat/regressed bands, so the proposer cannot memorise individual board entries.',
@@ -812,6 +901,7 @@ function overfittingSection(d) {
 function weightsSection(d) {
   const sc = d.scoring || {};
   const ns = sc.namespace_weights || {};
+  const vocab = (_config && _config.vocab) || {};
   const rows = [
     controlRow('Drift weight', {
       title: 'drift_weight', def: '1.0',
@@ -825,6 +915,24 @@ function weightsSection(d) {
     }, numInput(sc.pass_weight != null ? sc.pass_weight : 1,
       { step: '0.1', 'aria-label': 'Pass weight' },
       (n) => runOp('set_weights', { pass_weight: n }))),
+    controlRow('Default judge weight', {
+      title: 'default_judge_weight', def: '1.0',
+      body: 'The weight a process judge folds into the loss with when it is not named in per_judge_weights. The baseline every judge inherits.',
+    }, numInput(sc.default_judge_weight != null ? sc.default_judge_weight : 1,
+      { step: '0.1', 'aria-label': 'Default judge weight' },
+      (n) => runOp('set_weights', { default_judge_weight: n }))),
+    controlRow('Plan-revision weight', {
+      title: 'plan_revision_weight', def: '0.5',
+      body: 'Coefficient on the plan-revision drift term (how much the agent rewrote its own plan mid-run) in the scalar.',
+    }, numInput(sc.plan_revision_weight != null ? sc.plan_revision_weight : 0.5,
+      { step: '0.1', 'aria-label': 'Plan revision weight' },
+      (n) => runOp('set_weights', { plan_revision_weight: n }))),
+    controlRow('Runtime weight', {
+      title: 'runtime_weight', def: '0.0',
+      body: 'Coefficient on the wall-clock runtime term of the scalar — opt-in pressure toward faster runs (0 keeps runtime untracked in the loss).',
+    }, numInput(sc.runtime_weight != null ? sc.runtime_weight : 0,
+      { step: '0.1', 'aria-label': 'Runtime weight' },
+      (n) => runOp('set_weights', { runtime_weight: n }))),
     controlRow('Diff-complexity weight', {
       title: 'diff_complexity_weight', def: '0 (term absent)',
       body: 'Opt-in MDL/parsimony coefficient: adds weight × (added + removed + patches) to the challenger scalar, biasing selection toward the smaller, more general edit (a shorter-description edit provably overfits the board less). 0 keeps the term exactly absent.',
@@ -832,6 +940,68 @@ function weightsSection(d) {
       { min: '0', step: '0.001', 'aria-label': 'Diff complexity weight' },
       (n) => runOp('set_namespace_weights', { diff_complexity_weight: n }))),
   ];
+
+  // ── severity_weights — FIXED rows from vocab.severities (→ set_weights) ──
+  const sevKeys = Array.isArray(vocab.severities) ? vocab.severities : [];
+  const sev = sc.severity_weights || {};
+  const sevRows = mappingNumRows(sevKeys, sev, {
+    def: 1, step: '0.1',
+    labelFor: (k) => 'Severity ' + k,
+    ariaFor: (k) => 'Severity weight ' + k,
+    infoFor: (k) => ({
+      title: 'severity_weights["' + k + '"]', def: '1.0',
+      body: 'Multiplier on every drift observation of ' + k + ' severity before it folds into the loss. Raises or lowers how much a ' + k + '-severity finding costs a challenger. Edits post the whole severity_weights mapping.',
+    }),
+  }, (mapping) => runOp('set_weights', { severity_weights: mapping }));
+
+  // ── per_kind_weights — FIXED rows from vocab.kinds (→ set_weights) ───────
+  const kindKeys = Array.isArray(vocab.kinds) ? vocab.kinds : [];
+  const perKind = sc.per_kind_weights || {};
+  const kindRows = mappingNumRows(kindKeys, perKind, {
+    def: 1, step: '0.1',
+    labelFor: (k) => 'Kind ' + k,
+    ariaFor: (k) => 'Per-kind weight ' + k,
+    infoFor: (k) => ({
+      title: 'per_kind_weights["' + k + '"]', def: '1.0',
+      body: 'Weight on every ' + k + ' board entry\'s contribution to the aggregate loss (1.0 = neutral). Lets one entry kind pull harder on selection. Edits post the whole per_kind_weights mapping.',
+    }),
+  }, (mapping) => runOp('set_weights', { per_kind_weights: mapping }));
+
+  // ── per_judge_weights — rows SEEDED from the judges declared on the board
+  //    + a free-text add-key row (→ set_weights) ───────────────────────────
+  const perJudge = sc.per_judge_weights || {};
+  const board = Array.isArray(d.board) ? d.board : [];
+  const judgeNames = [];
+  const seen = new Set();
+  for (const b of board) {
+    for (const j of (Array.isArray(b.judges) ? b.judges : [])) {
+      const name = j && j.name;
+      if (name && !seen.has(name)) { seen.add(name); judgeNames.push(name); }
+    }
+  }
+  for (const key of Object.keys(perJudge)) {
+    if (!seen.has(key)) { seen.add(key); judgeNames.push(key); }
+  }
+  const judgeRows = mappingNumRows(judgeNames, perJudge, {
+    def: 1, step: '0.1',
+    labelFor: (k) => 'Judge ' + k,
+    ariaFor: (k) => 'Per-judge weight ' + k,
+    infoFor: (k) => ({
+      title: 'per_judge_weights["' + k + '"]', def: 'default_judge_weight',
+      body: 'The weight the ' + k + ' process judge folds into the loss with, overriding default_judge_weight for this judge. Seeded from the judges declared on the board. Edits post the whole per_judge_weights mapping.',
+    }),
+  }, (mapping) => runOp('set_weights', { per_judge_weights: mapping }));
+  judgeRows.push(addKeyNumRow({
+    placeholder: 'judge name', defVal: 1, step: '0.1',
+    ariaKey: 'New per-judge weight name', ariaVal: 'New per-judge weight value',
+    ariaBtn: 'Add per-judge weight',
+  }, (key, n) => {
+    const next = Object.assign({}, perJudge);
+    next[key] = n;
+    runOp('set_weights', { per_judge_weights: next });
+  }));
+
+  // ── namespace_weights — existing rows + the NAMESPACE ADD-KEY row ────────
   const nsKeys = Object.keys(ns);
   const nsRows = nsKeys.map((key) => controlRow('Namespace ' + key, {
     title: 'namespace_weights["' + key + '"]', def: String(ns[key]),
@@ -841,11 +1011,27 @@ function weightsSection(d) {
     next[key] = n;
     runOp('set_namespace_weights', { namespace_weights: next });
   })));
+  nsRows.push(addKeyNumRow({
+    placeholder: 'namespace: (trailing colon)', defVal: 1, step: '0.001',
+    ariaKey: 'New namespace weight key', ariaVal: 'New namespace weight value',
+    ariaBtn: 'Add namespace weight',
+  }, (key, n) => {
+    const next = Object.assign({}, ns);
+    next[key] = n;
+    runOp('set_namespace_weights', { namespace_weights: next });
+  }));
+
   return section('Weights',
     el('p', { class: 'dn-lede', text: 'The loss-shaping coefficients: how drift, misses, and each metric namespace fold into the one scalar a duel compares. Contract fields — a change rolls the epoch.' }),
     ...rows,
+    el('h3', { class: 'dn-bld-subhead', text: 'Severity weights' }),
+    ...(sevRows.length ? sevRows : [empty('No drift severities in the vocabulary.')]),
+    el('h3', { class: 'dn-bld-subhead', text: 'Per-kind weights' }),
+    ...(kindRows.length ? kindRows : [empty('No entry kinds in the vocabulary.')]),
+    el('h3', { class: 'dn-bld-subhead', text: 'Per-judge weights' }),
+    ...judgeRows,
     el('h3', { class: 'dn-bld-subhead', text: 'Namespace weights' }),
-    ...(nsRows.length ? nsRows : [empty('No namespace weights in this contract.')]));
+    ...nsRows);
 }
 
 // The proposer-brief editor: a monospace textarea + an explicit Save (the
@@ -875,6 +1061,47 @@ function briefEditor(d) {
   ]);
 }
 
+// The proposer picker: a select over the discovered proposer dirs (from
+// /builder/draft's proposer_dirs) + the builtin default + a free-text path row,
+// all driving set_proposer. An explicit path outside the scanned set is
+// honored verbatim (the scan is a convenience, not a whitelist).
+function proposerPicker(d) {
+  const cur = d.proposer_path || '';
+  const dirs = Array.isArray(_proposerDirs) ? _proposerDirs : [];
+  const options = [el('option', { value: '', text: 'builtin default (skill-composed)' })];
+  const known = new Set();
+  for (const dir of dirs) {
+    options.push(el('option', { value: dir.path, text: dir.name + ' — ' + dir.path }));
+    known.add(dir.path);
+  }
+  // list the current path even if the scan didn't find it, so the select never
+  // silently drops the live value.
+  if (cur && !known.has(cur)) options.push(el('option', { value: cur, text: cur + ' (current)' }));
+  const sel = el('select', { class: 'dn-bld-select dn-bld-proposer-pick', 'aria-label': 'Proposer dir' }, options);
+  sel.value = cur;
+  sel.setAttribute('value', cur);
+  sel.addEventListener('change', () => {
+    const v = sel.value != null ? sel.value : sel.getAttribute('value');
+    runOp('set_proposer', { proposer_path: v ? v : null });
+  });
+  const pathIn = el('input', {
+    class: 'dn-bld-text dn-bld-proposer-path', type: 'text',
+    placeholder: '/path/to/proposer', value: cur, 'aria-label': 'Proposer path',
+  });
+  const setBtn = el('button', { class: 'dn-bld-btn dn-bld-proposer-set', type: 'button', text: 'Set path', 'aria-label': 'Set proposer path' });
+  setBtn.addEventListener('click', () => {
+    const raw = String(pathIn.value != null ? pathIn.value : (pathIn.getAttribute('value') || '')).trim();
+    runOp('set_proposer', { proposer_path: raw ? raw : null });
+  });
+  return el('div', { class: 'dn-bld-proposer-picker' }, [
+    controlRow('Proposer dir', {
+      title: 'proposer_path', def: 'builtin default',
+      body: 'Point the epoch at a proposer dir (one carrying an agent.py or a skills/ dir), or the builtin skill-composed default. The picker lists dirs discovered under <workspace>/../proposers/; the free-text row below sets any other path. Changing the proposer rolls the epoch.',
+    }, sel),
+    el('div', { class: 'dn-bld-proposer-freerow' }, [pathIn, setBtn]),
+  ]);
+}
+
 function proposerSection(d) {
   const p = d.proposer || {};
   const skills = Array.isArray(p.skills) ? p.skills : [];
@@ -882,7 +1109,8 @@ function proposerSection(d) {
   const pq = ((d.scoring || {}).proposer_quality) || {};
   const em = ((d.scoring || {}).experiment_memory) || {};
   return section('Proposer',
-    el('p', { class: 'dn-lede', text: 'Who proposes each challenger. A skill-composed default proposer, or a custom ADK agent dir. Read-only summary here — editing the proposer dir is a config change.' }),
+    el('p', { class: 'dn-lede', text: 'Who proposes each challenger: the skill-composed builtin default, a discovered proposer dir, or an explicit path — plus the proposer-quality levers (best-of-N slate, self-critique, cross-epoch memory). Changing the proposer or any lever is a contract edit — it rolls the epoch.' }),
+    proposerPicker(d),
     briefEditor(d),
     controlRow('Best-of-N slate', {
       title: 'best_of_n', def: '3',
@@ -926,6 +1154,46 @@ function proposerSection(d) {
           ].filter(Boolean))))
         : el('p', { class: 'dn-faint', text: 'No composed skills.' }),
     ]));
+}
+
+// The per-namespace strict-monotonicity gate mapping editor: a checkbox per
+// existing namespace + a text-key/bool add-key row, each committing the WHOLE
+// namespace_monotonicity mapping through set_gate (the op replaces it
+// wholesale). Closes the namespace_monotonicity GUI gap.
+function namespaceMonoPanel(sc) {
+  const cur = sc.namespace_monotonicity || {};
+  const rows = Object.keys(cur).map((key) => controlRow('Namespace ' + key, {
+    title: 'namespace_monotonicity["' + key + '"]', def: String(!!cur[key]),
+    body: 'When on, the ' + key + ' namespace\'s per-run mean may not regress on a promotion (a strict-monotonicity gate scoped to this namespace). Edits post the whole namespace_monotonicity mapping.',
+  }, checkInput(!!cur[key], 'Namespace monotonicity ' + key, key + ' may not regress', (on) => {
+    const next = Object.assign({}, cur);
+    next[key] = on;
+    runOp('set_gate', { namespace_monotonicity: next });
+  })));
+  const keyIn = el('input', {
+    class: 'dn-bld-text dn-bld-addkey-k', type: 'text',
+    placeholder: 'namespace: (trailing colon)', 'aria-label': 'New namespace monotonicity key',
+  });
+  const box = el('input', { class: 'dn-bld-check dn-bld-addkey-v', type: 'checkbox', 'aria-label': 'New namespace monotonicity value' });
+  box.setAttribute('checked', 'checked'); // default strict (may not regress)
+  const btn = el('button', { class: 'dn-bld-btn dn-bld-addkey-btn', type: 'button', text: 'Add', 'aria-label': 'Add namespace monotonicity key' });
+  btn.addEventListener('click', () => {
+    const k = String(keyIn.value != null ? keyIn.value : (keyIn.getAttribute('value') || '')).trim();
+    if (!k) return;
+    const on = box.checked != null ? box.checked : (box.getAttribute('checked') != null);
+    const next = Object.assign({}, cur);
+    next[k] = !!on;
+    runOp('set_gate', { namespace_monotonicity: next });
+  });
+  const addRow = el('div', { class: 'dn-bld-addkeyrow' }, [
+    keyIn, el('label', { class: 'dn-bld-checkwrap' }, [box, el('span', { text: 'may not regress' })]), btn,
+  ]);
+  return el('div', { class: 'dn-bld-nsmono' }, [
+    el('h3', { class: 'dn-bld-subhead', text: 'Namespace monotonicity' }),
+    el('p', { class: 'dn-faint', text: 'Per-namespace strict-monotonicity gates: each listed namespace\'s mean may not regress on a promotion. A change posts the whole mapping and rolls the epoch.' }),
+    ...(rows.length ? rows : [empty('No per-namespace monotonicity gates set.')]),
+    addRow,
+  ]);
 }
 
 function gateSection(d) {
@@ -980,6 +1248,7 @@ function gateSection(d) {
       title: 'pass_rate_monotonicity_scope', def: 'per_entry',
       body: 'Granularity of the pass-rate check when it is on. per_entry rejects if ANY champion-passed entry flips to fail (right for invariant / regression-suite boards); aggregate rejects only when the overall pass-rate drops (right for sampled boards where one noisy flip should not veto a strictly-better challenger).',
     }, scope),
+    namespaceMonoPanel(sc),
     controlRow('Block on containment violation', {
       title: 'block_on_containment_violation', def: 'off (alarm-only)',
       body: 'Before finalizing a gate-decided promotion, re-check diff containment (files outside the mutable trees must be byte-identical) and REJECT a violating child instead of promoting with an alarm. Fail-open on an unreadable snapshot; an explicit operator force-promote is never blocked.',
