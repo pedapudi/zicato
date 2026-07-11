@@ -273,13 +273,25 @@ def build_reflection_summary(paths: WorkspacePaths, reflection_id: str) -> dict[
 
 
 def build_judge_scorecards(paths: WorkspacePaths, reflection_id: str) -> dict[str, Any]:
-    """The per-judge scorecards for one reflection — index-first, file fallback.
+    """The per-judge scorecards for one reflection — FILE-first, index fallback.
 
-    Prefers the ``judge_scorecards`` projection; falls back to the canonical
-    ``scorecards.json`` when the index row is absent (a reflection persisted but
-    not yet indexed, or a never-indexed workspace). Returns ``{reflection_id,
-    judges: [...]}`` — an empty list for an unknown reflection.
+    Files are canonical: the canonical ``scorecards.json`` carries the FULL
+    scorecard shape (``JudgeScorecard.to_json`` — including ``fpr`` and
+    ``conflicts_with``), whereas the ``judge_scorecards`` index projection is a
+    LOSSY subset that drops those columns. So this reader prefers the file when
+    present and the Instrument lens gets every metric it renders; the index
+    projection is the fallback for a file-less / cheap read path (an index built
+    against a workspace whose reflection dir was pruned). Returns
+    ``{reflection_id, judges: [...]}`` — an empty list for an unknown reflection.
     """
+    # File-first (canonical, full shape).
+    epoch_id = _resolve_epoch(paths, reflection_id)
+    if epoch_id is not None:
+        from_file = _scorecards_from_file(paths, epoch_id, reflection_id)
+        if from_file:
+            return {"reflection_id": reflection_id, "judges": from_file}
+
+    # Index fallback — the lossy projection (no fpr / conflicts_with).
     from zicato.index import query as iq  # noqa: PLC0415
 
     try:
@@ -308,14 +320,7 @@ def build_judge_scorecards(paths: WorkspacePaths, reflection_id: str) -> dict[st
         ]
         return {"reflection_id": reflection_id, "judges": judges}
 
-    # File fallback — read the canonical scorecards.json.
-    epoch_id = _resolve_epoch(paths, reflection_id)
-    if epoch_id is None:
-        return {"reflection_id": reflection_id, "judges": []}
-    return {
-        "reflection_id": reflection_id,
-        "judges": _scorecards_from_file(paths, epoch_id, reflection_id),
-    }
+    return {"reflection_id": reflection_id, "judges": []}
 
 
 # ---------------------------------------------------------------------------

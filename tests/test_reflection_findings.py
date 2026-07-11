@@ -179,8 +179,10 @@ def test_fp_heavy_judge_emits_downweight() -> None:
     assert len(fp_finding) == 1
     assert fp_finding[0].proposed_op["op"] == "set_weights"
     assert fp_finding[0].proposed_op["args"]["per_judge_weights"]["noisy"] == 0.5
-    # Evidence links the FP pile.
+    # Evidence links the FP pile — and carries its adjudicated verdict so the UI
+    # colours the chip from the data, not a title regex.
     assert fp_finding[0].evidence[0]["run_ref"] == "c:e:r0"
+    assert fp_finding[0].evidence[0]["verdict"] == VERDICT_FP
 
 
 def test_untested_judge_is_recommendation_only() -> None:
@@ -206,6 +208,7 @@ def test_oracle_fn_finding_names_the_span() -> None:
     # The finding is evidence-linked to the adjudicated span the judge slept through.
     assert missed[0].evidence[0]["span"] == span
     assert missed[0].evidence[0]["run_ref"] == "v1:entryA:r0"
+    assert missed[0].evidence[0]["verdict"] == VERDICT_FN
     assert missed[0].proposed_op is None  # broadening is an authoring decision
 
 

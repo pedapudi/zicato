@@ -164,11 +164,15 @@ FIXTURE['/api/conversation/run_v0_waffles'] = {
 //     coverage(:650)}, validity = {n_judges, aggregate_f1, untested_judges}
 //     (:205-209), calibration = {promote_margin, noise_floor_max_abs_delta,
 //     margin_clears_floor} (:212-218). findings from reflection/findings.py
-//     Finding.to_json (:74-84).
-//   * build_judge_scorecards   → {reflection_id, judges:[…]} — the index-first
-//       projection shape (reflection_view.py:290-308): judge_name, tp, fp, fn,
-//       tn, ambiguous, precision, recall, f1, severity_accuracy,
-//       disagreement_rate, self_consistency_kappa, exercised, redundant_with.
+//     Finding.to_json (:74-84); each evidence chip carries its adjudicated
+//     `verdict` (FP/FN) from findings.py _evidence.
+//   * build_judge_scorecards   → {reflection_id, judges:[…]} — the FILE-first
+//       CANONICAL shape (scorecards.py JudgeScorecard.to_json), which build_
+//       judge_scorecards now prefers over the lossy index projection: judge_name,
+//       n_decisions, tp, fp, fn, tn, ambiguous, precision, recall, f1, fpr,
+//       severity_accuracy, disagreement_rate, self_consistency_kappa,
+//       redundant_with, conflicts_with, exercised, ambiguous_pile. (The index
+//       projection is the fallback and DROPS fpr + conflicts_with.)
 //   * build_adjudication_xray  → {reflection_id, epoch_id, judge_name, run_ref,
 //       found, transcript:{fidelity, turns:[str]}, judge_verdict, adjudication}
 //       (reflection_view.py:428-437); judge_verdict = one corpus.py
@@ -227,13 +231,13 @@ export const REFLECTION_SUMMARY = {
     { finding_id: 'find-4e5f6a7b', pillar: 'validity', severity: 'critical',
       title: "Judge 'safety.scope' misses real failures",
       detail: "Judge 'safety.scope' stayed silent on 1 transcript(s) the adjudicator found exhibited its failure (recall 0.67).",
-      evidence: [{ run_ref: REFL_RUN_REF, judge_name: 'safety.scope',
+      evidence: [{ run_ref: REFL_RUN_REF, judge_name: 'safety.scope', verdict: 'FN',
         span: 'guarantee the weather will be sunny', adjudication_path: 'adjudication/safety.scope/gen-0042:task.itinerary:r2.json' }],
       recommendation: "broaden 'safety.scope' to catch the named missed-fire spans", proposed_op: null },
     { finding_id: 'find-8c9d0e1f', pillar: 'validity', severity: 'warning',
       title: "Judge 'format.json' fires falsely",
       detail: "Judge 'format.json' has precision 0.40 over 3 false fires — it penalizes clean transcripts.",
-      evidence: [{ run_ref: REFL_RUN_REF, judge_name: REFL_JUDGE,
+      evidence: [{ run_ref: REFL_RUN_REF, judge_name: REFL_JUDGE, verdict: 'FP',
         span: 'response is not valid JSON', adjudication_path: 'adjudication/format.json/gen-0042:task.itinerary:r2.json' }],
       recommendation: "down-weight 'format.json' toward 0.5 and tighten it",
       proposed_op: { op: 'set_weights', args: { per_judge_weights: { 'format.json': 0.5 } } } },
@@ -242,16 +246,19 @@ export const REFLECTION_SUMMARY = {
 };
 
 export const REFLECTION_SCORECARDS = { reflection_id: REFLECTION_ID, judges: [
-  { judge_name: 'format.json', tp: 14, fp: 3, fn: 6, tn: 15, ambiguous: 3,
+  { judge_name: 'format.json', n_decisions: 41, tp: 14, fp: 3, fn: 6, tn: 15, ambiguous: 3,
     precision: 0.824, recall: 0.7, f1: 0.757, fpr: 0.167, severity_accuracy: 0.79,
-    disagreement_rate: 0.06, self_consistency_kappa: 0.84, exercised: true,
-    redundant_with: [{ judge: 'tool.args', corr: 0.96 }] },
-  { judge_name: 'safety.scope', tp: 2, fp: 0, fn: 1, tn: 20, ambiguous: 0,
+    disagreement_rate: 0.06, self_consistency_kappa: 0.84,
+    redundant_with: [{ judge: 'tool.args', corr: 0.96 }], conflicts_with: [{ judge: 'safety.scope', corr: -0.71 }],
+    exercised: true, ambiguous_pile: false },
+  { judge_name: 'safety.scope', n_decisions: 23, tp: 2, fp: 0, fn: 1, tn: 20, ambiguous: 0,
     precision: 1.0, recall: 0.667, f1: 0.8, fpr: 0.0, severity_accuracy: 1.0,
-    disagreement_rate: 0.0, self_consistency_kappa: 0.91, exercised: true, redundant_with: [] },
-  { judge_name: 'recall.multi', tp: 0, fp: 0, fn: 0, tn: 0, ambiguous: 0,
+    disagreement_rate: 0.0, self_consistency_kappa: 0.91,
+    redundant_with: [], conflicts_with: [], exercised: true, ambiguous_pile: false },
+  { judge_name: 'recall.multi', n_decisions: 0, tp: 0, fp: 0, fn: 0, tn: 0, ambiguous: 0,
     precision: null, recall: null, f1: null, fpr: null, severity_accuracy: null,
-    disagreement_rate: 0.0, self_consistency_kappa: null, exercised: false, redundant_with: [] },
+    disagreement_rate: 0.0, self_consistency_kappa: null,
+    redundant_with: [], conflicts_with: [], exercised: false, ambiguous_pile: false },
 ] };
 
 export const REFLECTION_XRAY = {

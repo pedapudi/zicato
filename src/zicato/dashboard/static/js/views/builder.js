@@ -80,6 +80,7 @@ let _briefDraft = null;        // uncommitted proposer-brief text (null → use 
 let _proposerDirs = [];        // discovered proposer dirs [{name, path}] (from /builder/draft)
 let _confirmReset = false;     // two-click revert-to-live arm (slot strip)
 let _undoNote = '';            // the last undo's note (e.g. "nothing to undo")
+let _replacedNote = '';        // create-mode Save that replaced an existing id (F6 notice)
 
 // Re-render hooks set up per mount.
 let _renderCenter = () => {};
@@ -175,6 +176,14 @@ function applyOpResult(env, opts) {
   // session's snapshot history is empty — surface it beside the Undo button.
   if (env.patch && env.patch.op === 'undo') _undoNote = env.patch.note || '';
   else if (env.patch) _undoNote = '';
+  // A draft-IDENTITY change (switch to another slot, revert-to-live, or an undo
+  // step) swaps the board out from under any open inline editor: a buffer typed
+  // against the old draft would Save into the NEW one. Close the editor so the
+  // stale buffer can never post. (Fork is deliberately excluded — it COPIES the
+  // working draft, so the open editor still targets the same entries.)
+  if (env.patch && (env.patch.op === 'switch' || env.patch.op === 'revert_to_live' || env.patch.op === 'undo')) {
+    closeEditState();
+  }
   _renderRail();
   _renderCenter();
   _renderPreview();
@@ -327,7 +336,7 @@ function renderCenter(host) {
     // the board-editor accordion state — pinned so the open editor survives a
     // digest re-render and reflects structural edits to the buffer.
     editId: _editId, editBuf: _editBuffer, editCreate: _editCreate,
-    editErr: _editError, delArm: _confirmDeleteEntry,
+    editErr: _editError, delArm: _confirmDeleteEntry, replaced: _replacedNote,
     imp: _importText, impRep: _importReport, brief: _briefDraft,
   });
   gatedSwap(host, 'center|' + digest, () => {
@@ -552,7 +561,7 @@ function boardSection(d) {
       el('span', { class: 'dn-bld-boardkind', text: b.kind || '' }),
       el('div', { class: 'dn-bld-boardbadges' }, badges),
     ]);
-    main.addEventListener('click', () => openEdit(b, held));
+    main.addEventListener('click', () => openEdit(b));
     const toggle = el('button', {
       class: 'dn-bld-holdtoggle' + (held ? ' dn-bld-held' : ''), type: 'button',
       'aria-pressed': String(held), title: held ? 'held out (click to train on it)' : 'in train set (click to hold out)',
@@ -578,6 +587,7 @@ function boardSection(d) {
 
   return section('Board & holdout',
     el('p', { class: 'dn-lede', text: 'The evaluation board and its train / holdout split. The winning challenger is re-scored on the holdout slice before it can promote.' }),
+    replacedNotice(),
     controlRow('Holdout fraction', {
       title: 'Holdout fraction', def: '0.2',
       body: 'Fraction of the board hash-partitioned into the holdout slice (when no explicit per-entry holdout tags are set). A larger holdout guards harder against overfitting but costs more confirm runs and shrinks the train field.',
@@ -592,6 +602,19 @@ function boardSection(d) {
       : empty('The board is empty — use “Add entry” below to author the first entry.'),
     addEntryControl(vocab),
     importBox());
+}
+
+// The create-mode "replaced an existing id" notice (F6). A dismissable status
+// banner — NOT a confirm gate — so a create Save that landed on an existing id
+// (an id-matched replace, never a rename) is surfaced rather than silent.
+function replacedNotice() {
+  if (!_replacedNote) return null;
+  const note = el('div', { class: 'dn-bld-replaced-note', role: 'status' }, [
+    el('span', { class: 'dn-bld-replaced-msg', text: _replacedNote }),
+    el('button', { class: 'dn-bld-replaced-x', type: 'button', 'aria-label': 'Dismiss', text: '×' }),
+  ]);
+  note.lastChild.addEventListener('click', () => { _replacedNote = ''; _renderCenter(); });
+  return note;
 }
 
 // The row's at-a-glance badges: expectation kind, per-judge (removable), a
@@ -726,15 +749,21 @@ function closeEditState() {
 export function _resetBuilderForTest() {
   closeEditState();
   _importText = ''; _importReport = []; _briefDraft = null;
-  _proposerDirs = []; _confirmReset = false; _undoNote = '';
+  _proposerDirs = []; _confirmReset = false; _undoNote = ''; _replacedNote = '';
   _config = null; _draft = null; _flash = '';
   _active = 'structure'; _busy = false;
 }
 
-function openEdit(entry, held) {
+function openEdit(entry) {
   const id = entry.id || entry.entry_id;
   if (_editId === id && !_editCreate) { closeEditState(); _renderCenter(); return; } // toggle closed
-  _editBuffer = entryToBuffer(entry, { heldOut: held });
+  // Seed the editor's heldOut from the entry's OWN tags only — NOT the holdSet,
+  // which folds in the hash-derived (rotating, fraction-based) holdout. Passing
+  // a hash-held flag here made the serializer stamp a literal `holdout` tag on
+  // Save (split.py rule 1: an explicit tag wins), collapsing the whole rotating
+  // holdout fraction onto this one entry. The train/holdout toggle stays the
+  // ONLY writer of the tag; entryToBuffer reads it from rawTags.
+  _editBuffer = entryToBuffer(entry);
   _editId = id; _editCreate = false; _editError = ''; _confirmDeleteEntry = false;
   _renderCenter();
 }
@@ -742,6 +771,7 @@ function openEdit(entry, held) {
 function startCreate(kind) {
   _editBuffer = newEntryBuffer(kind);
   _editCreate = true; _editId = null; _editError = ''; _confirmDeleteEntry = false;
+  _replacedNote = '';
   _renderCenter();
 }
 
@@ -758,11 +788,20 @@ function duplicateEntry() {
 // global flash), and the editor stays open so the operator can fix it.
 async function saveEntry() {
   if (_busy || !_editBuffer) return;
+  const wasCreate = _editCreate;
   _busy = true; _editError = ''; _renderCenter();
   try {
     const env = await postOp('edit_board_entry', { entry: bufferToEntryJson(_editBuffer) });
     if (env && env.error) { _editError = env.error; }
-    else if (env) { closeEditState(); applyOpResult(env); }
+    else if (env) {
+      // A create-mode Save whose id already existed REPLACED it in place (no
+      // rename on the id-matched op). Surface that verbatim so a fat-fingered
+      // duplicate-id create is never a silent clobber (F6 — no confirm gate).
+      const changed = (env.patch && env.patch.changed) || {};
+      _replacedNote = (wasCreate && changed.action === 'replaced')
+        ? 'replaced existing entry ' + (changed.entry_id || '') : '';
+      closeEditState(); applyOpResult(env);
+    }
   } catch (err) {
     _editError = (err && err.message) || String(err);
   } finally {

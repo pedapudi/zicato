@@ -45,6 +45,14 @@ test('router: parseRoute + href round-trip for every instrument depth', () => {
   }
 });
 
+test('router F9: an id containing ~ round-trips the x-ray route without truncating', () => {
+  const weird = 'gen~cmp:task.itinerary:r0'; // a run_ref carrying a literal ~
+  const url = router.href('instrument', { epochId: EPOCH_ID, reflectionId: REFLECTION_ID, judge: REFL_JUDGE, runRef: weird });
+  const parsed = router.parseRoute(url);
+  assertEqual(parsed.view, 'instrument', 'the view still resolves');
+  assertEqual(parsed.params.runRef, weird, 'the ~-bearing run_ref survives enc/dec verbatim (no split at ~)');
+});
+
 test('router: instrument is a registered VIEW; up() climbs x-ray → bill → landing → epoch', () => {
   assert(router.VIEWS.includes('instrument'), 'instrument in VIEWS');
   const xray = { view: 'instrument', params: { epochId: EPOCH_ID, reflectionId: REFLECTION_ID, judge: REFL_JUDGE, runRef: REFL_RUN_REF } };
@@ -257,6 +265,53 @@ test('tree: no Instrument leaf when the epoch has no reflections', async () => {
   tree.buildTree(host, model, { view: 'epoch', params: { epochId: EPOCH_ID } }, new Set(['e:' + EPOCH_ID]), CTX, () => {}, new Set());
   const leaves = host.querySelectorAll('[data-kind]').filter((n) => n.getAttribute('data-kind') === 'instrument');
   assertEqual(leaves.length, 0, 'no Instrument node without reflections');
+});
+
+// ====================================================================
+// F4 — the evidence chip verdict comes from the payload, not a title regex.
+// ====================================================================
+test('judge audit F4: an evidence chip reads its verdict from the payload, not the title', async () => {
+  fresh();
+  const summary = JSON.parse(JSON.stringify(REFLECTION_SUMMARY));
+  // a finding whose TITLE says "fires falsely" (regex → FP) but whose evidence
+  // is adjudicated FN. The chip must follow the DATA, not the wording.
+  summary.findings = [{
+    finding_id: 'find-mislabel', pillar: 'validity', severity: 'warning',
+    title: "Judge 'format.json' fires falsely", detail: 'x',
+    evidence: [{ run_ref: REFL_RUN_REF, judge_name: REFL_JUDGE, verdict: 'FN', span: 'a span', adjudication_path: 'p' }],
+    recommendation: 'y', proposed_op: null,
+  }];
+  installFixtureMap(reflectionFixtureMap({ summary }));
+  const host = document.createElement('div');
+  await instrument.render(host, CTX, { epochId: EPOCH_ID, reflectionId: REFLECTION_ID });
+  const chips = allByClass(host, 'dn-instr-echip');
+  assert(chips.length >= 1, 'an evidence chip rendered on the format.json card');
+  assert(chips.some((c) => (c.textContent || '').includes('FN')), 'the chip reads FN (from evidence.verdict)');
+  assert(hasClass(host, 'dn-instr-t-fn'), 'the FN tone is applied (not the FP the title regex would pick)');
+  assert(!chips.some((c) => (c.textContent || '').includes('FP')), 'no FP chip fabricated from the "falsely" title');
+});
+
+// ====================================================================
+// F5 — invalidateLive busts the reflection LIST but keeps the immutable
+// singular reads (the prefix must not over-match /api/reflection/<id>).
+// ====================================================================
+test('data F5: invalidateLive busts the cached reflection list but not the singular reads', async () => {
+  fresh(); // clears the data cache
+  installFixtureMap(reflectionFixtureMap());
+  const first = await data.reflections();
+  assertEqual((first.reflections || []).length, 2, 'the list fetched + cached (two fixtures)');
+  const sumFirst = await data.reflectionSummary(REFLECTION_ID);
+  assert(sumFirst.found === true, 'the singular summary fetched + cached');
+  // a NEW reflection completes: the list changes, and a would-be-different
+  // summary is installed. Only the LIST must re-fetch on invalidateLive.
+  const changedSummary = JSON.parse(JSON.stringify(REFLECTION_SUMMARY));
+  changedSummary.found = false;
+  installFixtureMap({ ...reflectionFixtureMap({ summary: changedSummary }), '/api/reflections': { reflections: [] } });
+  data.invalidateLive();
+  const refetched = await data.reflections();
+  assertEqual((refetched.reflections || []).length, 0, 'invalidateLive busted the list → it re-fetched the new (empty) payload');
+  const sumAfter = await data.reflectionSummary(REFLECTION_ID);
+  assert(sumAfter.found === true, 'the singular /api/reflection/<id>/summary stayed cached (prefix did not over-match)');
 });
 
 await run();

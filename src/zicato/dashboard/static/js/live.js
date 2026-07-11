@@ -658,6 +658,9 @@ export class LiveController {
     // tracks the alive→idle edge so the ticker is cleared exactly once on the
     // transition (not every idle beat).
     this._wasAlive = false;
+    // the run-key set from the last ALIVE tick — the "pre-idle" set the idle→
+    // alive edge compares against so a flap of the SAME runs keeps the feed.
+    this._preIdleRuns = null;
     this._funnelDigest = null;
     this._metaKey = null;
     this._pipeDigest = null;
@@ -739,11 +742,19 @@ export class LiveController {
 
     // ── the activity ticker: diff the snapshot, append the new events ──
     const snap = liveSnapshot({ status, heartbeat, activeRuns, activeTournament });
-    // On the idle→alive edge (a fresh run begins), clear the PREVIOUS run's dead
-    // rows BEFORE this tick's events land — so they never leak into the new
-    // run's feed. Clearing here (not on the alive→idle edge) preserves the
-    // finishing run's completion events, which land in the same tick it settles.
-    if (alive && !this._wasAlive) this.ticker.reset();
+    // On the idle→alive edge, clear the PREVIOUS run's dead rows BEFORE this
+    // tick's events land — but ONLY when the incoming run set is a genuinely NEW
+    // run (disjoint from the pre-idle set). A brief alive→idle→alive FLAP of the
+    // SAME still-running runs shares run keys with the pre-idle set, so the feed
+    // must survive it rather than momentarily blanking. Clearing here (not on the
+    // alive→idle edge) preserves a finishing run's completion events, which land
+    // in the same tick it settles.
+    if (alive && !this._wasAlive) {
+      const runKeys = snap.runs.map((r) => r.key);
+      const prior = this._preIdleRuns;
+      const carriedOver = !!(prior && runKeys.some((k) => prior.has(k)));
+      if (!carriedOver) this.ticker.reset();
+    }
     const { events, seq } = deriveActivity(this._prevSnap, snap, this._seq);
     this._seq = seq;
     if (events.length) this.ticker.push(events);
@@ -762,6 +773,10 @@ export class LiveController {
       return false;
     }
     this._wasAlive = true;
+    // Remember this alive tick's run set. Idle ticks return above without
+    // touching it, so at the next idle→alive edge it still holds the pre-idle
+    // run set the reset gate compares against.
+    this._preIdleRuns = new Set(snap.runs.map((r) => r.key));
 
     // ── tournament-level progress: the ONE rung-number source of truth ──
     // liveProgress reads the live TOPOLOGY (resolved rungs + the active rung),
