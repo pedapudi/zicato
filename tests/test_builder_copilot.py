@@ -175,7 +175,8 @@ async def test_two_tool_rounds_mutate_shared_draft_and_stream_patches(tmp_path: 
         [
             FunctionCallTurn(name="set_structure", args={"structure": "swiss"}),
             FunctionCallTurn(name="set_holdout", args={"fraction": 0.3}),
-            TextTurn(text="Done — swiss with a 0.3 holdout."),
+            FunctionCallTurn(name="remove_board_entry", args={"entry_id": "e4"}),
+            TextTurn(text="Done — swiss with a 0.3 holdout, e4 dropped."),
         ]
     )
 
@@ -183,7 +184,7 @@ async def test_two_tool_rounds_mutate_shared_draft_and_stream_patches(tmp_path: 
         run_copilot(
             config,
             session_id="sess",
-            message="make it swiss with a 30% holdout",
+            message="make it swiss with a 30% holdout and drop e4",
             store=store,
             workspace_root=ws,
             agent=agent,
@@ -192,19 +193,23 @@ async def test_two_tool_rounds_mutate_shared_draft_and_stream_patches(tmp_path: 
 
     types = [f["type"] for f in frames]
     # tool + patch per round, then the final text token(s) and a done.
-    assert types.count("tool") == 2
-    assert types.count("patch") == 2
+    assert types.count("tool") == 3
+    assert types.count("patch") == 3
     assert types[-1] == "done"
 
     tool_frames = [f for f in frames if f["type"] == "tool"]
     assert tool_frames[0]["name"] == "set_structure"
     assert tool_frames[0]["args"] == {"structure": "swiss"}
     assert tool_frames[1]["name"] == "set_holdout"
+    assert tool_frames[2]["name"] == "remove_board_entry"
+    assert tool_frames[2]["args"] == {"entry_id": "e4"}
 
     patch_frames = [f for f in frames if f["type"] == "patch"]
     assert patch_frames[0]["patch"]["op"] == "set_structure"
     assert patch_frames[0]["patch"]["changed"]["structure"]["to"] == "swiss"
     assert patch_frames[1]["patch"]["op"] == "set_holdout"
+    assert patch_frames[2]["patch"]["op"] == "remove_board_entry"
+    assert patch_frames[2]["patch"]["changed"] == {"entry_id": "e4", "action": "removed"}
     # Each patch frame carries the same envelope the REST op returns.
     assert "cost" in patch_frames[0] and "warnings" in patch_frames[0]
     assert "diff" in patch_frames[0]
@@ -213,6 +218,7 @@ async def test_two_tool_rounds_mutate_shared_draft_and_stream_patches(tmp_path: 
     draft = store.get("sess", ws)
     assert draft.scoring.tournament_structure.structure == "swiss"
     assert draft.scoring.overfitting.holdout_fraction == pytest.approx(0.3)
+    assert {e.id for e in draft.entries} == {"e1", "e2", "e3"}
 
 
 @pytest.mark.asyncio
@@ -343,19 +349,23 @@ def test_default_builder_tools_registry_covers_every_op() -> None:
         "set_experiment_memory",
         "set_screening",
         "edit_board_entry",
+        "remove_board_entry",
         "add_judge",
         "remove_judge",
         "set_brief",
+        "set_board_meta",
         # read ops
         "estimate_cost",
         "validate",
         "preflight",
         "preview_apply",
-        # the fork/compare lifecycle
+        # the fork/compare + revert/undo lifecycle
         "fork",
         "switch",
         "list_drafts",
         "compare",
+        "revert_to_live",
+        "undo",
     }
     assert expected <= names, f"missing tools: {sorted(expected - names)}"
 
@@ -397,16 +407,24 @@ def test_new_knob_tools_edit_the_shared_draft(tmp_path: Path) -> None:
         r3 = _json.loads(copilot_tools.set_namespace_weights(diff_complexity_weight=0.01))
         r4 = _json.loads(copilot_tools.set_holdout(ladder={"budget": 8}))
         r5 = _json.loads(copilot_tools.set_gate(regression_timeout_s=0))
+        r6 = _json.loads(copilot_tools.remove_board_entry("e4"))
+        r7 = _json.loads(copilot_tools.remove_board_entry("ghost"))
+        r8 = _json.loads(copilot_tools.set_board_meta(disable_drift=["off_topic"]))
     assert r1["patch"]["changed"]["best_of_n"]["to"] == 4
     assert r2["patch"]["changed"]["cross_epoch"]["to"] is True
     assert r3["patch"]["changed"]["diff_complexity_weight"]["to"] == 0.01
     assert r4["patch"]["changed"]["ladder.budget"]["to"] == 8
     # invalid values come back as an error the model can read, never a crash.
     assert "error" in r5
+    assert r6["patch"]["changed"] == {"entry_id": "e4", "action": "removed"}
+    assert "error" in r7
+    assert r8["patch"]["changed"]["disable_drift"]["to"] == ["off_topic"]
     draft = store.get("s", ws)
     assert draft.scoring.proposer_quality.best_of_n == 4
     assert draft.scoring.experiment_memory.cross_epoch is True
     assert draft.scoring.overfitting.ladder.budget == 8
+    assert {e.id for e in draft.entries} == {"e1", "e2", "e3"}
+    assert [str(k) for k in draft.disable_drift] == ["off_topic"]
 
 
 def test_lifecycle_tools_fork_switch_compare(tmp_path: Path) -> None:
@@ -442,3 +460,98 @@ def test_lifecycle_tools_fork_switch_compare(tmp_path: Path) -> None:
         assert "error" in _json.loads(copilot_tools.fork("variant-a"))
         assert "error" in _json.loads(copilot_tools.switch("ghost"))
         assert "error" in _json.loads(copilot_tools.compare("session", "ghost"))
+
+
+def test_undo_through_copilot_restores_a_form_edit(tmp_path: Path) -> None:
+    """THE SHARED HISTORY SEAM: a FORM edit (POST /builder/op, which calls
+    store.remember before dispatch) is undone by the COPILOT's undo tool
+    (through the bound context on the SAME store) — one per-session undo
+    history behind both front doors."""
+    import json as _json
+
+    from starlette.applications import Starlette
+    from starlette.testclient import TestClient
+
+    from zicato.builder import copilot_tools
+    from zicato.builder.api import builder_routes
+    from zicato.builder.copilot_tools import BuilderToolContext, bind_builder_tool_context
+
+    ws = _seed_workspace(tmp_path)
+    store = DraftStore()
+    app = Starlette(routes=builder_routes(ws, store=store))
+    client = TestClient(app)
+
+    # The FORM makes an edit through the REST front door.
+    resp = client.post(
+        "/builder/op",
+        json={"session": "shared", "op": "set_structure", "args": {"structure": "racing"}},
+    )
+    assert resp.status_code == 200
+    assert store.get("shared", ws).scoring.tournament_structure.structure == "racing"
+
+    # The COPILOT undoes it through the other front door — same store,
+    # same session, same history.
+    ctx = BuilderToolContext(session_id="shared", store=store, workspace_root=ws)
+    with bind_builder_tool_context(ctx):
+        result = _json.loads(copilot_tools.undo())
+    assert result["patch"]["op"] == "undo"
+    assert store.get("shared", ws).scoring.tournament_structure.structure == "gauntlet"
+
+    # And the form sees the restored draft on its next GET.
+    snap = client.get("/builder/draft?session=shared").json()
+    assert snap["draft"]["scoring"]["tournament"]["structure"] == "gauntlet"
+
+
+def test_copilot_edit_undone_through_rest(tmp_path: Path) -> None:
+    """The seam works in the other direction too: a copilot tool edit
+    (pre-op state captured by BuilderToolContext.draft) is undone by the
+    form's REST undo op."""
+    from starlette.applications import Starlette
+    from starlette.testclient import TestClient
+
+    from zicato.builder import copilot_tools
+    from zicato.builder.api import builder_routes
+    from zicato.builder.copilot_tools import BuilderToolContext, bind_builder_tool_context
+
+    ws = _seed_workspace(tmp_path)
+    store = DraftStore()
+    ctx = BuilderToolContext(session_id="shared", store=store, workspace_root=ws)
+    with bind_builder_tool_context(ctx):
+        copilot_tools.set_structure("swiss")
+    assert store.get("shared", ws).scoring.tournament_structure.structure == "swiss"
+
+    app = Starlette(routes=builder_routes(ws, store=store))
+    client = TestClient(app)
+    resp = client.post("/builder/op", json={"session": "shared", "op": "undo", "args": {}})
+    assert resp.status_code == 200
+    assert resp.json()["draft"]["scoring"]["tournament"]["structure"] == "gauntlet"
+
+
+def test_revert_to_live_tool_discards_edits_and_undo_restores_them(tmp_path: Path) -> None:
+    import json as _json
+
+    from zicato.builder import copilot_tools
+    from zicato.builder.copilot_tools import BuilderToolContext, bind_builder_tool_context
+
+    ws = _seed_workspace(tmp_path)
+    store = DraftStore()
+    ctx = BuilderToolContext(session_id="s", store=store, workspace_root=ws)
+    with bind_builder_tool_context(ctx):
+        copilot_tools.set_structure("racing")
+        copilot_tools.remove_board_entry("e1")
+        reverted = _json.loads(copilot_tools.revert_to_live())
+        assert reverted["patch"]["op"] == "revert_to_live"
+        draft = store.get("s", ws)
+        assert draft.scoring.tournament_structure.structure == "gauntlet"
+        assert {e.id for e in draft.entries} == {"e1", "e2", "e3", "e4"}
+        # undo brings the discarded (pre-revert) state back.
+        undone = _json.loads(copilot_tools.undo())
+        assert undone["patch"]["op"] == "undo"
+        draft = store.get("s", ws)
+        assert draft.scoring.tournament_structure.structure == "racing"
+        assert "e1" not in {e.id for e in draft.entries}
+        # exhausting the history yields the honest note, never an error.
+        while True:
+            result = _json.loads(copilot_tools.undo())
+            if result["patch"]["note"] == "nothing to undo":
+                break

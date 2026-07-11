@@ -173,6 +173,7 @@ select = [
 "zicato.epoch.contract._round_floats".msg = "promoted: use zicato.epoch.contract.round_floats"
 "zicato.epoch.contract._scoring_to_canon".msg = "promoted: use zicato.epoch.contract.scoring_to_canon"
 "zicato.board.jsonl._entry_to_dict".msg = "promoted: use zicato.board.jsonl.entry_to_dict"
+"zicato.board.jsonl._board_meta_to_dict".msg = "promoted: use zicato.board.jsonl.board_meta_to_dict"
 "zicato.proposer.skills._parse_frontmatter".msg = "promoted: use zicato.proposer.skills.parse_frontmatter"
 "zicato.workspace_loader._scoring_weights_from_dict".msg = "promoted: use zicato.workspace_loader.scoring_weights_from_dict"
 "zicato.analyzer.aggregator._to_snake".msg = "private to the aggregator: use zicato.query.paths.to_snake"

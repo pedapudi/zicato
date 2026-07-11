@@ -138,12 +138,23 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
     if op == "edit_board_entry":
         entry = validate_board_entry(args["entry"])
         return ops.edit_board_entry(draft, entry)
+    if op == "remove_board_entry":
+        return ops.remove_board_entry(draft, str(args["entry_id"]))
     if op == "add_judge":
         return ops.add_judge(draft, str(args["entry_id"]), _judge_from_dict(args["judge"]))
     if op == "remove_judge":
         return ops.remove_judge(draft, str(args["entry_id"]), str(args["name"]))
     if op == "set_brief":
         return ops.set_brief(draft, str(args["text"]))
+    if op == "set_board_meta":
+        raw_disable = args.get("disable_drift")
+        if raw_disable is not None and not isinstance(raw_disable, list):
+            raise ValueError("'disable_drift' must be a list of drift-kind tokens or null")
+        return ops.set_board_meta(
+            draft,
+            disable_drift=[str(t) for t in raw_disable] if raw_disable is not None else None,
+            judge_only=_opt_bool(args, "judge_only"),
+        )
     raise ValueError(f"unknown builder op {op!r}")
 
 
@@ -183,6 +194,63 @@ def _runs_of(args: dict[str, Any]) -> int | None:
         return int(raw)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"preflight 'runs' must be an integer, got {raw!r}") from exc
+
+
+def _builder_vocab() -> dict[str, list[str]]:
+    """The board-authoring enum vocabulary, server-derived.
+
+    Served on ``GET /builder/config`` so the GUI's forms (entry kinds,
+    expectation kinds/reads, judge modes/severities, board-level drift
+    kinds) render their choices from the SAME enums the validators
+    enforce — the JS never hardcodes an enum, and a new member appears in
+    the forms without a client change.
+    """
+    from typing import get_args  # noqa: PLC0415
+
+    from goldfive import DriftSeverity  # noqa: PLC0415
+
+    from zicato.core.drift_kinds import GOLDFIVE_DRIFT_KINDS  # noqa: PLC0415
+    from zicato.core.types import (  # noqa: PLC0415
+        BoardEntryKind,
+        ExpectationKind,
+        JudgeMode,
+        OutputScope,
+    )
+
+    return {
+        "kinds": list(get_args(BoardEntryKind)),
+        "expectation_kinds": [m.value for m in ExpectationKind],
+        "reads": [m.value for m in OutputScope],
+        "judge_modes": [m.value for m in JudgeMode],
+        "severities": [m.value for m in DriftSeverity],
+        "drift_kinds": sorted(GOLDFIVE_DRIFT_KINDS),
+    }
+
+
+def _proposer_dirs(workspace_root: Path) -> list[dict[str, str]]:
+    """Discover candidate proposer dirs for the builder's proposer picker.
+
+    Scans ``<workspace_parent>/proposers/*`` — the conventional location
+    next to the ``.zicato/`` dir, like the contract source files — for
+    subdirectories that look like proposers: an ``agent.py`` or a
+    ``skills/`` dir (the two things
+    :func:`zicato.proposer.skills.resolve_proposer_spec` reads). Pure
+    read plumbing: degrades to ``[]`` on any absence or filesystem
+    error, never raises.
+    """
+    base = Path(workspace_root).parent / "proposers"
+    found: list[dict[str, str]] = []
+    try:
+        candidates = sorted((p for p in base.iterdir() if p.is_dir()), key=lambda p: p.name)
+    except OSError:
+        return []
+    for candidate in candidates:
+        try:
+            if (candidate / "agent.py").is_file() or (candidate / "skills").is_dir():
+                found.append({"name": candidate.name, "path": str(candidate)})
+        except OSError:
+            continue
+    return found
 
 
 def _format_sse(frame: dict[str, Any]) -> str:
@@ -254,7 +322,7 @@ def make_builder_endpoints(
 
     async def builder_config(_request: Request) -> JSONResponse:
         cfg = load_builder_config(root)
-        return JSONResponse(cfg.to_public_dict())
+        return JSONResponse({**cfg.to_public_dict(), "vocab": _builder_vocab()})
 
     async def builder_draft(request: Request) -> JSONResponse:
         session = request.query_params.get("session") or _DEFAULT_SESSION
@@ -270,6 +338,7 @@ def make_builder_endpoints(
                 "warnings": [w.to_dict() for w in warns],
                 "diff": diff.to_dict(),
                 "drafts": draft_store.list_drafts(),
+                "proposer_dirs": _proposer_dirs(root),
             }
         )
 
@@ -302,11 +371,12 @@ def make_builder_endpoints(
             return JSONResponse({"error": "'args' must be a JSON object"}, status_code=400)
         session = _session_of(body, request)
         draft = draft_store.get(session, root)
-        if op in ("fork", "switch", "list_drafts", "compare"):
-            # The fork/compare LIFECYCLE ops act on the store's named slots
-            # rather than mutating draft fields, so they dispatch here. Their
-            # responses carry the normal envelope (the possibly-switched
-            # active draft) plus the slot list — and `compare` its keyed diff.
+        if op in ("fork", "switch", "list_drafts", "compare", "revert_to_live", "undo"):
+            # The fork/compare/undo LIFECYCLE ops act on the store's named
+            # slots / undo history rather than mutating draft fields via
+            # _dispatch_op, so they dispatch here. Their responses carry the
+            # normal envelope (the possibly-switched active draft) plus the
+            # slot list — and `compare` its keyed diff.
             try:
                 extra: dict[str, Any] = {}
                 if op == "fork":
@@ -317,6 +387,18 @@ def make_builder_endpoints(
                     patch = ops.DraftPatch(op="switch", changed={"name": str(args["name"])})
                 elif op == "list_drafts":
                     patch = ops.DraftPatch(op="list_drafts")
+                elif op == "revert_to_live":
+                    # Remember the pre-revert state so `undo` can bring the
+                    # discarded edits back; restore IN PLACE so slot bindings
+                    # stay coherent.
+                    draft_store.remember(session)
+                    patch = ops.restore_draft(draft, TournamentDraft.from_workspace(root))
+                elif op == "undo":
+                    snapshot = draft_store.pop_undo(session)
+                    if snapshot is None:
+                        patch = ops.DraftPatch(op="undo", note="nothing to undo")
+                    else:
+                        patch = ops.restore_draft(draft, snapshot, op="undo")
                 else:  # compare
                     name_a = str(args["name_a"])
                     name_b = str(args["name_b"])
@@ -375,6 +457,11 @@ def make_builder_endpoints(
                 }
             )
         try:
+            # The pre-op undo seam: snapshot the session's current state
+            # (deduped, bounded) before ANY write op mutates it, so `undo`
+            # can restore it. The copilot front door mirrors this in
+            # BuilderToolContext.draft().
+            draft_store.remember(session)
             patch = _dispatch_op(draft, op, args)
         except KeyError as exc:
             return JSONResponse(
