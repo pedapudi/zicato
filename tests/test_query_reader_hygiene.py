@@ -319,6 +319,131 @@ def test_build_run_transcript_failure_degrades_same_shape(tmp_path: Path) -> Non
 
 
 # ---------------------------------------------------------------------------
+# transcript_view — the PARTIAL (in-flight) reconstruction path, wired through
+# the REAL reconstructor (exactly as the /api/run/.../transcript endpoint injects
+# it). Pins: a growing events.jsonl surfaces more turns across reads; a torn tail
+# line is tolerated (never raises); a settled run's served body is identical to a
+# direct reconstruction (partial_ok does not perturb a completed run).
+# ---------------------------------------------------------------------------
+
+
+def _live_events_path(ws: Path) -> Path:
+    p = ws / "epochs" / EPOCH / "generations" / GEN / "runs" / ENTRY / "events.jsonl"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _evline(kind: str, payload: dict, seq: int) -> str:
+    return json.dumps(
+        {
+            kind: payload,
+            "runId": "run-live",
+            "sequence": str(seq),
+            "emittedAt": f"2026-06-01T00:00:{seq:02d}Z",
+        }
+    )
+
+
+def _agent_turn(agent: str, text: str, seq: int) -> list[str]:
+    # A merged reasoning turn (start+end, same agent) — the proven single-turn
+    # shape from the reconstructor's own tests.
+    return [
+        _evline(
+            "goldfiveLlmCallStart",
+            {"name": "reason", "inputPreview": text, "targetAgentId": agent},
+            seq,
+        ),
+        _evline(
+            "goldfiveLlmCallEnd",
+            {"name": "reason", "decisionSummary": text, "targetAgentId": agent},
+            seq + 1,
+        ),
+    ]
+
+
+def test_build_run_transcript_partial_grows_across_reads(tmp_path: Path) -> None:
+    from zicato.dashboard.transcript import reconstruct_transcript
+
+    ws = _base_workspace(tmp_path)
+    paths = WorkspacePaths(ws)
+    events = _live_events_path(ws)
+
+    # In-flight: a runStarted goal + one agent turn, NO runCompleted (not terminal).
+    lines = [
+        _evline("runStarted", {"goalSummary": "Build a thing"}, 0),
+        *_agent_turn("alpha", "first thought", 1),
+    ]
+    events.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    first = build_run_transcript(paths, EPOCH, GEN, ENTRY, reconstruct=reconstruct_transcript)
+    assert first["complete"] is False  # partial: no terminal event seen
+    n_first = len(first["turns"])
+    assert n_first >= 2  # goal turn + the alpha turn
+
+    # A new agent turn lands on disk (still no terminal) — a fresh read GROWS.
+    with events.open("a", encoding="utf-8") as fh:
+        fh.write("\n".join(_agent_turn("beta", "second thought", 3)) + "\n")
+
+    second = build_run_transcript(paths, EPOCH, GEN, ENTRY, reconstruct=reconstruct_transcript)
+    assert second["complete"] is False
+    assert len(second["turns"]) > n_first  # the partial transcript grew across reads
+    assert second["epoch_id"] == EPOCH
+    assert second["generation_id"] == GEN
+    assert second["entry_id"] == ENTRY
+
+
+def test_build_run_transcript_partial_tolerates_torn_tail_line(tmp_path: Path) -> None:
+    from zicato.dashboard.transcript import reconstruct_transcript
+
+    ws = _base_workspace(tmp_path)
+    paths = WorkspacePaths(ws)
+    events = _live_events_path(ws)
+
+    good = [
+        _evline("runStarted", {"goalSummary": "Build a thing"}, 0),
+        *_agent_turn("alpha", "first thought", 1),
+    ]
+    # A writer caught mid-flush: the final line is a truncated JSON fragment with
+    # no trailing newline. The endpoint must never raise; the good turns survive.
+    events.write_text(
+        "\n".join(good) + "\n" + '{"goldfiveLlmCallStart": {"name": "rea',
+        encoding="utf-8",
+    )
+
+    out = build_run_transcript(paths, EPOCH, GEN, ENTRY, reconstruct=reconstruct_transcript)
+    assert "error" not in out  # tolerated — not the failure-degrade shape
+    assert len(out["turns"]) >= 2  # the intact turns before the torn tail
+    assert out["complete"] is False  # a torn tail is never a clean completion
+
+
+def test_build_run_transcript_settled_run_matches_direct_reconstruct(tmp_path: Path) -> None:
+    from zicato.dashboard.transcript import reconstruct_transcript
+
+    ws = _base_workspace(tmp_path)
+    paths = WorkspacePaths(ws)
+    events = _live_events_path(ws)
+
+    lines = [
+        _evline("runStarted", {"goalSummary": "Build a thing"}, 0),
+        *_agent_turn("alpha", "first thought", 1),
+        _evline("runCompleted", {"outcomeSummary": "done"}, 3),
+    ]
+    events.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    out = build_run_transcript(paths, EPOCH, GEN, ENTRY, reconstruct=reconstruct_transcript)
+    assert out["complete"] is True  # a terminal event → settled
+
+    # The served body is byte-identical to a direct reconstruction — the endpoint
+    # adds only the stamped coordinates, and partial_ok does not perturb a
+    # completed run (so a settled read is exactly today's payload).
+    direct = reconstruct_transcript(events, partial_ok=True).to_dict()
+    assert out["turns"] == direct["turns"]
+    assert out["annotations"] == direct["annotations"]
+    assert out["complete"] == direct["complete"]
+    assert out["event_count"] == direct["event_count"]
+
+
+# ---------------------------------------------------------------------------
 # conversations_view — build_matchup_conversations
 # ---------------------------------------------------------------------------
 

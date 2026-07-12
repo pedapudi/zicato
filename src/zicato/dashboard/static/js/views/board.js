@@ -54,6 +54,13 @@ const KIND_LABEL = {
   multi_turn_emulated: 'emulated multi-turn',
 };
 
+// The orchestrator progress-seq at our LAST render — the seam that gates the
+// live transcript refetch on a genuine seq ADVANCE (never a no-op heartbeat).
+// Module-scoped: the board view is a singleton render target. `null` forces the
+// first render to bust (adopt the current seq); state.lastSeq === -1 (no seq
+// seen — a pre-RUNTIME-V2 server) degrades to the legacy always-bust path.
+let _lastBoardSeq = null;
+
 export async function render(host, ctx, params) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading board entry…' }));
   const entryId = params && params.entry;
@@ -97,13 +104,22 @@ export async function render(host, ctx, params) {
   }
 
   // While a candidate is RUNNING on the board the operator is watching, its
-  // transcript must re-read the still-growing events.jsonl on every beat —
-  // invalidateLive() only fires on a VIEW change, so bust just these live
-  // transcript cache keys here. The transcript host stays gated on CONTENT, so
-  // a re-read with no new turn is still a no-op repaint (scroll preserved).
-  for (const r of inflight) {
-    const g = r.generation_id;
-    if (g != null) D.invalidateRunTranscript(epochId, g, entryId, r.run_id || null);
+  // transcript must re-read the still-growing events.jsonl — but ONLY on a
+  // genuine progress-seq ADVANCE, never a no-op heartbeat. state.lastSeq is the
+  // orchestrator's liveness cursor (advances only on a real transition); we bust
+  // the live transcript cache keys just when it moved since our last render, so a
+  // burst of heartbeats at a stable seq issues ZERO refetches. A pre-RUNTIME-V2
+  // server that never sends a seq (lastSeq === -1) DEGRADES to the always-bust
+  // path. invalidateLive() only fires on a VIEW change, so this is the sole
+  // live-transcript busting seam; the transcript host stays gated on CONTENT, so
+  // even a forced re-read with no new turn is a no-op repaint (scroll preserved).
+  const seqAdvanced = state.lastSeq < 0 || state.lastSeq !== _lastBoardSeq;
+  _lastBoardSeq = state.lastSeq;
+  if (seqAdvanced) {
+    for (const r of inflight) {
+      const g = r.generation_id;
+      if (g != null) D.invalidateRunTranscript(epochId, g, entryId, r.run_id || null);
+    }
   }
 
   // Pivot per-entry across every generation for THIS entry.
@@ -205,16 +221,20 @@ export async function render(host, ctx, params) {
       return [r.generation_id || null, r.run_id || null, pr != null ? pr.toFixed(2) : null];
     }),
   });
-  // The transcript digest folds in ONLY the selected candidates and their
-  // transcript CONTENT (transcriptDigest = per-turn seq/role/text-length/tool
-  // count) plus the live flag — NEVER the in-flight progress %. So a beat that
-  // merely advances progress changes upperDigest but leaves xscriptDigest
-  // untouched (no transcript repaint, scroll preserved); a beat where the live
-  // transcript actually GAINS a turn changes the content signal and repaints.
+  // The transcript STRUCTURE digest gates the frame (headers, columns, scroller
+  // shells, the streaming caption) — deliberately EXCLUDING the growing turn
+  // content. It folds only what changes the frame's SHAPE: the selected
+  // candidates, their live flag + loss, and each column's coarse STATE
+  // (nosel / err / wait / turns). Growing turns do NOT change this digest, so a
+  // live beat that only APPENDS turns leaves the frame untouched and the turns
+  // are reconciled (appended) in below — never a wholesale thread rebuild. The
+  // frame rebuilds only on a genuine structural change: a new selection, the
+  // empty→first-turn transition, or the run completing (running flips false, the
+  // loss lands), which is where the final transcript cleanly replaces the partial.
   const xscriptDigest = JSON.stringify({
     epochId, entryId, selGen, champ: championId,
-    left: leftSel ? [leftSel.gen, !!leftSel.running, transcriptDigest(leftConv)] : null,
-    right: rightSel ? [rightSel.gen, !!rightSel.running, transcriptDigest(rightConv)] : null,
+    left: leftSel ? [leftSel.gen, !!leftSel.running, leftSel.promoted, columnStateSig(leftSel, leftConv), svg.isNum(leftSel.loss) ? leftSel.loss.toFixed(1) : null] : null,
+    right: rightSel ? [rightSel.gen, !!rightSel.running, rightSel.promoted, columnStateSig(rightSel, rightConv), svg.isNum(rightSel.loss) ? rightSel.loss.toFixed(1) : null] : null,
   });
 
   // Persistent sub-hosts: created ONCE under `host`, reused every render so the
@@ -379,14 +399,26 @@ export async function render(host, ctx, params) {
   // captureScroll/restoreScroll wrap the gatedSwap so a scrolled-up reader stays
   // put and a bottom-pinned column keeps live-tailing new turns.
   const scrollState = captureScroll(xscriptHost);
-  const repainted = gatedSwap(xscriptHost, xscriptDigest, () => {
+  const rebuilt = gatedSwap(xscriptHost, xscriptDigest, () => {
     if (!selGen) return [];
     return [section(
       `Transcripts · ${leftSel ? leftSel.gen : selGen} vs ${rightSel ? rightSel.gen : '—'} on ${entryId}`,
       sideBySideTranscripts(leftSel, leftConv, rightSel, rightConv, championId),
     )];
   });
-  if (repainted) restoreScroll(xscriptHost, scrollState);
+  // Reconcile the turn CONTENT into each column's persistent scroller AFTER the
+  // frame settled: APPEND only newly-landed turns (never a thread rebuild) and
+  // update the streaming caption. This runs every render — on a no-op beat it
+  // finds no new turns and writes ZERO DOM (scroll preserved); on a live beat it
+  // appends the tail and, if the reader was pinned to the bottom, keeps it there
+  // (live-tail). After a structural rebuild the scrollers are fresh (no rendered
+  // turns yet), so the same reconcile fills them in one pass — no double paint.
+  reconcileTranscript(xscriptHost, 'left', leftSel, leftConv);
+  reconcileTranscript(xscriptHost, 'right', rightSel, rightConv);
+  // Only a STRUCTURAL rebuild needs the wholesale scroll restore (new scrollers);
+  // pure-append reconciles preserve scroll themselves. Restore after both so a
+  // selection-change rebuild keeps a bottom-pinned column tailing.
+  if (rebuilt) restoreScroll(xscriptHost, scrollState);
 }
 
 // Two transcripts on the same board, side by side, in ONE constrained pane —
@@ -403,8 +435,14 @@ function sideBySideTranscripts(leftSel, leftConv, rightSel, rightConv, championI
   return card;
 }
 
+// Build one column's FRAME only — the header, the streaming caption shell (for a
+// running column), and an EMPTY scroller shell. The turn nodes are NOT built
+// here: they are reconciled/appended into the scroller by reconcileTranscript so
+// a later live beat appends the tail rather than rebuilding the thread. The
+// column carries `data-xscript-col` so reconcileTranscript can locate its
+// scroller + caption from the host.
 function transcriptColumn(sel, conv, championId, side) {
-  const col = el('div', { class: 'dn-xscript-col' });
+  const col = el('div', { class: 'dn-xscript-col', 'data-xscript-col': side || 'left' });
   if (!sel) {
     col.appendChild(el('div', { class: 'dn-xscript-head dn-faint', text: 'no second candidate to compare' }));
     return col;
@@ -417,7 +455,7 @@ function transcriptColumn(sel, conv, championId, side) {
     el('span', { class: 'dn-mono', text: sel.gen + (sel.promoted ? ' ♛' : '') }),
     pill(pillCls, role),
     // A RUNNING candidate gets a live marker so the operator reads the column
-    // as a streaming transcript (it repaints as new turns land), not a final one.
+    // as a streaming transcript (it appends as new turns land), not a final one.
     sel.running ? el('span', { class: 'dn-pill dn-live dn-xscript-live' }, [
       el('span', { class: 'dn-inflight-pulse', 'aria-hidden': 'true' }),
       el('span', { text: 'live' }),
@@ -425,24 +463,68 @@ function transcriptColumn(sel, conv, championId, side) {
     el('span', { class: 'dn-faint dn-mono', text: svg.isNum(sel.loss) ? ' · loss ' + svg.fmt(sel.loss, 1) : '' }),
   ].filter(Boolean)));
 
-  const turns = (conv && Array.isArray(conv.turns)) ? conv.turns : [];
-  // The transcript is keyed on the (epoch, gen, entry) triple, NOT the
-  // per-entry run_id — so a candidate whose row carries no run_id can still
-  // render its transcript when the gen×entry events.jsonl exists. Only fall
-  // through to the honest messages when the triple genuinely resolves to
-  // nothing.
-  if (conv && conv.error) { col.appendChild(empty(conv.error)); return col; }
-  if (!conv) {
-    // A RUNNING candidate that has not emitted its first turn yet is waiting,
-    // not unavailable — the events.jsonl will grow and the next beat repaints.
-    col.appendChild(empty(sel.running ? 'Waiting for the first turn… (this transcript streams as the run produces turns)' : 'Transcript unavailable (could not be reconstructed).'));
+  // The transcript is keyed on the (epoch, gen, entry) triple, NOT the per-entry
+  // run_id — so a candidate whose row carries no run_id can still render its
+  // transcript when the gen×entry events.jsonl exists. Only fall through to the
+  // honest messages when the triple genuinely resolves to nothing.
+  const sig = columnStateSig(sel, conv);
+  if (sig.startsWith('err')) { col.appendChild(empty(conv.error)); return col; }
+  if (sig === 'wait') {
+    // A RUNNING candidate that has not emitted its first turn yet is waiting, not
+    // unavailable — the events.jsonl will grow and the next seq-advance repaints.
+    col.appendChild(empty(sel.running
+      ? 'Waiting for the first turn… (this transcript streams as the run produces turns)'
+      : (conv ? 'No turns reconstructed for this run.' : 'Transcript unavailable (could not be reconstructed).')));
     return col;
   }
-  if (!turns.length) {
-    col.appendChild(empty(sel.running ? 'Waiting for the first turn… (this transcript streams as the run produces turns)' : 'No turns reconstructed for this run.'));
-    return col;
+  // sig === 'turns'. A running column carries a subtle "streaming — through turn
+  // N" caption (its count is filled by reconcileTranscript); it is part of the
+  // running FRAME, so it disappears cleanly once the run completes (running flips
+  // false → the frame rebuilds without it). Reuses the shipped live vocabulary
+  // (the in-flight pulse + faint mono) — no new chrome.
+  if (sel.running) {
+    col.appendChild(el('div', { class: 'dn-xscript-stream dn-faint dn-mono', 'data-stream-caption': '' }, [
+      el('span', { class: 'dn-inflight-pulse', 'aria-hidden': 'true' }),
+      el('span', { 'data-stream-count': '', text: 'streaming…' }),
+    ]));
   }
+  // `data-scroll-side` tags the scroller with its stable side so compare.js's
+  // captureScroll/restoreScroll (C5) can preserve each column's scroll position
+  // across a structural rebuild; the scroller starts EMPTY and is filled by
+  // reconcileTranscript.
+  col.appendChild(el('div', { class: 'dn-transcript dn-xscript-scroll', 'data-scroll-side': side || 'left' }));
+  return col;
+}
 
+// Coarse column STATE for the structure digest + the frame builder: the shape of
+// the column (which message vs a scroller), NOT its growing turn content. So a
+// beat that only appends turns leaves this stable and the frame is kept.
+function columnStateSig(sel, conv) {
+  if (!sel) return 'nosel';
+  if (conv && conv.error) return 'err:' + conv.error;
+  const turns = (conv && Array.isArray(conv.turns)) ? conv.turns : [];
+  return turns.length ? 'turns' : 'wait';
+}
+
+// Reconcile one column's turn CONTENT into its persistent scroller. Appends ONLY
+// the newly-landed turns (the rendered prefix is stable — dedup only folds
+// consecutive duplicates, and turns arrive append-only), so a live beat adds the
+// tail nodes without touching the existing turn DOM (no thread rebuild); a no-op
+// beat writes ZERO DOM. A bottom-pinned reader keeps tailing new turns. When the
+// prefix genuinely DIVERGES (a completed run's final transcript replacing a
+// partial with different structure, or a later annotation on an existing turn),
+// it falls back to a full rebuild of the scroller.
+function reconcileTranscript(hostEl, side, sel, conv) {
+  const col = hostEl.querySelector('[data-xscript-col="' + side + '"]');
+  if (!col) return;
+  const scroller = col.querySelector('[data-scroll-side="' + side + '"]');
+  if (!scroller) return; // err / wait / nosel column — no scroller to fill.
+
+  // DEDUP CONSECUTIVE IDENTICAL TURNS. goldfive emits the goal twice — on
+  // `runStarted.goalSummary` and again on `goalDerived` (the LiteralGoalDeriver
+  // echoes the same string) — so the goal reads twice; collapse the literal
+  // duplicate (see dedupConsecutiveTurns).
+  const turns = dedupConsecutiveTurns((conv && Array.isArray(conv.turns)) ? conv.turns : []);
   const anns = (conv && Array.isArray(conv.annotations)) ? conv.annotations : [];
   const annBySeq = new Map();
   for (const a of anns) {
@@ -450,33 +532,66 @@ function transcriptColumn(sel, conv, championId, side) {
     if (!annBySeq.has(k)) annBySeq.set(k, []);
     annBySeq.get(k).push(a);
   }
-  // DEDUP CONSECUTIVE IDENTICAL TURNS. goldfive emits the goal twice — on
-  // `runStarted.goalSummary` and again on `goalDerived` (the LiteralGoalDeriver
-  // echoes the same string) — so the goal reads twice; collapse the literal
-  // duplicate (see dedupConsecutiveTurns).
-  const shown = dedupConsecutiveTurns(turns);
-  // `data-scroll-side` tags the scroller with its stable side so compare.js's
-  // captureScroll/restoreScroll (C5) can preserve each column's scroll position
-  // across a content-growth repaint.
-  const scroller = el('div', { class: 'dn-transcript dn-xscript-scroll', 'data-scroll-side': side || 'left' });
-  for (const t of shown) {
-    const turn = el('div', { class: 'dn-turn dn-turn-' + (t.role || 'agent') }, [
-      el('div', { class: 'dn-turn-head dn-faint dn-mono' }, [
-        el('span', { text: t.agent || t.role || 'turn' }),
-        t.kind ? el('span', { text: ' · ' + t.kind }) : null,
-      ].filter(Boolean)),
-      t.text ? el('div', { class: 'dn-turn-text', text: t.text }) : null,
-    ].filter(Boolean));
-    if (Array.isArray(t.tool_calls)) for (const tc of t.tool_calls) {
-      turn.appendChild(el('div', { class: 'dn-tool dn-mono', text: '⚙ ' + (tc.name || tc.tool || 'tool') }));
-    }
-    for (const a of (annBySeq.get(t.seq) || [])) {
-      turn.appendChild(el('div', { class: 'dn-annot dn-annot-' + (a.kind || 'note'), text: '◂ ' + (a.summary || a.kind) }));
-    }
-    scroller.appendChild(turn);
+
+  const wantSig = turns.map((t) => turnSig(t, annBySeq));
+  const haveSig = Array.isArray(scroller._turnSig) ? scroller._turnSig : [];
+  let prefixOk = haveSig.length <= wantSig.length;
+  if (prefixOk) for (let i = 0; i < haveSig.length; i += 1) { if (haveSig[i] !== wantSig[i]) { prefixOk = false; break; } }
+
+  if (prefixOk && haveSig.length === wantSig.length) {
+    // No content change — ZERO DOM (scroll untouched).
+  } else if (prefixOk) {
+    // APPEND the tail turns only — the existing turn nodes stay in place.
+    const pinned = nearBottom(scroller);
+    for (let i = haveSig.length; i < turns.length; i += 1) scroller.appendChild(buildTurnNode(turns[i], annBySeq));
+    scroller._turnSig = wantSig;
+    if (pinned && typeof scroller.scrollHeight === 'number') scroller.scrollTop = scroller.scrollHeight;
+  } else {
+    // The rendered prefix diverged — rebuild the scroller wholesale.
+    clearChildren(scroller);
+    for (const t of turns) scroller.appendChild(buildTurnNode(t, annBySeq));
+    scroller._turnSig = wantSig;
   }
-  col.appendChild(scroller);
-  return col;
+
+  // The streaming caption reads "streaming — through turn N" while running; the
+  // caption shell exists only on a running column, so it is gone once complete.
+  const cap = col.querySelector('[data-stream-count]');
+  if (cap) cap.textContent = 'streaming — through turn ' + turns.length;
+}
+
+// Per-turn content signature for the append reconcile — seq / role / text length
+// / tool-call count / annotation count. Two turns with the same signature render
+// identically, so an unchanged prefix is a true no-op; a changed one rebuilds.
+function turnSig(t, annBySeq) {
+  const na = annBySeq && annBySeq.get(t.seq);
+  return [t.seq, t.role, (t.text || '').length, Array.isArray(t.tool_calls) ? t.tool_calls.length : 0, na ? na.length : 0].join(':');
+}
+
+// Whether the scroller is pinned at (or within a hair of) the bottom — the
+// live-tail signal. A headless test DOM without scroll metrics defaults to tail.
+function nearBottom(scroller) {
+  const sh = scroller.scrollHeight, st = scroller.scrollTop, ch = scroller.clientHeight;
+  if (typeof sh !== 'number' || typeof ch !== 'number' || typeof st !== 'number') return true;
+  return (sh - st - ch) <= 8;
+}
+
+// Build ONE turn's DOM node — the shared turn renderer for both the initial fill
+// and the live append, so an appended turn is byte-identical to a rebuilt one.
+function buildTurnNode(t, annBySeq) {
+  const turn = el('div', { class: 'dn-turn dn-turn-' + (t.role || 'agent') }, [
+    el('div', { class: 'dn-turn-head dn-faint dn-mono' }, [
+      el('span', { text: t.agent || t.role || 'turn' }),
+      t.kind ? el('span', { text: ' · ' + t.kind }) : null,
+    ].filter(Boolean)),
+    t.text ? el('div', { class: 'dn-turn-text', text: t.text }) : null,
+  ].filter(Boolean));
+  if (Array.isArray(t.tool_calls)) for (const tc of t.tool_calls) {
+    turn.appendChild(el('div', { class: 'dn-tool dn-mono', text: '⚙ ' + (tc.name || tc.tool || 'tool') }));
+  }
+  for (const a of ((annBySeq && annBySeq.get(t.seq)) || [])) {
+    turn.appendChild(el('div', { class: 'dn-annot dn-annot-' + (a.kind || 'note'), text: '◂ ' + (a.summary || a.kind) }));
+  }
+  return turn;
 }
 
 // Drop a turn that EXACTLY repeats the one immediately before it — same role,
@@ -534,13 +649,6 @@ async function resolveTranscript(epochId, entryId, sel) {
 
 function hasTurns(conv) {
   return !!(conv && Array.isArray(conv.turns) && conv.turns.length);
-}
-
-function transcriptDigest(conv) {
-  const turns = (conv && Array.isArray(conv.turns)) ? conv.turns : [];
-  if (conv && conv.error) return 'err:' + conv.error;
-  if (!conv) return 'none';
-  return turns.map((t) => [t.seq, t.role, (t.text || '').length, Array.isArray(t.tool_calls) ? t.tool_calls.length : 0]).join(';');
 }
 
 function passLabel(pf) {

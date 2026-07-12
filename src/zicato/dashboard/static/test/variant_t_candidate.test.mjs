@@ -683,20 +683,27 @@ test('board view (LIVE): a RUNNING candidate with no scored row resolves a PARTI
   coreState.state.activeRuns = [];
 });
 
-// (b) The transcript host repaints when the live conversation GAINS a turn, but
-// NOT on a progress-only beat.
-test('board view (LIVE): the transcript host repaints on a NEW TURN but NOT on a progress-only beat', async () => {
-  freshState();
-  let turnCount = 1;  // the live transcript grows between renders when we bump this.
-  installGrowableFetch({
-    [`/api/run/${EPOCH_ID}/v3/waffles_single/transcript`]: () => ({
-      epoch_id: EPOCH_ID, generation_id: 'v3', entry_id: 'waffles_single', run_id: 'run_v3_live',
-      turns: Array.from({ length: turnCount }, (_, i) => ({ seq: i, role: i % 2 ? 'agent' : 'user', agent: 'coordinator', text: 'turn #' + i })),
-      annotations: [], event_count: turnCount * 2, complete: false,
-    }),
+// (b) LIVE GROWTH. A new turn APPENDS one node into the persistent scroller
+// (never a thread rebuild); a progress-only / no-op beat writes ZERO DOM; and
+// the refetch is GATED on a genuine progress-seq advance.
+function leftScroller(host) {
+  return host.querySelectorAll('[data-scroll-side]').filter((n) => n.getAttribute('data-scroll-side') === 'left')[0];
+}
+function growableRun(getCount) {
+  return () => ({
+    epoch_id: EPOCH_ID, generation_id: 'v3', entry_id: 'waffles_single', run_id: 'run_v3_live',
+    turns: Array.from({ length: getCount() }, (_, i) => ({ seq: i, role: i % 2 ? 'agent' : 'user', agent: 'coordinator', text: 'turn #' + i })),
+    annotations: [], event_count: getCount() * 2, complete: false,
   });
+}
+
+test('board view (LIVE): a NEW TURN appends one node (no thread rebuild); a no-op beat writes ZERO DOM', async () => {
+  freshState();
+  let turnCount = 2;
+  installGrowableFetch({ [`/api/run/${EPOCH_ID}/v3/waffles_single/transcript`]: growableRun(() => turnCount) });
   FIXTURE['/api/lineage'].generations.push({ generation_id: 'v3', epoch_id: EPOCH_ID, parent_generation_id: 'v0', promoted: false });
   coreState.state.activeRuns = [{ generation_id: 'v3', entry_id: 'waffles_single', run_id: 'run_v3_live', progress: 0.4, epoch_id: EPOCH_ID }];
+  coreState.state.lastSeq = 10;  // a real orchestrator progress cursor.
 
   const board = await import('../js/views/board.js');
   const bhost = document.createElement('div');
@@ -704,26 +711,159 @@ test('board view (LIVE): the transcript host repaints on a NEW TURN but NOT on a
   const params = { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v3' };
 
   await board.render(bhost, ctx, params);
+  const scroller = leftScroller(bhost);
+  assert(scroller, 'the live transcript scroller exists');
+  const first = allByClass(scroller, 'dn-turn');
+  assertEqual(first.length, 2, 'both partial turns rendered on first paint');
+  const firstNode = first[0];
   const xhost = bhost.querySelectorAll('[data-node]').filter((n) => n.getAttribute('data-node') === 'board-xscript')[0];
-  assert(xhost, 'the transcript sub-host exists');
-  const digestAfterFirst = xhost.getAttribute('data-t-digest');
+  const structDigest = xhost.getAttribute('data-t-digest');
 
-  // PROGRESS-ONLY beat: same turns, only progress advanced. The transcript
-  // digest (content-gated) must NOT change — no repaint, scroll preserved.
+  // NO-OP beat: same seq, same turns. Reconcile finds no new turns → ZERO DOM;
+  // the structure digest is unchanged (turn CONTENT is not folded into it).
   coreState.state.activeRuns = [{ generation_id: 'v3', entry_id: 'waffles_single', run_id: 'run_v3_live', progress: 0.7, epoch_id: EPOCH_ID }];
-  data.invalidate();  // mimic a beat: caches dropped; transcript re-fetched (same content).
   await board.render(bhost, ctx, params);
-  assertEqual(xhost.getAttribute('data-t-digest'), digestAfterFirst, 'a PROGRESS-ONLY beat does NOT repaint the transcript host (content unchanged)');
+  const afterBeat = allByClass(scroller, 'dn-turn');
+  assertEqual(afterBeat.length, 2, 'a no-op beat appends NOTHING (zero DOM)');
+  assert(afterBeat[0] === firstNode, 'the existing turn node is the SAME instance (no rebuild)');
+  assertEqual(xhost.getAttribute('data-t-digest'), structDigest, 'the structure digest is unchanged on a no-op beat');
 
-  // NEW-TURN beat: the live transcript gained a turn → the content signal
-  // changes → the transcript host repaints.
+  // NEW-TURN beat: seq advances AND the transcript gains a turn → APPEND one node.
   turnCount = 3;
-  data.invalidate();
+  coreState.state.lastSeq = 11;
   await board.render(bhost, ctx, params);
-  assert(xhost.getAttribute('data-t-digest') !== digestAfterFirst, 'a NEW-TURN beat DOES repaint the transcript host (content grew)');
-  assert(xhost.textContent.includes('turn #2'), 'the newly-arrived turn rendered');
+  const grown = allByClass(scroller, 'dn-turn');
+  assertEqual(grown.length, 3, 'exactly ONE node appended for the new turn');
+  assert(grown[0] === firstNode, 'pre-existing turn nodes were NOT rebuilt (append, not replace)');
+  assert(scroller.textContent.includes('turn #2'), 'the newly-arrived turn rendered');
 
   FIXTURE['/api/lineage'].generations = FIXTURE['/api/lineage'].generations.filter((g) => g.generation_id !== 'v3');
+  coreState.state.activeRuns = [];
+});
+
+// (b2) The refetch is GATED on a progress-seq advance: a beat at a STABLE seq
+// re-reads nothing (the cached partial is reused), so a transcript that grew on
+// disk does NOT surface until the orchestrator's liveness cursor moves.
+test('board view (LIVE): the live transcript refetch is gated on a progress-seq ADVANCE', async () => {
+  freshState();
+  let turnCount = 1;
+  installGrowableFetch({ [`/api/run/${EPOCH_ID}/v3/waffles_single/transcript`]: growableRun(() => turnCount) });
+  FIXTURE['/api/lineage'].generations.push({ generation_id: 'v3', epoch_id: EPOCH_ID, parent_generation_id: 'v0', promoted: false });
+  coreState.state.activeRuns = [{ generation_id: 'v3', entry_id: 'waffles_single', run_id: 'run_v3_live', progress: 0.3, epoch_id: EPOCH_ID }];
+  coreState.state.lastSeq = 20;
+
+  const board = await import('../js/views/board.js');
+  const bhost = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  const params = { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v3' };
+
+  await board.render(bhost, ctx, params);
+  const scroller = leftScroller(bhost);
+  assertEqual(allByClass(scroller, 'dn-turn').length, 1, 'one turn on first paint');
+
+  // The events file grew on disk, but the SEQ did not advance → no refetch; the
+  // cached one-turn partial is reused (no growth).
+  turnCount = 4;
+  await board.render(bhost, ctx, params);
+  assertEqual(allByClass(scroller, 'dn-turn').length, 1, 'a stable seq re-reads NOTHING (cached partial reused)');
+
+  // The cursor advances → the refetch fires → the grown transcript surfaces.
+  coreState.state.lastSeq = 21;
+  await board.render(bhost, ctx, params);
+  assertEqual(allByClass(scroller, 'dn-turn').length, 4, 'a seq advance refetches and the new turns append');
+
+  FIXTURE['/api/lineage'].generations = FIXTURE['/api/lineage'].generations.filter((g) => g.generation_id !== 'v3');
+  coreState.state.activeRuns = [];
+});
+
+// (b3) The LIVE caption lifecycle: "streaming — through turn N" tracks the turn
+// count while running, then DISAPPEARS cleanly when the run completes and the
+// final transcript replaces the partial.
+test('board view (LIVE): the "streaming — through turn N" caption tracks the count and vanishes on completion', async () => {
+  freshState();
+  let turnCount = 2;
+  installGrowableFetch({ [`/api/run/${EPOCH_ID}/v3/waffles_single/transcript`]: growableRun(() => turnCount) });
+  FIXTURE['/api/lineage'].generations.push({ generation_id: 'v3', epoch_id: EPOCH_ID, parent_generation_id: 'v0', promoted: false });
+  coreState.state.activeRuns = [{ generation_id: 'v3', entry_id: 'waffles_single', run_id: 'run_v3_live', progress: 0.4, epoch_id: EPOCH_ID }];
+  coreState.state.lastSeq = 30;
+
+  const board = await import('../js/views/board.js');
+  const ctx = { navigate() {}, href: router.href };
+  const params = { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v3' };
+
+  const bhost = document.createElement('div');
+  await board.render(bhost, ctx, params);
+  assert(allByClass(bhost, 'dn-xscript-live')[0], 'the running column carries the LIVE badge');
+  const cap = bhost.querySelectorAll('[data-stream-count]')[0];
+  assert(cap, 'the streaming caption is present while running');
+  assertEqual((cap.textContent || '').trim(), 'streaming — through turn 2', 'the caption reads the current turn count');
+
+  // a new turn lands → the caption count advances (same element, updated text).
+  turnCount = 3;
+  coreState.state.lastSeq = 31;
+  await board.render(bhost, ctx, params);
+  assertEqual((bhost.querySelectorAll('[data-stream-count]')[0].textContent || '').trim(), 'streaming — through turn 3', 'the caption tracks the new turn');
+
+  // COMPLETION: the run leaves active-runs and lands a scored per-entry row +
+  // a final (complete) transcript. The column is now settled → the caption is
+  // gone and the LIVE badge is gone; the final transcript replaces the partial.
+  coreState.state.activeRuns = [];
+  const F = { [`/api/run/${EPOCH_ID}/v3/waffles_single/transcript`]: {
+    epoch_id: EPOCH_ID, generation_id: 'v3', entry_id: 'waffles_single', run_id: 'run_v3_final',
+    turns: Array.from({ length: 3 }, (_, i) => ({ seq: i, role: i % 2 ? 'agent' : 'user', agent: 'coordinator', text: 'turn #' + i })),
+    annotations: [], event_count: 6, complete: true,
+  } };
+  FIXTURE[`/api/generation/${EPOCH_ID}/v3/per-entry`] = { epoch_id: EPOCH_ID, generation_id: 'v3',
+    entries: [{ entry_id: 'waffles_single', run_id: 'run_v3_final', drift_loss: 58.0, pass_fail: true, wall_clock_budget_exceeded: false }] };
+  installGrowableFetch(F);
+  const bhost2 = document.createElement('div');
+  await board.render(bhost2, ctx, params);
+  assert(!bhost2.querySelectorAll('[data-stream-count]')[0], 'the streaming caption disappears once the run completes');
+  assert(!allByClass(bhost2, 'dn-xscript-live')[0], 'the LIVE badge is gone on the settled column');
+  assert(bhost2.textContent.includes('turn #2'), 'the final transcript renders cleanly (same turn structure)');
+
+  delete FIXTURE[`/api/generation/${EPOCH_ID}/v3/per-entry`];
+  FIXTURE['/api/lineage'].generations = FIXTURE['/api/lineage'].generations.filter((g) => g.generation_id !== 'v3');
+  coreState.state.activeRuns = [];
+});
+
+// (b4) BACK-COMPAT: with NO in-flight run, a settled transcript view is
+// byte-stable across a no-op beat — no caption chrome, no DOM churn.
+test('board view (LIVE): a SETTLED transcript (no in-flight run) is unchanged across a no-op beat', async () => {
+  freshState();
+  installGrowableFetch({ [`/api/run/${EPOCH_ID}/v1/waffles_single/transcript`]: {
+    epoch_id: EPOCH_ID, generation_id: 'v1', entry_id: 'waffles_single', run_id: 'run_v1',
+    turns: [
+      { seq: 0, role: 'user', agent: 'operator', text: 'Make a presentation about waffles.' },
+      { seq: 1, role: 'agent', agent: 'coordinator', text: 'Settled final turn.' },
+    ], annotations: [], event_count: 4, complete: true,
+  } });
+  coreState.state.activeRuns = [];  // NOTHING in flight.
+  coreState.state.lastSeq = 5;
+
+  const board = await import('../js/views/board.js');
+  const ctx = { navigate() {}, href: router.href };
+  const params = { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v1' };
+
+  const bhost = document.createElement('div');
+  await board.render(bhost, ctx, params);
+  const scroller = leftScroller(bhost);
+  assert(scroller, 'the settled transcript scroller exists');
+  const turns0 = allByClass(scroller, 'dn-turn');
+  assertEqual(turns0.length, 2, 'the settled transcript rendered its turns');
+  assert(!bhost.querySelectorAll('[data-stream-count]')[0], 'a settled (non-running) column carries NO streaming caption');
+  assert(!allByClass(bhost, 'dn-xscript-live')[0], 'a settled column carries NO LIVE badge');
+  const xhost = bhost.querySelectorAll('[data-node]').filter((n) => n.getAttribute('data-node') === 'board-xscript')[0];
+  const digest0 = xhost.getAttribute('data-t-digest');
+
+  // a no-op beat (a heartbeat with nothing in flight) → byte-identical: same
+  // turn nodes (same instances), same structure digest, zero DOM.
+  await board.render(bhost, ctx, params);
+  const turns1 = allByClass(scroller, 'dn-turn');
+  assertEqual(turns1.length, 2, 'no turns added on a no-op beat');
+  assert(turns1[0] === turns0[0] && turns1[1] === turns0[1], 'the settled turn nodes are the SAME instances (no rebuild)');
+  assertEqual(xhost.getAttribute('data-t-digest'), digest0, 'the structure digest is byte-stable across the no-op beat');
+
   coreState.state.activeRuns = [];
 });
 

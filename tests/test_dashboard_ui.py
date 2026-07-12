@@ -557,7 +557,22 @@ def test_bundle_under_size_envelope(
     # 1.35 MB entry records. The envelope is set to 1.388 MB to cover the
     # calibration row + the log pane (+ the publication overflow CSS, which is
     # in console.css and rides the same counted bundle) with a thin margin.
-    assert total < 1_388_000, f"bundle is {total} bytes, exceeds 1_388_000 envelope"
+    #
+    # The LIVE-TRANSCRIPT STREAMING surface (WS3) then makes the board view's
+    # inline transcript GROW during a run: the frame gates on a STRUCTURE digest
+    # (headers / columns / caption / scroller shells) while the turn CONTENT is
+    # reconciled into a persistent scroller — a new turn APPENDS one node rather
+    # than rebuilding the thread, so a live beat no longer flashes the column
+    # (board.js). The live refetch is gated on a genuine progress-seq ADVANCE
+    # (state.lastSeq) so a burst of heartbeats at a stable seq issues zero
+    # re-reads, and a running column carries a quiet "streaming — through turn N"
+    # caption that vanishes on completion (a 5-line console.css rule reusing the
+    # shipped live vocabulary — no new chrome). All digest-gated (a no-op beat is
+    # byte-identical, scroll preserved) + back-compat (no in-flight run → the
+    # settled view renders byte-identical to today, no caption). ~6 KB of real new
+    # streaming-discipline code. The envelope is raised to 1.392 MB to cover it
+    # with a thin margin.
+    assert total < 1_392_000, f"bundle is {total} bytes, exceeds 1_392_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
