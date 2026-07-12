@@ -261,15 +261,22 @@ def _message_text(obj: dict[str, Any]) -> str:
 def _message_role(obj: dict[str, Any]) -> str:
     """The message role bucket: ``"agent"``, ``"user"``, or ``""``.
 
-    Reads the event ``type`` first (``agent_message`` / ``user_message``),
-    then a ``role`` field (``assistant`` / ``agent`` → agent; ``user`` /
-    ``human`` → user) so a generic ``message`` event still routes.
+    Reads the event ``type`` first (``agent_message`` / ``user_message``);
+    only a generic ``message`` event or a TYPELESS line (a bare transcript
+    ``{"role": …, "content": …}`` shape) may fall back to the ``role``
+    field (``assistant`` / ``agent`` / ``model`` → agent; ``user`` /
+    ``human`` → user). Any OTHER event type returns ``""`` even when it
+    carries a ``role`` — the §3.1 "unknown type is skipped" contract: a
+    forward-compat event (a reasoning step, a log line) must not inflate
+    the output envelope or mint phantom transcript turns.
     """
     etype = _event_type(obj)
     if etype == "agent_message":
         return "agent"
     if etype == "user_message":
         return "user"
+    if etype not in ("", "message"):
+        return ""
     role = _first_str(obj, "role").lower()
     if role in ("assistant", "agent", "model"):
         return "agent"

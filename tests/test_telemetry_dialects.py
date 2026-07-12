@@ -174,6 +174,27 @@ def test_adk_events_malformed_lines_counted_not_fatal(tmp_path: Path) -> None:
     assert kinds == {"tool_error", "agent_transfer"}
 
 
+def test_adk_events_unknown_type_with_role_is_skipped(tmp_path: Path) -> None:
+    """The §3.1 contract: an UNKNOWN event type is skipped even when it
+    carries a ``role`` — a forward-compat event (a reasoning step, a log
+    line) must not inflate the output envelope or mint phantom turns.
+    Only the explicit message types route to the transcript."""
+    events = tmp_path / "adk.jsonl"
+    _write_jsonl(
+        events,
+        [
+            {"type": "reasoning_step", "role": "assistant", "content": "secret chain"},
+            {"type": "log", "role": "user", "content": "noise"},
+            {"type": "agent_message", "content": "real reply"},
+            {"type": "message", "role": "assistant", "content": "generic ok"},
+        ],
+    )
+    sig = reduce_adk_events(events, _single_turn_entry())
+    assert sig.agent_text_chars == len("real reply") + len("generic ok")
+    assert sig.agent_turns == ("real reply", "generic ok")
+    assert sig.user_turns == ()
+
+
 def test_adk_events_token_shapes_tolerated(tmp_path: Path) -> None:
     events = tmp_path / "adk.jsonl"
     _write_jsonl(

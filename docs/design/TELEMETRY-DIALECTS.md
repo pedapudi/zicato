@@ -101,8 +101,12 @@ dialect tolerates dialect-of-a-dialect naming):
 
 Tolerance rules (honest, never-crash):
 
-- an **unknown `type`** is skipped (forward-compatible with a framework
-  that adds event kinds);
+- an **unknown `type`** is skipped — even when the event carries a
+  `role` field (a forward-compat reasoning/log event must not inflate the
+  output envelope or mint phantom transcript turns); only the explicit
+  message types (`agent_message` / `user_message`), a generic `message`,
+  or a **typeless** bare-transcript line (`{"role": …, "content": …}`)
+  route to the transcript;
 - a **malformed line** (not JSON, or not a JSON object) is counted into
   `malformed_line_count` and surfaced as a reduction warning — never an
   exception, exactly as the goldfive fallback path skips unparseable
