@@ -50,7 +50,7 @@ function freshDraft() {
       },
       promote_margin: 0, pass_rate_monotonicity: false,
       pass_rate_monotonicity_scope: 'per_entry',
-      drift_weight: 1, pass_weight: 1, diff_complexity_weight: 0,
+      drift_weight: 1, pass_weight: 1, diff_complexity_weight: 0, diff_complexity_ceiling: 0,
       default_judge_weight: 1, plan_revision_weight: 0.5, runtime_weight: 0,
       severity_weights: { info: 1, warning: 3, critical: 10 },
       per_kind_weights: {}, per_judge_weights: {},
@@ -687,6 +687,13 @@ test('builder view: the Weights section drives set_weights + set_namespace_weigh
   await tick();
   assert(OP_CALLS.find((c) => c.op === 'set_namespace_weights' && c.args.diff_complexity_weight === 0.01),
     'the MDL term posts set_namespace_weights {diff_complexity_weight}');
+  // the paired parsimony CEILING posts diff_complexity_ceiling.
+  const ceil = byAria(host, 'dn-bld-num', 'Diff complexity ceiling');
+  ceil.value = '10';
+  ceil.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_namespace_weights' && c.args.diff_complexity_ceiling === 10),
+    'the parsimony ceiling posts set_namespace_weights {diff_complexity_ceiling}');
 });
 
 test('builder view: the Proposer section drives set_proposer_quality + set_experiment_memory', async () => {

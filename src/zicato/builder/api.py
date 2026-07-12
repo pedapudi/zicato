@@ -117,6 +117,7 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
             draft,
             namespace_weights=args.get("namespace_weights"),
             diff_complexity_weight=args.get("diff_complexity_weight"),
+            diff_complexity_ceiling=args.get("diff_complexity_ceiling"),
         )
     if op == "set_proposer_quality":
         return ops.set_proposer_quality(

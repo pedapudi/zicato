@@ -349,6 +349,7 @@ def set_gate(
 def set_namespace_weights(
     namespace_weights: dict[str, float] | None = None,
     diff_complexity_weight: float | None = None,
+    diff_complexity_ceiling: float | None = None,
 ) -> str:
     """Set the multi-objective namespace coefficients + the parsimony term.
 
@@ -358,7 +359,10 @@ def set_namespace_weights(
     = higher is better, zero = tracked but unscored).
     ``diff_complexity_weight`` is the opt-in MDL/parsimony coefficient
     (0 = exactly absent; must be >= 0 — it biases selection toward the
-    smaller, more general edit). Changing either rolls the epoch.
+    smaller, more general edit). ``diff_complexity_ceiling`` is the paired
+    opt-in parsimony CEILING (0 = OFF; must be >= 0 — a challenger whose
+    diff complexity exceeds it is rejected outright by the gate). Changing
+    any rolls the epoch.
     """
     ctx = _active_context()
     try:
@@ -366,6 +370,7 @@ def set_namespace_weights(
             ctx.draft(),
             namespace_weights=namespace_weights,
             diff_complexity_weight=diff_complexity_weight,
+            diff_complexity_ceiling=diff_complexity_ceiling,
         )
     except ValueError as exc:
         return _result_json({"error": str(exc)})

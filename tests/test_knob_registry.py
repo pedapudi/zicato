@@ -53,6 +53,7 @@ from zicato.epoch.contract import (
 _FROZEN_OMIT_AT_DEFAULT_FIELDS = frozenset(
     {
         "diff_complexity_weight",
+        "diff_complexity_ceiling",
         "experiment_memory",
         "random_baseline_every_n",
         "block_on_containment_violation",

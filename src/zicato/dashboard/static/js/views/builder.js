@@ -978,6 +978,12 @@ function weightsSection(d) {
     }, numInput(sc.diff_complexity_weight != null ? sc.diff_complexity_weight : 0,
       { min: '0', step: '0.001', 'aria-label': 'Diff complexity weight' },
       (n) => runOp('set_namespace_weights', { diff_complexity_weight: n }))),
+    controlRow('Diff-complexity ceiling', {
+      title: 'diff_complexity_ceiling', def: '0 (off)',
+      body: 'Opt-in parsimony CEILING paired with the weight above: a hard gate rule that REJECTS any challenger whose diff complexity (added + removed + patches) exceeds this value, regardless of how much it improved. 0 keeps the ceiling off (never consulted).',
+    }, numInput(sc.diff_complexity_ceiling != null ? sc.diff_complexity_ceiling : 0,
+      { min: '0', step: '1', 'aria-label': 'Diff complexity ceiling' },
+      (n) => runOp('set_namespace_weights', { diff_complexity_ceiling: n }))),
   ];
 
   // ── severity_weights — FIXED rows from vocab.severities (→ set_weights) ──
