@@ -230,16 +230,48 @@ overfitting-restricted context channels):
 
 ## 5. Documented-but-missing: candidate rating & winner-resolution
 
-Everything in `SELECTION-THEORY.md` is unbuilt (the doc says so at `:3-10`). Today
-winner-resolution is two-tier: a per-duel **gate** (scalar margin + pass-rate &
+> **Status — partially implemented (PR #90 + the evidence gate).** The
+> *rating* half of this section has since shipped; the *resolver* half has
+> not. Built and live: the visibility rating fold
+> (`src/zicato/index/elo.py::fold_elo_into_index` — but as a
+> **Bradley–Terry MLE mapped onto the Elo scale**, not the standard-Elo
+> update this section first proposed; see the subsection note below), the
+> BT rating module (`src/zicato/selection/rating.py::fit_bradley_terry`,
+> convex MLE with CIs) and its opt-in θ-rank standings
+> (`params["rating"]`), and the BT **uncertainty pre-gate** with
+> CI-driven "replicate-first, resolve-second" scheduling
+> (`src/zicato/selection/evidence_gate.py` + `selection/driver.py`,
+> defer→replicate on the closest-CI duel). Still unbuilt: the `resolver`
+> knob — Ranked Pairs, the Smith-set prune, and maximal lotteries
+> (`SELECTION-THEORY.md` remains DESIGN for those). Per-lever status is
+> tagged inline below.
+
+Winner-resolution today is two-tier: a per-duel **gate** (scalar margin + pass-rate &
 namespace monotonicity + holdout) is the only thing that can promote, and each
 structure picks an internal leader by **scalar/Copeland bookkeeping** (Copeland
-exists only in swiss) then runs one champion-gate duel. There is **no global
-rating**. The complete pairwise-outcome ledger (`MatchRecord`, `MatchOutcome`,
-`Standing`, the index `tournaments` table with per-`match_id` losses) is already
-persisted — enough to add a rating layer with **zero new measurements**.
+exists only in swiss) then runs one champion-gate duel. The **selection path**
+still carries no global rating — but a read-only visibility rating now folds
+over the same ledger post-hoc (below). The complete pairwise-outcome ledger
+(`MatchRecord`, `MatchOutcome`, `Standing`, the index `tournaments` table with
+per-`match_id` losses) is already persisted — which is exactly what let the
+rating layer land with **zero new measurements**.
 
 ### Can tournaments generate Elo? — Yes (ship this first)
+
+> **Status — implemented, but via BT (PR #90).** `src/zicato/index/elo.py`
+> shipped this read-only fold — however it re-fits `fit_bradley_terry`
+> over the de-duplicated match ledger at every reindex/ingest and **maps
+> the fitted strength onto the Elo scale** (`elo = 1500 + θ·400/ln 10`)
+> rather than running the sequential margin-K Elo update the bullets below
+> propose. The BT fit natively carries the CIs (`generations.elo_se`) the
+> margin-K approximation lacked, so the "margin-of-victory K-weighting" and
+> "provisional-K decay" refinements were superseded (the sub-`MIN_RATING_GAMES`
+> `provisional` display suffix stands in for the latter). The
+> `generations.elo` / `elo_se` / `elo_games` columns (schema v10 + v12) and
+> the standings / gens-roster / candidate-dossier display all shipped.
+> Visibility only — never the gate. Racing intermediate rungs contribute
+> zero games (no named pairwise winner); a Plackett–Luce set-rating is the
+> documented future fix.
 
 Every settled duel is already an Elo "game": winner=1, loser=0, with
 `delta_scalar` as a margin. Build a **read-only analytics fold** (`index/elo.py`),
@@ -295,17 +327,24 @@ intervals — the noise backbone Elo lacks. Used correctly in zicato:
   `resolver` (`none|copeland|ranked_pairs|maximal_lottery`, default = today) and
   `rating` (`none|bradley_terry|elo`, default `none`). Params already fold into the
   contract hash, so a change rolls the epoch with zero new plumbing. Add the
-  additive index columns.
+  additive index columns. **(Partial — SHIPPED:** the `rating` knob + additive
+  columns; **UNBUILT:** the `resolver` knob.)**
 - **Phase 1 — Elo analytics fold** (above): highest impact/effort ratio, read-only,
-  zero selection risk.
+  zero selection risk. **(SHIPPED via the BT-on-Elo-scale fold — see the
+  subsection status note.)**
 - **Phase 2 — BT rating module** (`selection/rating.py`, convex MLE): replace
   Copeland/scalar standings with θ-rank in swiss/elim; persist θ/SE; CI dot-plot.
+  **(SHIPPED:** `fit_bradley_terry` + opt-in `params["rating"]` θ-rank standings;
+  θ/SE persist as `elo`/`elo_se` on the Elo scale.)**
 - **Phase 3 — Ranked Pairs + Smith-set prune resolver** (`selection/resolve.py`,
   pure functions over the `MatchRecord` matrix; the doc's #1 recommendation): plug
-  into *leader selection only*, not the gate.
+  into *leader selection only*, not the gate. **(UNBUILT.)**
 - **Phase 4 — CI-driven replication + the uncertainty pre-gate + maximal-lottery
   resolver for residual cycles**: biggest correctness win under noise; needs the
-  driver-feedback refactor; do last.
+  driver-feedback refactor; do last. **(Partial — SHIPPED:** the uncertainty
+  pre-gate + CI-driven replication as `selection/evidence_gate.py` +
+  `driver.py::confirm_promotion_with_evidence`; **UNBUILT:** the maximal-lottery
+  resolver.)**
 
 ---
 
