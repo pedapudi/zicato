@@ -453,7 +453,8 @@ from gather-completion order):
    (`orchestrator.py:~1651`). It therefore needs its OWN deterministic-order
    treatment in the ordered pass; it does not simply "inherit RoundLog's."
 6. **Shared `lineage.json` write.** `append_to_lineage(…, pending=True)`
-   (`orchestrator.py:1777`, inside `_propose_and_apply_challenger`) upserts
+   (inside `_propose_and_apply_challenger` — since the Finding-2 extraction,
+   `evolve/propose_apply.py`) upserts
    the in-flight node into the one shared `lineage.json`; two concurrent
    coroutines would interleave that read-modify-write. It must move to the
    ordered apply pass.
@@ -586,6 +587,64 @@ propose → apply → screen → schedule → gate → persist → ingest
   property of the graph edges, not an implementation detail hidden in a for-
   loop. The graph is the single place a future reviewer reads to learn which
   stages are concurrency-safe.
+
+**As landed (behavior-preserving first cut).** The decomposition shipped as a
+sequence of *verbatim-relocation* commits that carve the stages out of the
+driver as sibling modules under `src/zicato/evolve/`, without yet changing the
+round's shape. Five stage modules now exist, each a small cohesive unit of the
+pipeline above:
+
+- **`ingest.py`** — the live SQLite analytical-index IO (`_index_db_path`,
+  `_ingest_experiment_into_index`, `_load_prior_experiments`,
+  `_load_mutation_track_records`, `_cache_gen_score`).
+- **`persist.py`** — the terminal write funnel + round tail
+  (`_finalize_generation`, `_round_epilogue`, `_persist_rejected_round`, and
+  the two synthetic reject/skip outcome builders).
+- **`gate.py`** — the promotion decision procedure
+  (`_gauntlet_decision_from_result`, `_confirm_gauntlet_promotion`,
+  `_confirm_crowning_on_holdout`, `_apply_field_overrides`,
+  `_resolve_round_champion_mode`, the integrity block, …).
+- **`round_context.py`** — the pre-propose ("screen") context builders that
+  assemble the proposer-context inputs once per round
+  (`_build_candidate_screen_runner`, `_build_recombination_pair`,
+  `_build_genealogy_items`, `_build_calibration_summary`) — the builders the
+  Target above wanted moved "beside their consuming stage."
+- **`propose_apply.py`** — the propose → apply → admit stage: `_propose_child`
+  (the shared propose shape), `_propose_and_apply_challenger` (the field path's
+  propose/validate/derive/persist pipeline), the random-baseline placebo arm
+  (`_mint_placebo_challenger`, `_maybe_run_placebo_arm_gauntlet`), the
+  applied-child record + tracker-reason helpers (`_AppliedChallenger`,
+  `_trim_reason`, `_short_reject_reason`), and the pure field-diversity
+  accept/soft-reject decision (`_mint_challenger_field`, `_FieldMintDecision`,
+  and the `_diversity_signature` / `_duplicates_inflight_sibling` /
+  `_max_overlap_with_accepted` companions).
+
+Each module keeps the `zicato.orchestrator` logger name, imports its stable
+collaborators directly, and resolves back-edges into the driver as lazy
+call-time imports through the orchestrator module object; the orchestrator
+re-exports the externally-referenced names so callers and tests are unaffected.
+The extraction took the driver from ~6,500 to ~4,350 lines. **The orchestrator
+is now the round *driver*:** it owns `evolve_once` and `_evolve_multi_challenger`
+and *sequences* the stage modules, threading the round's data between them.
+
+**Remaining: the `schedule` closure-lift.** The one stage from the Target
+sequence still living inside the driver is **`schedule`** — the matchup-dispatch
+logic that runs the field/gauntlet duels. In the multi-challenger path it is the
+`_run_matchup` **nested closure** inside `_evolve_multi_challenger` (it captures
+the round's adapter, board, weights, config, emitters, and the live-standings
+publish seam from the enclosing frame); in `evolve_once` it is the gauntlet's
+single-duel dispatch. Extracting it is **not** a verbatim relocation like the
+five stages above: it requires *lifting nested closures out of their enclosing
+frame* — every captured variable becomes an explicit parameter (or a small typed
+"schedule context" dataclass), and the live-publish/standings-overlay callbacks
+have to be threaded back in as injected seams. That is a genuine
+shape-changing refactor, and it was deliberately deferred: its marginal value is
+low now that the per-round builders and the propose/apply/persist/gate/ingest
+stages all have homes, and doing it verbatim is impossible, so it is best done
+together with Finding 1's propose-side gather (which already needs
+`_propose_and_apply_challenger` split into a pure-propose half and an
+apply/persist half — see Finding 1's closing note) rather than as a standalone
+relocation.
 
 ## Finding 3 — The knob tax → declarative field metadata
 
