@@ -435,6 +435,14 @@ _SCORING_OMIT_AT_DEFAULT_FIELDS: frozenset[str] = frozenset(
         # rolls the epoch — a proposer shown candidate genealogy proposes
         # under a different rule.
         "genealogy",
+        # Telemetry dialect (TELEMETRY-DIALECTS.md §5): the pluggable LossProfile
+        # PRODUCER. Omitted at its ``"goldfive"`` default so every existing
+        # contract hashes byte-identically to one that predates the field (the
+        # CONTRACT-HASH parity gate stays green); a non-default dialect
+        # (``adk_events`` / ``transcript``) reintroduces the key and rolls the
+        # epoch — a run measured under a different dialect selects champions
+        # under a different rule.
+        "telemetry_dialect",
     }
 )
 

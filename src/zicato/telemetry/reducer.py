@@ -51,6 +51,7 @@ in heavy NLP deps. Single-turn entries leave both fields ``None``.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import re
 from collections import Counter
@@ -59,6 +60,9 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core import (
+    DIALECT_ADK_EVENTS,
+    DIALECT_GOLDFIVE,
+    DIALECT_TRANSCRIPT,
     BoardEntry,
     DriftCount,
     ExpectationResult,
@@ -70,6 +74,15 @@ from zicato.core import (
     normalize_wire_severity,
 )
 from zicato.scoring import DriftContext, builtin_drift_loss, resolve_drift_loss
+from zicato.telemetry.dialects import (
+    DialectReducer,
+    DialectSignals,
+    dialect_capability_warnings,
+    reduce_adk_events,
+    reduce_transcript,
+)
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Event walking — wire-form helpers
@@ -812,6 +825,133 @@ def _agent_and_user_turns_from_events(
     return agent_turns, user_turns
 
 
+def _goldfive_signals(events_jsonl_path: Path, entry: BoardEntry) -> DialectSignals:
+    """The ``goldfive`` dialect producer — the historical event walk (Seam 0).
+
+    Reads the drift-instrumented ``events.jsonl`` (via goldfive's replay
+    helper when available, plain JSON otherwise) and aggregates the raw
+    signals into a :class:`~zicato.telemetry.dialects.DialectSignals`. This
+    is the DEFAULT dialect and the most powerful: only this producer can
+    carry in-process drift instruments, custom process-judge drift
+    (``custom:<judge_name>``), and the collusion-guarded emulator lane
+    (TELEMETRY-DIALECTS.md §2).
+
+    Extracted VERBATIM from the inline walk :func:`reduce_loss` used to
+    run, so the default path is byte-identical — the transcript
+    reconstruction is computed unconditionally here (it was gated on the
+    entry kind before), but the result is used only for non-``single_turn``
+    entries, so the emitted profile is unchanged.
+    """
+    events: list[dict[str, Any]] = []
+    if events_jsonl_path.exists():
+        events = _load_events_as_dicts(events_jsonl_path)
+
+    drift_bucket: dict[tuple[str, str], int] = {}
+    plan_revisions = 0
+    task_started = 0
+    task_failed = 0
+    llm_call_count = 0
+    token_count = 0
+    agent_text_chars = 0
+    run_id = ""
+    adk_session_id = ""
+    # Custom-judge drift attribution. The steerer emits a drift-flavoured
+    # ``JudgementEmitted`` IMMEDIATELY before the paired ``DriftDetected``,
+    # and custom judges fire in a sequential loop, so each (judgement,
+    # drift) pair is contiguous on the wire. ``pending_judge_name`` holds
+    # the ``judge_name`` of the most recent unconsumed drift-flavoured
+    # judgement; the next ``DriftDetected`` of any kind consumes it.
+    pending_judge_name: str | None = None
+    for evt in events:
+        if not run_id:
+            run_id = str(evt.get("run_id", "") or evt.get("runId", "") or "")
+        if not adk_session_id:
+            adk_session_id = str(evt.get("session_id", "") or evt.get("sessionId", "") or "")
+        key, payload = _payload(evt)
+        if key is None:
+            continue
+        if key == "judgement_emitted":
+            jn = _judgement_judge_name(payload)
+            if jn is not None:
+                pending_judge_name = jn
+        elif key == "drift_detected":
+            kind, sev = _extract_drift_buckets(payload)
+            paired_judge = pending_judge_name
+            pending_judge_name = None
+            if kind is None or sev is None:
+                continue
+            if kind == _CUSTOM_DRIFT_KIND:
+                kind = _judge_attributed_kind(paired_judge or "")
+            drift_bucket[(kind, sev)] = drift_bucket.get((kind, sev), 0) + 1
+        elif key == "plan_revised":
+            plan_revisions += 1
+        elif key == "task_started":
+            task_started += 1
+        elif key == "task_failed":
+            task_failed += 1
+        elif key == "goldfive_llm_call_end":
+            llm_call_count += 1
+            # Token counts are not on the canonical goldfive proto but MAY be
+            # attached as extension fields by callers that wrap their LLM SDK
+            # with token-accounting middleware. Read opportunistically.
+            for tk in ("input_tokens", "output_tokens", "tokens", "total_tokens"):
+                v = payload.get(tk)
+                if isinstance(v, int | float):
+                    token_count += int(v)
+        elif key == "agent_invocation_completed":
+            s = payload.get("summary", "")
+            if isinstance(s, str):
+                agent_text_chars += len(s)
+        elif key == "task_completed":
+            s = payload.get("summary", "")
+            if isinstance(s, str):
+                agent_text_chars += len(s)
+
+    drift_counts = tuple(
+        DriftCount(kind=k, severity=s, count=n)  # type: ignore[arg-type]
+        for (k, s), n in sorted(drift_bucket.items())
+    )
+
+    agent_turns, user_turns = _agent_and_user_turns_from_events(events)
+
+    return DialectSignals(
+        drift_counts=drift_counts,
+        plan_revisions=plan_revisions,
+        task_started=task_started,
+        task_failed=task_failed,
+        llm_call_count=llm_call_count,
+        token_count=token_count,
+        agent_text_chars=agent_text_chars,
+        run_id=run_id,
+        adk_session_id=adk_session_id,
+        agent_turns=tuple(agent_turns),
+        user_turns=tuple(user_turns),
+    )
+
+
+#: The dialect registry: name → producer. The ``goldfive`` slot is the
+#: historical walk (byte-identical default); the others are the alternative
+#: producers in :mod:`zicato.telemetry.dialects`. Keyed on the closed
+#: ``KNOWN_TELEMETRY_DIALECTS`` set that ``ScoringWeights.__post_init__``
+#: validates against, so an unknown name never reaches dispatch.
+_DIALECT_PRODUCERS: dict[str, DialectReducer] = {
+    DIALECT_GOLDFIVE: _goldfive_signals,
+    DIALECT_ADK_EVENTS: reduce_adk_events,
+    DIALECT_TRANSCRIPT: reduce_transcript,
+}
+
+
+def _resolve_dialect_producer(dialect: str) -> DialectReducer:
+    """Look up the producer for ``dialect`` (fail-open to ``goldfive``).
+
+    The contract loader validates the name against
+    :data:`~zicato.core.KNOWN_TELEMETRY_DIALECTS`, so an unknown name here
+    would be a corrupt args file — we fall open to the default producer
+    rather than crash the worker mid-reduction.
+    """
+    return _DIALECT_PRODUCERS.get(dialect, _goldfive_signals)
+
+
 def reduce_loss(
     events_jsonl_path: Path,
     entry: BoardEntry,
@@ -904,101 +1044,39 @@ def reduce_loss(
         above). Back-compat: optional, defaults to ``False`` so a run
         that completed cleanly is scored exactly as before.
     """
-    events: list[dict[str, Any]] = []
-    if events_jsonl_path.exists():
-        events = _load_events_as_dicts(events_jsonl_path)
+    # --- 1. Produce raw signals via the pinned telemetry dialect (Seam 0) ---
+    #
+    # The dialect (TELEMETRY-DIALECTS.md) is the pluggable PRODUCER: it turns
+    # the run's raw telemetry into the LossProfile inputs. ``goldfive`` (the
+    # default) is the historical drift-instrument walk, byte-identical;
+    # ``adk_events`` reduces a generic agent event log; ``transcript`` is the
+    # predicate/judge-only floor. Everything below this line is
+    # DIALECT-AGNOSTIC — it scores the raw signals identically regardless of
+    # which producer emitted them. The dialect rides ``weights`` (an
+    # evaluation-contract property) so it reaches BOTH the orchestrator and
+    # this reducer (in the killable worker) with no new call-site plumbing.
+    producer = _resolve_dialect_producer(weights.telemetry_dialect)
+    signals = producer(events_jsonl_path, entry)
+    # Surface reduction warnings (malformed lines) + capability mismatches
+    # (drift knobs inert under a drift-incapable dialect — the "warn" half of
+    # the warn-or-refuse story, TELEMETRY-DIALECTS.md §4.2). Advisory only.
+    for warning in (*dialect_capability_warnings(weights), *signals.warnings):
+        log.warning("telemetry reduction [%s]: %s", weights.telemetry_dialect, warning)
 
-    # --- 1. Walk events, aggregate raw counts ---
+    drift_counts = signals.drift_counts
+    plan_revisions = signals.plan_revisions
+    task_started = signals.task_started
+    task_failed = signals.task_failed
+    llm_call_count = signals.llm_call_count
+    token_count = signals.token_count
+    agent_text_chars = signals.agent_text_chars
+    run_id = signals.run_id
+    adk_session_id = signals.adk_session_id
 
-    drift_bucket: dict[tuple[str, str], int] = {}
-    plan_revisions = 0
-    task_started = 0
-    task_failed = 0
-    llm_call_count = 0
-    token_count = 0
-    agent_text_chars = 0
-    run_id = ""
-    adk_session_id = ""
-    # Custom-judge drift attribution. The steerer emits a
-    # drift-flavoured ``JudgementEmitted`` IMMEDIATELY before the
-    # paired ``DriftDetected`` (``_emit_judgement`` then
-    # ``handle_drift``), and custom judges fire in a sequential loop,
-    # so each (judgement, drift) pair is contiguous on the wire.
-    # ``pending_judge_name`` holds the ``judge_name`` of the most
-    # recent unconsumed drift-flavoured judgement; the next
-    # ``DriftDetected`` of any kind consumes it. A ``custom``-kind
-    # drift is then attributed to that judge via
-    # ``_judge_attributed_kind``; a custom drift with no pending
-    # judgement stays the bare ``"custom"`` kind (default-weighted).
-    pending_judge_name: str | None = None
-    for evt in events:
-        if not run_id:
-            run_id = str(evt.get("run_id", "") or evt.get("runId", "") or "")
-        if not adk_session_id:
-            adk_session_id = str(evt.get("session_id", "") or evt.get("sessionId", "") or "")
-        key, payload = _payload(evt)
-        if key is None:
-            continue
-        if key == "judgement_emitted":
-            jn = _judgement_judge_name(payload)
-            if jn is not None:
-                # A drift-flavoured judgement — it pairs with the
-                # next ``DriftDetected``. A non-drift judgement
-                # (``jn is None``) leaves any existing pending value
-                # untouched: it does not mint a drift and so must not
-                # clobber a still-unpaired drift judgement.
-                pending_judge_name = jn
-        elif key == "drift_detected":
-            kind, sev = _extract_drift_buckets(payload)
-            # Consume the pending judgement regardless of whether the
-            # kind/severity parsed: this ``DriftDetected`` is the one
-            # the pending judgement paired with, so a later custom
-            # drift must not inherit a stale ``judge_name``.
-            paired_judge = pending_judge_name
-            pending_judge_name = None
-            if kind is None or sev is None:
-                continue
-            if kind == _CUSTOM_DRIFT_KIND:
-                # Attribute the custom-kind drift to its authoring
-                # judge. ``paired_judge`` is "" when the wire carried
-                # no judgement to pair with — the bare ``"custom"``
-                # kind then scores at the default judge weight.
-                kind = _judge_attributed_kind(paired_judge or "")
-            drift_bucket[(kind, sev)] = drift_bucket.get((kind, sev), 0) + 1
-        elif key == "plan_revised":
-            plan_revisions += 1
-        elif key == "task_started":
-            task_started += 1
-        elif key == "task_failed":
-            task_failed += 1
-        elif key == "goldfive_llm_call_end":
-            llm_call_count += 1
-            # Token counts are not on the canonical goldfive proto but
-            # MAY be attached as extension fields by callers that wrap
-            # their LLM SDK with token-accounting middleware. Read
-            # opportunistically; missing keys yield 0 and are tolerated.
-            for tk in ("input_tokens", "output_tokens", "tokens", "total_tokens"):
-                v = payload.get(tk)
-                if isinstance(v, int | float):
-                    token_count += int(v)
-        elif key == "agent_invocation_completed":
-            s = payload.get("summary", "")
-            if isinstance(s, str):
-                agent_text_chars += len(s)
-        elif key == "task_completed":
-            s = payload.get("summary", "")
-            if isinstance(s, str):
-                agent_text_chars += len(s)
-
-    drift_counts = tuple(
-        DriftCount(kind=k, severity=s, count=n)  # type: ignore[arg-type]
-        for (k, s), n in sorted(drift_bucket.items())
-    )
-
-    # Schema-failure scalar derived from the drift bucket. Folds the
+    # Schema-failure scalar derived from the drift counts. Folds the
     # `schema_violation` kind into a first-class metric so analysis
     # sites that care about schema health don't have to re-walk drift.
-    schema_failures = sum(cnt for (k, _s), cnt in drift_bucket.items() if k == "schema_violation")
+    schema_failures = sum(dc.count for dc in drift_counts if dc.kind == "schema_violation")
 
     # Output-chars: prefer the caller's explicit final_output length
     # (single source of truth for the user-facing surface); otherwise
@@ -1038,7 +1116,8 @@ def reduce_loss(
     memory_failure_count: int | None = None
     context_loss_count: int | None = None
     if entry.kind != "single_turn":
-        agent_turns, user_turns = _agent_and_user_turns_from_events(events)
+        agent_turns = list(signals.agent_turns)
+        user_turns = list(signals.user_turns)
         # ``turns_completed`` is a positional count of agent-side turns
         # observed on the wire; for the scripted / emulated kinds this
         # is what operators want surfaced in the journal.
