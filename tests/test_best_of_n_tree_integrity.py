@@ -1,12 +1,26 @@
 """Best-of-N tree integrity — the MOUNTED child tree matches the SELECTION.
 
 Known-answer e2e over the target_0 planted-defect contract with
-``proposer_quality.best_of_n = 3`` (the shipped DEFAULT slate width): every
-slate sample's post-apply validation derives the SAME fixed child snapshot in
-place, so before the fix the on-disk child tree belonged to the LAST-sampled
-candidate while the critique could choose an EARLIER one — the tournament
-then scored (and the field path diversity-judged) a tree that was not the
-experiment on record.
+``proposer_quality.best_of_n = 3`` (the shipped DEFAULT slate width).
+
+The invariant under test (WS-CONC rework)
+-----------------------------------------
+Each slate slot now validates into its OWN per-slot SCRATCH tree, and the
+CHOSEN candidate is derived into the real ``next_id`` exactly once, after
+selection, by one unconditional final derive. So the post-condition this
+suite pins is: **after ``propose`` returns, the mounted ``next_id`` tree
+matches the CHOSEN candidate, and no scratch residue is left behind** — no
+extra generation ever appears in the store's namespace (every scratch tree is
+off-namespace and invisible to ``list_generations``), and no ``ztw-slate-*``
+temp directory survives the round. This replaces the pre-rework invariant
+("re-derive the chosen candidate only when it is not the last-validated one"):
+the shared ``next_id`` derive that every slot used to race on is gone, so the
+old last-writer-wins mismatch it guarded against cannot arise.
+
+Both pipelines are exercised at ``propose_parallelism`` **1 AND 4** — the
+serial reference and the concurrent gather — and the invariant must hold
+identically at both (the deterministic post-gather pass makes the observable
+outcome independent of the knob).
 
 Both evolve pipelines are driven for real (subprocess tournament workers, the
 default git generation store):
@@ -30,7 +44,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import tempfile
 from pathlib import Path
+
+import pytest
 
 import zicato_examples.target_0_convergence as _t0_pkg
 from tests import _best_of_n_slate_support as slate_mocks
@@ -53,8 +70,16 @@ EXPECTED_FLOOR = 1.2  # 1 token (verbose-prose), 4/5 pass
 EXPECTED_TWO_TOKENS = 2.4  # 2 tokens, 3/5 pass
 
 
-def _bootstrap(tmp_path: Path, tournament: dict) -> tuple[Path, str]:
-    """A target_0 workspace whose contract samples a best-of-3 slate."""
+def _bootstrap(
+    tmp_path: Path, tournament: dict, *, propose_parallelism: int = 4
+) -> tuple[Path, str]:
+    """A target_0 workspace whose contract samples a best-of-3 slate.
+
+    ``propose_parallelism`` is written into the workspace ``runtime`` block so
+    the slate gather runs at the requested width (1 = serial reference; 4 =
+    the concurrent gather). It is a RUNTIME knob — never part of the frozen
+    contract — so it does not perturb the known-answer scalars.
+    """
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
     (workspace / "config.json").write_text(
@@ -64,6 +89,7 @@ def _bootstrap(tmp_path: Path, tournament: dict) -> tuple[Path, str]:
                 "created_at": "2026-07-01T00:00:00Z",
                 "adapter": ADAPTER_BLOCK,
                 "mutable_trees": [str(AGENT_DIR)],
+                "runtime": {"propose_parallelism": propose_parallelism},
             }
         )
     )
@@ -87,6 +113,31 @@ def _bootstrap(tmp_path: Path, tournament: dict) -> tuple[Path, str]:
         proposer_path=EXAMPLE_DIR / "proposer",
     )
     return workspace, cfg.id
+
+
+def _assert_no_scratch_residue(
+    workspace: Path, epoch_id: str, scratch_tmp: Path, expected_ids: set[str]
+) -> None:
+    """The WS-CONC post-condition: no scratch tree survived, anywhere.
+
+    Two checks:
+
+    * **Namespace** — ``list_generations`` returns EXACTLY ``expected_ids``,
+      so no per-slot scratch tree ever entered the generation namespace (the
+      ``derive_scratch`` off-namespace guarantee — a scratch tree is invisible
+      to every walker).
+    * **Temp dir** — no ``ztw-slate-*`` slate-scratch parent survives under
+      the (test-local) temp dir; every slot's ``try/finally`` cleaned its
+      lease.
+    """
+    from zicato.epoch.genstore import default_generation_store
+
+    store = default_generation_store(workspace)
+    assert (
+        set(store.list_generations(epoch_id)) == expected_ids
+    ), "a scratch derivation leaked into the generation namespace"
+    leaked = list(scratch_tmp.glob("ztw-slate-*"))
+    assert leaked == [], f"slate scratch parents survived the round: {leaked}"
 
 
 def _policy_text(workspace: Path, epoch_id: str, generation_id: str) -> str:
@@ -129,15 +180,25 @@ def _patch_content(workspace: Path, epoch_id: str, generation_id: str) -> str:
     return str(experiment.patches[0].new_content)
 
 
-def test_gauntlet_mounts_the_chosen_candidate_tree(tmp_path: Path) -> None:
+@pytest.mark.parametrize("propose_parallelism", [1, 4])
+def test_gauntlet_mounts_the_chosen_candidate_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, propose_parallelism: int
+) -> None:
     """The critic picks candidate 0; the round must score + persist THAT
-    candidate's tree, not the last-sampled decoy's."""
+    candidate's tree, not the last-sampled decoy's — at serial AND gathered
+    propose-parallelism, with no scratch residue left behind."""
+    # Route the in-process slate scratch (``ztw-slate-*``) into a test-local
+    # temp dir so the residue check cannot collide with a sibling xdist worker.
+    scratch_tmp = tmp_path / "tmp"
+    scratch_tmp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(scratch_tmp))
     workspace, epoch_id = _bootstrap(
         tmp_path,
         {
             "structure": "gauntlet",
             "params": {"replicates": 1, "promote_confidence_threshold": None},
         },
+        propose_parallelism=propose_parallelism,
     )
     slate_mocks.reset()
 
@@ -184,12 +245,23 @@ def test_gauntlet_mounts_the_chosen_candidate_tree(tmp_path: Path) -> None:
     assert selected[0]["payload"]["index"] == 0
     assert selected[0]["payload"]["reason"] == "critique"
 
+    # WS-CONC post-condition: the chosen tree is mounted and NO scratch tree
+    # survived — not in the namespace, not on disk.
+    _assert_no_scratch_residue(workspace, epoch_id, scratch_tmp, {"v0", "v1"})
 
-def test_field_mounts_each_chosen_candidate_tree(tmp_path: Path) -> None:
+
+@pytest.mark.parametrize("propose_parallelism", [1, 4])
+def test_field_mounts_each_chosen_candidate_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, propose_parallelism: int
+) -> None:
     """Racing field of 2, each challenger proposed through a best-of-3 slate:
     every applied challenger's tree must match its persisted experiment (the
     experiment whose diversity signature `_mint_challenger_field` judged),
-    and the best chosen arm survives to the known floor."""
+    and the best chosen arm survives to the known floor — at serial AND
+    gathered propose-parallelism, with no scratch residue."""
+    scratch_tmp = tmp_path / "tmp"
+    scratch_tmp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(scratch_tmp))
     workspace, epoch_id = _bootstrap(
         tmp_path,
         {
@@ -201,6 +273,7 @@ def test_field_mounts_each_chosen_candidate_tree(tmp_path: Path) -> None:
                 "board_fraction": 0.4,
             },
         },
+        propose_parallelism=propose_parallelism,
     )
     slate_mocks.reset()
 
@@ -246,3 +319,8 @@ def test_field_mounts_each_chosen_candidate_tree(tmp_path: Path) -> None:
     # The two chosen hypotheses are genuinely distinct (the field did not
     # collapse), matching their genuinely distinct trees.
     assert signatures[0] != signatures[1]
+
+    # WS-CONC post-condition: exactly the two challenger trees are mounted and
+    # NO per-slot scratch survived (namespace or temp dir) across the whole
+    # sequential-field × concurrent-slate fan-out.
+    _assert_no_scratch_residue(workspace, epoch_id, scratch_tmp, {"v0", "v1", "v2"})

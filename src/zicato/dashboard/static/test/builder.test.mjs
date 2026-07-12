@@ -704,6 +704,14 @@ test('builder view: the Proposer section drives set_proposer_quality + set_exper
   await tick();
   assert(OP_CALLS.find((c) => c.op === 'set_proposer_quality' && c.args.critique_enabled === false),
     'the critique toggle posts set_proposer_quality');
+  const exemplars = byAria(host, 'dn-bld-num', 'Process exemplars');
+  assert(exemplars, 'the process-exemplars control renders');
+  exemplars.value = '2';
+  exemplars.dispatchEvent(makeEvent('change'));
+  await tick();
+  const exCall = OP_CALLS.find((c) => c.op === 'set_proposer_quality' && 'process_exemplars' in c.args);
+  assert(exCall && exCall.args.process_exemplars === 2,
+    'the process-exemplars count posts set_proposer_quality {process_exemplars:2} — exact op+args');
   const recombine = byAria(host, 'dn-bld-check', 'Recombination slot');
   assert(recombine, 'the recombination-slot control renders');
   assert(!recombine.checked, 'the recombination slot is unchecked at the False default');
@@ -763,6 +771,29 @@ test('builder view: a no-op re-render of the Proposer section rebuilds ZERO DOM 
   assertEqual(center.innerHTMLWriteCount(), writes, 'a no-op section re-render writes ZERO additional DOM');
 });
 
+test('builder view: the Field & noise section drives set_screening (tryout knobs)', async () => {
+  const host = await mountAt('Field & noise');
+  // the candidate-screen numeric posts set_screening {entries} (the field is
+  // screen_entries but the op arg is `entries`).
+  const screen = byAria(host, 'dn-bld-num', 'Candidate screen entries');
+  assert(screen, 'the candidate-screen control renders');
+  screen.value = '3';
+  screen.dispatchEvent(makeEvent('change'));
+  await tick();
+  const entriesCall = OP_CALLS.find((c) => c.op === 'set_screening' && 'entries' in c.args);
+  assert(entriesCall && entriesCall.args.entries === 3,
+    'the candidate-screen count posts set_screening {entries:3} — exact op+args');
+  // the veto-only checkbox posts set_screening {veto_only}.
+  const veto = byAria(host, 'dn-bld-check', 'Screen veto-only');
+  assert(veto, 'the screen veto-only control renders');
+  veto.checked = true;
+  veto.dispatchEvent(makeEvent('change'));
+  await tick();
+  const vetoCall = OP_CALLS.find((c) => c.op === 'set_screening' && 'veto_only' in c.args);
+  assert(vetoCall && vetoCall.args.veto_only === true,
+    'the veto-only toggle posts set_screening {veto_only:true} — exact op+args');
+});
+
 test('builder view: the Gate section gains scope + blocking + regression controls', async () => {
   const host = await mountAt('Gate');
   // the monotonicity-scope select posts set_gate {monotonicity_scope}.
@@ -779,6 +810,12 @@ test('builder view: the Gate section gains scope + blocking + regression control
   await tick();
   assert(OP_CALLS.find((c) => c.op === 'set_gate' && c.args.block_on_containment_violation === true),
     'the containment block posts set_gate');
+  const contradiction = byAria(host, 'dn-bld-check', 'Block on gate contradiction');
+  contradiction.checked = true;
+  contradiction.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_gate' && c.args.block_on_gate_contradiction === true),
+    'the gate-contradiction block posts set_gate {block_on_gate_contradiction:true} — exact op+args');
   const regTimeout = byAria(host, 'dn-bld-num', 'Regression timeout seconds');
   regTimeout.value = '90';
   regTimeout.dispatchEvent(makeEvent('change'));

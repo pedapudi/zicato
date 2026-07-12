@@ -44,6 +44,52 @@ KNOWN_TELEMETRY_DIALECTS: frozenset[str] = frozenset(
 
 
 # ---------------------------------------------------------------------------
+# Declarative knob metadata (REIMPLEMENTATION.md — Finding 3)
+# ---------------------------------------------------------------------------
+
+
+def _knob(
+    *,
+    omit_at_default: bool = False,
+    builder_op: str | None = None,
+    builder_arg: str | None = None,
+) -> dict[str, Any]:
+    """Per-field knob metadata — the declarative source of truth (Finding 3).
+
+    A scoring/proposer knob historically fanned out across seven hand-kept
+    registries; this metadata makes the field declaration the source and
+    lets the mechanical registries DERIVE from it (with the existing guard
+    tables retained as the enforcement net).
+
+    ``omit_at_default`` — the field is dropped from the contract canonical
+    form while it holds its default (an additive, default-off knob that must
+    not retroactively roll existing epochs). The canonicalizer's omit set
+    (:data:`zicato.epoch.contract._SCORING_OMIT_AT_DEFAULT_FIELDS`) is
+    DERIVED from this flag across the contract dataclasses; a frozen-literal
+    guard test pins the derived set so a metadata typo can never silently
+    move the contract hash.
+
+    ``builder_op`` — the builder operation that exposes this knob (e.g.
+    ``"set_proposer_quality"``), or ``None`` for a field with no GUI knob.
+    ``builder_arg`` — the argument NAME the op / API dispatch / copilot tool
+    / GUI row use for this field WHEN it differs from the field name (e.g.
+    ``screen_entries`` is the ``entries`` arg of ``set_screening``); ``None``
+    means "same as the field name". A registry-driven completeness guard
+    test asserts every ``builder_op`` knob is wired through all its
+    touchpoints (op signature, API dispatch, copilot tool, GUI row, node
+    test), naming exactly which touchpoint is missing for which knob.
+
+    Defaults and validation are unaffected — they stay on the field
+    declaration / ``__post_init__`` exactly as before; this is metadata only.
+    """
+    return {
+        "omit_at_default": omit_at_default,
+        "builder_op": builder_op,
+        "builder_arg": builder_arg,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Scoring config (overfitting / proposer-quality sub-configs)
 # ---------------------------------------------------------------------------
 
@@ -207,7 +253,10 @@ class OverfittingConfig:
     ladder: LadderConfig = field(default_factory=_default_ladder_config)
     rotate_holdout: bool = True
     max_generations_per_contract: int | None = None
-    random_baseline_every_n: int = 0
+    random_baseline_every_n: int = field(
+        default=0,
+        metadata=_knob(omit_at_default=True, builder_op="set_holdout"),
+    )
 
     def __post_init__(self) -> None:
         if not 0.0 < self.holdout_fraction < 1.0:
@@ -440,15 +489,42 @@ class ProposerQualityConfig:
         :mod:`zicato.epoch.recombine` / :mod:`zicato.proposer.recombine`.
     """
 
-    best_of_n: int = 3
-    critique_enabled: bool = True
-    screen_entries: int = 0
-    screen_veto_only: bool = False
-    process_exemplars: int = 0
-    recombine: bool = False
-    genealogy: int = 0
-    calibration_feedback: int = 0
-    recombine_merge: str = "mechanical"
+    best_of_n: int = field(
+        default=3,
+        metadata=_knob(builder_op="set_proposer_quality"),
+    )
+    critique_enabled: bool = field(
+        default=True,
+        metadata=_knob(builder_op="set_proposer_quality"),
+    )
+    screen_entries: int = field(
+        default=0,
+        metadata=_knob(omit_at_default=True, builder_op="set_screening", builder_arg="entries"),
+    )
+    screen_veto_only: bool = field(
+        default=False,
+        metadata=_knob(omit_at_default=True, builder_op="set_screening", builder_arg="veto_only"),
+    )
+    process_exemplars: int = field(
+        default=0,
+        metadata=_knob(omit_at_default=True, builder_op="set_proposer_quality"),
+    )
+    recombine: bool = field(
+        default=False,
+        metadata=_knob(omit_at_default=True, builder_op="set_proposer_quality"),
+    )
+    genealogy: int = field(
+        default=0,
+        metadata=_knob(omit_at_default=True, builder_op="set_proposer_quality"),
+    )
+    calibration_feedback: int = field(
+        default=0,
+        metadata=_knob(omit_at_default=True, builder_op="set_proposer_quality"),
+    )
+    recombine_merge: str = field(
+        default="mechanical",
+        metadata=_knob(omit_at_default=True, builder_op="set_proposer_quality"),
+    )
 
     def __post_init__(self) -> None:
         if self.best_of_n < 1:
@@ -508,7 +584,10 @@ class ExperimentMemoryConfig:
         surfaced regardless of this knob.
     """
 
-    cross_epoch: bool = False
+    cross_epoch: bool = field(
+        default=False,
+        metadata=_knob(builder_op="set_experiment_memory"),
+    )
 
     @classmethod
     def defaults(cls) -> ExperimentMemoryConfig:
@@ -748,7 +827,10 @@ class ScoringWeights:
     # ``epoch/contract.py::scoring_to_canon``). Set ``> 0`` to fold a
     # ``diff_complexity_weight * (added + removed + patches)`` component into the
     # challenger's scalar so a shorter-description edit is preferred.
-    diff_complexity_weight: float = 0.0
+    diff_complexity_weight: float = field(
+        default=0.0,
+        metadata=_knob(omit_at_default=True, builder_op="set_namespace_weights"),
+    )
     promote_margin: float = 0.01
     pass_rate_monotonicity: bool = True
     pass_rate_monotonicity_scope: PassRateMonotonicityScope = "per_entry"
@@ -792,7 +874,8 @@ class ScoringWeights:
     # retroactively, while opting in rolls the epoch like any other
     # contract change. See :class:`ExperimentMemoryConfig`.
     experiment_memory: ExperimentMemoryConfig = field(
-        default_factory=_default_experiment_memory_config
+        default_factory=_default_experiment_memory_config,
+        metadata=_knob(omit_at_default=True),
     )
     # Optional operator outcome-summarizer hook (Capability 2 of issue #18,
     # item 8). A dotted spec (``pkg.mod:fn`` / ``pkg.mod.fn``) resolved like
@@ -873,7 +956,10 @@ class ScoringWeights:
     # retroactively; a non-default dialect rolls the epoch normally. Validated
     # fail-fast in ``__post_init__`` (an unknown name is a genuine config error,
     # the "refuse" half of the warn-or-refuse story).
-    telemetry_dialect: str = DIALECT_GOLDFIVE
+    telemetry_dialect: str = field(
+        default=DIALECT_GOLDFIVE,
+        metadata=_knob(omit_at_default=True),
+    )
     # Opt-in INTEGRITY BLOCKING modes (both default OFF — the alarm-only
     # posture of the supervisor's integrity notary is the shipped baseline).
     # Both are omitted from the contract canonical form at their default
@@ -891,7 +977,10 @@ class ScoringWeights:
     # check (never a false quarantine). An explicit operator
     # force-promote is NOT blocked — the override is recorded provenance,
     # never silent.
-    block_on_containment_violation: bool = False
+    block_on_containment_violation: bool = field(
+        default=False,
+        metadata=_knob(omit_at_default=True, builder_op="set_gate"),
+    )
     # ``block_on_gate_contradiction``: immediately before finalizing a
     # GATE-DECIDED promotion, re-derive the gate's scalar rule
     # (``delta_scalar <= -promote_margin`` — the supervisor's
@@ -902,7 +991,10 @@ class ScoringWeights:
     # force-promote is NOT re-checked (same rationale as above); a
     # promotion with no usable scalar evidence is skipped (fail-open,
     # mirroring ``check_row``'s SkippedNoEvidence).
-    block_on_gate_contradiction: bool = False
+    block_on_gate_contradiction: bool = field(
+        default=False,
+        metadata=_knob(omit_at_default=True, builder_op="set_gate"),
+    )
 
     def __post_init__(self) -> None:
         """Validate the declarative transform specs fail-fast at construction.

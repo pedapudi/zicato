@@ -922,7 +922,51 @@ the cost + epoch-roll surfacing a stated requirement of the two builder skills.
 > justification, not an oversight. A new op with neither a control nor an
 > exception reds the pin, naming the op and the two remedies.
 
-The recipe that walks all six is §10.8.
+### 10.7.1 The declarative knob registry (Finding 3)
+
+The six surfaces above are the *op-level* net (every op has a dispatch arm, a
+copilot tool, a GUI control). One layer finer sits the **per-field knob
+registry**: for a scoring/proposer knob the same field was historically
+mirrored across seven hand-kept sites, and the omit-at-default set was a
+hand-maintained literal a typo could silently corrupt. Finding 3 makes the
+**field declaration the source of truth**.
+
+Each participating field on `ScoringWeights` and its nested config dataclasses
+carries `dataclasses.field(metadata=_knob(...))`
+(`core/scoring_config.py::_knob`) declaring:
+
+- **`omit_at_default: bool`** — the field is dropped from the contract
+  canonical form while it holds its default. The canonicalizer's omit set
+  (`epoch/contract.py::_SCORING_OMIT_AT_DEFAULT_FIELDS`) is now **derived** from
+  this flag by `_derive_omit_at_default_fields()` rather than hand-maintained.
+  `test_knob_registry.py::test_derived_omit_set_equals_frozen_literal` pins the
+  derived set to a frozen literal, so a metadata typo reds THAT test (loudly,
+  per-field) instead of silently moving the CONTRACT hash for every epoch.
+- **`builder_op: str | None`** + optional **`builder_arg`** — the builder op
+  that exposes the knob (e.g. `"set_proposer_quality"`), and the arg name when
+  it differs from the field name (e.g. `screen_entries` is the `entries` arg of
+  `set_screening`).
+
+The registry-driven completeness guard,
+`test_knob_registry.py::test_every_builder_op_knob_is_fully_wired`, walks the
+metadata and asserts every `builder_op` knob is wired through all **five**
+remaining touchpoints — (a) the op signature, (b) the API dispatch entry, (c)
+the copilot tool arg, (d) a `runOp('<op>', {…})` GUI row in `views/builder.js`,
+and (e) an arg-level assertion in `test/builder.test.mjs` — by
+introspection/source-scan. Forgetting ANY one reds this ONE test with a message
+naming exactly which touchpoint is missing for which knob (e.g. *"knob
+'genealogy' … is missing touchpoint (b): an API dispatch entry"*).
+
+> ✅ **The new discipline for adding an omit-at-default / proposer-quality knob:
+> declare the field + its `_knob(...)` metadata, then let the guard test tell
+> you every remaining touchpoint.** Run `test_every_builder_op_knob_is_fully_wired`
+> and fix each named gap until it is green; you do not have to remember the five
+> sites, the test enumerates the ones you missed. The ops are **not**
+> code-generated from the metadata — this is enforcement, not generation. The
+> op-level pins (`test_builder_gui_coverage.py`) and the serializer-completeness
+> table (`test_contract_serializer_completeness.py`) stay as the coarser nets.
+
+The recipe that walks all six op-level surfaces is §10.8.
 
 ---
 
