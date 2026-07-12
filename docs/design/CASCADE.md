@@ -1,6 +1,6 @@
 # Evaluation cascade — staged screen → rung → full → holdout under one budget
 
-> **Status.** DESIGN / **NOT IMPLEMENTED**. This is the staged-evaluation
+> **Status.** DESIGN + MEASURED / **build decision pending**. This is the staged-evaluation
 > design note the deferred register owes. zicato already ships **four
 > partial cascade forms** — the pre-tournament candidate screen, racing's
 > board-slice rungs, the full-board promote gate, and the Ladder-mediated
@@ -16,7 +16,11 @@
 > is inflated by the sum of the upstream selection biases — and promote
 > noise the single-stage gate would have caught. No source, config schema,
 > or test in the tree changes because of this note. **What gates a build
-> decision is the OC-harness evidence in §4**, not this argument.
+> decision is the OC-harness evidence in §4**, not this argument — and that
+> evidence has now been measured: the §4 harness is built
+> (`tools/cascade_oc.py` + `tests/test_cascade_oc_harness.py`) and its first
+> full run is reported in **§5**. The build/no-build call itself remains the
+> operator's; this note does not make it.
 
 This is the companion to five shipped docs and two research notes:
 
@@ -362,7 +366,169 @@ lifted to the whole pipeline.
 
 ---
 
-## 5. The config sketch (NOT implemented)
+## 5. Measured results (first run)
+
+The §4 harness is built and run. Home: `tools/cascade_oc.py` (the
+measurement engine + a `python -m tools.cascade_oc` runner that emits a
+machine-readable JSON report and a printed summary) and
+`tests/test_cascade_oc_harness.py` (the pinned assertions behind the
+`cascade_oc` pytest marker, **excluded from the default run**; one cheap
+unmarked smoke test keeps the harness from rotting). The cascade under
+measurement is a *simulated* composition of the shipped stages — the draws
+flow through `runner._run_single` (the documented monkeypatch anchor) on the
+seeded target_0 noise model, but every **decision** is the shipped code: the
+real `measure_noise_floor` (per-slice floors), the real
+`RacingStrategy._apply_cut` rung, the real `evaluate_gate` / `holdout_confirms`,
+and the real evidence-gated `resolve_tournament` terminal. Nothing about the
+cascade itself was built.
+
+### 5.1 Chosen parameters (the doc left these underspecified — §4.2)
+
+| Knob | Value | Rationale |
+|---|---|---|
+| `sigma` | `0.22` | the Tier-2 harness's deliberately-hot noise (one full defect ≈ 1× the full-board A/A floor) — reused verbatim |
+| A/A floor draws | `30` per slice | the power harness's precedent is 60 single-sample A/A draws; 30 on each of five slices keeps the sweep cheap while resolving the floor |
+| rung false-cut trials | `48` | each trial runs two duels (better-arm and champion-equal decoy vs the champion) on the slice; 48 resolves the rate to ~2% |
+| **rung field composition** | 1 better arm + 1 champion-equal decoy, `eta=2` | halving a 2-arm rung keeps exactly one, so a false cut is unambiguously "the better arm lost the rung to a champion-equal decoy on this noisy slice" — the crispest per-rung OC |
+| screen veto trials | `200` | matches the shipped screen OC test |
+| Exp-B/C end-to-end trials | `16` | the power harness's regime; the evidence terminal is the cost driver |
+| Exp-B/C representative rung slice | `2` entries (~40%) | on this **5-entry** board a literal quarter-board rung is a *single* entry (pathologically noisy — see the m=1 column of §5.2); Exp A sweeps the full m∈{1..4} separately |
+| Exp-C field size | `6` (1 true + 5 decoys) | the budget saving is "prune the field cheaply, gate only the survivor" vs "full-board every candidate"; a field is needed to expose it |
+| Exp-C terminal margin | `0.55 × floor` | a legitimate operator choice (`04-evaluation-statistics.md §13.8`): below the 1× planted effect so power survives, above the R-averaged null noise so `P(promote|null)` stays small |
+| Exp-C terminal replicates | `16` | averages the terminal duel; the margin terminal's soundness/power hinge |
+
+All seeds derive from `stable_noise_seed(workspace_seed, generation_id,
+entry_id, replicate_index)` and are recorded in the JSON report; the run is
+verified **byte-identical across `PYTHONHASHSEED`** (no `hash()`-randomised
+seed leaked in). The numbers below are from one full run
+(`uv run python -m tools.cascade_oc`); re-running reproduces them exactly.
+
+### 5.2 Experiment A — per-stage false-cut vs the slice floor
+
+Measured full-board A/A floor (sd of the A/A `delta_scalar`): **0.640**. The
+floor **grows as the slice shrinks**, confirming §3.1 (the floor is a
+function of the slice, not a constant):
+
+| slice size m | 1 | 2 | 3 | 4 | 5 (full) |
+|---|---|---|---|---|---|
+| A/A floor | 1.042 | 1.086 | 0.903 | 0.740 | **0.640** |
+
+The rung's false-cut rate (P the genuinely-better arm is eliminated) is
+governed by that slice's **own** floor — an effect well above the slice floor
+is essentially never cut; an effect below it is cut materially more often:
+
+| planted δ (measured) | m=1 | m=2 | m=3 | m=4 | δ / slice-floor range |
+|---|---|---|---|---|---|
+| small (0.336) | 0.23 | 0.23 | 0.21 | 0.21 | ~0.31–0.45× |
+| medium (0.672) | 0.19 | 0.19 | 0.06 | 0.06 | ~0.62–0.91× |
+| large (2.016) | 0.02 | 0.00 | 0.00 | 0.00 | ~1.9–2.7× |
+
+This is exactly the coarse-cut discipline (§3.1/§4.2.4): a rung may not be
+trusted to resolve an effect below its slice floor. The **veto stage**
+(screen) follows the confirm-before-veto squaring: measured false-veto rate
+**0.035 ≈ σ² (0.048)**, an order below the naive any-flip alternative's
+**0.195 ≈ σ** on the identical seeded draws — the noisiest stage is allowed
+only the coarsest (categorical-breakage) cut.
+
+### 5.3 Experiment B — end-to-end P(promote | ·), cascade ON vs single-stage OFF
+
+Evidence-gated terminal (the shipped `resolve_tournament` pre-gate), 16
+seeded trials, identical draws for every column:
+
+| condition | cascade ON | single-stage OFF | naive "gate at every rung" |
+|---|---|---|---|
+| **null (A/A)** | **0.00** | **0.00** | 0.25 |
+| small (0.5× floor) | 0.56 | 0.94 | 0.19 |
+| medium (1× floor) | 0.50 | 1.00 | 0.31 |
+| large (3× floor) | **1.00** | **1.00** | 0.81 |
+
+Reading:
+
+- **The hard soundness bar holds.** `P(promote | null)` is **zero** under the
+  cascade and does **not** exceed the single-stage contract's zero
+  (fact #4). The failing alternative — running each rung's cut *as a gate* —
+  by contrast leaks a **0.25** null-promotion rate: staged gates on noisy
+  slices manufacture false promotions, which is precisely why a rung must be
+  a rank-halve, not a gate.
+- **Staging costs power at small effects, and the harness quantifies it.** At
+  the unmissable 3× effect the cascade loses nothing (1.00 vs 1.00). At the
+  1× and 0.5× effects it recovers only ~0.50–0.56 of what the single stage
+  does — the 2-entry early rung false-cuts the true improvement on its noisy
+  slice before the terminal ever sees it. The cascade never *gains* power the
+  single stage lacks (the protected-incumbent invariant, made measurable).
+
+### 5.4 Experiment C — the budget-savings-vs-power curve (the build artifact)
+
+Margin terminal, `field=6`, `margin = 0.55×floor = 0.352`, terminal
+replicates 16, board-units counted exactly (one per `runner._run_single`
+call). x = mean total board-units spent per promotion; y = `P(promote|true)`:
+
+| planted δ | config | power | board-units | vs baseline |
+|---|---|---|---|---|
+| **large** | single-stage baseline | 0.94 | 1152 | — |
+| large | half-r2 | **1.00** | 240 | **4.8× cheaper, +0.06 power** |
+| large | quarter-r1 | 0.94 | 216 | **5.3× cheaper, equal power** |
+| large | aggressive-r1 | 0.94 | 216 | **5.3× cheaper, equal power** |
+| **medium** | single-stage baseline | 0.88 | 1152 | — |
+| medium | half-r2 | 0.31 | 240 | cheaper but **loses 0.57 power** |
+| medium | quarter/aggressive | 0.19 | 216 | loses 0.69 power |
+| **small** | single-stage baseline | 0.38 | 1152 | — |
+| small | all cascade configs | 0.00 | 216–240 | loses all power |
+
+The build-candidate rule the harness applies (report-only: a config that
+reaches the reference power within 5pp at ≤75% of the reference budget)
+returns **all three configs at the large effect** and **none** at the medium
+or small effects.
+
+### 5.5 §4.5 slot-integrity proof
+
+Green: across a full cascade run the canonical replicate-0 `loss.json` bytes
+are unchanged for both sides, the calibration draws persist under base
+**1000**, the evidence draws persist under base **4000** for both sides, and
+the three bases `{0, 1000, 4000}` are disjoint. The screen's base-3000 draws
+live under swept phantom directories by design, so its isolation is witnessed
+by r0 being untouched rather than by a persisted slot. The cross-stage
+draw-independence invariant (§3.2) holds mechanically.
+
+### 5.6 An honest reading of what this supports — and does not
+
+What the first run **supports**:
+
+1. **The staged cascade is sound.** It does not raise `P(promote|null)` above
+   the single-stage contract's zero (§4.3's hard bar), and the reserved-base
+   ledger keeps every stage's draws independent (§4.5). The naive
+   "gate-at-every-rung" strawman is measurably *un*sound (0.25 null leak),
+   which validates the doc's core design choice (rank-halve rungs, veto-only
+   screen).
+2. **There is a real budget win at large effects.** When the true
+   improvement is unmissable (≥ ~2× the full-board floor), a cascade reaches
+   the single-stage contract's power at **≈5× fewer board-unit evaluations**
+   by pruning the field cheaply and gating only the survivor.
+
+What it **does not** support — and why a build decision is genuinely open:
+
+3. **The win evaporates at the effect sizes that matter most.** At 1× and
+   below the full-board floor — the regime a maturing proposer actually
+   operates in — the cheap early rungs false-cut the true improvement (Exp A's
+   sub-slice-floor false-cut rates; Exp B's 0.50–0.56 power vs the single
+   stage's 0.94–1.00; Exp C's collapse to 0.00–0.31 power). On this 5-entry
+   board a realistic early rung is 1–2 entries, and a 1–2-entry slice simply
+   cannot resolve a floor-sized effect. So the cascade buys budget **only**
+   where the single stage was already going to win easily, and *costs* power
+   exactly where the single stage was doing the hard work.
+
+The two outcomes the harness was built to be able to return are both on the
+table: **build** (if operators judge the large-effect budget saving worth the
+small-effect power cost — e.g. an early-epoch, many-candidate, large-effect
+regime), or **do not build** (if the small-effect power loss is unacceptable,
+keeping the four partial forms independently wired, as §4.4 explicitly allows).
+A larger board would widen the early rung slices and likely soften (3) — the
+single most useful next measurement. **This note does not make the call; it
+presents the curves.**
+
+---
+
+## 6. The config sketch (NOT implemented)
 
 The endorsed shape is **one nested frozen block** on the contract, layered
 under the existing `tournament_structure` — not a new top-level structure,
@@ -416,7 +582,7 @@ exists in the loader, the strategies, or the tests today.**
 
 ---
 
-## 6. Relationship to the partial forms — what unification absorbs
+## 7. Relationship to the partial forms — what unification absorbs
 
 | Shipped form | Under a cascade | Deprecated? |
 |---|---|---|
@@ -440,34 +606,45 @@ Experiment B's null bar (§4.3) and never ship.
 
 ---
 
-## 7. STATUS and the build-decision gate
+## 8. STATUS and the build-decision gate
 
-- **Status: DESIGN / NOT IMPLEMENTED.** No loader, strategy, config field,
-  or test in the tree reads a `cascade` block. The four partial forms ship
-  and are documented in their own docs; this note only proposes unifying
-  them.
-- **What gates a build decision:** the **OC-harness evidence in §4**,
-  specifically:
+- **Status: DESIGN + MEASURED / build decision pending.** No loader,
+  strategy, or `cascade` config block exists in the tree — the cascade itself
+  is still unbuilt, and the four partial forms ship and are documented in
+  their own docs. What *has* landed is the §4 **OC harness** and its first
+  measured run (§5): `tools/cascade_oc.py` + the `cascade_oc`-marked
+  `tests/test_cascade_oc_harness.py`. The build/no-build call is the
+  operator's and is **not** made here.
+- **What gates a build decision:** the **OC-harness evidence in §4**, now
+  measured in §5:
   1. Experiment A shows per-stage false-cut rates that respect each
-     stage's *slice* floor and the coarse-cut discipline (§4.2).
+     stage's *slice* floor and the coarse-cut discipline (§4.2) — **passed**
+     (§5.2): the floor grows as the slice shrinks, and rung false-cut tracks
+     δ / slice-floor; the veto stage squares to ≈ σ².
   2. Experiment B shows the cascade does **not** raise `P(promote | null)`
      above the single-stage contract's rate (the hard soundness bar,
-     fact #4) **and** holds power within a stated tolerance of the
-     single-stage contract at every planted δ (§4.3).
-  3. Experiment C exhibits at least one stage allocation that reaches the
-     reference power at **materially lower** total board-units while
-     passing (2) — the *only* thing that justifies the added machinery
-     (§4.4).
-  4. §4.5's slot-integrity test proves cross-stage draw independence.
-- **A legitimate outcome is "do not build."** If Experiment C finds no
-  budget-saving configuration that preserves soundness and power, the
-  correct decision is to keep the four forms independently wired and leave
-  this note deferred. The harness is designed to be able to *reject* the
-  cascade, not only to bless it.
+     fact #4) — **passed** (§5.3, both zero) — **but** the power it holds at
+     the 1× and sub-1× planted δ is well *below* the single-stage contract
+     (0.50–0.56 vs 0.94–1.00), a real, quantified staging cost, not "within a
+     tolerance" (§4.3).
+  3. Experiment C exhibits a stage allocation that reaches the reference power
+     at materially lower board-units — **only at the large (≥ ~2× floor)
+     effect** (≈5× cheaper, §5.4); at the 1× and small effects *no* config
+     qualifies. The justification for the added machinery therefore holds in
+     one effect-size regime and fails in another (§4.4).
+  4. §4.5's slot-integrity test proves cross-stage draw independence —
+     **passed** (§5.5).
+- **A legitimate outcome is "do not build."** The first run puts both
+  outcomes genuinely on the table (§5.6): a build is defensible for an
+  early-epoch, many-candidate, large-effect regime; "do not build" — keeping
+  the four forms independently wired — is defensible if the sub-floor power
+  loss is unacceptable. The harness is designed to be able to *reject* the
+  cascade, not only to bless it, and here it neither blesses nor rejects: it
+  hands the operator the curves.
 
 ---
 
-## 8. Cross-references
+## 9. Cross-references
 
 | Topic | Document |
 |---|---|
