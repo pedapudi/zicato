@@ -38,6 +38,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from zicato.core.scoring_config import (
+    ExperimentMemoryConfig,
+    LadderConfig,
+    OverfittingConfig,
+    ProposerQualityConfig,
+    ScoringWeights,
+)
+
 log = logging.getLogger("zicato.epoch.contract")
 
 #: Separator between the canonical component forms before hashing.
@@ -381,83 +389,54 @@ _SCORING_PLUGIN_SPEC_FIELDS: frozenset[str] = frozenset(
     {"scalar_fn", "drift_reducer", "outcome_summarizer_spec"}
 )
 
-#: ``ScoringWeights`` fields that are OMITTED from the canonical scoring dict
-#: when they hold their dataclass default. A field listed here was added AFTER
-#: the parity goldens were captured; emitting it unconditionally would inject a
-#: new key into the scoring hash and roll EVERY existing epoch (and turn the
-#: CONTRACT-HASH parity gate red) the moment the field exists. Omitting it at
-#: the default keeps an unset contract byte-identical to one that predates the
-#: field, while a NON-default value still appears in the canonical form and
-#: rolls the epoch — exactly like any other weight change. Only purely-additive,
-#: default-off fields belong here.
-_SCORING_OMIT_AT_DEFAULT_FIELDS: frozenset[str] = frozenset(
-    {
-        "diff_complexity_weight",
-        # Opt-in cross-epoch experiment memory (EXPERIMENT-MEMORY.md §3.4):
-        # the nested ``ExperimentMemoryConfig`` compares by value against
-        # its ``default_factory()`` instance, so an all-default block is
-        # omitted (no retroactive roll) while any opt-in rolls the epoch.
-        "experiment_memory",
-        # Opt-in random-baseline (placebo) challenger cadence
-        # (OVERFITTING.md #7). Lives on the nested ``OverfittingConfig`` —
-        # the canonicalizer recurses through this same field-name set, so
-        # the nested field is omitted at its 0 default (no retroactive
-        # roll) and a non-zero cadence rolls the epoch.
-        "random_baseline_every_n",
-        # Opt-in integrity BLOCKING modes (default OFF — alarm-only parity
-        # with the supervisor's notary). Omitted at their False default so
-        # existing epochs never roll; opting either on selects champions
-        # under a stricter rule and rolls the epoch, which is correct.
-        "block_on_containment_violation",
-        "block_on_gate_contradiction",
-        # Opt-in pre-tournament candidate screening (tryouts). Both live on
-        # the nested ``ProposerQualityConfig`` — the canonicalizer recurses
-        # through this same field-name set (the ``random_baseline_every_n``
-        # precedent), so each is omitted at its default (0 / False; no
-        # retroactive roll) and a non-default value rolls the epoch.
-        "screen_entries",
-        "screen_veto_only",
-        # Opt-in process-exemplar channel (PROCESS-EXEMPLARS.md). Lives on
-        # the nested ``ProposerQualityConfig`` like the screen knobs and is
-        # omitted at its 0 default (no retroactive roll); a non-zero cap
-        # rolls the epoch — a proposer shown redacted process windows
-        # proposes under a different rule.
-        "process_exemplars",
-        # Opt-in mechanical recombination slot (WS-REC). Lives on the nested
-        # ``ProposerQualityConfig`` like the screen knobs; omitted at its
-        # False default (no retroactive roll) and True rolls the epoch — a
-        # proposer whose slate can mint the union of two rejected fixes
-        # proposes under a different rule.
-        "recombine",
-        # Opt-in recombination merge MODE (WS-MERGE; PROPOSER.md §2.6.1).
-        # Lives on the nested ``ProposerQualityConfig`` like the ``recombine``
-        # flag; omitted at its ``"mechanical"`` default (no retroactive roll)
-        # and ``"llm"`` rolls the epoch — a slate that can compose an LLM
-        # merge (over an OVERLAPPING pair the mechanical mint cannot touch)
-        # proposes under a different rule.
-        "recombine_merge",
-        # Opt-in genealogy channel (WS-GENE; PROPOSER.md §2.7). Lives on the
-        # nested ``ProposerQualityConfig`` like the screen / exemplar knobs;
-        # omitted at its 0 default (no retroactive roll) and a non-zero count
-        # rolls the epoch — a proposer shown candidate genealogy proposes
-        # under a different rule.
-        "genealogy",
-        # Opt-in critic-calibration channel (WS-CAL; PROPOSER.md §2.8). Lives on
-        # the nested ``ProposerQualityConfig`` like the genealogy / exemplar
-        # knobs; omitted at its 0 default (no retroactive roll) and a non-zero
-        # count rolls the epoch — a proposer shown its own prediction
-        # calibration proposes under a different rule.
-        "calibration_feedback",
-        # Telemetry dialect (TELEMETRY-DIALECTS.md §5): the pluggable LossProfile
-        # PRODUCER. Omitted at its ``"goldfive"`` default so every existing
-        # contract hashes byte-identically to one that predates the field (the
-        # CONTRACT-HASH parity gate stays green); a non-default dialect
-        # (``adk_events`` / ``transcript``) reintroduces the key and rolls the
-        # epoch — a run measured under a different dialect selects champions
-        # under a different rule.
-        "telemetry_dialect",
-    }
+#: The contract dataclasses whose field metadata declares the omit-at-default
+#: knobs. The canonicalizer's omit set is a FLAT set of field names checked at
+#: every recursion level, so the derivation walks each class and unions the
+#: names its metadata flags — a nested-field flag (e.g. ``ProposerQualityConfig``
+#: knobs) participates exactly like a top-level one.
+_CONTRACT_KNOB_DATACLASSES: tuple[type, ...] = (
+    ScoringWeights,
+    OverfittingConfig,
+    LadderConfig,
+    ProposerQualityConfig,
+    ExperimentMemoryConfig,
 )
+
+
+def _derive_omit_at_default_fields() -> frozenset[str]:
+    """Derive the omit-at-default field-name set from the field metadata.
+
+    Finding 3 (REIMPLEMENTATION.md): the omit set is DERIVED from the
+    declarative ``omit_at_default`` flag on each field
+    (:func:`zicato.core.scoring_config._knob`) rather than hand-maintained in
+    a literal here. Adding an additive, default-off knob is then ONE field
+    declaration; the frozen-literal guard test
+    (``tests/test_knob_registry.py``) pins the derived set so a metadata typo
+    can never silently move the contract hash.
+
+    A field listed here was added AFTER the parity goldens were captured;
+    emitting it unconditionally would inject a new key into the scoring hash
+    and roll EVERY existing epoch (and red the CONTRACT-HASH parity gate) the
+    moment the field exists. Omitting it at the default keeps an unset
+    contract byte-identical to one that predates the field, while a NON-default
+    value still appears in the canonical form and rolls the epoch — exactly
+    like any other weight change. Only purely-additive, default-off fields
+    carry the flag.
+    """
+    from dataclasses import fields as _fields
+
+    names: set[str] = set()
+    for cls in _CONTRACT_KNOB_DATACLASSES:
+        for f in _fields(cls):
+            if f.metadata.get("omit_at_default"):
+                names.add(f.name)
+    return frozenset(names)
+
+
+#: ``ScoringWeights`` (+ nested config) fields OMITTED from the canonical
+#: scoring dict when they hold their dataclass default — DERIVED from field
+#: metadata (see :func:`_derive_omit_at_default_fields`).
+_SCORING_OMIT_AT_DEFAULT_FIELDS: frozenset[str] = _derive_omit_at_default_fields()
 
 
 def scoring_to_canon(weights: object) -> dict[str, object]:
