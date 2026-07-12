@@ -584,7 +584,16 @@ def test_bundle_under_size_envelope(
     # after the seq advanced elsewhere refetches. ~0.6 KB of real reconcile code +
     # its rationale on the same surface. The envelope is nudged to 1.393 MB to
     # cover it with a thin margin.
-    assert total < 1_393_000, f"bundle is {total} bytes, exceeds 1_393_000 envelope"
+    #
+    # The WAVE-3 INTEGRATION then lands the other two GUI touches beside the
+    # streaming work: the telemetry-dialect select row with its capability-tier
+    # caption (builder.js, ~1.5 KB) and the diff-complexity ceiling row + the
+    # scope caveats on both parsimony tooltips (builder.js, ~1.5 KB). Each
+    # branch fit under the prior line alone; their union sits ~3 KB above it —
+    # the per-wave-raise interaction the 1.35 MB entry records, fourth
+    # occurrence. The envelope is raised to 1.398 MB to cover the combined
+    # surface with headroom.
+    assert total < 1_398_000, f"bundle is {total} bytes, exceeds 1_398_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
