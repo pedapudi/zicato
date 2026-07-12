@@ -83,7 +83,7 @@ in-context vs. board-run mechanical).
 only thing that varies is the named knob):**
 
 - **Target:** `target_1_presentation` (the v0 dogfood — DOGFOOD-TARGETS.md
-  §1; real coordinator+specialist agent, 8-entry board, real drift). A
+  §1; real coordinator+specialist agent, 7-entry board, real drift). A
   **live** proposer is mandatory: the generator arsenal (`best_of_n>1`,
   `screen`, `genealogy`, `recombine`, roles) only does anything with a real
   model sampling the slate; `target_0`'s scripted proposer would leave every
@@ -91,7 +91,13 @@ only thing that varies is the named knob):**
   **deterministic instrument dry-run** (§6.1), never as a measurement arm.
 - **Tournament structure:** `gauntlet`, `replicates: 2` (buy a little
   per-duel power without the evidence gate's ~37-duel crowning budget —
-  dev-guide §3.1 fact #3). The evidence gate is deliberately **off** for the
+  dev-guide §3.1 fact #3), with `field_size` pinned to **1**. The gauntlet's
+  `GauntletStrategy.field_size()` hard-returns `1`
+  (`selection/strategies/gauntlet.py`), but `estimate_cost` defaults an
+  unset `field_size` to `2`; pinning `field_size: 1` in the shared control
+  makes the a-priori cost meter (§5) read the *true* runtime board-run count
+  instead of double-counting a challenger the gauntlet never runs. The
+  evidence gate is deliberately **off** for the
   campaign: its honest cost would dominate the meter and it is a *soundness*
   device, orthogonal to the *proposal-generation* questions under test
   (dev-guide invariant #10). Holding structure fixed keeps the board-run
@@ -120,7 +126,7 @@ effective contract.
 {
   "tournament": {
     "structure": "gauntlet",
-    "params": { "replicates": 2 }
+    "params": { "replicates": 2, "field_size": 1 }
   },
   "overfitting": { "rotate_holdout": false, "holdout_fraction": 0.3 }
 }
@@ -168,8 +174,9 @@ from the *scaffold's* screen choice, which arm A2 tests).
 ### Arm A5 — +ROLES (breadth/depth ensemble)
 
 `scoring.json` is **identical to A0** (roles are not a contract field). The
-delta is a `models.json` (workspace `config.json` `models` block) that binds
-the two propose call-classes to distinct model roles:
+delta is written into the workspace `config.json` `models` block (there is no
+separate `models.json` file) — it binds the two propose call-classes to
+distinct model roles:
 
 ```json
 {
@@ -276,19 +283,50 @@ same reason the evidence gate is opt-in rather than default-on (dev-guide
 
 **Continuous-endpoint power (the feasible instrument).** E1 (final Δscalar in
 floor units) is continuous, so K independent runs give a t-CI on the arm mean
-with K−1 df. Power is bought with replication exactly as dev-guide §3.1 fact
-#3 describes (averaging shrinks the per-run sd). At **K=6** the half-width of
-a 90% t-CI on the mean is ≈ `2.02 · sd/√6 ≈ 0.82·sd`; for an inter-run sd on
-the order of the A/A floor this resolves an inter-arm gap of **≈ 0.5–1.0
-floor units** — precisely the "small effect" scale the power harness plants
-and pins (dev-guide §13.4, the 0.5× / 1× / 3× floor ladder). K=6 is therefore
-**decision-grade for E1** and **screening-grade for E2/E3**.
+with K−1 df. Power is bought with replication as dev-guide §3.1 fact #3
+describes (averaging shrinks the per-run sd). The quantity a screen turns on is
+not the WITHIN-arm precision but the resolvable INTER-arm gap, and these are
+different numbers. At **K=6** the within-arm 90% mean-CI half-width is
+≈ `2.02 · sd/√6 ≈ 0.82·sd` — but resolving a gap *between* two arms is a
+**two-sample** question. Recomputed for `sd ≈ floor` (n=6/arm, df=10):
+
+- the minimum detectable effect at 80% power is **≈ 1.79·floor** at α=.05
+  (**≈ 1.55·floor** at α=.10), and
+- the §4 non-overlap clause (two non-overlapping 90% t-CIs) needs an observed
+  gap **> ≈ 1.48·floor**.
+
+So the K=6 screen cleanly resolves **~1.5-floor** effects — **not** the
+0.5–1.0 band an earlier draft claimed (that draft conflated the 0.82·sd
+single-arm mean-CI half-width with the inter-arm gap). Arms whose *true* effect
+sits in the 0.5–1.0 band will therefore **mostly land "ambiguous → graduate to
+K≈24"** rather than resolve at K=6; that is the accepted screen/confirm trade,
+and it is safe — the per-arm false-flip probability under it is ≈1%. (The
+0.5×/1×/3× floor ladder and the "0.5-floor is catchable" claim are dev-guide
+§13.4 / §3.1-fact-#5 properties of the **32-replicate evidence gate**, which
+this campaign deliberately turns OFF — §2. That borrowed guarantee does not
+transfer to a K=6 screen, so it is dropped here.) K=6 is therefore
+**screening-grade for E1** (it graduates arms, it never flips a default — §4,
+§5), with the K≈24 confirmatory run the only decision-grade instrument;
+E2/E3 stay screening-grade context only.
+
+**Grounding the flip bar's sd assumption (pre-registered).** The "~1.5-floor
+resolution" and the §4 non-overlap bar assume the cross-run sd of E1 is on the
+order of the A/A floor — an assumption that is **ungrounded** for a live
+endpoint until measured. Before any arm's read is trusted against the bar,
+**estimate the actual cross-run sd of E1 from BASE's first K runs** and compare
+it to the floor. **Adjustment rule:** the resolvable gap scales linearly with
+sd (MDE ∝ sd), so if the measured sd exceeds the floor by a factor `f`, every
+resolvable-gap and non-overlap threshold above multiplies by `f` (and holding a
+~1.5-floor resolution would require raising K by ≈ `f²`); if sd is materially
+below the floor, the screen resolves proportionally finer. This estimate is
+made and recorded **before** any graduate/ambiguous verdict is read.
 
 **The two-tier plan that follows:**
 
 1. **Screening campaign (this doc's budget): K=6 × R=12 × 8 arms = 576 live
-   evolve rounds.** Primary read on E1 (decision-grade); E2/E3/E6 pooled
-   across the 6 runs as screening-grade context.
+   evolve rounds.** Primary read on E1 (**screening-grade — graduates arms to
+   confirmation, never flips a scaffold default**); E2/E3/E6 pooled across the
+   6 runs as screening-grade context.
 2. **Confirmatory extension (separate go-ahead): K≈24 × R=12 on the ≤2 arms
    that graduate** from screening (§4). This is where the binary
    promotion-rate CI becomes decision-grade, at ~4× the per-arm screening
@@ -320,6 +358,15 @@ read over the K closed epochs' `EpochReportData` — no ad-hoc file walks
 - **LLM nondeterminism.** No controllable seed on a live endpoint (§3.2). The
   model's sampling variance is the noise the K=6 replication is designed to
   average over; report every arm as mean ± CI, never a point estimate.
+- **Temporal endpoint drift (across-arm).** A hosted model can change version
+  mid-campaign; over a multi-hour run, arms measured early and arms measured
+  late may be scored against a **different underlying endpoint** — a confounder
+  that aliases with the knob effect *across the arm axis* (distinct from the
+  within-arm sampling nondeterminism above, which averages out per arm).
+  **Mitigated** by running the 8 arms in **parallel workspaces** over the same
+  wall-clock window (§5), so any version shift hits every arm together rather
+  than confounding the arm contrast; residual drift is folded into the
+  cross-run sd the §3.2 pre-registered estimate captures.
 - **Cost variance.** Board runs (E4) are **deterministic** given the structure
   — the campaign's cost is reported in board runs, not wall-clock. Wall-clock
   (E3) varies with endpoint latency and parallelism and is reported only as
@@ -341,39 +388,62 @@ CI90     = the 90% t-CI (K−1 df) on each arm's mean E1
 CPP(arm) = pooled cost_per_promotion (E3), board-run form: total board runs / promotions
 ```
 
-**The flip bar (a default-OFF knob turns ON) — BOTH must hold:**
+**The one authority rule — which read edits a scaffold.** **No K=6 screening
+read ever flips a scaffold default.** Clearing the graduation bar below at K=6
+**GRADUATES** an arm to the K≈24 confirmatory run (§3.2); a scaffold default is
+flipped **only** by that confirmatory read. "Recommend" is the strongest verdict
+a K=6 screen can return. Every "flip" in the per-knob rules below therefore
+names the action the **confirmatory** read would authorize, not a K=6 outcome —
+§3.2 and this section are reconciled to that single rule.
+
+**The graduation bar (clearing it at K=6 → graduate to confirmation) — BOTH
+must hold:**
 
 1. **Signal clears its own noise:** `ΔE1(arm) ≥ +0.5·floor` **AND** the 90%
-   CIs of `E1(arm)` and `E1(A0)` do **not** overlap. (0.5×floor is the
-   "small but real" threshold the power harness plants and the effective
-   contract is pinned to catch — dev-guide §3.1 fact #5, §13.4.)
+   CIs of `E1(arm)` and `E1(A0)` do **not** overlap. (+0.5×floor is the
+   smallest *candidate* effect worth the confirmatory spend — it is a
+   graduation trigger, not a decision-grade catch; recall the K=6 screen only
+   cleanly resolves ~1.5-floor effects, §3.2, so a true 0.5–1.0 effect usually
+   fails the non-overlap clause and lands "ambiguous", which graduates it too.)
 2. **It does not cost more than it delivers:** `CPP(arm) ≤ 1.10 · CPP(A0)`
    (board-run cost per real promotion rises by at most 10%). A read-side knob
    (`genealogy`, `calibration_feedback`, roles) trivially satisfies this —
-   the cost meter is untouched — so its flip reduces to rule 1 alone.
+   the cost meter is untouched — so its graduation reduces to rule 1 alone.
 
-**Stays OFF** iff `ΔE1(arm) < +0.5·floor` **OR** `CPP(arm) > 1.10 · CPP(A0)`.
+**Does not graduate** iff `ΔE1(arm) < +0.5·floor` **OR** `CPP(arm) > 1.10 ·
+CPP(A0)`.
 
-**Ambiguous → graduate, do not decide:** `ΔE1(arm) ≥ +0.5·floor` but the CIs
-overlap (or CPP lands in `(1.0, 1.10]·CPP(A0)`) → the arm advances to the
-**K≈24 confirmatory run** (§3.2). No scaffold default changes on a screening
-read alone.
+**Ambiguous → also graduates, do not decide:** `ΔE1(arm) ≥ +0.5·floor` but the
+CIs overlap (or CPP lands in `(1.0, 1.10]·CPP(A0)`) → the arm advances to the
+**K≈24 confirmatory run** (§3.2). Because the K=6 screen resolves ~1.5 floor,
+most true 0.5–1.0 effects land here by design. No scaffold default changes on a
+screening read alone.
 
-**Per-knob specialization of the bar:**
+**Per-knob specialization of the bar (each states the graduation trigger and
+the flip direction the confirmatory read would then authorize):**
 
-- **`recombine` (A3):** flip to default-`True` on the flip bar. Because A3 is
+- **`recombine` (A3):** graduates on the bar; the confirmatory read then flips
+  it to default-`True`. Because A3 is
   cost-neutral (mint replaces a propose call — `estimate_cost` charges it as
   `best_of_n − 1` propose calls, no extra board run), rule 2 is automatic;
   the decision is rule 1 on E1, with E2 (promotions A3 caught that A0 didn't)
   as the mechanistic confirmation the oracle predicts (dev-guide §1.8).
-- **`recombine_merge="llm"` (A4):** evaluated **relative to A3**, not A0. Flip
-  to `"llm"` iff `E1(A4) − E1(A3) ≥ +0.5·floor` with non-overlapping CIs, and
-  the +1-aux-merge-call cost keeps `CPP(A4) ≤ 1.10·CPP(A3)`. If A3 itself does
-  not flip on, A4 is moot (llm merge requires recombine on).
+- **`recombine_merge="llm"` (A4):** evaluated **relative to A3**, not A0.
+  Graduates (and the confirmatory read flips to `"llm"`) iff `E1(A4) − E1(A3)
+  ≥ +0.5·floor` with non-overlapping CIs, and the +1-aux-merge-call cost keeps
+  `CPP(A4) ≤ 1.10·CPP(A3)`. If A3 itself does not graduate, A4 is moot (llm
+  merge requires recombine on). **The A4-vs-A3 contrast is bundled:** `"llm"`
+  merge changes both the merge *method* (one aux merge call vs. mechanical
+  concatenation) **and** the candidate-pair eligibility — it reaches
+  OVERLAPPING rejected pairs the mechanical mint's disjointness predicate
+  rejects (`proposer/best_of_n.py` §2.6.1). The decision rule therefore reads
+  the *bundle* (merge method + disjointness relaxation), not the pure merge
+  effect.
 - **`screen_entries` (A2) — REVERSED NULL.** The scaffold *currently* writes
   `screen_entries=2`, so the pre-registered action is to **keep** it only if
-  A2 clears the flip bar over A0. If A2 fails the bar (its ~+37% board-run
-  cost, §5, is not repaid in E1), the pre-registered action is to **remove
+  A2 clears the graduation bar over A0. If A2 fails the bar (its ~+43%
+  board-run cost, §5, is not repaid in E1), the pre-registered action is to
+  **remove
   `screen_entries` from `recommended_scaffold_weights()`** — scaffold default
   → `0`. (The in-code default is already `0`; this only touches the scaffold.)
 - **`genealogy` (A1), `calibration_feedback` (A6-contribution), roles (A5):**
@@ -386,8 +456,9 @@ read alone.
   iff `E1(A0) − E1(A0-ablation) ≥ +0.5·floor`; otherwise flag `best_of_n=3`'s
   aux-call cost as unearned and revert the recommendation toward `1`.
 - **`process_exemplars` — extension arm, higher bar.** Evaluated only as a
-  separate K=6 arm under the PROCESS-EXEMPLARS.md §5 harm runbook. Flips on
-  **only if** it clears the E1 flip bar **AND** its `generalization_gap`
+  separate K=6 arm under the PROCESS-EXEMPLARS.md §5 harm runbook. Graduates
+  (and the confirmatory read may flip it on) **only if** it clears the E1
+  graduation bar **AND** its `generalization_gap`
   detector stays quiet **AND** its placebo arm never promotes (dev-guide §12
   boundary rules). A promotion-rate lift bought with a widening
   generalization gap is a *reject*, not a win — the whole point of ranking it
@@ -408,19 +479,26 @@ board entry). Auxiliary LLM calls (`best-of-N propose calls`) are labelled and
 **excluded from the board-run headline** but are real spend. Assumptions,
 stated so the estimate is auditable:
 
-- `target_1` board = 8 entries; with `holdout_fraction=0.3` and
-  `min_board_size_for_split=6`, the split yields **train ≈ 6, holdout ≈ 2**
-  (`board/split.split_board`).
-- Structure `gauntlet`, `field_size` = 1 (one challenger/round), `replicates`
-  = 2. Per `estimate_cost`: `duel runs = field_size·replicates·train =
-  1·2·6 = 12`; `holdout-confirm = holdout·replicates = 2·2 = 4`. **BASE
-  board runs/round = 16.**
+- `target_1` board = **7 entries**. With `holdout_fraction=0.3`,
+  `min_board_size_for_split=6`, and the pinned unrotated seed
+  (`rotate_holdout: false`), `split_board` hashes all 7 ids **above** the 0.3
+  threshold, so the split is **train = 7, holdout = 0** — this board carries
+  no hash-selected holdout under the fixed (unrotated) split, and no entry is
+  `holdout`-tagged. The `holdout-confirm` term is therefore **0** for every
+  arm. (Verified by running `estimate_cost` on the arm contracts, §6.1.)
+- Structure `gauntlet`, `field_size` pinned to **1** in the shared control
+  (§2 — the meter defaults an unset `field_size` to `2`, but
+  `GauntletStrategy.field_size()` hard-returns `1`, so pinning it makes the
+  meter read the true runtime board-run count), `replicates` = 2. Per
+  `estimate_cost`: `duel runs = field_size·replicates·train = 1·2·7 = 14`;
+  `holdout-confirm = holdout·replicates = 0·2 = 0`. **BASE board
+  runs/round = 14.**
 - Screen arms add `candidate-screen runs = proposes·best_of_n·panel =
-  1·3·min(2,6) = 6` → **22 runs/round** (a +37.5% board-run premium — the
+  1·3·min(2,7) = 6` → **20 runs/round** (a +42.9% board-run premium — the
   exact quantity A2's decision rule prices).
 - `recombine` arms: cost-neutral (no board-run change; propose calls drop to
   `best_of_n−1` on recombining rounds). `genealogy` / `calibration_feedback` /
-  roles / `process_exemplars`: read-side → **cost meter untouched**, 16
+  roles / `process_exemplars`: read-side → **cost meter untouched**, 14
   runs/round. `recombine_merge="llm"` adds ~1 aux merge call on merge rounds
   (not a board run).
 - Auxiliary `best-of-N propose calls` = `proposes·best_of_n = 1·3 = 3` per
@@ -430,15 +508,15 @@ stated so the estimate is auditable:
 
 | Arm | Runs/round | Board runs (× 12 × 6) | Aux propose calls (× 12 × 6) |
 |---|---|---|---|
-| A0 BASE | 16 | 1,152 | 216 |
-| A1 +genealogy | 16 | 1,152 | 216 |
-| A2 +screen | 22 | 1,584 | 216 |
-| A3 +recombine(mech) | 16 | 1,152 | ≈180 (−1 on mint rounds) |
-| A4 +recombine(llm) | 16 | 1,152 | ≈216 (+merge calls) |
-| A5 +roles | 16 | 1,152 | 216 |
-| A6 combo-R (gene+cal) | 16 | 1,152 | 216 |
-| A7 combo-M (screen+recomb) | 22 | 1,584 | ≈180 |
-| **Screening total** | — | **≈ 10,080 board runs** | **≈ 1,656 aux propose calls** |
+| A0 BASE | 14 | 1,008 | 216 |
+| A1 +genealogy | 14 | 1,008 | 216 |
+| A2 +screen | 20 | 1,440 | 216 |
+| A3 +recombine(mech) | 14 | 1,008 | ≈180 (−1 on mint rounds) |
+| A4 +recombine(llm) | 14 | 1,008 | ≈216 (+merge calls) |
+| A5 +roles | 14 | 1,008 | 216 |
+| A6 combo-R (gene+cal) | 14 | 1,008 | 216 |
+| A7 combo-M (screen+recomb) | 20 | 1,440 | ≈180 |
+| **Screening total** | — | **≈ 8,928 board runs** | **≈ 1,656 aux propose calls** |
 
 **LLM-call envelope (assumption-driven).** Each `target_1` board run drives
 the presentation agent's coordinator + 4 specialists ≈ **5 harness LLM
@@ -446,23 +524,23 @@ calls/run** (DOGFOOD-TARGETS.md §1.3 surface), plus ≈ 1–2 aux judge calls/r
 So the screening campaign's order-of-magnitude LLM spend:
 
 ```
-harness calls ≈ 10,080 runs × 5   ≈ 50,400
-aux judge     ≈ 10,080 runs × 1.5 ≈ 15,120
+harness calls ≈ 8,928 runs × 5   ≈ 44,640
+aux judge     ≈ 8,928 runs × 1.5 ≈ 13,392
 aux propose   ≈ 1,656 (slate)  + ~660 critique/merge ≈ 2,300
 ─────────────────────────────────────────────────────────
-TOTAL         ≈ 68,000 LLM calls for the whole 8-arm screening campaign
+TOTAL         ≈ 60,000 LLM calls for the whole 8-arm screening campaign
 ```
 
 **Wall-clock (secondary, high-variance).** At an assumed ≈ 0.8 s/LLM-call and
 `--parallelism 4`, one board run (≈ 5 serial-ish harness calls) ≈ 4 s of
-critical path; 10,080 runs / 4 parallel × 4 s ≈ **2.8 h of pure board-run
-wall-clock**, plus proposer/reduce/gate overhead → budget **≈ 4–6 h total** if
-arms run serially, or ≈ 1 h if the 8 arms run in parallel workspaces. These
+critical path; 8,928 runs / 4 parallel × 4 s ≈ **2.5 h of pure board-run
+wall-clock**, plus proposer/reduce/gate overhead → budget **≈ 3.5–5.5 h total**
+if arms run serially, or ≈ 1 h if the 8 arms run in parallel workspaces. These
 are planning figures only; real latency is endpoint-dependent (§3.4).
 
 **Confirmatory extension (pre-registered, separate budget):** K≈24 on ≤2
-graduated arms ≈ 2 × (24/6) × ~1,300 board runs ≈ **10,400 additional board
-runs** (~68k LLM calls again). Not part of this doc's authorization.
+graduated arms ≈ 2 × (24/6) × ~1,200 board runs ≈ **9,600 additional board
+runs** (~55k LLM calls again). Not part of this doc's authorization.
 
 ## 6. Execution runbook (GATED — do not run without the §0 go-ahead)
 
@@ -494,14 +572,26 @@ rm -rf "$WS" && mkdir -p "$WS" && cd "$WS"
 EX=/home/sunil/git/zicato/examples/zicato_examples/target_1_presentation
 
 zicato init --workspace .zicato
-# Register the ADK agent + its mutable tree (target_1 surface, DOGFOOD §1.3):
-zicato register --adk "$EX/agent.py:root_agent" --mutable-tree "$EX" \
-    --workspace .zicato
-cp "$EX/board.jsonl" ./board.jsonl
-cp ./arm_A0.scoring.json ./scoring.json        # the §2 A0 contract (full effective form)
-cp "$EX/brief.md" ./brief.md                    # the operator's proposer brief
+# Register the ADK agent by its DOTTED IMPORT PATH + the vetted mutable
+# subtree (the example's own RUN.md — evolve resolves the adapter via
+# importlib, so this MUST be a module path, not a filesystem path):
+zicato register --workspace .zicato \
+    --adk zicato_examples.target_1_presentation.agent.agent:root_agent \
+    --mutable-tree "$EX/agent"
 
-# Confirm the contract + cost BEFORE spending (no run yet):
+# Open the epoch from the example's board / brief / scoring, using THIS
+# arm's scoring delta. `epoch new` freezes a per-epoch copy AND publishes
+# board.jsonl / brief.md / scoring.json to the canonical location so the
+# `evolve` below continues this epoch instead of rolling a fresh one
+# (RUN.md "End-to-end loop"). The proposer brief is the example's
+# `rubric.md` (there is no `brief.md` in the example):
+zicato epoch new campaign_A0_k${k} --workspace .zicato \
+    --board   "$EX/board.jsonl" \
+    --brief   "$EX/rubric.md" \
+    --scoring ./arm_A0.scoring.json      # the §2 A0 contract (full effective form)
+
+# With the epoch open, inspect the mutation surface + eyeball the cost
+# meter BEFORE spending (no run yet):
 zicato mutations --workspace .zicato
 # (optional) open the builder to eyeball the cost meter for this scoring.json
 
@@ -516,8 +606,8 @@ zicato epoch close   --workspace .zicato          # → analysis.md / analysis.h
 zicato reflect run   --workspace .zicato          # MSA pass over the eval contract
 ```
 
-- **A1–A4, A6, A7** are identical except the copied `scoring.json` is the
-  arm's §2 delta.
+- **A1–A4, A6, A7** are identical except the `--scoring` file is the arm's §2
+  delta.
 - **A5 (roles)** additionally writes the `models.proposer_breadth` /
   `models.proposer_depth` block into the workspace `config.json` before
   `evolve` (its `scoring.json` == A0's).
