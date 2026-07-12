@@ -125,6 +125,7 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
             critique_enabled=_opt_bool(args, "critique_enabled"),
             process_exemplars=_opt_int(args, "process_exemplars"),
             recombine=_opt_bool(args, "recombine"),
+            genealogy=_opt_int(args, "genealogy"),
         )
     if op == "set_experiment_memory":
         return ops.set_experiment_memory(draft, cross_epoch=_opt_bool(args, "cross_epoch"))

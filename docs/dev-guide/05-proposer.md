@@ -280,6 +280,7 @@ folded to counts), **REDACTED** (mechanically scrubbed content), **SANITIZED**
 | `round_event_emitter` | `Callable[[str, dict], None] \| None = None` | orchestrator: `_RoundLogEmitter.emit` | best-of-N wrapper via `_emit_round_event` (guarded — a raising emitter never fails a propose) | MACHINERY |
 | `screen_candidates` | `ScreenRunner \| None = None` | orchestrator: `_build_candidate_screen_runner` — ONE closure per round, only when `screen_entries > 0 AND best_of_n > 1` | best-of-N wrapper: `_screen_slate`, `_screen_replacement` | MACHINERY (its OUTPUT strings are AGGREGATED counts-only by the `CandidateScreenResult.reason` contract) |
 | `recombine_pair` | `RecombinationPair \| None = None` | orchestrator: `_build_recombination_pair` — ONE selection per round at the screen-builder site, only when `proposer_quality.recombine AND best_of_n > 1`; `_recombine_pair_for_slot` threads it to the FIELD's slot-0 challenger only | best-of-N wrapper: the last slate slot mints its patch union (§5.6.11) instead of sampling the LLM | MACHINERY (carries counts + patches + hypothesis TEXT only — entry ids never leave the builder; the improved/regressed sets are intersected with the current TRAIN board inside `_build_recombination_pair` and discarded) |
+| `genealogy` | `tuple[GenealogyItem, ...] = ()` | orchestrator: `_build_genealogy_items` — ONE sampling per round at the screen-builder site, only when `proposer_quality.genealogy > 0`; ALL best-of-N slots (and the critic) see the SAME items | `render_user_prompt` → `render_genealogy_block` → spliced as `## Candidate genealogy` directly above `## What's already been tried` (§5.6.13) | BANDED + REDACTED (whole-candidate outcomes through `_bucket_scalar_delta`; proposer-authored core ideas + capped diff excerpts; NO entry ids, NO per-entry results, NO exact deltas — candidate genealogy, never board data; empty at default) |
 
 > ✅ ALWAYS give a new `ProposerContext` field a default that renders
 > byte-identically when unset. That is not a style preference — it is the
@@ -1137,8 +1138,8 @@ Points where the trace changes under non-default knobs:
 
 (`src/zicato/core/scoring_config.py`; all contract fields — non-default
 values roll the epoch; `screen_entries`, `screen_veto_only`,
-`process_exemplars` and `recombine` are omitted-at-default from the canonical
-form so old epochs never roll retroactively.)
+`process_exemplars`, `recombine` and `genealogy` are omitted-at-default from
+the canonical form so old epochs never roll retroactively.)
 
 | Knob | Default | Effect | Inert when |
 |---|---|---|---|
@@ -1148,6 +1149,7 @@ form so old epochs never roll retroactively.)
 | `screen_veto_only` | `false` | `true` suppresses BOTH screen tiebreak feeds (critic block + heuristic key) — the screen can only disqualify | `screen_entries == 0` |
 | `process_exemplars` | `0` (OFF) | max redacted event windows spliced into the prompt per round | — |
 | `recombine` | `false` (OFF) | the mechanical recombination slot (§5.6.11): the last slate slot MINTS the patch union of two rejected complementary challengers instead of sampling the LLM; cost-neutral (the mint replaces the slot's propose call) | `best_of_n == 1` (no slate slot to mint into) |
+| `genealogy` | `0` (OFF) | the genealogy channel (§5.6.13): up to N candidate-lineage items (champion's promoted spine + diverse rejected reign candidates, banded outcomes) spliced into the prompt for in-context evolution; render-side only (cost meter untouched) | — |
 
 And the sibling knobs this chapter leans on:
 `overfitting.restrict_proposer_visibility` (default `true` — the §5.8 master
@@ -1352,6 +1354,77 @@ Then the adversarial fixtures: `uv run pytest tests/test_process_exemplars.py
 tests/test_proposer_prompts.py tests/test_outcome_marginals.py -q`. A clean
 grep + green fixtures is necessary, not sufficient — new channels still walk
 §5.8.7 by hand.
+
+---
+
+### 5.6.13 The genealogy channel (WS-GENE)
+
+Opt-in (`proposer_quality.genealogy > 0`; default `0` = OFF — byte-identical
+propose path when off). The in-context analogue of AlphaEvolve's prompt
+sampler: it feeds the proposer a redacted view of the current reign's
+candidate LINEAGE so the LLM can evolve IN CONTEXT — extend a promoted line
+or re-frame a rejected idea — reaching even the pure-drift-side complementary
+pairs the mechanical recombination slot (§5.6.11) cannot see. Where that slot
+merges two rejected fixes WITHOUT an LLM call, this channel hands the LLM the
+raw material to merge them itself. The design + the normative redaction
+contract are in **[PROPOSER.md §2.7](../design/PROPOSER.md)**;
+`src/zicato/proposer/genealogy.py` is its mechanical enforcement.
+
+**The two halves.** The sampler is a pure, deterministic function
+(`sample_genealogy(records, ratings, k, *, champion_id)` — NO RNG, NO IO) fed
+by an IO builder (`_build_genealogy_items` in `src/zicato/orchestrator.py`,
+run ONCE per round at the screen-builder site). The builder threads DATA — a
+`tuple[GenealogyItem, ...]` on `ProposerContext.genealogy` (§5.2), NOT a
+callable, so the proposer stack stays IO-free. Unlike the recombination pair,
+the SAME items ride EVERY best-of-N slot (and the critic) — genealogy is
+read-only context, not a per-slot mint.
+
+**What the sampler produces.** It partitions the reign's settled records:
+
+- **Parents** — the PROMOTED records (the champion's own promoted spine),
+  most-recent-first by `round_index`, taking the first `k // 2`. A short spine
+  backfills its unused budget into inspirations.
+- **Inspirations** — the REJECTED records (reign-scoped to `champion_id` — the
+  recombination #2 reign guard), capped at `GENEALOGY_POOL_MAX` most-recent,
+  then a **greedy max--min-Jaccard diversity walk** (`_greedy_dissimilar`):
+  the seed is the best tie-break candidate (Elo down, then gid ascending), and
+  each subsequent pick MAXIMIZES its minimum mutation-id-set distance
+  (`1 - jaccard`) to the already-chosen set. Because the key is total, the
+  selection is reproducible for any fixed pool in ANY input order (the
+  shuffled-pool order-independence pin). Placebo arms are excluded from both.
+
+Each `GenealogyItem` carries the proposer-authored `core_idea`, a
+`PatchSummary` (targeted mutation ids + op kinds + a coarse size band + a
+capped, head-truncated excerpt of the proposer's OWN diff text —
+`_DIFF_EXCERPT_MAX`), a whole-candidate `banded_outcome`, and a static
+`rationale`.
+
+**The envelope.** Genealogy widens CANDIDATE lineage, never evaluation data.
+The outcome is banded through the SAME `_bucket_scalar_delta`
+(`improved`/`flat`/`regressed`) vocabulary the experiment memory uses — the
+exact Δscalar never escapes. There is NO per-entry read anywhere in the
+sampler, so there is no per-entry slice to leak: no entry id, no per-entry
+result, no holdout-derived value can enter a channel that never looks at board
+entries. The `GenealogyRecord`/`GenealogyItem` types have no field that could
+carry an entry id (a structural pin in `tests/test_genealogy.py`). The
+redaction (band + excerpt cap) is enforced IN the sampler and tested there,
+not trusted to the caller.
+
+**Cost.** Render-side only — the meter is untouched (the process-exemplars
+precedent). `_build_genealogy_items` reads the durable records + one
+best-effort Elo fold; ANY exception → `()` → a byte-identical round.
+
+**Determinism = the leakage budget.** A byte-identical block round over round
+(while the reign's candidate set is unchanged) re-presents nothing new.
+
+**Seams noted, NOT built:** an LLM-guided merge behind the same channel
+(rides the ensemble depth role); cross-reign genealogy retention; the scaffold
+default-on decision (needs live evidence). Tests: `tests/test_genealogy.py`
+(the greedy known-answer + order-independence, the parent/inspiration budget
+split, the adversarial redaction fixtures, the byte-identical-at-default
+render golden, and a seeded A/B power measurement — genealogy vs a recency
+baseline, measuring the mergeable-pair rate, PRINTED with a no-regression
+assert).
 
 ---
 

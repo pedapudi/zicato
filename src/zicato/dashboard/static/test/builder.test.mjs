@@ -713,6 +713,14 @@ test('builder view: the Proposer section drives set_proposer_quality + set_exper
   const recCall = OP_CALLS.find((c) => c.op === 'set_proposer_quality' && 'recombine' in c.args);
   assert(recCall && recCall.args.recombine === true,
     'the recombination toggle posts set_proposer_quality {recombine:true} — exact op+args');
+  const genealogy = byAria(host, 'dn-bld-num', 'Genealogy');
+  assert(genealogy, 'the genealogy control renders');
+  genealogy.value = '4';
+  genealogy.dispatchEvent(makeEvent('change'));
+  await tick();
+  const genCall = OP_CALLS.find((c) => c.op === 'set_proposer_quality' && 'genealogy' in c.args);
+  assert(genCall && genCall.args.genealogy === 4,
+    'the genealogy count posts set_proposer_quality {genealogy:4} — exact op+args');
   const mem = byAria(host, 'dn-bld-check', 'Cross-epoch experiment memory');
   mem.checked = true;
   mem.dispatchEvent(makeEvent('change'));

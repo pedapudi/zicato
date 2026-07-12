@@ -341,6 +341,33 @@ def test_hash_changes_when_recombine_opted_in(tmp_path: Path) -> None:
     assert h_default != h_on
 
 
+def test_hash_stable_when_genealogy_at_default(tmp_path: Path) -> None:
+    # The genealogy channel (WS-GENE) is omit-at-default like the screen /
+    # exemplar knobs: a contract that predates the field hashes byte-identically
+    # to one that spells out the 0 default — no retroactive roll.
+    base = _write_contract(tmp_path)
+    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0}))
+    h_omitted = compute_contract_hash(base)
+    base.scoring_path.write_text(
+        json.dumps({"drift_weight": 1.0, "proposer_quality": {"genealogy": 0}})
+    )
+    h_explicit_default = compute_contract_hash(base)
+    assert h_omitted == h_explicit_default
+
+
+def test_hash_changes_when_genealogy_opted_in(tmp_path: Path) -> None:
+    # A proposer shown candidate genealogy proposes under a different rule, so
+    # a non-zero genealogy count rolls the epoch like any other contract weight.
+    base = _write_contract(tmp_path)
+    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0}))
+    h_default = compute_contract_hash(base)
+    base.scoring_path.write_text(
+        json.dumps({"drift_weight": 1.0, "proposer_quality": {"genealogy": 4}})
+    )
+    h_on = compute_contract_hash(base)
+    assert h_default != h_on
+
+
 def test_hash_changes_on_ladder_knob_edit(tmp_path: Path) -> None:
     # The Ladder sub-config (OVERFITTING.md §12 #2) folds into the scoring
     # contract through OverfittingConfig — bumping a Ladder knob rolls the

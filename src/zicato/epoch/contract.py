@@ -429,6 +429,12 @@ _SCORING_OMIT_AT_DEFAULT_FIELDS: frozenset[str] = frozenset(
         # proposer whose slate can mint the union of two rejected fixes
         # proposes under a different rule.
         "recombine",
+        # Opt-in genealogy channel (WS-GENE; PROPOSER.md §2.7). Lives on the
+        # nested ``ProposerQualityConfig`` like the screen / exemplar knobs;
+        # omitted at its 0 default (no retroactive roll) and a non-zero count
+        # rolls the epoch — a proposer shown candidate genealogy proposes
+        # under a different rule.
+        "genealogy",
     }
 )
 

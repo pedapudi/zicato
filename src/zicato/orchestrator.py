@@ -602,6 +602,23 @@ async def evolve_once(
         mutations=mutations,
     )
 
+    # --- 5a'''. Optional genealogy channel (WS-GENE) ---
+    # ONE sampling per round, built only when the contract opts in
+    # (proposer_quality.genealogy > 0) — otherwise () and no items ride the
+    # propose path. Read-side only (the meter is untouched): the sampler reads
+    # the reign's durable records + the Elo fold and returns already-banded,
+    # already-capped candidate-lineage items (PARENTS = the champion's promoted
+    # spine; INSPIRATIONS = diverse rejected reign candidates). ALL best-of-N
+    # slots see the same items (in-context evolution — the LLM can merge ideas
+    # itself). Best-effort — any failure inside degrades to () and the round is
+    # byte-identical.
+    genealogy_items = _build_genealogy_items(
+        weights=weights,
+        workspace_root=workspace_root,
+        epoch_id=resolved_epoch_id,
+        parent_id=parent_id,
+    )
+
     # --- 5b. Tournament-structure dispatch ---
     # The gauntlet (the default and back-compat baseline) has field_size
     # == 1: one champion, one challenger, one full-board duel. Steps 6-13
@@ -637,6 +654,7 @@ async def evolve_once(
             loss_summary=loss_summary,
             failure_profile=failure_profile,
             process_exemplars=process_exemplars_block,
+            genealogy=genealogy_items,
             disable_drift=disable_drift,
             judge_only=judge_only,
             fast_mode=fast_mode,
@@ -791,6 +809,7 @@ async def evolve_once(
                 restrict_visibility=weights.overfitting.restrict_proposer_visibility,
                 failure_profile=failure_profile,
                 process_exemplars=process_exemplars_block,
+                genealogy=genealogy_items,
                 round_index=round_index,
                 round_emitter=round_log,
                 screen_candidates=screen_candidates,
@@ -1539,6 +1558,7 @@ async def _propose_and_apply_challenger(
     restrict_visibility: bool = False,
     failure_profile: str = "",
     process_exemplars: str = "",
+    genealogy: tuple[Any, ...] = (),
     on_status: Callable[[dict[str, Any]], None] | None = None,
     round_emitter: _RoundLogEmitter | None = None,
     screen_candidates: ScreenRunner | None = None,
@@ -1665,6 +1685,7 @@ async def _propose_and_apply_challenger(
             restrict_visibility=restrict_visibility,
             failure_profile=failure_profile,
             process_exemplars=process_exemplars,
+            genealogy=genealogy,
             round_index=round_index,
             round_emitter=round_emitter,
             screen_candidates=screen_candidates,
@@ -1831,6 +1852,7 @@ async def _evolve_multi_challenger(
     loss_summary: str,
     failure_profile: str,
     process_exemplars: str,
+    genealogy: tuple[Any, ...] = (),
     disable_drift: tuple[Any, ...],
     judge_only: bool,
     fast_mode: bool,
@@ -2054,6 +2076,7 @@ async def _evolve_multi_challenger(
             restrict_visibility=weights.overfitting.restrict_proposer_visibility,
             failure_profile=failure_profile,
             process_exemplars=process_exemplars,
+            genealogy=genealogy,
             on_status=_publish_proposing,
             round_emitter=round_log,
             screen_candidates=screen_candidates,
@@ -3425,6 +3448,124 @@ def _build_recombination_pair(
         return None
 
 
+def _build_genealogy_items(
+    *,
+    weights: Any,
+    workspace_root: Path,
+    epoch_id: str,
+    parent_id: str,
+) -> tuple[Any, ...]:
+    """Sample this round's genealogy items (WS-GENE), or ``()`` when OFF.
+
+    ``()`` — the DEFAULT — unless the contract opts in with
+    ``proposer_quality.genealogy > 0``: the propose path then carries no items
+    at all and is byte-identical.
+
+    The IO half of the genealogy channel, built ONCE per round beside the
+    recombination + screen builders and threaded as plain DATA (a
+    ``tuple[GenealogyItem, ...]`` on
+    :attr:`~zicato.proposer.agent.ProposerContext.genealogy` — all best-of-N
+    slots see the same items, so the proposer can merge/diverge in context).
+    Reads, all best-effort:
+
+    * the current epoch's durable experiment RECORDS (the ``generations/``
+      records tree outlives GC), each through
+      :func:`zicato.epoch.journal.read_experiment` GUARDED — an
+      unreadable/incomplete record simply drops that candidate. Every settled
+      record is a genealogy CANDIDATE; the pure sampler partitions promoted
+      (the champion spine) from rejected (the inspiration pool).
+    * ONE best-effort Elo read (:func:`zicato.index.query.elo_for_epoch`) for
+      the greedy walk's tie-break; an absent index default-fills.
+
+    The pure sampler (:mod:`zicato.proposer.genealogy`) then selects parents +
+    the greedy max--min-Jaccard inspirations, banding every whole-candidate
+    outcome and capping every diff excerpt — ENVELOPE-CLEAN by construction (no
+    per-entry read happens here, so no entry id can leave). ANY exception
+    anywhere → DEBUG log → ``()`` → a byte-identical round (genealogy must
+    never fail a propose step).
+    """
+    quality = getattr(weights, "proposer_quality", None)
+    k = int(getattr(quality, "genealogy", 0) or 0)
+    if k <= 0:
+        return ()
+    try:
+        from zicato.core.experiment import PLACEBO_HYPOTHESIS_MARKER  # noqa: PLC0415
+        from zicato.core.workspace import generations_dir  # noqa: PLC0415
+        from zicato.epoch.journal import read_experiment  # noqa: PLC0415
+        from zicato.proposer.genealogy import (  # noqa: PLC0415
+            GenealogyRecord,
+            sample_genealogy,
+        )
+
+        gens_root = generations_dir(workspace_root, epoch_id)
+        if not gens_root.is_dir():
+            return ()
+
+        records: list[GenealogyRecord] = []
+        for gen_dir in gens_root.iterdir():
+            if not gen_dir.is_dir():
+                continue
+            gid = gen_dir.name
+            if gid == parent_id:
+                # The champion's OWN record is surfaced via the promoted spine
+                # if it was promoted; a non-champion parent-of-record cannot be
+                # a fresh challenger here. Skip the reigning head as a candidate
+                # pool member — it is the anchor, not an item.
+                continue
+            try:
+                exp = read_experiment(workspace_root, epoch_id, gid)
+            except Exception as exc:  # noqa: BLE001 — unreadable record: skip
+                log.debug("genealogy: record %s/%s unreadable (%s)", epoch_id, gid, exc)
+                continue
+            if exp.outcome is None:
+                continue
+            hyp = exp.hypothesis
+            patch_text = "\n".join(p.new_content or "" for p in exp.patches)
+            records.append(
+                GenealogyRecord(
+                    generation_id=exp.generation_id,
+                    parent_generation_id=exp.parent_generation_id,
+                    decision=exp.outcome.tournament_decision,
+                    round_index=exp.round_index,
+                    core_idea=hyp.core_idea,
+                    patch_mutation_ids=frozenset(p.mutation_id for p in exp.patches),
+                    patch_op_kinds=tuple(p.op for p in exp.patches),
+                    patch_text=patch_text,
+                    scalar_score_delta=exp.outcome.scalar_score_delta,
+                    is_placebo=hyp.core_idea.startswith(PLACEBO_HYPOTHESIS_MARKER),
+                )
+            )
+        if not records:
+            return ()  # no settled history yet — nothing to build a lineage from
+
+        # ONE best-effort Elo read for the greedy walk's tie-break (fresh per
+        # round — the fold runs at every ingest). Absent index → {}.
+        elo_by_gid: dict[str, float] = {}
+        try:
+            from zicato.index.query import elo_for_epoch  # noqa: PLC0415
+
+            for row in elo_for_epoch(workspace_root / "index.db", epoch_id):
+                if row["elo"] is not None:
+                    elo_by_gid[str(row["generation_id"])] = float(row["elo"])
+        except Exception as exc:  # noqa: BLE001 — Elo is advisory tie-break material
+            log.debug("genealogy: Elo read skipped (%s)", exc)
+
+        # The pure sampler partitions promoted (spine) from rejected
+        # (inspiration pool), re-caps the pool, and does the greedy walk.
+        items = sample_genealogy(records, elo_by_gid, k, champion_id=parent_id)
+        if items:
+            log.debug(
+                "genealogy: sampled %d item(s) (%d parent, %d inspiration)",
+                len(items),
+                sum(1 for it in items if it.kind == "parent"),
+                sum(1 for it in items if it.kind == "inspiration"),
+            )
+        return items
+    except Exception as exc:  # noqa: BLE001 — genealogy must never fail a round
+        log.debug("genealogy: sampling skipped (%s)", exc)
+        return ()
+
+
 async def _propose_child(
     *,
     proposer_agent: ProposerAgent,
@@ -3447,6 +3588,7 @@ async def _propose_child(
     failure_profile: str,
     round_index: int,
     process_exemplars: str = "",
+    genealogy: tuple[Any, ...] = (),
     round_emitter: _RoundLogEmitter | None = None,
     screen_candidates: ScreenRunner | None = None,
     recombine_pair: Any = None,
@@ -3505,6 +3647,7 @@ async def _propose_child(
                 restrict_visibility=restrict_visibility,
                 failure_profile=failure_profile,
                 process_exemplars=process_exemplars,
+                genealogy=genealogy,
                 mutation_track_records=mutation_track_records,
                 round_event_emitter=(round_emitter.emit if round_emitter is not None else None),
                 screen_candidates=screen_candidates,

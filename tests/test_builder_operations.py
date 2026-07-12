@@ -964,6 +964,30 @@ def test_set_proposer_quality_recombine_arg() -> None:
     assert draft.scoring.proposer_quality.recombine is False
 
 
+def test_set_proposer_quality_genealogy_arg() -> None:
+    """The genealogy count round-trips via the changed-dict pattern; default-off
+    ⇒ omitted from changed; a negative value raises."""
+    import pytest
+
+    draft = TournamentDraft()
+    # Default 0 ⇒ passing the current value is a no-op (no changed entry, no roll).
+    noop = ops.set_proposer_quality(draft, genealogy=0)
+    assert "genealogy" not in noop.changed
+    assert draft.scoring.proposer_quality.genealogy == 0
+
+    # A positive count lands on the nested block and records the from/to delta.
+    patch = ops.set_proposer_quality(draft, genealogy=4)
+    assert draft.scoring.proposer_quality.genealogy == 4
+    assert patch.changed["genealogy"] == {"from": 0, "to": 4}
+
+    # Back to 0 records the reverse delta.
+    off = ops.set_proposer_quality(draft, genealogy=0)
+    assert off.changed["genealogy"] == {"from": 4, "to": 0}
+
+    with pytest.raises(ValueError, match="genealogy must be >= 0"):
+        ops.set_proposer_quality(TournamentDraft(), genealogy=-1)
+
+
 def test_set_experiment_memory() -> None:
     import json
 

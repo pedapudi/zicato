@@ -336,6 +336,31 @@ class ProposerQualityConfig:
         ``True`` rolls the epoch, which is correct — a proposer whose slate
         can recombine rejected fixes proposes under a different rule. See
         :mod:`zicato.epoch.recombine` / :mod:`zicato.proposer.recombine`.
+    genealogy:
+        Opt-in genealogy channel (WS-GENE; ``docs/design/PROPOSER.md`` §2.7).
+        When ``> 0``, each round the orchestrator samples up to this many
+        candidate-LINEAGE items from the current reign's durable records —
+        PARENTS (the champion's own promoted patch history) + INSPIRATIONS
+        (diverse rejected reign candidates chosen by mutation-id-set
+        dissimilarity) — each carrying the proposer-authored core idea + a
+        capped diff excerpt + a BANDED whole-candidate outcome, and splices
+        them into the proposer prompt so the LLM can evolve IN CONTEXT
+        (extend a winning line or re-frame a rejected one — the in-context
+        analogue of the mechanical recombination slot, reaching even the
+        pure-drift-side pairs that slot cannot see). Envelope-safe by
+        construction: it carries candidate genealogy, never board data — no
+        entry ids, no per-entry results, no exact deltas (banded through the
+        same ``_bucket_scalar_delta`` vocabulary as the experiment memory),
+        nothing holdout-derived. The sampler is a pure, DETERMINISTIC
+        function (no RNG). ``0`` (default) is OFF — no sampling runs and the
+        proposer prompt is byte-identical. Like ``process_exemplars`` this
+        widens the proposer-visibility channel, so it is NOT set by the
+        scaffold; the operator opts in deliberately. Omitted from the
+        contract canonical form at its 0 default so existing epochs never
+        roll retroactively; a non-zero count rolls the epoch, which is
+        correct — a proposer shown candidate genealogy proposes under a
+        different rule. Read-side only (the cost meter is untouched). Must be
+        ``>= 0``. See :mod:`zicato.proposer.genealogy`.
     """
 
     best_of_n: int = 3
@@ -344,6 +369,7 @@ class ProposerQualityConfig:
     screen_veto_only: bool = False
     process_exemplars: int = 0
     recombine: bool = False
+    genealogy: int = 0
 
     def __post_init__(self) -> None:
         if self.best_of_n < 1:
@@ -352,6 +378,8 @@ class ProposerQualityConfig:
             raise ValueError(f"screen_entries must be >= 0, got {self.screen_entries!r}")
         if self.process_exemplars < 0:
             raise ValueError(f"process_exemplars must be >= 0, got {self.process_exemplars!r}")
+        if self.genealogy < 0:
+            raise ValueError(f"genealogy must be >= 0, got {self.genealogy!r}")
 
     @classmethod
     def defaults(cls) -> ProposerQualityConfig:

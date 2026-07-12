@@ -377,6 +377,7 @@ def set_proposer_quality(
     critique_enabled: bool | None = None,
     process_exemplars: int | None = None,
     recombine: bool | None = None,
+    genealogy: int | None = None,
 ) -> str:
     """Set the proposer-quality levers: best-of-N slate + self-critique.
 
@@ -394,7 +395,12 @@ def set_proposer_quality(
     rejected complementary challengers instead of sampling the LLM —
     REQUIRES best_of_n > 1 to have effect, and is cost-neutral (the mint
     REPLACES that slot's auxiliary propose call, never adds one).
-    Flipping it rolls the epoch. The screen (tryout) knobs live on
+    Flipping it rolls the epoch. ``genealogy`` opts in the genealogy
+    channel (WS-GENE): up to that many candidate-lineage items — the
+    champion's promoted patch history + diverse rejected reign candidates,
+    each with a banded outcome — are spliced into the prompt so the
+    proposer can evolve in context (0 = off, the default; read-side only,
+    no cost-meter impact). The screen (tryout) knobs live on
     `set_screening` — the ops COMPOSE on the same proposer_quality
     contract block. Changing any rolls the epoch. Returns the patch +
     updated cost / warnings.
@@ -407,6 +413,7 @@ def set_proposer_quality(
             critique_enabled=critique_enabled,
             process_exemplars=process_exemplars,
             recombine=recombine,
+            genealogy=genealogy,
         )
     except ValueError as exc:
         return _result_json({"error": str(exc)})
