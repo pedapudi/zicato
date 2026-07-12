@@ -102,11 +102,20 @@ only thing that varies is the named knob):**
   device, orthogonal to the *proposal-generation* questions under test
   (dev-guide invariant #10). Holding structure fixed keeps the board-run
   denominator comparable across arms.
-- **Overfitting controls:** `rotate_holdout: false`, `holdout_fraction: 0.3`
+- **Overfitting controls:** `rotate_holdout: false`, `holdout_fraction: 0.6`
   set **explicitly and identically** on every arm, so all arms (each a
   distinct epoch) see the **same** train/holdout split of the fixed board —
   removing the cross-epoch holdout-rotation confounder (§3.4). Everything
-  else in `OverfittingConfig` stays default-on.
+  else in `OverfittingConfig` stays default-on. The fraction is 0.6, NOT
+  the 0.3 default, and this is load-bearing: the hash-based split at 0.3
+  puts **zero** of this 7-entry board's ids into the holdout (verified by
+  running `split_board` — every id hashes above the 0.3 threshold), which
+  would leave the generalization-gap and holdout-confirm metrics silently
+  inert for the whole campaign. At 0.6 the split is **train = 5, holdout =
+  2** (`q3_metrics_outline`, `every_expectation_kind_demo`), and the cost
+  meter still reads the same 14/20 board-runs per round (the smaller train
+  is offset by the 2 × replicates holdout-confirm runs — re-verified with
+  `estimate_cost`).
 - **Seed v0:** every arm starts from the **same** registered champion (the
   vendored `target_1` agent), so the headroom to the floor is identical at
   round 0.
@@ -128,7 +137,7 @@ effective contract.
     "structure": "gauntlet",
     "params": { "replicates": 2, "field_size": 1 }
   },
-  "overfitting": { "rotate_holdout": false, "holdout_fraction": 0.3 }
+  "overfitting": { "rotate_holdout": false, "holdout_fraction": 0.6 }
 }
 ```
 
@@ -479,20 +488,22 @@ board entry). Auxiliary LLM calls (`best-of-N propose calls`) are labelled and
 **excluded from the board-run headline** but are real spend. Assumptions,
 stated so the estimate is auditable:
 
-- `target_1` board = **7 entries**. With `holdout_fraction=0.3`,
-  `min_board_size_for_split=6`, and the pinned unrotated seed
-  (`rotate_holdout: false`), `split_board` hashes all 7 ids **above** the 0.3
-  threshold, so the split is **train = 7, holdout = 0** — this board carries
-  no hash-selected holdout under the fixed (unrotated) split, and no entry is
-  `holdout`-tagged. The `holdout-confirm` term is therefore **0** for every
-  arm. (Verified by running `estimate_cost` on the arm contracts, §6.1.)
+- `target_1` board = **7 entries**. At the default `holdout_fraction=0.3`
+  the hash-based split puts **zero** ids into the holdout (all 7 hash above
+  the threshold) — which is exactly why the shared control pins
+  `holdout_fraction: 0.6` (§2): the split becomes **train = 5, holdout = 2**
+  (`q3_metrics_outline`, `every_expectation_kind_demo`), so the
+  generalization-gap and holdout-confirm mechanics are live for the
+  campaign instead of silently inert. (Verified by running `split_board`
+  and `estimate_cost` on the arm contracts, §6.1.)
 - Structure `gauntlet`, `field_size` pinned to **1** in the shared control
   (§2 — the meter defaults an unset `field_size` to `2`, but
   `GauntletStrategy.field_size()` hard-returns `1`, so pinning it makes the
   meter read the true runtime board-run count), `replicates` = 2. Per
-  `estimate_cost`: `duel runs = field_size·replicates·train = 1·2·7 = 14`;
-  `holdout-confirm = holdout·replicates = 0·2 = 0`. **BASE board
-  runs/round = 14.**
+  `estimate_cost`: `duel runs = field_size·replicates·train = 1·2·5 = 10`;
+  `holdout-confirm = holdout·replicates = 2·2 = 4`. **BASE board
+  runs/round = 14** — unchanged from the zero-holdout figure, so every
+  downstream total in this section stands.
 - Screen arms add `candidate-screen runs = proposes·best_of_n·panel =
   1·3·min(2,7) = 6` → **20 runs/round** (a +42.9% board-run premium — the
   exact quantity A2's decision rule prices).
