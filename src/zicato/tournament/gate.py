@@ -1,5 +1,23 @@
 """The promote gate: decide whether a child generation supersedes its parent.
 
+Before the three scoring rules, an OPT-IN parsimony CEILING may veto the
+candidate outright (OVERFITTING.md §5 / §12 #4 — the ceiling half of the
+diff-complexity regularizer):
+
+0. **Diff-complexity ceiling** (when
+   :attr:`ScoringWeights.diff_complexity_ceiling` ``> 0`` AND the challenger's
+   ``diff_size`` was threaded onto ``child_agg``). The challenger's diff
+   complexity (``added + removed + patches`` — the same measure the loss-term
+   weight reads) is compared against the ceiling; a diff OVER the ceiling is
+   REJECTED with an honest ``"diff_complexity_ceiling: diff complexity N
+   exceeds ceiling M"`` reason, regardless of how strongly it improved. This
+   is checked FIRST because it is a structural admissibility veto — an
+   over-budget edit is inadmissible no matter what it scores. DEFAULT 0.0 =
+   OFF: the ceiling is never consulted and the decision is byte-identical to a
+   contract without the field (the challenger diff size is threaded only on the
+   full A/B promotion path, so — exactly like the loss term — fast-mode and
+   multi-challenger matchup scoring never carry it and are untouched).
+
 Three rules, applied in order:
 
 1. **Scalar margin.** The child's combined scalar must beat the parent's
@@ -104,6 +122,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from zicato.core import ScoringWeights, TournamentDecision
+from zicato.scoring.diff_complexity import diff_complexity
 
 #: Default tolerance applied to the child-vs-parent delta for a
 #: monotonicity-tracked namespace. The check is
@@ -437,6 +456,31 @@ def evaluate_gate(
 
     delta_scalar = child_scalar - parent_scalar
     delta_pass_rate = child_pass - parent_pass
+
+    # Rule 0: diff-complexity ceiling (OPT-IN, default 0.0 = OFF). A structural
+    # admissibility veto — a challenger whose diff complexity
+    # (``added + removed + patches``) exceeds the ceiling is rejected outright,
+    # BEFORE the scoring rules, so the reason names the ceiling rather than a
+    # scoring near-miss the over-budget edit may or may not also trip. The
+    # challenger ``diff_size`` is present on ``child_agg`` only when the
+    # parsimony machinery is active (see ``aggregate_generation_score``); at the
+    # default ceiling this branch is skipped and the decision is byte-identical
+    # to a contract without the field.
+    ceiling = float(weights.diff_complexity_ceiling)
+    if ceiling > 0.0:
+        diff_size = child_agg.get("diff_size")
+        if isinstance(diff_size, dict):
+            complexity = diff_complexity(diff_size)
+            if complexity > ceiling:
+                return GateOutcome(
+                    decision=TournamentDecision.REJECTED,
+                    reason=(
+                        f"diff_complexity_ceiling: diff complexity {complexity:g} "
+                        f"exceeds ceiling {ceiling:g}"
+                    ),
+                    delta_scalar=delta_scalar,
+                    delta_pass_rate=delta_pass_rate,
+                )
 
     # Rule 1: scalar margin. The scalar is a LOSS — lower is better — so
     # a promotion needs the child's loss to drop by at least

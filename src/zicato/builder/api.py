@@ -117,6 +117,7 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
             draft,
             namespace_weights=args.get("namespace_weights"),
             diff_complexity_weight=args.get("diff_complexity_weight"),
+            diff_complexity_ceiling=args.get("diff_complexity_ceiling"),
         )
     if op == "set_proposer_quality":
         return ops.set_proposer_quality(
@@ -131,6 +132,8 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
         )
     if op == "set_experiment_memory":
         return ops.set_experiment_memory(draft, cross_epoch=_opt_bool(args, "cross_epoch"))
+    if op == "set_telemetry_dialect":
+        return ops.set_telemetry_dialect(draft, dialect=_opt_str(args, "dialect"))
     if op == "set_screening":
         raw_entries = args.get("entries")
         raw_veto_only = args.get("veto_only")

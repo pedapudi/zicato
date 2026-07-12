@@ -349,6 +349,7 @@ def set_gate(
 def set_namespace_weights(
     namespace_weights: dict[str, float] | None = None,
     diff_complexity_weight: float | None = None,
+    diff_complexity_ceiling: float | None = None,
 ) -> str:
     """Set the multi-objective namespace coefficients + the parsimony term.
 
@@ -358,7 +359,10 @@ def set_namespace_weights(
     = higher is better, zero = tracked but unscored).
     ``diff_complexity_weight`` is the opt-in MDL/parsimony coefficient
     (0 = exactly absent; must be >= 0 — it biases selection toward the
-    smaller, more general edit). Changing either rolls the epoch.
+    smaller, more general edit). ``diff_complexity_ceiling`` is the paired
+    opt-in parsimony CEILING (0 = OFF; must be >= 0 — a challenger whose
+    diff complexity exceeds it is rejected outright by the gate). Changing
+    any rolls the epoch.
     """
     ctx = _active_context()
     try:
@@ -366,6 +370,7 @@ def set_namespace_weights(
             ctx.draft(),
             namespace_weights=namespace_weights,
             diff_complexity_weight=diff_complexity_weight,
+            diff_complexity_ceiling=diff_complexity_ceiling,
         )
     except ValueError as exc:
         return _result_json({"error": str(exc)})
@@ -446,6 +451,30 @@ def set_experiment_memory(cross_epoch: bool | None = None) -> str:
     """
     ctx = _active_context()
     patch = ops.set_experiment_memory(ctx.draft(), cross_epoch=cross_epoch)
+    return _result_json(_summary(patch))
+
+
+def set_telemetry_dialect(dialect: str | None = None) -> str:
+    """Set the telemetry dialect — the producer that reduces raw telemetry into the LossProfile.
+
+    ``goldfive`` (default): the full drift-instrument stream — the most
+    powerful dialect, the only one carrying in-process drift instruments,
+    custom process-judge drift, and emulator introspection.
+    ``adk_events``: a generic agent event-log JSONL (tool-call / tool-response
+    / transfer / error / model-usage) — no in-process drift instruments and
+    no custom process-judge drift, but it recovers the failure / cost / loop
+    envelope.
+    ``transcript``: the floor — no telemetry at all; the drift term is
+    structurally zero and scoring degrades to predicates + optional in-run
+    judges only. Changing the dialect selects champions under a different
+    measurement rule and rolls the epoch. Returns an ``error`` for an unknown
+    dialect name.
+    """
+    ctx = _active_context()
+    try:
+        patch = ops.set_telemetry_dialect(ctx.draft(), dialect=dialect)
+    except ValueError as exc:
+        return _result_json({"error": str(exc)})
     return _result_json(_summary(patch))
 
 
@@ -773,6 +802,7 @@ DEFAULT_BUILDER_TOOLS = (
     set_namespace_weights,
     set_proposer_quality,
     set_experiment_memory,
+    set_telemetry_dialect,
     set_screening,
     edit_board_entry,
     remove_board_entry,
@@ -806,6 +836,7 @@ __all__ = [
     "set_namespace_weights",
     "set_proposer_quality",
     "set_experiment_memory",
+    "set_telemetry_dialect",
     "set_screening",
     "edit_board_entry",
     "remove_board_entry",

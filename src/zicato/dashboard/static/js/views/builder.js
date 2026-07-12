@@ -934,6 +934,36 @@ function overfittingSection(d) {
 
 // ── Weights — the loss-shaping + multi-objective coefficients ─────────
 //
+// The capability tiers for the telemetry-dialect select's quiet caption —
+// the honest-tiers wording sourced verbatim in spirit from
+// TELEMETRY-DIALECTS.md §2 / §3.3 / §4 (never invented here).
+const DIALECT_TIERS = {
+  goldfive: 'goldfive — the full drift-instrument stream: in-process drift instruments, custom process-judge drift, and emulator introspection. The most powerful dialect.',
+  adk_events: 'adk_events — no in-process drift instruments and no custom process-judge drift: sees behaviour (tools, transfers, errors), never reasoning; recovers the failure / cost / loop envelope.',
+  transcript: 'transcript — the floor: no telemetry at all, the drift term structurally zero; scoring degrades to predicates + optional in-run judges only.',
+};
+
+// The telemetry-dialect control: a closed three-token <select> (the PRODUCER
+// that reduces raw telemetry into the LossProfile) plus one quiet caption line
+// stating the selected dialect's capability tier. Mirrors the monotonicity
+// scope select idiom (attribute-mirrored value so the mock DOM + browser agree).
+function telemetryDialectControl(sc) {
+  const cur = sc.telemetry_dialect || 'goldfive';
+  const sel = el('select', { class: 'dn-bld-select', 'aria-label': 'Telemetry dialect' }, [
+    el('option', { value: 'goldfive', text: 'goldfive — full drift-instrument stream (default)' }),
+    el('option', { value: 'adk_events', text: 'adk_events — agent event-log JSONL' }),
+    el('option', { value: 'transcript', text: 'transcript — predicate/judge-only floor' }),
+  ]);
+  sel.value = cur;
+  sel.setAttribute('value', cur);
+  sel.addEventListener('change', () => {
+    const v = sel.value != null ? sel.value : sel.getAttribute('value');
+    if (v === 'goldfive' || v === 'adk_events' || v === 'transcript') runOp('set_telemetry_dialect', { dialect: v });
+  });
+  const caption = el('p', { class: 'dn-faint dn-bld-dialect-tier', text: DIALECT_TIERS[cur] || DIALECT_TIERS.goldfive });
+  return el('div', { class: 'dn-bld-dialect' }, [sel, caption]);
+}
+
 // set_weights had NO GUI before this section: the scalar's drift/pass
 // coefficients plus the per-namespace multi-objective weights (through the
 // dedicated set_namespace_weights op) and the opt-in parsimony term.
@@ -942,6 +972,10 @@ function weightsSection(d) {
   const ns = sc.namespace_weights || {};
   const vocab = (_config && _config.vocab) || {};
   const rows = [
+    controlRow('Telemetry dialect', {
+      title: 'telemetry_dialect', def: 'goldfive',
+      body: 'The PRODUCER that reduces a run\'s raw telemetry into the LossProfile the scalar scores. goldfive consumes the full drift-instrument stream; adk_events reduces a generic agent event-log JSONL (no in-process drift instruments, no custom process-judge drift); transcript is the predicate/judge-only floor with a structurally zero drift term. A contract field — changing it selects champions under a different measurement rule and rolls the epoch.',
+    }, telemetryDialectControl(sc)),
     controlRow('Drift weight', {
       title: 'drift_weight', def: '1.0',
       body: 'Coefficient on the aggregated drift-loss term of the scalar.',
@@ -974,10 +1008,16 @@ function weightsSection(d) {
       (n) => runOp('set_weights', { runtime_weight: n }))),
     controlRow('Diff-complexity weight', {
       title: 'diff_complexity_weight', def: '0 (term absent)',
-      body: 'Opt-in MDL/parsimony coefficient: adds weight × (added + removed + patches) to the challenger scalar, biasing selection toward the smaller, more general edit (a shorter-description edit provably overfits the board less). 0 keeps the term exactly absent.',
+      body: 'Opt-in MDL/parsimony coefficient: adds weight × (added + removed + patches) to the challenger scalar, biasing selection toward the smaller, more general edit (a shorter-description edit provably overfits the board less). 0 keeps the term exactly absent. Applies on the full gauntlet A/B path only (racing/swiss/elim matchups score without a diff term).',
     }, numInput(sc.diff_complexity_weight != null ? sc.diff_complexity_weight : 0,
       { min: '0', step: '0.001', 'aria-label': 'Diff complexity weight' },
       (n) => runOp('set_namespace_weights', { diff_complexity_weight: n }))),
+    controlRow('Diff-complexity ceiling', {
+      title: 'diff_complexity_ceiling', def: '0 (off)',
+      body: 'Opt-in parsimony CEILING paired with the weight above: a hard gate rule that REJECTS any challenger whose diff complexity (added + removed + patches) exceeds this value, regardless of how much it improved. 0 keeps the ceiling off (never consulted). Applies on the full gauntlet A/B path only, like the weight above.',
+    }, numInput(sc.diff_complexity_ceiling != null ? sc.diff_complexity_ceiling : 0,
+      { min: '0', step: '1', 'aria-label': 'Diff complexity ceiling' },
+      (n) => runOp('set_namespace_weights', { diff_complexity_ceiling: n }))),
   ];
 
   // ── severity_weights — FIXED rows from vocab.severities (→ set_weights) ──

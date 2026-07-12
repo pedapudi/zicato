@@ -16,11 +16,11 @@
 > double_elim / racing) via `orchestrator._evolve_multi_challenger` +
 > `runner.confirm_crowning_holdout`, so a crowning under any structure is
 > Ladder-mediated on the holdout. §12 now carries per-lever **SHIPPED /
-> FUTURE** status tags (**#4** diff-complexity regularization has since
-> shipped its loss-term half — `ScoringWeights.diff_complexity_weight`,
-> default-off — and **#7** the random-baseline check has since shipped as
-> the opt-in placebo arm, `overfitting.random_baseline_every_n`; only the
-> #4 complexity-ceiling half remains unbuilt); treat the
+> FUTURE** status tags (**#4** diff-complexity regularization is now shipped
+> in FULL — both the loss-term half, `ScoringWeights.diff_complexity_weight`,
+> and the complexity-CEILING half, `ScoringWeights.diff_complexity_ceiling`,
+> both default-off — and **#7** the random-baseline check has since shipped as
+> the opt-in placebo arm, `overfitting.random_baseline_every_n`); treat the
 > *mechanism → verdict* analysis as the design rationale and those tags
 > as the as-built status. The proposer **outcome-marginal failure-mode
 > channel** (§11.5) is the most recent addition.
@@ -285,9 +285,11 @@ variance-reduction lever (its stated purpose there) but *also* an
 anti-memorization lever: a bounded-description edit provably overfits the
 board less.
 
-**Verdict.** **BUILD — cheap and composable (§12 #4).** A diff-complexity
+**Verdict.** **BUILT — cheap and composable (§12 #4).** A diff-complexity
 term is a bounded change to `gate.py`/`scoring.py` and pairs naturally
-with the existing mutation-budget idea. Rank it below the split and the
+with the existing mutation-budget idea. Both halves now ship: the loss
+term (`diff_complexity_weight`) and the hard ceiling
+(`diff_complexity_ceiling`, a `tournament/gate.py` reject rule). Rank it below the split and the
 holdout (it dampens the *rate* of overfitting but, unlike a holdout,
 cannot *detect* or *correct* it), but above most others because it is
 nearly free and synergistic.
@@ -564,8 +566,8 @@ racing) via `orchestrator._evolve_multi_challenger` +
 `runner.confirm_crowning_holdout`, so a crowning under any structure — not
 just the gauntlet — is Ladder-mediated on the holdout; and **#7** the
 random-baseline placebo arm (`overfitting.random_baseline_every_n`).
-Still **future work**: the complexity-ceiling half of **#4**
-diff-complexity regularization (flagged inline below). Levers compose;
+All seven levers are now built (the complexity-ceiling half of **#4** —
+once the last future item — has since shipped; see below). Levers compose;
 the dependency arrows are noted.
 
 ```mermaid
@@ -620,24 +622,36 @@ edits. *Tradeoff:* less precise steering → possibly more rounds to a fix.
 **Independently shippable — no prerequisite — so ship it first** as the
 cheapest, most direct strike at adversarial Goodhart.
 
-**#4 — Diff/complexity regularization in the gate or loss. (SHIPPED — loss term.)**
-*What:* `λ · complexity(diff)` added to the challenger scalar, with
-`complexity = added + removed + patches` over the challenger's patch
-records. *Where:* `ScoringWeights.diff_complexity_weight` (default `0.0`)
-folds a `diff_complexity` component into the built-in scalar
+**#4 — Diff/complexity regularization in the gate or loss. (SHIPPED — both halves.)**
+*What:* two paired parsimony levers over `complexity = added + removed +
+patches` (the challenger's patch records). (a) The **loss term** — `λ ·
+complexity(diff)` added to the challenger scalar; (b) the **hard ceiling** —
+reject any challenger whose `complexity` exceeds a budget outright. *Where
+(a):* `ScoringWeights.diff_complexity_weight` (default `0.0`) folds a
+`diff_complexity` component into the built-in scalar
 (`scoring/builtins.py::builtin_scalar` + `tournament/scoring.py`), surfaced
 through the existing `scalar_components` mechanism and a
 `diff_size:{champion,challenger}:{added,removed,patches}` gate evidence line
 (`tournament/gate.py::diff_size_evidence`); the diff size comes from
 `scoring/diff_complexity.py::diff_size` (the lifted best-of-N `_diff_size`
-proxy). DEFAULT-OFF and byte-identical at `0.0` — the term is exactly absent
-and the contract canonicalizer omits the field at the default so no existing
-epoch rolls. The orchestrator threads the challenger's diff size on the full
-A/B promotion path only (the champion side pays no parsimony cost). The
-complexity-ceiling half (reject oversized diffs in `gate.py`) is still future.
-*Cost:* a new weight to calibrate. *Tradeoff:* may suppress a legitimately
-large beneficial refactor; pair with the proposer-brief mutation budget
-(`SELECTION.md` §9 lever 4) rather than duplicating it.
+proxy). *Where (b):* `ScoringWeights.diff_complexity_ceiling` (default `0.0` =
+OFF) is a first-class gate rule in `tournament/gate.py::evaluate_gate` — a
+Rule-0 admissibility veto checked BEFORE the scoring rules: when the ceiling is
+`> 0` and the challenger's diff complexity (`diff_complexity(diff_size)`)
+exceeds it, the gate returns a `REJECTED` outcome with an honest, specific
+reason (`"diff_complexity_ceiling: diff complexity 14 exceeds ceiling 10"`)
+that lands on the experiment record's `rejection_reason` and, via
+`_emit_gate_evaluated`, on the round-log `gate_evaluated` rule. `child_agg`
+carries the challenger `diff_size` whenever EITHER half is active (see
+`aggregate_generation_score`). BOTH DEFAULT-OFF and byte-identical at `0.0` —
+neither term is present and the contract canonicalizer omits both fields at
+their defaults so no existing epoch rolls. The orchestrator threads the
+challenger's diff size on the full A/B promotion path only (the champion side
+pays no parsimony cost; fast-mode and multi-challenger matchup scoring are
+untouched, exactly like the loss term). *Cost:* a new weight / a new budget to
+calibrate. *Tradeoff:* may suppress a legitimately large beneficial refactor;
+pair with the proposer-brief mutation budget (`SELECTION.md` §9 lever 4) rather
+than duplicating it.
 
 **#5 — A `generalization_gap` loop-health detector. (SHIPPED.)**
 *What:* track `train_loss` vs `holdout_loss` across the lineage; fire

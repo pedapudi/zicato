@@ -912,12 +912,20 @@ def test_set_namespace_weights() -> None:
     assert patch.changed["namespace_weights"]["to"] == weights
     assert patch.changed["diff_complexity_weight"] == {"from": 0.0, "to": 0.01}
 
+    # The paired parsimony CEILING sets + records like the weight.
+    patch_ceil = ops.set_namespace_weights(draft, diff_complexity_ceiling=10.0)
+    assert draft.scoring.diff_complexity_ceiling == 10.0
+    assert patch_ceil.changed["diff_complexity_ceiling"] == {"from": 0.0, "to": 10.0}
+
     # No-op replacement records nothing.
     patch2 = ops.set_namespace_weights(draft, namespace_weights=dict(weights))
     assert patch2.changed == {}
 
     with pytest.raises(ValueError, match=">= 0"):
         ops.set_namespace_weights(TournamentDraft(), diff_complexity_weight=-0.1)
+
+    with pytest.raises(ValueError, match=">= 0"):
+        ops.set_namespace_weights(TournamentDraft(), diff_complexity_ceiling=-1.0)
 
 
 def test_set_proposer_quality_composes_with_screening() -> None:
@@ -1021,6 +1029,45 @@ def test_set_experiment_memory() -> None:
     assert ops.set_experiment_memory(draft, cross_epoch=True).changed == {}
     serialized = json.loads(json.dumps(draft.to_dict()))
     assert serialized["scoring"]["experiment_memory"]["cross_epoch"] is True
+
+
+def test_set_telemetry_dialect() -> None:
+    """The telemetry dialect round-trips via the changed-dict pattern; the
+    default (goldfive) is a no-op; an unknown name raises; None leaves it be."""
+    import json
+
+    import pytest
+
+    draft = TournamentDraft()
+    assert draft.scoring.telemetry_dialect == "goldfive"
+
+    # Default-value ⇒ no-op (no changed entry, no roll).
+    noop = ops.set_telemetry_dialect(draft, dialect="goldfive")
+    assert noop.changed == {}
+    assert draft.scoring.telemetry_dialect == "goldfive"
+    # None ⇒ leave unchanged.
+    assert ops.set_telemetry_dialect(draft, dialect=None).changed == {}
+
+    # A non-default dialect lands on the field and records the from/to delta.
+    patch = ops.set_telemetry_dialect(draft, dialect="adk_events")
+    assert draft.scoring.telemetry_dialect == "adk_events"
+    assert patch.changed["telemetry_dialect"] == {"from": "goldfive", "to": "adk_events"}
+
+    # Reverting to goldfive records the reverse delta (the contract pins both
+    # directions — reverting rolls back to the original hash).
+    back = ops.set_telemetry_dialect(draft, dialect="goldfive")
+    assert back.changed["telemetry_dialect"] == {"from": "adk_events", "to": "goldfive"}
+    assert draft.scoring.telemetry_dialect == "goldfive"
+
+    # An unknown name raises (the closed dialect set — never a second list).
+    with pytest.raises(ValueError, match="telemetry_dialect must be one of"):
+        ops.set_telemetry_dialect(draft, dialect="mystery")
+    # The field is unchanged after the raise (validated before applying).
+    assert draft.scoring.telemetry_dialect == "goldfive"
+
+    ops.set_telemetry_dialect(draft, dialect="transcript")
+    serialized = json.loads(json.dumps(draft.to_dict()))
+    assert serialized["scoring"]["telemetry_dialect"] == "transcript"
 
 
 # ---------------------------------------------------------------------------

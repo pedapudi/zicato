@@ -50,7 +50,7 @@ function freshDraft() {
       },
       promote_margin: 0, pass_rate_monotonicity: false,
       pass_rate_monotonicity_scope: 'per_entry',
-      drift_weight: 1, pass_weight: 1, diff_complexity_weight: 0,
+      drift_weight: 1, pass_weight: 1, diff_complexity_weight: 0, diff_complexity_ceiling: 0,
       default_judge_weight: 1, plan_revision_weight: 0.5, runtime_weight: 0,
       severity_weights: { info: 1, warning: 3, critical: 10 },
       per_kind_weights: {}, per_judge_weights: {},
@@ -61,6 +61,7 @@ function freshDraft() {
       regression_timeout_s: 600,
       proposer_quality: { best_of_n: 3, critique_enabled: true, screen_entries: 0, screen_veto_only: false },
       experiment_memory: { cross_epoch: false },
+      telemetry_dialect: 'goldfive',
     },
     board: [
       { id: 'waffles', kind: 'single_turn', judges: [{ name: 'tone' }] },
@@ -153,6 +154,7 @@ function installBuilderFetch() {
       }
       // mutate the shared draft so the applied envelope is observably different.
       if (body.op === 'set_structure') DRAFT.scoring.tournament.structure = body.args.structure;
+      if (body.op === 'set_telemetry_dialect' && body.args.dialect) DRAFT.scoring.telemetry_dialect = body.args.dialect;
       if (body.op === 'set_param') DRAFT.scoring.tournament.params[body.args.key] = body.args.value;
       if (body.op === 'set_gate' && body.args.promote_margin != null) DRAFT.scoring.promote_margin = body.args.promote_margin;
       if (body.op === 'set_holdout' && Array.isArray(body.args.tags)) {
@@ -292,6 +294,37 @@ test('builder view: a field param edit posts set_param with the numeric value', 
   const setParam = OP_CALLS.find((c) => c.op === 'set_param');
   assert(setParam, 'set_param was posted');
   assertEqual(setParam.args.value, 3, 'the value was sent as a number');
+});
+
+test('builder view: the telemetry-dialect select posts set_telemetry_dialect + shows the tier caption', async () => {
+  installBuilderFetch();
+  globalThis.window.localStorage.clear();
+  const host = globalThis.document.createElement('div');
+  await view.render(host);
+  // go to the Weights section (where the telemetry-dialect select lives).
+  const rail = byClass(host, 'dn-bld-railitem').find((r) => r.textContent.includes('Weights'));
+  rail.dispatchEvent(makeEvent('click'));
+  await tick();
+  // the dialect control (its own row wrapper, distinct from the draft-slot
+  // picker which also uses dn-bld-select) starts on goldfive; its quiet caption
+  // states the goldfive tier.
+  const wrap = byClass(host, 'dn-bld-dialect')[0];
+  assert(wrap, 'the telemetry-dialect control is present in the Weights section');
+  const sel = byClass(wrap, 'dn-bld-select')[0];
+  assert(sel, 'the dialect select is present');
+  const tier0 = byClass(wrap, 'dn-bld-dialect-tier')[0];
+  assert(tier0 && tier0.textContent.includes('goldfive'), 'the caption states the goldfive tier');
+  // pick adk_events — change drives set_telemetry_dialect { dialect: 'adk_events' }.
+  sel.value = 'adk_events';
+  sel.dispatchEvent(makeEvent('change', { target: sel }));
+  await tick();
+  const dl = OP_CALLS.find((c) => c.op === 'set_telemetry_dialect' && c.args.dialect);
+  assert(dl, 'set_telemetry_dialect was posted with a dialect arg');
+  assertEqual(dl.args.dialect, 'adk_events', 'the dialect arg was adk_events');
+  // the applied draft re-renders the caption to the adk_events capability tier.
+  const tier1 = byClass(host, 'dn-bld-dialect-tier')[0];
+  assert(tier1 && tier1.textContent.includes('no in-process drift instruments'),
+    'the caption re-renders to the adk_events tier after the change');
 });
 
 test('builder view: a holdout toggle posts set_holdout tags and re-renders the split strip', async () => {
@@ -687,6 +720,13 @@ test('builder view: the Weights section drives set_weights + set_namespace_weigh
   await tick();
   assert(OP_CALLS.find((c) => c.op === 'set_namespace_weights' && c.args.diff_complexity_weight === 0.01),
     'the MDL term posts set_namespace_weights {diff_complexity_weight}');
+  // the paired parsimony CEILING posts diff_complexity_ceiling.
+  const ceil = byAria(host, 'dn-bld-num', 'Diff complexity ceiling');
+  ceil.value = '10';
+  ceil.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_namespace_weights' && c.args.diff_complexity_ceiling === 10),
+    'the parsimony ceiling posts set_namespace_weights {diff_complexity_ceiling}');
 });
 
 test('builder view: the Proposer section drives set_proposer_quality + set_experiment_memory', async () => {

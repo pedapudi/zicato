@@ -30,6 +30,7 @@ from typing import Any
 from zicato.board.split import HOLDOUT_TAG, split_board
 from zicato.builder.draft import TournamentDraft
 from zicato.core.types import (
+    KNOWN_TELEMETRY_DIALECTS,
     VALID_TOURNAMENT_STRUCTURES,
     BoardEntry,
     JudgeSpec,
@@ -545,6 +546,7 @@ def set_namespace_weights(
     *,
     namespace_weights: dict[str, float] | None = None,
     diff_complexity_weight: float | None = None,
+    diff_complexity_ceiling: float | None = None,
 ) -> DraftPatch:
     """Set the multi-objective namespace coefficients + the parsimony term.
 
@@ -553,8 +555,11 @@ def set_namespace_weights(
     encodes the namespace's "worse" direction — positive = higher is
     worse, negative = higher is better, zero = tracked but unscored).
     ``diff_complexity_weight`` is the opt-in MDL/parsimony coefficient
-    (``0`` = the term is exactly absent; must be >= 0). Both are contract
-    fields — changing either rolls the epoch.
+    (``0`` = the term is exactly absent; must be >= 0).
+    ``diff_complexity_ceiling`` is the paired opt-in parsimony CEILING
+    (``0`` = OFF; must be >= 0): a challenger whose diff complexity exceeds
+    it is rejected outright by the gate. All are contract fields — changing
+    any rolls the epoch.
     """
     changed: dict[str, Any] = {}
     scoring_changes: dict[str, Any] = {}
@@ -574,6 +579,17 @@ def set_namespace_weights(
             changed["diff_complexity_weight"] = {
                 "from": draft.scoring.diff_complexity_weight,
                 "to": diff_complexity_weight,
+            }
+    if diff_complexity_ceiling is not None:
+        if diff_complexity_ceiling < 0:
+            raise ValueError(
+                f"diff_complexity_ceiling must be >= 0, got {diff_complexity_ceiling!r}"
+            )
+        if diff_complexity_ceiling != draft.scoring.diff_complexity_ceiling:
+            scoring_changes["diff_complexity_ceiling"] = diff_complexity_ceiling
+            changed["diff_complexity_ceiling"] = {
+                "from": draft.scoring.diff_complexity_ceiling,
+                "to": diff_complexity_ceiling,
             }
     if scoring_changes:
         draft.scoring = _replace_scoring(draft, **scoring_changes)
@@ -710,6 +726,40 @@ def set_experiment_memory(
         )
         changed["cross_epoch"] = {"from": memory.cross_epoch, "to": cross_epoch}
     return DraftPatch(op="set_experiment_memory", changed=changed)
+
+
+def set_telemetry_dialect(
+    draft: TournamentDraft,
+    *,
+    dialect: str | None = None,
+) -> DraftPatch:
+    """Set the telemetry dialect — the PRODUCER that reduces a run's raw
+    telemetry into the ``LossProfile`` inputs (TELEMETRY-DIALECTS.md).
+
+    ``"goldfive"`` (the default, most powerful) consumes the full
+    drift-instrument stream; ``"adk_events"`` reduces a generic agent
+    event-log JSONL (no in-process drift instruments, no custom
+    process-judge drift); ``"transcript"`` is the predicate/judge-only floor
+    with a structurally zero drift term. The dialect is part of the
+    evaluation contract — changing it selects champions under a different
+    measurement rule, so it rolls the epoch like any scoring change. It is
+    omitted from the contract canonical form at its ``"goldfive"`` default,
+    so setting a non-default dialect rolls and reverting to ``"goldfive"``
+    rolls back to the original hash. ``None`` leaves it unchanged; an unknown
+    name raises :class:`ValueError` (the closed dialect set validated the
+    same way the ``ScoringWeights`` contract-load check validates it — never
+    a second hardcoded list).
+    """
+    changed: dict[str, Any] = {}
+    if dialect is not None:
+        if dialect not in KNOWN_TELEMETRY_DIALECTS:
+            known = ", ".join(sorted(KNOWN_TELEMETRY_DIALECTS))
+            raise ValueError(f"telemetry_dialect must be one of {{{known}}}, got {dialect!r}")
+        current = draft.scoring.telemetry_dialect
+        if dialect != current:
+            draft.scoring = _replace_scoring(draft, telemetry_dialect=dialect)
+            changed["telemetry_dialect"] = {"from": current, "to": dialect}
+    return DraftPatch(op="set_telemetry_dialect", changed=changed)
 
 
 def set_screening(
@@ -2037,6 +2087,7 @@ __all__ = [
     "set_namespace_weights",
     "set_proposer_quality",
     "set_experiment_memory",
+    "set_telemetry_dialect",
     "set_screening",
     "edit_board_entry",
     "remove_board_entry",
