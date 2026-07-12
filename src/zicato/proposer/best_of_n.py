@@ -53,6 +53,22 @@ a contract that opted into paying for the screen has already accepted
 that propose-step cost class. With screening off nothing here runs and
 the propose path is byte-identical.
 
+The recombination slot (WS-REC; opt-in, rides ``recombine`` + ``best_of_n > 1``)
+---------------------------------------------------------------------------------
+When the orchestrator threads a per-round
+:attr:`~zicato.proposer.agent.ProposerContext.recombine_pair` (two
+rejected complementary challengers of the current reign, selected by
+:mod:`zicato.epoch.recombine`), the LAST slate slot MINTS their patch
+union (:mod:`zicato.proposer.recombine`) instead of sampling the LLM —
+cost-neutral by construction: the mint REPLACES the slot's auxiliary
+propose call. The mint runs ``enforce_forbidden`` plus the SAME validate
+hook every sample runs; any finding degrades the slot to a normal fresh
+sample. A NON-VETOED mint short-circuits the selection
+(``selection_mode="recombined"``, no critic call) because the heuristic's
+minimal-diff key would systematically starve the union — its diff is
+larger than either parent's by construction; a VETOED mint stays an
+ordinary slate member and every existing path is unchanged.
+
 Overfitting discipline (LOAD-BEARING)
 -------------------------------------
 The self-critique pass sees ONLY the SAME restricted prompt context the
@@ -461,26 +477,26 @@ class BestOfNProposerAgent:
 
         candidates: list[Experiment] = []
         last_error: ProposerError | None = None
+        recombined_index: int | None = None
         for sample in range(n):
-            # Intra-slate diversity: each slot carries a DISTINCT edit-class
-            # hint on its context, so the N samples explore different edit
-            # strategies rather than re-rolling one idea. The pure mapping
-            # (zicato.proposer.hints.hint_for_slot) conditions slots 0..N-2
-            # on the profile's DOMINANT failure mode and keeps the LAST slot
-            # exploratory; with no profile signal it is the historical
-            # EDIT_CLASS_HINTS rotation, byte-identical. Hints are static
-            # instruction strings — no board identity — so the
-            # restricted-visibility envelope is untouched.
-            slot_ctx = replace(ctx, sample_hint=hint_for_slot(sample, n, ctx.failure_profile))
-            try:
-                candidates.append(await self.inner.propose(slot_ctx))
-            except ProposerError as exc:
-                # A candidate the inner proposer could not produce simply
-                # narrows the slate; remember the error so an all-failed
-                # slate can re-raise the real failure.
-                last_error = exc
-            else:
-                _emit_round_event(ctx, "candidate_sampled", {"i": sample, "n": n})
+            if sample == n - 1 and ctx.recombine_pair is not None:
+                # The recombination slot (WS-REC): the LAST slot MINTS the
+                # union of the round's selected pair instead of sampling
+                # the LLM — the mint REPLACES the slot's auxiliary propose
+                # call (cost-neutral: n−1 calls, never more). Landing in
+                # the last slot makes a chosen mint the LAST-validated
+                # candidate, so the tree alignment below is a no-op on the
+                # happy path. A mint that fails forbidden-enforcement or
+                # the validate hook DEGRADES to the normal fresh sample
+                # below — the identical slot body, with the slot's normal
+                # exploratory hint (a recombination failure must never
+                # narrow the slate).
+                minted = await self._mint_recombined(ctx, sample, n)
+                if minted is not None:
+                    candidates.append(minted)
+                    recombined_index = len(candidates) - 1
+                    continue
+            last_error = await self._sample_slot(candidates, ctx, sample, n) or last_error
 
         if not candidates:
             # The whole slate failed — surface the inner failure exactly as a
@@ -499,6 +515,28 @@ class BestOfNProposerAgent:
         # survivors. ``None`` (unscreened — no runner threaded, screen
         # error, or malformed result) leaves the selection byte-identical.
         screen_results = await self._screen_slate(candidates, ctx)
+
+        if recombined_index is not None and (
+            screen_results is None or not screen_results[recombined_index].vetoed
+        ):
+            # SELECTION SHORT-CIRCUIT (WS-REC): a NON-VETOED mint is chosen
+            # outright — no critic call (the sole-survivor precedent). The
+            # heuristic's minimal-diff key would systematically STARVE the
+            # union (its diff is larger than either parent's BY
+            # CONSTRUCTION — the parsimony bias the slot exists to
+            # overcome; the starved-heuristic OC test documents the failing
+            # alternative). The mint is grounded in MEASURED per-entry
+            # evidence from two real tournament rounds, the screen above
+            # could still veto it, and the unchanged gate remains the
+            # arbiter. A VETOED mint takes the else-branch as an ordinary
+            # slate member — every existing path is unchanged.
+            chosen, selection_mode = recombined_index, "recombined"
+            chosen, selection_mode = await self._align_child_tree(
+                candidates, chosen, selection_mode, ctx
+            )
+            _emit_round_event(ctx, "critique_selected", {"index": chosen, "reason": selection_mode})
+            return candidates[chosen]
+
         survivor_indices = list(range(len(candidates)))
         all_vetoed = False
         revise_chosen = False
@@ -542,6 +580,87 @@ class BestOfNProposerAgent:
         )
         _emit_round_event(ctx, "critique_selected", {"index": chosen, "reason": selection_mode})
         return candidates[chosen]
+
+    async def _sample_slot(
+        self, candidates: list[Experiment], ctx: ProposerContext, sample: int, n: int
+    ) -> ProposerError | None:
+        """One ordinary slate slot — the extracted loop body.
+
+        Intra-slate diversity: each slot carries a DISTINCT edit-class
+        hint on its context, so the N samples explore different edit
+        strategies rather than re-rolling one idea. The pure mapping
+        (:func:`zicato.proposer.hints.hint_for_slot`) conditions slots
+        0..N-2 on the profile's DOMINANT failure mode and keeps the LAST
+        slot exploratory; with no profile signal it is the historical
+        EDIT_CLASS_HINTS rotation, byte-identical. Hints are static
+        instruction strings — no board identity — so the
+        restricted-visibility envelope is untouched.
+
+        Appends the sampled candidate on success and emits its
+        ``candidate_sampled`` event; returns the :class:`ProposerError`
+        when the inner proposer could not produce one (the slate simply
+        narrows; the caller remembers the error so an all-failed slate can
+        re-raise the real failure). Extracted so the recombination slot's
+        degrade path reuses the slot body VERBATIM.
+        """
+        slot_ctx = replace(ctx, sample_hint=hint_for_slot(sample, n, ctx.failure_profile))
+        try:
+            candidates.append(await self.inner.propose(slot_ctx))
+        except ProposerError as exc:
+            return exc
+        _emit_round_event(ctx, "candidate_sampled", {"i": sample, "n": n})
+        return None
+
+    async def _mint_recombined(
+        self, ctx: ProposerContext, sample: int, n: int
+    ) -> Experiment | None:
+        """Mint the round's recombination pair into the slate. GUARDED.
+
+        Pure mint (:func:`zicato.proposer.recombine.mint_recombined_experiment`
+        — no LLM call, no IO), then two defenses before the mint may enter
+        the slate:
+
+        * :func:`~zicato.proposer.brief.enforce_forbidden` — defense in
+          depth: both parents cleared the brief when they were proposed,
+          but the brief's forbidden set may have changed since.
+        * the SAME post-apply validate hook every sampled candidate runs
+          (``ctx.validate_experiment``) — it derives the shared child
+          snapshot from the mint's patches, so a chosen mint is the
+          last-validated candidate and the tree alignment stays honest.
+
+        Any finding → DEBUG log → ``None``: the caller DEGRADES to the
+        normal fresh sample for the slot (recombination must never narrow
+        a slate, let alone fail a propose). A successful mint emits its
+        ``candidate_sampled`` event with the ``recombined`` marker.
+        """
+        from zicato.proposer.brief import enforce_forbidden  # noqa: PLC0415
+        from zicato.proposer.recombine import mint_recombined_experiment  # noqa: PLC0415
+        from zicato.util.iso_time import now_iso  # noqa: PLC0415
+
+        pair = ctx.recombine_pair
+        assert pair is not None  # caller-checked
+        minted = mint_recombined_experiment(
+            pair,
+            epoch_id=ctx.epoch_id,
+            parent_generation_id=ctx.parent_generation_id,
+            new_generation_id=ctx.new_generation_id,
+            proposed_at=now_iso(),
+        )
+        findings = enforce_forbidden(list(minted.patches), ctx.forbidden_ids)
+        if not findings:
+            validate = ctx.validate_experiment
+            if validate is not None:
+                findings = await self._revalidate(validate, minted)
+        if findings:
+            log.debug(
+                "recombination mint (%s + %s) degraded to a fresh sample: %s",
+                pair.a_generation_id,
+                pair.b_generation_id,
+                "; ".join(findings),
+            )
+            return None
+        _emit_round_event(ctx, "candidate_sampled", {"i": sample, "n": n, "recombined": True})
+        return minted
 
     async def _screen_slate(
         self, candidates: list[Experiment], ctx: ProposerContext

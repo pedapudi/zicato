@@ -2057,10 +2057,7 @@ async def _evolve_multi_challenger(
             on_status=_publish_proposing,
             round_emitter=round_log,
             screen_candidates=screen_candidates,
-            # The pair rides SLOT 0 ONLY (the plan's bug-#7 note): every
-            # field slot minting the identical union would collapse the
-            # extra slots into diversity soft-rejects — one mint per round.
-            recombine_pair=recombine_pair if offset == 0 else None,
+            recombine_pair=_recombine_pair_for_slot(recombine_pair, offset),
         )
         # Field-diversity DECISION (pure — `_mint_challenger_field`): accept
         # the challenger into the run slate, or soft-reject it as an exact
@@ -3205,6 +3202,20 @@ def _build_candidate_screen_runner(
         )
 
     return _screen
+
+
+def _recombine_pair_for_slot(recombine_pair: Any, offset: int) -> Any:
+    """The field path's SLOT-0-ONLY rule for the recombination pair. Pure.
+
+    On a multi-challenger field the round's single recombination pair
+    rides the FIRST slot only: every field slot minting the IDENTICAL
+    union would collapse the extra slots into field-diversity soft-rejects
+    (an exact-duplicate challenger is cut from the run slate) — one mint
+    per round, the rest of the field explores normally. The gauntlet path
+    (one propose per round) threads the pair directly and never calls
+    this.
+    """
+    return recombine_pair if offset == 0 else None
 
 
 def _build_recombination_pair(

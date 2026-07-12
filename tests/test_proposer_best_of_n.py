@@ -1290,3 +1290,218 @@ async def test_no_screen_runner_on_context_screens_nothing() -> None:
     out = await agent.propose(_context(critic))
     assert out is cand1
     assert "## Screen measurements" not in critic.user_prompts[0]
+
+
+# --------------------------------------------------------------------------
+# WS-REC — the recombination slot
+# --------------------------------------------------------------------------
+
+
+def _rec_pair():
+    from zicato.proposer.recombine import RecombinationPair
+
+    def _p(pid: str, mid: str, content: str) -> Patch:
+        return Patch(
+            id=pid,
+            mutation_id=mid,
+            op="replace",
+            new_content=content,
+            new_numeric=None,
+            new_enum=None,
+            rationale="r",
+        )
+
+    return RecombinationPair(
+        a_generation_id="v1",
+        b_generation_id="v2",
+        a_patches=(_p("pa", "router__sp", "fix-a"),),
+        b_patches=(_p("pb", "writer__sp", "fix-b"),),
+        a_core_idea="fix the router",
+        b_core_idea="fix the writer",
+        a_improved_count=1,
+        b_improved_count=1,
+        combined_improved_count=2,
+        combined_regressed_count=0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_recombination_mint_happy_path() -> None:
+    """A pair on the context: the LAST slot mints (no inner call), the
+    non-vetoed mint is CHOSEN with selection_mode="recombined" (no critic
+    call), and the round log carries the recombined marker."""
+    from dataclasses import replace as _replace
+
+    candidates = _slate3()[:2]
+    inner = _ScriptedInnerAgent(candidates)
+    critic = _CapturingCriticLLM("0")
+    events: list[tuple[str, dict]] = []
+    ctx = _replace(
+        _context(critic),
+        recombine_pair=_rec_pair(),
+        round_event_emitter=lambda t, f: events.append((t, f)),
+    )
+    agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
+    out = await agent.propose(ctx)
+
+    # The mint replaced the LAST slot's inner propose — n−1 calls exactly.
+    assert inner.calls == 2
+    # The returned experiment IS the mint: union patches, machine provenance.
+    assert out.recombined_from == ("v1", "v2")
+    assert sorted(p.mutation_id for p in out.patches) == ["router__sp", "writer__sp"]
+    assert out.hypothesis.core_idea.startswith("[recombined]")
+    # No critic call was made (the selection short-circuit).
+    assert critic.user_prompts == []
+    # Round-log trace: two ordinary samples, one recombined, the mode.
+    sampled = [f for t, f in events if t == "candidate_sampled"]
+    assert [s.get("recombined", False) for s in sampled] == [False, False, True]
+    selected = dict(events)["critique_selected"]
+    assert selected == {"index": 2, "reason": "recombined"}
+
+
+@pytest.mark.asyncio
+async def test_recombination_mint_validation_failure_degrades_to_fresh_sample() -> None:
+    """A mint the validate hook rejects DEGRADES the slot to a normal fresh
+    sample: the full slate budget is spent, no recombined candidate exists,
+    and the ordinary selection runs."""
+    from dataclasses import replace as _replace
+
+    candidates = _slate3()
+    inner = _ScriptedInnerAgent(candidates)
+
+    class _MintRejectingValidator(_RecordingValidator):
+        async def __call__(self, candidate: Experiment) -> list[str]:
+            await super().__call__(candidate)
+            if candidate.recombined_from:
+                return ["mint no longer derives against the parent tree"]
+            return []
+
+    hook = _MintRejectingValidator()
+    events: list[tuple[str, dict]] = []
+    ctx = _replace(
+        _context(_CapturingCriticLLM("2")),
+        recombine_pair=_rec_pair(),
+        validate_experiment=hook,
+        round_event_emitter=lambda t, f: events.append((t, f)),
+    )
+    agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
+    out = await agent.propose(ctx)
+
+    assert inner.calls == 3  # the degrade re-spent the slot on the inner agent
+    assert out is candidates[2]
+    assert out.recombined_from == ()
+    sampled = [f for t, f in events if t == "candidate_sampled"]
+    assert [s.get("recombined", False) for s in sampled] == [False, False, False]
+    assert dict(events)["critique_selected"]["reason"] != "recombined"
+
+
+@pytest.mark.asyncio
+async def test_recombination_forbidden_id_degrades_to_fresh_sample() -> None:
+    """Defense in depth: a mint touching a NOW-forbidden mutation id never
+    enters the slate — the slot degrades to a normal sample."""
+    from dataclasses import replace as _replace
+
+    candidates = _slate3()
+    inner = _ScriptedInnerAgent(candidates)
+    ctx = _replace(
+        _context(_CapturingCriticLLM("2")),
+        recombine_pair=_rec_pair(),
+        forbidden_ids=("writer__sp",),
+    )
+    agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
+    out = await agent.propose(ctx)
+    assert inner.calls == 3
+    assert out.recombined_from == ()
+
+
+@pytest.mark.asyncio
+async def test_vetoed_mint_stays_an_ordinary_slate_member() -> None:
+    """A screen-VETOED mint takes no short-circuit: the ordinary selection
+    runs over the survivors and the mode string is not "recombined"."""
+    from dataclasses import replace as _replace
+
+    candidates = _slate3()[:2]
+    inner = _ScriptedInnerAgent(candidates)
+
+    async def _screen(slate):
+        results = []
+        for exp in slate:
+            vetoed = bool(exp.recombined_from)
+            results.append(
+                CandidateScreenResult(
+                    vetoed=vetoed,
+                    reason="vetoed: panel 2, budget-aborts 1" if vetoed else "clear: panel 2",
+                    scalar=1.0,
+                    entries_screened=2,
+                    baseline_passes=2,
+                    candidate_passes=0 if vetoed else 2,
+                    confirmed=False,
+                )
+            )
+        return results
+
+    events: list[tuple[str, dict]] = []
+    ctx = _replace(
+        _context(_CapturingCriticLLM("0")),
+        recombine_pair=_rec_pair(),
+        screen_candidates=_screen,
+        round_event_emitter=lambda t, f: events.append((t, f)),
+    )
+    agent = BestOfNProposerAgent(
+        inner=inner,
+        config=ProposerQualityConfig(best_of_n=3, critique_enabled=False, screen_entries=2),
+    )
+    out = await agent.propose(ctx)
+
+    assert out.recombined_from == ()  # the mint was NOT chosen
+    assert out in candidates
+    selected = dict(events)["critique_selected"]
+    assert selected["reason"] != "recombined"
+    assert selected["index"] != 2
+
+
+@pytest.mark.asyncio
+async def test_chosen_mint_needs_no_tree_realign() -> None:
+    """The mint lands in the LAST slot and validates during minting, so a
+    chosen mint is the last-validated candidate — the alignment pass never
+    re-derives (exactly one hook call, the mint's own validation)."""
+    from dataclasses import replace as _replace
+
+    candidates = _slate3()[:2]
+    inner = _ScriptedInnerAgent(candidates)
+    hook = _RecordingValidator()
+    ctx = _replace(
+        _context(_CapturingCriticLLM("0")),
+        recombine_pair=_rec_pair(),
+        validate_experiment=hook,
+    )
+    agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
+    out = await agent.propose(ctx)
+    assert out.recombined_from == ("v1", "v2")
+    # ONE call: the mint's own validation. No post-selection re-derive.
+    assert len(hook.calls) == 1
+    assert hook.calls[0].recombined_from == ("v1", "v2")
+
+
+@pytest.mark.asyncio
+async def test_no_pair_on_context_is_byte_identical() -> None:
+    """Without a pair (every knob-off round) the slot loop is unchanged."""
+    candidates = _slate3()
+    inner = _ScriptedInnerAgent(candidates)
+    agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
+    out = await agent.propose(_context(_CapturingCriticLLM("1")))
+    assert inner.calls == 3
+    assert out is candidates[1]
+
+
+def test_field_threads_the_pair_to_slot_zero_only() -> None:
+    """The field path's slot-0-only rule: identical mints across the field
+    would collapse into field-diversity soft-rejects, so exactly one slot
+    per round may carry the pair."""
+    from zicato.orchestrator import _recombine_pair_for_slot
+
+    pair = _rec_pair()
+    assert _recombine_pair_for_slot(pair, 0) is pair
+    assert _recombine_pair_for_slot(pair, 1) is None
+    assert _recombine_pair_for_slot(pair, 3) is None
+    assert _recombine_pair_for_slot(None, 0) is None

@@ -1368,3 +1368,144 @@ def test_screened_slate_never_sends_broken_to_the_tournament(
         f"{forwarded_broken_screened}/{trials} times"
     )
     assert forwarded_broken_unscreened == trials  # the failing alternative
+
+
+# ===========================================================================
+# WS-REC — the recombination slot: operating characteristics of the UNION
+# under the SAME seeded noise model.
+#
+# The mechanical mint exists because two complementary fixes that are each
+# real-but-sub-margin can only clear the gate TOGETHER. These tests measure
+# both halves of that claim on the Tier-2 harness: (1) through the real
+# matchup + gate, the union's promotion probability strictly dominates a
+# single fix's under seeded noise; (2) the best-of-N heuristic — the
+# selection the short-circuit bypasses — would systematically STARVE the
+# union (its diff is larger by construction), which is WHY
+# selection_mode="recombined" exists.
+# ===========================================================================
+
+#: The two-defect champion of the recombination OC (the two-marker policy).
+REC_BASE_TOKENS = ("omit-summary", "skip-citations")
+#: One fix applied — one defect remains. True Δ = 1.2.
+REC_SINGLE_FIX_TOKENS = ("skip-citations",)
+#: Both fixes applied — the union. True Δ = 2.4.
+REC_UNION_TOKENS: tuple[str, ...] = ()
+
+#: The OC contract's margin — strictly between the single fix's true Δ
+#: (1.2) and the union's (2.4). Monotonicity off to isolate the margin
+#: rule (the same isolation the margin-vs-noise test uses).
+REC_MARGIN_WEIGHTS = ScoringWeights(promote_margin=1.5, pass_rate_monotonicity=False)
+
+REC_SIGMA = 0.10
+REC_TRIALS = 40
+
+
+def _rec_promotion_rate(
+    monkeypatch: pytest.MonkeyPatch, workspace: Path, challenger_tokens: tuple[str, ...]
+) -> float:
+    world = {"champion": REC_BASE_TOKENS, "challenger": challenger_tokens}
+    _NoisyWorld(world, REC_SIGMA).install(monkeypatch)
+    promoted = sum(
+        1
+        for trial in range(REC_TRIALS)
+        if _naive_outcome(workspace, seed=trial, weights=REC_MARGIN_WEIGHTS).decision == "promoted"
+    )
+    return promoted / REC_TRIALS
+
+
+def test_union_promotion_probability_dominates_single_fix(monkeypatch, tmp_path):
+    """P(promote | union) > P(promote | single fix) through the real gate.
+
+    Same seeds, same noise model, same margin — only the challenger
+    differs. The single fix's measured delta (1.2·(1−2σ) ≈ 0.96) sits
+    UNDER the 1.5 margin, so only noise can push it over; the union's
+    (2.4·(1−2σ) ≈ 1.92) sits OVER it, so only noise can pull it under.
+    The union is not merely a fresh sample of the same idea — it is a
+    categorically stronger effect the gate resolves at a higher rate.
+    """
+    single_rate = _rec_promotion_rate(monkeypatch, tmp_path, REC_SINGLE_FIX_TOKENS)
+    union_rate = _rec_promotion_rate(monkeypatch, tmp_path, REC_UNION_TOKENS)
+    print(
+        f"\n[recombination power] sigma={REC_SIGMA} margin="
+        f"{REC_MARGIN_WEIGHTS.promote_margin} trials={REC_TRIALS}: "
+        f"P(promote|single fix)={single_rate:.2f} P(promote|union)={union_rate:.2f}"
+    )
+    # The single fix is sub-margin: noise alone must carry it, rarely.
+    assert single_rate <= 0.5
+    # The union clears the margin: promoted in a decisive majority.
+    assert union_rate >= 0.5
+    # The headline: strict dominance, by a wide, seeded-deterministic gap.
+    assert union_rate >= single_rate + 0.25
+
+
+def test_heuristic_over_slate_starves_the_union(monkeypatch, tmp_path):
+    """Executable documentation: WHY selection_mode="recombined" exists.
+
+    Put the union mint on an ordinary best-of-N slate next to one of its
+    own single-fix parents and let the deterministic heuristic choose
+    (no short-circuit): the minimal-diff key picks the single fix EVERY
+    time — the union's diff is larger by construction (it carries both
+    parents' patches), so the parsimony bias the heuristic rightly applies
+    to speculative LLM samples systematically starves the one candidate
+    grounded in two rounds of measured evidence. The short-circuit is the
+    fix; the tournament gate remains the arbiter either way.
+    """
+    del monkeypatch, tmp_path
+    from zicato.core.types import Experiment, HypothesisSpec, Patch
+    from zicato.proposer.agent import ProposerContext
+    from zicato.proposer.best_of_n import _heuristic_best_index
+
+    def _patch(pid: str, mid: str) -> Patch:
+        return Patch(
+            id=pid,
+            mutation_id=mid,
+            op="replace",
+            new_content="x" * 40,
+            new_numeric=None,
+            new_enum=None,
+            rationale="fix",
+        )
+
+    def _exp(exp_id: str, patches: tuple[Patch, ...], recombined_from=()) -> Experiment:
+        return Experiment(
+            id=exp_id,
+            epoch_id="e0",
+            generation_id="v3",
+            parent_generation_id="v0",
+            proposed_at="2026-07-11T00:00:00+00:00",
+            hypothesis=HypothesisSpec(
+                core_idea=exp_id,
+                modulating=tuple(p.mutation_id for p in patches),
+                why="",
+                expected_drift_movements=(),
+                expected_pass_rate_delta="",
+            ),
+            patches=patches,
+            outcome=None,
+            recombined_from=tuple(recombined_from),
+        )
+
+    single = _exp("single-fix", (_patch("p1", "style_rules"),))
+    union = _exp(
+        "union-mint",
+        (_patch("p2", "style_rules"), _patch("p3", "style_rules_extra")),
+        recombined_from=("v1", "v2"),
+    )
+
+    async def _no_llm(system: str, user: str, model: str) -> str:
+        return "0"
+
+    ctx = ProposerContext(
+        epoch_id="e0",
+        parent_generation_id="v0",
+        new_generation_id="v3",
+        patterns=(),
+        mutations=(),
+        brief_text="",
+        current_loss_summary="",
+        aux_call_llm=_no_llm,
+    )
+    # Both slate orders: the union's larger diff loses to parsimony every
+    # time — never a stable-index accident.
+    assert _heuristic_best_index([single, union], ctx) == 0
+    assert _heuristic_best_index([union, single], ctx) == 1

@@ -1053,7 +1053,10 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
     # Best-of-N propose multiplier: each propose-step samples best_of_n
     # candidate experiments — auxiliary LLM CALLS, not board runs, so the
     # line is labelled and EXCLUDED from the board-runs headline. Real
-    # spend the operator should still see priced.
+    # spend the operator should still see priced. An UPPER BOUND under the
+    # recombination slot (proposer_quality.recombine): a round that mints
+    # a recombination pair REPLACES its last slot's propose call with the
+    # free mechanical mint, spending best_of_n − 1 calls that round.
     if quality.best_of_n > 1:
         propose_calls = proposes * quality.best_of_n
         lines.append(
