@@ -318,6 +318,24 @@ class ProposerQualityConfig:
         epochs never roll retroactively; a non-zero cap rolls the epoch,
         which is correct — a proposer shown process windows proposes
         under a different rule. Must be ``>= 0``.
+    recombine:
+        Opt-in mechanical recombination slot (WS-REC). When ``True`` AND
+        ``best_of_n > 1``, the orchestrator builds one recombination pair
+        per round (from the current reign's REJECTED, complementary,
+        disjoint-patch challengers) and, when a pair is found, the last
+        best-of-N slot MINTS the union of the two patch sets instead of
+        sampling the LLM — a non-vetoed mint is CHOSEN with
+        ``selection_mode="recombined"`` (a single winner can capture two
+        complementary fixes a parsimony-biased selector would each
+        discount). INERT unless ``best_of_n > 1`` (a single-sample proposer
+        has no slate slot to mint into) — and cost-neutral: the mint
+        REPLACES the slot's auxiliary propose call, never adds one.
+        ``False`` (default) is OFF — no pair is ever built and the propose
+        path is byte-identical. Omitted from the contract canonical form at
+        its ``False`` default so existing epochs never roll retroactively;
+        ``True`` rolls the epoch, which is correct — a proposer whose slate
+        can recombine rejected fixes proposes under a different rule. See
+        :mod:`zicato.epoch.recombine` / :mod:`zicato.proposer.recombine`.
     """
 
     best_of_n: int = 3
@@ -325,6 +343,7 @@ class ProposerQualityConfig:
     screen_entries: int = 0
     screen_veto_only: bool = False
     process_exemplars: int = 0
+    recombine: bool = False
 
     def __post_init__(self) -> None:
         if self.best_of_n < 1:

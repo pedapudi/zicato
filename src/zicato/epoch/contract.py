@@ -423,6 +423,12 @@ _SCORING_OMIT_AT_DEFAULT_FIELDS: frozenset[str] = frozenset(
         # rolls the epoch — a proposer shown redacted process windows
         # proposes under a different rule.
         "process_exemplars",
+        # Opt-in mechanical recombination slot (WS-REC). Lives on the nested
+        # ``ProposerQualityConfig`` like the screen knobs; omitted at its
+        # False default (no retroactive roll) and True rolls the epoch — a
+        # proposer whose slate can mint the union of two rejected fixes
+        # proposes under a different rule.
+        "recombine",
     }
 )
 
