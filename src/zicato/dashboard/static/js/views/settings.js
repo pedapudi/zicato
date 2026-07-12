@@ -69,12 +69,16 @@ const SECTIONS = [
 // discoverable affordance, but it navigates rather than swapping a section.
 const LAUNCHER = { view: 'builder', label: 'Tournament builder', glyph: '⚒' };
 
-// The four LLM roles the unified models section edits, in display order.
+// The LLM roles the unified models section edits, in display order. The two
+// proposer-ensemble roles (WS-ENS) are OPTIONAL and fall back to auxiliary when
+// unset — a change here, like every models role, does NOT roll the epoch.
 const MODEL_ROLES = [
   ['harness', 'Harness', 'The LLM the inner agent under evaluation runs on.'],
   ['auxiliary', 'Auxiliary', 'Every zicato-internal consumer — emulator, proposer, analysis.'],
   ['builder', 'Builder', 'The tournament-builder copilot.'],
   ['judge', 'Judge', 'In-run process judges / rubric matchers (falls back to auxiliary).'],
+  ['proposer_breadth', 'Proposer breadth', 'Best-of-N slate sampling — the exploratory ensemble half. A model spec steers the default proposer; a call_llm path applies only to text-shim/custom proposers. Falls back to auxiliary when unset.'],
+  ['proposer_depth', 'Proposer depth', 'Best-of-N critique + revise — the refine ensemble half. A model spec steers the default proposer; a call_llm path applies only to text-shim/custom proposers. Falls back to auxiliary when unset.'],
 ];
 const SECTION_IDS = SECTIONS.map((s) => s.id);
 // The default section a bare `#/settings` opens — sourced from the router so the
@@ -262,8 +266,9 @@ function contractRow(label, value, linkView) {
 // ── Models / LLM endpoints — EDITABLE per-role config (NAMES only) ────
 //
 // Generalises the former "Builder assistant" read-out into an EDITABLE
-// section for ALL FOUR roles (harness · auxiliary · builder · judge), backed
-// by the secret-safe GET/POST /settings/models. Each role toggles between the
+// section for EVERY role (harness · auxiliary · builder · judge ·
+// proposer_breadth · proposer_depth), backed by the
+// secret-safe GET/POST /settings/models. Each role toggles between the
 // `call_llm` dotted-path form and the `{model, endpoint, api_key_env}` form;
 // only the api_key_env NAME is ever shown/edited (plus a "set / unset"
 // indicator from the server's api_key_env_set boolean) — never a secret value.
@@ -317,7 +322,7 @@ async function renderModels() {
     if (_models == null) return [empty('Could not load the models settings.')];
     return [
       section('Models / LLM endpoints',
-        el('p', { class: 'dn-lede', text: 'How every role reaches an LLM — harness, auxiliary, builder, and judge. A model / endpoint is runtime INFRASTRUCTURE, not part of the evaluation contract, so a change here does NOT roll the epoch (unlike the Contract section).' }),
+        el('p', { class: 'dn-lede', text: 'How every role reaches an LLM — harness, auxiliary, builder, judge, and the two best-of-N proposer-ensemble roles (breadth / depth). A model / endpoint is runtime INFRASTRUCTURE, not part of the evaluation contract, so a change here does NOT roll the epoch (unlike the Contract section).' }),
         el('p', { class: 'dn-faint', text: 'For each role, either a call_llm dotted path or a model spec. Only the API-key environment-variable NAME is shown or edited — a secret value is never read or surfaced here.' }),
         el('div', { class: 'dn-set-models' }, MODEL_ROLES.map(roleCard)),
         modelsActions()),

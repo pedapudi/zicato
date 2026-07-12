@@ -951,9 +951,11 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
     * ``candidate-screen runs`` — the pre-tournament tryout panel
       (``proposes × best_of_n × panel``).
     * ``best-of-N propose calls`` — ``proposes × best_of_n`` AUXILIARY
-      LLM calls per round. NOT board runs, so the line is labelled
-      auxiliary and EXCLUDED from the board-runs headline — but it is
-      real money and belongs on the meter.
+      LLM calls per round (the slate SAMPLING — the WS-ENS
+      proposer-breadth role; the critique / revise DEPTH calls run on
+      proposer-depth and are not separately metered). NOT board runs, so
+      the line is labelled auxiliary and EXCLUDED from the board-runs
+      headline — but it is real money and belongs on the meter.
     * ``crowning-confirm runs`` — the evidence gate's defer→replicate
       budget: each replicate is a FRESH board sweep for BOTH crowning
       contestants, so ``budget × 2 × board``. Spent per CONFIRMED
@@ -1075,7 +1077,9 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
                 "best-of-N propose calls",
                 propose_calls,
                 f"proposes {proposes} × best_of_n {quality.best_of_n} — auxiliary "
-                "LLM calls, not board runs (excluded from the headline)",
+                "LLM calls on the proposer-breadth role (sampling); critique / "
+                "revise run on proposer-depth. Not board runs (excluded from the "
+                "headline)",
             )
         )
 

@@ -413,3 +413,136 @@ def test_models_collusion_guard_fires_when_harness_equals_auxiliary(
             },
             workspace_root=tmp_path,
         )
+
+
+# ---------------------------------------------------------------------------
+# WS-ENS ensemble proposer roles (breadth + depth)
+# ---------------------------------------------------------------------------
+
+
+def _install_proposer_role_callables(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Register distinct breadth / depth call_llm callables for dotted paths."""
+
+    async def _breadth(system: str, user: str, model: str) -> str:
+        del system, user, model
+        return "breadth"
+
+    async def _depth(system: str, user: str, model: str) -> str:
+        del system, user, model
+        return "depth"
+
+    mod = types.ModuleType("fake_proposer_roles_mod")
+    mod.breadth_fn = _breadth  # type: ignore[attr-defined]
+    mod.depth_fn = _depth  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "fake_proposer_roles_mod", mod)
+
+
+def test_proposer_roles_default_none_and_fall_back_to_auxiliary(tmp_path: Path) -> None:
+    """Absent ``models.proposer_{breadth,depth}`` ⇒ ``None`` and the effective
+    accessors resolve to the SAME auxiliary callable object (byte-identical)."""
+    cfg = make_runtime_config(
+        {},
+        workspace_root=tmp_path,
+        harness_call_llm=_stub_harness,
+        auxiliary_call_llm=_stub_aux,
+    )
+    assert cfg.proposer_breadth_call_llm is None
+    assert cfg.proposer_depth_call_llm is None
+    assert cfg.proposer_breadth_model is None
+    assert cfg.proposer_depth_model is None
+    # The fall-back is the auxiliary callable — the very object sampling +
+    # critique always used, so an unconfigured ensemble is byte-identical.
+    assert cfg.effective_proposer_breadth_call_llm() is _stub_aux
+    assert cfg.effective_proposer_depth_call_llm() is _stub_aux
+
+
+def test_proposer_roles_resolve_from_models_block(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``models.proposer_breadth`` / ``proposer_depth`` (dotted form) resolve to
+    their own callables, distinct from the auxiliary surface."""
+    _install_models_callables(monkeypatch)
+    _install_proposer_role_callables(monkeypatch)
+    cfg = make_runtime_config(
+        {
+            "models": {
+                "harness": {"call_llm": "fake_models_mod:harness_fn"},
+                "auxiliary": {"call_llm": "fake_models_mod:aux_fn"},
+                "proposer_breadth": {"call_llm": "fake_proposer_roles_mod:breadth_fn"},
+                "proposer_depth": {"call_llm": "fake_proposer_roles_mod:depth_fn"},
+            }
+        },
+        workspace_root=tmp_path,
+    )
+    assert cfg.proposer_breadth_call_llm is not None
+    assert cfg.proposer_depth_call_llm is not None
+    assert cfg.effective_proposer_breadth_call_llm() is cfg.proposer_breadth_call_llm
+    assert cfg.effective_proposer_depth_call_llm() is cfg.proposer_depth_call_llm
+    assert cfg.effective_proposer_breadth_call_llm() is not cfg.auxiliary_call_llm
+    assert cfg.effective_proposer_depth_call_llm() is not cfg.auxiliary_call_llm
+    # A call_llm (dotted) role has NO model name — the model-string thread stays
+    # None, so it steers only proposers that read ``ctx.aux_call_llm``.
+    assert cfg.proposer_breadth_model is None
+    assert cfg.proposer_depth_model is None
+
+
+def test_proposer_roles_model_spec_captures_model_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A ``models.proposer_{breadth,depth}`` *model spec* captures its model-name
+    string onto the config so the wrapper can thread it onto ``ctx.model`` (the
+    default ADK proposer's binding)."""
+    pytest.importorskip("litellm")
+    _install_models_callables(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-dummy")
+    cfg = make_runtime_config(
+        {
+            "models": {
+                "harness": {"call_llm": "fake_models_mod:harness_fn"},
+                "auxiliary": {"call_llm": "fake_models_mod:aux_fn"},
+                "proposer_breadth": {
+                    "model": "openai/breadth-model",
+                    "endpoint": "http://kossel.lan:8080/v1",
+                    "api_key_env": "OPENAI_API_KEY",
+                },
+                "proposer_depth": {
+                    "model": "openai/depth-model",
+                    "endpoint": "http://kossel.lan:8080/v1",
+                    "api_key_env": "OPENAI_API_KEY",
+                },
+            }
+        },
+        workspace_root=tmp_path,
+    )
+    assert cfg.proposer_breadth_model == "openai/breadth-model"
+    assert cfg.proposer_depth_model == "openai/depth-model"
+    # The callables resolved too (both threads carry the spec).
+    assert cfg.proposer_breadth_call_llm is not None
+    assert cfg.proposer_depth_call_llm is not None
+
+
+def test_proposer_roles_no_collusion_guard_between_breadth_and_depth(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Breadth and depth may be the SAME callable — one proposer-side trust
+    domain, so the collusion identity-guard does NOT apply between them.
+
+    (Contrast ``test_models_collusion_guard_fires_when_harness_equals_auxiliary``:
+    that guard is for evaluator-vs-evaluated separation, not proposer roles.)
+    """
+    _install_models_callables(monkeypatch)
+    _install_proposer_role_callables(monkeypatch)
+    cfg = make_runtime_config(
+        {
+            "models": {
+                "harness": {"call_llm": "fake_models_mod:harness_fn"},
+                "auxiliary": {"call_llm": "fake_models_mod:aux_fn"},
+                # deliberately the SAME callable for both proposer roles.
+                "proposer_breadth": {"call_llm": "fake_proposer_roles_mod:breadth_fn"},
+                "proposer_depth": {"call_llm": "fake_proposer_roles_mod:breadth_fn"},
+            }
+        },
+        workspace_root=tmp_path,
+    )
+    # No error was raised, and both roles resolved to the identical object.
+    assert cfg.proposer_breadth_call_llm is cfg.proposer_depth_call_llm

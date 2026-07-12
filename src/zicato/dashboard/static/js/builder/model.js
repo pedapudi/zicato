@@ -347,7 +347,7 @@ export function estimateCost(structure, params, trainCount, holdoutCount, propos
   // listed on the meter (real spend) but EXCLUDED from the headline.
   if (bestOfN > 1) {
     lines.push(costLine('best-of-N propose calls', proposes * bestOfN,
-      `proposes ${proposes} × best_of_n ${bestOfN} — auxiliary LLM calls, not board runs (excluded from the headline)`));
+      `proposes ${proposes} × best_of_n ${bestOfN} — auxiliary LLM calls on the proposer-breadth role (sampling); critique / revise run on proposer-depth. Not board runs (excluded from the headline)`));
   }
 
   // The evidence gate's crowning-confirm budget: budget × 2 contestants ×

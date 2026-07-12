@@ -367,15 +367,19 @@ def assert_distinct_callables(
 ) -> None:
     """Enforce that the two LLM callables on :class:`RuntimeConfig` differ.
 
-    The emulator, proposer, judge, and analysis pass run on the
-    ``auxiliary_call_llm`` side; the inner harness runs on the
-    ``harness_call_llm`` side. If the two sides share a callable, the
-    emulator and the inner harness execute through the same process
-    state and risk colluding (the inner harness can perceive the
-    emulator's prompts, the emulator can leak the expected output
-    through shared state, etc.). The collusion risk is high enough that
-    we refuse to start the run when the two callables are identity-
-    equal.
+    The emulator, judge, and analysis pass run on the ``auxiliary_call_llm``
+    side; the inner harness runs on the ``harness_call_llm`` side. If the two
+    sides share a callable, the emulator and the inner harness execute through
+    the same process state and risk colluding (the inner harness can perceive
+    the emulator's prompts, the emulator can leak the expected output through
+    shared state, etc.). The collusion risk is high enough that we refuse to
+    start the run when the two callables are identity-equal.
+
+    The WS-ENS proposer ROLE callables (breadth / depth) are guard-exempt:
+    they are proposer-side, one trust domain, and may freely be the same
+    callable as each other or as the auxiliary. The emulator↔harness collusion
+    risk this guard defends rides the still-guarded auxiliary surface, not the
+    proposer roles.
 
     Raises
     ------
