@@ -29,10 +29,25 @@ the gauntlet path and the field path now call the SAME code. Behaviour is
 identical — the validator factory reproduces the closure's beat / derive /
 validate sequence verbatim, and the manifest check raises the same two
 ``RuntimeError`` messages.
+
+Concurrency note (WS-CONC): under best-of-N slate parallelism the per-slot
+``validate`` hook from :func:`build_scratch_validator_factory` calls
+``genstore.derive_scratch`` SYNCHRONOUSLY on the event loop — there is no
+``await`` between the derive's start and finish — so two slots' derives never
+overlap in time; only the LLM propose calls actually yield and run
+concurrently. Even a hypothetical overlap would be safe, because each slot
+derives into its own disjoint ``ztw-slate-*`` scratch path. The git backend's
+one shared touch is the first ``snapshot_root`` that materialises the parent
+worktree; that is pre-warmed once here, and its cold-store materialisation is
+made idempotent under the worktree-admin lock
+(:meth:`zicato.epoch.git_genstore.GitGenerationStore._materialise_worktree`),
+so a future threaded caller that raced the pre-warm would still be safe.
 """
 
 from __future__ import annotations
 
+import shutil
+import tempfile
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -42,6 +57,72 @@ from zicato.evolve.lifecycle_services import _beat
 if TYPE_CHECKING:
     from zicato.core.types import Experiment
     from zicato.runtime.heartbeat import HeartbeatBeater
+
+#: One scratch-validator lease: the ``validate_experiment`` hook the wrapper
+#: threads onto ONE slate slot, plus its idempotent cleanup. The wrapper
+#: allocates one lease per slot from
+#: :func:`build_scratch_validator_factory`, runs the slot through the hook,
+#: and calls the cleanup in a ``finally`` (including on propose failure /
+#: degrade) so the slot's scratch tree never outlives the slot.
+ScratchValidatorLease = tuple[
+    "Callable[[Experiment], Awaitable[list[str]]]",
+    Callable[[], None],
+]
+#: The zero-arg factory threaded on ``ProposerContext.scratch_validator_factory``.
+#: Each call mints a FRESH, disjoint scratch tree + validator lease.
+ScratchValidatorFactory = Callable[[], ScratchValidatorLease]
+
+#: Prefix for a best-of-N slate slot's ephemeral scratch derivation parent.
+#: Placed in the OS temp dir so it never sits under the workspace tree —
+#: nothing under it can be mistaken for a canonical generation snapshot.
+#:
+#: Lifecycle — a slate parent is NOT crash-reaped like a run's ``ztw-snap-*``
+#: checkout. The supervisor's reaper (``reap.rs``) only removes paths RECORDED
+#: as a run's ``snapshot_path``; a slate parent is a per-slot dir private to
+#: the orchestrator process and is never recorded, so the reaper cannot see
+#: it. Its cleanup is instead: (1) the slot's ``try/finally`` removes it on
+#: every normal exit (success, propose failure, or degrade); (2) a SIGKILL
+#: that skips the ``finally`` leaks it, and those leaks are collected by the
+#: OS temp-dir cleaner and by the best-effort startup sweep
+#: :func:`_sweep_stale_slate_scratch` runs from
+#: :func:`build_scratch_validator_factory`.
+SLATE_SCRATCH_PREFIX = "ztw-slate-"
+
+#: Age past which the startup sweep treats a stray ``ztw-slate-*`` parent as a
+#: crash leak. Comfortably longer than any live slate slot (which lives for one
+#: propose attempt), so an in-flight sibling orchestrator's dirs are never
+#: touched.
+_SLATE_SCRATCH_STALE_SECONDS = 24 * 60 * 60
+
+
+def _sweep_stale_slate_scratch() -> None:
+    """Best-effort removal of crash-leaked ``ztw-slate-*`` parents in the temp root.
+
+    A SIGKILL between :func:`tempfile.mkdtemp` and the slot's ``finally`` leaks
+    a ``ztw-slate-*`` parent — the ``try/finally`` cannot run, and the
+    supervisor's reaper never sees it (it reaps only RECORDED run snapshots).
+    This cheap, bounded sweep — glob the OS temp root for our prefix and remove
+    the dirs older than :data:`_SLATE_SCRATCH_STALE_SECONDS` — is run once when
+    a round builds its scratch-validator factory. It NEVER raises: any error
+    (permission, a dir vanishing mid-sweep, a racing sibling) is swallowed so a
+    housekeeping hiccup can never fail a round.
+    """
+    import time  # noqa: PLC0415
+
+    try:
+        temp_root = Path(tempfile.gettempdir())
+        cutoff = time.time() - _SLATE_SCRATCH_STALE_SECONDS
+        for entry in temp_root.glob(f"{SLATE_SCRATCH_PREFIX}*"):
+            try:
+                if not entry.is_dir():
+                    continue
+                if entry.stat().st_mtime >= cutoff:
+                    continue
+                shutil.rmtree(entry, ignore_errors=True)
+            except OSError:
+                continue
+    except OSError:
+        return
 
 
 def build_post_apply_validator(
@@ -110,6 +191,95 @@ def build_post_apply_validator(
         return validate_post_apply(child, list(candidate.patches), mutations)
 
     return _validate
+
+
+def build_scratch_validator_factory(
+    *,
+    genstore: Any,
+    epoch_id: str,
+    parent_id: str,
+    next_id: str,
+    mutations: list[Any],
+    beater: HeartbeatBeater | None,
+    round_index: int,
+) -> ScratchValidatorFactory:
+    """Build the per-slot scratch ``validate_experiment`` factory (WS-CONC).
+
+    The concurrency-enabling sibling of :func:`build_post_apply_validator`.
+    Where that shared hook derives every attempt into the ONE shared
+    ``next_id`` tree — the write that serialises the slate — this factory
+    hands each slate slot its OWN throwaway scratch tree, so N slots can
+    validate concurrently against fully disjoint directories.
+
+    Each ``factory()`` call:
+
+    * allocates a fresh :func:`tempfile.mkdtemp` parent (``ztw-slate-*`` in
+      the OS temp dir, OUTSIDE the workspace so nothing under it can be
+      mistaken for a canonical snapshot) and a ``child`` scratch path under
+      it;
+    * returns a ``(validate, cleanup)`` lease. ``validate`` beats the
+      ``applying`` phase, calls ``genstore.derive_scratch`` (which applies
+      the candidate's patches into the scratch tree WITHOUT touching the
+      generation namespace — see
+      :meth:`zicato.epoch.genstore.GenerationStore.derive_scratch` — so no
+      walker can ever enumerate it), and runs
+      :func:`zicato.mutation.validator.validate_post_apply`. A retry within
+      the slot re-derives into the SAME scratch tree (idempotent
+      clear-and-reapply). ``cleanup`` idempotently removes the whole
+      ``ztw-slate-*`` parent.
+
+    The parent generation's source tree is pre-warmed ONCE here (the git
+    backend materialises the parent worktree under its admin lock on first
+    ``snapshot_root``), so the concurrent ``derive_scratch`` calls find it
+    already present and only ever READ it — the derives race on nothing.
+
+    The chosen candidate is still mounted into the real ``next_id`` exactly
+    once, AFTER selection, through the shared
+    :func:`build_post_apply_validator` hook (the wrapper's unconditional
+    final derive) — this factory never writes the canonical tree.
+    """
+    from zicato.mutation.validator import validate_post_apply  # noqa: PLC0415
+
+    # Sweep any crash-leaked ``ztw-slate-*`` parents left by a prior SIGKILL
+    # before this round allocates its own (best-effort, never raises).
+    _sweep_stale_slate_scratch()
+
+    # Pre-warm the parent source tree once so concurrent slot derives find it
+    # materialised and only read it (git: first snapshot_root checks out the
+    # parent worktree under the process worktree-admin lock).
+    genstore.snapshot_root(epoch_id, parent_id)
+
+    def _factory() -> ScratchValidatorLease:
+        from zicato.epoch.genstore import discard_ephemeral_parent  # noqa: PLC0415
+
+        parent = Path(tempfile.mkdtemp(prefix=SLATE_SCRATCH_PREFIX))
+        scratch_root = parent / "child"
+
+        async def _validate(candidate: Experiment) -> list[str]:
+            _beat(
+                beater,
+                epoch_id=epoch_id,
+                generation_id=next_id,
+                round_index=round_index,
+                phase=f"applying:round_{round_index}:{next_id}",
+            )
+            try:
+                child = genstore.derive_scratch(
+                    epoch_id=epoch_id,
+                    parent_generation_id=parent_id,
+                    patches=list(candidate.patches),
+                    scratch_root=scratch_root,
+                )
+            except ValueError as exc:
+                return [f"derive_generation rejected the patch set: {exc}"]
+            return validate_post_apply(child, list(candidate.patches), mutations)
+
+        def _cleanup() -> None:
+            discard_ephemeral_parent(parent)
+
+        return _validate, _cleanup
+
+    return _factory
 
 
 def check_patch_manifest_and_forbidden(

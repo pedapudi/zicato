@@ -476,10 +476,10 @@ def _slate3() -> list[Experiment]:
 
 @pytest.mark.asyncio
 async def test_chosen_earlier_candidate_rederives_its_child_tree() -> None:
-    """When the selection picks a candidate that is NOT the last-validated
-    one, the wrapper re-runs the validation hook on the pick so the on-disk
-    child tree (derived per attempt, last-writer-wins) matches the
-    experiment the caller will mount + persist."""
+    """WS-CONC: the chosen candidate is mounted into the real next_id tree by
+    one unconditional final derive after selection, so the on-disk child tree
+    matches the experiment the caller mounts + persists — here the pick is an
+    EARLIER slate slot, but the mount runs the same either way."""
     from dataclasses import replace as _replace
 
     candidates = _slate3()
@@ -503,9 +503,10 @@ async def test_chosen_earlier_candidate_rederives_its_child_tree() -> None:
 
 
 @pytest.mark.asyncio
-async def test_chosen_last_candidate_skips_the_rederive() -> None:
-    """Picking the last-sampled candidate needs no extra derive — its tree
-    is already the one on disk."""
+async def test_chosen_last_candidate_is_still_mounted() -> None:
+    """WS-CONC: every slot validated into its OWN scratch tree (now gone), so
+    the chosen candidate is UNCONDITIONALLY derived into the real next_id
+    once after selection — even when the pick is the last-sampled slot."""
     from dataclasses import replace as _replace
 
     candidates = _slate3()
@@ -515,7 +516,8 @@ async def test_chosen_last_candidate_skips_the_rederive() -> None:
     agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
     out = await agent.propose(ctx)
     assert out is candidates[2]
-    assert hook.calls == []
+    # Exactly one final mount, for the chosen candidate — no conditional skip.
+    assert hook.calls == [candidates[2]]
 
 
 @pytest.mark.asyncio
@@ -530,63 +532,59 @@ async def test_no_validation_hook_keeps_selection_untouched() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rederive_failure_falls_back_to_last_validated_candidate() -> None:
-    """An unexpected re-validate failure (it validated cleanly moments ago)
-    falls back to the LAST-validated candidate — restoring that candidate's
-    tree — so the mounted tree and the returned (persisted) experiment stay
-    consistent either way."""
-    from dataclasses import replace as _replace
-
-    candidates = _slate3()
-    inner = _ScriptedInnerAgent(candidates)
-    # First post-selection call (the chosen candidate 0) fails; the restore
-    # call (the last-validated candidate 2) succeeds.
-    hook = _RecordingValidator(findings_script=[["parent tree changed underneath the slate"]])
-    events: list[tuple[str, dict]] = []
-    ctx = _replace(
-        _context(_CapturingCriticLLM("0")),
-        validate_experiment=hook,
-        round_event_emitter=lambda t, f: events.append((t, f)),
-    )
-    agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
-    out = await agent.propose(ctx)
-    # The experiment the caller persists IS the candidate whose tree is now
-    # on disk: the fallback re-derived candidate 2 after candidate 0's
-    # failed re-derive cleared the tree.
-    assert out is candidates[2]
-    assert hook.calls == [candidates[0], candidates[2]]
-    selected = dict(events)["critique_selected"]
-    assert selected["index"] == 2
-    assert selected["reason"] == "critique:revalidate-fallback"
-
-
-@pytest.mark.asyncio
-async def test_rederive_and_restore_both_failing_raises_proposer_error() -> None:
-    """When even the fallback candidate no longer re-derives, no consistent
-    tree can be mounted — the step surfaces the standard ProposerError the
-    call sites already handle."""
+async def test_mount_failure_raises_proposer_error() -> None:
+    """WS-CONC: the chosen candidate validated cleanly in its scratch tree
+    moments ago, so a final-mount failure is unexpected — and with NO shared
+    last-validated tree to fall back to, it surfaces the standard
+    ProposerError every call site already handles."""
     from dataclasses import replace as _replace
 
     from zicato.proposer.proposer import ProposerError
 
     candidates = _slate3()
     inner = _ScriptedInnerAgent(candidates)
-    hook = _RecordingValidator(findings_script=[["chosen failed"], ["fallback failed"]])
+    hook = _RecordingValidator(findings_script=[["parent tree changed underneath the slate"]])
+    ctx = _replace(_context(_CapturingCriticLLM("0")), validate_experiment=hook)
+    agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
+    with pytest.raises(ProposerError) as exc_info:
+        await agent.propose(ctx)
+    assert any("parent tree changed" in a for a in exc_info.value.attempts)
+    # Only the chosen candidate was mounted — there is no second candidate to
+    # fall back to (the shared last-validated tree is gone).
+    assert hook.calls == [candidates[0]]
+
+
+@pytest.mark.asyncio
+async def test_mount_failure_does_not_attempt_a_fallback() -> None:
+    """The retired ``_align_child_tree`` fell back to the last-validated
+    candidate on a re-derive failure; the unconditional final mount has no
+    shared tree to fall back to, so it re-validates ONLY the chosen candidate
+    and surfaces its finding — never a second candidate's."""
+    from dataclasses import replace as _replace
+
+    from zicato.proposer.proposer import ProposerError
+
+    candidates = _slate3()
+    inner = _ScriptedInnerAgent(candidates)
+    hook = _RecordingValidator(findings_script=[["chosen failed"], ["would-be fallback"]])
     ctx = _replace(_context(_CapturingCriticLLM("0")), validate_experiment=hook)
     agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
     with pytest.raises(ProposerError) as exc_info:
         await agent.propose(ctx)
     attempts = list(exc_info.value.attempts)
     assert any("chosen failed" in a for a in attempts)
-    assert any("fallback failed" in a for a in attempts)
+    assert not any("would-be fallback" in a for a in attempts)
+    assert hook.calls == [candidates[0]]
 
 
 @pytest.mark.asyncio
-async def test_rederive_hook_raising_is_folded_into_the_fallback() -> None:
-    """A hook that RAISES (doubly unexpected — its contract is to return
-    findings) is treated exactly like findings: fall back, restore, return
-    the last-validated candidate."""
+async def test_mount_hook_raising_is_folded_into_the_error() -> None:
+    """A mount hook that RAISES (doubly unexpected — its contract is to return
+    findings) is folded into a finding and surfaces the standard ProposerError
+    — no fallback candidate is tried."""
     from dataclasses import replace as _replace
+
+    from zicato.proposer.proposer import ProposerError
 
     candidates = _slate3()
     inner = _ScriptedInnerAgent(candidates)
@@ -594,15 +592,14 @@ async def test_rederive_hook_raising_is_folded_into_the_fallback() -> None:
 
     async def _hook(candidate: Experiment) -> list[str]:
         calls.append(candidate)
-        if len(calls) == 1:
-            raise RuntimeError("boom")
-        return []
+        raise RuntimeError("boom")
 
     ctx = _replace(_context(_CapturingCriticLLM("0")), validate_experiment=_hook)
     agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
-    out = await agent.propose(ctx)
-    assert out is candidates[2]
-    assert calls == [candidates[0], candidates[2]]
+    with pytest.raises(ProposerError) as exc_info:
+        await agent.propose(ctx)
+    assert any("boom" in a for a in exc_info.value.attempts)
+    assert calls == [candidates[0]]
 
 
 # --------------------------------------------------------------------------
@@ -1223,9 +1220,10 @@ async def test_revise_malformed_screen_result_treated_as_unscreened_survivor() -
 
 
 @pytest.mark.asyncio
-async def test_revise_survivor_needs_no_tree_realign() -> None:
-    # The chosen replacement is the LAST-validated candidate — the tree
-    # alignment is a no-op (no extra hook call after selection).
+async def test_revise_survivor_is_mounted() -> None:
+    # WS-CONC: the chosen revise replacement (the last candidate) is still
+    # mounted into next_id by the one unconditional final derive — its own
+    # scratch validation tree is gone.
     _, inner, screen, critic = _revise_fixture(replacement_result=_screen_result())
     hook = _RecordingValidator()
     from dataclasses import replace as _replace
@@ -1234,15 +1232,16 @@ async def test_revise_survivor_needs_no_tree_realign() -> None:
     agent = BestOfNProposerAgent(
         inner=inner, config=ProposerQualityConfig(best_of_n=2, screen_entries=2)
     )
-    await agent.propose(ctx)
-    assert hook.calls == []
+    out = await agent.propose(ctx)
+    assert hook.calls == [out]
 
 
 @pytest.mark.asyncio
-async def test_revise_fallback_realigns_the_chosen_original_tree() -> None:
-    # Revise-also-vetoed: the selection returns to an ORIGINAL candidate,
-    # but the replacement's validation re-derived the shared child tree —
-    # the alignment must re-derive the chosen original's tree.
+async def test_revise_fallback_mounts_the_chosen_original() -> None:
+    # Revise-also-vetoed: the selection returns to an ORIGINAL candidate. The
+    # one unconditional final derive mounts exactly that chosen original — the
+    # replacement validated into its OWN scratch tree, so nothing shared was
+    # clobbered.
     candidates, inner, screen, critic = _revise_fixture(
         replacement_result=_screen_result(vetoed=True, passes=0), critic="0"
     )
@@ -1259,10 +1258,10 @@ async def test_revise_fallback_realigns_the_chosen_original_tree() -> None:
 
 
 @pytest.mark.asyncio
-async def test_failed_revise_restores_the_last_validated_tree() -> None:
-    # The revise propose fails after the failed attempts may have clobbered
-    # the shared child tree: the wrapper restores the last ORIGINAL
-    # candidate's tree before selecting, then aligns the chosen pick.
+async def test_failed_revise_needs_no_tree_restore() -> None:
+    # WS-CONC: the revise propose fails, but the replacement validated into
+    # its OWN throwaway scratch tree — there is no shared tree to restore. The
+    # step degrades to critic-over-all and mounts ONLY the chosen original.
     cand0 = _experiment(core_idea="a", mutation_id="router__sp", new_content="a")
     cand1 = _experiment(core_idea="b", mutation_id="writer__sp", new_content="b")
     inner = _ExhaustibleInnerAgent([cand0, cand1])  # the revise call raises
@@ -1278,9 +1277,8 @@ async def test_failed_revise_restores_the_last_validated_tree() -> None:
     )
     out = await agent.propose(ctx)
     assert out is cand0
-    # Restore of cand1 (the last original), then the alignment re-derive of
-    # the chosen cand0.
-    assert hook.calls == [cand1, cand0]
+    # No restore — only the mount of the chosen original.
+    assert hook.calls == [cand0]
 
 
 @pytest.mark.asyncio
@@ -1492,10 +1490,11 @@ async def test_vetoed_mint_stays_an_ordinary_slate_member() -> None:
 
 
 @pytest.mark.asyncio
-async def test_chosen_mint_needs_no_tree_realign() -> None:
-    """The mint lands in the LAST slot and validates during minting, so a
-    chosen mint is the last-validated candidate — the alignment pass never
-    re-derives (exactly one hook call, the mint's own validation)."""
+async def test_chosen_mint_is_scratch_validated_then_mounted() -> None:
+    """WS-CONC: the mint validates during minting in its OWN scratch tree,
+    then the chosen mint is mounted into next_id by the one unconditional
+    final derive — two hook calls, both the recombined mint (there is no
+    shared last-validated tree to skip against)."""
     from dataclasses import replace as _replace
 
     candidates = _slate3()[:2]
@@ -1509,9 +1508,10 @@ async def test_chosen_mint_needs_no_tree_realign() -> None:
     agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
     out = await agent.propose(ctx)
     assert out.recombined_from == ("v1", "v2")
-    # ONE call: the mint's own validation. No post-selection re-derive.
-    assert len(hook.calls) == 1
-    assert hook.calls[0].recombined_from == ("v1", "v2")
+    # Two calls: the mint's scratch validation, then the final mount of the
+    # chosen mint — both the recombined experiment.
+    assert len(hook.calls) == 2
+    assert all(c.recombined_from == ("v1", "v2") for c in hook.calls)
 
 
 @pytest.mark.asyncio

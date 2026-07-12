@@ -463,8 +463,71 @@ from gather-completion order):
    `0..k-1`) is a SEMANTIC dependency on the earlier slots, not merely a
    log-ordering one. It belongs to the ordered pass and — like the
    sibling-conditioning above — cannot be reproduced by a blind gather.
+8. **The slate loop's `validate_experiment` hook is a shared-DIRECTORY
+   write (the derive transaction), NOT just an event-ordering surface.**
+   Every slot's `inner.propose` runs `ctx.validate_experiment`
+   (`evolve/round.py::build_post_apply_validator._validate`), which calls
+   `genstore.derive_generation(epoch_id, parent_id, child_generation_id=next_id, …)`
+   — an `rmtree` + `apply_patches` against the ONE shared
+   `generations/{next_id}/snapshot/` (directory backend) or the ONE shared
+   epoch-branch working tree, tag, and `.derive-scratch` path (git backend)
+   — plus the shared `last_child_snapshot["path"]` mutation. `_align_child_tree`
+   then assumes the on-disk tree belongs to the LAST-validated candidate.
+   Two concurrent slots deriving into the same `next_id` would corrupt the
+   tree, make validation findings scheduling-dependent, and turn
+   `tests/test_best_of_n_tree_integrity.py` flaky. So — UNLIKE the field
+   loop, whose `v{base_n+offset}` ids already name disjoint directories
+   (item 1) — the slate is NOT gatherable as-is: the shared derive
+   transaction is the slate's version of the field's structural
+   precondition, and must be split (below) before the gather is sound.
 
-**Structural precondition (the split).** None of the above is reachable
+**Structural precondition (the slate split).** The slate loop's blocker
+mirrors the field loop's: side effects (here the shared `next_id` derive)
+run *inside* the coroutine, so "gather, then finalize in order" is
+unreachable until the derive is split off. The split commit 2 implements:
+
+- **Per-slot scratch derivation.** Each slate slot validates into its OWN
+  throwaway scratch child tree (a `mkdtemp` parent, cleaned in `try/finally`
+  including on propose failure/degrade), NOT the shared `next_id` tree, via
+  a new `GenerationStore.derive_scratch(epoch_id, parent_generation_id,
+  patches, scratch_root)` — a pure `apply_patches` into a disjoint temp
+  dir that NEVER enters the generation namespace (no commit, no tag, no
+  branch/working-tree mutation), so it is provably invisible to every
+  walker (records listing, lineage, GC, reindex, the dashboard readers all
+  enumerate tags/`generations/` — never a temp dir). Two slots' scratches
+  are fully disjoint, so the derive races on nothing. The scratch validator
+  is built once per round beside `build_post_apply_validator`
+  (`evolve/round.py::build_scratch_validator_factory`) and threaded onto
+  `ProposerContext.scratch_validator_factory`; the wrapper allocates one
+  scratch validator per slot.
+- **One unconditional post-selection derive.** After the critique/selection
+  pass picks the winner, the chosen candidate is ALWAYS derived into the
+  real `next_id` (via the round's own `build_post_apply_validator` hook),
+  guaranteeing the mounted tree == the chosen candidate. This REPLACES
+  `_align_child_tree`'s conditional "re-derive only when chosen != last-
+  validated" logic (and retires the `_restore_last_validated_tree`
+  bookkeeping the shared tree needed): with per-slot scratch there is no
+  shared last-validated tree to align against, so the funnel simplifies to
+  one always-runs final derive that raises the standard `ProposerError`
+  when the chosen candidate cannot be re-derived. The recombination-mint /
+  llm-merge slots and their degrade paths ride the same per-slot scratch
+  mechanics.
+- **The gather.** With the slots now write-disjoint, the N samples run
+  concurrently under a `RuntimeConfig.propose_parallelism` semaphore
+  (runtime-only — never part of the scoring canonical form; default 4;
+  `propose_parallelism=1` reproduces serial behavior byte-identically).
+  The `candidate_sampled` round events, candidates-list order, and any
+  pinned logging are all emitted in SLOT order in the deterministic
+  post-gather pass; per-slot failures are captured per-slot so one slot
+  failing never loses the others. The `applying` progress BEATS are the
+  one exception: each slot's `_beat` fires MID-gather, in completion
+  order, from inside its scratch validator — not in the post-gather pass.
+  This is benign because every slot beats the identical phase string
+  (`applying:round_{i}:{next_id}`, keyed on the shared child id with no
+  slot identity), so a completion-ordered sequence of these beats is
+  indistinguishable from a slot-ordered one to any observer.
+
+**Structural precondition (the field split).** None of the above is reachable
 while `_propose_and_apply_challenger` runs its side effects *inside* the
 coroutine: today it both proposes AND ingests
 (`_ingest_experiment_into_index`, `:1751`), writes the pending lineage node

@@ -80,6 +80,7 @@ from zicato.evolve.lifecycle_services import (
 )
 from zicato.evolve.round import (
     build_post_apply_validator,
+    build_scratch_validator_factory,
     check_patch_manifest_and_forbidden,
 )
 from zicato.runtime.control_consumer import (
@@ -413,6 +414,14 @@ async def evolve_once(
     # never rolls the epoch.
     from zicato.proposer.best_of_n import wrap_with_proposer_quality  # noqa: PLC0415
 
+    # WS-CONC: the best-of-N slate SAMPLES fan out under
+    # ``config.propose_parallelism`` (a runtime-only knob, never part of the
+    # frozen contract). ``1`` runs the slate serially, byte-identically to the
+    # pre-concurrency wrapper; the deterministic post-gather pass makes any
+    # value produce the same slate + event stream regardless of completion
+    # order. Each slot validates into its OWN scratch tree (the factory the
+    # propose builders thread on the context), so the samples never race on the
+    # shared ``next_id`` derive.
     proposer_agent = wrap_with_proposer_quality(
         proposer_agent,
         weights.proposer_quality,
@@ -420,6 +429,7 @@ async def evolve_once(
         depth_call_llm=config.proposer_depth_call_llm,
         breadth_model=config.proposer_breadth_model,
         depth_model=config.proposer_depth_model,
+        propose_parallelism=config.propose_parallelism,
     )
 
     # --- 2. Parent generation ---
@@ -768,6 +778,20 @@ async def evolve_once(
         round_index=round_index,
         last_child_snapshot=last_child_snapshot,
     )
+    # WS-CONC: the per-slot scratch-validator factory — each best-of-N slate
+    # slot leases a FRESH disjoint scratch tree from this so the samples can
+    # gather without racing on the shared ``next_id`` derive above. Threaded
+    # onto the ProposerContext; the shared validator above still does the ONE
+    # canonical ``next_id`` derive for the chosen candidate after selection.
+    _scratch_validator_factory = build_scratch_validator_factory(
+        genstore=genstore,
+        epoch_id=resolved_epoch_id,
+        parent_id=parent_id,
+        next_id=next_id,
+        mutations=mutations,
+        beater=beater,
+        round_index=round_index,
+    )
 
     # Experiment memory: the settled cross-round digest for this epoch.
     # Best-effort — a missing / stale index yields an empty list and the
@@ -852,6 +876,7 @@ async def evolve_once(
                 round_emitter=round_log,
                 screen_candidates=screen_candidates,
                 recombine_pair=recombine_pair,
+                scratch_validator_factory=_scratch_validator_factory,
             )
         except ProposerError as exc:
             # The proposer exhausted its bounded retries without producing
@@ -1702,6 +1727,19 @@ async def _propose_and_apply_challenger(
         round_index=round_index,
         last_child_snapshot=last_child_snapshot,
     )
+    # WS-CONC: per-slot scratch-validator factory (see the gauntlet path). The
+    # field proposes challengers sequentially — sibling-conditioning is an
+    # intentional diversity property — but each challenger's best-of-N slate
+    # still gathers internally, so every slate slot needs its own scratch tree.
+    _scratch_validator_factory = build_scratch_validator_factory(
+        genstore=genstore,
+        epoch_id=epoch_id,
+        parent_id=parent_id,
+        next_id=next_id,
+        mutations=mutations,
+        beater=beater,
+        round_index=round_index,
+    )
 
     try:
         experiment = await _propose_child(
@@ -1730,6 +1768,7 @@ async def _propose_and_apply_challenger(
             round_emitter=round_emitter,
             screen_candidates=screen_candidates,
             recombine_pair=recombine_pair,
+            scratch_validator_factory=_scratch_validator_factory,
         )
     except ProposerError as exc:
         reason = _short_reject_reason(exc.attempts) or str(exc)
@@ -3766,6 +3805,7 @@ async def _propose_child(
     round_emitter: _RoundLogEmitter | None = None,
     screen_candidates: ScreenRunner | None = None,
     recombine_pair: Any = None,
+    scratch_validator_factory: Any = None,
 ) -> Experiment:
     """Build the :class:`ProposerContext` + propose ONE child of the champion.
 
@@ -3827,6 +3867,7 @@ async def _propose_child(
                 round_event_emitter=(round_emitter.emit if round_emitter is not None else None),
                 screen_candidates=screen_candidates,
                 recombine_pair=recombine_pair,
+                scratch_validator_factory=scratch_validator_factory,
             )
         )
     except ProposerError as exc:

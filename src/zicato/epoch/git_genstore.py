@@ -298,12 +298,22 @@ class GitGenerationStore:
         :meth:`has_generation` to test existence.
         """
         wt = self._worktree_path(epoch_id, generation_id)
-        if wt.is_dir():
-            return wt
         if not self.has_generation(epoch_id, generation_id):
+            # Never materialised (no commit): return the would-be path without
+            # creating anything, matching the directory backend's pure
+            # coordinate → path contract for the not-yet-existing case.
             return wt
-        self._materialise_worktree(epoch_id, generation_id)
-        return wt
+        # Route EVERY materialised read through the locked materialiser — even
+        # when a worktree directory already exists. The old unlocked
+        # ``if wt.is_dir(): return wt`` fast path was unsafe under concurrency:
+        # ``git worktree add`` creates the target directory BEFORE it checks
+        # the files out, so a sibling that probed ``wt.is_dir()`` mid-add got
+        # ``True`` and copied a HALF-populated tree. _materialise_worktree does
+        # its is_dir re-check + validity verify under the worktree-admin lock,
+        # so it either fast-returns an already-valid worktree (the warm path
+        # stays cheap) or serialises the add — never handing back a tree an
+        # add is still populating.
+        return self._materialise_worktree(epoch_id, generation_id)
 
     def _materialise_worktree(self, epoch_id: str, generation_id: str) -> Path:
         """Check out a generation's tag into a fresh ``git worktree``.
@@ -318,11 +328,47 @@ class GitGenerationStore:
         wt.parent.mkdir(parents=True, exist_ok=True)
         tag = self._generation_tag(epoch_id, generation_id)
         with _worktree_admin_lock(self._repo):
+            # Re-check for an existing valid worktree INSIDE the lock before
+            # adding. :meth:`snapshot_root` routes every materialised read here
+            # (it no longer has its own unlocked ``if wt.is_dir(): return wt``
+            # fast path), so two concurrent cold-store materialisations of the
+            # same generation both reach this point. ``git worktree add`` on an
+            # already-populated directory fails, so the guard only holds if it
+            # lives under the admin lock: the first caller adds the worktree,
+            # and every sibling that acquires the lock afterward finds a valid
+            # worktree parked at ``tag`` and simply reuses it (the benign
+            # already-exists case).
+            if wt.is_dir():
+                if self._is_worktree_at(wt, tag):
+                    return wt
+                # A directory exists but is not a live worktree at this ref
+                # (a crashed half-add, or a stale/corrupt tree). Remove it so
+                # the add below starts clean; the following prune collects any
+                # orphaned registration.
+                shutil.rmtree(wt, ignore_errors=True)
             # Prune any stale registration first (a crashed run can leave
             # a worktree entry whose directory is gone).
             self._git("worktree", "prune")
             self._git("worktree", "add", "--detach", "--force", str(wt), tag)
         return wt
+
+    def _is_worktree_at(self, wt: Path, tag: str) -> bool:
+        """True iff ``wt`` is a live git worktree checked out at ``tag``'s commit.
+
+        Used by :meth:`_materialise_worktree` to tolerate the benign
+        concurrent already-materialised case: a sibling caller may have
+        created the worktree between the unlocked ``snapshot_root`` probe and
+        this caller acquiring the admin lock. The directory is only reused
+        when it is a real worktree detached at exactly the commit ``tag``
+        names — a stale, partial, or wrong-ref tree returns ``False`` and gets
+        rebuilt.
+        """
+        try:
+            head = self._git("rev-parse", "HEAD", cwd=wt).strip()
+            want = self._git("rev-parse", f"{tag}^{{commit}}").strip()
+        except GitCommandError:
+            return False
+        return bool(head) and head == want
 
     def checkout_ephemeral(
         self,
@@ -602,6 +648,61 @@ class GitGenerationStore:
         if stale_worktree.is_dir():
             shutil.rmtree(stale_worktree, ignore_errors=True)
         return self.snapshot_root(epoch_id, child_generation_id)
+
+    def derive_scratch(
+        self,
+        epoch_id: str,
+        parent_generation_id: str,
+        patches: Sequence[Patch],
+        scratch_root: Path,
+    ) -> Path:
+        """Apply ``patches`` to the parent tree into ``scratch_root``, off-repo.
+
+        The concurrency-safe scratch derive: it reads the parent generation's
+        materialised worktree (a clean, read-only checkout —
+        :meth:`snapshot_root`) and applies the patch set all-or-nothing into
+        the caller-owned ``scratch_root`` via
+        :func:`zicato.mutation.applier.apply_patches`. It touches NO shared
+        git state — no ``git checkout``/``reset``/``commit``/``tag``, no
+        epoch-branch working-tree replace, no ``.derive-scratch`` — so
+        concurrent slot derives never contend on the repo (each writes a
+        disjoint ``scratch_root``; the parent worktree is read-only). Because
+        nothing enters the object store or the tag namespace, a scratch tree
+        is invisible to :meth:`list_generations`, the GC, the reindex and the
+        dashboard readers (all of which enumerate ``epoch/{id}/*`` tags).
+
+        The parent worktree is materialised on first read, and that
+        materialisation is idempotent: :meth:`_materialise_worktree`
+        re-checks for an existing valid worktree *inside* the process
+        worktree-admin lock before running ``git worktree add``, so
+        concurrent cold-store derives of the same parent never race on the
+        add — the first one checks it out and the rest reuse it. Callers that
+        fan out concurrently should still pre-warm it once (the round's
+        scratch-validator factory does) so the concurrent derives find it
+        already present and only read.
+
+        Raises :class:`FileNotFoundError` when the parent has no commit and
+        :class:`ValueError` when the patch set fails validation (no scratch
+        tree is left behind).
+        """
+        from zicato.mutation.applier import apply_patches  # noqa: PLC0415
+
+        if not self.has_generation(epoch_id, parent_generation_id):
+            raise FileNotFoundError(
+                f"derive_scratch: parent generation {epoch_id}/"
+                f"{parent_generation_id} has no commit in the generation repo"
+            )
+        parent_root = self.snapshot_root(epoch_id, parent_generation_id)
+        scratch_root = Path(scratch_root)
+        if scratch_root.exists():
+            shutil.rmtree(scratch_root)
+        scratch_root.parent.mkdir(parents=True, exist_ok=True)
+        apply_patches(
+            source_root=parent_root,
+            patches=list(patches),
+            target_root=scratch_root,
+        )
+        return scratch_root
 
     def _replace_working_tree(self, new_tree: Path) -> None:
         """Overwrite the repo working tree (preserving ``.git``) with ``new_tree``."""

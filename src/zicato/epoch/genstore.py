@@ -314,6 +314,47 @@ class GenerationStore(Protocol):
         """
         ...
 
+    def derive_scratch(
+        self,
+        epoch_id: str,
+        parent_generation_id: str,
+        patches: Sequence[Patch],
+        scratch_root: Path,
+    ) -> Path:
+        """Materialise a THROWAWAY child tree at ``scratch_root``, off-namespace.
+
+        The concurrency-safe sibling of :meth:`derive_generation`. It
+        applies ``patches`` to the parent's source tree all-or-nothing into
+        the caller-owned ``scratch_root`` — a disjoint temp directory the
+        caller allocates and cleans up — and does NOT touch the generation
+        namespace: it creates NO commit, NO tag, NO branch/working-tree
+        state, and never writes under ``generations/`` (directory backend)
+        or the epoch branch (git backend). A scratch tree is therefore
+        **provably invisible to every walker** — :meth:`list_generations`,
+        the GC, the reindex, the lineage reader and the dashboard readers
+        all enumerate ``generations/`` directories (directory backend) or
+        ``epoch/{id}/*`` tags (git backend), never a caller temp dir.
+
+        This is what makes the best-of-N slate loop gatherable: each slot
+        validates into its own ``scratch_root``, so two concurrent slots
+        derive against fully disjoint trees and race on nothing (the shared
+        ``next_id`` derive that blocked the gather is done exactly ONCE, for
+        the chosen candidate, via :meth:`derive_generation` after selection).
+
+        ``scratch_root`` is cleared first if it exists (an idempotent retry
+        re-derives cleanly, exactly like :meth:`derive_generation`'s child
+        clear). Returns ``scratch_root``.
+
+        Raises
+        ------
+        FileNotFoundError
+            When the parent generation has no materialised source tree.
+        ValueError
+            When the patch set fails validation — no scratch tree is left
+            behind.
+        """
+        ...
+
     def checkout_ephemeral(
         self,
         epoch_id: str,
@@ -555,6 +596,41 @@ class DirectoryGenerationStore:
             target_root=child_root,
         )
         return child_root
+
+    def derive_scratch(
+        self,
+        epoch_id: str,
+        parent_generation_id: str,
+        patches: Sequence[Patch],
+        scratch_root: Path,
+    ) -> Path:
+        """Apply ``patches`` to the parent snapshot into ``scratch_root``.
+
+        Off-namespace: it reads the parent's canonical ``snapshot/`` tree but
+        writes ONLY the caller-owned ``scratch_root`` — no ``generations/``
+        directory is created, so :meth:`list_generations` and every walker
+        that scans that directory never sees it. Byte-for-byte the same
+        ``apply_patches`` the real :meth:`derive_generation` runs, minus the
+        canonical child path.
+        """
+        from zicato.mutation.applier import apply_patches  # noqa: PLC0415
+
+        parent_root = self.snapshot_root(epoch_id, parent_generation_id)
+        if not parent_root.is_dir():
+            raise FileNotFoundError(
+                f"derive_scratch: parent generation {epoch_id}/"
+                f"{parent_generation_id} has no source tree at {parent_root}"
+            )
+        scratch_root = Path(scratch_root)
+        if scratch_root.exists():
+            shutil.rmtree(scratch_root)
+        scratch_root.parent.mkdir(parents=True, exist_ok=True)
+        apply_patches(
+            source_root=parent_root,
+            patches=list(patches),
+            target_root=scratch_root,
+        )
+        return scratch_root
 
     def checkout_ephemeral(
         self,
