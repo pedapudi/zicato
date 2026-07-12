@@ -25,7 +25,7 @@
 // breadcrumb, back button, and every view share one signature.
 
 export const PREFIX = '#';
-export const VIEWS = ['home', 'epoch', 'gens', 'candidate', 'diff', 'boards', 'board', 'mutations', 'instrument', 'publication', 'builder', 'settings'];
+export const VIEWS = ['home', 'epoch', 'gens', 'candidate', 'diff', 'boards', 'board', 'mutations', 'instrument', 'publication', 'builder', 'logs', 'settings'];
 
 // The Settings section a bare `#/settings` opens. The tournament builder used
 // to be the default Settings section; now that the builder is its OWN view,
@@ -69,6 +69,9 @@ export function parseRoute(hash) {
   // the standalone `zicato builder` CLI (which deep-links here) — but it now
   // renders FULL-WIDTH in the main view host rather than nested in Settings.
   if (parts[0] === 'builder') return { view: 'builder', params: {}, cmp };
+  // `#/logs` is the workspace-level operator-log pane (LOGGING.md) — a peer of
+  // builder / settings, NOT epoch-scoped (the streams are per-invocation).
+  if (parts[0] === 'logs') return { view: 'logs', params: {}, cmp };
   if (parts[0] !== 'e') return { view: 'home', params: {}, cmp };
 
   const epochId = parts[1] || null;
@@ -121,6 +124,8 @@ export function href(view, params, opts) {
       break;
     // `#/builder` is the canonical link to the standalone tournament-builder view.
     case 'builder': base = PREFIX + '/builder'; break;
+    // `#/logs` is the workspace-level operator-log pane.
+    case 'logs': base = PREFIX + '/logs'; break;
     case 'epoch': base = e || (PREFIX + '/'); break;
     case 'gens':
       base = e ? (p.round != null ? `${e}/gens/r/${enc(p.round)}` : `${e}/gens`) : PREFIX + '/';
@@ -196,6 +201,8 @@ export function up(route) {
     // the builder is its OWN view now — it steps up to environment (the crumb
     // reads environment › tournament builder).
     case 'builder': return { view: 'home', params: {} };
+    // the operator-log pane is workspace-level — it steps up to environment.
+    case 'logs': return { view: 'home', params: {} };
     case 'epoch': return { view: 'home', params: {} };
     case 'gens':
       // a round drill-down steps up to the full (all-rounds) Match-ups first.
@@ -247,6 +254,8 @@ export function crumbTrail(route) {
     }
     case 'builder':
       return [home, { label: 'tournament builder', current: true }];
+    case 'logs':
+      return [home, { label: 'operator log', current: true }];
     case 'epoch':
       return [home, { label: p.epochId || 'epoch', current: true }];
     case 'gens':

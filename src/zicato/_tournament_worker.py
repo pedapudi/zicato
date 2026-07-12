@@ -857,6 +857,36 @@ def _weights_from_args(args: dict[str, Any]) -> ScoringWeights:
     return ScoringWeights.from_json(args.get("weights"))
 
 
+def _install_worker_log_stream_from_args(args: dict[str, Any]) -> None:
+    """Install the worker-side operator-log stream from the args file.
+
+    Reads the invocation stream path the runner threaded through
+    (``log_stream_path``) and the run coordinate (epoch / generation /
+    entry) to bind context, then appends this worker's records to that one
+    stream. Fully best-effort: any failure is swallowed so logging setup
+    can never fail a run.
+    """
+    try:
+        path = args.get("log_stream_path")
+        if not path:
+            return
+        from zicato.logging_stream import install_worker_log_stream  # noqa: PLC0415
+
+        epoch_id = str(args.get("epoch_id") or "") or None
+        generation_id = str(args.get("generation_id") or "") or None
+        entry = args.get("entry")
+        entry_id = str(entry.get("id")) if isinstance(entry, dict) and entry.get("id") else None
+        run_id = f"{generation_id}--{entry_id}" if generation_id and entry_id else None
+        install_worker_log_stream(
+            path,
+            epoch_id=epoch_id,
+            generation_id=generation_id,
+            run_id=run_id,
+        )
+    except Exception:  # noqa: BLE001 — logging setup never fails a run
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     """Module entry point: ``python -m zicato._tournament_worker <args-file>``.
 
@@ -881,6 +911,13 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001 — surface as a clean non-zero exit
         print(f"zicato._tournament_worker: bad args file: {exc}", file=sys.stderr)
         return 2
+
+    # Structured operator-log stream (LOGGING.md §2): append this worker's
+    # records to the SAME per-invocation file the orchestrator installed,
+    # with the full (epoch, generation, run) context bound so every worker
+    # record is attributed. Best-effort — a logging-setup failure must never
+    # fail the run; ``None`` path (an ad-hoc drive) keeps stderr only.
+    _install_worker_log_stream_from_args(args)
 
     try:
         asyncio.run(_run(args))

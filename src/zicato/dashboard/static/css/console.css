@@ -3181,14 +3181,18 @@
   /* the top-bar nav entries — the ⚒ builder (its own full-width view) and the
    * ⚙ settings chip read as a peer set, so they share one chip rule. */
   .dt-nav-build,
+  .dt-nav-logs,
   .dt-nav-builder { display: inline-flex; align-items: center; gap: 5px; font-family: var(--v2-mono);
     font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); border: 1px solid var(--v2-rule); border-radius: 5px;
     padding: 4px 9px; text-decoration: none; transition: background 0.15s, color 0.15s, border-color 0.15s; }
   .dt-nav-build:hover,
+  .dt-nav-logs:hover,
   .dt-nav-builder:hover { background: var(--v2-accent); color: var(--v2-paper); border-color: var(--v2-accent); }
   .dt-nav-build-glyph,
+  .dt-nav-logs-glyph,
   .dt-nav-builder-glyph { color: var(--v2-accent); }
   .dt-nav-build:hover .dt-nav-build-glyph,
+  .dt-nav-logs:hover .dt-nav-logs-glyph,
   .dt-nav-builder:hover .dt-nav-builder-glyph { color: var(--v2-paper); }
 
   /* the ZICATO-LEVEL harmonograf entry — top-bar "execution ↗" deep-link
@@ -3832,4 +3836,37 @@
   .dn-chip.dn-chip-instr-verdict-fn { color: var(--v2-caution); border-color: var(--v2-caution); }
   .dn-chip.dn-chip-instr-verdict-tn,
   .dn-chip.dn-chip-instr-verdict-amb { color: var(--v2-ink-faint); border-color: var(--v2-rule); }
+
+  /* ── the operator-log pane (views/logs.js, LOGGING.md §5) ───────────────
+   * Quiet-precision register: mono rows, level-coloured via the --v2 tone
+   * tokens, level-filter chips + an invocation picker. No decorative chrome. */
+  .dt-logs-toolbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 4px 0 12px; }
+  .dt-logs-invwrap { display: inline-flex; align-items: center; gap: 6px; }
+  .dt-logs-invlab { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); }
+  .dt-logs-inv { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1));
+    color: var(--v2-ink); background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 4px; padding: 3px 6px; }
+  .dt-logs-chips { display: inline-flex; gap: 6px; }
+  .dt-logs-chip { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1));
+    color: var(--v2-ink-soft); background: transparent; border: 1px solid var(--v2-rule); border-radius: 999px;
+    padding: 2px 10px; cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s; }
+  .dt-logs-chip:hover { border-color: var(--v2-ink-soft); }
+  .dt-logs-chip-on { background: var(--v2-ink-soft); color: var(--v2-paper); border-color: var(--v2-ink-soft); }
+  .dt-logs-body { display: flex; flex-direction: column; gap: 1px; font-family: var(--v2-mono);
+    font-size: calc(12px * var(--dt-font-scale, 1)); line-height: 1.5; overflow-x: auto; }
+  .dt-logs-row { display: flex; gap: 10px; align-items: baseline; padding: 1px 2px; white-space: pre-wrap; word-break: break-word; }
+  .dt-logs-ts { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+  .dt-logs-lvl { flex: 0 0 auto; min-width: 62px; }
+  .dt-logs-comp { flex: 0 0 auto; }
+  .dt-logs-ctx { flex: 0 0 auto; }
+  .dt-logs-msg { flex: 1 1 auto; color: var(--v2-ink); }
+  /* level → tone (also used by the level-filter chips) */
+  .dt-logs-t-bad .dt-logs-lvl, .dt-logs-lvl.dt-logs-t-bad { color: var(--v2-bad); }
+  .dt-logs-t-warn .dt-logs-lvl, .dt-logs-lvl.dt-logs-t-warn { color: var(--v2-caution); }
+  .dt-logs-t-info .dt-logs-lvl, .dt-logs-lvl.dt-logs-t-info { color: var(--v2-ink); }
+  .dt-logs-t-faint .dt-logs-lvl, .dt-logs-lvl.dt-logs-t-faint { color: var(--v2-ink-faint); }
+  .dt-logs-t-bad .dt-logs-msg { color: var(--v2-bad); }
+  .dt-logs-t-warn .dt-logs-msg { color: var(--v2-ink); }
+  .dt-logs-chip.dt-logs-t-bad { color: var(--v2-bad); }
+  .dt-logs-chip.dt-logs-t-warn { color: var(--v2-caution); }
+  .dt-logs-chip.dt-logs-t-faint { color: var(--v2-ink-faint); }
 }

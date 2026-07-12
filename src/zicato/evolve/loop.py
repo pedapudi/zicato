@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from zicato.epoch.preflight import PreflightRefusedError
+from zicato.logging_stream import install_log_stream, set_log_context
 from zicato.runtime.heartbeat import HeartbeatBeater
 from zicato.runtime.lock import acquire_workspace_lock, release_workspace_lock
 from zicato.runtime.resume import ResumePlan, prepare_resume
@@ -51,6 +52,33 @@ if TYPE_CHECKING:
 log = logging.getLogger("zicato.orchestrator")
 
 CallLLM = Callable[[str, str, str], Awaitable[str]]
+
+
+def emit_dialect_capability_warnings(workspace_root: Path) -> tuple[str, ...]:
+    """Surface the telemetry-dialect capability warnings ONCE, at contract-load.
+
+    ``dialect_capability_warnings(weights)`` (LOGGING.md §6) is a pure
+    function of the contract's :class:`ScoringWeights` — e.g. a drift knob
+    left inert under a drift-incapable telemetry dialect — so it belongs at
+    the invocation-level preflight, NOT inside the per-board-unit reducer
+    (where it fired N times, invisibly, inside the killable worker). Each
+    warning is logged once at ``WARNING`` (captured by the structured
+    stream AND shown on the operator's console). Returns the warnings it
+    emitted so a test can assert the single-surface relocation. Best-effort
+    at the call site; here we only need the loaded weights.
+    """
+    from zicato import workspace_loader  # noqa: PLC0415
+    from zicato.telemetry.dialects import dialect_capability_warnings  # noqa: PLC0415
+
+    weights = workspace_loader.load_current_scoring(workspace_root)
+    warnings = dialect_capability_warnings(weights)
+    for warning in warnings:
+        log.warning(
+            "contract pre-flight [telemetry dialect %s]: %s",
+            weights.telemetry_dialect,
+            warning,
+        )
+    return warnings
 
 
 async def _sleep_for_backoff(seconds: float) -> None:
@@ -445,6 +473,26 @@ async def evolve_n_rounds(
         # nonsense values by treating them as "never stop early".
         max_consecutive_rejections = rounds + 1
 
+    # The structured operator-log stream (LOGGING.md) for THIS invocation.
+    # Installed here — the shared orchestrator entrypoint — so every
+    # ``zicato.*`` ``log.*`` call for the whole loop is captured into
+    # ``.zicato/logs/<stamp>-<pid>.jsonl`` with zero call-site changes.
+    # Acquired outside the try (like the lock below) and closed in the same
+    # ``finally``. Best-effort: a logging-setup failure never fails the run.
+    log_stream = install_log_stream(workspace_root)
+    # Tag every orchestrator record with the pinned epoch for this
+    # invocation (optional enrichment; the workers bind the full
+    # epoch/generation/run context on their side).
+    set_log_context(epoch_id=epoch_id)
+    # Contract-load preflight: surface the telemetry-dialect capability
+    # warnings ONCE per invocation (relocated out of the per-entry reducer),
+    # beside the epoch-open preflight machinery below. Best-effort.
+    with best_effort(
+        "dialect-capability preflight warnings",
+        on_error=lambda exc: log.debug("dialect-capability preflight skipped: %s", exc),
+    ):
+        emit_dialect_capability_warnings(workspace_root)
+
     # Workspace lock + heartbeat lifecycle. The lock keeps two concurrent
     # orchestrators from corrupting the same workspace; the beater writes
     # ``heartbeat.json`` so the supervisor binary can detect a wedge.
@@ -589,6 +637,8 @@ async def evolve_n_rounds(
                 # base (0 for a brand-new epoch) rather than continuing the prior
                 # epoch's count.
                 epoch_round_index = _epoch_round_base(workspace_root, epoch_id)
+                # Re-tag the operator log with the rolled epoch id.
+                set_log_context(epoch_id=epoch_id)
 
             round_start_seq = _append_progress_seq(workspace_root, progress_log.ROUND_START)
             beater.update(
@@ -786,6 +836,13 @@ async def evolve_n_rounds(
         _orch._mark_run_terminal(workspace_root)
         await beater.stop()
         release_workspace_lock(lock)
+        # Remove the operator-log handler + restore the logger level. Best-
+        # effort: teardown failures never propagate out of the ``finally``.
+        with best_effort(
+            "operator-log stream close",
+            on_error=lambda exc: log.debug("operator-log stream close raised: %s", exc),
+        ):
+            log_stream.close()
         # Flush + close the meta-loop emitter BEFORE the harmonograf
         # supervisor is stopped — a sink that needs to push a final
         # buffer to the gRPC console wants the server still up.

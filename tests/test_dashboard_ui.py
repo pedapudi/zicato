@@ -540,7 +540,13 @@ def test_bundle_under_size_envelope(
     # fit under the prior line alone; their union sits ~0.8 KB above it — the
     # same per-wave-raise interaction the 1.35 MB entry records. The envelope is
     # nudged to 1.372 MB to cover the combined surface with a thin margin.
-    assert total < 1_372_000, f"bundle is {total} bytes, exceeds 1_372_000 envelope"
+    #
+    # The STRUCTURED-LOGGING foundation then adds the operator-log pane: a new
+    # workspace-level view (views/logs.js), its toolbar/row CSS in console.css,
+    # and the shell/router/data wiring for the `#/logs` route + top-bar entry —
+    # ~8 KB of real new surface. The envelope is raised to 1.386 MB to cover it
+    # with a thin margin.
+    assert total < 1_386_000, f"bundle is {total} bytes, exceeds 1_386_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

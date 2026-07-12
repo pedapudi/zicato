@@ -49,6 +49,8 @@ Advanced commands — off the happy path (inspection & debugging):
   health                Advanced: report whether the evolve loop has real
                         optimization signal.
   help                  Show help for zicato, or for one COMMAND.
+  logs                  Advanced: tail the structured operator-log stream for an
+                        invocation.
   mutations             Advanced: audit the mutable surface the proposer may
                         change.
   propose               Advanced: generate one Experiment for the next
@@ -636,6 +638,33 @@ Options:
   --force                Overwrite config.json / lineage.json if the workspace
                          already exists.
   --help                 Show this message and exit.
+
+===== zicato logs --help =====
+Usage: zicato logs [OPTIONS]
+
+  Tail the structured operator-log stream for one evolve invocation.
+
+  The streams live under `.zicato/logs/<stamp>-<pid>.jsonl` — one per `evolve` /
+  `reflect run` invocation — and this reads them through the same reader the
+  dashboard log pane uses. A workspace with no logs prints nothing and exits 0.
+
+Options:
+  --workspace PATH                Path to the zicato workspace root (the
+                                  directory `zicato init` made).  [default:
+                                  .zicato]
+  --invocation TEXT               Which invocation stream to read: 'latest' (the
+                                  newest) or a specific <stamp>-<pid> id (list
+                                  them with --list).  [default: latest]
+  --level [DEBUG|INFO|WARNING|ERROR|CRITICAL]
+                                  Show only records at or above this level.
+                                  Unset shows everything captured.
+  --limit INTEGER RANGE           Tail at most this many records (default 200).
+                                  [x>=1]
+  -f, --follow                    Poll-tail the stream, printing new records as
+                                  they land (Ctrl-C to stop).
+  --list                          List the available invocation streams (newest
+                                  first) and exit.
+  --help                          Show this message and exit.
 
 ===== zicato mutations --help =====
 Usage: zicato mutations [OPTIONS]

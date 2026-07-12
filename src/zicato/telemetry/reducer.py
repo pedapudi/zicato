@@ -77,7 +77,6 @@ from zicato.scoring import DriftContext, builtin_drift_loss, resolve_drift_loss
 from zicato.telemetry.dialects import (
     DialectReducer,
     DialectSignals,
-    dialect_capability_warnings,
     reduce_adk_events,
     reduce_transcript,
 )
@@ -1057,10 +1056,17 @@ def reduce_loss(
     # this reducer (in the killable worker) with no new call-site plumbing.
     producer = _resolve_dialect_producer(weights.telemetry_dialect)
     signals = producer(events_jsonl_path, entry)
-    # Surface reduction warnings (malformed lines) + capability mismatches
-    # (drift knobs inert under a drift-incapable dialect — the "warn" half of
-    # the warn-or-refuse story, TELEMETRY-DIALECTS.md §4.2). Advisory only.
-    for warning in (*dialect_capability_warnings(weights), *signals.warnings):
+    # Surface per-run reduction warnings (malformed lines). Advisory only.
+    #
+    # NOTE: the dialect CAPABILITY warnings (drift knobs inert under a
+    # drift-incapable dialect — the "warn" half of TELEMETRY-DIALECTS.md
+    # §4.2) are NOT emitted here. They are a pure function of the contract's
+    # weights, not of this run, so emitting them per board-unit — inside the
+    # killable worker, once per entry × replicate × generation — was pure
+    # duplication and invisible. They are now surfaced ONCE per invocation at
+    # the contract-load preflight (LOGGING.md §6,
+    # ``evolve.loop.emit_dialect_capability_warnings``).
+    for warning in signals.warnings:
         log.warning("telemetry reduction [%s]: %s", weights.telemetry_dialect, warning)
 
     drift_counts = signals.drift_counts

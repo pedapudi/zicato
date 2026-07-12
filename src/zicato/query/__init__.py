@@ -120,6 +120,16 @@ from zicato.query.judge_view import (
 from zicato.query.lineage_view import (
     build_lineage_view,
 )
+from zicato.query.log_stream import (
+    LOG_DEFAULT_LIMIT,
+    LOG_MAX_LIMIT,
+    Invocation,
+    build_log_view,
+    clamp_log_limit,
+    list_invocations,
+    resolve_invocation,
+    tail_records,
+)
 from zicato.query.loop_view import (
     build_optimization_trajectory,
     build_round_pipeline,
@@ -344,6 +354,14 @@ __all__ = [
     "build_per_judge_trend",
     "build_run_header",
     "build_run_log",
+    "build_log_view",
+    "list_invocations",
+    "resolve_invocation",
+    "tail_records",
+    "clamp_log_limit",
+    "LOG_DEFAULT_LIMIT",
+    "LOG_MAX_LIMIT",
+    "Invocation",
     "build_score_trajectory",
     "build_search_results",
     "build_snapshot",

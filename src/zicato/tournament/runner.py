@@ -147,6 +147,7 @@ from zicato.core import (
     Side,
 )
 from zicato.epoch.genstore import EphemeralCheckout
+from zicato.logging_stream import current_log_stream_path
 from zicato.tournament.gate import GateOutcome, evaluate_gate
 
 # ``_load_ladder_state`` / ``_losses_for`` / ``_save_ladder_state`` are
@@ -613,6 +614,15 @@ async def _run_single(
                 # like config_pins.
                 "persist_run_results": bool(config.persist_run_results),
                 "persist_judge_io": bool(config.persist_judge_io),
+                # The invocation's operator-log stream path (LOGGING.md §2):
+                # the worker APPENDS its structured records to the SAME file
+                # the orchestrator installed, so worker logs reach the one
+                # per-invocation stream. Absent (None) when no stream is
+                # installed (an ad-hoc / test drive) — the worker then logs
+                # to stderr only, exactly as before.
+                "log_stream_path": (
+                    str(_lsp) if (_lsp := current_log_stream_path()) is not None else None
+                ),
             }
             args_path.write_text(json.dumps(args_payload), encoding="utf-8")
         except (ValueError, OSError) as exc:

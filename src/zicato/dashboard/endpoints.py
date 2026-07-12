@@ -162,6 +162,24 @@ def _make_state_endpoints(
         q = request.query_params.get("q", "")
         return JSONResponse(query.build_search_results(paths, q))
 
+    async def api_logs(request: Request) -> JSONResponse:
+        """The structured operator-log tail (LOGGING.md) for one invocation.
+
+        ``?invocation=latest|<id>`` selects the stream (default latest);
+        ``?level=`` filters; ``?limit=`` tails; ``?after=<cursor>`` returns
+        only records past a line cursor so the pane appends instead of
+        re-rendering. An empty / no-logs workspace degrades to an empty view.
+        """
+        limit = query.clamp_log_limit(_int_query(request, "limit"))
+        after = _int_query(request, "after")
+        level = request.query_params.get("level") or None
+        invocation = request.query_params.get("invocation") or None
+        return JSONResponse(
+            query.build_log_view(
+                paths, limit=limit, level=level, after=after, invocation=invocation
+            )
+        )
+
     return {
         "api_health": api_health,
         "api_state": api_state,
@@ -169,6 +187,7 @@ def _make_state_endpoints(
         "api_workspace": api_workspace,
         "api_health_report": api_health_report,
         "api_search": api_search,
+        "api_logs": api_logs,
     }
 
 
