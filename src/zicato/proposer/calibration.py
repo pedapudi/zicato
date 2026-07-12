@@ -123,6 +123,18 @@ class CalibrationSummary:
     recent: tuple[CalibrationClaimItem, ...]
 
 
+def _natural_gid(gid: str) -> tuple[str, int]:
+    """Numeric-aware sort key for a ``v{n}`` generation id.
+
+    ``("v", 2)`` sorts before ``("v", 10)`` where a plain string compare
+    would not; a non-conforming id degrades to ``(gid, -1)`` — still a
+    total, deterministic order.
+    """
+    head = gid.rstrip("0123456789")
+    tail = gid[len(head) :]
+    return (head, int(tail)) if tail.isdigit() else (gid, -1)
+
+
 def _core_idea(text: str) -> str:
     """Normalize + cap the proposer's core idea (head-only, elided).
 
@@ -214,10 +226,11 @@ def sample_calibration(
 
     fraction = hit_count / graded_total
 
-    # Most-recent-first with a TOTAL tie-break (round DOWN, then gid ascending)
-    # so the recent list is byte-identical for a fixed claim set in ANY input
-    # order — the determinism / leakage-budget pin.
-    graded.sort(key=lambda c: (-c.round_index, c.generation_id))
+    # Most-recent-first with a TOTAL tie-break (round DOWN, then gid ascending
+    # NUMERIC-aware, so v2 sorts before v10 within a same-round tie) — the
+    # recent list is byte-identical for a fixed claim set in ANY input order,
+    # the determinism / leakage-budget pin.
+    graded.sort(key=lambda c: (-c.round_index, _natural_gid(c.generation_id)))
     recent = tuple(
         CalibrationClaimItem(
             generation_id=claim.generation_id,

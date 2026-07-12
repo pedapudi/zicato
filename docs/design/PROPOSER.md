@@ -486,6 +486,12 @@ many it made. From that pair each claim is graded into exactly ONE bucket:
   (`predictions == 0`), so calibration is silent on it. (Matches the
   experiment-memory reader's "None accuracy = made no graded predictions.")
 
+One rendered-block corollary worth knowing when reading it: the grade and
+the banded outcome are INDEPENDENT axes, so a claim can render
+`HIT · Δscalar regressed` — every specific prediction verified while the
+candidate's overall scalar still worsened. That is honest, not a bug: the
+grade measures forecasting skill, the band measures the outcome.
+
 ### What the channel carries
 
 A per-reign calibration summary, rendered into the proposer context:
