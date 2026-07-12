@@ -572,7 +572,19 @@ def test_bundle_under_size_envelope(
     # settled view renders byte-identical to today, no caption). ~6 KB of real new
     # streaming-discipline code. The envelope is raised to 1.392 MB to cover it
     # with a thin margin.
-    assert total < 1_392_000, f"bundle is {total} bytes, exceeds 1_392_000 envelope"
+    #
+    # The STREAMING SCROLL-DISCIPLINE review fix then hardens the same board.js
+    # reconcile: the divergence-rebuild branch dropped the scroll pin (a merged
+    # reasoning turn whose text grows across two seqs flips only the last turn's
+    # signature → prefix divergence → clamp-to-0 → live-tail breaks). The fix adds
+    # a LAST-TURN-GREW path (re-render just that one node in place, preserving the
+    # prefix + scroll position) and captures the pin BEFORE the remaining wholesale
+    # rebuild so a bottom-pinned reader stays pinned and a scrolled-up one keeps
+    # their offset; the live-seq tracker is also keyed per-entry so a return visit
+    # after the seq advanced elsewhere refetches. ~0.6 KB of real reconcile code +
+    # its rationale on the same surface. The envelope is nudged to 1.393 MB to
+    # cover it with a thin margin.
+    assert total < 1_393_000, f"bundle is {total} bytes, exceeds 1_393_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

@@ -867,6 +867,189 @@ test('board view (LIVE): a SETTLED transcript (no in-flight run) is unchanged ac
   coreState.state.activeRuns = [];
 });
 
+// (b5) THE LAST TURN GROWING (the routine streaming case) + SCROLL DISCIPLINE.
+// A merged reasoning turn (goldfive's llmCallStart→llmCallEnd folded into ONE
+// turn) grows its text across two seqs, so the last rendered turn's signature
+// flips while every earlier turn is byte-stable. That must update ONLY that node
+// in place (never a full clear that clamps scrollTop to 0), and — on both the in-
+// place path and a genuine rebuild — a bottom-pinned reader stays pinned while a
+// scrolled-up reader keeps their offset.
+
+// A running v3/waffles_single transcript whose turn texts a test controls; the
+// first + last turn strings are read fresh on every render so a growth is
+// simulated between renders. lastSeq must advance to clear the seq gate.
+function installLastTurnGrowFetch(getFirst, getLast) {
+  installGrowableFetch({ [`/api/run/${EPOCH_ID}/v3/waffles_single/transcript`]: () => ({
+    epoch_id: EPOCH_ID, generation_id: 'v3', entry_id: 'waffles_single', run_id: 'run_v3_live',
+    turns: [
+      { seq: 0, role: 'user', agent: 'operator', text: getFirst() },
+      { seq: 1, role: 'agent', agent: 'coordinator', text: getLast() },
+    ], annotations: [], event_count: 4, complete: false,
+  }) });
+  FIXTURE['/api/lineage'].generations.push({ generation_id: 'v3', epoch_id: EPOCH_ID, parent_generation_id: 'v0', promoted: false });
+  coreState.state.activeRuns = [{ generation_id: 'v3', entry_id: 'waffles_single', run_id: 'run_v3_live', progress: 0.4, epoch_id: EPOCH_ID }];
+}
+function cleanupV3Live() {
+  FIXTURE['/api/lineage'].generations = FIXTURE['/api/lineage'].generations.filter((g) => g.generation_id !== 'v3');
+  coreState.state.activeRuns = [];
+}
+// The headless DOM has no layout, so the scroll metrics are absent (nearBottom
+// then defaults to tail). Define them on the scroller INSTANCE via
+// Object.defineProperty (writable so the view's `scrollTop = scrollHeight` pin
+// still lands) to drive a genuine pinned / scrolled-up decision.
+function fakeScrollMetrics(scroller, scrollHeight, clientHeight, scrollTop) {
+  Object.defineProperty(scroller, 'scrollHeight', { value: scrollHeight, configurable: true, writable: true });
+  Object.defineProperty(scroller, 'clientHeight', { value: clientHeight, configurable: true, writable: true });
+  Object.defineProperty(scroller, 'scrollTop', { value: scrollTop, configurable: true, writable: true });
+}
+
+test('board view (LIVE): the LAST turn GROWING updates that node IN PLACE (prefix preserved, no full clear)', async () => {
+  freshState();
+  let lastText = 'partial reasoning so far…';
+  installLastTurnGrowFetch(() => 'Make a presentation about waffles.', () => lastText);
+  coreState.state.lastSeq = 40;
+
+  const board = await import('../js/views/board.js');
+  const bhost = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  const params = { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v3' };
+
+  await board.render(bhost, ctx, params);
+  const scroller = leftScroller(bhost);
+  const before = allByClass(scroller, 'dn-turn');
+  assertEqual(before.length, 2, 'both partial turns rendered on first paint');
+  const prefixNode = before[0];
+  const lastNodeOld = before[1];
+
+  // the merged reasoning turn grows (same seq/role, longer text) → only the last
+  // turn's signature flips. seq advances so the refetch fires.
+  lastText = 'partial reasoning so far… now the completed, much longer reasoning turn.';
+  coreState.state.lastSeq = 41;
+  await board.render(bhost, ctx, params);
+  const after = allByClass(scroller, 'dn-turn');
+  assertEqual(after.length, 2, 'still exactly two turns (last replaced in place, not appended)');
+  assert(after[0] === prefixNode, 'the PREFIX turn node is the SAME instance (no wholesale clear)');
+  assert(after[1] !== lastNodeOld, 'the grown last turn is a FRESH node (re-rendered in place)');
+  assert(scroller.textContent.includes('completed, much longer reasoning turn'), 'the grown text rendered');
+
+  cleanupV3Live();
+});
+
+test('board view (LIVE): a BOTTOM-PINNED reader stays pinned across in-place growth AND a genuine rebuild', async () => {
+  freshState();
+  let firstText = 'Make a presentation about waffles.';
+  let lastText = 'partial';
+  installLastTurnGrowFetch(() => firstText, () => lastText);
+  coreState.state.lastSeq = 50;
+
+  const board = await import('../js/views/board.js');
+  const bhost = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  const params = { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v3' };
+
+  await board.render(bhost, ctx, params);
+  const scroller = leftScroller(bhost);
+  // pinned: (1000 - 800 - 200) = 0 ≤ slop.
+  fakeScrollMetrics(scroller, 1000, 200, 800);
+
+  // IN-PLACE growth path → the pin re-lands at the (fixed) scrollHeight.
+  lastText = 'partial then a much longer grown reasoning turn.';
+  coreState.state.lastSeq = 51;
+  await board.render(bhost, ctx, params);
+  assertEqual(scroller.scrollTop, 1000, 'bottom-pinned reader is re-pinned to the bottom after in-place growth');
+
+  // GENUINE rebuild path (an EARLIER turn changes) → still re-pinned.
+  fakeScrollMetrics(scroller, 1200, 200, 1000); // pinned again at the new height
+  firstText = 'A completely different opening prompt turn.';
+  coreState.state.lastSeq = 52;
+  await board.render(bhost, ctx, params);
+  assertEqual(scroller.scrollTop, 1200, 'bottom-pinned reader is re-pinned to the bottom after a genuine rebuild');
+
+  cleanupV3Live();
+});
+
+test('board view (LIVE): a SCROLLED-UP reader is NOT yanked across in-place growth NOR a genuine rebuild', async () => {
+  freshState();
+  let firstText = 'Make a presentation about waffles.';
+  let lastText = 'partial';
+  installLastTurnGrowFetch(() => firstText, () => lastText);
+  coreState.state.lastSeq = 60;
+
+  const board = await import('../js/views/board.js');
+  const bhost = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  const params = { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v3' };
+
+  await board.render(bhost, ctx, params);
+  const scroller = leftScroller(bhost);
+  // scrolled up: (1000 - 100 - 200) = 700 > slop → NOT pinned.
+  fakeScrollMetrics(scroller, 1000, 200, 100);
+
+  // IN-PLACE growth path → scrollTop untouched.
+  lastText = 'partial then a much longer grown reasoning turn.';
+  coreState.state.lastSeq = 61;
+  await board.render(bhost, ctx, params);
+  assertEqual(scroller.scrollTop, 100, 'scrolled-up reader keeps their exact offset across in-place growth');
+
+  // GENUINE rebuild path → prior offset restored, not clamped to 0.
+  fakeScrollMetrics(scroller, 1200, 200, 100);
+  firstText = 'A completely different opening prompt turn.';
+  coreState.state.lastSeq = 62;
+  await board.render(bhost, ctx, params);
+  assertEqual(scroller.scrollTop, 100, 'scrolled-up reader keeps their offset across a genuine rebuild (never yanked to 0)');
+
+  cleanupV3Live();
+});
+
+// (b6) The PER-ENTRY seq tracker. When the seq ADVANCES while a DIFFERENT entry
+// is being viewed, returning to the first entry must still bust its cache and
+// refetch — the seq moved since we last read THAT entry. A bare module scalar
+// leaks the other entry's now-current seq into the returned entry, so the return
+// sees "seq unchanged" and serves the warm-but-stale partial (the bug).
+test('board view (LIVE): a seq advance while viewing another entry busts on return (per-entry seq tracker)', async () => {
+  freshState();
+  let aCount = 1;
+  installGrowableFetch({
+    [`/api/run/${EPOCH_ID}/v3/waffles_single/transcript`]: growableRun(() => aCount),
+    [`/api/run/${EPOCH_ID}/v3/picky_stakeholder_emulated/transcript`]: () => ({
+      epoch_id: EPOCH_ID, generation_id: 'v3', entry_id: 'picky_stakeholder_emulated', run_id: 'run_v3_live_b',
+      turns: [{ seq: 0, role: 'user', agent: 'coordinator', text: 'B turn #0' }],
+      annotations: [], event_count: 2, complete: false,
+    }),
+  });
+  FIXTURE['/api/lineage'].generations.push({ generation_id: 'v3', epoch_id: EPOCH_ID, parent_generation_id: 'v0', promoted: false });
+  coreState.state.activeRuns = [
+    { generation_id: 'v3', entry_id: 'waffles_single', run_id: 'run_v3_live', progress: 0.4, epoch_id: EPOCH_ID },
+    { generation_id: 'v3', entry_id: 'picky_stakeholder_emulated', run_id: 'run_v3_live_b', progress: 0.4, epoch_id: EPOCH_ID },
+  ];
+  coreState.state.lastSeq = 70;
+
+  const board = await import('../js/views/board.js');
+  const ctx = { navigate() {}, href: router.href };
+
+  // View entry A at seq 70 → fetches + caches its one-turn partial. (A's tracker = 70.)
+  const hostA = document.createElement('div');
+  await board.render(hostA, ctx, { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v3' });
+  assertEqual(allByClass(leftScroller(hostA), 'dn-turn').length, 1, 'entry A shows its one partial turn');
+
+  // Switch to entry B while the cursor ADVANCES to 71. (A scalar tracker is now 71.)
+  coreState.state.lastSeq = 71;
+  const hostB = document.createElement('div');
+  await board.render(hostB, ctx, { epochId: EPOCH_ID, entry: 'picky_stakeholder_emulated', gen: 'v3' });
+  assertEqual(allByClass(leftScroller(hostB), 'dn-turn').length, 1, 'entry B shows its own partial turn');
+
+  // Entry A grew on disk. Return to A — the seq is still 71 but A has NOT been
+  // read since it was 70. A per-entry tracker (A=70 ≠ 71) BUSTS and refetches the
+  // grown transcript; a scalar (71 === 71) would wrongly reuse A's stale cache.
+  aCount = 3;
+  const hostA2 = document.createElement('div');
+  await board.render(hostA2, ctx, { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v3' });
+  assertEqual(allByClass(leftScroller(hostA2), 'dn-turn').length, 3,
+    'returning to A after the seq advanced elsewhere refetches its grown transcript (per-entry bust)');
+
+  cleanupV3Live();
+});
+
 // (c) The live card + transcript path is STRUCTURE-AGNOSTIC — it is driven by
 // active-runs, not by any tournament structure. Verify for swiss + elim.
 for (const structure of ['swiss', 'single_elim']) {
