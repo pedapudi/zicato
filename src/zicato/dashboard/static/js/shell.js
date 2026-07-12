@@ -56,9 +56,10 @@ import * as mutations from './views/mutations.js';
 import * as instrument from './views/instrument.js';
 import * as publication from './views/publication.js';
 import * as builder from './views/builder.js';
+import * as logs from './views/logs.js';
 import * as settings from './views/settings.js';
 
-const RENDERERS = { home, epoch, gens, candidate, diff, boards, board, mutations, instrument, publication, builder, settings };
+const RENDERERS = { home, epoch, gens, candidate, diff, boards, board, mutations, instrument, publication, builder, logs, settings };
 
 export const THEMES = COLOR_THEMES.map((t) => t[0]);
 export const TYPEFACES = TYPE_THEMES.map((t) => t[0]);
@@ -620,6 +621,13 @@ export function mountShell(root) {
     el('a', { class: 'dt-nav-builder', href: href('builder', {}), title: 'Tournament builder (compose the evaluation contract)', 'aria-label': 'Open the tournament builder' }, [
       el('span', { class: 'dt-nav-builder-glyph', 'aria-hidden': 'true', text: '⚒' }),
       el('span', { class: 'dt-nav-builder-text', text: 'builder' }),
+    ]),
+    // the OPERATOR-LOG entry — the workspace-level `#/logs` pane (LOGGING.md).
+    // A peer of the builder / settings surfaces; reads the structured stream
+    // for one evolve / reflect invocation.
+    el('a', { class: 'dt-nav-logs', href: href('logs', {}), title: 'Operator log (the structured log stream for one invocation)', 'aria-label': 'Open the operator log' }, [
+      el('span', { class: 'dt-nav-logs-glyph', 'aria-hidden': 'true', text: '☰' }),
+      el('span', { class: 'dt-nav-logs-text', text: 'log' }),
     ]),
     // the SETTINGS entry — a ⚙ that opens the Settings surface (contract roll-up
     // · models / LLM endpoints · appearance). The builder is no longer homed

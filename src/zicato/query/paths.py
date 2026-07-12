@@ -62,6 +62,12 @@ class WorkspacePaths:
         return self.root / "epochs"
 
     @property
+    def logs(self) -> Path:
+        # The structured operator-log streams (LOGGING.md): one
+        # ``<utc-stamp>-<pid>.jsonl`` per evolve/reflect invocation.
+        return self.root / "logs"
+
+    @property
     def heartbeat(self) -> Path:
         return self.runtime / "heartbeat.json"
 

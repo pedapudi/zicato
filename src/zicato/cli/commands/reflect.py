@@ -27,6 +27,7 @@ Running reflection never rolls the epoch — it is measurement, not evolution.
 
 from __future__ import annotations
 
+import contextlib
 import datetime as _dt
 import json
 from pathlib import Path
@@ -429,6 +430,77 @@ def run_cmd(
     if adjudication_requested and not adjudicator_dotted:
         raise click.ClickException(_LIVE_RUN_GATE_MSG)
 
+    # Structured operator-log stream (LOGGING.md) for this reflect
+    # invocation — the other long-running command. Installed here (past the
+    # refuse gate, so a refused run writes no stream) and closed in the
+    # finally below. Best-effort; a logging-setup failure never fails the run.
+    from zicato.logging_stream import install_log_stream, set_log_context  # noqa: PLC0415
+
+    _log_stream = install_log_stream(workspace_root)
+    set_log_context(epoch_id=resolved_epoch)
+    # Contract-load preflight: surface the telemetry-dialect capability
+    # warnings ONCE for this invocation — the SAME single seam evolve uses
+    # (evolve.loop.emit_dialect_capability_warnings), so a `reflect run`
+    # tuning a drift-derived loss under a drift-incapable dialect is warned
+    # too. Best-effort; a warning-emit failure never fails the run.
+    from zicato.evolve.loop import emit_dialect_capability_warnings  # noqa: PLC0415
+    from zicato.util import best_effort  # noqa: PLC0415
+
+    with best_effort("dialect-capability preflight warnings"):
+        emit_dialect_capability_warnings(workspace_root)
+    try:
+        _reflect_execute(
+            workspace_root=workspace_root,
+            resolved_epoch=resolved_epoch,
+            reflection_plan=reflection_plan,
+            reflection_id=reflection_id,
+            plan_mod=plan_mod,
+            candidate_list=candidate_list,
+            entry_list=entry_list,
+            weights=weights,
+            adjudication_requested=adjudication_requested,
+            adjudicator_dotted=adjudicator_dotted,
+            board_judges=board_judges,
+            k_adj=k_adj,
+            epoch_cfg=epoch_cfg,
+            parent_id=parent_id,
+            champion_id=champion_id,
+            promote_margin=promote_margin,
+            board=board,
+            output_path=output_path,
+        )
+    finally:
+        with contextlib.suppress(Exception):
+            _log_stream.close()
+
+
+def _reflect_execute(
+    *,
+    workspace_root: Path,
+    resolved_epoch: str,
+    reflection_plan: Any,
+    reflection_id: str,
+    plan_mod: Any,
+    candidate_list: list[str],
+    entry_list: list[str],
+    weights: Any,
+    adjudication_requested: bool,
+    adjudicator_dotted: str | None,
+    board_judges: list[str],
+    k_adj: int,
+    epoch_cfg: Any,
+    parent_id: str | None,
+    champion_id: str | None,
+    promote_margin: float,
+    board: list[Any],
+    output_path: str | None,
+) -> None:
+    """The reflect-run execution body (corpus → adjudicate → persist → report).
+
+    Extracted from ``run_cmd`` so the operator-log stream can wrap it in a
+    single ``try/finally`` — behaviour is otherwise identical to the
+    inlined body it replaced.
+    """
     # Persist the plan up front (the reflection directory is created here).
     plan_mod.write_plan(workspace_root, reflection_plan)
 

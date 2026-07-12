@@ -203,6 +203,21 @@ export async function livePipeline() {
   try { return await fetchJson('/api/live/pipeline'); } catch (err) { return null; }
 }
 
+// The structured operator-log tail (LOGGING.md). NEVER cached — the stream
+// grows as the run logs — and a failure / no-logs workspace degrades to a
+// null the pane renders as an honest empty state. Params: {invocation, level,
+// limit, after}.
+export async function logs(params) {
+  const p = params || {};
+  const qs = [];
+  if (p.invocation) qs.push('invocation=' + enc(p.invocation));
+  if (p.level) qs.push('level=' + enc(p.level));
+  if (p.limit != null) qs.push('limit=' + enc(p.limit));
+  if (p.after != null) qs.push('after=' + enc(p.after));
+  const path = '/api/logs' + (qs.length ? '?' + qs.join('&') : '');
+  try { return await fetchJson(path); } catch (err) { return null; }
+}
+
 // The actual configured tournament STRUCTURE for one tournament — the
 // full bracket / standings / racing state (§3.2). Resolves from the
 // index → live active record → per-run loss files, so a completed

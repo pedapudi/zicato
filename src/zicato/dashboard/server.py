@@ -281,6 +281,7 @@ def create_app(
         ),
         Route("/api/health-report", handlers["api_health_report"]),
         Route("/api/search", handlers["api_search"]),
+        Route("/api/logs", handlers["api_logs"]),
         Route("/api/score-trajectory", handlers["api_score_trajectory"]),
         Route(
             "/api/drift-movements/{generation_id}",
