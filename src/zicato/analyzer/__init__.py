@@ -49,6 +49,7 @@ from zicato.analyzer.process_exemplars import (
 )
 from zicato.analyzer.report import (
     generate_epoch_report,
+    regenerate_epoch_report_deterministic,
     restamp_persisted_report,
 )
 from zicato.analyzer.report_data import EpochReportData, gather_epoch_report_data
@@ -65,6 +66,7 @@ __all__ = [
     "ProcessExemplar",
     "extract_process_exemplars",
     "generate_epoch_report",
+    "regenerate_epoch_report_deterministic",
     "restamp_persisted_report",
     "EpochReportData",
     "gather_epoch_report_data",
