@@ -661,15 +661,20 @@ def _rungs_from_row(row: Mapping[str, Any]) -> list[RungEvent]:
             cut_raw = m.get("cut")
             if not isinstance(surv_raw, list) or not isinstance(cut_raw, list):
                 continue  # not a rung group (a two-competitor match / gate)
-            survivors = tuple(str(s) for s in surv_raw if s)
-            cut = tuple(str(c) for c in cut_raw if c)
+            # Dedup within each side so a corrupt row with a repeated entry
+            # is capped and counted on the same effective set the fit keeps
+            # (a generation must never end up rated with zero games).
+            survivors = tuple(dict.fromkeys(str(s) for s in surv_raw if s))
+            cut = tuple(dict.fromkeys(str(c) for c in cut_raw if c))
             if not survivors or not cut:
                 continue  # everyone carried / everyone cut — no ranking signal
             rungs.append(
                 RungEvent(
                     epoch_id=epoch_id,
                     tournament_id=tournament_id,
-                    rung_id=str(m.get("match_id") or ""),
+                    # Positional fallback: two malformed rungs both missing
+                    # match_id must not collide into one dedup key.
+                    rung_id=str(m.get("match_id") or f"rung@{len(rungs)}"),
                     survivors=survivors,
                     cut=cut,
                     ran_at=ran_at,
