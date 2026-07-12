@@ -396,13 +396,19 @@ def aggregate_generation_score(
         # that don't read it are unaffected.
         "scalar_provenance": scalar_provenance,
     }
-    # Echo the candidate diff size onto the aggregate ONLY when the
-    # diff-complexity term is actually active, so the gate / dashboard can
-    # surface ``diff_size:challenger:{added,removed,patches}`` evidence. At the
-    # default weight (or with no diff size) the key is ABSENT, so the returned
-    # dict — and therefore the serialised ``gen_score.json`` golden — is
-    # byte-identical to the pre-feature aggregate.
-    if diff_component is not None and diff_size is not None:
+    # Echo the candidate diff size onto the aggregate when EITHER half of the
+    # diff-complexity regularizer is active — the loss-term weight (``> 0`` ⇒
+    # ``diff_component is not None``) OR the opt-in parsimony CEILING
+    # (``diff_complexity_ceiling > 0``, which the gate's Rule 0 reads off this
+    # key). This lets the gate / dashboard surface
+    # ``diff_size:challenger:{added,removed,patches}`` evidence and lets the
+    # ceiling see the diff size even when the loss weight is off. At BOTH
+    # defaults (weight 0.0 and ceiling 0.0), or with no diff size, the key is
+    # ABSENT, so the returned dict — and therefore the serialised
+    # ``gen_score.json`` golden — is byte-identical to the pre-feature
+    # aggregate.
+    parsimony_active = diff_component is not None or weights.diff_complexity_ceiling > 0.0
+    if parsimony_active and diff_size is not None:
         agg["diff_size"] = dict(diff_size)
     return agg
 

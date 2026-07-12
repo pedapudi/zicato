@@ -9,9 +9,22 @@ term is EXACTLY absent — the scalar, the ``scalar_components`` dict, the retur
 aggregate, and the contract canonical form are byte-identical to a contract
 without the field. The ON-path tests prove the term works (changes the scalar,
 surfaces as a component, echoes the diff size, rolls the epoch) when weighted.
+
+The CEILING half (``diff_complexity_ceiling``) is the paired hard gate rule:
+a challenger whose diff complexity exceeds the ceiling is rejected outright
+(default 0.0 = OFF, byte-identical). Its gate-decision behaviour is pinned in
+``test_tournament_gate.py``; the end-to-end tests here prove the whole thread —
+the orchestrator derives the diff size from the child's patches, the aggregate
+echoes it, and the gate rejects with the honest reason recorded on the outcome.
 """
 
 from __future__ import annotations
+
+import asyncio
+import json
+from pathlib import Path
+
+import pytest
 
 from zicato.core import DriftCount, LossProfile, ScoringWeights
 from zicato.core.types import Experiment, HypothesisSpec, Patch
@@ -214,6 +227,47 @@ def test_no_diff_size_means_no_term_even_when_weighted() -> None:
 
 
 # ---------------------------------------------------------------------------
+# CEILING half (OVERFITTING.md §5 / §12 #4). The ceiling reads the challenger
+# diff size off the aggregate; unlike the loss weight it adds NO scalar term.
+# ---------------------------------------------------------------------------
+
+
+def test_ceiling_echoes_diff_size_without_a_scalar_term() -> None:
+    # Ceiling ON, weight OFF: the diff size is echoed so the gate's Rule 0 can
+    # read it, but the scalar / components are byte-identical to the weight-off
+    # path (the ceiling is a gate rule, not a loss nudge).
+    weights = ScoringWeights(diff_complexity_ceiling=10.0)
+    diff = {"added": 4, "removed": 0, "patches": 3}
+    losses = [_loss("e1", drift_loss=2.0)]
+    off = aggregate_generation_score(losses, ScoringWeights())
+    on = aggregate_generation_score(losses, weights, diff_size=diff)
+    assert on["scalar"] == off["scalar"]
+    assert "diff_complexity" not in on["scalar_components"]
+    assert on["scalar_components"] == off["scalar_components"]
+    # ...but the diff size IS echoed for the ceiling to read.
+    assert on["diff_size"] == diff
+
+
+def test_ceiling_off_and_weight_off_is_byte_identical() -> None:
+    # BOTH halves off: threading a diff size changes nothing (no echo, no term).
+    weights = ScoringWeights()  # ceiling 0.0, weight 0.0
+    diff = {"added": 100, "removed": 0, "patches": 5}
+    losses = [_loss("e1", drift_loss=2.0)]
+    agg_none = aggregate_generation_score(losses, weights)
+    agg_with_diff = aggregate_generation_score(losses, weights, diff_size=diff)
+    assert agg_with_diff == agg_none
+    assert "diff_size" not in agg_none
+
+
+def test_canon_omits_ceiling_at_default_and_rolls_when_set() -> None:
+    off = round_floats(scoring_to_canon(ScoringWeights()))
+    assert "diff_complexity_ceiling" not in off
+    on = round_floats(scoring_to_canon(ScoringWeights(diff_complexity_ceiling=10.0)))
+    assert on["diff_complexity_ceiling"] == 10.0
+    assert on != off
+
+
+# ---------------------------------------------------------------------------
 # gate evidence
 # ---------------------------------------------------------------------------
 
@@ -260,3 +314,95 @@ def test_scoring_weights_round_trips_field() -> None:
     # The default still round-trips (and serialises the field as 0.0).
     d = ScoringWeights()
     assert ScoringWeights.from_json(d.to_json()) == d
+
+
+# ---------------------------------------------------------------------------
+# CEILING end-to-end through evolve_once. The orchestrator derives the
+# challenger diff size from its patch records and threads it on the full A/B
+# path; with the ceiling on, an over-budget diff is rejected pre-persist and
+# the champion stands. The reason lands on the outcome (experiment record) and,
+# via ``_emit_gate_evaluated``, on the round-log ``gate_evaluated`` rule.
+# ---------------------------------------------------------------------------
+
+
+def _set_ceiling(workspace: Path, epoch_id: str, ceiling: float) -> None:
+    scoring_path = workspace / "epochs" / epoch_id / "scoring.json"
+    body = json.loads(scoring_path.read_text())
+    body["diff_complexity_ceiling"] = ceiling
+    scoring_path.write_text(json.dumps(body))
+
+
+def test_ceiling_rejects_oversized_challenger_diff_e2e(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The one-patch challenger diff (complexity 2) exceeds a ceiling of 1.0,
+    so an otherwise-promotable child is REJECTED with the ceiling reason and
+    the champion pointer does not advance."""
+    from tests.test_orchestrator import (
+        _bootstrap_workspace,
+        _harness_call_llm,
+        _install_stub_adapter_factory,
+        _install_telemetry_stubs,
+        _make_aux_responder,
+        _valid_proposer_response,
+    )
+    from zicato.orchestrator import evolve_once
+
+    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    _set_ceiling(workspace, epoch_id, 1.0)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.0},  # v1 strictly better — would promote
+        canned_pass_by_gen={"v0": True, "v1": True},
+    )
+
+    outcome = asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+        )
+    )
+
+    assert outcome.tournament_decision == "rejected"
+    assert outcome.rejection_reason.startswith("diff_complexity_ceiling:")
+    assert "exceeds ceiling 1" in outcome.rejection_reason
+    marker = workspace / "epochs" / epoch_id / "current_generation"
+    assert not marker.exists()
+
+
+def test_ceiling_high_enough_promotes_the_same_diff_e2e(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The identical improving child promotes when the ceiling is generous
+    (complexity 2 <= 100) — the ceiling only vetoes over-budget diffs."""
+    from tests.test_orchestrator import (
+        _bootstrap_workspace,
+        _harness_call_llm,
+        _install_stub_adapter_factory,
+        _install_telemetry_stubs,
+        _make_aux_responder,
+        _valid_proposer_response,
+    )
+    from zicato.orchestrator import evolve_once
+
+    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    _set_ceiling(workspace, epoch_id, 100.0)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
+        canned_pass_by_gen={"v0": True, "v1": True},
+    )
+
+    outcome = asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+        )
+    )
+    assert outcome.tournament_decision == "promoted"

@@ -545,6 +545,7 @@ def set_namespace_weights(
     *,
     namespace_weights: dict[str, float] | None = None,
     diff_complexity_weight: float | None = None,
+    diff_complexity_ceiling: float | None = None,
 ) -> DraftPatch:
     """Set the multi-objective namespace coefficients + the parsimony term.
 
@@ -553,8 +554,11 @@ def set_namespace_weights(
     encodes the namespace's "worse" direction — positive = higher is
     worse, negative = higher is better, zero = tracked but unscored).
     ``diff_complexity_weight`` is the opt-in MDL/parsimony coefficient
-    (``0`` = the term is exactly absent; must be >= 0). Both are contract
-    fields — changing either rolls the epoch.
+    (``0`` = the term is exactly absent; must be >= 0).
+    ``diff_complexity_ceiling`` is the paired opt-in parsimony CEILING
+    (``0`` = OFF; must be >= 0): a challenger whose diff complexity exceeds
+    it is rejected outright by the gate. All are contract fields — changing
+    any rolls the epoch.
     """
     changed: dict[str, Any] = {}
     scoring_changes: dict[str, Any] = {}
@@ -574,6 +578,17 @@ def set_namespace_weights(
             changed["diff_complexity_weight"] = {
                 "from": draft.scoring.diff_complexity_weight,
                 "to": diff_complexity_weight,
+            }
+    if diff_complexity_ceiling is not None:
+        if diff_complexity_ceiling < 0:
+            raise ValueError(
+                f"diff_complexity_ceiling must be >= 0, got {diff_complexity_ceiling!r}"
+            )
+        if diff_complexity_ceiling != draft.scoring.diff_complexity_ceiling:
+            scoring_changes["diff_complexity_ceiling"] = diff_complexity_ceiling
+            changed["diff_complexity_ceiling"] = {
+                "from": draft.scoring.diff_complexity_ceiling,
+                "to": diff_complexity_ceiling,
             }
     if scoring_changes:
         draft.scoring = _replace_scoring(draft, **scoring_changes)

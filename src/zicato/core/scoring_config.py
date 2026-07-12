@@ -733,6 +733,24 @@ class ScoringWeights:
         canonicalizer omits the field from the scoring hash at the default so
         an unset contract does not roll its epoch; setting it ``> 0`` adds the
         key and rolls the epoch like any other weight change.
+    diff_complexity_ceiling:
+        The parsimony CEILING that pairs with :attr:`diff_complexity_weight`
+        (OVERFITTING.md §5 / §12 #4 — the ceiling half of the diff-complexity
+        regularizer). While the weight *dampens* an oversized diff by adding a
+        loss term, the ceiling is a HARD gate rule: a challenger whose diff
+        complexity (``added + removed + patches`` — the same
+        :func:`zicato.scoring.diff_complexity.diff_complexity` measure the loss
+        term reads) EXCEEDS the ceiling is REJECTED outright, regardless of how
+        strongly it improved. The rejection reason is honest and specific
+        (``"diff_complexity_ceiling: diff complexity 14 exceeds ceiling 10"``),
+        so the experiment record + the round-log ``gate_evaluated`` rule name
+        why. Defaults to ``0.0`` = OFF: the ceiling is never consulted, no
+        candidate is rejected on it, and the scalar / contract hash / every
+        golden are byte-identical to a contract without this field (the
+        contract canonicalizer omits the field at the default). Applies on the
+        full A/B promotion path only — the same path the challenger diff size
+        is threaded on — so like the loss term it does not touch fast-mode or
+        multi-challenger matchup scoring. Any value ``<= 0`` is treated as OFF.
     promote_margin:
         Minimum scalar-score improvement the child generation must show
         over the parent to be promoted. Acts as a regression-noise
@@ -828,6 +846,17 @@ class ScoringWeights:
     # ``diff_complexity_weight * (added + removed + patches)`` component into the
     # challenger's scalar so a shorter-description edit is preferred.
     diff_complexity_weight: float = field(
+        default=0.0,
+        metadata=_knob(omit_at_default=True, builder_op="set_namespace_weights"),
+    )
+    # Parsimony CEILING (OVERFITTING.md §5 / §12 #4 — the ceiling half of the
+    # diff-complexity regularizer, paired with the loss-term weight above).
+    # DEFAULT 0.0 ⇒ OFF: the gate never consults it and the scalar / contract
+    # hash / every golden are byte-identical (the canonicalizer omits it at the
+    # default). Set ``> 0`` to REJECT any challenger whose diff complexity
+    # (``added + removed + patches``) exceeds the ceiling — a hard gate rule,
+    # not a loss nudge. Any value ``<= 0`` is treated as OFF.
+    diff_complexity_ceiling: float = field(
         default=0.0,
         metadata=_knob(omit_at_default=True, builder_op="set_namespace_weights"),
     )

@@ -494,3 +494,75 @@ def test_holdout_aggregate_scope_rejects_net_holdout_regression() -> None:
     assert outcome.decision == "rejected"
     assert "holdout_not_confirmed" in outcome.reason
     assert "overall pass-rate fell by" in outcome.reason
+
+
+# ---------------------------------------------------------------------------
+# Diff-complexity CEILING (OVERFITTING.md §5 / §12 #4 — the ceiling half of the
+# regularizer). An OPT-IN hard gate rule (default 0.0 = OFF): a challenger
+# whose diff complexity (added + removed + patches) exceeds the ceiling is
+# REJECTED outright, before any scoring rule, with an honest reason. The
+# challenger diff size rides on ``child_agg["diff_size"]`` (threaded only when
+# the parsimony machinery is active).
+# ---------------------------------------------------------------------------
+
+
+def _agg_with_diff(
+    *, scalar: float, diff_size: dict[str, int] | None = None, pass_rate: float = 1.0
+) -> dict[str, object]:
+    agg = _agg(scalar=scalar, pass_rate=pass_rate)
+    if diff_size is not None:
+        agg["diff_size"] = dict(diff_size)
+    return agg
+
+
+def test_ceiling_off_by_default_ignores_an_oversized_diff() -> None:
+    """At the default ceiling 0.0 the check is skipped — a huge diff that would
+    otherwise clear the gate still promotes (byte-identical to no field)."""
+    parent = _agg(scalar=2.0)
+    child = _agg_with_diff(scalar=1.0, diff_size={"added": 500, "removed": 0, "patches": 9})
+    outcome = evaluate_gate(parent, child, ScoringWeights())
+    assert outcome.decision == "promoted"
+    assert outcome.reason == ""
+
+
+def test_ceiling_rejects_a_diff_over_the_ceiling_with_an_honest_reason() -> None:
+    """complexity = 12 + 0 + 2 = 14 > ceiling 10 → rejected, and the reason
+    names the actual complexity and the ceiling."""
+    weights = ScoringWeights(diff_complexity_ceiling=10.0)
+    parent = _agg(scalar=2.0)
+    child = _agg_with_diff(scalar=0.5, diff_size={"added": 12, "removed": 0, "patches": 2})
+    outcome = evaluate_gate(parent, child, weights)
+    assert outcome.decision == "rejected"
+    assert outcome.reason == "diff_complexity_ceiling: diff complexity 14 exceeds ceiling 10"
+
+
+def test_ceiling_passes_a_diff_at_or_under_the_ceiling() -> None:
+    """complexity = 9 + 0 + 1 = 10 == ceiling 10 (not OVER) → the ceiling does
+    not fire; the scoring rules decide (this child improves → promoted)."""
+    weights = ScoringWeights(diff_complexity_ceiling=10.0)
+    parent = _agg(scalar=2.0)
+    child = _agg_with_diff(scalar=0.5, diff_size={"added": 9, "removed": 0, "patches": 1})
+    outcome = evaluate_gate(parent, child, weights)
+    assert outcome.decision == "promoted"
+
+
+def test_ceiling_vetoes_before_the_scalar_rule_even_when_the_child_regressed() -> None:
+    """A structural admissibility veto: an over-budget diff that ALSO regressed
+    reports the ceiling reason, not the scalar near-miss — the ceiling is
+    checked first."""
+    weights = ScoringWeights(diff_complexity_ceiling=5.0)
+    parent = _agg(scalar=1.0)
+    child = _agg_with_diff(scalar=2.0, diff_size={"added": 20, "removed": 0, "patches": 3})
+    outcome = evaluate_gate(parent, child, weights)
+    assert outcome.decision == "rejected"
+    assert outcome.reason.startswith("diff_complexity_ceiling:")
+
+
+def test_ceiling_with_no_diff_size_on_child_agg_is_skipped() -> None:
+    """When the ceiling is on but no diff size was threaded (e.g. fast-mode /
+    matchup scoring), the ceiling cannot fire and the scoring rules decide."""
+    weights = ScoringWeights(diff_complexity_ceiling=1.0)
+    parent = _agg(scalar=2.0)
+    child = _agg(scalar=1.0)  # no diff_size key
+    outcome = evaluate_gate(parent, child, weights)
+    assert outcome.decision == "promoted"

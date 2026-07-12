@@ -912,12 +912,20 @@ def test_set_namespace_weights() -> None:
     assert patch.changed["namespace_weights"]["to"] == weights
     assert patch.changed["diff_complexity_weight"] == {"from": 0.0, "to": 0.01}
 
+    # The paired parsimony CEILING sets + records like the weight.
+    patch_ceil = ops.set_namespace_weights(draft, diff_complexity_ceiling=10.0)
+    assert draft.scoring.diff_complexity_ceiling == 10.0
+    assert patch_ceil.changed["diff_complexity_ceiling"] == {"from": 0.0, "to": 10.0}
+
     # No-op replacement records nothing.
     patch2 = ops.set_namespace_weights(draft, namespace_weights=dict(weights))
     assert patch2.changed == {}
 
     with pytest.raises(ValueError, match=">= 0"):
         ops.set_namespace_weights(TournamentDraft(), diff_complexity_weight=-0.1)
+
+    with pytest.raises(ValueError, match=">= 0"):
+        ops.set_namespace_weights(TournamentDraft(), diff_complexity_ceiling=-1.0)
 
 
 def test_set_proposer_quality_composes_with_screening() -> None:
