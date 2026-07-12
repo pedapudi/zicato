@@ -21,11 +21,13 @@ The workspace ``config.json`` may carry an optional ``models`` block::
       "auxiliary": { "model": "...", "endpoint": "...|null",
                      "api_key_env": "...|null" },
       "builder":   { ... },
-      "judge":     { ... }
+      "judge":     { ... },
+      "proposer_breadth": { ... },
+      "proposer_depth":   { ... }
     }
 
-Each of the four roles (**harness · auxiliary · builder · judge**) is
-OPTIONAL and is EITHER:
+Each role (**harness · auxiliary · builder · judge · proposer_breadth ·
+proposer_depth**) is OPTIONAL and is EITHER:
 
 * ``{"call_llm": "pkg.mod:fn"}`` — a dotted-path callable (today's
   behavior, fully backward-compatible), OR
@@ -56,9 +58,20 @@ from typing import Any
 
 from zicato.core.types import CallLLM
 
-#: The four LLM roles the unified ``models`` block configures, in the order
-#: the settings UI lists them.
-MODEL_ROLES: tuple[str, ...] = ("harness", "auxiliary", "builder", "judge")
+#: The LLM roles the unified ``models`` block configures, in the order the
+#: settings UI lists them. ``proposer_breadth`` / ``proposer_depth`` are the
+#: WS-ENS ensemble roles: the best-of-N proposer's slate SAMPLING (breadth)
+#: and its CRITIQUE + REVISE passes (depth). Both are OPTIONAL and, when
+#: unconfigured, fall back to the auxiliary surface (byte-identical) — see
+#: :meth:`zicato.core.runtime.RuntimeConfig.effective_proposer_breadth_call_llm`.
+MODEL_ROLES: tuple[str, ...] = (
+    "harness",
+    "auxiliary",
+    "builder",
+    "judge",
+    "proposer_breadth",
+    "proposer_depth",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +184,8 @@ class ModelsConfig:
     auxiliary: RoleSpec = RoleSpec()
     builder: RoleSpec = RoleSpec()
     judge: RoleSpec = RoleSpec()
+    proposer_breadth: RoleSpec = RoleSpec()
+    proposer_depth: RoleSpec = RoleSpec()
 
     def role(self, name: str) -> RoleSpec:
         """Return the :class:`RoleSpec` for ``name`` (one of :data:`MODEL_ROLES`)."""
@@ -217,6 +232,8 @@ def models_config_from_dict(raw: Any) -> ModelsConfig:
         auxiliary=role_spec_from_dict(raw.get("auxiliary")),
         builder=role_spec_from_dict(raw.get("builder")),
         judge=role_spec_from_dict(raw.get("judge")),
+        proposer_breadth=role_spec_from_dict(raw.get("proposer_breadth")),
+        proposer_depth=role_spec_from_dict(raw.get("proposer_depth")),
     )
 
 

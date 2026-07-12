@@ -148,6 +148,35 @@ class RuntimeConfig:
         identity-distinct from the judge callable before adjudicating
         (:func:`zicato.core.workspace.assert_distinct_callables`) — a
         judge cannot grade its own homework.
+    proposer_breadth_call_llm:
+        Optional LLM callable used by the best-of-N proposer's SLATE
+        SAMPLING (WS-ENS ensemble roles — the "breadth" of AlphaEvolve's
+        proposer ensemble). ``None`` (the default) ⇒ sampling falls back
+        to :attr:`auxiliary_call_llm` (today's behavior, byte-identical),
+        so an absent role changes nothing. When set (from a workspace
+        ``models.proposer_breadth`` block) it points the exploratory
+        slate samples at a separate endpoint/model — typically a cheaper,
+        higher-temperature model that generates many diverse candidates.
+        Read via :meth:`effective_proposer_breadth_call_llm`.
+
+        NO collusion identity-guard applies between this and
+        :attr:`proposer_depth_call_llm`: both are PROPOSER-SIDE roles in
+        the SAME trust domain (the proposer stack, inside one
+        overfitting-visibility envelope). The collusion guard exists only
+        to keep an EVALUATOR distinct from the thing it evaluates (harness
+        vs auxiliary; judge vs adjudicator) — breadth and depth are two
+        halves of one proposer and may freely be the same callable.
+    proposer_depth_call_llm:
+        Optional LLM callable used by the best-of-N proposer's DEPTH
+        passes — the self-CRITIQUE selection call and the screen-informed
+        REVISE re-sample (and the future LLM-guided recombination merge).
+        ``None`` (the default) ⇒ these fall back to
+        :attr:`auxiliary_call_llm` (today's behavior, byte-identical).
+        When set (from ``models.proposer_depth``) it points the
+        refine/critique step at a separate endpoint/model — typically a
+        stronger, lower-temperature model that judges + repairs the slate.
+        Read via :meth:`effective_proposer_depth_call_llm`. See the
+        no-collusion-guard note on :attr:`proposer_breadth_call_llm`.
     seed:
         Optional integer seed for any zicato-internal random number
         generators. Adapters may or may not honor it for the inner
@@ -344,6 +373,8 @@ class RuntimeConfig:
     parallelism: int = 4
     judge_call_llm: CallLLM | None = None
     adjudicator_call_llm: CallLLM | None = None
+    proposer_breadth_call_llm: CallLLM | None = None
+    proposer_depth_call_llm: CallLLM | None = None
     scrub_worker_env: bool = False
     worker_env_passthrough: tuple[str, ...] = ()
     diversity_tolerance: float | None = None
@@ -436,5 +467,41 @@ class RuntimeConfig:
         return (
             self.adjudicator_call_llm
             if self.adjudicator_call_llm is not None
+            else self.auxiliary_call_llm
+        )
+
+    def effective_proposer_breadth_call_llm(self) -> CallLLM:
+        """The callable the best-of-N SLATE SAMPLING runs on (WS-ENS breadth).
+
+        :attr:`proposer_breadth_call_llm` when set, else the auxiliary
+        surface — the same construction-time fall-back rule as
+        :meth:`effective_judge_call_llm`. Absent a configured
+        ``models.proposer_breadth`` role, sampling runs on exactly the
+        auxiliary callable it always has (byte-identical).
+
+        Unlike the judge/adjudicator accessors this carries NO distinctness
+        obligation: breadth and depth are both proposer-side roles in one
+        trust domain (see the field docstring), so the fall-back onto the
+        shared auxiliary surface is not merely constructible but fully
+        supported — it is the default.
+        """
+        return (
+            self.proposer_breadth_call_llm
+            if self.proposer_breadth_call_llm is not None
+            else self.auxiliary_call_llm
+        )
+
+    def effective_proposer_depth_call_llm(self) -> CallLLM:
+        """The callable the best-of-N CRITIQUE + REVISE passes run on (depth).
+
+        :attr:`proposer_depth_call_llm` when set, else the auxiliary
+        surface — mirroring :meth:`effective_proposer_breadth_call_llm`.
+        No distinctness obligation applies against the breadth role (same
+        proposer-side trust domain); both defaulting to the auxiliary
+        callable is the supported, byte-identical default.
+        """
+        return (
+            self.proposer_depth_call_llm
+            if self.proposer_depth_call_llm is not None
             else self.auxiliary_call_llm
         )

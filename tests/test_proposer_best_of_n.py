@@ -1505,3 +1505,165 @@ def test_field_threads_the_pair_to_slot_zero_only() -> None:
     assert _recombine_pair_for_slot(pair, 1) is None
     assert _recombine_pair_for_slot(pair, 3) is None
     assert _recombine_pair_for_slot(None, 0) is None
+
+
+# --------------------------------------------------------------------------
+# WS-ENS — ensemble proposer roles (breadth = sampling, depth = critique/revise)
+# --------------------------------------------------------------------------
+
+
+async def _plain_aux(system: str, user: str, model: str) -> str:
+    """A breadth double: a distinct callable the fake inner never invokes.
+
+    The wiring proof for SAMPLING is that the inner agent RECEIVES this
+    object on ``ctx.aux_call_llm`` (the fake inner records the context but
+    never calls the callable), so identity — not a call count — is the seam.
+    """
+    del system, user, model
+    return "unused"
+
+
+@pytest.mark.asyncio
+async def test_ens_sampling_uses_breadth_critique_uses_depth() -> None:
+    """Slate SAMPLING runs on breadth (N times); the CRITIQUE call runs on
+    depth — and both are distinct from the context's base auxiliary, proving
+    the wrapper actually swapped ``ctx.aux_call_llm`` per call class."""
+    candidates = [
+        _experiment(core_idea="a", mutation_id="router__sp", new_content="a"),
+        _experiment(core_idea="b", mutation_id="writer__sp", new_content="b"),
+        _experiment(core_idea="c", mutation_id="router__sp", new_content="c"),
+    ]
+    inner = _ExhaustibleInnerAgent(candidates)
+    breadth = _plain_aux
+    depth = _CapturingCriticLLM("0")  # the critic double: counts + records
+    base_aux = _CapturingCriticLLM("2")  # deliberately different from both roles
+    agent = BestOfNProposerAgent(
+        inner=inner,
+        config=ProposerQualityConfig(best_of_n=3),
+        breadth_call_llm=breadth,
+        depth_call_llm=depth,
+    )
+    out = await agent.propose(_context(base_aux))
+
+    # SAMPLING: the inner was handed the breadth callable on every slate slot.
+    assert inner.calls == 3
+    assert [c.aux_call_llm for c in inner.contexts] == [breadth, breadth, breadth]
+    # CRITIQUE: exactly one depth call; the base auxiliary was NEVER the critic.
+    assert len(depth.system_prompts) == 1
+    assert len(base_aux.system_prompts) == 0
+    # The critic's pick (index 0) is returned.
+    assert out is candidates[0]
+
+
+@pytest.mark.asyncio
+async def test_ens_absent_roles_are_byte_identical_same_callable_object() -> None:
+    """With NO roles configured, sampling AND critique run on the SAME object
+    the context carries — a counting-double proves the fall-back is the exact
+    ``ctx.aux_call_llm`` (byte-identical to the pre-ensemble wrapper)."""
+    candidates = [
+        _experiment(core_idea="a", mutation_id="router__sp", new_content="a"),
+        _experiment(core_idea="b", mutation_id="writer__sp", new_content="b"),
+    ]
+    inner = _ExhaustibleInnerAgent(candidates)
+    base_aux = _CapturingCriticLLM("0")
+    agent = BestOfNProposerAgent(
+        inner=inner,
+        config=ProposerQualityConfig(best_of_n=2),
+        breadth_call_llm=None,
+        depth_call_llm=None,
+    )
+    await agent.propose(_context(base_aux))
+
+    # Sampling fell back to the base auxiliary — the SAME object, not a copy.
+    assert all(c.aux_call_llm is base_aux for c in inner.contexts)
+    # Critique fell back to that same object too (one call).
+    assert len(base_aux.system_prompts) == 1
+
+
+@pytest.mark.asyncio
+async def test_ens_revise_uses_depth() -> None:
+    """The screen-informed REVISE re-sample is a depth pass: its context
+    carries the depth callable (and a non-empty revise_feedback), while the
+    original slate slots carried breadth."""
+    slate = [
+        _experiment(core_idea="a", mutation_id="router__sp", new_content="a"),
+        _experiment(core_idea="b", mutation_id="writer__sp", new_content="b"),
+        _experiment(core_idea="rev", mutation_id="router__sp", new_content="r"),
+    ]
+    inner = _ExhaustibleInnerAgent(slate)
+    # slate screen (call 0): both vetoed → all-vetoed → one revise; the
+    # replacement screen (call 1): clear → the revise is chosen.
+    screen = _SequencedScreen(
+        [
+            [_screen_result(vetoed=True), _screen_result(vetoed=True)],
+            [_screen_result(vetoed=False)],
+        ]
+    )
+    breadth = _plain_aux
+    depth = _CapturingCriticLLM("0")
+    base_aux = _CapturingCriticLLM("0")
+    agent = BestOfNProposerAgent(
+        inner=inner,
+        config=ProposerQualityConfig(best_of_n=2, screen_entries=2),
+        breadth_call_llm=breadth,
+        depth_call_llm=depth,
+    )
+    ctx = _screened_context(base_aux, screen)
+    await agent.propose(ctx)
+
+    # 2 slate samples on breadth, then the revise re-sample on depth.
+    assert inner.calls == 3
+    assert inner.contexts[0].aux_call_llm is breadth
+    assert inner.contexts[1].aux_call_llm is breadth
+    assert inner.contexts[2].aux_call_llm is depth
+    # The 3rd call is unmistakably the revise (its repair feedback is seeded).
+    assert inner.contexts[2].revise_feedback != ""
+
+
+@pytest.mark.asyncio
+async def test_ens_no_collusion_guard_between_breadth_and_depth() -> None:
+    """Breadth and depth may be the IDENTICAL callable — both are
+    proposer-side (one trust domain), so no distinctness guard fires and the
+    propose step succeeds normally."""
+    candidates = [
+        _experiment(core_idea="a", mutation_id="router__sp", new_content="a"),
+        _experiment(core_idea="b", mutation_id="writer__sp", new_content="b"),
+    ]
+    inner = _ScriptedInnerAgent(candidates)
+    shared = _CapturingCriticLLM("1")  # the SAME object for both roles
+    agent = BestOfNProposerAgent(
+        inner=inner,
+        config=ProposerQualityConfig(best_of_n=2),
+        breadth_call_llm=shared,
+        depth_call_llm=shared,
+    )
+    # No exception — the guard does not apply between the two proposer roles.
+    out = await agent.propose(_context(_CapturingCriticLLM("1")))
+    assert out is candidates[1]
+
+
+def test_ens_wrap_threads_roles_onto_the_wrapper() -> None:
+    """`wrap_with_proposer_quality` stores the two role callables on the
+    wrapper when best_of_n > 1 (and they are irrelevant on the pass-through)."""
+    inner = _ScriptedInnerAgent(
+        [_experiment(core_idea="a", mutation_id="router__sp", new_content="x")]
+    )
+    breadth = _plain_aux
+    depth = _CapturingCriticLLM("0")
+    wrapped = wrap_with_proposer_quality(
+        inner,
+        ProposerQualityConfig(best_of_n=3),
+        breadth_call_llm=breadth,
+        depth_call_llm=depth,
+    )
+    assert isinstance(wrapped, BestOfNProposerAgent)
+    assert wrapped.breadth_call_llm is breadth
+    assert wrapped.depth_call_llm is depth
+    # The best_of_n <= 1 pass-through ignores the roles (no wrapper at all).
+    passthrough = wrap_with_proposer_quality(
+        inner,
+        ProposerQualityConfig(best_of_n=1),
+        breadth_call_llm=breadth,
+        depth_call_llm=depth,
+    )
+    assert passthrough is inner

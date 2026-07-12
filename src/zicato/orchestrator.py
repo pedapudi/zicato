@@ -351,16 +351,9 @@ async def evolve_once(
     # resolved from. ``None`` (the default / skill-only proposer) yields the
     # single-shot built-in unchanged.
     proposer_agent = build_proposer_agent(proposer_spec, proposer_path=_epoch_cfg.proposer_path)
-    # Proposer-quality levers (FUNCTIONALITY-RECOMMENDATIONS.md §4.1): with
-    # ``proposer_quality.best_of_n > 1`` — the DEFAULT is 3 — interpose a
-    # best-of-N + self-critique wrapper around the resolved agent. A contract
-    # that pins ``best_of_n: 1`` (scripted/deterministic proposers do) gets
-    # the agent back UNCHANGED — the historical single-sample propose path.
-    # The critic sees ONLY the same restricted proposer context (never the
-    # holdout), so best-of-N stays inside the overfitting-visibility envelope.
-    from zicato.proposer.best_of_n import wrap_with_proposer_quality  # noqa: PLC0415
-
-    proposer_agent = wrap_with_proposer_quality(proposer_agent, weights.proposer_quality)
+    # NOTE: the best-of-N proposer-quality wrapper is interposed BELOW, right
+    # after the RuntimeConfig is built, because it now threads the config's
+    # WS-ENS ensemble-role callables into the wrapper (see there).
     # --- 0b. Durable per-round event log (WS8) ---
     # The round's store-of-record trace at
     # ``epochs/{epoch}/rounds/{round_index}/round_log.jsonl``, opened here
@@ -400,6 +393,29 @@ async def evolve_once(
         from zicato.core.runtime import RoundTokenLedger  # noqa: PLC0415
 
         config = replace(config, token_ledger=RoundTokenLedger(config.max_tokens_per_round))
+
+    # Proposer-quality levers (FUNCTIONALITY-RECOMMENDATIONS.md §4.1): with
+    # ``proposer_quality.best_of_n > 1`` — the DEFAULT is 3 — interpose a
+    # best-of-N + self-critique wrapper around the resolved agent. A contract
+    # that pins ``best_of_n: 1`` (scripted/deterministic proposers do) gets
+    # the agent back UNCHANGED — the historical single-sample propose path.
+    # The critic sees ONLY the same restricted proposer context (never the
+    # holdout), so best-of-N stays inside the overfitting-visibility envelope.
+    #
+    # WS-ENS ensemble roles: the wrapper routes slate SAMPLING to the breadth
+    # callable and CRITIQUE + REVISE to the depth callable, both read off the
+    # RuntimeConfig (built just above). Absent a ``models.proposer_{breadth,
+    # depth}`` block they are ``None`` and the wrapper falls back to the
+    # round's auxiliary callable — byte-identical. A models/endpoint change
+    # never rolls the epoch.
+    from zicato.proposer.best_of_n import wrap_with_proposer_quality  # noqa: PLC0415
+
+    proposer_agent = wrap_with_proposer_quality(
+        proposer_agent,
+        weights.proposer_quality,
+        breadth_call_llm=config.proposer_breadth_call_llm,
+        depth_call_llm=config.proposer_depth_call_llm,
+    )
 
     # --- 2. Parent generation ---
     # Materialise a v0 baseline snapshot from the registered mutable

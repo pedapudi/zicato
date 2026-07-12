@@ -96,6 +96,30 @@ def test_unknown_role_lookup_raises() -> None:
         ModelsConfig().role("nonsense")
 
 
+def test_proposer_ensemble_roles_parse_and_roundtrip() -> None:
+    """WS-ENS: proposer_breadth / proposer_depth parse, serialize, and are in
+    the canonical role set (so the public view + settings surface them)."""
+    assert "proposer_breadth" in MODEL_ROLES
+    assert "proposer_depth" in MODEL_ROLES
+    raw = {
+        "proposer_breadth": {"call_llm": "pkg:breadth"},
+        "proposer_depth": {"model": "depth-x", "endpoint": None, "api_key_env": None},
+    }
+    cfg = models_config_from_dict(raw)
+    assert cfg.proposer_breadth.call_llm == "pkg:breadth"
+    assert cfg.proposer_depth.model == "depth-x"
+    out = cfg.to_dict()
+    assert out["proposer_breadth"] == {"call_llm": "pkg:breadth"}
+    assert out["proposer_depth"] == {"model": "depth-x", "endpoint": None, "api_key_env": None}
+    # Absent roles serialize to nothing (clean on-disk form).
+    assert "harness" not in out
+    assert models_config_from_dict(out).to_dict() == out
+    # The public view always emits BOTH proposer roles, even unconfigured.
+    pub = ModelsConfig().to_public_dict()
+    assert "proposer_breadth" in pub
+    assert "proposer_depth" in pub
+
+
 # ---------------------------------------------------------------------------
 # Secret safety
 # ---------------------------------------------------------------------------

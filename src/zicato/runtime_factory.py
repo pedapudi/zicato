@@ -22,6 +22,11 @@ Resolution rules:
 * The judge callable is resolved from ``models.judge`` when present; absent,
   it is left ``None`` so judges fall back to the auxiliary callable (today's
   behavior, via :meth:`RuntimeConfig.effective_judge_call_llm`).
+* The WS-ENS proposer-ensemble callables are resolved the same way from
+  ``models.proposer_breadth`` (best-of-N slate sampling) and
+  ``models.proposer_depth`` (critique + revise); absent, both stay ``None``
+  and the best-of-N wrapper falls back to the auxiliary callable
+  (byte-identical). No distinctness guard applies — both are proposer-side.
 * The instance id, workspace root, and seed are read from the config's
   ``runtime`` sub-dict (with ``instance_id`` defaulting to ``"default"``).
 
@@ -136,6 +141,21 @@ def make_runtime_config(
     judge: CallLLM | None = None
     if not models.judge.is_empty:
         judge = resolve_text_call_llm(models.judge, role="judge")
+
+    # WS-ENS ensemble proposer roles: ``models.proposer_breadth`` steers the
+    # best-of-N SLATE SAMPLING and ``models.proposer_depth`` the CRITIQUE +
+    # REVISE passes. Both absent (the common case) ⇒ ``None``, and the
+    # best-of-N wrapper falls back to the auxiliary callable it always used —
+    # byte-identical. No distinctness guard binds them to each other or to any
+    # other role: both are proposer-side, one trust domain (the guard is for
+    # evaluator-vs-evaluated separation). Like every ``models`` role, a change
+    # here is runtime infra and NEVER rolls the epoch.
+    proposer_breadth: CallLLM | None = None
+    if not models.proposer_breadth.is_empty:
+        proposer_breadth = resolve_text_call_llm(models.proposer_breadth, role="proposer_breadth")
+    proposer_depth: CallLLM | None = None
+    if not models.proposer_depth.is_empty:
+        proposer_depth = resolve_text_call_llm(models.proposer_depth, role="proposer_depth")
 
     seed_raw = runtime_dict.get("seed")
     seed: int | None = int(seed_raw) if seed_raw is not None else None
@@ -253,6 +273,8 @@ def make_runtime_config(
         seed=seed,
         parallelism=parallelism,
         judge_call_llm=judge,
+        proposer_breadth_call_llm=proposer_breadth,
+        proposer_depth_call_llm=proposer_depth,
         scrub_worker_env=scrub_worker_env,
         worker_env_passthrough=worker_env_passthrough,
         diversity_tolerance=diversity_tolerance,
