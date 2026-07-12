@@ -225,6 +225,34 @@ scoring surface and are owned by SCORING.md — this doc describes only the
 
 ---
 
+## 2.6 The mechanical recombination slot (WS-REC)
+
+`proposer_quality.recombine` (default OFF) opts in a MECHANICAL merge of two
+already-evaluated challengers — no LLM call. The premise: a single champion can
+only ever discount ONE challenger's fix, so when two REJECTED challengers of the
+current reign each fixed a DISTINCT slice of the board with NON-OVERLAPPING
+edits, the last best-of-N slate slot mints the UNION of their patches, and a
+non-vetoed mint is chosen with `selection_mode = "recombined"`. A
+parsimony-biased selector rejects each single fix; the union clears the gate
+that neither half could — so the slot deliberately bypasses the minimal-diff
+selection heuristic (whose diff key would otherwise starve the larger union).
+
+It is cost-neutral (the mint REPLACES the slot's auxiliary propose call, never
+adds one — a recombining round spends `best_of_n − 1` calls) and
+envelope-clean: selection runs on per-entry PASS-FLIP evidence computed
+orchestrator-side and intersected with the TRAIN board there — entry ids never
+reach the proposer, and the holdout is never eligible. Requires `best_of_n > 1`
+to have any effect; flipping it rolls the epoch (a slate that can recombine
+proposes under a different rule). The full mechanism — the 8 eligibility
+predicates, the 4-key deterministic ranking, the minter, the `recombined`
+selection mode, and the KNOWN NARROWING (pure drift-side complementary pairs are
+invisible by design; they remain reachable through the in-context genealogy
+channel, with a drift-delta-with-confirmation variant as a documented future
+seam) — is specified in **[dev-guide 05 §5.6.11](../dev-guide/05-proposer.md)**
+(`src/zicato/epoch/recombine.py`, `src/zicato/proposer/recombine.py`).
+
+---
+
 ## 3. Design A — why a tool-using proposer owns its own model
 
 The text shim is a single-shot text exchange: zicato hands the auxiliary

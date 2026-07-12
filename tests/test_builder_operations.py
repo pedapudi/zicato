@@ -942,6 +942,28 @@ def test_set_proposer_quality_composes_with_screening() -> None:
         ops.set_proposer_quality(TournamentDraft(), best_of_n=0)
 
 
+def test_set_proposer_quality_recombine_arg() -> None:
+    """The recombination-slot flag round-trips via the changed-dict pattern and
+    composes with the other quality knobs (default-off ⇒ omitted from changed)."""
+    draft = TournamentDraft()
+    # Default-off ⇒ passing the current value is a no-op (no changed entry, no roll).
+    noop = ops.set_proposer_quality(draft, recombine=False)
+    assert "recombine" not in noop.changed
+    assert draft.scoring.proposer_quality.recombine is False
+
+    # Flipping it on lands on the nested block and records the from/to delta.
+    patch = ops.set_proposer_quality(draft, best_of_n=4, recombine=True)
+    quality = draft.scoring.proposer_quality
+    assert quality.recombine is True
+    assert quality.best_of_n == 4
+    assert patch.changed["recombine"] == {"from": False, "to": True}
+
+    # Flipping it back off records the reverse delta.
+    off = ops.set_proposer_quality(draft, recombine=False)
+    assert off.changed["recombine"] == {"from": True, "to": False}
+    assert draft.scoring.proposer_quality.recombine is False
+
+
 def test_set_experiment_memory() -> None:
     import json
 

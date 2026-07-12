@@ -586,6 +586,7 @@ def set_proposer_quality(
     best_of_n: int | None = None,
     critique_enabled: bool | None = None,
     process_exemplars: int | None = None,
+    recombine: bool | None = None,
 ) -> DraftPatch:
     """Set the proposer-quality levers: best-of-N slate + self-critique.
 
@@ -597,7 +598,14 @@ def set_proposer_quality(
     drift-anchored event windows per round (``0`` = off, the default —
     see ``docs/design/PROCESS-EXEMPLARS.md`` incl. its §5 harm-detection
     runbook before opting in; must be >= 0; read-side only, so the cost
-    meter is untouched). COMPOSES with :func:`set_screening` — both edit
+    meter is untouched). ``recombine`` opts in the mechanical
+    recombination slot (WS-REC): when ``True`` the last best-of-N slot
+    mints the patch union of two rejected complementary challengers
+    instead of sampling the LLM — REQUIRES ``best_of_n > 1`` to have any
+    effect (a single-sample proposer has no slate slot to mint into) and
+    is cost-neutral (the mint REPLACES the slot's auxiliary propose call,
+    never adds one — see :mod:`zicato.epoch.recombine`). Flipping it
+    rolls the epoch. COMPOSES with :func:`set_screening` — both edit
     the same nested ``proposer_quality`` block; the screen knobs stay
     that op's. Changing any rolls the epoch.
     """
@@ -622,6 +630,9 @@ def set_proposer_quality(
                 "from": quality.process_exemplars,
                 "to": process_exemplars,
             }
+    if recombine is not None and recombine != quality.recombine:
+        quality_changes["recombine"] = recombine
+        changed["recombine"] = {"from": quality.recombine, "to": recombine}
     if quality_changes:
         draft.scoring = _replace_scoring(
             draft, proposer_quality=dataclasses.replace(quality, **quality_changes)

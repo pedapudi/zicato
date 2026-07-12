@@ -376,6 +376,7 @@ def set_proposer_quality(
     best_of_n: int | None = None,
     critique_enabled: bool | None = None,
     process_exemplars: int | None = None,
+    recombine: bool | None = None,
 ) -> str:
     """Set the proposer-quality levers: best-of-N slate + self-critique.
 
@@ -387,10 +388,16 @@ def set_proposer_quality(
     drift-anchored event windows per round (0 = off, the default; it
     touches the overfitting boundary — point the operator at
     docs/design/PROCESS-EXEMPLARS.md §5, the harm-detection runbook,
-    before setting it; read-side only, no cost-meter impact). The screen
-    (tryout) knobs live on `set_screening` — the ops COMPOSE on the
-    same proposer_quality contract block. Changing any rolls the
-    epoch. Returns the patch + updated cost / warnings.
+    before setting it; read-side only, no cost-meter impact).
+    ``recombine`` opts in the mechanical recombination slot (WS-REC):
+    when True the last best-of-N slot mints the patch union of two
+    rejected complementary challengers instead of sampling the LLM —
+    REQUIRES best_of_n > 1 to have effect, and is cost-neutral (the mint
+    REPLACES that slot's auxiliary propose call, never adds one).
+    Flipping it rolls the epoch. The screen (tryout) knobs live on
+    `set_screening` — the ops COMPOSE on the same proposer_quality
+    contract block. Changing any rolls the epoch. Returns the patch +
+    updated cost / warnings.
     """
     ctx = _active_context()
     try:
@@ -399,6 +406,7 @@ def set_proposer_quality(
             best_of_n=best_of_n,
             critique_enabled=critique_enabled,
             process_exemplars=process_exemplars,
+            recombine=recombine,
         )
     except ValueError as exc:
         return _result_json({"error": str(exc)})

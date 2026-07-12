@@ -415,13 +415,14 @@ def test_builder_op_full_knob_dispatch(client: TestClient) -> None:
         json={
             **s,
             "op": "set_proposer_quality",
-            "args": {"best_of_n": 4, "critique_enabled": False},
+            "args": {"best_of_n": 4, "critique_enabled": False, "recombine": True},
         },
     )
     assert r.status_code == 200
     pq = r.json()["draft"]["scoring"]["proposer_quality"]
     assert pq["best_of_n"] == 4
     assert pq["critique_enabled"] is False
+    assert pq["recombine"] is True
 
     r = client.post(
         "/builder/op", json={**s, "op": "set_experiment_memory", "args": {"cross_epoch": True}}
@@ -448,6 +449,29 @@ def test_builder_op_knob_dispatch_errors_are_400(client: TestClient) -> None:
         json={"session": "kerr", "op": "set_proposer_quality", "args": {"best_of_n": 0}},
     )
     assert r.status_code == 400
+
+
+def test_builder_op_set_proposer_quality_recombine_dispatch(client: TestClient) -> None:
+    """The recombine flag round-trips through /builder/op onto the serialized
+    draft; a bad co-arg (best_of_n 0) in the same call still 400s and leaves the
+    draft untouched (the op validates before applying — recombine never lands)."""
+    s = {"session": "recomb"}
+    r = client.post(
+        "/builder/op",
+        json={**s, "op": "set_proposer_quality", "args": {"best_of_n": 2, "recombine": True}},
+    )
+    assert r.status_code == 200
+    assert r.json()["draft"]["scoring"]["proposer_quality"]["recombine"] is True
+
+    # 400 path: an invalid best_of_n co-arg is rejected wholesale — the prior
+    # recombine value is unchanged (no partial apply).
+    r = client.post(
+        "/builder/op",
+        json={**s, "op": "set_proposer_quality", "args": {"best_of_n": 0, "recombine": False}},
+    )
+    assert r.status_code == 400
+    r = client.post("/builder/op", json={**s, "op": "set_proposer_quality", "args": {}})
+    assert r.json()["draft"]["scoring"]["proposer_quality"]["recombine"] is True
 
 
 def test_builder_op_fork_switch_list_roundtrip(client: TestClient) -> None:

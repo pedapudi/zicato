@@ -279,6 +279,7 @@ folded to counts), **REDACTED** (mechanically scrubbed content), **SANITIZED**
 | `mutation_track_records` | `Mapping[str, MutationTrackRecord] \| None = None` | orchestrator: `_load_mutation_track_records` (best-effort index read, `{}` on failure) | `render_mutation_block(track_records=…)` — one banded advisory line per manifest entry; the `mutation_track_record` tool renders the same shape | BANDED + AGGREGATED ("experiments touching this point"; Δscalar bucketed; never causal) |
 | `round_event_emitter` | `Callable[[str, dict], None] \| None = None` | orchestrator: `_RoundLogEmitter.emit` | best-of-N wrapper via `_emit_round_event` (guarded — a raising emitter never fails a propose) | MACHINERY |
 | `screen_candidates` | `ScreenRunner \| None = None` | orchestrator: `_build_candidate_screen_runner` — ONE closure per round, only when `screen_entries > 0 AND best_of_n > 1` | best-of-N wrapper: `_screen_slate`, `_screen_replacement` | MACHINERY (its OUTPUT strings are AGGREGATED counts-only by the `CandidateScreenResult.reason` contract) |
+| `recombine_pair` | `RecombinationPair \| None = None` | orchestrator: `_build_recombination_pair` — ONE selection per round at the screen-builder site, only when `proposer_quality.recombine AND best_of_n > 1`; `_recombine_pair_for_slot` threads it to the FIELD's slot-0 challenger only | best-of-N wrapper: the last slate slot mints its patch union (§5.6.11) instead of sampling the LLM | MACHINERY (carries counts + patches + hypothesis TEXT only — entry ids never leave the builder; the improved/regressed sets are intersected with the current TRAIN board inside `_build_recombination_pair` and discarded) |
 
 > ✅ ALWAYS give a new `ProposerContext` field a default that renders
 > byte-identically when unset. That is not a style preference — it is the
@@ -1038,6 +1039,7 @@ screens/vetoes off the events, but the mode string is what a human greps for):
 |---|---|
 | `critique` | the critic chose; normal healthy path |
 | `heuristic` | critique disabled, no aux callable, or the critic failed/was unparseable — a persistent stream of these with `critique_enabled: true` means the aux endpoint or the critic prompt is broken |
+| `recombined` | a non-vetoed mechanical recombination mint was chosen outright (§5.6.11), no critic call — a single winner captured two rejected complementary fixes; expected only under `proposer_quality.recombine` |
 | `screen_sole_survivor` | the veto narrowed the slate to one; no critique call spent |
 | `screen_revise_survivor` | an all-vetoed slate was rescued by the ONE revise re-sample |
 | `screen_all_vetoed:critique` / `screen_all_vetoed:heuristic` | all-vetoed, revise UNAVAILABLE (inner proposer failed) — the step knowingly forwards a vetoed candidate; frequent occurrences mean the proposer cannot act on the veto feedback |
@@ -1134,9 +1136,9 @@ Points where the trace changes under non-default knobs:
 ### 5.6.9 `ProposerQualityConfig` — the knobs in one table
 
 (`src/zicato/core/scoring_config.py`; all contract fields — non-default
-values roll the epoch; `screen_entries`, `screen_veto_only` and
-`process_exemplars` are omitted-at-default from the canonical form so old
-epochs never roll retroactively.)
+values roll the epoch; `screen_entries`, `screen_veto_only`,
+`process_exemplars` and `recombine` are omitted-at-default from the canonical
+form so old epochs never roll retroactively.)
 
 | Knob | Default | Effect | Inert when |
 |---|---|---|---|
@@ -1145,6 +1147,7 @@ epochs never roll retroactively.)
 | `screen_entries` | `0` (OFF) | tryout-panel size per candidate; `> 0` builds the per-round screen closure | `best_of_n == 1` (no slate to screen) |
 | `screen_veto_only` | `false` | `true` suppresses BOTH screen tiebreak feeds (critic block + heuristic key) — the screen can only disqualify | `screen_entries == 0` |
 | `process_exemplars` | `0` (OFF) | max redacted event windows spliced into the prompt per round | — |
+| `recombine` | `false` (OFF) | the mechanical recombination slot (§5.6.11): the last slate slot MINTS the patch union of two rejected complementary challengers instead of sampling the LLM; cost-neutral (the mint replaces the slot's propose call) | `best_of_n == 1` (no slate slot to mint into) |
 
 And the sibling knobs this chapter leans on:
 `overfitting.restrict_proposer_visibility` (default `true` — the §5.8 master
@@ -1181,7 +1184,124 @@ def wrap_with_proposer_quality(
     return BestOfNProposerAgent(inner=inner, config=config)
 ```
 
-### 5.6.11 The `new_content` style contract (what the system prompt demands)
+### 5.6.11 The recombination slot (WS-REC)
+
+Opt-in (`proposer_quality.recombine` AND `best_of_n > 1`; default OFF —
+byte-identical propose path when off). The mechanism, in one sentence: **a
+single champion can only ever discount ONE challenger's fix — so when two
+REJECTED challengers each fixed a DISTINCT slice of the board with
+non-overlapping edits, the last slate slot mints the UNION of their patches
+mechanically, and a non-vetoed mint is chosen outright.** A parsimony-biased
+selector rejects each single fix; the union clears the gate that neither half
+could.
+
+**The two halves.** Selection is a pure engine
+(`src/zicato/epoch/recombine.py`) fed by an IO builder
+(`_build_recombination_pair` in `src/zicato/orchestrator.py`, run ONCE per
+round at the screen-builder site); minting is a second pure function
+(`src/zicato/proposer/recombine.py::mint_recombined_experiment`). The builder
+threads DATA — a `RecombinationPair` on `ProposerContext.recombine_pair` (§5.2)
+— never a callable, so the proposer stack stays IO-free. On the field path
+`_recombine_pair_for_slot` gives the pair to the slot-0 challenger ONLY
+(identical mints across a field would collapse under the diversity
+soft-reject).
+
+**The 8 eligibility predicates.** Six are per-candidate
+(`eligible_parents`), three are pair-level (`rank_pairs`; #5/#7/#8):
+
+1. **rejected** — not deferred (a live evidence loop is not a settled
+   negative);
+2. **current reign** — `parent_generation_id == round-start champion` (the
+   parent pointer IS the staleness guard; a promotion empties the pool);
+3. **non-placebo** — a random-baseline arm is never a real fix (marker check);
+4. **non-recombined parent** — no chains in v1 (keeps provenance one level
+   deep);
+5. **pair not already tried** — dedup over persisted `recombined_from`
+   frozensets (a round-SPENDING mint never re-mints; a vetoed, unpersisted one
+   may retry);
+6. **patches reconstructable + all mutation-ids in the current manifest** — an
+   unreachable target cannot be applied; a patch-free candidate has nothing to
+   contribute;
+7. **disjoint patch mutation-id sets** (jaccard == 0) — REQUIRED, not
+   preferred: the applier re-enumerates between patches and is LAST-WINS on a
+   duplicate target, so an overlap would silently drop one side's edit;
+8. **complementary improved sets** — both non-empty, neither ⊆ the other (each
+   parent carries a distinct win the other lacks).
+
+Cross-regression is deliberately NOT a predicate — it is a ranking penalty
+(below), because per-entry single-sample verdicts are noisy (the screen's
+confirm-before-veto lesson, §5.6.2). Any failure anywhere → `None` → the mint
+is skipped and the round is byte-identical.
+
+**The 4-key deterministic ranking** (`rank_pairs`; each level only breaks the
+previous level's ties, so the pick is reproducible for any fixed pool in ANY
+input order — the shuffled-pool order-independence pin):
+
+1. combined TRAIN coverage DOWN (union of the two improved sets — the whole
+   objective);
+2. cross-regression penalty UP (union of the two regressed sets — fewer
+   entries put at risk);
+3. summed Elo DOWN (default-filled to `DEFAULT_ELO = 1500`, so it can only
+   reorder within an evidence tie);
+4. lexicographic `(gid_a, gid_b)` ascending — the total-order backstop.
+
+**The mint + the `recombined` mode.** The minter applies patches A-then-B in
+ascending-gid order (order-independent under disjointness; fixed for byte-stable
+tests) with FRESH patch ids, `core_idea = "[recombined] {A[:80]} + {B[:80]}"`,
+`modulating` = the union of PATCH ids (manifest-valid by predicate 6), and a
+counts-only `why` (envelope-clean). In the last slot the wrapper mints instead
+of sampling the LLM, still runs `enforce_forbidden` + the SAME validate hook,
+and a NON-VETOED mint is chosen with `selection_mode = "recombined"` — **no
+critic call**. This bypass is load-bearing: the deterministic heuristic's
+minimal-diff key (§5.6.6, key 3) would systematically STARVE the union, whose
+diff is larger than either parent's BY CONSTRUCTION — that parsimony bias is
+exactly what the slot exists to overcome. The bypass is safe because the mint is
+grounded in MEASURED per-entry evidence from two real tournament rounds, the
+screen above can still veto it, and the unchanged evidence gate remains the sole
+arbiter of promotion. A VETOED mint falls through to the ordinary slate paths
+unchanged. The `tests/test_recombination_known_answer.py` starved-heuristic
+test documents the failing alternative (heuristic-selection ⇒ the union never
+wins).
+
+**Cost-neutral.** The mint REPLACES the slot's auxiliary propose call — a
+recombining round spends `best_of_n − 1` propose calls, NEVER more. The cost
+meter is untouched; `estimate_cost`'s best-of-N line carries one sentence
+noting this upper-bound (`src/zicato/builder/operations.py`), and the py↔js
+parity harness sees no CostLine change.
+
+**The envelope.** `RecombinationPair` carries counts + patches + hypothesis
+TEXT only — the improved/regressed entry-id sets are computed INSIDE
+`_build_recombination_pair` (from `build_matchup_grid` per pool member) and
+intersected with the current TRAIN board there, then discarded; entry ids never
+reach the proposer stack. The holdout is never eligible (the `train_entry_ids`
+filter), so this closes the holdout-leak and preserves context-is-the-envelope.
+
+> ⚠️ **KNOWN NARROWING — pure drift-side complementary pairs are invisible.**
+> The improved/regressed sets are PASS-FLIP sets (a champion-failing entry the
+> challenger passes, and the inverse), NOT the matchup grid's drift-only
+> `won_by`. Per-run drift folds every remaining defect into EVERY entry's loss,
+> so a strictly-better challenger "wins" all entries on drift and two
+> single-fix parents could never read as complementary — the pass bit is the
+> per-entry signal a fix actually OWNS. The consequence: a pair whose
+> improvements are PURELY drift-side (no pass flip — e.g. two independent
+> verbosity fixes on an all-passing board) never recombines mechanically. This
+> is DELIBERATE: per-entry drift deltas are noisy single-sample verdicts (the
+> same reason cross-regression is a ranking penalty, not a filter). Such pairs
+> remain reachable through the in-context genealogy channel (the LLM can merge
+> the ideas itself), and a drift-delta-with-confirmation variant is a
+> documented future seam. The rationale lives verbatim at the `KNOWN NARROWING`
+> comment in `_build_recombination_pair`.
+
+**Seams noted, NOT built:** an LLM-guided merge (a second minter behind the
+same ctx field, riding the genealogy channel + ensemble depth role); a chain
+depth cap; an index `recombined_from` column; the scaffold default-on decision
+(needs live evidence). Tests: `tests/test_recombine_engine.py` (predicate +
+ranking + order-independence units), `tests/test_recombination_known_answer.py`
+(the two-marker OC full-loop: union minted round 3, `mode="recombined"`,
+promoted where recombine-off stalls; `recombined_from == (v1, v2)`; the exact
+`n−1` aux-call cost-neutrality counter; pair-dedup).
+
+### 5.6.12 The `new_content` style contract (what the system prompt demands)
 
 `SYSTEM_PROMPT_TEMPLATE` (`src/zicato/proposer/prompts.py`) binds the model to
 a formatting contract for `replace` payloads that downstream tooling relies

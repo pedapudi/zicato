@@ -367,6 +367,21 @@ power harness's planted deltas (§13.4): one full token fix is a true effect
 of 1.2 in scalar units, measured as `1.2·(1 − 2σ)` under measurement-flip
 noise σ.
 
+> **The two-marker (two-defect) harness variant** — the WS-REC recombination
+> oracle. The example harness carries an additive `STYLE_RULES_EXTRA` support
+> (byte-identical when unused, so §1.8's numbers above are untouched) that
+> plants TWO independent defect markers instead of one: v0 scalar 2.4, a
+> single-fix A and a single-fix B each worth Δ = 1.2, and the UNION worth
+> Δ = 2.4. The contract pins `promote_margin = 1.5` STRICTLY BETWEEN the single
+> and the union deltas — so A and B EACH REJECT (1.2 < 1.5) while the mechanical
+> recombination of their disjoint patches PROMOTES (2.4 > 1.5). This is the
+> planted-defect world that proves the recombination slot (05-proposer.md
+> §5.6.11) earns its keep: `tests/test_recombination_known_answer.py` runs it
+> through the full loop and pins the union minted in round 3, chosen
+> `mode="recombined"`, promoted — with the STALL CONTROL (same script,
+> `recombine` off ⇒ the champion stays v0, neither single fix ever clears the
+> margin). The two-marker policy template lives in that test.
+
 ### 1.9 The observability layer: loop-health detectors over the chain
 
 Statistics you cannot see rot silently. `src/zicato/health/diagnostics.py` is
