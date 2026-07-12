@@ -367,23 +367,69 @@ concurrent:
   a solved pattern in the run layer and simply absent from the propose
   layer.
 
-**Target.** Collect the field/slate concurrently (`asyncio.gather` under a
-propose-side concurrency cap — reuse the `parallelism` idiom, or a distinct
-`propose_parallelism`), then apply results in a **deterministic second
-pass** that reproduces today's serial side effects in slot/offset order. The
-gather is the only concurrent region; every ordering-sensitive side effect
-happens afterward, in order, so byte-stable goldens and the event ledger
-never become interleaving-dependent.
+**Target.** The two loops are NOT symmetric, and conflating them is the
+trap: the slate loop is embarrassingly parallel; the field loop is
+deliberately *sequential* and gathering it changes behavior.
+
+- **Slate loop (best-of-N) — safe concurrency.** The N samples are
+  genuinely independent: each slot varies only by a deterministic per-slot
+  hint (`hints.hint_for_slot` edit-class + `hints.strategy_for_slot`
+  framing, both keyed off `(slot, round)`) and the shared round-start
+  context; no slot reads another slot's output. Collect them with
+  `asyncio.gather` under a propose-side cap, then apply results in a
+  **deterministic second pass** that emits the `candidate_sampled` events
+  and appends candidates in slot order. Byte-stable goldens hold because the
+  only ordering-sensitive surface here is the event `seq`, and the ordered
+  pass restores it.
+- **Field loop — sibling-conditioned, so NOT free to gather.** Challenger
+  *k*'s prompt is threaded `prior_experiments=prior + tuple(siblings)`
+  (`orchestrator.py:2095`), where `siblings` (`:1993`) accumulates one
+  `PriorExperiment` per already-*applied* challenger `0..k-1` this round —
+  sequential sibling-conditioning is an INTENTIONAL diversity property
+  (`_evolve_multi_challenger`'s docstring: "each challenger diversifies away
+  from … its just-proposed cohort"). A blind `gather` erases it. The honest
+  option set:
+  - **(a) Keep the field loop serial** (sibling-conditioning preserved).
+    Slate-level concurrency inside each challenger still cuts propose
+    wall-clock by ~`best_of_n`, so this is not "no speed-up." This is the
+    only option under which the byte-stable-goldens promise holds.
+  - **(b) Wave/batched gather** — propose in batches of `w`, re-conditioning
+    the sibling digest between batches. A tunable diversity/latency trade
+    (`w=1` = option a, `w=field_n` = option c); goldens move, so it needs
+    its own parity story.
+  - **(c) Drop sibling-conditioning entirely** and gather the whole field —
+    a DECLARED behavior change (the field's diversity pressure falls back to
+    whatever `_mint_challenger_field` soft-rejects catch post-hoc), with its
+    own parity/measurement story proving the field does not collapse.
+- **Recommended Wave-2 default: (a) + slate concurrency.** It is the
+  latency win with zero behavior change and a green byte-level golden. Treat
+  (b) as the measured follow-up if slate concurrency alone is insufficient.
+  The byte-stable-goldens promise below holds **only for (a)**; (b) and (c)
+  are measured changes, not parity-preserving ones.
+
+**Backpressure (nested fan-out).** Propose concurrency is two-level: a field
+of `field_n` challengers, each running a `best_of_n` slate — so under any
+option where the field also fans out (b/c) the in-flight propose count is
+`field_n × best_of_n`, not `field_n`. The two levels must share ONE budget,
+not two independent caps that multiply. Default to a single shared
+`propose_parallelism` semaphore threaded through both the field gather and
+the slate gather; an explicit two-level budget (a field cap and a per-field
+slate cap) is the alternative, but the single shared cap is the simpler
+default and the one an implementer should reach for first.
 
 **Ordering-sensitive surfaces an implementer MUST protect** (each verified
 in the tree; all must be driven from the post-gather ordered pass, never
 from gather-completion order):
 
-1. **Generation-id + seed minting.** `next_id = f"v{base_n + offset}"` and
-   `seed = offset + 2` in the field loop must stay bound to `offset`, and
-   the `competitors_meta` seed order (champion = 1, challengers 2, 3, … in
-   mint order) must be assigned in offset order regardless of which propose
-   finished first.
+1. **Generation-id + seed minting — deterministic PRE-gather, not a race.**
+   `next_id = f"v{base_n + offset}"` and `seed = offset + 2` are computed
+   from `offset` *before* any propose runs, so the `competitors_meta` seed
+   order (champion = 1, challengers 2, 3, … in mint order) is already fixed
+   and cannot be perturbed by completion order. Each id also names a
+   distinct `generations/{id}/snapshot/` directory, so the *applies* never
+   race on directories either. The only shared-artifact writes that DO race
+   are `index.db` (`_ingest_experiment_into_index`) and `lineage.json`
+   (`append_to_lineage`) — see items 2, 6, and 7.
 2. **Journal / experiment index write order.** The per-slot persistence —
    `_ingest_experiment_into_index(workspace_root, epoch_id, generation_id)`,
    the `OutcomeRecord` writes for soft-rejected slots, and the
@@ -398,15 +444,50 @@ from gather-completion order):
 4. **The round-log fold.** Downstream consumers fold the sequenced RoundLog
    by `seq`; because `seq` is the machine ordering key, an interleaving-
    dependent append order silently reorders the fold's output.
-5. **SSE progress `seq`.** `dashboard/sse.py`'s progress cursor
-   (`_progress_signal` → `progress_log.tail_seq`) is the TRUE liveness
-   signal the dashboard diffs against; it is downstream of the RoundLog
-   ordering and inherits the same requirement.
+5. **SSE progress `seq` — an INDEPENDENT writer, not RoundLog's.**
+   `dashboard/sse.py`'s progress cursor (`_progress_signal` →
+   `progress_log.tail_seq`, `sse.py:62,81`) is the TRUE liveness signal the
+   dashboard diffs against — but it reads `zicato.runtime.progress_log`, a
+   SEPARATE append-only log from `epoch/round_log.py`, whose per-slot
+   `PROPOSE` beat is emitted INSIDE the propose coroutine
+   (`orchestrator.py:~1651`). It therefore needs its OWN deterministic-order
+   treatment in the ordered pass; it does not simply "inherit RoundLog's."
+6. **Shared `lineage.json` write.** `append_to_lineage(…, pending=True)`
+   (`orchestrator.py:1777`, inside `_propose_and_apply_challenger`) upserts
+   the in-flight node into the one shared `lineage.json`; two concurrent
+   coroutines would interleave that read-modify-write. It must move to the
+   ordered apply pass.
+7. **`_mint_challenger_field` accumulator state.** `sibling_signatures` and
+   `accepted_mutation_sets` (`:1999`, `:2012`) grow in mint order, and slot
+   *k*'s soft-reject decision (exact-duplicate + Jaccard-overlap against
+   `0..k-1`) is a SEMANTIC dependency on the earlier slots, not merely a
+   log-ordering one. It belongs to the ordered pass and — like the
+   sibling-conditioning above — cannot be reproduced by a blind gather.
+
+**Structural precondition (the split).** None of the above is reachable
+while `_propose_and_apply_challenger` runs its side effects *inside* the
+coroutine: today it both proposes AND ingests
+(`_ingest_experiment_into_index`, `:1751`), writes the pending lineage node
+(`:1777`), and feeds the mint accumulators — so "gather, then emit in order"
+is unreachable until it is first SPLIT into a pure-propose half (gatherable,
+no shared-state writes) and an apply/persist/ingest half (ordered, deferred
+to the second pass). That split is exactly Finding 2's stage decomposition
+arriving early; concurrency cannot land cleanly before it.
 
 This finding **composes with finding 2**: the deterministic post-ordering
 pass is exactly the "apply / persist / ingest" stages of the pipeline below,
 and "which stages may overlap" (here: propose may fan out, apply/persist may
 not) becomes a declared property of the stage graph.
+
+**Owning the sequencing trade-off.** Landing Finding 1 *before* Finding 2
+means writing the gather, the ordered second pass, and the propose/apply
+split above INTO the monolith, then relocating that logic when the pipeline
+is decomposed. This is deliberate: concurrency goes first because it is the
+urgent latency win, and the parity harness makes the later lift safe — the
+gather/ordered-pass logic is *lifted* into the stage graph, not rewritten,
+so decomposition inherits a structure that already names its concurrency
+boundary. (The knob registry, Finding 3, sequences second and stays
+orthogonal to both.)
 
 ## Finding 2 — The orchestrator monolith → an explicit typed round pipeline
 
@@ -417,8 +498,8 @@ accretes a per-program IO builder for every feature added to the loop:
 `_build_events_paths`, … each constructed inline at the top of the round and
 threaded down through the propose call as an opaque callable. New programs
 append another builder and another positional argument; the loop driver
-carries the union of every program's construction logic (163 `Any`
-annotations remain in the file).
+carries the union of every program's construction logic (~150+ `Any`
+annotations remain in the file — 154 at last count).
 
 **Target (sharpens Phase 3a's `evolve/round.py`).** An **explicit typed
 round pipeline** with named stages, each declaring its inputs and outputs:
@@ -499,6 +580,18 @@ that a generated table and the dataclass never disagree.
   `/statusz` + dashboard-API surface that must survive an orchestrator
   wedge.
 
+The duplication is **only** that subset of index-projection views. Most of
+the 26-file crate is NOT a `query/` duplicate but crash-survival and
+integrity infrastructure with no Python equivalent: `reader.rs`'s in-flight
+lineage node (`reader.rs:55` the live active-tournament event log; `:304`
+the tri-state in-flight generation the Tree needs), `run_log.rs`'s live
+`events.jsonl` tail, `divergence.rs`'s dead-worker/dead-pid audit
+(`divergence.rs:23`), `ledger.rs` + `diff_containment.rs` (the
+tamper-evident integrity notary), `signal.rs` (POSIX `/proc` liveness), and
+`statusz.rs`/`watchdog.rs` (heartbeat freshness + escalation). These exist
+*because* the index — and the orchestrator writing it — can be stale when
+the loop is wedged.
+
 The two are held together only by the reader-parity goldens
 (`tests/test_dashboard_reader_parity.py` + `tests/_reader_parity_harness.py`)
 — and **the seam has already failed once**: the Rust reader pinned its
@@ -518,6 +611,16 @@ that made the failure possible.
   does well) and delete any Rust re-derivation of canonical-file facts;
   Python `query/` remains the one place canonical files are interpreted.
   Keeps two decoders but shrinks the Rust one to a single, guarded shape.
+  **Carve-out:** this applies ONLY to the reader-parity dashboard read-views
+  that overlap Python `query/` (epoch / tournament / lineage / gate / racing
+  / ratings). It must NOT touch the liveness/integrity surface named in
+  *Observed* — `reader.rs`'s in-flight lineage node, `run_log.rs`'s live
+  telemetry tail, `divergence.rs`'s dead-pid audit, `ledger.rs`,
+  `diff_containment.rs`, `signal.rs`//proc, and `statusz.rs`/watchdog
+  heartbeat — which reads canonical files directly *by design*, precisely so
+  it can still report when the index (and the orchestrator writing it) has
+  gone stale. Folding those into an index-only projection would delete the
+  crash-survivability the supervisor exists for.
 - **(B) One implementation owns views, one caller.** Pick a single owner for
   each view payload (Python `query/` is the natural owner — it changes with
   the schema) and have the supervisor call *it* rather than re-decode: either
