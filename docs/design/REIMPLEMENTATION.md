@@ -516,10 +516,16 @@ unreachable until the derive is split off. The split commit 2 implements:
   concurrently under a `RuntimeConfig.propose_parallelism` semaphore
   (runtime-only — never part of the scoring canonical form; default 4;
   `propose_parallelism=1` reproduces serial behavior byte-identically).
-  The `candidate_sampled` round events, progress beats, candidates-list
-  order, and any pinned logging are all emitted in SLOT order in the
-  deterministic post-gather pass; per-slot failures are captured per-slot
-  so one slot failing never loses the others.
+  The `candidate_sampled` round events, candidates-list order, and any
+  pinned logging are all emitted in SLOT order in the deterministic
+  post-gather pass; per-slot failures are captured per-slot so one slot
+  failing never loses the others. The `applying` progress BEATS are the
+  one exception: each slot's `_beat` fires MID-gather, in completion
+  order, from inside its scratch validator — not in the post-gather pass.
+  This is benign because every slot beats the identical phase string
+  (`applying:round_{i}:{next_id}`, keyed on the shared child id with no
+  slot identity), so a completion-ordered sequence of these beats is
+  indistinguishable from a slot-ordered one to any observer.
 
 **Structural precondition (the field split).** None of the above is reachable
 while `_propose_and_apply_challenger` runs its side effects *inside* the

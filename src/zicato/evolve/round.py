@@ -29,10 +29,24 @@ the gauntlet path and the field path now call the SAME code. Behaviour is
 identical — the validator factory reproduces the closure's beat / derive /
 validate sequence verbatim, and the manifest check raises the same two
 ``RuntimeError`` messages.
+
+Concurrency note (WS-CONC): under best-of-N slate parallelism the per-slot
+``validate`` hook from :func:`build_scratch_validator_factory` calls
+``genstore.derive_scratch`` SYNCHRONOUSLY on the event loop — there is no
+``await`` between the derive's start and finish — so two slots' derives never
+overlap in time; only the LLM propose calls actually yield and run
+concurrently. Even a hypothetical overlap would be safe, because each slot
+derives into its own disjoint ``ztw-slate-*`` scratch path. The git backend's
+one shared touch is the first ``snapshot_root`` that materialises the parent
+worktree; that is pre-warmed once here, and its cold-store materialisation is
+made idempotent under the worktree-admin lock
+(:meth:`zicato.epoch.git_genstore.GitGenerationStore._materialise_worktree`),
+so a future threaded caller that raced the pre-warm would still be safe.
 """
 
 from __future__ import annotations
 
+import shutil
 import tempfile
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -59,10 +73,56 @@ ScratchValidatorLease = tuple[
 ScratchValidatorFactory = Callable[[], ScratchValidatorLease]
 
 #: Prefix for a best-of-N slate slot's ephemeral scratch derivation parent.
-#: Placed in the OS temp dir (like the ``ztw-snap-*`` per-run checkouts) so
-#: it never sits under the workspace tree — nothing under it can be mistaken
-#: for a canonical generation snapshot, and it is cleaned up per slot.
+#: Placed in the OS temp dir so it never sits under the workspace tree —
+#: nothing under it can be mistaken for a canonical generation snapshot.
+#:
+#: Lifecycle — a slate parent is NOT crash-reaped like a run's ``ztw-snap-*``
+#: checkout. The supervisor's reaper (``reap.rs``) only removes paths RECORDED
+#: as a run's ``snapshot_path``; a slate parent is a per-slot dir private to
+#: the orchestrator process and is never recorded, so the reaper cannot see
+#: it. Its cleanup is instead: (1) the slot's ``try/finally`` removes it on
+#: every normal exit (success, propose failure, or degrade); (2) a SIGKILL
+#: that skips the ``finally`` leaks it, and those leaks are collected by the
+#: OS temp-dir cleaner and by the best-effort startup sweep
+#: :func:`_sweep_stale_slate_scratch` runs from
+#: :func:`build_scratch_validator_factory`.
 SLATE_SCRATCH_PREFIX = "ztw-slate-"
+
+#: Age past which the startup sweep treats a stray ``ztw-slate-*`` parent as a
+#: crash leak. Comfortably longer than any live slate slot (which lives for one
+#: propose attempt), so an in-flight sibling orchestrator's dirs are never
+#: touched.
+_SLATE_SCRATCH_STALE_SECONDS = 24 * 60 * 60
+
+
+def _sweep_stale_slate_scratch() -> None:
+    """Best-effort removal of crash-leaked ``ztw-slate-*`` parents in the temp root.
+
+    A SIGKILL between :func:`tempfile.mkdtemp` and the slot's ``finally`` leaks
+    a ``ztw-slate-*`` parent — the ``try/finally`` cannot run, and the
+    supervisor's reaper never sees it (it reaps only RECORDED run snapshots).
+    This cheap, bounded sweep — glob the OS temp root for our prefix and remove
+    the dirs older than :data:`_SLATE_SCRATCH_STALE_SECONDS` — is run once when
+    a round builds its scratch-validator factory. It NEVER raises: any error
+    (permission, a dir vanishing mid-sweep, a racing sibling) is swallowed so a
+    housekeeping hiccup can never fail a round.
+    """
+    import time  # noqa: PLC0415
+
+    try:
+        temp_root = Path(tempfile.gettempdir())
+        cutoff = time.time() - _SLATE_SCRATCH_STALE_SECONDS
+        for entry in temp_root.glob(f"{SLATE_SCRATCH_PREFIX}*"):
+            try:
+                if not entry.is_dir():
+                    continue
+                if entry.stat().st_mtime >= cutoff:
+                    continue
+                shutil.rmtree(entry, ignore_errors=True)
+            except OSError:
+                continue
+    except OSError:
+        return
 
 
 def build_post_apply_validator(
@@ -179,6 +239,10 @@ def build_scratch_validator_factory(
     final derive) — this factory never writes the canonical tree.
     """
     from zicato.mutation.validator import validate_post_apply  # noqa: PLC0415
+
+    # Sweep any crash-leaked ``ztw-slate-*`` parents left by a prior SIGKILL
+    # before this round allocates its own (best-effort, never raises).
+    _sweep_stale_slate_scratch()
 
     # Pre-warm the parent source tree once so concurrent slot derives find it
     # materialised and only read it (git: first snapshot_root checks out the

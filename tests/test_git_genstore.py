@@ -12,6 +12,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import textwrap
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -357,3 +358,72 @@ def test_derive_an_unchanged_child_is_a_real_generation(
     v0 = _git(store.repo_path, "rev-parse", "epoch/e1/v0").strip()
     v1_parent = _git(store.repo_path, "rev-parse", "epoch/e1/v1^").strip()
     assert v1_parent == v0
+
+
+# ---------------------------------------------------------------------------
+# cold-store concurrent materialisation (regression probe for the
+# _materialise_worktree inside-lock re-check)
+# ---------------------------------------------------------------------------
+
+
+def _run_cold_materialise_rep(
+    store: GitGenerationStore,
+    scratch_base: Path,
+    rep: int,
+    threads: int,
+) -> None:
+    """One rep of the cold-store probe: N threads derive from a COLD parent.
+
+    The parent worktree is removed by the caller before this runs, so every
+    thread reaches the cold ``_materialise_worktree`` path together and races
+    on ``git worktree add``. Asserts all N derives succeed with disjoint,
+    fully-intact trees (each carrying ONLY its own content).
+    """
+    contents = [f"rep{rep}-slot{i}" for i in range(threads)]
+    scratch_roots = [scratch_base / f"rep{rep}" / f"s{i}" / "child" for i in range(threads)]
+
+    def _derive(i: int) -> Path:
+        return store.derive_scratch(
+            epoch_id="e1",
+            parent_generation_id="v0",
+            patches=[_patch(f"p{rep}_{i}", f'"""{contents[i]}"""')],
+            scratch_root=scratch_roots[i],
+        )
+
+    with ThreadPoolExecutor(max_workers=threads) as pool:
+        # ``.result()`` re-raises any per-thread failure — a racing
+        # ``git worktree add`` on an already-populated dir would surface here.
+        results = [f.result() for f in [pool.submit(_derive, i) for i in range(threads)]]
+
+    for i, root in enumerate(results):
+        body = (root / "agent" / "prompts.py").read_text(encoding="utf-8")
+        assert contents[i] in body, f"scratch {i} missing its own content"
+        for j in range(threads):
+            if j != i:
+                assert contents[j] not in body, f"scratch {i} contaminated by slot {j}"
+
+
+def test_cold_store_concurrent_derive_never_races_on_materialise(tmp_path: Path) -> None:
+    """8 concurrent cold-store ``derive_scratch`` calls, repeated, never race.
+
+    The reviewer's probe, pinned: from a COLD store (no pre-warmed parent
+    worktree) 8 threads each trigger ``_materialise_worktree`` for the SAME
+    parent. Before the inside-lock re-check, the second thread's
+    ``git worktree add`` hit an already-populated directory and failed
+    (~134/160 failures at 8×20 from cold). Each rep is forced cold by dropping
+    the parent worktree first; every derive must succeed with an intact tree.
+    """
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    store = GitGenerationStore(workspace)
+    store.seed_generation("e1", "v0", [_mutable_tree(tmp_path / "src")])
+    worktrees = workspace / GitGenerationStore.WORKTREES_DIRNAME
+
+    threads = 8
+    reps = 5
+    for rep in range(reps):
+        # Force COLD: drop the parent worktree + prune its registration so this
+        # rep's threads all hit the cold-materialisation race together.
+        shutil.rmtree(worktrees, ignore_errors=True)
+        _git(store.repo_path, "worktree", "prune")
+        _run_cold_materialise_rep(store, tmp_path / "scratch", rep, threads)
