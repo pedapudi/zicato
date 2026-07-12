@@ -251,6 +251,69 @@ channel, with a drift-delta-with-confirmation variant as a documented future
 seam) — is specified in **[dev-guide 05 §5.6.11](../dev-guide/05-proposer.md)**
 (`src/zicato/epoch/recombine.py`, `src/zicato/proposer/recombine.py`).
 
+### 2.6.1 Merge modes — `mechanical` (default) vs `llm`
+
+`proposer_quality.recombine_merge` (a string, default `"mechanical"`; values
+`"mechanical" | "llm"`) chooses HOW the slot composes the union once the
+selector has picked a pair. It is meaningful only when `recombine` is on and
+`best_of_n > 1`; at its `"mechanical"` default it is omitted from the contract
+canonical form (byte-identical hash, no retroactive roll), and `"llm"` rolls
+the epoch — a slate that can compose an LLM merge proposes under a different
+rule. A `"llm"` value set with `recombine` off is accepted-and-inert (the
+dependent-knob house style, as `screen_veto_only` is inert without
+`screen_entries`); it still rolls the hash, exactly like an inert
+`screen_veto_only`.
+
+- **`mechanical`** — the shipped WS-REC behaviour of §2.6: the last slot MINTS
+  the concatenation of the two patch sets with NO LLM call. It REQUIRES a
+  DISJOINT pair (predicate #7): the applier is last-wins on a duplicate
+  target, so overlapping edits would silently drop one side. Cost: a
+  recombining round spends `best_of_n − 1` propose calls (the free mint
+  replaces the slot's own sample call).
+
+- **`llm`** — the last slot issues ONE auxiliary call (the depth
+  refinement-class role, exactly as the self-critique call) rendering a MERGE
+  prompt from the selected pair; the response flows through the NORMAL
+  proposal parse + `enforce_forbidden` + validate path — it is a proposal like
+  any other — is stamped with the same `recombined_from` provenance, and a
+  non-vetoed merge is chosen with the same `selection_mode = "recombined"`. On
+  any parse/validate failure the slot DEGRADES to a fresh LLM sample (the
+  mechanical mint's exact degrade). This mode exists to reach the pairs
+  mechanical mint cannot: when two rejected fixes OVERLAP on a mutation target,
+  a model can compose a genuine merge (resolving the shared edit) that a
+  last-wins concatenation cannot.
+
+**What relaxes, and what never does.** Only predicate #7 (disjointness)
+relaxes, and only for PAIR SELECTION in `llm` mode — the model resolves the
+overlap, which is the whole point. Overlap does not vanish: it becomes a
+RANKING consideration (prefer LESS overlap at equal coverage), slotted into the
+existing deterministic key immediately after coverage so that mechanical-mode
+selections — where every surviving pair has zero overlap — are byte-identical
+to before. Every OTHER predicate holds unchanged in both modes: #1 rejected,
+#2 current reign, #3 non-placebo, #4 non-recombined parent, #5 pair-not-tried,
+#6 manifest-valid patches, and #8 complementarity ESPECIALLY (each parent must
+still carry a distinct win the other lacks — an LLM merge of two identical
+fixes is nothing).
+
+**The envelope (LOAD-BEARING).** The merge prompt carries ONLY
+proposer-authored artifacts, exactly the genealogy-channel redaction
+vocabulary (§2.7): both parents' PATCHES (the `new_content` the proposer
+itself wrote), their hypothesis CORE IDEAS, their whole-candidate BANDED
+outcomes (through the same `improved`/`flat`/`regressed` `_bucket_scalar_delta`
+vocabulary the experiment memory renders), and COUNTS-ONLY complementarity
+(how many train entries each parent improved, and the combined
+improved/regressed counts). It NEVER carries a board-entry id, a per-entry
+result, or an exact Δscalar — the improved/regressed entry-id sets are computed
+and discarded inside `_build_recombination_pair`, and the holdout is never
+eligible (the `train_entry_ids` filter). The merge call widens the proposer's
+visibility by NOTHING the genealogy channel does not already permit.
+
+**Cost.** `mechanical` spends `best_of_n − 1` propose calls (the mint is free).
+`llm` spends exactly `best_of_n`: the merge call SUBSTITUTES the slot's own
+sample call (it does not add to it), so an `llm`-merge round costs precisely
+what a recombine-OFF round costs — the slot count is unchanged, and the
+`estimate_cost` best-of-N upper bound already covers it (no CostLine moves).
+
 ---
 
 ## 2.7 The genealogy channel (WS-GENE) — in-context evolution, envelope-safe
