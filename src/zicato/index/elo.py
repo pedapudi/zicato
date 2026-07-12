@@ -1,4 +1,4 @@
-"""A read-only Bradley--Terry rating fold over the persisted match ledger.
+"""A read-only Plackett--Luce rating fold over the persisted match ledger.
 
 This module answers the design question "can tournaments generate a
 candidate-strength number?" (see ``docs/design/FUNCTIONALITY-RECOMMENDATIONS.md``
@@ -12,14 +12,25 @@ keep their historical names (``elo`` / ``elo_games``, plus the additive
 ``elo_se``) and the ratings are still reported on the conventional Elo scale, so
 downstream consumers do not have to learn a new unit.
 
-The engine: batch maximum-likelihood Bradley--Terry
+The engine: batch maximum-likelihood Plackett--Luce
 ---------------------------------------------------
-The rating is the maximum-likelihood Bradley--Terry fit
-(:func:`zicato.selection.rating.fit_bradley_terry`) over the de-duplicated list
-of settled two-competitor games. Each contestant ``i`` has a latent strength
-``theta_i``; the probability ``i`` beats ``j`` is the logistic
-``sigma(theta_i - theta_j)``. The fitted strengths are mapped onto the Elo
-scale so a 400-point gap is the classic 10:1 odds::
+The rating is the maximum-likelihood Plackett--Luce fit
+(:func:`zicato.selection.rating.fit_plackett_luce`) over the de-duplicated
+**observations** in the ledger. Each contestant ``i`` has a latent strength
+``theta_i``. Two observation shapes feed one likelihood:
+
+* a settled **two-competitor game** (``i`` beat ``j``) — the probability ``i``
+  wins is ``sigma(theta_i - theta_j)``, which is where Plackett--Luce reduces
+  *exactly* to Bradley--Terry, so the pairwise ratings are unchanged from the
+  earlier BT fold;
+* a **racing rung group** — a survivor set ``S`` finished above a cut set ``C``,
+  with the order within each block unobserved. This is the exact marginal
+  Plackett--Luce likelihood over the within-``S`` orderings, so a rung that
+  used to contribute nothing (its ``winner`` is ``None``; see below) now
+  contributes a real ranked observation and its cut generations become rated.
+
+The fitted strengths are mapped onto the Elo scale so a 400-point gap is the
+classic 10:1 odds::
 
     elo    = 1500 + theta * (400 / ln 10)
     elo_se =         se    * (400 / ln 10)
@@ -39,7 +50,7 @@ Three properties this engine buys over the sequential margin-K Elo it replaced:
   record, or in a disconnected component of the duel graph (two clusters that
   never played each other are each anchored to the field mean by the ridge
   prior rather than diverging).
-* **Margins are deliberately ignored.** Bradley--Terry is fit on win/loss
+* **Margins are deliberately ignored.** The fit uses win/loss and rank-group
   outcomes only. The margin of victory (``|delta_scalar|``) is still *extracted*
   from the ledger (:class:`EloGame` carries it) but is **not** an input to the
   rating: margins ride the *gate*, which is where the scalar magnitude belongs.
@@ -47,43 +58,59 @@ Three properties this engine buys over the sequential margin-K Elo it replaced:
   margin into the rating would double-count the same evidence and let a single
   blow-out distort a visibility number.
 
-What an Elo "game" is
----------------------
-Every settled two-competitor duel is one game: the winner, the loser. Games are
-sourced from the ``tournaments`` index rows
-(:func:`zicato.index.ingest._upsert_tournament` /
-``_upsert_field_tournament``), which already carry the complete pairwise ledger:
+What an "observation" is
+------------------------
+Two shapes, both sourced from the ``tournaments`` index rows
+(:func:`zicato.index.ingest._upsert_tournament` / ``_upsert_field_tournament``):
 
-* a **gauntlet** crowning row is one game (``parent`` vs ``child``, resolved
-  from the row's ``decision`` / ``delta_scalar``);
-* a **non-gauntlet** crowning row's ``rounds_json`` carries the challenger's
-  per-match audit (one game per named opponent it faced);
-* a **field** row's ``rounds_json`` carries the full bracket — every settled
-  two-competitor match — so challenger-vs-challenger duels that never surface as
-  a crowning row are still counted.
+* a settled **two-competitor game** — the winner, the loser. From:
 
-Games are de-duplicated across these overlapping sources by a stable key
-(``(tournament_id, match_id, frozenset(sides))``) so the same physical match is
-folded exactly once — the same dedup the sequential fold used.
+  * a **gauntlet** crowning row (``parent`` vs ``child``, resolved from the
+    row's ``decision`` / ``delta_scalar``);
+  * a **non-gauntlet** crowning row's ``rounds_json`` per-match audit (one game
+    per named opponent the challenger faced);
+  * a **field** row's ``rounds_json`` full bracket — every settled
+    two-competitor match — so challenger-vs-challenger duels that never surface
+    as a crowning row are still counted.
 
-Zero-games generations and the racing-rung limitation
------------------------------------------------------
-A generation that played **no** settled two-competitor game gets **no** rating —
-its ``elo`` / ``elo_se`` stay NULL and it is simply absent from the fit output.
+* a **racing rung group** — a field row's ``rounds_json`` rung match persists a
+  ``survivors`` set ranked above a ``cut`` set (its ``winner`` is ``None`` —
+  a rung cuts, it does not crown). Each such rung is one grouped Plackett--Luce
+  observation: the survivors finished above the cut arms, order within each
+  block unobserved.
+
+Games are de-duplicated by ``(tournament_id, match_id, frozenset(sides))`` and
+rung groups by ``(tournament_id, rung_id)``, so the same physical observation —
+which can surface in two overlapping rows — is folded exactly once.
+
+Zero-observation generations
+----------------------------
+A generation that appeared in **no** observation gets **no** rating — its
+``elo`` / ``elo_se`` stay NULL and it is simply absent from the fit output.
 This is honest: a batch MLE has nothing to estimate a strength from with zero
 observations, so there is no rating to show rather than a fabricated carry-
 forward number. (The former sequential fold seeded a never-played child at its
-parent's rating; the BT fold does not — a strength you never measured is not a
-strength you can report.)
+parent's rating; the batch fit does not — a strength you never measured is not
+a strength you can report.)
 
-A known limitation rides here: a **racing** intermediate rung that persists a
-survivor/cut *set* with no single named winner (``winner=None``) contributes
-**zero games** — only two-competitor named-winner matches are counted. A rung
-that ranks N survivors by scalar and cuts the worst is not a pairwise outcome,
-so it is invisible to the rating (a Plackett--Luce rating over ranked sets is
-out of scope; see SELECTION-THEORY.md). Racing rungs that *do* record a named
-two-competitor winner (e.g. the challenger-vs-champion audit rows) are counted
-normally.
+``elo_games`` counts the **observations a generation appeared in** — a
+two-competitor game counts for its two sides, and a rung group counts once per
+participant (every survivor and every cut arm). It is the evidence count behind
+the rating, not a literal duel tally. A racing rung's cut generation, which the
+earlier BT fold left NULL (a set cut is not a pairwise winner), is now rated
+from the rung group it appeared in.
+
+Slice-size weighting is deliberately **unweighted** in v1: a rung run on a small
+board slice is noisier evidence than one on the full board, but every
+observation enters the likelihood with equal weight. The rating is
+visibility-only (it never gates), so under-counting a small-slice rung's noise
+costs nothing operational; a variance-aware weighting is future work (see
+SELECTION-THEORY.md §7.1).
+
+A rung whose survivor set exceeds :data:`~zicato.selection.rating.PL_MAX_SURVIVORS`
+is skipped (with a debug log) rather than approximated — the exact marginal is
+factorial in the survivor count and racing fields are single-digit, so the cap
+is comfortable headroom.
 
 All public functions here are pure over their inputs (a list of games + the
 lineage map) — :func:`compute_elo` takes plain data and returns plain data, so
@@ -102,7 +129,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from zicato.selection.rating import fit_bradley_terry
+from zicato.selection.rating import PL_MAX_SURVIVORS, fit_plackett_luce
 
 # ---------------------------------------------------------------------------
 # Tunables (module-level so a test can reference the same constants)
@@ -184,6 +211,51 @@ class EloGame:
 
 
 @dataclass(frozen=True, slots=True)
+class RungEvent:
+    """One racing-rung group observation: a survivor set ranked above a cut set.
+
+    A racing intermediate rung persists a ``survivors`` set that carried and a
+    ``cut`` set that was eliminated, with no single named ``winner`` — the
+    order within each block is unobserved. It is one grouped Plackett--Luce
+    observation (the survivors all finished above the cut arms). It carries no
+    margin (a rung ranks by scalar; the ordering, not any single delta, is the
+    evidence).
+
+    Fields
+    ------
+    epoch_id:
+        The epoch the rung ran under (used to tag the resulting rating).
+    tournament_id:
+        The field-tournament row the rung belongs to. Part of the de-dup key.
+    rung_id:
+        The rung's stable match id within the tournament (e.g. ``"rung0"``).
+        Part of the de-dup key.
+    survivors, cut:
+        The generation ids that carried / were eliminated. Every survivor is
+        ranked above every cut arm.
+    ran_at:
+        Best-effort ISO-8601 timestamp; retained for provenance (the batch fit
+        is order-independent so it is not used to sequence observations).
+    """
+
+    epoch_id: str
+    tournament_id: str
+    rung_id: str
+    survivors: tuple[str, ...]
+    cut: tuple[str, ...]
+    ran_at: str = ""
+
+    def dedup_key(self) -> tuple[str, str]:
+        """A stable identity for one physical rung.
+
+        A rung's survivor/cut set can surface in more than one overlapping row
+        (the assembled field record and, in principle, a re-ingest). Keying on
+        ``(tournament_id, rung_id)`` folds it exactly once.
+        """
+        return (self.tournament_id, self.rung_id)
+
+
+@dataclass(frozen=True, slots=True)
 class EloRating:
     """The folded rating for one generation.
 
@@ -192,16 +264,17 @@ class EloRating:
     generation_id, epoch_id:
         The generation this rating belongs to.
     rating:
-        The Bradley--Terry strength mapped onto the Elo scale
+        The Plackett--Luce strength mapped onto the Elo scale
         (``1500 + theta * 400 / ln 10``).
     se:
         The standard error of the rating on the Elo scale (``se_theta *
-        400 / ln 10``), from the inverse Fisher information of the fit. Always
+        400 / ln 10``), from the inverse observed information of the fit. Always
         finite (the ridge prior guarantees it); larger = less certain.
     games:
-        How many settled two-competitor games the generation actually played.
-        Always ``>= 1`` for a rated generation — a zero-game generation gets no
-        rating at all (it is absent from the fit output).
+        How many observations the generation appeared in — a two-competitor
+        game counts for its two sides, a racing rung group counts once per
+        participant. Always ``>= 1`` for a rated generation; a generation in no
+        observation gets no rating at all (it is absent from the fit output).
     """
 
     generation_id: str
@@ -223,7 +296,7 @@ class LineageNode:
         epoch_id)``).
     parent_generation_id:
         The generation this one was derived from, or ``None`` for a genesis
-        seed. Retained for lineage provenance; the batch BT fit does not seed a
+        seed. Retained for lineage provenance; the batch fit does not seed a
         child from its parent (a strength is measured, not inherited).
     created_at:
         Best-effort creation timestamp. Retained for provenance.
@@ -243,16 +316,18 @@ class LineageNode:
 def compute_elo(
     games: Sequence[EloGame],
     lineage: Mapping[str, LineageNode],
+    rungs: Sequence[RungEvent] = (),
 ) -> dict[str, EloRating]:
-    """Fold a ledger of games into a per-generation Bradley--Terry rating.
+    """Fold a ledger of games + rung groups into a per-generation rating.
 
     Pure and **order-independent**: the result depends only on the *set* of
-    de-duplicated games (specifically, the win/loss tally per pairing), never on
-    the order they are passed. A re-run — or a full ``zicato reindex`` —
-    reproduces identical ratings with no reliance on a game-ordering pass. This
-    is the property the batch MLE buys over the sequential margin-K Elo it
-    replaced (that fold's rating was path-dependent: each update landed on the
-    running rating, so a different fold order gave a different answer).
+    de-duplicated observations (the win/loss tally per pairing plus the ranked
+    survivor/cut sets), never on the order they are passed. A re-run — or a full
+    ``zicato reindex`` — reproduces identical ratings with no reliance on an
+    observation-ordering pass. This is the property the batch MLE buys over the
+    sequential margin-K Elo it replaced (that fold's rating was path-dependent:
+    each update landed on the running rating, so a different fold order gave a
+    different answer).
 
     Parameters
     ----------
@@ -264,42 +339,68 @@ def compute_elo(
         pre-filtering. Self-matches / empty-sided games are ignored.
     lineage:
         Every generation keyed by id, carrying its ``epoch_id`` (used to tag the
-        resulting rating). A generation that plays a game but is absent from
-        ``lineage`` is still rated — its epoch is taken from the game.
+        resulting rating). A generation that appears in an observation but is
+        absent from ``lineage`` is still rated — its epoch is taken from the
+        observation.
+    rungs:
+        Every racing-rung group observation, normalised to :class:`RungEvent`
+        (survivor set ranked above cut set). De-duplicated internally by
+        :meth:`RungEvent.dedup_key`. A rung whose survivor set exceeds
+        :data:`~zicato.selection.rating.PL_MAX_SURVIVORS` is skipped (with a
+        debug log inside the fit) rather than approximated.
 
     Returns
     -------
     dict
-        ``{generation_id: EloRating}`` for **every generation that played at
-        least one game**. A generation that played none is absent (it has no
-        measured strength; the fold writes NULL for it). The strengths are
-        zero-sum-gauged by the fit, so the field mean sits at
-        :data:`DEFAULT_RATING`.
+        ``{generation_id: EloRating}`` for **every generation that appeared in
+        at least one observation** (a two-competitor game OR a rung group). A
+        generation that appeared in none is absent (it has no measured strength;
+        the fold writes NULL for it). The strengths are zero-sum-gauged by the
+        fit, so the field mean sits at :data:`DEFAULT_RATING`. ``games`` on each
+        rating is the count of observations that generation appeared in — a
+        game counts for its two sides, a rung group counts once per participant.
     """
     epoch_of: dict[str, str] = {gid: node.epoch_id for gid, node in lineage.items()}
 
     deduped = _dedup_games(games)
+    deduped_rungs = _dedup_rungs(rungs)
 
-    outcomes: list[tuple[str, str]] = []
+    observations: list[tuple[Sequence[str], Sequence[str]]] = []
     game_count: dict[str, int] = {}
     for game in deduped:
         if not game.winner or not game.loser or game.winner == game.loser:
             continue
-        outcomes.append((game.winner, game.loser))
+        observations.append(((game.winner,), (game.loser,)))
         game_count[game.winner] = game_count.get(game.winner, 0) + 1
         game_count[game.loser] = game_count.get(game.loser, 0) + 1
         # Best-effort epoch tag for a generation absent from lineage: the first
-        # game it appears in wins.
+        # observation it appears in wins.
         epoch_of.setdefault(game.winner, game.epoch_id)
         epoch_of.setdefault(game.loser, game.epoch_id)
 
-    if not outcomes:
+    for rung in deduped_rungs:
+        survivors = tuple(s for s in rung.survivors if s)
+        cut = tuple(c for c in rung.cut if c)
+        if not survivors or not cut or set(survivors) & set(cut):
+            continue  # no comparative information / contradictory
+        observations.append((survivors, cut))
+        # ``elo_games`` counts observations a generation APPEARED in; a rung
+        # group counts once per participant. An over-cap rung is skipped by the
+        # fit, so only count participants of rungs the fit will keep.
+        if len(survivors) <= PL_MAX_SURVIVORS:
+            for pid in (*survivors, *cut):
+                game_count[pid] = game_count.get(pid, 0) + 1
+                epoch_of.setdefault(pid, rung.epoch_id)
+
+    if not observations:
         return {}
 
     # The batch MLE. The ridge prior (default 1.0) keeps the fit identifiable
-    # and finite even for a perfect/empty record or a disconnected duel graph,
-    # so every played generation gets a finite (theta, se).
-    fitted = fit_bradley_terry(outcomes)
+    # and finite even for a perfect/empty record or a disconnected graph, so
+    # every observed generation gets a finite (theta, se). Plackett--Luce
+    # reduces exactly to Bradley--Terry on the pairwise (singleton-group)
+    # observations, so pairwise-only ledgers are byte-unchanged from the BT fold.
+    fitted = fit_plackett_luce(observations)
 
     out: dict[str, EloRating] = {}
     for gid, (theta, se) in fitted.items():
@@ -329,6 +430,25 @@ def _dedup_games(games: Sequence[EloGame]) -> list[EloGame]:
             continue
         seen.add(key)
         out.append(g)
+    return out
+
+
+def _dedup_rungs(rungs: Sequence[RungEvent]) -> list[RungEvent]:
+    """Drop duplicate rung observations, keeping the first occurrence.
+
+    A rung's survivor/cut set can surface in more than one overlapping row
+    (or a re-ingest of the same round). Keying on ``(tournament_id, rung_id)``
+    folds it exactly once; the batch fit is order-independent, so which copy
+    survives does not affect the result.
+    """
+    seen: set[tuple[str, str]] = set()
+    out: list[RungEvent] = []
+    for r in rungs:
+        key = r.dedup_key()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(r)
     return out
 
 
@@ -443,8 +563,10 @@ def _games_from_field_row(row: Mapping[str, Any]) -> list[EloGame]:
     competitor; the margin is ``|delta_scalar|``.
 
     A racing intermediate rung that persists a survivor/cut *set* with no single
-    named ``winner`` contributes nothing here (it is not a pairwise outcome) —
-    the documented racing-rung zero-games limitation (see the module docstring).
+    named ``winner`` yields no pairwise game HERE — it is a grouped ranking, not
+    a two-competitor duel, so it is extracted separately as a
+    :class:`RungEvent` by :func:`_rungs_from_field_row` and folded through the
+    Plackett--Luce likelihood.
 
     Only field rows are processed here (empty per-matchup
     ``parent_generation_id`` / ``child_generation_id``); a per-challenger
@@ -508,19 +630,86 @@ def _abs_float(value: Any) -> float:
     return 0.0
 
 
+def _rungs_from_row(row: Mapping[str, Any]) -> list[RungEvent]:
+    """Extract racing-rung group observations from one ``tournaments`` row.
+
+    A field-level row's ``rounds_json`` bracket persists each racing rung as a
+    match carrying a ``survivors`` set ranked above a ``cut`` set (its
+    ``winner`` is ``None`` — a rung cuts rather than crowns). Every such match
+    is one :class:`RungEvent` (a survivor-over-cut partial order). A match with
+    no ``survivors`` / ``cut`` field, or with only one side populated, carries
+    no comparative information and yields nothing — as does a per-challenger
+    crowning row, whose audit ``rounds_json`` has no bracket ``matches``.
+
+    De-duplication of a rung that surfaces in more than one row is left to
+    :func:`compute_elo` (via :meth:`RungEvent.dedup_key`).
+    """
+    epoch_id = str(row.get("epoch_id") or "")
+    tournament_id = str(row.get("tournament_id") or "")
+    ran_at = str(row.get("ran_at") or "")
+    rounds = _safe_json(row.get("rounds_json"))
+    if not isinstance(rounds, list):
+        return []
+    rungs: list[RungEvent] = []
+    for rnd in rounds:
+        if not isinstance(rnd, dict):
+            continue
+        for m in rnd.get("matches") or []:
+            if not isinstance(m, dict):
+                continue
+            surv_raw = m.get("survivors")
+            cut_raw = m.get("cut")
+            if not isinstance(surv_raw, list) or not isinstance(cut_raw, list):
+                continue  # not a rung group (a two-competitor match / gate)
+            # Dedup within each side so a corrupt row with a repeated entry
+            # is capped and counted on the same effective set the fit keeps
+            # (a generation must never end up rated with zero games).
+            survivors = tuple(dict.fromkeys(str(s) for s in surv_raw if s))
+            cut = tuple(dict.fromkeys(str(c) for c in cut_raw if c))
+            if not survivors or not cut:
+                continue  # everyone carried / everyone cut — no ranking signal
+            rungs.append(
+                RungEvent(
+                    epoch_id=epoch_id,
+                    tournament_id=tournament_id,
+                    # Positional fallback: two malformed rungs both missing
+                    # match_id must not collide into one dedup key.
+                    rung_id=str(m.get("match_id") or f"rung@{len(rungs)}"),
+                    survivors=survivors,
+                    cut=cut,
+                    ran_at=ran_at,
+                )
+            )
+    return rungs
+
+
 def games_from_tournament_rows(rows: Sequence[Mapping[str, Any]]) -> list[EloGame]:
     """Normalise every ``tournaments`` index row into Elo games.
 
     The union of the per-challenger crowning games and the field-bracket
     games across every row. De-duplication of the overlap is left to
     :func:`compute_elo` (via :meth:`EloGame.dedup_key`), so this function
-    can emit both sources freely.
+    can emit both sources freely. Racing rung groups are NOT games; extract
+    them with :func:`rungs_from_tournament_rows`.
     """
     games: list[EloGame] = []
     for row in rows:
         games.extend(_games_from_crowning_row(row))
         games.extend(_games_from_field_row(row))
     return games
+
+
+def rungs_from_tournament_rows(rows: Sequence[Mapping[str, Any]]) -> list[RungEvent]:
+    """Normalise every ``tournaments`` index row into racing-rung group events.
+
+    The union of the rung groups across every row (only field-bracket rows
+    carry them; a crowning row's audit yields none). De-duplication of the
+    overlap is left to :func:`compute_elo` (via :meth:`RungEvent.dedup_key`).
+    """
+    rungs: list[RungEvent] = []
+    for row in rows:
+        rungs.extend(_rungs_from_row(row))
+    return rungs
 
 
 # ---------------------------------------------------------------------------
@@ -616,7 +805,8 @@ def fold_elo_into_index(conn: sqlite3.Connection) -> dict[str, EloRating]:
     rows = _read_tournament_rows(conn)
     lineage = _read_lineage(conn)
     games = games_from_tournament_rows(rows)
-    ratings = compute_elo(games, lineage)
+    rungs = rungs_from_tournament_rows(rows)
+    ratings = compute_elo(games, lineage, rungs)
 
     for gid, rating in ratings.items():
         node = lineage.get(gid)
@@ -648,7 +838,9 @@ __all__ = [
     "EloGame",
     "EloRating",
     "LineageNode",
+    "RungEvent",
     "compute_elo",
     "games_from_tournament_rows",
+    "rungs_from_tournament_rows",
     "fold_elo_into_index",
 ]

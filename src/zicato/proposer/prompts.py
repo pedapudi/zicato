@@ -37,8 +37,9 @@ from typing import TYPE_CHECKING
 from zicato.analyzer.outcome_marginals import OutcomeMarginalSummary
 from zicato.analyzer.process_exemplars import ProcessExemplar
 from zicato.core.drift_kinds import GOLDFIVE_DRIFT_KINDS
-from zicato.core.types import MutationPoint, Pattern, PriorExperiment, ProposerSkill
+from zicato.core.types import MutationPoint, Patch, Pattern, PriorExperiment, ProposerSkill
 from zicato.proposer.genealogy import GenealogyItem
+from zicato.proposer.recombine import RecombinationPair
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
     from zicato.index.query import MutationTrackRecord
@@ -1142,11 +1143,102 @@ def render_user_prompt(
     return body
 
 
+def _render_merge_patches(patches: tuple[Patch, ...]) -> str:
+    """One parent's patches rendered for the merge prompt (op + payload + why).
+
+    The payload is the proposer's OWN authored edit (``new_content`` /
+    ``new_numeric`` / ``new_enum``) — in-envelope exactly like the genealogy
+    channel's diff excerpts (PROPOSER.md §2.6.1). No board identity rides here.
+    """
+    lines: list[str] = []
+    for p in patches:
+        if p.op == "replace":
+            payload = p.new_content or ""
+        elif p.op == "set_numeric":
+            payload = str(p.new_numeric)
+        else:
+            payload = str(p.new_enum or "")
+        indented = textwrap.indent(payload, "      ") if "\n" in payload else payload
+        lines.append(
+            f"    - {p.op} {p.mutation_id}: {indented}\n"
+            f"      rationale: {p.rationale or '(no rationale)'}"
+        )
+    return "\n".join(lines) if lines else "    (no patches)"
+
+
+def render_recombine_merge_prompt(
+    pair: RecombinationPair,
+    *,
+    brief_text: str,
+    mutations: Iterable[MutationPoint] = (),
+    custom_judge_names: Iterable[str] = (),
+) -> tuple[str, str]:
+    """Build the ``(system, user)`` prompt for an LLM-guided recombination merge.
+
+    The prompt-side surface of the WS-MERGE ``recombine_merge = "llm"`` mode
+    (PROPOSER.md §2.6.1). The SYSTEM prompt is the SAME schema-carrying
+    proposer system prompt (:func:`render_system_prompt` with the epoch brief),
+    so the response is a proposal like any other and flows through the normal
+    :func:`zicato.proposer.structured.parse_experiment_json` path. The USER
+    prompt frames the MERGE task from the envelope-clean :class:`RecombinationPair`:
+
+    * both parents' CORE IDEAS, whole-candidate BANDED outcomes, and PATCHES
+      (the ``new_content`` the proposer itself authored — in-envelope);
+    * COUNTS-ONLY complementarity (how many train entries each improved, the
+      combined improved / regressed counts);
+    * the valid expectation targets + the mutation manifest, so the merged
+      proposal targets only manifest-valid ids.
+
+    It carries NOTHING the genealogy channel does not already permit: no
+    board-entry id, no per-entry result, no exact Δscalar (the builder bands
+    the outcomes before construction). Skills are omitted from the system
+    prompt (the merge composes already-authored patches, not fresh
+    exploration; the wrapper does not hold the resolved skill modules) — the
+    epoch brief, which carries the forbidden-edits guidance, IS included.
+    """
+    system_prompt = render_system_prompt(brief_text)
+    targets_block = render_metric_targets_block(custom_judge_names)
+    mutation_block = render_mutation_block(mutations)
+    a_outcome = pair.a_banded_outcome or "unsettled"
+    b_outcome = pair.b_banded_outcome or "unsettled"
+    user_prompt = (
+        "You are MERGING two rejected complementary improvement proposals into "
+        "a single experiment for a multi-agent system. Each was rejected alone "
+        "because a parsimony-biased gate discounts one fix at a time, but each "
+        "genuinely fixed a DISTINCT slice of the evaluation board. Compose ONE "
+        "experiment that captures BOTH parents' improvements.\n\n"
+        f"## Parent A (generation {pair.a_generation_id}; outcome: {a_outcome})\n"
+        f"core_idea: {pair.a_core_idea}\n"
+        f"patches:\n{_render_merge_patches(pair.a_patches)}\n\n"
+        f"## Parent B (generation {pair.b_generation_id}; outcome: {b_outcome})\n"
+        f"core_idea: {pair.b_core_idea}\n"
+        f"patches:\n{_render_merge_patches(pair.b_patches)}\n\n"
+        "## Complementarity (counts only)\n"
+        f"Parent A improved {pair.a_improved_count} train entr(y/ies); parent B "
+        f"improved {pair.b_improved_count}. Together they cover "
+        f"{pair.combined_improved_count} distinct entries "
+        f"({pair.combined_regressed_count} with an observed single-sample "
+        "regression). Their edits may OVERLAP where they touch the SAME "
+        "mutation point — resolve those into a single coherent edit that "
+        "preserves both parents' intent (a blind concatenation would drop one "
+        "side, since the applier is last-wins on a duplicate target).\n\n"
+        "## Valid expectation targets (what a hypothesis movement may reference)\n"
+        f"{targets_block}\n\n"
+        "## Mutation points (only these ids are valid patch targets)\n"
+        f"{mutation_block}\n\n"
+        "Emit the merged experiment as the JSON object only — no surrounding "
+        'prose, no markdown fences. The first character MUST be "{" and the '
+        'last MUST be "}".'
+    )
+    return system_prompt, user_prompt
+
+
 __all__ = [
     "SYSTEM_PROMPT_TEMPLATE",
     "USER_PROMPT_TEMPLATE",
     "render_failure_mode_profile",
     "render_genealogy_block",
+    "render_recombine_merge_prompt",
     "render_metric_targets_block",
     "render_process_exemplars",
     "render_mutation_track_annotation",

@@ -692,4 +692,4 @@ backwards-compatible special case.
 | Replication (lever 1), multi-candidate field (lever 0), confirmation (lever 3) | [`SELECTION.md §9`](SELECTION.md#9-the-recommended-design) |
 | The epoch as the frozen contract; auto-roll on contract change | [`EPOCHS-AND-JOURNALING.md`](EPOCHS-AND-JOURNALING.md), `src/zicato/epoch/contract.py` |
 | Operator-facing: choosing + configuring a structure | `skills/zicato-design-tournament-structure/SKILL.md` |
-| FUTURE: winner-resolution (Ranked Pairs, maximal lotteries) + rating (Bradley–Terry) layers *under* these structures, for noisy/cyclic duel matrices — research note, not implemented | [`SELECTION-THEORY.md`](SELECTION-THEORY.md) |
+| Rating (Bradley–Terry) layer *under* these structures — SHIPPED as the opt-in `params["rating"]` θ-rank standings + the visibility Elo fold; winner-resolution SHIPPED as the opt-in `params["resolver"]` (Ranked Pairs behind a Smith-set prune, `selection/resolve.py`); only the maximal-lottery resolver remains FUTURE | [`SELECTION-THEORY.md`](SELECTION-THEORY.md) |

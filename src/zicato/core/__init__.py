@@ -22,6 +22,10 @@ from zicato.core.drift_kinds import (
 )
 from zicato.core.types import (
     BUDGET_ABORT_CAUSE,
+    DIALECT_ADK_EVENTS,
+    DIALECT_GOLDFIVE,
+    DIALECT_TRANSCRIPT,
+    KNOWN_TELEMETRY_DIALECTS,
     BoardEntry,
     BoardEntryKind,
     CallLLM,
@@ -131,6 +135,10 @@ __all__ = [
     "Experiment",
     # epoch / generation
     "ScoringWeights",
+    "DIALECT_GOLDFIVE",
+    "DIALECT_ADK_EVENTS",
+    "DIALECT_TRANSCRIPT",
+    "KNOWN_TELEMETRY_DIALECTS",
     "PassRateMonotonicityScope",
     "EpochConfig",
     "Generation",

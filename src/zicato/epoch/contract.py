@@ -429,12 +429,27 @@ _SCORING_OMIT_AT_DEFAULT_FIELDS: frozenset[str] = frozenset(
         # proposer whose slate can mint the union of two rejected fixes
         # proposes under a different rule.
         "recombine",
+        # Opt-in recombination merge MODE (WS-MERGE; PROPOSER.md §2.6.1).
+        # Lives on the nested ``ProposerQualityConfig`` like the ``recombine``
+        # flag; omitted at its ``"mechanical"`` default (no retroactive roll)
+        # and ``"llm"`` rolls the epoch — a slate that can compose an LLM
+        # merge (over an OVERLAPPING pair the mechanical mint cannot touch)
+        # proposes under a different rule.
+        "recombine_merge",
         # Opt-in genealogy channel (WS-GENE; PROPOSER.md §2.7). Lives on the
         # nested ``ProposerQualityConfig`` like the screen / exemplar knobs;
         # omitted at its 0 default (no retroactive roll) and a non-zero count
         # rolls the epoch — a proposer shown candidate genealogy proposes
         # under a different rule.
         "genealogy",
+        # Telemetry dialect (TELEMETRY-DIALECTS.md §5): the pluggable LossProfile
+        # PRODUCER. Omitted at its ``"goldfive"`` default so every existing
+        # contract hashes byte-identically to one that predates the field (the
+        # CONTRACT-HASH parity gate stays green); a non-default dialect
+        # (``adk_events`` / ``transcript``) reintroduces the key and rolls the
+        # epoch — a run measured under a different dialect selects champions
+        # under a different rule.
+        "telemetry_dialect",
     }
 )
 

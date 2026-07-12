@@ -130,6 +130,10 @@ from zicato.core.runtime import (
     RuntimeConfig,
 )
 from zicato.core.scoring_config import (
+    DIALECT_ADK_EVENTS,
+    DIALECT_GOLDFIVE,
+    DIALECT_TRANSCRIPT,
+    KNOWN_TELEMETRY_DIALECTS,
     ExperimentMemoryConfig,
     LadderConfig,
     OverfittingConfig,
@@ -200,6 +204,10 @@ __all__ = [
     "LadderConfig",
     "ProposerQualityConfig",
     "ExperimentMemoryConfig",
+    "DIALECT_GOLDFIVE",
+    "DIALECT_ADK_EVENTS",
+    "DIALECT_TRANSCRIPT",
+    "KNOWN_TELEMETRY_DIALECTS",
     "EpochConfig",
     "Generation",
     # Patterns

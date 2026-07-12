@@ -588,6 +588,7 @@ def set_proposer_quality(
     process_exemplars: int | None = None,
     recombine: bool | None = None,
     genealogy: int | None = None,
+    recombine_merge: str | None = None,
 ) -> DraftPatch:
     """Set the proposer-quality levers: best-of-N slate + self-critique.
 
@@ -606,7 +607,14 @@ def set_proposer_quality(
     effect (a single-sample proposer has no slate slot to mint into) and
     is cost-neutral (the mint REPLACES the slot's auxiliary propose call,
     never adds one — see :mod:`zicato.epoch.recombine`). Flipping it
-    rolls the epoch. ``genealogy`` opts in the genealogy channel
+    rolls the epoch. ``recombine_merge`` (``"mechanical"`` default |
+    ``"llm"``) chooses HOW the slot composes the union: ``"mechanical"``
+    mints the disjoint patch concatenation with no LLM call; ``"llm"``
+    issues one merge call whose response flows through the normal parse
+    path and RELAXES disjointness so an OVERLAPPING pair the mechanical
+    mint cannot touch can be merged (PROPOSER.md §2.6.1). Meaningful only
+    with ``recombine`` on; ``"llm"`` rolls the epoch. ``genealogy`` opts in
+    the genealogy channel
     (WS-GENE): up to that many candidate-LINEAGE items — the champion's
     promoted patch history + diverse rejected reign candidates, each with
     a banded outcome — are spliced into the prompt so the proposer can
@@ -640,6 +648,17 @@ def set_proposer_quality(
     if recombine is not None and recombine != quality.recombine:
         quality_changes["recombine"] = recombine
         changed["recombine"] = {"from": quality.recombine, "to": recombine}
+    if recombine_merge is not None:
+        if recombine_merge not in ("mechanical", "llm"):
+            raise ValueError(
+                f"recombine_merge must be 'mechanical' or 'llm', got {recombine_merge!r}"
+            )
+        if recombine_merge != quality.recombine_merge:
+            quality_changes["recombine_merge"] = recombine_merge
+            changed["recombine_merge"] = {
+                "from": quality.recombine_merge,
+                "to": recombine_merge,
+            }
     if genealogy is not None:
         if genealogy < 0:
             raise ValueError(f"genealogy must be >= 0, got {genealogy!r}")

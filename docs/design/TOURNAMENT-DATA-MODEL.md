@@ -1,6 +1,9 @@
 # Tournament data model — configurable per-epoch structures
 
-> **Status.** DESIGN. Not yet implemented. This document owns the
+> **Status.** IMPLEMENTED / SHIPPED — this design was built essentially
+> verbatim: the runtime record (`runtime/state.py::ActiveTournament`) and
+> the index `tournaments` table cite these section numbers in their
+> source comments. Retained as the as-built reference. This document owns the
 > **data-model / persistence / API / UI** half of the configurable
 > per-epoch tournament-structures feature: the epoch-contract config
 > block, the generalized persisted tournament record, the dashboard API
@@ -8,8 +11,8 @@
 > implementation plan. The **selection-logic** half — the pairing /
 > elimination / racing-cut algorithms that *drive* each structure, and
 > the decision theory under them — is owned by
-> [`SELECTION.md`](SELECTION.md), [`TOURNAMENT.md`](TOURNAMENT.md), and a
-> planned `TOURNAMENT-STRUCTURES.md` (sibling work). The `tournament`
+> [`SELECTION.md`](SELECTION.md), [`TOURNAMENT.md`](TOURNAMENT.md), and
+> [`TOURNAMENT-STRUCTURES.md`](TOURNAMENT-STRUCTURES.md). The `tournament`
 > config block specified in §1 is the **shared contract** between the two
 > halves — its field name (`tournament`) and shape (`{structure, params}`)
 > must stay byte-identical across both designs.
@@ -764,7 +767,7 @@ champion-vs-challenger.
 
 | Topic | Document |
 |---|---|
-| The selection algorithms that drive each structure (pairing, cuts, racing) | [SELECTION.md](SELECTION.md), planned `TOURNAMENT-STRUCTURES.md` |
+| The selection algorithms that drive each structure (pairing, cuts, racing) | [SELECTION.md](SELECTION.md), [TOURNAMENT-STRUCTURES.md](TOURNAMENT-STRUCTURES.md) |
 | The operational gauntlet view, the bracket, per-matchup analytics | [TOURNAMENT.md](TOURNAMENT.md) |
 | The `tournament` config block in the epoch contract + contract-hash roll | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §10 |
 | The generalized persisted record + storage seams + back-compat | [STORAGE.md](STORAGE.md) §5 |

@@ -27,7 +27,7 @@ This document covers:
 - Why the index exists and what it is *not* (§1).
 - The discipline: files canonical, index derived, dual-write +
   full rebuild (§2).
-- The full schema — nine tables (§3).
+- The full schema — eleven tables (§3).
 - `zicato reindex` / `zicato reindex-generations` — the rebuild
   commands (§4).
 - Where SQLite is and is NOT used in zicato (§5).
@@ -229,14 +229,16 @@ follows (see [RUNTIME.md](RUNTIME.md)).
 The schema is defined authoritatively in
 `src/zicato/index/schema.py` as plain SQL DDL (kept as SQL strings,
 not an ORM, precisely so the Rust supervisor can mirror it
-verbatim). The current `SCHEMA_VERSION` is **2**. That module is the
-contract; this section documents it.
+verbatim). The current `SCHEMA_VERSION` is **12** (additive migrations
+have since added, among others, the `generations.elo*` visibility-rating
+columns — §3.2). That module is the contract; this section documents it.
 
-The index has **nine tables**, mirroring the artifact hierarchy:
+The index has **eleven tables** — nine mirroring the artifact hierarchy:
 `epochs` → `generations` → `experiments` → `patches`, and
 `generations` → `runs` → `loss_profiles` / `metric_counts` /
 `judge_losses`, with `tournaments` as the per-round comparison
-record.
+record — plus the two reflection tables added at schema v11
+(`reflections`, `judge_scorecards`).
 
 ```
 ┌──────────┐      ┌──────────────┐      ┌──────────────┐      ┌──────────┐
@@ -302,11 +304,17 @@ One row per generation directory under any epoch.
 | `parent_generation_id` | TEXT NULL | the generation it was proposed against |
 | `promoted` | INTEGER | 1 if this generation was promoted |
 | `created_at` | TEXT | when the generation was created |
+| `elo` | REAL NULL | visibility rating on the Elo scale (schema v10) — the Bradley–Terry strength re-fit over the match ledger at reindex, mapped `1500 + θ·400/ln 10`; NULL until the generation has a settled two-competitor duel |
+| `elo_se` | REAL NULL | standard error of `elo` (schema v12), same scale |
+| `elo_games` | INTEGER NULL | settled observations folded into the fit (schema v10) — two-competitor duels plus racing rung group observations |
 
 Primary key `(epoch_id, generation_id)`. The `parent_generation_id`
 and `promoted` columns are exactly the two that the targeted
 `zicato reindex-generations` repair rewrites (§4.3) — they are the
-fields a buggy live dual-write was observed to leave stale.
+fields a buggy live dual-write was observed to leave stale. The `elo*`
+columns are a **read-only analytics fold** (`src/zicato/index/elo.py`),
+re-derived from scratch at every reindex and read only by the display
+surfaces — never by the gate or the selection path.
 
 ### 3.3 `experiments`
 
@@ -531,7 +539,7 @@ going *ahead* of the files; a behind index is fixed by a plain
 `reindex` (or by the next incremental `ingest_*`).
 
 Schema versioning is the mechanism that makes a rebuild
-recognisably necessary. `SCHEMA_VERSION` is **2**, stamped into
+recognisably necessary. `SCHEMA_VERSION` is **12**, stamped into
 `PRAGMA user_version` and the `schema_meta` table by `apply_schema`.
 The v1 → v2 migration added five things:
 

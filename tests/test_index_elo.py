@@ -23,6 +23,7 @@ from zicato.index.elo import (
     LineageNode,
     compute_elo,
     games_from_tournament_rows,
+    rungs_from_tournament_rows,
 )
 
 
@@ -380,10 +381,10 @@ def test_field_row_yields_a_game_per_settled_two_sided_match() -> None:
     assert games[0].margin == 0.2
 
 
-def test_racing_rung_set_cut_contributes_zero_games() -> None:
-    # A racing intermediate rung that persists a survivor/cut SET with no single
-    # named winner (winner=None, N competitors) is not a pairwise outcome — the
-    # documented racing-rung zero-games limitation. It contributes nothing.
+def test_racing_rung_without_survivor_cut_sets_contributes_nothing() -> None:
+    # A rung match with NO survivors/cut fields (only a bare competitor list,
+    # winner=None) carries no ranking signal — it is neither a pairwise game
+    # nor a grouped observation, so it yields no game AND no rung event.
     bracket = [
         {
             "stage_index": 0,
@@ -406,6 +407,162 @@ def test_racing_rung_set_cut_contributes_zero_games() -> None:
         }
     ]
     assert games_from_tournament_rows(rows) == []
+    assert rungs_from_tournament_rows(rows) == []
+
+
+def _racing_field_row() -> dict[str, object]:
+    # A realistic settled racing field row: two rung cuts (a survivor/cut SET
+    # each, winner=None) then a champion-gate two-competitor duel.
+    bracket = [
+        {
+            "stage_index": 0,
+            "label": "Rung 0",
+            "matches": [
+                {
+                    "match_id": "rung0",
+                    "competitors": ["a", "b", "c", "d"],
+                    "winner": None,
+                    "survivors": ["a", "b"],
+                    "cut": ["c", "d"],
+                    "board_fraction": 0.25,
+                }
+            ],
+        },
+        {
+            "stage_index": 1,
+            "label": "Rung 1",
+            "matches": [
+                {
+                    "match_id": "rung1",
+                    "competitors": ["a", "b"],
+                    "winner": None,
+                    "survivors": ["a"],
+                    "cut": ["b"],
+                    "board_fraction": 0.5,
+                }
+            ],
+        },
+        {
+            "stage_index": 2,
+            "label": "Champion gate",
+            "matches": [
+                {
+                    "match_id": "racing-final",
+                    "competitors": ["champ", "a"],
+                    "winner": "a",
+                    "decision": "promoted",
+                    "delta_scalar": -0.3,
+                    "board_fraction": 1.0,
+                }
+            ],
+        },
+    ]
+    return {
+        "tournament_id": "e:field:a",
+        "epoch_id": "e",
+        "parent_generation_id": "",
+        "child_generation_id": "",
+        "decision": "promoted",
+        "delta_scalar": -0.3,
+        "rounds_json": json.dumps(bracket),
+        "ran_at": "2026-01-02T00:00:00Z",
+    }
+
+
+def test_racing_rung_group_rates_the_cut_generation() -> None:
+    # THE HOLE, CLOSED. A racing rung persists a survivor/cut SET; under the
+    # Plackett--Luce fold that set is a grouped observation, so a generation
+    # cut only at a rung (never in a named two-competitor duel) is now RATED
+    # with elo_games > 0 — where the old BT fold left it NULL.
+    row = _racing_field_row()
+    rungs = rungs_from_tournament_rows([row])
+    assert [(r.rung_id, r.survivors, r.cut) for r in rungs] == [
+        ("rung0", ("a", "b"), ("c", "d")),
+        ("rung1", ("a",), ("b",)),
+    ]
+    games = games_from_tournament_rows([row])
+    lineage = {g: _node("e", g, None, "x") for g in ("champ", "a", "b", "c", "d")}
+    ratings = compute_elo(games, lineage, rungs)
+    # c and d were cut at a rung and never played a named duel — previously
+    # NULL, now rated.
+    for gid in ("c", "d"):
+        assert gid in ratings
+        assert ratings[gid].games > 0
+    # elo_games counts observations a generation appeared in: a appears in
+    # rung0 + rung1 + the champion gate = 3; c appears in rung0 alone = 1.
+    assert ratings["a"].games == 3
+    assert ratings["c"].games == 1
+    # Strength order reflects the racing outcome: a (survived all + beat the
+    # champion) sits above b, which sits above the symmetric first-cut pair.
+    assert ratings["a"].rating > ratings["b"].rating > ratings["c"].rating
+    # The first-cut arms are symmetric.
+    assert ratings["c"].rating == ratings["d"].rating
+
+
+def test_racing_rung_events_are_deduplicated() -> None:
+    # Re-ingesting the SAME rung rows (the same rung surfacing twice) must never
+    # double-count: the rating + the observation count are identical whether the
+    # rung appears once or twice.
+    row = _racing_field_row()
+    games = games_from_tournament_rows([row])
+    rungs = rungs_from_tournament_rows([row])
+    lineage = {g: _node("e", g, None, "x") for g in ("champ", "a", "b", "c", "d")}
+    once = compute_elo(games, lineage, rungs)
+    twice = compute_elo(games + games, lineage, rungs + rungs)
+    for gid in once:
+        assert once[gid].games == twice[gid].games
+        assert round(once[gid].rating, 9) == round(twice[gid].rating, 9)
+        assert round(once[gid].se, 9) == round(twice[gid].se, 9)
+
+
+def test_racing_field_fold_end_to_end_through_the_index(tmp_path: Path) -> None:
+    # A racing-structure field row through the real reindex fold: the rung-cut
+    # generation lands a non-NULL elo + elo_games > 0 in the generations table.
+    import sqlite3
+
+    from zicato.index.elo import fold_elo_into_index
+
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        "CREATE TABLE generations("
+        "generation_id TEXT, epoch_id TEXT, parent_generation_id TEXT, created_at TEXT, "
+        "elo REAL, elo_se REAL, elo_games INTEGER)"
+    )
+    conn.execute(
+        "CREATE TABLE tournaments("
+        "tournament_id TEXT PRIMARY KEY, epoch_id TEXT, parent_generation_id TEXT, "
+        "child_generation_id TEXT, decision TEXT, delta_scalar REAL, rounds_json TEXT, ran_at TEXT)"
+    )
+    for gid in ("champ", "a", "b", "c", "d"):
+        conn.execute(
+            "INSERT INTO generations(generation_id, epoch_id, parent_generation_id, created_at) "
+            "VALUES(?, 'e', NULL, 'x')",
+            (gid,),
+        )
+    row = _racing_field_row()
+    conn.execute(
+        "INSERT INTO tournaments(tournament_id, epoch_id, parent_generation_id, "
+        "child_generation_id, decision, delta_scalar, rounds_json, ran_at) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            row["tournament_id"],
+            row["epoch_id"],
+            row["parent_generation_id"],
+            row["child_generation_id"],
+            row["decision"],
+            row["delta_scalar"],
+            row["rounds_json"],
+            row["ran_at"],
+        ),
+    )
+    ratings = fold_elo_into_index(conn)
+    assert {"champ", "a", "b", "c", "d"} <= set(ratings)
+    for gid in ("c", "d"):
+        db_elo, db_games = conn.execute(
+            "SELECT elo, elo_games FROM generations WHERE generation_id = ?", (gid,)
+        ).fetchone()
+        assert db_elo is not None
+        assert db_games > 0
 
 
 def test_overlapping_sources_are_deduplicated() -> None:
