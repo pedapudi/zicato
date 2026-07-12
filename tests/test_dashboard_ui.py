@@ -557,7 +557,34 @@ def test_bundle_under_size_envelope(
     # 1.35 MB entry records. The envelope is set to 1.388 MB to cover the
     # calibration row + the log pane (+ the publication overflow CSS, which is
     # in console.css and rides the same counted bundle) with a thin margin.
-    assert total < 1_388_000, f"bundle is {total} bytes, exceeds 1_388_000 envelope"
+    #
+    # The LIVE-TRANSCRIPT STREAMING surface (WS3) then makes the board view's
+    # inline transcript GROW during a run: the frame gates on a STRUCTURE digest
+    # (headers / columns / caption / scroller shells) while the turn CONTENT is
+    # reconciled into a persistent scroller — a new turn APPENDS one node rather
+    # than rebuilding the thread, so a live beat no longer flashes the column
+    # (board.js). The live refetch is gated on a genuine progress-seq ADVANCE
+    # (state.lastSeq) so a burst of heartbeats at a stable seq issues zero
+    # re-reads, and a running column carries a quiet "streaming — through turn N"
+    # caption that vanishes on completion (a 5-line console.css rule reusing the
+    # shipped live vocabulary — no new chrome). All digest-gated (a no-op beat is
+    # byte-identical, scroll preserved) + back-compat (no in-flight run → the
+    # settled view renders byte-identical to today, no caption). ~6 KB of real new
+    # streaming-discipline code. The envelope is raised to 1.392 MB to cover it
+    # with a thin margin.
+    #
+    # The STREAMING SCROLL-DISCIPLINE review fix then hardens the same board.js
+    # reconcile: the divergence-rebuild branch dropped the scroll pin (a merged
+    # reasoning turn whose text grows across two seqs flips only the last turn's
+    # signature → prefix divergence → clamp-to-0 → live-tail breaks). The fix adds
+    # a LAST-TURN-GREW path (re-render just that one node in place, preserving the
+    # prefix + scroll position) and captures the pin BEFORE the remaining wholesale
+    # rebuild so a bottom-pinned reader stays pinned and a scrolled-up one keeps
+    # their offset; the live-seq tracker is also keyed per-entry so a return visit
+    # after the seq advanced elsewhere refetches. ~0.6 KB of real reconcile code +
+    # its rationale on the same surface. The envelope is nudged to 1.393 MB to
+    # cover it with a thin margin.
+    assert total < 1_393_000, f"bundle is {total} bytes, exceeds 1_393_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

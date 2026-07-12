@@ -2027,6 +2027,11 @@
   .dn-xscript-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
     padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px solid var(--v2-rule); }
   .dn-xscript-scroll { max-height: 56vh; }
+  /* the live "streaming — through turn N" caption on a RUNNING transcript column;
+     it disappears once the run completes. Quiet register — reuses dn-faint / the
+     in-flight pulse (no new chrome), just a small flex line above the turns. */
+  .dn-xscript-stream { display: flex; align-items: center; gap: 6px;
+    font-size: calc(10.5px * var(--dt-font-scale, 1)); margin: 0 0 6px; }
   .dn-board-sel { outline: 2px solid var(--v2-accent); outline-offset: -2px; }
   a.dn-linkbtn.dn-linkbtn-on { color: var(--v2-paper); background: var(--v2-accent); border-radius: 3px; }
   /* a RUNNING candidate row — its loss is not scored yet; the live link reads
