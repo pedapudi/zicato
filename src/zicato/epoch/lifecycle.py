@@ -561,6 +561,20 @@ def _close_epoch_prelude(
 
     _lineage.mark_closed(workspace_root, epoch_id, cfg.closed_at)
 
+    # Re-stamp any persisted living-draft analysis.md now that ``closed`` is
+    # on disk: mid-epoch the masthead carries a "LIVING DRAFT" stamp, and the
+    # no-LLM close path (``zicato epoch close``) leaves the existing document
+    # in place, so without this the stamp would persist forever. The re-stamp
+    # is data-derived (it reads the now-closed config), preserves the LLM
+    # prose verbatim, and is a no-op when no living draft exists. Strictly
+    # best-effort — a re-stamp failure must never fail the close.
+    from zicato.util.best_effort import best_effort
+
+    with best_effort("post-close report re-stamp"):
+        from zicato.analyzer import restamp_persisted_report  # noqa: PLC0415
+
+        restamp_persisted_report(workspace_root, epoch_id)
+
     # OPT-IN snapshot GC on close (the workspace ``storage_gc`` config
     # block; absent = off, the default). Best-effort by construction —
     # the hook logs-and-swallows internally, so closing an epoch can

@@ -143,6 +143,24 @@ class EpochReportData:
     # no goal was recorded; the analyzer renders that case as "no goal
     # recorded" in the header so the report shape stays uniform.
     goal: str = ""
+    # The frozen telemetry dialect (which reducer vocabulary drift is read
+    # through). Sourced from ``scoring.json``; empty when the epoch
+    # predates the field, which the renderer degrades to "default".
+    telemetry_dialect: str = ""
+    # The per-epoch tournament structure, ``{"structure": name, "params":
+    # {...}}`` as serialised into ``scoring.json``. Empty dict ⇒ the
+    # gauntlet default (renderer says so rather than fabricating params).
+    tournament_structure: dict[str, Any] = field(default_factory=dict)
+    # The nested proposer-quality config (best_of_n / critique / screen /
+    # exemplars / genealogy / recombine ...), as serialised into
+    # ``scoring.json``. Empty dict ⇒ the built-in defaults.
+    proposer_quality: dict[str, Any] = field(default_factory=dict)
+    # The durable per-round event records, folded from
+    # ``epochs/{id}/rounds/{n}/round_log.jsonl`` (best-effort; empty tuple
+    # when no round has settled yet — the evolve path emits the log per
+    # round, so the validity / proposer-analytics sections light up as
+    # rounds accrue and degrade honestly before the first one settles).
+    round_records: tuple[Any, ...] = ()
 
     @property
     def attempted(self) -> int:
@@ -167,6 +185,17 @@ class EpochReportData:
         if not self.generations:
             return 0.0
         return self.generations[-1].cumulative_scalar
+
+    @property
+    def last_round(self) -> int:
+        """The settled-round count the document is current through.
+
+        Used by the masthead's ``LIVING DRAFT — through round N`` stamp.
+        Derived from the number of challenger generations settled so far
+        (each round settles exactly one), so it is deterministic and needs
+        no extra artifact read.
+        """
+        return self.attempted
 
 
 # ---------------------------------------------------------------------------
@@ -504,6 +533,42 @@ def _cumulate_scalar(generations: list[GenerationView]) -> list[GenerationView]:
 # ---------------------------------------------------------------------------
 
 
+def _load_round_records(workspace_root: Path, epoch_id: str) -> tuple[Any, ...]:
+    """Fold every ``rounds/{n}/round_log.jsonl`` into typed round records.
+
+    Best-effort: the orchestrator emits the durable per-round event log as
+    each round settles, so a freshly-opened epoch with no settled round yet
+    has no ``rounds/`` tree and this returns ``()`` — the validity and
+    proposer-analytics sections then degrade to their honest one-liners.
+    As rounds accrue the same reader lights those sections up with no
+    report change. A malformed / interior-corrupt log for one round is
+    skipped rather than failing the whole gather.
+    """
+    from zicato.epoch.round_log import (  # noqa: PLC0415
+        RoundLog,
+        fold_round_record,
+        rounds_dir,
+    )
+
+    root = rounds_dir(workspace_root, epoch_id)
+    if not root.is_dir():
+        return ()
+    records: list[Any] = []
+    for child in sorted(root.iterdir(), key=lambda p: (len(p.name), p.name)):
+        if not child.is_dir():
+            continue
+        try:
+            idx = int(child.name)
+        except ValueError:
+            continue
+        try:
+            events = RoundLog(workspace_root, epoch_id, idx).read()
+            records.append(fold_round_record(events))
+        except Exception:  # noqa: BLE001 — one bad round never sinks the gather
+            continue
+    return tuple(records)
+
+
 def _distill_brief_goal(brief: str) -> str:
     """The first prose line of the brief's ``## Goal`` section, or ``""``.
 
@@ -565,6 +630,12 @@ def gather_epoch_report_data(workspace_root: Path, epoch_id: str) -> EpochReport
     span_start = min(timestamps) if timestamps else ""
     span_end = max(timestamps) if timestamps else ""
 
+    ts_raw = scoring.get("tournament_structure")
+    tournament_structure = ts_raw if isinstance(ts_raw, dict) else {}
+    pq_raw = scoring.get("proposer_quality")
+    proposer_quality = pq_raw if isinstance(pq_raw, dict) else {}
+    round_records = _load_round_records(layout.root, epoch_id)
+
     return EpochReportData(
         epoch_id=epoch_id,
         epoch_name=str(cfg.get("name", "") or epoch_id),
@@ -582,6 +653,10 @@ def gather_epoch_report_data(workspace_root: Path, epoch_id: str) -> EpochReport
         span_start=span_start,
         span_end=span_end,
         goal=str(cfg.get("goal", "") or "") or _distill_brief_goal(brief_text),
+        telemetry_dialect=str(scoring.get("telemetry_dialect", "") or ""),
+        tournament_structure=tournament_structure,
+        proposer_quality=proposer_quality,
+        round_records=round_records,
     )
 
 

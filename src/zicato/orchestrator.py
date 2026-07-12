@@ -5131,33 +5131,33 @@ async def _regenerate_epoch_report(
     auxiliary_call_llm: CallLLM,
     auxiliary_model: str,
 ) -> None:
-    """Regenerate the comprehensive epoch analysis report — best-effort.
+    """Refresh the epoch publication's deterministic sections — best-effort.
 
-    The academic-paper-style epoch report is rebuilt in full after every
-    round so it is always current; by epoch close it reads as a complete
-    write-up. Its data-bearing sections are templated exactly from the
-    structured workspace artifacts; one bounded auxiliary-LLM call writes
-    the prose sections. The report is persisted as
-    ``epochs/{epoch}/analysis.md`` plus a rendered ``analysis.html``
-    (served by the existing dashboard endpoint).
+    The event-driven freshness path (``docs/design/PUBLICATION.md``): after
+    each settled round the publication's data-bearing sections (masthead,
+    methodology, results, validity, proposer analytics, threats) are
+    re-templated from the CURRENT workspace data WITHOUT an auxiliary-LLM
+    call — cost discipline. The existing LLM-authored prose is preserved
+    verbatim; the full LLM prose render happens at epoch close. Mid-epoch
+    the masthead carries the ``LIVING DRAFT — through round N`` stamp.
 
-    Strictly best-effort: any failure is swallowed and logged at debug
-    level so a wedge here cannot abort the round or the loop. This is a
-    separate artifact from the per-round ``insights/round_{N}.md``
-    proposer-feedback files.
+    Naturally debounced: the round epilogue runs exactly once per settled
+    round, so this fires at most once per round. Digest-gated inside — a
+    settled round that moved no data rewrites nothing. Strictly
+    best-effort: any failure is swallowed and logged at debug level so a
+    wedge here can never abort the round or the loop. ``auxiliary_*`` are
+    accepted for call-site parity with the LLM-authoring close render (and
+    so the full-render path can be swapped back in per-epoch if wanted);
+    the per-round refresh deliberately spends no tokens.
     """
+    del auxiliary_call_llm, auxiliary_model  # no per-round LLM call by design
     with best_effort(
         "epoch analysis report regeneration",
         on_error=lambda exc: log.debug("epoch analysis report regeneration skipped: %s", exc),
     ):
-        from zicato.analyzer import generate_epoch_report  # noqa: PLC0415
+        from zicato.analyzer import regenerate_epoch_report_deterministic  # noqa: PLC0415
 
-        await generate_epoch_report(
-            workspace_root,
-            epoch_id,
-            auxiliary_call_llm,
-            model=auxiliary_model,
-        )
+        regenerate_epoch_report_deterministic(workspace_root, epoch_id)
 
 
 def _cache_gen_score(

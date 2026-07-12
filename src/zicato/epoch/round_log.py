@@ -8,8 +8,8 @@ of a round: a typed, sequenced JSONL event log at
     ``epochs/{epoch}/rounds/{round}/round_log.jsonl``
 
 plus the fold that reduces it to a typed :class:`RoundRecord` summary.
-This is schema + fold only — the orchestrator's emission wiring is a
-later phase, so nothing on the evolve path writes it yet.
+The orchestrator's ``_RoundLogEmitter`` wires this on the evolve path:
+every settled round writes its ``round_log.jsonl`` as the round runs.
 
 Load-bearing invariants
 -----------------------
