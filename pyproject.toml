@@ -254,7 +254,7 @@ testpaths = ["tests"]
 # `node src/zicato/dashboard/static/test/run-all.mjs` run); pass
 # `-m node` (or `--no-header -m ''`) / run `make node-test` to exercise
 # the Node behaviour suite.
-addopts = "-n auto -m 'not node'"
+addopts = "-n auto -m 'not node and not cascade_oc'"
 # Custom markers. `node` tags tests that shell out to the `node` runtime
 # (the dashboard JS harness); excluded from the default run via addopts.
 # `slow` and `integration` tag the real-subprocess / real-server tests
@@ -268,6 +268,7 @@ markers = [
     "node: shells out to the standalone Node test harness (run via `make node-test`)",
     "slow: real-subprocess / real-server test whose runtime IS the coverage; the fast lane is `-m 'not slow and not node'` (the full suite stays the default run)",
     "integration: crosses a process or network boundary (worker subprocesses, live servers, git subprocesses)",
+    "cascade_oc: the opt-in evaluation-cascade OC measurement suite (CASCADE.md §4); EXCLUDED from the default run via addopts — run with `-m cascade_oc`",
 ]
 # With the package under src/, an editable install puts `zicato` on
 # sys.path, but a bare `pytest` from a non-installed checkout would
