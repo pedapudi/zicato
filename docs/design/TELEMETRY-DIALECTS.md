@@ -285,13 +285,20 @@ the committed fixture must reproduce the committed numbers to the bit.
 
 ## 7. Out of scope this wave (follow-ups)
 
-- **GUI / builder surface.** The dialect is a `scoring.json` field; the
-  builder's settings panel and the dashboard's contract view do not yet
-  expose it. A follow-up adds a dialect selector (with the capability
-  tiers rendered inline) to the builder.
 - **A hard `refuse` gate** on capability mismatch (§4.2).
 - **Additional dialects.** The registry is open; a new dialect is a new
   `reduce_<name>` producer plus a registry entry plus a KAT fixture.
+
+The **GUI / builder surface** is now built (it was the deferred follow-up
+here). The dialect is exposed as the `set_telemetry_dialect` builder op —
+declared through the field's `_knob(builder_op=…, builder_arg="dialect")`
+metadata and wired (guard-driven, `test_knob_registry.py`) through the API
+dispatch, the copilot tool, and a `<select>` row in the builder's Weights
+panel. The row renders the selected dialect's capability tier (§2 / §3.3 /
+§4) inline as a quiet caption, and changing the dialect rolls the epoch like
+any scoring change (a non-default value reintroduces the omitted contract
+key). It is still the first knob added under the declarative-knob-registry
+discipline (REIMPLEMENTATION.md Finding 3).
 
 ## 8. Cross-references
 

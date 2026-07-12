@@ -1031,6 +1031,45 @@ def test_set_experiment_memory() -> None:
     assert serialized["scoring"]["experiment_memory"]["cross_epoch"] is True
 
 
+def test_set_telemetry_dialect() -> None:
+    """The telemetry dialect round-trips via the changed-dict pattern; the
+    default (goldfive) is a no-op; an unknown name raises; None leaves it be."""
+    import json
+
+    import pytest
+
+    draft = TournamentDraft()
+    assert draft.scoring.telemetry_dialect == "goldfive"
+
+    # Default-value ⇒ no-op (no changed entry, no roll).
+    noop = ops.set_telemetry_dialect(draft, dialect="goldfive")
+    assert noop.changed == {}
+    assert draft.scoring.telemetry_dialect == "goldfive"
+    # None ⇒ leave unchanged.
+    assert ops.set_telemetry_dialect(draft, dialect=None).changed == {}
+
+    # A non-default dialect lands on the field and records the from/to delta.
+    patch = ops.set_telemetry_dialect(draft, dialect="adk_events")
+    assert draft.scoring.telemetry_dialect == "adk_events"
+    assert patch.changed["telemetry_dialect"] == {"from": "goldfive", "to": "adk_events"}
+
+    # Reverting to goldfive records the reverse delta (the contract pins both
+    # directions — reverting rolls back to the original hash).
+    back = ops.set_telemetry_dialect(draft, dialect="goldfive")
+    assert back.changed["telemetry_dialect"] == {"from": "adk_events", "to": "goldfive"}
+    assert draft.scoring.telemetry_dialect == "goldfive"
+
+    # An unknown name raises (the closed dialect set — never a second list).
+    with pytest.raises(ValueError, match="telemetry_dialect must be one of"):
+        ops.set_telemetry_dialect(draft, dialect="mystery")
+    # The field is unchanged after the raise (validated before applying).
+    assert draft.scoring.telemetry_dialect == "goldfive"
+
+    ops.set_telemetry_dialect(draft, dialect="transcript")
+    serialized = json.loads(json.dumps(draft.to_dict()))
+    assert serialized["scoring"]["telemetry_dialect"] == "transcript"
+
+
 # ---------------------------------------------------------------------------
 # Honest cost meter — the evidence-gate confirm budget, the best-of-N
 # auxiliary line, and the placebo cadence
