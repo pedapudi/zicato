@@ -24,7 +24,7 @@ use std::path::Path;
 /// schema generation. Opening a database whose `user_version` does not
 /// match this constant returns [`IndexError::StaleSchema`] rather than
 /// risking a row decoded against the wrong schema.
-pub const EXPECTED_SCHEMA_VERSION: i64 = 10;
+pub const EXPECTED_SCHEMA_VERSION: i64 = 12;
 
 /// A row of the `tournaments` table joined against `experiments` for the
 /// matchup's hypothesis idea.
@@ -501,15 +501,34 @@ mod tests {
     }
 
     /// The Rust reader's expected schema version MUST track the Python
-    /// `SCHEMA_VERSION` (`src/zicato/index/schema.py`). When the Python
-    /// schema bumps, this constant must bump in lockstep; this test is the
-    /// tripwire that makes the drift impossible to miss.
+    /// `SCHEMA_VERSION` (`src/zicato/index/schema.py`). The original form of
+    /// this test compared the constant against a HARDCODED LITERAL in this
+    /// file — so when Python bumped v10→v11→v12 it never fired, and the
+    /// supervisor's read-only surface silently served empty for two schema
+    /// generations. It now parses the Python source directly (the mirror of
+    /// the Python-side pin in `tests/test_index_v12_schema.py`), so drift in
+    /// EITHER direction reds one suite or the other.
     #[test]
     fn expected_schema_version_is_pinned_to_python() {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let schema_py = manifest.join("../../src/zicato/index/schema.py");
+        let text = std::fs::read_to_string(&schema_py)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", schema_py.display()));
+        let python_version: i64 = text
+            .lines()
+            .find_map(|line| {
+                // Match `SCHEMA_VERSION = 12` with or without a type
+                // annotation (`SCHEMA_VERSION: Final = 12`), at line start.
+                let rest = line.strip_prefix("SCHEMA_VERSION")?;
+                let (_, value) = rest.split_once('=')?;
+                value.trim().parse().ok()
+            })
+            .expect("SCHEMA_VERSION assignment not found in schema.py");
         assert_eq!(
-            EXPECTED_SCHEMA_VERSION, 10,
-            "EXPECTED_SCHEMA_VERSION must equal the Python SCHEMA_VERSION \
-             in src/zicato/index/schema.py (currently 10); bump both together",
+            EXPECTED_SCHEMA_VERSION, python_version,
+            "EXPECTED_SCHEMA_VERSION must equal the Python SCHEMA_VERSION in \
+             src/zicato/index/schema.py; bump both together (a mismatch makes \
+             the supervisor refuse every fresh index — a blind read-only surface)",
         );
     }
 

@@ -171,3 +171,30 @@ def test_fold_is_a_noop_on_a_pre_v10_schema() -> None:
     conn.commit()
     assert fold_elo_into_index(conn) == {}
     conn.close()
+
+
+def test_rust_supervisor_schema_version_is_in_lockstep() -> None:
+    """The Rust read-only index reader must expect EXACTLY the Python schema.
+
+    The supervisor refuses (serves empty for) any index whose
+    ``user_version`` differs from its ``EXPECTED_SCHEMA_VERSION`` — the
+    stale-schema guard. That guard silently blinded the supervisor for two
+    schema generations (v11, v12) because the constant was pinned at 10 and
+    nothing compared it against the PYTHON version. This source-text pin is
+    the cross-language tripwire: bumping ``SCHEMA_VERSION`` without bumping
+    the Rust constant (or vice versa) reds the suite.
+    """
+    import re
+    from pathlib import Path
+
+    from zicato.index.schema import SCHEMA_VERSION
+
+    rust = Path(__file__).resolve().parents[1] / "crates" / "supervisor" / "src" / "index_db.rs"
+    text = rust.read_text(encoding="utf-8")
+    match = re.search(r"EXPECTED_SCHEMA_VERSION:\s*i64\s*=\s*(\d+)", text)
+    assert match is not None, "EXPECTED_SCHEMA_VERSION not found in index_db.rs"
+    assert int(match.group(1)) == SCHEMA_VERSION, (
+        f"Rust EXPECTED_SCHEMA_VERSION={match.group(1)} != Python "
+        f"SCHEMA_VERSION={SCHEMA_VERSION} — bump them together (the supervisor "
+        "refuses mismatched indexes, so drift blinds its read-only surface)"
+    )
