@@ -404,9 +404,12 @@ async def evolve_once(
     #
     # WS-ENS ensemble roles: the wrapper routes slate SAMPLING to the breadth
     # callable and CRITIQUE + REVISE to the depth callable, both read off the
-    # RuntimeConfig (built just above). Absent a ``models.proposer_{breadth,
-    # depth}`` block they are ``None`` and the wrapper falls back to the
-    # round's auxiliary callable — byte-identical. A models/endpoint change
+    # RuntimeConfig (built just above). It ALSO threads the paired model-name
+    # strings so the default ADK proposer (which binds ``ctx.model``, not
+    # ``ctx.aux_call_llm``) honors a spec-configured role. Absent a
+    # ``models.proposer_{breadth,depth}`` block the callables AND model names
+    # are ``None`` and the wrapper falls back to the round's auxiliary callable
+    # + the context's own model — byte-identical. A models/endpoint change
     # never rolls the epoch.
     from zicato.proposer.best_of_n import wrap_with_proposer_quality  # noqa: PLC0415
 
@@ -415,6 +418,8 @@ async def evolve_once(
         weights.proposer_quality,
         breadth_call_llm=config.proposer_breadth_call_llm,
         depth_call_llm=config.proposer_depth_call_llm,
+        breadth_model=config.proposer_breadth_model,
+        depth_model=config.proposer_depth_model,
     )
 
     # --- 2. Parent generation ---

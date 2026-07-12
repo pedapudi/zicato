@@ -150,12 +150,24 @@ def make_runtime_config(
     # other role: both are proposer-side, one trust domain (the guard is for
     # evaluator-vs-evaluated separation). Like every ``models`` role, a change
     # here is runtime infra and NEVER rolls the epoch.
+    # Each role also carries its MODEL-NAME string when configured via a model
+    # SPEC (``{"model": ...}``, NOT a ``{"call_llm": ...}`` dotted path): the
+    # wrapper threads it onto ``ctx.model`` so the DEFAULT ADK proposer — which
+    # binds the model string and never reads ``ctx.aux_call_llm`` — honors the
+    # role. A call_llm-form (or absent) role leaves the model name ``None`` and
+    # steers only proposers that read ``ctx.aux_call_llm`` (the text-shim path).
     proposer_breadth: CallLLM | None = None
+    proposer_breadth_model: str | None = None
     if not models.proposer_breadth.is_empty:
         proposer_breadth = resolve_text_call_llm(models.proposer_breadth, role="proposer_breadth")
+        if not models.proposer_breadth.uses_call_llm:
+            proposer_breadth_model = models.proposer_breadth.model
     proposer_depth: CallLLM | None = None
+    proposer_depth_model: str | None = None
     if not models.proposer_depth.is_empty:
         proposer_depth = resolve_text_call_llm(models.proposer_depth, role="proposer_depth")
+        if not models.proposer_depth.uses_call_llm:
+            proposer_depth_model = models.proposer_depth.model
 
     seed_raw = runtime_dict.get("seed")
     seed: int | None = int(seed_raw) if seed_raw is not None else None
@@ -275,6 +287,8 @@ def make_runtime_config(
         judge_call_llm=judge,
         proposer_breadth_call_llm=proposer_breadth,
         proposer_depth_call_llm=proposer_depth,
+        proposer_breadth_model=proposer_breadth_model,
+        proposer_depth_model=proposer_depth_model,
         scrub_worker_env=scrub_worker_env,
         worker_env_passthrough=worker_env_passthrough,
         diversity_tolerance=diversity_tolerance,

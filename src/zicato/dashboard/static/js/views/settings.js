@@ -77,8 +77,8 @@ const MODEL_ROLES = [
   ['auxiliary', 'Auxiliary', 'Every zicato-internal consumer — emulator, proposer, analysis.'],
   ['builder', 'Builder', 'The tournament-builder copilot.'],
   ['judge', 'Judge', 'In-run process judges / rubric matchers (falls back to auxiliary).'],
-  ['proposer_breadth', 'Proposer breadth', 'Best-of-N slate sampling — the exploratory ensemble half (falls back to auxiliary).'],
-  ['proposer_depth', 'Proposer depth', 'Best-of-N critique + revise — the refine ensemble half (falls back to auxiliary).'],
+  ['proposer_breadth', 'Proposer breadth', 'Best-of-N slate sampling — the exploratory ensemble half. A model spec steers the default proposer; a call_llm path applies only to text-shim/custom proposers. Falls back to auxiliary when unset.'],
+  ['proposer_depth', 'Proposer depth', 'Best-of-N critique + revise — the refine ensemble half. A model spec steers the default proposer; a call_llm path applies only to text-shim/custom proposers. Falls back to auxiliary when unset.'],
 ];
 const SECTION_IDS = SECTIONS.map((s) => s.id);
 // The default section a bare `#/settings` opens — sourced from the router so the

@@ -448,6 +448,8 @@ def test_proposer_roles_default_none_and_fall_back_to_auxiliary(tmp_path: Path) 
     )
     assert cfg.proposer_breadth_call_llm is None
     assert cfg.proposer_depth_call_llm is None
+    assert cfg.proposer_breadth_model is None
+    assert cfg.proposer_depth_model is None
     # The fall-back is the auxiliary callable — the very object sampling +
     # critique always used, so an unconfigured ensemble is byte-identical.
     assert cfg.effective_proposer_breadth_call_llm() is _stub_aux
@@ -478,6 +480,45 @@ def test_proposer_roles_resolve_from_models_block(
     assert cfg.effective_proposer_depth_call_llm() is cfg.proposer_depth_call_llm
     assert cfg.effective_proposer_breadth_call_llm() is not cfg.auxiliary_call_llm
     assert cfg.effective_proposer_depth_call_llm() is not cfg.auxiliary_call_llm
+    # A call_llm (dotted) role has NO model name — the model-string thread stays
+    # None, so it steers only proposers that read ``ctx.aux_call_llm``.
+    assert cfg.proposer_breadth_model is None
+    assert cfg.proposer_depth_model is None
+
+
+def test_proposer_roles_model_spec_captures_model_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A ``models.proposer_{breadth,depth}`` *model spec* captures its model-name
+    string onto the config so the wrapper can thread it onto ``ctx.model`` (the
+    default ADK proposer's binding)."""
+    pytest.importorskip("litellm")
+    _install_models_callables(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-dummy")
+    cfg = make_runtime_config(
+        {
+            "models": {
+                "harness": {"call_llm": "fake_models_mod:harness_fn"},
+                "auxiliary": {"call_llm": "fake_models_mod:aux_fn"},
+                "proposer_breadth": {
+                    "model": "openai/breadth-model",
+                    "endpoint": "http://kossel.lan:8080/v1",
+                    "api_key_env": "OPENAI_API_KEY",
+                },
+                "proposer_depth": {
+                    "model": "openai/depth-model",
+                    "endpoint": "http://kossel.lan:8080/v1",
+                    "api_key_env": "OPENAI_API_KEY",
+                },
+            }
+        },
+        workspace_root=tmp_path,
+    )
+    assert cfg.proposer_breadth_model == "openai/breadth-model"
+    assert cfg.proposer_depth_model == "openai/depth-model"
+    # The callables resolved too (both threads carry the spec).
+    assert cfg.proposer_breadth_call_llm is not None
+    assert cfg.proposer_depth_call_llm is not None
 
 
 def test_proposer_roles_no_collusion_guard_between_breadth_and_depth(

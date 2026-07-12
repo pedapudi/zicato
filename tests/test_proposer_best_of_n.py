@@ -1655,15 +1655,100 @@ def test_ens_wrap_threads_roles_onto_the_wrapper() -> None:
         ProposerQualityConfig(best_of_n=3),
         breadth_call_llm=breadth,
         depth_call_llm=depth,
+        breadth_model="breadth-model",
+        depth_model="depth-model",
     )
     assert isinstance(wrapped, BestOfNProposerAgent)
     assert wrapped.breadth_call_llm is breadth
     assert wrapped.depth_call_llm is depth
+    assert wrapped.breadth_model == "breadth-model"
+    assert wrapped.depth_model == "depth-model"
     # The best_of_n <= 1 pass-through ignores the roles (no wrapper at all).
     passthrough = wrap_with_proposer_quality(
         inner,
         ProposerQualityConfig(best_of_n=1),
         breadth_call_llm=breadth,
         depth_call_llm=depth,
+        breadth_model="breadth-model",
+        depth_model="depth-model",
     )
     assert passthrough is inner
+
+
+@pytest.mark.asyncio
+async def test_ens_spec_role_swaps_ctx_model_for_default_proposer() -> None:
+    """A spec-configured role carries a MODEL NAME: every sampling slot's inner
+    ctx binds the breadth model string, and the revise binds the depth model —
+    so the DEFAULT ADK proposer (which reads ``ctx.model``, not the callable)
+    honors the role."""
+    slate = [
+        _experiment(core_idea="a", mutation_id="router__sp", new_content="a"),
+        _experiment(core_idea="b", mutation_id="writer__sp", new_content="b"),
+        _experiment(core_idea="rev", mutation_id="router__sp", new_content="r"),
+    ]
+    inner = _ExhaustibleInnerAgent(slate)
+    # slate screen vetoes both → one revise; the replacement screen clears it.
+    screen = _SequencedScreen(
+        [
+            [_screen_result(vetoed=True), _screen_result(vetoed=True)],
+            [_screen_result(vetoed=False)],
+        ]
+    )
+    agent = BestOfNProposerAgent(
+        inner=inner,
+        config=ProposerQualityConfig(best_of_n=2, screen_entries=2),
+        breadth_call_llm=_plain_aux,
+        depth_call_llm=_CapturingCriticLLM("0"),
+        breadth_model="breadth-model",
+        depth_model="depth-model",
+    )
+    await agent.propose(_screened_context(_CapturingCriticLLM("0"), screen))
+
+    assert inner.calls == 3
+    # The 2 slate slots carry the breadth model; the revise carries depth.
+    assert inner.contexts[0].model == "breadth-model"
+    assert inner.contexts[1].model == "breadth-model"
+    assert inner.contexts[2].model == "depth-model"
+
+
+@pytest.mark.asyncio
+async def test_ens_callable_only_role_leaves_ctx_model_unchanged() -> None:
+    """A callable-only role (no model name — a bare call_llm / test callable)
+    swaps ``ctx.aux_call_llm`` but LEAVES ``ctx.model`` at the auxiliary string
+    (the documented degrade: it steers only proposers that read
+    ``ctx.aux_call_llm``, not the default ADK proposer)."""
+    candidates = [
+        _experiment(core_idea="a", mutation_id="router__sp", new_content="a"),
+        _experiment(core_idea="b", mutation_id="writer__sp", new_content="b"),
+    ]
+    inner = _ExhaustibleInnerAgent(candidates)
+    agent = BestOfNProposerAgent(
+        inner=inner,
+        config=ProposerQualityConfig(best_of_n=2),
+        breadth_call_llm=_plain_aux,
+        depth_call_llm=_CapturingCriticLLM("0"),
+        # breadth_model / depth_model left None — the callable-only path.
+    )
+    await agent.propose(_context(_CapturingCriticLLM("0")))
+
+    # The callable was swapped, but the model string stayed the context's own.
+    assert [c.aux_call_llm for c in inner.contexts] == [_plain_aux, _plain_aux]
+    assert all(c.model == "test-model" for c in inner.contexts)
+
+
+@pytest.mark.asyncio
+async def test_ens_absent_roles_leave_ctx_model_byte_identical() -> None:
+    """With NO roles configured, every inner ctx keeps the context's own model
+    string unchanged — the byte-identical default extends to ``ctx.model``."""
+    candidates = [
+        _experiment(core_idea="a", mutation_id="router__sp", new_content="a"),
+        _experiment(core_idea="b", mutation_id="writer__sp", new_content="b"),
+    ]
+    inner = _ExhaustibleInnerAgent(candidates)
+    agent = BestOfNProposerAgent(
+        inner=inner,
+        config=ProposerQualityConfig(best_of_n=2),
+    )
+    await agent.propose(_context(_CapturingCriticLLM("0")))
+
+    assert all(c.model == "test-model" for c in inner.contexts)

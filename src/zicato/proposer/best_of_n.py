@@ -77,22 +77,28 @@ breadth+depth proposer ensemble): the exploratory SLATE SAMPLING uses the
 REVISE re-sample use the "depth" role. Both are resolved into
 :class:`BestOfNProposerAgent` by :func:`wrap_with_proposer_quality` from the
 :class:`~zicato.core.runtime.RuntimeConfig` (its
-``proposer_breadth_call_llm`` / ``proposer_depth_call_llm`` — set from a
+``proposer_breadth_call_llm`` / ``proposer_depth_call_llm`` PLUS the parallel
+``proposer_breadth_model`` / ``proposer_depth_model`` name strings — set from a
 ``models.proposer_breadth`` / ``models.proposer_depth`` block). BOTH default
 to ``None``, and the wrapper then resolves each per-propose to
-``ctx.aux_call_llm`` — the exact same auxiliary callable the sampling +
-critique always used — so an unconfigured ensemble is byte-identical.
+``ctx.aux_call_llm`` (and leaves ``ctx.model`` at its own value) — the exact
+same auxiliary callable + model string the sampling + critique always used —
+so an unconfigured ensemble is byte-identical.
 
 The seam is the WRAPPER, not :class:`ProposerContext`: the context mirrors
 :func:`~zicato.proposer.proposer.propose_experiment`'s inputs one-for-one and
-these two role callables are proposer INFRASTRUCTURE, not propose inputs, so
-they live on the wrapper (the only code that distinguishes the two call
-classes) and the sampling/revise seam swaps ``ctx.aux_call_llm`` via
-``dataclasses.replace`` at the call site. NOTE: the DEFAULT ADK tool-using
-proposer binds to ``ctx.model`` (a model string), not ``ctx.aux_call_llm``,
-so the breadth callable steers the TEXT-SHIM proposer's sampling and the
-wrapper's own critique/revise — a callable-level seam, matching the
-``judge_call_llm`` precedent.
+the role bindings are proposer INFRASTRUCTURE, not propose inputs, so they live
+on the wrapper (the only code that distinguishes the two call classes) and the
+sampling/revise seam swaps BOTH ``ctx.aux_call_llm`` AND ``ctx.model`` via
+``dataclasses.replace`` at the call site. The dual swap is deliberate: the
+DEFAULT ADK tool-using proposer binds to ``ctx.model`` (a model string) and
+never reads ``ctx.aux_call_llm``, so a spec-configured role must move the model
+string to reach it; a callable-only role (no model name — a bare ``call_llm``
+dotted path or an injected test callable) leaves ``ctx.model`` untouched and so
+steers ONLY the proposers that read ``ctx.aux_call_llm`` (the text-shim /
+custom path) plus the wrapper's own critique/revise. Matches the
+``judge_call_llm`` precedent on the callable side; the model-string thread is
+what makes the default proposer honor the role.
 
 The collusion identity-guard does NOT apply between breadth and depth: both
 are proposer-side roles in ONE trust domain (inside the same
@@ -509,6 +515,17 @@ class BestOfNProposerAgent:
     #: why the collusion guard is inapplicable here.
     breadth_call_llm: CallLLM | None = None
     depth_call_llm: CallLLM | None = None
+    #: The role MODEL-NAME strings that ride ALONGSIDE the callables above.
+    #: Set (from a workspace ``models.proposer_{breadth,depth}`` *model spec*)
+    #: they are swapped onto ``ctx.model`` at the sampling/revise sites so the
+    #: DEFAULT ADK proposer — which binds to ``ctx.model`` (a string) and never
+    #: reads ``ctx.aux_call_llm`` — actually reaches the role's endpoint. Left
+    #: ``None`` (the role absent, OR configured as a bare ``call_llm`` dotted
+    #: path / injected as a raw callable) ⇒ ``ctx.model`` is replaced with its
+    #: OWN value, byte-identical; a callable-only role then steers only the
+    #: proposers that DO read ``ctx.aux_call_llm`` (the text-shim / custom path).
+    breadth_model: str | None = None
+    depth_model: str | None = None
 
     def _breadth_call_llm(self, ctx: ProposerContext) -> CallLLM:
         """The SLATE-SAMPLING callable: the breadth role, else ``ctx.aux_call_llm``.
@@ -528,6 +545,25 @@ class BestOfNProposerAgent:
         very object the critique/revise always used.
         """
         return self.depth_call_llm if self.depth_call_llm is not None else ctx.aux_call_llm
+
+    def _breadth_model(self, ctx: ProposerContext) -> str:
+        """The SLATE-SAMPLING model name: the breadth model, else ``ctx.model``.
+
+        Threaded onto ``ctx.model`` alongside :meth:`_breadth_call_llm` so the
+        default ADK proposer (which binds to the model STRING, not the callable)
+        honors a spec-configured breadth role. Absent a breadth model name the
+        context's own ``ctx.model`` is returned unchanged — byte-identical.
+        """
+        return self.breadth_model if self.breadth_model is not None else ctx.model
+
+    def _depth_model(self, ctx: ProposerContext) -> str:
+        """The REVISE model name: the depth model, else ``ctx.model``.
+
+        Mirrors :meth:`_breadth_model` for the screen-informed revise re-sample.
+        The critique call needs no ``ctx.model`` swap — it invokes the depth
+        callable directly (see :meth:`_select_over`).
+        """
+        return self.depth_model if self.depth_model is not None else ctx.model
 
     async def propose(self, ctx: ProposerContext) -> Experiment:
         n = self.config.best_of_n
@@ -667,12 +703,17 @@ class BestOfNProposerAgent:
         # (same object) when no breadth role is configured, so the slot is
         # byte-identical to the pre-ensemble wrapper; when configured, the
         # inner proposer's ``ctx.aux_call_llm`` consumers reach the breadth
-        # endpoint. The recombination-mint DEGRADE path routes here too, so a
-        # degraded slot samples on breadth exactly like an ordinary one.
+        # endpoint. We ALSO swap ``ctx.model`` to the breadth model name so the
+        # DEFAULT ADK proposer — which binds to the model STRING, not the
+        # callable — honors the role too; absent a breadth model the string is
+        # replaced with its OWN value (byte-identical). The recombination-mint
+        # DEGRADE path routes here too, so a degraded slot samples on breadth
+        # exactly like an ordinary one.
         slot_ctx = replace(
             ctx,
             sample_hint=hint_for_slot(sample, n, ctx.failure_profile),
             aux_call_llm=self._breadth_call_llm(ctx),
+            model=self._breadth_model(ctx),
         )
         try:
             candidates.append(await self.inner.propose(slot_ctx))
@@ -821,8 +862,17 @@ class BestOfNProposerAgent:
             # WS-ENS: the screen-informed REVISE is a DEPTH pass (a targeted
             # repair, not exploration) — it runs on the depth role, falling
             # back to ``ctx.aux_call_llm`` (byte-identical) when unconfigured.
+            # ``ctx.model`` is swapped to the depth model name for the same
+            # reason as the sampling site: so the default ADK proposer (which
+            # binds the model STRING) honors the role; absent it, the string is
+            # replaced with its own value.
             replacement = await self.inner.propose(
-                replace(ctx, revise_feedback=feedback, aux_call_llm=self._depth_call_llm(ctx))
+                replace(
+                    ctx,
+                    revise_feedback=feedback,
+                    aux_call_llm=self._depth_call_llm(ctx),
+                    model=self._depth_model(ctx),
+                )
             )
         except Exception as exc:  # noqa: BLE001 — the revise must never fail a propose
             log.debug(
@@ -1125,6 +1175,8 @@ def wrap_with_proposer_quality(
     *,
     breadth_call_llm: CallLLM | None = None,
     depth_call_llm: CallLLM | None = None,
+    breadth_model: str | None = None,
+    depth_model: str | None = None,
 ) -> ProposerAgent:
     """Interpose best-of-N + self-critique only when an operator opts in.
 
@@ -1144,6 +1196,15 @@ def wrap_with_proposer_quality(
     exact auxiliary callable it always used, so an unconfigured ensemble is
     byte-identical. They are irrelevant on the ``best_of_n <= 1`` pass-through
     (no wrapper, no critique).
+
+    ``breadth_model`` / ``depth_model`` are the role MODEL-NAME strings that
+    accompany the callables (typically ``config.proposer_breadth_model`` /
+    ``config.proposer_depth_model`` off the :class:`RuntimeConfig`, set only
+    when the role was configured via a *model spec*). The wrapper swaps them
+    onto ``ctx.model`` at the sampling/revise sites so the default ADK
+    proposer — which binds the model STRING, not ``ctx.aux_call_llm`` — honors
+    the role. ``None`` (the common case, a callable-only or absent role) leaves
+    ``ctx.model`` at its own value, byte-identical.
     """
     if config.best_of_n <= 1:
         return inner
@@ -1152,6 +1213,8 @@ def wrap_with_proposer_quality(
         config=config,
         breadth_call_llm=breadth_call_llm,
         depth_call_llm=depth_call_llm,
+        breadth_model=breadth_model,
+        depth_model=depth_model,
     )
 
 

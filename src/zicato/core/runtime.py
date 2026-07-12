@@ -157,7 +157,15 @@ class RuntimeConfig:
         ``models.proposer_breadth`` block) it points the exploratory
         slate samples at a separate endpoint/model — typically a cheaper,
         higher-temperature model that generates many diverse candidates.
-        Read via :meth:`effective_proposer_breadth_call_llm`.
+
+        Live read path: the orchestrator threads this onto
+        :class:`~zicato.proposer.best_of_n.BestOfNProposerAgent`, which
+        swaps it onto ``ctx.aux_call_llm`` at the sampling site, FALLING
+        BACK to the context's own ``ctx.aux_call_llm`` when ``None``. The
+        default ADK proposer does not read ``ctx.aux_call_llm`` at all —
+        the callable steers only proposers that DO (the text-shim / custom
+        path); :attr:`proposer_breadth_model` carries the model-name string
+        that makes the DEFAULT proposer honor a spec-configured role.
 
         NO collusion identity-guard applies between this and
         :attr:`proposer_depth_call_llm`: both are PROPOSER-SIDE roles in
@@ -175,8 +183,31 @@ class RuntimeConfig:
         When set (from ``models.proposer_depth``) it points the
         refine/critique step at a separate endpoint/model — typically a
         stronger, lower-temperature model that judges + repairs the slate.
-        Read via :meth:`effective_proposer_depth_call_llm`. See the
-        no-collusion-guard note on :attr:`proposer_breadth_call_llm`.
+
+        Live read path: mirrors :attr:`proposer_breadth_call_llm` — the
+        wrapper routes the critique call through this callable directly and
+        swaps it onto ``ctx.aux_call_llm`` for the revise re-sample,
+        falling back to the context's ``ctx.aux_call_llm`` when ``None``.
+        :attr:`proposer_depth_model` carries the paired model string. See
+        the no-collusion-guard note on :attr:`proposer_breadth_call_llm`.
+    proposer_breadth_model:
+        Optional MODEL-NAME string paired with
+        :attr:`proposer_breadth_call_llm`: the resolved model name when the
+        breadth role was configured via a ``models.proposer_breadth`` *model
+        spec*. ``None`` when the role is absent OR was given as a bare
+        ``call_llm`` dotted path (no model name) / injected as a raw
+        callable (the test seam). The orchestrator threads it onto
+        :class:`~zicato.proposer.best_of_n.BestOfNProposerAgent`, which
+        swaps it onto ``ctx.model`` at the sampling site so the DEFAULT ADK
+        proposer — which binds the model STRING, not ``ctx.aux_call_llm`` —
+        reaches the role's endpoint. ``None`` ⇒ ``ctx.model`` keeps its own
+        value (byte-identical).
+    proposer_depth_model:
+        Optional MODEL-NAME string paired with
+        :attr:`proposer_depth_call_llm`, mirroring
+        :attr:`proposer_breadth_model` for the DEPTH revise re-sample.
+        (The critique call passes ``ctx.model`` straight to the depth
+        callable, so no ``ctx.model`` swap is needed there.)
     seed:
         Optional integer seed for any zicato-internal random number
         generators. Adapters may or may not honor it for the inner
@@ -375,6 +406,8 @@ class RuntimeConfig:
     adjudicator_call_llm: CallLLM | None = None
     proposer_breadth_call_llm: CallLLM | None = None
     proposer_depth_call_llm: CallLLM | None = None
+    proposer_breadth_model: str | None = None
+    proposer_depth_model: str | None = None
     scrub_worker_env: bool = False
     worker_env_passthrough: tuple[str, ...] = ()
     diversity_tolerance: float | None = None
@@ -471,13 +504,15 @@ class RuntimeConfig:
         )
 
     def effective_proposer_breadth_call_llm(self) -> CallLLM:
-        """The callable the best-of-N SLATE SAMPLING runs on (WS-ENS breadth).
+        """Convenience accessor mirroring :meth:`effective_judge_call_llm`.
 
-        :attr:`proposer_breadth_call_llm` when set, else the auxiliary
-        surface — the same construction-time fall-back rule as
-        :meth:`effective_judge_call_llm`. Absent a configured
-        ``models.proposer_breadth`` role, sampling runs on exactly the
-        auxiliary callable it always has (byte-identical).
+        Returns :attr:`proposer_breadth_call_llm` when set, else the
+        auxiliary surface. NOT the live read path: the best-of-N wrapper
+        does its OWN fall-back onto the propose-time ``ctx.aux_call_llm``
+        (the context, not this config, is the propose-time source of truth
+        for the auxiliary surface), so it never calls this accessor. Kept
+        for parity with the judge/adjudicator accessors and for callers that
+        want the resolved callable off a config in hand.
 
         Unlike the judge/adjudicator accessors this carries NO distinctness
         obligation: breadth and depth are both proposer-side roles in one
@@ -492,13 +527,15 @@ class RuntimeConfig:
         )
 
     def effective_proposer_depth_call_llm(self) -> CallLLM:
-        """The callable the best-of-N CRITIQUE + REVISE passes run on (depth).
+        """Convenience accessor mirroring :meth:`effective_proposer_breadth_call_llm`.
 
-        :attr:`proposer_depth_call_llm` when set, else the auxiliary
-        surface — mirroring :meth:`effective_proposer_breadth_call_llm`.
-        No distinctness obligation applies against the breadth role (same
-        proposer-side trust domain); both defaulting to the auxiliary
-        callable is the supported, byte-identical default.
+        Returns :attr:`proposer_depth_call_llm` when set, else the auxiliary
+        surface. NOT the live read path (the wrapper falls back to the
+        propose-time ``ctx.aux_call_llm`` itself); see the note on
+        :meth:`effective_proposer_breadth_call_llm`. No distinctness
+        obligation applies against the breadth role (same proposer-side
+        trust domain); both defaulting to the auxiliary callable is the
+        supported, byte-identical default.
         """
         return (
             self.proposer_depth_call_llm
