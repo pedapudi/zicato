@@ -24,8 +24,9 @@ The invariants, mirroring the process-exemplar / recombination precedents:
   — the same ``improved`` / ``flat`` / ``regressed`` three-band vocabulary
   the experiment-memory block already renders — so no new banding primitive
   and no exact response-surface number reaches the model.
-* **Deterministic + budget-capped.** No RNG, no wall clock. Parents sort by
-  round (the champion spine); inspirations are a greedy max--min-Jaccard
+* **Deterministic + budget-capped.** No RNG, no wall clock. Parents are the
+  champion's promoted spine, walked by ``parent_generation_id`` pointer;
+  inspirations are a greedy max--min-Jaccard
   diversity walk with a TOTAL tie-break (Elo down, then generation-id
   ascending), so the same pool yields byte-identical items in ANY input
   order — the leakage budget is a stable block round over round. The
@@ -59,6 +60,12 @@ GENEALOGY_POOL_MAX: int = 24
 #: in-envelope — but it is still capped so one item cannot balloon the
 #: prompt, and truncation is head-only with an elision marker.
 _DIFF_EXCERPT_MAX = 200
+
+#: Cap on the ``core_idea`` carried per item. Like the diff excerpt, the core
+#: idea is proposer-authored (in-envelope) — but budget-capped with the same
+#: head-only-plus-elision discipline so a pathologically long hypothesis line
+#: cannot balloon the prompt (the process-exemplar cap style; PROPOSER.md §2.7).
+_CORE_IDEA_MAX = 240
 
 #: Size-band edges over the total patch-diff length (chars). A COARSE label —
 #: the proposer reads "how big an edit was this" qualitatively, never the
@@ -182,6 +189,19 @@ def _diff_excerpt(text: str) -> str:
     return line[: _DIFF_EXCERPT_MAX - 1].rstrip() + "…"
 
 
+def _core_idea(text: str) -> str:
+    """Normalize + cap the proposer's core idea (head-only, elided).
+
+    Mirrors :func:`_diff_excerpt`: whitespace is collapsed to one line and the
+    line is head-capped to :data:`_CORE_IDEA_MAX` with a trailing ellipsis, so
+    an over-long hypothesis line cannot balloon the rendered block.
+    """
+    line = " ".join(text.strip().split())
+    if len(line) <= _CORE_IDEA_MAX:
+        return line
+    return line[: _CORE_IDEA_MAX - 1].rstrip() + "…"
+
+
 def _band_outcome(delta: float | None) -> str:
     """Band a whole-candidate Δscalar through the experiment-memory vocabulary.
 
@@ -211,11 +231,44 @@ def _make_item(record: GenealogyRecord, kind: str, rationale: str) -> GenealogyI
     return GenealogyItem(
         kind=kind,
         generation_id=record.generation_id,
-        core_idea=" ".join(record.core_idea.strip().split()),
+        core_idea=_core_idea(record.core_idea),
         banded_outcome=_band_outcome(record.scalar_score_delta),
         patch_summary=_summarize_patch(record),
         rationale=rationale,
     )
+
+
+def _champion_spine(
+    promoted: Sequence[GenealogyRecord],
+    champion_id: str,
+) -> list[GenealogyRecord]:
+    """Walk the ``parent_generation_id`` chain backward from ``champion_id``.
+
+    Returns the champion's OWN promoted lineage — the champion record (when it
+    is itself a promoted record in the pool) followed by its promoted ancestors,
+    most-recent-first (the walk order). A promoted record NOT reachable on this
+    chain (an off-spine promotion of a non-linear structure) is excluded by
+    construction — matching the PROPOSER.md §2.7 contract ("the champion's own
+    promoted patch history via the ``parent_generation_id`` chain").
+
+    Pure + deterministic (a pointer walk has no choices to make). Terminates on
+    a missing pointer (a gid absent from the promoted set — e.g. the seed ``v0``
+    or the excluded reigning head) and on a cyclic pointer (a ``visited`` set),
+    with a hop cap at the pool bound as a belt-and-suspenders backstop.
+    """
+    by_gid = {r.generation_id: r for r in promoted}
+    spine: list[GenealogyRecord] = []
+    visited: set[str] = set()
+    cap = len(by_gid) + 1
+    current: str | None = champion_id
+    while current is not None and current not in visited and len(spine) <= cap:
+        visited.add(current)
+        record = by_gid.get(current)
+        if record is None:
+            break  # off-chain / missing pointer — the spine ends here
+        spine.append(record)
+        current = record.parent_generation_id
+    return spine
 
 
 def _greedy_dissimilar(
@@ -269,10 +322,15 @@ def sample_genealogy(
 
     Deterministic and IO-free. Partitions the reign records:
 
-    * **Parents** — PROMOTED records (the champion's own promoted spine),
-      most-recent-first by ``round_index`` (gid backstop), taking the first
-      ``k // 2``. When the spine is shorter than that, the unused budget
-      backfills into inspirations.
+    * **Parents** — the champion's OWN promoted spine, built by walking the
+      ``parent_generation_id`` chain backward from ``champion_id`` through the
+      promoted records (:func:`_champion_spine`), most-recent-first (the walk
+      order), taking the first ``k // 2``. An off-spine promotion — a promoted
+      record NOT on the champion's chain — is excluded by construction. When
+      ``champion_id`` is ``None`` (no anchor to walk from), the spine falls
+      back to the promoted records sorted most-recent-first by ``round_index``
+      (gid backstop). When the spine is shorter than the budget, the unused
+      slots backfill into inspirations.
     * **Inspirations** — REJECTED records (reign-scoped to ``champion_id`` when
       given — the recombination #2 reign guard), capped at the
       :data:`GENEALOGY_POOL_MAX` most-recent, then the greedy
@@ -287,12 +345,16 @@ def sample_genealogy(
 
     live = [r for r in records if not r.is_placebo]
 
-    promoted = sorted(
-        (r for r in live if r.decision == "promoted"),
-        key=lambda r: (-r.round_index, r.generation_id),
-    )
+    promoted = [r for r in live if r.decision == "promoted"]
+    if champion_id is not None:
+        # Walk the champion's own promoted lineage by pointer — off-spine
+        # promotions never surface as parents (the PROPOSER.md §2.7 contract).
+        spine = _champion_spine(promoted, champion_id)
+    else:
+        # No anchor to walk from: most-recent-first over all promoted records.
+        spine = sorted(promoted, key=lambda r: (-r.round_index, r.generation_id))
     n_parents = k // 2
-    parents = promoted[:n_parents]
+    parents = spine[:n_parents]
 
     parent_ids = {r.generation_id for r in parents}
     rejected = [

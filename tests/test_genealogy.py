@@ -26,6 +26,7 @@ from pathlib import Path
 
 from zicato.core.types import MutationPoint
 from zicato.proposer.genealogy import (
+    _CORE_IDEA_MAX,
     _DIFF_EXCERPT_MAX,
     GenealogyItem,
     GenealogyRecord,
@@ -133,7 +134,7 @@ def test_dissimilarity_tie_breaks_by_elo_then_gid() -> None:
 
 
 def test_parents_are_the_promoted_spine_most_recent_first() -> None:
-    """Promoted records fill parents, most-recent (highest round) first."""
+    """No anchor (champion_id=None) ⇒ promoted records sort most-recent-first."""
     records = [
         _record("v1", decision="promoted", round_index=1),
         _record("v2", decision="promoted", round_index=2),
@@ -143,6 +144,58 @@ def test_parents_are_the_promoted_spine_most_recent_first() -> None:
     items = sample_genealogy(records, {}, 4)
     parents = [it for it in items if it.kind == "parent"]
     assert [it.generation_id for it in parents] == ["v3", "v2"]
+
+
+def test_parents_walk_the_champion_pointer_chain() -> None:
+    """With an anchor, parents are the champion's OWN promoted lineage.
+
+    Chain: champ ← p1 ← p2 (champ's real ancestors). The walk from ``champ``
+    follows ``parent_generation_id`` backward, so the spine is exactly the
+    champion's line, most-recent-first — regardless of the promoted records'
+    round order.
+    """
+    records = [
+        _record("champ", decision="promoted", parent="p1", round_index=5),
+        _record("p1", decision="promoted", parent="p2", round_index=3),
+        _record("p2", decision="promoted", parent="v0", round_index=1),
+    ]
+    # k=6 ⇒ n_parents=3; the full chain, champ first (the walk order).
+    items = sample_genealogy(records, {}, 6, champion_id="champ")
+    parents = [it.generation_id for it in items if it.kind == "parent"]
+    assert parents == ["champ", "p1", "p2"]
+
+
+def test_off_spine_promoted_record_is_excluded() -> None:
+    """A promoted record NOT on the champion's chain never surfaces as a parent.
+
+    ``off`` is promoted with the FRESHEST round, so a naive most-recent sort
+    would surface it — but its parent pointer (``side``) is off the champion's
+    chain, so the pointer walk excludes it. This is the non-linear-structure
+    guard the ``parent_generation_id`` chain contract promises.
+    """
+    records = [
+        _record("champ", decision="promoted", parent="p1", round_index=5),
+        _record("p1", decision="promoted", parent="v0", round_index=2),
+        # Off-spine: promoted, freshest round, but parented off the champ chain.
+        _record("off", decision="promoted", parent="side", round_index=9),
+    ]
+    items = sample_genealogy(records, {}, 6, champion_id="champ")
+    parents = [it.generation_id for it in items if it.kind == "parent"]
+    assert parents == ["champ", "p1"]
+    assert "off" not in parents
+
+
+def test_spine_walk_terminates_on_a_cyclic_pointer() -> None:
+    """A pointer cycle among promoted records cannot spin the walk forever."""
+    records = [
+        _record("a", decision="promoted", parent="b", round_index=2),
+        _record("b", decision="promoted", parent="a", round_index=1),
+    ]
+    items = sample_genealogy(records, {}, 4, champion_id="a")
+    parents = [it.generation_id for it in items if it.kind == "parent"]
+    # Each gid is visited at most once — a then b, then the pointer revisits a
+    # (already visited) and the walk stops.
+    assert parents == ["a", "b"]
 
 
 def test_budget_split_and_backfill() -> None:
@@ -242,6 +295,19 @@ def test_diff_excerpt_is_capped() -> None:
     assert len(_LONG_DIFF) > _DIFF_EXCERPT_MAX  # sanity: the fixture is long
 
 
+def test_core_idea_is_capped() -> None:
+    """A pathologically long core idea is head-capped with an elision marker."""
+    long_idea = "IDEA_HEAD " + ("y" * 5000) + " IDEA_TAIL"
+    item = sample_genealogy([_record("v7", core_idea=long_idea)], {}, 2, champion_id="v0")[0]
+    assert len(item.core_idea) <= _CORE_IDEA_MAX
+    assert item.core_idea.endswith("…")
+    assert item.core_idea.startswith("IDEA_HEAD")
+    # The tail beyond the cap never survives into the rendered block.
+    block = render_genealogy_block([item])
+    assert "IDEA_TAIL" not in block
+    assert len(long_idea) > _CORE_IDEA_MAX  # sanity: the fixture is long
+
+
 def test_no_fine_grained_decimal_leaks_from_the_outcome() -> None:
     """A blanket scan: the rendered OUTCOME carries no multi-digit decimal.
 
@@ -299,9 +365,17 @@ def test_genealogy_default_is_byte_identical() -> None:
 def test_genealogy_section_renders_when_present() -> None:
     records = [
         _record("v2", decision="promoted", round_index=2, core_idea="promoted ancestor idea"),
-        _record("r1", decision="rejected", mutation_ids=("m9",), core_idea="a rejected idea"),
+        _record(
+            "r1",
+            decision="rejected",
+            parent="v2",
+            mutation_ids=("m9",),
+            core_idea="a rejected idea",
+        ),
     ]
-    items = sample_genealogy(records, {}, 4, champion_id="v0")
+    # champion_id="v2": the walk anchors on the promoted spine head (v2), and
+    # r1 is reign-scoped to it (parent == champion).
+    items = sample_genealogy(records, {}, 4, champion_id="v2")
     rendered = render_user_prompt(
         current_loss_summary="loss",
         patterns=[],

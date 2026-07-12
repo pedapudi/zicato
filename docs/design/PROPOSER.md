@@ -295,9 +295,13 @@ Two kinds of item, each a proposer-authored artifact plus a BANDED outcome:
   DISTINCT ideas rather than N variants of one). These are the "here is what
   else was tried, and how it landed" material — a rejected idea is not a dead
   end when a different framing of it might clear the gate. Same per-item
-  payload as a parent; the outcome band is `regressed`/`flat` by
-  construction (they were rejected), so the band carries the coarse "how
-  badly" without a number.
+  payload as a parent; the outcome band reflects the MEASURED Δscalar, NOT the
+  gate's verdict — rejected is not regressed. A candidate the gate rejected can
+  still band `improved` (a real but insufficient gain, or a win the
+  cross-regression / diversity guard vetoed): the band says how the delta
+  landed, the rejection says the gate declined to promote it. That is exactly
+  the signal the proposer wants — "this framing moved the needle but did not
+  clear the bar" — carried coarsely, without a number.
 
 ### What the channel NEVER carries
 
@@ -346,6 +350,9 @@ inspirations take the remainder (the greedy dissimilarity walk, capped at
 what is left). The pool the sampler reads is itself bounded to a small
 constant of most-recent candidates (the recombination pool cap precedent),
 so the O(pool²) dissimilarity scan stays cheap regardless of epoch length.
+Per-item, the two proposer-authored free-text fields are BOTH head-capped
+with an elision marker — the patch diff excerpt (`_DIFF_EXCERPT_MAX`) and the
+`core_idea` (`_CORE_IDEA_MAX`) — so no single item can balloon the block.
 An empty result renders the EMPTY STRING — the "omit this section entirely"
 sentinel — so a `genealogy = 0` round is byte-identical to today.
 

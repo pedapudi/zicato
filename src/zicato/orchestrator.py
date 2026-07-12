@@ -3357,7 +3357,7 @@ def _build_recombination_pair(
 
             # The canonical index location every consumer uses
             # (``zicato reindex`` reconciles ``{workspace_root}/index.db``).
-            for row in elo_for_epoch(workspace_root / "index.db", epoch_id):
+            for row in elo_for_epoch(_index_db_path(workspace_root), epoch_id):
                 if row["elo"] is not None:
                     elo_by_gid[str(row["generation_id"])] = float(row["elo"])
         except Exception as exc:  # noqa: BLE001 — Elo is advisory ranking material
@@ -3506,12 +3506,12 @@ def _build_genealogy_items(
             if not gen_dir.is_dir():
                 continue
             gid = gen_dir.name
-            if gid == parent_id:
-                # The champion's OWN record is surfaced via the promoted spine
-                # if it was promoted; a non-champion parent-of-record cannot be
-                # a fresh challenger here. Skip the reigning head as a candidate
-                # pool member — it is the anchor, not an item.
-                continue
+            # NB: the reigning champion (``parent_id``) is NOT skipped — the
+            # pure sampler walks the champion's ``parent_generation_id`` chain
+            # from ``champion_id``, so the champion's own promoted record is the
+            # spine ANCHOR (the head of "the winning line to build on"). It only
+            # ever surfaces as a PARENT (promoted → never the rejected
+            # inspiration pool), so no anchor double-counts as an inspiration.
             try:
                 exp = read_experiment(workspace_root, epoch_id, gid)
             except Exception as exc:  # noqa: BLE001 — unreadable record: skip
@@ -3544,7 +3544,7 @@ def _build_genealogy_items(
         try:
             from zicato.index.query import elo_for_epoch  # noqa: PLC0415
 
-            for row in elo_for_epoch(workspace_root / "index.db", epoch_id):
+            for row in elo_for_epoch(_index_db_path(workspace_root), epoch_id):
                 if row["elo"] is not None:
                     elo_by_gid[str(row["generation_id"])] = float(row["elo"])
         except Exception as exc:  # noqa: BLE001 — Elo is advisory tie-break material

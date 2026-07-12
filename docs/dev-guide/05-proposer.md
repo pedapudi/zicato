@@ -1208,8 +1208,9 @@ threads DATA — a `RecombinationPair` on `ProposerContext.recombine_pair` (§5.
 (identical mints across a field would collapse under the diversity
 soft-reject).
 
-**The 8 eligibility predicates.** Six are per-candidate
-(`eligible_parents`), three are pair-level (`rank_pairs`; #5/#7/#8):
+**The 8 eligibility predicates.** Five are per-candidate (`eligible_parents`;
+#1–#4 and #6 — six checks, since #6 folds two), three are pair-level
+(`rank_pairs`; #5/#7/#8):
 
 1. **rejected** — not deferred (a live evidence loop is not a settled
    negative);
@@ -1381,8 +1382,14 @@ read-only context, not a per-slot mint.
 
 **What the sampler produces.** It partitions the reign's settled records:
 
-- **Parents** — the PROMOTED records (the champion's own promoted spine),
-  most-recent-first by `round_index`, taking the first `k // 2`. A short spine
+- **Parents** — the champion's own promoted spine, built by walking the
+  `parent_generation_id` chain backward from `champion_id` through the promoted
+  records (`_champion_spine`), most-recent-first (the walk order), taking the
+  first `k // 2`. An off-spine promotion — a promoted record NOT on the
+  champion's chain — is excluded by construction; a missing/cyclic pointer ends
+  the walk (a `visited` set + a pool-bound hop cap). When `champion_id` is
+  `None` there is no anchor to walk from, so the spine falls back to the
+  promoted records sorted most-recent-first by `round_index`. A short spine
   backfills its unused budget into inspirations.
 - **Inspirations** — the REJECTED records (reign-scoped to `champion_id` — the
   recombination #2 reign guard), capped at `GENEALOGY_POOL_MAX` most-recent,
