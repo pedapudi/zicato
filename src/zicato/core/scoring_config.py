@@ -958,7 +958,11 @@ class ScoringWeights:
     # the "refuse" half of the warn-or-refuse story).
     telemetry_dialect: str = field(
         default=DIALECT_GOLDFIVE,
-        metadata=_knob(omit_at_default=True),
+        metadata=_knob(
+            omit_at_default=True,
+            builder_op="set_telemetry_dialect",
+            builder_arg="dialect",
+        ),
     )
     # Opt-in INTEGRITY BLOCKING modes (both default OFF — the alarm-only
     # posture of the supervisor's integrity notary is the shipped baseline).

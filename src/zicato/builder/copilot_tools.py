@@ -449,6 +449,30 @@ def set_experiment_memory(cross_epoch: bool | None = None) -> str:
     return _result_json(_summary(patch))
 
 
+def set_telemetry_dialect(dialect: str | None = None) -> str:
+    """Set the telemetry dialect — the producer that reduces raw telemetry into the LossProfile.
+
+    ``goldfive`` (default): the full drift-instrument stream — the most
+    powerful dialect, the only one carrying in-process drift instruments,
+    custom process-judge drift, and emulator introspection.
+    ``adk_events``: a generic agent event-log JSONL (tool-call / tool-response
+    / transfer / error / model-usage) — no in-process drift instruments and
+    no custom process-judge drift, but it recovers the failure / cost / loop
+    envelope.
+    ``transcript``: the floor — no telemetry at all; the drift term is
+    structurally zero and scoring degrades to predicates + optional in-run
+    judges only. Changing the dialect selects champions under a different
+    measurement rule and rolls the epoch. Returns an ``error`` for an unknown
+    dialect name.
+    """
+    ctx = _active_context()
+    try:
+        patch = ops.set_telemetry_dialect(ctx.draft(), dialect=dialect)
+    except ValueError as exc:
+        return _result_json({"error": str(exc)})
+    return _result_json(_summary(patch))
+
+
 def set_screening(entries: int | None = None, veto_only: bool | None = None) -> str:
     """Set the pre-tournament candidate screen (tryouts).
 
@@ -773,6 +797,7 @@ DEFAULT_BUILDER_TOOLS = (
     set_namespace_weights,
     set_proposer_quality,
     set_experiment_memory,
+    set_telemetry_dialect,
     set_screening,
     edit_board_entry,
     remove_board_entry,
@@ -806,6 +831,7 @@ __all__ = [
     "set_namespace_weights",
     "set_proposer_quality",
     "set_experiment_memory",
+    "set_telemetry_dialect",
     "set_screening",
     "edit_board_entry",
     "remove_board_entry",

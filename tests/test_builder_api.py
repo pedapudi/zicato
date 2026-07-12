@@ -517,6 +517,32 @@ def test_builder_op_set_proposer_quality_calibration_feedback_dispatch(
     assert r.json()["draft"]["scoring"]["proposer_quality"]["calibration_feedback"] == 5
 
 
+def test_builder_op_set_telemetry_dialect_dispatch(client: TestClient) -> None:
+    """The telemetry dialect round-trips through /builder/op onto the serialized
+    draft, rolls the epoch (scoring is a changed component), and an unknown name
+    400s leaving the prior value untouched."""
+    s = {"session": "dialect"}
+    r = client.post(
+        "/builder/op",
+        json={**s, "op": "set_telemetry_dialect", "args": {"dialect": "adk_events"}},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["draft"]["scoring"]["telemetry_dialect"] == "adk_events"
+    # A non-default dialect is a scoring/contract change — it rolls the epoch.
+    assert "scoring" in body["diff"]["changed_components"]
+    assert body["diff"]["rolls_epoch"] is True
+
+    # 400 path: an unknown dialect is rejected wholesale (no partial apply).
+    r = client.post(
+        "/builder/op",
+        json={**s, "op": "set_telemetry_dialect", "args": {"dialect": "mystery"}},
+    )
+    assert r.status_code == 400
+    r = client.post("/builder/op", json={**s, "op": "set_telemetry_dialect", "args": {}})
+    assert r.json()["draft"]["scoring"]["telemetry_dialect"] == "adk_events"
+
+
 def test_builder_op_fork_switch_list_roundtrip(client: TestClient) -> None:
     s = {"session": "life"}
     # Build state, fork it, verify the slot list + the patch shape.

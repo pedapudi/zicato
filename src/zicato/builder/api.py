@@ -131,6 +131,8 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
         )
     if op == "set_experiment_memory":
         return ops.set_experiment_memory(draft, cross_epoch=_opt_bool(args, "cross_epoch"))
+    if op == "set_telemetry_dialect":
+        return ops.set_telemetry_dialect(draft, dialect=_opt_str(args, "dialect"))
     if op == "set_screening":
         raw_entries = args.get("entries")
         raw_veto_only = args.get("veto_only")
