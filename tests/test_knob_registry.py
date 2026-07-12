@@ -120,7 +120,13 @@ def _knob_registry() -> dict[str, tuple[str, str]]:
 
 
 def _api_dispatch_block(op: str) -> str:
-    """The body of api.py's ``if op == "<op>":`` dispatch arm."""
+    """The body of api.py's ``if op == "<op>":`` dispatch arm.
+
+    Deliberately FAILS CLOSED: the extraction assumes top-level
+    ``if op == "…":`` arms at 4-space indent (true of api.py today). A
+    refactor to elif/match-case reds this test as a scan-assumption
+    failure — widen the extraction, don't weaken the guard.
+    """
     source = Path(builder_api.__file__).read_text(encoding="utf-8")
     op_esc = re.escape(op)
     match = re.search(
@@ -147,23 +153,36 @@ def _has_copilot_arg(op: str, arg: str) -> bool:
 
 
 def _has_gui_row(op: str, arg: str) -> bool:
-    """A ``runOp('<op>', { … <arg> … })`` call in builder.js."""
+    """A ``runOp('<op>', { … <arg> … })`` call in builder.js.
+
+    Deliberately FAILS CLOSED: the scan assumes the call fits one line
+    (every runOp in builder.js does today) — a reformat that wraps a call,
+    or an alias like ``const g = runOp``, reds this test rather than
+    passing silently. If that happens, this is a scan-assumption failure,
+    not a missing GUI row; widen the pattern, don't weaken the guard.
+    """
     source = _BUILDER_JS.read_text(encoding="utf-8")
     pattern = re.compile(rf"""runOp\(\s*['"]{re.escape(op)}['"]\s*,[^\n]*\b{re.escape(arg)}\b""")
     return bool(pattern.search(source))
 
 
 def _has_node_test_assertion(op: str, arg: str) -> bool:
-    """A builder.test.mjs assertion naming BOTH the quoted op and the arg.
+    """A builder.test.mjs assertion naming the op's calls and the arg.
 
-    The quoted op on the same line is the discriminator that separates a
-    real op-posting assertion from the fixture rows (which mention the arg
-    but never the op).
+    TWO lines must exist: (i) a line carrying the quoted op AND the arg —
+    the op-call lookup or posting, separating a real test from fixture rows
+    that mention the arg without the op; and (ii) an ``assert`` line
+    carrying the arg as a word — the actual value check. Requiring the
+    ``assert`` line closes the review-found hole where a comment mentioning
+    the op + arg satisfied the touchpoint with no assertion at all.
     """
     source = _BUILDER_TEST_MJS.read_text(encoding="utf-8")
     quoted_op = re.compile(rf"['\"]{re.escape(op)}['\"]")
     word_arg = re.compile(rf"\b{re.escape(arg)}\b")
-    return any(quoted_op.search(line) and word_arg.search(line) for line in source.splitlines())
+    lines = source.splitlines()
+    references_op_call = any(quoted_op.search(ln) and word_arg.search(ln) for ln in lines)
+    asserts_arg = any("assert" in ln and word_arg.search(ln) for ln in lines)
+    return references_op_call and asserts_arg
 
 
 #: The five touchpoints a ``builder_op`` knob must satisfy, each a
