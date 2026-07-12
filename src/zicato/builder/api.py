@@ -126,6 +126,7 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
             process_exemplars=_opt_int(args, "process_exemplars"),
             recombine=_opt_bool(args, "recombine"),
             genealogy=_opt_int(args, "genealogy"),
+            calibration_feedback=_opt_int(args, "calibration_feedback"),
             recombine_merge=_opt_str(args, "recombine_merge"),
         )
     if op == "set_experiment_memory":

@@ -640,6 +640,21 @@ async def evolve_once(
         parent_id=parent_id,
     )
 
+    # --- 5a''''. Optional critic-calibration channel (WS-CAL) ---
+    # ONE summary per round, built only when the contract opts in
+    # (proposer_quality.calibration_feedback > 0) — otherwise ``None`` and no
+    # summary rides the propose path. Read-side only (the meter is untouched):
+    # the builder joins the reign's durable records with the prediction-accuracy
+    # grader's ledger and returns an already-banded, aggregate-count summary of
+    # how the proposer's OWN past predictions landed. ALL best-of-N slots see
+    # the same summary. Best-effort — any failure inside degrades to ``None``
+    # and the round is byte-identical.
+    calibration_summary = _build_calibration_summary(
+        weights=weights,
+        workspace_root=workspace_root,
+        epoch_id=resolved_epoch_id,
+    )
+
     # --- 5b. Tournament-structure dispatch ---
     # The gauntlet (the default and back-compat baseline) has field_size
     # == 1: one champion, one challenger, one full-board duel. Steps 6-13
@@ -676,6 +691,7 @@ async def evolve_once(
             failure_profile=failure_profile,
             process_exemplars=process_exemplars_block,
             genealogy=genealogy_items,
+            calibration=calibration_summary,
             disable_drift=disable_drift,
             judge_only=judge_only,
             fast_mode=fast_mode,
@@ -831,6 +847,7 @@ async def evolve_once(
                 failure_profile=failure_profile,
                 process_exemplars=process_exemplars_block,
                 genealogy=genealogy_items,
+                calibration=calibration_summary,
                 round_index=round_index,
                 round_emitter=round_log,
                 screen_candidates=screen_candidates,
@@ -1580,6 +1597,7 @@ async def _propose_and_apply_challenger(
     failure_profile: str = "",
     process_exemplars: str = "",
     genealogy: tuple[Any, ...] = (),
+    calibration: Any = None,
     on_status: Callable[[dict[str, Any]], None] | None = None,
     round_emitter: _RoundLogEmitter | None = None,
     screen_candidates: ScreenRunner | None = None,
@@ -1707,6 +1725,7 @@ async def _propose_and_apply_challenger(
             failure_profile=failure_profile,
             process_exemplars=process_exemplars,
             genealogy=genealogy,
+            calibration=calibration,
             round_index=round_index,
             round_emitter=round_emitter,
             screen_candidates=screen_candidates,
@@ -1874,6 +1893,7 @@ async def _evolve_multi_challenger(
     failure_profile: str,
     process_exemplars: str,
     genealogy: tuple[Any, ...] = (),
+    calibration: Any = None,
     disable_drift: tuple[Any, ...],
     judge_only: bool,
     fast_mode: bool,
@@ -2098,6 +2118,7 @@ async def _evolve_multi_challenger(
             failure_profile=failure_profile,
             process_exemplars=process_exemplars,
             genealogy=genealogy,
+            calibration=calibration,
             on_status=_publish_proposing,
             round_emitter=round_log,
             screen_candidates=screen_candidates,
@@ -3607,6 +3628,117 @@ def _build_genealogy_items(
         return ()
 
 
+def _build_calibration_summary(
+    *,
+    weights: Any,
+    workspace_root: Path,
+    epoch_id: str,
+) -> Any:
+    """Summarize the reign's prediction calibration (WS-CAL), or ``None`` when OFF.
+
+    ``None`` — the DEFAULT — unless the contract opts in with
+    ``proposer_quality.calibration_feedback > 0``: the propose path then carries
+    no summary at all and is byte-identical.
+
+    The IO half of the critic-calibration channel, built ONCE per round beside
+    the recombination + genealogy builders and threaded as plain DATA (a
+    :class:`~zicato.proposer.calibration.CalibrationSummary` on
+    :attr:`~zicato.proposer.agent.ProposerContext.calibration` — all best-of-N
+    slots see the same summary). Two best-effort reads (the genealogy precedent
+    — records + an advisory index read):
+
+    * the current epoch's durable experiment RECORDS
+      (:func:`zicato.epoch.journal.read_experiment`, GUARDED) for each settled
+      hypothesis's ``core_idea`` + whole-candidate Δscalar + round + placebo
+      flag;
+    * the prediction-accuracy grader
+      (:func:`zicato.tournament.detail.hypothesis_ledger`) for each hypothesis's
+      ``(matches, predictions)`` COUNTS — the EXISTING ``/api/hypothesis-accuracy``
+      feed, reused. An absent / unbuildable index default-fills every claim to
+      ``predictions == 0`` (unresolved), so the sampler returns ``None`` (no
+      graded history) and the round stays byte-identical.
+
+    The pure sampler (:mod:`zicato.proposer.calibration`) then tallies the
+    hit / miss / unresolved counts, the pooled ``hit / (hit + miss)`` fraction,
+    and up to ``k`` recent graded claims — ENVELOPE-CLEAN by construction (the
+    grader scores whole-candidate MOVEMENT aggregates, so no per-entry read
+    happens and no entry id can leave). ANY exception anywhere → DEBUG log →
+    ``None`` → a byte-identical round (calibration must never fail a propose
+    step).
+    """
+    quality = getattr(weights, "proposer_quality", None)
+    k = int(getattr(quality, "calibration_feedback", 0) or 0)
+    if k <= 0:
+        return None
+    try:
+        from zicato.core.experiment import PLACEBO_HYPOTHESIS_MARKER  # noqa: PLC0415
+        from zicato.core.workspace import generations_dir  # noqa: PLC0415
+        from zicato.epoch.journal import read_experiment  # noqa: PLC0415
+        from zicato.proposer.calibration import (  # noqa: PLC0415
+            CalibrationClaim,
+            sample_calibration,
+        )
+
+        gens_root = generations_dir(workspace_root, epoch_id)
+        if not gens_root.is_dir():
+            return None
+
+        # ONE best-effort grader read — the reign's per-hypothesis
+        # (matches, predictions), keyed by generation id. An absent / degraded
+        # index leaves the map empty, so every claim grades unresolved and the
+        # sampler omits the block (byte-identical).
+        grades_by_gid: dict[str, tuple[int, int]] = {}
+        try:
+            from zicato.tournament.detail import hypothesis_ledger  # noqa: PLC0415
+
+            for grade in hypothesis_ledger(_index_db_path(workspace_root), epoch_id):
+                grades_by_gid[str(grade.generation_id)] = (grade.matches, grade.predictions)
+        except Exception as exc:  # noqa: BLE001 — the grader is advisory here
+            log.debug("calibration: prediction-accuracy read skipped (%s)", exc)
+
+        claims: list[CalibrationClaim] = []
+        for gen_dir in gens_root.iterdir():
+            if not gen_dir.is_dir():
+                continue
+            gid = gen_dir.name
+            try:
+                exp = read_experiment(workspace_root, epoch_id, gid)
+            except Exception as exc:  # noqa: BLE001 — unreadable record: skip
+                log.debug("calibration: record %s/%s unreadable (%s)", epoch_id, gid, exc)
+                continue
+            if exp.outcome is None:
+                continue  # only settled hypotheses can be graded
+            matches, predictions = grades_by_gid.get(exp.generation_id, (0, 0))
+            hyp = exp.hypothesis
+            claims.append(
+                CalibrationClaim(
+                    generation_id=exp.generation_id,
+                    round_index=exp.round_index,
+                    core_idea=hyp.core_idea,
+                    scalar_score_delta=exp.outcome.scalar_score_delta,
+                    matches=int(matches),
+                    predictions=int(predictions),
+                    is_placebo=hyp.core_idea.startswith(PLACEBO_HYPOTHESIS_MARKER),
+                )
+            )
+        if not claims:
+            return None
+
+        summary = sample_calibration(claims, k)
+        if summary is not None:
+            log.debug(
+                "calibration: %d hit / %d miss / %d unresolved (fraction %.2f)",
+                summary.hit_count,
+                summary.miss_count,
+                summary.unresolved_count,
+                summary.calibration_fraction,
+            )
+        return summary
+    except Exception as exc:  # noqa: BLE001 — calibration must never fail a round
+        log.debug("calibration: sampling skipped (%s)", exc)
+        return None
+
+
 async def _propose_child(
     *,
     proposer_agent: ProposerAgent,
@@ -3630,6 +3762,7 @@ async def _propose_child(
     round_index: int,
     process_exemplars: str = "",
     genealogy: tuple[Any, ...] = (),
+    calibration: Any = None,
     round_emitter: _RoundLogEmitter | None = None,
     screen_candidates: ScreenRunner | None = None,
     recombine_pair: Any = None,
@@ -3689,6 +3822,7 @@ async def _propose_child(
                 failure_profile=failure_profile,
                 process_exemplars=process_exemplars,
                 genealogy=genealogy,
+                calibration=calibration,
                 mutation_track_records=mutation_track_records,
                 round_event_emitter=(round_emitter.emit if round_emitter is not None else None),
                 screen_candidates=screen_candidates,
@@ -4997,33 +5131,33 @@ async def _regenerate_epoch_report(
     auxiliary_call_llm: CallLLM,
     auxiliary_model: str,
 ) -> None:
-    """Regenerate the comprehensive epoch analysis report — best-effort.
+    """Refresh the epoch publication's deterministic sections — best-effort.
 
-    The academic-paper-style epoch report is rebuilt in full after every
-    round so it is always current; by epoch close it reads as a complete
-    write-up. Its data-bearing sections are templated exactly from the
-    structured workspace artifacts; one bounded auxiliary-LLM call writes
-    the prose sections. The report is persisted as
-    ``epochs/{epoch}/analysis.md`` plus a rendered ``analysis.html``
-    (served by the existing dashboard endpoint).
+    The event-driven freshness path (``docs/design/PUBLICATION.md``): after
+    each settled round the publication's data-bearing sections (masthead,
+    methodology, results, validity, proposer analytics, threats) are
+    re-templated from the CURRENT workspace data WITHOUT an auxiliary-LLM
+    call — cost discipline. The existing LLM-authored prose is preserved
+    verbatim; the full LLM prose render happens at epoch close. Mid-epoch
+    the masthead carries the ``LIVING DRAFT — through round N`` stamp.
 
-    Strictly best-effort: any failure is swallowed and logged at debug
-    level so a wedge here cannot abort the round or the loop. This is a
-    separate artifact from the per-round ``insights/round_{N}.md``
-    proposer-feedback files.
+    Naturally debounced: the round epilogue runs exactly once per settled
+    round, so this fires at most once per round. Digest-gated inside — a
+    settled round that moved no data rewrites nothing. Strictly
+    best-effort: any failure is swallowed and logged at debug level so a
+    wedge here can never abort the round or the loop. ``auxiliary_*`` are
+    accepted for call-site parity with the LLM-authoring close render (and
+    so the full-render path can be swapped back in per-epoch if wanted);
+    the per-round refresh deliberately spends no tokens.
     """
+    del auxiliary_call_llm, auxiliary_model  # no per-round LLM call by design
     with best_effort(
         "epoch analysis report regeneration",
         on_error=lambda exc: log.debug("epoch analysis report regeneration skipped: %s", exc),
     ):
-        from zicato.analyzer import generate_epoch_report  # noqa: PLC0415
+        from zicato.analyzer import regenerate_epoch_report_deterministic  # noqa: PLC0415
 
-        await generate_epoch_report(
-            workspace_root,
-            epoch_id,
-            auxiliary_call_llm,
-            model=auxiliary_model,
-        )
+        regenerate_epoch_report_deterministic(workspace_root, epoch_id)
 
 
 def _cache_gen_score(

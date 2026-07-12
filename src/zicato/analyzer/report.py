@@ -75,7 +75,9 @@ from zicato.analyzer.report_prompts import (
 from zicato.analyzer.report_sections import (
     render_approach_section,
     render_methodology_section,
+    render_proposer_analytics_section,
     render_results_section,
+    render_statistical_integrity_section,
     render_threats_section,
     render_title_block,
 )
@@ -89,6 +91,37 @@ _AuxCallLLM = Callable[[str, str, str], Awaitable[str]]
 
 # Placeholder prose used when the LLM omits a block or the call fails.
 _MISSING_PROSE = "_(prose section unavailable — the auxiliary LLM did not return it this round.)_"
+
+
+# Explicit HTML-comment fences bracket each LLM-authored prose block in an
+# assembled document (same invisible-marker scheme as ``<!-- FIGURE:... -->``
+# / ``<!-- META -->``). The deterministic refresh re-lifts prose by these
+# ANCHOR-EXACT fences, so LLM prose containing a ``---`` rule, an embedded
+# ``## heading``, or any other structural line survives verbatim — the old
+# "stop at the first ``## ``/``---``" heuristic silently truncated it. The
+# fence lines render to nothing (HTML comments); see the renderer's skip
+# branch. The suffix is spaced to match the label form (``<!-- PROSE:X -->``).
+_PROSE_FENCE_OPEN_PREFIX = "<!-- PROSE:"
+_PROSE_FENCE_CLOSE_PREFIX = "<!-- /PROSE:"
+_PROSE_FENCE_SUFFIX = " -->"
+
+
+def _prose_fence_open(label: str) -> str:
+    """The opening fence line for a prose block, e.g. ``<!-- PROSE:ABSTRACT -->``."""
+    return f"{_PROSE_FENCE_OPEN_PREFIX}{label}{_PROSE_FENCE_SUFFIX}"
+
+
+def _prose_fence_close(label: str) -> str:
+    """The closing fence line for a prose block, e.g. ``<!-- /PROSE:ABSTRACT -->``."""
+    return f"{_PROSE_FENCE_CLOSE_PREFIX}{label}{_PROSE_FENCE_SUFFIX}"
+
+
+def _is_prose_fence_line(stripped: str) -> bool:
+    """True for either the open or close fence of any prose block."""
+    return (
+        stripped.startswith(_PROSE_FENCE_OPEN_PREFIX)
+        or stripped.startswith(_PROSE_FENCE_CLOSE_PREFIX)
+    ) and stripped.endswith(_PROSE_FENCE_SUFFIX.strip())
 
 
 # ---------------------------------------------------------------------------
@@ -119,28 +152,37 @@ def assemble_report_markdown(
     analysis = prose.get("ANALYSIS", _MISSING_PROSE).strip() or _MISSING_PROSE
     conclusion = prose.get("CONCLUSION", _MISSING_PROSE).strip() or _MISSING_PROSE
 
+    def _prose_block(label: str, body: str) -> None:
+        # Bracket every prose block in anchor-exact fences so a later
+        # deterministic refresh re-lifts it verbatim (see
+        # :func:`parse_prose_from_markdown`), even when the body carries a
+        # ``---`` rule or an embedded ``## heading``.
+        parts.append(_prose_fence_open(label))
+        parts.append(body)
+        parts.append(_prose_fence_close(label))
+
     parts: list[str] = []
     parts.append(render_title_block(data))
     parts.append("")
     parts.append("## Abstract")
     parts.append("")
-    parts.append(abstract)
+    _prose_block("ABSTRACT", abstract)
     parts.append("")
     parts.append("## Introduction")
     parts.append("")
-    parts.append(introduction)
+    _prose_block("INTRODUCTION", introduction)
     parts.append("")
     parts.append(deterministic_sections.strip())
     parts.append("")
     parts.append("## Analysis — What Worked and What Didn't")
     parts.append("")
-    parts.append(analysis)
+    _prose_block("ANALYSIS", analysis)
     parts.append("")
     parts.append(render_threats_section(data))
     parts.append("")
     parts.append("## Conclusion & Next Directions")
     parts.append("")
-    parts.append(conclusion)
+    _prose_block("CONCLUSION", conclusion)
     parts.append("")
     parts.append("---")
     parts.append("")
@@ -169,6 +211,8 @@ def _deterministic_sections(data: EpochReportData) -> str:
             render_methodology_section(data),
             render_approach_section(data),
             render_results_section(data),
+            render_statistical_integrity_section(data),
+            render_proposer_analytics_section(data),
         )
     )
 
@@ -413,6 +457,15 @@ def markdown_to_html(md: str, *, data: EpochReportData | None = None) -> str:
         line = lines[i]
         stripped = line.strip()
 
+        # Prose fence — an invisible ``<!-- PROSE:LABEL -->`` / ``<!-- /PROSE:
+        # LABEL -->`` marker bracketing an LLM prose block. HTML comments
+        # render to nothing; skip the line so it neither prints literally
+        # nor gets swept into the following paragraph.
+        if _is_prose_fence_line(stripped):
+            _close_list()
+            i += 1
+            continue
+
         # Eyebrow marker — small-caps line above the title.
         if stripped == _EYEBROW_MARKER:
             _close_list()
@@ -449,6 +502,7 @@ def markdown_to_html(md: str, *, data: EpochReportData | None = None) -> str:
                     or nxt == _META_MARKER
                     or nxt == _EYEBROW_MARKER
                     or nxt.startswith(_CALLOUT_MARKER_PREFIX)
+                    or _is_prose_fence_line(nxt)
                     or _is_caption_line(nxt)
                     or "|" in nxt
                 ):
@@ -601,6 +655,7 @@ def markdown_to_html(md: str, *, data: EpochReportData | None = None) -> str:
                 or nxt == _META_MARKER
                 or nxt == _EYEBROW_MARKER
                 or nxt.startswith(_CALLOUT_MARKER_PREFIX)
+                or _is_prose_fence_line(nxt)
                 or _is_caption_line(nxt)
                 or "|" in nxt
             ):
@@ -827,7 +882,9 @@ _PAPER_TYPOGRAPHY = """
   margin: 10px 0;
   orphans: 2;
   widows: 2;
+  overflow-wrap: break-word;
 }
+.paper li { overflow-wrap: break-word; }
 /* Abstract section: indented, italic, single drop cap. The drop-cap is
    conservatively scoped to the FIRST paragraph after the unnumbered
    Abstract heading, never beyond. */
@@ -864,6 +921,9 @@ _PAPER_TYPOGRAPHY = """
   padding: 1px 5px;
   border-radius: 3px;
   color: var(--paper-text);
+  /* A long unbroken token in prose (a contract hash, an absolute path)
+     breaks rather than pushing the article column past the page. */
+  overflow-wrap: anywhere;
 }
 .paper pre {
   background: var(--paper-code-bg);
@@ -917,7 +977,12 @@ _PAPER_TYPOGRAPHY = """
   font-weight: 500;
   font-size: 13px;
   line-height: 1.4;
+  /* A long masthead value (a full contract hash, a long goal) breaks
+     inside its grid cell rather than widening the metadata row. */
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
+.paper .paper-meta .meta-row { min-width: 0; }
 .paper .paper-meta code {
   background: transparent;
   padding: 0;
@@ -1265,6 +1330,181 @@ def restamp_masthead(report_md: str, data: EpochReportData) -> str:
     return render_title_block(data) + "\n\n" + "\n".join(lines[body_idx:])
 
 
+#: The h2 headings that bracket the four LLM-authored prose blocks in an
+#: assembled document, mapped to their :data:`PROSE_BLOCK_LABELS` key. Used
+#: to lift existing prose out of a persisted report so a deterministic-only
+#: refresh can re-template every data section WITHOUT discarding the prose.
+_PROSE_HEADINGS: tuple[tuple[str, str], ...] = (
+    ("## Abstract", "ABSTRACT"),
+    ("## Introduction", "INTRODUCTION"),
+    ("## Analysis", "ANALYSIS"),
+    ("## Conclusion", "CONCLUSION"),
+)
+
+
+def _mask_regen_timestamp(report_md: str) -> str:
+    """Blank the volatile ``_Regenerated by zicato at <ts>...`` footer line.
+
+    Used by the digest gate so a refresh whose only difference is the
+    regeneration timestamp reads as a content no-op.
+    """
+    return "\n".join(
+        "" if line.startswith("_Regenerated by zicato at ") else line
+        for line in report_md.replace("\r\n", "\n").split("\n")
+    )
+
+
+def parse_prose_from_markdown(report_md: str) -> dict[str, str]:
+    """Lift the four LLM-authored prose blocks out of an assembled report.
+
+    Returns a ``{LABEL: text}`` dict for every prose block found (keyed by
+    :data:`PROSE_BLOCK_LABELS`), skipping the placeholder body so a
+    never-written block is not resurrected as prose. Absent blocks are
+    simply not present in the result, which the assembler then fills with a
+    placeholder — so a document with no prose yet round-trips to
+    placeholders, not to broken sections.
+
+    Two parse paths:
+
+    * **Fenced (current format).** When the document carries the explicit
+      ``<!-- PROSE:LABEL -->`` … ``<!-- /PROSE:LABEL -->`` fences, each block
+      is lifted ANCHOR-EXACT — the whole text between its open and close
+      fence, INCLUDING any ``---`` rule or embedded ``## heading`` the LLM
+      wrote. This is the fix for the silent truncation the old heuristic
+      caused; the fences round-trip a block byte-identically.
+    * **Legacy (unfenced) fallback.** A pre-fix document written before the
+      fences existed has none, so we fall back to the old heuristic (body
+      from a ``## <Heading>`` to the next ``## ``/``---``). Whatever it
+      captures is spliced back verbatim and the assembler re-emits it WITH
+      fences, so the document self-heals to the exact format on the first
+      deterministic refresh.
+    """
+    text = report_md.replace("\r\n", "\n")
+    # An open fence anywhere ⇒ the document is in the fenced format; parse
+    # exclusively by fence (never mix the heuristic in — a fenced body may
+    # legitimately contain ``## ``/``---`` lines the heuristic would trip on).
+    if _PROSE_FENCE_OPEN_PREFIX in text:
+        return _parse_prose_fenced(text)
+    return _parse_prose_heuristic(text)
+
+
+def _parse_prose_fenced(text: str) -> dict[str, str]:
+    """Lift each prose block by its anchor-exact ``<!-- PROSE:LABEL -->`` fence."""
+    lines = text.split("\n")
+    open_to_label = {_prose_fence_open(lbl): lbl for lbl in PROSE_BLOCK_LABELS}
+    out: dict[str, str] = {}
+    i = 0
+    n = len(lines)
+    while i < n:
+        label = open_to_label.get(lines[i].strip())
+        if label is None:
+            i += 1
+            continue
+        close = _prose_fence_close(label)
+        body: list[str] = []
+        i += 1
+        # Capture verbatim to the matching close fence (or EOF). Only the
+        # exact close sentinel terminates the block, so structural lines —
+        # rules, headings, other blocks' fences — are preserved as body.
+        while i < n and lines[i].strip() != close:
+            body.append(lines[i])
+            i += 1
+        i += 1  # consume the close fence
+        captured = "\n".join(body).strip()
+        if captured and captured != _MISSING_PROSE:
+            out[label] = captured
+    return out
+
+
+def _parse_prose_heuristic(text: str) -> dict[str, str]:
+    """Legacy unfenced parse: body from a ``## <Heading>`` to the next ``## ``/``---``.
+
+    Retained ONLY for pre-fix documents that predate the prose fences; it
+    truncates a block at the first ``## ``/``---`` it contains (the very bug
+    the fenced format fixes), but a legacy document is no worse off than
+    under the old code, and the assembler re-emits the captured prose WITH
+    fences so the document upgrades on its first refresh.
+    """
+    lines = text.split("\n")
+    out: dict[str, str] = {}
+    i = 0
+    n = len(lines)
+    while i < n:
+        line = lines[i]
+        label = None
+        for prefix, lbl in _PROSE_HEADINGS:
+            if line.startswith(prefix):
+                label = lbl
+                break
+        if label is None:
+            i += 1
+            continue
+        body: list[str] = []
+        i += 1
+        while i < n:
+            nxt = lines[i]
+            if nxt.startswith("## ") or nxt.strip() == "---":
+                break
+            body.append(nxt)
+            i += 1
+        captured = "\n".join(body).strip()
+        if captured and captured != _MISSING_PROSE:
+            out[label] = captured
+    return out
+
+
+def regenerate_epoch_report_deterministic(workspace_root: Path, epoch_id: str) -> bool:
+    """Refresh a persisted report's DETERMINISTIC sections — no LLM call.
+
+    The event-driven freshness path (see ``docs/design/PUBLICATION.md``):
+    after each settled round the orchestrator calls this to re-template
+    every data-bearing section (masthead, methodology, results, validity,
+    proposer analytics, threats) from the CURRENT workspace data, while
+    preserving the existing LLM-authored prose verbatim. Cost discipline —
+    no auxiliary-LLM call is made; the full LLM prose render happens at
+    epoch close. Mid-epoch the masthead carries the ``LIVING DRAFT`` stamp
+    (data-derived: dropped once the epoch is marked closed).
+
+    Idempotent and digest-gated: returns ``True`` only when the rewrite
+    actually changed ``analysis.md`` on disk; a byte-identical regeneration
+    is a no-op (``False``) and rewrites nothing, so a settled round that
+    moved no data never churns the file (and the dashboard's digest
+    discipline rebuilds zero DOM). Best-effort on the HTML companion — a
+    render failure there never loses the refreshed markdown.
+    """
+    data = gather_epoch_report_data(workspace_root, epoch_id)
+    deterministic = _deterministic_sections(data)
+
+    md_path = analysis_path(workspace_root, epoch_id)
+    try:
+        existing = md_path.read_text(encoding="utf-8")
+    except OSError:
+        existing = ""
+    prose = parse_prose_from_markdown(existing) if existing else {}
+    for label in PROSE_BLOCK_LABELS:
+        prose.setdefault(label, _MISSING_PROSE)
+
+    new_md = assemble_report_markdown(data, prose, deterministic)
+    # Digest gate: the assembled document carries a volatile "Regenerated
+    # at <now>" footer, so a raw equality check would always differ. Mask
+    # that one line on both sides — when only the timestamp moved the
+    # content is unchanged, so keep the existing file byte-for-byte (the
+    # dashboard's digest discipline then rebuilds zero DOM).
+    if _mask_regen_timestamp(new_md) == _mask_regen_timestamp(existing):
+        return False
+
+    md_path.parent.mkdir(parents=True, exist_ok=True)
+    md_path.write_text(new_md, encoding="utf-8")
+    try:
+        md_path.with_suffix(".html").write_text(
+            render_report_html(epoch_id, new_md, data=data),
+            encoding="utf-8",
+        )
+    except Exception as exc:  # noqa: BLE001 — HTML is non-critical
+        log.debug("epoch report: deterministic analysis.html refresh skipped (%s)", exc)
+    return True
+
+
 def restamp_persisted_report(workspace_root: Path, epoch_id: str) -> bool:
     """Rewrite a persisted ``analysis.md``/``.html`` masthead from CURRENT data.
 
@@ -1398,4 +1638,6 @@ __all__ = [
     "render_report_html_fragment",
     "restamp_masthead",
     "restamp_persisted_report",
+    "regenerate_epoch_report_deterministic",
+    "parse_prose_from_markdown",
 ]

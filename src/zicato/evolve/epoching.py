@@ -205,18 +205,26 @@ async def ensure_epoch_for_contract(
 
     await close_epoch_async(workspace_root, cur, aux_call_llm=aux_call_llm)
 
-    # The comprehensive report is regenerated every round, so the copy on disk
-    # is frozen at the last mid-run pass — masthead still reading "in progress"
-    # with pre-close counts. Now that the epoch is marked closed, re-stamp that
-    # (deterministic) masthead so the persisted analysis.md/.html reflect the
-    # final closed state. Cheap, no LLM; the narrative is left untouched.
+    # Mid-run the publication is refreshed deterministically each round (no
+    # LLM), carrying a LIVING DRAFT stamp and preserving whatever prose was
+    # last authored. The epoch is now closed, so run the FULL render — the
+    # bounded auxiliary-LLM prose pass over the final data — which produces
+    # the finished paper and drops the LIVING DRAFT stamp (the masthead now
+    # reads "closed"). When no auxiliary callable is available, fall back to
+    # the cheap deterministic masthead re-stamp so the persisted files still
+    # reflect the closed state. Best-effort — never blocks the epoch roll.
     with best_effort(
-        "post-close report re-stamp",
-        on_error=lambda exc: log.debug("post-close report re-stamp skipped: %s", exc),
+        "post-close report render",
+        on_error=lambda exc: log.debug("post-close report render skipped: %s", exc),
     ):
-        from zicato.analyzer import restamp_persisted_report  # noqa: PLC0415
+        if aux_call_llm is not None:
+            from zicato.analyzer import generate_epoch_report  # noqa: PLC0415
 
-        restamp_persisted_report(workspace_root, cur)
+            await generate_epoch_report(workspace_root, cur, aux_call_llm)
+        else:
+            from zicato.analyzer import restamp_persisted_report  # noqa: PLC0415
+
+            restamp_persisted_report(workspace_root, cur)
 
     next_n = len(list_epochs(workspace_root))
     new_id = _create_epoch_from_contract(

@@ -176,6 +176,7 @@ def _render_task_text(spec: ProposerSpec, ctx: ProposerContext, feedback: str) -
         failure_profile=ctx.failure_profile,
         process_exemplars=ctx.process_exemplars,
         genealogy=ctx.genealogy,
+        calibration=ctx.calibration,
         sample_hint=ctx.sample_hint,
         mutation_track_records=ctx.mutation_track_records,
     )

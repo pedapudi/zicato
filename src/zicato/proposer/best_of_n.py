@@ -146,7 +146,7 @@ from zicato.proposer.agent import ProposerAgent, ProposerContext
 # EDIT_CLASS_HINTS moved to :mod:`zicato.proposer.hints` (its canonical home,
 # alongside the failure-mode-conditioned FAILURE_MODE_HINTS and the pure
 # slot→hint mapping); re-exported here so every existing import keeps working.
-from zicato.proposer.hints import EDIT_CLASS_HINTS, hint_for_slot
+from zicato.proposer.hints import EDIT_CLASS_HINTS, hint_for_slot, strategy_for_slot
 from zicato.proposer.prompts import render_user_prompt
 from zicato.proposer.proposer import ProposerError
 from zicato.scoring.diff_complexity import diff_char_size as _diff_size
@@ -699,15 +699,22 @@ class BestOfNProposerAgent:
     ) -> ProposerError | None:
         """One ordinary slate slot — the extracted loop body.
 
-        Intra-slate diversity: each slot carries a DISTINCT edit-class
-        hint on its context, so the N samples explore different edit
-        strategies rather than re-rolling one idea. The pure mapping
+        Intra-slate diversity, on TWO axes: each slot carries a DISTINCT
+        edit-class hint (WHICH failure to target) composed WITH a distinct
+        STRATEGY framing (HOW to approach the fix), so the N samples explore
+        different edit strategies AND different strategic framings rather
+        than re-rolling one idea. The edit-class mapping
         (:func:`zicato.proposer.hints.hint_for_slot`) conditions slots
         0..N-2 on the profile's DOMINANT failure mode and keeps the LAST
         slot exploratory; with no profile signal it is the historical
-        EDIT_CLASS_HINTS rotation, byte-identical. Hints are static
-        instruction strings — no board identity — so the
-        restricted-visibility envelope is untouched.
+        EDIT_CLASS_HINTS rotation, byte-identical. The strategy framing
+        (:func:`zicato.proposer.hints.strategy_for_slot`) is a small fixed
+        vocabulary rotated deterministically per (slot, round) — no RNG, no
+        extra sampling params (the ``aux_call_llm`` seam is
+        ``(system, user, model) -> str`` and accepts no temperature, so the
+        variation rides the PROMPT only). Both are static instruction strings
+        — no board identity — so the restricted-visibility envelope is
+        untouched.
 
         Appends the sampled candidate on success and emits its
         ``candidate_sampled`` event; returns the :class:`ProposerError`
@@ -726,9 +733,14 @@ class BestOfNProposerAgent:
         # replaced with its OWN value (byte-identical). The recombination-mint
         # DEGRADE path routes here too, so a degraded slot samples on breadth
         # exactly like an ordinary one.
+        # Compose the two diversity axes into the single sample-hint string:
+        # the edit-class hint (WHICH failure), then the per-(slot, round)
+        # strategy framing (HOW to fix it). Both static, board-identity-free.
+        edit_hint = hint_for_slot(sample, n, ctx.failure_profile)
+        strategy = strategy_for_slot(sample, ctx.new_generation_id)
         slot_ctx = replace(
             ctx,
-            sample_hint=hint_for_slot(sample, n, ctx.failure_profile),
+            sample_hint=f"{edit_hint}\n{strategy}",
             aux_call_llm=self._breadth_call_llm(ctx),
             model=self._breadth_model(ctx),
         )
@@ -1250,6 +1262,9 @@ class BestOfNProposerAgent:
             # Likewise the genealogy block (opt-in): banded + capped candidate
             # lineage, part of the same restricted envelope.
             genealogy=ctx.genealogy,
+            # Likewise the calibration block (opt-in): the proposer's OWN
+            # banded prediction track record, part of the same envelope.
+            calibration=ctx.calibration,
         )
         slate = _render_candidate_slate(candidates)
         # Calibration-aware advisory note (never a gate): when the lineage's

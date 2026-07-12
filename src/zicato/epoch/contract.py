@@ -442,6 +442,12 @@ _SCORING_OMIT_AT_DEFAULT_FIELDS: frozenset[str] = frozenset(
         # rolls the epoch — a proposer shown candidate genealogy proposes
         # under a different rule.
         "genealogy",
+        # Opt-in critic-calibration channel (WS-CAL; PROPOSER.md §2.8). Lives on
+        # the nested ``ProposerQualityConfig`` like the genealogy / exemplar
+        # knobs; omitted at its 0 default (no retroactive roll) and a non-zero
+        # count rolls the epoch — a proposer shown its own prediction
+        # calibration proposes under a different rule.
+        "calibration_feedback",
         # Telemetry dialect (TELEMETRY-DIALECTS.md §5): the pluggable LossProfile
         # PRODUCER. Omitted at its ``"goldfive"`` default so every existing
         # contract hashes byte-identically to one that predates the field (the

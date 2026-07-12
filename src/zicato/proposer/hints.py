@@ -44,6 +44,7 @@ recognise.
 from __future__ import annotations
 
 import re
+import zlib
 
 #: Per-slot edit-class steering for the best-of-N slate — the intra-slate
 #: DIVERSITY lever and the exploratory rotation. Slot ``i`` of a slate with
@@ -170,6 +171,49 @@ def dominant_failure_mode(failure_profile: str) -> str | None:
     return best_mode
 
 
+#: Per-slot STRATEGY framings for the best-of-N slate — the SECOND intra-slate
+#: diversity axis (the edit-class hint above says WHICH failure to target; the
+#: strategy says HOW to approach the fix). Composed WITH the edit-class hint on
+#: each slate slot so the N samples do not all share one strategic framing. Each
+#: is a static instruction string carrying no board identity — the
+#: restricted-visibility envelope is untouched — and the vocabulary is a small
+#: fixed set rotated deterministically per (slot, round) by
+#: :func:`strategy_for_slot` (no RNG).
+STRATEGY_HINTS: tuple[str, ...] = (
+    "Strategy for THIS candidate: MINIMAL-SURGICAL. Make the smallest possible "
+    "change that could plausibly work; touch as few mutation points as you can.",
+    "Strategy for THIS candidate: STRUCTURAL-REWORK. Do not settle for a local "
+    "tweak — reshape the mechanism (the control flow, the prompt structure, the "
+    "orchestration) even if the diff is larger.",
+    "Strategy for THIS candidate: DEFENSIVE-HARDENING. Assume the current failure "
+    "is an unhandled edge or a missing guard; add the check, the fallback, or the "
+    "constraint that makes the failure mode impossible rather than less likely.",
+    "Strategy for THIS candidate: CONTRARIAN. Reject the obvious fix the other "
+    "candidates will reach for and try a DIFFERENT mechanism entirely — if the "
+    "consensus is to add something, consider removing something instead.",
+)
+
+
+def strategy_for_slot(sample_index: int, generation_id: str) -> str:
+    """Return the STRATEGY framing for slate slot ``sample_index`` this round.
+
+    Deterministic per ``(slot, round)`` with NO RNG: the round is identified by
+    ``generation_id`` (the child id being proposed this round — stable within a
+    round, distinct across rounds), reduced to a stable rotation offset via
+    :func:`zlib.crc32` (a fixed, seed-independent hash — unlike :func:`hash`,
+    which is salted per process). Slot ``i`` of round ``g`` gets
+    ``STRATEGY_HINTS[(crc32(g) + i) % len]``, so the N slots of one round span
+    distinct strategies AND the same slot draws a different strategy in a
+    different round — the two-axis slate diversity — while re-running the SAME
+    round yields the SAME assignment (the determinism pin).
+
+    A static instruction string carrying no board identity, so it composes with
+    the restricted-visibility envelope untouched.
+    """
+    seed = zlib.crc32(generation_id.encode("utf-8"))
+    return STRATEGY_HINTS[(seed + sample_index) % len(STRATEGY_HINTS)]
+
+
 def hint_for_slot(sample_index: int, n: int, failure_profile: str) -> str:
     """Return the edit-class hint for slate slot ``sample_index`` of ``n``.
 
@@ -205,6 +249,8 @@ def hint_for_slot(sample_index: int, n: int, failure_profile: str) -> str:
 __all__ = [
     "EDIT_CLASS_HINTS",
     "FAILURE_MODE_HINTS",
+    "STRATEGY_HINTS",
     "dominant_failure_mode",
     "hint_for_slot",
+    "strategy_for_slot",
 ]

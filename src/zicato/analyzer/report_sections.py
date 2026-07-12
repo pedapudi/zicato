@@ -28,6 +28,8 @@ its absolute position in the assembled document.
 
 from __future__ import annotations
 
+from typing import Any
+
 from zicato.analyzer.report_data import (
     BoardEntryView,
     EpochReportData,
@@ -83,9 +85,18 @@ def render_title_block(data: EpochReportData) -> str:
     meta_bits: list[str] = [
         f"**Epoch id**: `{data.epoch_id}`",
         f"**Status**: {status}",
-        f"**Generations**: {data.attempted} attempted · "
-        f"{data.promoted} promoted · {data.rejected} rejected",
     ]
+    # LIVING DRAFT stamp — visible while the epoch is open so a reader
+    # knows the document is mid-run and not the finished paper. Data-
+    # derived: present iff the epoch is not yet closed, so the close
+    # render drops it automatically. Suppressed before any round settles
+    # (nothing to be a draft "through" yet).
+    if not data.closed and data.last_round > 0:
+        meta_bits.append(f"**Draft**: LIVING DRAFT — through round {data.last_round}")
+    meta_bits.append(
+        f"**Generations**: {data.attempted} attempted · "
+        f"{data.promoted} promoted · {data.rejected} rejected"
+    )
     if data.deferred:
         meta_bits.append(f"**Deferred**: {data.deferred}")
     if data.contract_hash:
@@ -161,6 +172,7 @@ def _render_scoring_block(scoring: dict[str, object]) -> str:
     _row("promote_margin", "promote_margin")
     _row("pass_rate_monotonicity", "pass_rate_monotonicity")
     _row("pass_rate_monotonicity_scope", "pass_rate_monotonicity_scope")
+    _row("telemetry_dialect", "telemetry_dialect")
 
     sev = scoring.get("severity_weights")
     if isinstance(sev, dict) and sev:
@@ -178,6 +190,113 @@ def _render_scoring_block(scoring: dict[str, object]) -> str:
     if isinstance(ns, dict) and ns:
         rendered = ", ".join(f"{k}={v}" for k, v in sorted(ns.items()))
         lines.append(f"| namespace_weights | {_esc_cell(rendered)} |")
+    return "\n".join(lines)
+
+
+def _render_tournament_structure_block(structure: dict[str, object]) -> str:
+    """Render the per-epoch tournament structure + its params.
+
+    Reads the ``{"structure": name, "params": {...}}`` shape serialised
+    into ``scoring.json``. An empty view (an epoch predating configurable
+    structures, or one that never left the default) renders the honest
+    default notice rather than fabricating a param table.
+    """
+    name = str(structure.get("structure", "") or "") if structure else ""
+    if not name:
+        return (
+            "The tournament ran the default **gauntlet** structure "
+            "(champion vs. one challenger per round); no alternate "
+            "structure or resolver/rating layer was configured."
+        )
+    params = structure.get("params")
+    params = params if isinstance(params, dict) else {}
+    lines: list[str] = []
+    lines.append(f"Tournament structure: **{_esc_cell(name)}**.")
+    lines.append("")
+    if not params:
+        lines.append("_Structure defaults applied; no structure params were overridden._")
+        return "\n".join(lines)
+    lines.append("| structure param | value |")
+    lines.append("| --- | --- |")
+    for key in sorted(params):
+        val = params[key]
+        if isinstance(val, dict):
+            rendered = ", ".join(f"{k}={v}" for k, v in sorted(val.items()))
+        else:
+            rendered = str(val)
+        lines.append(f"| `{_esc_cell(str(key))}` | {_esc_cell(rendered)} |")
+    return "\n".join(lines)
+
+
+def _render_proposer_config_block(pq: dict[str, object]) -> str:
+    """Render the frozen proposer-quality configuration.
+
+    Sourced from ``scoring.json``'s nested ``proposer_quality`` block:
+    ``best_of_n`` slate width, the self-critique pass, pre-tournament
+    screening (+ veto-only), redacted process exemplars, the genealogy
+    channel, and recombination (+ its merge mode). Each lever renders its
+    value or an explicit "off"; an epoch that never configured proposer
+    quality renders the built-in defaults notice. The breadth/depth
+    ensemble ROLES are runtime infrastructure (model bindings), not part
+    of the per-epoch scoring artifact, so they are noted as not recorded
+    here rather than fabricated.
+    """
+    if not pq:
+        return (
+            "The proposer ran the built-in defaults: a best-of-3 slate with "
+            "the self-critique pass; screening, process exemplars, the "
+            "genealogy channel, and recombination all off."
+        )
+
+    def _get_int(key: str, default: int) -> int:
+        raw = pq.get(key, default)
+        if isinstance(raw, bool):
+            return int(raw)
+        if isinstance(raw, int | float):
+            return int(raw)
+        if isinstance(raw, str):
+            try:
+                return int(raw)
+            except ValueError:
+                return default
+        return default
+
+    best_of_n = _get_int("best_of_n", 3)
+    critique = bool(pq.get("critique_enabled", True)) and best_of_n > 1
+    screen = _get_int("screen_entries", 0)
+    veto_only = bool(pq.get("screen_veto_only", False))
+    exemplars = _get_int("process_exemplars", 0)
+    genealogy = _get_int("genealogy", 0)
+    recombine = bool(pq.get("recombine", False))
+    merge = str(pq.get("recombine_merge", "mechanical") or "mechanical")
+
+    lines: list[str] = []
+    lines.append("| proposer lever | setting |")
+    lines.append("| --- | --- |")
+    lines.append(
+        f"| best_of_n | {best_of_n}"
+        + (" (single sample — no slate)" if best_of_n == 1 else " (slate)")
+        + " |"
+    )
+    lines.append(
+        "| self-critique | " + ("on" if critique else "off (inert without a slate)") + " |"
+    )
+    if screen > 0:
+        lines.append(
+            f"| pre-tournament screen | {screen} "
+            f"{'entry' if screen == 1 else 'entries'}"
+            + (" · veto-only" if veto_only else " · veto+advise")
+            + " |"
+        )
+    else:
+        lines.append("| pre-tournament screen | off |")
+    lines.append(f"| process exemplars | {exemplars if exemplars else 'off'} |")
+    lines.append(f"| genealogy channel | {genealogy if genealogy else 'off'} |")
+    if recombine:
+        lines.append(f"| recombination | on · `{_esc_cell(merge)}` merge |")
+    else:
+        lines.append("| recombination | off |")
+    lines.append("| breadth/depth roles | _not recorded in the scoring artifact_ |")
     return "\n".join(lines)
 
 
@@ -248,6 +367,21 @@ def render_methodology_section(data: EpochReportData) -> str:
         "retained. A promoted challenger becomes the champion for the next "
         "round."
     )
+    parts.append("")
+    parts.append("### Tournament structure")
+    parts.append("")
+    parts.append(_render_tournament_structure_block(data.tournament_structure))
+    parts.append("")
+    parts.append("### Proposer configuration")
+    parts.append("")
+    parts.append(
+        "The proposer is a first-class contract input. The levers frozen for "
+        "this epoch (a change to any of which rolls the epoch):"
+    )
+    parts.append("")
+    parts.append("Caption: Proposer-quality configuration frozen for the epoch.")
+    parts.append("")
+    parts.append(_render_proposer_config_block(data.proposer_quality))
     return "\n".join(parts)
 
 
@@ -764,6 +898,219 @@ def _render_campaign_callout(data: EpochReportData) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Statistical integrity (validity)
+# ---------------------------------------------------------------------------
+
+
+def _round_records(data: EpochReportData) -> list[Any]:
+    """The folded per-round records, or an empty list when none were read."""
+    return [r for r in data.round_records if r is not None]
+
+
+def render_statistical_integrity_section(data: EpochReportData) -> str:
+    """Render ``## Statistical Integrity`` — the validity differentiator.
+
+    Folds the durable per-round event records: pre-tournament screen
+    veto/confirm counts, evidence-gate replication/deferral statistics,
+    Ladder holdout confirmations, and any placebo-arm outcome (a promoted
+    placebo is a CRITICAL callout). Every sub-claim degrades honestly:
+    when no round records were folded (no round has settled yet) or the
+    measure's feature was disabled for the epoch, each measure renders an
+    honest one-liner naming the true cause rather than a fabricated
+    number, and the section still frames the guarantees the contract
+    makes.
+    """
+    parts: list[str] = []
+    parts.append("## Statistical Integrity")
+    parts.append("")
+    records = _round_records(data)
+
+    # Placebo arm — the single most important integrity signal. A promoted
+    # placebo means the gate crowned noise.
+    placebo_promoted = 0
+    placebo_seen = 0
+    for r in records:
+        prov = getattr(r, "decision_provenance", {}) or {}
+        if isinstance(prov, dict) and prov.get("placebo"):
+            placebo_seen += 1
+            if getattr(r, "decision", "") == "promoted":
+                placebo_promoted += 1
+    if placebo_promoted:
+        parts.append("<!-- CALLOUT:CRITICAL -->")
+        parts.append(
+            f"A PLACEBO arm was PROMOTED in {placebo_promoted} "
+            f"{'round' if placebo_promoted == 1 else 'rounds'}. A placebo carries "
+            "no real change, so a promotion means the gate crowned noise — treat "
+            "every promotion this epoch as suspect until the floor is re-measured."
+        )
+        parts.append("")
+    elif placebo_seen:
+        parts.append(
+            f"**Placebo arms.** {placebo_seen} placebo "
+            f"{'arm was' if placebo_seen == 1 else 'arms were'} run and none was "
+            "promoted — the gate rejected the no-op change, as it should."
+        )
+        parts.append("")
+
+    # Screen veto / confirm.
+    screened = sum(int(getattr(r.proposal, "candidates_screened", 0)) for r in records)
+    vetoes = sum(int(getattr(r.proposal, "screen_vetoes", 0)) for r in records)
+    if screened:
+        parts.append(
+            f"**Pre-tournament screen.** {screened} slate "
+            f"{'candidate was' if screened == 1 else 'candidates were'} screened; "
+            f"{vetoes} vetoed before the tournament, {screened - vetoes} advanced."
+        )
+    elif records:
+        parts.append(
+            "**Pre-tournament screen.** No screen events were recorded for this "
+            "epoch — pre-tournament screening was not enabled."
+        )
+    else:
+        parts.append(
+            "**Pre-tournament screen.** No round has settled for this epoch yet, "
+            "so there are no screen events to report."
+        )
+    parts.append("")
+
+    # Evidence-gate replication / deferral.
+    evidence_rounds = sum(1 for r in records if getattr(r, "evidence_trail", ()))
+    replicates = sum(len(getattr(r, "evidence_trail", ())) for r in records)
+    deferred_rounds = sum(1 for r in records if getattr(r, "decision", "") == "deferred")
+    if replicates or deferred_rounds:
+        parts.append(
+            f"**Evidence gate.** {replicates} replicate "
+            f"{'refit' if replicates == 1 else 'refits'} across {evidence_rounds} "
+            f"{'round' if evidence_rounds == 1 else 'rounds'}; {deferred_rounds} "
+            f"{'round was' if deferred_rounds == 1 else 'rounds were'} deferred for "
+            "more evidence rather than crowned or rejected on a single duel."
+        )
+    elif records:
+        parts.append(
+            "**Evidence gate.** No replicate-duel or deferral events were recorded "
+            "for this epoch — the evidence gate did not fire (every round settled on "
+            "a single duel)."
+        )
+    else:
+        parts.append(
+            "**Evidence gate.** No round has settled for this epoch yet, so there "
+            "are no evidence-gate events to report."
+        )
+    parts.append("")
+
+    # Ladder holdout confirmations.
+    holdout_conf = sum(1 for r in records if getattr(r, "holdout", None) and r.holdout.confirmed)
+    holdout_rel = sum(1 for r in records if getattr(r, "holdout", None) is not None)
+    if holdout_rel:
+        parts.append(
+            f"**Ladder holdout.** The holdout-confirmation bit was released in "
+            f"{holdout_rel} {'round' if holdout_rel == 1 else 'rounds'}; "
+            f"{holdout_conf} confirmed the crowning on held-out entries."
+        )
+    elif records:
+        parts.append(
+            "**Ladder holdout.** No holdout-confirmation events were recorded for "
+            "this epoch — holdout confirmation was not enabled."
+        )
+    else:
+        parts.append(
+            "**Ladder holdout.** No round has settled for this epoch yet, so there "
+            "are no holdout-confirmation events to report."
+        )
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Proposer analytics
+# ---------------------------------------------------------------------------
+
+
+def _hypothesis_calibration(data: EpochReportData) -> tuple[int, int]:
+    """Return ``(hits, total)`` for the proposer's pass-rate predictions.
+
+    A completed challenger with a parseable ``expected_pass_rate_delta``
+    contributes one comparison; it is a HIT when the predicted direction
+    matches the realised ``pass_rate_delta`` sign (a flat prediction hits a
+    flat outcome). This is the same projection the hypothesis-vs-outcome
+    figure uses, reduced to a scalar calibration fraction.
+    """
+    from zicato.analyzer.svg.hypothesis import (  # noqa: PLC0415
+        _parse_expected_pass_rate_delta,
+    )
+
+    hits = 0
+    total = 0
+    for g in data.generations:
+        if g.is_baseline or g.decision not in ("promoted", "rejected"):
+            continue
+        predicted = _parse_expected_pass_rate_delta(g.expected_pass_rate_delta)
+        if predicted is None:
+            continue
+        total += 1
+        actual = g.pass_rate_delta
+        pred_sign = (predicted > 0) - (predicted < 0)
+        act_sign = (actual > 0) - (actual < 0)
+        if pred_sign == act_sign:
+            hits += 1
+    return hits, total
+
+
+def render_proposer_analytics_section(data: EpochReportData) -> str:
+    """Render ``## Proposer Analytics``.
+
+    The hypothesis-calibration fraction (predicted vs realised pass-rate
+    direction), plus the slate / selection-mode mix folded from the per-
+    round records. The calibration is computed from data always present in
+    the generation views; the slate mix degrades honestly when the per-
+    round event log is absent.
+    """
+    parts: list[str] = []
+    parts.append("## Proposer Analytics")
+    parts.append("")
+    hits, total = _hypothesis_calibration(data)
+    if total:
+        frac = hits / total
+        parts.append(
+            f"**Hypothesis calibration.** The proposer's predicted pass-rate "
+            f"direction matched the realised movement in {hits} of {total} "
+            f"completed challengers ({frac:.0%}). A low fraction means the "
+            "proposer is guessing at outcomes it cannot yet foresee; a high one "
+            "means its hypotheses are load-bearing."
+        )
+    else:
+        parts.append(
+            "**Hypothesis calibration.** No completed challenger carried a "
+            "parseable pass-rate prediction, so calibration cannot be scored for "
+            "this epoch."
+        )
+    parts.append("")
+
+    records = _round_records(data)
+    recombined = sum(int(getattr(r.proposal, "recombined_sampled", 0)) for r in records)
+    sampled = sum(int(getattr(r.proposal, "candidates_sampled", 0)) for r in records)
+    if sampled:
+        parts.append(
+            f"**Slate mix.** {sampled} candidate "
+            f"{'was' if sampled == 1 else 'were'} sampled across the recorded "
+            f"rounds; {recombined} came from mechanical recombination of rejected "
+            "parents rather than a fresh proposer sample."
+        )
+    elif records:
+        parts.append(
+            "**Slate mix.** The recorded rounds carried no per-candidate sampling "
+            "counts; the slate width frozen for the epoch is reported under the "
+            "Methodology's proposer configuration."
+        )
+    else:
+        parts.append(
+            "**Slate mix.** No round has settled for this epoch yet, so the slate "
+            "mix cannot be summarised; the slate width frozen for the epoch is "
+            "reported under the Methodology's proposer configuration."
+        )
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
 # Threats to validity
 # ---------------------------------------------------------------------------
 
@@ -829,5 +1176,7 @@ __all__ = [
     "render_drift_movement_table",
     "render_per_board_outcomes",
     "render_per_judge_attribution_table",
+    "render_statistical_integrity_section",
+    "render_proposer_analytics_section",
     "render_threats_section",
 ]

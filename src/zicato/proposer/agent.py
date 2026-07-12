@@ -61,6 +61,7 @@ from zicato.proposer.proposer import ExperimentValidator, propose_experiment
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
     from zicato.index.query import MutationTrackRecord
     from zicato.proposer.best_of_n import ScreenRunner
+    from zicato.proposer.calibration import CalibrationSummary
     from zicato.proposer.genealogy import GenealogyItem
     from zicato.proposer.recombine import RecombinationPair
     from zicato.telemetry.meta_loop import MetaLoopEmitter
@@ -150,6 +151,23 @@ class ProposerContext:
     #: holdout-derived. Empty ``()`` (the default — every knob-off round) omits
     #: the section, byte-identical to before this surface.
     genealogy: tuple[GenealogyItem, ...] = ()
+    #: Optional per-reign prediction-calibration summary — the opt-in
+    #: ``proposer_quality.calibration_feedback`` channel
+    #: (``docs/design/PROPOSER.md`` §2.8). Built by the orchestrator from
+    #: :func:`~zicato.proposer.calibration.sample_calibration` (the reign's
+    #: settled hypotheses graded by the prediction-accuracy grader —
+    #: :func:`~zicato.tournament.detail.hypothesis_ledger`) and rendered by
+    #: :func:`~zicato.proposer.prompts.render_calibration_block` inside
+    #: ``render_user_prompt``; when non-empty a ``## Prediction calibration``
+    #: section is spliced above the experiment-memory block so the proposer
+    #: sees its OWN miss pattern and hypothesizes more honestly. Already banded
+    #: (whole-candidate outcomes through ``improved``/``flat``/``regressed``) +
+    #: reduced to hit/miss verdicts + aggregate counts by the sampler; NEVER an
+    #: entry id, a per-entry result, an exact delta, or anything holdout-derived
+    #: (the grader scores whole-candidate movement aggregates). ``None`` (the
+    #: default — every knob-off round, and any round with no graded history)
+    #: omits the section, byte-identical to before this surface.
+    calibration: CalibrationSummary | None = None
     #: Optional per-sample edit-class steering line — the best-of-N slate
     #: diversifier (:data:`zicato.proposer.best_of_n.EDIT_CLASS_HINTS`). The
     #: wrapper stamps a DISTINCT hint on each slate slot's context via
@@ -265,6 +283,7 @@ class DefaultProposerAgent:
             failure_profile=ctx.failure_profile,
             process_exemplars=ctx.process_exemplars,
             genealogy=ctx.genealogy,
+            calibration=ctx.calibration,
             sample_hint=ctx.sample_hint,
             mutation_track_records=ctx.mutation_track_records,
             revise_feedback=ctx.revise_feedback,

@@ -5,10 +5,10 @@
 > is the source of truth; if this document and the binary ever disagree,
 > trust `zicato --help` / `zicato help <command>`.
 >
-> *Last reconciled against the live `--help` on 2026-07-10.* Verified the
+> *Last reconciled against the live `--help` on 2026-07-12.* Verified the
 > full command set (`init`, `evolve`, and the advanced/debugging group:
 > `analyze-telemetry`, `board`, `builder`, `config`, `dashboard`, `epoch`,
-> `health`, `help`, `mutations`, `propose`, `reflect`, `regenerate-report`,
+> `health`, `help`, `logs`, `mutations`, `propose`, `reflect`, `regenerate-report`,
 > `register`, `reindex`, `reindex-generations`, `repair-epoch-goals`,
 > `repair-judge-losses`, `repair-tournament-fk`, `repair-v0-baseline`,
 > `tournament`) and every option/default below by running
@@ -500,6 +500,27 @@ for `zicato --help`; `zicato help evolve` is equivalent to
 ```
 zicato help [COMMAND]
 ```
+
+### `zicato logs`
+
+Advanced: tail the structured operator-log stream for one invocation. Every
+`evolve` / `reflect run` invocation writes one JSONL stream under
+`.zicato/logs/<stamp>-<pid>.jsonl` (see `docs/design/LOGGING.md`); this reads
+it back through the same query-layer reader the dashboard log pane uses — the
+files are canonical. A workspace with no logs prints nothing and exits 0.
+
+```
+zicato logs [OPTIONS]
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--workspace PATH` | `.zicato` | Path to the zicato workspace root. |
+| `--invocation TEXT` | `latest` | Which stream to read: `latest` (newest) or a specific `<stamp>-<pid>` id (list them with `--list`). |
+| `--level [DEBUG\|INFO\|WARNING\|ERROR\|CRITICAL]` | — | Show only records at or above this level. Unset shows everything captured. |
+| `--limit INTEGER` | `200` | Tail at most this many records. |
+| `-f, --follow` | off | Poll-tail the stream, printing new records as they land (Ctrl-C to stop). |
+| `--list` | off | List the available invocation streams (newest first) and exit. |
 
 ### `zicato mutations`
 
