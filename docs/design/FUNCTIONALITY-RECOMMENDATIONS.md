@@ -191,9 +191,10 @@ The default proposer is a tool-using ADK agent with a rich restricted context
 (loss summary, valid targets, patterns, mutation points, prior-experiment digest,
 failure-mode profile, telemetry insights) and read-only tools
 (`list_mutation_points`, `read_mutable_file`, `grep_mutable`, `read_journal`,
-`read_insights`), with a parse→validate→retry loop. But generation is **one
-sample, no critique, no diversity pressure, no calibration loop** — the largest
-untapped quality reservoir. Ranked levers (all stay inside the existing
+`read_insights`), with a parse→validate→retry loop. But generation still has **no
+critique and no calibration loop** — and only *partial* diversity pressure
+(per-slot edit-class hints exist; per-slot decoding variation does not; item
+4) — the largest untapped quality reservoir. Ranked levers (all stay inside the existing
 overfitting-restricted context channels):
 
 1. **Best-of-N + self-critique (top lever).** Sample N experiments per
@@ -214,9 +215,18 @@ overfitting-restricted context channels):
    field of N into < N experiments. Reject/penalize a challenger whose
    `modulating` id-set + core-idea duplicates a sibling; optionally assign each
    slot a distinct target. Free tournament value. **H / S-M.**
-4. **Targeted failure-mode → edit-class prompting.** The failure profile already
-   says *over-retrieves / misses / empty / looping*; inject a mode-specific
-   instruction instead of leaving the proposer to infer the remedy. **M / S.**
+4. **Targeted failure-mode → edit-class prompting — mostly SHIPPED; the
+   remaining gap is decoding diversity.** The prompt half landed:
+   `proposer/best_of_n.py::_sample_slot` threads a DISTINCT per-slot
+   edit-class hint (`proposer/hints.py::hint_for_slot` /`EDIT_CLASS_HINTS`),
+   conditioning slots `0..N-2` on the failure profile's DOMINANT mode
+   (*over-retrieves / misses / empty / looping*) and keeping the last slot
+   exploratory — so the N samples inside one best-of-N slate are no longer
+   i.i.d. draws from one prompt. What is **still** unbuilt is *decoding*
+   diversity: the slots vary the instruction string but share one sampling
+   strategy and temperature. Vary temperature/strategy per slot (and pair it
+   with the hint) for genuine breadth. A Wave-1 sibling workstream is
+   building this. **M / S.**
 5. **Structured per-epoch reflection on rejection *patterns*** (distinct from the
    per-experiment digest, which surfaces instances not patterns). **M / M.**
 6. **Richer mutation tooling**: a `read_parent_diff` (what the last promotion
