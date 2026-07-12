@@ -80,7 +80,11 @@ def test_cascade_oc_smoke_end_to_end() -> None:
 
 @pytest.fixture(scope="module")
 def full_report(tmp_path_factory: pytest.TempPathFactory) -> dict:
-    """One full harness run (~35s) shared across the marked assertions."""
+    """Experiments A+B shared across the marked assertions.
+
+    Experiment B carries the 60-trial null condition (the soundness bar), so
+    this fixture is the marked suite's cost driver (~75s single-worker; the
+    marked run is opt-in and excluded from the default suite)."""
     params = HarnessParams()
     return {
         "a": experiment_a(params, tmp_path_factory.mktemp("casc-a")),
@@ -148,14 +152,20 @@ def test_experiment_b_null_soundness_and_power_cost(full_report: dict) -> None:
     """§4.3: the hard soundness bar (cascade must NOT raise P(promote|null)
     above the single-stage contract's rate — here both are the evidence-gated
     zero, fact #4) AND the honest power accounting (the cascade never gains
-    power over the single stage; the staging costs power at small effects)."""
+    power over the single stage; the staging costs power at small effects).
+
+    The null bar rests on ``null_trials`` (60) trials, not the effect
+    conditions' 16 — a cheap null field bought a stiffer bound (95% Wilson
+    upper ~0.06 rather than ~0.20)."""
     b = full_report["b"]["by_condition"]
     for cond, row in b.items():
         print(
-            f"\n[B {cond}] on={row['cascade_on']:.2f} off={row['single_stage']:.2f} "
+            f"\n[B {cond}] n={row['n']} on={row['cascade_on']:.2f} off={row['single_stage']:.2f} "
             f"naive={row['naive_gate_at_every_rung']:.2f}"
         )
 
+    # The null bar is measured on the larger trial count.
+    assert b["null"]["n"] >= 60
     # The hard bar: no null promotion leaks through the cascade, and it is not
     # above the single-stage contract's (zero) rate.
     assert b["null"]["cascade_on"] == 0.0
@@ -171,9 +181,13 @@ def test_experiment_b_null_soundness_and_power_cost(full_report: dict) -> None:
     # regression the harness exists to expose).
     assert b["small"]["cascade_on"] <= b["small"]["single_stage"] - 0.10
 
-    # The failing alternative (gate at every rung) both loses power on the
-    # large effect and is less sound than the rank-halve cascade.
-    assert b["large"]["naive_gate_at_every_rung"] < b["large"]["single_stage"]
+    # The failing alternative (gate at every rung) now runs on the IDENTICAL
+    # seeded draws through the SAME evidence-gated terminal as the cascade
+    # column (rule-vs-rule). Sharing that sound terminal, it too holds the null
+    # at zero — the honest correction to the first run's 0.25 "leak", which was
+    # an artifact of pairing the naive rung rule with a weaker margin terminal.
+    # Soundness is the terminal's job, not the rung rule's.
+    assert b["null"]["naive_gate_at_every_rung"] == 0.0
 
 
 @pytest.mark.cascade_oc

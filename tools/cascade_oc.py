@@ -112,8 +112,14 @@ class HarnessParams:
     rung_trials: int = 48
     #: Screen veto false-veto trials (matches the shipped screen OC test's 200).
     screen_trials: int = 200
-    #: End-to-end promotion trials for Experiment B (evidence terminal, heavy).
+    #: End-to-end promotion trials for the Experiment B EFFECT conditions
+    #: (evidence terminal, heavy).
     b_trials: int = 16
+    #: End-to-end promotion trials for the Experiment B NULL (A/A) condition.
+    #: The soundness bar (P(promote|null)) rests on this count, so it is raised
+    #: to the doctrine's ``AA_TRIALS=60`` precedent — the null field never
+    #: triggers the expensive evidence streak, so the extra trials stay cheap.
+    null_trials: int = 60
     #: Experiment C trials per swept configuration (margin terminal, cheap).
     c_trials: int = 16
     #: Rung successive-halving ratio (racing's default).
@@ -179,6 +185,28 @@ def _slice_board(m: int) -> list[Any]:
 
 
 _RUNG_WEIGHTS = ScoringWeights()  # rung cut is rank-based; gate weights are irrelevant here
+
+# 95% two-sided normal quantile — the z for every Wilson interval below.
+_WILSON_Z95 = 1.959963984540054
+
+
+def _wilson_ci(successes: int, n: int, z: float = _WILSON_Z95) -> tuple[float, float]:
+    """95% Wilson score interval for ``successes`` of ``n`` Bernoulli trials.
+
+    The end-to-end promotion rates (Experiments B and C) are estimates from a
+    finite trial count; this reports the sampling uncertainty around each so the
+    doc can carry an interval instead of an unqualified point rate. The
+    board-unit BUDGET numbers are exact counts (a deterministic function of the
+    seeds), not sampled proportions, so they carry no interval.
+    """
+    if n == 0:
+        return (0.0, 0.0)
+    phat = successes / n
+    z2 = z * z
+    denom = 1.0 + z2 / n
+    center = (phat + z2 / (2.0 * n)) / denom
+    half = z * ((phat * (1.0 - phat) / n + z2 / (4.0 * n * n)) ** 0.5) / denom
+    return (round(max(0.0, center - half), 4), round(min(1.0, center + half), 4))
 
 
 # ---------------------------------------------------------------------------
@@ -514,14 +542,22 @@ def _cascade_promote_evidence(
 
 
 def _naive_gate_rung_promote(
-    workspace: Path, trial: int, field_tokens: dict[str, tuple[str, ...]], sigma: float, m: int
+    workspace: Path,
+    trial: int,
+    field_tokens: dict[str, tuple[str, ...]],
+    sigma: float,
+    m: int,
 ) -> bool:
     """The FAILING alternative (§4.3): run each rung's cut as a GATE on the
-    noisy board slice instead of a rank-halve. The true candidate is cut
-    whenever the noisy slice fails the margin gate — power bleeds at the rung.
-    Shown hot on the same seeded draws."""
+    noisy board slice instead of a rank-halve, then hand the survivor to the
+    SAME evidence-gated terminal the cascade column uses — on the IDENTICAL
+    seeded draws (same ``(trial+1)*11_000`` rung stream, same
+    ``_effective_decision(workspace, trial)`` terminal). The only thing that
+    differs from the cascade column is the RULE: gate-at-every-rung vs
+    rank-halve. The true candidate is cut whenever the noisy slice fails the
+    margin gate — power bleeds at the rung — isolating what the wrong rung
+    rule costs, samples held fixed."""
     field = list(field_tokens.keys())
-    holdout = tuple(_board_ids()[-1:])
     world = _CountingWorld({"champion": BASE_TOKENS, **field_tokens}, sigma)
     survivors: list[str] = []
     with pytest.MonkeyPatch.context() as mp:
@@ -531,7 +567,7 @@ def _naive_gate_rung_promote(
             res = asyncio.run(
                 _duel(
                     workspace=workspace,
-                    seed=(trial + 1) * 13_000 + cand_idx,
+                    seed=(trial + 1) * 11_000 + cand_idx,
                     left_id="champion",
                     right_id=cand,
                     weights=weights,
@@ -544,17 +580,15 @@ def _naive_gate_rung_promote(
             # would promote it (that is the "cut every stage as a gate" rule).
             if res.outcome.decision == "promoted":
                 survivors.append(cand)
-        if not survivors:
-            return False
-        # Terminal on the first survivor (margin gate + holdout).
-        return _margin_terminal(
-            workspace=workspace,
-            seed=(trial + 1) * 17_000,
-            challenger_id=survivors[0],
-            margin=0.35,
-            replicates=1,
-            holdout_ids=holdout,
-        )
+    if not survivors:
+        return False
+    # Terminal = the SAME shipped evidence-gated decision the cascade column
+    # runs, on the survivor mapped onto the "challenger" id, same trial seed.
+    survivor_tokens = field_tokens[survivors[0]]
+    term_world = _NoisyWorld({"champion": BASE_TOKENS, "challenger": survivor_tokens}, sigma)
+    with pytest.MonkeyPatch.context() as mp:
+        term_world.install(mp)
+        return _effective_decision(workspace, trial).decision == "promoted"
 
 
 def experiment_b(params: HarnessParams, workspace: Path) -> dict[str, Any]:
@@ -573,12 +607,15 @@ def experiment_b(params: HarnessParams, workspace: Path) -> dict[str, Any]:
     for name, (tokens, _delta) in DELTA_CASES.items():
         conditions[name] = {"true": tokens, "decoy": BASE_TOKENS}
 
-    results: dict[str, dict[str, float]] = {}
+    results: dict[str, dict[str, Any]] = {}
     for cond, field_tokens in conditions.items():
+        # The null (soundness) bar rests on a larger trial count than the
+        # effect conditions (Fix 2): a cheap null field, a stiffer bound.
+        n_trials = params.null_trials if cond == "null" else params.b_trials
         cascade_on = 0
         single_stage = 0
         naive = 0
-        for trial in range(params.b_trials):
+        for trial in range(n_trials):
             if _cascade_promote_evidence(
                 workspace, trial, field_tokens, params.eta, params.sigma, params.b_rung_slice
             ):
@@ -597,13 +634,23 @@ def experiment_b(params: HarnessParams, workspace: Path) -> dict[str, Any]:
             ):
                 naive += 1
         results[cond] = {
-            "cascade_on": cascade_on / params.b_trials,
-            "single_stage": single_stage / params.b_trials,
-            "naive_gate_at_every_rung": naive / params.b_trials,
+            "n": n_trials,
+            "cascade_on": cascade_on / n_trials,
+            "single_stage": single_stage / n_trials,
+            "naive_gate_at_every_rung": naive / n_trials,
+            "counts": {
+                "cascade_on": cascade_on,
+                "single_stage": single_stage,
+                "naive_gate_at_every_rung": naive,
+            },
+            "cascade_on_ci95": _wilson_ci(cascade_on, n_trials),
+            "single_stage_ci95": _wilson_ci(single_stage, n_trials),
+            "naive_gate_at_every_rung_ci95": _wilson_ci(naive, n_trials),
         }
 
     return {
-        "trials": params.b_trials,
+        "null_trials": params.null_trials,
+        "effect_trials": params.b_trials,
         "sigma": params.sigma,
         "by_condition": results,
         "wall_clock_s": round(time.monotonic() - started, 2),
@@ -733,7 +780,11 @@ def _experiment_c_at_delta(
                 "rung0_size": cfg.rung0_size,
                 "eta": cfg.eta,
                 "terminal_replicates": cfg.terminal_replicates,
+                "n": params.c_trials,
                 "power": promotes / params.c_trials,
+                "power_count": promotes,
+                "power_ci95": _wilson_ci(promotes, params.c_trials),
+                # exact count, not a sampled proportion → no interval
                 "mean_board_units": spend / params.c_trials,
             }
         )
@@ -754,7 +805,10 @@ def _experiment_c_at_delta(
         base_spend += calls
     baseline = {
         "label": "single_stage_baseline",
+        "n": params.c_trials,
         "power": base_promotes / params.c_trials,
+        "power_count": base_promotes,
+        "power_ci95": _wilson_ci(base_promotes, params.c_trials),
         "mean_board_units": base_spend / params.c_trials,
     }
 
@@ -969,6 +1023,24 @@ def _seeds_used(params: HarnessParams) -> dict[str, Any]:
     }
 
 
+def _persistable(report: dict[str, Any]) -> dict[str, Any]:
+    """The report minus the per-experiment ``wall_clock_s`` timings.
+
+    Wall-clock varies run-to-run; stripping it from the persisted JSON makes
+    the determinism claim (§5.1) literally true — the persisted report is
+    byte-identical across runs and ``PYTHONHASHSEED`` values. The timings are
+    still shown in the printed summary.
+    """
+    out = dict(report)
+    for key in ("experiment_a", "experiment_b", "experiment_c"):
+        sub = out.get(key)
+        if isinstance(sub, dict) and "wall_clock_s" in sub:
+            trimmed = dict(sub)
+            trimmed.pop("wall_clock_s", None)
+            out[key] = trimmed
+    return out
+
+
 def run_all(params: HarnessParams) -> dict[str, Any]:
     """Run every experiment and return the machine-readable report dict."""
     report: dict[str, Any] = {
@@ -996,6 +1068,7 @@ def _smoke_params() -> HarnessParams:
         rung_trials=2,
         screen_trials=3,
         b_trials=1,
+        null_trials=1,
         c_trials=1,
         rung_slice_sizes=(2,),
         c_deltas=("large",),
@@ -1010,6 +1083,10 @@ def _print_summary(report: dict[str, Any]) -> None:
     c = report["experiment_c"]
     slot = report["slot_integrity"]
     print("\n=== CASCADE OC HARNESS — summary ===")
+    print(
+        "(wall-clock, NOT persisted: "
+        f"A={a.get('wall_clock_s')}s B={b.get('wall_clock_s')}s C={c.get('wall_clock_s')}s)"
+    )
     print(f"full-board A/A floor (delta sd): {a['full_board_floor']:.3f}")
     print("\n[A] slice floors (grow ~1/sqrt(m) as m shrinks):")
     for m, fl in sorted(a["slice_floors"].items(), key=lambda kv: int(kv[0])):
@@ -1059,10 +1136,11 @@ def main(argv: list[str] | None = None) -> int:
     params = _smoke_params() if args.smoke else HarnessParams()
     report = run_all(params)
 
-    if args.out is not None:
-        args.out.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
-        print(f"wrote {args.out}")
     _print_summary(report)
+    if args.out is not None:
+        persisted = json.dumps(_persistable(report), indent=2, sort_keys=True)
+        args.out.write_text(persisted, encoding="utf-8")
+        print(f"wrote {args.out}")
     return 0
 
 
