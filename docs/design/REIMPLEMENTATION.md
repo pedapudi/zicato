@@ -453,7 +453,8 @@ from gather-completion order):
    (`orchestrator.py:~1651`). It therefore needs its OWN deterministic-order
    treatment in the ordered pass; it does not simply "inherit RoundLog's."
 6. **Shared `lineage.json` write.** `append_to_lineage(…, pending=True)`
-   (`orchestrator.py:1777`, inside `_propose_and_apply_challenger`) upserts
+   (inside `_propose_and_apply_challenger` — since the Finding-2 extraction,
+   `evolve/propose_apply.py`) upserts
    the in-flight node into the one shared `lineage.json`; two concurrent
    coroutines would interleave that read-modify-write. It must move to the
    ordered apply pass.
