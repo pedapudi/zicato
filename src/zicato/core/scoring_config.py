@@ -376,9 +376,10 @@ class ProposerQualityConfig:
         with ``recombine`` off is accepted-and-inert (the dependent-knob house
         style, like ``screen_veto_only`` without ``screen_entries``). Cost:
         ``"mechanical"`` spends ``best_of_n − 1`` propose calls (the mint is
-        free); ``"llm"`` spends exactly ``best_of_n`` (the merge call
-        SUBSTITUTES the slot's own sample call, so an ``"llm"`` round costs a
-        recombine-off round). Omitted from the contract canonical form at its
+        free); ``"llm"`` spends ``best_of_n`` on the happy path (the merge
+        call SUBSTITUTES the slot's own sample call) — a rare parse/validate
+        degrade adds the one fallback sample on top (``best_of_n + 1`` for
+        that round). Omitted from the contract canonical form at its
         ``"mechanical"`` default (no retroactive roll); ``"llm"`` rolls the
         epoch — a slate that can compose an LLM merge proposes under a
         different rule. Must be ``"mechanical"`` or ``"llm"``. See

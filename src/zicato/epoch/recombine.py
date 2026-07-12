@@ -147,17 +147,6 @@ def eligible_parents(
     return kept
 
 
-def _disjoint(a: ParentCandidate, b: ParentCandidate) -> bool:
-    """#7 — the two PATCH mutation-id sets share nothing (jaccard == 0).
-
-    Required, not preferred: the applier re-enumerates between patches and
-    is LAST-WINS on a duplicate target, so a pair that both touch a target
-    would silently drop one side's edit. Jaccard over disjoint sets is 0;
-    any overlap makes it > 0.
-    """
-    return not (a.patch_mutation_ids & b.patch_mutation_ids)
-
-
 def _complementary(a: ParentCandidate, b: ParentCandidate) -> bool:
     """#8 — improved sets both non-empty and neither is a subset of the other.
 
@@ -200,9 +189,10 @@ def rank_pairs(
        ``tried_pairs`` (built from every persisted ``recombined_from``) is
        skipped: a round-SPENDING mint must not be re-minted (a vetoed,
        unpersisted mint is not in the set, so it may retry).
-    #7 **disjoint** patch mutation-id sets (:func:`_disjoint`) — HARD in
-       ``"mechanical"`` mode; in ``"llm"`` mode any overlap is allowed and
-       ranked (key level 2 below).
+    #7 **disjoint** patch mutation-id sets (the inline ``overlap`` count:
+       zero means disjoint — the applier is last-wins on a duplicate
+       target) — HARD in ``"mechanical"`` mode; in ``"llm"`` mode any
+       overlap is allowed and ranked (key level 2 below).
     #8 **complementary** improved sets (:func:`_complementary`).
 
     Ranking key (each level only breaks the previous level's ties):

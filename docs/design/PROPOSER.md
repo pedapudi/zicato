@@ -308,11 +308,19 @@ and discarded inside `_build_recombination_pair`, and the holdout is never
 eligible (the `train_entry_ids` filter). The merge call widens the proposer's
 visibility by NOTHING the genealogy channel does not already permit.
 
+One semantic note: an `llm` merge is **a full proposal, not strictly a
+union** — the response validates against the whole mutation manifest, so it
+may touch points neither parent did. `recombined_from` records the pair that
+*seeded* the merge; only the mechanical mint guarantees the patch set is
+exactly the parents' union. The gate adjudicates either way.
+
 **Cost.** `mechanical` spends `best_of_n − 1` propose calls (the mint is free).
-`llm` spends exactly `best_of_n`: the merge call SUBSTITUTES the slot's own
-sample call (it does not add to it), so an `llm`-merge round costs precisely
-what a recombine-OFF round costs — the slot count is unchanged, and the
-`estimate_cost` best-of-N upper bound already covers it (no CostLine moves).
+`llm` spends `best_of_n` on the happy path: the merge call SUBSTITUTES the
+slot's own sample call, so a successful `llm`-merge round costs what a
+recombine-OFF round costs. The one exception is the degrade: a merge response
+that fails parse/validation has already spent its call, and the fallback
+fresh sample adds one more (`best_of_n + 1` for that round — rare, and the
+reason the `estimate_cost` figure is documented as an estimate, not a cap).
 
 ---
 
