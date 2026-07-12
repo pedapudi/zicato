@@ -24,7 +24,7 @@ import { el } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, section, empty, verdictPill, decisionFor, decisionOf, dataTable, deltaCell } from '../ui.js';
+import { gatedSwap, section, empty, verdictPill, decisionFor, decisionOf, dataTable, deltaCell, ratingCellEl, ratingTripleDigest } from '../ui.js';
 import { renderStructure, structurePill, structureDigest, isNonGauntlet, normalizeStructure, resolveNonGauntletSt } from './structure.js';
 import { deriveLiveStatus } from '../livestatus.js';
 import { roundsFromTimeline, roundModelDigest } from '../rounds.js';
@@ -104,8 +104,10 @@ export async function render(host, ctx, params) {
     return;
   }
   const experiments = (ep && Array.isArray(ep.experiments)) ? ep.experiments : [];
+  // the visibility rating triple rides the lineage rows (server-joined; the
+  // Rust view / experiments fallback simply omit it -> unrated, renders '—').
   const gens = rows.length
-    ? rows.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted }))
+    ? rows.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted, elo: g.elo, elo_se: g.elo_se, elo_games: g.elo_games }))
     : experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: x.promoted == null ? null : !!x.promoted }));
 
   const scalarByGen = new Map();
@@ -130,7 +132,10 @@ export async function render(host, ctx, params) {
       svg.isNum(m.delta_scalar) ? m.delta_scalar.toFixed(2) : null,
       (m.hypothesis_core_idea || '').slice(0, 90),
       gates[i] && gates[i].primary_driver ? gates[i].primary_driver.judge : null]),
-    gens: gens.map((g) => [g.id, g.parent, g.promoted, scalarByGen.has(g.id) ? scalarByGen.get(g.id).toFixed(3) : null]),
+    gens: gens.map((g) => [g.id, g.parent, g.promoted, scalarByGen.has(g.id) ? scalarByGen.get(g.id).toFixed(3) : null,
+      // the visibility rating (int register) — a reindex that moves a rating
+      // repaints; an unrated row folds null (pre-rating digest shape).
+      ratingTripleDigest(g)]),
   });
 
   gatedSwap(host, digest, () => {
@@ -157,7 +162,7 @@ export async function render(host, ctx, params) {
       const tbl = dataTable({
         class: 'dn-board-table',
         columns: [{ label: 'generation' }, { label: 'role' }, { label: 'parent' },
-          { label: 'scalar (loss)', class: 'dn-num' }, { label: 'Δ vs champion', class: 'dn-num' }, { label: '' }],
+          { label: 'scalar (loss)', class: 'dn-num' }, { label: 'rating', class: 'dn-num' }, { label: 'Δ vs champion', class: 'dn-num' }, { label: '' }],
         rows: gens.map((g) => {
           const sc = scalarByGen.get(g.id);
           const baseline = !g.parent;
@@ -171,6 +176,8 @@ export async function render(host, ctx, params) {
               { el: verdictPill(decision) },
               { class: 'dn-mono', text: g.parent || 'seed' },
               { class: 'dn-num dn-mono', text: svg.isNum(sc) ? svg.fmt(sc, 1) : '—' },
+              // the visibility rating (server-joined; never the gate).
+              { class: 'dn-num', el: [ratingCellEl(g)] },
               deltaCell(delta, { base: 'dn-num dn-mono', text: svg.isNum(delta) ? svg.fmtSigned(delta, 1) : '—' }),
               { el: el('a', { class: 'dn-linkbtn', href: ctx.href('candidate', { epochId: id, gen: g.id }), text: 'open →' }) },
             ],

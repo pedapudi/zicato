@@ -684,6 +684,61 @@ export function stat(value, key) {
   ]);
 }
 
+// ---- the candidate rating (visibility-only; never the gate) ----------
+//
+// The index-derived Bradley–Terry rating, served on the wire as the triple
+// `elo` / `elo_se` / `elo_games` (lineage nodes + tournament standings). The
+// server derives; these helpers only FORMAT (DQ1). Quiet-precision register:
+// mono `1512 ±34`, a faint `provisional` suffix while the sample is thin,
+// `—` when the fold has not rated the generation (zero settled duels, cold
+// index, or the Rust lineage view, which omits the keys — absence reads as
+// null). NO chips.
+
+// THE one home of the provisionality floor (the views import it from here;
+// the server never thresholds — provisionality is a display register, the
+// per-candidate analogue of the per-pair MIN_CREDIBLE_DUELS honesty states
+// in candidate.js's ratingBlock). Below this many settled duels the ridge
+// prior still dominates the fit, so the number renders with the faint
+// `provisional` suffix rather than as a settled strength.
+export const MIN_RATING_GAMES = 5;
+
+// Normalize a rating-bearing row ({elo, elo_se, elo_games}, keys optional)
+// into a render model: null when unrated, else
+// {text: '1512 ±34', elo, se, games, provisional}. Integer register — a
+// rating is a legibility number, never false precision.
+export function ratingModel(src) {
+  if (!src || !isNum(src.elo)) return null;
+  const eloInt = Math.round(src.elo);
+  const se = isNum(src.elo_se) ? Math.round(src.elo_se) : null;
+  const games = isNum(src.elo_games) ? src.elo_games : null;
+  return {
+    elo: eloInt, se, games,
+    provisional: games != null && games < MIN_RATING_GAMES,
+    text: String(eloInt) + (se != null ? ' ±' + se : ''),
+  };
+}
+
+// A table-cell node for the rating column (standings + gens roster):
+// mono value + faint `provisional` suffix; a plain '—' when unrated.
+export function ratingCellEl(src) {
+  const m = ratingModel(src);
+  if (!m) return el('span', { class: 'dn-mono dt-rating', text: '—' });
+  return el('span', { class: 'dt-rating' }, [
+    el('span', { class: 'dn-mono', text: m.text }),
+    m.provisional ? el('span', { class: 'dn-faint dt-rating-prov', text: ' provisional' }) : null,
+  ].filter(Boolean));
+}
+
+// The digest fold for a rating TRIPLE (int convention — the render
+// register): a [elo, se, games, provisional] tuple, or null when unrated so
+// a pre-rating payload digests exactly like an unrated one. (Named for the
+// per-candidate triple — candidate.js's ratingDigest is the separate
+// per-PAIR gate-block digest.)
+export function ratingTripleDigest(src) {
+  const m = ratingModel(src);
+  return m ? [m.elo, m.se, m.games, m.provisional] : null;
+}
+
 // A themed link/button (the E bug fix: the "open full transcript" link must be
 // a properly styled themed control, never an unstyled anchor).
 export function linkButton(text, hrefStr, attrs) {
