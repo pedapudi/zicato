@@ -16,6 +16,7 @@ from zicato.query.paths import (
     _read_json_value,
     layout_of,
 )
+from zicato.query.ratings import RATING_FIELDS, rating_by_generation
 from zicato.workspace import iter_epochs
 
 # ---------------------------------------------------------------------------
@@ -39,6 +40,14 @@ def build_lineage_view(paths: WorkspacePaths, epoch_id: str | None = None) -> di
     epoch-scoped generations feed the views consume); ``None`` keeps the
     workspace-global walk. An unknown id yields an empty list — the same
     honest degrade as an epoch with no generations.
+
+    Each node also carries the visibility rating triple ``elo`` /
+    ``elo_se`` / ``elo_games`` (DQ2 snake_case), joined server-side from
+    the analytical index (never re-derived by the client — DQ1). The join
+    is best-effort (DQ3): an absent / cold index — or a generation the
+    fold has not rated (zero settled duels, or a pre-reindex file) — reads
+    as the null triple, never an error. The rating is visibility-only; it
+    never gates promotion.
     """
     legacy: dict[tuple[str, str], dict[str, Any]] = {}
     lineage_file = _read_json_value(paths.lineage)
@@ -141,6 +150,14 @@ def build_lineage_view(paths: WorkspacePaths, epoch_id: str | None = None) -> di
                 if round_index is not None:
                     node["round_index"] = round_index
                 generations.append(node)
+
+    # The visibility rating triple, joined server-side from the index
+    # (best-effort — the null triple when the index is absent/cold, DQ3).
+    ratings = rating_by_generation(paths, epoch_id)
+    for node in generations:
+        triple = ratings.get((node["epoch_id"], node["generation_id"]))
+        for field in RATING_FIELDS:
+            node[field] = triple.get(field) if triple else None
 
     # Sort by the RECORDED creation timestamp first (epoch ``config.json``
     # created_at, then the generation's proposed_at/created_at), with the

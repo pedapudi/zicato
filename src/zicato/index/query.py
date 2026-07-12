@@ -188,13 +188,16 @@ def generations_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
     optional column: a legacy index opened read-only without the
     migration still loads each row with ``round_index`` present-but-null,
     so a consumer can group ``Epoch -> Round -> {challengers}`` and
-    degrade on a null.
+    degrade on a null. The rating triple (``elo`` / ``elo_se`` /
+    ``elo_games``; v10 + v12, visibility-only) rides the same optional
+    contract — present-but-null on a legacy index or an unplayed
+    generation.
     """
     return _select_optional_columns(
         db_path,
         "generations",
         ["epoch_id", "generation_id", "parent_generation_id", "promoted", "created_at"],
-        ["round_index", "elo", "elo_games"],
+        ["round_index", "elo", "elo_se", "elo_games"],
         "WHERE epoch_id = ? ORDER BY created_at, generation_id",
         (epoch_id,),
     )
@@ -935,26 +938,29 @@ def tournaments_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
 
 
 def elo_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
-    """Return each generation's folded Elo rating under ``epoch_id``.
+    """Return each generation's folded rating under ``epoch_id``.
 
-    The read side of the Elo analytics fold (``index/elo.py``;
+    The read side of the Bradley--Terry rating fold (``index/elo.py``;
     FUNCTIONALITY-RECOMMENDATIONS.md §5): one row per generation carrying
-    ``generation_id``, ``parent_generation_id``, ``elo`` (its folded
-    rating across the lineage's settled match ledger), and ``elo_games``
-    (how many settled duels contributed to it), oldest first.
+    ``generation_id``, ``parent_generation_id``, ``elo`` (its batch-fit
+    rating across the lineage's settled match ledger, on the Elo scale),
+    ``elo_se`` (the rating's standard error on the same scale), and
+    ``elo_games`` (how many settled duels contributed to it), oldest first.
 
-    Elo is **read-only / for visibility** — it never gates promotion. The
-    ``elo`` / ``elo_games`` columns are v9 additions: a legacy index opened
-    read-only without the migration still loads each row with both fields
-    present-but-null (``elo IS NULL`` = rating not yet computed; run
-    ``zicato reindex`` to derive them). A never-indexed workspace yields
-    ``[]``.
+    The rating is **read-only / for visibility** — it never gates
+    promotion. ``elo`` / ``elo_games`` land in schema v10 and ``elo_se`` in
+    v12: a legacy index opened read-only without the migration still loads
+    each row with all three fields present-but-null (``elo IS NULL`` =
+    rating not yet computed; ``elo_se IS NULL`` on a pre-v12 file =
+    uncertainty not yet computed; run ``zicato reindex`` to derive them). A
+    generation that never played a settled duel also reads NULL (no games,
+    no rating). A never-indexed workspace yields ``[]``.
     """
     return _select_optional_columns(
         db_path,
         "generations",
         ["epoch_id", "generation_id", "parent_generation_id", "created_at"],
-        ["elo", "elo_games"],
+        ["elo", "elo_se", "elo_games"],
         "WHERE epoch_id = ? ORDER BY created_at, generation_id",
         (epoch_id,),
     )

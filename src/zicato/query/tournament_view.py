@@ -25,6 +25,7 @@ from zicato.query.paths import (
     layout_of,
     read_current_epoch,
 )
+from zicato.query.ratings import RATING_FIELDS, rating_by_generation
 from zicato.query.runtime_view import read_active_tournament_dict
 from zicato.workspace import read_gen_score
 
@@ -1249,7 +1250,8 @@ def build_tournament_structure(
         if result is not None:
             enriched = _enrich_field_status(paths, epoch_id, tournament_id, result)
             enriched = _enrich_override_status(paths, epoch_id, tournament_id, enriched)
-            return _enrich_diversity(paths, epoch_id, enriched)
+            enriched = _enrich_diversity(paths, epoch_id, enriched)
+            return _enrich_standings_ratings(paths, epoch_id, enriched)
     return _empty_tournament_structure(epoch_id, tournament_id, "loss_files")
 
 
@@ -1464,6 +1466,41 @@ def _enrich_diversity(
         mutation_sets, tolerance=tolerance, soft_rejected_count=soft_rejected
     )
     result["diversity"] = block
+    return result
+
+
+def _enrich_standings_ratings(
+    paths: WorkspacePaths, epoch_id: str, result: dict[str, Any]
+) -> dict[str, Any]:
+    """Attach the visibility rating triple to every standings entry (additive).
+
+    Each ``standings`` record gains ``elo`` / ``elo_se`` / ``elo_games`` (DQ2
+    snake_case), joined server-side from the analytical index so the client
+    renders the rating column without re-deriving anything (DQ1). Best-effort
+    by contract (DQ3): an absent / cold index — or a generation the fold has
+    not rated (zero settled duels; a pre-reindex file) — attaches the null
+    triple, never an error.
+
+    Settled-vs-live: the structure payload is request-scoped (the GET handler
+    calls this reader once per fetch — there is no SSE/heartbeat recompute),
+    and the rating join reads only the SETTLED index. A LIVE field's standings
+    (resolved off ``active_tournament.json``) simply carry whatever the index
+    derived at the last ingest — typically the null triple for brand-new
+    challengers — and the live overlay (projected scalars, in-flight bars)
+    keeps riding the active envelope untouched. The rating is visibility-only;
+    it never gates promotion.
+    """
+    standings = result.get("standings")
+    if not isinstance(standings, list) or not standings:
+        return result
+    ratings = rating_by_generation(paths, epoch_id)
+    for s in standings:
+        if not isinstance(s, dict):
+            continue
+        gid = str(s.get("generation_id") or "")
+        triple = ratings.get((epoch_id, gid)) if gid else None
+        for field in RATING_FIELDS:
+            s[field] = triple.get(field) if triple else None
     return result
 
 
