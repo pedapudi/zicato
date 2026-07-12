@@ -378,6 +378,7 @@ def set_proposer_quality(
     process_exemplars: int | None = None,
     recombine: bool | None = None,
     genealogy: int | None = None,
+    recombine_merge: str | None = None,
 ) -> str:
     """Set the proposer-quality levers: best-of-N slate + self-critique.
 
@@ -395,7 +396,13 @@ def set_proposer_quality(
     rejected complementary challengers instead of sampling the LLM —
     REQUIRES best_of_n > 1 to have effect, and is cost-neutral (the mint
     REPLACES that slot's auxiliary propose call, never adds one).
-    Flipping it rolls the epoch. ``genealogy`` opts in the genealogy
+    Flipping it rolls the epoch. ``recombine_merge`` (``"mechanical"``
+    default | ``"llm"``) chooses HOW the slot composes the union:
+    ``"mechanical"`` mints the disjoint patch concatenation with no LLM
+    call; ``"llm"`` issues one merge call (relaxing disjointness so an
+    OVERLAPPING pair the mechanical mint cannot touch can be merged).
+    Meaningful only with recombine on; ``"llm"`` rolls the epoch.
+    ``genealogy`` opts in the genealogy
     channel (WS-GENE): up to that many candidate-lineage items — the
     champion's promoted patch history + diverse rejected reign candidates,
     each with a banded outcome — are spliced into the prompt so the
@@ -414,6 +421,7 @@ def set_proposer_quality(
             process_exemplars=process_exemplars,
             recombine=recombine,
             genealogy=genealogy,
+            recombine_merge=recombine_merge,
         )
     except ValueError as exc:
         return _result_json({"error": str(exc)})

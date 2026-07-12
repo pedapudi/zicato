@@ -176,6 +176,7 @@ def rank_pairs(
     eligible: list[ParentCandidate],
     *,
     tried_pairs: frozenset[frozenset[str]] = frozenset(),
+    merge_mode: str = "mechanical",
 ) -> tuple[ParentCandidate, ParentCandidate] | None:
     """Return the single best mergeable pair (A, B) in ascending-gid order.
 
@@ -184,35 +185,55 @@ def rank_pairs(
     total key. ``None`` when no pair survives — the caller then mints
     nothing and the round is byte-identical.
 
+    ``merge_mode`` (``"mechanical"`` default | ``"llm"``) is the ONLY split
+    (WS-MERGE; PROPOSER.md §2.6.1): in ``"llm"`` mode predicate #7
+    (disjointness) RELAXES for pair selection — the LLM merge resolves the
+    overlap the mechanical mint cannot — and overlap becomes a RANKING
+    penalty instead. EVERY other predicate holds in both modes (#8
+    especially). Because a mechanical-mode survivor is disjoint BY the #7
+    filter, its overlap key is always ``0`` and constant across survivors,
+    so the mechanical selection is byte-identical to before this parameter
+    existed.
+
     Pair predicates:
     #5 **pair not already tried** — a ``frozenset({gid_a, gid_b})`` in
        ``tried_pairs`` (built from every persisted ``recombined_from``) is
        skipped: a round-SPENDING mint must not be re-minted (a vetoed,
        unpersisted mint is not in the set, so it may retry).
-    #7 **disjoint** patch mutation-id sets (:func:`_disjoint`).
+    #7 **disjoint** patch mutation-id sets (:func:`_disjoint`) — HARD in
+       ``"mechanical"`` mode; in ``"llm"`` mode any overlap is allowed and
+       ranked (key level 2 below).
     #8 **complementary** improved sets (:func:`_complementary`).
 
     Ranking key (each level only breaks the previous level's ties):
     1. combined TRAIN coverage DOWN — the union of the two improved sets;
        more distinct entries fixed is the whole objective.
-    2. cross-regression penalty UP — the union of the two regressed sets;
+    2. patch OVERLAP UP — the size of the two patch mutation-id sets'
+       intersection; prefer LESS overlap at equal coverage (a cleaner merge
+       for the LLM). Always ``0`` in ``"mechanical"`` mode (the #7 filter
+       already dropped every overlapping pair), so this term never disturbs
+       the mechanical ranking — it only orders ``"llm"``-mode survivors.
+    3. cross-regression penalty UP — the union of the two regressed sets;
        fewer entries put at risk wins (a penalty, never a filter: per-entry
        single-sample verdicts are noisy, the screen + gate still adjudicate).
-    3. summed Elo DOWN — higher-rated parents preferred; default-filled to
+    4. summed Elo DOWN — higher-rated parents preferred; default-filled to
        :data:`DEFAULT_ELO` so it can only reorder within an evidence tie.
-    4. lexicographic backstop — ``(gid_a, gid_b)`` ascending: a total order
+    5. lexicographic backstop — ``(gid_a, gid_b)`` ascending: a total order
        that makes the selection reproducible for any fixed pool, in any
        input order (the shuffled-pool order-independence pin).
     """
+    allow_overlap = merge_mode == "llm"
     best: tuple[ParentCandidate, ParentCandidate] | None = None
-    best_key: tuple[int, int, float, str, str] | None = None
+    best_key: tuple[int, int, int, float, str, str] | None = None
     for x, y in combinations(eligible, 2):
         # Canonicalise to ascending-gid (A, B) so the minted patch order
         # and the ranking backstop are order-independent.
         a, b = (x, y) if x.generation_id <= y.generation_id else (y, x)
         if frozenset({a.generation_id, b.generation_id}) in tried_pairs:
             continue
-        if not _disjoint(a, b):
+        overlap = len(a.patch_mutation_ids & b.patch_mutation_ids)
+        if overlap and not allow_overlap:
+            # #7 disjointness — HARD in mechanical mode only.
             continue
         if not _complementary(a, b):
             continue
@@ -223,6 +244,7 @@ def rank_pairs(
         )
         key = (
             -coverage,  # more coverage first
+            overlap,  # less overlap first (constant 0 in mechanical mode)
             cross_regression,  # less risk first
             -summed_elo,  # higher rating first
             a.generation_id,  # lexicographic backstop

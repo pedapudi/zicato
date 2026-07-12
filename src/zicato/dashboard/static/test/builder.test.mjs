@@ -713,6 +713,15 @@ test('builder view: the Proposer section drives set_proposer_quality + set_exper
   const recCall = OP_CALLS.find((c) => c.op === 'set_proposer_quality' && 'recombine' in c.args);
   assert(recCall && recCall.args.recombine === true,
     'the recombination toggle posts set_proposer_quality {recombine:true} — exact op+args');
+  const merge = byAria(host, 'dn-bld-check', 'LLM-guided merge');
+  assert(merge, 'the LLM-guided-merge control renders');
+  assert(!merge.checked, 'the merge mode is unchecked at the "mechanical" default');
+  merge.checked = true;
+  merge.dispatchEvent(makeEvent('change'));
+  await tick();
+  const mergeCall = OP_CALLS.find((c) => c.op === 'set_proposer_quality' && 'recombine_merge' in c.args);
+  assert(mergeCall && mergeCall.args.recombine_merge === 'llm',
+    'the merge toggle posts set_proposer_quality {recombine_merge:"llm"} — exact op+args');
   const genealogy = byAria(host, 'dn-bld-num', 'Genealogy');
   assert(genealogy, 'the genealogy control renders');
   genealogy.value = '4';

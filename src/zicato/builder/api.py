@@ -126,6 +126,7 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
             process_exemplars=_opt_int(args, "process_exemplars"),
             recombine=_opt_bool(args, "recombine"),
             genealogy=_opt_int(args, "genealogy"),
+            recombine_merge=_opt_str(args, "recombine_merge"),
         )
     if op == "set_experiment_memory":
         return ops.set_experiment_memory(draft, cross_epoch=_opt_bool(args, "cross_epoch"))
@@ -181,6 +182,20 @@ def _opt_bool(args: dict[str, Any], key: str) -> bool | None:
     if raw is None:
         return None
     return bool(raw)
+
+
+def _opt_str(args: dict[str, Any], key: str) -> str | None:
+    """Coerce an optional string arg (absent / null ⇒ ``None``).
+
+    A non-string raises :class:`ValueError` so the handler returns a clear
+    400 instead of silently mis-typing a contract knob.
+    """
+    raw = args.get(key)
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise ValueError(f"{key!r} must be a string, got {raw!r}")
+    return raw
 
 
 def _runs_of(args: dict[str, Any]) -> int | None:

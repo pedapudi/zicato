@@ -3437,7 +3437,12 @@ def _build_recombination_pair(
 
         manifest_ids = frozenset(str(m.id) for m in mutations)
         eligible = eligible_parents(candidates, champion_id=parent_id, manifest_ids=manifest_ids)
-        pair = rank_pairs(eligible, tried_pairs=frozenset(tried))
+        # WS-MERGE: the merge mode gates the disjointness predicate — "llm"
+        # relaxes #7 for pair selection so an OVERLAPPING pair (which only an
+        # LLM merge can compose) is eligible; "mechanical" (default) keeps #7
+        # hard and selects byte-identically to before this knob.
+        merge_mode = getattr(quality, "recombine_merge", "mechanical")
+        pair = rank_pairs(eligible, tried_pairs=frozenset(tried), merge_mode=merge_mode)
         if pair is None:
             return None
         a, b = pair
@@ -3448,6 +3453,19 @@ def _build_recombination_pair(
             len(a.improved_entry_ids | b.improved_entry_ids),
             len(a.regressed_entry_ids | b.regressed_entry_ids),
         )
+        # WS-MERGE: the LLM merge prompt carries each parent's whole-candidate
+        # BANDED outcome (envelope-clean — the exact Δscalar is bucketed HERE
+        # and discarded, only the coarse label reaches the pair). Reuses the
+        # experiment-memory band vocabulary; "" for an unsettled delta.
+        from zicato.proposer.prompts import _bucket_scalar_delta  # noqa: PLC0415
+
+        exp_by_gid = {e.generation_id: e for e in pool}
+
+        def _banded_outcome(gid: str) -> str:
+            exp = exp_by_gid.get(gid)
+            delta = exp.outcome.scalar_score_delta if exp is not None and exp.outcome else None
+            return _bucket_scalar_delta(delta) if delta is not None else ""
+
         return RecombinationPair(
             a_generation_id=a.generation_id,
             b_generation_id=b.generation_id,
@@ -3459,6 +3477,8 @@ def _build_recombination_pair(
             b_improved_count=len(b.improved_entry_ids),
             combined_improved_count=len(a.improved_entry_ids | b.improved_entry_ids),
             combined_regressed_count=len(a.regressed_entry_ids | b.regressed_entry_ids),
+            a_banded_outcome=_banded_outcome(a.generation_id),
+            b_banded_outcome=_banded_outcome(b.generation_id),
             a_expected_drift_movements=a.expected_drift_movements,
             b_expected_drift_movements=b.expected_drift_movements,
             a_expected_metric_movements=a.expected_metric_movements,

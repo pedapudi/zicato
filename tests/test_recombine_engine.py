@@ -161,6 +161,72 @@ def test_predicate_8_complementarity_requires_distinct_wins() -> None:
     assert rank_pairs([base, distinct]) is not None
 
 
+def test_llm_mode_relaxes_disjointness_for_overlapping_pair() -> None:
+    """WS-MERGE: ``merge_mode="llm"`` accepts an OVERLAPPING pair #7 rejects.
+
+    The whole point of the LLM merge: two rejected fixes that touch the SAME
+    mutation id can be composed by a model (resolving the overlap a last-wins
+    concatenation would drop). Mechanical mode still filters it.
+    """
+    a = _candidate("v1", mutation_ids=("m1", "m2"), improved=("e1",))
+    b = _candidate("v2", mutation_ids=("m2", "m3"), improved=("e2",))
+    # Disjoint predicate #7 is hard in mechanical mode.
+    assert rank_pairs([a, b], merge_mode="mechanical") is None
+    assert rank_pairs([a, b]) is None  # default is mechanical
+    # In llm mode the overlap is allowed and the complementary pair selects.
+    pair = rank_pairs([a, b], merge_mode="llm")
+    assert pair is not None
+    assert (pair[0].generation_id, pair[1].generation_id) == ("v1", "v2")
+
+
+def test_llm_mode_still_enforces_complementarity() -> None:
+    """WS-MERGE: only #7 relaxes — #8 (complementarity) holds in llm mode too.
+
+    An LLM merge of two identical / subsumed fixes is nothing; the overlapping
+    pair must STILL carry two distinct wins.
+    """
+    base = _candidate("v1", mutation_ids=("m1",), improved=("e1", "e2"))
+    subset = _candidate("v2", mutation_ids=("m1",), improved=("e1",))  # overlaps + ⊆
+    assert rank_pairs([base, subset], merge_mode="llm") is None
+    distinct = _candidate("v3", mutation_ids=("m1",), improved=("e2", "e3"))  # overlaps + distinct
+    pair = rank_pairs([base, distinct], merge_mode="llm")
+    assert pair is not None
+    assert (pair[0].generation_id, pair[1].generation_id) == ("v1", "v3")
+
+
+def test_llm_mode_prefers_less_overlap_at_equal_coverage() -> None:
+    """WS-MERGE ranking: at equal coverage, the LESS-overlapping pair wins.
+
+    Overlap is the new key level 2 (right after coverage): a cleaner merge for
+    the model, all else equal.
+    """
+    a = _candidate("v1", mutation_ids=("m1", "m2"), improved=("e1",))
+    b = _candidate("v2", mutation_ids=("m2", "m3"), improved=("e2",))  # overlaps a on m2
+    c = _candidate("v3", mutation_ids=("m4",), improved=("e2",))  # disjoint from a
+    # (a,b) and (a,c) both cover {e1, e2}; (a,c) has zero overlap, (a,b) has one.
+    pair = rank_pairs([a, b, c], merge_mode="llm")
+    assert pair is not None
+    assert (pair[0].generation_id, pair[1].generation_id) == ("v1", "v3")
+
+
+def test_mechanical_mode_ignores_overlapping_pair_even_at_higher_coverage() -> None:
+    """Mechanical selection is byte-identical: the overlap key never disturbs it.
+
+    An overlapping pair with HIGHER coverage is invisible to mechanical mode
+    (filtered by #7), so the disjoint complementary pair is chosen exactly as
+    before this knob existed; llm mode reaches the higher-coverage overlap.
+    """
+    a = _candidate("v1", mutation_ids=("m1",), improved=("e1",))
+    b = _candidate("v2", mutation_ids=("m2",), improved=("e2",))  # disjoint from a
+    c = _candidate("v3", mutation_ids=("m1",), improved=("e2", "e3"))  # overlaps a, wider
+    mech = rank_pairs([a, b, c], merge_mode="mechanical")
+    assert mech is not None
+    assert (mech[0].generation_id, mech[1].generation_id) == ("v1", "v2")
+    llm = rank_pairs([a, b, c], merge_mode="llm")
+    assert llm is not None
+    assert (llm[0].generation_id, llm[1].generation_id) == ("v1", "v3")
+
+
 def test_predicate_5_tried_pair_dedup() -> None:
     """#5: a persisted pair never re-mints; an untried pairing still can."""
     a = _candidate("v1", mutation_ids=("m1",), improved=("e1",))

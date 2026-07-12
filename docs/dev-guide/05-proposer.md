@@ -1138,8 +1138,9 @@ Points where the trace changes under non-default knobs:
 
 (`src/zicato/core/scoring_config.py`; all contract fields — non-default
 values roll the epoch; `screen_entries`, `screen_veto_only`,
-`process_exemplars`, `recombine` and `genealogy` are omitted-at-default from
-the canonical form so old epochs never roll retroactively.)
+`process_exemplars`, `recombine`, `recombine_merge` and `genealogy` are
+omitted-at-default from the canonical form so old epochs never roll
+retroactively.)
 
 | Knob | Default | Effect | Inert when |
 |---|---|---|---|
@@ -1149,6 +1150,7 @@ the canonical form so old epochs never roll retroactively.)
 | `screen_veto_only` | `false` | `true` suppresses BOTH screen tiebreak feeds (critic block + heuristic key) — the screen can only disqualify | `screen_entries == 0` |
 | `process_exemplars` | `0` (OFF) | max redacted event windows spliced into the prompt per round | — |
 | `recombine` | `false` (OFF) | the mechanical recombination slot (§5.6.11): the last slate slot MINTS the patch union of two rejected complementary challengers instead of sampling the LLM; cost-neutral (the mint replaces the slot's propose call) | `best_of_n == 1` (no slate slot to mint into) |
+| `recombine_merge` | `"mechanical"` | how the slot composes the union (§5.6.11): `"mechanical"` mints the disjoint concatenation (no LLM call, `n−1` calls); `"llm"` issues one merge call and RELAXES disjointness so an OVERLAPPING pair can be merged (substitutes the slot's sample call, `n` calls) | `recombine` off (accept-and-inert) |
 | `genealogy` | `0` (OFF) | the genealogy channel (§5.6.13): up to N candidate-lineage items (champion's promoted spine + diverse rejected reign candidates, banded outcomes) spliced into the prompt for in-context evolution; render-side only (cost meter untouched) | — |
 
 And the sibling knobs this chapter leans on:
@@ -1295,14 +1297,40 @@ filter), so this closes the holdout-leak and preserves context-is-the-envelope.
 > documented future seam. The rationale lives verbatim at the `KNOWN NARROWING`
 > comment in `_build_recombination_pair`.
 
-**Seams noted, NOT built:** an LLM-guided merge (a second minter behind the
-same ctx field, riding the genealogy channel + ensemble depth role); a chain
-depth cap; an index `recombined_from` column; the scaffold default-on decision
-(needs live evidence). Tests: `tests/test_recombine_engine.py` (predicate +
-ranking + order-independence units), `tests/test_recombination_known_answer.py`
-(the two-marker OC full-loop: union minted round 3, `mode="recombined"`,
-promoted where recombine-off stalls; `recombined_from == (v1, v2)`; the exact
-`n−1` aux-call cost-neutrality counter; pair-dedup).
+**Merge modes — `mechanical` (default) vs `llm` (WS-MERGE).**
+`proposer_quality.recombine_merge` chooses HOW the slot composes the union
+(design: PROPOSER.md §2.6.1; omit-at-default, `"llm"` rolls). `"mechanical"` is
+everything above. `"llm"` instead issues ONE auxiliary merge call — the DEPTH
+refinement role (`BestOfNProposerAgent._depth_call_llm`, exactly as the
+self-critique call), so it SUBSTITUTES the slot's own sample call (cost:
+`best_of_n` calls, a recombine-off round — not `n−1`). The merge prompt
+(`render_recombine_merge_prompt`) is rendered from the envelope-clean
+`RecombinationPair` (both parents' patches, core ideas, BANDED whole-candidate
+outcomes and counts-only complementarity — never an entry id); the response
+flows through the NORMAL `parse_experiment_json` → `enforce_forbidden` →
+validate path (`BestOfNProposerAgent._merge_recombined`), is stamped with the
+same `recombined_from`, and a non-vetoed merge is chosen with the same
+`selection_mode = "recombined"`. Any parse/validate failure DEGRADES to a fresh
+sample (the mechanical mint's exact degrade). The ONLY selector change:
+`rank_pairs(..., merge_mode="llm")` RELAXES predicate #7 (disjointness) for pair
+SELECTION so an OVERLAPPING pair — which only an LLM can merge — is eligible,
+and overlap becomes ranking key level 2 (prefer less overlap at equal
+coverage); mechanical-mode survivors are disjoint by the #7 filter so their
+overlap key is a constant 0 and the mechanical selection is byte-identical.
+
+**Seams noted, NOT built:** a chain depth cap; an index `recombined_from`
+column; the scaffold default-on decision (needs live evidence); and a
+`recombine_merge` distinction in the round log (the `recombined` flag already
+tells consumers a mint happened — the mode is a contract-hash fact, not a
+per-candidate one). Tests: `tests/test_recombine_engine.py` (predicate +
+ranking + order-independence + the relaxed-mode overlap ranking units),
+`tests/test_recombination_known_answer.py` (the two-marker mechanical OC
+full-loop: union minted round 3, `mode="recombined"`, promoted where
+recombine-off stalls; `recombined_from == (v1, v2)`; the exact `n−1` aux-call
+cost-neutrality counter; pair-dedup),
+`tests/test_recombination_merge_known_answer.py` (the OVERLAP-pair `"llm"` OC:
+mechanical mode mints nothing on the shared-target fixture, `"llm"` merges +
+promotes, the `n`-call cost story, the garbage-response degrade).
 
 ### 5.6.12 The `new_content` style contract (what the system prompt demands)
 
