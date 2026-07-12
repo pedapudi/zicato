@@ -319,6 +319,267 @@ was not behavior-preserving — fix before merge.
 - No live-LLM runs as verification.
 - The Rust supervisor crate (`crates/`, `src/`) is not part of this Python
   refactor program (touch only if a Phase-4 boundary move requires it).
+  *(Finding 4 below is the one exception the review calls out: reader
+  unification is a decided design direction that deliberately crosses this
+  boundary.)*
+
+---
+
+# Structural findings — 2026-07 review
+
+> **Status unchanged: still plan-only / not-yet-implemented.** A structural
+> review (2026-07-12) revisited the god-object roadmap above against the
+> code as it stands today and produced five findings that *sharpen the
+> plan* — none is built. They compose with Part I: findings 1–3 refine
+> Phase 3a (the `orchestrator.py` split), finding 4 refines Phase 1c/4, and
+> finding 5 names an observability layer the whole pipeline emits into.
+>
+> **Wave-2 sequencing intent** (the order these should land, each still
+> gated by the parity harness): **concurrency (finding 1) → knob registry
+> (finding 3) → pipeline decomposition (finding 2)**; **reader unification
+> (finding 4) is decided in design** and sequenced with the Phase-4 boundary
+> work; **the log stream (finding 5) is being built by a sibling Wave-1
+> workstream** and this doc only fixes its seat in the layer cake.
+>
+> Note: `orchestrator.py` has grown to **~6,300 lines** since Part I's
+> census recorded 4,622 — treat the god-object figures above as a lower
+> bound, not a current count.
+
+## Finding 1 — Propose-phase serialization (concurrency with deterministic post-ordering)
+
+**Observed.** Two propose loops issue their LLM round-trips strictly
+serially, even though the board-entry *runs* they later feed are already
+concurrent:
+
+- The **field loop** — `orchestrator.py` `_evolve_multi_challenger`'s
+  `for offset in range(field_n):` — `await`s `_propose_and_apply_challenger`
+  one challenger at a time. Each slot is minted with an offset-ordered
+  identity: `next_id = f"v{base_n + offset}"` and `seed = offset + 2`
+  (champion is seed 1; challengers follow in mint order).
+- The **best-of-N slate loop** — `proposer/best_of_n.py`
+  `BestOfNProposerAgent.propose`'s `for sample in range(n):` — `await`s
+  `self._sample_slot(...)` per sample (the last slot may instead `await`
+  `self._merge_recombined`/`self._mint_recombined`), emitting a
+  `candidate_sampled` event per slot.
+- By contrast, board-entry **runs** already fan out: `tournament/runner.py`
+  schedules each `(side, entry, replicate)` subprocess worker under an
+  `asyncio.Semaphore` sized from `RuntimeConfig.parallelism`. Concurrency is
+  a solved pattern in the run layer and simply absent from the propose
+  layer.
+
+**Target.** Collect the field/slate concurrently (`asyncio.gather` under a
+propose-side concurrency cap — reuse the `parallelism` idiom, or a distinct
+`propose_parallelism`), then apply results in a **deterministic second
+pass** that reproduces today's serial side effects in slot/offset order. The
+gather is the only concurrent region; every ordering-sensitive side effect
+happens afterward, in order, so byte-stable goldens and the event ledger
+never become interleaving-dependent.
+
+**Ordering-sensitive surfaces an implementer MUST protect** (each verified
+in the tree; all must be driven from the post-gather ordered pass, never
+from gather-completion order):
+
+1. **Generation-id + seed minting.** `next_id = f"v{base_n + offset}"` and
+   `seed = offset + 2` in the field loop must stay bound to `offset`, and
+   the `competitors_meta` seed order (champion = 1, challengers 2, 3, … in
+   mint order) must be assigned in offset order regardless of which propose
+   finished first.
+2. **Journal / experiment index write order.** The per-slot persistence —
+   `_ingest_experiment_into_index(workspace_root, epoch_id, generation_id)`,
+   the `OutcomeRecord` writes for soft-rejected slots, and the
+   `_publish_proposing` status callbacks — must fire in slot order so
+   `experiment.json`/index rows land in a stable sequence.
+3. **RoundLog event sequence.** `epoch/round_log.py` is a single-writer,
+   append-only, `seq`-derived-from-tail log (`seq` = 1 for the first event,
+   exactly `+1` per append). The `round_emitter=round_log` appends —
+   including best-of-N's `candidate_sampled` events carrying `{"i": sample,
+   "n": n}` — must be appended in slot order, or the gap-free monotonic
+   `seq` becomes a function of scheduling.
+4. **The round-log fold.** Downstream consumers fold the sequenced RoundLog
+   by `seq`; because `seq` is the machine ordering key, an interleaving-
+   dependent append order silently reorders the fold's output.
+5. **SSE progress `seq`.** `dashboard/sse.py`'s progress cursor
+   (`_progress_signal` → `progress_log.tail_seq`) is the TRUE liveness
+   signal the dashboard diffs against; it is downstream of the RoundLog
+   ordering and inherits the same requirement.
+
+This finding **composes with finding 2**: the deterministic post-ordering
+pass is exactly the "apply / persist / ingest" stages of the pipeline below,
+and "which stages may overlap" (here: propose may fan out, apply/persist may
+not) becomes a declared property of the stage graph.
+
+## Finding 2 — The orchestrator monolith → an explicit typed round pipeline
+
+**Observed.** `orchestrator.py` (~6,300 lines) drives the round *and*
+accretes a per-program IO builder for every feature added to the loop:
+`_build_candidate_screen_runner` (screening), `_build_recombination_pair`
+(recombination), `_build_genealogy_items` (genealogy channel),
+`_build_events_paths`, … each constructed inline at the top of the round and
+threaded down through the propose call as an opaque callable. New programs
+append another builder and another positional argument; the loop driver
+carries the union of every program's construction logic (163 `Any`
+annotations remain in the file).
+
+**Target (sharpens Phase 3a's `evolve/round.py`).** An **explicit typed
+round pipeline** with named stages, each declaring its inputs and outputs:
+
+```
+propose → apply → screen → schedule → gate → persist → ingest
+```
+
+- Each stage is a small typed unit (a dataclass of inputs → a dataclass of
+  outputs), not a step buried in a 6k-line function. The two evolve
+  pipelines (gauntlet `evolve_once` vs `_evolve_multi_challenger`) share the
+  one stage sequence with the scheduler injected (as Phase 3a already
+  proposes).
+- **Per-round context builders live beside their consuming stage**, not at
+  the top of the driver: `_build_candidate_screen_runner` moves next to the
+  `screen` stage, `_build_recombination_pair` and `_build_genealogy_items`
+  next to `propose`. Adding a program adds a builder in one place — its
+  stage — instead of another argument on the driver's signature.
+- The **stage graph is where overlap is declared.** Finding 1's answer
+  ("propose may fan out; apply/persist/ingest run in slot order") is a
+  property of the graph edges, not an implementation detail hidden in a for-
+  loop. The graph is the single place a future reviewer reads to learn which
+  stages are concurrency-safe.
+
+## Finding 3 — The knob tax → declarative field metadata
+
+**Observed (traced end-to-end for the `genealogy` knob).** Adding one
+proposer/scoring knob touches a fixed set of hand-maintained registries.
+For `ProposerQualityConfig.genealogy` (`core/scoring_config.py`), the review
+found the same field mirrored across **seven** sites:
+
+1. **The dataclass field** — `core/scoring_config.py`
+   `ProposerQualityConfig` (`genealogy: int = 0`).
+2. **The omit-at-default set** — `epoch/contract.py`
+   `_SCORING_OMIT_AT_DEFAULT_FIELDS` (adds `"genealogy"` so a default value
+   never rolls the contract hash).
+3. **The serializer-completeness guard table** —
+   `tests/test_contract_serializer_completeness.py`'s per-field non-default
+   value map (`"genealogy": 4`), which the `_all_fields_nondefault` /
+   round-trip tests iterate to prove no field is silently dropped.
+4. **The builder op** — `builder/operations.py::set_proposer_quality`
+   (`genealogy: int | None = None` parameter + its validation/apply block).
+5. **The API dispatch** — `builder/api.py`
+   (`genealogy=_opt_int(args, "genealogy")`).
+6. **The copilot mirror** — `builder/copilot_tools.py::set_proposer_quality`
+   (the duplicated tool signature the chat copilot drives).
+7. **The GUI row + node test** — the builder settings row in
+   `dashboard/static/js/views/builder.js` (title/body/`numInput` →
+   `runOp('set_proposer_quality', { genealogy })`) and its assertion in
+   `dashboard/static/test/builder.test.mjs` (posts
+   `set_proposer_quality {genealogy:4}`).
+
+Miss any one and the knob half-works silently: e.g. omitting site 2 rolls
+every existing epoch's contract hash; omitting site 6 leaves the copilot
+unable to set it. `recombine_merge` traces to the identical seven sites.
+
+**Target.** Drive the mechanical registries from **declarative field
+metadata** on the dataclass — `dataclasses.field(metadata={...})` carrying
+the omit-at-default flag, the builder-op arg spec (type, bounds,
+epoch-rolling), and the GUI row descriptor. Generate the omit-list, the
+builder-op/copilot signatures, and the builder-row scaffold from that
+metadata so a new knob is *one* field declaration. **Retain the existing
+guard tables as the enforcement net**, not the source: `contract_serde.py`
+is already field-enumerating (it derives from `dataclasses.fields()` and so
+covers new fields automatically), and
+`test_contract_serializer_completeness.py` stays as the red-on-drift check
+that a generated table and the dataclass never disagree.
+
+## Finding 4 — Dual reader implementations (Python `query/` + Rust supervisor)
+
+**Observed.** The same index/canonical payloads are decoded twice:
+
+- **Python** — `src/zicato/query/` (`epoch_view.py`, `tournament_view.py`,
+  `lineage_view.py`, `gate_view.py`, `racing_view.py`, `ratings.py`, … over
+  `query/_sqlite.py`) serves the dashboard/analyzer read surface.
+- **Rust** — `crates/supervisor/src/` (`epoch.rs`, `elim_states.rs`,
+  `tournaments.rs`, `index_db.rs`, …) re-implements the same reads for the
+  `/statusz` + dashboard-API surface that must survive an orchestrator
+  wedge.
+
+The two are held together only by the reader-parity goldens
+(`tests/test_dashboard_reader_parity.py` + `tests/_reader_parity_harness.py`)
+— and **the seam has already failed once**: the Rust reader pinned its
+expected schema version to a **hardcoded literal**, so when Python bumped
+`SCHEMA_VERSION` v10→v11→v12 the guard never fired and the supervisor's
+read-only surface **silently served empty for two schema generations**. The
+fix (now in `crates/supervisor/src/index_db.rs`,
+`expected_schema_version_is_pinned_to_python`) parses `SCHEMA_VERSION`
+straight out of `src/zicato/index/schema.py` so drift reds one suite or the
+other. That fix hardens the *detector*; it does not remove the *duplication*
+that made the failure possible.
+
+**Options.**
+
+- **(A) Supervisor serves from the index only.** Constrain the Rust surface
+  to a thin, schema-guarded projection of `index.db` (the read it already
+  does well) and delete any Rust re-derivation of canonical-file facts;
+  Python `query/` remains the one place canonical files are interpreted.
+  Keeps two decoders but shrinks the Rust one to a single, guarded shape.
+- **(B) One implementation owns views, one caller.** Pick a single owner for
+  each view payload (Python `query/` is the natural owner — it changes with
+  the schema) and have the supervisor call *it* rather than re-decode: either
+  Rust shells to a `zicato` read subcommand, or the view payloads are frozen
+  as a versioned read contract the supervisor consumes verbatim.
+
+**Recommendation.** Option **A** for the near term — it is the smallest move
+that removes the class of bug that already bit (Rust re-tallying a fact a
+canonical file settled), keeps the supervisor's crash-survivability property
+(it still reads the file directly), and leaves the schema-version pin as the
+single enforced seam. Treat option B (collapsing to one decoder) as the
+end-state once finding 1/2's `workspace/readers` layer (Phase 1c) exists to
+be the one owner. **Migration safety:** the reader-parity goldens are the
+gate for either move — they must stay green byte-for-byte across the change,
+and the `SCHEMA_VERSION`-parsing pin (both directions) must remain the CI
+tripwire so a schema bump can never again ship a silently-empty supervisor.
+This is the deliberate exception to the "Rust crate is out of scope" non-goal
+above.
+
+## Finding 5 — Logging insertion point (the observability layer)
+
+**Observed.** The tree has **exactly one** `logging.basicConfig`
+(`_tournament_worker.py`, at `WARNING`); there is no structured per-run log
+stream. Operators reconstruct a run's story from `events.jsonl` + the
+RoundLog, neither of which is a general diagnostic log.
+
+**Target (reference, do not re-design).** A **sibling Wave-1 workstream is
+already building** a structured per-run log stream as a first-class artifact
+beside `events.jsonl`, against a new `docs/design/LOGGING.md`. This
+reimplementation doc does **not** design that stream; its job is to fix
+*where it sits*: the log stream is the **observability layer that every
+stage of finding 2's pipeline emits into**. In the layer cake, it is a
+cross-cutting sink beneath the stage graph — propose/apply/screen/schedule/
+gate/persist/ingest each emit structured records into it — and it is written
+through the one storage seam / atomic writer (Part II), so it is crash-safe
+like the canonical artifacts. When `docs/design/LOGGING.md` lands, link it
+here; until then treat the stream as in-flight, not as a design owned by this
+doc.
+
+## Confirmed keep-as-is (the validated structure)
+
+The review also confirmed the following as **correct and load-bearing** —
+the reimplementation must **preserve** them, not "clean them up":
+
+- **Subprocess kill-isolation + the Rust watchdog.** Each `(side, entry,
+  replicate)` is an isolated subprocess killable from outside; a separate
+  Rust supervisor enforces deadlines/staleness. Cage-vs-payload is right.
+- **asyncio + `Semaphore(parallelism)` run concurrency** in
+  `tournament/runner.py` — the run-layer fan-out finding 1 wants the propose
+  layer to match.
+- **WAL index: files-canonical, index-derived, full-rebuildable.** `.zicato/`
+  is truth; `index.db` is a pure projection re-derivable by `reindex`. (This
+  is also Part II design principle 1.)
+- **Pure-core / IO-builder-at-the-edge.** Pure decision functions with IO
+  constructed at the boundary — the shape finding 2 makes *explicit* as a
+  stage graph rather than removes.
+- **Contract-hash epoch rolling.** A contract change rolls the epoch via the
+  canonicalized hash; the omit-at-default discipline (finding 3) exists to
+  keep that hash stable for default knobs and must be preserved exactly.
+- **seq-driven SSE.** The monotonic `seq` liveness cursor
+  (`dashboard/sse.py`) is the right change-detection primitive; finding 1
+  protects its determinism rather than replacing it.
 
 ---
 
