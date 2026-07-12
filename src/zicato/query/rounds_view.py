@@ -104,7 +104,7 @@ def build_round_timeline(paths: WorkspacePaths, epoch_id: str | None = None) -> 
             "waterfall": [],
         }
 
-    lineage = build_lineage_view(paths, epoch_id)
+    lineage = build_lineage_view(paths, epoch_id, include_ratings=False)
     gens: list[dict[str, Any]] = [g for g in lineage.get("generations", []) if isinstance(g, dict)]
     traj = build_score_trajectory(paths, epoch_id)
     scalar_by: dict[str, float] = {}

@@ -14,6 +14,7 @@ bracket, de-duplicated across the overlapping sources).
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from zicato.index.elo import (
@@ -252,10 +253,25 @@ def test_rating_columns_are_never_read_gate_side() -> None:
         (src_root / "selection").rglob("*.py")
     )
     assert gate_side, "expected gate/selection source files to scan"
+    # The scan must catch BOTH the column-name spellings and every read-path
+    # entry point — a bare ``row["elo"]`` reached via ``elo_for_epoch`` or
+    # ``rating_by_generation`` contains none of the column substrings, so the
+    # reader names are pinned too, plus a word-boundary check on the bare
+    # column (``\belo\b`` — written lowercase in SQL/dict keys; prose says
+    # "Elo", which the case-sensitive match deliberately skips).
+    leak_markers = (
+        "elo_se",
+        "elo_games",
+        "index.elo",
+        "elo_for_epoch",
+        "rating_by_generation",
+        "query.ratings",
+    )
+    bare_column = re.compile(r"\belo\b")
     offenders: list[str] = []
     for path in gate_side:
         text = path.read_text(encoding="utf-8")
-        if "elo_se" in text or "elo_games" in text or "index.elo" in text:
+        if any(marker in text for marker in leak_markers) or bare_column.search(text):
             offenders.append(str(path))
     assert not offenders, f"rating columns leaked into the gate/selection path: {offenders}"
 

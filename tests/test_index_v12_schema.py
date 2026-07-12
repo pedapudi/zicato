@@ -191,7 +191,9 @@ def test_rust_supervisor_schema_version_is_in_lockstep() -> None:
 
     rust = Path(__file__).resolve().parents[1] / "crates" / "supervisor" / "src" / "index_db.rs"
     text = rust.read_text(encoding="utf-8")
-    match = re.search(r"EXPECTED_SCHEMA_VERSION:\s*i64\s*=\s*(\d+)", text)
+    # Tolerant of an integer-type rename (i64 -> u32/u64/...) — the pin cares
+    # about the VALUE, not the Rust type spelling.
+    match = re.search(r"EXPECTED_SCHEMA_VERSION\s*:\s*\w+\s*=\s*(\d+)", text)
     assert match is not None, "EXPECTED_SCHEMA_VERSION not found in index_db.rs"
     assert int(match.group(1)) == SCHEMA_VERSION, (
         f"Rust EXPECTED_SCHEMA_VERSION={match.group(1)} != Python "

@@ -119,7 +119,7 @@ def build_score_trajectory(paths: WorkspacePaths, epoch_id: str | None = None) -
     epoch_id = _resolve_epoch_id(paths, epoch_id)
     # Lineage order is authoritative for the x-axis — the index's
     # ``generations`` rows can carry empty ``created_at`` strings.
-    lineage = build_lineage_view(paths)
+    lineage = build_lineage_view(paths, include_ratings=False)
     ordered = [
         g
         for g in lineage.get("generations", [])

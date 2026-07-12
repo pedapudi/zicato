@@ -28,7 +28,12 @@ from zicato.workspace import iter_epochs
 # the payloads cannot disagree about what counts as a promotion.
 
 
-def build_lineage_view(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[str, Any]:
+def build_lineage_view(
+    paths: WorkspacePaths,
+    epoch_id: str | None = None,
+    *,
+    include_ratings: bool = True,
+) -> dict[str, Any]:
     """Every generation directory in every epoch, in-flight or resolved.
 
     Walks ``epochs/{id}/generations/*`` and emits one node per directory
@@ -153,11 +158,16 @@ def build_lineage_view(paths: WorkspacePaths, epoch_id: str | None = None) -> di
 
     # The visibility rating triple, joined server-side from the index
     # (best-effort — the null triple when the index is absent/cold, DQ3).
-    ratings = rating_by_generation(paths, epoch_id)
-    for node in generations:
-        triple = ratings.get((node["epoch_id"], node["generation_id"]))
-        for field in RATING_FIELDS:
-            node[field] = triple.get(field) if triple else None
+    # ``include_ratings=False`` skips the index open entirely for internal
+    # consumers that discard the triple (rounds/gate/judge composition —
+    # they read lineage topology, never ratings); the endpoint path and the
+    # gens view keep the default join.
+    if include_ratings:
+        ratings = rating_by_generation(paths, epoch_id)
+        for node in generations:
+            triple = ratings.get((node["epoch_id"], node["generation_id"]))
+            for field in RATING_FIELDS:
+                node[field] = triple.get(field) if triple else None
 
     # Sort by the RECORDED creation timestamp first (epoch ``config.json``
     # created_at, then the generation's proposed_at/created_at), with the

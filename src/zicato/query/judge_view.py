@@ -99,7 +99,7 @@ def build_per_judge_trend(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any
     # Resolve the spine — the promoted lineage when available, else
     # every generation in directory order. The L1 heatmap renders only
     # promoted-spine generations so the columns stay narrow.
-    lineage_view = build_lineage_view(paths)
+    lineage_view = build_lineage_view(paths, include_ratings=False)
     epoch_gens = [g for g in lineage_view.get("generations", []) if g.get("epoch_id") == epoch_id]
     spine = _champion_lineage(epoch_gens)
     if not spine:
@@ -775,6 +775,7 @@ def build_environment(
         "epochs": build_epochs_summary(paths),
         "active_tournament": read_active_tournament_dict(paths),
         "tournaments": build_bracket(paths),
+        # SERVED verbatim (the environment feed) — the rating triple stays.
         "generations": build_lineage_view(paths),
         "score_trajectory": _gate_view.build_score_trajectory(paths),
         "active_runs": read_active_runs_view(paths),

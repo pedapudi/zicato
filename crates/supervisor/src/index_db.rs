@@ -521,6 +521,8 @@ mod tests {
                 // annotation (`SCHEMA_VERSION: Final = 12`), at line start.
                 let rest = line.strip_prefix("SCHEMA_VERSION")?;
                 let (_, value) = rest.split_once('=')?;
+                // Tolerate a trailing inline comment (`= 13  # bumped`).
+                let value = value.split('#').next().unwrap_or(value);
                 value.trim().parse().ok()
             })
             .expect("SCHEMA_VERSION assignment not found in schema.py");
