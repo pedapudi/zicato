@@ -313,6 +313,34 @@ def test_hash_changes_when_screening_opted_in(tmp_path: Path) -> None:
     assert h_on != h_veto_only
 
 
+def test_hash_stable_when_recombine_at_default(tmp_path: Path) -> None:
+    # The recombination slot (WS-REC) is omit-at-default like the screen
+    # knobs: a contract that predates the field hashes byte-identically to
+    # one that spells out the False default — no retroactive roll.
+    base = _write_contract(tmp_path)
+    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0}))
+    h_omitted = compute_contract_hash(base)
+    base.scoring_path.write_text(
+        json.dumps({"drift_weight": 1.0, "proposer_quality": {"recombine": False}})
+    )
+    h_explicit_default = compute_contract_hash(base)
+    assert h_omitted == h_explicit_default
+
+
+def test_hash_changes_when_recombine_opted_in(tmp_path: Path) -> None:
+    # Opting into recombination selects champions under a different rule (a
+    # minted union can be chosen without a critic pass), so recombine: true
+    # rolls the epoch exactly like retuning any other contract weight.
+    base = _write_contract(tmp_path)
+    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0}))
+    h_default = compute_contract_hash(base)
+    base.scoring_path.write_text(
+        json.dumps({"drift_weight": 1.0, "proposer_quality": {"recombine": True}})
+    )
+    h_on = compute_contract_hash(base)
+    assert h_default != h_on
+
+
 def test_hash_changes_on_ladder_knob_edit(tmp_path: Path) -> None:
     # The Ladder sub-config (OVERFITTING.md §12 #2) folds into the scoring
     # contract through OverfittingConfig — bumping a Ladder knob rolls the

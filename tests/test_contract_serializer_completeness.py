@@ -98,6 +98,7 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         "screen_entries": 3,
         "screen_veto_only": True,
         "process_exemplars": 2,
+        "recombine": True,
     },
     "ExperimentMemoryConfig": {
         "cross_epoch": True,

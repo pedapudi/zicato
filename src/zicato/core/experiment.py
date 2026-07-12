@@ -443,3 +443,14 @@ class Experiment:
     patches: tuple[Patch, ...]
     outcome: OutcomeRecord | None
     round_index: int = 0
+    #: Machine provenance for a mechanically-recombined experiment
+    #: (WS-REC): the generation ids of the two rejected complementary
+    #: parents whose patch sets were merged to mint this challenger, in
+    #: ascending-gid order. Empty ``()`` for every ordinary (non-recombined)
+    #: experiment — the vast majority — so the journal writer OMITS the key
+    #: entirely at this default and every non-recombined ``experiment.json``
+    #: stays byte-identical to one written before the field existed.
+    #: Consumers read THIS field for recombination provenance; they never
+    #: parse the ``[recombined]`` display prefix on ``hypothesis.core_idea``.
+    #: A legacy on-disk record without the key reads back as ``()``.
+    recombined_from: tuple[str, ...] = ()

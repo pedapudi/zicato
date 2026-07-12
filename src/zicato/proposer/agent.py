@@ -61,6 +61,7 @@ from zicato.proposer.proposer import ExperimentValidator, propose_experiment
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
     from zicato.index.query import MutationTrackRecord
     from zicato.proposer.best_of_n import ScreenRunner
+    from zicato.proposer.recombine import RecombinationPair
     from zicato.telemetry.meta_loop import MetaLoopEmitter
 
 
@@ -181,6 +182,19 @@ class ProposerContext:
     #: propose. ``None`` (the default) screens nothing and the propose
     #: path is byte-identical.
     screen_candidates: ScreenRunner | None = None
+    #: Optional recombination pair (WS-REC) — plain DATA, not a callable:
+    #: the orchestrator's ``_build_recombination_pair`` selects it once per
+    #: round from round-start state (rejected complementary challengers of
+    #: the current reign) and threads the envelope-clean value here (counts
+    #: + patches + hypothesis text ONLY — never a board-entry id). When
+    #: set, the best-of-N wrapper's LAST slot MINTS the union experiment
+    #: (:func:`zicato.proposer.recombine.mint_recombined_experiment`)
+    #: instead of sampling the LLM. On the multi-challenger field path the
+    #: orchestrator threads the pair to SLOT 0 ONLY (identical mints across
+    #: the field would collapse into diversity soft-rejects). ``None`` (the
+    #: default — every knob-off round, and every round with no eligible
+    #: pair) mints nothing and the propose path is byte-identical.
+    recombine_pair: RecombinationPair | None = None
 
 
 class ProposerAgent(Protocol):

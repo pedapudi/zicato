@@ -586,6 +586,22 @@ async def evolve_once(
         beater=beater,
     )
 
+    # --- 5a''. Optional recombination pair (WS-REC) ---
+    # ONE selection per round, built only when the contract opts in
+    # (proposer_quality.recombine AND best_of_n > 1) — otherwise ``None``
+    # and no pair even rides the propose path. Plain DATA (not a callable):
+    # the selection depends only on round-start state, so the proposer
+    # stack stays IO-free. Best-effort by contract — any failure inside
+    # degrades to ``None`` and the round is byte-identical.
+    recombine_pair = _build_recombination_pair(
+        weights=weights,
+        workspace_root=workspace_root,
+        epoch_id=resolved_epoch_id,
+        parent_id=parent_id,
+        train_entry_ids=frozenset(e.id for e in train_board),
+        mutations=mutations,
+    )
+
     # --- 5b. Tournament-structure dispatch ---
     # The gauntlet (the default and back-compat baseline) has field_size
     # == 1: one champion, one challenger, one full-board duel. Steps 6-13
@@ -605,6 +621,7 @@ async def evolve_once(
     if strategy.field_size() > 1:
         return await _evolve_multi_challenger(
             screen_candidates=screen_candidates,
+            recombine_pair=recombine_pair,
             workspace_root=workspace_root,
             epoch_id=resolved_epoch_id,
             tournament_spec=tournament_spec,
@@ -777,6 +794,7 @@ async def evolve_once(
                 round_index=round_index,
                 round_emitter=round_log,
                 screen_candidates=screen_candidates,
+                recombine_pair=recombine_pair,
             )
         except ProposerError as exc:
             # The proposer exhausted its bounded retries without producing
@@ -1524,6 +1542,7 @@ async def _propose_and_apply_challenger(
     on_status: Callable[[dict[str, Any]], None] | None = None,
     round_emitter: _RoundLogEmitter | None = None,
     screen_candidates: ScreenRunner | None = None,
+    recombine_pair: Any = None,
 ) -> tuple[_AppliedChallenger | None, dict[str, Any]]:
     """Propose + apply ONE challenger child of the champion.
 
@@ -1649,6 +1668,7 @@ async def _propose_and_apply_challenger(
             round_index=round_index,
             round_emitter=round_emitter,
             screen_candidates=screen_candidates,
+            recombine_pair=recombine_pair,
         )
     except ProposerError as exc:
         reason = _short_reject_reason(exc.attempts) or str(exc)
@@ -1824,6 +1844,7 @@ async def _evolve_multi_challenger(
     proposer_agent: ProposerAgent,
     round_log: _RoundLogEmitter | None = None,
     screen_candidates: ScreenRunner | None = None,
+    recombine_pair: Any = None,
 ) -> EvolveRoundOutcome:
     """Run ONE evolve round under a non-gauntlet tournament structure.
 
@@ -2036,6 +2057,10 @@ async def _evolve_multi_challenger(
             on_status=_publish_proposing,
             round_emitter=round_log,
             screen_candidates=screen_candidates,
+            # The pair rides SLOT 0 ONLY (the plan's bug-#7 note): every
+            # field slot minting the identical union would collapse the
+            # extra slots into diversity soft-rejects — one mint per round.
+            recombine_pair=recombine_pair if offset == 0 else None,
         )
         # Field-diversity DECISION (pure — `_mint_challenger_field`): accept
         # the challenger into the run slate, or soft-reject it as an exact
@@ -3182,6 +3207,199 @@ def _build_candidate_screen_runner(
     return _screen
 
 
+def _build_recombination_pair(
+    *,
+    weights: Any,
+    workspace_root: Path,
+    epoch_id: str,
+    parent_id: str,
+    train_entry_ids: frozenset[str],
+    mutations: list[Any],
+) -> Any:
+    """Select this round's recombination pair (WS-REC), or ``None`` when OFF.
+
+    ``None`` — the DEFAULT — unless the contract opts in with
+    ``proposer_quality.recombine`` AND ``best_of_n > 1`` (a single-sample
+    proposer has no slate slot to mint into): the propose path then carries
+    no pair at all and is byte-identical.
+
+    The IO half of the recombination selector, built ONCE per round beside
+    the screen builder and threaded as plain DATA
+    (:attr:`~zicato.proposer.agent.ProposerContext.recombine_pair` — the
+    selection depends only on round-start state, so the proposer stack
+    stays IO-free). Reads, all best-effort:
+
+    * the current epoch's durable experiment RECORDS (the ``generations/``
+      records tree outlives GC — snapshots are pruned, records never are),
+      each through :func:`zicato.epoch.journal.read_experiment` GUARDED —
+      an unreadable/incomplete record (a missing patch file) simply drops
+      that candidate. The pool is capped at the
+      :data:`~zicato.epoch.recombine.RECOMBINE_POOL_MAX` most-recent
+      settled REJECTS.
+    * per-candidate improved/regressed entry sets via
+      :func:`zicato.query.tournament_view.build_matchup_grid` (disk
+      ``loss.json`` — durable, index-free), INTERSECTED with this round's
+      TRAIN entry ids before they are counted: entry ids never leave this
+      builder — the :class:`~zicato.proposer.recombine.RecombinationPair`
+      carries counts + patches + hypothesis text only (the envelope
+      boundary; a holdout entry can never influence the selection).
+    * ONE best-effort Elo read (:func:`zicato.index.query.elo_for_epoch`)
+      for the ranking's summed-Elo key; an absent index default-fills.
+
+    The pure engine (:mod:`zicato.epoch.recombine`) then applies the 8
+    eligibility predicates and the 4-key deterministic ranking. ANY
+    exception anywhere → DEBUG log → ``None`` → a byte-identical round
+    (recombination must never fail a propose step).
+    """
+    quality = weights.proposer_quality
+    if not getattr(quality, "recombine", False) or quality.best_of_n <= 1:
+        return None
+    try:
+        from zicato.core.experiment import PLACEBO_HYPOTHESIS_MARKER  # noqa: PLC0415
+        from zicato.core.workspace import generations_dir  # noqa: PLC0415
+        from zicato.epoch.journal import read_experiment  # noqa: PLC0415
+        from zicato.epoch.recombine import (  # noqa: PLC0415
+            RECOMBINE_POOL_MAX,
+            ParentCandidate,
+            eligible_parents,
+            rank_pairs,
+        )
+        from zicato.proposer.recombine import RecombinationPair  # noqa: PLC0415
+        from zicato.query.paths import WorkspacePaths  # noqa: PLC0415
+        from zicato.query.tournament_view import build_matchup_grid  # noqa: PLC0415
+
+        gens_root = generations_dir(workspace_root, epoch_id)
+        if not gens_root.is_dir():
+            return None
+
+        def _gen_sort_key(gid: str) -> tuple[int, str]:
+            # v-numbered ids sort numerically (v10 after v9); anything else
+            # falls back lexicographically after them.
+            if gid.startswith("v") and gid[1:].isdigit():
+                return (int(gid[1:]), "")
+            return (-1, gid)
+
+        gen_ids = sorted(
+            (d.name for d in gens_root.iterdir() if d.is_dir()),
+            key=_gen_sort_key,
+            reverse=True,
+        )
+
+        # One pass over the records: collect the pool of most-recent
+        # settled rejects (capped) and the already-tried pair set (#5 —
+        # every PERSISTED recombined_from, whatever its decision: a
+        # round-spending mint never re-mints; a vetoed, unpersisted one
+        # may retry because it never reached disk).
+        pool: list[Any] = []
+        tried: set[frozenset[str]] = set()
+        for gid in gen_ids:
+            if gid == parent_id:
+                continue
+            try:
+                exp = read_experiment(workspace_root, epoch_id, gid)
+            except Exception as exc:  # noqa: BLE001 — unreadable record: skip
+                log.debug("recombine: record %s/%s unreadable (%s)", epoch_id, gid, exc)
+                continue
+            if len(exp.recombined_from) == 2:
+                tried.add(frozenset(exp.recombined_from))
+            if exp.outcome is None or exp.outcome.tournament_decision != "rejected":
+                continue
+            if len(pool) < RECOMBINE_POOL_MAX:
+                pool.append(exp)
+        if len(pool) < 2:
+            return None
+
+        # ONE best-effort Elo read for the whole pool (fresh per round —
+        # the fold runs at every ingest, so the index is as settled as it
+        # will get at round start). Absent index / missing rows → {}.
+        elo_by_gid: dict[str, float] = {}
+        try:
+            from zicato.index.query import elo_for_epoch  # noqa: PLC0415
+
+            # The canonical index location every consumer uses
+            # (``zicato reindex`` reconciles ``{workspace_root}/index.db``).
+            for row in elo_for_epoch(workspace_root / "index.db", epoch_id):
+                if row["elo"] is not None:
+                    elo_by_gid[str(row["generation_id"])] = float(row["elo"])
+        except Exception as exc:  # noqa: BLE001 — Elo is advisory ranking material
+            log.debug("recombine: Elo read skipped (%s)", exc)
+
+        paths = WorkspacePaths(workspace_root)
+        candidates: list[ParentCandidate] = []
+        for exp in pool:
+            grid = build_matchup_grid(paths, epoch_id, parent_id, exp.generation_id)
+            improved: set[str] = set()
+            regressed: set[str] = set()
+            for row in grid.get("entry_grid", []):
+                entry_id = str(row.get("entry_id", ""))
+                if entry_id not in train_entry_ids:
+                    continue  # the envelope point: holdout never counts
+                # PASS-FLIP sets, not the grid's drift-only ``won_by``:
+                # per-run drift folds every remaining defect into EVERY
+                # entry's loss, so a strictly-better challenger "wins" all
+                # entries on drift and two single-fix parents could never
+                # read as complementary. The pass bit is the per-entry
+                # signal a fix actually owns: improved = a champion-failing
+                # entry this challenger passes; regressed = the inverse.
+                parent_pass = row.get("parent_pass")
+                child_pass = row.get("child_pass")
+                if parent_pass is False and child_pass is True:
+                    improved.add(entry_id)
+                elif parent_pass is True and child_pass is False:
+                    regressed.add(entry_id)
+            hyp = exp.hypothesis
+            candidates.append(
+                ParentCandidate(
+                    generation_id=exp.generation_id,
+                    decision=(exp.outcome.tournament_decision if exp.outcome is not None else ""),
+                    parent_generation_id=exp.parent_generation_id,
+                    is_placebo=hyp.core_idea.startswith(PLACEBO_HYPOTHESIS_MARKER),
+                    is_recombined=bool(exp.recombined_from),
+                    patch_mutation_ids=frozenset(p.mutation_id for p in exp.patches),
+                    improved_entry_ids=frozenset(improved),
+                    regressed_entry_ids=frozenset(regressed),
+                    elo=elo_by_gid.get(exp.generation_id),
+                    patches=exp.patches,
+                    core_idea=hyp.core_idea,
+                    expected_drift_movements=hyp.expected_drift_movements,
+                    expected_metric_movements=hyp.expected_metric_movements,
+                )
+            )
+
+        manifest_ids = frozenset(str(m.id) for m in mutations)
+        eligible = eligible_parents(candidates, champion_id=parent_id, manifest_ids=manifest_ids)
+        pair = rank_pairs(eligible, tried_pairs=frozenset(tried))
+        if pair is None:
+            return None
+        a, b = pair
+        log.debug(
+            "recombine: selected pair (%s, %s) — coverage %d, cross-regression %d",
+            a.generation_id,
+            b.generation_id,
+            len(a.improved_entry_ids | b.improved_entry_ids),
+            len(a.regressed_entry_ids | b.regressed_entry_ids),
+        )
+        return RecombinationPair(
+            a_generation_id=a.generation_id,
+            b_generation_id=b.generation_id,
+            a_patches=a.patches,
+            b_patches=b.patches,
+            a_core_idea=a.core_idea,
+            b_core_idea=b.core_idea,
+            a_improved_count=len(a.improved_entry_ids),
+            b_improved_count=len(b.improved_entry_ids),
+            combined_improved_count=len(a.improved_entry_ids | b.improved_entry_ids),
+            combined_regressed_count=len(a.regressed_entry_ids | b.regressed_entry_ids),
+            a_expected_drift_movements=a.expected_drift_movements,
+            b_expected_drift_movements=b.expected_drift_movements,
+            a_expected_metric_movements=a.expected_metric_movements,
+            b_expected_metric_movements=b.expected_metric_movements,
+        )
+    except Exception as exc:  # noqa: BLE001 — recombination must never fail a round
+        log.debug("recombine: pair selection skipped (%s)", exc)
+        return None
+
+
 async def _propose_child(
     *,
     proposer_agent: ProposerAgent,
@@ -3206,6 +3424,7 @@ async def _propose_child(
     process_exemplars: str = "",
     round_emitter: _RoundLogEmitter | None = None,
     screen_candidates: ScreenRunner | None = None,
+    recombine_pair: Any = None,
 ) -> Experiment:
     """Build the :class:`ProposerContext` + propose ONE child of the champion.
 
@@ -3264,6 +3483,7 @@ async def _propose_child(
                 mutation_track_records=mutation_track_records,
                 round_event_emitter=(round_emitter.emit if round_emitter is not None else None),
                 screen_candidates=screen_candidates,
+                recombine_pair=recombine_pair,
             )
         )
     except ProposerError as exc:

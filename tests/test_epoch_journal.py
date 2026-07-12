@@ -452,3 +452,159 @@ def test_write_experiment_with_zero_patches_omits_patches_dir(
     # patches dir is allowed to be absent for a zero-patch experiment.
     pdir = patches_dir(ws, eid, "v_zero")
     assert not pdir.exists()
+
+
+# ---------------------------------------------------------------------------
+# Hypothesis metric-movements round-trip (the WS-REC phase-1 journal bug fix)
+# ---------------------------------------------------------------------------
+
+
+def test_hypothesis_metric_movements_round_trip(epoch_root: tuple[Path, str]) -> None:
+    """``expected_metric_movements`` must survive a write/read round-trip.
+
+    The writer always serialised them (``asdict`` over the whole
+    hypothesis), but ``_hypothesis_from_dict`` silently dropped the key on
+    read — every namespaced metric prediction was lost the moment a record
+    was re-read (the outcome updater re-reads, so even one tournament round
+    erased them). This test FAILS with the read-side fix stashed.
+    """
+    from zicato.core.types import ExpectedMetricMovement
+
+    ws, eid = epoch_root
+    movements = (
+        ExpectedMetricMovement(
+            metric_name="cost:tokens_spent", direction="decrease", magnitude="small"
+        ),
+        ExpectedMetricMovement(
+            metric_name="rubric:slide_structure", direction="increase", magnitude="medium"
+        ),
+    )
+    exp = _experiment()
+    exp = Experiment(
+        id=exp.id,
+        epoch_id=exp.epoch_id,
+        generation_id=exp.generation_id,
+        parent_generation_id=exp.parent_generation_id,
+        proposed_at=exp.proposed_at,
+        hypothesis=HypothesisSpec(
+            core_idea=exp.hypothesis.core_idea,
+            modulating=exp.hypothesis.modulating,
+            why=exp.hypothesis.why,
+            expected_drift_movements=exp.hypothesis.expected_drift_movements,
+            expected_pass_rate_delta=exp.hypothesis.expected_pass_rate_delta,
+            risks=exp.hypothesis.risks,
+            expected_metric_movements=movements,
+        ),
+        patches=exp.patches,
+        outcome=None,
+    )
+    write_experiment(ws, eid, "v1", exp)
+
+    # The writer really did persist them (this half held before the fix).
+    body = json.loads(experiment_json_path(ws, eid, "v1").read_text())
+    assert len(body["hypothesis"]["expected_metric_movements"]) == 2
+
+    # The reader must reconstitute them — the bug dropped them here.
+    re_read = read_experiment(ws, eid, "v1")
+    assert re_read.hypothesis.expected_metric_movements == movements
+    # And the round-trip is stable through the outcome updater's re-read.
+    updated = update_experiment_outcome(ws, eid, "v1", _outcome())
+    assert updated.hypothesis.expected_metric_movements == movements
+
+
+def test_hypothesis_metric_movements_absent_reads_empty(
+    epoch_root: tuple[Path, str],
+) -> None:
+    """A record written before the field (no key) reads as ``()``."""
+    ws, eid = epoch_root
+    write_experiment(ws, eid, "v1", _experiment())
+    body = json.loads(experiment_json_path(ws, eid, "v1").read_text())
+    del body["hypothesis"]["expected_metric_movements"]
+    experiment_json_path(ws, eid, "v1").write_text(json.dumps(body, indent=2, sort_keys=True))
+    re_read = read_experiment(ws, eid, "v1")
+    assert re_read.hypothesis.expected_metric_movements == ()
+
+
+# ---------------------------------------------------------------------------
+# Recombination provenance (WS-REC): the CONDITIONAL recombined_from key
+# ---------------------------------------------------------------------------
+
+
+def test_recombined_from_round_trips(epoch_root: tuple[Path, str]) -> None:
+    ws, eid = epoch_root
+    exp = _experiment()
+    exp = Experiment(
+        id=exp.id,
+        epoch_id=exp.epoch_id,
+        generation_id=exp.generation_id,
+        parent_generation_id=exp.parent_generation_id,
+        proposed_at=exp.proposed_at,
+        hypothesis=exp.hypothesis,
+        patches=exp.patches,
+        outcome=None,
+        recombined_from=("v1", "v2"),
+    )
+    write_experiment(ws, eid, "v3", exp)
+    body = json.loads(experiment_json_path(ws, eid, "v3").read_text())
+    assert body["recombined_from"] == ["v1", "v2"]
+    assert read_experiment(ws, eid, "v3").recombined_from == ("v1", "v2")
+    # Survives the outcome updater's re-read + rewrite.
+    updated = update_experiment_outcome(ws, eid, "v3", _outcome("rejected", "margin"))
+    assert updated.recombined_from == ("v1", "v2")
+    assert read_experiment(ws, eid, "v3").recombined_from == ("v1", "v2")
+
+
+def test_recombined_from_key_omitted_at_default(epoch_root: tuple[Path, str]) -> None:
+    """The DEFAULT-OFF byte-identity proof at the record level: an ordinary
+    (non-recombined) experiment.json carries NO ``recombined_from`` key, so
+    its serialised form is byte-identical to one written before the field
+    existed."""
+    ws, eid = epoch_root
+    write_experiment(ws, eid, "v1", _experiment())
+    body = json.loads(experiment_json_path(ws, eid, "v1").read_text())
+    assert "recombined_from" not in body
+    # The exact key set of the pre-field record shape — a new unconditional
+    # key here would break byte-identity for every existing workspace.
+    assert set(body) == {
+        "format_version",
+        "id",
+        "epoch_id",
+        "generation_id",
+        "parent_generation_id",
+        "proposed_at",
+        "round_index",
+        "hypothesis",
+        "patch_ids",
+        "outcome",
+    }
+    assert read_experiment(ws, eid, "v1").recombined_from == ()
+
+
+def test_recombined_from_absent_on_legacy_record_reads_empty(
+    epoch_root: tuple[Path, str],
+) -> None:
+    """An old-shape record (legacy inline patches, no key) reads as ()."""
+    ws, eid = epoch_root
+    gen_dir = generation_dir(ws, eid, "v9")
+    gen_dir.mkdir(parents=True)
+    (gen_dir / "experiment.json").write_text(
+        json.dumps(
+            {
+                "id": "exp_legacy",
+                "epoch_id": eid,
+                "generation_id": "v9",
+                "parent_generation_id": "v0",
+                "proposed_at": "2026-01-01T00:00:00+00:00",
+                "hypothesis": {
+                    "core_idea": "legacy",
+                    "modulating": [],
+                    "why": "",
+                    "expected_drift_movements": [],
+                    "expected_pass_rate_delta": "",
+                },
+                "patches": [],
+                "outcome": None,
+            }
+        )
+    )
+    assert read_experiment(ws, eid, "v9").recombined_from == ()
