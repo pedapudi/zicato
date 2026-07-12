@@ -1415,6 +1415,29 @@ async def test_recombination_forbidden_id_degrades_to_fresh_sample() -> None:
 
 
 @pytest.mark.asyncio
+async def test_llm_merge_mode_is_behaviorally_inert_without_a_pair() -> None:
+    """The accept-and-inert pin: recombine_merge="llm" with NO pair on the
+    context (recombine off, or no eligible pair) behaves byte-identically
+    to the default — every slot samples normally, no merge call, no
+    provenance."""
+    from dataclasses import replace as _replace
+
+    candidates = _slate3()
+    critic = _CapturingCriticLLM("2")
+    inner = _ScriptedInnerAgent(candidates)
+    ctx = _replace(_context(critic), recombine_pair=None)
+    agent = BestOfNProposerAgent(
+        inner=inner,
+        config=ProposerQualityConfig(best_of_n=3, recombine_merge="llm"),
+    )
+    out = await agent.propose(ctx)
+    assert inner.calls == 3  # all slots sampled — no slot was replaced
+    assert out.recombined_from == ()
+    # The critic ran the ordinary selection (no recombined short-circuit).
+    assert critic.user_prompts != []
+
+
+@pytest.mark.asyncio
 async def test_vetoed_mint_stays_an_ordinary_slate_member() -> None:
     """A screen-VETOED mint takes no short-circuit: the ordinary selection
     runs over the survivors and the mode string is not "recombined"."""

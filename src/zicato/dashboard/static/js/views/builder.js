@@ -1173,6 +1173,11 @@ function proposerSection(d) {
       body: 'Opt-in: when best-of-N > 1, the last slate slot mints the patch union of two rejected complementary challengers instead of sampling the LLM — so a single winner can capture two fixes a parsimony-biased selector would each discount. Requires best_of_n > 1 to have any effect; cost-neutral (the mint replaces that slot\'s propose call, never adds one). Inert at best_of_n 1.',
     }, checkInput(!!pq.recombine, 'Recombination slot', 'mint the union of two rejected complementary fixes into the last slate slot',
       (on) => runOp('set_proposer_quality', { recombine: on }))),
+    controlRow('LLM-guided merge', {
+      title: 'recombine_merge', def: 'mechanical',
+      body: 'How the recombination slot composes the union. Off (mechanical): the last slot mints the concatenation of two DISJOINT patch sets with no LLM call — cost-neutral (best_of_n − 1 calls). On (llm): the slot issues ONE merge call instead, and disjointness RELAXES so two rejected fixes that OVERLAP on a mutation point can be merged (the model resolves the overlap a blind concatenation would drop) — the merge substitutes the slot\'s own sample call, so it costs exactly a recombine-off round. Only meaningful with the recombination slot on; on rolls the epoch.',
+    }, checkInput(pq.recombine_merge === 'llm', 'LLM-guided merge', 'compose the union with an LLM merge call (relaxes disjointness for overlapping pairs) instead of a mechanical patch concatenation',
+      (on) => runOp('set_proposer_quality', { recombine_merge: on ? 'llm' : 'mechanical' }))),
     controlRow('Genealogy channel', {
       title: 'genealogy', def: '0 (off)',
       body: 'Opt-in: show the proposer up to N candidate-lineage items per round — the champion\'s promoted patch history (build on what worked) plus diverse rejected reign candidates (re-frame a different idea), each with a BANDED outcome (improved / flat / regressed) and a capped excerpt of the proposer\'s own diff. Lets the proposer evolve IN CONTEXT (the in-context analogue of the recombination slot). Envelope-safe — candidate genealogy, never board data: no entry ids, no per-entry results, no exact deltas, nothing holdout-derived. Read-side only — free on the cost meter. Non-zero rolls the epoch.',

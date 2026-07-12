@@ -74,6 +74,15 @@ class RecombinationPair:
     b_improved_count: int = 0
     combined_improved_count: int = 0
     combined_regressed_count: int = 0
+    #: Each parent's whole-candidate BANDED outcome — the ``improved`` /
+    #: ``flat`` / ``regressed`` bucket of its settled Δscalar through the
+    #: experiment-memory vocabulary (:func:`zicato.proposer.prompts
+    #: ._bucket_scalar_delta`), or ``""`` when unsettled. The exact Δscalar
+    #: never rides this value: the builder bands it before construction, so
+    #: only the coarse label reaches the (envelope-clean) LLM merge prompt
+    #: (WS-MERGE; PROPOSER.md §2.6.1). Unused by the mechanical mint.
+    a_banded_outcome: str = ""
+    b_banded_outcome: str = ""
     a_expected_drift_movements: tuple[ExpectedDriftMovement, ...] = ()
     b_expected_drift_movements: tuple[ExpectedDriftMovement, ...] = ()
     a_expected_metric_movements: tuple[ExpectedMetricMovement, ...] = ()

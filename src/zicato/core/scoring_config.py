@@ -388,6 +388,29 @@ class ProposerQualityConfig:
         correct — a proposer shown candidate genealogy proposes under a
         different rule. Read-side only (the cost meter is untouched). Must be
         ``>= 0``. See :mod:`zicato.proposer.genealogy`.
+    recombine_merge:
+        How the recombination slot COMPOSES the union once the selector has
+        picked a pair (``docs/design/PROPOSER.md`` §2.6.1). ``"mechanical"``
+        (default) MINTS the concatenation of the two disjoint patch sets with
+        NO LLM call — REQUIRES a disjoint pair (the applier is last-wins on a
+        duplicate target). ``"llm"`` instead issues ONE auxiliary merge call
+        (the depth refinement role) whose response flows through the normal
+        proposal parse/validate path, and RELAXES the disjointness predicate
+        for pair SELECTION so two REJECTED fixes that OVERLAP on a mutation
+        target can be merged (the model resolves the overlap — overlap then
+        becomes a ranking penalty, never a filter). Meaningful only when
+        ``recombine`` is ``True`` AND ``best_of_n > 1``; a ``"llm"`` value set
+        with ``recombine`` off is accepted-and-inert (the dependent-knob house
+        style, like ``screen_veto_only`` without ``screen_entries``). Cost:
+        ``"mechanical"`` spends ``best_of_n − 1`` propose calls (the mint is
+        free); ``"llm"`` spends ``best_of_n`` on the happy path (the merge
+        call SUBSTITUTES the slot's own sample call) — a rare parse/validate
+        degrade adds the one fallback sample on top (``best_of_n + 1`` for
+        that round). Omitted from the contract canonical form at its
+        ``"mechanical"`` default (no retroactive roll); ``"llm"`` rolls the
+        epoch — a slate that can compose an LLM merge proposes under a
+        different rule. Must be ``"mechanical"`` or ``"llm"``. See
+        :mod:`zicato.epoch.recombine` / :mod:`zicato.proposer.recombine`.
     """
 
     best_of_n: int = 3
@@ -397,6 +420,7 @@ class ProposerQualityConfig:
     process_exemplars: int = 0
     recombine: bool = False
     genealogy: int = 0
+    recombine_merge: str = "mechanical"
 
     def __post_init__(self) -> None:
         if self.best_of_n < 1:
@@ -407,6 +431,10 @@ class ProposerQualityConfig:
             raise ValueError(f"process_exemplars must be >= 0, got {self.process_exemplars!r}")
         if self.genealogy < 0:
             raise ValueError(f"genealogy must be >= 0, got {self.genealogy!r}")
+        if self.recombine_merge not in ("mechanical", "llm"):
+            raise ValueError(
+                f"recombine_merge must be 'mechanical' or 'llm', got {self.recombine_merge!r}"
+            )
 
     @classmethod
     def defaults(cls) -> ProposerQualityConfig:

@@ -58,15 +58,25 @@ The recombination slot (WS-REC; opt-in, rides ``recombine`` + ``best_of_n > 1``)
 When the orchestrator threads a per-round
 :attr:`~zicato.proposer.agent.ProposerContext.recombine_pair` (two
 rejected complementary challengers of the current reign, selected by
-:mod:`zicato.epoch.recombine`), the LAST slate slot MINTS their patch
-union (:mod:`zicato.proposer.recombine`) instead of sampling the LLM —
-cost-neutral by construction: the mint REPLACES the slot's auxiliary
-propose call. The mint runs ``enforce_forbidden`` plus the SAME validate
-hook every sample runs; any finding degrades the slot to a normal fresh
-sample. A NON-VETOED mint short-circuits the selection
+:mod:`zicato.epoch.recombine`), the LAST slate slot COMPOSES their union
+instead of sampling the LLM. Two merge modes (WS-MERGE; PROPOSER.md
+§2.6.1), chosen by ``proposer_quality.recombine_merge``:
+
+* ``"mechanical"`` (default) — a PURE mint of the disjoint patch union
+  (:mod:`zicato.proposer.recombine`), NO LLM call — cost-neutral by
+  construction (the mint REPLACES the slot's auxiliary propose call, so a
+  recombining round spends ``best_of_n − 1`` calls).
+* ``"llm"`` — ONE auxiliary merge call (the depth refinement role) whose
+  response flows through the NORMAL parse/validate path; it SUBSTITUTES the
+  slot's own sample call (cost: ``best_of_n`` calls, a recombine-off round)
+  and reaches OVERLAPPING pairs the mechanical mint cannot compose.
+
+Either composition runs ``enforce_forbidden`` plus the SAME validate hook
+every sample runs; any finding degrades the slot to a normal fresh sample.
+A NON-VETOED mint/merge short-circuits the selection
 (``selection_mode="recombined"``, no critic call) because the heuristic's
 minimal-diff key would systematically starve the union — its diff is
-larger than either parent's by construction; a VETOED mint stays an
+larger than either parent's by construction; a VETOED one stays an
 ordinary slate member and every existing path is unchanged.
 
 Ensemble proposer roles (WS-ENS; breadth + depth)
@@ -576,18 +586,25 @@ class BestOfNProposerAgent:
         recombined_index: int | None = None
         for sample in range(n):
             if sample == n - 1 and ctx.recombine_pair is not None:
-                # The recombination slot (WS-REC): the LAST slot MINTS the
-                # union of the round's selected pair instead of sampling
-                # the LLM — the mint REPLACES the slot's auxiliary propose
-                # call (cost-neutral: n−1 calls, never more). Landing in
-                # the last slot makes a chosen mint the LAST-validated
-                # candidate, so the tree alignment below is a no-op on the
-                # happy path. A mint that fails forbidden-enforcement or
-                # the validate hook DEGRADES to the normal fresh sample
-                # below — the identical slot body, with the slot's normal
-                # exploratory hint (a recombination failure must never
+                # The recombination slot (WS-REC): the LAST slot composes the
+                # round's selected pair instead of sampling the LLM. Two merge
+                # modes (WS-MERGE; PROPOSER.md §2.6.1):
+                #   * "mechanical" (default) — a PURE mint of the disjoint
+                #     patch union, NO LLM call (cost-neutral: n−1 calls).
+                #   * "llm" — ONE aux merge call (the depth refinement role)
+                #     whose response flows through the normal parse/validate
+                #     path; it SUBSTITUTES the slot's own sample call (cost:
+                #     n calls, exactly a recombine-off round).
+                # Either lands in the last slot, so a chosen merge is the
+                # LAST-validated candidate and the tree alignment below is a
+                # no-op on the happy path. Any failure DEGRADES to the normal
+                # fresh sample below — the identical slot body, with the slot's
+                # normal exploratory hint (a recombination failure must never
                 # narrow the slate).
-                minted = await self._mint_recombined(ctx, sample, n)
+                if self.config.recombine_merge == "llm":
+                    minted = await self._merge_recombined(ctx, sample, n)
+                else:
+                    minted = await self._mint_recombined(ctx, sample, n)
                 if minted is not None:
                     candidates.append(minted)
                     recombined_index = len(candidates) - 1
@@ -772,6 +789,104 @@ class BestOfNProposerAgent:
             return None
         _emit_round_event(ctx, "candidate_sampled", {"i": sample, "n": n, "recombined": True})
         return minted
+
+    async def _merge_recombined(
+        self, ctx: ProposerContext, sample: int, n: int
+    ) -> Experiment | None:
+        """LLM-guided merge of the round's recombination pair (WS-MERGE). GUARDED.
+
+        The ``recombine_merge = "llm"`` counterpart to :meth:`_mint_recombined`
+        (PROPOSER.md §2.6.1): instead of mechanically concatenating a disjoint
+        patch union, it issues ONE auxiliary merge call — the DEPTH refinement
+        role (:meth:`_depth_call_llm`, exactly as the self-critique call), so
+        the merge SUBSTITUTES the slot's own sample call (cost: n calls, a
+        recombine-off round). The merge prompt
+        (:func:`~zicato.proposer.prompts.render_recombine_merge_prompt`) is
+        rendered from the envelope-clean :class:`RecombinationPair` — both
+        parents' patches, core ideas, BANDED outcomes and counts-only
+        complementarity, never an entry id — and the response flows through
+        the NORMAL proposal parse
+        (:func:`~zicato.proposer.structured.parse_experiment_json`), so a merge
+        is a proposal like any other. The parsed experiment is stamped with the
+        pair's ``recombined_from`` provenance and then runs the SAME two
+        defenses the mechanical mint runs (``enforce_forbidden`` + the validate
+        hook, which re-derives the shared child tree so a chosen merge is the
+        last-validated candidate).
+
+        Any failure — an opaque LLM error, an unparseable / schema-invalid
+        response, a forbidden-id or validation finding → DEBUG log → ``None``:
+        the caller DEGRADES to the normal fresh sample for the slot (the exact
+        mechanical-mint degrade; a merge failure must never narrow the slate,
+        let alone fail a propose). A successful merge emits its
+        ``candidate_sampled`` event with the ``recombined`` marker.
+        """
+        import dataclasses  # noqa: PLC0415
+
+        from zicato.proposer.brief import enforce_forbidden  # noqa: PLC0415
+        from zicato.proposer.prompts import render_recombine_merge_prompt  # noqa: PLC0415
+        from zicato.proposer.structured import (  # noqa: PLC0415
+            ExperimentParseError,
+            parse_experiment_json,
+        )
+
+        pair = ctx.recombine_pair
+        assert pair is not None  # caller-checked
+        system_prompt, user_prompt = render_recombine_merge_prompt(
+            pair,
+            brief_text=ctx.brief_text,
+            mutations=ctx.mutations,
+            custom_judge_names=ctx.custom_judge_names or frozenset(),
+        )
+        aux_call_llm = self._depth_call_llm(ctx)
+        try:
+            response = await aux_call_llm(system_prompt, user_prompt, ctx.model)
+        except Exception as exc:  # noqa: BLE001 — opaque LLM errors are common
+            log.debug(
+                "recombination merge (%s + %s) call failed (%s); degrading to a fresh sample",
+                pair.a_generation_id,
+                pair.b_generation_id,
+                exc,
+            )
+            return None
+        try:
+            merged = parse_experiment_json(
+                response or "",
+                epoch_id=ctx.epoch_id,
+                parent_gen=ctx.parent_generation_id,
+                new_gen=ctx.new_generation_id,
+                mutations_by_id={mp.id: mp for mp in ctx.mutations},
+                custom_judge_names=ctx.custom_judge_names,
+            )
+        except ExperimentParseError as exc:
+            log.debug(
+                "recombination merge (%s + %s) response unparseable (%s); "
+                "degrading to a fresh sample",
+                pair.a_generation_id,
+                pair.b_generation_id,
+                exc,
+            )
+            return None
+        # Stamp the same provenance the mechanical mint carries so the merge is
+        # indistinguishable downstream — the gate/journal consumers key on
+        # ``recombined_from`` + ``selection_mode="recombined"``.
+        merged = dataclasses.replace(
+            merged, recombined_from=(pair.a_generation_id, pair.b_generation_id)
+        )
+        findings = enforce_forbidden(list(merged.patches), ctx.forbidden_ids)
+        if not findings:
+            validate = ctx.validate_experiment
+            if validate is not None:
+                findings = await self._revalidate(validate, merged)
+        if findings:
+            log.debug(
+                "recombination merge (%s + %s) degraded to a fresh sample: %s",
+                pair.a_generation_id,
+                pair.b_generation_id,
+                "; ".join(findings),
+            )
+            return None
+        _emit_round_event(ctx, "candidate_sampled", {"i": sample, "n": n, "recombined": True})
+        return merged
 
     async def _screen_slate(
         self, candidates: list[Experiment], ctx: ProposerContext
