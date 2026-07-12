@@ -52,6 +52,7 @@ from zicato.proposer.structured import (
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
     from zicato.index.query import MutationTrackRecord
+    from zicato.proposer.genealogy import GenealogyItem
     from zicato.telemetry.meta_loop import MetaLoopEmitter
 
 #: An optional post-parse validation hook. The proposer calls it with a
@@ -105,6 +106,7 @@ async def propose_experiment(
     restrict_visibility: bool = False,
     failure_profile: str = "",
     process_exemplars: str = "",
+    genealogy: tuple[GenealogyItem, ...] = (),
     sample_hint: str = "",
     mutation_track_records: Mapping[str, MutationTrackRecord] | None = None,
     revise_feedback: str = "",
@@ -248,6 +250,19 @@ async def propose_experiment(
         engine only forwards it. Empty (the default) omits the section, so
         a caller that supplies no exemplars renders a byte-identical prompt
         to before this surface existed.
+    genealogy:
+        Optional sampled genealogy items (the opt-in
+        ``proposer_quality.genealogy`` channel — ``docs/design/PROPOSER.md``
+        §2.7). Forwarded to :func:`~zicato.proposer.prompts.render_user_prompt`,
+        which renders them via
+        :func:`~zicato.proposer.prompts.render_genealogy_block` and splices a
+        ``## Candidate genealogy`` section directly above the experiment-memory
+        block so the proposer can extend a promoted line or re-frame a rejected
+        one (in-context evolution). Each item is already banded + capped by its
+        sampler (:func:`~zicato.proposer.genealogy.sample_genealogy`) — no
+        entry ids, no per-entry results, no exact deltas; this engine only
+        forwards them. Empty (the default) omits the section, byte-identical to
+        before this surface existed.
 
     Returns
     -------
@@ -346,6 +361,7 @@ async def propose_experiment(
             custom_judge_names=custom_judge_names or frozenset(),
             failure_profile=failure_profile,
             process_exemplars=process_exemplars,
+            genealogy=genealogy,
             sample_hint=sample_hint,
             mutation_track_records=mutation_track_records,
         )

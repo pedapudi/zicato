@@ -586,6 +586,8 @@ def set_proposer_quality(
     best_of_n: int | None = None,
     critique_enabled: bool | None = None,
     process_exemplars: int | None = None,
+    recombine: bool | None = None,
+    genealogy: int | None = None,
 ) -> DraftPatch:
     """Set the proposer-quality levers: best-of-N slate + self-critique.
 
@@ -597,9 +599,22 @@ def set_proposer_quality(
     drift-anchored event windows per round (``0`` = off, the default —
     see ``docs/design/PROCESS-EXEMPLARS.md`` incl. its §5 harm-detection
     runbook before opting in; must be >= 0; read-side only, so the cost
-    meter is untouched). COMPOSES with :func:`set_screening` — both edit
-    the same nested ``proposer_quality`` block; the screen knobs stay
-    that op's. Changing any rolls the epoch.
+    meter is untouched). ``recombine`` opts in the mechanical
+    recombination slot (WS-REC): when ``True`` the last best-of-N slot
+    mints the patch union of two rejected complementary challengers
+    instead of sampling the LLM — REQUIRES ``best_of_n > 1`` to have any
+    effect (a single-sample proposer has no slate slot to mint into) and
+    is cost-neutral (the mint REPLACES the slot's auxiliary propose call,
+    never adds one — see :mod:`zicato.epoch.recombine`). Flipping it
+    rolls the epoch. ``genealogy`` opts in the genealogy channel
+    (WS-GENE): up to that many candidate-LINEAGE items — the champion's
+    promoted patch history + diverse rejected reign candidates, each with
+    a banded outcome — are spliced into the prompt so the proposer can
+    evolve in context (``0`` = off, the default; must be >= 0; read-side
+    only, so the cost meter is untouched — see
+    :mod:`zicato.proposer.genealogy`). COMPOSES with :func:`set_screening`
+    — both edit the same nested ``proposer_quality`` block; the screen
+    knobs stay that op's. Changing any rolls the epoch.
     """
     changed: dict[str, Any] = {}
     quality = draft.scoring.proposer_quality
@@ -622,6 +637,15 @@ def set_proposer_quality(
                 "from": quality.process_exemplars,
                 "to": process_exemplars,
             }
+    if recombine is not None and recombine != quality.recombine:
+        quality_changes["recombine"] = recombine
+        changed["recombine"] = {"from": quality.recombine, "to": recombine}
+    if genealogy is not None:
+        if genealogy < 0:
+            raise ValueError(f"genealogy must be >= 0, got {genealogy!r}")
+        if genealogy != quality.genealogy:
+            quality_changes["genealogy"] = genealogy
+            changed["genealogy"] = {"from": quality.genealogy, "to": genealogy}
     if quality_changes:
         draft.scoring = _replace_scoring(
             draft, proposer_quality=dataclasses.replace(quality, **quality_changes)
@@ -940,9 +964,11 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
     * ``candidate-screen runs`` — the pre-tournament tryout panel
       (``proposes × best_of_n × panel``).
     * ``best-of-N propose calls`` — ``proposes × best_of_n`` AUXILIARY
-      LLM calls per round. NOT board runs, so the line is labelled
-      auxiliary and EXCLUDED from the board-runs headline — but it is
-      real money and belongs on the meter.
+      LLM calls per round (the slate SAMPLING — the WS-ENS
+      proposer-breadth role; the critique / revise DEPTH calls run on
+      proposer-depth and are not separately metered). NOT board runs, so
+      the line is labelled auxiliary and EXCLUDED from the board-runs
+      headline — but it is real money and belongs on the meter.
     * ``crowning-confirm runs`` — the evidence gate's defer→replicate
       budget: each replicate is a FRESH board sweep for BOTH crowning
       contestants, so ``budget × 2 × board``. Spent per CONFIRMED
@@ -1053,7 +1079,10 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
     # Best-of-N propose multiplier: each propose-step samples best_of_n
     # candidate experiments — auxiliary LLM CALLS, not board runs, so the
     # line is labelled and EXCLUDED from the board-runs headline. Real
-    # spend the operator should still see priced.
+    # spend the operator should still see priced. An UPPER BOUND under the
+    # recombination slot (proposer_quality.recombine): a round that mints
+    # a recombination pair REPLACES its last slot's propose call with the
+    # free mechanical mint, spending best_of_n − 1 calls that round.
     if quality.best_of_n > 1:
         propose_calls = proposes * quality.best_of_n
         lines.append(
@@ -1061,7 +1090,9 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
                 "best-of-N propose calls",
                 propose_calls,
                 f"proposes {proposes} × best_of_n {quality.best_of_n} — auxiliary "
-                "LLM calls, not board runs (excluded from the headline)",
+                "LLM calls on the proposer-breadth role (sampling); critique / "
+                "revise run on proposer-depth. Not board runs (excluded from the "
+                "headline)",
             )
         )
 

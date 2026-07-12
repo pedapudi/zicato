@@ -225,6 +225,155 @@ scoring surface and are owned by SCORING.md — this doc describes only the
 
 ---
 
+## 2.6 The mechanical recombination slot (WS-REC)
+
+`proposer_quality.recombine` (default OFF) opts in a MECHANICAL merge of two
+already-evaluated challengers — no LLM call. The premise: a single champion can
+only ever discount ONE challenger's fix, so when two REJECTED challengers of the
+current reign each fixed a DISTINCT slice of the board with NON-OVERLAPPING
+edits, the last best-of-N slate slot mints the UNION of their patches, and a
+non-vetoed mint is chosen with `selection_mode = "recombined"`. A
+parsimony-biased selector rejects each single fix; the union clears the gate
+that neither half could — so the slot deliberately bypasses the minimal-diff
+selection heuristic (whose diff key would otherwise starve the larger union).
+
+It is cost-neutral (the mint REPLACES the slot's auxiliary propose call, never
+adds one — a recombining round spends `best_of_n − 1` calls) and
+envelope-clean: selection runs on per-entry PASS-FLIP evidence computed
+orchestrator-side and intersected with the TRAIN board there — entry ids never
+reach the proposer, and the holdout is never eligible. Requires `best_of_n > 1`
+to have any effect; flipping it rolls the epoch (a slate that can recombine
+proposes under a different rule). The full mechanism — the 8 eligibility
+predicates, the 4-key deterministic ranking, the minter, the `recombined`
+selection mode, and the KNOWN NARROWING (pure drift-side complementary pairs are
+invisible by design; they remain reachable through the in-context genealogy
+channel, with a drift-delta-with-confirmation variant as a documented future
+seam) — is specified in **[dev-guide 05 §5.6.11](../dev-guide/05-proposer.md)**
+(`src/zicato/epoch/recombine.py`, `src/zicato/proposer/recombine.py`).
+
+---
+
+## 2.7 The genealogy channel (WS-GENE) — in-context evolution, envelope-safe
+
+`proposer_quality.genealogy` (an `int`, default `0` = OFF) opts the proposer
+into an IN-CONTEXT view of the current reign's candidate lineage — the
+zicato analogue of AlphaEvolve's *prompt sampler*, which feeds parent
+programs and their scores back into generation so the LLM evolves in
+context. Where the mechanical recombination slot (§2.6) merges two rejected
+fixes WITHOUT an LLM call, the genealogy channel gives the LLM the raw
+material to merge, extend, or diverge from what has already been tried —
+the same in-context recombination, but authored by the model, and reachable
+even for the pure-drift-side pairs the mechanical slot cannot see (the §2.6
+KNOWN NARROWING). It is a RENDER-SIDE channel only: it splices a prompt
+block and touches no evaluation, so the cost meter is untouched (the
+process-exemplars precedent, §2.5).
+
+The design-first rule (ch04 §12) requires the redaction contract IN
+WRITING, before the code, because this channel widens what the proposer
+reads about prior candidates. The whole point of the section is that
+widening candidate genealogy is NOT widening evaluation data.
+
+### What the channel carries
+
+Two kinds of item, each a proposer-authored artifact plus a BANDED outcome:
+
+- **Parents** — the current champion's OWN promoted patch history: the
+  spine of experiments that were promoted up the lineage to the reigning
+  champion (the `parent_generation_id` chain), most-recent-first, capped at
+  half the item budget. These are the "build on these" ancestors — the
+  edits that WORKED, so the proposer can extend the winning line rather than
+  re-derive it. Each carries: the hypothesis `core_idea` (proposer-authored
+  free text), a `patch_summary` (the targeted mutation-id set + the patch op
+  kinds + a coarse size band — plus, at most, a short excerpt of the PATCH
+  DIFF TEXT itself, which is proposer-authored and therefore in-envelope, capped),
+  and the banded outcome.
+
+- **Inspirations** — DIVERSE rejected candidates of the current reign,
+  chosen by mutation-id-set DISSIMILARITY (a greedy max–min Jaccard walk over
+  the rejected pool: each pick maximizes its minimum Jaccard DISTANCE to the
+  already-chosen set, so the surfaced inspirations span the widest spread of
+  DISTINCT ideas rather than N variants of one). These are the "here is what
+  else was tried, and how it landed" material — a rejected idea is not a dead
+  end when a different framing of it might clear the gate. Same per-item
+  payload as a parent; the outcome band reflects the MEASURED Δscalar, NOT the
+  gate's verdict — rejected is not regressed. A candidate the gate rejected can
+  still band `improved` (a real but insufficient gain, or a win the
+  cross-regression / diversity guard vetoed): the band says how the delta
+  landed, the rejection says the gate declined to promote it. That is exactly
+  the signal the proposer wants — "this framing moved the needle but did not
+  clear the bar" — carried coarsely, without a number.
+
+### What the channel NEVER carries
+
+The envelope boundary (dev-guide 05 §5.8; OVERFITTING.md §11), stated as
+hard exclusions:
+
+1. **No board-entry ids.** Never an entry id, a question, an answer, or any
+   per-entry token. Genealogy is CANDIDATE lineage — patches, ideas, and
+   whole-candidate outcomes — never board content.
+2. **No per-entry results.** Never a per-entry pass/fail, a per-entry
+   drift verdict, or a matchup grid. The outcome is a WHOLE-CANDIDATE band.
+3. **No exact deltas.** The Δscalar is coarsened to a band through the
+   EXISTING `_bucket_scalar_delta` vocabulary (`improved` / `flat` /
+   `regressed`) — the same memorization-resistant banding the experiment
+   memory already uses (§2.5; OVERFITTING.md §11.4). The exact
+   response-surface number never reaches the model.
+4. **No holdout anything.** The pool is the reign's REJECTED + PROMOTED
+   candidates — whole experiments — and nothing is ever read from, sliced
+   by, or intersected against the holdout. There is no per-entry read at
+   all, so there is no per-entry slice to leak; the holdout cannot enter a
+   channel that never looks at board entries.
+
+The only numbers that ride the channel are the banded outcome
+(`improved`/`flat`/`regressed`) and coarse patch metadata (a mutation-id
+count, an op-kind list, a size band). Everything else is proposer-authored
+text (the `core_idea`, the patch diff excerpt) — content the proposer wrote
+in the first place, echoed back to it. **This widens NOTHING about
+evaluation data**: it is candidate genealogy, not board data.
+
+### The banding vocabulary
+
+Reuse, do not reinvent. The whole-candidate outcome is banded through
+`_bucket_scalar_delta` (`src/zicato/proposer/prompts.py`) — the exact
+`improved` / `flat` / `regressed` three-band vocabulary the prior-experiments
+block already renders under `restrict_visibility`. A candidate with no
+settled Δscalar (an in-flight sibling — never sampled here, but defensively)
+renders no band. No new banding primitive is introduced; a reader who knows
+the experiment-memory bands reads genealogy with no new vocabulary.
+
+### The cap discipline
+
+Budget-capped rendering, exactly the process-exemplar cap style (§2.5):
+`genealogy = k` bounds the TOTAL items rendered to `k`. Parents take the
+first `k // 2` slots (most-recent-first along the champion spine),
+inspirations take the remainder (the greedy dissimilarity walk, capped at
+what is left). The pool the sampler reads is itself bounded to a small
+constant of most-recent candidates (the recombination pool cap precedent),
+so the O(pool²) dissimilarity scan stays cheap regardless of epoch length.
+Per-item, the two proposer-authored free-text fields are BOTH head-capped
+with an elision marker — the patch diff excerpt (`_DIFF_EXCERPT_MAX`) and the
+`core_idea` (`_CORE_IDEA_MAX`) — so no single item can balloon the block.
+An empty result renders the EMPTY STRING — the "omit this section entirely"
+sentinel — so a `genealogy = 0` round is byte-identical to today.
+
+### The determinism requirement
+
+The sampler is a PURE, DETERMINISTIC function of (the reign's records, the
+ratings, `k`) — **no RNG**. Parents sort by round (the spine order);
+inspirations are the greedy max–min-Jaccard walk with a TOTAL tie-break
+(Elo DOWN, then generation-id ascending) so the same pool always yields the
+same inspirations in the same order, in ANY input order. Determinism is the
+leakage budget: a byte-identical block round-over-round (while the reign's
+candidate set is unchanged) re-presents nothing new, exactly as the
+process-exemplar channel argues.
+
+The full mechanism — `GenealogyItem`, `sample_genealogy`, the greedy
+dissimilarity walk, the render block, and the `genealogy` knob — is
+specified in **[dev-guide 05 §5.6.13](../dev-guide/05-proposer.md)**
+(`src/zicato/proposer/genealogy.py`).
+
+---
+
 ## 3. Design A — why a tool-using proposer owns its own model
 
 The text shim is a single-shot text exchange: zicato hands the auxiliary

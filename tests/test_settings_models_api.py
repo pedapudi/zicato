@@ -15,6 +15,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from zicato.dashboard.server import create_app
+from zicato.models_config import MODEL_ROLES
 from zicato.workspace.config_io import write_workspace_config
 
 _SECRET = "sk-leak-canary-value"
@@ -59,8 +60,10 @@ def test_get_returns_secret_safe_view_with_set_flag(
     body = resp.json()
     assert body["rolls_epoch"] is False
     models = body["models"]
-    # All four roles are present (even the unconfigured ones).
-    assert set(models.keys()) == {"harness", "auxiliary", "builder", "judge"}
+    # EVERY role is present (even the unconfigured ones) — including the two
+    # WS-ENS proposer-ensemble roles.
+    assert set(models.keys()) == set(MODEL_ROLES)
+    assert {"proposer_breadth", "proposer_depth"} <= set(models.keys())
     assert models["harness"]["call_llm"] == "pkg.harness:fn"
     # The model-spec role carries the NAME + a set flag, NEVER the value.
     assert models["auxiliary"]["api_key_env"] == _ENV_NAME
@@ -94,6 +97,28 @@ def test_post_persists_models_block_names_only(client: TestClient, workspace: Pa
     body = resp.json()
     assert body["rolls_epoch"] is False
     assert "api_key_env_set" in body["models"]["judge"]
+
+
+def test_post_round_trips_proposer_ensemble_roles(client: TestClient, workspace: Path) -> None:
+    """The WS-ENS proposer_breadth / proposer_depth roles persist + echo like
+    any other role (a call_llm path and a model spec, NAMES only)."""
+    payload = {
+        "models": {
+            "proposer_breadth": {"call_llm": "pkg.breadth:fn"},
+            "proposer_depth": {"model": "depth-x", "endpoint": None, "api_key_env": _ENV_NAME},
+        }
+    }
+    resp = client.post("/settings/models", json=payload)
+    assert resp.status_code == 200
+    on_disk = json.loads((workspace / "config.json").read_text(encoding="utf-8"))
+    assert on_disk["models"]["proposer_breadth"]["call_llm"] == "pkg.breadth:fn"
+    assert on_disk["models"]["proposer_depth"]["model"] == "depth-x"
+    assert on_disk["models"]["proposer_depth"]["api_key_env"] == _ENV_NAME
+    assert _SECRET not in json.dumps(on_disk)
+    # The echoed secret-safe view carries both roles.
+    echoed = resp.json()["models"]
+    assert echoed["proposer_breadth"]["call_llm"] == "pkg.breadth:fn"
+    assert "api_key_env_set" in echoed["proposer_depth"]
 
 
 def test_post_preserves_other_config_keys(client: TestClient, workspace: Path) -> None:

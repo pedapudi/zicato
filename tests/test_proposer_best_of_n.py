@@ -1290,3 +1290,465 @@ async def test_no_screen_runner_on_context_screens_nothing() -> None:
     out = await agent.propose(_context(critic))
     assert out is cand1
     assert "## Screen measurements" not in critic.user_prompts[0]
+
+
+# --------------------------------------------------------------------------
+# WS-REC — the recombination slot
+# --------------------------------------------------------------------------
+
+
+def _rec_pair():
+    from zicato.proposer.recombine import RecombinationPair
+
+    def _p(pid: str, mid: str, content: str) -> Patch:
+        return Patch(
+            id=pid,
+            mutation_id=mid,
+            op="replace",
+            new_content=content,
+            new_numeric=None,
+            new_enum=None,
+            rationale="r",
+        )
+
+    return RecombinationPair(
+        a_generation_id="v1",
+        b_generation_id="v2",
+        a_patches=(_p("pa", "router__sp", "fix-a"),),
+        b_patches=(_p("pb", "writer__sp", "fix-b"),),
+        a_core_idea="fix the router",
+        b_core_idea="fix the writer",
+        a_improved_count=1,
+        b_improved_count=1,
+        combined_improved_count=2,
+        combined_regressed_count=0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_recombination_mint_happy_path() -> None:
+    """A pair on the context: the LAST slot mints (no inner call), the
+    non-vetoed mint is CHOSEN with selection_mode="recombined" (no critic
+    call), and the round log carries the recombined marker."""
+    from dataclasses import replace as _replace
+
+    candidates = _slate3()[:2]
+    inner = _ScriptedInnerAgent(candidates)
+    critic = _CapturingCriticLLM("0")
+    events: list[tuple[str, dict]] = []
+    ctx = _replace(
+        _context(critic),
+        recombine_pair=_rec_pair(),
+        round_event_emitter=lambda t, f: events.append((t, f)),
+    )
+    agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
+    out = await agent.propose(ctx)
+
+    # The mint replaced the LAST slot's inner propose — n−1 calls exactly.
+    assert inner.calls == 2
+    # The returned experiment IS the mint: union patches, machine provenance.
+    assert out.recombined_from == ("v1", "v2")
+    assert sorted(p.mutation_id for p in out.patches) == ["router__sp", "writer__sp"]
+    assert out.hypothesis.core_idea.startswith("[recombined]")
+    # No critic call was made (the selection short-circuit).
+    assert critic.user_prompts == []
+    # Round-log trace: two ordinary samples, one recombined, the mode.
+    sampled = [f for t, f in events if t == "candidate_sampled"]
+    assert [s.get("recombined", False) for s in sampled] == [False, False, True]
+    selected = dict(events)["critique_selected"]
+    assert selected == {"index": 2, "reason": "recombined"}
+
+
+@pytest.mark.asyncio
+async def test_recombination_mint_validation_failure_degrades_to_fresh_sample() -> None:
+    """A mint the validate hook rejects DEGRADES the slot to a normal fresh
+    sample: the full slate budget is spent, no recombined candidate exists,
+    and the ordinary selection runs."""
+    from dataclasses import replace as _replace
+
+    candidates = _slate3()
+    inner = _ScriptedInnerAgent(candidates)
+
+    class _MintRejectingValidator(_RecordingValidator):
+        async def __call__(self, candidate: Experiment) -> list[str]:
+            await super().__call__(candidate)
+            if candidate.recombined_from:
+                return ["mint no longer derives against the parent tree"]
+            return []
+
+    hook = _MintRejectingValidator()
+    events: list[tuple[str, dict]] = []
+    ctx = _replace(
+        _context(_CapturingCriticLLM("2")),
+        recombine_pair=_rec_pair(),
+        validate_experiment=hook,
+        round_event_emitter=lambda t, f: events.append((t, f)),
+    )
+    agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
+    out = await agent.propose(ctx)
+
+    assert inner.calls == 3  # the degrade re-spent the slot on the inner agent
+    assert out is candidates[2]
+    assert out.recombined_from == ()
+    sampled = [f for t, f in events if t == "candidate_sampled"]
+    assert [s.get("recombined", False) for s in sampled] == [False, False, False]
+    assert dict(events)["critique_selected"]["reason"] != "recombined"
+
+
+@pytest.mark.asyncio
+async def test_recombination_forbidden_id_degrades_to_fresh_sample() -> None:
+    """Defense in depth: a mint touching a NOW-forbidden mutation id never
+    enters the slate — the slot degrades to a normal sample."""
+    from dataclasses import replace as _replace
+
+    candidates = _slate3()
+    inner = _ScriptedInnerAgent(candidates)
+    ctx = _replace(
+        _context(_CapturingCriticLLM("2")),
+        recombine_pair=_rec_pair(),
+        forbidden_ids=("writer__sp",),
+    )
+    agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
+    out = await agent.propose(ctx)
+    assert inner.calls == 3
+    assert out.recombined_from == ()
+
+
+@pytest.mark.asyncio
+async def test_vetoed_mint_stays_an_ordinary_slate_member() -> None:
+    """A screen-VETOED mint takes no short-circuit: the ordinary selection
+    runs over the survivors and the mode string is not "recombined"."""
+    from dataclasses import replace as _replace
+
+    candidates = _slate3()[:2]
+    inner = _ScriptedInnerAgent(candidates)
+
+    async def _screen(slate):
+        results = []
+        for exp in slate:
+            vetoed = bool(exp.recombined_from)
+            results.append(
+                CandidateScreenResult(
+                    vetoed=vetoed,
+                    reason="vetoed: panel 2, budget-aborts 1" if vetoed else "clear: panel 2",
+                    scalar=1.0,
+                    entries_screened=2,
+                    baseline_passes=2,
+                    candidate_passes=0 if vetoed else 2,
+                    confirmed=False,
+                )
+            )
+        return results
+
+    events: list[tuple[str, dict]] = []
+    ctx = _replace(
+        _context(_CapturingCriticLLM("0")),
+        recombine_pair=_rec_pair(),
+        screen_candidates=_screen,
+        round_event_emitter=lambda t, f: events.append((t, f)),
+    )
+    agent = BestOfNProposerAgent(
+        inner=inner,
+        config=ProposerQualityConfig(best_of_n=3, critique_enabled=False, screen_entries=2),
+    )
+    out = await agent.propose(ctx)
+
+    assert out.recombined_from == ()  # the mint was NOT chosen
+    assert out in candidates
+    selected = dict(events)["critique_selected"]
+    assert selected["reason"] != "recombined"
+    assert selected["index"] != 2
+
+
+@pytest.mark.asyncio
+async def test_chosen_mint_needs_no_tree_realign() -> None:
+    """The mint lands in the LAST slot and validates during minting, so a
+    chosen mint is the last-validated candidate — the alignment pass never
+    re-derives (exactly one hook call, the mint's own validation)."""
+    from dataclasses import replace as _replace
+
+    candidates = _slate3()[:2]
+    inner = _ScriptedInnerAgent(candidates)
+    hook = _RecordingValidator()
+    ctx = _replace(
+        _context(_CapturingCriticLLM("0")),
+        recombine_pair=_rec_pair(),
+        validate_experiment=hook,
+    )
+    agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
+    out = await agent.propose(ctx)
+    assert out.recombined_from == ("v1", "v2")
+    # ONE call: the mint's own validation. No post-selection re-derive.
+    assert len(hook.calls) == 1
+    assert hook.calls[0].recombined_from == ("v1", "v2")
+
+
+@pytest.mark.asyncio
+async def test_no_pair_on_context_is_byte_identical() -> None:
+    """Without a pair (every knob-off round) the slot loop is unchanged."""
+    candidates = _slate3()
+    inner = _ScriptedInnerAgent(candidates)
+    agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
+    out = await agent.propose(_context(_CapturingCriticLLM("1")))
+    assert inner.calls == 3
+    assert out is candidates[1]
+
+
+def test_field_threads_the_pair_to_slot_zero_only() -> None:
+    """The field path's slot-0-only rule: identical mints across the field
+    would collapse into field-diversity soft-rejects, so exactly one slot
+    per round may carry the pair."""
+    from zicato.orchestrator import _recombine_pair_for_slot
+
+    pair = _rec_pair()
+    assert _recombine_pair_for_slot(pair, 0) is pair
+    assert _recombine_pair_for_slot(pair, 1) is None
+    assert _recombine_pair_for_slot(pair, 3) is None
+    assert _recombine_pair_for_slot(None, 0) is None
+
+
+# --------------------------------------------------------------------------
+# WS-ENS — ensemble proposer roles (breadth = sampling, depth = critique/revise)
+# --------------------------------------------------------------------------
+
+
+async def _plain_aux(system: str, user: str, model: str) -> str:
+    """A breadth double: a distinct callable the fake inner never invokes.
+
+    The wiring proof for SAMPLING is that the inner agent RECEIVES this
+    object on ``ctx.aux_call_llm`` (the fake inner records the context but
+    never calls the callable), so identity — not a call count — is the seam.
+    """
+    del system, user, model
+    return "unused"
+
+
+@pytest.mark.asyncio
+async def test_ens_sampling_uses_breadth_critique_uses_depth() -> None:
+    """Slate SAMPLING runs on breadth (N times); the CRITIQUE call runs on
+    depth — and both are distinct from the context's base auxiliary, proving
+    the wrapper actually swapped ``ctx.aux_call_llm`` per call class."""
+    candidates = [
+        _experiment(core_idea="a", mutation_id="router__sp", new_content="a"),
+        _experiment(core_idea="b", mutation_id="writer__sp", new_content="b"),
+        _experiment(core_idea="c", mutation_id="router__sp", new_content="c"),
+    ]
+    inner = _ExhaustibleInnerAgent(candidates)
+    breadth = _plain_aux
+    depth = _CapturingCriticLLM("0")  # the critic double: counts + records
+    base_aux = _CapturingCriticLLM("2")  # deliberately different from both roles
+    agent = BestOfNProposerAgent(
+        inner=inner,
+        config=ProposerQualityConfig(best_of_n=3),
+        breadth_call_llm=breadth,
+        depth_call_llm=depth,
+    )
+    out = await agent.propose(_context(base_aux))
+
+    # SAMPLING: the inner was handed the breadth callable on every slate slot.
+    assert inner.calls == 3
+    assert [c.aux_call_llm for c in inner.contexts] == [breadth, breadth, breadth]
+    # CRITIQUE: exactly one depth call; the base auxiliary was NEVER the critic.
+    assert len(depth.system_prompts) == 1
+    assert len(base_aux.system_prompts) == 0
+    # The critic's pick (index 0) is returned.
+    assert out is candidates[0]
+
+
+@pytest.mark.asyncio
+async def test_ens_absent_roles_are_byte_identical_same_callable_object() -> None:
+    """With NO roles configured, sampling AND critique run on the SAME object
+    the context carries — a counting-double proves the fall-back is the exact
+    ``ctx.aux_call_llm`` (byte-identical to the pre-ensemble wrapper)."""
+    candidates = [
+        _experiment(core_idea="a", mutation_id="router__sp", new_content="a"),
+        _experiment(core_idea="b", mutation_id="writer__sp", new_content="b"),
+    ]
+    inner = _ExhaustibleInnerAgent(candidates)
+    base_aux = _CapturingCriticLLM("0")
+    agent = BestOfNProposerAgent(
+        inner=inner,
+        config=ProposerQualityConfig(best_of_n=2),
+        breadth_call_llm=None,
+        depth_call_llm=None,
+    )
+    await agent.propose(_context(base_aux))
+
+    # Sampling fell back to the base auxiliary — the SAME object, not a copy.
+    assert all(c.aux_call_llm is base_aux for c in inner.contexts)
+    # Critique fell back to that same object too (one call).
+    assert len(base_aux.system_prompts) == 1
+
+
+@pytest.mark.asyncio
+async def test_ens_revise_uses_depth() -> None:
+    """The screen-informed REVISE re-sample is a depth pass: its context
+    carries the depth callable (and a non-empty revise_feedback), while the
+    original slate slots carried breadth."""
+    slate = [
+        _experiment(core_idea="a", mutation_id="router__sp", new_content="a"),
+        _experiment(core_idea="b", mutation_id="writer__sp", new_content="b"),
+        _experiment(core_idea="rev", mutation_id="router__sp", new_content="r"),
+    ]
+    inner = _ExhaustibleInnerAgent(slate)
+    # slate screen (call 0): both vetoed → all-vetoed → one revise; the
+    # replacement screen (call 1): clear → the revise is chosen.
+    screen = _SequencedScreen(
+        [
+            [_screen_result(vetoed=True), _screen_result(vetoed=True)],
+            [_screen_result(vetoed=False)],
+        ]
+    )
+    breadth = _plain_aux
+    depth = _CapturingCriticLLM("0")
+    base_aux = _CapturingCriticLLM("0")
+    agent = BestOfNProposerAgent(
+        inner=inner,
+        config=ProposerQualityConfig(best_of_n=2, screen_entries=2),
+        breadth_call_llm=breadth,
+        depth_call_llm=depth,
+    )
+    ctx = _screened_context(base_aux, screen)
+    await agent.propose(ctx)
+
+    # 2 slate samples on breadth, then the revise re-sample on depth.
+    assert inner.calls == 3
+    assert inner.contexts[0].aux_call_llm is breadth
+    assert inner.contexts[1].aux_call_llm is breadth
+    assert inner.contexts[2].aux_call_llm is depth
+    # The 3rd call is unmistakably the revise (its repair feedback is seeded).
+    assert inner.contexts[2].revise_feedback != ""
+
+
+@pytest.mark.asyncio
+async def test_ens_no_collusion_guard_between_breadth_and_depth() -> None:
+    """Breadth and depth may be the IDENTICAL callable — both are
+    proposer-side (one trust domain), so no distinctness guard fires and the
+    propose step succeeds normally."""
+    candidates = [
+        _experiment(core_idea="a", mutation_id="router__sp", new_content="a"),
+        _experiment(core_idea="b", mutation_id="writer__sp", new_content="b"),
+    ]
+    inner = _ScriptedInnerAgent(candidates)
+    shared = _CapturingCriticLLM("1")  # the SAME object for both roles
+    agent = BestOfNProposerAgent(
+        inner=inner,
+        config=ProposerQualityConfig(best_of_n=2),
+        breadth_call_llm=shared,
+        depth_call_llm=shared,
+    )
+    # No exception — the guard does not apply between the two proposer roles.
+    out = await agent.propose(_context(_CapturingCriticLLM("1")))
+    assert out is candidates[1]
+
+
+def test_ens_wrap_threads_roles_onto_the_wrapper() -> None:
+    """`wrap_with_proposer_quality` stores the two role callables on the
+    wrapper when best_of_n > 1 (and they are irrelevant on the pass-through)."""
+    inner = _ScriptedInnerAgent(
+        [_experiment(core_idea="a", mutation_id="router__sp", new_content="x")]
+    )
+    breadth = _plain_aux
+    depth = _CapturingCriticLLM("0")
+    wrapped = wrap_with_proposer_quality(
+        inner,
+        ProposerQualityConfig(best_of_n=3),
+        breadth_call_llm=breadth,
+        depth_call_llm=depth,
+        breadth_model="breadth-model",
+        depth_model="depth-model",
+    )
+    assert isinstance(wrapped, BestOfNProposerAgent)
+    assert wrapped.breadth_call_llm is breadth
+    assert wrapped.depth_call_llm is depth
+    assert wrapped.breadth_model == "breadth-model"
+    assert wrapped.depth_model == "depth-model"
+    # The best_of_n <= 1 pass-through ignores the roles (no wrapper at all).
+    passthrough = wrap_with_proposer_quality(
+        inner,
+        ProposerQualityConfig(best_of_n=1),
+        breadth_call_llm=breadth,
+        depth_call_llm=depth,
+        breadth_model="breadth-model",
+        depth_model="depth-model",
+    )
+    assert passthrough is inner
+
+
+@pytest.mark.asyncio
+async def test_ens_spec_role_swaps_ctx_model_for_default_proposer() -> None:
+    """A spec-configured role carries a MODEL NAME: every sampling slot's inner
+    ctx binds the breadth model string, and the revise binds the depth model —
+    so the DEFAULT ADK proposer (which reads ``ctx.model``, not the callable)
+    honors the role."""
+    slate = [
+        _experiment(core_idea="a", mutation_id="router__sp", new_content="a"),
+        _experiment(core_idea="b", mutation_id="writer__sp", new_content="b"),
+        _experiment(core_idea="rev", mutation_id="router__sp", new_content="r"),
+    ]
+    inner = _ExhaustibleInnerAgent(slate)
+    # slate screen vetoes both → one revise; the replacement screen clears it.
+    screen = _SequencedScreen(
+        [
+            [_screen_result(vetoed=True), _screen_result(vetoed=True)],
+            [_screen_result(vetoed=False)],
+        ]
+    )
+    agent = BestOfNProposerAgent(
+        inner=inner,
+        config=ProposerQualityConfig(best_of_n=2, screen_entries=2),
+        breadth_call_llm=_plain_aux,
+        depth_call_llm=_CapturingCriticLLM("0"),
+        breadth_model="breadth-model",
+        depth_model="depth-model",
+    )
+    await agent.propose(_screened_context(_CapturingCriticLLM("0"), screen))
+
+    assert inner.calls == 3
+    # The 2 slate slots carry the breadth model; the revise carries depth.
+    assert inner.contexts[0].model == "breadth-model"
+    assert inner.contexts[1].model == "breadth-model"
+    assert inner.contexts[2].model == "depth-model"
+
+
+@pytest.mark.asyncio
+async def test_ens_callable_only_role_leaves_ctx_model_unchanged() -> None:
+    """A callable-only role (no model name — a bare call_llm / test callable)
+    swaps ``ctx.aux_call_llm`` but LEAVES ``ctx.model`` at the auxiliary string
+    (the documented degrade: it steers only proposers that read
+    ``ctx.aux_call_llm``, not the default ADK proposer)."""
+    candidates = [
+        _experiment(core_idea="a", mutation_id="router__sp", new_content="a"),
+        _experiment(core_idea="b", mutation_id="writer__sp", new_content="b"),
+    ]
+    inner = _ExhaustibleInnerAgent(candidates)
+    agent = BestOfNProposerAgent(
+        inner=inner,
+        config=ProposerQualityConfig(best_of_n=2),
+        breadth_call_llm=_plain_aux,
+        depth_call_llm=_CapturingCriticLLM("0"),
+        # breadth_model / depth_model left None — the callable-only path.
+    )
+    await agent.propose(_context(_CapturingCriticLLM("0")))
+
+    # The callable was swapped, but the model string stayed the context's own.
+    assert [c.aux_call_llm for c in inner.contexts] == [_plain_aux, _plain_aux]
+    assert all(c.model == "test-model" for c in inner.contexts)
+
+
+@pytest.mark.asyncio
+async def test_ens_absent_roles_leave_ctx_model_byte_identical() -> None:
+    """With NO roles configured, every inner ctx keeps the context's own model
+    string unchanged — the byte-identical default extends to ``ctx.model``."""
+    candidates = [
+        _experiment(core_idea="a", mutation_id="router__sp", new_content="a"),
+        _experiment(core_idea="b", mutation_id="writer__sp", new_content="b"),
+    ]
+    inner = _ExhaustibleInnerAgent(candidates)
+    agent = BestOfNProposerAgent(
+        inner=inner,
+        config=ProposerQualityConfig(best_of_n=2),
+    )
+    await agent.propose(_context(_CapturingCriticLLM("0")))
+
+    assert all(c.model == "test-model" for c in inner.contexts)

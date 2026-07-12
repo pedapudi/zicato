@@ -110,12 +110,18 @@ class CandidateSampled:
     all-vetoed slate may take (``i`` is then the replacement's slate
     position, one past the sampled slots). Additive with a default so
     every pre-revise log decodes identically.
+
+    ``recombined`` marks the slot that MECHANICALLY MINTED the union of two
+    rejected parents' patch sets (WS-REC) instead of sampling the LLM — the
+    last slot when the round carries a recombination pair. Additive with a
+    default so every pre-recombine log decodes identically.
     """
 
     TYPE: ClassVar[str] = "candidate_sampled"
     i: int = 0
     n: int = 1
     revise: bool = False
+    recombined: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -457,6 +463,7 @@ class ProposalSession:
     candidates_sampled: int = 0
     candidates_screened: int = 0
     screen_vetoes: int = 0
+    recombined_sampled: int = 0
     critique_index: int | None = None
     critique_reason: str = ""
     experiment_ids: tuple[str, ...] = ()
@@ -512,6 +519,7 @@ def fold_round_record(events: list[RoundLogEnvelope]) -> RoundRecord:
     candidates = 0
     screened = 0
     screen_vetoes = 0
+    recombined_sampled = 0
     critique_index: int | None = None
     critique_reason = ""
     experiment_ids: list[str] = []
@@ -538,6 +546,8 @@ def fold_round_record(events: list[RoundLogEnvelope]) -> RoundRecord:
             errors.extend(event.errors)
         elif isinstance(event, CandidateSampled):
             candidates += 1
+            if event.recombined:
+                recombined_sampled += 1
         elif isinstance(event, CandidateScreened):
             screened += 1
             if event.vetoed:
@@ -575,6 +585,7 @@ def fold_round_record(events: list[RoundLogEnvelope]) -> RoundRecord:
             candidates_sampled=candidates,
             candidates_screened=screened,
             screen_vetoes=screen_vetoes,
+            recombined_sampled=recombined_sampled,
             critique_index=critique_index,
             critique_reason=critique_reason,
             experiment_ids=tuple(experiment_ids),

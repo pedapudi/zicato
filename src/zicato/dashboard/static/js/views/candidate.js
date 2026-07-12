@@ -29,7 +29,7 @@ import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { attachHovercard } from '../hovercard.js';
 import { lifecycleDag, rungProgression } from '../dag.js';
-import { gatedSwap, section, subhead, empty, stat, verdictPill, pill, overrideChip, overrideDigest, decisionFor, decisionOf, densityTokens, prText, metricsDigest, truncate, hovercardBody, dataTable, deltaCell } from '../ui.js';
+import { gatedSwap, section, subhead, empty, stat, verdictPill, pill, overrideChip, overrideDigest, decisionFor, decisionOf, densityTokens, prText, metricsDigest, truncate, hovercardBody, dataTable, deltaCell, ratingModel, ratingTripleDigest } from '../ui.js';
 import { comparePicker, splitFrame } from '../compare.js';
 import { candidateProgression, inflightForActiveEpoch, inflightForEntryGen, runProgressRatio, liveMatchupsForCandidate, liveBelongsToEpoch, resolveNonGauntletSt, racingModel, structureDigest, normalizeStructure } from './structure.js';
 import { roundsFromTimeline, reignModel } from '../rounds.js';
@@ -148,6 +148,13 @@ export async function render(host, ctx, params, route) {
   // (B) reads its lifecycle clean.
   const sideA = await resolveCandidate(epochId, genId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, params.entry || null, racingSt, epochInflight, liveProjected);
   const sideB = cmpId ? await resolveCandidate(epochId, cmpId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, null, racingSt, epochInflight, liveProjected) : null;
+
+  // the per-CANDIDATE visibility rating (the server-joined lineage triple;
+  // distinct from the per-PAIR gate ratingBlock below). Absent on the Rust
+  // lineage view / a pre-rating payload -> null -> the stat renders '—'.
+  const ratingByGen = new Map(rows.map((g) => [String(g.generation_id), { elo: g.elo, elo_se: g.elo_se, elo_games: g.elo_games }]));
+  sideA.rating = ratingByGen.get(String(genId)) || null;
+  if (sideB) sideB.rating = ratingByGen.get(String(cmpId)) || null;
 
   const digest = JSON.stringify({
     epochId, genId, cmpId, entry: params.entry || null, structure,
@@ -532,6 +539,9 @@ function projStat(value, key, proj) {
 function candidateDigest(s) {
   return {
     gen: s.node.id, parent: s.node.parent, decision: s.decision, championId: s.championId,
+    // the visibility rating stat (int register) — a reindex that moves the
+    // rating repaints the dossier; unrated folds null (pre-rating shape).
+    rating: ratingTripleDigest(s.rating),
     champScalar: svg.isNum(s.championScalar) ? s.championScalar.toFixed(3) : null,
     delta: svg.isNum(s.primaryDelta) ? s.primaryDelta.toFixed(3) : null,
     // the live PROJECTED standing — ROUNDED scalar/Δ + integer board counts so a
@@ -654,9 +664,21 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
   const deltaStat = (proj && svg.isNum(proj.delta))
     ? projStat('~' + svg.fmtSigned(proj.delta, 1), 'Δ vs champion', proj)
     : stat(svg.isNum(s.primaryDelta) ? svg.fmtSigned(s.primaryDelta, 1) : '—', 'Δ vs champion');
+  // the visibility rating stat (quiet-precision): `1512 ±34 · 7 games`; a
+  // thin sample declines the point estimate — `provisional · 2 games` (the
+  // ratingBlock forming-state honesty precedent); unrated reads '—'.
+  const rm = ratingModel(s.rating);
+  const ratingStat = stat(
+    rm
+      ? (rm.provisional
+        ? 'provisional · ' + rm.games + (rm.games === 1 ? ' game' : ' games')
+        : rm.text + (rm.games != null ? ' · ' + rm.games + (rm.games === 1 ? ' game' : ' games') : ''))
+      : '—',
+    'rating');
   host.appendChild(el('div', { class: 'dn-panel dn-row' }, [
     scalarStat,
     deltaStat,
+    ratingStat,
     stat(node.parent || 'seed', 'parent'),
     el('div', { class: 'dn-stat' }, [verdictPill(baseline ? 'baseline' : s.decision)]),
   ]));

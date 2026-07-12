@@ -102,7 +102,9 @@ def _card(name: str, **kw: object) -> dict:
 def test_fresh_build_carries_v11_tables() -> None:
     conn = sqlite3.connect(":memory:")
     schema.apply_schema(conn)
-    assert schema.read_schema_version(conn) == 11
+    # v11 introduced the tables; the build is now stamped at the CURRENT
+    # version (>= 11 — v12 added the elo_se column on top).
+    assert schema.read_schema_version(conn) >= 11
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"reflections", "judge_scorecards"} <= tables
 
@@ -115,8 +117,8 @@ def test_in_place_migrate_v10_to_v11_adds_tables() -> None:
     conn.execute("DROP TABLE judge_scorecards")
     conn.execute("PRAGMA user_version = 10")
     assert schema.read_schema_version(conn) == 10
-    schema.apply_schema(conn)  # in-place migrate
-    assert schema.read_schema_version(conn) == 11
+    schema.apply_schema(conn)  # in-place migrate (carries through to current)
+    assert schema.read_schema_version(conn) >= 11
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"reflections", "judge_scorecards"} <= tables
 

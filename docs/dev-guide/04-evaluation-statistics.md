@@ -367,6 +367,21 @@ power harness's planted deltas (§13.4): one full token fix is a true effect
 of 1.2 in scalar units, measured as `1.2·(1 − 2σ)` under measurement-flip
 noise σ.
 
+> **The two-marker (two-defect) harness variant** — the WS-REC recombination
+> oracle. The example harness carries an additive `STYLE_RULES_EXTRA` support
+> (byte-identical when unused, so §1.8's numbers above are untouched) that
+> plants TWO independent defect markers instead of one: v0 scalar 2.4, a
+> single-fix A and a single-fix B each worth Δ = 1.2, and the UNION worth
+> Δ = 2.4. The contract pins `promote_margin = 1.5` STRICTLY BETWEEN the single
+> and the union deltas — so A and B EACH REJECT (1.2 < 1.5) while the mechanical
+> recombination of their disjoint patches PROMOTES (2.4 > 1.5). This is the
+> planted-defect world that proves the recombination slot (05-proposer.md
+> §5.6.11) earns its keep: `tests/test_recombination_known_answer.py` runs it
+> through the full loop and pins the union minted in round 3, chosen
+> `mode="recombined"`, promoted — with the STALL CONTROL (same script,
+> `recombine` off ⇒ the champion stays v0, neither single fix ever clears the
+> margin). The two-marker policy template lives in that test.
+
 ### 1.9 The observability layer: loop-health detectors over the chain
 
 Statistics you cannot see rot silently. `src/zicato/health/diagnostics.py` is
@@ -969,6 +984,46 @@ properties a consumer must understand:
 The fit is opt-in as a *standings* device too (`params["rating"]` selects
 `theta_rank` ordering — see 06-tournament-and-selection.md §"Rating layer");
 in that role it only ever proposes an ordering. The gate is never involved.
+
+### 6.6 The visibility rating fold (index-side BT on the Elo scale)
+
+Home: `src/zicato/index/elo.py::fold_elo_into_index`, run on every reindex /
+ingest after the tournaments land. This is the SAME `fit_bradley_terry`
+engine as §6.5, in a different role: a **read-only analytics fold** over the
+persisted match ledger that writes each generation's
+`generations.elo` / `elo_se` / `elo_games` columns (schema v10 + v12). The
+fitted strength is mapped onto the conventional Elo scale for legibility —
+`elo = 1500 + theta·(400/ln 10)`, `elo_se = se·(400/ln 10)` — so a 400-point
+gap reads as 10:1 odds and the zero-sum gauge puts the field mean at 1500.
+
+The doctrine, in one line: **the rating is for VISIBILITY, never the gate.**
+The fold writes the three columns and nothing gate-side ever reads them back
+— the standings tables, the gens roster, and the candidate dossier render
+them; `evaluate_gate` / the selection strategies never touch them (pinned by
+`test_rating_columns_are_never_read_gate_side`). Facts a consumer must hold:
+
+- **Batch and order-independent.** The fold is a batch MLE over the
+  de-duplicated game list (crowning rows + field-bracket rows, keyed
+  `(tournament_id, match_id, {sides})`), so the same ledger yields identical
+  ratings and SEs in any fold order — re-derived from scratch at every
+  ingest, never incrementally updated.
+- **Margins are deliberately ignored.** BT is fit on win/loss only; the
+  `|delta_scalar|` magnitude rides the *gate* (§2), and folding it into the
+  rating would double-count the same evidence.
+- **Zero games ⇒ NULL, not a carried prior.** A generation that never played
+  a settled two-competitor duel has no measured strength; its columns stay
+  NULL and the display renders `—` (honest-degrade, never a fabricated
+  number).
+- **The racing-rung limitation.** A racing intermediate rung persists a
+  survivor/cut *set* with no single named winner — that is not a pairwise
+  outcome, so rung cuts contribute **zero games** to the rating (only
+  two-competitor named-winner matches count). A Plackett–Luce set-rating is
+  the documented future fix (SELECTION-THEORY.md); until then a racing
+  epoch's ratings lean on the champion-audit duels alone.
+- **Display honesty.** Below `MIN_RATING_GAMES = 5` games the surfaces
+  append a faint `provisional` suffix (the per-candidate analogue of §6.1's
+  `MIN_CREDIBLE_DUELS` honesty states); the SE always rides beside the
+  number (`1512 ±34`), never a bare point estimate.
 
 ---
 

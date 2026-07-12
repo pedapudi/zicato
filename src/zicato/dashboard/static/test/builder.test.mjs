@@ -704,12 +704,46 @@ test('builder view: the Proposer section drives set_proposer_quality + set_exper
   await tick();
   assert(OP_CALLS.find((c) => c.op === 'set_proposer_quality' && c.args.critique_enabled === false),
     'the critique toggle posts set_proposer_quality');
+  const recombine = byAria(host, 'dn-bld-check', 'Recombination slot');
+  assert(recombine, 'the recombination-slot control renders');
+  assert(!recombine.checked, 'the recombination slot is unchecked at the False default');
+  recombine.checked = true;
+  recombine.dispatchEvent(makeEvent('change'));
+  await tick();
+  const recCall = OP_CALLS.find((c) => c.op === 'set_proposer_quality' && 'recombine' in c.args);
+  assert(recCall && recCall.args.recombine === true,
+    'the recombination toggle posts set_proposer_quality {recombine:true} — exact op+args');
+  const genealogy = byAria(host, 'dn-bld-num', 'Genealogy');
+  assert(genealogy, 'the genealogy control renders');
+  genealogy.value = '4';
+  genealogy.dispatchEvent(makeEvent('change'));
+  await tick();
+  const genCall = OP_CALLS.find((c) => c.op === 'set_proposer_quality' && 'genealogy' in c.args);
+  assert(genCall && genCall.args.genealogy === 4,
+    'the genealogy count posts set_proposer_quality {genealogy:4} — exact op+args');
   const mem = byAria(host, 'dn-bld-check', 'Cross-epoch experiment memory');
   mem.checked = true;
   mem.dispatchEvent(makeEvent('change'));
   await tick();
   assert(OP_CALLS.find((c) => c.op === 'set_experiment_memory' && c.args.cross_epoch === true),
     'the memory toggle posts set_experiment_memory');
+});
+
+test('builder view: a no-op re-render of the Proposer section rebuilds ZERO DOM (digest-gated identity)', async () => {
+  const host = await mountAt('Proposer');
+  const center = firstClass(host, 'dn-bld-center');
+  assert(center, 'the center pane is present');
+  const secBefore = firstClass(center, 'dn-section');
+  const writes = center.innerHTMLWriteCount();
+  // re-click the ALREADY-active Proposer rail item → a full render pass with an
+  // IDENTICAL center digest must not rebuild the section (the render-discipline
+  // no-op guardrail — the recombination row must not perturb the digest).
+  const rail = byClass(host, 'dn-bld-railitem').find((r) => r.textContent.includes('Proposer'));
+  rail.dispatchEvent(makeEvent('click'));
+  await tick();
+  const secAfter = firstClass(center, 'dn-section');
+  assert(secBefore === secAfter, 'a no-op section re-render preserves node identity (zero rebuild)');
+  assertEqual(center.innerHTMLWriteCount(), writes, 'a no-op section re-render writes ZERO additional DOM');
 });
 
 test('builder view: the Gate section gains scope + blocking + regression controls', async () => {

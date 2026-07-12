@@ -238,3 +238,43 @@ def test_round_dir_layout_matches_path_helper(tmp_path):
     expected = tmp_path / "epochs" / "e9" / "rounds" / "12" / "round_log.jsonl"
     assert log.path == expected
     assert expected.exists()
+
+
+def test_candidate_sampled_recombined_flag_round_trips_and_folds(tmp_path):
+    """WS-REC: the additive ``recombined`` flag decodes + folds; absent
+    payloads (pre-recombine logs) default to False and fold to zero."""
+    log = RoundLog(tmp_path, "epoch-01", 7)
+    log.append(RoundOpened(contract_hash="h"))
+    log.append(CandidateSampled(i=0, n=3))
+    log.append(CandidateSampled(i=1, n=3))
+    log.append(CandidateSampled(i=2, n=3, recombined=True))
+    log.append(RoundClosed())
+
+    events = log.read()
+    sampled = [e.event for e in events if isinstance(e.event, CandidateSampled)]
+    assert [s.recombined for s in sampled] == [False, False, True]
+
+    record = fold_round_record(events)
+    assert record.proposal.candidates_sampled == 3
+    assert record.proposal.recombined_sampled == 1
+
+
+def test_pre_recombine_log_decodes_with_flag_defaulted(tmp_path):
+    """A log written BEFORE the flag existed (no ``recombined`` key in the
+    payload) decodes identically — the additive-default contract."""
+    import json as _json
+
+    path = round_log_path(tmp_path, "epoch-01", 8)
+    path.parent.mkdir(parents=True)
+    lines = [
+        {"seq": 1, "ts": "t", "type": "round_opened", "payload": {"contract_hash": "h"}},
+        {"seq": 2, "ts": "t", "type": "candidate_sampled", "payload": {"i": 0, "n": 3}},
+    ]
+    path.write_text("".join(_json.dumps(rec) + "\n" for rec in lines), encoding="utf-8")
+
+    events = RoundLog(tmp_path, "epoch-01", 8).read()
+    sampled = events[1].event
+    assert isinstance(sampled, CandidateSampled)
+    assert sampled.recombined is False
+    record = fold_round_record(events)
+    assert record.proposal.recombined_sampled == 0

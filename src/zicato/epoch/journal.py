@@ -38,6 +38,7 @@ from typing import Any
 from zicato.core.types import (
     DriftMovementActual,
     ExpectedDriftMovement,
+    ExpectedMetricMovement,
     Experiment,
     HypothesisSpec,
     MatchOutcome,
@@ -214,6 +215,20 @@ def _hypothesis_from_dict(d: dict[str, Any]) -> HypothesisSpec:
         )
         for m in d.get("expected_drift_movements", [])
     )
+    # Namespaced metric predictions (:class:`ExpectedMetricMovement`).
+    # The writer serialises them (``asdict`` over the whole hypothesis),
+    # but the reader historically dropped them silently — a round-trip lost
+    # every metric-space prediction, so the hypothesis-prediction grading
+    # never saw them. Read them back symmetrically; absent/older records
+    # yield ``()`` and deserialize unchanged.
+    metric_movements = tuple(
+        ExpectedMetricMovement(
+            metric_name=str(m["metric_name"]),
+            direction=m["direction"],
+            magnitude=m["magnitude"],
+        )
+        for m in d.get("expected_metric_movements", [])
+    )
     return HypothesisSpec(
         core_idea=str(d.get("core_idea", "")),
         modulating=tuple(d.get("modulating", ())),
@@ -221,6 +236,7 @@ def _hypothesis_from_dict(d: dict[str, Any]) -> HypothesisSpec:
         expected_drift_movements=movements,
         expected_pass_rate_delta=str(d.get("expected_pass_rate_delta", "")),
         risks=str(d.get("risks", "")),
+        expected_metric_movements=metric_movements,
     )
 
 
@@ -420,6 +436,13 @@ def write_experiment(
             _coerce_paths(asdict(experiment.outcome)) if experiment.outcome is not None else None
         ),
     }
+    # Recombination provenance (WS-REC) — CONDITIONAL key: emitted only when
+    # non-empty, so every ordinary (non-recombined) experiment.json is
+    # byte-identical to one written before the field existed (the default-off
+    # byte-identity proof). A recombined mint carries the ascending-gid tuple
+    # of its two rejected parents; the reader defaults absent → ().
+    if experiment.recombined_from:
+        body["recombined_from"] = list(experiment.recombined_from)
     backend.write_text(
         experiment_key(epoch_id, generation_id),
         json.dumps(body, indent=2, sort_keys=True) + "\n",
@@ -518,6 +541,12 @@ def read_experiment(
     # here so existing workspaces load uniformly.
     raw_parent = body.get("parent_generation_id")
     parent_generation_id = str(raw_parent) if raw_parent else None
+    # Recombination provenance (WS-REC). Absent on every non-recombined
+    # record and on every record written before the field existed ⇒ ().
+    raw_recombined = body.get("recombined_from")
+    recombined_from = (
+        tuple(str(x) for x in raw_recombined) if isinstance(raw_recombined, list) else ()
+    )
     return Experiment(
         id=str(body.get("id", "")),
         epoch_id=str(body.get("epoch_id", epoch_id)),
@@ -528,6 +557,7 @@ def read_experiment(
         patches=tuple(patches),
         outcome=outcome,
         round_index=round_index,
+        recombined_from=recombined_from,
     )
 
 

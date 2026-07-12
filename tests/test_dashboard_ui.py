@@ -532,7 +532,15 @@ def test_bundle_under_size_envelope(
     # elimRadial as a visual — so the ~6 KB of source/CSS comes back (now reading
     # the SERVED gen_states verbatim, no client re-derivation). The envelope is
     # raised to 1.37 MB to cover it with headroom.
-    assert total < 1_370_000, f"bundle is {total} bytes, exceeds 1_370_000 envelope"
+    #
+    # The RATINGS/RECOMBINATION/GENEALOGY/ENSEMBLE program integration then lands
+    # its three GUI touches at once: the builder's recombine toggle row + the
+    # genealogy numeric row (builder.js) and the proposer breadth/depth role
+    # cards with their honest default-proposer copy (settings.js). Each branch
+    # fit under the prior line alone; their union sits ~0.8 KB above it — the
+    # same per-wave-raise interaction the 1.35 MB entry records. The envelope is
+    # nudged to 1.372 MB to cover the combined surface with a thin margin.
+    assert total < 1_372_000, f"bundle is {total} bytes, exceeds 1_372_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

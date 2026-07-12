@@ -1,16 +1,18 @@
-"""End-to-end: ``rebuild_index`` populates the read-only Elo columns.
+"""End-to-end: ``rebuild_index`` populates the read-only rating columns.
 
-The Elo analytics fold (FUNCTIONALITY-RECOMMENDATIONS.md §5) is wired
-into the rebuild path AFTER the tournaments are ingested. These tests
-build a small real workspace (lineage + per-generation experiments with
-resolved gauntlet outcomes), run ``rebuild_index``, and assert the
-``generations.elo`` / ``generations.elo_games`` columns are populated and
-ordered (a consistently-promoted lineage rises). Elo is read-only — it
-never gates promotion; the rest of the index is unchanged.
+The Bradley--Terry rating fold (SELECTION-THEORY.md §7.1;
+FUNCTIONALITY-RECOMMENDATIONS.md §5) is wired into the rebuild path AFTER
+the tournaments are ingested. These tests build a small real workspace
+(lineage + per-generation experiments with resolved gauntlet outcomes),
+run ``rebuild_index``, and assert the ``generations.elo`` /
+``generations.elo_se`` / ``generations.elo_games`` columns are populated
+and ordered (a consistently-promoted lineage rises). The rating is
+read-only — it never gates promotion; the rest of the index is unchanged.
 """
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 from zicato.core.types import Generation, ScoringWeights
@@ -48,9 +50,9 @@ def _build_chain_workspace(tmp_path: Path) -> tuple[Path, str]:
     """A four-generation promoted chain v0 -> v1 -> v2 -> v3.
 
     Each non-seed child has a resolved experiment whose gauntlet outcome is
-    ``promoted`` (the child beats the incumbent). The Elo fold should rank
-    the lineage strictly increasing: each promotion is a win over the prior
-    champion, so a later generation seeds from (and then beats) its parent.
+    ``promoted`` (the child beats the incumbent). The rating fold should
+    rank the ends of the dominance chain: the final champion above the
+    original seed (each promotion is a win over the prior champion).
     """
     ws = tmp_path / ".zicato"
     board, rubric = _board_and_rubric(tmp_path)
@@ -88,8 +90,8 @@ def test_reindex_populates_elo_columns(tmp_path: Path) -> None:
     rows = {r["generation_id"]: r for r in elo_for_epoch(db, eid)}
     assert set(rows) == {"v0", "v1", "v2", "v3"}
 
-    # Every generation has a non-null rating (the seed v0 via its prior, the
-    # children via their games).
+    # Every generation played at least one duel in the chain, so every one
+    # has a non-null rating (the batch fit rates exactly the played set).
     for gid in ("v0", "v1", "v2", "v3"):
         assert rows[gid]["elo"] is not None
 
@@ -99,6 +101,25 @@ def test_reindex_populates_elo_columns(tmp_path: Path) -> None:
     assert rows["v1"]["elo_games"] == 2  # beat v0, lost to v2
     assert rows["v2"]["elo_games"] == 2  # beat v1, lost to v3
     assert rows["v3"]["elo_games"] == 1  # beat v2
+
+
+def test_reindex_populates_elo_se_positive(tmp_path: Path) -> None:
+    # The v12 column: every rated generation carries a finite, strictly
+    # positive standard error from the fit's Fisher information.
+    ws, eid = _build_chain_workspace(tmp_path)
+    db = rebuild_index(ws)
+    conn = sqlite3.connect(db)
+    try:
+        rows = conn.execute(
+            "SELECT generation_id, elo_se FROM generations WHERE epoch_id = ?",
+            (eid,),
+        ).fetchall()
+    finally:
+        conn.close()
+    assert {r[0] for r in rows} == {"v0", "v1", "v2", "v3"}
+    for gid, se in rows:
+        assert se is not None, f"{gid} missing elo_se"
+        assert se > 0.0
 
 
 def test_reindex_elo_ordering_rewards_the_consistent_winner(tmp_path: Path) -> None:
@@ -131,6 +152,25 @@ def test_generations_for_epoch_surfaces_elo_columns(tmp_path: Path) -> None:
         keys = row.keys()
         assert "elo" in keys
         assert "elo_games" in keys
+
+
+def test_zero_game_generation_stays_null(tmp_path: Path) -> None:
+    # A generation that never played a settled duel (a freshly-minted leaf
+    # with no resolved outcome) is absent from the fit output, so its rating
+    # cells stay NULL — no fabricated carry-forward rating.
+    ws, eid = _build_chain_workspace(tmp_path)
+    append_to_lineage(ws, eid, _gen(eid, "v9", "v3", "2026-01-09T00:00:00Z", False), "v3")
+    db = rebuild_index(ws)
+    conn = sqlite3.connect(db)
+    try:
+        row = conn.execute(
+            "SELECT elo, elo_se, elo_games FROM generations "
+            "WHERE epoch_id = ? AND generation_id = 'v9'",
+            (eid,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row == (None, None, None)
 
 
 def test_empty_workspace_reindex_has_no_elo_rows(tmp_path: Path) -> None:

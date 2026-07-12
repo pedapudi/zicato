@@ -52,8 +52,10 @@ const MODELS_VIEW = {
     auxiliary: { model: 'house-model-x', endpoint: null, api_key_env: 'HOUSE_API_KEY', api_key_env_set: true },
     builder: { model: 'builder-model', endpoint: 'https://endpoint.example', api_key_env: 'BUILDER_KEY', api_key_env_set: false },
     judge: {},
+    proposer_breadth: {},
+    proposer_depth: {},
   },
-  roles: ['harness', 'auxiliary', 'builder', 'judge'],
+  roles: ['harness', 'auxiliary', 'builder', 'judge', 'proposer_breadth', 'proposer_depth'],
   rolls_epoch: false,
 };
 
@@ -73,7 +75,7 @@ function installFetch() {
         // echo a refreshed secret-safe view derived from the posted block.
         const posted = _lastModelsPost.models || {};
         const echo = {};
-        for (const id of ['harness', 'auxiliary', 'builder', 'judge']) {
+        for (const id of MODELS_VIEW.roles) {
           const s = posted[id] || {};
           echo[id] = s.call_llm ? { call_llm: s.call_llm }
             : (s.model ? { model: s.model, endpoint: s.endpoint || null, api_key_env: s.api_key_env || null, api_key_env_set: false } : {});
@@ -351,17 +353,18 @@ test('settings: the Contract cost panel degrades to an honest "unavailable" line
   assertEqual(byClass(preview, 'dn-bld-cost-num').length, 0, 'no fabricated board-runs/round number is shown');
 });
 
-test('settings: the Models section renders all four roles, each editable (toggle + fields)', async () => {
+test('settings: the Models section renders every role, each editable (toggle + fields)', async () => {
   installFetch();
   const host = globalThis.document.createElement('div');
   await settings.render(host, ctx, { section: 'models' });
   await tick();
   const body = firstClass(host, 'dn-set-body');
-  // one card per role — harness · auxiliary · builder · judge.
+  // one card per role — harness · auxiliary · builder · judge · the two
+  // WS-ENS proposer-ensemble roles (breadth / depth).
   const cards = byClass(body, 'dn-set-modelcard');
-  assertEqual(cards.length, 4, 'all four roles render a card');
+  assertEqual(cards.length, 6, 'every role renders a card');
   const roleIds = cards.map((c) => c.getAttribute('data-role'));
-  for (const id of ['harness', 'auxiliary', 'builder', 'judge']) {
+  for (const id of ['harness', 'auxiliary', 'builder', 'judge', 'proposer_breadth', 'proposer_depth']) {
     assert(roleIds.includes(id), 'the ' + id + ' role card renders');
   }
   // each card carries the call_llm ⟷ model-spec toggle.
@@ -423,6 +426,37 @@ test('settings: editing a Models role + saving round-trips through POST /setting
   assert(!('api_key_env_set' in _lastModelsPost.models.judge), 'the set/unset flag is a VIEW-only field, never posted');
   const flat = JSON.stringify(_lastModelsPost).toLowerCase();
   assert(!flat.includes('sk-'), 'no secret value crossed the POST boundary');
+});
+
+test('settings (WS-ENS): a proposer-ensemble role edits + saves through POST like any other role', async () => {
+  installFetch();
+  const host = globalThis.document.createElement('div');
+  await settings.render(host, ctx, { section: 'models' });
+  await tick();
+  let body = firstClass(host, 'dn-set-body');
+  // the proposer_breadth card starts as an empty spec (model-spec form default).
+  const breadth = byClass(body, 'dn-set-modelcard').find((c) => c.getAttribute('data-role') === 'proposer_breadth');
+  assert(breadth, 'the proposer_breadth role card renders');
+  // switch it to the call_llm path form and type a dotted path.
+  const toCallLlm = byClass(breadth, 'dn-set-typebtn').find((b) => b.getAttribute('data-form') === 'call_llm');
+  toCallLlm.dispatchEvent(makeEvent('click'));
+  await tick();
+  body = firstClass(host, 'dn-set-body');
+  const breadth2 = byClass(body, 'dn-set-modelcard').find((c) => c.getAttribute('data-role') === 'proposer_breadth');
+  const pathInput = byClass(breadth2, 'dn-set-input').find((i) => i.getAttribute('name') === 'proposer_breadth-call_llm');
+  assert(pathInput, 'the proposer_breadth call_llm path input is present after the toggle');
+  pathInput.setAttribute('value', 'pkg.breadth:fn');
+  pathInput.value = 'pkg.breadth:fn';
+  pathInput.dispatchEvent(makeEvent('input'));
+  await tick();
+  body = firstClass(host, 'dn-set-body');
+  const save = byClass(body, 'dn-linkbtn').find((b) => b.textContent.includes('Save'));
+  save.dispatchEvent(makeEvent('click'));
+  await tick();
+  // the POST carried the proposer_breadth role's edited call_llm path — the
+  // role round-trips exactly like harness/judge (no special-casing).
+  assert(_lastModelsPost && _lastModelsPost.models, 'the POST carried a models block');
+  assertEqual(_lastModelsPost.models.proposer_breadth.call_llm, 'pkg.breadth:fn', 'the proposer_breadth call_llm path round-tripped');
 });
 
 test('settings: the EDITABLE builder is NO LONGER embedded — only a LAUNCHER (+ a read-only contract preview)', async () => {

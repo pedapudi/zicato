@@ -1168,6 +1168,17 @@ function proposerSection(d) {
     }, numInput(pq.process_exemplars != null ? pq.process_exemplars : 0,
       { min: '0', step: '1', 'aria-label': 'Process exemplars' },
       (n) => runOp('set_proposer_quality', { process_exemplars: n }), { int: true })),
+    controlRow('Recombination slot', {
+      title: 'recombine', def: 'off',
+      body: 'Opt-in: when best-of-N > 1, the last slate slot mints the patch union of two rejected complementary challengers instead of sampling the LLM — so a single winner can capture two fixes a parsimony-biased selector would each discount. Requires best_of_n > 1 to have any effect; cost-neutral (the mint replaces that slot\'s propose call, never adds one). Inert at best_of_n 1.',
+    }, checkInput(!!pq.recombine, 'Recombination slot', 'mint the union of two rejected complementary fixes into the last slate slot',
+      (on) => runOp('set_proposer_quality', { recombine: on }))),
+    controlRow('Genealogy channel', {
+      title: 'genealogy', def: '0 (off)',
+      body: 'Opt-in: show the proposer up to N candidate-lineage items per round — the champion\'s promoted patch history (build on what worked) plus diverse rejected reign candidates (re-frame a different idea), each with a BANDED outcome (improved / flat / regressed) and a capped excerpt of the proposer\'s own diff. Lets the proposer evolve IN CONTEXT (the in-context analogue of the recombination slot). Envelope-safe — candidate genealogy, never board data: no entry ids, no per-entry results, no exact deltas, nothing holdout-derived. Read-side only — free on the cost meter. Non-zero rolls the epoch.',
+    }, numInput(pq.genealogy != null ? pq.genealogy : 0,
+      { min: '0', step: '1', 'aria-label': 'Genealogy' },
+      (n) => runOp('set_proposer_quality', { genealogy: n }), { int: true })),
     controlRow('Cross-epoch memory', {
       title: 'experiment_memory.cross_epoch', def: 'off',
       body: 'Opts settled experiments from PRIOR epochs that share the current contract hash into the proposer\'s digest — banded, clearly separated, and only in the budget left after same-epoch history. Different-contract experiments are never surfaced.',

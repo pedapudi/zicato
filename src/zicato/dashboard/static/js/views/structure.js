@@ -5,7 +5,7 @@
 
 import { el, svgEl } from '../core/dom.js';
 import * as svg from '../svg.js';
-import { section, empty, stat, verdictPill, overrideChip, overrideDigest, overrideControlCell, pendingOverride, pendingOverrideDigest, clearPendingOverride, chip, hovercardBody, dataTable, deltaCell } from '../ui.js';
+import { section, empty, stat, verdictPill, overrideChip, overrideDigest, overrideControlCell, pendingOverride, pendingOverrideDigest, clearPendingOverride, chip, hovercardBody, dataTable, deltaCell, ratingCellEl, ratingTripleDigest } from '../ui.js';
 import { structureStatusLabel } from '../livestatus.js';
 import { attachHovercard } from '../hovercard.js';
 import { state } from '../core/state.js';
@@ -322,6 +322,10 @@ export function structureDigest(st) {
       ]),
     ]),
     standings: (Array.isArray(st.standings) ? st.standings : []).map((s) => [s.generation_id, s.rank, s.scalar, s.wins, s.losses, s.status,
+      // the visibility rating triple (int register) — folded so a reindex
+      // that moves a rating repaints, while an unrated row digests null
+      // (byte-identical to a pre-rating payload).
+      ratingTripleDigest(s),
       // the projected-standing overlay — ROUNDED scalar + integer board counts +
       // the in_flight flag, so an identical projection yields an identical digest
       // (no repaint) but a board landing or a re-rank fires the swap.
@@ -2335,6 +2339,10 @@ function standingsTable(st, ctx, epochId, live) {
         { class: 'dn-mono', text: (s.generation_id || '—') + (status === 'champion' ? ' ' + CROWN.current : '') },
         { el: [statusPill(status), ovChip, divBadge] },
         scalarCell,
+        // the visibility rating (server-joined BT triple; never the gate):
+        // mono `1512 ±34`, faint `provisional` under MIN_RATING_GAMES, `—`
+        // when the fold has not rated this generation. Quiet — NO chips.
+        { class: 'dn-num', el: [ratingCellEl(s)] },
         ...(showWL ? [
           { class: 'dn-num dn-mono', text: svg.isNum(s.wins) ? String(s.wins) : '—' },
           { class: 'dn-num dn-mono', text: svg.isNum(s.losses) ? String(s.losses) : '—' },
@@ -2354,6 +2362,7 @@ function standingsTable(st, ctx, epochId, live) {
     class: 'dn-board-table dt-standings',
     columns: [
       { label: 'rank' }, { label: 'generation' }, { label: 'status' }, { label: 'scalar', class: 'dn-num' },
+      { label: 'rating', class: 'dn-num' },
       ...(showWL ? [{ label: 'W', class: 'dn-num' }, { label: 'L', class: 'dn-num' }] : []),
       { label: '' }, { label: 'override', class: 'dn-ovr-col' },
     ],

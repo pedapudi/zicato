@@ -180,26 +180,46 @@ def parse_style_tokens(policy_source: str) -> list[str]:
     string assigned to ``STYLE_RULES``. Tokens are ``;``-separated,
     whitespace-stripped, empties dropped, order preserved.
 
-    A policy that no longer parses, or lost its ``STYLE_RULES``
-    assignment, yields the sentinel token ``["broken-policy"]`` — one
-    generic defect — rather than raising, so a destructive patch that
-    somehow survives validation still scores (badly) instead of
-    crashing the worker.
+    An OPTIONAL ``STYLE_RULES_EXTRA`` assignment (additive; the WS-REC
+    two-marker recombination OC splits its defects across two mutation
+    points so two single-fix challengers touch DISJOINT ids) contributes
+    its tokens APPENDED after ``STYLE_RULES``'s. A policy without the
+    variable — every shipped example — parses byte-identically to before
+    the variable existed.
+
+    A policy that no longer parses, lost its ``STYLE_RULES`` assignment,
+    or assigns a non-string to either variable, yields the sentinel token
+    ``["broken-policy"]`` — one generic defect — rather than raising, so
+    a destructive patch that somehow survives validation still scores
+    (badly) instead of crashing the worker.
     """
     try:
         tree = ast.parse(policy_source)
     except SyntaxError:
         return ["broken-policy"]
+
+    def _tokens_of(node: ast.Assign) -> list[str] | None:
+        value = node.value
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            return [t for t in (t.strip() for t in value.value.split(";")) if t]
+        return None
+
+    found: dict[str, list[str] | None] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "STYLE_RULES":
-                    value = node.value
-                    if isinstance(value, ast.Constant) and isinstance(value.value, str):
-                        tokens = [t.strip() for t in value.value.split(";")]
-                        return [t for t in tokens if t]
-                    return ["broken-policy"]
-    return ["broken-policy"]
+                name = target.id if isinstance(target, ast.Name) else ""
+                if name in ("STYLE_RULES", "STYLE_RULES_EXTRA") and name not in found:
+                    found[name] = _tokens_of(node)
+    base = found.get("STYLE_RULES")
+    if base is None:
+        return ["broken-policy"]
+    if "STYLE_RULES_EXTRA" in found:
+        extra = found["STYLE_RULES_EXTRA"]
+        if extra is None:
+            return ["broken-policy"]
+        return base + extra
+    return base
 
 
 def synthesize_output(entry_input: str, tokens: list[str]) -> str:

@@ -175,6 +175,7 @@ def _render_task_text(spec: ProposerSpec, ctx: ProposerContext, feedback: str) -
         custom_judge_names=ctx.custom_judge_names or frozenset(),
         failure_profile=ctx.failure_profile,
         process_exemplars=ctx.process_exemplars,
+        genealogy=ctx.genealogy,
         sample_hint=ctx.sample_hint,
         mutation_track_records=ctx.mutation_track_records,
     )

@@ -38,6 +38,7 @@ from zicato.analyzer.outcome_marginals import OutcomeMarginalSummary
 from zicato.analyzer.process_exemplars import ProcessExemplar
 from zicato.core.drift_kinds import GOLDFIVE_DRIFT_KINDS
 from zicato.core.types import MutationPoint, Pattern, PriorExperiment, ProposerSkill
+from zicato.proposer.genealogy import GenealogyItem
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
     from zicato.index.query import MutationTrackRecord
@@ -642,6 +643,59 @@ def render_process_exemplars(exemplars: Iterable[ProcessExemplar]) -> str:
     return "\n".join(blocks)
 
 
+def render_genealogy_block(items: Iterable[GenealogyItem]) -> str:
+    """Render sampled genealogy items into the prompt block body.
+
+    The prompt-side surface of the opt-in genealogy channel (WS-GENE;
+    ``docs/design/PROPOSER.md`` §2.7;
+    :func:`zicato.proposer.genealogy.sample_genealogy`). Groups the items into
+    the champion-spine PARENTS ("build on these") and the diverse rejected
+    INSPIRATIONS ("a different framing may clear the gate"), each rendered as a
+    two-line entry: the generation id + kind + banded whole-candidate outcome +
+    the redacted patch summary (targeted mutation ids, op kinds, size band, and
+    a capped excerpt of the proposer's OWN diff text), then the indented core
+    idea. This function performs NO redaction of its own — the sampler already
+    banded the outcome and capped the excerpt (no entry ids, no per-entry
+    results, no exact deltas ever reach it); it only formats.
+
+    An empty iterable returns the EMPTY STRING — the proposer-side sentinel for
+    "omit this section entirely", exactly as the failure-mode and
+    process-exemplar blocks behave — so a ``genealogy = 0`` round renders a
+    byte-identical prompt.
+    """
+    items_list = list(items)
+    if not items_list:
+        return ""
+
+    def _entry(item: GenealogyItem) -> str:
+        ps = item.patch_summary
+        ids = ", ".join(ps.mutation_ids) if ps.mutation_ids else "—"
+        ops = "/".join(ps.op_kinds) if ps.op_kinds else "—"
+        head = f"- {item.generation_id}"
+        if item.banded_outcome:
+            head = f"{head} Δscalar={item.banded_outcome}"
+        head = f"{head}  [{ids}] {ops} · {ps.size_band} edit"
+        lines = [head, f"    {item.core_idea}"]
+        if ps.diff_excerpt:
+            lines.append(f"    diff: {ps.diff_excerpt}")
+        return "\n".join(lines)
+
+    parents = [it for it in items_list if it.kind == "parent"]
+    inspirations = [it for it in items_list if it.kind == "inspiration"]
+
+    blocks: list[str] = []
+    if parents:
+        body = "\n".join(_entry(it) for it in parents)
+        blocks.append("Champion lineage (promoted ancestors — build on what worked):\n" f"{body}")
+    if inspirations:
+        body = "\n".join(_entry(it) for it in inspirations)
+        blocks.append(
+            "Rejected candidates worth re-framing (diverse ideas that did not "
+            f"clear the gate as tried):\n{body}"
+        )
+    return "\n\n".join(blocks)
+
+
 def _band_prediction_accuracy(accuracy: float) -> str:
     """Coarsen a hypothesis prediction-accuracy fraction to a calibration band.
 
@@ -858,6 +912,7 @@ def render_user_prompt(
     custom_judge_names: Iterable[str] = (),
     failure_profile: str = "",
     process_exemplars: str = "",
+    genealogy: Iterable[GenealogyItem] = (),
     sample_hint: str = "",
     mutation_track_records: Mapping[str, MutationTrackRecord] | None = None,
 ) -> str:
@@ -951,6 +1006,19 @@ def render_user_prompt(
         Empty (the default — every knob-off round) omits the section
         entirely, rendering a byte-identical prompt to before this
         surface existed.
+    genealogy:
+        Optional sampled genealogy items (the opt-in
+        ``proposer_quality.genealogy`` channel — ``docs/design/PROPOSER.md``
+        §2.7; produced by :func:`zicato.proposer.genealogy.sample_genealogy`).
+        Rendered here through :func:`render_genealogy_block` and, when the
+        result is non-empty, spliced as a ``## Candidate genealogy`` section
+        DIRECTLY ABOVE ``## What's already been tried`` so the proposer can
+        extend a winning line or re-frame a rejected one (in-context
+        evolution). The items are already banded + capped by the sampler (no
+        entry ids, no per-entry results, no exact deltas, nothing
+        holdout-derived); this function only renders + splices them. Empty (the
+        default — every knob-off round) omits the section entirely, rendering a
+        byte-identical prompt to before this surface existed.
     sample_hint:
         Optional per-sample edit-class steering line (the best-of-N slate
         diversifier — see :data:`zicato.proposer.best_of_n.EDIT_CLASS_HINTS`).
@@ -987,6 +1055,22 @@ def render_user_prompt(
             f"failures, build on wins)\n\n{prior_block}\n\n"
         )
         body = prior_prefix + body
+    genealogy_block = render_genealogy_block(genealogy)
+    if genealogy_block.strip():
+        # Spliced so it lands DIRECTLY ABOVE the experiment-memory block in the
+        # final prompt (prefixes stack in reverse prepend order) — the lineage
+        # the proposer builds on / diverges from, framing the "what's been
+        # tried" list below it. The banner names the channel; the sampler has
+        # already banded every outcome and capped every excerpt.
+        genealogy_prefix = (
+            "## Candidate genealogy (this reign — in-context evolution)\n"
+            "Promoted ancestors to build on and diverse rejected ideas to "
+            "re-frame. Outcomes are\n"
+            "banded (improved / flat / regressed); diffs are the proposer's "
+            "own edits, excerpted.\n"
+            f"{genealogy_block.strip()}\n\n"
+        )
+        body = genealogy_prefix + body
     if process_exemplars.strip():
         # Spliced so it lands DIRECTLY AFTER the failure-mode profile in the
         # final prompt (prefixes stack in reverse prepend order). The banner
@@ -1062,6 +1146,7 @@ __all__ = [
     "SYSTEM_PROMPT_TEMPLATE",
     "USER_PROMPT_TEMPLATE",
     "render_failure_mode_profile",
+    "render_genealogy_block",
     "render_metric_targets_block",
     "render_process_exemplars",
     "render_mutation_track_annotation",
