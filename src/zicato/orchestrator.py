@@ -3312,7 +3312,12 @@ def _build_recombination_pair(
                 log.debug("recombine: record %s/%s unreadable (%s)", epoch_id, gid, exc)
                 continue
             if len(exp.recombined_from) == 2:
+                # A prior mint records its pair as tried (any outcome) but is
+                # NEVER a pool candidate itself (predicate #4 would drop it
+                # later anyway) — skipping here keeps it from wasting one of
+                # the RECOMBINE_POOL_MAX slots and a matchup-grid read.
                 tried.add(frozenset(exp.recombined_from))
+                continue
             if exp.outcome is None or exp.outcome.tournament_decision != "rejected":
                 continue
             if len(pool) < RECOMBINE_POOL_MAX:
@@ -3352,6 +3357,15 @@ def _build_recombination_pair(
                 # read as complementary. The pass bit is the per-entry
                 # signal a fix actually owns: improved = a champion-failing
                 # entry this challenger passes; regressed = the inverse.
+                # KNOWN NARROWING: a pair whose improvements are PURELY
+                # drift-side (no pass flip — e.g. two independent verbosity
+                # fixes on an all-passing board) is invisible to this
+                # selector and never recombines mechanically. Deliberate:
+                # per-entry drift deltas are noisy single-sample verdicts
+                # (the same reason cross-regression is a ranking penalty,
+                # not a filter). Such pairs remain reachable through the
+                # in-context genealogy channel; a drift-delta-with-
+                # confirmation variant is a documented future seam.
                 parent_pass = row.get("parent_pass")
                 child_pass = row.get("child_pass")
                 if parent_pass is False and child_pass is True:

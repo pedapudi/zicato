@@ -155,12 +155,7 @@ def _disjoint(a: ParentCandidate, b: ParentCandidate) -> bool:
     would silently drop one side's edit. Jaccard over disjoint sets is 0;
     any overlap makes it > 0.
     """
-    inter = a.patch_mutation_ids & b.patch_mutation_ids
-    if not inter:
-        return True
-    union = a.patch_mutation_ids | b.patch_mutation_ids
-    jaccard = len(inter) / len(union)
-    return jaccard == 0.0
+    return not (a.patch_mutation_ids & b.patch_mutation_ids)
 
 
 def _complementary(a: ParentCandidate, b: ParentCandidate) -> bool:
