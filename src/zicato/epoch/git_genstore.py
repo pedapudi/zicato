@@ -603,6 +603,56 @@ class GitGenerationStore:
             shutil.rmtree(stale_worktree, ignore_errors=True)
         return self.snapshot_root(epoch_id, child_generation_id)
 
+    def derive_scratch(
+        self,
+        epoch_id: str,
+        parent_generation_id: str,
+        patches: Sequence[Patch],
+        scratch_root: Path,
+    ) -> Path:
+        """Apply ``patches`` to the parent tree into ``scratch_root``, off-repo.
+
+        The concurrency-safe scratch derive: it reads the parent generation's
+        materialised worktree (a clean, read-only checkout —
+        :meth:`snapshot_root`) and applies the patch set all-or-nothing into
+        the caller-owned ``scratch_root`` via
+        :func:`zicato.mutation.applier.apply_patches`. It touches NO shared
+        git state — no ``git checkout``/``reset``/``commit``/``tag``, no
+        epoch-branch working-tree replace, no ``.derive-scratch`` — so
+        concurrent slot derives never contend on the repo (each writes a
+        disjoint ``scratch_root``; the parent worktree is read-only). Because
+        nothing enters the object store or the tag namespace, a scratch tree
+        is invisible to :meth:`list_generations`, the GC, the reindex and the
+        dashboard readers (all of which enumerate ``epoch/{id}/*`` tags).
+
+        The parent worktree is materialised on first read (idempotent, under
+        the process worktree-admin lock); callers that fan out concurrently
+        should pre-warm it once (the round's scratch-validator factory does)
+        so the concurrent derives find it already present and only read.
+
+        Raises :class:`FileNotFoundError` when the parent has no commit and
+        :class:`ValueError` when the patch set fails validation (no scratch
+        tree is left behind).
+        """
+        from zicato.mutation.applier import apply_patches  # noqa: PLC0415
+
+        if not self.has_generation(epoch_id, parent_generation_id):
+            raise FileNotFoundError(
+                f"derive_scratch: parent generation {epoch_id}/"
+                f"{parent_generation_id} has no commit in the generation repo"
+            )
+        parent_root = self.snapshot_root(epoch_id, parent_generation_id)
+        scratch_root = Path(scratch_root)
+        if scratch_root.exists():
+            shutil.rmtree(scratch_root)
+        scratch_root.parent.mkdir(parents=True, exist_ok=True)
+        apply_patches(
+            source_root=parent_root,
+            patches=list(patches),
+            target_root=scratch_root,
+        )
+        return scratch_root
+
     def _replace_working_tree(self, new_tree: Path) -> None:
         """Overwrite the repo working tree (preserving ``.git``) with ``new_tree``."""
         for child in self._repo.iterdir():

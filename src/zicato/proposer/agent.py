@@ -230,6 +230,23 @@ class ProposerContext:
     #: default — every knob-off round, and every round with no eligible
     #: pair) mints nothing and the propose path is byte-identical.
     recombine_pair: RecombinationPair | None = None
+    #: Optional per-slot scratch-validator factory (WS-CONC) — the seam that
+    #: lets the best-of-N slate GATHER. Built once per round by the
+    #: orchestrator beside the shared post-apply validator
+    #: (:func:`zicato.evolve.round.build_scratch_validator_factory`); each
+    #: call mints a FRESH, disjoint scratch child tree + a ``(validate,
+    #: cleanup)`` lease. The best-of-N wrapper calls it once per slate slot so
+    #: N slots validate concurrently into disjoint trees instead of all
+    #: deriving the shared ``next_id`` tree (the write that used to serialise
+    #: the slate). ``None`` (the default — single-sample proposers, and every
+    #: unit-test context that threads no genstore) ⇒ the wrapper falls back to
+    #: the shared ``validate_experiment`` hook and runs the slate serially,
+    #: byte-identically to the pre-concurrency behaviour. The chosen candidate
+    #: is still mounted into the real ``next_id`` once, after selection, via
+    #: ``validate_experiment`` — this factory never writes the canonical tree.
+    scratch_validator_factory: (
+        Callable[[], tuple[ExperimentValidator, Callable[[], None]]] | None
+    ) = None
 
 
 class ProposerAgent(Protocol):

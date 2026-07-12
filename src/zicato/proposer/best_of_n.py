@@ -17,6 +17,27 @@ critique and NO extra work (:meth:`BestOfNProposerAgent.propose`) — the
 historical single-sample proposer, the right pin for scripted/deterministic
 proposers.
 
+Slate concurrency (WS-CONC)
+---------------------------
+The N samples are genuinely independent — each varies only by a deterministic
+per-slot hint (:func:`~zicato.proposer.hints.hint_for_slot` +
+:func:`~zicato.proposer.hints.strategy_for_slot`) and its OWN per-slot scratch
+VALIDATION tree — so :meth:`BestOfNProposerAgent.propose` gathers them under an
+``asyncio.Semaphore`` sized from ``propose_parallelism`` (threaded from
+:attr:`~zicato.core.runtime.RuntimeConfig.propose_parallelism`). Each slot
+leases a fresh scratch validator from
+``ProposerContext.scratch_validator_factory`` (built beside the shared
+post-apply validator by
+:func:`zicato.evolve.round.build_scratch_validator_factory`), so no two slots
+ever derive into the same on-disk tree — the shared ``next_id`` derive that
+used to serialise the slate is done EXACTLY ONCE, for the chosen candidate,
+after selection (:meth:`BestOfNProposerAgent._mount_chosen`, replacing the old
+``_align_child_tree`` conditional re-derive). A deterministic post-gather pass
+emits the ``candidate_sampled`` events and appends candidates in SLOT order, so
+the slate, event sequence, and chosen candidate are byte-identical regardless
+of completion order; ``propose_parallelism == 1`` runs the slate serially,
+byte-identically to the pre-concurrency wrapper.
+
 Candidate screening (tryouts; opt-in)
 -------------------------------------
 When the contract opts in (``proposer_quality.screen_entries > 0`` with
@@ -135,6 +156,7 @@ counts only, never an entry id.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
@@ -216,6 +238,36 @@ class CandidateScreenResult:
 #: slate order. ``None`` on the context (every caller that does not opt
 #: in) screens nothing.
 ScreenRunner = Callable[[Sequence[Experiment]], Awaitable[Sequence[CandidateScreenResult]]]
+
+
+def _noop_cleanup() -> None:
+    """The scratch-lease cleanup used when no scratch factory is threaded.
+
+    A context with no ``scratch_validator_factory`` (single-sample proposers
+    and every unit-test context that wires no genstore) leases the SHARED
+    ``validate_experiment`` hook with this no-op cleanup, so the wrapper's
+    per-slot ``finally: cleanup()`` is uniform on both paths.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class _SlotOutcome:
+    """One best-of-N slate slot's result, collected for the ordered pass.
+
+    The concurrent gather produces one per slot; the deterministic
+    post-gather pass reads them in SLOT order (``sample``) to emit the
+    ``candidate_sampled`` events and append candidates, so the observable
+    outcome never depends on completion order. A failed slot carries its
+    :class:`~zicato.proposer.proposer.ProposerError` (the slate narrows; the
+    caller remembers the last error so an all-failed slate re-raises the real
+    failure), never losing the slots that did succeed.
+    """
+
+    sample: int
+    candidate: Experiment | None
+    error: Any | None
+    recombined: bool
+
 
 #: The recent-lineage hypothesis prediction-accuracy bar above which the
 #: candidate selection prefers hypotheses that carry concrete expected
@@ -536,6 +588,15 @@ class BestOfNProposerAgent:
     #: proposers that DO read ``ctx.aux_call_llm`` (the text-shim / custom path).
     breadth_model: str | None = None
     depth_model: str | None = None
+    #: WS-CONC slate-gather concurrency cap — the ``asyncio.Semaphore`` size
+    #: for the best-of-N sampling fan-out (threaded from
+    #: :attr:`~zicato.core.runtime.RuntimeConfig.propose_parallelism`). ``1``
+    #: (the default, and every context that pins it) runs the slate serially,
+    #: byte-identically to the pre-concurrency wrapper; the deterministic
+    #: post-gather pass makes any value produce the SAME slate + event stream
+    #: regardless of slot completion order. Effectively capped at ``best_of_n``
+    #: (never more tasks than slots).
+    propose_parallelism: int = 1
 
     def _breadth_call_llm(self, ctx: ProposerContext) -> CallLLM:
         """The SLATE-SAMPLING callable: the breadth role, else ``ctx.aux_call_llm``.
@@ -581,35 +642,37 @@ class BestOfNProposerAgent:
             # Byte-identical to today: one inner sample, no critique.
             return await self.inner.propose(ctx)
 
+        # WS-CONC: the N slate samples are genuinely independent (each varies
+        # only by a deterministic per-slot hint + its OWN scratch validation
+        # tree), so fan them out under the propose-parallelism cap and collect
+        # one ``_SlotOutcome`` per slot. ``asyncio.gather`` preserves INPUT
+        # order in its result list regardless of completion order, so the
+        # ordered pass below is deterministic; ``propose_parallelism == 1``
+        # runs the slots serially, byte-identically to the pre-concurrency
+        # wrapper. Every slot leases its OWN scratch derivation tree (see
+        # :meth:`_run_one_slot`), so two concurrent slots never race on the
+        # shared ``next_id`` tree — that shared derive happens exactly once,
+        # for the chosen candidate, in :meth:`_mount_chosen` after selection.
+        outcomes = await self._gather_slate(ctx, n)
+
+        # Deterministic post-gather pass — SLOT order. Emit each surviving
+        # slot's ``candidate_sampled`` event and append its candidate in slot
+        # order; a failed slot narrows the slate and its error is remembered so
+        # an all-failed slate re-raises the real inner failure.
         candidates: list[Experiment] = []
         last_error: ProposerError | None = None
         recombined_index: int | None = None
-        for sample in range(n):
-            if sample == n - 1 and ctx.recombine_pair is not None:
-                # The recombination slot (WS-REC): the LAST slot composes the
-                # round's selected pair instead of sampling the LLM. Two merge
-                # modes (WS-MERGE; PROPOSER.md §2.6.1):
-                #   * "mechanical" (default) — a PURE mint of the disjoint
-                #     patch union, NO LLM call (cost-neutral: n−1 calls).
-                #   * "llm" — ONE aux merge call (the depth refinement role)
-                #     whose response flows through the normal parse/validate
-                #     path; it SUBSTITUTES the slot's own sample call (cost:
-                #     n calls, exactly a recombine-off round).
-                # Either lands in the last slot, so a chosen merge is the
-                # LAST-validated candidate and the tree alignment below is a
-                # no-op on the happy path. Any failure DEGRADES to the normal
-                # fresh sample below — the identical slot body, with the slot's
-                # normal exploratory hint (a recombination failure must never
-                # narrow the slate).
-                if self.config.recombine_merge == "llm":
-                    minted = await self._merge_recombined(ctx, sample, n)
-                else:
-                    minted = await self._mint_recombined(ctx, sample, n)
-                if minted is not None:
-                    candidates.append(minted)
-                    recombined_index = len(candidates) - 1
-                    continue
-            last_error = await self._sample_slot(candidates, ctx, sample, n) or last_error
+        for outcome in outcomes:
+            if outcome.candidate is None:
+                if outcome.error is not None:
+                    last_error = outcome.error
+                continue
+            candidates.append(outcome.candidate)
+            fields: dict[str, Any] = {"i": outcome.sample, "n": n}
+            if outcome.recombined:
+                recombined_index = len(candidates) - 1
+                fields["recombined"] = True
+            _emit_round_event(ctx, "candidate_sampled", fields)
 
         if not candidates:
             # The whole slate failed — surface the inner failure exactly as a
@@ -620,6 +683,10 @@ class BestOfNProposerAgent:
             raise ProposerError(["best-of-N produced no candidates"])  # pragma: no cover
 
         if len(candidates) == 1:
+            # Even a sole survivor is mounted into the real ``next_id`` — its
+            # scratch validation tree was already cleaned up, so the shared
+            # tree must be derived from its patches before the caller mounts.
+            await self._mount_chosen(candidates, 0, ctx)
             return candidates[0]
 
         # Optional pre-tournament candidate screen (tryouts) — VETO-FIRST:
@@ -644,9 +711,7 @@ class BestOfNProposerAgent:
             # arbiter. A VETOED mint takes the else-branch as an ordinary
             # slate member — every existing path is unchanged.
             chosen, selection_mode = recombined_index, "recombined"
-            chosen, selection_mode = await self._align_child_tree(
-                candidates, chosen, selection_mode, ctx
-            )
+            await self._mount_chosen(candidates, chosen, ctx)
             _emit_round_event(ctx, "critique_selected", {"index": chosen, "reason": selection_mode})
             return candidates[chosen]
 
@@ -675,8 +740,7 @@ class BestOfNProposerAgent:
         if revise_chosen:
             # The revise replacement survived its own screen (or could not
             # be screened — the guarded degrade): it is the choice, no
-            # critique call needed. It is also the LAST-validated
-            # candidate, so the tree alignment below is a no-op.
+            # critique call needed.
             chosen, selection_mode = len(candidates) - 1, "screen_revise_survivor"
         elif screen_results is not None and not all_vetoed and len(survivor_indices) == 1:
             # A single survivor needs no critique call — the veto already
@@ -688,16 +752,124 @@ class BestOfNProposerAgent:
             )
             if all_vetoed:
                 selection_mode = f"{vetoed_mode_prefix}:{selection_mode}"
-        chosen, selection_mode = await self._align_child_tree(
-            candidates, chosen, selection_mode, ctx
-        )
+        # Unconditional final derive: mount the CHOSEN candidate into the real
+        # ``next_id`` tree (its slate scratch tree is gone). This is the
+        # ⛔-funnel guaranteeing the mounted tree == the chosen candidate.
+        await self._mount_chosen(candidates, chosen, ctx)
         _emit_round_event(ctx, "critique_selected", {"index": chosen, "reason": selection_mode})
         return candidates[chosen]
 
-    async def _sample_slot(
-        self, candidates: list[Experiment], ctx: ProposerContext, sample: int, n: int
-    ) -> ProposerError | None:
-        """One ordinary slate slot — the extracted loop body.
+    async def _gather_slate(self, ctx: ProposerContext, n: int) -> list[_SlotOutcome]:
+        """Fan the N slate slots out under the propose-parallelism cap.
+
+        Returns one :class:`_SlotOutcome` per slot IN SLOT ORDER
+        (``asyncio.gather`` preserves input order regardless of which slot
+        finishes first), so the caller's ordered pass is deterministic.
+        ``propose_parallelism == 1`` runs the slots strictly serially — the
+        exact pre-concurrency ordering — and skips the task/semaphore
+        machinery so the no-factory unit-test path stays a plain loop.
+        """
+        parallelism = max(1, min(self.propose_parallelism, n))
+        if parallelism == 1:
+            return [await self._run_one_slot(ctx, sample, n) for sample in range(n)]
+        sem = asyncio.Semaphore(parallelism)
+
+        async def _guarded(sample: int) -> _SlotOutcome:
+            async with sem:
+                return await self._run_one_slot(ctx, sample, n)
+
+        return list(await asyncio.gather(*(_guarded(sample) for sample in range(n))))
+
+    async def _run_one_slot(self, ctx: ProposerContext, sample: int, n: int) -> _SlotOutcome:
+        """Run ONE slate slot into its OWN scratch validation tree.
+
+        Leases a per-slot ``(validate, cleanup)`` from
+        ``ctx.scratch_validator_factory`` (or the shared ``validate_experiment``
+        hook + a no-op cleanup when no factory is threaded — the serial
+        unit-test path), threads the scratch validator onto the slot context,
+        runs the slot body (the recombination mint/merge for the last slot, an
+        ordinary sample otherwise, degrading a failed mint/merge to an ordinary
+        sample VERBATIM), and ALWAYS releases the scratch tree in ``finally`` —
+        including on propose failure or a recombination degrade. Emits NO
+        events: the deterministic post-gather pass owns emission in slot order.
+        """
+        validate, cleanup = self._slot_validate_lease(ctx)
+        slot_ctx = replace(ctx, validate_experiment=validate)
+        try:
+            if sample == n - 1 and ctx.recombine_pair is not None:
+                # The recombination slot (WS-REC): the LAST slot composes the
+                # round's selected pair instead of sampling the LLM (WS-MERGE
+                # modes; PROPOSER.md §2.6.1). It validates through the SAME
+                # per-slot scratch hook every sample uses. Any failure DEGRADES
+                # to the normal fresh sample below — the identical slot body,
+                # with the slot's normal exploratory hint (a recombination
+                # failure must never narrow the slate).
+                if self.config.recombine_merge == "llm":
+                    minted = await self._merge_recombined(slot_ctx)
+                else:
+                    minted = await self._mint_recombined(slot_ctx)
+                if minted is not None:
+                    return _SlotOutcome(
+                        sample=sample, candidate=minted, error=None, recombined=True
+                    )
+            return await self._sample_slot(slot_ctx, sample, n)
+        finally:
+            cleanup()
+
+    def _slot_validate_lease(
+        self, ctx: ProposerContext
+    ) -> tuple[Callable[[Experiment], Awaitable[list[str]]] | None, Callable[[], None]]:
+        """Lease this slot's ``(validate, cleanup)`` scratch pair.
+
+        With a ``scratch_validator_factory`` on the context (the real
+        orchestrator paths) each call mints a FRESH, disjoint scratch tree so
+        concurrent slots never collide. Without one (single-sample proposers,
+        unit-test contexts with no genstore) the slot leases the SHARED
+        ``validate_experiment`` hook + a no-op cleanup and the slate runs
+        serially — byte-identical to the pre-concurrency wrapper.
+        """
+        factory = ctx.scratch_validator_factory
+        if factory is not None:
+            return factory()
+        return ctx.validate_experiment, _noop_cleanup
+
+    async def _mount_chosen(
+        self, candidates: list[Experiment], chosen: int, ctx: ProposerContext
+    ) -> None:
+        """Mount the chosen candidate into the real ``next_id`` tree (⛔-funnel).
+
+        Replaces ``_align_child_tree``'s conditional "re-derive only when the
+        pick is not the last-validated" logic. With per-slot scratch there is
+        no shared last-validated tree to align against — each slot validated
+        into its OWN scratch tree, already cleaned up — so the chosen candidate
+        is ALWAYS derived into the canonical ``next_id`` exactly once here,
+        through the round's shared ``validate_experiment`` hook
+        (:func:`zicato.evolve.round.build_post_apply_validator`). That single
+        derive is what guarantees the mounted ``next_id`` tree == the chosen
+        candidate + populates the caller's ``last_child_snapshot``.
+
+        The chosen candidate validated cleanly in scratch moments ago, so a
+        finding here is unexpected (e.g. the parent tree changed underneath the
+        slate). There is no shared tree to fall back to, so any finding
+        surfaces the standard :class:`~zicato.proposer.proposer.ProposerError`
+        every call site already handles. ``validate_experiment is None`` (a
+        context with no derive hook — the pre-hook caller contract) mounts
+        nothing and returns.
+        """
+        validate = ctx.validate_experiment
+        if validate is None:
+            return
+        findings = await self._revalidate(validate, candidates[chosen])
+        if findings:
+            raise ProposerError(
+                [
+                    f"mounting chosen candidate {chosen} into the generation tree failed: {f}"
+                    for f in findings
+                ]
+            )
+
+    async def _sample_slot(self, slot_ctx: ProposerContext, sample: int, n: int) -> _SlotOutcome:
+        """One ordinary slate slot — the sample body, returning a ``_SlotOutcome``.
 
         Intra-slate diversity, on TWO axes: each slot carries a DISTINCT
         edit-class hint (WHICH failure to target) composed WITH a distinct
@@ -716,12 +888,15 @@ class BestOfNProposerAgent:
         — no board identity — so the restricted-visibility envelope is
         untouched.
 
-        Appends the sampled candidate on success and emits its
-        ``candidate_sampled`` event; returns the :class:`ProposerError`
-        when the inner proposer could not produce one (the slate simply
-        narrows; the caller remembers the error so an all-failed slate can
-        re-raise the real failure). Extracted so the recombination slot's
-        degrade path reuses the slot body VERBATIM.
+        ``slot_ctx`` already carries this slot's per-slot SCRATCH validation
+        hook (leased by :meth:`_run_one_slot`), so the sample validates into
+        its OWN tree. Returns a :class:`_SlotOutcome` carrying the sampled
+        candidate on success, or the :class:`ProposerError` when the inner
+        proposer could not produce one (the slate simply narrows; the ordered
+        pass remembers the error so an all-failed slate re-raises the real
+        failure). Emits NO event — the deterministic post-gather pass owns
+        emission in slot order. The recombination slot's degrade path reuses
+        this body VERBATIM.
         """
         # WS-ENS: slate SAMPLING runs on the breadth role. The swap is a no-op
         # (same object) when no breadth role is configured, so the slot is
@@ -736,24 +911,21 @@ class BestOfNProposerAgent:
         # Compose the two diversity axes into the single sample-hint string:
         # the edit-class hint (WHICH failure), then the per-(slot, round)
         # strategy framing (HOW to fix it). Both static, board-identity-free.
-        edit_hint = hint_for_slot(sample, n, ctx.failure_profile)
-        strategy = strategy_for_slot(sample, ctx.new_generation_id)
-        slot_ctx = replace(
-            ctx,
+        edit_hint = hint_for_slot(sample, n, slot_ctx.failure_profile)
+        strategy = strategy_for_slot(sample, slot_ctx.new_generation_id)
+        sample_ctx = replace(
+            slot_ctx,
             sample_hint=f"{edit_hint}\n{strategy}",
-            aux_call_llm=self._breadth_call_llm(ctx),
-            model=self._breadth_model(ctx),
+            aux_call_llm=self._breadth_call_llm(slot_ctx),
+            model=self._breadth_model(slot_ctx),
         )
         try:
-            candidates.append(await self.inner.propose(slot_ctx))
+            candidate = await self.inner.propose(sample_ctx)
         except ProposerError as exc:
-            return exc
-        _emit_round_event(ctx, "candidate_sampled", {"i": sample, "n": n})
-        return None
+            return _SlotOutcome(sample=sample, candidate=None, error=exc, recombined=False)
+        return _SlotOutcome(sample=sample, candidate=candidate, error=None, recombined=False)
 
-    async def _mint_recombined(
-        self, ctx: ProposerContext, sample: int, n: int
-    ) -> Experiment | None:
+    async def _mint_recombined(self, ctx: ProposerContext) -> Experiment | None:
         """Mint the round's recombination pair into the slate. GUARDED.
 
         Pure mint (:func:`zicato.proposer.recombine.mint_recombined_experiment`
@@ -764,9 +936,9 @@ class BestOfNProposerAgent:
           depth: both parents cleared the brief when they were proposed,
           but the brief's forbidden set may have changed since.
         * the SAME post-apply validate hook every sampled candidate runs
-          (``ctx.validate_experiment``) — it derives the shared child
-          snapshot from the mint's patches, so a chosen mint is the
-          last-validated candidate and the tree alignment stays honest.
+          (``ctx.validate_experiment`` — this slot's per-slot SCRATCH hook) —
+          it derives the mint's patches into this slot's own scratch tree, so
+          the mint is validated in isolation exactly like an ordinary sample.
 
         Any finding → DEBUG log → ``None``: the caller DEGRADES to the
         normal fresh sample for the slot (recombination must never narrow
@@ -799,12 +971,9 @@ class BestOfNProposerAgent:
                 "; ".join(findings),
             )
             return None
-        _emit_round_event(ctx, "candidate_sampled", {"i": sample, "n": n, "recombined": True})
         return minted
 
-    async def _merge_recombined(
-        self, ctx: ProposerContext, sample: int, n: int
-    ) -> Experiment | None:
+    async def _merge_recombined(self, ctx: ProposerContext) -> Experiment | None:
         """LLM-guided merge of the round's recombination pair (WS-MERGE). GUARDED.
 
         The ``recombine_merge = "llm"`` counterpart to :meth:`_mint_recombined`
@@ -822,8 +991,8 @@ class BestOfNProposerAgent:
         is a proposal like any other. The parsed experiment is stamped with the
         pair's ``recombined_from`` provenance and then runs the SAME two
         defenses the mechanical mint runs (``enforce_forbidden`` + the validate
-        hook, which re-derives the shared child tree so a chosen merge is the
-        last-validated candidate).
+        hook, which derives the merge's patches into this slot's own scratch
+        tree so it is validated in isolation exactly like an ordinary sample).
 
         Any failure — an opaque LLM error, an unparseable / schema-invalid
         response, a forbidden-id or validation finding → DEBUG log → ``None``:
@@ -897,7 +1066,6 @@ class BestOfNProposerAgent:
                 "; ".join(findings),
             )
             return None
-        _emit_round_event(ctx, "candidate_sampled", {"i": sample, "n": n, "recombined": True})
         return merged
 
     async def _screen_slate(
@@ -963,11 +1131,16 @@ class BestOfNProposerAgent:
         never re-enters :meth:`propose` and never loops.
 
         MUTATES ``candidates``: a successfully-proposed replacement is
-        APPENDED whatever its own screen verdict, because its post-apply
-        validation (inside the inner ``propose``) just re-derived the
-        shared on-disk child tree — appending keeps
-        :meth:`_align_child_tree`'s last-validated bookkeeping honest on
-        every downstream path.
+        APPENDED whatever its own screen verdict, so the selection can pick
+        it. It validates into its OWN per-slot SCRATCH tree (leased exactly
+        like a slate slot), so a failed revise cannot clobber any other
+        candidate's tree — there is no shared on-disk tree to restore, since
+        the chosen candidate is derived into the real ``next_id`` once, after
+        selection, in :meth:`_mount_chosen`.
+
+        Runs sequentially AFTER the gather (an all-vetoed slate is the only
+        trigger), so its single re-sample does not participate in the
+        propose-parallelism fan-out.
 
         Returns one of:
 
@@ -979,12 +1152,16 @@ class BestOfNProposerAgent:
           the revise was spent.
         * ``"unavailable"`` — the inner proposer produced no replacement:
           the caller degrades exactly as before the revise existed
-          (``screen_all_vetoed``). The last-validated original's child
-          tree is restored first, since the failed revise attempts may
-          have clobbered it.
+          (``screen_all_vetoed``). No tree restore is needed — the
+          replacement validated into its own throwaway scratch tree.
         """
         revise_index = len(candidates)
         feedback = _render_revise_feedback(screen_results)
+        # Lease a per-slot scratch validator so the revise re-sample validates
+        # into its OWN tree (never the shared ``next_id``, never another
+        # candidate's tree). Released in ``finally`` — the screen derives its
+        # own tempdir, and the chosen candidate is mounted from patches later.
+        validate, cleanup = self._slot_validate_lease(ctx)
         try:
             # WS-ENS: the screen-informed REVISE is a DEPTH pass (a targeted
             # repair, not exploration) — it runs on the depth role, falling
@@ -997,6 +1174,7 @@ class BestOfNProposerAgent:
                 replace(
                     ctx,
                     revise_feedback=feedback,
+                    validate_experiment=validate,
                     aux_call_llm=self._depth_call_llm(ctx),
                     model=self._depth_model(ctx),
                 )
@@ -1007,8 +1185,9 @@ class BestOfNProposerAgent:
                 "degrading to critic-over-all",
                 exc,
             )
-            await self._restore_last_validated_tree(candidates, ctx)
             return "unavailable"
+        finally:
+            cleanup()
         _emit_round_event(ctx, "candidate_sampled", {"i": revise_index, "n": n, "revise": True})
         result = await self._screen_replacement(replacement, revise_index, ctx)
         candidates.append(replacement)
@@ -1048,33 +1227,6 @@ class BestOfNProposerAgent:
         _emit_round_event(ctx, "candidate_screened", _screened_event_fields(index, res, True))
         return res
 
-    async def _restore_last_validated_tree(
-        self, candidates: list[Experiment], ctx: ProposerContext
-    ) -> None:
-        """Re-derive the last original candidate's child tree after a failed revise.
-
-        A revise ``propose`` that failed may still have run its post-apply
-        validation attempts, each of which re-derives the SHARED child
-        snapshot in place — so the on-disk tree can belong to a rejected
-        revise attempt rather than to ``candidates[-1]`` (the state every
-        downstream path assumes). One idempotent hook call restores it.
-        If even the restore fails, no candidate's tree can be mounted
-        consistently and the step surfaces the standard
-        :class:`~zicato.proposer.proposer.ProposerError` — the
-        :meth:`_align_child_tree` both-failed precedent.
-        """
-        validate = ctx.validate_experiment
-        if validate is None:
-            return
-        findings = await self._revalidate(validate, candidates[-1])
-        if findings:
-            raise ProposerError(
-                [
-                    f"restore of last-validated candidate after a failed revise failed: {f}"
-                    for f in findings
-                ]
-            )
-
     async def _select_over(
         self,
         candidates: list[Experiment],
@@ -1106,76 +1258,6 @@ class BestOfNProposerAgent:
         )
         return survivor_indices[sub_choice], selection_mode
 
-    async def _align_child_tree(
-        self,
-        candidates: list[Experiment],
-        chosen: int,
-        selection_mode: str,
-        ctx: ProposerContext,
-    ) -> tuple[int, str]:
-        """Make the on-disk child tree match the CHOSEN candidate.
-
-        Every slate sample's post-apply validation (``ctx.validate_experiment``)
-        derives the SAME fixed child snapshot in place — each attempt clears
-        the previous attempt's tree (see
-        :func:`zicato.evolve.round.build_post_apply_validator`) — so after N
-        samples the on-disk child tree belongs to the LAST successfully-
-        validated candidate, while the selection above may pick an EARLIER
-        one. Both evolve pipelines mount that snapshot while persisting the
-        CHOSEN candidate's experiment (and the field path additionally judges
-        the chosen hypothesis's diversity signature), so a mismatch would
-        score — and diversity-judge — a tree that is not the experiment on
-        record.
-
-        When the chosen candidate is not the last-validated one, run the
-        validation hook once more on it: the hook re-derives the child
-        snapshot from the chosen candidate's patches (the same idempotent
-        clear-and-reapply a retry performs), so the mounted tree and the
-        returned experiment agree.
-
-        The chosen candidate validated cleanly moments ago, so findings here
-        are unexpected (e.g. the parent tree changed underneath the slate).
-        On any finding the selection FALLS BACK to the last-validated
-        candidate — whose tree is restored by one more hook call, because the
-        failed re-derive cleared it — so tree and experiment stay consistent
-        either way. If even the restore fails, no candidate's tree can be
-        mounted consistently and the step surfaces the standard
-        :class:`~zicato.proposer.proposer.ProposerError` every call site
-        already handles.
-
-        Returns the (possibly changed) ``(chosen, selection_mode)`` pair; a
-        fallback stamps ``:revalidate-fallback`` onto the mode string so the
-        round log records why the critic's pick was not returned.
-        """
-        last_validated = len(candidates) - 1
-        validate = ctx.validate_experiment
-        if validate is None or chosen == last_validated:
-            return chosen, selection_mode
-        findings = await self._revalidate(validate, candidates[chosen])
-        if not findings:
-            return chosen, selection_mode
-        log.warning(
-            "best-of-N: re-validating chosen candidate %d failed unexpectedly (%s); "
-            "falling back to last-validated candidate %d so the mounted child tree "
-            "matches the persisted experiment",
-            chosen,
-            "; ".join(findings),
-            last_validated,
-        )
-        restore_findings = await self._revalidate(validate, candidates[last_validated])
-        if restore_findings:
-            # The fallback candidate no longer re-derives either — there is
-            # no candidate whose tree can be mounted consistently with its
-            # experiment. Surface the standard proposer failure.
-            raise ProposerError(
-                [f"re-validate of chosen candidate {chosen} failed: {f}" for f in findings]
-                + [
-                    f"re-validate of fallback candidate {last_validated} failed: {f}"
-                    for f in restore_findings
-                ]
-            )
-        return last_validated, f"{selection_mode}:revalidate-fallback"
-
     @staticmethod
     async def _revalidate(
         validate: Callable[[Experiment], Awaitable[list[str]]], candidate: Experiment
@@ -1184,8 +1266,9 @@ class BestOfNProposerAgent:
 
         The hook's own contract is to RETURN findings (it already folds a
         ``derive_generation`` rejection into one), so an exception here is
-        doubly unexpected — fold it into the findings list so the caller's
-        fallback logic handles both failure shapes identically.
+        doubly unexpected — fold it into the findings list so
+        :meth:`_mount_chosen` (and the recombination-degrade defenses) handle
+        both failure shapes identically.
         """
         try:
             return list(await validate(candidate))
@@ -1310,6 +1393,7 @@ def wrap_with_proposer_quality(
     depth_call_llm: CallLLM | None = None,
     breadth_model: str | None = None,
     depth_model: str | None = None,
+    propose_parallelism: int = 1,
 ) -> ProposerAgent:
     """Interpose best-of-N + self-critique only when an operator opts in.
 
@@ -1338,6 +1422,13 @@ def wrap_with_proposer_quality(
     proposer — which binds the model STRING, not ``ctx.aux_call_llm`` — honors
     the role. ``None`` (the common case, a callable-only or absent role) leaves
     ``ctx.model`` at its own value, byte-identical.
+
+    ``propose_parallelism`` (WS-CONC; typically ``config.propose_parallelism``
+    off the :class:`RuntimeConfig`) sizes the slate-sampling gather's
+    semaphore. ``1`` (the default) runs the slate serially, byte-identically
+    to the pre-concurrency wrapper; the deterministic post-gather pass makes
+    any value produce the SAME slate + event stream regardless of slot
+    completion order. Irrelevant on the ``best_of_n <= 1`` pass-through.
     """
     if config.best_of_n <= 1:
         return inner
@@ -1348,6 +1439,7 @@ def wrap_with_proposer_quality(
         depth_call_llm=depth_call_llm,
         breadth_model=breadth_model,
         depth_model=depth_model,
+        propose_parallelism=propose_parallelism,
     )
 
 

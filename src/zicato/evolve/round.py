@@ -33,6 +33,7 @@ validate sequence verbatim, and the manifest check raises the same two
 
 from __future__ import annotations
 
+import tempfile
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -42,6 +43,26 @@ from zicato.evolve.lifecycle_services import _beat
 if TYPE_CHECKING:
     from zicato.core.types import Experiment
     from zicato.runtime.heartbeat import HeartbeatBeater
+
+#: One scratch-validator lease: the ``validate_experiment`` hook the wrapper
+#: threads onto ONE slate slot, plus its idempotent cleanup. The wrapper
+#: allocates one lease per slot from
+#: :func:`build_scratch_validator_factory`, runs the slot through the hook,
+#: and calls the cleanup in a ``finally`` (including on propose failure /
+#: degrade) so the slot's scratch tree never outlives the slot.
+ScratchValidatorLease = tuple[
+    "Callable[[Experiment], Awaitable[list[str]]]",
+    Callable[[], None],
+]
+#: The zero-arg factory threaded on ``ProposerContext.scratch_validator_factory``.
+#: Each call mints a FRESH, disjoint scratch tree + validator lease.
+ScratchValidatorFactory = Callable[[], ScratchValidatorLease]
+
+#: Prefix for a best-of-N slate slot's ephemeral scratch derivation parent.
+#: Placed in the OS temp dir (like the ``ztw-snap-*`` per-run checkouts) so
+#: it never sits under the workspace tree — nothing under it can be mistaken
+#: for a canonical generation snapshot, and it is cleaned up per slot.
+SLATE_SCRATCH_PREFIX = "ztw-slate-"
 
 
 def build_post_apply_validator(
@@ -110,6 +131,91 @@ def build_post_apply_validator(
         return validate_post_apply(child, list(candidate.patches), mutations)
 
     return _validate
+
+
+def build_scratch_validator_factory(
+    *,
+    genstore: Any,
+    epoch_id: str,
+    parent_id: str,
+    next_id: str,
+    mutations: list[Any],
+    beater: HeartbeatBeater | None,
+    round_index: int,
+) -> ScratchValidatorFactory:
+    """Build the per-slot scratch ``validate_experiment`` factory (WS-CONC).
+
+    The concurrency-enabling sibling of :func:`build_post_apply_validator`.
+    Where that shared hook derives every attempt into the ONE shared
+    ``next_id`` tree — the write that serialises the slate — this factory
+    hands each slate slot its OWN throwaway scratch tree, so N slots can
+    validate concurrently against fully disjoint directories.
+
+    Each ``factory()`` call:
+
+    * allocates a fresh :func:`tempfile.mkdtemp` parent (``ztw-slate-*`` in
+      the OS temp dir, OUTSIDE the workspace so nothing under it can be
+      mistaken for a canonical snapshot) and a ``child`` scratch path under
+      it;
+    * returns a ``(validate, cleanup)`` lease. ``validate`` beats the
+      ``applying`` phase, calls ``genstore.derive_scratch`` (which applies
+      the candidate's patches into the scratch tree WITHOUT touching the
+      generation namespace — see
+      :meth:`zicato.epoch.genstore.GenerationStore.derive_scratch` — so no
+      walker can ever enumerate it), and runs
+      :func:`zicato.mutation.validator.validate_post_apply`. A retry within
+      the slot re-derives into the SAME scratch tree (idempotent
+      clear-and-reapply). ``cleanup`` idempotently removes the whole
+      ``ztw-slate-*`` parent.
+
+    The parent generation's source tree is pre-warmed ONCE here (the git
+    backend materialises the parent worktree under its admin lock on first
+    ``snapshot_root``), so the concurrent ``derive_scratch`` calls find it
+    already present and only ever READ it — the derives race on nothing.
+
+    The chosen candidate is still mounted into the real ``next_id`` exactly
+    once, AFTER selection, through the shared
+    :func:`build_post_apply_validator` hook (the wrapper's unconditional
+    final derive) — this factory never writes the canonical tree.
+    """
+    from zicato.mutation.validator import validate_post_apply  # noqa: PLC0415
+
+    # Pre-warm the parent source tree once so concurrent slot derives find it
+    # materialised and only read it (git: first snapshot_root checks out the
+    # parent worktree under the process worktree-admin lock).
+    genstore.snapshot_root(epoch_id, parent_id)
+
+    def _factory() -> ScratchValidatorLease:
+        from zicato.epoch.genstore import discard_ephemeral_parent  # noqa: PLC0415
+
+        parent = Path(tempfile.mkdtemp(prefix=SLATE_SCRATCH_PREFIX))
+        scratch_root = parent / "child"
+
+        async def _validate(candidate: Experiment) -> list[str]:
+            _beat(
+                beater,
+                epoch_id=epoch_id,
+                generation_id=next_id,
+                round_index=round_index,
+                phase=f"applying:round_{round_index}:{next_id}",
+            )
+            try:
+                child = genstore.derive_scratch(
+                    epoch_id=epoch_id,
+                    parent_generation_id=parent_id,
+                    patches=list(candidate.patches),
+                    scratch_root=scratch_root,
+                )
+            except ValueError as exc:
+                return [f"derive_generation rejected the patch set: {exc}"]
+            return validate_post_apply(child, list(candidate.patches), mutations)
+
+        def _cleanup() -> None:
+            discard_ephemeral_parent(parent)
+
+        return _validate, _cleanup
+
+    return _factory
 
 
 def check_patch_manifest_and_forbidden(

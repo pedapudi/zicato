@@ -230,6 +230,23 @@ class RuntimeConfig:
         a modest default (``4``) is a safe starting point; operators
         raise it only when the endpoint can absorb more in-flight calls.
         Must be ``>= 1``.
+    propose_parallelism:
+        Maximum number of best-of-N slate SAMPLES the proposer keeps in
+        flight at once — the propose-phase analogue of :attr:`parallelism`
+        (which bounds board-unit runs). The N samples of a best-of-N slate
+        are genuinely independent (each varies only by a deterministic
+        per-slot hint), so the wrapper gathers them under an
+        :class:`asyncio.Semaphore` sized from this value; the deterministic
+        post-gather pass then emits every ``candidate_sampled`` event and
+        appends every candidate in SLOT order, so the observable outcome is
+        independent of completion order. ``1`` runs the slate fully serially
+        and reproduces the pre-concurrency behaviour byte-for-byte. Default
+        ``4``, mirroring :attr:`parallelism`; the real ceiling is almost
+        always the LLM endpoint's own concurrency limit. A RUNTIME tuning
+        knob, NOT part of the frozen evaluation contract — it never enters
+        the scoring canonical form (it lives on :class:`RuntimeConfig`, which
+        is never fed to the contract canonicalizer), so flipping it does not
+        roll the epoch. Must be ``>= 1``.
     scrub_worker_env:
         When ``True``, each tournament worker is spawned with a MINIMAL
         explicit environment — the process-essential keys plus the
@@ -402,6 +419,7 @@ class RuntimeConfig:
     auxiliary_call_llm: CallLLM
     seed: int | None = None
     parallelism: int = 4
+    propose_parallelism: int = 4
     judge_call_llm: CallLLM | None = None
     adjudicator_call_llm: CallLLM | None = None
     proposer_breadth_call_llm: CallLLM | None = None
@@ -438,6 +456,11 @@ class RuntimeConfig:
             raise ValueError(
                 f"RuntimeConfig.parallelism must be >= 1, got {self.parallelism!r}; "
                 "use 1 for fully sequential board execution"
+            )
+        if self.propose_parallelism < 1:
+            raise ValueError(
+                f"RuntimeConfig.propose_parallelism must be >= 1, got "
+                f"{self.propose_parallelism!r}; use 1 for a fully serial best-of-N slate"
             )
         if self.diversity_tolerance is not None and not (0.0 < self.diversity_tolerance <= 1.0):
             raise ValueError(
