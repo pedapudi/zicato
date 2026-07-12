@@ -1014,12 +1014,24 @@ them; `evaluate_gate` / the selection strategies never touch them (pinned by
   a settled two-competitor duel has no measured strength; its columns stay
   NULL and the display renders `—` (honest-degrade, never a fabricated
   number).
-- **The racing-rung limitation.** A racing intermediate rung persists a
-  survivor/cut *set* with no single named winner — that is not a pairwise
-  outcome, so rung cuts contribute **zero games** to the rating (only
-  two-competitor named-winner matches count). A Plackett–Luce set-rating is
-  the documented future fix (SELECTION-THEORY.md); until then a racing
-  epoch's ratings lean on the champion-audit duels alone.
+- **Racing rungs are rated (Plackett–Luce).** A racing intermediate rung
+  persists a survivor/cut *set* with no single named winner. The fold's fit is
+  `fit_plackett_luce`, a strict generalisation of `fit_bradley_terry`: a
+  two-competitor game is the singleton case where PL's choice probability
+  `p_i/(p_i+p_j)` *is* the BT logistic (so pairwise ratings are byte-unchanged,
+  pinned by a reduction test), and a rung is a grouped observation — survivor
+  set `S` above cut set `C`, scored by the **exact marginal over the within-`S`
+  orderings** (`|S|!` sequential-choice terms; the within-`C` orderings
+  marginalise to one). So a generation cut only at a rung is now rated where
+  the earlier BT fold left it NULL. `elo_games` therefore counts *observations
+  a generation appeared in* — a game counts for its two sides, a rung group
+  counts once per participant. Guards: a survivor set over
+  `PL_MAX_SURVIVORS = 8` is skipped with a debug log (never approximated —
+  the marginal is factorial in `|S|`, and racing fields are single-digit);
+  rung groups de-dup on `(tournament_id, rung_id)`. Slice size is deliberately
+  **unweighted** in v1 (a thin-slice rung is noisier evidence but weighs the
+  same — acceptable because the rating never gates; variance-aware weighting
+  is future work).
 - **Display honesty.** Below `MIN_RATING_GAMES = 5` games the surfaces
   append a faint `provisional` suffix (the per-candidate analogue of §6.1's
   `MIN_CREDIBLE_DUELS` honesty states); the SE always rides beside the

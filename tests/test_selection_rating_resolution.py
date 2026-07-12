@@ -36,6 +36,7 @@ from zicato.selection import (
     smith_set,
     theta_rank,
 )
+from zicato.selection.rating import fit_plackett_luce
 from zicato.selection.resolve import Duel
 from zicato.selection.standings_ext import (
     apply_uncertainty_guard,
@@ -89,6 +90,104 @@ def test_bradley_terry_empty_field_is_empty() -> None:
 def test_bradley_terry_rejects_nonpositive_prior() -> None:
     with pytest.raises(ValueError):
         fit_bradley_terry([("a", "b")], prior=0.0)
+
+
+# ---------------------------------------------------------------------------
+# Plackett--Luce rating (the grouped generalisation of Bradley--Terry)
+# ---------------------------------------------------------------------------
+
+
+def test_plackett_luce_reduces_exactly_to_bradley_terry_on_pairwise() -> None:
+    # THE REDUCTION PIN. For two-item observations the Plackett--Luce choice
+    # probability p_i/(p_i+p_j) IS the Bradley--Terry logistic, so the SAME
+    # pairwise match list fed through both fits must agree — not just the
+    # ordering but the theta AND the standard error, to tight tolerance (the
+    # per-observation gradient and Fisher information are term-for-term equal).
+    matches = (
+        [("a", "b")] * 5
+        + [("a", "c")] * 4
+        + [("b", "c")] * 6
+        + [("b", "a"), ("c", "a"), ("c", "b")]
+    )
+    bt = fit_bradley_terry(matches)
+    pl = fit_plackett_luce([((win,), (lose,)) for win, lose in matches])
+    assert set(pl) == set(bt)
+    for gid in bt:
+        assert math.isclose(pl[gid][0], bt[gid][0], abs_tol=1e-9)
+        assert math.isclose(pl[gid][1], bt[gid][1], abs_tol=1e-9)
+
+
+def test_plackett_luce_grouped_symmetry_known_answer() -> None:
+    # {A,B} survive over {C,D} with no other data. By symmetry A<->B and
+    # C<->D the strengths must pair up (theta_A == theta_B, theta_C == theta_D)
+    # and the survivors sit strictly above the cut (theta_A > theta_C). SEs are
+    # present and finite for all four.
+    rating = fit_plackett_luce([(("A", "B"), ("C", "D"))])
+    assert set(rating) == {"A", "B", "C", "D"}
+    theta = {g: rating[g][0] for g in rating}
+    assert math.isclose(theta["A"], theta["B"], abs_tol=1e-9)
+    assert math.isclose(theta["C"], theta["D"], abs_tol=1e-9)
+    assert theta["A"] > theta["C"]
+    # Zero-sum gauge.
+    assert math.isclose(sum(theta.values()), 0.0, abs_tol=1e-6)
+    for g in rating:
+        assert rating[g][1] > 0.0
+        assert rating[g][1] == rating[g][1]  # finite (not NaN)
+
+
+def test_plackett_luce_transitive_rung_chain_orders_strictly() -> None:
+    # A survives every rung; D is cut first, then C, then B — a strict
+    # dominance chain expressed purely as survivor/cut groups. The recovered
+    # strengths must be strictly ordered A > B > C > D.
+    chain = [
+        (("A", "B", "C"), ("D",)),  # rung 0: D cut
+        (("A", "B"), ("C",)),  # rung 1: C cut
+        (("A",), ("B",)),  # rung 2: B cut
+    ]
+    rating = fit_plackett_luce(chain)
+    theta = {g: rating[g][0] for g in rating}
+    assert theta["A"] > theta["B"] > theta["C"] > theta["D"]
+
+
+def test_plackett_luce_is_input_order_independent() -> None:
+    # Shuffling the observation list yields byte-identical output (the fit
+    # canonicalises the observations + the id index internally, so the float
+    # summation order is fixed regardless of input order).
+    obs = [
+        (("A", "B", "C"), ("D",)),
+        (("A", "B"), ("C",)),
+        (("B",), ("C",)),
+        (("A", "B"), ("C", "D")),
+        (("A", "B"), ("C", "D")),
+    ]
+    forward = fit_plackett_luce(obs)
+    backward = fit_plackett_luce(list(reversed(obs)))
+    rotated = fit_plackett_luce(obs[2:] + obs[:2])
+    assert forward == backward
+    assert forward == rotated
+
+
+def test_plackett_luce_skips_observation_over_the_cardinality_cap() -> None:
+    # A survivor set larger than the cap is SKIPPED (never crashed, never
+    # approximated). The lone over-cap observation contributes nothing, so the
+    # fit is empty. A within-cap observation alongside it is unaffected.
+    over_cap = tuple(f"s{i}" for i in range(9))  # |S| = 9 > PL_MAX_SURVIVORS
+    assert fit_plackett_luce([(over_cap, ("z",))]) == {}
+    mixed = fit_plackett_luce([(over_cap, ("z",)), (("A",), ("B",))])
+    assert set(mixed) == {"A", "B"}
+    assert mixed["A"][0] > mixed["B"][0]
+
+
+def test_plackett_luce_rejects_nonpositive_prior() -> None:
+    with pytest.raises(ValueError):
+        fit_plackett_luce([(("a",), ("b",))], prior=0.0)
+
+
+def test_plackett_luce_empty_and_degenerate_inputs_are_empty() -> None:
+    assert fit_plackett_luce([]) == {}
+    # An all-survive / all-cut observation carries no comparison.
+    assert fit_plackett_luce([(("a", "b"), ())]) == {}
+    assert fit_plackett_luce([((), ("a", "b"))]) == {}
 
 
 def test_prob_stronger_is_monotone_and_bounded() -> None:

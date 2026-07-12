@@ -24,14 +24,34 @@ be played.
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Iterable, Mapping, Sequence
+from itertools import permutations
+
+_log = logging.getLogger(__name__)
 
 #: One pairwise outcome: ``(winner_id, loser_id)``. A tie is not a valid
 #: Bradley--Terry observation (the continuous loss makes exact ties
 #: measure-zero); callers resolve any tie to a definite winner before
 #: feeding it here.
 DuelOutcome = tuple[str, str]
+
+#: One grouped ranking observation: ``(survivors, cut)``. Every id in
+#: ``survivors`` finished strictly ABOVE every id in ``cut``; the order
+#: WITHIN each set is unobserved (a racing rung ranks its survivors above the
+#: cut arms but does not record the internal order of either block). A
+#: pairwise duel — ``i`` beat ``j`` — is the singleton case ``((i,), (j,))``,
+#: which the Plackett--Luce likelihood reduces to *exactly* Bradley--Terry.
+RankGroup = tuple[Sequence[str], Sequence[str]]
+
+#: Hard cap on the survivor-set cardinality a single grouped observation may
+#: carry. The exact marginal likelihood sums over the ``|S|!`` sequential-
+#: choice orderings of the survivor set, so the cost is factorial in ``|S|``;
+#: racing rung fields are single-digit, so ``8`` is a comfortable ceiling that
+#: still bounds the enumeration. An observation over the cap is SKIPPED (with a
+#: debug log) rather than approximated or crashed.
+PL_MAX_SURVIVORS = 8
 
 
 def _logistic(x: float) -> float:
@@ -188,6 +208,280 @@ def fit_bradley_terry(
     return out
 
 
+def fit_plackett_luce(
+    observations: Iterable[RankGroup],
+    *,
+    prior: float = 1.0,
+    max_iter: int = 100,
+    tol: float = 1e-9,
+    max_survivors: int = PL_MAX_SURVIVORS,
+) -> dict[str, tuple[float, float]]:
+    """Fit Plackett--Luce strengths from grouped (and pairwise) rankings.
+
+    A single likelihood over TWO observation shapes:
+
+    * **Pairwise duels** — ``i`` beat ``j``, passed as the singleton group
+      ``((i,), (j,))``. For a two-item observation the Plackett--Luce choice
+      probability is ``p_i / (p_i + p_j) = sigma(theta_i - theta_j)`` —
+      *exactly* the Bradley--Terry model. Feed a pairwise-only ledger and this
+      fit agrees with :func:`fit_bradley_terry` to numerical tolerance (the
+      per-observation gradient and Fisher information are term-for-term
+      identical), so it is a strict generalisation, not a replacement.
+    * **Grouped partial orders** — a survivor set ``S`` finished strictly above
+      a cut set ``C`` (a racing rung: the survivors carried, the cut arms were
+      eliminated), with the order WITHIN each block unobserved. The likelihood
+      is the EXACT marginal over the within-``S`` orderings: the probability
+      that the members of ``S`` occupy the top ``|S|`` positions of the pool
+      ``S ∪ C`` in *some* order, summed over all ``|S|!`` sequential-choice
+      terms (the within-``C`` orderings marginalise to one and need no
+      enumeration). No approximation is smuggled in: a survivor set larger than
+      ``max_survivors`` is SKIPPED (with a debug log), never truncated or
+      sampled.
+
+    Parameters
+    ----------
+    observations:
+        An iterable of :data:`RankGroup` ``(survivors, cut)`` tuples. Each is
+        one observation; a replicate is a separate element (which sharpens the
+        fit, exactly as for the pairwise engine). An observation with an empty
+        survivor OR cut set carries no comparative information and is dropped;
+        an id appearing in both sets is contradictory and drops the
+        observation.
+    prior:
+        The L2 (ridge) prior weight on each ``theta`` toward zero — same role
+        and default as :func:`fit_bradley_terry`: it makes the
+        translation-invariant likelihood identifiable and keeps every strength
+        (and its SE) finite even for a perfect record or a disconnected graph.
+        Must be ``> 0``.
+    max_iter, tol:
+        Newton iteration controls. Each step is taken with a backtracking line
+        search on the ridge-penalised log-likelihood, so the objective never
+        decreases and the fit is robust even where a grouped observation makes
+        the marginal likelihood non-concave.
+    max_survivors:
+        The hard survivor-set cardinality cap (:data:`PL_MAX_SURVIVORS`). An
+        observation whose survivor set exceeds it is skipped + debug-logged.
+
+    Returns
+    -------
+    A mapping ``{generation_id: (theta, se)}`` — the zero-sum-gauged strength
+    and its standard error from the inverse observed information, identical in
+    convention to :func:`fit_bradley_terry`. Deterministic and independent of
+    the order the observations are supplied (the observations and the id index
+    are canonicalised internally, so the summation order is fixed).
+    """
+    if prior <= 0.0:
+        raise ValueError(f"prior must be positive, got {prior!r}")
+
+    # Normalise + canonicalise. Sorting the ids and the observation list fixes
+    # the float summation order, so a shuffled input yields byte-identical
+    # output (the order-independence guarantee).
+    norm: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+    ids: set[str] = set()
+    for surv_raw, cut_raw in observations:
+        surv = tuple(dict.fromkeys(str(x) for x in surv_raw))
+        cut = tuple(dict.fromkeys(str(x) for x in cut_raw))
+        if not surv or not cut:
+            continue  # no comparative information (all survived / all cut)
+        if set(surv) & set(cut):
+            continue  # contradictory: an id on both sides
+        if len(surv) > max_survivors:
+            _log.debug(
+                "plackett_luce: skipping observation with |survivors|=%d over cap %d",
+                len(surv),
+                max_survivors,
+            )
+            continue
+        norm.append((tuple(sorted(surv)), tuple(sorted(cut))))
+        ids.update(surv)
+        ids.update(cut)
+    if not norm:
+        return {}
+    norm.sort()
+
+    ordered_ids = sorted(ids)
+    index = {gid: i for i, gid in enumerate(ordered_ids)}
+    n = len(ordered_ids)
+    obs_idx: list[tuple[tuple[int, ...], tuple[int, ...]]] = [
+        (tuple(index[s] for s in surv), tuple(index[c] for c in cut)) for surv, cut in norm
+    ]
+
+    theta = [0.0] * n
+    for _ in range(max_iter):
+        grad, hess = _pl_assemble(obs_idx, theta, prior, n)
+        # Newton ascent direction: solve (-hess) @ delta = grad. The ridge
+        # keeps ``-hess`` positive-definite on its diagonal.
+        neg_hess = [[-hess[i][j] for j in range(n)] for i in range(n)]
+        delta = _solve(neg_hess, grad)
+        obj0 = _pl_penalized_loglik(obs_idx, theta, prior)
+        step = 1.0
+        moved = False
+        for _ls in range(40):
+            cand = [theta[i] + step * delta[i] for i in range(n)]
+            if _pl_penalized_loglik(obs_idx, cand, prior) >= obj0:
+                theta = cand
+                moved = True
+                break
+            step *= 0.5
+        if not moved:
+            break  # cannot ascend further — at the optimum
+        max_step = 0.0
+        for i in range(n):
+            s = abs(step * delta[i])
+            if s > max_step:
+                max_step = s
+        if max_step < tol:
+            break
+
+    # Standard errors from the observed information (``-hess``) at the fit.
+    _, hess = _pl_assemble(obs_idx, theta, prior, n)
+    info = [[-hess[i][j] for j in range(n)] for i in range(n)]
+    cov = _invert(info)
+
+    mean_theta = sum(theta) / n
+    out: dict[str, tuple[float, float]] = {}
+    for gid in ordered_ids:
+        i = index[gid]
+        var = cov[i][i]
+        se = math.sqrt(var) if var > 0.0 else 0.0
+        out[gid] = (theta[i] - mean_theta, se)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Plackett--Luce marginal-likelihood assembly (pure; single-digit pools).
+# ---------------------------------------------------------------------------
+
+
+def _pl_group_terms(
+    surv: Sequence[int],
+    cut: Sequence[int],
+    theta: Sequence[float],
+) -> tuple[dict[int, float], dict[tuple[int, int], float]]:
+    """Gradient + Hessian of one grouped observation's log-marginal-likelihood.
+
+    ``surv`` / ``cut`` are GLOBAL contestant indices; the returned gradient
+    (keyed by index) and Hessian (keyed by index pair) cover only the
+    observation's pool ``S ∪ C``. The marginal likelihood ``W`` is the sum over
+    the ``|S|!`` orderings of the survivor block of the sequential-choice weight
+    ``w_σ = Π_t p_{σ_t} / D_t`` (``D_t`` = the pool mass not yet chosen). Each
+    ``w_σ`` is a product of softmax choices, so its log-gradient is a sum of
+    ``(indicator − choice-probability)`` terms and its log-Hessian a sum of
+    negative softmax covariances; the mixture's gradient/Hessian are the
+    standard responsibility-weighted combinations.
+    """
+    pool = list(surv) + list(cut)
+    # A constant shift of the pool's logits cancels in every choice
+    # probability and in ``w_σ`` (denominator and numerator shift together), so
+    # subtract the pool max for numerical stability.
+    tmax = max(theta[k] for k in pool)
+    exp_t = {k: math.exp(theta[k] - tmax) for k in pool}
+
+    sum_w = 0.0
+    sum_wg: dict[int, float] = {}
+    sum_whgg: dict[tuple[int, int], float] = {}
+
+    for perm in permutations(surv):
+        w_log = 0.0
+        g: dict[int, float] = {}
+        h: dict[tuple[int, int], float] = {}
+        remaining = list(pool)
+        for chosen in perm:
+            denom = 0.0
+            for k in remaining:
+                denom += exp_t[k]
+            w_log += (theta[chosen] - tmax) - math.log(denom)
+            q = {k: exp_t[k] / denom for k in remaining}
+            for k in remaining:
+                g[k] = g.get(k, 0.0) + ((1.0 if k == chosen else 0.0) - q[k])
+            for a in remaining:
+                qa = q[a]
+                for b in remaining:
+                    h[(a, b)] = h.get((a, b), 0.0) + (qa * q[b] - (qa if a == b else 0.0))
+            remaining.remove(chosen)
+        w = math.exp(w_log)
+        sum_w += w
+        for k, gv in g.items():
+            sum_wg[k] = sum_wg.get(k, 0.0) + w * gv
+        for (a, b), hv in h.items():
+            sum_whgg[(a, b)] = sum_whgg.get((a, b), 0.0) + w * (hv + g.get(a, 0.0) * g.get(b, 0.0))
+
+    grad = {k: sum_wg[k] / sum_w for k in sum_wg}
+    hess: dict[tuple[int, int], float] = {}
+    for (a, b), v in sum_whgg.items():
+        hess[(a, b)] = v / sum_w - grad.get(a, 0.0) * grad.get(b, 0.0)
+    return grad, hess
+
+
+def _pl_group_loglik(
+    surv: Sequence[int],
+    cut: Sequence[int],
+    theta: Sequence[float],
+) -> float:
+    """The log-marginal-likelihood of one grouped observation (value only).
+
+    The lighter companion to :func:`_pl_group_terms` used by the line search —
+    it enumerates the same ``|S|!`` sequential-choice weights but skips the
+    gradient / Hessian bookkeeping.
+    """
+    pool = list(surv) + list(cut)
+    tmax = max(theta[k] for k in pool)
+    exp_t = {k: math.exp(theta[k] - tmax) for k in pool}
+    sum_w = 0.0
+    for perm in permutations(surv):
+        w_log = 0.0
+        remaining = list(pool)
+        for chosen in perm:
+            denom = 0.0
+            for k in remaining:
+                denom += exp_t[k]
+            w_log += (theta[chosen] - tmax) - math.log(denom)
+            remaining.remove(chosen)
+        sum_w += math.exp(w_log)
+    return math.log(sum_w)
+
+
+def _pl_assemble(
+    obs_idx: Sequence[tuple[tuple[int, ...], tuple[int, ...]]],
+    theta: Sequence[float],
+    prior: float,
+    n: int,
+) -> tuple[list[float], list[list[float]]]:
+    """Gradient + Hessian of the ridge-penalised PL log-likelihood.
+
+    The penalised log-likelihood is concave for pairwise data (where it is
+    Bradley--Terry) and near it for the small grouped fields here; ``hess`` is
+    its Hessian (negative-definite modulo the ridge), so ``-hess`` is the
+    observed information. Ridge: ``-prior·theta`` on the gradient, ``-prior`` on
+    the Hessian diagonal.
+    """
+    grad = [0.0] * n
+    hess = [[0.0] * n for _ in range(n)]
+    for i in range(n):
+        grad[i] -= prior * theta[i]
+        hess[i][i] -= prior
+    for surv, cut in obs_idx:
+        g, h = _pl_group_terms(surv, cut, theta)
+        for k, gv in g.items():
+            grad[k] += gv
+        for (a, b), hv in h.items():
+            hess[a][b] += hv
+    return grad, hess
+
+
+def _pl_penalized_loglik(
+    obs_idx: Sequence[tuple[tuple[int, ...], tuple[int, ...]]],
+    theta: Sequence[float],
+    prior: float,
+) -> float:
+    """The ridge-penalised PL log-likelihood (the line-search objective)."""
+    total = 0.0
+    for surv, cut in obs_idx:
+        total += _pl_group_loglik(surv, cut, theta)
+    total -= 0.5 * prior * sum(t * t for t in theta)
+    return total
+
+
 def prob_stronger(
     theta_a: float,
     se_a: float,
@@ -308,8 +602,11 @@ def _invert(matrix: Sequence[Sequence[float]]) -> list[list[float]]:
 
 
 __all__ = [
+    "PL_MAX_SURVIVORS",
     "DuelOutcome",
+    "RankGroup",
     "fit_bradley_terry",
+    "fit_plackett_luce",
     "prob_stronger",
     "theta_rank",
 ]

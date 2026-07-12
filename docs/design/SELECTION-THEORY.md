@@ -418,19 +418,47 @@ stable and the CIs are meaningful.
 replication budgeting; its point estimates also give a clean
 margin-bearing ranking that feeds the §5 resolvers.
 
-> **Status — implemented: the BT rating fold.** The batch MLE
-> (`src/zicato/selection/rating.py::fit_bradley_terry`) is now also the
-> engine of the index-side visibility rating (`src/zicato/index/elo.py`):
-> at every reindex/ingest it is re-fit over the de-duplicated persisted
-> match ledger and written to `generations.elo` / `elo_se` / `elo_games`
-> on the conventional Elo scale (`1500 + θ·400/ln 10`), replacing the
-> earlier sequential margin-K approximation (§7.2's order-dependence and
-> missing CIs were exactly its defects). Displayed in the standings /
-> gens roster / candidate dossier; **visibility only — it never touches
-> the gate or the selection path**. Known hole: racing intermediate rungs
-> persist survivor/cut sets with no named pairwise winner, so rung cuts
-> contribute zero games (the Plackett–Luce set-rating below remains
-> future work).
+> **Status — implemented: the BT rating fold, now a Plackett–Luce
+> generalisation.** The batch MLE
+> (`src/zicato/selection/rating.py::fit_bradley_terry`) is the engine of the
+> index-side visibility rating (`src/zicato/index/elo.py`): at every
+> reindex/ingest it is re-fit over the de-duplicated persisted match ledger
+> and written to `generations.elo` / `elo_se` / `elo_games` on the
+> conventional Elo scale (`1500 + θ·400/ln 10`), replacing the earlier
+> sequential margin-K approximation (§7.2's order-dependence and missing CIs
+> were exactly its defects). Displayed in the standings / gens roster /
+> candidate dossier; **visibility only — it never touches the gate or the
+> selection path**.
+>
+> The former hole — racing intermediate rungs persist a survivor/cut *set*
+> with no named pairwise winner, so rung cuts contributed zero games — is now
+> closed. The fold's fit is
+> `src/zicato/selection/rating.py::fit_plackett_luce`, which folds **two
+> observation shapes under one likelihood**:
+>
+> * a two-competitor game (`i` beat `j`) — the Plackett–Luce choice
+>   probability `p_i/(p_i+p_j)` **is** the Bradley–Terry logistic, so the fit
+>   *reduces exactly to BT* on pairwise data (theta and Fisher SE agree
+>   term-for-term; pinned by a test). It is a strict generalisation, so every
+>   pre-existing pairwise rating is byte-unchanged.
+> * a racing rung group — a survivor set `S` finished above a cut set `C`,
+>   order within each block unobserved. The likelihood is the **exact marginal
+>   over the within-`S` orderings**: the probability that `S` occupies the top
+>   `|S|` positions of the pool `S ∪ C` in some order, summed over all `|S|!`
+>   sequential-choice terms (the within-`C` orderings marginalise to one). No
+>   approximation is smuggled in — an over-cap survivor set (`|S| >
+>   PL_MAX_SURVIVORS = 8`; racing fields are single-digit) is *skipped with a
+>   debug log*, not truncated or sampled. `elo_games` becomes "observations a
+>   generation appeared in" (a rung group counts once per participant), so a
+>   rung-cut generation is now rated where the BT fold left it NULL.
+>
+> **Slices are deliberately unweighted (v1).** A rung run on a small board
+> slice is noisier evidence than one on the full board, but every observation
+> enters the likelihood with equal weight. The rating is visibility-only (it
+> never gates), so under-counting a small-slice rung's noise costs nothing
+> operational; the trade-off is that an early-rung cut on a thin slice carries
+> the same nominal weight as a full-board duel. A variance-aware
+> (slice-size-scaled) weighting is the documented future refinement.
 
 ### 7.2 Elo
 
