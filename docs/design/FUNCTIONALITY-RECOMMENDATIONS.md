@@ -241,10 +241,12 @@ overfitting-restricted context channels):
 > (`params["rating"]`), and the BT **uncertainty pre-gate** with
 > CI-driven "replicate-first, resolve-second" scheduling
 > (`src/zicato/selection/evidence_gate.py` + `selection/driver.py`,
-> defer→replicate on the closest-CI duel). Still unbuilt: the `resolver`
-> knob — Ranked Pairs, the Smith-set prune, and maximal lotteries
-> (`SELECTION-THEORY.md` remains DESIGN for those). Per-lever status is
-> tagged inline below.
+> defer→replicate on the closest-CI duel), and the `resolver` knob —
+> Ranked Pairs behind a Smith-set prune (`selection/resolve.py` +
+> `standings_ext.py`, opt-in `params["resolver"]`, wired into
+> single/double-elim + swiss). Still unbuilt: the maximal-lottery
+> resolver (`SELECTION-THEORY.md` remains DESIGN for that). Per-lever
+> status is tagged inline below.
 
 Winner-resolution today is two-tier: a per-duel **gate** (scalar margin + pass-rate &
 namespace monotonicity + holdout) is the only thing that can promote, and each
@@ -327,8 +329,8 @@ intervals — the noise backbone Elo lacks. Used correctly in zicato:
   `resolver` (`none|copeland|ranked_pairs|maximal_lottery`, default = today) and
   `rating` (`none|bradley_terry|elo`, default `none`). Params already fold into the
   contract hash, so a change rolls the epoch with zero new plumbing. Add the
-  additive index columns. **(Partial — SHIPPED:** the `rating` knob + additive
-  columns; **UNBUILT:** the `resolver` knob.)**
+  additive index columns. **(SHIPPED:** the `rating` knob + additive columns +
+  the `resolver` knob (`copeland`/`ranked_pairs`; `maximal_lottery` unbuilt).)**
 - **Phase 1 — Elo analytics fold** (above): highest impact/effort ratio, read-only,
   zero selection risk. **(SHIPPED via the BT-on-Elo-scale fold — see the
   subsection status note.)**
@@ -338,7 +340,9 @@ intervals — the noise backbone Elo lacks. Used correctly in zicato:
   θ/SE persist as `elo`/`elo_se` on the Elo scale.)**
 - **Phase 3 — Ranked Pairs + Smith-set prune resolver** (`selection/resolve.py`,
   pure functions over the `MatchRecord` matrix; the doc's #1 recommendation): plug
-  into *leader selection only*, not the gate. **(UNBUILT.)**
+  into *leader selection only*, not the gate. **(SHIPPED:** `smith_set` +
+  `ranked_pairs` + `resolve_leader` in `selection/resolve.py`, opt-in via
+  `params["resolver"]`, wired into single/double-elim + swiss.)**
 - **Phase 4 — CI-driven replication + the uncertainty pre-gate + maximal-lottery
   resolver for residual cycles**: biggest correctness win under noise; needs the
   driver-feedback refactor; do last. **(Partial — SHIPPED:** the uncertainty

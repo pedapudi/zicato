@@ -27,7 +27,7 @@ This document covers:
 - Why the index exists and what it is *not* (§1).
 - The discipline: files canonical, index derived, dual-write +
   full rebuild (§2).
-- The full schema — nine tables (§3).
+- The full schema — eleven tables (§3).
 - `zicato reindex` / `zicato reindex-generations` — the rebuild
   commands (§4).
 - Where SQLite is and is NOT used in zicato (§5).
@@ -233,11 +233,12 @@ verbatim). The current `SCHEMA_VERSION` is **12** (additive migrations
 have since added, among others, the `generations.elo*` visibility-rating
 columns — §3.2). That module is the contract; this section documents it.
 
-The index has **nine tables**, mirroring the artifact hierarchy:
+The index has **eleven tables** — nine mirroring the artifact hierarchy:
 `epochs` → `generations` → `experiments` → `patches`, and
 `generations` → `runs` → `loss_profiles` / `metric_counts` /
 `judge_losses`, with `tournaments` as the per-round comparison
-record.
+record — plus the two reflection tables added at schema v11
+(`reflections`, `judge_scorecards`).
 
 ```
 ┌──────────┐      ┌──────────────┐      ┌──────────────┐      ┌──────────┐
@@ -305,7 +306,7 @@ One row per generation directory under any epoch.
 | `created_at` | TEXT | when the generation was created |
 | `elo` | REAL NULL | visibility rating on the Elo scale (schema v10) — the Bradley–Terry strength re-fit over the match ledger at reindex, mapped `1500 + θ·400/ln 10`; NULL until the generation has a settled two-competitor duel |
 | `elo_se` | REAL NULL | standard error of `elo` (schema v12), same scale |
-| `elo_games` | INTEGER NULL | settled two-competitor duels folded into the fit (schema v12); racing rung cuts contribute zero (no named pairwise winner) |
+| `elo_games` | INTEGER NULL | settled observations folded into the fit (schema v10) — two-competitor duels plus racing rung group observations |
 
 Primary key `(epoch_id, generation_id)`. The `parent_generation_id`
 and `promoted` columns are exactly the two that the targeted

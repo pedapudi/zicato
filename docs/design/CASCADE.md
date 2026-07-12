@@ -47,7 +47,7 @@ compounding-selection pipeline.
 | Stage (order) | Shipped as | Cut rule | Board slice | Replicate base | Selectivity |
 |---|---|---|---|---|---|
 | **Screen** (upstream, in-propose-step) | `src/zicato/epoch/screen.py` | **veto-first, confirm-before-veto** — disqualify a candidate that flips a champion-passing train entry twice, or blows its wall-clock budget; never ranks | 1–2 rotating **train** entries | `3000` (`+1` confirm at `3001`) | high-recall filter: cuts only categorical breakage |
-| **Rung** (racing, downstream) | `strategies/racing.py` (`TOURNAMENT-STRUCTURES.md §3.5`) | **rank-and-halve** — eliminate the worst `1 − 1/eta` by scalar per rung; escalating slice = escalating sample; gate applied only at the **final** rung | rung-0 `board_fraction`/`rung0_board_size`, escalating to full | `0` (real duel slots) | best-arm identification, margin-blind cut |
+| **Rung** (racing, downstream) | `selection/strategies/racing.py` (`TOURNAMENT-STRUCTURES.md §3.5`) | **rank-and-halve** — eliminate the worst `1 − 1/eta` by scalar per rung; escalating slice = escalating sample; gate applied only at the **final** rung | rung-0 `board_fraction`/`rung0_board_size`, escalating to full | `0` (real duel slots) | best-arm identification, margin-blind cut |
 | **Full** (the gate) | `tournament/gate.py::evaluate_gate` | the three-rule ladder — scalar margin, pass-rate monotonicity, namespace monotonicity | full board × `replicates` × both sides | `0` | the promotion decision itself |
 | **Holdout** (terminal confirm) | `tournament/ladder.py` + gate rule 4 | **Ladder-mediated confirmation** — a train-win must hold on a slice the proposer never saw; released only when the train improvement clears the threshold, budgeted per epoch | the `holdout`-tagged slice | (holdout entries, canonical slots) | anti-memorization guard, confirmation-only |
 
@@ -225,7 +225,10 @@ zicato already ships:
    `promote_confidence_replicates` should be a **function of upstream
    selectivity** (how many stages, how selective each) rather than a fixed
    constant — the cascade knows the selectivity; the standalone gate does
-   not.
+   not. To be precise about the division of labor: the *fresh draw* (rule
+   1) is what removes the selection bias from the point estimate;
+   replicate-scaling only tightens the CI — a power hedge that makes a
+   noise-winner survivor harder to confirm, not itself a bias correction.
 3. **The holdout is the one slice no stage selected on.** The train/holdout
    split (`board/split.py`) already withholds the holdout from proposer
    context, pattern detection, screen panels, and loss summaries
@@ -418,7 +421,7 @@ exists in the loader, the strategies, or the tests today.**
 | Shipped form | Under a cascade | Deprecated? |
 |---|---|---|
 | Candidate screen (`epoch/screen.py`) | becomes **stage 0** (`kind: screen`, veto-first, confirm-before-veto retained verbatim) | the standalone `proposer_quality` screen wiring is **absorbed**, not removed — a cascade with no `screen` stage runs today's screen unchanged |
-| Racing rungs (`strategies/racing.py`) | become the **middle `rung` stages** (rank-halve, escalating slice) | racing as a standalone `tournament_structure` **stays**; the cascade merely lets its rungs be interleaved with a screen and an explicit terminal budget |
+| Racing rungs (`selection/strategies/racing.py`) | become the **middle `rung` stages** (rank-halve, escalating slice) | racing as a standalone `tournament_structure` **stays**; the cascade merely lets its rungs be interleaved with a screen and an explicit terminal budget |
 | Full gate (`tournament/gate.py`) | becomes the penultimate **`full` stage** | **unchanged** — the three-rule ladder is the cut rule, verbatim |
 | Holdout / Ladder (`ladder.py`, gate rule 4) | becomes the terminal **`holdout` stage** | **unchanged** — Ladder release + budget rules retained; the cascade only guarantees it is the never-selected-on anchor |
 | A/A calibration (`calibration.py`) | **not a stage** — a measurement the cascade *consumes* (per-slice floors, §4.2) | unchanged |
