@@ -52,6 +52,7 @@ from zicato.proposer.structured import (
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
     from zicato.index.query import MutationTrackRecord
+    from zicato.proposer.calibration import CalibrationSummary
     from zicato.proposer.genealogy import GenealogyItem
     from zicato.telemetry.meta_loop import MetaLoopEmitter
 
@@ -107,6 +108,7 @@ async def propose_experiment(
     failure_profile: str = "",
     process_exemplars: str = "",
     genealogy: tuple[GenealogyItem, ...] = (),
+    calibration: CalibrationSummary | None = None,
     sample_hint: str = "",
     mutation_track_records: Mapping[str, MutationTrackRecord] | None = None,
     revise_feedback: str = "",
@@ -263,6 +265,20 @@ async def propose_experiment(
         entry ids, no per-entry results, no exact deltas; this engine only
         forwards them. Empty (the default) omits the section, byte-identical to
         before this surface existed.
+    calibration:
+        Optional per-reign prediction-calibration summary (the opt-in
+        ``proposer_quality.calibration_feedback`` channel —
+        ``docs/design/PROPOSER.md`` §2.8). Forwarded to
+        :func:`~zicato.proposer.prompts.render_user_prompt`, which renders it
+        via :func:`~zicato.proposer.prompts.render_calibration_block` and
+        splices a ``## Prediction calibration`` section above the
+        experiment-memory block so the proposer sees how its own past
+        predictions landed. Already banded + reduced to hit/miss verdicts +
+        aggregate counts by its sampler
+        (:func:`~zicato.proposer.calibration.sample_calibration`) — no entry
+        ids, no per-entry results, no exact deltas; this engine only forwards
+        it. ``None`` (the default) omits the section, byte-identical to before
+        this surface existed.
 
     Returns
     -------
@@ -362,6 +378,7 @@ async def propose_experiment(
             failure_profile=failure_profile,
             process_exemplars=process_exemplars,
             genealogy=genealogy,
+            calibration=calibration,
             sample_hint=sample_hint,
             mutation_track_records=mutation_track_records,
         )

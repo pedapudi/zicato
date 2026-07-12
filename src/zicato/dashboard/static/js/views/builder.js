@@ -1184,6 +1184,12 @@ function proposerSection(d) {
     }, numInput(pq.genealogy != null ? pq.genealogy : 0,
       { min: '0', step: '1', 'aria-label': 'Genealogy' },
       (n) => runOp('set_proposer_quality', { genealogy: n }), { int: true })),
+    controlRow('Calibration feedback', {
+      title: 'calibration_feedback', def: '0 (off)',
+      body: 'Opt-in: show the proposer up to N of its own RECENT graded hypotheses per round — how its falsifiable movement predictions landed against realized outcomes. Renders per-claim-type hit / miss / unresolved counts, the overall calibration fraction (its own self-accuracy), and each recent claim as its core idea + a BANDED outcome (improved / flat / regressed) + hit/miss. A proposer shown its own miss pattern hypothesizes more honestly. Envelope-safe — the proposer\'s own claim text + aggregate counts, never board data: no entry ids, no per-entry results, no exact deltas, nothing holdout-derived. Read-side only — free on the cost meter. Non-zero rolls the epoch.',
+    }, numInput(pq.calibration_feedback != null ? pq.calibration_feedback : 0,
+      { min: '0', step: '1', 'aria-label': 'Calibration feedback' },
+      (n) => runOp('set_proposer_quality', { calibration_feedback: n }), { int: true })),
     controlRow('Cross-epoch memory', {
       title: 'experiment_memory.cross_epoch', def: 'off',
       body: 'Opts settled experiments from PRIOR epochs that share the current contract hash into the proposer\'s digest — banded, clearly separated, and only in the budget left after same-epoch history. Different-contract experiments are never surfaced.',

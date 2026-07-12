@@ -988,6 +988,27 @@ def test_set_proposer_quality_genealogy_arg() -> None:
         ops.set_proposer_quality(TournamentDraft(), genealogy=-1)
 
 
+def test_set_proposer_quality_calibration_feedback_arg() -> None:
+    """The calibration_feedback count round-trips via the changed-dict pattern;
+    default-off ⇒ omitted from changed; a negative value raises."""
+    import pytest
+
+    draft = TournamentDraft()
+    noop = ops.set_proposer_quality(draft, calibration_feedback=0)
+    assert "calibration_feedback" not in noop.changed
+    assert draft.scoring.proposer_quality.calibration_feedback == 0
+
+    patch = ops.set_proposer_quality(draft, calibration_feedback=5)
+    assert draft.scoring.proposer_quality.calibration_feedback == 5
+    assert patch.changed["calibration_feedback"] == {"from": 0, "to": 5}
+
+    off = ops.set_proposer_quality(draft, calibration_feedback=0)
+    assert off.changed["calibration_feedback"] == {"from": 5, "to": 0}
+
+    with pytest.raises(ValueError, match="calibration_feedback must be >= 0"):
+        ops.set_proposer_quality(TournamentDraft(), calibration_feedback=-1)
+
+
 def test_set_experiment_memory() -> None:
     import json
 

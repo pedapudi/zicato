@@ -730,6 +730,14 @@ test('builder view: the Proposer section drives set_proposer_quality + set_exper
   const genCall = OP_CALLS.find((c) => c.op === 'set_proposer_quality' && 'genealogy' in c.args);
   assert(genCall && genCall.args.genealogy === 4,
     'the genealogy count posts set_proposer_quality {genealogy:4} — exact op+args');
+  const calibration = byAria(host, 'dn-bld-num', 'Calibration feedback');
+  assert(calibration, 'the calibration-feedback control renders');
+  calibration.value = '5';
+  calibration.dispatchEvent(makeEvent('change'));
+  await tick();
+  const calCall = OP_CALLS.find((c) => c.op === 'set_proposer_quality' && 'calibration_feedback' in c.args);
+  assert(calCall && calCall.args.calibration_feedback === 5,
+    'the calibration count posts set_proposer_quality {calibration_feedback:5} — exact op+args');
   const mem = byAria(host, 'dn-bld-check', 'Cross-epoch experiment memory');
   mem.checked = true;
   mem.dispatchEvent(makeEvent('change'));

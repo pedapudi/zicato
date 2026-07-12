@@ -540,7 +540,14 @@ def test_bundle_under_size_envelope(
     # fit under the prior line alone; their union sits ~0.8 KB above it — the
     # same per-wave-raise interaction the 1.35 MB entry records. The envelope is
     # nudged to 1.372 MB to cover the combined surface with a thin margin.
-    assert total < 1_372_000, f"bundle is {total} bytes, exceeds 1_372_000 envelope"
+    #
+    # The CRITIC-CALIBRATION knob row (WS-CAL) then adds one builder controlRow
+    # (builder.js) — the `calibration_feedback` numeric input beside the
+    # genealogy row, driving set_proposer_quality — so the operator can opt the
+    # proposer into a view of its own prediction calibration. ~0.7 KB of new
+    # control surface (a numeric row + its tooltip copy). The envelope is nudged
+    # to 1.374 MB to cover it with a thin margin.
+    assert total < 1_374_000, f"bundle is {total} bytes, exceeds 1_374_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
