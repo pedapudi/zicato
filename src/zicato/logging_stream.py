@@ -11,7 +11,7 @@ See ``docs/design/LOGGING.md`` for the model. The short version:
   so worker records reach the one invocation stream (POSIX ``O_APPEND``
   keeps single-line writes atomic across the handful of parallel workers);
 * the optional ``epoch_id`` / ``generation_id`` / ``run_id`` on each
-  record come from a :mod:`contextvars` binding (:func:`bind_log_context`)
+  record come from a :mod:`contextvars` binding (:func:`set_log_context`)
   read by :class:`LogContextFilter` — never a per-call ``extra=``, so no
   log statement changes.
 
@@ -26,7 +26,6 @@ import datetime as _dt
 import json
 import logging
 import os
-from collections.abc import Iterator
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
@@ -82,34 +81,6 @@ def set_log_context(
         _generation_id.set(generation_id)
     if run_id is not None:
         _run_id.set(run_id)
-
-
-@contextlib.contextmanager
-def bind_log_context(
-    *,
-    epoch_id: str | None = None,
-    generation_id: str | None = None,
-    run_id: str | None = None,
-) -> Iterator[None]:
-    """Scope a run-context binding to a ``with`` block, then restore.
-
-    Used by the round loop to tag every record emitted during one round
-    with its ``epoch_id`` (and, where known, the generation/run) without
-    leaking the binding past the round. Each field is reset to its prior
-    value on exit.
-    """
-    tokens = []
-    if epoch_id is not None:
-        tokens.append((_epoch_id, _epoch_id.set(epoch_id)))
-    if generation_id is not None:
-        tokens.append((_generation_id, _generation_id.set(generation_id)))
-    if run_id is not None:
-        tokens.append((_run_id, _run_id.set(run_id)))
-    try:
-        yield
-    finally:
-        for var, token in reversed(tokens):
-            var.reset(token)
 
 
 def current_log_context() -> dict[str, str]:
@@ -215,6 +186,40 @@ class JsonlStreamHandler(logging.FileHandler):
         super().__init__(str(path), mode="a", encoding="utf-8", delay=True)
         self.setFormatter(JsonlFormatter())
         self.addFilter(LogContextFilter())
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Emit a record, never letting an open/write failure escape.
+
+        Stdlib :meth:`logging.FileHandler.emit` runs ``self.stream =
+        self._open()`` OUTSIDE its try/except, so with ``delay=True`` the
+        FIRST record to an uncreatable / unwritable ``logs/`` directory
+        raises straight out of the caller's ``log.warning(...)`` and crashes
+        the run — violating the LOGGING.md invariant that *logging setup can
+        never fail a run*. We wrap the whole emit: any exception routes to
+        :meth:`handleError` and the caller continues.
+
+        Nothing is cached on failure — ``self.stream`` stays ``None`` and the
+        NEXT record retries ``_open()``. So a directory that only becomes
+        writable later (permissions fixed mid-run) starts capturing again on
+        the very next record (per-emit retry).
+        """
+        try:
+            super().emit(record)
+        except Exception:  # noqa: BLE001 — observability must never fail a run
+            self.handleError(record)
+
+    def handleError(self, record: logging.LogRecord) -> None:
+        """Swallow handler errors silently — the stream is best-effort.
+
+        Stdlib ``handleError`` prints the traceback to ``stderr`` whenever
+        ``logging.raiseExceptions`` is set (the default), which on a wedged /
+        read-only ``logs/`` would spam the operator's console once per record.
+        The invariant is *no crash*; here we also keep it *quiet* — the
+        operator still sees every ``log.*`` line on the console directly, so
+        the dropped file capture needs no per-record stderr echo. (A one-line
+        stderr note would be acceptable per review; silence is the choice.)
+        """
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -430,7 +435,6 @@ __all__ = [
     "JsonlStreamHandler",
     "LogContextFilter",
     "LogStreamHandle",
-    "bind_log_context",
     "current_log_context",
     "current_log_stream_path",
     "install_log_stream",

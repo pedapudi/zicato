@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -50,9 +52,10 @@ def test_handler_round_trip_record_to_jsonl_to_reader(tmp_path: Path) -> None:
     ws.mkdir()
     handle = install_log_stream(ws, pid=4242)
     log = logging.getLogger("zicato.orchestrator")
-    with ls.bind_log_context(epoch_id="e1", generation_id="g2"):
-        log.info("plain %d", 7)
-        log.warning("attend", extra={"fields": {"k": 1}})
+    ls.set_log_context(epoch_id="e1", generation_id="g2")
+    log.info("plain %d", 7)
+    log.warning("attend", extra={"fields": {"k": 1}})
+    ls.set_log_context(epoch_id="", generation_id="")
     log.info("unbound")
     handle.close()
 
@@ -73,7 +76,8 @@ def test_handler_round_trip_record_to_jsonl_to_reader(tmp_path: Path) -> None:
     view = build_log_view(WorkspacePaths(ws), limit=10)
     assert view["invocation"].endswith("-4242")
     assert [r["message"] for r in view["records"]] == ["plain 7", "attend", "unbound"]
-    assert view["cursor"] == 2
+    # The cursor is now the file's EOF byte offset (the resume point).
+    assert view["cursor"] == handle.path.stat().st_size
 
 
 def test_reader_level_filter_and_after_cursor(tmp_path: Path) -> None:
@@ -91,10 +95,15 @@ def test_reader_level_filter_and_after_cursor(tmp_path: Path) -> None:
     warn_view = build_log_view(paths, limit=10, level="WARNING")
     assert [r["message"] for r in warn_view["records"]] == ["w1", "e2"]
 
-    # after the first line → only records past cursor 0.
-    tail = build_log_view(paths, limit=10, after=0)
+    # after = the byte cursor PAST the first record → only records beyond it.
+    full = build_log_view(paths, limit=10)
+    assert [r["message"] for r in full["records"]] == ["i0", "w1", "e2"]
+    first_cursor = full["records"][0]["cursor"]  # byte offset just past "i0"
+    tail = build_log_view(paths, limit=10, after=first_cursor)
     assert [r["message"] for r in tail["records"]] == ["w1", "e2"]
-    assert all(r["cursor"] > 0 for r in tail["records"])
+    assert all(r["cursor"] > first_cursor for r in tail["records"])
+    # The view-level cursor is the file's EOF byte offset.
+    assert full["cursor"] == full["records"][-1]["cursor"]
 
 
 def test_below_floor_records_are_not_captured(tmp_path: Path) -> None:
@@ -219,5 +228,177 @@ def test_malformed_line_is_skipped_not_fatal(tmp_path: Path) -> None:
     )
     view = build_log_view(WorkspacePaths(ws), limit=10)
     assert [r["message"] for r in view["records"]] == ["a", "b"]
-    # cursor tracks the RAW line index (append-only), so it survives the skip.
-    assert view["cursor"] == 2
+    # cursor is the file's EOF byte offset; the torn middle line is skipped
+    # without disturbing it (append-only follow survives the skip).
+    assert view["cursor"] == stream.stat().st_size
+
+
+# ---------------------------------------------------------------------------
+# Fix 1 — failure isolation: logging setup / write can NEVER fail a run.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(os.getuid() == 0, reason="root bypasses directory permissions")
+def test_unwritable_logs_dir_does_not_crash_the_run(tmp_path: Path) -> None:
+    """An unwritable ``logs/`` dir: ``log.warning`` must NOT raise; run continues."""
+    ws = tmp_path / ".zicato"
+    logs = ls.logs_dir(ws)
+    logs.mkdir(parents=True)
+    os.chmod(logs, 0o555)  # read+execute, NOT writable → the file open fails
+    try:
+        handle = install_log_stream(ws, pid=7)
+        log = logging.getLogger("zicato.orchestrator")
+        # The FIRST record forces the (delayed) open, which fails inside emit —
+        # stdlib would raise this straight out of the caller. It must not.
+        log.warning("this must not raise")
+        log.info("still running")  # per-emit retry: also silent, still no raise
+        handle.close()
+        # No stream file was created (the dir was unwritable), reader degrades.
+        assert not any(p.suffix == ".jsonl" for p in logs.iterdir())
+    finally:
+        os.chmod(logs, 0o755)
+
+
+@pytest.mark.skipif(os.getuid() == 0, reason="root bypasses directory permissions")
+def test_missing_logs_dir_on_readonly_root_does_not_crash(tmp_path: Path) -> None:
+    """A read-only workspace root (``logs/`` cannot even be created): no crash."""
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    os.chmod(ws, 0o555)  # cannot mkdir logs/ under here
+    try:
+        # mkdir is suppressed; the handler still installs (opens lazily).
+        handle = install_log_stream(ws, pid=8)
+        log = logging.getLogger("zicato.orchestrator")
+        log.warning("no dir, must not raise")
+        handle.close()
+        assert not ls.logs_dir(ws).exists()
+    finally:
+        os.chmod(ws, 0o755)
+
+
+@pytest.mark.skipif(os.getuid() == 0, reason="root bypasses directory permissions")
+def test_logs_dir_becoming_writable_later_flows_again(tmp_path: Path) -> None:
+    """Per-emit retry: once the dir is writable, records flow with NO reinstall."""
+    ws = tmp_path / ".zicato"
+    logs = ls.logs_dir(ws)
+    logs.mkdir(parents=True)
+    os.chmod(logs, 0o555)
+    try:
+        handle = install_log_stream(ws, pid=9)
+        log = logging.getLogger("zicato.orchestrator")
+        log.warning("dropped while blocked")  # silently fails to open
+        assert not any(p.suffix == ".jsonl" for p in logs.iterdir())
+        # Directory becomes writable mid-run — the SAME handler retries on the
+        # next emit (nothing is cached that would permanently disable it).
+        os.chmod(logs, 0o755)
+        log.warning("flows once writable")
+        handle.close()
+        lines = _read_lines(handle.path)
+        assert [r["message"] for r in lines] == ["flows once writable"]
+    finally:
+        os.chmod(logs, 0o755)
+
+
+# ---------------------------------------------------------------------------
+# Fix 2 — bounded seek-based tail + byte-offset cursor.
+# ---------------------------------------------------------------------------
+
+
+def _write_records(stream: Path, msgs: list[str], *, pad: str = "") -> None:
+    with stream.open("a", encoding="utf-8") as fh:
+        for m in msgs:
+            rec: dict[str, str] = {
+                "ts": "2026-01-01T00:00:00.000Z",
+                "level": "INFO",
+                "component": "z",
+                "message": m,
+            }
+            if pad:
+                rec["pad"] = pad
+            fh.write(json.dumps(rec) + "\n")
+
+
+def test_large_stream_tail_is_bounded(tmp_path: Path) -> None:
+    """A ~50 MB stream tails the last ``limit`` records WITHOUT reading it whole."""
+    from zicato.query.log_stream import tail_records
+
+    logs = ls.logs_dir(tmp_path / ".zicato")
+    logs.mkdir(parents=True)
+    stream = logs / "20260101T000000Z-1.jsonl"
+    pad = "x" * 512
+    n = 90_000  # ~90k * ~620B ≈ 54 MB
+    with stream.open("w", encoding="utf-8") as fh:
+        for i in range(n):
+            fh.write(
+                json.dumps(
+                    {
+                        "ts": "2026-01-01T00:00:00.000Z",
+                        "level": "INFO",
+                        "component": "z",
+                        "message": f"m{i}",
+                        "pad": pad,
+                    }
+                )
+                + "\n"
+            )
+    size = stream.stat().st_size
+    assert size > 40 * 1024 * 1024  # genuinely large
+
+    t0 = time.perf_counter()
+    records, cursor = tail_records(stream, limit=50)
+    bounded = time.perf_counter() - t0
+
+    # Correct tail: the last 50 messages, in order, each with a byte cursor.
+    assert [r["message"] for r in records] == [f"m{i}" for i in range(n - 50, n)]
+    assert cursor == size
+    assert all(r["cursor"] <= size for r in records)
+
+    # Bounded: the seek-based tail does FAR less work than a whole-file read
+    # (the old read_text + splitlines), which is the whole point of the fix.
+    t0 = time.perf_counter()
+    _ = stream.read_text(encoding="utf-8").splitlines()
+    whole = time.perf_counter() - t0
+    assert bounded < whole
+
+
+def test_cursor_append_correctness_across_offsets(tmp_path: Path) -> None:
+    """Byte-offset follow: each ``after`` resumes exactly past the last record."""
+    from zicato.query.log_stream import tail_records
+
+    logs = ls.logs_dir(tmp_path / ".zicato")
+    logs.mkdir(parents=True)
+    stream = logs / "20260101T000000Z-1.jsonl"
+
+    _write_records(stream, ["a", "b", "c"])
+    recs, cursor = tail_records(stream, limit=100)
+    assert [r["message"] for r in recs] == ["a", "b", "c"]
+    assert cursor == stream.stat().st_size
+
+    # No new data → empty delta, cursor holds (no rewind).
+    recs2, cursor2 = tail_records(stream, limit=100, after=cursor)
+    assert recs2 == []
+    assert cursor2 == cursor
+
+    # Append more → the delta is EXACTLY the new records, all past the cursor.
+    _write_records(stream, ["d", "e"])
+    recs3, cursor3 = tail_records(stream, limit=100, after=cursor)
+    assert [r["message"] for r in recs3] == ["d", "e"]
+    assert cursor3 == stream.stat().st_size
+    assert all(r["cursor"] > cursor for r in recs3)
+
+
+def test_bounded_tail_tolerates_torn_trailing_line(tmp_path: Path) -> None:
+    """A partial (no-newline) trailing write is not emitted; complete lines are."""
+    from zicato.query.log_stream import tail_records
+
+    logs = ls.logs_dir(tmp_path / ".zicato")
+    logs.mkdir(parents=True)
+    stream = logs / "20260101T000000Z-1.jsonl"
+    good = json.dumps({"ts": "t", "level": "INFO", "component": "z", "message": "done"})
+    # Two complete lines + a torn trailing record still being written (no \n).
+    stream.write_text(good + "\n" + good + "\n" + '{"partial": ', encoding="utf-8")
+    recs, cursor = tail_records(stream, limit=100)
+    assert [r["message"] for r in recs] == ["done", "done"]
+    # cursor stays the EOF byte offset; the follower re-reads from there once
+    # the torn line completes.
+    assert cursor == stream.stat().st_size

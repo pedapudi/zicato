@@ -438,6 +438,16 @@ def run_cmd(
 
     _log_stream = install_log_stream(workspace_root)
     set_log_context(epoch_id=resolved_epoch)
+    # Contract-load preflight: surface the telemetry-dialect capability
+    # warnings ONCE for this invocation — the SAME single seam evolve uses
+    # (evolve.loop.emit_dialect_capability_warnings), so a `reflect run`
+    # tuning a drift-derived loss under a drift-incapable dialect is warned
+    # too. Best-effort; a warning-emit failure never fails the run.
+    from zicato.evolve.loop import emit_dialect_capability_warnings  # noqa: PLC0415
+    from zicato.util import best_effort  # noqa: PLC0415
+
+    with best_effort("dialect-capability preflight warnings"):
+        emit_dialect_capability_warnings(workspace_root)
     try:
         _reflect_execute(
             workspace_root=workspace_root,

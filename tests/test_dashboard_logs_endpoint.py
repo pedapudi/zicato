@@ -58,10 +58,12 @@ def test_logs_endpoint_payload_shape(tmp_path: Path, static_dir: Path) -> None:
     body = resp.json()
     assert set(body) == {"records", "cursor", "invocation", "invocations", "level"}
     assert [r["message"] for r in body["records"]] == ["loop booted", "over budget"]
-    assert body["cursor"] == 1
+    # cursor is now the file's EOF byte offset (the resume point).
+    stream = ws / "logs" / "20260712T084000Z-1.jsonl"
+    assert body["cursor"] == stream.stat().st_size
     assert body["invocation"] == "20260712T084000Z-1"
     assert body["invocations"][0]["id"] == "20260712T084000Z-1"
-    # each record carries an append cursor.
+    # each record carries an append (byte) cursor.
     assert all("cursor" in r for r in body["records"])
 
 
@@ -73,7 +75,11 @@ def test_logs_endpoint_level_filter_and_after(tmp_path: Path, static_dir: Path) 
     assert [r["message"] for r in warn["records"]] == ["over budget"]
     assert warn["level"] == "WARNING"
 
-    after = client.get("/api/logs?after=0").json()
+    # `after` is a BYTE offset: resume past the first record's cursor to get
+    # only the appended tail.
+    full = client.get("/api/logs").json()
+    first_cursor = full["records"][0]["cursor"]  # byte offset just past record 0
+    after = client.get(f"/api/logs?after={first_cursor}").json()
     assert [r["message"] for r in after["records"]] == ["over budget"]
 
 

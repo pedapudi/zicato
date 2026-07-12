@@ -25,6 +25,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse, Response
 
@@ -166,19 +167,28 @@ def _make_state_endpoints(
         """The structured operator-log tail (LOGGING.md) for one invocation.
 
         ``?invocation=latest|<id>`` selects the stream (default latest);
-        ``?level=`` filters; ``?limit=`` tails; ``?after=<cursor>`` returns
-        only records past a line cursor so the pane appends instead of
-        re-rendering. An empty / no-logs workspace degrades to an empty view.
+        ``?level=`` filters; ``?limit=`` tails; ``?after=<byte-offset>``
+        returns only records appended past that byte cursor so the pane
+        appends instead of re-rendering. An empty / no-logs workspace
+        degrades to an empty view.
+
+        The read is seek-bounded (log_stream reads at most a few MB), but it
+        is still blocking file I/O, so it runs in the threadpool rather than
+        on the event loop — a large stream must never stall the dashboard.
         """
         limit = query.clamp_log_limit(_int_query(request, "limit"))
         after = _int_query(request, "after")
         level = request.query_params.get("level") or None
         invocation = request.query_params.get("invocation") or None
-        return JSONResponse(
-            query.build_log_view(
-                paths, limit=limit, level=level, after=after, invocation=invocation
-            )
+        view = await run_in_threadpool(
+            query.build_log_view,
+            paths,
+            limit=limit,
+            level=level,
+            after=after,
+            invocation=invocation,
         )
+        return JSONResponse(view)
 
     return {
         "api_health": api_health,

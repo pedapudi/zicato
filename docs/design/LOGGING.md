@@ -131,16 +131,30 @@ reach the same stream. Two mechanisms were possible:
    `JsonlStreamHandler` pointed at that path in append (`"a"`) mode and
    binds its run context.
 
-**Why shared-append is safe.** On POSIX an `O_APPEND` write (which
-`open(path, "a")` sets) is atomic against concurrent writers for any
-payload up to `PIPE_BUF` (4096 bytes). Each record is a single JSON line
-kept well under that ceiling, so the default handful of parallel workers
-(`runtime.parallelism`, default 4) interleave safely at whole-line
-granularity — never a torn line. This keeps **exactly one file per
-invocation**, which in turn makes retention trivial (count files, §4) and
-the reader trivial (read one file, §3). A per-worker sibling file would
-multiply files per invocation, blur the "keep last N invocations" count,
-and force the reader to merge-sort N streams for one logical view.
+**Why shared-append is safe.** On **Linux**, a `write()` to a regular
+file opened `O_APPEND` (which `open(path, "a")` sets) is serialized under
+the inode lock: the kernel takes the file's `i_rwsem` for the whole
+seek-to-end-plus-write, so concurrent appenders never interleave within a
+single `write()` — and this holds for **arbitrary sizes**, not just small
+ones. (`PIPE_BUF`, sometimes cited here, is the wrong guarantee: it is a
+*pipe/FIFO* atomicity bound of 4096 bytes, and a big traceback record
+easily exceeds it — so it would NOT justify torn-free large lines.)
+Because each record is emitted by a single `write()` (one `logging`
+handler `emit` → one line + terminator), the default handful of parallel
+workers (`runtime.parallelism`, default 4) interleave safely at whole-line
+granularity — never a torn line. The probe evidence matches: 6 processes
+writing mixed records (some ~40 KB, well past `PIPE_BUF`) produced **zero
+torn lines** on both ext4 and tmpfs.
+
+This is **Linux-specific**, not portable POSIX: the standard does not
+mandate whole-`write()` atomicity for regular files, and **NFS is
+explicitly out** (its `O_APPEND` is emulated client-side and races). The
+streams live on the local workspace filesystem, where the guarantee
+holds. Shared-append also keeps **exactly one file per invocation**, which
+makes retention trivial (count files, §4) and the reader trivial (read one
+file, §3). A per-worker sibling file would multiply files per invocation,
+blur the "keep last N invocations" count, and force the reader to
+merge-sort N streams for one logical view.
 
 The worker keeps its existing `logging.basicConfig(level=WARNING)` (stderr
 for a human watching a foreground run); the JSONL handler is *additional*.
@@ -160,11 +174,20 @@ shape of `build_run_log` deliberately:
   `<stamp>-<pid>` id. The view also returns the full `invocations` roster
   (newest first) so a caller can offer a picker.
 * `level` filters to records at or above a threshold name.
-* `limit` tails the last N matching records (the initial paint).
-* `after` is a monotone **line cursor**: only records past it are
-  returned, so a follower appends instead of re-rendering. The view
-  returns the largest cursor so the caller passes it back as the next
-  `after`. Append-only files make the line index a sound cursor.
+* `limit` tails the last N matching records (the initial paint). The
+  initial tail is a **bounded reverse block-read from EOF** — the reader
+  block-reads backward until it has `limit` complete lines or hits a 4 MiB
+  byte budget (`_TAIL_BYTE_BUDGET`), so it never reads the whole file. On a
+  large stream (measured: 250 MB) this is the difference between a
+  full-file `read_text` on every follow tick / SSE beat and a fixed few-KB
+  read.
+* `after` is a monotone **byte-offset cursor**: the reader `seek`s to it
+  and reads FORWARD, returning only the records appended since — so a
+  follower appends instead of re-rendering. The view returns the file's
+  EOF byte offset so the caller passes it back as the next `after`.
+  Append-only files make the byte offset a sound cursor (an offset never
+  points into rewritten bytes), and unlike a line index it needs no scan
+  from the top to resolve.
 
 An absent `logs/` directory, an empty directory, and an unreadable file
 all degrade to an empty view (`records: []`, `cursor: null`) — never an

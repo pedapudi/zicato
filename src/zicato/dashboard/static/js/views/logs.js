@@ -26,6 +26,21 @@ const LEVELS = ['ALL', 'DEBUG', 'INFO', 'WARNING', 'ERROR'];
 let _level = 'ALL';
 let _invocation = 'latest';
 
+// Append accumulator (LOGGING.md §5). The first paint of a given
+// stream+level does a full bounded tail; every SSE-driven beat AFTER that
+// fetches only `after=<byte cursor>` and appends the delta — instead of
+// re-pulling limit-500 every tick. `_rows` is the accumulated tail we
+// render; `_cursor` is the byte offset to resume from; `_reqInv`/`_reqLevel`
+// are the request params the accumulator is keyed to; `_acctInv` is the
+// resolved stream id it holds (so a picker switch, a level change, a pruned
+// stream, or `latest` rolling to a new invocation all reset cleanly).
+const _APPEND_CAP = 2000;
+let _rows = [];
+let _cursor = null;
+let _reqInv = null;
+let _reqLevel = null;
+let _acctInv = null;
+
 // Level → tone class (styled in console.css via the --v2 tokens).
 function levelTone(level) {
   const l = String(level || '').toUpperCase();
@@ -37,17 +52,47 @@ function levelTone(level) {
 
 export async function render(host, ctx, _params, _route) {
   if (!host) return;
-  const view = await D.logs({
-    invocation: _invocation,
-    level: _level === 'ALL' ? null : _level,
-    limit: 500,
-  });
+  const levelParam = _level === 'ALL' ? null : _level;
+
+  // Append only when the request params match what the accumulator holds AND
+  // we have a cursor; otherwise this is a fresh tail (first paint, or the
+  // operator switched invocation/level). `after` is a BYTE offset.
+  const sameReq = _invocation === _reqInv && _level === _reqLevel;
+  let after = (sameReq && _cursor != null) ? _cursor : null;
+  let view = await D.logs({ invocation: _invocation, level: levelParam, limit: 500, after });
+  let resolvedInv = (view && view.invocation) || null;
+
+  // If we sent an append cursor but `latest` rolled to a DIFFERENT stream
+  // (or the pinned one was pruned away), that byte offset is meaningless
+  // against the new file — refetch a full tail once and reset.
+  if (after != null && resolvedInv !== _acctInv) {
+    view = await D.logs({ invocation: _invocation, level: levelParam, limit: 500 });
+    resolvedInv = (view && view.invocation) || null;
+    after = null;
+  }
+
+  const fetched = (view && Array.isArray(view.records)) ? view.records : [];
+  if (after != null && resolvedInv && resolvedInv === _acctInv) {
+    // Genuine append to the same stream — take only records past the cursor
+    // (dedup guard: the reader already returns only the delta) and cap growth.
+    const add = fetched.filter((r) => typeof r.cursor !== 'number' || _cursor == null || r.cursor > _cursor);
+    if (add.length) {
+      _rows = _rows.concat(add);
+      if (_rows.length > _APPEND_CAP) _rows = _rows.slice(-_APPEND_CAP);
+    }
+  } else {
+    // Fresh tail (or a no-logs / transport-null view → empty accumulator).
+    _rows = fetched;
+  }
+  if (view && view.cursor != null) _cursor = view.cursor;
+  _reqInv = _invocation;
+  _reqLevel = _level;
+  _acctInv = resolvedInv;
 
   // A null payload is a transport failure (server down mid-view); an empty
   // records list with no invocation is the honest no-logs state.
-  const records = (view && Array.isArray(view.records)) ? view.records : [];
+  const records = _rows;
   const invocations = (view && Array.isArray(view.invocations)) ? view.invocations : [];
-  const resolvedInv = (view && view.invocation) || null;
 
   const digest = JSON.stringify({
     ok: !!view,

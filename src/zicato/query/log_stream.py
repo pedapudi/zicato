@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,18 @@ LOG_MAX_LIMIT = 2000
 #: The stream filename suffix (kept local so the reader has no import-time
 #: dependency on the writer module).
 _STREAM_SUFFIX = ".jsonl"
+
+#: Reverse-tail byte budget for the INITIAL (``after is None``) tail. The
+#: reader block-reads backward from EOF looking for ``limit`` complete lines
+#: but never scans more than this many bytes, so the initial paint's read +
+#: RSS is bounded no matter how large the stream has grown (a 250 MB stream
+#: was formerly ``read_text``-ed WHOLE on every follow tick / SSE beat).
+#: Records older than the budget are simply not in the initial tail; the
+#: ``after=`` byte cursor then streams everything appended from there on.
+_TAIL_BYTE_BUDGET = 4 * 1024 * 1024
+
+#: Block size for the backward read.
+_TAIL_BLOCK = 64 * 1024
 
 
 def clamp_log_limit(requested: int | None) -> int:
@@ -134,6 +147,45 @@ def _parse_record_line(line: str) -> dict[str, Any] | None:
     return obj
 
 
+def _records_from_bytes(
+    data: bytes,
+    base_offset: int,
+    *,
+    threshold: int,
+    skip_leading_partial: bool,
+) -> list[dict[str, Any]]:
+    """Parse COMPLETE (newline-terminated) JSONL lines out of ``data``.
+
+    Each returned record carries a ``cursor`` = the byte offset just PAST
+    its terminating newline (i.e. where the next line begins), so passing
+    it back as ``after=`` seeks straight to the following record. An
+    incomplete trailing line (no ``\\n`` yet — a record mid-write) is left
+    unparsed. When ``skip_leading_partial`` is set (a reverse read that
+    started mid-line) the bytes before the first newline are discarded.
+    """
+    out: list[dict[str, Any]] = []
+    start = 0
+    if skip_leading_partial:
+        nl = data.find(b"\n")
+        if nl == -1:
+            return out
+        start = nl + 1
+    while True:
+        nl = data.find(b"\n", start)
+        if nl == -1:
+            break
+        raw = data[start:nl].decode("utf-8", "replace")
+        end_offset = base_offset + nl + 1
+        start = nl + 1
+        rec = _parse_record_line(raw)
+        if rec is None:
+            continue
+        if threshold and _level_value(rec.get("level")) < threshold:
+            continue
+        out.append({**rec, "cursor": end_offset})
+    return out
+
+
 def tail_records(
     path: Path,
     *,
@@ -141,43 +193,69 @@ def tail_records(
     level: str | None = None,
     after: int | None = None,
 ) -> tuple[list[dict[str, Any]], int | None]:
-    """Read a stream's records with a level filter + line cursor.
+    """Read a stream's records with a level filter + a BYTE-OFFSET cursor.
 
     Returns ``(records, cursor)``. Each returned record carries an added
-    ``cursor`` (its line index in the file) so a follower can advance.
-    ``cursor`` (the second element) is the largest line index in the
-    file, or ``None`` when the file is empty / unreadable.
+    ``cursor`` = the byte offset just past its line (append-only follow);
+    ``cursor`` (the second element) is the byte length of the file (the
+    resume point), or ``None`` when the file is empty / unreadable.
 
     * ``level`` keeps only records at or above that level name.
-    * ``after`` returns only records whose line index is strictly greater
-      (append-only follow); ``None`` returns the last ``limit`` matches.
+    * ``after`` is a byte offset: the reader ``seek``s there and reads
+      FORWARD, returning only the records appended since (bounded by the
+      appended size). ``None`` is the INITIAL tail: a bounded reverse
+      block-read from EOF (:data:`_TAIL_BLOCK`-sized blocks backward until
+      ``limit`` complete lines OR :data:`_TAIL_BYTE_BUDGET` bytes), so the
+      whole file is never read. Both paths return at most ``limit`` records.
     """
+    threshold = _level_value(level)
     try:
-        text = path.read_text(encoding="utf-8")
+        with path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            file_size = fh.tell()
+
+            if after is not None:
+                # Forward tail: seek to the cursor, read what was appended.
+                start = max(0, min(int(after), file_size))
+                if start >= file_size:
+                    return [], file_size
+                fh.seek(start)
+                data = fh.read(file_size - start)
+                records = _records_from_bytes(
+                    data, start, threshold=threshold, skip_leading_partial=False
+                )
+                if len(records) > limit:
+                    records = records[-limit:]
+                return records, file_size
+
+            # Initial tail: bounded reverse block-read from EOF.
+            if file_size == 0:
+                return [], None
+            blocks: list[bytes] = []
+            pos = file_size
+            scanned = 0
+            newlines = 0
+            while pos > 0 and scanned < _TAIL_BYTE_BUDGET:
+                read_size = min(_TAIL_BLOCK, pos)
+                pos -= read_size
+                fh.seek(pos)
+                chunk = fh.read(read_size)
+                blocks.append(chunk)
+                scanned += read_size
+                newlines += chunk.count(b"\n")
+                # ``> limit`` guarantees at least ``limit`` complete lines
+                # remain after dropping the (partial) leading one below.
+                if newlines > limit:
+                    break
+            data = b"".join(reversed(blocks))
+            records = _records_from_bytes(
+                data, pos, threshold=threshold, skip_leading_partial=pos > 0
+            )
+            if len(records) > limit:
+                records = records[-limit:]
+            return records, file_size
     except (FileNotFoundError, OSError):
         return [], None
-
-    threshold = _level_value(level)
-    lines = text.splitlines()
-    file_cursor: int | None = len(lines) - 1 if lines else None
-
-    matched: list[dict[str, Any]] = []
-    for idx, raw in enumerate(lines):
-        rec = _parse_record_line(raw)
-        if rec is None:
-            continue
-        if threshold and _level_value(rec.get("level")) < threshold:
-            continue
-        if after is not None and idx <= after:
-            continue
-        rec = {**rec, "cursor": idx}
-        matched.append(rec)
-
-    if after is None and len(matched) > limit:
-        matched = matched[-limit:]
-    elif after is not None and len(matched) > limit:
-        matched = matched[-limit:]
-    return matched, file_cursor
 
 
 def build_log_view(
@@ -194,7 +272,7 @@ def build_log_view(
 
         {
           "records": [...],          # newest-last, each with a `cursor`
-          "cursor": <int|None>,      # largest line index in the file
+          "cursor": <int|None>,      # byte offset of EOF (the resume point)
           "invocation": <id|None>,   # the resolved stream id
           "invocations": [...],      # the roster, newest first (for a picker)
           "level": <str|None>,       # the applied level filter (echoed)
