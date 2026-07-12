@@ -445,6 +445,119 @@ specified in **[dev-guide 05 §5.6.13](../dev-guide/05-proposer.md)**
 
 ---
 
+## 2.8 The critic-calibration channel (WS-CAL) — feeding prediction accuracy back
+
+`proposer_quality.calibration_feedback` (an `int`, default `0` = OFF) opts the
+proposer into an IN-CONTEXT view of ITS OWN PREDICTION CALIBRATION — how the
+falsifiable movement predictions it wrote in past hypotheses actually landed
+against realized outcomes. The prediction-accuracy grader
+(`hypothesis_ledger` / `grade_hypothesis_predictions` in
+`src/zicato/tournament/detail.py`, surfaced by the `/api/hypothesis-accuracy`
+dashboard feed) already scores every settled hypothesis's predicted-vs-realized
+movements, but that score has been CONSUMPTION-ONLY — a dashboard diagnostic
+the proposer never saw. This channel closes the loop: a proposer shown its own
+MISS PATTERN hypothesizes more honestly — it stops writing confident,
+un-earned predictions once it can see that its confident predictions have been
+missing.
+
+Like the genealogy channel (§2.7) this is a RENDER-SIDE channel only: it
+splices a prompt block and touches no evaluation, so the cost meter is
+untouched (the process-exemplars precedent, §2.5). The design-first rule (ch04
+§12) requires the redaction contract IN WRITING, before the code, because — as
+with genealogy — this channel widens what the proposer reads. The whole point
+of the section is that showing the proposer its OWN calibration is NOT widening
+evaluation data.
+
+### The unit — a settled hypothesis is one "claim"
+
+Each settled hypothesis of the current reign is ONE claim the proposer made
+about the world: a `core_idea` (proposer-authored) plus a set of falsifiable
+movement predictions the grader can verify. The grader returns, per hypothesis,
+`(matches, predictions)` — how many of its predicted movements verified, of how
+many it made. From that pair each claim is graded into exactly ONE bucket:
+
+- **hit** — the proposer made falsifiable predictions and EVERY one verified
+  (`matches == predictions`, `predictions > 0`). The proposer called it.
+- **miss** — the proposer made predictions but at least one did NOT verify
+  (`matches < predictions`, `predictions > 0`). The prediction was (partly)
+  wrong. Strict-all-match for a hit is deliberate: it rewards conservative,
+  well-earned prediction over confident over-claiming.
+- **unresolved** — the hypothesis made NO gradeable predictions
+  (`predictions == 0`), so calibration is silent on it. (Matches the
+  experiment-memory reader's "None accuracy = made no graded predictions.")
+
+### What the channel carries
+
+A per-reign calibration summary, rendered into the proposer context:
+
+- **Per-claim-type COUNTS** — the hit / miss / unresolved tallies over the
+  reign's settled hypotheses.
+- **The overall calibration fraction** — `hit / (hit + miss)`, the fraction of
+  the proposer's GRADED claims it called correctly. This is the proposer's OWN
+  self-accuracy meta-signal, pooled over its own predictions — never a board
+  number. Climbing it means predicting more honestly, which is precisely the
+  behaviour the channel exists to encourage; it is a calibration target, not a
+  board-response surface to game.
+- **Up to K recent graded claims** — the K most-recent hit/miss claims
+  (most-recent-first), each rendered as `(claim text, banded realized outcome,
+  hit | miss)`. The claim text is the proposer's own `core_idea` (capped
+  head-only, the genealogy `_core_idea` discipline); the banded realized
+  outcome is the whole-candidate Δscalar through the EXISTING
+  `_bucket_scalar_delta` vocabulary (`improved` / `flat` / `regressed`).
+  Unresolved claims carry no realized band to show, so the recent list is
+  hit/miss only — the counts still tally the unresolved.
+
+`calibration_feedback = K` bounds the recent list to K; the counts + fraction
+are aggregate and always computed when the channel is on. When there is no
+GRADED history yet (`hit + miss == 0` — a baseline reign, or one whose settled
+hypotheses all made no falsifiable predictions) the sampler returns nothing and
+the renderer emits the EMPTY STRING — the "omit this section entirely"
+sentinel — so a `calibration_feedback = 0` round, and any round with no graded
+claims, renders a byte-identical prompt to today.
+
+### The envelope (LOAD-BEARING)
+
+Stated as hard exclusions, exactly the genealogy vocabulary (§2.7):
+
+1. **Claim text is PROPOSER-AUTHORED.** The only free text on the channel is
+   the proposer's own `core_idea`, echoed back to it (capped). Never a board
+   question, answer, or per-entry token.
+2. **Realized outcomes render BANDED.** The per-claim realized outcome is the
+   whole-candidate Δscalar coarsened through `_bucket_scalar_delta` — the same
+   `improved` / `flat` / `regressed` three-band vocabulary the experiment
+   memory and genealogy already use. The exact response-surface number never
+   reaches the model.
+3. **Never an entry id, never a per-entry result, never an exact delta.** The
+   grade (`hit` / `miss`) is a WHOLE-HYPOTHESIS verdict computed from the
+   grader's `(matches, predictions)` COUNTS; the counts + fraction are
+   aggregates over the proposer's OWN predictions. No per-entry pass/fail, no
+   per-movement number, and no exact Δscalar rides the channel.
+4. **No holdout anything.** The grader scores predicted-vs-realized MOVEMENTS,
+   which are whole-candidate metric aggregates — there is no per-entry read, so
+   there is no per-entry slice, and the holdout cannot enter a channel that
+   never looks at board entries.
+
+This widens NOTHING about evaluation data: it re-presents the proposer's own
+authored predictions and a coarse verdict on whether they held.
+
+### The determinism requirement
+
+The sampler is a PURE, DETERMINISTIC function of (the reign's graded claims,
+`k`) — **no RNG, no wall clock**. Counts are order-independent tallies; the
+recent list sorts by round DOWN then generation-id ascending (a TOTAL key), so
+the same claim set always yields the same block in ANY input order — the
+byte-identical-round-over-round leakage-budget argument the genealogy and
+process-exemplar channels already make.
+
+The full mechanism — `CalibrationClaim`, `CalibrationSummary`,
+`sample_calibration`, the render block, and the `calibration_feedback` knob —
+is `src/zicato/proposer/calibration.py` (the pure sampler, mirroring
+`genealogy.py`'s pure/no-IO discipline) + `_build_calibration_summary` in
+`src/zicato/orchestrator.py` (the once-per-round IO builder, joining the
+reign's durable records with the grader's ledger).
+
+---
+
 ## 3. Design A — why a tool-using proposer owns its own model
 
 The text shim is a single-shot text exchange: zicato hands the auxiliary

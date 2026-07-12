@@ -38,6 +38,7 @@ from zicato.analyzer.outcome_marginals import OutcomeMarginalSummary
 from zicato.analyzer.process_exemplars import ProcessExemplar
 from zicato.core.drift_kinds import GOLDFIVE_DRIFT_KINDS
 from zicato.core.types import MutationPoint, Patch, Pattern, PriorExperiment, ProposerSkill
+from zicato.proposer.calibration import CalibrationSummary
 from zicato.proposer.genealogy import GenealogyItem
 from zicato.proposer.recombine import RecombinationPair
 
@@ -697,6 +698,47 @@ def render_genealogy_block(items: Iterable[GenealogyItem]) -> str:
     return "\n\n".join(blocks)
 
 
+def render_calibration_block(summary: CalibrationSummary | None) -> str:
+    """Render a calibration summary into the prompt block body.
+
+    The prompt-side surface of the opt-in critic-calibration channel (WS-CAL;
+    ``docs/design/PROPOSER.md`` §2.8; produced by
+    :func:`zicato.proposer.calibration.sample_calibration`). Renders the
+    per-claim-type hit / miss / unresolved COUNTS, the overall calibration
+    fraction (``hit / (hit + miss)`` — the proposer's own self-accuracy), and
+    up to K recent graded claims as ``GRADE · banded outcome · core idea``.
+    This function performs NO redaction of its own — the sampler already banded
+    every outcome and capped every core idea (no entry ids, no per-entry
+    results, no exact deltas ever reach it); it only formats.
+
+    ``None`` (the sampler's "no graded history" sentinel) returns the EMPTY
+    STRING — the proposer-side "omit this section entirely" marker, exactly as
+    the genealogy / failure-mode / process-exemplar blocks behave — so a
+    ``calibration_feedback = 0`` round (and any round with no graded claims)
+    renders a byte-identical prompt.
+    """
+    if summary is None:
+        return ""
+
+    graded = summary.hit_count + summary.miss_count
+    if graded == 0:  # defensive — the sampler never returns such a summary
+        return ""
+
+    pct = round(summary.calibration_fraction * 100)
+    lines = [
+        f"Calibration: {pct}% of graded claims called correctly "
+        f"({summary.hit_count} hit / {summary.miss_count} miss / "
+        f"{summary.unresolved_count} unresolved).",
+    ]
+    if summary.recent:
+        lines.append("Recent graded claims (most recent first):")
+        for item in summary.recent:
+            verdict = item.grade.upper()
+            outcome = item.banded_outcome or "unsettled"
+            lines.append(f"- {verdict} · Δscalar {outcome} · {item.core_idea}")
+    return "\n".join(lines)
+
+
 def _band_prediction_accuracy(accuracy: float) -> str:
     """Coarsen a hypothesis prediction-accuracy fraction to a calibration band.
 
@@ -914,6 +956,7 @@ def render_user_prompt(
     failure_profile: str = "",
     process_exemplars: str = "",
     genealogy: Iterable[GenealogyItem] = (),
+    calibration: CalibrationSummary | None = None,
     sample_hint: str = "",
     mutation_track_records: Mapping[str, MutationTrackRecord] | None = None,
 ) -> str:
@@ -1020,6 +1063,21 @@ def render_user_prompt(
         holdout-derived); this function only renders + splices them. Empty (the
         default — every knob-off round) omits the section entirely, rendering a
         byte-identical prompt to before this surface existed.
+    calibration:
+        Optional per-reign prediction-calibration summary (the opt-in
+        ``proposer_quality.calibration_feedback`` channel —
+        ``docs/design/PROPOSER.md`` §2.8; produced by
+        :func:`zicato.proposer.calibration.sample_calibration`). Rendered here
+        through :func:`render_calibration_block` and, when the result is
+        non-empty, spliced as a ``## Prediction calibration`` section DIRECTLY
+        ABOVE ``## What's already been tried`` so the proposer sees how its own
+        past predictions landed. The summary is already banded + capped by the
+        sampler (no entry ids, no per-entry results, no exact deltas — only the
+        proposer's own core ideas + hit/miss verdicts + aggregate counts); this
+        function only renders + splices it. ``None`` (the default — every
+        knob-off round, and any round with no graded history) omits the section
+        entirely, rendering a byte-identical prompt to before this surface
+        existed.
     sample_hint:
         Optional per-sample edit-class steering line (the best-of-N slate
         diversifier — see :data:`zicato.proposer.best_of_n.EDIT_CLASS_HINTS`).
@@ -1056,6 +1114,23 @@ def render_user_prompt(
             f"failures, build on wins)\n\n{prior_block}\n\n"
         )
         body = prior_prefix + body
+    calibration_block = render_calibration_block(calibration)
+    if calibration_block.strip():
+        # Spliced so it lands DIRECTLY ABOVE the experiment-memory block (and
+        # below the genealogy block) — the proposer's own prediction track
+        # record, framing the "what's been tried" list. The banner names the
+        # channel; the sampler has already banded every outcome and reduced the
+        # grades to hit/miss verdicts + aggregate counts (no board data).
+        calibration_prefix = (
+            "## Prediction calibration (this reign — your own settled hypotheses)\n"
+            "How your falsifiable movement predictions landed against realized "
+            "outcomes. Claim\n"
+            "text is your own; outcomes are banded (improved / flat / regressed). "
+            "Predict more\n"
+            "honestly — do not over-claim movements your track record says you miss.\n"
+            f"{calibration_block.strip()}\n\n"
+        )
+        body = calibration_prefix + body
     genealogy_block = render_genealogy_block(genealogy)
     if genealogy_block.strip():
         # Spliced so it lands DIRECTLY ABOVE the experiment-memory block in the
@@ -1236,6 +1311,7 @@ def render_recombine_merge_prompt(
 __all__ = [
     "SYSTEM_PROMPT_TEMPLATE",
     "USER_PROMPT_TEMPLATE",
+    "render_calibration_block",
     "render_failure_mode_profile",
     "render_genealogy_block",
     "render_recombine_merge_prompt",

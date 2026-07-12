@@ -368,6 +368,33 @@ def test_hash_changes_when_genealogy_opted_in(tmp_path: Path) -> None:
     assert h_default != h_on
 
 
+def test_hash_stable_when_calibration_feedback_at_default(tmp_path: Path) -> None:
+    # The critic-calibration channel (WS-CAL) is omit-at-default like the
+    # genealogy / screen / exemplar knobs: a contract that predates the field
+    # hashes byte-identically to one that spells out the 0 default.
+    base = _write_contract(tmp_path)
+    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0}))
+    h_omitted = compute_contract_hash(base)
+    base.scoring_path.write_text(
+        json.dumps({"drift_weight": 1.0, "proposer_quality": {"calibration_feedback": 0}})
+    )
+    h_explicit_default = compute_contract_hash(base)
+    assert h_omitted == h_explicit_default
+
+
+def test_hash_changes_when_calibration_feedback_opted_in(tmp_path: Path) -> None:
+    # A proposer shown its own prediction calibration proposes under a different
+    # rule, so a non-zero calibration_feedback rolls the epoch like any weight.
+    base = _write_contract(tmp_path)
+    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0}))
+    h_default = compute_contract_hash(base)
+    base.scoring_path.write_text(
+        json.dumps({"drift_weight": 1.0, "proposer_quality": {"calibration_feedback": 5}})
+    )
+    h_on = compute_contract_hash(base)
+    assert h_default != h_on
+
+
 def test_hash_changes_on_ladder_knob_edit(tmp_path: Path) -> None:
     # The Ladder sub-config (OVERFITTING.md §12 #2) folds into the scoring
     # contract through OverfittingConfig — bumping a Ladder knob rolls the

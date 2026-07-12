@@ -100,6 +100,7 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         "process_exemplars": 2,
         "recombine": True,
         "genealogy": 4,
+        "calibration_feedback": 5,
         "recombine_merge": "llm",
     },
     "ExperimentMemoryConfig": {

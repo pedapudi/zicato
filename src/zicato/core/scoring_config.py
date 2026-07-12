@@ -388,6 +388,33 @@ class ProposerQualityConfig:
         correct — a proposer shown candidate genealogy proposes under a
         different rule. Read-side only (the cost meter is untouched). Must be
         ``>= 0``. See :mod:`zicato.proposer.genealogy`.
+    calibration_feedback:
+        Opt-in critic-calibration channel (WS-CAL; ``docs/design/PROPOSER.md``
+        §2.8). When ``> 0``, each round the orchestrator summarizes the current
+        reign's PREDICTION CALIBRATION — how the proposer's own falsifiable
+        movement predictions landed against realized outcomes, joining the
+        durable records with the prediction-accuracy grader
+        (:func:`zicato.tournament.detail.hypothesis_ledger`, the
+        ``/api/hypothesis-accuracy`` feed) — and splices it into the proposer
+        prompt: per-claim-type hit / miss / unresolved COUNTS, the overall
+        calibration fraction, and up to this many RECENT graded claims (claim
+        text + banded realized outcome + hit/miss). A proposer shown its own
+        miss pattern hypothesizes more honestly. Envelope-safe by construction:
+        claim text is proposer-authored, realized outcomes render BANDED
+        through the same ``_bucket_scalar_delta`` vocabulary as the experiment
+        memory, and the grade is a whole-hypothesis verdict from aggregate
+        COUNTS — no entry ids, no per-entry results, no exact deltas, nothing
+        holdout-derived (the grader scores whole-candidate movement
+        aggregates). The sampler is a pure, DETERMINISTIC function (no RNG).
+        ``0`` (default) is OFF — no sampling runs and the proposer prompt is
+        byte-identical. Like ``genealogy`` this widens the
+        proposer-visibility channel, so it is NOT set by the scaffold; the
+        operator opts in deliberately. Omitted from the contract canonical form
+        at its 0 default so existing epochs never roll retroactively; a
+        non-zero count rolls the epoch, which is correct — a proposer shown its
+        own calibration proposes under a different rule. Read-side only (the
+        cost meter is untouched). Must be ``>= 0``. See
+        :mod:`zicato.proposer.calibration`.
     recombine_merge:
         How the recombination slot COMPOSES the union once the selector has
         picked a pair (``docs/design/PROPOSER.md`` §2.6.1). ``"mechanical"``
@@ -420,6 +447,7 @@ class ProposerQualityConfig:
     process_exemplars: int = 0
     recombine: bool = False
     genealogy: int = 0
+    calibration_feedback: int = 0
     recombine_merge: str = "mechanical"
 
     def __post_init__(self) -> None:
@@ -431,6 +459,10 @@ class ProposerQualityConfig:
             raise ValueError(f"process_exemplars must be >= 0, got {self.process_exemplars!r}")
         if self.genealogy < 0:
             raise ValueError(f"genealogy must be >= 0, got {self.genealogy!r}")
+        if self.calibration_feedback < 0:
+            raise ValueError(
+                f"calibration_feedback must be >= 0, got {self.calibration_feedback!r}"
+            )
         if self.recombine_merge not in ("mechanical", "llm"):
             raise ValueError(
                 f"recombine_merge must be 'mechanical' or 'llm', got {self.recombine_merge!r}"

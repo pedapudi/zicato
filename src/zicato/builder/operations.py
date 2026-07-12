@@ -588,6 +588,7 @@ def set_proposer_quality(
     process_exemplars: int | None = None,
     recombine: bool | None = None,
     genealogy: int | None = None,
+    calibration_feedback: int | None = None,
     recombine_merge: str | None = None,
 ) -> DraftPatch:
     """Set the proposer-quality levers: best-of-N slate + self-critique.
@@ -620,9 +621,17 @@ def set_proposer_quality(
     a banded outcome — are spliced into the prompt so the proposer can
     evolve in context (``0`` = off, the default; must be >= 0; read-side
     only, so the cost meter is untouched — see
-    :mod:`zicato.proposer.genealogy`). COMPOSES with :func:`set_screening`
-    — both edit the same nested ``proposer_quality`` block; the screen
-    knobs stay that op's. Changing any rolls the epoch.
+    :mod:`zicato.proposer.genealogy`). ``calibration_feedback`` opts in the
+    critic-calibration channel (WS-CAL): up to that many RECENT graded
+    hypotheses — the proposer's own falsifiable predictions graded against
+    realized outcomes (hit / miss / unresolved counts + the overall
+    calibration fraction + banded per-claim outcomes) — are spliced into
+    the prompt so the proposer sees its OWN miss pattern and predicts more
+    honestly (``0`` = off, the default; must be >= 0; read-side only, so the
+    cost meter is untouched — see :mod:`zicato.proposer.calibration`).
+    COMPOSES with :func:`set_screening` — both edit the same nested
+    ``proposer_quality`` block; the screen knobs stay that op's. Changing
+    any rolls the epoch.
     """
     changed: dict[str, Any] = {}
     quality = draft.scoring.proposer_quality
@@ -665,6 +674,15 @@ def set_proposer_quality(
         if genealogy != quality.genealogy:
             quality_changes["genealogy"] = genealogy
             changed["genealogy"] = {"from": quality.genealogy, "to": genealogy}
+    if calibration_feedback is not None:
+        if calibration_feedback < 0:
+            raise ValueError(f"calibration_feedback must be >= 0, got {calibration_feedback!r}")
+        if calibration_feedback != quality.calibration_feedback:
+            quality_changes["calibration_feedback"] = calibration_feedback
+            changed["calibration_feedback"] = {
+                "from": quality.calibration_feedback,
+                "to": calibration_feedback,
+            }
     if quality_changes:
         draft.scoring = _replace_scoring(
             draft, proposer_quality=dataclasses.replace(quality, **quality_changes)

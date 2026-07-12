@@ -378,8 +378,10 @@ class _HintRecordingInnerAgent(_ScriptedInnerAgent):
 @pytest.mark.asyncio
 async def test_slate_slots_carry_distinct_edit_class_hints() -> None:
     """Each of the N samples gets a DISTINCT rotating edit-class hint on its
-    context; the caller's own context is never mutated."""
+    context, composed with a per-(slot, round) STRATEGY line; the caller's own
+    context is never mutated."""
     from zicato.proposer.best_of_n import EDIT_CLASS_HINTS
+    from zicato.proposer.hints import strategy_for_slot
 
     inner = _HintRecordingInnerAgent(
         [
@@ -394,7 +396,13 @@ async def test_slate_slots_carry_distinct_edit_class_hints() -> None:
     )
     ctx = _context(_CapturingCriticLLM("0"))
     await agent.propose(ctx)
-    assert inner.hints == list(EDIT_CLASS_HINTS[:3])
+    # Each composed hint is the edit-class hint, a newline, then the slot's
+    # strategy framing — deterministic per (slot, generation_id="v1").
+    expected = [f"{EDIT_CLASS_HINTS[i]}\n{strategy_for_slot(i, 'v1')}" for i in range(3)]
+    assert inner.hints == expected
+    # The edit-class hints stay distinct (the first axis), and the whole
+    # composed hints are distinct too.
+    assert len({h.split(chr(10))[0] for h in inner.hints}) == 3
     assert len(set(inner.hints)) == 3
     assert ctx.sample_hint == ""  # the shared context is untouched
 

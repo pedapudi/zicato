@@ -378,6 +378,7 @@ def set_proposer_quality(
     process_exemplars: int | None = None,
     recombine: bool | None = None,
     genealogy: int | None = None,
+    calibration_feedback: int | None = None,
     recombine_merge: str | None = None,
 ) -> str:
     """Set the proposer-quality levers: best-of-N slate + self-critique.
@@ -407,10 +408,16 @@ def set_proposer_quality(
     champion's promoted patch history + diverse rejected reign candidates,
     each with a banded outcome — are spliced into the prompt so the
     proposer can evolve in context (0 = off, the default; read-side only,
-    no cost-meter impact). The screen (tryout) knobs live on
-    `set_screening` — the ops COMPOSE on the same proposer_quality
-    contract block. Changing any rolls the epoch. Returns the patch +
-    updated cost / warnings.
+    no cost-meter impact). ``calibration_feedback`` opts in the
+    critic-calibration channel (WS-CAL): up to that many RECENT graded
+    hypotheses — the proposer's own falsifiable predictions graded against
+    realized outcomes (hit / miss / unresolved counts + the overall
+    calibration fraction + banded per-claim outcomes) — are spliced into
+    the prompt so the proposer sees its OWN miss pattern and predicts more
+    honestly (0 = off, the default; read-side only, no cost-meter impact).
+    The screen (tryout) knobs live on `set_screening` — the ops COMPOSE on
+    the same proposer_quality contract block. Changing any rolls the epoch.
+    Returns the patch + updated cost / warnings.
     """
     ctx = _active_context()
     try:
@@ -421,6 +428,7 @@ def set_proposer_quality(
             process_exemplars=process_exemplars,
             recombine=recombine,
             genealogy=genealogy,
+            calibration_feedback=calibration_feedback,
             recombine_merge=recombine_merge,
         )
     except ValueError as exc:

@@ -22,8 +22,10 @@ from zicato.proposer.best_of_n import BestOfNProposerAgent
 from zicato.proposer.hints import (
     EDIT_CLASS_HINTS,
     FAILURE_MODE_HINTS,
+    STRATEGY_HINTS,
     dominant_failure_mode,
     hint_for_slot,
+    strategy_for_slot,
 )
 from zicato.proposer.prompts import render_failure_mode_profile, render_user_prompt
 from zicato.testing import make_experiment, make_hypothesis_spec, make_mutation_point, make_patch
@@ -168,10 +170,39 @@ def test_hints_are_static_and_identity_free() -> None:
     """Every mintable hint is a fixed instruction string carrying no number
     at all — no rate, no count, no entry id can leak through a hint, so the
     restricted-visibility posture is enforceable by inspection."""
-    for hint in (*EDIT_CLASS_HINTS, *FAILURE_MODE_HINTS.values()):
+    for hint in (*EDIT_CLASS_HINTS, *FAILURE_MODE_HINTS.values(), *STRATEGY_HINTS):
         assert isinstance(hint, str)
         assert hint  # non-empty
         assert not any(ch.isdigit() for ch in hint)
+
+
+# ---------------------------------------------------------------------------
+# The per-(slot, round) STRATEGY framing (Lever 2)
+# ---------------------------------------------------------------------------
+
+
+def test_strategy_for_slot_is_deterministic() -> None:
+    """Same (slot, generation_id) always yields the same strategy — no RNG."""
+    for i in range(6):
+        assert strategy_for_slot(i, "v7") == strategy_for_slot(i, "v7")
+        assert strategy_for_slot(i, "v7") in STRATEGY_HINTS
+
+
+def test_strategy_slots_span_the_vocabulary_within_one_round() -> None:
+    """Within a round the slot offset walks the vocabulary — a 4-slot slate on
+    a 4-item vocabulary draws four DISTINCT strategies."""
+    n = len(STRATEGY_HINTS)
+    strategies = [strategy_for_slot(i, "gen-42") for i in range(n)]
+    assert len(set(strategies)) == n
+
+
+def test_strategy_rotates_across_rounds_for_a_fixed_slot() -> None:
+    """The same slot draws a different strategy in a different round (the
+    generation id shifts the rotation offset), so the two-axis diversity is
+    real. Not every pair need differ, but the assignment is not round-invariant.
+    """
+    slot0 = {strategy_for_slot(0, f"v{r}") for r in range(12)}
+    assert len(slot0) > 1
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +251,12 @@ async def test_slate_conditions_on_dominant_mode_and_keeps_last_slot_exploratory
         failure_profile=_LOOPING_DOMINANT,
     )
     await agent.propose(ctx)
-    assert inner.hints[:2] == [FAILURE_MODE_HINTS["looping"]] * 2
-    assert inner.hints[2] in EDIT_CLASS_HINTS
+    # Each slot's hint is the edit-class hint (first line) composed with a
+    # per-(slot, round) strategy line (second line) — assert on the edit-class
+    # axis, which the failure-mode conditioning still owns.
+    edit_axis = [h.split("\n", 1)[0] for h in inner.hints]
+    assert edit_axis[:2] == [FAILURE_MODE_HINTS["looping"]] * 2
+    assert edit_axis[2] in EDIT_CLASS_HINTS
+    # The strategy line rode along on every slot.
+    assert all("\n" in h for h in inner.hints)
     assert ctx.sample_hint == ""  # the shared context is never mutated

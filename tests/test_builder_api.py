@@ -495,6 +495,28 @@ def test_builder_op_set_proposer_quality_genealogy_dispatch(client: TestClient) 
     assert r.json()["draft"]["scoring"]["proposer_quality"]["genealogy"] == 4
 
 
+def test_builder_op_set_proposer_quality_calibration_feedback_dispatch(
+    client: TestClient,
+) -> None:
+    """The calibration_feedback count round-trips through /builder/op; a negative
+    count 400s and leaves the prior value untouched."""
+    s = {"session": "calib"}
+    r = client.post(
+        "/builder/op",
+        json={**s, "op": "set_proposer_quality", "args": {"calibration_feedback": 5}},
+    )
+    assert r.status_code == 200
+    assert r.json()["draft"]["scoring"]["proposer_quality"]["calibration_feedback"] == 5
+
+    r = client.post(
+        "/builder/op",
+        json={**s, "op": "set_proposer_quality", "args": {"calibration_feedback": -1}},
+    )
+    assert r.status_code == 400
+    r = client.post("/builder/op", json={**s, "op": "set_proposer_quality", "args": {}})
+    assert r.json()["draft"]["scoring"]["proposer_quality"]["calibration_feedback"] == 5
+
+
 def test_builder_op_fork_switch_list_roundtrip(client: TestClient) -> None:
     s = {"session": "life"}
     # Build state, fork it, verify the slot list + the patch shape.
