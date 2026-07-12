@@ -17,6 +17,33 @@ from zicato.core.tournament import (
 )
 
 # ---------------------------------------------------------------------------
+# Telemetry dialects (TELEMETRY-DIALECTS.md)
+# ---------------------------------------------------------------------------
+
+#: The default (and most powerful) telemetry dialect: the full
+#: drift-instrumented event stream the reducer has always consumed. Kept
+#: as a bare string so it serialises through the field-enumerating scoring
+#: serde with no custom codec.
+DIALECT_GOLDFIVE: str = "goldfive"
+#: A generic ADK-style agent event-log JSONL (tool-call / tool-response /
+#: agent-transfer / error / model-usage events). Weaker than goldfive — no
+#: in-process drift instruments, no custom process-judge drift — but
+#: recovers the failure / cost / loop envelope. See TELEMETRY-DIALECTS.md §3.
+DIALECT_ADK_EVENTS: str = "adk_events"
+#: The floor tier: no telemetry at all — predicates + optional in-run judges
+#: only, the drift term structurally zero. See TELEMETRY-DIALECTS.md §4.
+DIALECT_TRANSCRIPT: str = "transcript"
+
+#: The closed set of dialect names a contract may pin. An unknown name is a
+#: genuine config error rejected fail-fast at contract load (the "refuse"
+#: half of the warn-or-refuse story; the capability-mismatch "warn" half
+#: lives in :func:`zicato.telemetry.dialects.dialect_capability_warnings`).
+KNOWN_TELEMETRY_DIALECTS: frozenset[str] = frozenset(
+    {DIALECT_GOLDFIVE, DIALECT_ADK_EVENTS, DIALECT_TRANSCRIPT}
+)
+
+
+# ---------------------------------------------------------------------------
 # Scoring config (overfitting / proposer-quality sub-configs)
 # ---------------------------------------------------------------------------
 
@@ -771,6 +798,22 @@ class ScoringWeights:
     # class). ``scalar_fn`` is Seam 2 — it runs in the orchestrator.
     drift_reducer: str = ""
     scalar_fn: str = ""
+    # Telemetry dialect — the PRODUCER that turns a run's raw telemetry into
+    # the LossProfile inputs (TELEMETRY-DIALECTS.md). ``"goldfive"`` (default,
+    # the most powerful — the full drift-instrument stream) leaves every path
+    # byte-identical; ``"adk_events"`` reduces a generic agent event-log JSONL;
+    # ``"transcript"`` is the predicate/judge-only floor with a structurally
+    # zero drift term. Part of the evaluation contract — changing it selects
+    # champions under a different measurement rule and rolls the epoch — and it
+    # is threaded to BOTH the orchestrator and the killable worker through the
+    # SAME field-enumerating serde that carries ``drift_reducer`` across the
+    # worker boundary (no new plumbing). Omitted from the contract canonical
+    # form at its ``"goldfive"`` default (``epoch/contract.py::
+    # _SCORING_OMIT_AT_DEFAULT_FIELDS``) so existing epochs never roll
+    # retroactively; a non-default dialect rolls the epoch normally. Validated
+    # fail-fast in ``__post_init__`` (an unknown name is a genuine config error,
+    # the "refuse" half of the warn-or-refuse story).
+    telemetry_dialect: str = DIALECT_GOLDFIVE
     # Opt-in INTEGRITY BLOCKING modes (both default OFF — the alarm-only
     # posture of the supervisor's integrity notary is the shipped baseline).
     # Both are omitted from the contract canonical form at their default
@@ -834,6 +877,16 @@ class ScoringWeights:
                     f"{plugin_field} must be a dotted-spec string (got "
                     f"{type(value).__name__}); resolution happens at scoring time"
                 )
+        # Reject an unknown telemetry dialect fail-fast — the "refuse" half of
+        # the warn-or-refuse story (TELEMETRY-DIALECTS.md §4.2). A capability
+        # MISMATCH (drift weights under a drift-incapable dialect) is only
+        # WARNED, recommend-only, in the reducer; an unknown NAME is a genuine
+        # config error rejected here, like an unknown transform op.
+        if self.telemetry_dialect not in KNOWN_TELEMETRY_DIALECTS:
+            known = ", ".join(sorted(KNOWN_TELEMETRY_DIALECTS))
+            raise ValueError(
+                f"telemetry_dialect must be one of {{{known}}}, got " f"{self.telemetry_dialect!r}"
+            )
 
     def to_json(self) -> dict[str, Any]:
         """Serialise to a JSON-shaped dict via the field-enumerating serde.

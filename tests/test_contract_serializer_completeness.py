@@ -148,6 +148,10 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         # the canonicalizer — opting in rolls the epoch like any weight).
         "block_on_containment_violation": True,
         "block_on_gate_contradiction": True,
+        # Telemetry dialect (TELEMETRY-DIALECTS.md): the pluggable LossProfile
+        # producer. Default "goldfive" is omit-at-default; a non-default
+        # dialect rolls the epoch like any weight.
+        "telemetry_dialect": "adk_events",
     },
 }
 
