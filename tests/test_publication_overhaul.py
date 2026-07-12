@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from zicato.analyzer.report import (
     parse_prose_from_markdown,
     regenerate_epoch_report_deterministic,
@@ -142,9 +144,14 @@ def test_statistical_integrity_degrades_without_round_log(tmp_path: Path) -> Non
     data = gather_epoch_report_data(ws, "2026-07-12_pub")
     md = render_statistical_integrity_section(data)
     assert md.startswith("## Statistical Integrity")
-    # No round log emitted for this epoch ⇒ every measure says so, and
-    # nothing invents a number or a CRITICAL placebo callout.
-    assert "not yet emitted" in md
+    # No round has settled for this epoch ⇒ every measure says so honestly
+    # (the TRUE cause — no settled round — never "instrumentation not yet
+    # wired"), and nothing invents a number or a CRITICAL placebo callout.
+    assert "No round has settled for this epoch yet" in md
+    # The purged false premise must never resurface: round-log emission is
+    # live on the evolve path, so no degrade line may claim otherwise.
+    assert "not yet emitted" not in md
+    assert "later phase" not in md
     assert "CRITICAL" not in md
     assert "PLACEBO" not in md
 
@@ -272,3 +279,215 @@ def test_parse_prose_from_markdown_skips_placeholders(tmp_path: Path) -> None:
     assert "INTRODUCTION" not in prose
     # A non-prose h2 (Methodology) is never captured as prose.
     assert "METHODOLOGY" not in prose
+
+
+# ---------------------------------------------------------------------------
+# Prose splice — anchor-exact fences (no silent truncation on ---/heading)
+# ---------------------------------------------------------------------------
+
+
+def test_prose_fences_survive_structural_lines_through_two_refreshes(tmp_path: Path) -> None:
+    """LLM prose carrying a ``---`` rule, an embedded ``## heading``, and a
+    fence-shaped line round-trips BYTE-IDENTICAL through two consecutive
+    deterministic refreshes — the old "stop at the first ``## ``/``---``"
+    heuristic would have permanently truncated it."""
+    ws = _base_epoch(tmp_path, scoring={"promote_margin": 0.01})
+    epoch = "2026-07-12_pub"
+    md_path = analysis_path(ws, epoch)
+    md_path.parent.mkdir(parents=True, exist_ok=True)
+
+    tricky = (
+        "The clause held across the lineage.\n\n"
+        "---\n\n"
+        "## Deep Dive\n\n"
+        "An embedded heading the old heuristic would have severed here.\n\n"
+        "A fence-shaped line that is not our sentinel: <!-- PROSE:NOTES -->\n"
+        "and another block's close fence inline: <!-- /PROSE:CONCLUSION -->"
+    )
+    # A seed already in the fenced format, but with a STALE deterministic
+    # body so the first refresh genuinely rewrites (and thus exercises the
+    # parse→re-emit round-trip) rather than short-circuiting on the digest.
+    seeded = (
+        "<!-- EYEBROW -->\nZicato\n\n# Publication Fixture\n\n"
+        "## Abstract\n\n<!-- PROSE:ABSTRACT -->\nAbstract prose.\n<!-- /PROSE:ABSTRACT -->\n\n"
+        "## Introduction\n\n<!-- PROSE:INTRODUCTION -->\nIntro prose.\n"
+        "<!-- /PROSE:INTRODUCTION -->\n\n"
+        "## Methodology\n\nstale\n\n"
+        "## Analysis — What Worked and What Didn't\n\n"
+        "<!-- PROSE:ANALYSIS -->\n" + tricky + "\n<!-- /PROSE:ANALYSIS -->\n\n"
+        "## Conclusion & Next Directions\n\n"
+        "<!-- PROSE:CONCLUSION -->\nKeep the clause.\n<!-- /PROSE:CONCLUSION -->\n"
+    )
+    md_path.write_text(seeded, encoding="utf-8")
+
+    assert regenerate_epoch_report_deterministic(ws, epoch) is True
+    after_first = md_path.read_bytes()
+    refreshed = md_path.read_text(encoding="utf-8")
+    # Every structural line inside the prose survived verbatim — no truncation.
+    assert "## Deep Dive" in refreshed
+    assert "An embedded heading the old heuristic would have severed here." in refreshed
+    assert "<!-- PROSE:NOTES -->" in refreshed
+    assert "another block's close fence inline: <!-- /PROSE:CONCLUSION -->" in refreshed
+    # The prose after the embedded rule/heading is intact (not severed).
+    assert "Keep the clause." in refreshed
+
+    # A second refresh with no data change is a byte-identical no-op — the
+    # fenced round-trip is stable (the fence-shaped lines did not perturb it).
+    assert regenerate_epoch_report_deterministic(ws, epoch) is False
+    assert md_path.read_bytes() == after_first
+
+
+def test_unfenced_legacy_report_upgrades_to_fences_without_prose_loss(tmp_path: Path) -> None:
+    """A pre-fix ``analysis.md`` WITHOUT fences must not lose prose: the parse
+    falls back to the old heuristic, splices what it captured verbatim, and
+    the assembler re-emits WITH fences so the document self-heals on the first
+    refresh (a fenced no-op thereafter)."""
+    ws = _base_epoch(tmp_path, scoring={"promote_margin": 0.01})
+    epoch = "2026-07-12_pub"
+    md_path = analysis_path(ws, epoch)
+    md_path.parent.mkdir(parents=True, exist_ok=True)
+
+    legacy = (
+        "<!-- EYEBROW -->\nZicato\n\n# Publication Fixture\n\n"
+        "## Abstract\n\nLegacy abstract prose.\n\n"
+        "## Introduction\n\nLegacy intro prose.\n\n"
+        "## Methodology\n\nstale\n\n"
+        "## Analysis — What Worked and What Didn't\n\nLegacy analysis prose.\n\n"
+        "## Conclusion & Next Directions\n\nLegacy conclusion prose.\n"
+    )
+    assert "<!-- PROSE:" not in legacy  # genuinely unfenced
+    md_path.write_text(legacy, encoding="utf-8")
+
+    assert regenerate_epoch_report_deterministic(ws, epoch) is True
+    upgraded = md_path.read_text(encoding="utf-8")
+    # Prose preserved through the heuristic fallback...
+    assert "Legacy abstract prose." in upgraded
+    assert "Legacy analysis prose." in upgraded
+    assert "Legacy conclusion prose." in upgraded
+    # ...and the document self-healed — it now carries the fences.
+    assert "<!-- PROSE:ABSTRACT -->" in upgraded
+    assert "<!-- /PROSE:CONCLUSION -->" in upgraded
+
+    # Now fenced, a second refresh is a no-op.
+    assert regenerate_epoch_report_deterministic(ws, epoch) is False
+
+
+# ---------------------------------------------------------------------------
+# LIVING DRAFT clears on explicit `zicato epoch close`
+# ---------------------------------------------------------------------------
+
+
+def test_epoch_close_clears_living_draft_and_preserves_prose(tmp_path: Path) -> None:
+    """The no-LLM close seam (``zicato epoch close``) must clear the LIVING
+    DRAFT stamp on an existing living-draft ``analysis.md`` while preserving
+    the LLM prose verbatim."""
+    from zicato.epoch import lifecycle
+
+    ws = _base_epoch(tmp_path, scoring={"promote_margin": 0.01}, closed=False)
+    epoch = "2026-07-12_pub"
+    edir = ws / "epochs" / epoch
+    # The strict close-path loader (`load_epoch`) requires the frozen
+    # board/brief paths the minimal fixture config omits; add them.
+    (edir / "brief.md").write_text("## Goal\n\nHold the line.\n", encoding="utf-8")
+    _write(
+        edir / "config.json",
+        {
+            "id": epoch,
+            "name": "Publication Fixture",
+            "created_at": "2026-07-12T00:00:00Z",
+            "board_path": "board.jsonl",
+            "brief_path": "brief.md",
+            "contract_hash": "feedfacecafebabe",
+            "closed": False,
+            "closed_at": "",
+        },
+    )
+    md_path = analysis_path(ws, epoch)
+    md_path.parent.mkdir(parents=True, exist_ok=True)
+    md_path.write_text(
+        "<!-- EYEBROW -->\nZicato\n\n# Publication Fixture\n\n"
+        "## Abstract\n\nDurable abstract prose.\n\n"
+        "## Introduction\n\nDurable intro prose.\n\n"
+        "## Analysis — What Worked and What Didn't\n\nDurable analysis prose.\n\n"
+        "## Conclusion & Next Directions\n\nDurable conclusion prose.\n",
+        encoding="utf-8",
+    )
+    # A mid-epoch refresh makes this a LIVING DRAFT (epoch still open).
+    assert regenerate_epoch_report_deterministic(ws, epoch) is True
+    draft = md_path.read_text(encoding="utf-8")
+    assert "LIVING DRAFT" in draft
+    assert "Durable abstract prose." in draft
+
+    # Explicit close with NO auxiliary LLM — the `zicato epoch close` path.
+    lifecycle.close_epoch(ws, epoch_id=epoch, aux_call_llm=None)
+
+    closed = md_path.read_text(encoding="utf-8")
+    # The stamp is gone and the status reads closed...
+    assert "LIVING DRAFT" not in closed
+    assert "**Status**: closed" in closed
+    # ...and the prose is preserved verbatim across the close re-stamp.
+    assert "Durable abstract prose." in closed
+    assert "Durable conclusion prose." in closed
+
+
+# ---------------------------------------------------------------------------
+# Proposer analytics — the LIT slate-mix path + best-effort freshness hook
+# ---------------------------------------------------------------------------
+
+
+def test_proposer_analytics_lights_up_slate_mix_with_round_log(tmp_path: Path) -> None:
+    """The ``if sampled:`` branch of the slate-mix fold binds real
+    round-record data — mirroring the statistical-integrity lightup."""
+    from zicato.epoch.round_log import (
+        CandidateSampled,
+        DecisionRecorded,
+        RoundClosed,
+        RoundLog,
+        RoundOpened,
+    )
+
+    ws = _base_epoch(tmp_path, scoring={"promote_margin": 0.01})
+    epoch = "2026-07-12_pub"
+    # One round that sampled three candidates, one of them minted by
+    # mechanical recombination of rejected parents (WS-REC).
+    log1 = RoundLog(ws, epoch, 1)
+    log1.append(RoundOpened(contract_hash="feedfacecafebabe"))
+    log1.append(CandidateSampled(i=0, n=3))
+    log1.append(CandidateSampled(i=1, n=3))
+    log1.append(CandidateSampled(i=2, n=3, recombined=True))
+    log1.append(DecisionRecorded(decision="promoted", provenance={}))
+    log1.append(RoundClosed())
+
+    data = gather_epoch_report_data(ws, epoch)
+    assert len(data.round_records) == 1
+    md = render_proposer_analytics_section(data)
+    # The LIT branch reports the real sampled/recombined counts, never the
+    # degrade one-liner.
+    assert "3 candidate" in md and "were sampled" in md
+    assert "1 came from mechanical recombination" in md
+    assert "No round has settled" not in md
+
+
+async def test_round_report_regeneration_is_best_effort(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A wedge inside report generation during the round epilogue is swallowed
+    — the freshness hook must NEVER abort the round."""
+    import zicato.analyzer as analyzer_pkg
+    from zicato.orchestrator import _regenerate_epoch_report
+    from zicato.util.best_effort import best_effort_failures, reset_best_effort_failures
+
+    async def _unused_llm(system: str, user: str, model: str) -> str:  # pragma: no cover
+        return ""
+
+    def _boom(*_args: object, **_kwargs: object) -> bool:
+        raise RuntimeError("report generation wedged")
+
+    monkeypatch.setattr(analyzer_pkg, "regenerate_epoch_report_deterministic", _boom)
+    reset_best_effort_failures()
+
+    ws = _base_epoch(tmp_path, scoring={"promote_margin": 0.01})
+    # Does NOT raise, even though the underlying regeneration blew up.
+    await _regenerate_epoch_report(ws, "2026-07-12_pub", _unused_llm, "")
+    # The swallow is observable via the best-effort failure tally.
+    assert best_effort_failures().get("epoch analysis report regeneration", 0) >= 1

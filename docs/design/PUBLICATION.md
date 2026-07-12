@@ -124,10 +124,11 @@ Prefer the canonical workspace layer (`WorkspaceLayout`, `read_experiments`,
 | 7 Reflection | the reflection artifacts (`reflection/`) when a pass ran; per-judge trends from `per_judge_loss_totals`. |
 | 8 Limitations | `EpochReportData` scale (board size, judge coverage, sample size) + `contract_hash`. |
 
-When a binding's source is absent for an epoch (e.g. the round log is not yet
-emitted on the evolve path, or no rating layer was configured), the section
-degrades to its honest one-liner. The scaffolding is present and lights up
-automatically once the source is populated — no report change is needed.
+When a binding's source is absent for an epoch (e.g. no round has settled yet,
+the measure's feature was disabled — screening off, no holdout — or no rating
+layer was configured), the section degrades to its honest one-liner. The
+scaffolding is present and lights up automatically once the source is
+populated — no report change is needed.
 
 ## Freshness model — event-driven, not a timer
 

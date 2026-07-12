@@ -93,6 +93,37 @@ _AuxCallLLM = Callable[[str, str, str], Awaitable[str]]
 _MISSING_PROSE = "_(prose section unavailable — the auxiliary LLM did not return it this round.)_"
 
 
+# Explicit HTML-comment fences bracket each LLM-authored prose block in an
+# assembled document (same invisible-marker scheme as ``<!-- FIGURE:... -->``
+# / ``<!-- META -->``). The deterministic refresh re-lifts prose by these
+# ANCHOR-EXACT fences, so LLM prose containing a ``---`` rule, an embedded
+# ``## heading``, or any other structural line survives verbatim — the old
+# "stop at the first ``## ``/``---``" heuristic silently truncated it. The
+# fence lines render to nothing (HTML comments); see the renderer's skip
+# branch. The suffix is spaced to match the label form (``<!-- PROSE:X -->``).
+_PROSE_FENCE_OPEN_PREFIX = "<!-- PROSE:"
+_PROSE_FENCE_CLOSE_PREFIX = "<!-- /PROSE:"
+_PROSE_FENCE_SUFFIX = " -->"
+
+
+def _prose_fence_open(label: str) -> str:
+    """The opening fence line for a prose block, e.g. ``<!-- PROSE:ABSTRACT -->``."""
+    return f"{_PROSE_FENCE_OPEN_PREFIX}{label}{_PROSE_FENCE_SUFFIX}"
+
+
+def _prose_fence_close(label: str) -> str:
+    """The closing fence line for a prose block, e.g. ``<!-- /PROSE:ABSTRACT -->``."""
+    return f"{_PROSE_FENCE_CLOSE_PREFIX}{label}{_PROSE_FENCE_SUFFIX}"
+
+
+def _is_prose_fence_line(stripped: str) -> bool:
+    """True for either the open or close fence of any prose block."""
+    return (
+        stripped.startswith(_PROSE_FENCE_OPEN_PREFIX)
+        or stripped.startswith(_PROSE_FENCE_CLOSE_PREFIX)
+    ) and stripped.endswith(_PROSE_FENCE_SUFFIX.strip())
+
+
 # ---------------------------------------------------------------------------
 # Markdown assembly
 # ---------------------------------------------------------------------------
@@ -121,28 +152,37 @@ def assemble_report_markdown(
     analysis = prose.get("ANALYSIS", _MISSING_PROSE).strip() or _MISSING_PROSE
     conclusion = prose.get("CONCLUSION", _MISSING_PROSE).strip() or _MISSING_PROSE
 
+    def _prose_block(label: str, body: str) -> None:
+        # Bracket every prose block in anchor-exact fences so a later
+        # deterministic refresh re-lifts it verbatim (see
+        # :func:`parse_prose_from_markdown`), even when the body carries a
+        # ``---`` rule or an embedded ``## heading``.
+        parts.append(_prose_fence_open(label))
+        parts.append(body)
+        parts.append(_prose_fence_close(label))
+
     parts: list[str] = []
     parts.append(render_title_block(data))
     parts.append("")
     parts.append("## Abstract")
     parts.append("")
-    parts.append(abstract)
+    _prose_block("ABSTRACT", abstract)
     parts.append("")
     parts.append("## Introduction")
     parts.append("")
-    parts.append(introduction)
+    _prose_block("INTRODUCTION", introduction)
     parts.append("")
     parts.append(deterministic_sections.strip())
     parts.append("")
     parts.append("## Analysis — What Worked and What Didn't")
     parts.append("")
-    parts.append(analysis)
+    _prose_block("ANALYSIS", analysis)
     parts.append("")
     parts.append(render_threats_section(data))
     parts.append("")
     parts.append("## Conclusion & Next Directions")
     parts.append("")
-    parts.append(conclusion)
+    _prose_block("CONCLUSION", conclusion)
     parts.append("")
     parts.append("---")
     parts.append("")
@@ -417,6 +457,15 @@ def markdown_to_html(md: str, *, data: EpochReportData | None = None) -> str:
         line = lines[i]
         stripped = line.strip()
 
+        # Prose fence — an invisible ``<!-- PROSE:LABEL -->`` / ``<!-- /PROSE:
+        # LABEL -->`` marker bracketing an LLM prose block. HTML comments
+        # render to nothing; skip the line so it neither prints literally
+        # nor gets swept into the following paragraph.
+        if _is_prose_fence_line(stripped):
+            _close_list()
+            i += 1
+            continue
+
         # Eyebrow marker — small-caps line above the title.
         if stripped == _EYEBROW_MARKER:
             _close_list()
@@ -453,6 +502,7 @@ def markdown_to_html(md: str, *, data: EpochReportData | None = None) -> str:
                     or nxt == _META_MARKER
                     or nxt == _EYEBROW_MARKER
                     or nxt.startswith(_CALLOUT_MARKER_PREFIX)
+                    or _is_prose_fence_line(nxt)
                     or _is_caption_line(nxt)
                     or "|" in nxt
                 ):
@@ -605,6 +655,7 @@ def markdown_to_html(md: str, *, data: EpochReportData | None = None) -> str:
                 or nxt == _META_MARKER
                 or nxt == _EYEBROW_MARKER
                 or nxt.startswith(_CALLOUT_MARKER_PREFIX)
+                or _is_prose_fence_line(nxt)
                 or _is_caption_line(nxt)
                 or "|" in nxt
             ):
@@ -1308,14 +1359,73 @@ def parse_prose_from_markdown(report_md: str) -> dict[str, str]:
 
     Returns a ``{LABEL: text}`` dict for every prose block found (keyed by
     :data:`PROSE_BLOCK_LABELS`), skipping the placeholder body so a
-    never-written block is not resurrected as prose. A block is the text
-    between its ``## <Heading>`` and the next ``## `` heading (or the ``---``
-    footer rule). Absent blocks are simply not present in the result, which
-    the assembler then fills with a placeholder — so a document with no
-    prose yet round-trips to placeholders, not to broken sections.
+    never-written block is not resurrected as prose. Absent blocks are
+    simply not present in the result, which the assembler then fills with a
+    placeholder — so a document with no prose yet round-trips to
+    placeholders, not to broken sections.
+
+    Two parse paths:
+
+    * **Fenced (current format).** When the document carries the explicit
+      ``<!-- PROSE:LABEL -->`` … ``<!-- /PROSE:LABEL -->`` fences, each block
+      is lifted ANCHOR-EXACT — the whole text between its open and close
+      fence, INCLUDING any ``---`` rule or embedded ``## heading`` the LLM
+      wrote. This is the fix for the silent truncation the old heuristic
+      caused; the fences round-trip a block byte-identically.
+    * **Legacy (unfenced) fallback.** A pre-fix document written before the
+      fences existed has none, so we fall back to the old heuristic (body
+      from a ``## <Heading>`` to the next ``## ``/``---``). Whatever it
+      captures is spliced back verbatim and the assembler re-emits it WITH
+      fences, so the document self-heals to the exact format on the first
+      deterministic refresh.
     """
-    lines = report_md.replace("\r\n", "\n").split("\n")
-    # Index each h2 heading position + which prose label (if any) it opens.
+    text = report_md.replace("\r\n", "\n")
+    # An open fence anywhere ⇒ the document is in the fenced format; parse
+    # exclusively by fence (never mix the heuristic in — a fenced body may
+    # legitimately contain ``## ``/``---`` lines the heuristic would trip on).
+    if _PROSE_FENCE_OPEN_PREFIX in text:
+        return _parse_prose_fenced(text)
+    return _parse_prose_heuristic(text)
+
+
+def _parse_prose_fenced(text: str) -> dict[str, str]:
+    """Lift each prose block by its anchor-exact ``<!-- PROSE:LABEL -->`` fence."""
+    lines = text.split("\n")
+    open_to_label = {_prose_fence_open(lbl): lbl for lbl in PROSE_BLOCK_LABELS}
+    out: dict[str, str] = {}
+    i = 0
+    n = len(lines)
+    while i < n:
+        label = open_to_label.get(lines[i].strip())
+        if label is None:
+            i += 1
+            continue
+        close = _prose_fence_close(label)
+        body: list[str] = []
+        i += 1
+        # Capture verbatim to the matching close fence (or EOF). Only the
+        # exact close sentinel terminates the block, so structural lines —
+        # rules, headings, other blocks' fences — are preserved as body.
+        while i < n and lines[i].strip() != close:
+            body.append(lines[i])
+            i += 1
+        i += 1  # consume the close fence
+        captured = "\n".join(body).strip()
+        if captured and captured != _MISSING_PROSE:
+            out[label] = captured
+    return out
+
+
+def _parse_prose_heuristic(text: str) -> dict[str, str]:
+    """Legacy unfenced parse: body from a ``## <Heading>`` to the next ``## ``/``---``.
+
+    Retained ONLY for pre-fix documents that predate the prose fences; it
+    truncates a block at the first ``## ``/``---`` it contains (the very bug
+    the fenced format fixes), but a legacy document is no worse off than
+    under the old code, and the assembler re-emits the captured prose WITH
+    fences so the document upgrades on its first refresh.
+    """
+    lines = text.split("\n")
     out: dict[str, str] = {}
     i = 0
     n = len(lines)
@@ -1329,7 +1439,6 @@ def parse_prose_from_markdown(report_md: str) -> dict[str, str]:
         if label is None:
             i += 1
             continue
-        # Collect the body until the next h2 heading or the footer rule.
         body: list[str] = []
         i += 1
         while i < n:
@@ -1338,9 +1447,9 @@ def parse_prose_from_markdown(report_md: str) -> dict[str, str]:
                 break
             body.append(nxt)
             i += 1
-        text = "\n".join(body).strip()
-        if text and text != _MISSING_PROSE:
-            out[label] = text
+        captured = "\n".join(body).strip()
+        if captured and captured != _MISSING_PROSE:
+            out[label] = captured
     return out
 
 

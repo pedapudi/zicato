@@ -914,10 +914,11 @@ def render_statistical_integrity_section(data: EpochReportData) -> str:
     veto/confirm counts, evidence-gate replication/deferral statistics,
     Ladder holdout confirmations, and any placebo-arm outcome (a promoted
     placebo is a CRITICAL callout). Every sub-claim degrades honestly:
-    when the round-log tree is absent (the evolve-path emission is a later
-    phase) each measure renders "not recorded for this epoch" rather than
-    a fabricated number, and the section still frames the guarantees the
-    contract makes.
+    when no round records were folded (no round has settled yet) or the
+    measure's feature was disabled for the epoch, each measure renders an
+    honest one-liner naming the true cause rather than a fabricated
+    number, and the section still frames the guarantees the contract
+    makes.
     """
     parts: list[str] = []
     parts.append("## Statistical Integrity")
@@ -960,10 +961,15 @@ def render_statistical_integrity_section(data: EpochReportData) -> str:
             f"{'candidate was' if screened == 1 else 'candidates were'} screened; "
             f"{vetoes} vetoed before the tournament, {screened - vetoes} advanced."
         )
-    else:
+    elif records:
         parts.append(
             "**Pre-tournament screen.** No screen events were recorded for this "
-            "epoch (screening off, or the per-round event log not yet emitted)."
+            "epoch — pre-tournament screening was not enabled."
+        )
+    else:
+        parts.append(
+            "**Pre-tournament screen.** No round has settled for this epoch yet, "
+            "so there are no screen events to report."
         )
     parts.append("")
 
@@ -979,11 +985,16 @@ def render_statistical_integrity_section(data: EpochReportData) -> str:
             f"{'round was' if deferred_rounds == 1 else 'rounds were'} deferred for "
             "more evidence rather than crowned or rejected on a single duel."
         )
-    else:
+    elif records:
         parts.append(
             "**Evidence gate.** No replicate-duel or deferral events were recorded "
-            "for this epoch (the evidence gate did not fire, or the per-round event "
-            "log is not yet emitted)."
+            "for this epoch — the evidence gate did not fire (every round settled on "
+            "a single duel)."
+        )
+    else:
+        parts.append(
+            "**Evidence gate.** No round has settled for this epoch yet, so there "
+            "are no evidence-gate events to report."
         )
     parts.append("")
 
@@ -996,11 +1007,15 @@ def render_statistical_integrity_section(data: EpochReportData) -> str:
             f"{holdout_rel} {'round' if holdout_rel == 1 else 'rounds'}; "
             f"{holdout_conf} confirmed the crowning on held-out entries."
         )
-    else:
+    elif records:
         parts.append(
             "**Ladder holdout.** No holdout-confirmation events were recorded for "
-            "this epoch (holdout confirmation off, or the per-round event log not "
-            "yet emitted)."
+            "this epoch — holdout confirmation was not enabled."
+        )
+    else:
+        parts.append(
+            "**Ladder holdout.** No round has settled for this epoch yet, so there "
+            "are no holdout-confirmation events to report."
         )
     return "\n".join(parts)
 
@@ -1080,12 +1095,17 @@ def render_proposer_analytics_section(data: EpochReportData) -> str:
             f"rounds; {recombined} came from mechanical recombination of rejected "
             "parents rather than a fresh proposer sample."
         )
+    elif records:
+        parts.append(
+            "**Slate mix.** The recorded rounds carried no per-candidate sampling "
+            "counts; the slate width frozen for the epoch is reported under the "
+            "Methodology's proposer configuration."
+        )
     else:
         parts.append(
-            "**Slate mix.** Per-candidate sampling counts were not recorded for "
-            "this epoch (the per-round event log is not yet emitted); the slate "
-            "width frozen for the epoch is reported under the Methodology's "
-            "proposer configuration."
+            "**Slate mix.** No round has settled for this epoch yet, so the slate "
+            "mix cannot be summarised; the slate width frozen for the epoch is "
+            "reported under the Methodology's proposer configuration."
         )
     return "\n".join(parts)
 

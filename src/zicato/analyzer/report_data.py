@@ -157,9 +157,9 @@ class EpochReportData:
     proposer_quality: dict[str, Any] = field(default_factory=dict)
     # The durable per-round event records, folded from
     # ``epochs/{id}/rounds/{n}/round_log.jsonl`` (best-effort; empty tuple
-    # when the log is absent — the evolve path emits it in a later phase,
-    # so the validity / proposer-analytics sections degrade honestly until
-    # then).
+    # when no round has settled yet — the evolve path emits the log per
+    # round, so the validity / proposer-analytics sections light up as
+    # rounds accrue and degrade honestly before the first one settles).
     round_records: tuple[Any, ...] = ()
 
     @property
@@ -536,11 +536,11 @@ def _cumulate_scalar(generations: list[GenerationView]) -> list[GenerationView]:
 def _load_round_records(workspace_root: Path, epoch_id: str) -> tuple[Any, ...]:
     """Fold every ``rounds/{n}/round_log.jsonl`` into typed round records.
 
-    Best-effort and forward-looking: the durable per-round event log's
-    orchestrator emission is a later phase, so a live epoch usually has no
-    ``rounds/`` tree yet and this returns ``()`` — the validity and
+    Best-effort: the orchestrator emits the durable per-round event log as
+    each round settles, so a freshly-opened epoch with no settled round yet
+    has no ``rounds/`` tree and this returns ``()`` — the validity and
     proposer-analytics sections then degrade to their honest one-liners.
-    Once emission lands the same reader lights those sections up with no
+    As rounds accrue the same reader lights those sections up with no
     report change. A malformed / interior-corrupt log for one round is
     skipped rather than failing the whole gather.
     """
