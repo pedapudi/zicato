@@ -418,6 +418,20 @@ stable and the CIs are meaningful.
 replication budgeting; its point estimates also give a clean
 margin-bearing ranking that feeds the §5 resolvers.
 
+> **Status — implemented: the BT rating fold.** The batch MLE
+> (`src/zicato/selection/rating.py::fit_bradley_terry`) is now also the
+> engine of the index-side visibility rating (`src/zicato/index/elo.py`):
+> at every reindex/ingest it is re-fit over the de-duplicated persisted
+> match ledger and written to `generations.elo` / `elo_se` / `elo_games`
+> on the conventional Elo scale (`1500 + θ·400/ln 10`), replacing the
+> earlier sequential margin-K approximation (§7.2's order-dependence and
+> missing CIs were exactly its defects). Displayed in the standings /
+> gens roster / candidate dossier; **visibility only — it never touches
+> the gate or the selection path**. Known hole: racing intermediate rungs
+> persist survivor/cut sets with no named pairwise winner, so rung cuts
+> contribute zero games (the Plackett–Luce set-rating below remains
+> future work).
+
 ### 7.2 Elo
 
 **Definition.** An *online, incremental* update rule (each game nudges the

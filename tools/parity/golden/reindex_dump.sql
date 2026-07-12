@@ -34,14 +34,15 @@ CREATE TABLE generations (
       created_at TEXT,
       round_index INTEGER,
       elo REAL,
+      elo_se REAL,
       elo_games INTEGER,
       PRIMARY KEY (epoch_id, generation_id)
     );
-INSERT INTO "generations" VALUES('<DATE>_t1_racing','v0',NULL,0,'',NULL,1.360708765009003401e+03,8);
-INSERT INTO "generations" VALUES('<DATE>_t1_racing','v1','v0',1,'<TS>',0,1.595011808661427266e+03,4);
-INSERT INTO "generations" VALUES('<DATE>_t1_racing','v2','v0',0,'<TS>',0,1.546621689148817722e+03,2);
-INSERT INTO "generations" VALUES('<DATE>_t1_racing','v3','v0',0,'<TS>',0,1.520666608092385331e+03,1);
-INSERT INTO "generations" VALUES('<DATE>_t1_racing','v4','v0',0,'<TS>',0,1.513744278033262617e+03,1);
+INSERT INTO "generations" VALUES('<DATE>_t1_racing','v0',NULL,0,'',NULL,1.279644338898006936e+03,1.292158308397073938e+02,8);
+INSERT INTO "generations" VALUES('<DATE>_t1_racing','v1','v0',1,'<TS>',0,1.596539376198991931e+03,1.488617971188911894e+02,4);
+INSERT INTO "generations" VALUES('<DATE>_t1_racing','v2','v0',0,'<TS>',0,1.558194730182773582e+03,1.561762412273665178e+02,2);
+INSERT INTO "generations" VALUES('<DATE>_t1_racing','v3','v0',0,'<TS>',0,1.532810777360113889e+03,1.626759673974695203e+02,1);
+INSERT INTO "generations" VALUES('<DATE>_t1_racing','v4','v0',0,'<TS>',0,1.532810777360113889e+03,1.626759673974695203e+02,1);
 CREATE TABLE judge_losses (
       run_id TEXT,
       judge_name TEXT,
@@ -132,7 +133,7 @@ CREATE TABLE schema_meta (
   key TEXT PRIMARY KEY,
   value TEXT
 );
-INSERT INTO "schema_meta" VALUES('schema_version','11');
+INSERT INTO "schema_meta" VALUES('schema_version','12');
 INSERT INTO "schema_meta" VALUES('description','zicato analytical index — derived, rebuildable from .zicato/ files');
 CREATE TABLE tournaments (
       tournament_id TEXT PRIMARY KEY,

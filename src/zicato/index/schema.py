@@ -42,7 +42,7 @@ import sqlite3
 #: Bump this whenever the table/column shape below changes. Stamped
 #: into ``PRAGMA user_version`` and the ``schema_meta`` table by
 #: :func:`apply_schema`.
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 
 class IndexSchemaNewerError(RuntimeError):
@@ -83,6 +83,7 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
       created_at TEXT,
       round_index INTEGER,
       elo REAL,
+      elo_se REAL,
       elo_games INTEGER,
       PRIMARY KEY (epoch_id, generation_id)
     )
@@ -403,6 +404,22 @@ _V10_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
 _V11_ADDED_TABLES: tuple[str, ...] = ("reflections", "judge_scorecards")
 
 
+#: Columns added in v12 (the standard error of the Bradley--Terry rating fold).
+#: A generation row gains ``elo_se`` — the standard error of its ``elo`` on the
+#: same Elo scale, from the inverse Fisher information of the batch BT fit
+#: (:func:`zicato.index.elo.fold_elo_into_index`). Like ``elo`` / ``elo_games``
+#: it is a **derived, read-only, visibility-only** analytics column — the rating
+#: and its uncertainty never gate the promote decision — re-derived at index
+#: time from the ingested ``tournaments`` rows. Same incremental-open ALTER
+#: pattern as the earlier waves: a pre-existing v11 (or older) database gains
+#: the column as ``NULL`` on open (a generation reads as ``elo_se IS NULL`` —
+#: uncertainty not yet computed), and the next ``zicato reindex`` re-derives it
+#: after the tournaments land. The fold writes ``elo_se`` only when the column
+#: is present, so a v10/v11 index that has ``elo`` but not yet this column still
+#: folds its two older rating columns.
+_V12_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (("generations", "elo_se", "REAL"),)
+
+
 def apply_schema(conn: sqlite3.Connection) -> None:
     """Create every table + index + stamp the schema version.
 
@@ -571,6 +588,17 @@ def _migrate_inplace(conn: sqlite3.Connection) -> None:
 
     if current < 10:
         for table, column, ddl_type in _V10_ADDED_COLUMNS:
+            if not _table_exists(conn, table):
+                continue
+            if column in _column_names(conn, table):
+                continue
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
+
+    # v11 added WHOLE tables (reflections / judge_scorecards), materialised by
+    # the CREATE TABLE IF NOT EXISTS pass — no column ALTER needed here. v12
+    # adds the ``generations.elo_se`` rating-uncertainty column.
+    if current < 12:
+        for table, column, ddl_type in _V12_ADDED_COLUMNS:
             if not _table_exists(conn, table):
                 continue
             if column in _column_names(conn, table):
