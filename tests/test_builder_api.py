@@ -474,6 +474,27 @@ def test_builder_op_set_proposer_quality_recombine_dispatch(client: TestClient) 
     assert r.json()["draft"]["scoring"]["proposer_quality"]["recombine"] is True
 
 
+def test_builder_op_set_proposer_quality_genealogy_dispatch(client: TestClient) -> None:
+    """The genealogy count round-trips through /builder/op onto the serialized
+    draft; a negative count 400s and leaves the prior value untouched."""
+    s = {"session": "gene"}
+    r = client.post(
+        "/builder/op",
+        json={**s, "op": "set_proposer_quality", "args": {"genealogy": 4}},
+    )
+    assert r.status_code == 200
+    assert r.json()["draft"]["scoring"]["proposer_quality"]["genealogy"] == 4
+
+    # 400 path: a negative genealogy count is rejected wholesale (no partial apply).
+    r = client.post(
+        "/builder/op",
+        json={**s, "op": "set_proposer_quality", "args": {"genealogy": -1}},
+    )
+    assert r.status_code == 400
+    r = client.post("/builder/op", json={**s, "op": "set_proposer_quality", "args": {}})
+    assert r.json()["draft"]["scoring"]["proposer_quality"]["genealogy"] == 4
+
+
 def test_builder_op_fork_switch_list_roundtrip(client: TestClient) -> None:
     s = {"session": "life"}
     # Build state, fork it, verify the slot list + the patch shape.

@@ -61,6 +61,7 @@ from zicato.proposer.proposer import ExperimentValidator, propose_experiment
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
     from zicato.index.query import MutationTrackRecord
     from zicato.proposer.best_of_n import ScreenRunner
+    from zicato.proposer.genealogy import GenealogyItem
     from zicato.proposer.recombine import RecombinationPair
     from zicato.telemetry.meta_loop import MetaLoopEmitter
 
@@ -133,6 +134,22 @@ class ProposerContext:
     #: on. Empty (the default — every knob-off round) omits the section,
     #: byte-identical to before this surface.
     process_exemplars: str = ""
+    #: Sampled genealogy items — the opt-in ``proposer_quality.genealogy``
+    #: channel (``docs/design/PROPOSER.md`` §2.7). Built by the orchestrator
+    #: from :func:`~zicato.proposer.genealogy.sample_genealogy` (parents = the
+    #: champion's promoted spine; inspirations = diverse rejected reign
+    #: candidates by mutation-id-set dissimilarity) and rendered by
+    #: :func:`~zicato.proposer.prompts.render_genealogy_block` inside
+    #: ``render_user_prompt``; when the render is non-empty a
+    #: ``## Candidate genealogy`` section is spliced directly above the
+    #: experiment-memory block so the proposer can evolve in context — extend a
+    #: promoted line or re-frame a rejected one. Each item is already BANDED
+    #: (whole-candidate outcomes through the ``improved``/``flat``/``regressed``
+    #: vocabulary) + CAPPED (proposer's own diff excerpts) by the sampler;
+    #: NEVER an entry id, a per-entry result, an exact delta, or anything
+    #: holdout-derived. Empty ``()`` (the default — every knob-off round) omits
+    #: the section, byte-identical to before this surface.
+    genealogy: tuple[GenealogyItem, ...] = ()
     #: Optional per-sample edit-class steering line — the best-of-N slate
     #: diversifier (:data:`zicato.proposer.best_of_n.EDIT_CLASS_HINTS`). The
     #: wrapper stamps a DISTINCT hint on each slate slot's context via
@@ -247,6 +264,7 @@ class DefaultProposerAgent:
             restrict_visibility=ctx.restrict_visibility,
             failure_profile=ctx.failure_profile,
             process_exemplars=ctx.process_exemplars,
+            genealogy=ctx.genealogy,
             sample_hint=ctx.sample_hint,
             mutation_track_records=ctx.mutation_track_records,
             revise_feedback=ctx.revise_feedback,

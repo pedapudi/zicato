@@ -1132,6 +1132,9 @@ class BestOfNProposerAgent:
             # proposer: the redacted exemplar block (when the contract opted
             # in) is part of that envelope — never anything beyond it.
             process_exemplars=ctx.process_exemplars,
+            # Likewise the genealogy block (opt-in): banded + capped candidate
+            # lineage, part of the same restricted envelope.
+            genealogy=ctx.genealogy,
         )
         slate = _render_candidate_slate(candidates)
         # Calibration-aware advisory note (never a gate): when the lineage's

@@ -99,6 +99,7 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         "screen_veto_only": True,
         "process_exemplars": 2,
         "recombine": True,
+        "genealogy": 4,
     },
     "ExperimentMemoryConfig": {
         "cross_epoch": True,

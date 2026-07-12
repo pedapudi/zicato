@@ -587,6 +587,7 @@ def set_proposer_quality(
     critique_enabled: bool | None = None,
     process_exemplars: int | None = None,
     recombine: bool | None = None,
+    genealogy: int | None = None,
 ) -> DraftPatch:
     """Set the proposer-quality levers: best-of-N slate + self-critique.
 
@@ -605,9 +606,15 @@ def set_proposer_quality(
     effect (a single-sample proposer has no slate slot to mint into) and
     is cost-neutral (the mint REPLACES the slot's auxiliary propose call,
     never adds one — see :mod:`zicato.epoch.recombine`). Flipping it
-    rolls the epoch. COMPOSES with :func:`set_screening` — both edit
-    the same nested ``proposer_quality`` block; the screen knobs stay
-    that op's. Changing any rolls the epoch.
+    rolls the epoch. ``genealogy`` opts in the genealogy channel
+    (WS-GENE): up to that many candidate-LINEAGE items — the champion's
+    promoted patch history + diverse rejected reign candidates, each with
+    a banded outcome — are spliced into the prompt so the proposer can
+    evolve in context (``0`` = off, the default; must be >= 0; read-side
+    only, so the cost meter is untouched — see
+    :mod:`zicato.proposer.genealogy`). COMPOSES with :func:`set_screening`
+    — both edit the same nested ``proposer_quality`` block; the screen
+    knobs stay that op's. Changing any rolls the epoch.
     """
     changed: dict[str, Any] = {}
     quality = draft.scoring.proposer_quality
@@ -633,6 +640,12 @@ def set_proposer_quality(
     if recombine is not None and recombine != quality.recombine:
         quality_changes["recombine"] = recombine
         changed["recombine"] = {"from": quality.recombine, "to": recombine}
+    if genealogy is not None:
+        if genealogy < 0:
+            raise ValueError(f"genealogy must be >= 0, got {genealogy!r}")
+        if genealogy != quality.genealogy:
+            quality_changes["genealogy"] = genealogy
+            changed["genealogy"] = {"from": quality.genealogy, "to": genealogy}
     if quality_changes:
         draft.scoring = _replace_scoring(
             draft, proposer_quality=dataclasses.replace(quality, **quality_changes)
