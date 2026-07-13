@@ -563,7 +563,18 @@ async def _run_board_units_full(
 
     async def _bounded(entry: BoardEntry) -> tuple[LossProfile, LossProfile]:
         nonlocal token_skipped
-        async with semaphore:
+        from zicato.telemetry.meta_loop import SPAN_MATCHUP, meta_span  # noqa: PLC0415
+
+        # Matchup span opens BEFORE the semaphore, so the gap between its start
+        # and its first worker child (which begins only after the semaphore
+        # admits the unit) is the QUEUE WAIT — no separate acquire span needed
+        # (HARMONOGRAF.md §7). The combined ``async with`` keeps the body's
+        # indentation unchanged.
+        _mu_meta = {"entry_id": entry.id, "match_id": match_id}
+        async with (
+            meta_span(entry.id, kind=SPAN_MATCHUP, meta=_mu_meta),
+            semaphore,
+        ):
             # Per-round token budget (WS-H): the would-launch check, taken
             # AFTER the semaphore admits this unit so a bounded-parallelism
             # run consults the tally the earlier units actually produced.
@@ -696,30 +707,44 @@ async def _run_board_units_full_budgeted(
     effective_parent_force_fresh = force_fresh if parent_force_fresh is None else parent_force_fresh
 
     async def _bounded(entry: BoardEntry) -> tuple[LossProfile, LossProfile]:
+        from zicato.telemetry.meta_loop import SPAN_MATCHUP, meta_span  # noqa: PLC0415
+
         # A shared cross-matchup semaphore (when supplied) gates this unit
         # against the round's one global cap; without it the per-batch
         # ceiling below is the only bound (byte-identical to before).
         # Either way the champion (parent) side cache-reads under
         # ``parent_force_fresh`` (the immutable-champion reuse) while the
         # child stays force-fresh per ``force_fresh``.
+        #
+        # The matchup span opens BEFORE the semaphore so the workers nest on
+        # the matchup lane (not directly on the round) — the SAME two-line
+        # tuple-CM the full/fast twins carry (:575/:881), so the gap between
+        # the span's start and its first worker child reads as the queue wait
+        # (HARMONOGRAF.md §7). Without the shared semaphore there is nothing
+        # to queue behind, so the span alone brackets the unit.
+        _mu_meta = {"entry_id": entry.id, "match_id": match_id}
         if unit_semaphore is None:
-            return await _run_full_board_unit(
-                adapter=adapter,
-                parent_gen=parent_gen,
-                child_gen=child_gen,
-                entry=entry,
-                weights=weights,
-                config=config,
-                workspace_root=workspace_root,
-                epoch_id=epoch_id,
-                scorer=scorer,
-                match_id=match_id,
-                replicate_index=replicate_index,
-                force_fresh=force_fresh,
-                parent_force_fresh=parent_force_fresh,
-                provenance=provenance,
-            )
-        async with unit_semaphore:
+            async with meta_span(entry.id, kind=SPAN_MATCHUP, meta=_mu_meta):
+                return await _run_full_board_unit(
+                    adapter=adapter,
+                    parent_gen=parent_gen,
+                    child_gen=child_gen,
+                    entry=entry,
+                    weights=weights,
+                    config=config,
+                    workspace_root=workspace_root,
+                    epoch_id=epoch_id,
+                    scorer=scorer,
+                    match_id=match_id,
+                    replicate_index=replicate_index,
+                    force_fresh=force_fresh,
+                    parent_force_fresh=parent_force_fresh,
+                    provenance=provenance,
+                )
+        async with (
+            meta_span(entry.id, kind=SPAN_MATCHUP, meta=_mu_meta),
+            unit_semaphore,
+        ):
             return await _run_full_board_unit(
                 adapter=adapter,
                 parent_gen=parent_gen,
@@ -861,7 +886,15 @@ async def _run_board_units_fast(
 
     async def _bounded(entry: BoardEntry) -> LossProfile:
         nonlocal token_skipped
-        async with semaphore:
+        from zicato.telemetry.meta_loop import SPAN_MATCHUP, meta_span  # noqa: PLC0415
+
+        # Matchup span before the semaphore — queue wait is the gap to the
+        # first worker child (HARMONOGRAF.md §7; see the full-mode twin).
+        _mu_meta = {"entry_id": entry.id, "match_id": match_id}
+        async with (
+            meta_span(entry.id, kind=SPAN_MATCHUP, meta=_mu_meta),
+            semaphore,
+        ):
             # Per-round token budget (WS-H): the would-launch check, after
             # the semaphore admits this unit (see the full-mode twin).
             # Inert (no ledger consulted) with the knob off.
@@ -971,17 +1004,31 @@ async def _run_unit_cache_first(
             _record_provenance(provenance, generation.id, cached=True)
             return cached
 
-    loss = await _run_single(
-        adapter=adapter,
-        generation=generation,
-        entry=entry,
-        weights=weights,
-        config=config,
-        workspace_root=workspace_root,
-        epoch_id=epoch_id,
-        side=side,
-        match_id=match_id,
-    )
+    from zicato.telemetry.meta_loop import SPAN_WORKER, meta_span  # noqa: PLC0415
+
+    # Worker span: the parent-side lifecycle of ONE subprocess run (only on a
+    # cache MISS — a hit above ran no worker). Its goldfive session id is
+    # stamped on close so a harmonograf user can cross-jump into the run's own
+    # trace (HARMONOGRAF.md §7). Nests under the matchup span via the ambient
+    # context var.
+    run_id = f"{generation.id}--{entry.id}"
+    async with meta_span(
+        run_id,
+        kind=SPAN_WORKER,
+        meta={"run_id": run_id, "side": side, "entry_id": entry.id},
+    ) as _worker_span:
+        loss = await _run_single(
+            adapter=adapter,
+            generation=generation,
+            entry=entry,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            side=side,
+            match_id=match_id,
+        )
+        _worker_span.set(adk_session_id=str(getattr(loss, "adk_session_id", "") or ""))
     # Per-round token accounting (WS-H): every FRESH run — and only a
     # fresh run; a cache hit returned above spends nothing — folds its
     # opportunistic token count into the round's ledger. This is the ONE

@@ -266,14 +266,23 @@ def _install_telemetry_stubs(
     supervisor_mod.start_harmonograf = _stub_start_harmonograf  # type: ignore[attr-defined]
     supervisor_mod.HarmonografHandle = _StubHandle  # type: ignore[attr-defined]
 
+    # The real, dependency-light meta_loop module — the structural-span call
+    # sites (runner / scheduler / best-of-N) import ``meta_span`` from it. It is
+    # a no-op here (no ambient emitter is bound when evolve_once is driven
+    # directly), so registering the real module preserves behaviour while
+    # keeping the shadow package importable.
+    import zicato.telemetry.meta_loop as meta_loop_mod
+
     telemetry_pkg = types.ModuleType("zicato.telemetry")
     telemetry_pkg.sink = sink_mod  # type: ignore[attr-defined]
     telemetry_pkg.reducer = reducer_mod  # type: ignore[attr-defined]
     telemetry_pkg.harmonograf_supervisor = supervisor_mod  # type: ignore[attr-defined]
+    telemetry_pkg.meta_loop = meta_loop_mod  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "zicato.telemetry", telemetry_pkg)
     monkeypatch.setitem(sys.modules, "zicato.telemetry.sink", sink_mod)
     monkeypatch.setitem(sys.modules, "zicato.telemetry.reducer", reducer_mod)
     monkeypatch.setitem(sys.modules, "zicato.telemetry.harmonograf_supervisor", supervisor_mod)
+    monkeypatch.setitem(sys.modules, "zicato.telemetry.meta_loop", meta_loop_mod)
 
     # Since the L3 subprocess-isolation refactor each tournament run
     # spawns a worker subprocess, which cannot see these sys.modules
