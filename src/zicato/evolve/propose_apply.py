@@ -178,37 +178,42 @@ async def _propose_child(
     # records.
     mutation_track_records = _load_mutation_track_records(workspace_root, epoch_id)
 
+    from zicato.telemetry.meta_loop import SPAN_PHASE, meta_span  # noqa: PLC0415
+
     try:
-        experiment = await proposer_agent.propose(
-            ProposerContext(
-                epoch_id=epoch_id,
-                parent_generation_id=parent_id,
-                new_generation_id=next_id,
-                patterns=tuple(patterns),
-                mutations=tuple(mutations),
-                brief_text=brief.text,
-                current_loss_summary=loss_summary,
-                aux_call_llm=auxiliary_call_llm,
-                model=auxiliary_model,
-                max_retries=max_proposer_retries,
-                forbidden_ids=brief.forbidden_ids,
-                workspace_root=workspace_root,
-                validate_experiment=validate_experiment,
-                meta_loop_emitter=meta_loop_emitter,
-                custom_judge_names=custom_judge_names,
-                prior_experiments=prior_experiments,
-                restrict_visibility=restrict_visibility,
-                failure_profile=failure_profile,
-                process_exemplars=process_exemplars,
-                genealogy=genealogy,
-                calibration=calibration,
-                mutation_track_records=mutation_track_records,
-                round_event_emitter=(round_emitter.emit if round_emitter is not None else None),
-                screen_candidates=screen_candidates,
-                recombine_pair=recombine_pair,
-                scratch_validator_factory=scratch_validator_factory,
+        # The propose phase span frames this challenger's slate (its slate-slot
+        # spans nest under it) and the proposer LLM call (HARMONOGRAF.md §7).
+        async with meta_span("propose", kind=SPAN_PHASE, meta={"generation_id": next_id}):
+            experiment = await proposer_agent.propose(
+                ProposerContext(
+                    epoch_id=epoch_id,
+                    parent_generation_id=parent_id,
+                    new_generation_id=next_id,
+                    patterns=tuple(patterns),
+                    mutations=tuple(mutations),
+                    brief_text=brief.text,
+                    current_loss_summary=loss_summary,
+                    aux_call_llm=auxiliary_call_llm,
+                    model=auxiliary_model,
+                    max_retries=max_proposer_retries,
+                    forbidden_ids=brief.forbidden_ids,
+                    workspace_root=workspace_root,
+                    validate_experiment=validate_experiment,
+                    meta_loop_emitter=meta_loop_emitter,
+                    custom_judge_names=custom_judge_names,
+                    prior_experiments=prior_experiments,
+                    restrict_visibility=restrict_visibility,
+                    failure_profile=failure_profile,
+                    process_exemplars=process_exemplars,
+                    genealogy=genealogy,
+                    calibration=calibration,
+                    mutation_track_records=mutation_track_records,
+                    round_event_emitter=(round_emitter.emit if round_emitter is not None else None),
+                    screen_candidates=screen_candidates,
+                    recombine_pair=recombine_pair,
+                    scratch_validator_factory=scratch_validator_factory,
+                )
             )
-        )
     except ProposerError as exc:
         if round_emitter is not None:
             for attempt_error in exc.attempts:

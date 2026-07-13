@@ -928,21 +928,26 @@ async def _gate_with_regression(
     aggregate dicts so the journal can render evidence even when a
     regression-side rejection shadows the scoring signal.
     """
-    if weights.regression_gate_enabled:
-        regression = await run_regression_suite(
-            child_snapshot_root,
-            test_command=weights.regression_test_command,
-            timeout_s=weights.regression_timeout_s,
+    from zicato.telemetry.meta_loop import SPAN_PHASE, meta_span  # noqa: PLC0415
+
+    # The gate phase span brackets the regression suite + promote gate
+    # (HARMONOGRAF.md §7). It nests under the matchup / round span in scope.
+    async with meta_span("gate", kind=SPAN_PHASE):
+        if weights.regression_gate_enabled:
+            regression = await run_regression_suite(
+                child_snapshot_root,
+                test_command=weights.regression_test_command,
+                timeout_s=weights.regression_timeout_s,
+            )
+            if not regression.passed:
+                return _regression_rejection(parent_agg, child_agg, regression)
+        return evaluate_gate(
+            parent_agg,
+            child_agg,
+            weights,
+            holdout_parent_agg=holdout_parent_agg,
+            holdout_child_agg=holdout_child_agg,
         )
-        if not regression.passed:
-            return _regression_rejection(parent_agg, child_agg, regression)
-    return evaluate_gate(
-        parent_agg,
-        child_agg,
-        weights,
-        holdout_parent_agg=holdout_parent_agg,
-        holdout_child_agg=holdout_child_agg,
-    )
 
 
 async def run_tournament(

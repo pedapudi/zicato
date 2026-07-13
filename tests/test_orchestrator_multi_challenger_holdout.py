@@ -142,14 +142,20 @@ def _install_per_entry_telemetry_stubs(
     supervisor_mod.start_harmonograf = _stub_start  # type: ignore[attr-defined]
     supervisor_mod.HarmonografHandle = _StubHandle  # type: ignore[attr-defined]
 
+    # Real, dependency-light meta_loop so the structural-span call sites can
+    # import ``meta_span`` (a no-op here — no ambient emitter is bound).
+    import zicato.telemetry.meta_loop as meta_loop_mod
+
     telemetry_pkg = types.ModuleType("zicato.telemetry")
     telemetry_pkg.sink = sink_mod  # type: ignore[attr-defined]
     telemetry_pkg.reducer = reducer_mod  # type: ignore[attr-defined]
     telemetry_pkg.harmonograf_supervisor = supervisor_mod  # type: ignore[attr-defined]
+    telemetry_pkg.meta_loop = meta_loop_mod  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "zicato.telemetry", telemetry_pkg)
     monkeypatch.setitem(sys.modules, "zicato.telemetry.sink", sink_mod)
     monkeypatch.setitem(sys.modules, "zicato.telemetry.reducer", reducer_mod)
     monkeypatch.setitem(sys.modules, "zicato.telemetry.harmonograf_supervisor", supervisor_mod)
+    monkeypatch.setitem(sys.modules, "zicato.telemetry.meta_loop", meta_loop_mod)
 
     import zicato.tournament.runner as _runner_mod
 

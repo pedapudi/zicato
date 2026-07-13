@@ -545,6 +545,17 @@ async def evolve_n_rounds(
     meta_loop_emitter = _orch._build_meta_loop_emitter_safe(
         workspace_root, harmonograf_url, evolve_started_at_iso
     )
+    # Bind the emitter as the ambient meta-loop emitter so the structural
+    # spans (round / phase / matchup / worker / slate slot) can be opened by
+    # deep call sites — the runner, the board-unit scheduler, the best-of-N
+    # slate — without threading it through every signature. Every descendant
+    # asyncio task inherits the binding; it is reset in the teardown finally.
+    from zicato.telemetry.meta_loop import (  # noqa: PLC0415
+        reset_current_emitter,
+        set_current_emitter,
+    )
+
+    _emitter_token = set_current_emitter(meta_loop_emitter)
     outcomes: list[EvolveRoundOutcome] = []
     try:
         await beater.start()
@@ -664,20 +675,29 @@ async def evolve_n_rounds(
                 # closure must snapshot the current epoch, not the loop var.
                 _epoch_id: str | None = epoch_id,
             ) -> EvolveRoundOutcome:
-                return await _orch.evolve_once(
-                    workspace_root=workspace_root,
-                    epoch_id=_epoch_id,
-                    harness_call_llm=harness_call_llm,
-                    auxiliary_call_llm=auxiliary_call_llm,
-                    instance_id=instance_id,
-                    fast_mode=fast_mode,
-                    max_proposer_retries=max_proposer_retries,
-                    beater=beater,
-                    round_index=_round_idx,
-                    total_rounds=rounds,
-                    meta_loop_emitter=meta_loop_emitter,
-                    resume_plan=_resume_plan,
-                )
+                from zicato.telemetry.meta_loop import SPAN_ROUND, meta_span  # noqa: PLC0415
+
+                # The round span frames every phase / matchup / worker / slot
+                # of this round on the meta-loop timeline (HARMONOGRAF.md §7).
+                async with meta_span(
+                    f"round {_round_idx}",
+                    kind=SPAN_ROUND,
+                    meta={"round_index": _round_idx, "epoch_id": _epoch_id or ""},
+                ):
+                    return await _orch.evolve_once(
+                        workspace_root=workspace_root,
+                        epoch_id=_epoch_id,
+                        harness_call_llm=harness_call_llm,
+                        auxiliary_call_llm=auxiliary_call_llm,
+                        instance_id=instance_id,
+                        fast_mode=fast_mode,
+                        max_proposer_retries=max_proposer_retries,
+                        beater=beater,
+                        round_index=_round_idx,
+                        total_rounds=rounds,
+                        meta_loop_emitter=meta_loop_emitter,
+                        resume_plan=_resume_plan,
+                    )
 
             try:
                 if not budget.enabled:
@@ -846,6 +866,7 @@ async def evolve_n_rounds(
         # Flush + close the meta-loop emitter BEFORE the harmonograf
         # supervisor is stopped — a sink that needs to push a final
         # buffer to the gRPC console wants the server still up.
+        reset_current_emitter(_emitter_token)
         if meta_loop_emitter is not None:
             with best_effort(
                 "meta-loop emitter close",

@@ -178,13 +178,17 @@ def build_post_apply_validator(
         # ValueError when a patch left a touched ``.py`` file unparseable;
         # surface that as a retryable post-apply finding rather than letting
         # it crash the evolve loop (issue #11).
+        from zicato.telemetry.meta_loop import SPAN_PHASE, meta_span  # noqa: PLC0415
+
         try:
-            child = genstore.derive_generation(
-                epoch_id=epoch_id,
-                parent_generation_id=parent_id,
-                child_generation_id=next_id,
-                patches=list(candidate.patches),
-            )
+            # The apply phase span brackets the patch-set derive (HARMONOGRAF.md §7).
+            async with meta_span("apply", kind=SPAN_PHASE, meta={"generation_id": next_id}):
+                child = genstore.derive_generation(
+                    epoch_id=epoch_id,
+                    parent_generation_id=parent_id,
+                    child_generation_id=next_id,
+                    patches=list(candidate.patches),
+                )
         except ValueError as exc:
             return [f"derive_generation rejected the patch set: {exc}"]
         last_child_snapshot["path"] = child
@@ -263,13 +267,17 @@ def build_scratch_validator_factory(
                 round_index=round_index,
                 phase=f"applying:round_{round_index}:{next_id}",
             )
+            from zicato.telemetry.meta_loop import SPAN_PHASE, meta_span  # noqa: PLC0415
+
             try:
-                child = genstore.derive_scratch(
-                    epoch_id=epoch_id,
-                    parent_generation_id=parent_id,
-                    patches=list(candidate.patches),
-                    scratch_root=scratch_root,
-                )
+                # Apply phase span for the per-slot scratch derive (HARMONOGRAF.md §7).
+                async with meta_span("apply", kind=SPAN_PHASE, meta={"generation_id": next_id}):
+                    child = genstore.derive_scratch(
+                        epoch_id=epoch_id,
+                        parent_generation_id=parent_id,
+                        patches=list(candidate.patches),
+                        scratch_root=scratch_root,
+                    )
             except ValueError as exc:
                 return [f"derive_generation rejected the patch set: {exc}"]
             return validate_post_apply(child, list(candidate.patches), mutations)

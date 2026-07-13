@@ -249,12 +249,18 @@ def _install_telemetry_stubs(
     reducer_mod.reduce_loss = reduce_loss  # type: ignore[attr-defined]
     reducer_mod.read_loss_profile = read_loss_profile  # type: ignore[attr-defined]
 
+    # Real, dependency-light meta_loop so the structural-span call sites can
+    # import ``meta_span`` (a no-op here — no ambient emitter is bound).
+    import zicato.telemetry.meta_loop as meta_loop_mod
+
     telemetry_pkg = types.ModuleType("zicato.telemetry")
     telemetry_pkg.sink = sink_mod  # type: ignore[attr-defined]
     telemetry_pkg.reducer = reducer_mod  # type: ignore[attr-defined]
+    telemetry_pkg.meta_loop = meta_loop_mod  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "zicato.telemetry", telemetry_pkg)
     monkeypatch.setitem(sys.modules, "zicato.telemetry.sink", sink_mod)
     monkeypatch.setitem(sys.modules, "zicato.telemetry.reducer", reducer_mod)
+    monkeypatch.setitem(sys.modules, "zicato.telemetry.meta_loop", meta_loop_mod)
 
     # The L3 subprocess-isolation refactor moved per-run execution into a
     # worker subprocess that cannot see these sys.modules stubs. These

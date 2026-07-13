@@ -793,26 +793,31 @@ class BestOfNProposerAgent:
         including on propose failure or a recombination degrade. Emits NO
         events: the deterministic post-gather pass owns emission in slot order.
         """
+        from zicato.telemetry.meta_loop import SPAN_SLOT, meta_span  # noqa: PLC0415
+
         validate, cleanup = self._slot_validate_lease(ctx)
         slot_ctx = replace(ctx, validate_experiment=validate)
         try:
-            if sample == n - 1 and ctx.recombine_pair is not None:
-                # The recombination slot (WS-REC): the LAST slot composes the
-                # round's selected pair instead of sampling the LLM (WS-MERGE
-                # modes; PROPOSER.md §2.6.1). It validates through the SAME
-                # per-slot scratch hook every sample uses. Any failure DEGRADES
-                # to the normal fresh sample below — the identical slot body,
-                # with the slot's normal exploratory hint (a recombination
-                # failure must never narrow the slate).
-                if self.config.recombine_merge == "llm":
-                    minted = await self._merge_recombined(slot_ctx)
-                else:
-                    minted = await self._mint_recombined(slot_ctx)
-                if minted is not None:
-                    return _SlotOutcome(
-                        sample=sample, candidate=minted, error=None, recombined=True
-                    )
-            return await self._sample_slot(slot_ctx, sample, n)
+            # Slate-slot span: the N slots gather concurrently, so these render
+            # as overlapping lifelines under the propose phase (HARMONOGRAF.md §7).
+            async with meta_span(f"slot {sample}", kind=SPAN_SLOT, meta={"sample": sample}):
+                if sample == n - 1 and ctx.recombine_pair is not None:
+                    # The recombination slot (WS-REC): the LAST slot composes the
+                    # round's selected pair instead of sampling the LLM (WS-MERGE
+                    # modes; PROPOSER.md §2.6.1). It validates through the SAME
+                    # per-slot scratch hook every sample uses. Any failure DEGRADES
+                    # to the normal fresh sample below — the identical slot body,
+                    # with the slot's normal exploratory hint (a recombination
+                    # failure must never narrow the slate).
+                    if self.config.recombine_merge == "llm":
+                        minted = await self._merge_recombined(slot_ctx)
+                    else:
+                        minted = await self._mint_recombined(slot_ctx)
+                    if minted is not None:
+                        return _SlotOutcome(
+                            sample=sample, candidate=minted, error=None, recombined=True
+                        )
+                return await self._sample_slot(slot_ctx, sample, n)
         finally:
             cleanup()
 
