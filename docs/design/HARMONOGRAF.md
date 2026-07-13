@@ -179,3 +179,83 @@ Every layer warns-and-continues; harmonograf is never load-bearing:
   unaffected (`meta_loop.py:_fan_emit`, `sink.py:_make_harmonograf_sink`);
 * unresolvable / absent workspace → no-op workspace handle, dashboard
   still serves with no harmonograf links.
+
+## 7. Structural spans — zicato's own concurrency as lifelines
+
+The proposer + judge emits (§2b) put zicato's LLM calls on the meta-loop
+timeline, but the STRUCTURE around them — the round loop, the propose-time
+slate, the tournament fan-out, the per-run workers — emitted nothing, so the
+"execution ▸" view rendered the target-agent lifelines in a vacuum. The
+structural spans close that gap: the `MetaLoopEmitter` brackets each unit of
+orchestration work with a paired goldfive `AgentInvocation{Started,Completed}`
+envelope, rendered by harmonograf as a nested lifeline.
+
+### 7a. The taxonomy
+
+One generic emit surface — `MetaLoopEmitter.span(name, *, kind, meta)`, an
+async context manager — carries all five span kinds (the `SPAN_*` constants).
+`kind` selects the harmonograf lane (`agent_name = "zicato.<kind>"`, so every
+span of a kind shares one lane); `name` is the per-instance label (`task_id`):
+
+| kind | opened at | one span per | children |
+|---|---|---|---|
+| `round` | `evolve/loop.py:_run_round` | evolve round (both pipelines) | phases, matchups |
+| `phase` | the stage seams | `propose` / `apply` / `gate` | slots (propose), the derive (apply) |
+| `matchup` | `tournament/scheduling.py:_bounded` | scheduled board unit | workers |
+| `worker` | `tournament/scheduling.py:_run_unit_cache_first` | subprocess run (cache MISS only) | — |
+| `slot` | `proposer/best_of_n.py:_run_one_slot` | best-of-N slate slot | — |
+
+### 7b. Nesting — inferred, not threaded
+
+harmonograf builds the span tree from `AgentInvocationStarted.parent_invocation_id`
+(`harmonograf_server/ingest.py:_on_agent_invocation_started`). A span reads its
+parent from a module-level `contextvars.ContextVar` (`_current_span_id`) and
+sets itself as the current id for its body. Because `asyncio` copies the
+context when a task is created, a `gather`-fanned child (a board unit, a slate
+slot) inherits its enclosing span **automatically** — the fan-out renders as
+nested, overlapping lifelines with no explicit parent bookkeeping and no new
+parameter on any intervening signature. The emitter itself is reached the same
+way: `evolve_n_rounds` binds it to a second contextvar (`_current_emitter`,
+`set_current_emitter`) once, and every deep call site opens spans through the
+ambient `meta_span(...)` helper. Emitter unbound → `meta_span` is a no-op,
+identical to the proposer emits' `meta_loop_emitter is None` path.
+
+The **matchup** span is opened BEFORE its semaphore (`async with (meta_span(...),
+semaphore)`), so the gap between the matchup's start and its first worker child
+(which begins only after the semaphore admits the unit) is the QUEUE WAIT — a
+distinct visual, no separate acquire span needed.
+
+Metadata (`meta`) is **ids / phase-names / timings only** — never board content,
+never scores beyond what the §2b judge spans already carry. It rides the
+completed envelope's `summary` (a small JSON blob); a worker stamps the run's
+goldfive `adk_session_id` there so a harmonograf user can cross-jump into the
+board run's own session (§2a).
+
+### 7c. Disciplines (all tested)
+
+* **Best-effort, never load-bearing.** Every emit goes through
+  `_fan_emit`, which swallows per-sink failures; a raising harmonograf sink
+  never fails a round (§6). The hot path never awaits the network:
+  `HarmonografSink.emit` is a constant-time buffer append its transport drains
+  off-thread, and the JSONL sink is a local file append — no emit path blocks
+  on the stream, so no buffer-and-drop layer is needed on top.
+* **Pairing.** The completed half fires in a `finally`, so an exception, a
+  `CancelledError`, or a crash mid-body still closes the span (with
+  `outcome="error:<Exc>"` / `"cancelled"`). The completed emit is `shield`ed so
+  a task cancellation propagating through the `finally` cannot drop it.
+* **Bounded memory.** The span id is a single contextvar string a context
+  manager sets-and-resets; there is no per-round-growing span registry. The
+  emitter's only mutable state is its monotonic sequence counter.
+* **Determinism untouched.** Spans are a RENDERING, never an input:
+  `runtime/progress_log.py` remains the SSE / liveness `seq` source of truth,
+  and nothing ordering-pinned (RoundLog, journal, goldens, progress seq) routes
+  through the emitter. Spans may emit in completion order — harmonograf orders
+  by timestamp.
+* **Teardown.** The ambient emitter binding is reset and the emitter closed in
+  `evolve_n_rounds`' teardown `finally` (before the harmonograf supervisor
+  stops); no daemon threads beyond the supervisor's own are spawned.
+
+Coverage is intentionally scoped to the concurrency-bearing seams. The
+sequential `context-build` and `persist` seams, and a dedicated `tournament`
+wrapper phase (matchups nest directly on the round span today), are not yet
+instrumented — a follow-up, not a correctness gap.
