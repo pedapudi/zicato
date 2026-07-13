@@ -707,30 +707,44 @@ async def _run_board_units_full_budgeted(
     effective_parent_force_fresh = force_fresh if parent_force_fresh is None else parent_force_fresh
 
     async def _bounded(entry: BoardEntry) -> tuple[LossProfile, LossProfile]:
+        from zicato.telemetry.meta_loop import SPAN_MATCHUP, meta_span  # noqa: PLC0415
+
         # A shared cross-matchup semaphore (when supplied) gates this unit
         # against the round's one global cap; without it the per-batch
         # ceiling below is the only bound (byte-identical to before).
         # Either way the champion (parent) side cache-reads under
         # ``parent_force_fresh`` (the immutable-champion reuse) while the
         # child stays force-fresh per ``force_fresh``.
+        #
+        # The matchup span opens BEFORE the semaphore so the workers nest on
+        # the matchup lane (not directly on the round) — the SAME two-line
+        # tuple-CM the full/fast twins carry (:575/:881), so the gap between
+        # the span's start and its first worker child reads as the queue wait
+        # (HARMONOGRAF.md §7). Without the shared semaphore there is nothing
+        # to queue behind, so the span alone brackets the unit.
+        _mu_meta = {"entry_id": entry.id, "match_id": match_id}
         if unit_semaphore is None:
-            return await _run_full_board_unit(
-                adapter=adapter,
-                parent_gen=parent_gen,
-                child_gen=child_gen,
-                entry=entry,
-                weights=weights,
-                config=config,
-                workspace_root=workspace_root,
-                epoch_id=epoch_id,
-                scorer=scorer,
-                match_id=match_id,
-                replicate_index=replicate_index,
-                force_fresh=force_fresh,
-                parent_force_fresh=parent_force_fresh,
-                provenance=provenance,
-            )
-        async with unit_semaphore:
+            async with meta_span(entry.id, kind=SPAN_MATCHUP, meta=_mu_meta):
+                return await _run_full_board_unit(
+                    adapter=adapter,
+                    parent_gen=parent_gen,
+                    child_gen=child_gen,
+                    entry=entry,
+                    weights=weights,
+                    config=config,
+                    workspace_root=workspace_root,
+                    epoch_id=epoch_id,
+                    scorer=scorer,
+                    match_id=match_id,
+                    replicate_index=replicate_index,
+                    force_fresh=force_fresh,
+                    parent_force_fresh=parent_force_fresh,
+                    provenance=provenance,
+                )
+        async with (
+            meta_span(entry.id, kind=SPAN_MATCHUP, meta=_mu_meta),
+            unit_semaphore,
+        ):
             return await _run_full_board_unit(
                 adapter=adapter,
                 parent_gen=parent_gen,

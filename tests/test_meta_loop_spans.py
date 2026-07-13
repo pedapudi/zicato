@@ -205,6 +205,118 @@ async def test_span_tree_nesting_and_pairing() -> None:
 
 
 # ---------------------------------------------------------------------------
+# The REAL scheduler ``_bounded`` sites open the matchup span (all THREE
+# variants). The tree test above drives synthetic spans; this closes the gap
+# that let the budgeted variant ship WITHOUT the matchup tuple-CM — so a
+# fourth board-unit runner can never regress the matchup lane uncovered.
+# ---------------------------------------------------------------------------
+
+
+class _Ent:
+    """Minimal ``BoardEntry`` stand-in — the runner reads only ``.id``."""
+
+    def __init__(self, entry_id: str) -> None:
+        self.id = entry_id
+
+
+class _Gen:
+    """Minimal ``Generation`` stand-in — only ``.id`` is threaded to the scorer."""
+
+    def __init__(self, gen_id: str) -> None:
+        self.id = gen_id
+
+
+class _FakeCfg:
+    """Minimal ``RuntimeConfig`` stand-in — the runner reads parallelism + ledger."""
+
+    parallelism = 4
+    token_ledger = None
+
+
+@pytest.mark.parametrize("variant", ["full", "fast", "budgeted"])
+async def test_real_bounded_opens_matchup_span_with_worker_nested(
+    monkeypatch: pytest.MonkeyPatch, variant: str
+) -> None:
+    """Every board-unit runner's ``_bounded`` brackets its unit in a matchup span.
+
+    Drives the REAL ``_run_board_units_{full,fast,full_budgeted}`` through a
+    fake board unit that opens the SAME worker span the production unit does,
+    then asserts a single ``zicato.matchup`` span exists and the worker nests
+    under it (parent == matchup invocation id). Pre-fix, the budgeted variant
+    lacked the matchup tuple-CM its siblings carried, so the worker nested
+    directly on the round — this test fails on that regression for ``budgeted``
+    while passing for ``full`` / ``fast``.
+    """
+    from pathlib import Path
+
+    from zicato.telemetry.meta_loop import SPAN_MATCHUP, SPAN_WORKER, meta_span
+    from zicato.tournament import scheduling as sched
+
+    async def _fake_full_unit(*, entry: Any, **_kw: Any) -> tuple[Any, Any]:
+        # Mirror the real worker span the true board unit opens, so its parent
+        # linkage exercises the ambient contextvar set by the matchup span.
+        async with meta_span(f"worker::{entry.id}", kind=SPAN_WORKER, meta={"entry_id": entry.id}):
+            await asyncio.sleep(0)
+        return object(), object()
+
+    async def _fake_cache_first(*, entry: Any, **_kw: Any) -> Any:
+        async with meta_span(f"worker::{entry.id}", kind=SPAN_WORKER, meta={"entry_id": entry.id}):
+            await asyncio.sleep(0)
+        return object()
+
+    async def _noop_record(self: Any, **_kw: Any) -> None:
+        return None
+
+    monkeypatch.setattr(sched, "_run_full_board_unit", _fake_full_unit)
+    monkeypatch.setattr(sched, "_run_unit_cache_first", _fake_cache_first)
+    monkeypatch.setattr(sched._IncrementalScorer, "record", _noop_record)
+
+    sink = _CapturingSink()
+    emitter = MetaLoopEmitter(run_id="r", session_id="s", sinks=[sink])
+    token = set_current_emitter(emitter)
+
+    board = [_Ent("e1")]
+    common: dict[str, Any] = {
+        "adapter": None,
+        "weights": object(),
+        "config": _FakeCfg(),
+        "workspace_root": Path("/tmp"),
+        "epoch_id": "ep",
+        "match_id": "m1",
+    }
+    try:
+        if variant == "full":
+            await sched._run_board_units_full(
+                parent_gen=_Gen("v0"), child_gen=_Gen("v1"), board=board, **common
+            )
+        elif variant == "fast":
+            await sched._run_board_units_fast(child_gen=_Gen("v1"), board=board, **common)
+        else:
+            await sched._run_board_units_full_budgeted(
+                parent_gen=_Gen("v0"),
+                child_gen=_Gen("v1"),
+                board=board,
+                replicate_index=0,
+                force_fresh=False,
+                provenance=None,
+                matchup_deadline=time.monotonic() + 3600.0,
+                **common,
+            )
+    finally:
+        reset_current_emitter(token)
+
+    starts = _starts(sink)
+    matchups = [s for s in starts if s.agent_name == f"zicato.{SPAN_MATCHUP}"]
+    workers = [s for s in starts if s.agent_name == f"zicato.{SPAN_WORKER}"]
+    assert len(matchups) == 1, f"{variant}: expected one matchup span, got {len(matchups)}"
+    assert len(workers) == 1, f"{variant}: expected one worker span, got {len(workers)}"
+    assert matchups[0].task_id == "e1"
+    assert (
+        workers[0].parent == matchups[0].invocation_id
+    ), f"{variant}: worker must nest under the matchup span, not the round"
+
+
+# ---------------------------------------------------------------------------
 # Pairing on exception / cancellation — for each span kind.
 # ---------------------------------------------------------------------------
 
@@ -370,3 +482,146 @@ async def test_span_overhead_is_bounded() -> None:
         f"enabled span overhead {per_span_ms:.3f} ms/span (disabled baseline "
         f"{disabled_s * 1000:.1f} ms total) exceeds the 5 ms/span ceiling"
     )
+
+
+# ---------------------------------------------------------------------------
+# The proposer / judge lifelines nest into the span tree (HARMONOGRAF.md §7).
+#
+# The pre-existing proposer / judge emits used to stuff their payload JSON
+# into ``parent_invocation_id``, rendering them as DETACHED orphan roots. The
+# migration parents them on the ambient structural span (propose / slot for
+# the proposer, gate for a judge) and moves the payload to the COMPLETED
+# envelope's ``summary`` — the structural-span convention.
+# ---------------------------------------------------------------------------
+
+
+async def test_proposer_emit_nests_under_slot_span() -> None:
+    """Each slate slot's proposer call parents on ITS slot span, not a blob."""
+    sink = _CapturingSink()
+    emitter = MetaLoopEmitter(run_id="r", session_id="s", sinks=[sink])
+    token = set_current_emitter(emitter)
+    try:
+        async with meta_span("propose", kind=SPAN_PHASE):
+
+            async def _slot(i: int) -> None:
+                async with meta_span(f"slot {i}", kind=SPAN_SLOT):
+                    inv = await emitter.proposer_started(
+                        model="aux-model",
+                        epoch_id="ep-1",
+                        parent_generation_id="v0",
+                        new_generation_id=f"v1-{i}",
+                    )
+                    await emitter.proposer_completed(
+                        invocation_id=inv,
+                        latency_s=0.1,
+                        response_chars=42,
+                        outcome="completed",
+                    )
+
+            await asyncio.gather(*(_slot(i) for i in range(3)))
+    finally:
+        reset_current_emitter(token)
+
+    starts = _starts(sink)
+    slot_ids = {s.invocation_id for s in starts if s.agent_name == f"zicato.{SPAN_SLOT}"}
+    proposer_starts = [s for s in starts if s.agent_name == "zicato.proposer"]
+    assert len(slot_ids) == 3
+    assert len(proposer_starts) == 3
+    # Every proposer started nests under one of the slate slots (no orphans).
+    for p in proposer_starts:
+        assert p.parent in slot_ids, "proposer must nest under its slot span"
+
+    # The started identity payload migrated to the COMPLETED envelope's summary.
+    proposer_completes = [s for s in _completes(sink) if s.agent_name == "zicato.proposer"]
+    assert len(proposer_completes) == 3
+    for c in proposer_completes:
+        assert c.meta["model"] == "aux-model"
+        assert c.meta["epoch_id"] == "ep-1"
+        assert c.meta["parent_generation_id"] == "v0"
+        assert c.meta["new_generation_id"].startswith("v1-")
+        # The completed half's own metrics ride alongside the migrated fields.
+        assert c.meta["outcome"] == "completed"
+        assert c.meta["response_chars"] == 42
+        assert "latency_s" in c.meta
+
+
+async def test_judge_emit_nests_under_gate_span() -> None:
+    """A process judge's call parents on the enclosing gate (phase) span."""
+    sink = _CapturingSink()
+    emitter = MetaLoopEmitter(run_id="r", session_id="s", sinks=[sink])
+    token = set_current_emitter(emitter)
+    try:
+        async with meta_span("gate", kind=SPAN_PHASE) as _gate:
+            inv = await emitter.judge_invoked(
+                judge_name="decision_telemetry_analyzer", kind="process"
+            )
+            await emitter.judgment_emitted(
+                invocation_id=inv,
+                judge_name="decision_telemetry_analyzer",
+                verdict_kind="rubric",
+                detail="insight written",
+                latency_s=0.2,
+            )
+    finally:
+        reset_current_emitter(token)
+
+    starts = _starts(sink)
+    gate = next(s for s in starts if s.task_id == "gate")
+    judge_starts = [s for s in starts if s.agent_name == "zicato.judge:decision_telemetry_analyzer"]
+    assert len(judge_starts) == 1
+    assert judge_starts[0].parent == gate.invocation_id
+
+    # The judge payload lands in the completed summary (its new home).
+    judge_completes = [
+        s for s in _completes(sink) if s.agent_name == "zicato.judge:decision_telemetry_analyzer"
+    ]
+    assert len(judge_completes) == 1
+    assert judge_completes[0].meta["judge_name"] == "decision_telemetry_analyzer"
+    assert judge_completes[0].meta["verdict_kind"] == "rubric"
+    assert judge_completes[0].meta["detail"] == "insight written"
+
+
+async def test_proposer_emit_without_ambient_span_has_empty_parent() -> None:
+    """A bare emit (no enclosing span — e.g. a unit test) keeps an empty parent.
+
+    Today's detached-root behaviour is preserved when there is no ambient span
+    to nest under, rather than resurrecting the payload-blob parent.
+    """
+    sink = _CapturingSink()
+    emitter = MetaLoopEmitter(run_id="r", session_id="s", sinks=[sink])
+    # No ``set_current_emitter`` and no open span: ``_current_span_id`` is "".
+    inv = await emitter.proposer_started(
+        model="m", epoch_id="e", parent_generation_id="p", new_generation_id="c"
+    )
+    await emitter.proposer_completed(invocation_id=inv, latency_s=0.0, outcome="completed")
+
+    proposer_starts = [s for s in _starts(sink) if s.agent_name == "zicato.proposer"]
+    assert len(proposer_starts) == 1
+    assert proposer_starts[0].parent == ""
+
+
+async def test_read_meta_loop_session_id_still_reads_migrated_jsonl(tmp_path: Any) -> None:
+    """The one zicato-side consumer still recovers the session id post-migration.
+
+    ``read_meta_loop_session_id`` reads only ``session_id`` off the first
+    JSONL line (never the payload / parent) — the migration must not perturb
+    it. Drives the real JSONL sink end-to-end.
+    """
+    from zicato.query.paths import WorkspacePaths
+    from zicato.query.runtime_view import read_meta_loop_session_id
+    from zicato.telemetry.meta_loop import build_meta_loop_emitter
+
+    emitter = build_meta_loop_emitter(
+        tmp_path,
+        harmonograf_url="",
+        evolve_started_at_iso="2026-05-28T05:04:00+00:00",
+    )
+    inv = await emitter.proposer_started(
+        model="m", epoch_id="e", parent_generation_id="p", new_generation_id="c"
+    )
+    await emitter.proposer_completed(invocation_id=inv, latency_s=0.0, outcome="completed")
+    await emitter.close()
+
+    sid = read_meta_loop_session_id(WorkspacePaths(tmp_path))
+    assert sid == emitter.session_id
+    assert sid  # non-empty

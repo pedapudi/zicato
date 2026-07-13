@@ -229,7 +229,10 @@ Metadata (`meta`) is **ids / phase-names / timings only** — never board conten
 never scores beyond what the §2b judge spans already carry. It rides the
 completed envelope's `summary` (a small JSON blob); a worker stamps the run's
 goldfive `adk_session_id` there so a harmonograf user can cross-jump into the
-board run's own session (§2a).
+board run's own session (§2a). **Deviation — no pid.** No span stamps a
+subprocess pid today; the worker span carries `run_id` / `side` / `entry_id` and
+the run's `adk_session_id` only (an earlier `_SpanHandle` docstring implied a pid
+that was never emitted).
 
 ### 7c. Disciplines (all tested)
 
@@ -242,7 +245,13 @@ board run's own session (§2a).
 * **Pairing.** The completed half fires in a `finally`, so an exception, a
   `CancelledError`, or a crash mid-body still closes the span (with
   `outcome="error:<Exc>"` / `"cancelled"`). The completed emit is `shield`ed so
-  a task cancellation propagating through the `finally` cannot drop it.
+  a task cancellation propagating through the `finally` does not abort the
+  closing emit mid-flight — the `CancelledError` still propagates to the caller,
+  it is only deferred past the shielded emit. This is best-effort, not a
+  guarantee: it holds only while the loop lives — under a HARD loop teardown
+  (the event loop closing while the shielded emit is still pending) the closing
+  envelope can be destroyed un-emitted. The pairing discipline covers the
+  common in-loop cancel, not loop death.
 * **Bounded memory.** The span id is a single contextvar string a context
   manager sets-and-resets; there is no per-round-growing span registry. The
   emitter's only mutable state is its monotonic sequence counter.
@@ -254,6 +263,32 @@ board run's own session (§2a).
 * **Teardown.** The ambient emitter binding is reset and the emitter closed in
   `evolve_n_rounds`' teardown `finally` (before the harmonograf supervisor
   stops); no daemon threads beyond the supervisor's own are spawned.
+
+### 7d. The proposer / judge lifelines are IN the tree
+
+The §2b proposer / judge emits predate the structural spans. Each still emits a
+paired `AgentInvocation{Started,Completed}`, but originally serialised its
+payload JSON into the STARTED envelope's `parent_invocation_id` (goldfive ships
+no `ProposerCallStarted` of its own) — the very field harmonograf reads as the
+tree PARENT (`ingest.py:_on_agent_invocation_started`). A JSON blob matches no
+invocation, so those lifelines rendered as **detached orphan roots** beside the
+span tree — the single most-watched lifeline (the proposer) sitting outside the
+unified picture.
+
+They now parent exactly like a structural span: the started envelope's
+`parent_invocation_id` carries the ambient `_current_span_id`, so a proposer
+call nests under its propose / `slot` span and a judge under `gate`. The payload
+moved to the COMPLETED envelope's `summary` — the same home the structural spans
+use for `meta`: `_emit_paired_started` stashes the started payload by invocation
+id and `_emit_paired_completed` folds it in under the completed metrics. Absent
+an ambient span (a bare `propose_experiment` in a unit test) the parent is empty
+— the prior root behaviour, preserved.
+
+**Back-compat.** Old `meta_loop_events.jsonl` files still carry blob parents on
+their proposer/judge started lines; harmonograf tolerates them (a non-matching
+parent is simply treated as a root). The one zicato-side reader of that JSONL —
+`read_meta_loop_session_id` (§2b) — reads only `session_id` off the first line,
+never the payload or the parent, so it is unaffected by either representation.
 
 Coverage is intentionally scoped to the concurrency-bearing seams. The
 sequential `context-build` and `persist` seams, and a dedicated `tournament`

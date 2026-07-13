@@ -117,7 +117,7 @@ class _SpanHandle:
 
     Carries the span's ``invocation_id`` (opaque, for correlation) and a
     ``meta`` dict the body can enrich with values only known mid-span — a
-    worker's pid + goldfive session id, a matchup's resolved decision — via
+    worker's goldfive session id, a matchup's resolved decision — via
     :meth:`set`. Whatever is accumulated is serialised onto the COMPLETED
     envelope's ``summary`` when the span closes. Metadata is ids / names /
     timings only; never board content and never scores.
@@ -188,6 +188,13 @@ class MetaLoopEmitter:
         self._sinks: list[Any] = list(sinks or [])
         self._sequence = 0
         self._seq_lock = asyncio.Lock()
+        # A proposer / judge STARTED payload, stashed by invocation_id, so it
+        # can ride the paired COMPLETED envelope's ``summary`` (the
+        # structural-span convention). ``parent_invocation_id`` on the started
+        # half now carries the true ambient span, not this payload — see
+        # :meth:`_emit_paired_started` / :meth:`_emit_paired_completed`.
+        # Bounded: one entry per open pair, popped when the pair completes.
+        self._pending_payloads: dict[str, dict[str, Any]] = {}
 
     @property
     def sinks(self) -> list[Any]:
@@ -495,12 +502,21 @@ class MetaLoopEmitter:
         payload: dict[str, Any],
     ) -> None:
         seq = await self._next_seq()
+        # Nest the started event under the ENCLOSING structural span exactly
+        # as :meth:`span` does — its ``parent_invocation_id`` carries the true
+        # ambient parent (the proposer's propose / slot span, a judge's gate
+        # span), NOT the payload. The payload is stashed so it rides the
+        # COMPLETED envelope's ``summary`` (the structural-span convention).
+        # Absent an ambient span (a bare ``propose_experiment`` in a test) the
+        # parent is empty — today's detached-root behaviour, preserved.
+        parent = _current_span_id.get()
+        self._pending_payloads[invocation_id] = dict(payload)
         event = self._build_started_event(
             kind=kind,
             sequence=seq,
             invocation_id=invocation_id,
             agent_name=agent_name,
-            payload=payload,
+            parent=parent,
         )
         await self._fan_emit(event)
 
@@ -513,12 +529,19 @@ class MetaLoopEmitter:
         payload: dict[str, Any],
     ) -> None:
         seq = await self._next_seq()
+        # Fold the paired started payload (model / gen-ids / judge_name) in
+        # UNDER the completed payload so the migrated started metadata lands in
+        # the completed ``summary`` — the started half now carries only its
+        # ambient parent. The completed payload wins on any key collision
+        # (e.g. ``judge_name``, identical anyway).
+        started_payload = self._pending_payloads.pop(invocation_id, {})
+        merged = {**started_payload, **payload}
         event = self._build_completed_event(
             kind=kind,
             sequence=seq,
             invocation_id=invocation_id,
             agent_name=agent_name,
-            payload=payload,
+            payload=merged,
         )
         await self._fan_emit(event)
 
@@ -529,21 +552,26 @@ class MetaLoopEmitter:
         sequence: int,
         invocation_id: str,
         agent_name: str,
-        payload: dict[str, Any],
+        parent: str,
     ) -> Any:
         """Build a goldfive envelope for the started half, or a dict fallback.
 
         The proto path uses :func:`goldfive.events.agent_invocation_started_event`
         so a sink expecting the canonical envelope sees one regardless of
         whether the emitter was constructed by the orchestrator (meta
-        loop) or a worker. The kind-specific payload travels in a JSON
-        sidecar field — the proto's ``parent_invocation_id`` field is
-        repurposed as a small JSON pointer when goldfive ships no
-        ``ProposerCallStarted`` of its own (it does not).
+        loop) or a worker. ``parent_invocation_id`` carries the ENCLOSING
+        structural span (:data:`_current_span_id`, threaded in by
+        :meth:`_emit_paired_started`) so harmonograf nests the proposer /
+        judge lifeline under its propose / slot / gate span instead of
+        rendering it as a detached root. The started payload does NOT ride
+        here — it moved to the paired COMPLETED envelope's ``summary``
+        (the structural-span convention; see :meth:`_emit_paired_completed`).
 
-        On the dict-fallback path (no proto stubs available) every field
-        rides verbatim, with a ``kind`` discriminator so the reducer can
-        switch on it. The dict shape mirrors :func:`goldfive.events.make_event`.
+        On the dict-fallback path (no proto stubs available) the parent
+        rides a ``parent_invocation_id`` field and the payload is empty
+        (it too moved to the completed half), with a ``kind`` discriminator
+        so the reducer can switch on it. The dict shape mirrors
+        :func:`goldfive.events.make_event`.
         """
         try:
             from goldfive.events import agent_invocation_started_event  # noqa: PLC0415
@@ -553,16 +581,14 @@ class MetaLoopEmitter:
                 sequence=sequence,
                 invocation_id=invocation_id,
                 agent_name=agent_name,
-                payload=payload,
+                payload={},
+                parent=parent,
             )
 
-        # Use the canonical AgentInvocationStarted envelope. The payload
-        # dict is serialised as JSON into the (otherwise unused for the
-        # meta-loop) ``parent_invocation_id`` field, with ``task_id``
-        # carrying the discriminator. A future canonical envelope for
+        # The canonical AgentInvocationStarted envelope, nesting under the
+        # ambient structural span via ``parent_invocation_id`` (``task_id``
+        # carries the kind discriminator). A future canonical envelope for
         # ProposerCallStarted would replace this.
-        import json  # noqa: PLC0415
-
         try:
             event = agent_invocation_started_event(
                 self.run_id,
@@ -570,7 +596,7 @@ class MetaLoopEmitter:
                 agent_name=agent_name,
                 task_id=kind,
                 invocation_id=invocation_id,
-                parent_invocation_id=json.dumps(payload, sort_keys=True, default=str),
+                parent_invocation_id=parent,
                 session_id=self.session_id,
             )
             return event
@@ -581,7 +607,8 @@ class MetaLoopEmitter:
                 sequence=sequence,
                 invocation_id=invocation_id,
                 agent_name=agent_name,
-                payload=payload,
+                payload={},
+                parent=parent,
             )
 
     def _build_completed_event(
@@ -634,8 +661,14 @@ class MetaLoopEmitter:
         invocation_id: str,
         agent_name: str,
         payload: dict[str, Any],
+        parent: str = "",
     ) -> dict[str, Any]:
-        """Dict envelope used when proto stubs are unavailable / build fails."""
+        """Dict envelope used when proto stubs are unavailable / build fails.
+
+        ``parent`` carries the enclosing structural span for the started
+        half (empty for the completed half, which nests via ``invocation_id``
+        correlation); it mirrors the proto path's ``parent_invocation_id``.
+        """
         t = time.time_ns()
         return {
             "event_id": f"{self.run_id}:{sequence}:{uuid.uuid4().hex[:8]}",
@@ -645,6 +678,7 @@ class MetaLoopEmitter:
             "emitted_at": {"seconds": t // 1_000_000_000, "nanos": t % 1_000_000_000},
             "kind": kind,
             "invocation_id": invocation_id,
+            "parent_invocation_id": parent,
             "agent_name": agent_name,
             "payload": dict(payload),
         }
