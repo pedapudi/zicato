@@ -88,7 +88,7 @@ only thing that varies is the named knob):**
   `screen`, `genealogy`, `recombine`, roles) only does anything with a real
   model sampling the slate; `target_0`'s scripted proposer would leave every
   arm byte-identical. `target_0_convergence` is used only as the
-  **deterministic instrument dry-run** (§6.1), never as a measurement arm.
+  **deterministic instrument dry-run** (§6.2), never as a measurement arm.
 - **Tournament structure:** `gauntlet`, `replicates: 2` (buy a little
   per-duel power without the evidence gate's ~37-duel crowning budget —
   dev-guide §3.1 fact #3), with `field_size` pinned to **1**. The gauntlet's
@@ -495,7 +495,7 @@ stated so the estimate is auditable:
   (`q3_metrics_outline`, `every_expectation_kind_demo`), so the
   generalization-gap and holdout-confirm mechanics are live for the
   campaign instead of silently inert. (Verified by running `split_board`
-  and `estimate_cost` on the arm contracts, §6.1.)
+  and `estimate_cost` on the arm contracts, §6.2.)
 - Structure `gauntlet`, `field_size` pinned to **1** in the shared control
   (§2 — the meter defaults an unset `field_size` to `2`, but
   `GauntletStrategy.field_size()` hard-returns `1`, so pinning it makes the
@@ -553,7 +553,15 @@ are planning figures only; real latency is endpoint-dependent (§3.4).
 graduated arms ≈ 2 × (24/6) × ~1,200 board runs ≈ **9,600 additional board
 runs** (~55k LLM calls again). Not part of this doc's authorization.
 
-## 6. Execution runbook (GATED — do not run without the §0 go-ahead)
+## 6. Execution protocol — the executor agent's runbook (GATED)
+
+**This section is addressed to you, the execution agent.** You run the whole
+campaign from this document and report back to the coordinator in the §7
+format. You do **not** decide anything: you produce the pre-registered
+statistics; the §4 decision rules are the coordinator's to apply. Work the
+subsections in order — §6.0 authorization → §6.1 preconditions → §6.2 dry-run
+→ §6.3 execution (BASE first) → §6.4 monitoring/failure → §6.5 data
+collection — then emit §7.
 
 Every arm follows the same shape: fresh workspace → publish the arm's
 contract → `zicato evolve` **with the dashboard** (house rule: `evolve`
@@ -563,22 +571,101 @@ launches the dashboard on `127.0.0.1:7892` by default; do **not** pass
 `reflect run`. The `target_1` registration mirrors the vendored example's
 adapter/mutable-tree wiring.
 
-### 6.1 Instrument dry-run first (deterministic, zero endpoint — not gated)
+### 6.0 Authorization check (first, blocking — the G3 gate)
+
+**Before any command that touches a live endpoint, verify your dispatch
+message contains the operator's explicit go-ahead for this campaign** (the G3
+live-run gate, top-of-document STATUS banner; MEMORY "Gate live e2e runs"). The
+go-ahead must be explicit — a task that merely says "run the campaign" without
+the operator's own words authorizing live spend is **not** sufficient.
+
+- **Go-ahead absent or ambiguous → STOP. Run nothing.** Complete §6.1's
+  non-endpoint preconditions and §6.2's deterministic dry-run only (neither
+  spends on the endpoint), then report back to the coordinator: "authorization
+  not present in dispatch; dry-run + preconditions only; awaiting explicit
+  operator go-ahead." Do not proceed to §6.3.
+- **Go-ahead present → record its verbatim wording in the run log** and
+  proceed. The authorization covers the **screening** campaign only (K=6 ×
+  8 arms); the K≈24 confirmatory extension (§3.2, §4) requires a **separate**
+  go-ahead and is out of scope for this dispatch.
+
+### 6.1 Preconditions checklist (record each as PASS / FAIL before any spend)
+
+Each item is a recorded pass/fail. **Any FAIL halts the campaign** — report
+the failing item to the coordinator and stop; do not work around it.
+
+1. **Toolchain — `uv sync --all-extras`.** Run it (NEVER bare `uv sync`, which
+   strips dev tooling — MEMORY "uv sync --all-extras always"). PASS iff it
+   exits 0 and `uv run zicato --help` resolves.
+2. **Auxiliary + harness endpoints configured and responding — cheap house
+   smoke-test.** The house way to prove both endpoints resolve and answer
+   *without* launching an evolve loop is `zicato board preflight` with the
+   minimum draw count. On BASE's first workspace, immediately after
+   `epoch new` (§6.3), run:
+   ```bash
+   zicato board preflight --workspace .zicato --runs 2 \
+       --harness-call-llm   <operator harness endpoint dotted path> \
+       --auxiliary-call-llm <operator auxiliary endpoint dotted path>
+   ```
+   `board preflight` requires **both** dotted callables (`cli/commands/board.py`
+   `preflight_cmd`, both `required=True`) and takes as few as **2** A/A draws
+   (`--runs` `IntRange(min=2)`; default 5 = `DEFAULT_CALIBRATION_RUNS`). It is
+   cache-idempotent with `zicato board audit`, so it is the cheapest genuine
+   endpoint probe in the tree, and it does double duty: its A/A measurement
+   **is** the measured floor the whole campaign reads (`epoch/preflight.py`
+   `noise_floor_max_abs_delta`, persisted onto the epoch via
+   `epoch/lifecycle.set_epoch_noise_floor`). PASS iff it returns a verdict
+   (OK / WARN / REFUSE) rather than an import/connection error. A `REFUSE`
+   verdict is a §6.4 abort condition, not a precondition failure — note it and
+   surface it, but the *endpoint* is "responding" either way.
+3. **Disk headroom.** Confirm free space on the volume holding
+   `campaign-<ts>/` is comfortably above the run footprint (per-run workspace =
+   a `target_1` clone + telemetry JSONL; budget on the order of a few hundred
+   MB per run, 8 arms × 6 runs). PASS iff `df -h <campaign root>` shows
+   headroom > 3× the projected footprint.
+4. **The §6.2 deterministic dry-run is green.** The `target_0` end-to-end
+   demo reaches its known answer with the cost-meter/analytics chain intact
+   (§6.2). PASS iff the dry-run converges (v0 3.6 → v3 1.2) and `epoch close`
+   emits `analysis.md`.
+5. **Cost-meter reconciliation.** Run `zicato builder`'s cost meter (or
+   `estimate_cost`, `builder/operations.py`) on each arm's `scoring.json` and
+   confirm it reads the **§5 numbers**: **14** board-runs/round for the
+   non-screen arms and **20** for the screen arms (A2, A7). PASS iff the meter
+   reads 14/20 exactly. **A mismatch here means a contract or `field_size`
+   pin is wrong — halt before spending; the whole §5 budget rests on 14/20.**
+
+### 6.2 Instrument dry-run (deterministic, zero endpoint — not gated)
 
 Before any live arm, prove the harness/cost-meter/analytics chain end-to-end
 on the **deterministic** `target_0` (its scripted proposer needs no
 endpoint), exactly as `examples/zicato_examples/target_0_convergence/RUN.md`
 §"End-to-end demo". This validates wiring under a known answer (dev-guide
 §1.8: v0 3.6 → v3 1.2) with **no** live-run gate, the same way `cascade_oc.py`
-validates the statistics offline before any real spend. Also dry-run
-`zicato builder`'s cost meter on each arm's `scoring.json` to confirm the §5
-board-run numbers before committing budget.
+validates the statistics offline before any real spend. This is precondition
+§6.1 item 4; it runs regardless of the §6.0 authorization outcome.
 
-### 6.2 Per-arm live runbook (one block per arm; A0 shown)
+### 6.3 Execution recipe (BASE first; then the remaining arms)
+
+**Workspace layout.** One timestamped campaign root; arms in separate
+workspace trees (never share a `.zicato`); one dir per arm×seed:
+
+```
+campaign-<ts>/<arm>/k<seed_index>        # e.g. campaign-20260712T0900/A0/k1
+campaign-<ts>/results/                    # the §7 artifacts land here
+```
+
+`<arm>` ∈ {A0…A7} (plus `A0-ablation`, `PEXEMPLAR` for the extension arm);
+`<seed_index>` ∈ {1…6} for the screening campaign. Each `k<seed_index>` is a
+**fresh clone** — the live endpoint exposes no seed we control, so the seed
+index names an independent replicate run, not a reproducible seed (§3.2).
+
+**Per-run command sequence (one block per arm×seed; A0/k shown — the reviewed
+per-arm commands, unchanged except the workspace path):**
 
 ```bash
 # --- Arm A0 BASE, replicate run k (repeat k = 1..6, fresh dir each) ---
-WS=/tmp/campaign/A0/k${k}
+TS=<campaign timestamp>          # one value for the whole campaign
+WS=campaign-${TS}/A0/k${k}
 rm -rf "$WS" && mkdir -p "$WS" && cd "$WS"
 EX=/home/sunil/git/zicato/examples/zicato_examples/target_1_presentation
 
@@ -601,16 +688,23 @@ zicato epoch new campaign_A0_k${k} --workspace .zicato \
     --brief   "$EX/rubric.md" \
     --scoring ./arm_A0.scoring.json      # the §2 A0 contract (full effective form)
 
+# ENDPOINT SMOKE-TEST (§6.1 item 2) — run ONCE, on this first BASE workspace.
+# Its A/A measurement is also the campaign's measured floor:
+zicato board preflight --workspace .zicato --runs 2 \
+    --harness-call-llm   <operator harness endpoint dotted path> \
+    --auxiliary-call-llm <operator auxiliary endpoint dotted path>
+
 # With the epoch open, inspect the mutation surface + eyeball the cost
 # meter BEFORE spending (no run yet):
 zicato mutations --workspace .zicato
 # (optional) open the builder to eyeball the cost meter for this scoring.json
 
-# GATED: only after explicit operator go-ahead for this arm ---------------
+# GATED: only after §6.0 explicit operator go-ahead -----------------------
 zicato evolve --workspace .zicato --rounds 12 \
     --harness-call-llm   <operator harness endpoint dotted path> \
     --auxiliary-call-llm <operator auxiliary endpoint dotted path>
-# evolve prints:  Dashboard: http://127.0.0.1:7892   (watch the bracket live)
+# evolve prints:  Dashboard: http://127.0.0.1:7892   (RECORD this exact URL
+# into the run record's dashboard_url; watch the bracket live)
 
 # After the loop settles:
 zicato epoch close   --workspace .zicato          # → analysis.md / analysis.html
@@ -618,48 +712,235 @@ zicato reflect run   --workspace .zicato          # MSA pass over the eval contr
 ```
 
 - **A1–A4, A6, A7** are identical except the `--scoring` file is the arm's §2
-  delta.
+  delta (the `board preflight` smoke-test is NOT repeated — it runs once on
+  BASE/k1).
 - **A5 (roles)** additionally writes the `models.proposer_breadth` /
   `models.proposer_depth` block into the workspace `config.json` before
   `evolve` (its `scoring.json` == A0's).
 - **A0-ablation** (`best_of_n=1`) and the **process_exemplars** extension arm
   reuse the A0 block with the one-field change.
 
-### 6.3 Monitoring checklist (per arm, per run)
+**Parallelism (recommend ≤ 4 concurrent `evolve` processes).** Arms run in
+separate workspaces, so they *can* run concurrently, but bound concurrency at
+**≤ 4** for two grounded reasons:
+
+1. **Shared endpoint rate limits.** Every arm hits the same operator harness +
+   auxiliary endpoints; the §5 wall-clock math already assumes `--parallelism
+   4` *within* a run, so N concurrent arms multiply the offered load N× against
+   one rate limit. Beyond ~4 concurrent arms the endpoint throttles and
+   wall-clock (E3) inflates with ret/latency — polluting the only
+   latency-sensitive metric.
+2. **One dashboard port each.** `zicato evolve` binds the dashboard on
+   `--dashboard-port` (default **7892**, `cli/commands/evolve.py:764`). Two
+   concurrent evolves on the default collide on 7892. The house rule forbids a
+   `--dashboard-bind` flag but says nothing about the port, so give each
+   concurrent run a **distinct** port — first run keeps the 7892 default,
+   additional concurrent runs pass `--dashboard-port 7893`, `7894`, `7895` —
+   and **record each run's actual printed URL** into its `dashboard_url`
+   field. Four ports (7892–7895) is a clean, memorable band and matches the
+   ≤ 4 concurrency bound.
+
+**Run ordering — BASE's K runs FIRST (blocking gate on the flip bar's
+trustworthiness).** Launch all **K=6 BASE (A0)** runs before any other arm.
+The entire §4 non-overlap / ~1.5-floor resolution rests on the §3.2
+pre-registered assumption that the cross-run sd of E1 is on the order of the
+A/A floor — **an assumption that is ungrounded until BASE measures it.** After
+BASE's 6 runs close:
+
+1. Compute the **cross-run sd of E1** (final champion Δscalar in floor units)
+   over the 6 BASE runs, and the ratio `f = sd / measured_floor`.
+2. **Record `f`** into `floor.json` (§7) with its K.
+3. **If `f > 1.5`**: the flip bar is not trustworthy as written (§3.2:
+   thresholds scale linearly with sd; holding ~1.5-floor resolution would need
+   K raised by ≈ `f²`). **PAUSE and report the sd finding to the coordinator
+   for confirmation before launching the remaining arms.** Do not proceed on
+   your own judgment.
+4. **If `f ≤ 1.5`**: proceed to launch A1–A7 (respecting the ≤ 4 concurrency
+   bound), noting `f` in the per-arm records.
+
+### 6.4 Monitoring + failure policy (per arm, per run)
+
+**Per-run signals to watch (log stream + dashboard):**
 
 - **Log stream:** watch for `preflight_signal_below_floor` /
   `preflight_saturated_contract` at evolve start (dev-guide §9 — a saturated
-  contract means the arm cannot resolve any improvement; abort and
-  investigate). Watch `margin_below_noise_floor` (E5), `stalled_loop`,
-  `placebo_promoted` (CRITICAL — the decision procedure is broken, every
-  recent "win" is suspect; dev-guide §11).
+  contract means the arm cannot resolve any improvement). Watch
+  `margin_below_noise_floor` (E5), `stalled_loop`, `placebo_promoted`
+  (CRITICAL — `health/diagnostics.detect_placebo_promoted`; the decision
+  procedure is broken and every recent "win" is suspect; dev-guide §11).
 - **Publication LIVING DRAFT:** the dashboard's publication tab regenerates
   its deterministic sections every settled round (PUBLICATION freshness
   model). Eyeball §5 Statistical integrity and §3 Reign narrative as they
   fill in — a promotion whose gate margin sits below the A/A floor is a
   suspect promotion.
-- **Board-status surface:** watch the `generalization_gap` and holdout budget
-  panels (dev-guide §12 #5, §5) — a widening gap on a read-side arm
-  (genealogy, calibration, exemplars) is the overfitting alarm those arms
-  exist to be checked against.
+- **Board-status surface:** watch the `generalization_gap`
+  (`health/diagnostics.detect_generalization_gap`) and holdout budget panels
+  (dev-guide §12 #5, §5) — a widening gap on a read-side arm (genealogy,
+  calibration, exemplars) is the overfitting alarm those arms exist to be
+  checked against.
 
-### 6.4 Abort criteria (any one → stop that run, log, do not silently continue)
+**Abort triggers (each stated as signal → threshold → action; any one fires →
+stop THAT run, log the reason, never silently continue):**
 
-1. `placebo_promoted` CRITICAL fires (decision procedure compromised — the
-   whole arm's evidence is void until explained).
-2. Pre-flight verdict `refuse` (signal ≤ floor) at evolve start — the arm's
-   contract cannot out-signal its own noise; fix before spending rounds.
-3. A stream of `inconclusive` dead-letters (if the evidence gate were ever
-   enabled) or a `stalled_loop` across the full round budget with zero
-   promotions on **BASE** — indicates a target/endpoint problem, not a knob
-   effect; halt the whole campaign, not just the arm.
-4. Wall-clock or spend exceeds 1.5× the §5 planning estimate for the arm —
-   stop and re-price before continuing (cost variance, §3.4).
-5. Any run whose infra-abort rate (§dev-guide §1.6 `is_infra_abort_cause`)
-   dominates real measurements — those are endpoint outages, not signal;
-   the run is void and re-run, never averaged in.
+| # | Signal | Threshold | Action |
+|---|---|---|---|
+| 1 | `placebo_promoted` CRITICAL (`detect_placebo_promoted`) | fires once | Abort the run AND freeze that arm — its evidence is void until the coordinator explains it. |
+| 2 | Pre-flight verdict `REFUSE` (signal ≤ floor) at evolve start | verdict == `VERDICT_REFUSE` | Abort the run — the arm's contract cannot out-signal its own noise; surface to coordinator, do not spend rounds. |
+| 3 | `stalled_loop` / zero promotions **on BASE (A0)** across the full 12-round budget (or a stream of gate `inconclusive` dead-letters if the gate were ever enabled) | whole round budget, BASE only | **Halt the WHOLE campaign** — this is a target/endpoint problem, not a knob effect. |
+| 4 | Wall-clock or spend for the arm | > 1.5× the §5 planning estimate | Stop and re-price with the coordinator before continuing (cost variance, §3.4). |
+| 5 | Infra-abort rate (`core/loss.is_infra_abort_cause`, dev-guide §1.6) | dominates real measurements in the run | The run is **void** — re-run it (this counts as the one permitted restart, #below), never average it in. |
 
-## 7. Cross-references
+**Crash / restart policy:**
+
+- A run that **crashes** (process death, infra outage, an abort-trigger #5
+  void) is **restarted ONCE** from its own `campaign-<ts>/<arm>/k<seed_index>`
+  workspace (fresh clone, same arm contract).
+- **Twice-crashed → record the run as `aborted`** in `runs.jsonl`
+  (`"aborted": true`, `"abort_reason": "<one line>"`). **Never silently drop
+  it.**
+- An **aborted run does NOT get re-seeded** — K shrinks for that arm (e.g. an
+  arm with one abort completes at K=5), and the §7 report **says so
+  explicitly** (the arm's K in the headline table is the *completed* count,
+  with the abort listed in the anomalies section). Do not substitute a fresh
+  seed to "top up" K; that would silently bias the arm.
+
+### 6.5 Data collection (one record per arm×seed run; every field's SOURCE named)
+
+Emit exactly one `runs.jsonl` record (§7.1 schema) per arm×seed run. Pull each
+field from the shipped surface below — no ad-hoc file walks; every source is
+verified present in the tree:
+
+| Field | Source (verified in tree) |
+|---|---|
+| `arm`, `seed_index`, `workspace` | executor bookkeeping (the §6.3 workspace path) |
+| `epoch_id` | the epoch opened by `epoch new` (`epoch/lifecycle.current_epoch_id`) |
+| `rounds_completed` | RoundLog fold — count of settled `RoundRecord`s (`epoch/round_log.py:473`) |
+| `promotions` | `tournament/detail.tournament_summary` → `promoted_count` (`detail.py:1256`) |
+| `final_champion_delta_scalar` | `analyzer/report_data.EpochReportData.final_scalar` (`report_data.py:183`) minus the seed scalar |
+| `measured_floor` | `zicato board preflight` A/A floor → `epoch/preflight.noise_floor_max_abs_delta`, persisted via `epoch/lifecycle.set_epoch_noise_floor` (`lifecycle.py:697`) |
+| `delta_in_floor_units` | `final_champion_delta_scalar / measured_floor` (the §3.1 floor-unit statement) |
+| `board_runs` | `builder/operations.estimate_cost.board_runs_per_round` (`operations.py:1232`) × `rounds_completed` — deterministic given the structure (E4, §5) |
+| `llm_calls_estimate` | the §5 envelope (harness ≈ 5/run + aux judge ≈ 1.5/run + aux propose/critique) applied to `board_runs` |
+| `wall_clock_s` | `tournament/detail.tournament_cost` → `total_runtime` (`detail.py:1436`), seconds |
+| `calibration_fraction` | `proposer/calibration.sample_calibration.calibration_fraction` (`calibration.py:122,248`) / `tournament/detail.proposer_calibration_rate` (`detail.py:1013`) |
+| `holdout_confirms`, `holdout_rejects` | RoundLog fold — `HoldoutReleased` events (`epoch/round_log.py:205`) |
+| `placebo_events` | `health/diagnostics.detect_placebo_promoted` count (`diagnostics.py:885`) |
+| `gate_margin_summary` | RoundLog fold — `GateEvaluated.margin` over settled rounds (`epoch/round_log.py:196`), reduced to `{median, max}` |
+| `dashboard_url` | the exact URL `evolve` printed (§6.3), default `http://127.0.0.1:7892` or the run's assigned port |
+| `aborted`, `abort_reason`, `notes` | executor bookkeeping (§6.4 policy) |
+
+The cross-run roll-up (mean E1 ± CI per arm) is a read over the K closed
+epochs' `EpochReportData` via the ANALYTICAL-INDEX cross-run query layer
+(§3.3) — not a re-derivation from raw telemetry.
+
+## 7. The reporting contract (the coordinator's required output format)
+
+**This is what you deliver. Produce every artifact below; make no decisions.**
+You compute the pre-registered statistics; the §4 decision rules are applied by
+the **coordinator**, not you. Do not declare wins, do not flip defaults, do not
+graduate arms — those verdicts are the coordinator's.
+
+### 7.1 Artifacts (all under `campaign-<ts>/results/`)
+
+**`runs.jsonl`** — one JSON object per arm×seed run, this exact schema
+(fields sourced per §6.5):
+
+```json
+{"arm": "A2", "seed_index": 3, "workspace": "campaign-20260712T0900/A2/k3",
+ "epoch_id": "campaign_A2_k3", "rounds_completed": 12, "promotions": 2,
+ "final_champion_delta_scalar": 0.83, "delta_in_floor_units": 1.3,
+ "measured_floor": 0.64, "board_runs": 240, "llm_calls_estimate": 1180,
+ "wall_clock_s": 1042, "calibration_fraction": 0.5, "holdout_confirms": 2,
+ "holdout_rejects": 0, "placebo_events": 0,
+ "gate_margin_summary": {"median": 0.4, "max": 1.1},
+ "dashboard_url": "http://127.0.0.1:7892", "aborted": false,
+ "abort_reason": null, "notes": ""}
+```
+
+**`floor.json`** — the per-arm measured A/A floor and the **BASE cross-run sd**
+estimate with its K (the §6.3 run-ordering gate):
+
+```json
+{
+  "per_arm_floor": { "A0": 0.64, "A1": 0.64, "A2": 0.64, "...": "..." },
+  "base_cross_run_sd": { "value": 0.71, "K": 6, "floor": 0.64,
+                         "ratio_f": 1.11, "exceeds_1_5x": false }
+}
+```
+
+**`campaign_summary.json`** — per-arm aggregates. The pre-registered statistic
+is **mean `delta_in_floor_units` ± the 90% CI** (§4):
+
+```json
+{
+  "A0": { "K_completed": 6, "mean_delta_floor_units": 0.00,
+          "ci90": [-0.40, 0.40], "promotions_total": 5, "rounds_total": 72,
+          "board_runs_total": 1008, "cost_per_promotion_board_runs": 201.6,
+          "mean_calibration_fraction": 0.48, "flags": [] },
+  "A2": { "K_completed": 5, "mean_delta_floor_units": 0.30,
+          "ci90": [-0.15, 0.75], "promotions_total": 4, "rounds_total": 60,
+          "board_runs_total": 1200, "cost_per_promotion_board_runs": 300.0,
+          "mean_calibration_fraction": 0.51,
+          "flags": ["K_shrank_from_abort", "screen_cost_premium"] }
+}
+```
+
+**`CAMPAIGN-REPORT.md`** — the human summary, on this **fixed template** (fill
+the brackets; keep the section order):
+
+```markdown
+# Campaign <ts> — screening results (K=6 × R=12 × 8 arms)
+
+Authorization: <verbatim operator go-ahead wording, §6.0>.
+Measured floor: <value> (BASE A/A, board preflight, K=<n> draws).
+
+## Headline table
+| Arm | K | mean Δ (floor units) ± 90% CI | promotions / rounds | board-runs | cost / promotion (board-runs) | calibration frac | flags |
+|-----|---|-------------------------------|---------------------|-----------|-------------------------------|------------------|-------|
+| A0 BASE | 6 | 0.00 ± 0.40 | 5 / 72 | 1008 | 201.6 | 0.48 | — |
+| ...     |   |             |       |      |       |                  |       |
+
+## The sd-vs-floor finding (§3.2 / §6.3 gate)
+BASE cross-run sd = <value> over K=6; floor = <value>; ratio f = <value>.
+<"f ≤ 1.5 → flip bar trustworthy as written" | "f > 1.5 → PAUSED, coordinator
+confirmed <how> before remaining arms launched">.
+
+## Per-arm narratives (one paragraph each, A0…A7 + extension arms)
+<arm>: <what the numbers show — Δ in floor units, CI overlap with A0,
+promotions, cost, any calibration/holdout/placebo notes. No verdict.>
+
+## Anomalies
+<aborts (arm, seed, reason, resulting K), abort-trigger fires, sd pause,
+endpoint throttling, anything that departed from the plan.>
+
+## Artifact inventory
+- runs.jsonl (<n> records)
+- floor.json
+- campaign_summary.json
+- per-run analysis.md / analysis.html paths
+```
+
+### 7.2 The final message back to the coordinator (verbatim contract)
+
+Send the coordinator, in one message:
+
+1. **The headline table** (the §7.1 `CAMPAIGN-REPORT.md` table, inline).
+2. **The BASE sd finding** — one line: sd, floor, ratio `f`, and whether the
+   §6.3 pause fired.
+3. **Aborts / anomalies** — each with a **one-line cause** (arm, seed,
+   trigger, resulting K).
+4. **The artifact paths** (`campaign-<ts>/results/…`).
+5. **Explicitly: NO decision-making and NO raw dumps.** You computed the
+   pre-registered statistics; the **§4 decision rules are the coordinator's to
+   apply**. Do not paste raw `runs.jsonl` into the message — reference the file.
+
+**Progress cadence:** send **one status report per completed ARM** (its
+per-arm row + any anomaly), **not per round**. The BASE-arm status report
+additionally carries the §6.3 sd-vs-floor gate result (and, if `f > 1.5`, is
+the message that PAUSES for coordinator confirmation before the remaining
+arms).
+
+## 8. Cross-references
 
 | Topic | Source |
 |---|---|
