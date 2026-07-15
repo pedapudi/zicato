@@ -230,6 +230,14 @@ def create_app(
             handlers["api_epoch_round_timeline"],
         ),
         Route(
+            "/api/epoch/{epoch_id}/evals",
+            handlers["api_epoch_evals"],
+        ),
+        Route(
+            "/api/epoch/{epoch_id}/eval/{entry_id}",
+            handlers["api_epoch_eval_entry"],
+        ),
+        Route(
             "/api/generation/{epoch_id}/{generation_id}/per-judge",
             handlers["api_per_judge_for_generation"],
         ),

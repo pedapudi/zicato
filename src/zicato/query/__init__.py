@@ -56,6 +56,10 @@ from zicato.query.epoch_view import (
     compute_epoch_delta_summary,
     read_epoch_analysis_html,
 )
+from zicato.query.eval_view import (
+    build_eval_dossier,
+    build_eval_matrix,
+)
 from zicato.query.events_index import (
     _CONTRACT_COMPONENT_NAMES,
     _LEDGER_COMPONENT_NAMES,
@@ -343,6 +347,8 @@ __all__ = [
     "build_adjudication_xray",
     "entry_candidate_matrix",
     "list_reflections",
+    "build_eval_matrix",
+    "build_eval_dossier",
     "build_round_timeline",
     "build_per_entry_for_generation",
     "build_round_pipeline",

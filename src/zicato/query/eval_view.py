@@ -1,0 +1,656 @@
+"""eval_view — the eval-centric (board-as-instrument) read surface.
+
+The transpose of the candidate-centric UI: rows are board **entries** (the
+measurement instrument), columns are **candidates** (what the instrument
+measured). Two index-first, file-fallback readers back the three eval views
+(EVAL-VIEW.md §5):
+
+* :func:`build_eval_matrix` — the OUTCOMES lens: the entries × candidates
+  matrix, one cell per (entry, candidate), with replicate-aware aggregation,
+  evidence tiers, holdout flagging, and per-entry A/A flip rates.
+* :func:`build_eval_dossier` — the INSTRUMENT-QUALITY lens for ONE entry: its
+  flip rate, discrimination, runtime cost, per-candidate trajectory, and the
+  first-passed-by / regressed-by attribution along the champion spine.
+
+Every reader is best-effort and honest (EVAL-VIEW.md §3 DQ1/DQ2/DQ3): a
+never-indexed workspace, an unknown epoch/entry, or absent calibration
+degrades to a same-shape payload (``found: False`` / ``null`` fields, a
+``"flip rate unmeasured"`` signal — NEVER a fabricated ``0.0``) rather than
+raising. This module stays dashboard-free (the ``zicato.query`` import
+contract).
+
+The pure analytics helpers (:func:`flip_rate`, :func:`discrimination`,
+:func:`runtime_aggregates`, :func:`pass_ratio`, :func:`evidence_of`) do no
+I/O and are unit-tested against known answers.
+"""
+
+from __future__ import annotations
+
+import json
+import statistics
+from typing import Any
+
+from zicato.query.paths import (
+    WorkspacePaths,
+    _read_json_value,
+    _resolve_epoch_id,
+    coerce_float,
+    layout_of,
+)
+
+# The A/A calibration draws cache per replicate at this base (base 1000); the
+# per-entry flip rate reads those replicate files directly (EVAL-VIEW.md §2.2).
+_CALIBRATION_REPLICATE_BASE = 1000
+
+
+# ---------------------------------------------------------------------------
+# Pure analytics helpers (no I/O — unit-tested against known answers)
+# ---------------------------------------------------------------------------
+
+
+def flip_rate(pass_fail_draws: list[bool | None]) -> float | None:
+    """The A/A flip rate over K calibration draws (EVAL-VIEW.md §2.2).
+
+    The fraction of usable (non-``None``) draws whose pass/fail verdict flipped
+    from the majority: ``min(#pass, #fail) / n_usable``. ``None`` when fewer
+    than two usable draws exist — an unmeasured floor is honest, a ``0.0`` is a
+    lie.
+    """
+    bits = [bool(b) for b in pass_fail_draws if b is not None]
+    if len(bits) < 2:
+        return None
+    passes = sum(1 for b in bits if b)
+    fails = len(bits) - passes
+    return min(passes, fails) / len(bits)
+
+
+def pass_ratio(bits: list[bool | None]) -> float | None:
+    """Mean of the non-``None`` pass/fail bits, or ``None`` when there are none."""
+    vals = [bool(b) for b in bits if b is not None]
+    if not vals:
+        return None
+    return sum(1 for b in vals if b) / len(vals)
+
+
+def majority_verdict(bits: list[bool | None]) -> bool | None:
+    """The majority pass/fail verdict; ``None`` on no bits OR an exact tie.
+
+    A tie is genuinely ambiguous, so it degrades to ``None`` rather than
+    silently rounding toward pass.
+    """
+    ratio = pass_ratio(bits)
+    if ratio is None or ratio == 0.5:
+        return None
+    return ratio > 0.5
+
+
+def evidence_of(n: int) -> str:
+    """Evidence tier for a cell built from ``n`` runs (EVAL-VIEW.md §4.1)."""
+    if n <= 0:
+        return "none"
+    if n == 1:
+        return "single"
+    return "replicated"
+
+
+def runtime_aggregates(values: list[float | int | None]) -> dict[str, float | None]:
+    """``{mean, p50, max}`` over the non-``None`` runtimes (ms)."""
+    vals = [float(v) for v in values if isinstance(v, int | float) and not isinstance(v, bool)]
+    if not vals:
+        return {"mean": None, "p50": None, "max": None}
+    return {
+        "mean": sum(vals) / len(vals),
+        "p50": float(statistics.median(vals)),
+        "max": max(vals),
+    }
+
+
+def discrimination(pairs: list[tuple[Any, bool | None]]) -> tuple[float | None, int]:
+    """Discrimination rate over same-match groups (EVAL-VIEW.md §2.3).
+
+    ``pairs`` is a list of ``(group_key, pass_fail)`` — the group key is the
+    matchup ``(tournament_id, match_id)``. A group *discriminates* when it has
+    at least two usable verdicts and they are not all equal. Returns
+    ``(discriminating_groups / groups_with_both_sides, groups_with_both_sides)``;
+    ``(None, 0)`` when no group has both sides present (nothing to discriminate).
+    """
+    groups: dict[Any, list[bool]] = {}
+    for key, pf in pairs:
+        if pf is None:
+            continue
+        groups.setdefault(key, []).append(bool(pf))
+    both = 0
+    disc = 0
+    for bits in groups.values():
+        if len(bits) < 2:
+            continue
+        both += 1
+        if any(b != bits[0] for b in bits):
+            disc += 1
+    if both == 0:
+        return None, 0
+    return disc / both, both
+
+
+# ---------------------------------------------------------------------------
+# Small internal accessors (tolerant of a stale index / missing columns)
+# ---------------------------------------------------------------------------
+
+
+def _row_get(row: Any, key: str) -> Any:
+    """``row[key]`` when present, else ``None`` (tolerates an omitted column)."""
+    try:
+        keys = row.keys()
+    except AttributeError:
+        return None
+    return row[key] if key in keys else None
+
+
+def _opt_bool(value: Any) -> bool | None:
+    if value is None:
+        return None
+    return bool(value)
+
+
+def _opt_int(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return int(value)
+
+
+def _score_from_loss_json(row: Any) -> float | None:
+    """Lift the continuous ``score`` out of the row's ``loss_json`` blob.
+
+    The continuous per-entry outcome lives in the verbatim ``loss_json`` blob,
+    not a dedicated column (mirrors ``judge_view.build_per_entry_for_generation``).
+    A missing / malformed blob degrades to ``None``.
+    """
+    raw = _row_get(row, "loss_json")
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        blob = json.loads(raw)
+    except (ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(blob, dict):
+        return None
+    return coerce_float(blob.get("score"))
+
+
+# ---------------------------------------------------------------------------
+# Shared workspace loads (board order + holdout split + calibration)
+# ---------------------------------------------------------------------------
+
+
+def _load_board_entries(paths: WorkspacePaths, epoch_id: str) -> list[Any]:
+    """Load the epoch's board as ``BoardEntry`` objects (``[]`` on any defect)."""
+    from zicato.board.jsonl import load_board  # noqa: PLC0415
+
+    try:
+        return list(load_board(layout_of(paths).board(epoch_id)))
+    except Exception:  # noqa: BLE001 — best-effort; a missing/bad board degrades
+        return []
+
+
+def _holdout_ids(paths: WorkspacePaths, epoch_id: str, board_entries: list[Any]) -> set[str]:
+    """The holdout id set, bound to the SAME split the gate plays (§2.4).
+
+    Uses the canonical :func:`zicato.board.split.split_board` with
+    ``seed = rotation_seed(cfg, epoch_id)`` (exactly the gate's call), reading
+    the ``overfitting`` block off the epoch's ``scoring.json``. An empty /
+    unconfigured / unreadable split yields an empty set (every entry train).
+    """
+    from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
+    from zicato.workspace_loader import overfitting_config_from_dict  # noqa: PLC0415
+
+    if not board_entries:
+        return set()
+    scoring = _read_json_value(layout_of(paths).epoch_dir(epoch_id) / "scoring.json")
+    raw = scoring.get("overfitting") if isinstance(scoring, dict) else None
+    try:
+        cfg = overfitting_config_from_dict(raw)
+        seed = rotation_seed(cfg, epoch_id)
+        _train, holdout = split_board(board_entries, cfg, seed=seed)
+    except Exception:  # noqa: BLE001 — best-effort; degrade to no holdout
+        return set()
+    return set(holdout)
+
+
+def _calibration(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
+    """Read the persisted A/A noise floor off ``config.json`` (§2.2).
+
+    Returns ``{measured, generation_id, runs, max_abs_delta}``. ``measured`` is
+    ``False`` when no ``noise_floor`` was persisted — the caller then reports
+    flip rate unmeasured rather than fabricating a zero.
+    """
+    cfg = _read_json_value(layout_of(paths).epoch_dir(epoch_id) / "config.json")
+    floor = cfg.get("noise_floor") if isinstance(cfg, dict) else None
+    if not isinstance(floor, dict):
+        return {"measured": False, "generation_id": None, "runs": 0, "max_abs_delta": None}
+    gen = floor.get("generation_id")
+    runs = floor.get("runs")
+    return {
+        "measured": True,
+        "generation_id": gen if isinstance(gen, str) and gen else None,
+        "runs": int(runs) if isinstance(runs, int) and not isinstance(runs, bool) else 0,
+        "max_abs_delta": coerce_float(floor.get("max_abs_delta")),
+    }
+
+
+def _per_entry_flip_rates(
+    paths: WorkspacePaths, epoch_id: str, calibration: dict[str, Any]
+) -> dict[str, float | None]:
+    """Per-entry A/A flip rate from the base-1000 replicate files (§2.2).
+
+    The calibration draws are NOT ingested into ``loss_profiles`` (the index
+    reads only replicate-0 canonical ``loss.json``), so this reads
+    ``loss.r<1000+i>.json`` for ``i in [0, runs)`` under the champion
+    generation directly and folds each entry's per-draw ``pass_fail`` through
+    :func:`flip_rate`. Returns ``{entry_id: flip_rate | None}`` — empty when
+    calibration was never measured.
+    """
+    from zicato.telemetry.reducer import read_loss_profile  # noqa: PLC0415
+    from zicato.tournament.unit_cache import _unit_loss_path  # noqa: PLC0415
+
+    gen = calibration.get("generation_id")
+    runs = calibration.get("runs") or 0
+    if not calibration.get("measured") or not isinstance(gen, str) or runs < 2:
+        return {}
+
+    # Discover which entries have a champion run dir (the calibration wrote one
+    # replicate file per board entry under the champion generation).
+    runs_root = layout_of(paths).epoch_dir(epoch_id) / "generations" / gen / "runs"
+    if not runs_root.exists():
+        return {}
+
+    out: dict[str, float | None] = {}
+    for child in sorted(runs_root.iterdir()):
+        if not child.is_dir():
+            continue
+        entry_id = child.name
+        draws: list[bool | None] = []
+        for i in range(runs):
+            replicate = _CALIBRATION_REPLICATE_BASE + i
+            path = _unit_loss_path(paths.root, epoch_id, gen, entry_id, replicate)
+            try:
+                profile = read_loss_profile(path)
+            except (OSError, ValueError, KeyError, json.JSONDecodeError):
+                profile = None
+            if profile is None:
+                continue
+            draws.append(getattr(profile, "pass_fail", None))
+        # Only report a rate when at least one draw was actually read; an entry
+        # with no replicate files stays unmeasured (absent from the map).
+        if draws:
+            out[entry_id] = flip_rate(draws)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Candidate axis (columns) — round order, champion spine marked
+# ---------------------------------------------------------------------------
+
+
+def _candidate_axis(paths: WorkspacePaths, epoch_id: str) -> list[dict[str, Any]]:
+    """The ordered candidate columns for the epoch (EVAL-VIEW.md §3.1).
+
+    Column order is ``(round_index ?? +inf, created_at, generation_id)`` — the
+    index already returns generations in ``(created_at, generation_id)`` order,
+    so a stable sort by ``round_index`` finishes the ordering. Each column
+    carries ``promoted`` / ``champion_spine`` (the promoted spine) and the
+    read-only rating triple.
+    """
+    from zicato.index.query import generations_for_epoch  # noqa: PLC0415
+
+    try:
+        rows = generations_for_epoch(paths.index_db, epoch_id)
+    except Exception:  # noqa: BLE001 — best-effort
+        rows = []
+
+    axis: list[dict[str, Any]] = []
+    for r in rows:
+        gid = _row_get(r, "generation_id")
+        if not isinstance(gid, str) or not gid:
+            continue
+        promoted = bool(_row_get(r, "promoted"))
+        axis.append(
+            {
+                "generation_id": gid,
+                "round_index": _opt_int(_row_get(r, "round_index")),
+                "promoted": promoted,
+                # The promoted generations form the champion spine (§3.1).
+                "champion_spine": promoted,
+                "elo": coerce_float(_row_get(r, "elo")),
+                "elo_se": coerce_float(_row_get(r, "elo_se")),
+            }
+        )
+
+    # Stable sort by round_index (None sinks last); the index' created_at order
+    # is preserved for equal round indices.
+    axis.sort(key=lambda c: (c["round_index"] is None, c["round_index"] or 0))
+    return axis
+
+
+def _rows_for_candidate(paths: WorkspacePaths, epoch_id: str, gen: str) -> list[Any]:
+    from zicato.index.query import loss_profiles_for_generation  # noqa: PLC0415
+
+    try:
+        return list(loss_profiles_for_generation(paths.index_db, epoch_id, gen))
+    except Exception:  # noqa: BLE001 — best-effort
+        return []
+
+
+def _aggregate_cell(rows: list[Any]) -> dict[str, Any] | None:
+    """Fold multiple (entry, candidate) runs into ONE cell (§3.1 aggregation)."""
+    if not rows:
+        return None
+    drift = [coerce_float(_row_get(r, "drift_loss")) for r in rows]
+    drift_vals = [d for d in drift if d is not None]
+    scores = [_score_from_loss_json(r) for r in rows]
+    score_vals = [s for s in scores if s is not None]
+    bits = [_opt_bool(_row_get(r, "pass_fail")) for r in rows]
+    runtimes = [_row_get(r, "runtime_ms") for r in rows]
+    # latest_run_id: the last run id in the index' (entry_id, run_id) order.
+    run_ids = [_row_get(r, "run_id") for r in rows if isinstance(_row_get(r, "run_id"), str)]
+    cached_any = any(bool(_row_get(r, "cached")) for r in rows)
+    return {
+        "drift_loss": (sum(drift_vals) / len(drift_vals)) if drift_vals else None,
+        "pass_ratio": pass_ratio(bits),
+        "pass_fail": majority_verdict(bits),
+        "score": (sum(score_vals) / len(score_vals)) if score_vals else None,
+        "replicates": len(rows),
+        "cached": cached_any,
+        "latest_run_id": run_ids[-1] if run_ids else None,
+        "runtime_ms_mean": runtime_aggregates(runtimes)["mean"],
+        "evidence": evidence_of(len(rows)),
+    }
+
+
+# ---------------------------------------------------------------------------
+# build_eval_matrix — the OUTCOMES lens
+# ---------------------------------------------------------------------------
+
+
+def _empty_matrix(epoch_id: str | None) -> dict[str, Any]:
+    return {
+        "epoch_id": epoch_id,
+        "found": False,
+        "candidates": [],
+        "entries": [],
+        "cells": [],
+        "calibration": {"measured": False, "generation_id": None, "runs": 0, "max_abs_delta": None},
+        "note": "no such epoch / never indexed",
+    }
+
+
+def build_eval_matrix(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[str, Any]:
+    """The entries × candidates outcomes matrix for one epoch (EVAL-VIEW.md §3.1).
+
+    Rows are board entries (board order, holdout-flagged, flip-rate-badged);
+    columns are candidates (round order, champion spine marked). Each cell folds
+    every (entry, candidate) run into a replicate-aware summary with an evidence
+    tier. A never-indexed workspace or an unknown epoch degrades to a same-shape
+    payload with ``found: False`` (never raises).
+    """
+    try:
+        resolved = _resolve_epoch_id(paths, epoch_id)
+    except ValueError:
+        return _empty_matrix(epoch_id)
+    if resolved is None:
+        return _empty_matrix(epoch_id)
+
+    candidates = _candidate_axis(paths, resolved)
+    board_entries = _load_board_entries(paths, resolved)
+    holdout = _holdout_ids(paths, resolved, board_entries)
+    calibration = _calibration(paths, resolved)
+    flips = _per_entry_flip_rates(paths, resolved, calibration)
+
+    # (entry_id, gen) -> aggregated cell. Built from the per-candidate loss rows.
+    cell_by: dict[tuple[str, str], dict[str, Any]] = {}
+    seen_entries: list[str] = []
+    seen_set: set[str] = set()
+    for cand in candidates:
+        gen = cand["generation_id"]
+        by_entry: dict[str, list[Any]] = {}
+        for r in _rows_for_candidate(paths, resolved, gen):
+            eid = _row_get(r, "entry_id")
+            if not isinstance(eid, str) or not eid:
+                continue
+            by_entry.setdefault(eid, []).append(r)
+        for eid, rows in by_entry.items():
+            cell = _aggregate_cell(rows)
+            if cell is not None:
+                cell_by[(eid, gen)] = cell
+            if eid not in seen_set:
+                seen_set.add(eid)
+                seen_entries.append(eid)
+
+    # Row order: board order first (the instrument's own order), then any entry
+    # that has loss rows but is absent from the board (defensive — a renamed /
+    # dropped entry still surfaces rather than vanishing).
+    board_order = [e.id for e in board_entries if isinstance(getattr(e, "id", None), str)]
+    board_set = set(board_order)
+    ordered_entries = board_order + [e for e in seen_entries if e not in board_set]
+
+    entries_out: list[dict[str, Any]] = []
+    cells: list[list[dict[str, Any] | None]] = []
+    for eid in ordered_entries:
+        measured = eid in flips
+        entries_out.append(
+            {
+                "entry_id": eid,
+                "slice": "holdout" if eid in holdout else "train",
+                "tag": "holdout" if eid in holdout else None,
+                "flip_rate": flips.get(eid) if measured else None,
+                "flip_rate_measured": measured,
+                "calibration_runs": calibration["runs"] if calibration["measured"] else 0,
+            }
+        )
+        cells.append([cell_by.get((eid, cand["generation_id"])) for cand in candidates])
+
+    return {
+        "epoch_id": resolved,
+        "found": True,
+        "candidates": candidates,
+        "entries": entries_out,
+        "cells": cells,
+        "calibration": calibration,
+    }
+
+
+# ---------------------------------------------------------------------------
+# build_eval_dossier — the per-entry INSTRUMENT-QUALITY lens
+# ---------------------------------------------------------------------------
+
+
+def _empty_dossier(epoch_id: str | None, entry_id: str) -> dict[str, Any]:
+    return {
+        "epoch_id": epoch_id,
+        "entry_id": entry_id,
+        "found": False,
+        "slice": "train",
+        "tag": None,
+        "instrument": {
+            "flip_rate": None,
+            "flip_rate_measured": False,
+            "calibration_runs": 0,
+            "discrimination": None,
+            "discrimination_pairs": 0,
+            "runtime_ms_mean": None,
+            "runtime_ms_p50": None,
+            "runtime_ms_max": None,
+            "replicate_total": 0,
+            "cached_share": None,
+        },
+        "trajectory": [],
+        "attribution": {"first_passed_by": None, "regressed_by": []},
+        "reflection_findings": [],
+        "note": "no such epoch / entry",
+    }
+
+
+def _reflection_findings_for_entry(
+    paths: WorkspacePaths, epoch_id: str, entry_id: str
+) -> list[dict[str, Any]]:
+    """Best-effort links to reflection findings that NAME this entry (§2.6).
+
+    Cheap and honest: scans the epoch's reflections (via ``reflection_view``)
+    and keeps findings whose serialized text mentions ``entry_id``. Empty when
+    no reflection exists or none reference the entry — the WS-DOSSIER view links
+    into ``reflection_view`` for the full detail; this is only the pointer.
+    """
+    from zicato.query.reflection_view import (  # noqa: PLC0415
+        build_reflection_summary,
+        list_reflections,
+    )
+
+    out: list[dict[str, Any]] = []
+    try:
+        listing = list_reflections(paths, epoch_id)
+    except Exception:  # noqa: BLE001 — best-effort
+        return []
+    for item in listing.get("reflections", []):
+        rid = item.get("reflection_id")
+        if not isinstance(rid, str) or not rid:
+            continue
+        try:
+            summary = build_reflection_summary(paths, rid)
+        except Exception:  # noqa: BLE001 — best-effort
+            continue
+        for finding in summary.get("findings", []):
+            if isinstance(finding, dict) and entry_id in json.dumps(finding):
+                out.append({"reflection_id": rid, "finding": finding})
+    return out
+
+
+def build_eval_dossier(
+    paths: WorkspacePaths, epoch_id: str | None, entry_id: str
+) -> dict[str, Any]:
+    """One board entry across every candidate — the instrument-quality lens (§3.2).
+
+    Assembles the entry's A/A flip rate, its discrimination (same-match_id
+    verdict splits), its runtime cost aggregates, a per-candidate trajectory in
+    round order, and the first-passed-by / regressed-by attribution along the
+    champion spine. An unknown epoch/entry degrades to a same-shape payload with
+    ``found: False``.
+    """
+    try:
+        resolved = _resolve_epoch_id(paths, epoch_id)
+    except ValueError:
+        return _empty_dossier(epoch_id, entry_id)
+    if resolved is None:
+        return _empty_dossier(epoch_id, entry_id)
+
+    candidates = _candidate_axis(paths, resolved)
+    board_entries = _load_board_entries(paths, resolved)
+    holdout = _holdout_ids(paths, resolved, board_entries)
+    calibration = _calibration(paths, resolved)
+    flips = _per_entry_flip_rates(paths, resolved, calibration)
+
+    # Gather every loss row for THIS entry, per candidate.
+    per_candidate_rows: dict[str, list[Any]] = {}
+    all_rows: list[Any] = []
+    for cand in candidates:
+        gen = cand["generation_id"]
+        rows = [
+            r
+            for r in _rows_for_candidate(paths, resolved, gen)
+            if _row_get(r, "entry_id") == entry_id
+        ]
+        if rows:
+            per_candidate_rows[gen] = rows
+            all_rows.extend(rows)
+
+    board_ids = {e.id for e in board_entries if isinstance(getattr(e, "id", None), str)}
+    found = entry_id in board_ids or bool(all_rows)
+    if not found:
+        payload = _empty_dossier(resolved, entry_id)
+        payload["epoch_id"] = resolved
+        return payload
+
+    # Discrimination: pair rows by (tournament_id, match_id), restricted to
+    # MATCHUP-scoped rows (a real ``match_id``) and EXCLUDING cached rows (a
+    # carried-over result is not a fresh measurement of the matchup). A
+    # gauntlet/ad-hoc run (no match_id) is not a matchup and never counts.
+    disc_pairs: list[tuple[Any, bool | None]] = []
+    for r in all_rows:
+        if bool(_row_get(r, "cached")):
+            continue
+        mid = _row_get(r, "match_id")
+        if not isinstance(mid, str) or not mid:
+            continue
+        disc_pairs.append(
+            ((_row_get(r, "tournament_id"), mid), _opt_bool(_row_get(r, "pass_fail")))
+        )
+    disc_rate, disc_n = discrimination(disc_pairs)
+
+    runtimes = [_row_get(r, "runtime_ms") for r in all_rows]
+    rt = runtime_aggregates(runtimes)
+    cached_count = sum(1 for r in all_rows if bool(_row_get(r, "cached")))
+    cached_share = (cached_count / len(all_rows)) if all_rows else None
+    measured = entry_id in flips
+
+    # Trajectory + attribution along the champion spine (round order).
+    trajectory: list[dict[str, Any]] = []
+    first_passed_by: str | None = None
+    regressed_by: list[str] = []
+    prev_pass: bool | None = None
+    for cand in candidates:
+        gen = cand["generation_id"]
+        rows = per_candidate_rows.get(gen, [])
+        cell = _aggregate_cell(rows)
+        bits = [_opt_bool(_row_get(r, "pass_fail")) for r in rows]
+        verdict = majority_verdict(bits)
+        trajectory.append(
+            {
+                "generation_id": gen,
+                "round_index": cand["round_index"],
+                "champion_spine": cand["champion_spine"],
+                "drift_loss": cell["drift_loss"] if cell else None,
+                "pass_ratio": cell["pass_ratio"] if cell else None,
+                "replicates": cell["replicates"] if cell else 0,
+                "cached": cell["cached"] if cell else False,
+            }
+        )
+        # Attribution walks the champion spine only (the promoted path).
+        if cand["champion_spine"] and verdict is not None:
+            if verdict and first_passed_by is None:
+                first_passed_by = gen
+            if prev_pass is True and verdict is False:
+                regressed_by.append(gen)
+            prev_pass = verdict
+
+    return {
+        "epoch_id": resolved,
+        "entry_id": entry_id,
+        "found": True,
+        "slice": "holdout" if entry_id in holdout else "train",
+        "tag": "holdout" if entry_id in holdout else None,
+        "instrument": {
+            "flip_rate": flips.get(entry_id) if measured else None,
+            "flip_rate_measured": measured,
+            "calibration_runs": calibration["runs"] if calibration["measured"] else 0,
+            "discrimination": disc_rate,
+            "discrimination_pairs": disc_n,
+            "runtime_ms_mean": rt["mean"],
+            "runtime_ms_p50": rt["p50"],
+            "runtime_ms_max": rt["max"],
+            "replicate_total": len(all_rows),
+            "cached_share": cached_share,
+        },
+        "trajectory": trajectory,
+        "attribution": {"first_passed_by": first_passed_by, "regressed_by": regressed_by},
+        "reflection_findings": _reflection_findings_for_entry(paths, resolved, entry_id),
+    }
+
+
+__all__ = [
+    "build_eval_dossier",
+    "build_eval_matrix",
+    "discrimination",
+    "evidence_of",
+    "flip_rate",
+    "majority_verdict",
+    "pass_ratio",
+    "runtime_aggregates",
+]

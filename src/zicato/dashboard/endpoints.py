@@ -413,10 +413,60 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
             return PlainTextResponse("analysis.html not found for this epoch", status_code=404)
         return HTMLResponse(html)
 
+    async def api_epoch_evals(request: Request) -> JSONResponse:
+        """The entries × candidates outcomes matrix for one epoch (EVAL-VIEW.md).
+
+        ``GET /api/epoch/{epoch_id}/evals``. A malformed id degrades to the
+        empty matrix shape (HTTP 200), matching every other coordinate handler.
+        """
+        epoch_id = request.path_params["epoch_id"]
+        if not _is_safe_id(epoch_id):
+            return JSONResponse(
+                {
+                    "epoch_id": epoch_id,
+                    "found": False,
+                    "candidates": [],
+                    "entries": [],
+                    "cells": [],
+                    "calibration": {
+                        "measured": False,
+                        "generation_id": None,
+                        "runs": 0,
+                        "max_abs_delta": None,
+                    },
+                },
+                status_code=200,
+            )
+        return JSONResponse(query.build_eval_matrix(paths, epoch_id))
+
+    async def api_epoch_eval_entry(request: Request) -> JSONResponse:
+        """One board entry's instrument-quality dossier (EVAL-VIEW.md §3.2).
+
+        ``GET /api/epoch/{epoch_id}/eval/{entry_id}``. A malformed id degrades
+        to the empty dossier shape (HTTP 200).
+        """
+        epoch_id = request.path_params["epoch_id"]
+        entry_id = request.path_params["entry_id"]
+        if not _is_safe_id(epoch_id) or not _is_safe_id(entry_id):
+            return JSONResponse(
+                {
+                    "epoch_id": epoch_id,
+                    "entry_id": entry_id,
+                    "found": False,
+                    "trajectory": [],
+                    "attribution": {"first_passed_by": None, "regressed_by": []},
+                    "reflection_findings": [],
+                },
+                status_code=200,
+            )
+        return JSONResponse(query.build_eval_dossier(paths, epoch_id, entry_id))
+
     # -- conversation endpoints --------------------------------------
 
     return {
         "api_epoch": api_epoch,
+        "api_epoch_evals": api_epoch_evals,
+        "api_epoch_eval_entry": api_epoch_eval_entry,
         "api_lineage": api_lineage,
         "api_per_judge_trend": api_per_judge_trend,
         "api_epoch_trajectory": api_epoch_trajectory,
