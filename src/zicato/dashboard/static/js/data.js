@@ -327,6 +327,14 @@ export function tournamentCost(epochId) {
 export function perEntry(epochId, genId) {
   return cachedJson(`/api/generation/${enc(epochId)}/${enc(genId)}/per-entry`);
 }
+// The entries × candidates EVAL MATRIX for one epoch (the board-as-instrument
+// OUTCOMES lens — query.build_eval_matrix). Server-derived + honest: a cold
+// index / unknown epoch degrades to a same-shape `found: false` payload, so a
+// null here is a transport failure only. Rides the `/api/epoch` invalidateLive
+// prefix so a live run refreshes it.
+export function evalMatrix(epochId) {
+  return cachedJson(`/api/epoch/${enc(epochId)}/evals`);
+}
 export function perJudgeForGen(epochId, genId) {
   return cachedJson(`/api/generation/${enc(epochId)}/${enc(genId)}/per-judge`);
 }

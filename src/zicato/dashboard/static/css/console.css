@@ -1026,6 +1026,71 @@
     text-transform: uppercase; letter-spacing: 0.05em; color: var(--v2-ink-soft);
     padding: 1px 6px; border: 1px solid var(--v2-rule); border-radius: 3px; }
 
+  /* ===================  EVALS: entries × candidates matrix (WS-MATRIX)  =================== */
+
+  /* the WS-HEALTH mount seams — an instrument strip above + a ranked section
+   * below; health-a's module fills them (empty until it lands). */
+  .dn-evals-health-strip:empty, .dn-evals-health-section:empty { display: none; }
+  .dn-evals-health-strip { margin: 4px 0 10px; }
+  .dn-evals-health-section { margin: 16px 0 0; }
+
+  /* the calibration caption + client-side filter toolbar */
+  .dn-evals-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px; margin: 4px 0 12px; }
+  .dn-evals-cal { font-size: calc(11px * var(--dt-font-scale, 1)); font-family: var(--v2-mono); }
+  .dn-evals-filters { display: inline-flex; gap: 6px; }
+  .dn-evals-chip { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1));
+    color: var(--v2-ink-soft); background: transparent; border: 1px solid var(--v2-rule);
+    border-radius: 3px; padding: 2px 9px; cursor: pointer; text-transform: lowercase; letter-spacing: 0.03em; }
+  .dn-evals-chip:hover { color: var(--v2-ink); border-color: var(--v2-rule-strong, var(--v2-ink-faint)); }
+  .dn-evals-chip-on { color: var(--v2-accent); border-color: var(--v2-accent); background: var(--v2-accent-soft, var(--v2-good-soft)); }
+
+  /* the matrix grid — reuses the shipped dn-mtx grammar; the wide table scrolls
+   * in its OWN dn-table-scroll container, so the page body never scrolls. */
+  .dn-evalmtx-wrap { margin: 4px 0 0; }
+  .dn-evalmtx-legend { font-size: calc(10.5px * var(--dt-font-scale, 1)); margin: 8px 0 0; line-height: 1.4; }
+  .dn-evalmtx-grouprow .dn-evalmtx-group { text-align: center; padding: 3px 6px; color: var(--v2-ink-faint);
+    font-weight: 400; font-size: calc(9.5px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em;
+    background: var(--v2-panel); }
+  .dn-evalmtx-groupcorner { border: 1px solid var(--v2-rule); }
+  .dn-evalmtx-genhead { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 4px 6px; }
+  .dn-evalmtx-crown { color: var(--v2-good); font-size: calc(11px * var(--dt-font-scale, 1)); }
+  .dn-evalmtx-gen.dn-evalmtx-spine { background: var(--v2-good-soft); }
+  .dn-evalmtx-genlink { color: var(--v2-ink); text-decoration: none; }
+  .dn-evalmtx-genlink:hover { color: var(--v2-accent); text-decoration: underline; }
+  .dn-evalmtx-gen .dn-pill { font-size: calc(9px * var(--dt-font-scale, 1)); padding: 0 5px; }
+
+  /* the entry (row) header: id + holdout marker + flip-rate badge */
+  .dn-evalmtx-sitehead { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 4px 8px; }
+  .dn-evalmtx-entry { color: var(--v2-ink); }
+  .dn-evalmtx-row.dn-evalmtx-holdout .dn-evalmtx-site { border-left: 3px solid var(--v2-accent); }
+  .dn-evalmtx-holdout-tag { font-size: calc(9px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--v2-accent); border: 1px solid var(--v2-accent); border-radius: 3px; padding: 0 5px; }
+  .dn-evalmtx-flip, .dn-eval-flip { font-size: calc(9.5px * var(--dt-font-scale, 1)); font-family: var(--v2-mono);
+    padding: 0 5px; border-radius: 3px; white-space: nowrap; }
+  .dn-eval-flip-clean { color: var(--v2-good); }
+  .dn-eval-flip-warm { color: var(--v2-caution, var(--v2-ink-soft)); }
+  .dn-eval-flip-hot { color: var(--v2-bad); border: 1px solid var(--v2-bad); }
+  .dn-eval-flip-unmeasured { font-style: italic; }
+
+  /* the cells — toned by the SERVED verdict, SHADED BY the SERVED evidence tier
+   * (single → faint, replicated → firm); NEVER re-derived client-side. */
+  .dn-evalmtx-cell { text-align: center; width: 46px; height: 30px; position: relative; }
+  .dn-evalmtx-cell.dn-evalmtx-pass.dn-evalmtx-firm { background: var(--v2-good-soft); }
+  .dn-evalmtx-cell.dn-evalmtx-fail.dn-evalmtx-firm { background: var(--v2-bad-soft); }
+  .dn-evalmtx-cell.dn-evalmtx-single { opacity: 0.55; }
+  .dn-evalmtx-square { fill: var(--v2-good); }
+  .dn-evalmtx-pass .dn-evalmtx-square { fill: var(--v2-good); }
+  .dn-evalmtx-neutral .dn-evalmtx-square { fill: var(--v2-ink-faint); }
+  .dn-evalmtx-glyph { stroke: var(--v2-bad); }
+  .dn-evalmtx-celllink { display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 1px; width: 100%; height: 100%; cursor: pointer; text-decoration: none; }
+  .dn-evalmtx-mark { display: block; }
+  .dn-evalmtx-drift { font-size: calc(8.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); font-variant-numeric: tabular-nums; }
+  .dn-evalmtx-cachemark { position: absolute; top: 1px; right: 2px; font-size: calc(8px * var(--dt-font-scale, 1)); }
+  .dn-evalmtx-cell.dn-evalmtx-cached { outline: 1px dashed var(--v2-rule); outline-offset: -3px; }
+  .dn-evalmtx-hg { position: absolute; bottom: 1px; right: 2px; font-size: calc(8px * var(--dt-font-scale, 1)); }
+  .dn-evalmtx-none .dn-mtx-blank { opacity: 0.4; color: var(--v2-ink-faint); }
+
   .dn-patch-block { border: 1px solid var(--v2-rule-soft); border-radius: 4px; padding: 8px 10px; margin: 8px 0; }
   .dn-patch-head { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
   .dn-patch-op { font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); padding: 1px 6px; border: 1px solid var(--v2-rule); border-radius: 3px; }

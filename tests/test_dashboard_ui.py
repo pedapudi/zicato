@@ -593,7 +593,23 @@ def test_bundle_under_size_envelope(
     # the per-wave-raise interaction the 1.35 MB entry records, fourth
     # occurrence. The envelope is raised to 1.398 MB to cover the combined
     # surface with headroom.
-    assert total < 1_398_000, f"bundle is {total} bytes, exceeds 1_398_000 envelope"
+    #
+    # The EVAL-MATRIX view (WS-MATRIX, EVAL-VIEW.md §5) then adds the new
+    # top-level Evals surface: views/evals.js — the entries × candidates matrix
+    # (the board-as-instrument OUTCOMES lens) rendered in the shipped `dn-mtx`
+    # grid grammar off /api/epoch/{id}/evals, with evidence shading (single →
+    # faint, replicated → firm — the SERVED tier, never re-derived), per-entry
+    # flip-rate row badges (honest "unmeasured", never 0), champion-spine column
+    # marking, the round-grouped header, three client-side filters (failures /
+    # flips / holdout, digest-folded so a no-op beat is byte-identical), and
+    # cell click-through into the run transcript + a live harmonograf deep-link.
+    # Plus its router/shell/tree registration, the data.js reader, and the scoped
+    # dn-evalmtx-* CSS (in console.css, not this counted bundle). The new view is
+    # ~19.4 KB of real read-only surface (a WS-HEALTH mount seam is left for the
+    # sibling instrument panel; back-compat: every other view renders byte-
+    # identical). The measured total is 1,416,472 bytes; the envelope is raised
+    # to 1.42 MB to cover it with a thin margin.
+    assert total < 1_420_000, f"bundle is {total} bytes, exceeds 1_420_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
