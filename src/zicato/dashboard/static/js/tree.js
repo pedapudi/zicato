@@ -268,6 +268,14 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
       }
     }
 
+    // Evals (leaf) — the top-level entries × candidates matrix (the board-as-
+    // instrument OUTCOMES lens); a peer of Boards / Mutation surface.
+    tree.appendChild(leafRow({
+      depth: 2, kind: 'evals', label: 'Evals', glyph: '▤', tag: null,
+      selected: sel === 'evals' && p.epochId === epoch.id,
+      onSelect: () => ctx.navigate('evals', { epochId: epoch.id }),
+    }));
+
     // Mutation surface (leaf)
     tree.appendChild(leafRow({
       depth: 2, kind: 'mutations', label: 'Mutation surface', glyph: '⌗', tag: null,

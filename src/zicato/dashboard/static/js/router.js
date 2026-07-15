@@ -25,7 +25,7 @@
 // breadcrumb, back button, and every view share one signature.
 
 export const PREFIX = '#';
-export const VIEWS = ['home', 'epoch', 'gens', 'candidate', 'diff', 'boards', 'board', 'mutations', 'instrument', 'publication', 'builder', 'logs', 'settings'];
+export const VIEWS = ['home', 'epoch', 'gens', 'candidate', 'diff', 'boards', 'board', 'mutations', 'instrument', 'evals', 'publication', 'builder', 'logs', 'settings'];
 
 // The Settings section a bare `#/settings` opens. The tournament builder used
 // to be the default Settings section; now that the builder is its OWN view,
@@ -94,6 +94,10 @@ export function parseRoute(hash) {
       return { view: 'boards', params: { epochId }, cmp };
     case 'board':
       return { view: 'board', params: { epochId, entry: parts[3] || null, gen: parts[4] || null }, cmp };
+    case 'evals':
+      // …/evals — the top-level EVALS view (the entries × candidates matrix,
+      // the board-as-instrument OUTCOMES lens). Epoch-scoped; no sub-legs.
+      return { view: 'evals', params: { epochId }, cmp };
     case 'mutations':
       // …/mutations[/<mutId>[/<gen>]] — a bare mutId pins the SITE (all gens that
       // patched it, stacked); a trailing gen pins ONE site×generation cell (that
@@ -139,6 +143,7 @@ export function href(view, params, opts) {
       base = p.mutId ? `${e}/gen/${enc(p.gen)}/diff/${enc(p.mutId)}` : `${e}/gen/${enc(p.gen)}/diff`;
       break;
     case 'boards': base = e ? `${e}/boards` : PREFIX + '/'; break;
+    case 'evals': base = e ? `${e}/evals` : PREFIX + '/'; break;
     case 'board':
       if (!e || !p.entry) { base = e ? `${e}/boards` : PREFIX + '/'; break; }
       base = p.gen ? `${e}/board/${enc(p.entry)}/${enc(p.gen)}` : `${e}/board/${enc(p.entry)}`;
@@ -214,6 +219,8 @@ export function up(route) {
       return { view: 'gens', params: { epochId: p.epochId } };
     case 'diff': return { view: 'candidate', params: { epochId: p.epochId, gen: p.gen } };
     case 'boards': return { view: 'epoch', params: { epochId: p.epochId } };
+    // the evals matrix is an epoch-level surface — it steps up to the epoch.
+    case 'evals': return { view: 'epoch', params: { epochId: p.epochId } };
     case 'board':
       // an inline-transcript selection steps up to the bare board first.
       if (p.gen) return { view: 'board', params: { epochId: p.epochId, entry: p.entry } };
@@ -283,6 +290,8 @@ export function crumbTrail(route) {
       ].filter(Boolean);
     case 'boards':
       return [home, epoch, { label: 'boards', current: true }].filter(Boolean);
+    case 'evals':
+      return [home, epoch, { label: 'evals', current: true }].filter(Boolean);
     case 'board':
       return [home, epoch,
         { label: 'boards', view: 'boards', params: { epochId: p.epochId } },

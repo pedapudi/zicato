@@ -56,6 +56,14 @@ from zicato.query.epoch_view import (
     compute_epoch_delta_summary,
     read_epoch_analysis_html,
 )
+from zicato.query.eval_view import (
+    _empty_dossier,
+    _empty_health,
+    _empty_matrix,
+    build_eval_dossier,
+    build_eval_health,
+    build_eval_matrix,
+)
 from zicato.query.events_index import (
     _CONTRACT_COMPONENT_NAMES,
     _LEDGER_COMPONENT_NAMES,
@@ -256,6 +264,9 @@ __all__ = [
     "_decode_crowning_pair",
     "_distill_brief_goal",
     "_drift_counts_for_generation",
+    "_empty_dossier",
+    "_empty_health",
+    "_empty_matrix",
     "_empty_search_result",
     "_empty_tournament_structure",
     "_enrich_field_status",
@@ -343,6 +354,9 @@ __all__ = [
     "build_adjudication_xray",
     "entry_candidate_matrix",
     "list_reflections",
+    "build_eval_matrix",
+    "build_eval_dossier",
+    "build_eval_health",
     "build_round_timeline",
     "build_per_entry_for_generation",
     "build_round_pipeline",

@@ -327,6 +327,14 @@ export function tournamentCost(epochId) {
 export function perEntry(epochId, genId) {
   return cachedJson(`/api/generation/${enc(epochId)}/${enc(genId)}/per-entry`);
 }
+// The entries × candidates EVAL MATRIX for one epoch (the board-as-instrument
+// OUTCOMES lens — query.build_eval_matrix). Server-derived + honest: a cold
+// index / unknown epoch degrades to a same-shape `found: false` payload, so a
+// null here is a transport failure only. Rides the `/api/epoch` invalidateLive
+// prefix so a live run refreshes it.
+export function evalMatrix(epochId) {
+  return cachedJson(`/api/epoch/${enc(epochId)}/evals`);
+}
 export function perJudgeForGen(epochId, genId) {
   return cachedJson(`/api/generation/${enc(epochId)}/${enc(genId)}/per-judge`);
 }
@@ -392,6 +400,18 @@ export function reflectionPractices(reflectionId) {
 // run_ref carries `:` — enc() keeps the path segment intact.
 export function reflectionXray(reflectionId, judge, runRef) {
   return cachedJson(`/api/reflection/${enc(reflectionId)}/xray/${enc(judge)}/${enc(runRef)}`);
+}
+
+// The per-entry EVAL DOSSIER (EVAL-VIEW.md §3.2) — the board-as-instrument lens
+// for ONE board entry across every candidate: its A/A flip rate, discrimination,
+// runtime cost, the champion-spine trajectory, first-passed / regressed
+// attribution, and links to reflection findings that name the entry. ADDITIVE to
+// the transcript surface the board view already renders. Epoch-prefixed, so the
+// live bust (`/api/epoch`) refetches it while a run is in flight; a pre-feature
+// server (no such endpoint → the GET throws) degrades to null, so the board
+// renders byte-identical to before the feature.
+export function evalDossier(epochId, entryId) {
+  return cachedJson(`/api/epoch/${enc(epochId)}/eval/${enc(entryId)}`);
 }
 
 // The promote-gate decomposition for one round.
