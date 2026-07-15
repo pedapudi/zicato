@@ -593,7 +593,19 @@ def test_bundle_under_size_envelope(
     # the per-wave-raise interaction the 1.35 MB entry records, fourth
     # occurrence. The envelope is raised to 1.398 MB to cover the combined
     # surface with headroom.
-    assert total < 1_398_000, f"bundle is {total} bytes, exceeds 1_398_000 envelope"
+    #
+    # WS-DOSSIER then upgrades the per-entry board page into the EVAL DOSSIER
+    # (EVAL-VIEW.md §3.2): the board-as-instrument lens for one entry across every
+    # candidate — a champion-spine trajectory sparkline, the instrument stat row
+    # (flip rate with its unmeasured degrade, discrimination, runtime aggregates,
+    # holdout membership), the first-passed / regressed attribution rows linking
+    # into the named candidates' dossiers, and links into the reflection findings
+    # that name the entry — all mounted in their OWN digest-gated host beside the
+    # untouched live-transcript surface, plus the /eval data reader. ~11 KB of a
+    # read-only surface that pays for itself in operator time (the house rationale
+    # for a new view's envelope bump). The envelope is raised to 1.416 MB to cover
+    # it with headroom.
+    assert total < 1_416_000, f"bundle is {total} bytes, exceeds 1_416_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
