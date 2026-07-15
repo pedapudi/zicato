@@ -58,6 +58,7 @@ from zicato.query.epoch_view import (
 )
 from zicato.query.eval_view import (
     build_eval_dossier,
+    build_eval_health,
     build_eval_matrix,
 )
 from zicato.query.events_index import (
@@ -349,6 +350,7 @@ __all__ = [
     "list_reflections",
     "build_eval_matrix",
     "build_eval_dossier",
+    "build_eval_health",
     "build_round_timeline",
     "build_per_entry_for_generation",
     "build_round_pipeline",

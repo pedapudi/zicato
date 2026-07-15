@@ -25,10 +25,73 @@ from zicato.query.paths import WorkspacePaths
 from zicato.tournament.unit_cache import _unit_loss_path
 
 EPOCH = "e_eval"
+DEAD_EP = "e_dead"
 
 
 def _paths(workspace: Path) -> WorkspacePaths:
     return WorkspacePaths(workspace)
+
+
+def _seed_dead(workspace: Path) -> None:
+    """A workspace whose instrument has a genuinely DEAD channel (§5 WS-HEALTH).
+
+    Two promoted candidates (g0, g1); entryD never separates them across 3
+    matchups (always-agree → zero discrimination at/over the 3-comparison
+    threshold → DEAD), while entryE agrees over only 2 matchups (below the
+    threshold → "insufficient comparisons", never dead — the honesty boundary).
+    """
+    edir = workspace / "epochs" / DEAD_EP
+    edir.mkdir(parents=True, exist_ok=True)
+    (edir / "config.json").write_text(
+        json.dumps({"id": DEAD_EP, "created_at": "2026-07-02", "closed": False}), encoding="utf-8"
+    )
+    (edir / "scoring.json").write_text(json.dumps({}), encoding="utf-8")
+    board = [
+        {"board_meta": True},
+        {"id": "entryD", "kind": "single_turn", "input": "d", "wall_clock_budget_seconds": 60},
+        {"id": "entryE", "kind": "single_turn", "input": "e", "wall_clock_budget_seconds": 60},
+    ]
+    (edir / "board.jsonl").write_text("\n".join(json.dumps(r) for r in board), encoding="utf-8")
+    (workspace / "lineage.json").write_text(
+        json.dumps({"epochs": [{"id": DEAD_EP, "generations": []}]}), encoding="utf-8"
+    )
+    (workspace / "current_epoch").write_text(DEAD_EP, encoding="utf-8")
+
+    conn = sqlite3.connect(str(workspace / "index.db"))
+    try:
+        apply_schema(conn)
+        conn.execute(
+            "INSERT INTO epochs(epoch_id, contract_hash, created_at, closed) VALUES(?,?,?,?)",
+            (DEAD_EP, "h", "2026-07-02", 0),
+        )
+        for gid, rnd in [("g0", 0), ("g1", 1)]:
+            conn.execute(
+                "INSERT INTO generations(epoch_id, generation_id, parent_generation_id, "
+                "promoted, created_at, round_index, elo, elo_se, elo_games) "
+                "VALUES(?,?,?,?,?,?,?,?,?)",
+                (DEAD_EP, gid, None, 1, f"2026-07-0{2 + rnd}", rnd, 1500.0, 40.0, 4),
+            )
+
+        def lp(run: str, gen: str, entry: str, tour: str, match: str) -> None:
+            conn.execute(
+                "INSERT INTO loss_profiles(run_id, epoch_id, generation_id, entry_id, "
+                "drift_loss, pass_fail, runtime_ms, wall_clock_budget_exceeded, loss_json, "
+                "tournament_id, match_id, cached, source_epoch, source_run, abort_cause) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (run, DEAD_EP, gen, entry, 0.1, 1, 10, 0, None, tour, match, 0, None, None, None),
+            )
+
+        # entryD: 3 always-agree matchups (both sides pass) → dead over 3 pairs.
+        for i in range(3):
+            lp(f"d0-{i}", "g0", "entryD", f"Td{i}", f"md{i}")
+            lp(f"d1-{i}", "g1", "entryD", f"Td{i}", f"md{i}")
+        # entryE: only 2 agree matchups → below the 3-comparison threshold.
+        for i in range(2):
+            lp(f"e0-{i}", "g0", "entryE", f"Te{i}", f"me{i}")
+            lp(f"e1-{i}", "g1", "entryE", f"Te{i}", f"me{i}")
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -387,3 +450,152 @@ def test_endpoint_malformed_id_degrades(tmp_path: Path) -> None:
         # An unsafe id that still routes returns the same-shape empty payload.
         r2 = c.get(f"/api/epoch/{EPOCH}/eval/bad%20id")
         assert r2.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# The live MDE ladder (pure — known answers hand-computed against CAMPAIGN.md §3)
+# ---------------------------------------------------------------------------
+
+
+def test_students_t_upper_quantile_table_values() -> None:
+    # Standard Student-t upper-tail critical values, to 4 dp against the tables.
+    assert abs(ev.students_t_upper_quantile(0.025, 10) - 2.2281) < 1e-3
+    assert abs(ev.students_t_upper_quantile(0.20, 10) - 0.8791) < 1e-3
+    assert abs(ev.students_t_upper_quantile(0.05, 10) - 1.8125) < 1e-3
+    assert abs(ev.students_t_upper_quantile(0.025, 2) - 4.3027) < 1e-3
+    assert abs(ev.students_t_upper_quantile(0.005, 20) - 2.8453) < 1e-3
+
+
+def test_mde_ladder_known_answers() -> None:
+    # CAMPAIGN.md §3 pins ≈1.79·floor (α=.05) and ≈1.55·floor (α=.10) at n=6, df=10.
+    b = ev.mde_ladder(1.0, 6)
+    assert b["usable"] is True
+    assert b["formula_n"] == 6 and b["df"] == 10
+    assert abs(b["mde"] - 1.7939) < 1e-3
+    assert abs(b["mde_relaxed"] - 1.5539) < 1e-3
+    # Scales linearly with the floor (MDE ∝ sd).
+    assert abs(ev.mde_ladder(0.06, 6)["mde"] - 0.06 * 1.7939) < 1e-4
+    assert b["floor_measured"] is True and b["floor"] == 1.0
+
+
+def test_mde_ladder_degrades_honestly() -> None:
+    # No floor → floor unmeasured, never a fabricated bound (§4).
+    nf = ev.mde_ladder(None, 6)
+    assert nf["floor_measured"] is False and nf["mde"] is None and nf["usable"] is False
+    assert "floor unmeasured" in nf["note"]
+    # n<2 → the two-sample form is undefined; honest "insufficient replication".
+    n1 = ev.mde_ladder(0.06, 1)
+    assert n1["usable"] is False and n1["mde"] is None
+    assert "at least 2 replicates" in n1["note"]
+    # A non-int replicate count coerces to 0 → the n<2 note, never a crash.
+    assert ev.mde_ladder(0.06, None).get("mde") is None  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# build_eval_health — the WS-HEALTH instrument panel
+# ---------------------------------------------------------------------------
+
+
+def test_health_mde_uses_floor_and_replicates(tmp_path: Path) -> None:
+    _seed(tmp_path)
+    # Add a tournament block so the epoch's realised replicate count is 6.
+    edir = tmp_path / "epochs" / EPOCH
+    scoring = json.loads((edir / "scoring.json").read_text(encoding="utf-8"))
+    scoring["tournament"] = {"structure": "gauntlet", "params": {"replicates": 6}}
+    (edir / "scoring.json").write_text(json.dumps(scoring), encoding="utf-8")
+    h = ev.build_eval_health(_paths(tmp_path), EPOCH)
+    assert h["found"] is True
+    mde = h["mde"]
+    assert mde["floor"] == 0.06 and mde["replicates"] == 6 and mde["formula_n"] == 6
+    assert mde["usable"] is True
+    assert abs(mde["mde"] - 0.06 * 1.7939) < 1e-4
+    assert "t_{α/2,df}" in mde["formula"]
+
+
+def test_health_mde_defaults_to_single_replicate(tmp_path: Path) -> None:
+    _seed(tmp_path)  # no tournament block → replicates defaults to 1 → n<2 note.
+    h = ev.build_eval_health(_paths(tmp_path), EPOCH)
+    assert h["mde"]["replicates"] == 1
+    assert h["mde"]["usable"] is False
+    assert "at least 2 replicates" in h["mde"]["note"]
+
+
+def test_health_noisiest_and_runtime_rankings(tmp_path: Path) -> None:
+    _seed(tmp_path)
+    h = ev.build_eval_health(_paths(tmp_path), EPOCH)
+    # Noisiest: measured entries by descending flip rate; unmeasured entryC omitted.
+    assert [r["entry_id"] for r in h["noisiest"]] == ["entryA", "entryB"]
+    assert abs(h["noisiest"][0]["flip_rate"] - 1 / 3) < 1e-9
+    assert h["noisiest"][1]["flip_rate"] == 0.0
+    assert all(r["entry_id"] != "entryC" for r in h["noisiest"])
+    # Runtime cost: entryA (mean 70/6) leads; both single-row entries tie at 5.
+    rc = {r["entry_id"]: r for r in h["runtime_cost"]}
+    assert h["runtime_cost"][0]["entry_id"] == "entryA"
+    assert abs(rc["entryA"]["runtime_ms_mean"] - 70 / 6) < 1e-9
+    assert rc["entryA"]["replicate_total"] == 6
+
+
+def test_health_dead_vs_insufficient_honesty(tmp_path: Path) -> None:
+    _seed(tmp_path)
+    h = ev.build_eval_health(_paths(tmp_path), EPOCH)
+    # entryA discriminates over only 2 matchups (< the 3-comparison threshold), so
+    # it is "insufficient comparisons", never dead. entryB/entryC have no matchup.
+    assert h["dead"] == []
+    ins = {r["entry_id"]: r for r in h["insufficient"]}
+    assert set(ins) == {"entryA", "entryB", "entryC"}
+    assert ins["entryA"]["discrimination_pairs"] == 2
+
+
+def test_health_dead_channel_above_threshold(tmp_path: Path) -> None:
+    _seed_dead(tmp_path)
+    h = ev.build_eval_health(_paths(tmp_path), DEAD_EP)
+    dead = {r["entry_id"]: r for r in h["dead"]}
+    ins = {r["entry_id"] for r in h["insufficient"]}
+    # entryD: 3 always-agree matchups → zero discrimination at/over threshold → DEAD.
+    assert "entryD" in dead and dead["entryD"]["discrimination_pairs"] == 3
+    # entryE: only 2 agree matchups → below threshold → insufficient, never dead.
+    assert "entryD" not in ins
+    assert "entryE" in ins and "entryE" not in dead
+
+
+def test_health_rotation_holdout_and_redundancy_defer(tmp_path: Path) -> None:
+    _seed(tmp_path)
+    h = ev.build_eval_health(_paths(tmp_path), EPOCH)
+    # No experiments recorded → no holdout ladder budget yet, no cadence pressure.
+    assert h["holdout_budget"] is None
+    assert h["rotation"]["evaluated_generations"] == 0
+    assert h["rotation"]["refresh_recommended"] is False
+    assert h["rotation"]["max_generations_per_contract"] is None
+    # No reflection built → redundancy defers with an explicit pointer at reflect.
+    assert h["redundancy"]["available"] is False
+    assert h["redundancy"]["clusters"] == []
+    assert "reflect" in h["redundancy"]["note"]
+
+
+def test_health_cold_index_same_shape(tmp_path: Path) -> None:
+    h = ev.build_eval_health(_paths(tmp_path), "nope")
+    assert h["found"] is False
+    assert h["noisiest"] == [] and h["dead"] == [] and h["runtime_cost"] == []
+    assert h["mde"]["floor_measured"] is False and h["mde"]["mde"] is None
+    assert h["holdout_budget"] is None
+
+
+def test_health_round_trip_byte_identical(tmp_path: Path) -> None:
+    _seed(tmp_path)
+    p = _paths(tmp_path)
+    assert json.dumps(ev.build_eval_health(p, EPOCH), sort_keys=True) == json.dumps(
+        ev.build_eval_health(p, EPOCH), sort_keys=True
+    )
+
+
+def test_endpoint_eval_health(tmp_path: Path) -> None:
+    with _client(tmp_path) as c:
+        r = c.get(f"/api/epoch/{EPOCH}/eval-health")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["found"] is True
+        assert [x["entry_id"] for x in body["noisiest"]] == ["entryA", "entryB"]
+        # A malformed id still returns the same-shape empty payload.
+        r2 = c.get("/api/epoch/bad%20id/eval-health")
+        assert r2.status_code == 200
+        assert r2.json()["found"] is False

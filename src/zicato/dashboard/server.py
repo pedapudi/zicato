@@ -238,6 +238,10 @@ def create_app(
             handlers["api_epoch_eval_entry"],
         ),
         Route(
+            "/api/epoch/{epoch_id}/eval-health",
+            handlers["api_epoch_eval_health"],
+        ),
+        Route(
             "/api/generation/{epoch_id}/{generation_id}/per-judge",
             handlers["api_per_judge_for_generation"],
         ),

@@ -27,6 +27,7 @@ I/O and are unit-tested against known answers.
 from __future__ import annotations
 
 import json
+import math
 import statistics
 from typing import Any
 
@@ -41,6 +42,22 @@ from zicato.query.paths import (
 # The A/A calibration draws cache per replicate at this base (base 1000); the
 # per-entry flip rate reads those replicate files directly (EVAL-VIEW.md §2.2).
 _CALIBRATION_REPLICATE_BASE = 1000
+
+# The live MDE ladder's operating characteristics (EVAL-VIEW.md §4.3, pinned to
+# CAMPAIGN.md §3): the two-sample form at α=.05 / power .80 (with a relaxed α=.10
+# rung), sd ≈ the measured A/A floor. At n=6, df=10 this reproduces the doc's
+# ≈1.79·floor (α=.05) and ≈1.55·floor (α=.10) — the numbers CAMPAIGN.md §3 pins.
+_MDE_ALPHA = 0.05
+_MDE_ALPHA_RELAXED = 0.10
+_MDE_POWER = 0.80
+_MDE_FORMULA = "MDE = (t_{α/2,df} + t_{β,df})·sd·√(2/n),  sd ≈ floor,  df = 2·(n−1)"
+
+# The minimum-comparisons honesty threshold for the DEAD-eval finding
+# (EVAL-VIEW.md §5 WS-HEALTH): an entry needs at least this many both-sides
+# matchups before a zero discrimination is read as "dead" rather than thin
+# evidence. Below it the entry reports "insufficient comparisons", never dead —
+# §4's no-fabricated-numbers rule extended to the discrimination claim.
+_MIN_DISCRIMINATION_COMPARISONS = 3
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +147,141 @@ def discrimination(pairs: list[tuple[Any, bool | None]]) -> tuple[float | None, 
     if both == 0:
         return None, 0
     return disc / both, both
+
+
+# ---------------------------------------------------------------------------
+# The live MDE ladder (pure — no I/O, unit-tested against the CAMPAIGN.md numbers)
+# ---------------------------------------------------------------------------
+
+
+def _betacf(a: float, b: float, x: float) -> float:
+    """Continued-fraction expansion of the incomplete beta (Lentz's method).
+
+    The Numerical-Recipes ``betacf`` — used by :func:`_reg_incomplete_beta` in
+    the region where the fraction converges quickly. Pure standard-library math.
+    """
+    max_iter = 200
+    eps = 3.0e-16
+    fpmin = 1.0e-300
+    qab = a + b
+    qap = a + 1.0
+    qam = a - 1.0
+    c = 1.0
+    d = 1.0 - qab * x / qap
+    if abs(d) < fpmin:
+        d = fpmin
+    d = 1.0 / d
+    h = d
+    for m in range(1, max_iter + 1):
+        m2 = 2 * m
+        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + aa * d
+        if abs(d) < fpmin:
+            d = fpmin
+        c = 1.0 + aa / c
+        if abs(c) < fpmin:
+            c = fpmin
+        d = 1.0 / d
+        h *= d * c
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + aa * d
+        if abs(d) < fpmin:
+            d = fpmin
+        c = 1.0 + aa / c
+        if abs(c) < fpmin:
+            c = fpmin
+        d = 1.0 / d
+        delta = d * c
+        h *= delta
+        if abs(delta - 1.0) < eps:
+            break
+    return h
+
+
+def _reg_incomplete_beta(a: float, b: float, x: float) -> float:
+    """The regularized incomplete beta ``I_x(a, b)`` (Numerical Recipes ``betai``)."""
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+    lbt = (
+        math.lgamma(a + b)
+        - math.lgamma(a)
+        - math.lgamma(b)
+        + a * math.log(x)
+        + b * math.log(1.0 - x)
+    )
+    bt = math.exp(lbt)
+    if x < (a + 1.0) / (a + b + 2.0):
+        return bt * _betacf(a, b, x) / a
+    return 1.0 - bt * _betacf(b, a, 1.0 - x) / b
+
+
+def students_t_upper_quantile(upper_tail: float, df: int) -> float:
+    """The Student-t value ``t`` with ``P(T > t) = upper_tail`` for ``df`` (df ≥ 1).
+
+    Inverts the two-tailed survival ``P(|T| > t) = I_{df/(df+t²)}(df/2, 1/2)`` by
+    bisection — pure standard-library math (no SciPy runtime dependency). Exact to
+    machine precision against the standard t-tables; unit-tested against them.
+    """
+    p2 = 2.0 * upper_tail
+    lo, hi = 0.0, 1.0e7
+    for _ in range(160):
+        mid = (lo + hi) / 2.0
+        # Survival is monotone decreasing in t; walk toward the target tail mass.
+        if _reg_incomplete_beta(df / 2.0, 0.5, df / (df + mid * mid)) > p2:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2.0
+
+
+def mde_ladder(floor: float | None, replicates: int) -> dict[str, Any]:
+    """The two-sample MDE at the epoch's floor + replicate count (EVAL-VIEW.md §4.3).
+
+    ``MDE = (t_{α/2,df} + t_{β,df})·sd·√(2/n)`` with ``sd ≈ floor`` and
+    ``n = replicates`` (``df = 2·(n−1)``), served with EVERY input so the view
+    states the formula honestly — never a bare number (§4). Degrades honestly:
+    an unmeasured floor ⇒ ``floor_measured: False`` + a "floor unmeasured" note;
+    ``n < 2`` ⇒ an "insufficient replication" note (the two-sample form needs two
+    per arm) — NEVER a fabricated bound.
+    """
+    n = int(replicates) if isinstance(replicates, int) and not isinstance(replicates, bool) else 0
+    n = max(0, n)
+    block: dict[str, Any] = {
+        "floor_measured": floor is not None,
+        "floor": floor,
+        "replicates": n,
+        "usable": False,
+        "formula_n": None,
+        "df": None,
+        "mde": None,
+        "mde_relaxed": None,
+        "alpha": _MDE_ALPHA,
+        "alpha_relaxed": _MDE_ALPHA_RELAXED,
+        "power": _MDE_POWER,
+        "formula": _MDE_FORMULA,
+        "note": None,
+    }
+    if floor is None:
+        block["note"] = "floor unmeasured — run the A/A calibration to measure the noise floor"
+        return block
+    if n < 2:
+        block["note"] = f"n={n}: the two-sample MDE needs at least 2 replicates per arm"
+        return block
+    df = 2 * (n - 1)
+    t_alpha = students_t_upper_quantile(_MDE_ALPHA / 2.0, df)
+    t_alpha_relaxed = students_t_upper_quantile(_MDE_ALPHA_RELAXED / 2.0, df)
+    t_beta = students_t_upper_quantile(1.0 - _MDE_POWER, df)
+    root = math.sqrt(2.0 / n)
+    block.update(
+        usable=True,
+        formula_n=n,
+        df=df,
+        mde=(t_alpha + t_beta) * floor * root,
+        mde_relaxed=(t_alpha_relaxed + t_beta) * floor * root,
+    )
+    return block
 
 
 # ---------------------------------------------------------------------------
@@ -644,13 +796,304 @@ def build_eval_dossier(
     }
 
 
+# ---------------------------------------------------------------------------
+# build_eval_health — the WS-HEALTH instrument panel (epoch-wide)
+# ---------------------------------------------------------------------------
+
+
+def _realised_replicates(paths: WorkspacePaths, epoch_id: str) -> int:
+    """The epoch's per-arm replicate count — the frozen tournament ``replicates``.
+
+    The MDE ladder's ``n`` (EVAL-VIEW.md §4.3): read off the frozen
+    ``scoring.json`` tournament block (``params.replicates``); the contract
+    default of ``1`` when absent / malformed (a single sample per arm — the
+    ladder then honest-empties with an "insufficient replication" note).
+    """
+    scoring = _read_json_value(layout_of(paths).epoch_dir(epoch_id) / "scoring.json")
+    raw = scoring.get("tournament") if isinstance(scoring, dict) else None
+    params = raw.get("params") if isinstance(raw, dict) else None
+    rep = params.get("replicates") if isinstance(params, dict) else None
+    if isinstance(rep, int) and not isinstance(rep, bool) and rep > 0:
+        return rep
+    return 1
+
+
+def _instrument_by_entry(
+    paths: WorkspacePaths, epoch_id: str, candidates: list[dict[str, Any]]
+) -> dict[str, dict[str, Any]]:
+    """Per-entry discrimination + runtime, folded once across every candidate.
+
+    Returns ``{entry_id: {discrimination, discrimination_pairs, runtime_ms_mean,
+    replicate_total}}``. Discrimination pairs by ``(tournament_id, match_id)``,
+    EXCLUDING cached rows (a carried-over result is not a fresh measurement) and
+    non-matchup rows (no ``match_id``) — byte-identical to the dossier's rule
+    (§2.3). One pass over the candidate loss rows keeps the panel cheap.
+    """
+    disc_pairs: dict[str, list[tuple[Any, bool | None]]] = {}
+    runtimes: dict[str, list[Any]] = {}
+    totals: dict[str, int] = {}
+    for cand in candidates:
+        for r in _rows_for_candidate(paths, epoch_id, cand["generation_id"]):
+            eid = _row_get(r, "entry_id")
+            if not isinstance(eid, str) or not eid:
+                continue
+            totals[eid] = totals.get(eid, 0) + 1
+            runtimes.setdefault(eid, []).append(_row_get(r, "runtime_ms"))
+            if bool(_row_get(r, "cached")):
+                continue
+            mid = _row_get(r, "match_id")
+            if not isinstance(mid, str) or not mid:
+                continue
+            disc_pairs.setdefault(eid, []).append(
+                ((_row_get(r, "tournament_id"), mid), _opt_bool(_row_get(r, "pass_fail")))
+            )
+
+    out: dict[str, dict[str, Any]] = {}
+    for eid, total in totals.items():
+        rate, n_pairs = discrimination(disc_pairs.get(eid, []))
+        out[eid] = {
+            "discrimination": rate,
+            "discrimination_pairs": n_pairs,
+            "runtime_ms_mean": runtime_aggregates(runtimes.get(eid, []))["mean"],
+            "replicate_total": total,
+        }
+    return out
+
+
+def _rotation_status(
+    paths: WorkspacePaths, epoch_id: str, experiments: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Rotation-cadence status — BOUND to the shipped surfaces, not re-derived (§5).
+
+    ``rotate_holdout`` / ``max_generations_per_contract`` come off the frozen
+    ``scoring.json`` overfitting block; the refresh recommendation is the shipped
+    :func:`zicato.health.diagnostics.detect_refresh_cadence` finding (the same
+    signal the loop logs), so this panel never disagrees with the health surface.
+    """
+    from zicato.health.diagnostics import detect_refresh_cadence  # noqa: PLC0415
+
+    scoring = _read_json_value(layout_of(paths).epoch_dir(epoch_id) / "scoring.json")
+    raw = scoring.get("overfitting") if isinstance(scoring, dict) else None
+    rotate = bool(raw.get("rotate_holdout")) if isinstance(raw, dict) else False
+    ceiling_raw = raw.get("max_generations_per_contract") if isinstance(raw, dict) else None
+    ceiling = (
+        int(ceiling_raw)
+        if isinstance(ceiling_raw, int) and not isinstance(ceiling_raw, bool) and ceiling_raw >= 1
+        else None
+    )
+    evaluated = sum(
+        1 for exp in experiments if isinstance(exp, dict) and exp.get("outcome") is not None
+    )
+
+    findings = detect_refresh_cadence(experiments, ceiling)
+    recommendation: str | None = None
+    refresh_recommended = False
+    if findings:
+        detail = getattr(findings[0], "detail", {}) or {}
+        refresh_recommended = bool(detail.get("refresh_recommended"))
+        rec = detail.get("recommendation")
+        recommendation = rec if isinstance(rec, str) else None
+
+    return {
+        "rotate_holdout": rotate,
+        "max_generations_per_contract": ceiling,
+        "evaluated_generations": evaluated,
+        "refresh_recommended": refresh_recommended,
+        "recommendation": recommendation,
+    }
+
+
+def _redundancy_clusters(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
+    """Redundancy clusters from an ALREADY-BUILT reflection — else a deferred note.
+
+    EVAL-VIEW.md §5 / §2.6: the ``redundant_with`` clusters live in the reflection
+    corpus (``reflection_view.build_judge_scorecards``). This LINKS into the most
+    recent reflection when one exists (cheap: one listing + one scorecard read);
+    it NEVER runs a reflection to fill the panel — absent a reflection it defers
+    with an explicit note pointing at ``reflect``.
+    """
+    from zicato.query.reflection_view import (  # noqa: PLC0415
+        build_judge_scorecards,
+        list_reflections,
+    )
+
+    deferred = {
+        "available": False,
+        "clusters": [],
+        "note": "no reflection built for this epoch — run `reflect` to surface redundancy clusters",
+    }
+    try:
+        listing = list_reflections(paths, epoch_id)
+    except Exception:  # noqa: BLE001 — best-effort; a missing reflection defers
+        return deferred
+    reflections = listing.get("reflections", []) if isinstance(listing, dict) else []
+    latest = next(
+        (
+            item.get("reflection_id")
+            for item in reflections
+            if isinstance(item, dict) and isinstance(item.get("reflection_id"), str)
+        ),
+        None,
+    )
+    if not isinstance(latest, str) or not latest:
+        return deferred
+    try:
+        scorecards = build_judge_scorecards(paths, latest)
+    except Exception:  # noqa: BLE001 — best-effort; a bad scorecard defers
+        return deferred
+    clusters: list[dict[str, Any]] = []
+    for card in scorecards.get("judges", []) if isinstance(scorecards, dict) else []:
+        if not isinstance(card, dict):
+            continue
+        redundant = card.get("redundant_with")
+        if isinstance(redundant, list) and redundant:
+            clusters.append(
+                {
+                    "judge_name": card.get("judge_name"),
+                    "redundant_with": [r for r in redundant if isinstance(r, str)],
+                }
+            )
+    return {"available": True, "reflection_id": latest, "clusters": clusters, "note": None}
+
+
+def _empty_health(epoch_id: str | None) -> dict[str, Any]:
+    return {
+        "epoch_id": epoch_id,
+        "found": False,
+        "mde": mde_ladder(None, 0),
+        "noisiest": [],
+        "dead": [],
+        "insufficient": [],
+        "runtime_cost": [],
+        "holdout_budget": None,
+        "rotation": {
+            "rotate_holdout": False,
+            "max_generations_per_contract": None,
+            "evaluated_generations": 0,
+            "refresh_recommended": False,
+            "recommendation": None,
+        },
+        "redundancy": {
+            "available": False,
+            "clusters": [],
+            "note": "no such epoch / never indexed",
+        },
+        "note": "no such epoch / never indexed",
+    }
+
+
+def build_eval_health(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[str, Any]:
+    """The WS-HEALTH instrument panel for one epoch (EVAL-VIEW.md §5 WS-HEALTH).
+
+    The board read as a measuring device: the measured noise floor + the live MDE
+    ladder (§4.3), the ranked noisy / dead / costly evals (§2.2/§2.3), the
+    holdout-budget accounting and rotation cadence (bound to the shipped ladder /
+    cadence surfaces), and — only when a reflection already exists — its
+    redundancy clusters (else a deferred note). Recommend-only; every finding is a
+    pointer into ``reflect`` / the builder, not an action. A never-indexed
+    workspace or an unknown epoch degrades to a same-shape ``found: False`` payload
+    (§4: no fabricated numbers — an unmeasured floor / flip rate reads honest-empty,
+    never ``0.0``).
+    """
+    from zicato.query.epoch_view import (  # noqa: PLC0415
+        _latest_holdout_summary,
+        _read_epoch_experiments,
+    )
+
+    try:
+        resolved = _resolve_epoch_id(paths, epoch_id)
+    except ValueError:
+        return _empty_health(epoch_id)
+    if resolved is None:
+        return _empty_health(epoch_id)
+
+    candidates = _candidate_axis(paths, resolved)
+    board_entries = _load_board_entries(paths, resolved)
+    holdout = _holdout_ids(paths, resolved, board_entries)
+    calibration = _calibration(paths, resolved)
+    flips = _per_entry_flip_rates(paths, resolved, calibration)
+    instrument = _instrument_by_entry(paths, resolved, candidates)
+
+    def _slice(eid: str) -> str:
+        return "holdout" if eid in holdout else "train"
+
+    # Board order first (the instrument's own order), then any extra measured id.
+    board_order = [e.id for e in board_entries if isinstance(getattr(e, "id", None), str)]
+    board_set = set(board_order)
+    ordered = board_order + [e for e in instrument if e not in board_set]
+
+    # Noisiest — measured flip rate, descending (an unmeasured entry is omitted,
+    # never rendered as a 0.0; §4).
+    noisiest = [
+        {
+            "entry_id": eid,
+            "flip_rate": flips[eid],
+            "slice": _slice(eid),
+            "calibration_runs": calibration["runs"] if calibration["measured"] else 0,
+        }
+        for eid in ordered
+        if eid in flips and flips[eid] is not None
+    ]
+    noisiest.sort(key=lambda r: r["flip_rate"], reverse=True)
+
+    # Dead vs insufficient — a zero-discrimination channel is DEAD only above the
+    # minimum-comparisons honesty threshold; below it we say "insufficient
+    # comparisons", never "dead" (§5 WS-HEALTH honesty rule).
+    dead: list[dict[str, Any]] = []
+    insufficient: list[dict[str, Any]] = []
+    for eid in ordered:
+        info = instrument.get(eid)
+        if info is None:
+            continue
+        rate = info["discrimination"]
+        n_pairs = info["discrimination_pairs"]
+        if rate is None or n_pairs < _MIN_DISCRIMINATION_COMPARISONS:
+            insufficient.append(
+                {"entry_id": eid, "discrimination_pairs": n_pairs, "slice": _slice(eid)}
+            )
+        elif rate == 0.0:
+            dead.append({"entry_id": eid, "discrimination_pairs": n_pairs, "slice": _slice(eid)})
+    dead.sort(key=lambda r: r["discrimination_pairs"], reverse=True)
+
+    # Runtime cost — mean ms per entry, descending (unmeasured runtimes omitted).
+    runtime_cost = [
+        {
+            "entry_id": eid,
+            "runtime_ms_mean": instrument[eid]["runtime_ms_mean"],
+            "replicate_total": instrument[eid]["replicate_total"],
+            "slice": _slice(eid),
+        }
+        for eid in ordered
+        if eid in instrument and instrument[eid]["runtime_ms_mean"] is not None
+    ]
+    runtime_cost.sort(key=lambda r: r["runtime_ms_mean"], reverse=True)
+
+    experiments = _read_epoch_experiments(layout_of(paths).epoch_dir(resolved))
+
+    return {
+        "epoch_id": resolved,
+        "found": True,
+        "mde": mde_ladder(calibration["max_abs_delta"], _realised_replicates(paths, resolved)),
+        "noisiest": noisiest,
+        "dead": dead,
+        "insufficient": insufficient,
+        "runtime_cost": runtime_cost,
+        "holdout_budget": _latest_holdout_summary(experiments),
+        "rotation": _rotation_status(paths, resolved, experiments),
+        "redundancy": _redundancy_clusters(paths, resolved),
+    }
+
+
 __all__ = [
     "build_eval_dossier",
+    "build_eval_health",
     "build_eval_matrix",
     "discrimination",
     "evidence_of",
     "flip_rate",
     "majority_verdict",
+    "mde_ladder",
     "pass_ratio",
     "runtime_aggregates",
+    "students_t_upper_quantile",
 ]

@@ -593,7 +593,25 @@ def test_bundle_under_size_envelope(
     # the per-wave-raise interaction the 1.35 MB entry records, fourth
     # occurrence. The envelope is raised to 1.398 MB to cover the combined
     # surface with headroom.
-    assert total < 1_398_000, f"bundle is {total} bytes, exceeds 1_398_000 envelope"
+    #
+    # The EVAL-CENTRIC VIEW · WS-HEALTH instrument panel (EVAL-VIEW.md §5) then
+    # adds views/evals_health.js — the board read as a MEASURING DEVICE: the mono
+    # noise-floor + live MDE-ladder strip (the CAMPAIGN.md §3 two-sample form,
+    # stating its formula + n — never a bare number) and the ranked
+    # instrument-quality findings (noisiest evals, dead channels with the
+    # minimum-comparisons honesty threshold, runtime cost, the holdout-ladder
+    # budget + rotation cadence, and reflection redundancy clusters when already
+    # built). A SEPARATE module the sibling Evals/matrix view mounts as a strip +
+    # section INSIDE itself (a merge-safe `mount` seam), digest-gated (a no-op beat
+    # rebuilds nothing) and recommend-only (every finding is a pointer into reflect
+    # / the builder). Reuses the shipped dn-stat / dn-faint / dn-board-table idiom
+    # (no new chip vocabulary — §6) + its scoped dn-eh-* CSS. ~21 KB of new
+    # read-only evidence surface (back-compat: a cold / un-calibrated epoch renders
+    # the honest-empty panel). EVAL-VIEW.md §6 pre-registers this bundle-envelope
+    # bump — the house rationale (a read-only surface that pays for itself in
+    # operator time) covers it. The envelope is raised to 1.43 MB to cover it with
+    # headroom.
+    assert total < 1_430_000, f"bundle is {total} bytes, exceeds 1_430_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

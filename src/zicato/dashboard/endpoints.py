@@ -461,12 +461,44 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
             )
         return JSONResponse(query.build_eval_dossier(paths, epoch_id, entry_id))
 
+    async def api_epoch_eval_health(request: Request) -> JSONResponse:
+        """The WS-HEALTH instrument panel for one epoch (EVAL-VIEW.md §5).
+
+        ``GET /api/epoch/{epoch_id}/eval-health``. A malformed id degrades to the
+        empty health shape (HTTP 200), matching every other coordinate handler.
+        """
+        epoch_id = request.path_params["epoch_id"]
+        if not _is_safe_id(epoch_id):
+            return JSONResponse(
+                {
+                    "epoch_id": epoch_id,
+                    "found": False,
+                    "mde": {"floor_measured": False, "usable": False, "mde": None},
+                    "noisiest": [],
+                    "dead": [],
+                    "insufficient": [],
+                    "runtime_cost": [],
+                    "holdout_budget": None,
+                    "rotation": {
+                        "rotate_holdout": False,
+                        "max_generations_per_contract": None,
+                        "evaluated_generations": 0,
+                        "refresh_recommended": False,
+                        "recommendation": None,
+                    },
+                    "redundancy": {"available": False, "clusters": [], "note": None},
+                },
+                status_code=200,
+            )
+        return JSONResponse(query.build_eval_health(paths, epoch_id))
+
     # -- conversation endpoints --------------------------------------
 
     return {
         "api_epoch": api_epoch,
         "api_epoch_evals": api_epoch_evals,
         "api_epoch_eval_entry": api_epoch_eval_entry,
+        "api_epoch_eval_health": api_epoch_eval_health,
         "api_lineage": api_lineage,
         "api_per_judge_trend": api_per_judge_trend,
         "api_epoch_trajectory": api_epoch_trajectory,

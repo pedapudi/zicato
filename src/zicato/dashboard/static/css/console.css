@@ -1504,6 +1504,43 @@
   .dn-bs-verdict.dn-good { color: var(--v2-good); }
   .dn-bs-verdict.dn-bad { color: var(--v2-bad); }
 
+  /* ===================  WS-HEALTH · the instrument panel (EVAL-VIEW.md §5)  ===
+   * The board read as a measuring device: the mono floor + MDE strip and the
+   * ranked instrument-quality findings. All theme tokens; no new hue, no chips —
+   * reuses dn-stat / dn-faint / dn-board-table / dn-good / dn-bad (§6). */
+  .dn-evalhealth-wrap { display: flex; flex-direction: column; gap: 14px; }
+  .dn-evalhealth { display: flex; flex-direction: column; gap: 6px; }
+
+  /* the floor + MDE strip (mounts above the matrix): mono + quiet. */
+  .dn-evalhealth-strip .dn-eh-strip,
+  .dn-evalhealth .dn-eh-strip { display: flex; flex-direction: column; gap: 6px; }
+  .dn-eh-stats { display: flex; flex-wrap: wrap; gap: 22px; }
+  .dn-eh-mono { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1));
+    font-variant-numeric: tabular-nums; color: var(--v2-ink-soft); }
+  .dn-eh-formula { white-space: normal; word-break: break-word; }
+  .dn-eh-mde-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+  .dn-eh-mde-title { font-family: var(--v2-mono); text-transform: uppercase; letter-spacing: 0.06em;
+    font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
+  .dn-eh-mde-note { font-size: calc(11px * var(--dt-font-scale, 1)); font-style: italic; }
+
+  /* the ranked sub-blocks: a quiet subhead + a dataTable + an optional note. */
+  .dn-eh-sub { padding-top: 8px; border-top: 1px solid var(--v2-rule-soft); }
+  .dn-eh-subhead { font-size: calc(11px * var(--dt-font-scale, 1)); text-transform: uppercase;
+    letter-spacing: 0.07em; color: var(--v2-ink-faint); margin: 6px 0; font-family: var(--v2-mono); font-weight: 600; }
+  .dn-eh-note, .dn-eh-rec { font-size: calc(11px * var(--dt-font-scale, 1)); margin: 4px 0 0; }
+  .dn-eh-table { margin-top: 2px; }
+  .dn-eh-entry, .dn-eh-entrybtn { font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); color: var(--v2-ink); }
+  .dn-eh-entry.dn-eh-holdout, .dn-eh-entrybtn.dn-eh-holdout { color: var(--v2-accent); }
+  .dn-eh-entrybtn { background: transparent; border: none; padding: 0; cursor: pointer; text-align: left; }
+  .dn-eh-entrybtn:hover { text-decoration: underline; }
+  .dn-eh-entrybtn:focus { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--v2-accent) 45%, transparent); }
+  /* a noisy row leans faint-caution; a dead row leans faint-bad — tone, not chip. */
+  .dn-eh-table tr.dn-eh-noisy td { color: var(--v2-ink); }
+  .dn-eh-table tr.dn-eh-dead td { color: var(--v2-bad); }
+  .dn-eh-link { color: var(--v2-accent); text-decoration: none; }
+  .dn-eh-link:hover { text-decoration: underline; }
+  .dn-eh-cadence { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+
   .ezn-board-node { cursor: pointer; }
   .ezn-board-node:hover .ezn-board-disc { stroke-width: 2.2; }
   .ezn-board-node:focus { outline: none; }
