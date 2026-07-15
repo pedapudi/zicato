@@ -594,24 +594,37 @@ def test_bundle_under_size_envelope(
     # occurrence. The envelope is raised to 1.398 MB to cover the combined
     # surface with headroom.
     #
-    # The EVAL-CENTRIC VIEW · WS-HEALTH instrument panel (EVAL-VIEW.md §5) then
+    # The EVAL-CENTRIC VIEW then lands as three sibling workstreams that merge
+    # onto one branch. WS-MATRIX adds the new top-level Evals surface:
+    # views/evals.js — the entries × candidates matrix (the board-as-instrument
+    # OUTCOMES lens) rendered in the shipped `dn-mtx` grid grammar off
+    # /api/epoch/{id}/evals, with evidence shading (single → faint, replicated →
+    # firm — the SERVED tier, never re-derived), per-entry flip-rate row badges
+    # (honest "unmeasured", never 0), champion-spine column marking, the
+    # round-grouped header, three client-side filters (failures / flips / holdout,
+    # digest-folded so a no-op beat is byte-identical), and cell click-through into
+    # the run transcript + a live harmonograf deep-link — plus its router/shell/tree
+    # registration and the data.js reader (~19.4 KB). WS-HEALTH (EVAL-VIEW.md §5)
     # adds views/evals_health.js — the board read as a MEASURING DEVICE: the mono
     # noise-floor + live MDE-ladder strip (the CAMPAIGN.md §3 two-sample form,
     # stating its formula + n — never a bare number) and the ranked
     # instrument-quality findings (noisiest evals, dead channels with the
     # minimum-comparisons honesty threshold, runtime cost, the holdout-ladder
     # budget + rotation cadence, and reflection redundancy clusters when already
-    # built). A SEPARATE module the sibling Evals/matrix view mounts as a strip +
-    # section INSIDE itself (a merge-safe `mount` seam), digest-gated (a no-op beat
-    # rebuilds nothing) and recommend-only (every finding is a pointer into reflect
-    # / the builder). Reuses the shipped dn-stat / dn-faint / dn-board-table idiom
-    # (no new chip vocabulary — §6) + its scoped dn-eh-* CSS. ~21 KB of new
-    # read-only evidence surface (back-compat: a cold / un-calibrated epoch renders
-    # the honest-empty panel). EVAL-VIEW.md §6 pre-registers this bundle-envelope
-    # bump — the house rationale (a read-only surface that pays for itself in
-    # operator time) covers it. The envelope is raised to 1.43 MB to cover it with
-    # headroom.
-    assert total < 1_430_000, f"bundle is {total} bytes, exceeds 1_430_000 envelope"
+    # built) — a SEPARATE module the matrix view mounts as a strip + section INSIDE
+    # itself (a merge-safe `mount` seam), digest-gated and recommend-only, reusing
+    # the shipped dn-stat / dn-faint / dn-board-table idiom (~21 KB). The
+    # entry-DOSSIER surface rides the same branch. Each fit under its own line in
+    # isolation — three branches measured 1,448,900 bytes together — but their union
+    # sits above any one alone: the per-wave-raise interaction the 1.35 MB entry
+    # records, now with THREE overlapping read-only surfaces landing at once, so the
+    # envelope is raised once to cover the combined total rather than three times in
+    # sequence. All three are back-compat (a cold / un-calibrated epoch renders the
+    # honest-empty panel; every other view renders byte-identical) and EVAL-VIEW.md
+    # §6 pre-registers the bump — the house rationale (read-only surfaces that pay
+    # for themselves in operator time) covers it. The envelope is raised to 1.452 MB
+    # to cover the combined surface with headroom.
+    assert total < 1_452_000, f"bundle is {total} bytes, exceeds 1_452_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
