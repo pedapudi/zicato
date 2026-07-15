@@ -79,24 +79,57 @@ runtime_ms · wall_clock_budget_exceeded · loss_json · tournament_id
 match_id · cached · source_epoch · source_run · abort_cause
 ```
 
-The matrix is an **indexed query** over this table, not a new store. Read
-helpers already exist (`src/zicato/index/query.py`):
-`loss_profiles_for_generation` (`:228`), `loss_profiles_for_tournament`
-(`:281`), `generations_for_epoch` (`:184`, carries `round_index` / `elo` /
-`elo_se`), `tournaments_for_epoch` (`:909`), `elo_for_epoch` (`:940`). All
-are missing-index-tolerant (return `[]`).
+**PK REALITY (internalize before touching this table).** `run_id` is the
+**PRIMARY KEY** (`schema.py:133`) and the reducer's default is
+`run_id = "{generation_id}:{entry.id}"` (`reducer.py:1190`); ingest upserts
+`ON CONFLICT(run_id) DO UPDATE` with `match_id = COALESCE(...)`
+(`ingest.py:346`). So there is **exactly ONE `loss_profiles` row per
+`(generation_id, entry_id)`**, and its `match_id`/`tournament_id` are
+LAST-WINS at ingest. Two consequences drive the corrected bindings below:
+
+* **A row count is NOT a replicate count** — it is always 1. Cell EVIDENCE
+  must come from the on-disk replicate files (§2.1), not `len(rows)`.
+* **"Same-match_id row pairs" cannot exist** — the table can never hold two
+  rows for one `(gen, entry)`, so discrimination CANNOT be derived from
+  `loss_profiles` (§2.3). It binds to the durable matchup records instead.
+
+The matrix is an **indexed query** over this table for the AXES + cell
+membership, not a new store. Read helpers already exist
+(`src/zicato/index/query.py`): `loss_profiles_for_generation` (`:228`),
+`loss_profiles_for_tournament` (`:281`), `generations_for_epoch` (`:184`,
+carries `round_index` / `elo` / `elo_se`), `tournaments_for_epoch` (`:909`),
+`elo_for_epoch` (`:940`). All are missing-index-tolerant (return `[]`). The
+per-cell EVIDENCE and DISCRIMINATION quantities read the durable **files**
+(`generations/<gen>/runs/<entry>/loss*.json`) — index-free by design.
 
 Each derived quantity and its exact, verified binding:
 
 ### 2.1 The matrix cell (entry × candidate)
-Group `loss_profiles` rows by `(entry_id, generation_id)` under the epoch.
-`drift_loss` and `pass_fail` are columns; the continuous `score` and
-`metrics` live in the `loss_json` blob (parsed exactly as
-`build_per_entry_for_generation` does, `judge_view.py:255`). Multiple rows
-for one (entry, gen) = replicates (§3 aggregation). `cached` /
-`source_epoch` / `source_run` mark a carried-over champion result (a
-materialised fast-mode reuse — schema v6, `schema.py:320`), so the view can
-render it as scored-but-cached and never double-count it.
+The `loss_profiles` row for `(entry_id, generation_id)` supplies cell
+MEMBERSHIP (which candidate columns an entry appears in) plus `cached` /
+`latest_run_id`; `drift_loss` / `pass_fail` and the continuous `score` /
+`metrics` (parsed from the `loss_json` blob exactly as
+`build_per_entry_for_generation` does, `judge_view.py:255`) are its fallback
+values. But **REPLICATE COUNT + EVIDENCE come from the durable replicate
+FILES, not the row count** (which is always 1 — see the PK reality above).
+
+**The evidence binding (`_cell_replicate_draws`, `eval_view.py`).** For each
+cell we read the `loss.json` (replicate 0) + `loss.r<N>.json` siblings that
+actually exist under `generations/<gen>/runs/<entry>/`, filtered to the
+replicate ranges that count as fresh evidence FOR THE CELL: the **real duel
+replicates `[0, 1000)`** (r0 canonical + the low duel slots the
+holdout-ladder confirmation re-runs reuse) and the **evidence-gate draws
+`[4000, 5000)`** (`EVIDENCE_REPLICATE_BASE`). EXCLUDED — a different
+measurement, not this cell's evidence: A/A **calibration `[1000, 2000)`**
+(the champion noise-floor trace; it feeds the flip badge, §2.2), the
+contract **pre-flight `[2000, 3000)`**, the pre-tournament candidate
+**screen `[3000, 4000)`** (an ephemeral veto probe), and **reflection
+`[5000, …)`** (a meta-evaluation of the judges). `pass_ratio` / `pass_fail`
+/ `drift_loss` / `score` are averaged over those same qualifying draws; the
+cell falls back to the single index row only when the `runs/` dir was pruned.
+`cached` / `source_epoch` / `source_run` mark a carried-over champion result
+(a materialised fast-mode reuse — schema v6, `schema.py:320`), so the view
+renders it as scored-but-cached and never double-counts it.
 
 ### 2.2 Per-entry flip rate (calibration) — THE TRACE
 The A/A calibration (`measure_noise_floor`,
@@ -133,14 +166,33 @@ itself) and `runs` (K). The reader:
 Absent `noise_floor`, or missing replicate files → **flip rate unmeasured**
 (never 0; §4).
 
-### 2.3 Discrimination (same-match_id pairs)
+### 2.3 Discrimination (the reign's settled matchups)
 An entry discriminates a matchup when the two competitors' verdicts differ
-on it. Bind to `loss_profiles` rows sharing a `(tournament_id, match_id)`:
-group the entry's rows by that key, and for each group with both sides
-present count it *discriminating* when the two `pass_fail` values differ.
-`discrimination = discriminating_groups / groups_with_both_sides`. An entry
-that is always-pass or always-fail across every matchup discriminates
-nothing (a **dead** channel; §5 WS-HEALTH).
+on it. **This CANNOT bind to `loss_profiles` same-`match_id` pairs** — the
+PK forbids two rows per `(gen, entry)`, so those pairs never exist (the
+original §2 premise was false). Bind instead to the **durable matchup
+records** — the same source the recombination builder trusts
+(`_build_recombination_pair`, `evolve/round_context.py`, via
+`build_matchup_grid`).
+
+**The binding (`_discrimination_by_entry`, `eval_view.py`).** Enumerate the
+reign's SETTLED matchups from the experiment records
+(`_read_epoch_experiments`): each challenger whose `experiment.json` recorded
+a decision (it raced) is a matchup `(parent_generation_id → champion,
+generation_id → challenger)`, deduped on the pair. For each matchup,
+`build_matchup_grid(paths, epoch, champion, challenger)` reads BOTH sides'
+per-entry `loss.json` (`entry_grid[].parent_pass` / `child_pass`, drift-free
+pass bits). Per entry: a matchup is a **comparison** when both sides have a
+usable verdict, and **discriminating** when the two differ. Folding the
+per-entry `[(matchup_key, verdict), …]` through the pure `discrimination`
+helper gives `rate = discriminating / comparisons` and
+`discrimination_pairs = comparisons`. An entry that is always-pass or
+always-fail across every matchup discriminates nothing (a **dead** channel;
+§5 WS-HEALTH). The grid reads are POOLED one-per-matchup (the reign is
+bounded); the health + dossier surfaces share this one map so they always
+agree, and the reader runs in the endpoint threadpool (§5, F5). A gauntlet
+where the champion faces three challengers yields
+`discrimination_pairs = 3`.
 
 ### 2.4 Holdout membership (the split)
 There is **no persisted split record** — membership is *computed* and must
@@ -187,14 +239,15 @@ The OUTCOMES lens payload.
   "epoch_id": "e3",
   "found": true,                     // false + note on unknown/cold epoch
   "candidates": [                    // COLUMN ORDER: round order, then created_at
-    { "generation_id": "g0", "round_index": 0, "promoted": true,
-      "champion_spine": true,        // on the promoted-champion path
+    { "generation_id": "g0", "round_index": 0,
+      "promoted": true,              // TRISTATE: true | false | null (in-flight)
+      "champion_spine": true,        // on the promoted-champion path (promoted===true)
       "elo": 1503.2, "elo_se": 44.1 }
   ],
   "entries": [                       // ROW ORDER: board order (board.jsonl)
     { "entry_id": "task_login", "slice": "holdout", "tag": "holdout",
       "flip_rate": 0.2, "flip_rate_measured": true,
-      "calibration_runs": 5 }
+      "calibration_runs": 5, "calibration_generation": "g0" }
   ],
   "cells": [                         // entries × candidates; a missing cell is null
     [ { "drift_loss": 0.31, "pass_ratio": 1.0, "pass_fail": true,
@@ -207,22 +260,32 @@ The OUTCOMES lens payload.
 }
 ```
 
-Aggregation rules (multiple runs per (gen, entry)):
-- `replicates` = row count for that (gen, entry).
+Aggregation rules (the cell's **replicate draws**, §2.1 — the qualifying
+`loss*.json` files, NOT the `loss_profiles` row, whose count is always 1):
+- `replicates` = number of qualifying replicate FILES for that (gen, entry).
 - `pass_ratio` = mean of the non-`None` `pass_fail` bits; `pass_fail` = the
   ratio's majority verdict (`None` when no bits).
-- `drift_loss` / `score` / `runtime_ms_mean` = mean over the rows.
+- `drift_loss` / `score` / `runtime_ms_mean` = mean over the draws.
 - `latest_run_id` = the last run id in `(entry_id, run_id)` order (the
-  index' stable order).
-- `cached` = **any** row cached (a cell is cached if its result was carried
-  over — never counted as a fresh measurement).
-- `evidence` = `"none"` (0 rows) | `"single"` (1) | `"replicated"` (≥2).
-  Drives §4 shading: a single-sample verdict renders faint.
+  index' stable order — the index row supplies this).
+- `cached` = **any** draw/row cached (a cell is cached if its result was
+  carried over — never counted as a fresh measurement).
+- `evidence` = `"none"` (0 draws) | `"single"` (1) | `"replicated"` (≥2).
+  Drives §4 shading: a single-sample verdict renders faint. `"replicated"`
+  is reachable exactly when ≥2 qualifying replicate files exist on disk.
 
-Column ordering: `(round_index ?? +inf, created_at, generation_id)`;
-`champion_spine` marks the promoted spine (walk `promoted` generations).
-Row ordering: board order; each row flags `slice` (train/holdout via §2.4)
-and its per-entry `flip_rate` (§2.2).
+Column ordering: `(round_index ?? +inf, created_at, generation_id)`.
+`promoted` is **tri-state** (F1): the canonical
+`promoted_tristate(experiment_decision(experiment.json))` — `true` (won the
+gate), `false` (lost), `null` (in-flight / never raced); the index
+`promoted` bool is the fallback ONLY when the experiment record is
+unreadable (a readable-but-undecided experiment stays `null`, never a
+collapsed `false` — decisions.py's "Class-B bug"). `champion_spine` marks
+the promoted spine (`promoted === true` only). Row ordering: board order;
+each row flags `slice` (train/holdout via §2.4), its per-entry `flip_rate`
+(§2.2), and the `calibration_generation` the flip rate rides on (N4 — so a
+flip rate measured on an OLDER champion than the current spine tip reads as
+stale in the badge).
 
 ### 3.2 `build_eval_dossier(paths, epoch_id, entry_id) -> dict`
 The per-entry INSTRUMENT-QUALITY lens (one entry across all candidates).
@@ -234,7 +297,8 @@ The per-entry INSTRUMENT-QUALITY lens (one entry across all candidates).
   "slice": "holdout", "tag": "holdout",
   "instrument": {
     "flip_rate": 0.2, "flip_rate_measured": true, "calibration_runs": 5,
-    "discrimination": 0.75, "discrimination_pairs": 4,   // §2.3
+    "calibration_generation": "g0",                      // N4 (staleness)
+    "discrimination": 0.75, "discrimination_pairs": 4,   // §2.3 (matchup records)
     "runtime_ms_mean": 41200.0, "runtime_ms_p50": 40100.0,
     "runtime_ms_max": 61000.0, "replicate_total": 12,
     "cached_share": 0.08
@@ -250,16 +314,23 @@ The per-entry INSTRUMENT-QUALITY lens (one entry across all candidates).
 }
 ```
 
-`trajectory` orders candidates like the matrix columns; `attribution`
-walks the champion spine in round order: `first_passed_by` = first spine gen
-whose cell passed; `regressed_by` = spine gens that flipped a prior pass to
-a fail. All degrade to `null` / `[]` on absent data.
+`discrimination` / `discrimination_pairs` are the §2.3 matchup-record
+binding (comparisons = both-sides settled matchups; the rate over those);
+`flip_rate_measured` is `true` iff a real rate was computed (an entry with
+<2 usable draws is unmeasured, never a fabricated 0 — F4). `trajectory`
+orders candidates like the matrix columns and reads each cell's replicate
+files (§2.1); `attribution` walks the champion spine in round order:
+`first_passed_by` = first spine gen whose cell passed; `regressed_by` =
+spine gens that flipped a prior pass to a fail. All degrade to `null` / `[]`
+on absent data.
 
 ### 3.3 Pure analytics helpers (unit-tested, no I/O)
 In `eval_view.py`, pure and independently tested:
 - `flip_rate(pass_fail_draws) -> float | None` — §2.2.
-- `discrimination(pairs) -> tuple[float | None, int]` — §2.3, over
-  `(group_key, pass_fail)` items; returns `(rate, n_groups_with_both)`.
+- `discrimination(pairs) -> tuple[float | None, int]` — the pure grouped-pair
+  fold §2.3 drives: over `(matchup_key, pass_fail)` items it returns
+  `(rate, n_groups_with_both)`. (The DATA source is the matchup records, not
+  `loss_profiles`; the fold itself is unchanged and independently tested.)
 - `runtime_aggregates(values) -> {mean, p50, max}` — over non-`None` ms.
 - `pass_ratio(bits) -> float | None`, `evidence_of(n) -> str`.
 
@@ -283,7 +354,18 @@ In `eval_view.py`, pure and independently tested:
 4. **No fabricated numbers.** Absent calibration ⇒ `flip_rate_measured:
    false` and the view prints **"flip rate unmeasured"**, NEVER `0.0`.
    Absent floor ⇒ the MDE ladder says "floor unmeasured", not a made-up
-   bound. `null` is honest; a zero is a lie.
+   bound. An entry present in the flip map but with a `null` rate (<2 usable
+   draws) is **unmeasured** — the reader tests `flip.get(eid) is not None`,
+   not `eid in flip` (F4), so all three readers agree. `null` is honest; a
+   zero is a lie.
+5. **The MDE honesty caveat at low n (N3).** The two-sample form's `√(2/n)`
+   makes the MDE much LARGER at small replicate counts — at `n=2` it is
+   several times the `n=6` illustration this doc uses (`df=2`, the t-values
+   balloon). The panel already prints honestly: it states the actual `n`,
+   `df`, and the resulting bound (never the `n=6` number as if universal), so
+   an operator running at `replicates=2` sees the genuinely wider MDE, not a
+   flattering one. The illustration here is a fixed reference point, not the
+   served value.
 
 ## 5. The four workstreams
 
@@ -291,9 +373,13 @@ In `eval_view.py`, pure and independently tested:
 `src/zicato/query/eval_view.py` (§3) + endpoints
 `/api/epoch/{id}/evals` and `/api/epoch/{id}/eval/{entry_id}` in
 `_make_epoch_endpoints` (`endpoints.py:204`), routed in `server.py:200`
-following the `_is_safe_id` degrade idiom. Reads run synchronously from the
-async handler (the established pattern — every `query.build_*` handler does;
-SQLite reads are sub-ms). Exported from `zicato.query.__init__`.
+following the `_is_safe_id` degrade idiom. All THREE eval readers do blocking
+file I/O (the pooled matchup grids + per-cell replicate files), so each
+handler wraps its reader in `run_in_threadpool` (the `build_log_view`
+precedent, `endpoints.py:176`, F5) — the reads never stall the event loop.
+The malformed-id degrade returns the reader's own `_empty_matrix` /
+`_empty_dossier` / `_empty_health` shape (single-sourced, N1) so the endpoint
+and reader can never drift. Exported from `zicato.query.__init__`.
 
 ### WS-MATRIX (new top-level **Evals** view)
 A new shell view (a new hash route + tree node) rendering `build_eval_matrix`.
@@ -305,11 +391,24 @@ A new shell view (a new hash route + tree node) rendering `build_eval_matrix`.
   `dn-table-scroll` container (that class exists); the page body never
   scrolls horizontally.
 - **Evidence shading** (§4.1) — cell opacity/weight from `cell.evidence`.
-- **Filters** — failures-only, flips-only (`flip_rate > 0`), holdout-only.
+- **Filters** — failures-only, **flips-only**, holdout-only. **flips-only =
+  a CROSS-COLUMN VERDICT CHANGE** (F6): a row is kept when some cell's
+  verdict differs from the previous **non-null** column — "what did this
+  candidate MOVE". This is the operator-intended signal in `rowHasFlip`
+  (`views/evals.js`); it is **NOT** the entry-noise `flip_rate > 0` signal
+  (that lives on the per-row flip badge instead — a channel can be noisy
+  without any candidate changing its verdict, and a clean 0%-flip channel can
+  still record a genuine fail→pass move). The two are deliberately distinct
+  lenses.
 - **Flip-rate row badges** (§4.2) — each entry row shows `flip_rate` (or
-  "unmeasured") beside the entry id.
+  "unmeasured") beside the entry id, with the `calibration_generation` in the
+  badge tooltip (N4) so a stale (older-champion) flip rate is visible.
 - **Decision column headers** — champion-spine columns marked (crown glyph
-  from `svg.js` `CROWN`); `round_index` grouped.
+  from `svg.js` `CROWN`); `round_index` grouped. The decision pill is
+  **tri-state** (F1): `promoted` → the shipped `promoted` pill, `rejected` →
+  `rejected`, `null` (in-flight / never raced) → the shipped `pending`
+  ("racing…") vocabulary — a null is NEVER collapsed to rejected, and the
+  view digest folds a 3-state token so a `false`→`null` change repaints.
 - **Cell click-through** — into the run transcript and a harmonograf
   deep-link via the existing helpers (the `harmonograf_url` on
   `WorkspacePaths` + the run-header / transcript endpoints the dossier
@@ -332,8 +431,13 @@ Upgrade `src/zicato/dashboard/static/js/views/board.js` to render
 Recommend-only; every finding links into `reflect` / `builder`.
 - The **measured floor** + the **live MDE ladder** (§4.3).
 - **Ranked noisy evals** — entries by descending `flip_rate`.
-- **DEAD evals** — zero discrimination across all reign (§2.3): an entry
-  that never separated any two candidates.
+- **DEAD evals** — zero discrimination across the reign's settled matchups
+  (§2.3): an entry that never separated any two candidates, read from the
+  matchup records. A zero-discrimination channel is only DEAD **above** the
+  minimum-comparisons honesty threshold (`_MIN_DISCRIMINATION_COMPARISONS =
+  3`); below it the panel says "insufficient comparisons", never dead. The
+  dossier and this panel share the one `_discrimination_by_entry` map, so
+  they never disagree.
 - **Redundancy clusters** — from the reflection corpus analysis
   (`reflection_view` `redundant_with`) *if cheaply reachable* (the
   reflection is already built); else **deferred, with an explicit note** —

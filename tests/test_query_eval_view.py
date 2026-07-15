@@ -1,12 +1,17 @@
 """Known-answer tests for the eval-centric readers (EVAL-VIEW.md §3 / WS-READ).
 
-A small seeded workspace exercises both readers end-to-end: 2 candidates on
-the champion spine (g0, g1) + one non-promoted challenger (g2), entries with
-replicates, a holdout-tagged entry, a cached cell, matchup rows for
-discrimination, and base-1000 A/A calibration replicate files for the
-per-entry flip rate. The pure analytics helpers are tested independently, and
-every degrade path (cold index, unknown epoch/entry, no calibration) plus the
-digest round-trip (byte-identical payload) is covered.
+A small seeded workspace exercises all three readers end-to-end against
+REAL-SHAPED data — the run ids the pipeline actually emits (``loss_profiles``
+PK ``run_id`` = one row per (gen, entry)), per-replicate ``loss.json`` /
+``loss.r<N>.json`` files on disk as the worker writes them, and
+``experiment.json`` records as the journal writes them. This matters: the
+``loss_profiles`` table CANNOT hold "same-match row pairs" (its PK forbids two
+rows for one (gen, entry)), so discrimination is read from the DURABLE matchup
+records (``build_matchup_grid``) and cell evidence from the replicate FILES —
+not a fabricated row count. A gauntlet where the champion faces three
+challengers yields ``discrimination_pairs=3`` (§2.3 / F2). The pure analytics
+helpers are tested independently; every degrade path plus the digest round-trip
+is covered.
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ from zicato.index.schema import apply_schema
 from zicato.query import eval_view as ev
 from zicato.query.paths import WorkspacePaths
 from zicato.tournament.unit_cache import _unit_loss_path
+from zicato.workspace.layout import WorkspaceLayout
 
 EPOCH = "e_eval"
 DEAD_EP = "e_dead"
@@ -32,66 +38,103 @@ def _paths(workspace: Path) -> WorkspacePaths:
     return WorkspacePaths(workspace)
 
 
-def _seed_dead(workspace: Path) -> None:
-    """A workspace whose instrument has a genuinely DEAD channel (§5 WS-HEALTH).
+# ---------------------------------------------------------------------------
+# Real-shaped writers — the on-disk artifacts the pipeline actually emits.
+# ---------------------------------------------------------------------------
 
-    Two promoted candidates (g0, g1); entryD never separates them across 3
-    matchups (always-agree → zero discrimination at/over the 3-comparison
-    threshold → DEAD), while entryE agrees over only 2 matchups (below the
-    threshold → "insufficient comparisons", never dead — the honesty boundary).
-    """
-    edir = workspace / "epochs" / DEAD_EP
-    edir.mkdir(parents=True, exist_ok=True)
-    (edir / "config.json").write_text(
-        json.dumps({"id": DEAD_EP, "created_at": "2026-07-02", "closed": False}), encoding="utf-8"
+
+def _write_run_loss(
+    workspace: Path,
+    epoch: str,
+    gen: str,
+    entry: str,
+    *,
+    passes: bool | None,
+    drift: float,
+    runtime: int,
+    replicate: int = 0,
+    cached: bool = False,
+    score: float | None = None,
+) -> None:
+    """Write ONE per-replicate ``loss.json`` / ``loss.r<N>.json`` (the worker's output)."""
+    from zicato.telemetry import reducer  # noqa: PLC0415
+
+    suffix = "" if replicate == 0 else f":r{replicate}"
+    loss = LossProfile(
+        run_id=f"{gen}:{entry}{suffix}",
+        entry_id=entry,
+        generation_id=gen,
+        epoch_id=epoch,
+        drift_counts=(),
+        plan_revisions=0,
+        task_failure_ratio=0.0,
+        runtime_ms=runtime,
+        wall_clock_budget_exceeded=False,
+        expectation_result=None,
+        drift_loss=drift,
+        pass_fail=passes,
+        cached=cached,
+        score=score,
     )
-    (edir / "scoring.json").write_text(json.dumps({}), encoding="utf-8")
-    board = [
-        {"board_meta": True},
-        {"id": "entryD", "kind": "single_turn", "input": "d", "wall_clock_budget_seconds": 60},
-        {"id": "entryE", "kind": "single_turn", "input": "e", "wall_clock_budget_seconds": 60},
-    ]
-    (edir / "board.jsonl").write_text("\n".join(json.dumps(r) for r in board), encoding="utf-8")
-    (workspace / "lineage.json").write_text(
-        json.dumps({"epochs": [{"id": DEAD_EP, "generations": []}]}), encoding="utf-8"
+    reducer.write_loss_profile(loss, _unit_loss_path(workspace, epoch, gen, entry, replicate))
+
+
+def _write_experiment(
+    workspace: Path, epoch: str, gen: str, parent: str | None, decision: str | None
+) -> None:
+    """Write ONE ``experiment.json`` (the journal record the matchup enumerator reads)."""
+    layout = WorkspaceLayout.from_root(workspace)
+    path = layout.experiment(epoch, gen)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    record: dict = {"generation_id": gen, "parent_generation_id": parent}
+    if decision is not None:
+        record["outcome"] = {"tournament_decision": decision}
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+
+def _lp_row(conn: sqlite3.Connection, epoch: str, gen: str, entry: str, **kw: object) -> None:
+    """Insert ONE ``loss_profiles`` row — run_id ``{gen}:{entry}`` (the PK the pipeline emits)."""
+    loss_json = json.dumps({"score": kw.get("score")}) if kw.get("score") is not None else None
+    conn.execute(
+        "INSERT INTO loss_profiles(run_id, epoch_id, generation_id, entry_id, "
+        "drift_loss, pass_fail, runtime_ms, wall_clock_budget_exceeded, loss_json, "
+        "tournament_id, match_id, cached, source_epoch, source_run, abort_cause) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            f"{gen}:{entry}",
+            epoch,
+            gen,
+            entry,
+            kw.get("drift"),
+            1 if kw.get("passes") else 0,
+            kw.get("runtime"),
+            0,
+            loss_json,
+            kw.get("tour"),
+            None,
+            1 if kw.get("cached") else 0,
+            None,
+            None,
+            None,
+        ),
     )
-    (workspace / "current_epoch").write_text(DEAD_EP, encoding="utf-8")
 
-    conn = sqlite3.connect(str(workspace / "index.db"))
-    try:
-        apply_schema(conn)
-        conn.execute(
-            "INSERT INTO epochs(epoch_id, contract_hash, created_at, closed) VALUES(?,?,?,?)",
-            (DEAD_EP, "h", "2026-07-02", 0),
-        )
-        for gid, rnd in [("g0", 0), ("g1", 1)]:
-            conn.execute(
-                "INSERT INTO generations(epoch_id, generation_id, parent_generation_id, "
-                "promoted, created_at, round_index, elo, elo_se, elo_games) "
-                "VALUES(?,?,?,?,?,?,?,?,?)",
-                (DEAD_EP, gid, None, 1, f"2026-07-0{2 + rnd}", rnd, 1500.0, 40.0, 4),
-            )
 
-        def lp(run: str, gen: str, entry: str, tour: str, match: str) -> None:
-            conn.execute(
-                "INSERT INTO loss_profiles(run_id, epoch_id, generation_id, entry_id, "
-                "drift_loss, pass_fail, runtime_ms, wall_clock_budget_exceeded, loss_json, "
-                "tournament_id, match_id, cached, source_epoch, source_run, abort_cause) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (run, DEAD_EP, gen, entry, 0.1, 1, 10, 0, None, tour, match, 0, None, None, None),
-            )
-
-        # entryD: 3 always-agree matchups (both sides pass) → dead over 3 pairs.
-        for i in range(3):
-            lp(f"d0-{i}", "g0", "entryD", f"Td{i}", f"md{i}")
-            lp(f"d1-{i}", "g1", "entryD", f"Td{i}", f"md{i}")
-        # entryE: only 2 agree matchups → below the 3-comparison threshold.
-        for i in range(2):
-            lp(f"e0-{i}", "g0", "entryE", f"Te{i}", f"me{i}")
-            lp(f"e1-{i}", "g1", "entryE", f"Te{i}", f"me{i}")
-        conn.commit()
-    finally:
-        conn.close()
+def _gen_row(
+    conn: sqlite3.Connection,
+    epoch: str,
+    gid: str,
+    parent: str | None,
+    promo: int,
+    rnd: int,
+    created: str,
+) -> None:
+    conn.execute(
+        "INSERT INTO generations(epoch_id, generation_id, parent_generation_id, "
+        "promoted, created_at, round_index, elo, elo_se, elo_games) "
+        "VALUES(?,?,?,?,?,?,?,?,?)",
+        (epoch, gid, parent, promo, created, rnd, 1500.0, 40.0, 4),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -140,30 +183,24 @@ def test_discrimination_same_match_pairs() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Fixture workspace (built programmatically)
+# Fixture workspace (built programmatically) — the EVAL epoch.
 # ---------------------------------------------------------------------------
 
 
-def _write_replicate(
+def _write_calibration_replicate(
     workspace: Path, gen: str, entry: str, *, passes: bool, replicate: int
 ) -> None:
-    from zicato.telemetry import reducer  # noqa: PLC0415
-
-    loss = LossProfile(
-        run_id=f"cal-{gen}-{entry}-{replicate}",
-        entry_id=entry,
-        generation_id=gen,
-        epoch_id=EPOCH,
-        drift_counts=(),
-        plan_revisions=0,
-        task_failure_ratio=0.0,
-        runtime_ms=10,
-        wall_clock_budget_exceeded=False,
-        expectation_result=None,
-        drift_loss=0.0 if passes else 0.5,
-        pass_fail=passes,
+    """Write ONE base-1000 A/A calibration draw file for the per-entry flip rate."""
+    _write_run_loss(
+        workspace,
+        EPOCH,
+        gen,
+        entry,
+        passes=passes,
+        drift=0.0 if passes else 0.5,
+        runtime=10,
+        replicate=replicate,
     )
-    reducer.write_loss_profile(loss, _unit_loss_path(workspace, EPOCH, gen, entry, replicate))
 
 
 def _seed_index(workspace: Path) -> None:
@@ -174,51 +211,21 @@ def _seed_index(workspace: Path) -> None:
             "INSERT INTO epochs(epoch_id, contract_hash, created_at, closed) VALUES(?,?,?,?)",
             (EPOCH, "h", "2026-07-01", 0),
         )
-        # (generation_id, parent, promoted, round_index)
-        for gid, par, promo, rnd in [("g0", None, 1, 0), ("g1", "g0", 1, 1), ("g2", "g0", 0, 1)]:
-            conn.execute(
-                "INSERT INTO generations(epoch_id, generation_id, parent_generation_id, "
-                "promoted, created_at, round_index, elo, elo_se, elo_games) "
-                "VALUES(?,?,?,?,?,?,?,?,?)",
-                (EPOCH, gid, par, promo, f"2026-07-0{1 + rnd}", rnd, 1500.0, 40.0, 4),
-            )
+        # g0 seed (promoted), g1 promoted child, g2 rejected child.
+        _gen_row(conn, EPOCH, "g0", None, 1, 0, "2026-07-01")
+        _gen_row(conn, EPOCH, "g1", "g0", 1, 1, "2026-07-02")
+        _gen_row(conn, EPOCH, "g2", "g0", 0, 1, "2026-07-02")
 
-        def lp(run, gen, entry, drift, pf, rt, tour, match, cached, score=None):
-            loss_json = json.dumps({"score": score}) if score is not None else None
-            conn.execute(
-                "INSERT INTO loss_profiles(run_id, epoch_id, generation_id, entry_id, "
-                "drift_loss, pass_fail, runtime_ms, wall_clock_budget_exceeded, loss_json, "
-                "tournament_id, match_id, cached, source_epoch, source_run, abort_cause) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    run,
-                    EPOCH,
-                    gen,
-                    entry,
-                    drift,
-                    pf,
-                    rt,
-                    0,
-                    loss_json,
-                    tour,
-                    match,
-                    cached,
-                    None,
-                    None,
-                    None,
-                ),
-            )
-
-        # g0/entryA: replicated cell (2 rows, both pass, mean drift 0.3, mean score 0.8).
-        lp("g0A1", "g0", "entryA", 0.2, 1, 10, "T0", None, 0, score=0.9)
-        lp("g0A2", "g0", "entryA", 0.4, 1, 20, "T0", None, 0, score=0.7)
-        lp("g0B1", "g0", "entryB", 0.0, 1, 5, "T0", None, 0)
-        lp("g0C1", "g0", "entryC", 0.1, 1, 5, "T0", None, 1)  # cached cell (carried over)
-        # entryA matchups: m1 discriminates (g1 pass vs g2 fail), m2 agrees.
-        lp("g1A1", "g1", "entryA", 0.3, 1, 10, "T1", "m1", 0)
-        lp("g1A2", "g1", "entryA", 0.3, 1, 10, "T2", "m2", 0)
-        lp("g2A1", "g2", "entryA", 0.5, 0, 10, "T1", "m1", 0)
-        lp("g2A2", "g2", "entryA", 0.3, 1, 10, "T2", "m2", 0)
+        # ONE loss_profiles row per (gen, entry) — the PK the pipeline emits.
+        _lp_row(
+            conn, EPOCH, "g0", "entryA", drift=0.2, passes=True, runtime=10, tour="T0", score=0.9
+        )
+        _lp_row(conn, EPOCH, "g0", "entryB", drift=0.0, passes=True, runtime=5, tour="T0")
+        _lp_row(
+            conn, EPOCH, "g0", "entryC", drift=0.1, passes=True, runtime=5, tour="T0", cached=True
+        )
+        _lp_row(conn, EPOCH, "g1", "entryA", drift=0.3, passes=True, runtime=10, tour="T1")
+        _lp_row(conn, EPOCH, "g2", "entryA", drift=0.5, passes=False, runtime=10, tour="T1")
         conn.commit()
     finally:
         conn.close()
@@ -253,13 +260,90 @@ def _seed(workspace: Path, *, with_calibration: bool = True) -> None:
         json.dumps({"epochs": [{"id": EPOCH, "generations": []}]}), encoding="utf-8"
     )
     (workspace / "current_epoch").write_text(EPOCH, encoding="utf-8")
+
+    # The canonical per-entry loss.json each candidate wrote (drives the matrix
+    # cells AND build_matchup_grid's parent/child verdicts). g0/entryA carries a
+    # SECOND duel replicate (loss.r1.json, index 1 — a real evidence slot) so its
+    # cell is genuinely REPLICATED off the durable files, not a fabricated count.
+    _write_run_loss(workspace, EPOCH, "g0", "entryA", passes=True, drift=0.2, runtime=10, score=0.9)
+    _write_run_loss(
+        workspace, EPOCH, "g0", "entryA", passes=True, drift=0.4, runtime=20, replicate=1, score=0.7
+    )
+    _write_run_loss(workspace, EPOCH, "g0", "entryB", passes=True, drift=0.0, runtime=5)
+    _write_run_loss(
+        workspace, EPOCH, "g0", "entryC", passes=True, drift=0.1, runtime=5, cached=True
+    )
+    _write_run_loss(workspace, EPOCH, "g1", "entryA", passes=True, drift=0.3, runtime=10)
+    _write_run_loss(workspace, EPOCH, "g2", "entryA", passes=False, drift=0.5, runtime=10)
+
+    # The experiment records: g1 promoted, g2 rejected (each a settled matchup vs
+    # its parent g0). g0 is the seed — no experiment.json → the axis falls back to
+    # the index promoted bool (True), exercising the fallback path.
+    _write_experiment(workspace, EPOCH, "g1", "g0", "promoted")
+    _write_experiment(workspace, EPOCH, "g2", "g0", "rejected")
+
     if with_calibration:
         # entryA: T, T, F → flip 1/3 ; entryB: all pass → 0.0 ; entryC: no draws.
         for i, p in enumerate([True, True, False]):
-            _write_replicate(workspace, "g0", "entryA", passes=p, replicate=1000 + i)
+            _write_calibration_replicate(workspace, "g0", "entryA", passes=p, replicate=1000 + i)
         for i, p in enumerate([True, True, True]):
-            _write_replicate(workspace, "g0", "entryB", passes=p, replicate=1000 + i)
+            _write_calibration_replicate(workspace, "g0", "entryB", passes=p, replicate=1000 + i)
     _seed_index(workspace)
+
+
+def _seed_dead(workspace: Path) -> None:
+    """A GAUNTLET whose instrument has a genuinely DEAD channel (§5 WS-HEALTH).
+
+    The champion g0 faces THREE challengers (g1, g2, g3). entryD runs on all four
+    and always AGREES → zero discrimination over 3 both-sides matchups → DEAD
+    (this is the "champion faces 3 challengers ⇒ discrimination_pairs=3" pin).
+    entryE runs on g0/g1/g2 only → 2 both-sides matchups → below the 3-comparison
+    threshold → "insufficient comparisons", never dead (the honesty boundary).
+    """
+    edir = workspace / "epochs" / DEAD_EP
+    edir.mkdir(parents=True, exist_ok=True)
+    (edir / "config.json").write_text(
+        json.dumps({"id": DEAD_EP, "created_at": "2026-07-02", "closed": False}), encoding="utf-8"
+    )
+    (edir / "scoring.json").write_text(json.dumps({}), encoding="utf-8")
+    board = [
+        {"board_meta": True},
+        {"id": "entryD", "kind": "single_turn", "input": "d", "wall_clock_budget_seconds": 60},
+        {"id": "entryE", "kind": "single_turn", "input": "e", "wall_clock_budget_seconds": 60},
+    ]
+    (edir / "board.jsonl").write_text("\n".join(json.dumps(r) for r in board), encoding="utf-8")
+    (workspace / "lineage.json").write_text(
+        json.dumps({"epochs": [{"id": DEAD_EP, "generations": []}]}), encoding="utf-8"
+    )
+    (workspace / "current_epoch").write_text(DEAD_EP, encoding="utf-8")
+
+    # entryD on every gen (always pass → always-agree); entryE on g0/g1/g2 only.
+    for gen in ("g0", "g1", "g2", "g3"):
+        _write_run_loss(workspace, DEAD_EP, gen, "entryD", passes=True, drift=0.1, runtime=10)
+    for gen in ("g0", "g1", "g2"):
+        _write_run_loss(workspace, DEAD_EP, gen, "entryE", passes=True, drift=0.1, runtime=10)
+    # The three settled matchups: each challenger raced g0 and was rejected.
+    for gen in ("g1", "g2", "g3"):
+        _write_experiment(workspace, DEAD_EP, gen, "g0", "rejected")
+
+    conn = sqlite3.connect(str(workspace / "index.db"))
+    try:
+        apply_schema(conn)
+        conn.execute(
+            "INSERT INTO epochs(epoch_id, contract_hash, created_at, closed) VALUES(?,?,?,?)",
+            (DEAD_EP, "h", "2026-07-02", 0),
+        )
+        _gen_row(conn, DEAD_EP, "g0", None, 1, 0, "2026-07-02")
+        for i, gid in enumerate(("g1", "g2", "g3"), start=1):
+            _gen_row(conn, DEAD_EP, gid, "g0", 0, 1, f"2026-07-0{2 + i}")
+            _lp_row(conn, DEAD_EP, gid, "entryD", drift=0.1, passes=True, runtime=10)
+        _lp_row(conn, DEAD_EP, "g0", "entryD", drift=0.1, passes=True, runtime=10)
+        _lp_row(conn, DEAD_EP, "g0", "entryE", drift=0.1, passes=True, runtime=10)
+        _lp_row(conn, DEAD_EP, "g1", "entryE", drift=0.1, passes=True, runtime=10)
+        _lp_row(conn, DEAD_EP, "g2", "entryE", drift=0.1, passes=True, runtime=10)
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +359,8 @@ def test_matrix_axes_and_ordering(tmp_path: Path) -> None:
     # Columns in round order; champion spine = the promoted generations.
     assert [c["generation_id"] for c in m["candidates"]] == ["g0", "g1", "g2"]
     assert [c["champion_spine"] for c in m["candidates"]] == [True, True, False]
+    # Tristate promoted: g0 (fallback True) / g1 (promoted True) / g2 (rejected False).
+    assert [c["promoted"] for c in m["candidates"]] == [True, True, False]
     assert m["candidates"][0]["round_index"] == 0
     # Rows in board order; the tagged entry is flagged holdout.
     assert [e["entry_id"] for e in m["entries"]] == ["entryA", "entryB", "entryC"]
@@ -282,11 +368,22 @@ def test_matrix_axes_and_ordering(tmp_path: Path) -> None:
     assert slices == {"entryA": "train", "entryB": "train", "entryC": "holdout"}
 
 
+def test_matrix_tristate_promoted_null(tmp_path: Path) -> None:
+    # An in-flight generation (experiment.json with NO decision) serves promoted
+    # null — never a collapsed False (the Class-B bug), never on the spine.
+    _seed(tmp_path)
+    _write_experiment(tmp_path, EPOCH, "g2", "g0", None)  # overwrite g2 → undecided
+    m = ev.build_eval_matrix(_paths(tmp_path), EPOCH)
+    g2 = next(c for c in m["candidates"] if c["generation_id"] == "g2")
+    assert g2["promoted"] is None
+    assert g2["champion_spine"] is False
+
+
 def test_matrix_cell_aggregation_and_evidence(tmp_path: Path) -> None:
     _seed(tmp_path)
     m = ev.build_eval_matrix(_paths(tmp_path), EPOCH)
     cell = {(e["entry_id"]): row for e, row in zip(m["entries"], m["cells"], strict=True)}
-    a_g0 = cell["entryA"][0]  # replicated cell
+    a_g0 = cell["entryA"][0]  # replicated cell — TWO real files (r0 + r1)
     assert a_g0["replicates"] == 2
     assert a_g0["evidence"] == "replicated"
     assert abs(a_g0["drift_loss"] - 0.3) < 1e-9
@@ -311,6 +408,8 @@ def test_matrix_flip_rates_from_calibration(tmp_path: Path) -> None:
     assert abs(flags["entryA"]["flip_rate"] - 1 / 3) < 1e-9
     assert flags["entryA"]["flip_rate_measured"] is True
     assert flags["entryA"]["calibration_runs"] == 3
+    # The calibration generation is threaded onto every row (N4 — staleness).
+    assert flags["entryA"]["calibration_generation"] == "g0"
     # entryB never flipped.
     assert flags["entryB"]["flip_rate"] == 0.0
     # entryC has no calibration draws → unmeasured, NOT 0.0.
@@ -331,6 +430,7 @@ def test_matrix_no_calibration_degrades(tmp_path: Path) -> None:
     for e in m["entries"]:
         assert e["flip_rate"] is None
         assert e["flip_rate_measured"] is False
+        assert e["calibration_generation"] is None
 
 
 def test_matrix_cold_index_same_shape(tmp_path: Path) -> None:
@@ -362,11 +462,11 @@ def test_dossier_instrument_and_discrimination(tmp_path: Path) -> None:
     inst = d["instrument"]
     assert abs(inst["flip_rate"] - 1 / 3) < 1e-9
     assert inst["flip_rate_measured"] is True
-    # m1 splits, m2 agrees → 1/2 over 2 matchups.
+    # Reign matchups (g0,g1) agree + (g0,g2) split → 1/2 over 2 comparisons.
     assert inst["discrimination"] == 0.5
     assert inst["discrimination_pairs"] == 2
-    assert inst["replicate_total"] == 6  # 2 (g0) + 2 (g1) + 2 (g2)
-    assert inst["runtime_ms_max"] == 20.0
+    assert inst["replicate_total"] == 3  # one index row per (gen, entry): g0/g1/g2
+    assert inst["runtime_ms_max"] == 10.0
     assert inst["cached_share"] == 0.0
 
 
@@ -374,7 +474,7 @@ def test_dossier_trajectory_and_attribution(tmp_path: Path) -> None:
     _seed(tmp_path)
     d = ev.build_eval_dossier(_paths(tmp_path), EPOCH, "entryA")
     traj = {t["generation_id"]: t for t in d["trajectory"]}
-    assert traj["g0"]["replicates"] == 2
+    assert traj["g0"]["replicates"] == 2  # from the two on-disk replicate files
     assert traj["g0"]["champion_spine"] is True
     assert traj["g2"]["champion_spine"] is False
     # First spine gen to pass is g0; both spine gens pass → no regression.
@@ -389,7 +489,7 @@ def test_dossier_holdout_and_cached_entry(tmp_path: Path) -> None:
     assert d["slice"] == "holdout"
     assert d["tag"] == "holdout"
     assert d["instrument"]["cached_share"] == 1.0
-    # Only a cached, non-matchup row → nothing to discriminate.
+    # entryC ran only on g0 (never both-sided in a matchup) → nothing to discriminate.
     assert d["instrument"]["discrimination"] is None
     assert d["instrument"]["discrimination_pairs"] == 0
 
@@ -528,11 +628,11 @@ def test_health_noisiest_and_runtime_rankings(tmp_path: Path) -> None:
     assert abs(h["noisiest"][0]["flip_rate"] - 1 / 3) < 1e-9
     assert h["noisiest"][1]["flip_rate"] == 0.0
     assert all(r["entry_id"] != "entryC" for r in h["noisiest"])
-    # Runtime cost: entryA (mean 70/6) leads; both single-row entries tie at 5.
+    # Runtime cost: entryA (3 rows @10ms) leads; single-row entries trail at 5.
     rc = {r["entry_id"]: r for r in h["runtime_cost"]}
     assert h["runtime_cost"][0]["entry_id"] == "entryA"
-    assert abs(rc["entryA"]["runtime_ms_mean"] - 70 / 6) < 1e-9
-    assert rc["entryA"]["replicate_total"] == 6
+    assert rc["entryA"]["runtime_ms_mean"] == 10.0
+    assert rc["entryA"]["replicate_total"] == 3
 
 
 def test_health_dead_vs_insufficient_honesty(tmp_path: Path) -> None:
@@ -551,9 +651,10 @@ def test_health_dead_channel_above_threshold(tmp_path: Path) -> None:
     h = ev.build_eval_health(_paths(tmp_path), DEAD_EP)
     dead = {r["entry_id"]: r for r in h["dead"]}
     ins = {r["entry_id"] for r in h["insufficient"]}
-    # entryD: 3 always-agree matchups → zero discrimination at/over threshold → DEAD.
+    # entryD: champion vs 3 challengers, always agree → zero discrimination over 3
+    # comparisons → DEAD (the gauntlet discrimination_pairs=3 pin).
     assert "entryD" in dead and dead["entryD"]["discrimination_pairs"] == 3
-    # entryE: only 2 agree matchups → below threshold → insufficient, never dead.
+    # entryE: only 2 both-sides matchups → below threshold → insufficient, never dead.
     assert "entryD" not in ins
     assert "entryE" in ins and "entryE" not in dead
 
@@ -561,9 +662,8 @@ def test_health_dead_channel_above_threshold(tmp_path: Path) -> None:
 def test_health_rotation_holdout_and_redundancy_defer(tmp_path: Path) -> None:
     _seed(tmp_path)
     h = ev.build_eval_health(_paths(tmp_path), EPOCH)
-    # No experiments recorded → no holdout ladder budget yet, no cadence pressure.
+    # No holdout-ladder confirmations recorded → no budget yet, no cadence pressure.
     assert h["holdout_budget"] is None
-    assert h["rotation"]["evaluated_generations"] == 0
     assert h["rotation"]["refresh_recommended"] is False
     assert h["rotation"]["max_generations_per_contract"] is None
     # No reflection built → redundancy defers with an explicit pointer at reflect.

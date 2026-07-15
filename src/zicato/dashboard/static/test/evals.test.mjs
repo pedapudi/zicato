@@ -56,10 +56,15 @@ function setLive(live) {
 }
 
 // A known-answer matrix payload (build_eval_matrix shape, EVAL-VIEW.md §3.1).
-// Columns: g0 (r0, spine) · g1 (r1) · g2 (r1, spine). Rows:
-//   task_login  (train)   pass·rep | fail·single | pass·rep   → has fail, FLIPS
-//   task_hold   (holdout) pass·rep | (null)      | pass·rep   → no fail, no flip
-//   task_flat   (train)   fail·rep | fail·rep    | fail·rep   → has fail, no flip
+// Columns: g0 (r0, spine) · g1 (r1, rejected) · g2 (r1, spine). Rows — the two
+// flip interpretations are DELIBERATELY separated (§5 / F6): flips-only means a
+// CROSS-COLUMN verdict change, NOT flip_rate>0.
+//   task_login (train)   pass·rep | fail·single | pass·rep  flip 20%  → fail, CHANGE → in flips
+//   task_hold  (holdout) pass·rep | (null)      | pass·rep  unmeasured→ no fail, no change
+//   task_flat  (train)   fail·rep | fail·rep    | fail·rep  flip 40%  → fail, NO change → EXCLUDED
+//   task_clean (train)   fail·rep | pass·rep    | pass·rep  flip 0%   → fail, CHANGE → INCLUDED
+// task_flat (flip>0, no cross-column change) and task_clean (flip 0, fail→pass
+// change) are the discriminating pair: they distinguish flips-from-flip-rate.
 function matrixFixture() {
   const cP = (evidence, replicates) => ({ drift_loss: 0.31, pass_ratio: 1.0, pass_fail: true, score: 0.9,
     replicates, cached: false, latest_run_id: 'run_p', runtime_ms_mean: 41000, evidence });
@@ -73,14 +78,16 @@ function matrixFixture() {
       { generation_id: 'g2', round_index: 1, promoted: true, champion_spine: true, elo: 1520.0, elo_se: 39.0 },
     ],
     entries: [
-      { entry_id: 'task_login', slice: 'train', tag: null, flip_rate: 0.2, flip_rate_measured: true, calibration_runs: 5 },
-      { entry_id: 'task_hold', slice: 'holdout', tag: 'holdout', flip_rate: null, flip_rate_measured: false, calibration_runs: 0 },
-      { entry_id: 'task_flat', slice: 'train', tag: null, flip_rate: 0.0, flip_rate_measured: true, calibration_runs: 5 },
+      { entry_id: 'task_login', slice: 'train', tag: null, flip_rate: 0.2, flip_rate_measured: true, calibration_runs: 5, calibration_generation: 'g0' },
+      { entry_id: 'task_hold', slice: 'holdout', tag: 'holdout', flip_rate: null, flip_rate_measured: false, calibration_runs: 0, calibration_generation: null },
+      { entry_id: 'task_flat', slice: 'train', tag: null, flip_rate: 0.4, flip_rate_measured: true, calibration_runs: 5, calibration_generation: 'g0' },
+      { entry_id: 'task_clean', slice: 'train', tag: null, flip_rate: 0.0, flip_rate_measured: true, calibration_runs: 5, calibration_generation: 'g0' },
     ],
     cells: [
       [cP('replicated', 2), cF('single', 1), cP('replicated', 3)],
       [cP('replicated', 2), null, cP('replicated', 2)],
       [cF('replicated', 2), cF('replicated', 2), cF('replicated', 2)],
+      [cF('replicated', 2), cP('replicated', 2), cP('replicated', 2)],
     ],
     calibration: { measured: true, generation_id: 'g0', runs: 5, max_abs_delta: 0.06 },
   };
@@ -119,8 +126,8 @@ test('render: paints the entries × candidates matrix with the spine crown + dec
   installFixtureMap({ [EVALS_PATH]: matrixFixture() });
   const host = document.createElement('div');
   await evals.render(host, CTX, { epochId: EPOCH });
-  // three entry rows, three candidate columns.
-  assertEqual(allByClass(host, 'dn-evalmtx-row').length, 3, 'one row per board entry');
+  // four entry rows, three candidate columns.
+  assertEqual(allByClass(host, 'dn-evalmtx-row').length, 4, 'one row per board entry');
   assertEqual(allByClass(host, 'dn-evalmtx-gen').length, 3, 'one header cell per candidate');
   // the champion spine: g0 + g2 carry the crown (g1 does not).
   assertEqual(allByClass(host, 'dn-evalmtx-crown').length, 2, 'the two spine candidates are crowned');
@@ -131,6 +138,39 @@ test('render: paints the entries × candidates matrix with the spine crown + dec
   assert(hasClass(host, 'dn-evalmtx-group'), 'the round-group super-header renders');
   // the matrix scrolls in its OWN container — the page body never scrolls.
   assert(hasClass(host, 'dn-table-scroll'), 'the wide matrix is wrapped in dn-table-scroll');
+});
+
+// ====================================================================
+// TRISTATE decision pill (F1) — null (in-flight) ≠ false (rejected).
+// ====================================================================
+test('decision pill: a null (in-flight) candidate renders the pending pill, distinct from rejected', async () => {
+  fresh();
+  const F = matrixFixture();
+  // g3: an in-flight candidate (promoted null) — never raced, not on the spine.
+  F.candidates.push({ generation_id: 'g3', round_index: 2, promoted: null, champion_spine: false });
+  F.cells = F.cells.map((row) => [...row, null]); // its column is all-null cells
+  installFixtureMap({ [EVALS_PATH]: F });
+  const host = document.createElement('div');
+  await evals.render(host, CTX, { epochId: EPOCH });
+  assert(hasClass(host, 'dn-pending'), 'the in-flight candidate carries the shipped pending pill (racing…)');
+  assert(hasClass(host, 'dn-rejected'), 'the rejected candidate still carries the rejected pill — DISTINCT from pending');
+});
+
+test('digest: flipping a candidate promoted false→null changes the digest (no Class-B collapse)', async () => {
+  fresh();
+  const host = document.createElement('div');
+  installFixtureMap({ [EVALS_PATH]: matrixFixture() }); // g1 promoted:false → rejected
+  await evals.render(host, CTX, { epochId: EPOCH });
+  assert(!hasClass(host, 'dn-pending'), 'no pending pill while g1 is rejected (false)');
+  // Serve the SAME matrix but g1 now in-flight (null). If the digest folded a
+  // 2-state bool, null would collapse into false and the no-op gate would keep
+  // the stale rejected pill; the 3-state token forces a rebuild.
+  const Fnull = matrixFixture();
+  Fnull.candidates[1].promoted = null;
+  data.invalidate();
+  installFixtureMap({ [EVALS_PATH]: Fnull });
+  await evals.render(host, CTX, { epochId: EPOCH });
+  assert(hasClass(host, 'dn-pending'), 'the digest distinguished null from false → the pending pill now renders');
 });
 
 // ====================================================================
@@ -161,8 +201,10 @@ test('flip badges: a measured entry shows a %, an unmeasured one says "unmeasure
   assert(textOf(host).includes('flip 20%'), 'the measured flip rate renders as a percentage');
   assert(hasClass(host, 'dn-eval-flip-unmeasured'), 'the uncalibrated entry renders an "unmeasured" badge');
   assert(textOf(host).toLowerCase().includes('flip unmeasured'), 'it says unmeasured, not 0');
-  assert(!/flip 0%/.test(textOf(host)) || textOf(host).includes('flip 0%'),
-    'a genuine 0% measured flip is allowed (task_flat); unmeasured is never printed as 0');
+  // A GENUINE measured 0% (task_clean) prints "flip 0%" — the honest zero. An
+  // UNMEASURED entry (task_hold) never prints 0 (it says "unmeasured" above).
+  assert(textOf(host).includes('flip 0%'),
+    'a genuine 0% measured flip renders as "flip 0%" (task_clean)');
 });
 
 // ====================================================================
@@ -178,12 +220,13 @@ async function renderFiltered(host, clickFilter) {
   }
 }
 
-test('filter failures-only: keeps rows with a failing cell (task_login + task_flat)', async () => {
+test('filter failures-only: keeps rows with a failing cell (login + flat + clean)', async () => {
   fresh();
   const host = document.createElement('div');
   await renderFiltered(host, 'failures');
-  assertEqual(allByClass(host, 'dn-evalmtx-row').length, 2, 'two rows have a failing cell');
-  assert(textOf(host).includes('task_login') && textOf(host).includes('task_flat'), 'the failing rows are shown');
+  assertEqual(allByClass(host, 'dn-evalmtx-row').length, 3, 'three rows have a failing cell');
+  assert(textOf(host).includes('task_login') && textOf(host).includes('task_flat')
+    && textOf(host).includes('task_clean'), 'the failing rows are shown');
   assert(!allByClass(host, 'dn-evalmtx-site').some((n) => n.getAttribute('data-entry') === 'task_hold'),
     'the all-pass holdout row is filtered out');
   // toggle it back off so module-level state does not leak into the next test.
@@ -191,13 +234,17 @@ test('filter failures-only: keeps rows with a failing cell (task_login + task_fl
   chip.dispatchEvent({ type: 'click', target: chip });
 });
 
-test('filter flips-only: keeps only the row whose verdict flips between columns (task_login)', async () => {
+test('filter flips-only: keeps CROSS-COLUMN changes (login + clean), NOT flip_rate>0 (flat excluded)', async () => {
   fresh();
   const host = document.createElement('div');
   await renderFiltered(host, 'flips');
-  assertEqual(allByClass(host, 'dn-evalmtx-row').length, 1, 'exactly one row flips across columns');
-  assert(allByClass(host, 'dn-evalmtx-site').some((n) => n.getAttribute('data-entry') === 'task_login'),
-    'the flipping row is task_login');
+  // task_login (pass→fail→pass) and task_clean (fail→pass) MOVED across columns.
+  // task_flat has flip_rate 40% but NO cross-column change → excluded — proving
+  // flips-only is the verdict-change signal, not the entry-noise flip rate.
+  assertEqual(allByClass(host, 'dn-evalmtx-row').length, 2, 'exactly two rows change across columns');
+  const shown = allByClass(host, 'dn-evalmtx-site').map((n) => n.getAttribute('data-entry'));
+  assert(shown.includes('task_login') && shown.includes('task_clean'), 'the changing rows are login + clean');
+  assert(!shown.includes('task_flat'), 'a flip_rate>0 row with no cross-column change is EXCLUDED');
   const chip = allByClass(host, 'dn-evals-chip').find((c) => c.getAttribute('data-filter') === 'flips');
   chip.dispatchEvent({ type: 'click', target: chip });
 });

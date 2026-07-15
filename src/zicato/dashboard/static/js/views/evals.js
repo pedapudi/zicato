@@ -40,7 +40,11 @@ import { harmonografMini, harmonografIsLive } from '../core/harmonograf.js';
 // operator's chosen filters rather than resetting them each tick (the logs.js
 // idiom). All three are CLIENT-SIDE over the served payload.
 let _failuresOnly = false;   // rows with at least one failing cell
-let _flipsOnly = false;      // rows with a cell differing from the previous column
+// flips-only = a CROSS-COLUMN verdict change (a cell whose verdict differs from
+// the previous non-null column) — "what did this candidate MOVE" (EVAL-VIEW.md
+// §5). This is NOT the entry-noise (A/A flip-rate) signal, which lives on the
+// per-row flip badge; a noisy channel with no cross-column change is excluded.
+let _flipsOnly = false;
 let _holdoutOnly = false;    // rows in the holdout slice
 
 // A short display id for a generation column (the ids are already short —
@@ -65,10 +69,14 @@ function flipBadge(entry) {
   const pct = Math.round(entry.flip_rate * 100);
   // a noisy channel (any flip) earns caution; a clean 0% reads quiet-good.
   const tone = pct === 0 ? 'dn-eval-flip-clean' : (pct >= 20 ? 'dn-eval-flip-hot' : 'dn-eval-flip-warm');
+  // N4: name the calibrated champion so a STALE flip rate (measured on an older
+  // champion than the current spine tip) is visible in the badge tooltip.
+  const onGen = entry.calibration_generation ? ' on ' + entry.calibration_generation : '';
   return el('span', {
     class: 'dn-eval-flip ' + tone,
     title: 'A/A flip rate ' + pct + '% over ' + (entry.calibration_runs || 0)
-      + ' calibration draws — the fraction of self-duel draws whose verdict flipped',
+      + ' calibration draws' + onGen
+      + ' — the fraction of self-duel draws whose verdict flipped',
   }, ['flip ' + pct + '%']);
 }
 
@@ -83,7 +91,8 @@ function rowPasses(entry, row) {
   return true;
 }
 
-// A flip: two ADJACENT non-null cells whose (defined) pass/fail verdicts differ.
+// A flip: a cell whose verdict differs from the PREVIOUS NON-NULL column (§5) —
+// the candidate moved this entry's verdict. Null cells are skipped (not a move).
 function rowHasFlip(row) {
   let prev = null;
   for (const c of row) {
@@ -102,8 +111,12 @@ function rowHasFlip(row) {
 function digestOf(matrix, live) {
   if (!matrix) return 'evals|null|' + fbits();
   if (!matrix.found) return 'evals|notfound|' + (matrix.epoch_id || '') + '|' + fbits();
+  // promoted is TRISTATE (true / false / null) — fold a 3-state token so a
+  // never-raced null candidate is DISTINCT from a rejected false one (the
+  // Class-B bug: null must never collapse into false).
+  const promo3 = (p) => (p === true ? 1 : p === false ? 0 : 'n');
   const cands = (matrix.candidates || []).map((c) =>
-    [c.generation_id, c.round_index, c.champion_spine ? 1 : 0, c.promoted ? 1 : 0]);
+    [c.generation_id, c.round_index, c.champion_spine ? 1 : 0, promo3(c.promoted)]);
   const rows = (matrix.entries || []).map((e) =>
     [e.entry_id, e.slice, e.flip_rate_measured ? Math.round((e.flip_rate || 0) * 100) : 'u']);
   const cells = (matrix.cells || []).map((row) => (row || []).map((c) =>
@@ -296,8 +309,12 @@ function candidateHeader(ctx, epochId, c) {
     href: ctx.href('candidate', { epochId, gen: c.generation_id }),
     text: shortId(c.generation_id, 14),
   }));
-  // the shipped decision vocabulary: promoted → dn-promoted, else dn-rejected.
-  kids.push(verdictPill(spine || c.promoted === true ? 'promoted' : 'rejected'));
+  // the shipped decision vocabulary, TRISTATE (§3.1 / F1): promoted → dn-promoted,
+  // rejected → dn-rejected, null (in-flight / never raced) → the shipped 'pending'
+  // pill ("racing…") — NEVER collapse a null into rejected (the Class-B bug).
+  const decision = spine || c.promoted === true ? 'promoted'
+    : c.promoted === false ? 'rejected' : 'pending';
+  kids.push(verdictPill(decision));
   return el('th', {
     class: 'dn-mtx-gen dn-evalmtx-gen' + (spine ? ' dn-evalmtx-spine' : ''),
     scope: 'col', 'data-gen': String(c.generation_id),

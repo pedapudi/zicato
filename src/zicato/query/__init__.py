@@ -57,6 +57,9 @@ from zicato.query.epoch_view import (
     read_epoch_analysis_html,
 )
 from zicato.query.eval_view import (
+    _empty_dossier,
+    _empty_health,
+    _empty_matrix,
     build_eval_dossier,
     build_eval_health,
     build_eval_matrix,
@@ -261,6 +264,9 @@ __all__ = [
     "_decode_crowning_pair",
     "_distill_brief_goal",
     "_drift_counts_for_generation",
+    "_empty_dossier",
+    "_empty_health",
+    "_empty_matrix",
     "_empty_search_result",
     "_empty_tournament_structure",
     "_enrich_field_status",

@@ -39,9 +39,17 @@ from zicato.query.paths import (
     layout_of,
 )
 
-# The A/A calibration draws cache per replicate at this base (base 1000); the
-# per-entry flip rate reads those replicate files directly (EVAL-VIEW.md §2.2).
-_CALIBRATION_REPLICATE_BASE = 1000
+# Which replicate-index ranges count as EVIDENCE FOR A MATRIX CELL (EVAL-VIEW.md
+# §2.1 / §4.1). The board unit's replicate slots are reserved by purpose: real
+# duel replicates count up from 0 (r0 = the canonical loss.json, plus the
+# holdout-ladder confirmation re-runs, which reuse the low duel slots), the
+# evidence-gate's paired draws sit at 4000+ (EVIDENCE_REPLICATE_BASE). Those two
+# ranges are FRESH measurements of THIS cell, so they raise its evidence tier.
+# EXCLUDED: A/A calibration at 1000+ (that is the champion NOISE-FLOOR trace — it
+# feeds the flip badge, not the cell), the contract pre-flight at 2000+, the
+# pre-tournament candidate screen at 3000+ (an ephemeral veto probe), and
+# reflection draws at 5000+ (a meta-evaluation of the judges, not the candidate).
+_CELL_EVIDENCE_REPLICATE_RANGES: tuple[tuple[int, int], ...] = ((0, 1000), (4000, 5000))
 
 # The live MDE ladder's operating characteristics (EVAL-VIEW.md §4.3, pinned to
 # CAMPAIGN.md §3): the two-sample form at α=.05 / power .80 (with a relaxed α=.10
@@ -310,6 +318,73 @@ def _opt_int(value: Any) -> int | None:
     return int(value)
 
 
+def _opt_score_val(value: Any) -> float | None:
+    """Coerce a raw ``score`` field into a finite float, else ``None``.
+
+    Mirrors ``tournament_view._opt_score``: a bool, a non-number, or a
+    non-finite value degrades to ``None`` so a cell built from replicate files
+    reads its continuous score exactly as the matchup grid does.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    f = float(value)
+    if f != f or f in (float("inf"), float("-inf")):
+        return None
+    return f
+
+
+def _cell_evidence_replicate_index(name: str) -> int | None:
+    """The replicate index of a ``loss.json`` / ``loss.r<N>.json`` file, else ``None``.
+
+    ``loss.json`` is replicate 0 (the canonical worker output); ``loss.r<N>.json``
+    is replicate ``N`` (the sibling slot :func:`_unit_loss_path` writes). Any
+    other filename is not a replicate loss file.
+    """
+    if name == "loss.json":
+        return 0
+    if name.startswith("loss.r") and name.endswith(".json"):
+        mid = name[len("loss.r") : -len(".json")]
+        if mid.isdigit():
+            return int(mid)
+    return None
+
+
+def _cell_replicate_draws(
+    paths: WorkspacePaths, epoch_id: str, gen: str, entry_id: str
+) -> list[Any]:
+    """The qualifying per-replicate loss profiles for ONE cell (EVAL-VIEW.md §4.1).
+
+    The DURABLE evidence source for a matrix cell's replicate count / tier: the
+    ``loss.json`` + ``loss.r<N>.json`` files that actually exist under the run
+    dir, filtered to the ranges that count as fresh evidence FOR THE CELL
+    (:data:`_CELL_EVIDENCE_REPLICATE_RANGES` — real duel + evidence-gate draws;
+    NOT the calibration/screen/reflection slots). This replaces the
+    ``loss_profiles`` row count, which is always 1 (the table's PK is
+    ``run_id`` = one row per ``(gen, entry)``). Best-effort: an unreadable file
+    is skipped; a pruned/absent run dir yields ``[]`` (the caller then falls
+    back to the index row).
+    """
+    from zicato.core.workspace import loss_profile_path  # noqa: PLC0415
+    from zicato.telemetry.reducer import read_loss_profile  # noqa: PLC0415
+
+    run_dir = loss_profile_path(paths.root, epoch_id, gen, entry_id).parent
+    if not run_dir.is_dir():
+        return []
+    draws: list[Any] = []
+    for child in sorted(run_dir.iterdir()):
+        if not child.is_file():
+            continue
+        idx = _cell_evidence_replicate_index(child.name)
+        if idx is None or not any(lo <= idx < hi for lo, hi in _CELL_EVIDENCE_REPLICATE_RANGES):
+            continue
+        try:
+            profile = read_loss_profile(child)
+        except (OSError, ValueError, KeyError, json.JSONDecodeError):
+            continue
+        draws.append(profile)
+    return draws
+
+
 def _score_from_loss_json(row: Any) -> float | None:
     """Lift the continuous ``score`` out of the row's ``loss_json`` blob.
 
@@ -402,6 +477,7 @@ def _per_entry_flip_rates(
     calibration was never measured.
     """
     from zicato.telemetry.reducer import read_loss_profile  # noqa: PLC0415
+    from zicato.tournament.calibration import CALIBRATION_REPLICATE_BASE  # noqa: PLC0415
     from zicato.tournament.unit_cache import _unit_loss_path  # noqa: PLC0415
 
     gen = calibration.get("generation_id")
@@ -422,7 +498,7 @@ def _per_entry_flip_rates(
         entry_id = child.name
         draws: list[bool | None] = []
         for i in range(runs):
-            replicate = _CALIBRATION_REPLICATE_BASE + i
+            replicate = CALIBRATION_REPLICATE_BASE + i
             path = _unit_loss_path(paths.root, epoch_id, gen, entry_id, replicate)
             try:
                 profile = read_loss_profile(path)
@@ -441,6 +517,27 @@ def _per_entry_flip_rates(
 # ---------------------------------------------------------------------------
 # Candidate axis (columns) — round order, champion spine marked
 # ---------------------------------------------------------------------------
+
+
+def _promoted_tristate_for(
+    paths: WorkspacePaths, epoch_id: str, gid: str, index_promoted: bool | None
+) -> bool | None:
+    """The tri-state ``promoted`` for one generation (EVAL-VIEW.md §3.1 / F1).
+
+    Derives the canonical :func:`promoted_tristate` of the generation's
+    ``experiment.json`` decision: ``true`` (won the gate), ``false`` (lost), or
+    ``null`` (in-flight / never raced). The index ``promoted`` bool is the
+    fallback ONLY when the experiment record is absent/unreadable — a readable
+    but undecided experiment stays ``null`` (never collapsed to ``false``).
+    """
+    from zicato.query.decisions import experiment_decision, promoted_tristate  # noqa: PLC0415
+
+    exp = _read_json_value(
+        layout_of(paths).epoch_dir(epoch_id) / "generations" / gid / "experiment.json"
+    )
+    if isinstance(exp, dict):
+        return promoted_tristate(experiment_decision(exp))
+    return index_promoted
 
 
 def _candidate_axis(paths: WorkspacePaths, epoch_id: str) -> list[dict[str, Any]]:
@@ -464,14 +561,20 @@ def _candidate_axis(paths: WorkspacePaths, epoch_id: str) -> list[dict[str, Any]
         gid = _row_get(r, "generation_id")
         if not isinstance(gid, str) or not gid:
             continue
-        promoted = bool(_row_get(r, "promoted"))
+        # TRISTATE promoted (EVAL-VIEW.md §3.1 / F1): derive from the canonical
+        # experiment classifier so an in-flight / never-raced candidate serves
+        # ``null`` — NEVER a collapsed ``false`` (the Class-B bug decisions.py
+        # names). The index bool is the fallback ONLY when the experiment.json is
+        # unreadable (the lineage_view.py:104-110 idiom).
+        promoted = _promoted_tristate_for(paths, epoch_id, gid, _opt_bool(_row_get(r, "promoted")))
         axis.append(
             {
                 "generation_id": gid,
                 "round_index": _opt_int(_row_get(r, "round_index")),
                 "promoted": promoted,
-                # The promoted generations form the champion spine (§3.1).
-                "champion_spine": promoted,
+                # The PROMOTED generations form the champion spine (§3.1): a
+                # definite ``true`` only — a null/false candidate is not on it.
+                "champion_spine": promoted is True,
                 "elo": coerce_float(_row_get(r, "elo")),
                 "elo_se": coerce_float(_row_get(r, "elo_se")),
             }
@@ -492,30 +595,133 @@ def _rows_for_candidate(paths: WorkspacePaths, epoch_id: str, gen: str) -> list[
         return []
 
 
-def _aggregate_cell(rows: list[Any]) -> dict[str, Any] | None:
-    """Fold multiple (entry, candidate) runs into ONE cell (§3.1 aggregation)."""
-    if not rows:
+def _aggregate_cell(rows: list[Any], draws: list[Any] | None = None) -> dict[str, Any] | None:
+    """Fold ONE (entry, candidate) cell (§3.1 aggregation).
+
+    EVIDENCE + replicate count come from the DURABLE replicate FILES
+    (:func:`_cell_replicate_draws`, EVAL-VIEW.md §4.1 / F3) — the ``loss.json`` +
+    ``loss.r<N>.json`` that actually exist — NOT the ``loss_profiles`` row count,
+    which is always 1 (the table's PK is ``run_id`` = one row per (gen, entry)).
+    ``pass_ratio`` / ``pass_fail`` / ``drift_loss`` / ``score`` are averaged over
+    those same replicate draws. When no replicate file is on disk (a pruned
+    ``runs/`` dir), the cell falls back to the single index row so an index-only
+    read still renders. ``cached`` / ``latest_run_id`` stay index-derived.
+    """
+    draws = draws or []
+    # The evidence samples: prefer the on-disk replicate files; fall back to the
+    # index row(s) when the run dir was pruned. Each sample is
+    # (pass_fail, drift_loss, score, runtime_ms).
+    samples: list[tuple[bool | None, float | None, float | None, Any]] = []
+    if draws:
+        for d in draws:
+            samples.append(
+                (
+                    _opt_bool(getattr(d, "pass_fail", None)),
+                    coerce_float(getattr(d, "drift_loss", None)),
+                    _opt_score_val(getattr(d, "score", None)),
+                    getattr(d, "runtime_ms", None),
+                )
+            )
+    else:
+        for r in rows:
+            samples.append(
+                (
+                    _opt_bool(_row_get(r, "pass_fail")),
+                    coerce_float(_row_get(r, "drift_loss")),
+                    _score_from_loss_json(r),
+                    _row_get(r, "runtime_ms"),
+                )
+            )
+    if not samples:
         return None
-    drift = [coerce_float(_row_get(r, "drift_loss")) for r in rows]
-    drift_vals = [d for d in drift if d is not None]
-    scores = [_score_from_loss_json(r) for r in rows]
-    score_vals = [s for s in scores if s is not None]
-    bits = [_opt_bool(_row_get(r, "pass_fail")) for r in rows]
-    runtimes = [_row_get(r, "runtime_ms") for r in rows]
+    bits = [s[0] for s in samples]
+    drift_vals = [s[1] for s in samples if s[1] is not None]
+    score_vals = [s[2] for s in samples if s[2] is not None]
+    runtimes = [s[3] for s in samples]
+    n = len(samples)
     # latest_run_id: the last run id in the index' (entry_id, run_id) order.
     run_ids = [_row_get(r, "run_id") for r in rows if isinstance(_row_get(r, "run_id"), str)]
-    cached_any = any(bool(_row_get(r, "cached")) for r in rows)
+    cached_any = any(bool(_row_get(r, "cached")) for r in rows) or any(
+        bool(getattr(d, "cached", False)) for d in draws
+    )
     return {
         "drift_loss": (sum(drift_vals) / len(drift_vals)) if drift_vals else None,
         "pass_ratio": pass_ratio(bits),
         "pass_fail": majority_verdict(bits),
         "score": (sum(score_vals) / len(score_vals)) if score_vals else None,
-        "replicates": len(rows),
+        "replicates": n,
         "cached": cached_any,
         "latest_run_id": run_ids[-1] if run_ids else None,
         "runtime_ms_mean": runtime_aggregates(runtimes)["mean"],
-        "evidence": evidence_of(len(rows)),
+        "evidence": evidence_of(n),
     }
+
+
+# ---------------------------------------------------------------------------
+# Discrimination — rebound to the DURABLE matchup records (EVAL-VIEW.md §2.3)
+# ---------------------------------------------------------------------------
+
+
+def _reign_matchups(experiments: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """The reign's settled ``(champion, challenger)`` matchups, deduped, in record order.
+
+    A matchup is *settled* when the challenger's experiment recorded a decision
+    (it actually raced); the champion side is the experiment's
+    ``parent_generation_id`` (the generation it challenged). A parentless seed
+    has no matchup. Deduped on ``(champion, challenger)`` so a pooled grid read
+    is done at most once per pair — the reign is bounded, so this is cheap.
+    """
+    from zicato.query.decisions import experiment_decision  # noqa: PLC0415
+
+    seen: set[tuple[str, str]] = set()
+    out: list[tuple[str, str]] = []
+    for exp in experiments:
+        if not isinstance(exp, dict) or experiment_decision(exp) is None:
+            continue  # unsettled — never raced, so not a comparison
+        child = exp.get("generation_id")
+        champ = exp.get("parent_generation_id")
+        if not (isinstance(child, str) and child and isinstance(champ, str) and champ):
+            continue
+        pair = (champ, child)
+        if pair in seen:
+            continue
+        seen.add(pair)
+        out.append(pair)
+    return out
+
+
+def _discrimination_by_entry(
+    paths: WorkspacePaths, epoch_id: str, experiments: list[dict[str, Any]]
+) -> dict[str, tuple[float | None, int]]:
+    """Per-entry ``(rate, comparisons)`` over the reign's settled matchups (§2.3 / F2).
+
+    THE CORRECTED BINDING. Discrimination is read from the DURABLE matchup
+    records — not ``loss_profiles`` row pairs. The ``loss_profiles`` PK is
+    ``run_id`` (one row per ``(gen, entry)``, ``match_id`` last-wins at ingest),
+    so "same-match row pairs" are impossible. Instead, for each settled matchup
+    :func:`build_matchup_grid` reads BOTH sides' per-entry ``loss.json`` (the
+    recombination builder's proven source); an entry is *compared* in a matchup
+    when both sides have a usable verdict, and *discriminates* it when the two
+    verdicts differ. The grid reads are pooled per pair (one per matchup). The
+    per-entry ``[(matchup_key, verdict), ...]`` list is folded through the pure,
+    unit-tested :func:`discrimination` so ``rate = discriminating / comparisons``
+    and the second element is the both-sides comparison count. Returns
+    ``{entry_id: (rate, comparisons)}``; an entry never both-sided is absent.
+    """
+    from zicato.query.tournament_view import build_matchup_grid  # noqa: PLC0415
+
+    pairs_by_entry: dict[str, list[tuple[Any, bool | None]]] = {}
+    for champ, child in _reign_matchups(experiments):
+        grid = build_matchup_grid(paths, epoch_id, champ, child)
+        key = (champ, child)
+        for row in grid.get("entry_grid", []):
+            eid = row.get("entry_id") if isinstance(row, dict) else None
+            if not isinstance(eid, str) or not eid:
+                continue
+            bucket = pairs_by_entry.setdefault(eid, [])
+            bucket.append((key, _opt_bool(row.get("parent_pass"))))
+            bucket.append((key, _opt_bool(row.get("child_pass"))))
+    return {eid: discrimination(pairs) for eid, pairs in pairs_by_entry.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -570,7 +776,7 @@ def build_eval_matrix(paths: WorkspacePaths, epoch_id: str | None = None) -> dic
                 continue
             by_entry.setdefault(eid, []).append(r)
         for eid, rows in by_entry.items():
-            cell = _aggregate_cell(rows)
+            cell = _aggregate_cell(rows, _cell_replicate_draws(paths, resolved, gen, eid))
             if cell is not None:
                 cell_by[(eid, gen)] = cell
             if eid not in seen_set:
@@ -584,10 +790,16 @@ def build_eval_matrix(paths: WorkspacePaths, epoch_id: str | None = None) -> dic
     board_set = set(board_order)
     ordered_entries = board_order + [e for e in seen_entries if e not in board_set]
 
+    # The calibration generation the flip rates ride on (N4) — served on every
+    # row so the badge can show WHICH champion was calibrated, making a stale
+    # (older-champion) flip rate visible; None when no calibration was measured.
+    calibration_gen = calibration["generation_id"] if calibration["measured"] else None
     entries_out: list[dict[str, Any]] = []
     cells: list[list[dict[str, Any] | None]] = []
     for eid in ordered_entries:
-        measured = eid in flips
+        # Honesty (F4): MEASURED iff a real rate was computed — an entry present
+        # in the flip map but with a None rate (<2 usable draws) is NOT measured.
+        measured = flips.get(eid) is not None
         entries_out.append(
             {
                 "entry_id": eid,
@@ -596,6 +808,7 @@ def build_eval_matrix(paths: WorkspacePaths, epoch_id: str | None = None) -> dic
                 "flip_rate": flips.get(eid) if measured else None,
                 "flip_rate_measured": measured,
                 "calibration_runs": calibration["runs"] if calibration["measured"] else 0,
+                "calibration_generation": calibration_gen,
             }
         )
         cells.append([cell_by.get((eid, cand["generation_id"])) for cand in candidates])
@@ -626,6 +839,7 @@ def _empty_dossier(epoch_id: str | None, entry_id: str) -> dict[str, Any]:
             "flip_rate": None,
             "flip_rate_measured": False,
             "calibration_runs": 0,
+            "calibration_generation": None,
             "discrimination": None,
             "discrimination_pairs": 0,
             "runtime_ms_mean": None,
@@ -680,12 +894,15 @@ def build_eval_dossier(
 ) -> dict[str, Any]:
     """One board entry across every candidate — the instrument-quality lens (§3.2).
 
-    Assembles the entry's A/A flip rate, its discrimination (same-match_id
-    verdict splits), its runtime cost aggregates, a per-candidate trajectory in
-    round order, and the first-passed-by / regressed-by attribution along the
-    champion spine. An unknown epoch/entry degrades to a same-shape payload with
-    ``found: False``.
+    Assembles the entry's A/A flip rate, its discrimination (the fraction of the
+    reign's settled matchups on which this entry's verdict split the two sides —
+    read from the durable matchup records, §2.3 / F2), its runtime cost
+    aggregates, a per-candidate trajectory in round order, and the
+    first-passed-by / regressed-by attribution along the champion spine. An
+    unknown epoch/entry degrades to a same-shape payload with ``found: False``.
     """
+    from zicato.query.epoch_view import _read_epoch_experiments  # noqa: PLC0415
+
     try:
         resolved = _resolve_epoch_id(paths, epoch_id)
     except ValueError:
@@ -720,27 +937,22 @@ def build_eval_dossier(
         payload["epoch_id"] = resolved
         return payload
 
-    # Discrimination: pair rows by (tournament_id, match_id), restricted to
-    # MATCHUP-scoped rows (a real ``match_id``) and EXCLUDING cached rows (a
-    # carried-over result is not a fresh measurement of the matchup). A
-    # gauntlet/ad-hoc run (no match_id) is not a matchup and never counts.
-    disc_pairs: list[tuple[Any, bool | None]] = []
-    for r in all_rows:
-        if bool(_row_get(r, "cached")):
-            continue
-        mid = _row_get(r, "match_id")
-        if not isinstance(mid, str) or not mid:
-            continue
-        disc_pairs.append(
-            ((_row_get(r, "tournament_id"), mid), _opt_bool(_row_get(r, "pass_fail")))
-        )
-    disc_rate, disc_n = discrimination(disc_pairs)
+    # Discrimination (F2): rebound to the DURABLE matchup records — the reign's
+    # settled champion-vs-challenger matchups, each entry compared over the pairs
+    # where BOTH sides have a verdict (see :func:`_discrimination_by_entry`). NOT
+    # ``loss_profiles`` match_id pairs (the PK is one row per (gen, entry), so
+    # those pairs cannot exist).
+    experiments = _read_epoch_experiments(layout_of(paths).epoch_dir(resolved))
+    disc_rate, disc_n = _discrimination_by_entry(paths, resolved, experiments).get(
+        entry_id, (None, 0)
+    )
 
     runtimes = [_row_get(r, "runtime_ms") for r in all_rows]
     rt = runtime_aggregates(runtimes)
     cached_count = sum(1 for r in all_rows if bool(_row_get(r, "cached")))
     cached_share = (cached_count / len(all_rows)) if all_rows else None
-    measured = entry_id in flips
+    # Honesty (F4): MEASURED iff a real rate was computed (a None rate is unmeasured).
+    measured = flips.get(entry_id) is not None
 
     # Trajectory + attribution along the champion spine (round order).
     trajectory: list[dict[str, Any]] = []
@@ -750,7 +962,7 @@ def build_eval_dossier(
     for cand in candidates:
         gen = cand["generation_id"]
         rows = per_candidate_rows.get(gen, [])
-        cell = _aggregate_cell(rows)
+        cell = _aggregate_cell(rows, _cell_replicate_draws(paths, resolved, gen, entry_id))
         bits = [_opt_bool(_row_get(r, "pass_fail")) for r in rows]
         verdict = majority_verdict(bits)
         trajectory.append(
@@ -782,6 +994,9 @@ def build_eval_dossier(
             "flip_rate": flips.get(entry_id) if measured else None,
             "flip_rate_measured": measured,
             "calibration_runs": calibration["runs"] if calibration["measured"] else 0,
+            "calibration_generation": (
+                calibration["generation_id"] if calibration["measured"] else None
+            ),
             "discrimination": disc_rate,
             "discrimination_pairs": disc_n,
             "runtime_ms_mean": rt["mean"],
@@ -819,17 +1034,22 @@ def _realised_replicates(paths: WorkspacePaths, epoch_id: str) -> int:
 
 
 def _instrument_by_entry(
-    paths: WorkspacePaths, epoch_id: str, candidates: list[dict[str, Any]]
+    paths: WorkspacePaths,
+    epoch_id: str,
+    candidates: list[dict[str, Any]],
+    experiments: list[dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
     """Per-entry discrimination + runtime, folded once across every candidate.
 
     Returns ``{entry_id: {discrimination, discrimination_pairs, runtime_ms_mean,
-    replicate_total}}``. Discrimination pairs by ``(tournament_id, match_id)``,
-    EXCLUDING cached rows (a carried-over result is not a fresh measurement) and
-    non-matchup rows (no ``match_id``) — byte-identical to the dossier's rule
-    (§2.3). One pass over the candidate loss rows keeps the panel cheap.
+    replicate_total}}``. Discrimination is the DURABLE matchup-record binding
+    (:func:`_discrimination_by_entry`, §2.3 / F2) — the same source the dossier
+    reads, so the two surfaces agree — NOT ``loss_profiles`` match_id pairs (the
+    PK forbids them). Runtime + ``replicate_total`` fold the index loss rows in
+    one pass. The matchup grid reads are pooled inside
+    :func:`_discrimination_by_entry`; this feeds the threadpool-wrapped endpoint.
     """
-    disc_pairs: dict[str, list[tuple[Any, bool | None]]] = {}
+    disc_by_entry = _discrimination_by_entry(paths, epoch_id, experiments)
     runtimes: dict[str, list[Any]] = {}
     totals: dict[str, int] = {}
     for cand in candidates:
@@ -839,23 +1059,15 @@ def _instrument_by_entry(
                 continue
             totals[eid] = totals.get(eid, 0) + 1
             runtimes.setdefault(eid, []).append(_row_get(r, "runtime_ms"))
-            if bool(_row_get(r, "cached")):
-                continue
-            mid = _row_get(r, "match_id")
-            if not isinstance(mid, str) or not mid:
-                continue
-            disc_pairs.setdefault(eid, []).append(
-                ((_row_get(r, "tournament_id"), mid), _opt_bool(_row_get(r, "pass_fail")))
-            )
 
     out: dict[str, dict[str, Any]] = {}
-    for eid, total in totals.items():
-        rate, n_pairs = discrimination(disc_pairs.get(eid, []))
+    for eid in set(totals) | set(disc_by_entry):
+        rate, n_pairs = disc_by_entry.get(eid, (None, 0))
         out[eid] = {
             "discrimination": rate,
             "discrimination_pairs": n_pairs,
             "runtime_ms_mean": runtime_aggregates(runtimes.get(eid, []))["mean"],
-            "replicate_total": total,
+            "replicate_total": totals.get(eid, 0),
         }
     return out
 
@@ -1012,7 +1224,8 @@ def build_eval_health(paths: WorkspacePaths, epoch_id: str | None = None) -> dic
     holdout = _holdout_ids(paths, resolved, board_entries)
     calibration = _calibration(paths, resolved)
     flips = _per_entry_flip_rates(paths, resolved, calibration)
-    instrument = _instrument_by_entry(paths, resolved, candidates)
+    experiments = _read_epoch_experiments(layout_of(paths).epoch_dir(resolved))
+    instrument = _instrument_by_entry(paths, resolved, candidates, experiments)
 
     def _slice(eid: str) -> str:
         return "holdout" if eid in holdout else "train"
@@ -1068,8 +1281,6 @@ def build_eval_health(paths: WorkspacePaths, epoch_id: str | None = None) -> dic
     ]
     runtime_cost.sort(key=lambda r: r["runtime_ms_mean"], reverse=True)
 
-    experiments = _read_epoch_experiments(layout_of(paths).epoch_dir(resolved))
-
     return {
         "epoch_id": resolved,
         "found": True,
@@ -1085,6 +1296,9 @@ def build_eval_health(paths: WorkspacePaths, epoch_id: str | None = None) -> dic
 
 
 __all__ = [
+    "_empty_dossier",
+    "_empty_health",
+    "_empty_matrix",
     "build_eval_dossier",
     "build_eval_health",
     "build_eval_matrix",

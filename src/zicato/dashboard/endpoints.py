@@ -421,23 +421,13 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         """
         epoch_id = request.path_params["epoch_id"]
         if not _is_safe_id(epoch_id):
-            return JSONResponse(
-                {
-                    "epoch_id": epoch_id,
-                    "found": False,
-                    "candidates": [],
-                    "entries": [],
-                    "cells": [],
-                    "calibration": {
-                        "measured": False,
-                        "generation_id": None,
-                        "runs": 0,
-                        "max_abs_delta": None,
-                    },
-                },
-                status_code=200,
-            )
-        return JSONResponse(query.build_eval_matrix(paths, epoch_id))
+            # Single-source the degrade shape from the reader (N1) so the endpoint
+            # and the reader can never drift apart.
+            return JSONResponse(query._empty_matrix(epoch_id), status_code=200)
+        # The reader does blocking file I/O (the matchup grids + replicate files),
+        # so it runs OFF the event loop (the build_log_view precedent, F5).
+        view = await run_in_threadpool(query.build_eval_matrix, paths, epoch_id)
+        return JSONResponse(view)
 
     async def api_epoch_eval_entry(request: Request) -> JSONResponse:
         """One board entry's instrument-quality dossier (EVAL-VIEW.md §3.2).
@@ -448,18 +438,9 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         epoch_id = request.path_params["epoch_id"]
         entry_id = request.path_params["entry_id"]
         if not _is_safe_id(epoch_id) or not _is_safe_id(entry_id):
-            return JSONResponse(
-                {
-                    "epoch_id": epoch_id,
-                    "entry_id": entry_id,
-                    "found": False,
-                    "trajectory": [],
-                    "attribution": {"first_passed_by": None, "regressed_by": []},
-                    "reflection_findings": [],
-                },
-                status_code=200,
-            )
-        return JSONResponse(query.build_eval_dossier(paths, epoch_id, entry_id))
+            return JSONResponse(query._empty_dossier(epoch_id, entry_id), status_code=200)
+        view = await run_in_threadpool(query.build_eval_dossier, paths, epoch_id, entry_id)
+        return JSONResponse(view)
 
     async def api_epoch_eval_health(request: Request) -> JSONResponse:
         """The WS-HEALTH instrument panel for one epoch (EVAL-VIEW.md §5).
@@ -469,28 +450,9 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         """
         epoch_id = request.path_params["epoch_id"]
         if not _is_safe_id(epoch_id):
-            return JSONResponse(
-                {
-                    "epoch_id": epoch_id,
-                    "found": False,
-                    "mde": {"floor_measured": False, "usable": False, "mde": None},
-                    "noisiest": [],
-                    "dead": [],
-                    "insufficient": [],
-                    "runtime_cost": [],
-                    "holdout_budget": None,
-                    "rotation": {
-                        "rotate_holdout": False,
-                        "max_generations_per_contract": None,
-                        "evaluated_generations": 0,
-                        "refresh_recommended": False,
-                        "recommendation": None,
-                    },
-                    "redundancy": {"available": False, "clusters": [], "note": None},
-                },
-                status_code=200,
-            )
-        return JSONResponse(query.build_eval_health(paths, epoch_id))
+            return JSONResponse(query._empty_health(epoch_id), status_code=200)
+        view = await run_in_threadpool(query.build_eval_health, paths, epoch_id)
+        return JSONResponse(view)
 
     # -- conversation endpoints --------------------------------------
 
