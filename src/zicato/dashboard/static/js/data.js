@@ -402,6 +402,18 @@ export function reflectionXray(reflectionId, judge, runRef) {
   return cachedJson(`/api/reflection/${enc(reflectionId)}/xray/${enc(judge)}/${enc(runRef)}`);
 }
 
+// The per-entry EVAL DOSSIER (EVAL-VIEW.md §3.2) — the board-as-instrument lens
+// for ONE board entry across every candidate: its A/A flip rate, discrimination,
+// runtime cost, the champion-spine trajectory, first-passed / regressed
+// attribution, and links to reflection findings that name the entry. ADDITIVE to
+// the transcript surface the board view already renders. Epoch-prefixed, so the
+// live bust (`/api/epoch`) refetches it while a run is in flight; a pre-feature
+// server (no such endpoint → the GET throws) degrades to null, so the board
+// renders byte-identical to before the feature.
+export function evalDossier(epochId, entryId) {
+  return cachedJson(`/api/epoch/${enc(epochId)}/eval/${enc(entryId)}`);
+}
+
 // The promote-gate decomposition for one round.
 export function gate(epochId, championId, challengerId) {
   return cachedJson(`/api/round/${enc(epochId)}/${enc(championId)}/${enc(challengerId)}/gate`);
