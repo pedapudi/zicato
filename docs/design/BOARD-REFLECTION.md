@@ -758,6 +758,26 @@ component vocabulary bolted on beside them:
 
 (A companion agent implements the lens rework against exactly this text.)
 
+## Pillar 5 — generative reflection (eval synthesis)
+
+The four pillars above **read** the instrument; they diagnose a noisy judge,
+a dead entry, an unmeasured claim type, and recommend a contract edit. They do
+not **author** a new eval. That is the fifth pillar — **eval synthesis**,
+specified in its own design of record [`EVAL-SYNTHESIS.md`](EVAL-SYNTHESIS.md):
+the instrument's *second loop*, which mines episodes from the candidate loop's
+observed behaviour, synthesises draft entries / judges, measures each draft's
+operating characteristics (A/A noise, discrimination, leakage) **before** the
+operator sees it — the "evals are hypotheses too" move — and stages them into
+a builder draft through the same `reflect apply` seam. It reuses this
+document's spine wholesale (the observation corpus, the adjudicated corpus, the
+apply→builder-draft mechanism, and the operator-only envelope below) and
+**does not restructure the four pillars** — it consumes their demand signals
+(the dead/noisy/redundant lists, the judge scorecards, the calibration
+ledger's unresolved-claim types) as the raw material it synthesises from.
+Recommend-only end to end, exactly like the four pillars: nothing it produces
+ever auto-edits the sealed contract. See EVAL-SYNTHESIS.md for the episode
+taxonomy, the contamination-control discipline, and the admission pipeline.
+
 ## The proposer envelope — reflection output is operator-only
 
 Reflection findings, scorecards, and adjudication rationales are
