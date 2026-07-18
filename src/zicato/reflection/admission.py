@@ -317,6 +317,339 @@ async def admit_suggestion(
 
 
 # ---------------------------------------------------------------------------
+# The surface bridge — the sync seam WS-SURFACE / the CLI call into (§5 / §6)
+# ---------------------------------------------------------------------------
+
+
+async def _noop_harness(system: str, user: str, model: str) -> str:  # pragma: no cover
+    """Placeholder harness callable for the probe RuntimeConfig.
+
+    The admission probes drive the board-unit runner, which invokes the ADAPTER,
+    not this callable; ``make_runtime_config`` merely requires a callable when no
+    ``models.*`` role is configured (mirrors ``reflect run``'s adjudication). A
+    DISTINCT placeholder per role keeps ``assert_distinct_callables`` honest.
+    """
+    return ""
+
+
+async def _noop_auxiliary(system: str, user: str, model: str) -> str:  # pragma: no cover
+    """Placeholder auxiliary callable for the probe RuntimeConfig — see :func:`_noop_harness`."""
+    return ""
+
+
+def admit(
+    suggestions: list[Any],
+    *,
+    probe: bool = False,
+    workspace_root: Path,
+    epoch_id: str,
+) -> list[Any]:
+    """The sync WS-ADMIT seam: stamp admission records onto surface suggestions (§5).
+
+    The callable :func:`zicato.reflection.suggestions.resolve_admit` late-binds
+    and the CLI drives under ``--probe``. It resolves the same corpus context
+    ``reflect run`` builds — the epoch board / scoring / experiments, and (only
+    when spending) the champion / :class:`RuntimeConfig` / adapter — builds an
+    :class:`AdmissionRequest` per suggestion (populating the §4 self-preference
+    families from provenance), runs :func:`admit_suggestion` with
+    ``spend=probe``, and folds ``AdmissionRecord.to_json()`` into each
+    suggestion's ``admission`` field.
+
+    ``probe=False`` runs NOTHING live — :func:`admit_suggestion` computes the
+    cost estimate + the pure leakage check and returns every live stage
+    ``unmeasured`` (no champion / adapter is even resolved). ``probe=True`` is the
+    endpoint-gated spend the CLI gates behind ``--probe``.
+    """
+    import asyncio  # noqa: PLC0415
+
+    from zicato.reflection import suggestions as surface  # noqa: PLC0415
+
+    sugs = [surface._as_suggestion(s) for s in suggestions]
+    board = _load_epoch_board_entries(workspace_root, epoch_id)
+    weights = _load_epoch_weights(workspace_root, epoch_id)
+    experiments = _load_epoch_experiments(workspace_root, epoch_id)
+    aux_family, judge_family = _model_families(workspace_root)
+
+    champion: Generation | None = None
+    config: RuntimeConfig | None = None
+    adapter: Any = None
+    if probe:
+        champion, config, adapter = _probe_context(workspace_root, epoch_id)
+
+    out: list[Any] = []
+    for s in sugs:
+        request = _request_from_suggestion(
+            s, board=board, aux_family=aux_family, judge_family=judge_family
+        )
+        if request is None:
+            out.append(s)  # no executable draft (a rubric revision) — leave unmeasured
+            continue
+        record = _run(
+            asyncio,
+            admit_suggestion(
+                request,
+                champion=champion or _placeholder_generation(workspace_root, epoch_id),
+                board=board,
+                experiments=experiments,
+                weights=weights,
+                config=config or _placeholder_config(workspace_root),
+                adapter=adapter,
+                workspace_root=workspace_root,
+                epoch_id=epoch_id,
+                spend=probe,
+            ),
+        )
+        out.append(_with_admission(s, record.to_json()))
+    return out
+
+
+def _run(asyncio_mod: Any, coro: Any) -> AdmissionRecord:
+    return asyncio_mod.run(coro)  # type: ignore[no-any-return]
+
+
+def _with_admission(suggestion: Any, admission: dict[str, Any]) -> Any:
+    """Return ``suggestion`` with its ``admission`` field replaced (surface shape)."""
+    import dataclasses  # noqa: PLC0415
+
+    return dataclasses.replace(suggestion, admission=admission)
+
+
+def _request_from_suggestion(
+    suggestion: Any,
+    *,
+    board: list[BoardEntry],
+    aux_family: str | None,
+    judge_family: str | None,
+) -> AdmissionRequest | None:
+    """Build an :class:`AdmissionRequest` from a surface suggestion (§3 / §5).
+
+    * an ENTRY suggestion (regression / coverage / harder variant) carries the
+      drafted entry as the executable artifact;
+    * a JUDGE suggestion carries the target board entry with the drafted judge
+      attached (the entry admission executes; the judge fires in-run);
+    * a RUBRIC revision has no executable draft (it edits an existing judge) →
+      ``None`` (left unmeasured).
+
+    Populates the §4 self-preference families (SHOULD-FIX-B): ``judge_family``
+    from the configured judge model when a judge will grade, ``expected_answer_family``
+    from the synthesising aux model when the suggestion is LLM-drafted — the
+    provenance knows which tier authored it. ``None`` only when genuinely
+    unknowable (a mechanical draft pins recorded data — no model authored it).
+    """
+    from zicato.core import validate_board_entry  # noqa: PLC0415
+
+    stype = str(getattr(suggestion, "suggestion_type", ""))
+    artifact_kind = str(getattr(suggestion, "artifact_kind", ""))
+    draft = getattr(suggestion, "draft_artifact", {}) or {}
+    provenance = getattr(suggestion, "provenance", {}) or {}
+    target_slice = str(getattr(suggestion, "target_slice", "incoming_rotation"))
+    llm_drafted = provenance.get("synthesizer") == "llm" or stype in (
+        HINT_COVERAGE_ENTRY,
+        HINT_JUDGE,
+    )
+    expected_answer_family = aux_family if llm_drafted else None
+
+    if artifact_kind == "board_entry":
+        try:
+            entry = validate_board_entry(draft)
+        except (KeyError, ValueError, TypeError):
+            return None
+        return AdmissionRequest(
+            entry=entry,
+            suggestion_type=stype,
+            target_slice=target_slice,
+            expected_answer_family=expected_answer_family,
+            judge_family=None,
+            source_lineage_ids=tuple(provenance.get("source_lineage_ids", []) or ()),
+        )
+
+    if artifact_kind == "judge":
+        judge = _judge_from_json(draft)
+        host = _host_entry_for_judge(suggestion, board)
+        if judge is None or host is None:
+            return None
+        import dataclasses  # noqa: PLC0415
+
+        hosted = dataclasses.replace(host, judges=(*host.judges, judge))
+        return AdmissionRequest(
+            entry=hosted,
+            suggestion_type=stype,
+            target_slice=target_slice,
+            judge=judge,
+            expected_answer_family=expected_answer_family,
+            judge_family=judge_family,
+            source_lineage_ids=tuple(provenance.get("source_lineage_ids", []) or ()),
+        )
+
+    return None  # rubric revision (or an unknown kind) — no executable draft
+
+
+def _judge_from_json(draft: dict[str, Any]) -> JudgeSpec | None:
+    from goldfive import DriftSeverity  # noqa: PLC0415
+
+    from zicato.core import JudgeMode  # noqa: PLC0415
+
+    try:
+        return JudgeSpec(
+            name=str(draft["name"]),
+            mode=JudgeMode(str(draft.get("mode", "inline"))),
+            body=str(draft["body"]),
+            severity=DriftSeverity(str(draft.get("severity", "warning"))),
+        )
+    except (KeyError, ValueError, TypeError):
+        return None
+
+
+def _host_entry_for_judge(suggestion: Any, board: list[BoardEntry]) -> BoardEntry | None:
+    """The board entry a judge suggestion attaches to (from its ``add_judge`` op)."""
+    op = getattr(suggestion, "proposed_op", None)
+    entry_id = None
+    if isinstance(op, dict):
+        entry_id = (op.get("args") or {}).get("entry_id")
+    if not entry_id:
+        return None
+    for entry in board:
+        if entry.id == entry_id:
+            return entry
+    return None
+
+
+def _model_families(workspace_root: Path) -> tuple[str | None, str | None]:
+    """``(aux_family, judge_family)`` tokens from the workspace model config (§4).
+
+    A "family" is the model identity the self-preference check compares — the
+    model string (or the dotted call_llm path) configured for the role. Absent
+    config ⇒ ``(None, None)`` (the check stays honest: an unknowable family never
+    flags a false self-preference).
+    """
+    try:
+        from zicato import workspace_loader  # noqa: PLC0415
+        from zicato.models_config import load_models_config  # noqa: PLC0415
+
+        cfg = workspace_loader.load_workspace_config(workspace_root)
+        models = load_models_config(cfg)
+    except Exception:  # noqa: BLE001 — no/!bad config → no families
+        return None, None
+    return _role_family(models.auxiliary), _role_family(models.judge)
+
+
+def _role_family(spec: Any) -> str | None:
+    """The family token for a role spec — its model string or call_llm path."""
+    model = getattr(spec, "model", None)
+    if model:
+        return str(model)
+    call_llm = getattr(spec, "call_llm", None)
+    return str(call_llm) if call_llm else None
+
+
+def _load_epoch_board_entries(workspace_root: Path, epoch_id: str) -> list[BoardEntry]:
+    from zicato.board.jsonl import load_board_with_meta  # noqa: PLC0415
+    from zicato.core.workspace import board_path  # noqa: PLC0415
+
+    try:
+        board, _disable_drift, _judge_only = load_board_with_meta(
+            board_path(workspace_root, epoch_id)
+        )
+    except (OSError, ValueError, KeyError):
+        return []
+    return list(board)
+
+
+def _load_epoch_weights(workspace_root: Path, epoch_id: str) -> ScoringWeights:
+    from zicato.core.workspace import scoring_path  # noqa: PLC0415
+
+    try:
+        import json  # noqa: PLC0415
+
+        from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
+
+        raw = json.loads(scoring_path(workspace_root, epoch_id).read_text(encoding="utf-8"))
+        if isinstance(raw, dict):
+            return scoring_weights_from_dict(raw)
+    except Exception:  # noqa: BLE001 — a missing / bad scoring.json → defaults
+        pass
+    return ScoringWeights()
+
+
+def _load_epoch_experiments(workspace_root: Path, epoch_id: str) -> list[dict[str, Any]]:
+    from zicato.query.epoch_view import _read_epoch_experiments  # noqa: PLC0415
+    from zicato.query.paths import WorkspacePaths, layout_of  # noqa: PLC0415
+
+    try:
+        return _read_epoch_experiments(
+            layout_of(WorkspacePaths(workspace_root)).epoch_dir(epoch_id)
+        )
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _probe_context(
+    workspace_root: Path, epoch_id: str
+) -> tuple[Generation | None, RuntimeConfig, Any]:
+    """Resolve the champion / config / adapter for the live probes (§5).
+
+    Mirrors ``reflect run`` / the tournament CLI's reconstruction: the champion
+    generation off its on-disk snapshot, a :class:`RuntimeConfig` from the
+    workspace config (with placeholder callables — the adapter is what the runner
+    spends), and the adapter from ``config.json``. A missing champion / adapter
+    degrades to a placeholder so the pipeline still runs its honest degrades.
+    """
+    from zicato import adapter_factory, runtime_factory, workspace_loader  # noqa: PLC0415
+
+    champion = _resolve_champion(workspace_root, epoch_id)
+    try:
+        cfg = workspace_loader.load_workspace_config(workspace_root)
+        config = runtime_factory.make_runtime_config(
+            cfg,
+            workspace_root=workspace_root,
+            harness_call_llm=_noop_harness,
+            auxiliary_call_llm=_noop_auxiliary,
+        )
+    except (ValueError, OSError, FileNotFoundError):
+        config = _placeholder_config(workspace_root)
+    try:
+        adapter = adapter_factory.make_adapter_from_config(
+            workspace_loader.load_workspace_config(workspace_root)
+        )
+    except (ValueError, OSError, FileNotFoundError, ImportError):
+        adapter = object()
+    return champion, config, adapter
+
+
+def _resolve_champion(workspace_root: Path, epoch_id: str) -> Generation | None:
+    from zicato.orchestrator import _resolve_current_generation  # noqa: PLC0415
+
+    try:
+        champion_id = _resolve_current_generation(workspace_root, epoch_id)
+    except (FileNotFoundError, ValueError):
+        return None
+    if not champion_id:
+        return None
+    return _reconstruct_generation(workspace_root, epoch_id, champion_id)
+
+
+def _placeholder_generation(workspace_root: Path, epoch_id: str) -> Generation:
+    """A stand-in champion for PLAN mode — never executed (spend=False runs nothing)."""
+    return Generation(
+        id="__admission_plan__",
+        epoch_id=epoch_id,
+        parent_id=None,
+        snapshot_root=workspace_root,
+        created_at="",
+    )
+
+
+def _placeholder_config(workspace_root: Path) -> RuntimeConfig:
+    """A stand-in config for PLAN mode — never invoked (spend=False runs nothing)."""
+    return RuntimeConfig(
+        instance_id="default",
+        workspace_root=workspace_root,
+        harness_call_llm=_noop_harness,
+        auxiliary_call_llm=_noop_auxiliary,
+    )
+
+
+# ---------------------------------------------------------------------------
 # (a) + (b) execution + A/A noise at the reserved base 6000
 # ---------------------------------------------------------------------------
 
@@ -685,6 +1018,7 @@ __all__ = [
     "AdmissionCost",
     "AdmissionRecord",
     "AdmissionRequest",
+    "admit",
     "admit_suggestion",
     "estimate_cost",
 ]

@@ -836,6 +836,229 @@ async def synthesize_suggestions(
     return _finalize(out)
 
 
+# ---------------------------------------------------------------------------
+# The surface bridge — the sync seam WS-SURFACE / the CLI call into (§6)
+# ---------------------------------------------------------------------------
+
+
+def synthesize(
+    episodes: Sequence[MinedEpisode],
+    *,
+    allow_llm: bool = False,
+    workspace_root: Path | None = None,
+    epoch_id: str | None = None,
+) -> list[Any]:
+    """The sync WS-SURFACE seam: ranked episodes → persisted-shape suggestions (§6).
+
+    This is the callable :func:`zicato.reflection.suggestions.resolve_synthesize`
+    late-binds and the CLI drives. It bridges the two suggestion shapes: the
+    internal :class:`Suggestion` this module authors (a typed ``entry`` / ``judge``
+    draft) and the surface :class:`zicato.reflection.suggestions.Suggestion` the
+    persistence / apply / inbox contract reads (a ``draft_artifact`` + a
+    ``proposed_op``). The surface shape WINS — every path here terminates in it.
+
+    Steps:
+
+    1. Load the epoch board (the ``board_entries`` the async
+       :func:`synthesize_suggestions` needs to pin regressions / perturb dead
+       entries / host judges). A missing workspace / board degrades to an empty
+       board — the mechanical tier that needs a board entry then simply finds
+       none to draft, never a crash.
+    2. Resolve the auxiliary callable ONLY when ``allow_llm`` (the LLM tier), the
+       SAME way reflection's own aux resolution works (``models.auxiliary`` first,
+       then the legacy ``runtime.auxiliary_call_llm`` dotted path). When no aux is
+       configured the LLM tier is SKIPPED with a logged reason and the mechanical
+       tier still runs — the ``--allow-llm`` help says the LLM tier needs the
+       configured aux endpoint.
+    3. Run the async :func:`synthesize_suggestions` via :func:`asyncio.run` and
+       TRANSLATE each internal suggestion into the surface shape (§3): the typed
+       draft's canonical JSON becomes ``draft_artifact``; the ``proposed_op`` is
+       ``add_board_entry`` for entry drafts / ``add_judge`` for judge drafts /
+       ``None`` (a recorded gap) for a rubric revision; the ranking keys ride from
+       the motivating episode; the ``suggestion_id`` is kept verbatim.
+    """
+    from zicato.reflection import suggestions as surface  # noqa: PLC0415
+
+    board_entries = _load_epoch_board(workspace_root, epoch_id)
+    aux: CallLLM | None = None
+    if allow_llm:
+        aux = _resolve_aux_call_llm(workspace_root)
+        if aux is None:
+            _LOG.info(
+                "synthesize: --allow-llm requested but no auxiliary model/callable is "
+                "configured (models.auxiliary / runtime.auxiliary_call_llm); the LLM tier "
+                "is skipped (mechanical tier only)."
+            )
+
+    import asyncio  # noqa: PLC0415
+
+    internal = asyncio.run(
+        synthesize_suggestions(episodes, board_entries=board_entries, aux_call_llm=aux)
+    )
+    episode_by_id = {e.episode_id: e for e in episodes}
+    return [_to_surface_suggestion(s, episode_by_id, surface) for s in internal]
+
+
+def _to_surface_suggestion(
+    s: Suggestion, episode_by_id: dict[str, MinedEpisode], surface: Any
+) -> Any:
+    """Translate one internal :class:`Suggestion` into the surface shape (§3)."""
+    proposed_op_reason: str | None = None
+    if s.entry is not None:
+        artifact_kind = surface.ARTIFACT_BOARD_ENTRY
+        draft_artifact = _entry_op_dict(s.entry)
+        proposed_op: dict[str, Any] | None = {
+            "op": "add_board_entry",
+            "args": {"entry": draft_artifact},
+        }
+    elif s.judge is not None and s.suggestion_type == SUGGESTION_RUBRIC_REVISION:
+        artifact_kind = surface.ARTIFACT_RUBRIC_REVISION
+        draft_artifact = _judge_to_json(s.judge)
+        proposed_op = None
+        proposed_op_reason = (
+            "rubric revision edits an existing judge — no builder judge-edit op yet"
+        )
+    elif s.judge is not None:
+        artifact_kind = surface.ARTIFACT_JUDGE
+        draft_artifact = _judge_to_json(s.judge)
+        if s.target_entry_id:
+            proposed_op = {
+                "op": "add_judge",
+                "args": {"entry_id": s.target_entry_id, "judge": draft_artifact},
+            }
+        else:
+            proposed_op = None
+            proposed_op_reason = (
+                "judge suggestion did not resolve a target board entry to attach to"
+            )
+    else:  # pragma: no cover — a suggestion always carries exactly one draft
+        artifact_kind = ""
+        draft_artifact = {}
+        proposed_op = None
+
+    episode = _motivating_episode(s.provenance, episode_by_id)
+    provenance = dict(s.provenance)
+    provenance.setdefault("synthesizer", s.synthesizer)
+    if proposed_op_reason is not None:
+        provenance["proposed_op_reason"] = proposed_op_reason
+
+    return surface.Suggestion(
+        suggestion_id=s.suggestion_id,
+        suggestion_type=s.suggestion_type,
+        artifact_kind=artifact_kind,
+        subject=s.subject,
+        summary=_first_sentence(s.rationale),
+        rationale=s.rationale,
+        target_slice=s.target_slice,
+        draft_artifact=draft_artifact,
+        proposed_op=proposed_op,
+        provenance=provenance,
+        admission=None,
+        severity_rank=episode.severity_rank if episode else 0,
+        recency_key=episode.recency_key if episode else 0,
+        coverage_key=episode.coverage_key if episode else 0,
+    )
+
+
+def _entry_op_dict(entry: BoardEntry) -> dict[str, Any]:
+    """The canonical entry JSON the ``add_board_entry`` op reconstructs.
+
+    :func:`~zicato.board.jsonl.entry_to_dict` emits the short ``budget_s`` key,
+    but the apply seam validates the op's entry with
+    :func:`~zicato.core.board.validate_board_entry`, which reads the canonical
+    ``wall_clock_budget_seconds``. Normalise the one key so the drafted entry
+    round-trips through the op exactly like a hand-authored board edit.
+    """
+    from zicato.board.jsonl import entry_to_dict  # noqa: PLC0415
+
+    d = entry_to_dict(entry)
+    if "budget_s" in d and "wall_clock_budget_seconds" not in d:
+        d["wall_clock_budget_seconds"] = d.pop("budget_s")
+    return d
+
+
+def _motivating_episode(
+    provenance: dict[str, Any], episode_by_id: dict[str, MinedEpisode]
+) -> MinedEpisode | None:
+    """The first source episode present in the pool — the ranking-key source (§2)."""
+    for eid in provenance.get("source_episodes", []):
+        episode = episode_by_id.get(str(eid))
+        if episode is not None:
+            return episode
+    return None
+
+
+def _first_sentence(text: str) -> str:
+    """A one-line summary: the rationale's first sentence (or the whole line)."""
+    stripped = (text or "").strip()
+    if not stripped:
+        return ""
+    best = len(stripped)
+    for sep in (". ", "! ", "? "):
+        idx = stripped.find(sep)
+        if idx != -1:
+            best = min(best, idx + 1)
+    return stripped[:best].strip()
+
+
+def _load_epoch_board(workspace_root: Path | None, epoch_id: str | None) -> list[BoardEntry]:
+    """Load the epoch's board entries (tolerant: absent workspace/board ⇒ ``[]``)."""
+    if workspace_root is None or not epoch_id:
+        return []
+    from zicato.board.jsonl import load_board_with_meta  # noqa: PLC0415
+    from zicato.core.workspace import board_path  # noqa: PLC0415
+
+    try:
+        board, _disable_drift, _judge_only = load_board_with_meta(
+            board_path(workspace_root, epoch_id)
+        )
+    except (OSError, ValueError, KeyError):
+        return []
+    return list(board)
+
+
+def _resolve_aux_call_llm(workspace_root: Path | None) -> CallLLM | None:
+    """Resolve the auxiliary callable the LLM tier drafts through (or ``None``).
+
+    Mirrors reflection's own aux resolution: the unified ``models.auxiliary``
+    role first, then the legacy ``runtime.auxiliary_call_llm`` dotted path. Any
+    resolution failure (no config, an unimportable path) degrades to ``None`` so
+    the LLM tier is skipped with a logged reason — never a crash, never a live
+    call the operator did not ask for.
+    """
+    if workspace_root is None:
+        return None
+    try:
+        from zicato import workspace_loader  # noqa: PLC0415
+
+        cfg = workspace_loader.load_workspace_config(workspace_root)
+    except (OSError, ValueError, FileNotFoundError):
+        return None
+
+    try:
+        from zicato.models_config import load_models_config, resolve_text_call_llm  # noqa: PLC0415
+
+        models = load_models_config(cfg)
+        if not models.auxiliary.is_empty:
+            return resolve_text_call_llm(models.auxiliary, role="auxiliary")
+    except Exception as exc:  # noqa: BLE001 — an unresolvable aux spec degrades, never crashes
+        _LOG.info("synthesize: models.auxiliary did not resolve (%s); trying the legacy path", exc)
+
+    runtime = cfg.get("runtime", {}) if isinstance(cfg, dict) else {}
+    dotted = runtime.get("auxiliary_call_llm") if isinstance(runtime, dict) else None
+    if dotted:
+        try:
+            from zicato.import_path import import_dotted_path  # noqa: PLC0415
+
+            fn = import_dotted_path(str(dotted), label="runtime.auxiliary_call_llm")
+        except Exception as exc:  # noqa: BLE001
+            _LOG.info("synthesize: runtime.auxiliary_call_llm did not import (%s)", exc)
+            return None
+        if callable(fn):
+            return fn  # type: ignore[no-any-return]
+    return None
+
+
 def _route_mechanical(
     episode: MinedEpisode,
     board_by_id: dict[str, BoardEntry],
@@ -936,6 +1159,7 @@ __all__ = [
     "TARGET_INCOMING_ROTATION",
     "TARGET_TRAIN",
     "Suggestion",
+    "synthesize",
     "synthesize_mechanical",
     "synthesize_suggestions",
 ]

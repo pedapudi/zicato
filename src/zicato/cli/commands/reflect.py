@@ -980,7 +980,9 @@ def suggest_cmd(
             "no synthesis seam available (WS-SYNTH's reflection.synthesis.synthesize is "
             "not importable). Mining ran; suggestion drafting needs the synthesiser."
         )
-    raw_suggestions = synthesize(episodes, allow_llm=allow_llm)
+    raw_suggestions = synthesize(
+        episodes, allow_llm=allow_llm, workspace_root=workspace_root, epoch_id=resolved_epoch
+    )
     suggestions = [sug_mod._as_suggestion(s) for s in raw_suggestions]
 
     if probe:

@@ -154,7 +154,13 @@ def _run(args: list[str]) -> object:
 
 
 def _seed_synth(monkeypatch: pytest.MonkeyPatch) -> None:
-    def _synth(episodes: object, *, allow_llm: bool = False) -> list[Suggestion]:
+    def _synth(
+        episodes: object,
+        *,
+        allow_llm: bool = False,
+        workspace_root: Path | None = None,
+        epoch_id: str | None = None,
+    ) -> list[Suggestion]:
         return _fake_suggestions()
 
     monkeypatch.setattr(sug_mod, "resolve_synthesize", lambda: _synth)

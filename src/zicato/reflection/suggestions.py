@@ -201,9 +201,21 @@ def rank_suggestions(suggestions: list[Suggestion]) -> list[Suggestion]:
 
 @runtime_checkable
 class SynthesizeSeam(Protocol):
-    """WS-SYNTH: ranked episodes → suggestions (EVAL-SYNTHESIS.md §3)."""
+    """WS-SYNTH: ranked episodes → suggestions (EVAL-SYNTHESIS.md §3).
 
-    def __call__(self, episodes: Any, *, allow_llm: bool = False) -> list[Any]: ...
+    The synthesiser loads the epoch board (to pin regressions / perturb dead
+    entries / host judges) from ``workspace_root`` + ``epoch_id``, and resolves
+    the auxiliary callable for the LLM tier only when ``allow_llm``.
+    """
+
+    def __call__(
+        self,
+        episodes: Any,
+        *,
+        allow_llm: bool = False,
+        workspace_root: Path | None = None,
+        epoch_id: str | None = None,
+    ) -> list[Any]: ...
 
 
 @runtime_checkable
