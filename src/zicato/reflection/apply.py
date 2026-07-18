@@ -45,6 +45,10 @@ class FindingNotActionableError(ValueError):
     """
 
 
+class SuggestionNotFoundError(LookupError):
+    """No suggestion with the requested id in the reflection's ``suggestions.json``."""
+
+
 @dataclass(frozen=True, slots=True)
 class AppliedFinding:
     """The result of staging one finding's op onto a forked draft."""
@@ -145,7 +149,15 @@ def apply_finding_to_draft(
     # (DraftStore.fork copies the session's working draft, which is lazily
     # initialised from ``TournamentDraft.from_workspace``).
     draft = store.fork(session_id="reflect-apply", name=slot_name, workspace_root=workspace_root)
-    patch = fn(draft, **args)
+    # A builder op raises ValueError for a rejected edit (a duplicate entry id, an
+    # unknown target). Surface it as a not-actionable finding so the CLI renders
+    # the op's message cleanly instead of a raw traceback.
+    try:
+        patch = fn(draft, **args)
+    except ValueError as exc:
+        raise FindingNotActionableError(
+            f"finding {finding_id!r} op {op_name!r} could not be staged: {exc}"
+        ) from exc
     diff = draft.diff_vs_live(workspace_root)
 
     return AppliedFinding(
@@ -159,10 +171,150 @@ def apply_finding_to_draft(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class AppliedSuggestion:
+    """The result of staging one eval suggestion's op onto a forked draft."""
+
+    reflection_id: str
+    suggestion_id: str
+    suggestion_type: str
+    slot_name: str
+    op: str
+    args: dict[str, Any]
+    #: The builder ``DraftPatch.to_dict()`` describing what the op changed.
+    patch: dict[str, Any]
+    #: The forked draft's diff vs the live contract (``ContractDiff.to_dict()``).
+    diff: dict[str, Any]
+
+
+def _reconstruct_op_args(op_name: str, args: dict[str, Any]) -> tuple[Any, ...]:
+    """Reconstruct the TYPED positional args a board op needs from JSON args.
+
+    The suggestion apply seam carries the same ``{op, args}`` JSON the copilot /
+    REST dispatch does, but the board ops take typed objects (``BoardEntry`` /
+    ``JudgeSpec``) rather than dicts. This mirrors the builder REST dispatch's
+    reconstruction so an entry / judge suggestion lands byte-identically to a
+    hand-authored board edit. Unknown ops raise (recorded as not-actionable).
+    """
+    from zicato.core.types import JudgeMode, JudgeSpec, validate_board_entry  # noqa: PLC0415
+
+    if op_name == "add_board_entry":
+        return (validate_board_entry(args["entry"]),)
+    if op_name == "add_judge":
+        from goldfive import DriftSeverity  # noqa: PLC0415
+
+        raw = args["judge"]
+        if not isinstance(raw, dict):
+            raise ValueError("judge must be a JSON object")
+        judge = JudgeSpec(
+            name=str(raw["name"]),
+            mode=JudgeMode(str(raw.get("mode", "inline"))),
+            body=str(raw["body"]),
+            severity=DriftSeverity(str(raw.get("severity", "warning"))),
+        )
+        return (str(args["entry_id"]), judge)
+    raise FindingNotActionableError(
+        f"suggestion op {op_name!r} has no typed apply seam yet — "
+        "record the gap (rubric revision has no builder judge-edit op)"
+    )
+
+
+def find_suggestion(
+    workspace_root: Path,
+    epoch_id: str,
+    reflection_id: str,
+    suggestion_id: str,
+) -> dict[str, Any]:
+    """Return one suggestion dict by id, or raise :class:`SuggestionNotFoundError`."""
+    from zicato.reflection.suggestions import read_suggestions_json  # noqa: PLC0415
+
+    for s in read_suggestions_json(workspace_root, epoch_id, reflection_id):
+        if str(s.get("suggestion_id", "")) == suggestion_id:
+            return s
+    raise SuggestionNotFoundError(
+        f"no suggestion {suggestion_id!r} in reflection {reflection_id!r} (epoch {epoch_id!r})"
+    )
+
+
+def apply_suggestion_to_draft(
+    *,
+    workspace_root: Path,
+    epoch_id: str,
+    reflection_id: str,
+    suggestion_id: str,
+) -> AppliedSuggestion:
+    """Fork a builder draft from the live contract and stage a suggestion's op.
+
+    The suggestion analogue of :func:`apply_finding_to_draft`: an entry
+    suggestion (regression / coverage / harder variant) stages through the new
+    ``add_board_entry`` op; a judge suggestion through the existing
+    ``add_judge`` op. Both reconstruct the TYPED artifact from the persisted
+    JSON before dispatch, so the drafted entry / judge lands exactly as a
+    hand-authored board edit would. A rubric revision carries no ``proposed_op``
+    (no builder judge-edit op exists — the recorded gap) and raises
+    :class:`FindingNotActionableError`. NEVER writes the sealed contract.
+    """
+    from zicato.builder import operations as ops  # noqa: PLC0415
+    from zicato.builder.draft import DraftStore  # noqa: PLC0415
+
+    suggestion = find_suggestion(workspace_root, epoch_id, reflection_id, suggestion_id)
+    proposed = suggestion.get("proposed_op")
+    if not isinstance(proposed, dict) or not proposed.get("op"):
+        raise FindingNotActionableError(
+            f"suggestion {suggestion_id!r} carries no proposed_op — it is a "
+            "recommendation only (a rubric revision has no builder judge-edit op "
+            "yet; the fix is an authoring decision). Nothing to stage."
+        )
+    op_name = str(proposed["op"])
+    raw_args = proposed.get("args")
+    args: dict[str, Any] = raw_args if isinstance(raw_args, dict) else {}
+
+    fn = getattr(ops, op_name, None)
+    if not callable(fn):
+        raise FindingNotActionableError(
+            f"suggestion {suggestion_id!r} names an unknown builder op {op_name!r}"
+        )
+    try:
+        positional = _reconstruct_op_args(op_name, args)
+    except (KeyError, ValueError) as exc:
+        raise FindingNotActionableError(
+            f"suggestion {suggestion_id!r} op {op_name!r} has a malformed artifact: {exc}"
+        ) from exc
+
+    slot_name = _slot_name(reflection_id)
+    store = DraftStore()
+    draft = store.fork(session_id="reflect-apply", name=slot_name, workspace_root=workspace_root)
+    # The board op raises ValueError for a rejected edit (most commonly a
+    # duplicate entry id when the same suggestion is staged twice). Surface it as
+    # not-actionable so the CLI renders the message cleanly, never a traceback.
+    try:
+        patch = fn(draft, *positional)
+    except ValueError as exc:
+        raise FindingNotActionableError(
+            f"suggestion {suggestion_id!r} op {op_name!r} could not be staged: {exc}"
+        ) from exc
+    diff = draft.diff_vs_live(workspace_root)
+
+    return AppliedSuggestion(
+        reflection_id=reflection_id,
+        suggestion_id=suggestion_id,
+        suggestion_type=str(suggestion.get("suggestion_type", "")),
+        slot_name=slot_name,
+        op=op_name,
+        args=dict(args),
+        patch=patch.to_dict(),
+        diff=diff.to_dict(),
+    )
+
+
 __all__ = [
     "AppliedFinding",
+    "AppliedSuggestion",
     "FindingNotActionableError",
     "FindingNotFoundError",
+    "SuggestionNotFoundError",
     "apply_finding_to_draft",
+    "apply_suggestion_to_draft",
     "find_finding",
+    "find_suggestion",
 ]

@@ -58,6 +58,8 @@ from zicato.core import BoardEntry, Generation, RuntimeConfig, ScoringWeights
 #:   * ``3000`` / ``3001`` candidate screen (+ confirm-before-veto)
 #:   * ``4000``          evidence gate (both-sides-fresh)
 #:   * ``5000``          board reflection (this owner)
+#:   * ``6000``          eval-synthesis admission probes
+#:                       (:data:`zicato.reflection.admission.SYNTHESIS_REPLICATE_BASE`)
 #:
 #: Draw ``j`` of a (candidate, entry) unit runs, caches, and stamps its harness
 #: noise draw at ``REFLECTION_REPLICATE_BASE + j``. See dev-guide ch. 04

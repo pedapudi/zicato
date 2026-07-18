@@ -829,6 +829,87 @@ def test_builder_op_remove_board_entry_dispatch(client: TestClient) -> None:
     assert "ghost" in r.json()["error"]
 
 
+def test_builder_op_add_board_entry_dispatch(client: TestClient) -> None:
+    s = {"session": "addbe"}
+    r = client.post(
+        "/builder/op",
+        json={
+            **s,
+            "op": "add_board_entry",
+            "args": {
+                "entry": {
+                    "id": "n7",
+                    "kind": "single_turn",
+                    "wall_clock_budget_seconds": 30,
+                    "input": "new probe",
+                    "context": {"provenance": '{"miner_version": "eval-synth/1"}'},
+                }
+            },
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["patch"]["changed"] == {"entry_id": "n7", "action": "added"}
+    assert {e["id"] for e in body["draft"]["board"]} == {"e1", "e2", "n7"}
+    assert "board" in body["diff"]["changed_components"]
+    # A duplicate id is a 400 (the strict-ADD refusal).
+    r = client.post(
+        "/builder/op",
+        json={
+            **s,
+            "op": "add_board_entry",
+            "args": {
+                "entry": {
+                    "id": "e1",
+                    "kind": "single_turn",
+                    "wall_clock_budget_seconds": 30,
+                    "input": "dup",
+                }
+            },
+        },
+    )
+    assert r.status_code == 400
+    assert "already exists" in r.json()["error"]
+
+
+def test_builder_suggestions_endpoint_honest_empty(client: TestClient) -> None:
+    # A workspace with an epoch but no reflection/suggestions degrades honestly.
+    r = client.get("/builder/suggestions")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["suggestions"] == []
+    assert "epoch_id" in body and "reflection_id" in body
+
+
+def test_builder_suggestions_feed_sees_mint_mode(client: TestClient, workspace: Path) -> None:
+    # A mint-mode `reflect suggest` writes a reflection dir with ONLY a
+    # suggestions.json (no plan.json). The plan.json-keyed reflection discovery
+    # skips such dirs — the feed must scan suggestions.json directly.
+    from zicato.epoch.lifecycle import current_epoch_id
+    from zicato.reflection.suggestions import Suggestion, write_suggestions
+
+    epoch_id = current_epoch_id(workspace)
+    assert epoch_id
+    sug = Suggestion(
+        suggestion_id="sug-mint01",
+        suggestion_type="regression_entry",
+        artifact_kind="board_entry",
+        subject="e1",
+        summary="pin a regression",
+        rationale="e1 failed",
+        target_slice="train",
+        draft_artifact={"id": "e1_regression", "kind": "single_turn"},
+        proposed_op={"op": "add_board_entry", "args": {"entry": {}}},
+    )
+    write_suggestions(workspace, epoch_id, "refl-mint-only", [sug])
+
+    r = client.get("/builder/suggestions")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["reflection_id"] == "refl-mint-only"
+    assert [s["suggestion_id"] for s in body["suggestions"]] == ["sug-mint01"]
+
+
 def test_builder_op_revert_to_live_restores_the_draft(client: TestClient) -> None:
     s = {"session": "rvt"}
     client.post("/builder/op", json={**s, "op": "set_structure", "args": {"structure": "swiss"}})

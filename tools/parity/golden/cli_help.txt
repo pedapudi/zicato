@@ -720,17 +720,21 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  apply      Carry a finding's proposed edit to a builder draft.
+  apply      Carry a finding/suggestion edit to a builder draft.
   practices  Cheap tier: the practice review over the contract + history (no
              corpus).
   report     Render a stored reflection's report.
   run        Build + analyse an observation corpus; emit ranked findings.
+  suggest    Synthesise measured eval suggestions from mined episodes
+             (generative reflection).
 
 ===== zicato reflect apply --help =====
-Usage: zicato reflect apply [OPTIONS] REFLECTION_ID FINDING_ID
+Usage: zicato reflect apply [OPTIONS] REFLECTION_ID ITEM_ID
 
-  Fork a builder draft from the live contract and stage the finding's op.
+  Fork a builder draft from the live contract and stage a finding's or
+  suggestion's op.
 
+  ``item_id`` is a finding id (``find-…``) or an eval-suggestion id (``sug-…``).
   NEVER writes the sealed contract — the operator reviews the staged draft and
   seals it through the builder, which is the gated step that rolls the epoch.
 
@@ -800,6 +804,31 @@ Options:
   --max-wall-clock-seconds INTEGER
   --output TEXT                   Report destination (default: stdout).
   --help                          Show this message and exit.
+
+===== zicato reflect suggest --help =====
+Usage: zicato reflect suggest [OPTIONS]
+
+  Mine episodes, synthesise suggestions, (optionally) admission-stamp, persist.
+
+  The eval-synthesis surface (EVAL-SYNTHESIS.md §6): WS-MINE extracts episodes
+  (endpoint-free), WS-SYNTH drafts suggestions, WS-ADMIT measures them. The live
+  admission probes SPEND real champion budget and are endpoint-gated — they run
+  ONLY under ``--probe`` (default OFF: plan-mode shows what they would spend,
+  spending nothing). Suggestions persist beside ``findings.json`` and render
+  through ``zicato reflect report``. Recommend-only: apply stages a builder
+  draft, never the sealed contract.
+
+Options:
+  --workspace TEXT   Workspace root.  [default: .zicato]
+  --epoch TEXT       Contract to mine (default: current).
+  --reflection TEXT  Attach suggestions to this reflection id (default: mint a
+                     fresh one).
+  --probe            SPEND champion budget on the live admission probes
+                     (endpoint-gated; default OFF).
+  --allow-llm        Permit LLM synthesis (judge/rubric drafting; aux-metered).
+                     Default: mechanical only.
+  --json             Emit raw suggestion dicts.
+  --help             Show this message and exit.
 
 ===== zicato regenerate-report --help =====
 Usage: zicato regenerate-report [OPTIONS]

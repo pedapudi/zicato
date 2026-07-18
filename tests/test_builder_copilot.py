@@ -349,6 +349,7 @@ def test_default_builder_tools_registry_covers_every_op() -> None:
         "set_experiment_memory",
         "set_screening",
         "edit_board_entry",
+        "add_board_entry",
         "remove_board_entry",
         "add_judge",
         "remove_judge",
@@ -425,6 +426,43 @@ def test_new_knob_tools_edit_the_shared_draft(tmp_path: Path) -> None:
     assert draft.scoring.overfitting.ladder.budget == 8
     assert {e.id for e in draft.entries} == {"e1", "e2", "e3"}
     assert [str(k) for k in draft.disable_drift] == ["off_topic"]
+
+
+def test_add_board_entry_tool_appends_and_refuses_duplicate(tmp_path: Path) -> None:
+    """The add_board_entry copilot tool appends through the shared draft and
+    reports a readable error on a duplicate id (never a crash)."""
+    import json as _json
+
+    from zicato.builder import copilot_tools
+    from zicato.builder.copilot_tools import BuilderToolContext, bind_builder_tool_context
+
+    ws = _seed_workspace(tmp_path)
+    store = DraftStore()
+    ctx = BuilderToolContext(session_id="s", store=store, workspace_root=ws)
+    with bind_builder_tool_context(ctx):
+        ok = _json.loads(
+            copilot_tools.add_board_entry(
+                {
+                    "id": "probe1",
+                    "kind": "single_turn",
+                    "wall_clock_budget_seconds": 30,
+                    "input": "probe",
+                }
+            )
+        )
+        dup = _json.loads(
+            copilot_tools.add_board_entry(
+                {
+                    "id": "e1",
+                    "kind": "single_turn",
+                    "wall_clock_budget_seconds": 30,
+                    "input": "dup",
+                }
+            )
+        )
+    assert ok["patch"]["changed"] == {"entry_id": "probe1", "action": "added"}
+    assert "error" in dup and "already exists" in dup["error"]
+    assert "probe1" in {e.id for e in store.get("s", ws).entries}
 
 
 def test_lifecycle_tools_fork_switch_compare(tmp_path: Path) -> None:

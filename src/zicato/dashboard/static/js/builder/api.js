@@ -33,6 +33,13 @@ export async function getDraft() {
   try { return await fetchJson('/builder/draft?session=' + encodeURIComponent(SESSION)); } catch (e) { return null; }
 }
 
+// The eval-suggestions inbox feed (EVAL-SYNTHESIS.md §6): the current epoch's
+// latest reflection's persisted suggestions. Failure-tolerant (null on error);
+// an empty / cold workspace returns {epoch_id, reflection_id, suggestions: []}.
+export async function getSuggestions() {
+  try { return await fetchJson('/builder/suggestions'); } catch (e) { return null; }
+}
+
 async function postJson(path, body) {
   const res = await fetch(path, {
     method: 'POST',

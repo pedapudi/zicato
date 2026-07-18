@@ -844,6 +844,13 @@ def report_cmd(reflection_id: str, workspace: str, epoch_id: str | None, as_json
     finds = findings.get("findings", []) if isinstance(findings, dict) else []
     checks = practices.get("checks", []) if isinstance(practices, dict) else []
 
+    from zicato.reflection.suggestions import (  # noqa: PLC0415
+        read_suggestions,
+        render_suggestions_md,
+    )
+
+    suggestions = read_suggestions(workspace_root, resolved_epoch, reflection_id)
+
     if as_json:
         click.echo(
             json.dumps(
@@ -852,15 +859,17 @@ def report_cmd(reflection_id: str, workspace: str, epoch_id: str | None, as_json
                     "scorecards": cards,
                     "findings": finds,
                     "practices": checks,
+                    "suggestions": [s.to_json() for s in suggestions],
                 },
                 indent=2,
                 sort_keys=True,
             )
         )
         return
-    click.echo(
-        _render_report_md(summary if isinstance(summary, dict) else {}, cards, finds, checks)
-    )
+    report = _render_report_md(summary if isinstance(summary, dict) else {}, cards, finds, checks)
+    if suggestions:
+        report = report + "\n" + "\n".join(render_suggestions_md(suggestions))
+    click.echo(report)
 
 
 @reflect_grp.command(
@@ -912,21 +921,146 @@ def practices_cmd(workspace: str, epoch_id: str | None, as_json: bool) -> None:
     click.echo("\n".join(_render_practice_section(payload.get("checks", []))))
 
 
-@reflect_grp.command("apply", short_help="Carry a finding's proposed edit to a builder draft.")
+@reflect_grp.command(
+    "suggest",
+    short_help="Synthesise measured eval suggestions from mined episodes (generative reflection).",
+)
+@click.option("--workspace", default=".zicato", show_default=True, help="Workspace root.")
+@click.option("--epoch", "epoch_id", default=None, help="Contract to mine (default: current).")
+@click.option(
+    "--reflection",
+    "reflection_id",
+    default=None,
+    help="Attach suggestions to this reflection id (default: mint a fresh one).",
+)
+@click.option(
+    "--probe",
+    is_flag=True,
+    default=False,
+    help="SPEND champion budget on the live admission probes (endpoint-gated; default OFF).",
+)
+@click.option(
+    "--allow-llm",
+    "allow_llm",
+    is_flag=True,
+    default=False,
+    help="Permit LLM synthesis (judge/rubric drafting; aux-metered). Default: mechanical only.",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit raw suggestion dicts.")
+def suggest_cmd(
+    workspace: str,
+    epoch_id: str | None,
+    reflection_id: str | None,
+    probe: bool,
+    allow_llm: bool,
+    as_json: bool,
+) -> None:
+    """Mine episodes, synthesise suggestions, (optionally) admission-stamp, persist.
+
+    The eval-synthesis surface (EVAL-SYNTHESIS.md §6): WS-MINE extracts episodes
+    (endpoint-free), WS-SYNTH drafts suggestions, WS-ADMIT measures them. The
+    live admission probes SPEND real champion budget and are endpoint-gated —
+    they run ONLY under ``--probe`` (default OFF: plan-mode shows what they would
+    spend, spending nothing). Suggestions persist beside ``findings.json`` and
+    render through ``zicato reflect report``. Recommend-only: apply stages a
+    builder draft, never the sealed contract.
+    """
+    from zicato.reflection import suggestions as sug_mod  # noqa: PLC0415
+    from zicato.reflection.mining import mine_episodes  # noqa: PLC0415
+
+    workspace_root, resolved_epoch = _resolve_workspace_epoch(workspace, epoch_id)
+    paths = _paths_for(workspace_root)
+
+    episodes = mine_episodes(paths, resolved_epoch)
+    click.echo(f"mined {len(episodes)} episode(s) from epoch {resolved_epoch!r}", err=True)
+
+    synthesize = sug_mod.resolve_synthesize()
+    if synthesize is None:
+        raise click.ClickException(
+            "no synthesis seam available (WS-SYNTH's reflection.synthesis.synthesize is "
+            "not importable). Mining ran; suggestion drafting needs the synthesiser."
+        )
+    raw_suggestions = synthesize(
+        episodes, allow_llm=allow_llm, workspace_root=workspace_root, epoch_id=resolved_epoch
+    )
+    suggestions = [sug_mod._as_suggestion(s) for s in raw_suggestions]
+
+    if probe:
+        admit = sug_mod.resolve_admit()
+        if admit is None:
+            click.echo(
+                "warning: --probe requested but no admission seam (WS-ADMIT) is available; "
+                "persisting UNMEASURED suggestions.",
+                err=True,
+            )
+        else:
+            click.echo(
+                "--probe: spending champion budget on the live admission probes "
+                f"(A/A noise at base {sug_mod.SYNTHESIS_REPLICATE_BASE}).",
+                err=True,
+            )
+            admitted = admit(
+                suggestions, probe=True, workspace_root=workspace_root, epoch_id=resolved_epoch
+            )
+            suggestions = [sug_mod._as_suggestion(s) for s in admitted]
+    else:
+        cost = sug_mod.plan_cost(suggestions)
+        click.echo(f"plan mode (no probe spent): {cost['note']}", err=True)
+
+    rid = reflection_id or _mint_reflection_id(resolved_epoch)
+    sug_mod.write_suggestions(workspace_root, resolved_epoch, rid, suggestions)
+
+    if as_json:
+        click.echo(
+            json.dumps(
+                {"reflection_id": rid, "suggestions": [s.to_json() for s in suggestions]},
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return
+    click.echo(f"persisted {len(suggestions)} suggestion(s) under reflection {rid}")
+    click.echo(sug_mod.render_suggestions_table(suggestions))
+    click.echo(
+        f"review: `zicato reflect report {rid}`; "
+        f"stage: `zicato reflect apply {rid} <suggestion_id>`"
+    )
+
+
+def _paths_for(workspace_root: Path) -> Any:
+    """The query ``paths`` bundle mining reads from."""
+    from zicato.query.paths import WorkspacePaths  # noqa: PLC0415
+
+    return WorkspacePaths(workspace_root)
+
+
+def _mint_reflection_id(epoch_id: str) -> str:
+    """A fresh ``refl-…`` id for a suggest-only reflection directory."""
+    from zicato.reflection.plan import make_reflection_id  # noqa: PLC0415
+
+    return make_reflection_id(_now_iso())
+
+
+@reflect_grp.command("apply", short_help="Carry a finding/suggestion edit to a builder draft.")
 @click.argument("reflection_id")
-@click.argument("finding_id")
+@click.argument("item_id")
 @click.option("--workspace", default=".zicato", show_default=True, help="Workspace root.")
 @click.option("--epoch", "epoch_id", default=None, help="Epoch owning the reflection.")
-def apply_cmd(reflection_id: str, finding_id: str, workspace: str, epoch_id: str | None) -> None:
-    """Fork a builder draft from the live contract and stage the finding's op.
+def apply_cmd(reflection_id: str, item_id: str, workspace: str, epoch_id: str | None) -> None:
+    """Fork a builder draft from the live contract and stage a finding's or
+    suggestion's op.
 
-    NEVER writes the sealed contract — the operator reviews the staged draft and
-    seals it through the builder, which is the gated step that rolls the epoch.
+    ``item_id`` is a finding id (``find-…``) or an eval-suggestion id
+    (``sug-…``). NEVER writes the sealed contract — the operator reviews the
+    staged draft and seals it through the builder, which is the gated step that
+    rolls the epoch.
     """
     from zicato.reflection.apply import (  # noqa: PLC0415
         FindingNotActionableError,
         FindingNotFoundError,
+        SuggestionNotFoundError,
         apply_finding_to_draft,
+        apply_suggestion_to_draft,
     )
 
     workspace_root = Path(workspace).resolve()
@@ -934,26 +1068,55 @@ def apply_cmd(reflection_id: str, finding_id: str, workspace: str, epoch_id: str
     if resolved_epoch is None:
         raise click.ClickException(f"no reflection {reflection_id!r} found under {workspace_root}")
 
+    # A suggestion id (sug-) stages through the suggestion seam; anything else is
+    # a finding. Both fork a draft and never touch the sealed contract.
+    if item_id.startswith("sug-"):
+        try:
+            applied_s = apply_suggestion_to_draft(
+                workspace_root=workspace_root,
+                epoch_id=resolved_epoch,
+                reflection_id=reflection_id,
+                suggestion_id=item_id,
+            )
+        except SuggestionNotFoundError as exc:
+            raise click.ClickException(str(exc)) from exc
+        except FindingNotActionableError as exc:
+            raise click.ClickException(str(exc)) from exc
+        _echo_applied(
+            f"suggestion {item_id} ({applied_s.suggestion_type})",
+            applied_s.slot_name,
+            applied_s.op,
+            applied_s.args,
+            applied_s.diff,
+        )
+        return
+
     try:
         applied = apply_finding_to_draft(
             workspace_root=workspace_root,
             epoch_id=resolved_epoch,
             reflection_id=reflection_id,
-            finding_id=finding_id,
+            finding_id=item_id,
         )
     except FindingNotFoundError as exc:
         raise click.ClickException(str(exc)) from exc
     except FindingNotActionableError as exc:
         raise click.ClickException(str(exc)) from exc
+    _echo_applied(f"finding {item_id}", applied.slot_name, applied.op, applied.args, applied.diff)
 
-    click.echo(f"staged finding {finding_id} onto builder draft slot {applied.slot_name!r}")
-    click.echo(f"  op: {applied.op} {json.dumps(applied.args)}")
-    changed = applied.diff.get("changed_components") or applied.diff.get("components") or []
+
+def _echo_applied(
+    label: str, slot_name: str, op: str, args: dict[str, Any], diff: dict[str, Any]
+) -> None:
+    """Print the staged-onto-draft confirmation shared by finding + suggestion apply."""
+    click.echo(f"staged {label} onto builder draft slot {slot_name!r}")
+    click.echo(f"  op: {op} {json.dumps(args)}")
+    changed = diff.get("changed_components") or diff.get("components") or []
     if changed:
         click.echo(f"  draft now differs from live in: {changed}")
     click.echo(
         "next: open the tournament builder, review the "
-        f"{applied.slot_name!r} draft, and apply it there — rolling the epoch is "
+        f"{slot_name!r} draft, and apply it there — rolling the epoch is "
         "the builder's gated step (reflect never writes the sealed contract)."
     )
 

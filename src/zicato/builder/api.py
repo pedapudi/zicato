@@ -145,6 +145,9 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
     if op == "edit_board_entry":
         entry = validate_board_entry(args["entry"])
         return ops.edit_board_entry(draft, entry)
+    if op == "add_board_entry":
+        entry = validate_board_entry(args["entry"])
+        return ops.add_board_entry(draft, entry)
     if op == "remove_board_entry":
         return ops.remove_board_entry(draft, str(args["entry_id"]))
     if op == "add_judge":
@@ -548,13 +551,85 @@ def make_builder_endpoints(
 
         return StreamingResponse(_stream(), media_type="text/event-stream")
 
+    async def builder_suggestions(_request: Request) -> JSONResponse:
+        """The eval-suggestions inbox feed (EVAL-SYNTHESIS.md §6).
+
+        Reads the CURRENT epoch's latest reflection's persisted
+        ``suggestions.json`` (the ``reflect suggest`` output) so the board
+        editor can stage a suggestion onto the draft. Fully tolerant: no epoch,
+        no reflection, or no suggestions all degrade to an HONEST empty list
+        (never a fabricated suggestion) plus the ``epoch_id`` / ``reflection_id``
+        the Instrument-lens link needs.
+        """
+        return JSONResponse(_read_suggestions_feed(root))
+
     return {
         "builder_config": builder_config,
         "builder_draft": builder_draft,
         "builder_op": builder_op,
         "builder_apply": builder_apply,
         "builder_chat": builder_chat,
+        "builder_suggestions": builder_suggestions,
     }
+
+
+def _read_suggestions_feed(root: Path) -> dict[str, Any]:
+    """Latest reflection's suggestions for the current epoch (tolerant, operator-side)."""
+    from zicato.reflection.suggestions import read_suggestions_json  # noqa: PLC0415
+
+    empty: dict[str, Any] = {"epoch_id": None, "reflection_id": None, "suggestions": []}
+    try:
+        from zicato.epoch.lifecycle import current_epoch_id  # noqa: PLC0415
+
+        epoch_id = current_epoch_id(root)
+    except Exception:  # noqa: BLE001 — a cold workspace has no epoch
+        return empty
+    if not epoch_id:
+        return empty
+    reflection_id = _latest_reflection_id(root, epoch_id)
+    if reflection_id is None:
+        return {"epoch_id": epoch_id, "reflection_id": None, "suggestions": []}
+    return {
+        "epoch_id": epoch_id,
+        "reflection_id": reflection_id,
+        "suggestions": read_suggestions_json(root, epoch_id, reflection_id),
+    }
+
+
+def _latest_reflection_id(root: Path, epoch_id: str) -> str | None:
+    """The newest reflection dir carrying a ``suggestions.json`` (mint-mode aware).
+
+    Scans ``reflections/*/suggestions.json`` DIRECTLY rather than via
+    ``list_reflections`` — a ``reflect suggest`` in mint mode writes a reflection
+    dir with ONLY a ``suggestions.json`` (no ``plan.json``), and the
+    plan.json-keyed reflection discovery skips exactly those dirs, so the inbox
+    would never see a mint-mode suggestion. Newest-first by the suggestions
+    file's mtime (tiebroken by dir name, descending) so the freshest
+    ``reflect suggest`` output wins.
+    """
+    from zicato.core.workspace import reflection_suggestions_path, reflections_dir  # noqa: PLC0415
+
+    root_dir = reflections_dir(root, epoch_id)
+    if not root_dir.is_dir():
+        return None
+    candidates: list[tuple[float, str]] = []
+    try:
+        children = list(root_dir.iterdir())
+    except OSError:
+        return None
+    for child in children:
+        if not child.is_dir():
+            continue
+        path = reflection_suggestions_path(root, epoch_id, child.name)
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue  # no suggestions.json in this dir
+        candidates.append((mtime, child.name))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda c: (c[0], c[1]), reverse=True)
+    return candidates[0][1]
 
 
 def builder_routes(
@@ -574,6 +649,7 @@ def builder_routes(
         Route("/builder/op", handlers["builder_op"], methods=["POST"]),
         Route("/builder/apply", handlers["builder_apply"], methods=["POST"]),
         Route("/builder/chat", handlers["builder_chat"], methods=["POST"]),
+        Route("/builder/suggestions", handlers["builder_suggestions"], methods=["GET"]),
     ]
 
 

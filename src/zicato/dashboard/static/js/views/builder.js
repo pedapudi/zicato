@@ -32,7 +32,7 @@ import {
   CHAT_MIN, CHAT_MAX,
 } from '../builder/model.js';
 import {
-  getConfig, getDraft, postOp, postApply,
+  getConfig, getDraft, postOp, postApply, getSuggestions,
 } from '../builder/api.js';
 
 // The shared session draft + the section selection live across re-renders so a
@@ -63,6 +63,7 @@ let _config = null;      // /builder/config public dict (+ `vocab`)
 let _active = 'structure';
 let _busy = false;
 let _chat = null;
+let _suggestions = null;  // /builder/suggestions feed {epoch_id, reflection_id, suggestions[]}
 
 // ── board-editor module state (B2) ────────────────────────────────────
 // Pinned across renders so the inline accordion survives a digest re-render:
@@ -90,11 +91,12 @@ let _renderRail = () => {};
 export async function render(host) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Loading the tournament builder…' }));
 
-  // Load config + draft once; subsequent renders reuse the shared state.
+  // Load config + draft + suggestions once; subsequent renders reuse the state.
   if (_config == null) {
-    const [cfg, snap] = await Promise.all([getConfig(), getDraft()]);
+    const [cfg, snap, sug] = await Promise.all([getConfig(), getDraft(), getSuggestions()]);
     _config = cfg || { chat_enabled: false, agent: {}, skills: [] };
     if (snap) applySnapshot(snap);
+    _suggestions = sug || { epoch_id: null, reflection_id: null, suggestions: [] };
   }
 
   clearChildren(host);
@@ -338,6 +340,9 @@ function renderCenter(host) {
     editId: _editId, editBuf: _editBuffer, editCreate: _editCreate,
     editErr: _editError, delArm: _confirmDeleteEntry, replaced: _replacedNote,
     imp: _importText, impRep: _importReport, brief: _briefDraft,
+    // the suggestions inbox feed — static per mount, folded in so an SSE no-op
+    // re-render is a digest no-op (never rebuilds the inbox DOM).
+    sug: _suggestions,
   });
   gatedSwap(host, 'center|' + digest, () => {
     const nodes = [];
@@ -601,7 +606,113 @@ function boardSection(d) {
     rowNodes.length ? el('div', { class: 'dn-bld-boardlist' }, rowNodes)
       : empty('The board is empty — use “Add entry” below to author the first entry.'),
     addEntryControl(vocab),
-    importBox());
+    importBox(),
+    suggestionsInbox());
+}
+
+// ── the eval-suggestions inbox (EVAL-SYNTHESIS.md §6) ──────────────────
+// A verdict-led list of the persisted `reflect suggest` output: each row shows
+// its rationale, provenance (source episodes + lineage ids + target slice), the
+// admission stats rendered HONESTLY (§5 — measured numbers with n, `unmeasured`
+// states, the recommended bands as quiet advice, never an auto-verdict), and a
+// "stage to draft" affordance driving add_board_entry / add_judge. One
+// Instrument-lens link points back at the reflection that motivated them.
+// Recommend-only: staging forks the draft the operator reviews; it never seals.
+function suggestionsInbox() {
+  const feed = _suggestions || { suggestions: [] };
+  const items = Array.isArray(feed.suggestions) ? feed.suggestions : [];
+  const kids = [
+    el('h3', { class: 'dn-bld-subhead', text: 'Suggestions inbox' }),
+    el('p', { class: 'dn-faint', text: 'Synthesised eval suggestions (generative reflection). Each carries its admission stats as measured; staging forks a draft you review — nothing here seals the contract. Run `zicato reflect suggest` to refresh.' }),
+  ];
+  if (feed.epoch_id && feed.reflection_id) {
+    kids.push(el('a', {
+      class: 'dn-instr-link dn-mono',
+      href: '#/e/' + encodeURIComponent(feed.epoch_id) + '/instrument/' + encodeURIComponent(feed.reflection_id),
+      text: 'Instrument lens: reflection ' + feed.reflection_id + ' →',
+    }));
+  }
+  if (!items.length) {
+    kids.push(empty('No suggestions — run `zicato reflect suggest` to synthesise instrument improvements from the mined episodes.'));
+    return el('div', { class: 'dn-bld-suggestions' }, kids);
+  }
+  kids.push(el('ul', { class: 'dn-bld-suglist' }, items.map((s) => suggestionRow(s))));
+  return el('div', { class: 'dn-bld-suggestions' }, kids);
+}
+
+function suggestionRow(s) {
+  const prov = s.provenance || {};
+  const lineage = Array.isArray(prov.source_lineage_ids) ? prov.source_lineage_ids : [];
+  const episodes = Array.isArray(prov.source_episodes) ? prov.source_episodes : [];
+  const head = el('div', { class: 'dn-bld-sughead' }, [
+    chip('sug', s.suggestion_type || 'suggestion'),
+    el('span', { class: 'dn-bld-sugsubject dn-mono', text: s.subject || '' }),
+    chip('slice', s.target_slice || 'slice'),
+  ]);
+  const meta = [
+    el('div', { class: 'dn-bld-sugsummary', text: s.summary || '' }),
+    el('div', { class: 'dn-stat dn-bld-sugadmission', text: 'admission: ' + admissionText(s.admission) }),
+    el('div', { class: 'dn-faint dn-bld-sugprov', text:
+      'provenance: ' + (episodes.length ? episodes.length + ' episode(s)' : 'no episodes')
+      + (lineage.length ? ' · lineage ' + lineage.join(', ') : '')
+      + ' · target ' + (prov.target_slice || s.target_slice || '?') }),
+  ];
+  const kids = [head, ...meta];
+  const op = s.proposed_op;
+  if (op && op.op) {
+    const btn = el('button', {
+      class: 'dn-bld-btn dn-bld-sugstage', type: 'button',
+      text: 'Stage to draft', 'aria-label': 'Stage suggestion ' + (s.suggestion_id || '') + ' to draft',
+    });
+    // An entry suggestion stages through the new add_board_entry op — the inbox
+    // IS that op's GUI control (the L2 machine-pin). A judge suggestion reuses
+    // the granular add_judge op dynamically (its authoring GUI is the entry
+    // editor's judges list; the inbox only stages it).
+    btn.addEventListener('click', () => {
+      if (op.op === 'add_board_entry') runOp('add_board_entry', op.args || {});
+      else runOp(op.op, op.args || {});
+    });
+    kids.push(btn);
+  } else {
+    kids.push(el('span', { class: 'dn-faint', text: 'recommendation only — no mechanical op (an authoring decision)' }));
+  }
+  return el('li', { class: 'dn-bld-sugrow' }, kids);
+}
+
+// Honest one-line admission summary — mirrors suggestions.format_admission:
+// measured numbers WITH their n, `unmeasured` where a probe did not run, and
+// the recommended bands only as quiet advice (never an auto-verdict).
+function admissionText(adm) {
+  if (!adm || typeof adm !== 'object') return 'unmeasured (plan mode — no probe spent)';
+  const parts = [];
+  const noise = adm.noise;
+  if (noise && noise.measured) parts.push('flip ' + noise.flip_rate + ' (n=' + noise.runs + (noise.base != null ? ' @base ' + noise.base : '') + ')');
+  else parts.push('flip unmeasured');
+  const disc = adm.discrimination;
+  if (disc && disc.measured) parts.push('sep ' + disc.separated + '/' + disc.pairs);
+  else parts.push('sep unmeasured');
+  const leak = adm.leakage;
+  if (leak && leak.target_slice_ok === false) parts.push('LEAK: motivating proposer saw the target slice');
+  if (leak && leak.self_preference_flag) parts.push('self-preference flag');
+  const advisory = admissionAdvisory(adm);
+  if (advisory) parts.push('advisory: ' + advisory);
+  return parts.join('; ');
+}
+
+// The recommended bands as QUIET advice — mirrors suggestions._admission_advisory
+// (RECOMMENDED_FLIP_CEILING = 0.25, RECOMMENDED_MIN_DISCRIMINATION = 1). Advice
+// text only; never a verdict that drops the suggestion.
+function admissionAdvisory(adm) {
+  const notes = [];
+  const noise = adm.noise;
+  if (noise && noise.measured && typeof noise.flip_rate === 'number' && noise.flip_rate > 0.25) {
+    notes.push('flip above the 0.25 advisory ceiling (noisy eval)');
+  }
+  const disc = adm.discrimination;
+  if (disc && disc.measured && typeof disc.separated === 'number' && disc.separated < 1) {
+    notes.push('separated nothing (a dead channel before it ships)');
+  }
+  return notes.join('; ');
 }
 
 // The create-mode "replaced an existing id" notice (F6). A dismissable status
@@ -751,7 +862,7 @@ export function _resetBuilderForTest() {
   _importText = ''; _importReport = []; _briefDraft = null;
   _proposerDirs = []; _confirmReset = false; _undoNote = ''; _replacedNote = '';
   _config = null; _draft = null; _flash = '';
-  _active = 'structure'; _busy = false;
+  _active = 'structure'; _busy = false; _suggestions = null;
 }
 
 function openEdit(entry) {
