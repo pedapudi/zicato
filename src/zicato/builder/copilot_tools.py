@@ -514,6 +514,24 @@ def edit_board_entry(entry: dict[str, Any]) -> str:
     return _result_json(_summary(patch))
 
 
+def add_board_entry(entry: dict[str, Any]) -> str:
+    """Append a NEW board entry — the add beside edit_board_entry's add/replace.
+
+    ``entry`` is the JSON shape of a board entry (the same shape the REST ``op``
+    accepts); it is validated before it lands and a duplicate id is REFUSED (use
+    edit_board_entry to replace). Returns the patch + updated cost / warnings, or
+    an ``error`` on a malformed / colliding entry. A board change — it rolls the
+    epoch.
+    """
+    ctx = _active_context()
+    try:
+        board_entry = validate_board_entry(entry)
+        patch = ops.add_board_entry(ctx.draft(), board_entry)
+    except (ValueError, KeyError, TypeError) as exc:
+        return _result_json({"error": f"invalid board entry: {exc}"})
+    return _result_json(_summary(patch))
+
+
 def remove_board_entry(entry_id: str) -> str:
     """Remove a board entry by id — the delete beside edit_board_entry.
 
@@ -805,6 +823,7 @@ DEFAULT_BUILDER_TOOLS = (
     set_telemetry_dialect,
     set_screening,
     edit_board_entry,
+    add_board_entry,
     remove_board_entry,
     add_judge,
     remove_judge,
@@ -839,6 +858,7 @@ __all__ = [
     "set_telemetry_dialect",
     "set_screening",
     "edit_board_entry",
+    "add_board_entry",
     "remove_board_entry",
     "add_judge",
     "remove_judge",

@@ -829,6 +829,58 @@ def test_builder_op_remove_board_entry_dispatch(client: TestClient) -> None:
     assert "ghost" in r.json()["error"]
 
 
+def test_builder_op_add_board_entry_dispatch(client: TestClient) -> None:
+    s = {"session": "addbe"}
+    r = client.post(
+        "/builder/op",
+        json={
+            **s,
+            "op": "add_board_entry",
+            "args": {
+                "entry": {
+                    "id": "n7",
+                    "kind": "single_turn",
+                    "wall_clock_budget_seconds": 30,
+                    "input": "new probe",
+                    "context": {"provenance": '{"miner_version": "eval-synth/1"}'},
+                }
+            },
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["patch"]["changed"] == {"entry_id": "n7", "action": "added"}
+    assert {e["id"] for e in body["draft"]["board"]} == {"e1", "e2", "n7"}
+    assert "board" in body["diff"]["changed_components"]
+    # A duplicate id is a 400 (the strict-ADD refusal).
+    r = client.post(
+        "/builder/op",
+        json={
+            **s,
+            "op": "add_board_entry",
+            "args": {
+                "entry": {
+                    "id": "e1",
+                    "kind": "single_turn",
+                    "wall_clock_budget_seconds": 30,
+                    "input": "dup",
+                }
+            },
+        },
+    )
+    assert r.status_code == 400
+    assert "already exists" in r.json()["error"]
+
+
+def test_builder_suggestions_endpoint_honest_empty(client: TestClient) -> None:
+    # A workspace with an epoch but no reflection/suggestions degrades honestly.
+    r = client.get("/builder/suggestions")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["suggestions"] == []
+    assert "epoch_id" in body and "reflection_id" in body
+
+
 def test_builder_op_revert_to_live_restores_the_draft(client: TestClient) -> None:
     s = {"session": "rvt"}
     client.post("/builder/op", json={**s, "op": "set_structure", "args": {"structure": "swiss"}})

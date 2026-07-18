@@ -5,7 +5,7 @@
 > is the source of truth; if this document and the binary ever disagree,
 > trust `zicato --help` / `zicato help <command>`.
 >
-> *Last reconciled against the live `--help` on 2026-07-12.* Verified the
+> *Last reconciled against the live `--help` on 2026-07-18.* Verified the
 > full command set (`init`, `evolve`, and the advanced/debugging group:
 > `analyze-telemetry`, `board`, `builder`, `config`, `dashboard`, `epoch`,
 > `health`, `help`, `logs`, `mutations`, `propose`, `reflect`, `regenerate-report`,
@@ -613,13 +613,14 @@ contract itself. Runs the four-pillar analysis over an observation corpus and
 emits ranked, evidence-linked findings, each carrying a proposed contract edit.
 Diagnose-and-recommend only: running it never rolls the epoch (only sealing a
 recommendation through the builder does). See
-[BOARD-REFLECTION.md](BOARD-REFLECTION.md). Three subcommands:
+[BOARD-REFLECTION.md](BOARD-REFLECTION.md). Five subcommands:
 
 ```
 zicato reflect run [OPTIONS]
 zicato reflect practices [OPTIONS]
+zicato reflect suggest [OPTIONS]
 zicato reflect report REFLECTION_ID [OPTIONS]
-zicato reflect apply REFLECTION_ID FINDING_ID [OPTIONS]
+zicato reflect apply REFLECTION_ID ITEM_ID [OPTIONS]
 ```
 
 `reflect run` builds the observation corpus by REFERENCING the lineage's
@@ -655,12 +656,35 @@ scorecards report `unmeasured` honestly; `--json` emits the raw review. Accepts
 `practices.json` and renders it in the report — there it can measure the
 corpus-dependent checks too.)
 
+`reflect suggest` is **generative reflection** (the instrument's second loop;
+[EVAL-SYNTHESIS.md](EVAL-SYNTHESIS.md)): it mines **episodes** from the
+candidate loop's observed behaviour (endpoint-free), synthesises **suggestions**
+(a drafted board entry or judge, each carrying provenance), optionally
+attaches **admission** statistics (flip rate, discrimination), and persists them
+beside `findings.json` as `suggestions.json` — rendered by `reflect report` and
+staged by `reflect apply`. The live admission probes SPEND real champion budget
+and are **endpoint-gated**: they run ONLY under `--probe` (default OFF — plan
+mode shows what they would spend, spending nothing). `--allow-llm` permits the
+aux-metered LLM synthesis tier (judge / rubric drafting; default: mechanical
+only). Recommend-only end to end.
+
+| `reflect suggest` option | Default | Meaning |
+|---|---|---|
+| `--workspace TEXT` | `.zicato` | Workspace root. |
+| `--epoch TEXT` | current epoch | Contract to mine. |
+| `--reflection TEXT` | fresh id | Attach suggestions to this reflection id. |
+| `--probe` | off | SPEND champion budget on the live admission probes (endpoint-gated). |
+| `--allow-llm` | off | Permit LLM synthesis (judge/rubric drafting; aux-metered). |
+| `--json` | off | Emit the raw suggestion dicts. |
+
 `reflect report REFLECTION_ID` renders a stored reflection's report (Markdown,
-or `--json` for the raw dict). `reflect apply REFLECTION_ID FINDING_ID` forks a
-**builder draft** from the live contract and stages the finding's proposed op
-onto it — it never writes the sealed contract; the operator reviews and seals
-through the builder, which is the gated step that rolls the epoch. Both accept
-`--workspace` and `--epoch`.
+or `--json` for the raw dict) — including the **eval suggestions** section when
+`reflect suggest` has run. `reflect apply REFLECTION_ID ITEM_ID` forks a
+**builder draft** from the live contract and stages the op named by a finding
+(`find-…`) OR an eval suggestion (`sug-…`) onto it — an entry suggestion through
+`add_board_entry`, a judge suggestion through `add_judge`. It never writes the
+sealed contract; the operator reviews and seals through the builder, which is
+the gated step that rolls the epoch. Both accept `--workspace` and `--epoch`.
 
 ### `zicato reindex`
 

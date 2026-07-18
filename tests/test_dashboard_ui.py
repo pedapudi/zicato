@@ -624,7 +624,20 @@ def test_bundle_under_size_envelope(
     # §6 pre-registers the bump — the house rationale (read-only surfaces that pay
     # for themselves in operator time) covers it. The envelope is raised to 1.452 MB
     # to cover the combined surface with headroom.
-    assert total < 1_452_000, f"bundle is {total} bytes, exceeds 1_452_000 envelope"
+    #
+    # The EVAL-SYNTHESIS SUGGESTIONS INBOX (WS-SURFACE, EVAL-SYNTHESIS.md §6) then
+    # adds the board-editor's suggestions inbox to views/builder.js — the persisted
+    # `reflect suggest` output as verdict-led rows (rationale + provenance + the
+    # admission stats rendered HONESTLY: measured-with-n / `unmeasured`, the
+    # recommended bands as quiet advice, never an auto-verdict), a "stage to draft"
+    # affordance driving add_board_entry / add_judge, and one Instrument-lens link
+    # back to the motivating reflection — plus the `getSuggestions` reader in
+    # builder/api.js. Measured bundle 1,455,487 bytes, ~3.5 KB over the prior line.
+    # It is the generative-reflection surface's only frontend (recommend-only:
+    # staging forks a draft the operator seals; back-compat: an empty / cold feed
+    # renders the honest empty state, every other view byte-identical). The
+    # envelope is raised to 1.46 MB to cover it with headroom.
+    assert total < 1_460_000, f"bundle is {total} bytes, exceeds 1_460_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

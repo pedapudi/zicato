@@ -217,6 +217,16 @@ class WorkspaceLayout:
         """
         return self.reflection_dir(epoch_id, reflection_id) / "practices.json"
 
+    def reflection_suggestions(self, epoch_id: str, reflection_id: str) -> Path:
+        """One reflection's synthesised eval suggestions (``suggestions.json``).
+
+        The eval-synthesis output (EVAL-SYNTHESIS.md §6) persisted BESIDE
+        ``findings.json`` — the same additive shape: a canonical file the
+        ``reflect suggest`` mode writes and a tolerant reader degrades on
+        absence (a reflection that never ran synthesis has no file).
+        """
+        return self.reflection_dir(epoch_id, reflection_id) / "suggestions.json"
+
     # -- per-generation ------------------------------------------------------
 
     def generation_dir(self, epoch_id: str, generation_id: str) -> Path:

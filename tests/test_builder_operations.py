@@ -140,6 +140,41 @@ def test_edit_board_entry_add_then_replace() -> None:
     assert draft.entries[0].wall_clock_budget_seconds == 99
 
 
+def test_add_board_entry_appends_and_refuses_duplicate() -> None:
+    draft = TournamentDraft()
+    patch = ops.add_board_entry(draft, _entry("n1"))
+    assert patch.op == "add_board_entry"
+    assert patch.changed == {"entry_id": "n1", "action": "added"}
+    assert [e.id for e in draft.entries] == ["n1"]
+    # A strict ADD refuses a duplicate id (unlike edit_board_entry's replace).
+    import pytest  # noqa: PLC0415
+
+    with pytest.raises(ValueError, match="already exists"):
+        ops.add_board_entry(draft, _entry("n1"))
+    assert len(draft.entries) == 1
+
+
+def test_add_board_entry_validates_and_preserves_provenance_context() -> None:
+    import pytest  # noqa: PLC0415
+
+    draft = TournamentDraft()
+    # A malformed entry (single_turn with no input) is rejected before it lands.
+    bad = BoardEntry(id="bad", kind="single_turn", wall_clock_budget_seconds=30)
+    with pytest.raises(ValueError, match="requires 'input'"):
+        ops.add_board_entry(draft, bad)
+    assert draft.entries == []
+    # Provenance riding the entry context is appended untouched (§4).
+    entry = BoardEntry(
+        id="prov",
+        kind="single_turn",
+        wall_clock_budget_seconds=30,
+        input="hi",
+        context={"provenance": '{"miner_version": "eval-synth/1"}'},
+    )
+    ops.add_board_entry(draft, entry)
+    assert draft.entry_by_id("prov").context["provenance"] == '{"miner_version": "eval-synth/1"}'
+
+
 def test_add_and_remove_judge() -> None:
     draft = TournamentDraft()
     ops.edit_board_entry(draft, _entry("x1"))
