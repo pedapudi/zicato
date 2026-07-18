@@ -625,7 +625,8 @@ Design properties this sketch commits to:
 - **Each stage names its own reserved base** at load, extending the ledger
   (`04-evaluation-statistics.md §8.1`) — the loader assigns and
   cross-checks bases so §4.5's independence invariant holds by
-  construction. The next free base is `6000`.
+  construction. (`6000` is claimed by eval-synthesis admission —
+  EVAL-SYNTHESIS.md §5 — so a cascade build takes the next free base.)
 - **The terminal gate, the holdout/Ladder, the evidence gate, and the
   `SelectionStrategy` seam are all unchanged** — the cascade *orders and
   budgets* them; it does not reimplement any of them.

@@ -1129,6 +1129,7 @@ like a port-number registry.
 | `3000` | `3000` + confirm at `3001` | candidate screen | `zicato.epoch.screen.SCREEN_REPLICATE_BASE` | tryout panel runs (`3000`); the confirm-before-veto re-run (`3001`) |
 | `4000` | `4000 .. 4000+budget-1` | evidence gate | `zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE` | independent evidence draws of BOTH sides of the crowning pair |
 | `5000` | `5000 .. 5000+K-1` | board reflection (claimed; constant lands with `reflection/corpus.py`) | `zicato.reflection.corpus.REFLECTION_REPLICATE_BASE` | active observation-corpus replicates (BOARD-REFLECTION.md); infra-abort draws voided |
+| `6000` | `6000 .. 6000+K-1` | eval-synthesis admission | `zicato.reflection.admission.SYNTHESIS_REPLICATE_BASE` | drafted-suggestion admission probes (EVAL-SYNTHESIS.md §5): A/A noise draws (`6000+j`) + discrimination draws (each candidate side at `6000`, keyed distinct by generation); draw 0 is the execution probe |
 
 Design properties of the ledger:
 
@@ -1150,8 +1151,8 @@ Design properties of the ledger:
 If you are building a new out-of-tournament evaluation (a new probe, a new
 audit, a new confirmation loop), follow this procedure exactly:
 
-1. **Pick the next free thousand** (`5000` is claimed by board reflection; the
-   next free base is `6000`). Do not squat in
+1. **Pick the next free thousand** (`5000` is claimed by board reflection and
+   `6000` by eval-synthesis admission; the next free base is `7000`). Do not squat in
    an owner's range and do not subdivide an existing owner's range without
    that owner's module adopting the sub-slot explicitly (the screen's `+1`
    confirm slot is declared in `SCREEN_REPLICATE_BASE`'s own docstring).
@@ -1174,7 +1175,8 @@ audit, a new confirmation loop), follow this procedure exactly:
 
 ```bash
 grep -rn "REPLICATE_BASE\b *[:=]" src/zicato --include="*.py"
-# Expect exactly: 1000 (calibration), 2000 (preflight), 3000 (screen), 4000 (evidence)
+# Expect exactly: 1000 (calibration), 2000 (preflight), 3000 (screen), 4000 (evidence),
+#                 5000 (reflection), 6000 (synthesis admission)
 ```
 
 ### 8.2 The corruption that follows from squatting
