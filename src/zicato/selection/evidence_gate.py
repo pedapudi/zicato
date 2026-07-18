@@ -83,7 +83,10 @@ MIN_CREDIBLE_DUELS: int = 3
 #: (:data:`zicato.epoch.preflight.PREFLIGHT_REPLICATE_BASE`), and the
 #: pre-tournament candidate screen at 3000
 #: (:data:`zicato.epoch.screen.SCREEN_REPLICATE_BASE`; its
-#: confirm-before-veto re-run at 3001).
+#: confirm-before-veto re-run at 3001), board reflection at 5000
+#: (:data:`zicato.reflection.corpus.REFLECTION_REPLICATE_BASE`), and
+#: eval-synthesis admission at 6000
+#: (:data:`zicato.reflection.admission.SYNTHESIS_REPLICATE_BASE`).
 EVIDENCE_REPLICATE_BASE: int = 4000
 
 #: The half-width multiplier turning a Bradley--Terry standard error into a
