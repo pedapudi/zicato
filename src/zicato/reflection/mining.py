@@ -65,6 +65,11 @@ HINT_COVERAGE_ENTRY: str = "coverage_entry"
 HINT_JUDGE: str = "judge_suggestion"
 HINT_RUBRIC_REVISION: str = "rubric_revision"
 HINT_HARDER_VARIANT: str = "harder_variant"
+#: An infra flake seeds NOTHING — the synthesiser routes no suggestion for it
+#: (EVAL-SYNTHESIS.md §2a: an infrastructure abort is not a candidate failure, so
+#: it never becomes a regression entry). The episode still rides the mining
+#: output for operator visibility.
+HINT_INFRA_FLAKE: str = "infra_flake"
 
 # --- severity ranks (higher = worse; the ranking is descending, §2) --------
 #: A missed real failure (FN) and an infra/abort cascade are the worst demand
@@ -80,6 +85,9 @@ _SEV_FALSE_FIRE: int = 3
 _SEV_GAP_CRIT: int = 3
 _SEV_STALENESS: int = 2
 _SEV_GAP_WARN: int = 2
+#: An infra flake is the SOFTEST signal — it is not a candidate failure at all,
+#: just a telemetry note that a run aborted on infrastructure, not on behaviour.
+_SEV_INFRA_FLAKE: int = 1
 
 #: A mutation point is "churned" once it has been rewritten in at least this
 #: many generations — a single rewrite is not yet a track record.
@@ -192,7 +200,9 @@ def _make_episode(
     ``coverage_key`` = how many source lineage ids (or refs) the episode folds.
     """
     lineage = tuple(source_lineage_ids)
-    refs = tuple(source_refs)
+    # Dedup refs (order-stable) BEFORE they seed the content-stable episode id, so
+    # a repeated ref never inflates coverage or perturbs the id.
+    refs = tuple(dict.fromkeys(source_refs))
     recency = max((_generation_ordinal(g) for g in lineage), default=0)
     coverage = len(lineage) or len(refs)
     return MinedEpisode(
@@ -215,6 +225,7 @@ def _make_episode(
 # ---------------------------------------------------------------------------
 
 _FAIL_ABORT: str = "abort"
+_FAIL_INFRA_ABORT: str = "infra_abort"
 _FAIL_PREDICATE: str = "predicate_miss"
 _FAIL_DRIFT: str = "drift_spike"
 
@@ -223,11 +234,14 @@ def _classify_failure(obs: ObservationRun) -> str | None:
     """The single most-severe failure class for one observed run, or ``None``.
 
     Priority — one run yields at most ONE failure class, never double-counted:
-    an abort (infra/budget) outranks a predicate miss outranks a critical drift
-    spike. A clean run (passed, no abort, no critical drift) yields ``None``.
+    an abort outranks a predicate miss outranks a critical drift spike. An
+    **infra** abort (``is_infra_abort_cause`` — an endpoint 500, a transport
+    error) is classed SEPARATELY (:data:`_FAIL_INFRA_ABORT`): it is a flake, NOT
+    a candidate failure, so it never seeds a regression (SHOULD-FIX-C). A clean
+    run (passed, no abort, no critical drift) yields ``None``.
     """
     if obs.aborted or obs.abort_cause:
-        return _FAIL_ABORT
+        return _FAIL_INFRA_ABORT if is_infra_abort_cause(obs.abort_cause) else _FAIL_ABORT
     if obs.pass_fail is False:
         return _FAIL_PREDICATE
     for ev in obs.drift_events:
@@ -258,16 +272,27 @@ def failure_episodes(observations: list[ObservationRun]) -> list[MinedEpisode]:
         lineage = tuple(dict.fromkeys(o.candidate_id for o in runs))  # dedup, order-stable
         refs = tuple(o.loss_ref for o in runs if o.loss_ref)
         best_fidelity = _best_fidelity(runs)
-        if cls == _FAIL_ABORT:
-            infra = any(is_infra_abort_cause(o.abort_cause) for o in runs)
+        hint = HINT_REGRESSION_ENTRY
+        if cls == _FAIL_INFRA_ABORT:
+            # An infra flake is NOT a candidate failure — it seeds no regression
+            # (SHOULD-FIX-C). It rides mining output for operator visibility only.
+            hint = HINT_INFRA_FLAKE
+            severity = _SEV_INFRA_FLAKE
+            cause = next((o.abort_cause for o in runs if o.abort_cause), "infra_abort")
+            summary = (
+                f"entry {entry_id!r} hit an infrastructure abort on {len(runs)} run(s) across "
+                f"{len(lineage)} candidate(s) (cause {cause!r}) — an infra flake, not a candidate "
+                f"failure; no regression is seeded"
+            )
+            evidence = {"failure_class": cls, "infra": True, "abort_cause": cause}
+        elif cls == _FAIL_ABORT:
             severity = _SEV_ABORT
             cause = next((o.abort_cause for o in runs if o.abort_cause), "wall_clock_budget")
             summary = (
                 f"entry {entry_id!r} aborted on {len(runs)} run(s) across "
-                f"{len(lineage)} candidate(s) (cause {cause!r}"
-                f"{', infra' if infra else ''})"
+                f"{len(lineage)} candidate(s) (cause {cause!r})"
             )
-            evidence = {"failure_class": cls, "infra": infra, "abort_cause": cause}
+            evidence = {"failure_class": cls, "infra": False, "abort_cause": cause}
         elif cls == _FAIL_PREDICATE:
             severity = _SEV_PREDICATE_MISS
             summary = (
@@ -297,7 +322,7 @@ def failure_episodes(observations: list[ObservationRun]) -> list[MinedEpisode]:
                 subject=entry_id,
                 summary=summary,
                 severity_rank=severity,
-                suggestion_hint=HINT_REGRESSION_ENTRY,
+                suggestion_hint=hint,
                 source_lineage_ids=lineage,
                 source_refs=refs,
                 evidence=evidence,
@@ -824,6 +849,7 @@ __all__ = [
     "EPISODE_UNRESOLVED_CLAIM",
     "HINT_COVERAGE_ENTRY",
     "HINT_HARDER_VARIANT",
+    "HINT_INFRA_FLAKE",
     "HINT_JUDGE",
     "HINT_REGRESSION_ENTRY",
     "HINT_RUBRIC_REVISION",

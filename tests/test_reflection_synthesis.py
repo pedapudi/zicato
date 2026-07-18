@@ -158,6 +158,68 @@ def test_regression_pins_failing_entry() -> None:
     assert "regression" in sug.entry.tags and "synthesized" in sug.entry.tags
 
 
+def test_holdout_landing_forces_rotation_entry_into_holdout() -> None:
+    # SHOULD-FIX-A: a rotation-typed entry gets a suffixed id until split_board
+    # places it in holdout — so admission's leakage check sees a real holdout.
+    from zicato.board.split import split_board
+    from zicato.core.scoring_config import OverfittingConfig
+
+    board = [_single(f"e{i}") for i in range(8)]
+    entry = _single("cov__x")
+    cfg = OverfittingConfig(enabled=True, holdout_fraction=0.5, min_board_size_for_split=2)
+    landed_entry, landed = s._search_holdout_id(entry, board, cfg, seed="ep1")
+    assert landed is True
+    assert landed_entry.id != "cov__x"  # a suffixed id was needed
+    _train, holdout = split_board([*board, landed_entry], cfg, seed="ep1")
+    assert landed_entry.id in holdout
+
+
+def test_holdout_landing_degrades_when_it_cannot_land(tmp_path: Path) -> None:
+    # Overfitting disabled ⇒ no holdout ever ⇒ keep the base id + an honest note,
+    # so admission's LEAK flag stays honest rather than false-alarming.
+    from zicato.core.scoring_config import OverfittingConfig
+
+    board = [_single(f"e{i}") for i in range(8)]
+    entry = _single("cov__x")
+    off = OverfittingConfig(enabled=False)
+    kept, landed = s._search_holdout_id(entry, board, off, seed="ep1")
+    assert landed is False
+    assert kept.id == "cov__x"
+
+    # The synthesize() post-process stamps the honest note when a rotation entry
+    # cannot be forced into holdout (disabled overfitting on disk).
+    ws = tmp_path / ".zicato"
+    epoch_dir = ws / "epochs" / "ep1"
+    epoch_dir.mkdir(parents=True)
+    (epoch_dir / "scoring.json").write_text(
+        json.dumps({"overfitting": {"enabled": False}}), encoding="utf-8"
+    )
+    sug = s.Suggestion(
+        suggestion_id="sug-x",
+        suggestion_type=s.SUGGESTION_HARDER_VARIANT,
+        synthesizer=s.SYNTH_MECHANICAL,
+        subject="cov__x",
+        target_slice=s.TARGET_INCOMING_ROTATION,
+        rationale="r",
+        provenance={"source_episodes": [], "target_slice": "incoming_rotation"},
+        entry=entry,
+    )
+    (out,) = s._land_rotation_entries([sug], board, workspace_root=ws, epoch_id="ep1")
+    assert out.provenance["holdout_landing"] == "could not force holdout landing"
+    assert out.entry is not None and out.entry.id == "cov__x"
+
+
+def test_infra_abort_episode_seeds_no_regression() -> None:
+    # SHOULD-FIX-C: an infra (endpoint-500) abort mines to a HINT_INFRA_FLAKE
+    # episode the mechanical synthesiser routes to NOTHING — no false regression.
+    board = [_single("login")]
+    (ep,) = m.failure_episodes(
+        [_obs(entry_id="login", aborted=True, abort_cause="endpoint_error", loss_ref="/w/a")]
+    )
+    assert ep.suggestion_hint == m.HINT_INFRA_FLAKE
+    assert s.synthesize_mechanical([ep], board_entries=board) == []
+
+
 def test_regression_dropped_when_source_entry_absent() -> None:
     # The failing entry is not on the current board — nothing to pin.
     assert s.synthesize_mechanical([_failure_episode("gone")], board_entries=[]) == []
@@ -168,7 +230,7 @@ def test_two_failure_classes_yield_distinct_regression_ids(tmp_path: Path) -> No
     board = [_single("login")]
     predicate = _failure_episode("login")
     (abort,) = m.failure_episodes(
-        [_obs(entry_id="login", aborted=True, abort_cause="endpoint_error", loss_ref="/w/b")]
+        [_obs(entry_id="login", aborted=True, abort_cause="budget_exhausted", loss_ref="/w/b")]
     )
     sugs = s.synthesize_mechanical([predicate, abort], board_entries=board)
     ids = {sug.entry.id for sug in sugs if sug.entry is not None}
@@ -347,6 +409,22 @@ def test_coverage_entry_llm_drops_invalid_draft() -> None:
                 [_coverage_episode("prompt_a")],
                 board_entries=[],
                 aux_call_llm=_scripted(lambda *_: bad),
+            )
+        )
+        == []
+    )
+
+
+def test_coverage_entry_llm_drops_oversized_response() -> None:
+    # An oversized aux response is a malfunction (a single draft is small): it is
+    # capped and dropped with a reason, never parsed.
+    huge = " " * (s._MAX_AUX_RESPONSE_BYTES + 1) + _GOOD_COVERAGE
+    assert (
+        asyncio.run(
+            s.synthesize_suggestions(
+                [_coverage_episode("prompt_a")],
+                board_entries=[],
+                aux_call_llm=_scripted(lambda *_: huge),
             )
         )
         == []

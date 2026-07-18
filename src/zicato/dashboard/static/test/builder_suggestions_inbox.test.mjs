@@ -139,6 +139,22 @@ test('suggestions inbox: admission renders HONESTLY — measured with n, else un
   assert(/unmeasured/.test(joined), 'the unmeasured entry reads unmeasured (never a fabricated 0)');
 });
 
+test('suggestions inbox: the advisory band renders when a measured stat crosses a recommended band', async () => {
+  const f = feed();
+  // A noisy measured suggestion: flip 0.4 > the 0.25 advisory ceiling.
+  f.suggestions[0].admission = {
+    noise: { flip_rate: 0.4, runs: 5, measured: true, base: 6000 },
+    discrimination: { separated: 0, pairs: 5, measured: true },
+    leakage: { target_slice_ok: true, self_preference_flag: false },
+  };
+  SUGGESTIONS = f;
+  const host = await mountBoard();
+  const joined = byClass(host, 'dn-bld-sugadmission').map((n) => n.textContent).join(' | ');
+  assert(/advisory:/.test(joined), 'the advisory band renders (mirrors format_admission)');
+  assert(/advisory ceiling/.test(joined), 'names the flip ceiling advice');
+  assert(/dead channel/.test(joined), 'names the dead-channel advice');
+});
+
 test('suggestions inbox: the Instrument-lens link points at the motivating reflection', async () => {
   SUGGESTIONS = feed();
   const host = await mountBoard();

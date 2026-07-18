@@ -694,7 +694,25 @@ function admissionText(adm) {
   const leak = adm.leakage;
   if (leak && leak.target_slice_ok === false) parts.push('LEAK: motivating proposer saw the target slice');
   if (leak && leak.self_preference_flag) parts.push('self-preference flag');
+  const advisory = admissionAdvisory(adm);
+  if (advisory) parts.push('advisory: ' + advisory);
   return parts.join('; ');
+}
+
+// The recommended bands as QUIET advice — mirrors suggestions._admission_advisory
+// (RECOMMENDED_FLIP_CEILING = 0.25, RECOMMENDED_MIN_DISCRIMINATION = 1). Advice
+// text only; never a verdict that drops the suggestion.
+function admissionAdvisory(adm) {
+  const notes = [];
+  const noise = adm.noise;
+  if (noise && noise.measured && typeof noise.flip_rate === 'number' && noise.flip_rate > 0.25) {
+    notes.push('flip above the 0.25 advisory ceiling (noisy eval)');
+  }
+  const disc = adm.discrimination;
+  if (disc && disc.measured && typeof disc.separated === 'number' && disc.separated < 1) {
+    notes.push('separated nothing (a dead channel before it ships)');
+  }
+  return notes.join('; ');
 }
 
 // The create-mode "replaced an existing id" notice (F6). A dismissable status

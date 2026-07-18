@@ -110,7 +110,7 @@ def test_failure_episodes_classify_predicate_abort_drift() -> None:
             candidate_id="v5",
             entry_id="login",
             aborted=True,
-            abort_cause="endpoint_error",
+            abort_cause="budget_exhausted",
             loss_ref="/w/b",
         ),
         _obs(
@@ -129,10 +129,32 @@ def test_failure_episodes_classify_predicate_abort_drift() -> None:
         ("login", "abort"),
         ("pay", "drift_spike"),
     }
+    # A genuine budget abort is a real cascade → a regression demand.
     assert by_class[("login", "abort")].severity_rank == m._SEV_ABORT
-    assert by_class[("login", "abort")].evidence["infra"] is True
+    assert by_class[("login", "abort")].evidence["infra"] is False
     assert by_class[("pay", "drift_spike")].evidence["drift_kinds"] == ["custom:cite"]
     assert all(e.suggestion_hint == m.HINT_REGRESSION_ENTRY for e in eps)
+
+
+def test_failure_episodes_infra_abort_seeds_no_regression() -> None:
+    # SHOULD-FIX-C: an endpoint-500 (infra) abort is a FLAKE, not a candidate
+    # failure — a separate class + severity + a non-regression hint, so it never
+    # becomes a regression suggestion.
+    obs = [
+        _obs(
+            candidate_id="v5",
+            entry_id="login",
+            aborted=True,
+            abort_cause="endpoint_error",
+            loss_ref="/w/b",
+        ),
+    ]
+    (ep,) = m.failure_episodes(obs)
+    assert ep.evidence["failure_class"] == "infra_abort"
+    assert ep.evidence["infra"] is True
+    assert ep.severity_rank == m._SEV_INFRA_FLAKE
+    assert ep.suggestion_hint == m.HINT_INFRA_FLAKE
+    assert ep.suggestion_hint != m.HINT_REGRESSION_ENTRY
 
 
 def test_failure_episodes_group_replicates_and_candidates() -> None:
@@ -305,7 +327,7 @@ def _sample_episodes() -> list[m.MinedEpisode]:
             candidate_id="v5",
             entry_id="login",
             aborted=True,
-            abort_cause="endpoint_error",
+            abort_cause="budget_exhausted",
             loss_ref="a",
         ),
         _obs(candidate_id="v3", entry_id="pay", pass_fail=False, loss_ref="b"),

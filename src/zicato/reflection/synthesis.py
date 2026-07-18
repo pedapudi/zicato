@@ -113,6 +113,11 @@ _EDGE_CLAUSE: str = (
 #: Default wall-clock budget for a mechanically-scaffolded coverage entry.
 _DEFAULT_BUDGET_SECONDS: int = 120
 
+#: Byte cap on an aux LLM response (nit): a single drafted entry / judge is
+#: small, so a reply above this is a malfunction and the suggestion is dropped
+#: with a logged reason rather than parsed.
+_MAX_AUX_RESPONSE_BYTES: int = 64 * 1024
+
 #: The board sentinel a board-wide staleness episode uses as its subject — it is
 #: demand for rotation, not a single entry to perturb, so it seeds no artifact.
 _BOARD_SENTINEL: str = "__board__"
@@ -754,12 +759,27 @@ def _build_judge(parsed: dict[str, Any], subject: str) -> JudgeSpec | None:
 async def _aux_text(
     aux_call_llm: CallLLM, system: str, user: str, tier: str, subject: str
 ) -> str | None:
-    """Invoke the aux callable defensively; a failure logs and drops (no crash)."""
+    """Invoke the aux callable defensively; a failure / oversized response drops.
+
+    The aux endpoint is untrusted: a raised error logs and drops (no crash), and
+    an oversized response is capped and dropped with a reason (a single drafted
+    entry / judge is small — a megabyte reply is a malfunction, not a draft).
+    """
     try:
-        return await aux_call_llm(system, user, "")
+        raw = await aux_call_llm(system, user, "")
     except Exception as exc:  # noqa: BLE001 — the aux endpoint is untrusted; degrade
         _LOG.info("%s: aux call failed for %r — %s", tier, subject, exc)
         return None
+    if isinstance(raw, str) and len(raw.encode("utf-8", "ignore")) > _MAX_AUX_RESPONSE_BYTES:
+        _LOG.info(
+            "%s: dropped draft for %r — aux response exceeded the %d-byte cap (%d bytes)",
+            tier,
+            subject,
+            _MAX_AUX_RESPONSE_BYTES,
+            len(raw.encode("utf-8", "ignore")),
+        )
+        return None
+    return raw
 
 
 def _parse_json_object(raw: str, tier: str, subject: str) -> dict[str, Any] | None:
@@ -895,8 +915,98 @@ def synthesize(
     internal = asyncio.run(
         synthesize_suggestions(episodes, board_entries=board_entries, aux_call_llm=aux)
     )
+    internal = _land_rotation_entries(internal, board_entries, workspace_root, epoch_id)
     episode_by_id = {e.episode_id: e for e in episodes}
     return [_to_surface_suggestion(s, episode_by_id, surface) for s in internal]
+
+
+#: Bounded id-search attempts for landing a rotation-typed entry in holdout
+#: (SHOULD-FIX-A). Small — a handful of suffixed ids is enough to place an entry
+#: on the deterministic split, and a bound keeps the search terminating.
+_HOLDOUT_LANDING_ATTEMPTS: int = 8
+
+
+def _land_rotation_entries(
+    internal: list[Suggestion],
+    board_entries: Sequence[BoardEntry],
+    workspace_root: Path | None,
+    epoch_id: str | None,
+) -> list[Suggestion]:
+    """Force rotation-typed entry drafts to land in holdout (SHOULD-FIX-A, §4).
+
+    A coverage / harder-variant entry targets the incoming-rotation slice so the
+    motivating proposer meets it blind — but the drafted id only lands there if
+    :func:`~zicato.board.split.split_board` at the epoch's rotation seed places it
+    in holdout. This tries suffixed ids (``<id>``, ``<id>-r1``, …) until one
+    lands, keeping the ``suggestion_id`` verbatim; on failure it keeps the base
+    id and stamps a provenance note so admission's LEAK flag stays honest (a real
+    leak) rather than false-alarming on every suggestion.
+    """
+    weights = _load_epoch_weights(workspace_root, epoch_id)
+    cfg = getattr(weights, "overfitting", None)
+    if cfg is None or not epoch_id:
+        return internal
+    from zicato.board.split import rotation_seed  # noqa: PLC0415
+
+    try:
+        seed = rotation_seed(cfg, epoch_id)
+    except Exception:  # noqa: BLE001 — a seed we cannot resolve → land nothing, no crash
+        return internal
+
+    out: list[Suggestion] = []
+    for s in internal:
+        if s.entry is None or s.target_slice != TARGET_INCOMING_ROTATION:
+            out.append(s)
+            continue
+        landed_entry, landed = _search_holdout_id(s.entry, board_entries, cfg, seed)
+        provenance = dict(s.provenance)
+        if not landed:
+            provenance["holdout_landing"] = "could not force holdout landing"
+        # Re-stamp the (possibly-noted) provenance into the entry context so a
+        # surfaced entry carries its own lineage through the board loader.
+        stamped = _stamp_provenance(landed_entry, provenance)
+        out.append(dataclasses.replace(s, entry=stamped, provenance=provenance))
+    return out
+
+
+def _search_holdout_id(
+    entry: BoardEntry, board: Sequence[BoardEntry], cfg: Any, seed: str | None
+) -> tuple[BoardEntry, bool]:
+    """Find a board-unique id for ``entry`` that lands in holdout, or keep the base."""
+    from zicato.board.split import split_board  # noqa: PLC0415
+
+    base = entry.id
+    board_ids = {e.id for e in board}
+    for i in range(_HOLDOUT_LANDING_ATTEMPTS):
+        candidate = base if i == 0 else f"{base}-r{i}"
+        if candidate in board_ids:
+            continue
+        trial = dataclasses.replace(entry, id=candidate)
+        try:
+            _train_ids, holdout_ids = split_board([*board, trial], cfg, seed=seed)
+        except Exception:  # noqa: BLE001 — a split we cannot compute → keep the base id
+            return entry, False
+        if candidate in holdout_ids:
+            return trial, True
+    return entry, False
+
+
+def _load_epoch_weights(workspace_root: Path | None, epoch_id: str | None) -> Any:
+    """Load the epoch's scoring weights (tolerant: absent/bad ⇒ defaults)."""
+    from zicato.core import ScoringWeights  # noqa: PLC0415
+
+    if workspace_root is None or not epoch_id:
+        return ScoringWeights()
+    try:
+        from zicato.core.workspace import scoring_path  # noqa: PLC0415
+        from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
+
+        raw = json.loads(scoring_path(workspace_root, epoch_id).read_text(encoding="utf-8"))
+        if isinstance(raw, dict):
+            return scoring_weights_from_dict(raw)
+    except Exception:  # noqa: BLE001 — a missing / bad scoring.json → defaults
+        pass
+    return ScoringWeights()
 
 
 def _to_surface_suggestion(

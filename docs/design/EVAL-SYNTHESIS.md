@@ -94,6 +94,15 @@ Fidelity rides every episode (`ObservationRun.fidelity`: `verbatim` >
 `result` > `preview`) so a failure grounded in the judge's exact bytes
 outranks one grounded in a truncated preview — the R1 ladder, unchanged.
 
+> **Infra aborts are not candidate failures.** An abort whose cause is an
+> *infrastructure* fault (`core.loss.is_infra_abort_cause` — an endpoint 500, a
+> worker crash, an unreadable result; anything but the genuine
+> `BUDGET_ABORT_CAUSE`) is a **flake**, not a behaviour the instrument should
+> pin. The miner classes it separately (`infra_abort`, the softest severity) and
+> seeds **no regression** — its `suggestion_hint` routes to nothing. It still
+> rides the mining output for operator visibility. A genuine budget/tool abort
+> cascade remains a real regression demand.
+
 ### (b) JUDGE-DISAGREEMENT episodes — reflection's adjudicated corpus
 
 **Source (verified):** `reflection.adjudicator.JudgeAdjudication` records
@@ -343,6 +352,13 @@ known-answer test with zero live spend.
   in the reflection directory beside `findings.json`, canonical file + a
   tolerant reader that degrades on absence (the reflection persistence
   idiom).
+  > **Mint-mode reflection dirs.** A `reflect suggest` that mints a fresh
+  > reflection id writes a directory carrying **only** a `suggestions.json` — no
+  > `plan.json`. Such a dir is distinguishable from a full `reflect run`
+  > reflection by the absent `plan.json`, and the plan.json-keyed reflection
+  > discovery (`list_reflections`) skips it — so the builder suggestions inbox
+  > scans `reflections/*/suggestions.json` **directly** to surface mint-mode
+  > output. GC of these suggest-minted dirs is deferred (see the deferred list).
 - **`reflect apply` carries a suggestion into a builder draft.** The existing
   `reflection/apply.py` mechanism forks a builder draft off the live contract
   and applies a finding's `proposed_op` (verified: `apply_finding_to_draft`).
@@ -428,6 +444,10 @@ budget without explicit operator go-ahead.
 - **Cross-workspace episode mining** — mining episodes across epochs /
   workspaces (an entry's demand history beyond the current epoch); wants the
   cross-epoch lifetime record EVAL-VIEW.md §7 also defers.
+- **GC of suggest-minted reflection dirs** — a mint-mode `reflect suggest`
+  writes a `suggestions.json`-only reflection dir (no `plan.json`, §6); pruning
+  stale ones is deferred (they are cheap and operator-visible, and the inbox
+  already surfaces only the freshest).
 
 ## 9. WS-MINE — the episode extractor (this wave, Commit 2)
 
