@@ -277,3 +277,49 @@ def test_apply_judge_suggestion_carries_the_judge(
     )
     assert applied.op == "add_judge"
     assert applied.patch["changed"] == {"entry_id": "entryA", "judge": "citations"}
+
+
+def test_apply_duplicate_entry_renders_cleanly(
+    workspace: tuple[Path, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A suggestion whose add_board_entry op duplicates a LIVE entry id: the
+    # builder op raises ValueError; apply must surface it as a not-actionable
+    # message (clean CLI output), never a raw traceback.
+    ws, epoch_id = workspace
+    dup_entry = {
+        "id": "entryA",
+        "kind": "single_turn",
+        "wall_clock_budget_seconds": 30,
+        "input": "x",
+    }
+    dup = Suggestion(
+        suggestion_id="sug-dup001",
+        suggestion_type="regression_entry",
+        artifact_kind="board_entry",
+        subject="entryA",
+        summary="dup",
+        rationale="dup",
+        target_slice="train",
+        draft_artifact=dup_entry,
+        proposed_op={"op": "add_board_entry", "args": {"entry": dup_entry}},
+        provenance={"source_episodes": []},
+    )
+    monkeypatch.setattr(sug_mod, "resolve_synthesize", lambda: (lambda *a, **k: [dup]))
+    monkeypatch.setattr(sug_mod, "resolve_admit", lambda: None)
+    _run(["reflect", "suggest", "--workspace", str(ws), "--reflection", _REFLECTION_ID])
+
+    from zicato.reflection.apply import FindingNotActionableError, apply_suggestion_to_draft
+
+    with pytest.raises(FindingNotActionableError) as excinfo:
+        apply_suggestion_to_draft(
+            workspace_root=ws,
+            epoch_id=epoch_id,
+            reflection_id=_REFLECTION_ID,
+            suggestion_id="sug-dup001",
+        )
+    assert "could not be staged" in str(excinfo.value)
+
+    result = _run(["reflect", "apply", _REFLECTION_ID, "sug-dup001", "--workspace", str(ws)])
+    assert result.exit_code != 0
+    assert "could not be staged" in result.stderr
+    assert result.exception is None or isinstance(result.exception, SystemExit)

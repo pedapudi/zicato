@@ -149,7 +149,15 @@ def apply_finding_to_draft(
     # (DraftStore.fork copies the session's working draft, which is lazily
     # initialised from ``TournamentDraft.from_workspace``).
     draft = store.fork(session_id="reflect-apply", name=slot_name, workspace_root=workspace_root)
-    patch = fn(draft, **args)
+    # A builder op raises ValueError for a rejected edit (a duplicate entry id, an
+    # unknown target). Surface it as a not-actionable finding so the CLI renders
+    # the op's message cleanly instead of a raw traceback.
+    try:
+        patch = fn(draft, **args)
+    except ValueError as exc:
+        raise FindingNotActionableError(
+            f"finding {finding_id!r} op {op_name!r} could not be staged: {exc}"
+        ) from exc
     diff = draft.diff_vs_live(workspace_root)
 
     return AppliedFinding(
@@ -276,7 +284,15 @@ def apply_suggestion_to_draft(
     slot_name = _slot_name(reflection_id)
     store = DraftStore()
     draft = store.fork(session_id="reflect-apply", name=slot_name, workspace_root=workspace_root)
-    patch = fn(draft, *positional)
+    # The board op raises ValueError for a rejected edit (most commonly a
+    # duplicate entry id when the same suggestion is staged twice). Surface it as
+    # not-actionable so the CLI renders the message cleanly, never a traceback.
+    try:
+        patch = fn(draft, *positional)
+    except ValueError as exc:
+        raise FindingNotActionableError(
+            f"suggestion {suggestion_id!r} op {op_name!r} could not be staged: {exc}"
+        ) from exc
     diff = draft.diff_vs_live(workspace_root)
 
     return AppliedSuggestion(

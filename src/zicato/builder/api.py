@@ -597,31 +597,39 @@ def _read_suggestions_feed(root: Path) -> dict[str, Any]:
 
 
 def _latest_reflection_id(root: Path, epoch_id: str) -> str | None:
-    """The newest reflection id for an epoch that carries a ``suggestions.json``.
+    """The newest reflection dir carrying a ``suggestions.json`` (mint-mode aware).
 
-    Walks reflections newest-first and returns the first whose
-    ``suggestions.json`` is non-empty, so the inbox surfaces the freshest
-    ``reflect suggest`` output rather than an older reflection that only ran the
-    four pillars.
+    Scans ``reflections/*/suggestions.json`` DIRECTLY rather than via
+    ``list_reflections`` — a ``reflect suggest`` in mint mode writes a reflection
+    dir with ONLY a ``suggestions.json`` (no ``plan.json``), and the
+    plan.json-keyed reflection discovery skips exactly those dirs, so the inbox
+    would never see a mint-mode suggestion. Newest-first by the suggestions
+    file's mtime (tiebroken by dir name, descending) so the freshest
+    ``reflect suggest`` output wins.
     """
-    from zicato.core.workspace import reflection_suggestions_path  # noqa: PLC0415
-    from zicato.query.paths import WorkspacePaths  # noqa: PLC0415
-    from zicato.query.reflection_view import list_reflections  # noqa: PLC0415
+    from zicato.core.workspace import reflection_suggestions_path, reflections_dir  # noqa: PLC0415
 
-    try:
-        items = list_reflections(WorkspacePaths(root), epoch_id).get("reflections", [])
-    except Exception:  # noqa: BLE001
+    root_dir = reflections_dir(root, epoch_id)
+    if not root_dir.is_dir():
         return None
-    newest: str | None = None
-    for item in items:  # already newest-first
-        rid = item.get("reflection_id")
-        if not isinstance(rid, str) or not rid:
+    candidates: list[tuple[float, str]] = []
+    try:
+        children = list(root_dir.iterdir())
+    except OSError:
+        return None
+    for child in children:
+        if not child.is_dir():
             continue
-        if newest is None:
-            newest = rid
-        if reflection_suggestions_path(root, epoch_id, rid).is_file():
-            return rid
-    return newest
+        path = reflection_suggestions_path(root, epoch_id, child.name)
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue  # no suggestions.json in this dir
+        candidates.append((mtime, child.name))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda c: (c[0], c[1]), reverse=True)
+    return candidates[0][1]
 
 
 def builder_routes(
