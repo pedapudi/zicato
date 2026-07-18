@@ -818,6 +818,33 @@ def edit_board_entry(draft: TournamentDraft, entry: BoardEntry) -> DraftPatch:
     )
 
 
+def add_board_entry(draft: TournamentDraft, entry: BoardEntry) -> DraftPatch:
+    """Append a NEW board entry — the add beside :func:`add_judge`.
+
+    Where :func:`edit_board_entry` is add-OR-replace (id-matched), this is a
+    strict ADD: it mirrors :func:`add_judge`'s validate-then-append shape and
+    REFUSES a duplicate id (a silent replace would hide a suggestion colliding
+    with a live entry). The entry is validated before it lands (a malformed
+    draft raises :class:`ValueError` rather than corrupting the board). Any
+    provenance the author stamped onto ``entry.context`` (EVAL-SYNTHESIS.md §4)
+    rides along untouched — the op neither injects nor strips it.
+
+    A board change, so it rolls the epoch like any board edit. This is the op a
+    regression / coverage / harder-variant suggestion applies through (the
+    ``reflect apply`` suggestion seam).
+    """
+    entry.validate()
+    if any(e.id == entry.id for e in draft.entries):
+        raise ValueError(
+            f"board entry {entry.id!r} already exists — use edit_board_entry to replace it"
+        )
+    draft.entries.append(entry)
+    return DraftPatch(
+        op="add_board_entry",
+        changed={"entry_id": entry.id, "action": "added"},
+    )
+
+
 def remove_board_entry(draft: TournamentDraft, entry_id: str) -> DraftPatch:
     """Remove the board entry with ``entry_id`` — the delete beside
     :func:`edit_board_entry`'s add/replace.
@@ -2090,6 +2117,7 @@ __all__ = [
     "set_telemetry_dialect",
     "set_screening",
     "edit_board_entry",
+    "add_board_entry",
     "remove_board_entry",
     "add_judge",
     "remove_judge",

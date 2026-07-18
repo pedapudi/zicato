@@ -181,6 +181,11 @@ def reflection_practices_path(workspace_root: Path, epoch_id: str, reflection_id
     return _layout(workspace_root).reflection_practices(epoch_id, reflection_id)
 
 
+def reflection_suggestions_path(workspace_root: Path, epoch_id: str, reflection_id: str) -> Path:
+    """Path to one reflection's synthesised eval suggestions (``suggestions.json``)."""
+    return _layout(workspace_root).reflection_suggestions(epoch_id, reflection_id)
+
+
 def run_dir(
     workspace_root: Path,
     epoch_id: str,
