@@ -206,6 +206,10 @@ class SynthesizeSeam(Protocol):
     The synthesiser loads the epoch board (to pin regressions / perturb dead
     entries / host judges) from ``workspace_root`` + ``epoch_id``, and resolves
     the auxiliary callable for the LLM tier only when ``allow_llm``.
+
+    ``imported_traces`` (TRAJECTORY-BOOTSTRAP.md §7) carries the foreign-trace
+    reconstructions the bootstrap tier drafts entries from; it defaults to empty
+    so every existing caller stays valid and the seam is a no-op for them.
     """
 
     def __call__(
@@ -215,6 +219,7 @@ class SynthesizeSeam(Protocol):
         allow_llm: bool = False,
         workspace_root: Path | None = None,
         epoch_id: str | None = None,
+        imported_traces: Any = (),
     ) -> list[Any]: ...
 
 
@@ -438,6 +443,11 @@ def render_suggestions_md(suggestions: list[Suggestion]) -> list[str]:
         lineage = prov.get("source_lineage_ids") or []
         if lineage:
             lines.append(f"- source lineage: {', '.join(str(g) for g in lineage)}")
+        foreign = prov.get("foreign_source")
+        if isinstance(foreign, dict):
+            src = str(foreign.get("source_file", "?"))
+            dialect = str(foreign.get("dialect", "?"))
+            lines.append(f"- foreign source: {src} ({dialect}) — trajectory bootstrap")
         if s.proposed_op:
             lines.append(
                 f"- apply with: `zicato reflect apply {{reflection_id}} {s.suggestion_id}`"
