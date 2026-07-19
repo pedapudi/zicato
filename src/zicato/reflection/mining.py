@@ -41,12 +41,14 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 from zicato.core.loss import is_infra_abort_cause
 from zicato.reflection.adjudicator import VERDICT_FN, VERDICT_FP, JudgeAdjudication
 from zicato.reflection.corpus import ObservationRun
+from zicato.reflection.trace_import import ImportedTrace
 
 #: Stamped onto every episode's provenance so a suggestion traces back to the
 #: miner that produced it (EVAL-SYNTHESIS.md §4).
@@ -58,6 +60,11 @@ EPISODE_JUDGE_DISAGREEMENT: str = "judge_disagreement"
 EPISODE_COVERAGE_GAP: str = "coverage_gap"
 EPISODE_UNRESOLVED_CLAIM: str = "unresolved_claim"
 EPISODE_STALENESS: str = "staleness"
+#: Imported foreign-trace episodes (TRAJECTORY-BOOTSTRAP.md §4). A signal
+#: episode is a drift-derived adverse pattern (error cascade / retry loop / …);
+#: a behavioral episode is a substantive conversation with no adverse signal.
+EPISODE_IMPORTED_SIGNAL: str = "imported_signal"
+EPISODE_IMPORTED_BEHAVIORAL: str = "imported_behavioral"
 
 # --- suggestion hints (which EVAL-SYNTHESIS.md §3 type an episode seeds) ----
 HINT_REGRESSION_ENTRY: str = "regression_entry"
@@ -70,6 +77,10 @@ HINT_HARDER_VARIANT: str = "harder_variant"
 #: it never becomes a regression entry). The episode still rides the mining
 #: output for operator visibility.
 HINT_INFRA_FLAKE: str = "infra_flake"
+#: Bootstrap hints (TRAJECTORY-BOOTSTRAP.md §4.2). A signal episode seeds a
+#: mechanical bootstrap entry; a behavioral episode an LLM-drafted one.
+HINT_BOOTSTRAP_ENTRY: str = "bootstrap_entry"
+HINT_BOOTSTRAP_RUBRIC: str = "bootstrap_rubric"
 
 # --- severity ranks (higher = worse; the ranking is descending, §2) --------
 #: A missed real failure (FN) and an infra/abort cascade are the worst demand
@@ -88,6 +99,41 @@ _SEV_GAP_WARN: int = 2
 #: An infra flake is the SOFTEST signal — it is not a candidate failure at all,
 #: just a telemetry note that a run aborted on infrastructure, not on behaviour.
 _SEV_INFRA_FLAKE: int = 1
+
+# --- imported-trace signal severities (TRAJECTORY-BOOTSTRAP.md §4.1) --------
+#: An error cascade / total-failure abort pattern is the worst foreign signal —
+#: a run whose tools failed. A retry loop / cost blowout is middling; transfer
+#: churn and a signal-free behavioral episode are the softest.
+_SEV_IMPORTED_ERROR: int = 5
+_SEV_IMPORTED_ABORT: int = 5
+_SEV_IMPORTED_RETRY: int = 3
+_SEV_IMPORTED_BUDGET: int = 3
+_SEV_IMPORTED_TRANSFER: int = 2
+_SEV_IMPORTED_BEHAVIORAL: int = 2
+
+# --- imported-trace signal thresholds (documented, tunable) ----------------
+#: Minimum count for a drift-derived signal to seed an episode.
+MIN_ERROR_CASCADE: int = 1
+MIN_RETRY_LOOP: int = 1
+MIN_TRANSFER_CHURN: int = 3
+#: A task_failure_ratio at/above this is a high-failure run (error cascade).
+HIGH_FAILURE_RATIO: float = 0.5
+#: Cost ceilings above which a run is a budget blowout.
+MAX_TOKENS: int = 100_000
+MAX_LLM_CALLS: int = 50
+
+#: The ADK drift kinds the imported miner keys on (TELEMETRY-DIALECTS.md §3.2).
+_ADK_ERROR_KIND: str = "tool_error"
+_ADK_RETRY_KIND: str = "looping_tool_call"
+_ADK_TRANSFER_KIND: str = "agent_transfer"
+
+# --- imported signal-kind tokens (ride evidence["signal_kind"]) ------------
+_SIG_ERROR_CASCADE: str = "error_cascade"
+_SIG_ABORT_PATTERN: str = "abort_pattern"
+_SIG_RETRY_LOOP: str = "retry_loop"
+_SIG_BUDGET_BLOWOUT: str = "budget_blowout"
+_SIG_TRANSFER_CHURN: str = "transfer_churn"
+_SIG_BEHAVIORAL: str = "behavioral"
 
 #: A mutation point is "churned" once it has been rewritten in at least this
 #: many generations — a single rewrite is not yet a track record.
@@ -582,6 +628,199 @@ def staleness_episodes(
 
 
 # ---------------------------------------------------------------------------
+# (f) IMPORTED-TRACE episodes — signal-driven over foreign traces
+# ---------------------------------------------------------------------------
+
+
+def _drift_count(signals: Any, kind: str) -> int:
+    """Summed drift count for one kind across all severities (``0`` if absent)."""
+    return sum(int(dc.count) for dc in signals.drift_counts if dc.kind == kind)
+
+
+def _imported_episode(
+    *,
+    trace: ImportedTrace,
+    episode_type: str,
+    signal_kind: str,
+    summary: str,
+    severity_rank: int,
+    suggestion_hint: str,
+    coverage_key: int,
+    extra_evidence: dict[str, Any] | None = None,
+) -> MinedEpisode:
+    """Assemble one imported-trace :class:`MinedEpisode` (TRAJECTORY-BOOTSTRAP.md §4.2).
+
+    ``recency_key`` is ``0`` (a foreign trace has no generation lineage); the
+    id keys on ``(episode_type, trace_id, signal_kind)`` so two signal kinds on
+    one trace never collide; the evidence bag carries everything the bootstrap
+    synthesiser needs (the reconstruction pointer + the signal counts).
+    """
+    opening = trace.user_turns[0] if trace.user_turns else ""
+    evidence: dict[str, Any] = {
+        "signal_kind": signal_kind,
+        "dialect": trace.dialect,
+        "source_file": trace.source_file,
+        "trace_id": trace.trace_id,
+        "is_multi_turn": len(trace.user_turns) > 1,
+        "n_user_turns": len(trace.user_turns),
+        "n_agent_turns": len(trace.agent_turns),
+        "opening_user_turn": opening[:2000],
+    }
+    if extra_evidence:
+        evidence.update(extra_evidence)
+    payload = "|".join([episode_type, trace.trace_id, signal_kind])
+    episode_id = "ep-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8]
+    return MinedEpisode(
+        episode_id=episode_id,
+        episode_type=episode_type,
+        subject=trace.trace_id,
+        summary=summary,
+        severity_rank=severity_rank,
+        recency_key=0,
+        coverage_key=max(1, coverage_key),
+        suggestion_hint=suggestion_hint,
+        evidence=evidence,
+        source_refs=(trace.source_file, signal_kind),
+        source_lineage_ids=(),
+    )
+
+
+def imported_trace_episodes(traces: Sequence[ImportedTrace]) -> list[MinedEpisode]:
+    """Signal-driven episodes over imported foreign traces (TRAJECTORY-BOOTSTRAP.md §4).
+
+    Pure over the reduced :class:`DialectSignals` — NO ``pass_fail`` / judge
+    dependence (a foreign trace has neither). Each trace yields one episode per
+    adverse signal present (error cascade / abort pattern / retry loop / budget
+    blowout / transfer churn); a trace with no adverse signal but a substantive
+    conversation yields ONE behavioral episode (LLM-drafting demand). A
+    ``transcript``-dialect trace carries no drift, so it yields only the
+    behavioral episode — the honest zero-drift stance.
+    """
+    episodes: list[MinedEpisode] = []
+    for trace in traces:
+        signals = trace.signals
+        errors = _drift_count(signals, _ADK_ERROR_KIND)
+        retries = _drift_count(signals, _ADK_RETRY_KIND)
+        transfers = _drift_count(signals, _ADK_TRANSFER_KIND)
+        started = int(getattr(signals, "task_started", 0))
+        failed = int(getattr(signals, "task_failed", 0))
+        ratio = (failed / started) if started > 0 else 0.0
+        tokens = int(getattr(signals, "token_count", 0))
+        calls = int(getattr(signals, "llm_call_count", 0))
+        adverse = False
+
+        if errors >= MIN_ERROR_CASCADE or ratio >= HIGH_FAILURE_RATIO:
+            adverse = True
+            episodes.append(
+                _imported_episode(
+                    trace=trace,
+                    episode_type=EPISODE_IMPORTED_SIGNAL,
+                    signal_kind=_SIG_ERROR_CASCADE,
+                    summary=(
+                        f"trace {trace.source_file!r} ({trace.dialect}) hit an error cascade — "
+                        f"{errors} tool error(s), {failed}/{started} tool failure(s)"
+                    ),
+                    severity_rank=_SEV_IMPORTED_ERROR,
+                    suggestion_hint=HINT_BOOTSTRAP_ENTRY,
+                    coverage_key=errors + failed,
+                    extra_evidence={
+                        "tool_errors": errors,
+                        "task_failed": failed,
+                        "task_started": started,
+                    },
+                )
+            )
+        if started > 0 and failed == started:
+            adverse = True
+            episodes.append(
+                _imported_episode(
+                    trace=trace,
+                    episode_type=EPISODE_IMPORTED_SIGNAL,
+                    signal_kind=_SIG_ABORT_PATTERN,
+                    summary=(
+                        f"trace {trace.source_file!r} ({trace.dialect}) shows an abort pattern — "
+                        f"every observed tool call failed ({failed}/{started})"
+                    ),
+                    severity_rank=_SEV_IMPORTED_ABORT,
+                    suggestion_hint=HINT_BOOTSTRAP_ENTRY,
+                    coverage_key=failed,
+                    extra_evidence={"task_failed": failed, "task_started": started},
+                )
+            )
+        if retries >= MIN_RETRY_LOOP:
+            adverse = True
+            episodes.append(
+                _imported_episode(
+                    trace=trace,
+                    episode_type=EPISODE_IMPORTED_SIGNAL,
+                    signal_kind=_SIG_RETRY_LOOP,
+                    summary=(
+                        f"trace {trace.source_file!r} ({trace.dialect}) shows a retry loop — "
+                        f"{retries} repeated tool call(s)"
+                    ),
+                    severity_rank=_SEV_IMPORTED_RETRY,
+                    suggestion_hint=HINT_BOOTSTRAP_ENTRY,
+                    coverage_key=retries,
+                    extra_evidence={"retry_loops": retries},
+                )
+            )
+        if tokens >= MAX_TOKENS or calls >= MAX_LLM_CALLS:
+            adverse = True
+            episodes.append(
+                _imported_episode(
+                    trace=trace,
+                    episode_type=EPISODE_IMPORTED_SIGNAL,
+                    signal_kind=_SIG_BUDGET_BLOWOUT,
+                    summary=(
+                        f"trace {trace.source_file!r} ({trace.dialect}) is a budget blowout — "
+                        f"{calls} LLM call(s), {tokens} token(s)"
+                    ),
+                    severity_rank=_SEV_IMPORTED_BUDGET,
+                    suggestion_hint=HINT_BOOTSTRAP_ENTRY,
+                    coverage_key=max(calls, tokens // 1000),
+                    extra_evidence={"llm_calls": calls, "tokens": tokens},
+                )
+            )
+        if transfers >= MIN_TRANSFER_CHURN:
+            adverse = True
+            episodes.append(
+                _imported_episode(
+                    trace=trace,
+                    episode_type=EPISODE_IMPORTED_SIGNAL,
+                    signal_kind=_SIG_TRANSFER_CHURN,
+                    summary=(
+                        f"trace {trace.source_file!r} ({trace.dialect}) shows transfer churn — "
+                        f"{transfers} agent transfer(s)"
+                    ),
+                    severity_rank=_SEV_IMPORTED_TRANSFER,
+                    suggestion_hint=HINT_BOOTSTRAP_ENTRY,
+                    coverage_key=transfers,
+                    extra_evidence={"transfers": transfers},
+                )
+            )
+
+        # A trace with no adverse signal but a substantive conversation is a
+        # behavioral episode — demand for an LLM-drafted rubric/predicate.
+        if not adverse and trace.user_turns and int(getattr(signals, "agent_text_chars", 0)) > 0:
+            episodes.append(
+                _imported_episode(
+                    trace=trace,
+                    episode_type=EPISODE_IMPORTED_BEHAVIORAL,
+                    signal_kind=_SIG_BEHAVIORAL,
+                    summary=(
+                        f"trace {trace.source_file!r} ({trace.dialect}) is a clean "
+                        f"{len(trace.user_turns)}-turn conversation — draft a rubric to pin its "
+                        f"intent"
+                    ),
+                    severity_rank=_SEV_IMPORTED_BEHAVIORAL,
+                    suggestion_hint=HINT_BOOTSTRAP_RUBRIC,
+                    coverage_key=len(trace.user_turns),
+                )
+            )
+    return episodes
+
+
+# ---------------------------------------------------------------------------
 # Ranking — the deterministic TOTAL order (EVAL-SYNTHESIS.md §2)
 # ---------------------------------------------------------------------------
 
@@ -604,7 +843,12 @@ def rank_episodes(episodes: list[MinedEpisode]) -> list[MinedEpisode]:
 # ---------------------------------------------------------------------------
 
 
-def mine_episodes(paths: Any, epoch_id: str | None = None) -> list[MinedEpisode]:
+def mine_episodes(
+    paths: Any,
+    epoch_id: str | None = None,
+    *,
+    imported_traces: Sequence[ImportedTrace] = (),
+) -> list[MinedEpisode]:
     """Mine every episode kind for one epoch and return them ranked (§9).
 
     The one place that touches disk: resolve the epoch, build the observation
@@ -615,15 +859,22 @@ def mine_episodes(paths: Any, epoch_id: str | None = None) -> list[MinedEpisode]
     rank. EVERY read is best-effort: a cold workspace, an unknown epoch, an
     absent reflection / index, or a malformed artifact degrades to fewer
     episodes — never an exception.
+
+    ``imported_traces`` (TRAJECTORY-BOOTSTRAP.md §4) are mined FIRST and
+    UNCONDITIONALLY — a cold / absent epoch never suppresses the foreign-trace
+    episodes (the goldfive-optional path) — then folded with the workspace
+    episodes and ranked as one union.
     """
     from zicato.query.paths import _resolve_epoch_id  # noqa: PLC0415
+
+    episodes: list[MinedEpisode] = list(imported_trace_episodes(list(imported_traces)))
 
     try:
         resolved = _resolve_epoch_id(paths, epoch_id)
     except ValueError:
-        return []
+        resolved = None
     if not resolved:
-        return []
+        return rank_episodes(episodes)
 
     observations = _load_observations(paths, resolved)
     adjudications = _load_latest_adjudications(paths, resolved)
@@ -634,7 +885,6 @@ def mine_episodes(paths: Any, epoch_id: str | None = None) -> list[MinedEpisode]
     ledger = _load_ledger(paths, resolved)
     gap_findings = _gap_findings(experiments)
 
-    episodes: list[MinedEpisode] = []
     episodes.extend(failure_episodes(observations))
     episodes.extend(judge_disagreement_episodes(adjudications))
     episodes.extend(
@@ -844,9 +1094,13 @@ def _gap_findings(experiments: list[dict[str, Any]]) -> list[Any]:
 __all__ = [
     "EPISODE_COVERAGE_GAP",
     "EPISODE_FAILURE",
+    "EPISODE_IMPORTED_BEHAVIORAL",
+    "EPISODE_IMPORTED_SIGNAL",
     "EPISODE_JUDGE_DISAGREEMENT",
     "EPISODE_STALENESS",
     "EPISODE_UNRESOLVED_CLAIM",
+    "HINT_BOOTSTRAP_ENTRY",
+    "HINT_BOOTSTRAP_RUBRIC",
     "HINT_COVERAGE_ENTRY",
     "HINT_HARDER_VARIANT",
     "HINT_INFRA_FLAKE",
@@ -858,6 +1112,7 @@ __all__ = [
     "MinedEpisode",
     "coverage_gap_episodes",
     "failure_episodes",
+    "imported_trace_episodes",
     "judge_disagreement_episodes",
     "mine_episodes",
     "rank_episodes",

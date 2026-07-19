@@ -946,6 +946,15 @@ def practices_cmd(workspace: str, epoch_id: str | None, as_json: bool) -> None:
     default=False,
     help="Permit LLM synthesis (judge/rubric drafting; aux-metered). Default: mechanical only.",
 )
+@click.option(
+    "--from-trajectories",
+    "from_trajectories",
+    default=None,
+    type=click.Path(),
+    help="Bootstrap suggestions from a directory of foreign agent trace files "
+    "(*.jsonl; TRAJECTORY-BOOTSTRAP.md). Imports + mines them ALONGSIDE the "
+    "workspace episodes; goldfive-optional.",
+)
 @click.option("--json", "as_json", is_flag=True, default=False, help="Emit raw suggestion dicts.")
 def suggest_cmd(
     workspace: str,
@@ -953,6 +962,7 @@ def suggest_cmd(
     reflection_id: str | None,
     probe: bool,
     allow_llm: bool,
+    from_trajectories: str | None,
     as_json: bool,
 ) -> None:
     """Mine episodes, synthesise suggestions, (optionally) admission-stamp, persist.
@@ -964,6 +974,14 @@ def suggest_cmd(
     spend, spending nothing). Suggestions persist beside ``findings.json`` and
     render through ``zicato reflect report``. Recommend-only: apply stages a
     builder draft, never the sealed contract.
+
+    ``--from-trajectories <dir>`` bootstraps the instrument from a directory of
+    foreign agent trace files (TRAJECTORY-BOOTSTRAP.md §6): the traces are
+    imported (format-sniffed + reduced through the existing dialect reducers),
+    persisted under the minted reflection dir, and mined ALONGSIDE the workspace
+    episodes into one ranked list. The bootstrap tier drafts board entries whose
+    provenance names the foreign source. It is goldfive-optional — a trace dir
+    with zero goldfive artifacts still yields suggestions.
     """
     from zicato.reflection import suggestions as sug_mod  # noqa: PLC0415
     from zicato.reflection.mining import mine_episodes  # noqa: PLC0415
@@ -971,7 +989,30 @@ def suggest_cmd(
     workspace_root, resolved_epoch = _resolve_workspace_epoch(workspace, epoch_id)
     paths = _paths_for(workspace_root)
 
-    episodes = mine_episodes(paths, resolved_epoch)
+    rid = reflection_id or _mint_reflection_id(resolved_epoch)
+
+    imported_traces: list[Any] = []
+    if from_trajectories is not None:
+        from zicato.reflection.trace_import import (  # noqa: PLC0415
+            import_trajectories,
+            write_imported_traces,
+        )
+
+        imported_traces = import_trajectories(Path(from_trajectories))
+        if not imported_traces:
+            click.echo(
+                f"no importable *.jsonl traces under {from_trajectories!r} "
+                "(empty or missing directory); nothing to bootstrap.",
+            )
+            return
+        write_imported_traces(workspace_root, resolved_epoch, rid, imported_traces)
+        click.echo(
+            f"imported {len(imported_traces)} foreign trace(s) from {from_trajectories!r} "
+            f"under reflection {rid}",
+            err=True,
+        )
+
+    episodes = mine_episodes(paths, resolved_epoch, imported_traces=imported_traces)
     click.echo(f"mined {len(episodes)} episode(s) from epoch {resolved_epoch!r}", err=True)
 
     synthesize = sug_mod.resolve_synthesize()
@@ -980,9 +1021,20 @@ def suggest_cmd(
             "no synthesis seam available (WS-SYNTH's reflection.synthesis.synthesize is "
             "not importable). Mining ran; suggestion drafting needs the synthesiser."
         )
-    raw_suggestions = synthesize(
-        episodes, allow_llm=allow_llm, workspace_root=workspace_root, epoch_id=resolved_epoch
-    )
+    if imported_traces:
+        # The bootstrap tier needs the reconstructions to draft entries (§7's
+        # extended shim); the seam gains ``imported_traces=`` at integration.
+        raw_suggestions = synthesize(
+            episodes,
+            allow_llm=allow_llm,
+            workspace_root=workspace_root,
+            epoch_id=resolved_epoch,
+            imported_traces=imported_traces,
+        )
+    else:
+        raw_suggestions = synthesize(
+            episodes, allow_llm=allow_llm, workspace_root=workspace_root, epoch_id=resolved_epoch
+        )
     suggestions = [sug_mod._as_suggestion(s) for s in raw_suggestions]
 
     if probe:
@@ -1007,7 +1059,6 @@ def suggest_cmd(
         cost = sug_mod.plan_cost(suggestions)
         click.echo(f"plan mode (no probe spent): {cost['note']}", err=True)
 
-    rid = reflection_id or _mint_reflection_id(resolved_epoch)
     sug_mod.write_suggestions(workspace_root, resolved_epoch, rid, suggestions)
 
     if as_json:

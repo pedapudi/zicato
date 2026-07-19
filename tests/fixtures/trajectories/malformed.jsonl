@@ -1,0 +1,4 @@
+this is not json at all
+{"role": "user", "content": "Hello, are you there?"}
+["a", "json", "array", "not", "an", "object"]
+{"role": "assistant", "content": "Yes, I am here and ready to help."}

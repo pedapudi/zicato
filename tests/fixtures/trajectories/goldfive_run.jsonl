@@ -1,0 +1,8 @@
+{"event_id": "e1", "run_id": "gf-run-1", "sequence": 0, "run_started": {"goal_summary": "solar deck"}}
+{"event_id": "e2", "run_id": "gf-run-1", "sequence": 1, "task_started": {"task_id": "t1"}}
+{"event_id": "e3", "run_id": "gf-run-1", "sequence": 2, "task_started": {"task_id": "t2"}}
+{"event_id": "e4", "run_id": "gf-run-1", "sequence": 3, "task_failed": {"task_id": "t1"}}
+{"event_id": "e5", "run_id": "gf-run-1", "sequence": 4, "task_failed": {"task_id": "t2"}}
+{"event_id": "e6", "run_id": "gf-run-1", "sequence": 5, "drift_detected": {"kind": "looping_tool_call", "severity": "warning"}}
+{"event_id": "e7", "run_id": "gf-run-1", "sequence": 6, "goldfive_llm_call_end": {"span_id": "a", "input_tokens": 40, "output_tokens": 20}}
+{"event_id": "e8", "run_id": "gf-run-1", "sequence": 7, "agent_invocation_completed": {"summary": "here is the deck"}}

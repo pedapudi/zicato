@@ -63,6 +63,16 @@ function feed() {
         subject: 'tone', summary: 'tighten the tone rubric', target_slice: 'existing_judge',
         proposed_op: null, provenance: { source_episodes: ['ep-3'] }, admission: null,
       },
+      {
+        // A trajectory-bootstrap suggestion — foreign_source provenance names
+        // the trace file + sniffed dialect (TRAJECTORY-BOOTSTRAP.md §6).
+        suggestion_id: 'sug-boot01', suggestion_type: 'regression_entry', artifact_kind: 'board_entry',
+        subject: 'trace-a0be332d', summary: 'pin the error cascade from prod-run-01', target_slice: 'train',
+        proposed_op: { op: 'add_board_entry', args: { entry: { id: 'bootstrap_cascade', kind: 'single_turn', wall_clock_budget_seconds: 30, input: 'recorded opener' } } },
+        provenance: { source_episodes: ['ep-4'], source_lineage_ids: [], target_slice: 'train',
+          foreign_source: { kind: 'trajectory_bootstrap', dialect: 'adk_events', trace_id: 'trace-a0be332d', source_file: 'prod-run-01.jsonl' } },
+        admission: null,
+      },
     ],
   };
 }
@@ -123,10 +133,20 @@ test('suggestions inbox: renders one row per persisted suggestion', async () => 
   SUGGESTIONS = feed();
   const host = await mountBoard();
   const rows = byClass(host, 'dn-bld-sugrow');
-  assertEqual(rows.length, 3, 'one row per suggestion');
+  assertEqual(rows.length, 4, 'one row per suggestion');
   const text = firstClass(host, 'dn-bld-suggestions').textContent;
   assert(text.includes('regression_entry'), 'the entry suggestion type shows');
   assert(text.includes('judge_suggestion'), 'the judge suggestion type shows');
+});
+
+test('suggestions inbox: a trajectory-bootstrap row renders its foreign-source provenance', async () => {
+  SUGGESTIONS = feed();
+  const host = await mountBoard();
+  const foreign = byClass(host, 'dn-bld-sugforeign').map((n) => n.textContent);
+  const joined = foreign.join(' | ');
+  assert(/foreign source: prod-run-01\.jsonl \(adk_events\)/.test(joined), 'names the trace file + sniffed dialect');
+  // Only the bootstrap suggestion carries a foreign_source block — the reign-sourced ones do not.
+  assertEqual(foreign.length, 1, 'exactly the one foreign-sourced suggestion shows the block');
 });
 
 test('suggestions inbox: admission renders HONESTLY — measured with n, else unmeasured', async () => {
@@ -167,8 +187,8 @@ test('suggestions inbox: "stage to draft" drives the suggestion op; a rubric rev
   SUGGESTIONS = feed();
   const host = await mountBoard();
   const buttons = host.querySelectorAll('[class]').filter((n) => n.classList.contains('dn-bld-sugstage'));
-  // two staged ops (entry + judge); the rubric revision is recommendation-only.
-  assertEqual(buttons.length, 2, 'only the two op-bearing suggestions get a stage button');
+  // three staged ops (entry + judge + bootstrap entry); the rubric revision is recommendation-only.
+  assertEqual(buttons.length, 3, 'only the op-bearing suggestions get a stage button');
   buttons.find((b) => b.getAttribute('aria-label').includes('sug-entry01')).dispatchEvent(makeEvent('click'));
   await tick();
   const staged = OP_CALLS.find((c) => c.op === 'add_board_entry');

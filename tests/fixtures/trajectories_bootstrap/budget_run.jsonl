@@ -1,0 +1,4 @@
+{"type": "run_start", "run_id": "adk-run-budget", "session_id": "sess-budget"}
+{"type": "user_message", "text": "Research and summarise the entire history of quantum computing in exhaustive detail."}
+{"type": "model_usage", "input_tokens": 90000, "output_tokens": 30000}
+{"type": "agent_message", "text": "Here is a very long summary of quantum computing history."}

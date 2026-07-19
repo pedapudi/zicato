@@ -657,6 +657,16 @@ function suggestionRow(s) {
       + (lineage.length ? ' · lineage ' + lineage.join(', ') : '')
       + ' · target ' + (prov.target_slice || s.target_slice || '?') }),
   ];
+  // Foreign-source provenance (TRAJECTORY-BOOTSTRAP.md §6): a bootstrap
+  // suggestion came from a foreign agent trace, not a reign — name the trace
+  // file + sniffed dialect so the operator sees the on-ramp. A quiet caption
+  // beside the admission banner; part of the static feed render, so a digest
+  // no-op re-render never rebuilds it.
+  const foreign = prov.foreign_source;
+  if (foreign && typeof foreign === 'object') {
+    meta.push(el('div', { class: 'dn-faint dn-bld-sugforeign', text:
+      'foreign source: ' + (foreign.source_file || '?') + ' (' + (foreign.dialect || '?') + ')' }));
+  }
   const kids = [head, ...meta];
   const op = s.proposed_op;
   if (op && op.op) {

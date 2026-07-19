@@ -1,0 +1,4 @@
+{"role": "user", "content": "Summarise the attached paper in three bullet points."}
+{"role": "assistant", "content": "- The method beats baselines on three tasks.\n- Ablations show the attention module is load-bearing.\n- Costs scale linearly with context length."}
+{"role": "user", "content": "Which ablation mattered most?"}
+{"role": "assistant", "content": "Removing the attention module cost the most accuracy, so it is the most load-bearing component."}
