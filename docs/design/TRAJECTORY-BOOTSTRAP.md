@@ -86,7 +86,7 @@ routes it to that dialect's producer.
 |---|---|---|
 | **goldfive** `events.jsonl` | `reducer._goldfive_signals` (`reducer.py:827`) | goldfive `Event` dicts — envelope keys (`event_id` / `run_id` / `sequence` / `emitted_at` / `session_id`, or their camelCase twins) + exactly one **nested-dict** payload under a oneof key (`drift_detected`, `run_started`, `goldfive_llm_call_end`, `judgement_emitted`, …). Verified against `reducer._payload` (`reducer.py:255`). |
 | **adk_events** `events.jsonl` | `dialects.reduce_adk_events` (`dialects.py:288`) | flat objects, one per line, each a `type` (aliases `event_type` / `kind`) drawn from the ADK vocabulary: `tool_call`, `tool_response`, `agent_transfer` (`transfer`), `error` (`exception`), `model_usage`, `agent_message`, `user_message`, `run_start`. Verified against the §3.2 signal table + `dialects._event_type`. |
-| **transcript** (the floor) | `dialects.reduce_transcript` (`dialects.py:402`) | flat objects with a `role` (`user` / `assistant` / `agent` / `human` / `model`) + a text field (`content` / `text` / `message`), **no** `type`. Verified against `dialects._transcript_lines` / `_message_role`. |
+| **transcript** (the floor) | `dialects.reduce_transcript` (`dialects.py:402`) | flat objects with a `role` (`user` / `assistant` / `agent` / `human` / `model` / `system`) + a text field (`content` / `text` / `message`), **no** `type`. Verified against `dialects._transcript_lines` / `_message_role`. |
 
 ### 2.1 The synthetic-placeholder finding (verified)
 
@@ -102,6 +102,16 @@ wall_clock_budget_seconds=1, input="")` — which the producer never inspects.
 This is documented here so a future reducer that *does* start reading `entry`
 (e.g. an entry-kind branch) is a deliberate, reviewed change, not a silent
 break of the importer.
+
+**Record-size cap (persisted turns).** A foreign trace may carry an unbounded
+turn. The *persisted* `ImportedTrace` (§3.1) head-caps each reconstructed turn
+(`user_turns` / `agent_turns`) to a documented ceiling (`_PERSISTED_TURN_CHARS`
+= 4000 chars) with an elision marker — consistent with the evidence caps
+(`opening_user_turn` is already sliced to 2000, `mining.py`). A runaway turn
+therefore never balloons an `imported/{trace_id}.json`. The cap is applied in
+`_signals_to_json`, so it also flows into the content-hash `trace_id` (still
+deterministic); the *in-memory* signals keep full turns for same-run
+reconstruction.
 
 ### 2.2 The sniffing rules (deterministic, documented)
 
@@ -276,7 +286,10 @@ hints (§4.2). The internal `Suggestion` → surface `Suggestion` bridge
   `input` is the reconstructed **opening user turn**
   (`episode.evidence["opening_user_turn"]`, read off the trace's
   `user_turns[0]`; empty ⇒ a synthesised neutral opener, flagged in
-  provenance).
+  provenance). The reconstructed `input` is **head-capped** to a documented
+  ceiling (`_BOOTSTRAP_INPUT_CHARS` = 4000 chars) with an elision marker,
+  consistent with the persisted-turn cap (§2.1) and the evidence caps; a
+  truncation stamps the `input_head_capped` reconstruction flag into provenance.
 - **Multi-turn trace** (`len(user_turns) > 1`): a **`multi_turn_emulated`**
   entry (BOARD-FORMAT.md §2.3) — the emulator persona is **scripted from the
   recorded user side**: `UserPersona(goal=<derived from the opening turn>,
@@ -306,7 +319,7 @@ episode honestly:
 |---|---|
 | **abort pattern / error cascade / retry loop / transfer churn** | These are **drift-signal** properties, invisible to a `RunResult` matcher. The bootstrap entry pins the reconstructed **INPUT** and carries the property as a **process signal**, two honest ways: (a) leave the `expectation` **absent** — BOARD-FORMAT.md §3 explicitly supports drift-loss-only scoring — so the re-run's own drift term measures the recurrence; and/or (b) draft an **inline `Judge`** (`Judge.custom`, BOARD-FORMAT.md §4) whose criterion names the observed failure ("the agent must not enter a tool-retry loop"). The entry is tagged `bootstrap:<signal_kind>`. **No fabricated output-predicate.** |
 | **budget blowout** | Bind to the entry's own **`wall_clock_budget_seconds`** ceiling — a real, structural budget check (BOARD-FORMAT.md §1.2: over-budget ⇒ worst-case). The bootstrap entry sets a tightened budget derived from the observed cost; no expectation needed. |
-| **completes-under-budget** | A genuine `predicate`-kind expectation is honest here: a dotted-path callable over `RunResult.aborted` (`not run_result.aborted`). WS-BOOT ships this callable in a small `zicato.reflection.bootstrap_predicates` library so the dotted path resolves; the entry references it by path (bodies never serialised, BOARD-FORMAT.md §3.1). |
+| **completes-under-budget** | A genuine `predicate`-kind expectation is honest here: a dotted-path callable over `RunResult` in a small `zicato.reflection.bootstrap_predicates` library (the entry references it by path — bodies never serialised, BOARD-FORMAT.md §3.1). It is **not** a bare `not run_result.aborted`: an abort is only the candidate's failure when it is *not* an infra/harness abort, so `not_aborted` gates on `is_infra_abort_cause` (the same distinction screening/preflight draw) — a parent-kill / worker-crash / unreadable-result abort returns `True` (not the candidate's fault); a genuine wall-clock-budget abort returns `False`. **Note the redundancy:** an over-budget re-run is *already* scored worst-case by the entry's own `wall_clock_budget_seconds` ceiling (BOARD-FORMAT.md §1.2), so this predicate is a belt-and-suspenders surface signal on top of that structural scoring, not the sole guard — and by deferring to `is_infra_abort_cause` it does not double-penalise a transient harness blip that the worst-case budget path would (correctly) not cache. |
 
 - **Behavioral episodes** → an **LLM-drafted** `rubric` or `predicate` behind
   the **aux seam** (`CallLLM`, never the harness callable — EVAL-SYNTHESIS.md
@@ -359,6 +372,23 @@ is no proposer whose slice could have been seen. The operator may still route
 a bootstrap entry into rotation from the inbox; the *default* is train because
 the collusion hazard the default guards against does not exist for a foreign
 trace.
+
+**The self-trace caveat (operator, not always safe).** The rotation-routing
+freedom above assumes the trace is *foreign* — from an agent zicato does not
+evolve. In the **dogfood** case, where the trace comes from the *same* agent
+zicato evolves, that assumption breaks: the champion has effectively already
+seen the scenario, so an entry bootstrapped from it and promoted to
+rotation/holdout is a **false generalization signal** — a holdout is meant to
+measure transfer to *unseen* scenarios, and a self-trace scenario is not unseen.
+Such entries must stay in **`train`** (a regression suite — the correct home for
+"do not regress on this behaviour I already ran"). There is **no reliable
+self-detection** (a foreign vs. self trace is indistinguishable from the
+directory alone — it depends on operator knowledge of the source), so the
+caveat cannot be enforced mechanically; instead it is surfaced where the
+operator decides slice routing: the caveat text is embedded in the **suggestion
+rationale of every bootstrap entry** (one sentence, `_SELF_TRACE_CAVEAT`), so an
+operator reading a draft in the inbox sees the warning before promoting it out
+of train.
 
 ## 6. WS-WIRE spec (sibling)
 
@@ -545,7 +575,44 @@ Suggestion(
    resolver monkeypatching).
 4. **Fixes → integration ladder → PR.**
 
+### 8.1 The prompt-injection surface (disclosed)
+
+Bootstrap reconstructs board artifacts from **untrusted foreign text** — a trace
+directory the operator curates but does not author. That recorded text flows
+into several places that are **LLM-instruction space at eval time**, so it is a
+prompt-injection surface and is disclosed here explicitly:
+
+- **entry `input`** — the reconstructed opening user turn *is* the prompt the
+  agent-under-test receives (that is the point of an eval entry); it is untrusted
+  by construction, exactly as any adversarial board entry is.
+- **judge bodies** — a drift-signal entry's inline `Judge` criterion is static
+  (`_BOOTSTRAP_JUDGE_CRITERION`), not trace-derived, so it carries no foreign
+  text. A behavioral entry's rubric is LLM-*drafted*, then loader-validated.
+- **emulator persona** (`goal` / `constraints`) and the **aux rubric prompt** —
+  these place recorded text into the *emulator*/*aux* LLM's instruction space at
+  eval time. A recorded turn like "SYSTEM OVERRIDE: ignore your persona…" would
+  otherwise land as a live instruction. These are now wrapped in an explicit
+  **untrusted-data frame** (`_fence_recorded`, `_TRACE_DATA_FRAME`): the recorded
+  turns sit inside a clearly-fenced block prefixed by a never-follow instruction,
+  and drift-signal emulated entries — which carry no answer-leak-guard expectation
+  — no longer expose raw undelimited foreign text to the emulator.
+
+**Delimiting reduces, it does not eliminate, the risk.** A determined injection
+can still attempt to break the fence. The standing mitigations remain: the
+operator **curates the trace directory** (only pointing zicato at traces they
+trust as a source) **and reviews every drafted suggestion** in the inbox before
+sealing it (recommend-only, nothing auto-edits a sealed contract, §1). Full
+trace anonymisation / injection-scrubbing stays deferred (below).
+
 **Deferred + recorded** (do NOT build this wave):
+
+- **Judge-folding (one emulated entry per trace)** — when a single trace fires N
+  drift-signal episodes, v1 emits N near-duplicate bootstrap entries (one per
+  `(trace, signal_kind)`), each re-running the same reconstructed scenario with a
+  different inline judge. Folding the N judges into ONE emulated entry (same
+  input, judge tuple unioned) would cut re-run cost. Deferred from this pass as
+  not-clean-in-scope; it composes cleanly on top of the per-signal drafting and
+  wants a per-trace grouping pass ahead of `synthesize_bootstrap_suggestions`.
 
 - **Live LLM expectation drafting** — real aux-endpoint rubric/predicate
   drafting for behavioral episodes (endpoint-gated, EVAL-SYNTHESIS.md §7); the

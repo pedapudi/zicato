@@ -83,6 +83,20 @@ _TRANSCRIPT_ROLES: frozenset[str] = frozenset(
     {"user", "assistant", "agent", "human", "model", "system"}
 )
 
+#: Head-cap (chars) on a persisted ``ImportedTrace`` turn (TRAJECTORY-BOOTSTRAP.md
+#: §2.1) — a foreign trace may carry an unbounded turn; the persisted record keeps
+#: only a bounded head with an elision marker (consistent with the evidence caps),
+#: so a runaway turn never balloons the ``imported/{trace_id}.json`` file.
+_PERSISTED_TURN_CHARS: int = 4000
+_ELISION: str = "…[elided]"
+
+
+def _cap_turn(text: str) -> str:
+    """Head-cap one persisted turn to :data:`_PERSISTED_TURN_CHARS` with elision."""
+    if len(text) <= _PERSISTED_TURN_CHARS:
+        return text
+    return text[:_PERSISTED_TURN_CHARS].rstrip() + _ELISION
+
 
 # ---------------------------------------------------------------------------
 # The imported-trace record (TRAJECTORY-BOOTSTRAP.md §3.1)
@@ -162,8 +176,8 @@ def _signals_to_json(signals: DialectSignals) -> dict[str, Any]:
         "agent_text_chars": signals.agent_text_chars,
         "run_id": signals.run_id,
         "adk_session_id": signals.adk_session_id,
-        "agent_turns": list(signals.agent_turns),
-        "user_turns": list(signals.user_turns),
+        "agent_turns": [_cap_turn(t) for t in signals.agent_turns],
+        "user_turns": [_cap_turn(t) for t in signals.user_turns],
         "malformed_line_count": signals.malformed_line_count,
         "warnings": list(signals.warnings),
     }
@@ -215,8 +229,14 @@ def _read_objects(path: Path) -> tuple[list[dict[str, Any]], int, int]:
     non_empty = 0
     malformed = 0
     try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
+        # ``errors="replace"`` — a foreign trace is untrusted bytes; an invalid
+        # UTF-8 sequence must NOT crash the whole import (a full traceback
+        # propagating through sniff/import/the CLI). A line whose replacement
+        # chars then fail JSON-parse is COUNTED malformed by the loop below, so
+        # the existing tolerance takes over. ``UnicodeDecodeError`` is guarded
+        # too as belt-and-suspenders (a future non-replace reader can't regress).
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except (OSError, UnicodeDecodeError):
         return [], 0, 0
     for raw in text.splitlines():
         line = raw.strip()
@@ -344,7 +364,7 @@ def import_trajectories(trace_dir: Path) -> list[ImportedTrace]:
             continue
         try:
             out.append(import_trace_file(path))
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             _LOG.info("trace import: skipped unreadable %r (%s)", path.name, exc)
     return out
 
@@ -390,7 +410,7 @@ def read_imported_traces(
             continue
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, ValueError):
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
             continue
         if isinstance(raw, dict):
             out.append(ImportedTrace.from_json(raw))

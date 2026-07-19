@@ -10,6 +10,7 @@ the goldfive-optional proof (the whole path runs with zero goldfive artifact).
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from zicato.core import DIALECT_ADK_EVENTS, DIALECT_GOLDFIVE, DIALECT_TRANSCRIPT
@@ -26,6 +27,7 @@ from zicato.reflection.trace_import import (
 FIXTURES = Path(__file__).parent / "fixtures" / "trajectories"
 FIXTURES_EMPTY = Path(__file__).parent / "fixtures" / "trajectories_empty"
 FIXTURES_GF_FREE = Path(__file__).parent / "fixtures" / "trajectories_goldfive_free"
+FIXTURES_INVALID_BYTES = Path(__file__).parent / "fixtures" / "trajectories_invalid_bytes"
 
 
 def _by_file(traces: list[ImportedTrace]) -> dict[str, ImportedTrace]:
@@ -175,6 +177,23 @@ def test_read_imported_traces_absent_is_empty(tmp_path: Path) -> None:
     assert read_imported_traces(tmp_path, "epoch-x", "refl-x") == []
 
 
+def test_persisted_turns_are_head_capped(tmp_path: Path) -> None:
+    # A runaway foreign turn must not balloon imported/{trace_id}.json: the
+    # persisted turn text is head-capped with an elision marker (§2.1).
+    from zicato.reflection.trace_import import _PERSISTED_TURN_CHARS
+
+    long_turn = "B" * (_PERSISTED_TURN_CHARS + 500)
+    d = tmp_path / "traces"
+    d.mkdir()
+    (d / "long.jsonl").write_text(
+        json.dumps({"role": "user", "content": long_turn}) + "\n", encoding="utf-8"
+    )
+    trace = import_trajectories(d)[0]
+    persisted = trace.to_json()["signals"]["user_turns"][0]
+    assert len(persisted) <= _PERSISTED_TURN_CHARS + len("…[elided]")
+    assert persisted.endswith("…[elided]")
+
+
 # ---------------------------------------------------------------------------
 # imported-trace episodes (TRAJECTORY-BOOTSTRAP.md §4)
 # ---------------------------------------------------------------------------
@@ -248,6 +267,30 @@ def test_non_jsonl_files_are_ignored(tmp_path: Path) -> None:
     (tmp_path / "a.jsonl").write_text('{"role":"user","content":"hi"}\n', encoding="utf-8")
     traces = import_trajectories(tmp_path)
     assert [t.source_file for t in traces] == ["a.jsonl"]
+
+
+# ---------------------------------------------------------------------------
+# invalid UTF-8 bytes never crash the import (BLOCKER regression)
+# ---------------------------------------------------------------------------
+
+
+def test_invalid_bytes_file_imports_valid_lines_and_counts_garbage() -> None:
+    # A trace file with a valid transcript line, then raw \xff\xfe garbage bytes,
+    # then another valid line: the garbage decodes to replacement chars, fails
+    # JSON-parse, and is COUNTED malformed — the valid lines are kept, no crash.
+    trace = import_trace_file(FIXTURES_INVALID_BYTES / "invalid_bytes.jsonl")
+    assert trace.dialect == DIALECT_TRANSCRIPT
+    assert trace.malformed_line_count == 1  # only the garbage line
+    assert trace.user_turns == ("First valid line before the garbage.",)
+    assert trace.agent_turns == ("Second valid line after the garbage.",)
+
+
+def test_invalid_bytes_directory_import_survives() -> None:
+    # The DIRECTORY import must survive an invalid-byte member (no propagated
+    # UnicodeDecodeError) and still return the reconstructed trace.
+    traces = import_trajectories(FIXTURES_INVALID_BYTES)
+    assert [t.source_file for t in traces] == ["invalid_bytes.jsonl"]
+    assert traces[0].user_turns  # valid lines reconstructed
 
 
 # ---------------------------------------------------------------------------

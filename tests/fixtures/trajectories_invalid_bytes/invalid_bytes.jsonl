@@ -1,0 +1,3 @@
+{"role": "user", "content": "First valid line before the garbage."}
+ÿş garbage bytes that are not valid utf-8 €‚
+{"role": "assistant", "content": "Second valid line after the garbage."}

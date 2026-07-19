@@ -35,6 +35,7 @@ _FIXTURES = Path(__file__).parent / "fixtures"
 _TRAJ_DIR = _FIXTURES / "trajectories"
 _TRAJ_GF_FREE = _FIXTURES / "trajectories_goldfive_free"
 _TRAJ_EMPTY = _FIXTURES / "trajectories_empty"
+_TRAJ_INVALID_BYTES = _FIXTURES / "trajectories_invalid_bytes"
 _REFLECTION_ID = "refl-traj-test"
 
 
@@ -181,6 +182,34 @@ def test_empty_trajectory_dir_is_an_honest_exit0(
     assert result.exit_code == 0, result.output
     assert "no importable" in result.output
     assert not reflection_suggestions_path(ws, epoch_id, _REFLECTION_ID).exists()
+
+
+def test_invalid_bytes_dir_survives_exit0(
+    workspace: tuple[Path, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # BLOCKER regression: a trace directory whose member carries invalid UTF-8
+    # bytes must NOT crash the CLI (a propagated UnicodeDecodeError). The import
+    # tolerates it (malformed line counted, valid lines kept) and the run exits 0.
+    ws, _epoch_id = workspace
+    spy = _SynthSpy([_foreign_suggestion()])
+    monkeypatch.setattr(sug_mod, "resolve_synthesize", lambda: spy)
+    monkeypatch.setattr(sug_mod, "resolve_admit", lambda: None)
+
+    result = _run(
+        [
+            "reflect",
+            "suggest",
+            "--workspace",
+            str(ws),
+            "--reflection",
+            _REFLECTION_ID,
+            "--from-trajectories",
+            str(_TRAJ_INVALID_BYTES),
+        ]
+    )
+    assert result.exit_code == 0, result.output
+    # The invalid-byte trace was imported, not skipped or crashed.
+    assert "imported" in result.stderr
 
 
 def test_mixed_format_dir_imports_persists_and_mines(

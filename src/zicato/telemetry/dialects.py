@@ -135,13 +135,17 @@ def _iter_json_objects(path: Path) -> tuple[list[dict[str, Any]], int]:
 
     Tolerant by contract (TELEMETRY-DIALECTS.md §3.1): a line that is not
     JSON, or is JSON but not an object, is COUNTED as malformed and
-    skipped — never raised. A missing file yields ``([], 0)``.
+    skipped — never raised. A missing file yields ``([], 0)``. ``errors="replace"``
+    extends that tolerance to invalid UTF-8 bytes (a foreign / untrusted trace may
+    carry them): the offending line's replacement chars then fail JSON-parse and
+    are counted malformed, so a byte defect never raises through the reducer. A
+    valid-UTF-8 file decodes byte-identically, so this is behaviour-preserving.
     """
     objs: list[dict[str, Any]] = []
     malformed = 0
     if not path.exists():
         return objs, 0
-    with open(path, encoding="utf-8") as f:
+    with open(path, encoding="utf-8", errors="replace") as f:
         for raw in f:
             line = raw.strip()
             if not line:
