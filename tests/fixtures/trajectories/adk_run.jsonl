@@ -1,0 +1,12 @@
+{"type": "run_start", "run_id": "adk-run-1", "session_id": "sess-1"}
+{"type": "user_message", "text": "Book me a flight to Lisbon next Tuesday and add it to my calendar."}
+{"type": "tool_call", "tool": "search_flights", "args": {"dest": "LIS", "when": "next Tuesday"}}
+{"type": "tool_response", "tool": "search_flights", "status": "error", "error": "upstream 503"}
+{"type": "tool_call", "tool": "search_flights", "args": {"dest": "LIS", "when": "next Tuesday"}}
+{"type": "tool_response", "tool": "search_flights", "status": "error", "error": "upstream 503"}
+{"type": "error", "message": "search_flights failed twice"}
+{"type": "agent_transfer", "from": "planner", "to": "booking"}
+{"type": "agent_transfer", "from": "booking", "to": "planner"}
+{"type": "agent_transfer", "from": "planner", "to": "calendar"}
+{"type": "model_usage", "input_tokens": 800, "output_tokens": 200}
+{"type": "agent_message", "text": "I could not find a flight; the search service is down."}

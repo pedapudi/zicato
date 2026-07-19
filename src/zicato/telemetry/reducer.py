@@ -951,6 +951,18 @@ def _resolve_dialect_producer(dialect: str) -> DialectReducer:
     return _DIALECT_PRODUCERS.get(dialect, _goldfive_signals)
 
 
+def dialect_producer(dialect: str) -> DialectReducer:
+    """Public accessor for a dialect's ``DialectSignals`` producer.
+
+    The stable seam the trajectory importer (TRAJECTORY-BOOTSTRAP.md §3.1)
+    reduces a foreign trace through: it sniffs the file's dialect, resolves the
+    producer here, and calls it with a synthetic placeholder ``BoardEntry``
+    (§2.1 — no producer reads ``entry``). Fail-open to ``goldfive`` for an
+    unknown name, mirroring :func:`_resolve_dialect_producer`.
+    """
+    return _resolve_dialect_producer(dialect)
+
+
 def reduce_loss(
     events_jsonl_path: Path,
     entry: BoardEntry,
@@ -1390,4 +1402,5 @@ __all__ = [
     "split_judge_attributed_kind",
     "read_loss_profile",
     "write_loss_profile",
+    "dialect_producer",
 ]

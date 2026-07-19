@@ -1,0 +1,3 @@
+{"role": "user", "content": "What's the weather in Porto and should I pack a coat?"}
+{"type": "tool_call", "tool": "get_weather", "args": {"city": "Porto"}}
+{"role": "assistant", "content": "It's 14C and rainy in Porto, so yes, pack a coat."}
