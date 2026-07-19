@@ -42,16 +42,28 @@ import json
 import logging
 import re
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from goldfive import DriftSeverity
 
-from zicato.core.board import BoardEntry, JudgeMode, JudgeSpec, validate_board_entry
+from zicato.core.board import (
+    BoardEntry,
+    Expectation,
+    ExpectationKind,
+    JudgeMode,
+    JudgeSpec,
+    OutputScope,
+    UserPersona,
+    validate_board_entry,
+)
 from zicato.core.runtime import CallLLM
+from zicato.reflection.bootstrap_predicates import NOT_ABORTED_PATH
 from zicato.reflection.mining import (
+    HINT_BOOTSTRAP_ENTRY,
+    HINT_BOOTSTRAP_RUBRIC,
     HINT_COVERAGE_ENTRY,
     HINT_HARDER_VARIANT,
     HINT_JUDGE,
@@ -60,6 +72,7 @@ from zicato.reflection.mining import (
     MINER_VERSION,
     MinedEpisode,
 )
+from zicato.reflection.trace_import import ImportedTrace
 
 _LOG = logging.getLogger(__name__)
 
@@ -89,6 +102,63 @@ TARGET_TRAIN: str = "train"
 #: synthesizer stamps its own slice per this rule (§3 table): regression → train,
 #: coverage / judge / harder variant → incoming rotation, rubric → existing judge.
 TARGET_EXISTING_JUDGE: str = "existing_judge"
+
+# --- trajectory-bootstrap tier (TRAJECTORY-BOOTSTRAP.md §5) -----------------
+#: The signal-kind tokens a bootstrap episode carries in ``evidence["signal_kind"]``
+#: (the wire values ``mining.imported_trace_episodes`` stamps). A drift-signal
+#: kind is invisible to a ``RunResult`` matcher (§5.2) so it never gets an output
+#: predicate; ``budget_blowout`` is the one kind with an honest structural check.
+_SIG_ERROR_CASCADE: str = "error_cascade"
+_SIG_ABORT_PATTERN: str = "abort_pattern"
+_SIG_RETRY_LOOP: str = "retry_loop"
+_SIG_BUDGET_BLOWOUT: str = "budget_blowout"
+_SIG_TRANSFER_CHURN: str = "transfer_churn"
+#: The drift-signal kinds bound to an inline judge + absent expectation (§5.2).
+_DRIFT_SIGNAL_KINDS: frozenset[str] = frozenset(
+    {_SIG_ERROR_CASCADE, _SIG_ABORT_PATTERN, _SIG_RETRY_LOOP, _SIG_TRANSFER_CHURN}
+)
+#: The inline-judge criterion a drift-signal bootstrap entry pins (§5.2 (b)): the
+#: honest process criterion naming the observed failure. Keyed by signal_kind.
+_BOOTSTRAP_JUDGE_CRITERION: dict[str, str] = {
+    _SIG_ERROR_CASCADE: (
+        "The agent must handle tool failures gracefully and must not let a tool-error "
+        "cascade abort the task; it should recover, fall back, or report a partial result."
+    ),
+    _SIG_ABORT_PATTERN: (
+        "The agent must not abandon the task when its tools fail — every tool call failing "
+        "must not leave the user with nothing; the agent should recover or report honestly."
+    ),
+    _SIG_RETRY_LOOP: (
+        "The agent must not enter a tool-retry loop — repeating the same failing tool call "
+        "with the same arguments instead of changing its approach."
+    ),
+    _SIG_TRANSFER_CHURN: (
+        "The agent must not churn between sub-agents; agent transfers must be bounded and "
+        "purposeful, not a hand-off loop that makes no progress."
+    ),
+}
+#: A drift-signal judge's severity — a warning-level process signal (the honest
+#: mid stance: name the failure without asserting it is always critical).
+_BOOTSTRAP_JUDGE_SEVERITY: DriftSeverity = DriftSeverity.WARNING
+#: Assumed wall-clock seconds per observed LLM call — the ONLY way to derive a
+#: seconds budget from a cost-count blowout (a trace carries tokens/calls, not
+#: seconds). Documented, tunable; the derived budget is deterministic.
+_BOOTSTRAP_SECONDS_PER_LLM_CALL: int = 10
+#: Tokens treated as one LLM-call-equivalent when a trace reports tokens but no
+#: call count (so a token-only blowout still derives a budget).
+_BOOTSTRAP_TOKENS_PER_CALL: int = 2_000
+#: The budget-blowout entry tightens the derived budget below the observed cost so
+#: the re-run is forced to be more efficient (§5.2 "a tightened budget").
+_BOOTSTRAP_BUDGET_TIGHTEN: float = 0.75
+#: Floor on a derived bootstrap budget (seconds) — never a non-positive budget.
+_BOOTSTRAP_MIN_BUDGET_SECONDS: int = 30
+#: The neutral opener a single-turn bootstrap entry falls back to when the trace
+#: reconstructed no opening user turn (flagged in provenance, §5.1).
+_BOOTSTRAP_NEUTRAL_OPENER: str = (
+    "Continue the task the recorded agent was working on and complete it correctly."
+)
+#: The provenance flag stamped when the opener was synthesised, not reconstructed.
+_FLAG_SYNTHESISED_OPENER: str = "synthesised_neutral_opener"
 
 # --- the perturbation vocabulary (harder variants, §3 / task 1b) -----------
 #: A dead entry is hardened by ONE deterministically-chosen perturbation from
@@ -802,6 +872,365 @@ def _parse_json_object(raw: str, tier: str, subject: str) -> dict[str, Any] | No
 
 
 # ---------------------------------------------------------------------------
+# The trajectory-bootstrap tier (TRAJECTORY-BOOTSTRAP.md §5) — spec for WS-BOOT
+# ---------------------------------------------------------------------------
+
+_BOOTSTRAP_RUBRIC_SYSTEM_PROMPT: str = (
+    "You are drafting one evaluation rubric that pins the INTENT of a recorded "
+    "agent conversation — what a correct response to the user must accomplish. "
+    "Respond with a SINGLE JSON object and nothing else. Schema: "
+    '{"rubric": <one checkable criterion, phrased as what a correct answer must '
+    'do>, "threshold": <float in [0,1] or null>}. The criterion must name an '
+    "observable property of a good response, not the conversation's exact "
+    "wording. Do not include commentary."
+)
+
+
+def synthesize_bootstrap_suggestions(
+    episodes: Sequence[MinedEpisode],
+    *,
+    traces_by_id: Mapping[str, ImportedTrace],
+    aux_call_llm: CallLLM | None = None,
+) -> list[Suggestion]:
+    """Turn bootstrap episodes into drafted board-entry suggestions (§5).
+
+    The new synthesis tier the bootstrap hints (``HINT_BOOTSTRAP_ENTRY`` /
+    ``HINT_BOOTSTRAP_RUBRIC``) route to. A signal episode drafts an entry
+    MECHANICALLY (the reconstructed input + an honest process binding, §5.2); a
+    behavioral episode drafts an entry whose expectation is LLM-drafted behind the
+    aux seam (never the harness callable). Every drafted entry is
+    loader-round-tripped (§5.2) — a draft the loader would reject never ships.
+
+    Pure over the episodes and ``traces_by_id`` (the reconstruction pointer): the
+    signal tier is deterministic; the behavioral tier is deterministic for a fixed
+    episode set + scripted callable. Absent ``aux_call_llm`` the behavioral
+    episodes are skipped (mechanical signal entries still ship). The result is
+    deduped + sorted by ``suggestion_id`` (order-independent).
+    """
+    out: list[Suggestion] = []
+    behavioral: list[tuple[MinedEpisode, ImportedTrace]] = []
+    for episode in episodes:
+        hint = episode.suggestion_hint
+        trace = traces_by_id.get(episode.subject)
+        if trace is None:
+            if hint in (HINT_BOOTSTRAP_ENTRY, HINT_BOOTSTRAP_RUBRIC):
+                _LOG.debug(
+                    "bootstrap: no imported trace %r to reconstruct (episode %s)",
+                    episode.subject,
+                    episode.episode_id,
+                )
+            continue
+        if hint == HINT_BOOTSTRAP_ENTRY:
+            suggestion = _bootstrap_signal_suggestion(episode, trace)
+            if suggestion is not None:
+                out.append(suggestion)
+        elif hint == HINT_BOOTSTRAP_RUBRIC and aux_call_llm is not None:
+            behavioral.append((episode, trace))
+
+    if behavioral and aux_call_llm is not None:
+        import asyncio  # noqa: PLC0415
+
+        drafted = asyncio.run(_gather_bootstrap_behavioral(behavioral, aux_call_llm))
+        out.extend(s for s in drafted if s is not None)
+    return _finalize(out)
+
+
+async def _gather_bootstrap_behavioral(
+    work: list[tuple[MinedEpisode, ImportedTrace]], aux_call_llm: CallLLM
+) -> list[Suggestion | None]:
+    """Draft each behavioral episode's LLM expectation sequentially (deterministic)."""
+    return [
+        await _bootstrap_behavioral_suggestion(episode, trace, aux_call_llm)
+        for episode, trace in work
+    ]
+
+
+def _bootstrap_persona(user_turns: Sequence[str]) -> UserPersona:
+    """Script an emulator persona from the RECORDED user side (§5.1).
+
+    The recorded user side becomes the persona BRIEF, not a verbatim script — the
+    emulated kind carries the *intent* (a scripted entry would over-fit the exact
+    wording). ``goal`` derives from the opening turn; ``constraints`` instructs a
+    replay of the recorded intent plus a compact digest of the recorded turns.
+    """
+    opening = (user_turns[0] if user_turns else "").strip()
+    goal = f"Accomplish what the recorded user asked for: {_compact(opening, 240)}"
+    digest = " | ".join(f"turn {i + 1}: {_compact(t, 160)}" for i, t in enumerate(user_turns))
+    constraints = (
+        "Replay the recorded user's turns and intent — do not invent new goals. Ask one "
+        "focused follow-up per turn, in the spirit of the recorded conversation: " + digest
+    )
+    stop_when = "The agent has addressed the user's goal."
+    return UserPersona(goal=goal, constraints=constraints, stop_when=stop_when)
+
+
+def _reconstruct_bootstrap_entry(
+    trace: ImportedTrace,
+    *,
+    entry_id: str,
+    tags: tuple[str, ...],
+    budget_s: int,
+    expectation: Expectation | None,
+    judges: tuple[JudgeSpec, ...],
+) -> tuple[BoardEntry, list[str]]:
+    """Reconstruct the drafted entry's INPUT from the trace (§5.1).
+
+    A single-turn trace (``len(user_turns) ≤ 1``) → a ``single_turn`` entry whose
+    ``input`` is the reconstructed opening user turn (empty ⇒ a synthesised
+    neutral opener, flagged). A multi-turn trace → a ``multi_turn_emulated`` entry
+    whose persona is scripted from the recorded user side. Returns the entry and
+    any reconstruction flags to carry into provenance.
+    """
+    user_turns = trace.user_turns
+    flags: list[str] = []
+    if len(user_turns) > 1:
+        entry = BoardEntry(
+            id=entry_id,
+            kind="multi_turn_emulated",
+            wall_clock_budget_seconds=budget_s,
+            tags=tags,
+            expectation=expectation,
+            judges=judges,
+            user_persona=_bootstrap_persona(user_turns),
+            max_turns=len(user_turns) + 1,
+        )
+        return entry, flags
+    opening = user_turns[0] if user_turns else ""
+    if not opening.strip():
+        opening = _BOOTSTRAP_NEUTRAL_OPENER
+        flags.append(_FLAG_SYNTHESISED_OPENER)
+    entry = BoardEntry(
+        id=entry_id,
+        kind="single_turn",
+        wall_clock_budget_seconds=budget_s,
+        tags=tags,
+        expectation=expectation,
+        judges=judges,
+        input=opening,
+    )
+    return entry, flags
+
+
+def _bootstrap_budget_seconds(episode: MinedEpisode) -> int:
+    """A tightened wall-clock budget derived from the observed cost blowout (§5.2).
+
+    A trace carries token/call counts, not seconds, so the budget is derived: the
+    observed cost is expressed in LLM-call-equivalents, scaled by an assumed
+    per-call wall-clock cost, then TIGHTENED below the observed so the re-run must
+    be more efficient. Deterministic and floored so the budget is always positive.
+    """
+    calls = int(episode.evidence.get("llm_calls", 0) or 0)
+    tokens = int(episode.evidence.get("tokens", 0) or 0)
+    call_equivalents = max(calls, tokens // _BOOTSTRAP_TOKENS_PER_CALL, 1)
+    derived = call_equivalents * _BOOTSTRAP_SECONDS_PER_LLM_CALL
+    tightened = round(derived * _BOOTSTRAP_BUDGET_TIGHTEN)
+    return max(_BOOTSTRAP_MIN_BUDGET_SECONDS, tightened)
+
+
+def _bootstrap_provenance(
+    episode: MinedEpisode, suggestion_type: str, trace: ImportedTrace, flags: Sequence[str]
+) -> dict[str, Any]:
+    """The §5.3 provenance block: the eval-synth §4 shape + the foreign-source extension.
+
+    ``source_lineage_ids`` is empty (a foreign trace has no generations), so
+    admission's leakage check passes trivially (§5.3) — there is no proposer whose
+    slice could have been seen. The ``foreign_source`` block names the trace.
+    """
+    provenance = _provenance(
+        suggestion_type=suggestion_type,
+        target_slice=TARGET_TRAIN,
+        episodes=[episode],
+    )
+    provenance["foreign_source"] = {
+        "kind": "trajectory_bootstrap",
+        "dialect": trace.dialect,
+        "trace_id": trace.trace_id,
+        "source_file": trace.source_file,
+    }
+    if flags:
+        provenance["reconstruction_flags"] = list(flags)
+    return provenance
+
+
+def _bootstrap_signal_suggestion(episode: MinedEpisode, trace: ImportedTrace) -> Suggestion | None:
+    """Draft an entry for a drift-signal episode, MECHANICALLY + HONESTLY (§5.2).
+
+    A drift-signal property (error cascade / abort / retry loop / transfer churn)
+    is invisible to a ``RunResult`` matcher, so the entry pins the reconstructed
+    INPUT and binds the property honestly: NO fabricated output predicate — an
+    inline ``Judge`` names the observed failure and the expectation is left absent
+    (drift-loss-only scoring). A budget blowout is the one honest structural case:
+    a tightened wall-clock budget + a real ``not_aborted`` predicate.
+    """
+    signal_kind = str(episode.evidence.get("signal_kind", ""))
+    entry_id = _slug(f"bootstrap__{signal_kind}__{trace.trace_id}")
+    tags = ("bootstrap", f"bootstrap:{signal_kind}", "synthesized", "trajectory")
+
+    expectation: Expectation | None = None
+    judges: tuple[JudgeSpec, ...] = ()
+    budget_s = _DEFAULT_BUDGET_SECONDS
+
+    if signal_kind in _DRIFT_SIGNAL_KINDS:
+        # Honest binding (§5.2 (a)+(b)): absent expectation (drift-loss-only) + an
+        # inline judge naming the observed failure. NEVER an output predicate.
+        from zicato.board.judges import Judge  # noqa: PLC0415
+
+        criterion = _BOOTSTRAP_JUDGE_CRITERION[signal_kind]
+        try:
+            judge = Judge.custom(
+                f"bootstrap_{signal_kind}", criterion, severity=_BOOTSTRAP_JUDGE_SEVERITY
+            )
+        except (ValueError, TypeError) as exc:  # pragma: no cover — criteria are static
+            _LOG.info("bootstrap: dropped %r — judge build failed: %s", entry_id, exc)
+            return None
+        judges = (judge,)
+    elif signal_kind == _SIG_BUDGET_BLOWOUT:
+        # The one honest OUTPUT predicate: over the tightened budget the re-run
+        # aborts (BOARD-FORMAT §1.2), so `not run_result.aborted` is structural.
+        budget_s = _bootstrap_budget_seconds(episode)
+        expectation = Expectation(kind=ExpectationKind.PREDICATE, spec=NOT_ABORTED_PATH)
+    else:  # pragma: no cover — an unknown signal_kind is not routed here
+        _LOG.info("bootstrap: dropped %r — unknown signal kind %r", entry_id, signal_kind)
+        return None
+
+    entry, flags = _reconstruct_bootstrap_entry(
+        trace,
+        entry_id=entry_id,
+        tags=tags,
+        budget_s=budget_s,
+        expectation=expectation,
+        judges=judges,
+    )
+    provenance = _bootstrap_provenance(episode, SUGGESTION_REGRESSION_ENTRY, trace, flags)
+    entry = _stamp_provenance(entry, provenance)
+    reason = _entry_reject_reason(entry)
+    if reason is not None:
+        _LOG.info("bootstrap: dropped %r — %s", entry_id, reason)
+        return None
+
+    rationale = _bootstrap_signal_rationale(signal_kind, trace, episode, budget_s)
+    return Suggestion(
+        suggestion_id=_suggestion_id(
+            SUGGESTION_REGRESSION_ENTRY, SYNTH_MECHANICAL, trace.trace_id, provenance
+        ),
+        suggestion_type=SUGGESTION_REGRESSION_ENTRY,
+        synthesizer=SYNTH_MECHANICAL,
+        subject=trace.trace_id,
+        target_slice=TARGET_TRAIN,
+        rationale=rationale,
+        provenance=provenance,
+        entry=entry,
+        evidence={"signal_kind": signal_kind, "source_summary": episode.summary},
+    )
+
+
+def _bootstrap_signal_rationale(
+    signal_kind: str, trace: ImportedTrace, episode: MinedEpisode, budget_s: int
+) -> str:
+    """The why, naming the foreign source + the honest binding (§5.2 / §5.3)."""
+    if signal_kind == _SIG_BUDGET_BLOWOUT:
+        binding = (
+            f"It pins a tightened {budget_s}s wall-clock budget and an honest structural "
+            f"check (the re-run must complete without aborting) — no fabricated output predicate."
+        )
+    else:
+        binding = (
+            "It pins the reconstructed input and carries the failure as a process judge with "
+            "the expectation left absent (drift-loss-only scoring) — a drift-signal property is "
+            "invisible to a post-hoc output matcher, so no output predicate is fabricated."
+        )
+    return (
+        f"Foreign trace {trace.source_file!r} ({trace.dialect}) showed a {signal_kind} the loop "
+        f"never saw. This bootstrap entry lets the instrument measure whether the behaviour "
+        f"recurs. {binding} It defaults to the train slice: no zicato proposer produced the "
+        f"trace, so the rotation collusion hazard is absent (§5.3)."
+    )
+
+
+async def _bootstrap_behavioral_suggestion(
+    episode: MinedEpisode, trace: ImportedTrace, aux_call_llm: CallLLM
+) -> Suggestion | None:
+    """Draft a behavioral episode's entry with an LLM-drafted rubric (§5.2, aux seam).
+
+    A clean, substantive conversation has no adverse signal to bind, so its intent
+    is pinned by an LLM-drafted ``rubric`` expectation behind the aux callable
+    (never the harness callable). The reconstructed input/persona is mechanical;
+    only the expectation is drafted. Tolerant-parsed (the 64KiB cap) and
+    loader-validated — a parse / validation failure drops the one suggestion.
+    """
+    subject = trace.trace_id
+    convo = " || ".join(_compact(t, 240) for t in trace.user_turns)
+    user = (
+        f"A recorded {trace.dialect} conversation (foreign trace {trace.source_file!r}) ran "
+        f"clean with no adverse signal. The user side was: {convo}. Draft one rubric that pins "
+        f"what a correct response to this conversation must accomplish."
+    )
+    raw = await _aux_text(aux_call_llm, _BOOTSTRAP_RUBRIC_SYSTEM_PROMPT, user, "bootstrap", subject)
+    if raw is None:
+        return None
+    parsed = _parse_json_object(raw, "bootstrap", subject)
+    if parsed is None:
+        return None
+    rubric_text = parsed.get("rubric")
+    if not isinstance(rubric_text, str) or not rubric_text.strip():
+        _LOG.info("bootstrap: dropped rubric draft for %r — response missing 'rubric'", subject)
+        return None
+    threshold = parsed.get("threshold")
+    spec = json.dumps(
+        {"rubric": rubric_text, "threshold": threshold, "scale": [0.0, 1.0]}, sort_keys=True
+    )
+    is_multi = len(trace.user_turns) > 1
+    reads = OutputScope.TRANSCRIPT if is_multi else OutputScope.FINAL
+    expectation = Expectation(kind=ExpectationKind.RUBRIC, spec=spec, reads=reads)
+
+    entry_id = _slug(f"bootstrap__behavioral__{trace.trace_id}")
+    tags = ("bootstrap", "bootstrap:behavioral", "synthesized", "trajectory")
+    entry, flags = _reconstruct_bootstrap_entry(
+        trace,
+        entry_id=entry_id,
+        tags=tags,
+        budget_s=_DEFAULT_BUDGET_SECONDS,
+        expectation=expectation,
+        judges=(),
+    )
+    provenance = _bootstrap_provenance(episode, SUGGESTION_COVERAGE_ENTRY, trace, flags)
+    entry = _stamp_provenance(entry, provenance)
+    reason = _entry_reject_reason(entry)
+    if reason is not None:
+        _LOG.info("bootstrap: dropped rubric draft for %r — %s", entry_id, reason)
+        return None
+
+    rationale = (
+        f"Foreign trace {trace.source_file!r} ({trace.dialect}) is a clean "
+        f"{len(trace.user_turns)}-turn conversation the loop never saw. This bootstrap entry "
+        f"replays its intent and pins an LLM-drafted rubric so the instrument gains a measured "
+        f"channel for that behaviour. It defaults to the train slice (§5.3): no zicato proposer "
+        f"produced the trace, so the rotation collusion hazard is absent."
+    )
+    return Suggestion(
+        suggestion_id=_suggestion_id(
+            SUGGESTION_COVERAGE_ENTRY, SYNTH_LLM, trace.trace_id, provenance
+        ),
+        suggestion_type=SUGGESTION_COVERAGE_ENTRY,
+        synthesizer=SYNTH_LLM,
+        subject=trace.trace_id,
+        target_slice=TARGET_TRAIN,
+        rationale=rationale,
+        provenance=provenance,
+        entry=entry,
+        evidence={"signal_kind": "behavioral", "source_summary": episode.summary},
+    )
+
+
+def _compact(text: str, limit: int) -> str:
+    """A single-line, bounded digest of a turn (whitespace-collapsed, truncated)."""
+    collapsed = " ".join((text or "").split())
+    if len(collapsed) <= limit:
+        return collapsed
+    return collapsed[: max(0, limit - 1)].rstrip() + "…"
+
+
+# ---------------------------------------------------------------------------
 # orchestration
 # ---------------------------------------------------------------------------
 
@@ -867,6 +1296,7 @@ def synthesize(
     allow_llm: bool = False,
     workspace_root: Path | None = None,
     epoch_id: str | None = None,
+    imported_traces: Sequence[ImportedTrace] = (),
 ) -> list[Any]:
     """The sync WS-SURFACE seam: ranked episodes → persisted-shape suggestions (§6).
 
@@ -896,6 +1326,12 @@ def synthesize(
        ``add_board_entry`` for entry drafts / ``add_judge`` for judge drafts /
        ``None`` (a recorded gap) for a rubric revision; the ranking keys ride from
        the motivating episode; the ``suggestion_id`` is kept verbatim.
+    4. Run the bootstrap tier (:func:`synthesize_bootstrap_suggestions`,
+       TRAJECTORY-BOOTSTRAP.md §5) over the SAME ranked episodes, threading
+       ``imported_traces`` so it can reach the reconstructions. The bootstrap
+       hints route only there — the existing tiers return nothing for them, so no
+       double-emission. With no ``imported_traces`` (the default) the tier returns
+       nothing and this path is byte-identical to today.
     """
     from zicato.reflection import suggestions as surface  # noqa: PLC0415
 
@@ -916,6 +1352,12 @@ def synthesize(
         synthesize_suggestions(episodes, board_entries=board_entries, aux_call_llm=aux)
     )
     internal = _land_rotation_entries(internal, board_entries, workspace_root, epoch_id)
+    bootstrap = synthesize_bootstrap_suggestions(
+        episodes,
+        traces_by_id={t.trace_id: t for t in imported_traces},
+        aux_call_llm=aux,
+    )
+    internal = _finalize([*internal, *bootstrap])
     episode_by_id = {e.episode_id: e for e in episodes}
     return [_to_surface_suggestion(s, episode_by_id, surface) for s in internal]
 
@@ -1270,6 +1712,7 @@ __all__ = [
     "TARGET_TRAIN",
     "Suggestion",
     "synthesize",
+    "synthesize_bootstrap_suggestions",
     "synthesize_mechanical",
     "synthesize_suggestions",
 ]
