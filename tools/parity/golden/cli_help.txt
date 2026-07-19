@@ -818,17 +818,29 @@ Usage: zicato reflect suggest [OPTIONS]
   through ``zicato reflect report``. Recommend-only: apply stages a builder
   draft, never the sealed contract.
 
+  ``--from-trajectories <dir>`` bootstraps the instrument from a directory of
+  foreign agent trace files (TRAJECTORY-BOOTSTRAP.md §6): the traces are
+  imported (format-sniffed + reduced through the existing dialect reducers),
+  persisted under the minted reflection dir, and mined ALONGSIDE the workspace
+  episodes into one ranked list. The bootstrap tier drafts board entries whose
+  provenance names the foreign source. It is goldfive-optional — a trace dir
+  with zero goldfive artifacts still yields suggestions.
+
 Options:
-  --workspace TEXT   Workspace root.  [default: .zicato]
-  --epoch TEXT       Contract to mine (default: current).
-  --reflection TEXT  Attach suggestions to this reflection id (default: mint a
-                     fresh one).
-  --probe            SPEND champion budget on the live admission probes
-                     (endpoint-gated; default OFF).
-  --allow-llm        Permit LLM synthesis (judge/rubric drafting; aux-metered).
-                     Default: mechanical only.
-  --json             Emit raw suggestion dicts.
-  --help             Show this message and exit.
+  --workspace TEXT          Workspace root.  [default: .zicato]
+  --epoch TEXT              Contract to mine (default: current).
+  --reflection TEXT         Attach suggestions to this reflection id (default:
+                            mint a fresh one).
+  --probe                   SPEND champion budget on the live admission probes
+                            (endpoint-gated; default OFF).
+  --allow-llm               Permit LLM synthesis (judge/rubric drafting; aux-
+                            metered). Default: mechanical only.
+  --from-trajectories PATH  Bootstrap suggestions from a directory of foreign
+                            agent trace files (*.jsonl; TRAJECTORY-
+                            BOOTSTRAP.md). Imports + mines them ALONGSIDE the
+                            workspace episodes; goldfive-optional.
+  --json                    Emit raw suggestion dicts.
+  --help                    Show this message and exit.
 
 ===== zicato regenerate-report --help =====
 Usage: zicato regenerate-report [OPTIONS]

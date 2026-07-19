@@ -362,6 +362,18 @@ trace.
 
 ## 6. WS-WIRE spec (sibling)
 
+> **Status: WS-WIRE SHIPPED** (`reflect suggest --from-trajectories`, the
+> imported-record persistence wiring, the foreign-source inbox + report render,
+> CLI.md regen with a deliberately re-captured CLI-HELP golden, and the §9
+> un-mocked composition test). Two contract-aligned adjustments §6 forced, both
+> additive and §7-faithful: (a) the CLI passes `imported_traces=` to the
+> `synthesize` seam **only when the flag is set**, so the existing (non-bootstrap)
+> callers keep hitting the base signature and the branch stays green before
+> WS-BOOT integrates; (b) `suggestions.SynthesizeSeam` (the WS-SURFACE Protocol
+> the CLI type-checks against) gained the `imported_traces` keyword with an
+> empty default — the seam's typed mirror of §7's extended `synthesize`. Neither
+> changes a §7 signature; both make the parallel build type-clean.
+
 - **`reflect suggest --from-trajectories <dir>`** — a new flag on the existing
   `reflect suggest` mode (`cli/commands/reflect.py`), composing with the
   existing flags (`--probe` / `--allow-llm` / `--epoch` / `--json`). When set,
@@ -385,8 +397,14 @@ trace.
   findings-panel treatment, EVAL-SYNTHESIS.md §6), so the operator sees a
   suggestion came from `prod-run-01.jsonl` (adk_events), not a reign.
 - **CLI.md regen** — `docs/design/CLI.md` is generated from `zicato --help`;
-  the new flag regenerates it.
-- **THE UN-MOCKED COMPOSITION TEST (§9, named deliverable).**
+  the new flag regenerates it. **DONE** (the `--from-trajectories` row + the
+  deliberately re-captured `tools/parity/golden/cli_help.txt`).
+- **THE UN-MOCKED COMPOSITION TEST (§9, named deliverable). DONE** —
+  `tests/test_trajectory_bootstrap_composition.py`, capability-guarded on
+  WS-BOOT's real §7 symbol (`synthesize_bootstrap_suggestions` +
+  `synthesize(imported_traces=)`) so it is red-proof on the WS-WIRE branch and
+  activates live at the integration merge; zero resolver monkeypatching. It also
+  carries the goldfive-optional whole-chain assertion (§9).
 
 ## 7. Literal seam signatures — copy verbatim, do not reinterpret
 
@@ -568,7 +586,10 @@ file); determinism (re-import ⇒ identical ids + records); and **the
 goldfive-optional proof** — the whole `import → imported_trace_episodes` path
 runs and produces episodes with **no goldfive artifact anywhere** (a
 transcript / adk_events dir, no goldfive install assumed). **The un-mocked
-composition test** (WS-WIRE's named deliverable) closes the chain: a real
+composition test** (WS-WIRE's named deliverable — **SHIPPED**,
+`tests/test_trajectory_bootstrap_composition.py`, capability-guarded on the real
+§7 bootstrap symbol so it activates at the integration merge) closes the chain:
+a real
 foreign-trace fixture directory → real `import_trajectories` → real
 `mine_episodes` → real `synthesize` → persisted `suggestions.json` with a
 non-empty `draft_artifact` + `proposed_op` → real `reflect apply` into a

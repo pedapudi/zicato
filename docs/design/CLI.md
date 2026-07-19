@@ -666,7 +666,14 @@ staged by `reflect apply`. The live admission probes SPEND real champion budget
 and are **endpoint-gated**: they run ONLY under `--probe` (default OFF — plan
 mode shows what they would spend, spending nothing). `--allow-llm` permits the
 aux-metered LLM synthesis tier (judge / rubric drafting; default: mechanical
-only). Recommend-only end to end.
+only). Recommend-only end to end. `--from-trajectories <dir>` **bootstraps** the
+instrument from a directory of foreign agent trace files
+([TRAJECTORY-BOOTSTRAP.md](TRAJECTORY-BOOTSTRAP.md)): the traces are imported
+(format-sniffed + reduced through the existing dialect reducers), persisted under
+the minted reflection dir, and mined ALONGSIDE the workspace episodes into one
+ranked list. It is goldfive-optional — a trace dir with zero goldfive artifacts
+still yields suggestions; an empty / missing dir prints an honest message and
+exits 0.
 
 | `reflect suggest` option | Default | Meaning |
 |---|---|---|
@@ -675,6 +682,7 @@ only). Recommend-only end to end.
 | `--reflection TEXT` | fresh id | Attach suggestions to this reflection id. |
 | `--probe` | off | SPEND champion budget on the live admission probes (endpoint-gated). |
 | `--allow-llm` | off | Permit LLM synthesis (judge/rubric drafting; aux-metered). |
+| `--from-trajectories PATH` | unset | Bootstrap suggestions from a directory of foreign agent trace files (`*.jsonl`); goldfive-optional. |
 | `--json` | off | Emit the raw suggestion dicts. |
 
 `reflect report REFLECTION_ID` renders a stored reflection's report (Markdown,
