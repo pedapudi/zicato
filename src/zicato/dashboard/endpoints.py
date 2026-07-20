@@ -759,12 +759,84 @@ def _make_reflection_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
             query.build_adjudication_xray(paths, reflection_id, judge_name, run_ref)
         )
 
+    async def api_reflection_traces(request: Request) -> JSONResponse:
+        """The imported foreign traces for a reflection (TRAJECTORY-UI.md §3.1)."""
+        reflection_id = request.path_params["reflection_id"]
+        if not _is_safe_id(reflection_id):
+            return JSONResponse(
+                {
+                    "reflection_id": reflection_id,
+                    "epoch_id": None,
+                    "found": False,
+                    "trace_count": 0,
+                    "traces": [],
+                },
+                status_code=200,
+            )
+        view = await run_in_threadpool(query.build_trace_list, paths, reflection_id)
+        return JSONResponse(view)
+
+    async def api_reflection_trace(request: Request) -> JSONResponse:
+        """One imported trace: strip + reconstructed conversation (§3.2)."""
+        reflection_id = request.path_params["reflection_id"]
+        trace_id = request.path_params["trace_id"]
+        if not _is_safe_id(reflection_id) or not _is_safe_id(trace_id):
+            return JSONResponse(
+                {
+                    "reflection_id": reflection_id,
+                    "epoch_id": None,
+                    "found": False,
+                    "trace_id": trace_id,
+                    "source_file": "",
+                    "dialect": "",
+                    "line_count": 0,
+                    "malformed_line_count": 0,
+                    "signal_counts": {},
+                    "strip_model": {},
+                    "turns": [],
+                    "reconstruction_note": "",
+                    "episodes": [],
+                },
+                status_code=200,
+            )
+        view = await run_in_threadpool(query.build_trace_detail, paths, reflection_id, trace_id)
+        return JSONResponse(view)
+
+    async def api_reflection_suggestion_provenance(request: Request) -> JSONResponse:
+        """One suggestion's provenance chain: episodes → trace segments (§3.3)."""
+        reflection_id = request.path_params["reflection_id"]
+        suggestion_id = request.path_params["suggestion_id"]
+        if not _is_safe_id(reflection_id) or not _is_safe_id(suggestion_id):
+            return JSONResponse(
+                {
+                    "reflection_id": reflection_id,
+                    "epoch_id": None,
+                    "found": False,
+                    "suggestion_id": suggestion_id,
+                    "suggestion_type": "",
+                    "subject": "",
+                    "summary": "",
+                    "target_slice": "",
+                    "foreign_source": None,
+                    "admission_viz": {},
+                    "episodes": [],
+                },
+                status_code=200,
+            )
+        view = await run_in_threadpool(
+            query.build_suggestion_provenance, paths, reflection_id, suggestion_id
+        )
+        return JSONResponse(view)
+
     return {
         "api_reflections": api_reflections,
         "api_reflection_summary": api_reflection_summary,
         "api_reflection_scorecards": api_reflection_scorecards,
         "api_reflection_practices": api_reflection_practices,
         "api_reflection_xray": api_reflection_xray,
+        "api_reflection_traces": api_reflection_traces,
+        "api_reflection_trace": api_reflection_trace,
+        "api_reflection_suggestion_provenance": api_reflection_suggestion_provenance,
     }
 
 

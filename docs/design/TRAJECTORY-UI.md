@@ -212,12 +212,25 @@ They are **reflection-scoped** (the persisted `imported/*.json` +
 TRAJECTORY-BOOTSTRAP.md §3.2). Each resolves the owning epoch from the
 `reflection_id` the way `reflection_view._resolve_epoch` does (index-first,
 then a tree walk for a plan-less mint dir), reads the persisted imported
-traces (`trace_import.read_imported_traces`), and **re-mines the episodes
-purely** (`mining.imported_trace_episodes` — deterministic ids, zero LLM, no
-workspace) so the provenance chain reconstructs without a transient
-episode store. Every read is best-effort: an unknown/cold reflection, an
-unknown trace/suggestion, or a malformed record degrades to a same-shape
-payload with `found: false` — never a raise, never a fabricated number.
+traces (`trace_import.read_imported_traces`), and reads the persisted
+suggestions (`suggestions.read_suggestions`).
+
+**Dashboard-free by construction (the import contract, load-bearing).** The
+query layer must not reach the dashboard driver, and `reflection.mining`
+transitively imports `dashboard.transcript` (via the adjudicator). So the
+readers do **not** re-run the miner. They derive the **episode overlays from the
+persisted suggestions** — each bootstrap suggestion's provenance already carries
+`source_episodes` (the episode ids), `source_refs = [source_file, signal_kind]`,
+and the `foreign_source` block (TRAJECTORY-BOOTSTRAP.md §5.3), so the trace →
+episode → suggestion chain reconstructs from the persisted output alone; the
+trace figure (lane / signals / budget) reads the reduced `DialectSignals` off
+the persisted `ImportedTrace`. This reads the REAL pipeline output and adds no
+engine coupling. (Consequence: the overlays show the **drafted** episodes — the
+ones that became suggestions — which is exactly the provenance-chain the surface
+is about; the raw per-signal counts still ride `signal_counts` for the full
+telemetry.) Every read is best-effort: an unknown/cold reflection, an unknown
+trace/suggestion, or a malformed record degrades to a same-shape payload with
+`found: false` — never a raise, never a fabricated number.
 
 **Which endpoint idiom serves them.** All three do blocking file I/O (reading
 `imported/*.json` + `suggestions.json`), so each handler wraps its reader in
@@ -359,7 +372,8 @@ byte-stable). It is the ONE place the render math lives (DQ1). The shape is the
   `(k+1)/(n+1)` — `positioned: false` (aggregate, no real position).
 - **Budget.** `fill = round(min(1.0, max(tokens/MAX_TOKENS, llm_calls/MAX_LLM_CALLS)), 4)`;
   `over = tokens >= MAX_TOKENS or llm_calls >= MAX_LLM_CALLS`; `shaded = fill > 0`.
-  (`MAX_TOKENS` / `MAX_LLM_CALLS` are the `mining` module constants — one source.)
+  (`MAX_TOKENS` / `MAX_LLM_CALLS` mirror the `mining` module constants locally —
+  the query layer cannot import `mining`, per the dashboard-free rule above.)
 - **Episodes.** A **signal** episode (`imported_signal`) anchors to its matching
   signal tick: `x0/x1` = the tick's `x ± 0.05` (clamped `[0,1]`),
   `anchor: "signal"`. The **behavioral** episode (`imported_behavioral`) spans

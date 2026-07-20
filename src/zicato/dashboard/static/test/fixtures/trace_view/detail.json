@@ -1,0 +1,236 @@
+{
+  "dialect": "adk_events",
+  "episodes": [
+    {
+      "episode_id": "ep-acaca016",
+      "episode_type": "imported_signal",
+      "glyph": "✕",
+      "severity_rank": 5,
+      "signal_kind": "error_cascade",
+      "span": {
+        "anchor": "signal",
+        "x0": 0.15,
+        "x1": 0.25
+      },
+      "suggestion_ids": [
+        "sug-14ffa7e6"
+      ],
+      "summary": "Foreign trace 'adk_run.jsonl' (adk_events) showed a error_cascade the loop never saw.",
+      "tone": "bad"
+    },
+    {
+      "episode_id": "ep-971de1aa",
+      "episode_type": "imported_signal",
+      "glyph": "✕",
+      "severity_rank": 5,
+      "signal_kind": "abort_pattern",
+      "span": {
+        "anchor": "signal",
+        "x0": 0.35,
+        "x1": 0.45
+      },
+      "suggestion_ids": [
+        "sug-c5760e02"
+      ],
+      "summary": "Foreign trace 'adk_run.jsonl' (adk_events) showed a abort_pattern the loop never saw.",
+      "tone": "bad"
+    },
+    {
+      "episode_id": "ep-dc4a5674",
+      "episode_type": "imported_signal",
+      "glyph": "↻",
+      "severity_rank": 3,
+      "signal_kind": "retry_loop",
+      "span": {
+        "anchor": "signal",
+        "x0": 0.55,
+        "x1": 0.65
+      },
+      "suggestion_ids": [
+        "sug-f2a45b2d"
+      ],
+      "summary": "Foreign trace 'adk_run.jsonl' (adk_events) showed a retry_loop the loop never saw.",
+      "tone": "caution"
+    },
+    {
+      "episode_id": "ep-cff2490f",
+      "episode_type": "imported_signal",
+      "glyph": "⇄",
+      "severity_rank": 2,
+      "signal_kind": "transfer_churn",
+      "span": {
+        "anchor": "signal",
+        "x0": 0.75,
+        "x1": 0.85
+      },
+      "suggestion_ids": [
+        "sug-734ba4eb"
+      ],
+      "summary": "Foreign trace 'adk_run.jsonl' (adk_events) showed a transfer_churn the loop never saw.",
+      "tone": "neutral"
+    }
+  ],
+  "epoch_id": "2020-01-01_boot",
+  "found": true,
+  "line_count": 12,
+  "malformed_line_count": 0,
+  "reconstruction_note": "turns are the reducer's reconstruction; user and agent sides are zipped by index",
+  "reflection_id": "refl-traceviz",
+  "signal_counts": {
+    "llm_calls": 1,
+    "retry_loops": 1,
+    "task_failed": 2,
+    "task_started": 2,
+    "tokens": 1000,
+    "tool_errors": 1,
+    "transfers": 3
+  },
+  "source_file": "adk_run.jsonl",
+  "strip_model": {
+    "budget": {
+      "fill": 0.02,
+      "label": "1 calls · 1k tok",
+      "llm_calls": 1,
+      "over": false,
+      "shaded": true,
+      "tokens": 1000
+    },
+    "dialect": "adk_events",
+    "episodes": [
+      {
+        "anchor": "signal",
+        "episode_id": "ep-acaca016",
+        "glyph": "✕",
+        "kind": "imported_signal",
+        "severity_rank": 5,
+        "signal_kind": "error_cascade",
+        "suggestion_ids": [
+          "sug-14ffa7e6"
+        ],
+        "tone": "bad",
+        "x0": 0.15,
+        "x1": 0.25
+      },
+      {
+        "anchor": "signal",
+        "episode_id": "ep-971de1aa",
+        "glyph": "✕",
+        "kind": "imported_signal",
+        "severity_rank": 5,
+        "signal_kind": "abort_pattern",
+        "suggestion_ids": [
+          "sug-c5760e02"
+        ],
+        "tone": "bad",
+        "x0": 0.35,
+        "x1": 0.45
+      },
+      {
+        "anchor": "signal",
+        "episode_id": "ep-dc4a5674",
+        "glyph": "↻",
+        "kind": "imported_signal",
+        "severity_rank": 3,
+        "signal_kind": "retry_loop",
+        "suggestion_ids": [
+          "sug-f2a45b2d"
+        ],
+        "tone": "caution",
+        "x0": 0.55,
+        "x1": 0.65
+      },
+      {
+        "anchor": "signal",
+        "episode_id": "ep-cff2490f",
+        "glyph": "⇄",
+        "kind": "imported_signal",
+        "severity_rank": 2,
+        "signal_kind": "transfer_churn",
+        "suggestion_ids": [
+          "sug-734ba4eb"
+        ],
+        "tone": "neutral",
+        "x0": 0.75,
+        "x1": 0.85
+      }
+    ],
+    "focus_episode_id": null,
+    "lane": {
+      "marks": [
+        {
+          "chars": 66,
+          "i": 0,
+          "role": "user",
+          "size": 1.0,
+          "x0": 0.0,
+          "x1": 0.55
+        },
+        {
+          "chars": 54,
+          "i": 1,
+          "role": "agent",
+          "size": 0.8182,
+          "x0": 0.55,
+          "x1": 1.0
+        }
+      ],
+      "turn_count": 2
+    },
+    "signals": [
+      {
+        "count": 3,
+        "glyph": "✕",
+        "kind": "error_cascade",
+        "label": "1 tool err · 2/2 failed",
+        "positioned": false,
+        "tone": "bad",
+        "x": 0.2
+      },
+      {
+        "count": 2,
+        "glyph": "✕",
+        "kind": "abort_pattern",
+        "label": "2/2 failed",
+        "positioned": false,
+        "tone": "bad",
+        "x": 0.4
+      },
+      {
+        "count": 1,
+        "glyph": "↻",
+        "kind": "retry_loop",
+        "label": "1 retry loop",
+        "positioned": false,
+        "tone": "caution",
+        "x": 0.6
+      },
+      {
+        "count": 3,
+        "glyph": "⇄",
+        "kind": "transfer_churn",
+        "label": "3 transfers",
+        "positioned": false,
+        "tone": "neutral",
+        "x": 0.8
+      }
+    ],
+    "trace_id": "trace-a0be332d"
+  },
+  "trace_id": "trace-a0be332d",
+  "turns": [
+    {
+      "chars": 66,
+      "index": 0,
+      "role": "user",
+      "text": "Book me a flight to Lisbon next Tuesday and add it to my calendar.",
+      "truncated": false
+    },
+    {
+      "chars": 54,
+      "index": 1,
+      "role": "agent",
+      "text": "I could not find a flight; the search service is down.",
+      "truncated": false
+    }
+  ]
+}

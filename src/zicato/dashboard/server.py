@@ -367,6 +367,20 @@ def create_app(
             "/api/reflection/{reflection_id}/xray/{judge_name}/{run_ref}",
             handlers["api_reflection_xray"],
         ),
+        # Trajectory-bootstrap viz surface (TRAJECTORY-UI.md §3) — imported
+        # traces, one trace's detail, and a suggestion's provenance chain.
+        Route(
+            "/api/reflection/{reflection_id}/traces",
+            handlers["api_reflection_traces"],
+        ),
+        Route(
+            "/api/reflection/{reflection_id}/trace/{trace_id}",
+            handlers["api_reflection_trace"],
+        ),
+        Route(
+            "/api/reflection/{reflection_id}/suggestion/{suggestion_id}/provenance",
+            handlers["api_reflection_suggestion_provenance"],
+        ),
         Route("/events", events),
         Route("/api/control/pause", handlers["control_pause"], methods=["POST"]),
         Route("/api/control/resume", handlers["control_resume"], methods=["POST"]),

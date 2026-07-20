@@ -231,6 +231,11 @@ from zicato.query.tournament_view import (
     build_tournament_structure,
     derive_elim_states,
 )
+from zicato.query.trace_view import (
+    build_suggestion_provenance,
+    build_trace_detail,
+    build_trace_list,
+)
 from zicato.query.transcript_view import (
     build_run_transcript,
     empty_run_transcript,
@@ -358,6 +363,9 @@ __all__ = [
     "build_eval_dossier",
     "build_eval_health",
     "build_round_timeline",
+    "build_suggestion_provenance",
+    "build_trace_detail",
+    "build_trace_list",
     "build_per_entry_for_generation",
     "build_round_pipeline",
     "build_per_judge_comparison",
