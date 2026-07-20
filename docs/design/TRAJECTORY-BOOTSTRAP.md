@@ -666,6 +666,7 @@ builder draft. No resolver monkeypatching.
 
 | Topic | Document |
 |---|---|
+| The UI visualising these traces + the board being created | [`TRAJECTORY-UI.md`](TRAJECTORY-UI.md) |
 | The suggestion / admission / inbox engine this feeds | [`EVAL-SYNTHESIS.md`](EVAL-SYNTHESIS.md) |
 | `LossProfile` convergence + the three dialect producers | [`TELEMETRY-DIALECTS.md`](TELEMETRY-DIALECTS.md) |
 | The entry / predicate / judge schema the drafts obey | [`BOARD-FORMAT.md`](BOARD-FORMAT.md) |
