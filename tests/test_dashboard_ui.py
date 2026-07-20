@@ -637,7 +637,38 @@ def test_bundle_under_size_envelope(
     # staging forks a draft the operator seals; back-compat: an empty / cold feed
     # renders the honest empty state, every other view byte-identical). The
     # envelope is raised to 1.46 MB to cover it with headroom.
-    assert total < 1_460_000, f"bundle is {total} bytes, exceeds 1_460_000 envelope"
+    #
+    # The TRAJECTORY-UI TRACES surface (WS-TRACES, TRAJECTORY-UI.md §2.1) then
+    # adds the shared `svg.trajectoryStrip` figure + its digest (the
+    # imported-trace timeline: turn lane, unpositioned signal cluster, shaded
+    # budget ground, bracketed episode overlays — reused at list / hero /
+    # provenance-mini size, ~7 KB), the new top-level views/traces.js (the
+    # reflection-picker landing, the trace list of per-trace strips, and the
+    # trace detail = full strip over the reconstructed conversation reusing
+    # board.js's turn vocabulary, with episode anchors linking strip spans ↔
+    # conversation ↔ the builder inbox, ~17 KB), and the router/shell/tree/data
+    # wiring for the `#/e/<e>/traces` route (~3 KB). Its CSS rides console.css
+    # (not counted here). Read-only + recommend-only; a reflection with no
+    # imported traces renders the honest empty state, every other view
+    # byte-identical.
+    #
+    # The TRAJECTORY-BOOTSTRAP VISUALS (WS-SUGVIZ, TRAJECTORY-UI.md §2.2) then
+    # add the suggestion / board-creation surface: the shared admission-visuals
+    # module (js/core/admission_viz.js — the flip-rate WHISKER, discrimination
+    # PIPS, evidence TIER, honest `unmeasured` states), the inbox rows upgraded
+    # to CARDS with a PROVENANCE MINI-STRIP (the strip figure's compact mode
+    # behind a guarded dynamic import), and GHOST ROWS in the Evals matrix for
+    # suggested-but-not-yet-scored entries — pending-styled, never mistakable
+    # for measured data, the no-ghost matrix byte-identical to before. ~17 KB.
+    #
+    # UNION NOTE (the per-wave-raise interaction, measured at the merge):
+    # ground truth by this test's own accounting (character counts, not bytes —
+    # the strip glyphs are multi-byte): main == the contract base == 1,456,894
+    # chars (the readers branch added zero counted content; each view branch's
+    # self-measured "base" carried a worktree-local artifact), and the merged
+    # bundle measures 1,514,097 chars (+57 K across the two view branches). The
+    # envelope is raised once to 1.52 M to cover the union with a thin margin.
+    assert total < 1_520_000, f"bundle is {total} bytes, exceeds 1_520_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

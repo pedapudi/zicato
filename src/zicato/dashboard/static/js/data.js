@@ -402,6 +402,43 @@ export function reflectionXray(reflectionId, judge, runRef) {
   return cachedJson(`/api/reflection/${enc(reflectionId)}/xray/${enc(judge)}/${enc(runRef)}`);
 }
 
+// ---- Traces surface (imported foreign trajectories · TRAJECTORY-UI.md §3) ----
+//
+// The persisted `imported/*.json` + `suggestions.json` under a reflection are
+// immutable once written, so these reads are the same cacheable, reflection-
+// scoped class as the summary/scorecards/x-ray above (the live bust deliberately
+// spares `/api/reflection/` — data.js:95).
+//
+// The trace LIST for a reflection: per-trace strip-model + source/dialect/counts.
+export function traces(reflectionId) {
+  return cachedJson(`/api/reflection/${enc(reflectionId)}/traces`);
+}
+// ONE imported trace: the full strip-model + the reconstructed conversation turns
+// + the per-episode span/anchor/linked-suggestion chain.
+export function trace(reflectionId, traceId) {
+  return cachedJson(`/api/reflection/${enc(reflectionId)}/trace/${enc(traceId)}`);
+}
+// The provenance chain for ONE bootstrap suggestion (TRAJECTORY-UI.md §3.3):
+// the foreign-source block, the render-ready `admission_viz` marks, and the
+// motivating episode(s) each carrying a `segment_strip_model` (the trace →
+// episode → suggestion chain, for the inbox card's mini-strip). A completed
+// reflection is IMMUTABLE, so the read is cacheable; a pre-feature server (no
+// such endpoint) or an unknown suggestion degrades server-side to a found:false
+// payload (a null here means a transport failure only).
+export function suggestionProvenance(reflectionId, suggestionId) {
+  return cachedJson(`/api/reflection/${enc(reflectionId)}/suggestion/${enc(suggestionId)}/provenance`);
+}
+
+// The persisted `reflect suggest` inbox feed for the workspace ({epoch_id,
+// reflection_id, suggestions[]}) — the SAME feed the builder inbox reads. The
+// Evals ghost rows (TRAJECTORY-UI.md §2.2b) join it against the eval matrix
+// client-side. A pre-feature / read-only backend degrades to null (the GET
+// throws), so the ghost-row block renders nothing extra and the matrix stays
+// byte-identical.
+export function builderSuggestions() {
+  return cachedJson('/builder/suggestions');
+}
+
 // The per-entry EVAL DOSSIER (EVAL-VIEW.md §3.2) — the board-as-instrument lens
 // for ONE board entry across every candidate: its A/A flip rate, discrimination,
 // runtime cost, the champion-spine trajectory, first-passed / regressed

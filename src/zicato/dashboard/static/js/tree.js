@@ -292,6 +292,14 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
         selected: sel === 'instrument' && p.epochId === epoch.id,
         onSelect: () => ctx.navigate('instrument', { epochId: epoch.id }),
       }));
+      // Traces (leaf) — the imported foreign-trajectory viewer, reflection-scoped
+      // like Instrument. Shown on the same reflections gate (a reflection with no
+      // imported traces still degrades to an honest empty state within the view).
+      tree.appendChild(leafRow({
+        depth: 2, kind: 'traces', label: 'Traces', glyph: '⌇', tag: null,
+        selected: sel === 'traces' && p.epochId === epoch.id,
+        onSelect: () => ctx.navigate('traces', { epochId: epoch.id }),
+      }));
     }
 
     // Publication (leaf)

@@ -25,7 +25,7 @@
 // breadcrumb, back button, and every view share one signature.
 
 export const PREFIX = '#';
-export const VIEWS = ['home', 'epoch', 'gens', 'candidate', 'diff', 'boards', 'board', 'mutations', 'instrument', 'evals', 'publication', 'builder', 'logs', 'settings'];
+export const VIEWS = ['home', 'epoch', 'gens', 'candidate', 'diff', 'boards', 'board', 'mutations', 'instrument', 'traces', 'evals', 'publication', 'builder', 'logs', 'settings'];
 
 // The Settings section a bare `#/settings` opens. The tournament builder used
 // to be the default Settings section; now that the builder is its OWN view,
@@ -110,6 +110,12 @@ export function parseRoute(hash) {
       // parts are already decodeURIComponent'd, so the run_ref's `:` separators
       // arrive verbatim.
       return { view: 'instrument', params: { epochId, reflectionId: parts[3] || null, judge: parts[4] || null, runRef: parts[5] || null }, cmp };
+    case 'traces':
+      // …/traces[/<reflectionId>[/<traceId>]] — the Traces surface (imported
+      // foreign trajectories). Bare = the reflection LANDING (list); +reflectionId
+      // = that reflection's trace list; +traceId = the trace detail (strip +
+      // reconstructed conversation).
+      return { view: 'traces', params: { epochId, reflectionId: parts[3] || null, traceId: parts[4] || null }, cmp };
     case 'paper': case 'publication': case 'report':
       return { view: 'publication', params: { epochId }, cmp };
     default:
@@ -165,6 +171,14 @@ export function href(view, params, opts) {
           base += '/' + enc(p.judge);
           if (p.runRef) base += '/' + enc(p.runRef);
         }
+      }
+      break;
+    case 'traces':
+      if (!e) { base = PREFIX + '/'; break; }
+      base = `${e}/traces`;
+      if (p.reflectionId) {
+        base += '/' + enc(p.reflectionId);
+        if (p.traceId) base += '/' + enc(p.traceId);
       }
       break;
     case 'publication': base = e ? `${e}/paper` : PREFIX + '/'; break;
@@ -237,6 +251,13 @@ export function up(route) {
       // steps up to the epoch.
       if (p.reflectionId && p.runRef) return { view: 'instrument', params: { epochId: p.epochId, reflectionId: p.reflectionId } };
       if (p.reflectionId) return { view: 'instrument', params: { epochId: p.epochId } };
+      return { view: 'epoch', params: { epochId: p.epochId } };
+    case 'traces':
+      // the trace detail (traceId) steps up to that reflection's trace list; the
+      // trace list (a reflection) steps up to the reflection LANDING; the landing
+      // steps up to the epoch.
+      if (p.reflectionId && p.traceId) return { view: 'traces', params: { epochId: p.epochId, reflectionId: p.reflectionId } };
+      if (p.reflectionId) return { view: 'traces', params: { epochId: p.epochId } };
       return { view: 'epoch', params: { epochId: p.epochId } };
     case 'publication': return { view: 'epoch', params: { epochId: p.epochId } };
     default: return { view: 'home', params: {} };
@@ -317,6 +338,19 @@ export function crumbTrail(route) {
         return [home, epoch, landing, { label: p.reflectionId, current: true }].filter(Boolean);
       }
       return [home, epoch, { label: 'instrument', current: true }].filter(Boolean);
+    }
+    case 'traces': {
+      const landing = { label: 'traces', view: 'traces', params: { epochId: p.epochId } };
+      if (p.reflectionId && p.traceId) {
+        return [home, epoch, landing,
+          { label: p.reflectionId, view: 'traces', params: { epochId: p.epochId, reflectionId: p.reflectionId } },
+          { label: p.traceId, current: true },
+        ].filter(Boolean);
+      }
+      if (p.reflectionId) {
+        return [home, epoch, landing, { label: p.reflectionId, current: true }].filter(Boolean);
+      }
+      return [home, epoch, { label: 'traces', current: true }].filter(Boolean);
     }
     case 'publication':
       return [home, epoch, { label: 'publication', current: true }].filter(Boolean);

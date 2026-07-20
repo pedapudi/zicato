@@ -1091,6 +1091,33 @@
   .dn-evalmtx-hg { position: absolute; bottom: 1px; right: 2px; font-size: calc(8px * var(--dt-font-scale, 1)); }
   .dn-evalmtx-none .dn-mtx-blank { opacity: 0.4; color: var(--v2-ink-faint); }
 
+  /* ===  GHOST ROWS — the board being created (TRAJECTORY-UI.md §2.2b)  ===
+   * Suggested (not-yet-scored) board entries appended below the real rows.
+   * PENDING vocabulary (neutral, never bad — a suggested entry is not a
+   * regression), visually UNAMBIGUOUS (dashed + faint) so a ghost row can never
+   * be mistaken for measured tournament data (the §4 honesty rule). */
+  .dn-evalmtx-ghosthead .dn-evalmtx-ghostcaption { text-align: left; padding: 8px 10px 4px;
+    font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em;
+    border-top: 1px dashed var(--v2-rule); }
+  .dn-evalmtx-row.dn-evalmtx-ghost { opacity: 0.82; }
+  .dn-evalmtx-row.dn-evalmtx-ghost .dn-evalmtx-ghost-site { border-left: 3px dashed var(--v2-rule); }
+  .dn-evalmtx-ghosthead-cell { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .dn-evalmtx-ghost-tag { font-size: calc(9px * var(--dt-font-scale, 1)); text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--v2-ink-soft); border: 1px dashed var(--v2-rule); border-radius: 3px;
+    padding: 0 5px; }
+  .dn-evalmtx-ghost-flip { display: inline-flex; min-width: 90px; max-width: 150px; }
+  .dn-evalmtx-cell.dn-evalmtx-ghostcell { text-align: left; width: auto; height: auto; padding: 6px 10px;
+    background: repeating-linear-gradient(135deg, transparent, transparent 6px, var(--v2-rule-soft) 6px, var(--v2-rule-soft) 7px); }
+  .dn-evalmtx-ghostbody { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .dn-evalmtx-ghost-note { font-size: calc(10px * var(--dt-font-scale, 1)); font-style: italic; }
+  .dn-evalmtx-ghost-marks { display: inline-flex; align-items: center; gap: 8px; }
+  .dn-evalmtx-ghost-lab { font-size: calc(9.5px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.04em; }
+  .dn-evalmtx-ghost-tier { font-size: calc(9.5px * var(--dt-font-scale, 1)); font-family: var(--v2-mono);
+    text-transform: uppercase; letter-spacing: 0.04em; color: var(--v2-ink-soft); }
+  .dn-evalmtx-ghost-apply { font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-accent);
+    text-decoration: none; margin-left: auto; }
+  .dn-evalmtx-ghost-apply:hover { text-decoration: underline; }
+
   .dn-patch-block { border: 1px solid var(--v2-rule-soft); border-radius: 4px; padding: 8px 10px; margin: 8px 0; }
   .dn-patch-head { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
   .dn-patch-op { font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); padding: 1px 6px; border: 1px solid var(--v2-rule); border-radius: 3px; }
@@ -1263,6 +1290,32 @@
   .dn-bt-convspark { display: inline-block; width: 120px; }
   .dn-bt-inconclusive { font-size: calc(11px * var(--dt-font-scale, 1)); margin: 6px 0 0;
     border-left: 2px solid var(--v2-caution); padding-left: 8px; color: var(--v2-caution); }
+  /* ===  ADMISSION VISUALS (TRAJECTORY-UI.md §2.2a)  ===
+   * A suggestion's admission stats as marks, reusing the shipped vocabulary: the
+   * flip-rate WHISKER (BT-whisker figure + the advisory-ceiling reference rule;
+   * over-ceiling rides caution), the discrimination PIPS (dt-rungstep), and the
+   * evidence TIER (probed = firm, planned = faint). No new colour vocabulary. */
+  .dn-adm { display: grid; gap: 4px; margin: 4px 0; }
+  .dn-adm-tierrow { display: flex; align-items: center; gap: 6px; }
+  .dn-adm-tier { font-size: calc(9.5px * var(--dt-font-scale, 1)); font-family: var(--v2-mono);
+    text-transform: uppercase; letter-spacing: 0.05em; padding: 0 5px; border-radius: 3px; }
+  .dn-adm-tier-firm { color: var(--v2-ink); border: 1px solid var(--v2-rule); }
+  .dn-adm-tier-faint { border: 1px dashed var(--v2-rule); }
+  .dn-adm-row { display: grid; grid-template-columns: 34px minmax(90px, 150px) auto; gap: 8px; align-items: center; }
+  .dn-adm-compact .dn-adm-row { grid-template-columns: minmax(80px, 140px) auto; }
+  .dn-adm-lab { font-size: calc(9.5px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.04em; }
+  .dn-adm-whisker { display: block; }
+  /* over the advisory ceiling → the noisy-eval caution tone (extends the shared
+   * dn-bt-theta vocabulary; no new hue). */
+  .dn-bt-theta.dn-caution, .dn-adm-flipdot.dn-caution { fill: var(--v2-caution); }
+  .dn-adm-ceiling { stroke: var(--v2-ink-soft); }
+  .dn-adm-pips { display: inline-flex; align-items: center; gap: 3px; }
+  .dn-adm-pipmore { font-size: calc(9px * var(--dt-font-scale, 1)); }
+  .dn-adm-readout { font-size: calc(10px * var(--dt-font-scale, 1)); white-space: nowrap; }
+  .dn-adm-over { color: var(--v2-caution); }
+  .dn-adm-leak { font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-caution);
+    border-left: 2px solid var(--v2-caution); padding-left: 6px; }
+
   /* the BT credible-interval band drawn on the radar scalar vertex. */
   .dn-radar-ciband { stroke: var(--v2-accent); stroke-width: 2; opacity: 0.55; }
   .dn-radar-citick { stroke: var(--v2-accent); stroke-width: 1.4; opacity: 0.7; }
@@ -3467,6 +3520,25 @@
   .dn-bld-btn-confirm { background: var(--v2-bad); border-color: var(--v2-bad); color: var(--v2-paper); }
   .dn-bld-applyout { margin-top: 6px; }
 
+  /* ===  the SUGGESTION INBOX CARDS (TRAJECTORY-UI.md §2.2a)  ===
+   * The inbox rows upgraded to cards: summary + rationale + the admission
+   * visuals + (foreign-source) the provenance mini-strip. Quiet register; the
+   * only chips are the ones the head already pills (suggestion type + slice). */
+  .dn-bld-suglist { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .dn-bld-sugcard { border: 1px solid var(--v2-rule); border-radius: 6px; padding: 9px 11px;
+    display: grid; gap: 6px; background: var(--v2-panel); }
+  .dn-bld-sughead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .dn-bld-sugsummary { font-size: calc(12px * var(--dt-font-scale, 1)); color: var(--v2-ink); }
+  .dn-bld-sugrationale { font-size: calc(11px * var(--dt-font-scale, 1)); line-height: 1.4; }
+  .dn-bld-sugadmviz { margin: 2px 0; }
+  .dn-bld-sugadmission { font-size: calc(10.5px * var(--dt-font-scale, 1)); }
+  .dn-bld-sugprov, .dn-bld-sugforeign, .dn-bld-sugroll { font-size: calc(10px * var(--dt-font-scale, 1)); line-height: 1.35; }
+  .dn-bld-sugstripwrap { display: grid; gap: 4px; border-top: 1px dashed var(--v2-rule); padding-top: 6px; }
+  .dn-bld-sugtracelink { font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-accent); text-decoration: none; }
+  .dn-bld-sugtracelink:hover { text-decoration: underline; }
+  .dn-bld-sugstrip { min-width: 0; }
+  .dn-bld-sugstrip-fallback { font-size: calc(10px * var(--dt-font-scale, 1)); font-style: italic; }
+
   /* the info popover. ONE clean ring + a plain lowercase `i` (no pre-circled
    * glyph — that read as a circle inside the CSS circle). The ring is a faint
    * theme-token border; the mark is monospace-consistent and centred. */
@@ -3978,4 +4050,74 @@
   .dt-logs-chip.dt-logs-t-bad { color: var(--v2-bad); }
   .dt-logs-chip.dt-logs-t-warn { color: var(--v2-caution); }
   .dt-logs-chip.dt-logs-t-faint { color: var(--v2-ink-faint); }
+}
+
+/* ===================  the trajectory strip + Traces view  ===================
+ * TRAJECTORY-UI.md §1/§2. Theme tokens ONLY (the six ROLE tokens + the secondary
+ * set) — no hardcoded hex, no new token. The strip's shared tone classes are the
+ * §3.5 table's vocabulary; the ONE structural highlight is --v2-accent. The
+ * budget ground tints --v2-caution via fill-opacity (there is no *-soft caution
+ * token, and the rule forbids inventing one). The sole new LAYOUT class is
+ * .dn-strip (the .dn-mtx precedent). */
+#variant-root[data-variant="T"] {
+  /* the strip figure — fit-to-width, aspect-locked (svg.js applyResponsive) */
+  .dn-strip { display: block; width: 100%; }
+  .dn-strip-hero { max-width: 100%; }
+  /* shared tone classes (fill for figure marks) */
+  .dn-strip-t-bad { fill: var(--v2-bad); }
+  .dn-strip-t-caution { fill: var(--v2-caution); }
+  .dn-strip-t-neutral { fill: var(--v2-ink-soft); }
+  .dn-strip-t-accent { fill: var(--v2-accent); }
+  /* budget ground: a faint frame + the caution-tinted fill (∝ ceiling fraction) */
+  .dn-strip-ground { fill: var(--v2-rule-soft); }
+  .dn-strip-budget { fill: var(--v2-caution); fill-opacity: 0.16; }
+  .dn-strip-budget-over { fill-opacity: 0.30; }
+  /* turn lane: user marks ride --v2-ink, agent marks --v2-ink-soft (neutral) */
+  .dn-strip-mark-user { fill: var(--v2-ink); }
+  .dn-strip-mark-agent { fill: var(--v2-ink-soft); }
+  .dn-strip-baseline { stroke: var(--v2-rule); stroke-width: 1; }
+  /* signal cluster: glyphs toned by kind, the count label faint */
+  .dn-strip-sig-glyph { font-family: var(--v2-mono); font-size: 12px; }
+  .dn-strip-sig-label { fill: var(--v2-ink-faint); font-family: var(--v2-mono); font-size: 9px; }
+  /* episode overlay: the bracket strokes its tone; the focused one rides accent */
+  .dn-strip-bracket { stroke: currentColor; stroke-width: 1.4; }
+  .dn-strip-ep { color: var(--v2-ink-soft); }
+  .dn-strip-ep.dn-strip-t-bad { color: var(--v2-bad); }
+  .dn-strip-ep.dn-strip-t-caution { color: var(--v2-caution); }
+  .dn-strip-ep.dn-strip-t-neutral { color: var(--v2-ink-soft); }
+  .dn-strip-ep.dn-strip-t-accent, .dn-strip-ep-focus { color: var(--v2-accent); }
+  .dn-strip-ep-glyph { fill: currentColor; font-family: var(--v2-mono); font-size: 11px; }
+  .dn-strip-ep[role="button"] { cursor: pointer; }
+
+  /* the Traces view */
+  .dn-trace-list .dn-trace-link { color: var(--v2-accent); text-decoration: none; }
+  .dn-trace-link:hover { text-decoration: underline; }
+  .dn-trace-cap { font-size: calc(11px * var(--dt-font-scale, 1)); margin: 4px 0 0; }
+  .dn-trace-rows { display: flex; flex-direction: column; gap: 10px; }
+  .dn-trace-row { padding: 10px 12px; }
+  .dn-trace-row-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+  .dn-trace-row-file { color: var(--v2-accent); text-decoration: none; font-size: calc(13px * var(--dt-font-scale, 1)); }
+  .dn-trace-row-meta { font-size: calc(11px * var(--dt-font-scale, 1)); }
+  .dn-trace-strip { padding: 10px 12px; }
+  /* the episode anchors */
+  .dn-trace-eps { display: flex; flex-direction: column; gap: 8px; }
+  .dn-trace-ep { border: 1px solid var(--v2-rule); border-left: 2px solid var(--v2-rule); border-radius: 4px;
+    padding: 7px 10px; background: var(--v2-panel); cursor: pointer; transition: border-color 0.12s, background 0.12s; }
+  .dn-trace-ep:hover { border-color: var(--v2-ink-faint); }
+  .dn-trace-ep-bad { border-left-color: var(--v2-bad); }
+  .dn-trace-ep-caution { border-left-color: var(--v2-caution); }
+  .dn-trace-ep-neutral { border-left-color: var(--v2-flat); }
+  .dn-trace-ep-on { border-color: var(--v2-accent); border-left-color: var(--v2-accent); }
+  .dn-trace-ep-head { display: flex; align-items: baseline; gap: 8px; }
+  .dn-trace-ep-glyph { font-family: var(--v2-mono); }
+  .dn-strip-t-bad.dn-trace-ep-glyph { color: var(--v2-bad); }
+  .dn-strip-t-caution.dn-trace-ep-glyph { color: var(--v2-caution); }
+  .dn-strip-t-neutral.dn-trace-ep-glyph { color: var(--v2-ink-soft); }
+  .dn-trace-ep-sum { font-size: calc(12.5px * var(--dt-font-scale, 1)); color: var(--v2-ink); }
+  .dn-trace-ep-sugs { font-size: calc(11px * var(--dt-font-scale, 1)); margin: 4px 0 0; }
+  .dn-trace-ep-sug { color: var(--v2-accent); text-decoration: none; }
+  .dn-trace-ep-sug:hover { text-decoration: underline; }
+  /* the reconstructed conversation — own-container scroll (dn-transcript) */
+  .dn-trace-convpanel { padding: 10px 12px; }
+  .dn-trace-conv-focus { outline: 1px solid var(--v2-accent); outline-offset: 2px; border-radius: 3px; }
 }

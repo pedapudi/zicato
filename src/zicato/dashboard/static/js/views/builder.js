@@ -20,6 +20,8 @@
 
 import { el, clearChildren, patchText } from '../core/dom.js';
 import { gatedSwap, section, empty, chip } from '../ui.js';
+import { admissionVisuals, vizFromFeedAdmission } from '../core/admission_viz.js';
+import * as D from '../data.js';
 import { infoPopover } from '../builder/popover.js';
 import { BuilderChat } from '../builder/chat.js';
 import { previewNodes } from '../builder/preview.js';
@@ -64,6 +66,19 @@ let _active = 'structure';
 let _busy = false;
 let _chat = null;
 let _suggestions = null;  // /builder/suggestions feed {epoch_id, reflection_id, suggestions[]}
+// The provenance-payload cache for FOREIGN-source suggestion cards (keyed by
+// suggestion_id): { state:'loading'|'done', payload }. The fetch is digest-gated
+// (kicked once per foreign suggestion, cache-guarded), folded into the center
+// digest so its arrival re-renders the card with the mini-strip + admission viz.
+const _provenance = {};
+
+// A test seam for the guarded trajectory-strip figure. When set, the injected
+// factory renders the mini-strip SYNCHRONOUSLY (so the "figure present" branch is
+// deterministic in the node suite); `undefined` FORCES the absent branch (the
+// textual fallback) even though the real figure ships in the merged tree; `null`
+// (the default) lets the real guarded dynamic import resolve `svg.trajectoryStrip`.
+let _stripFigureForTest = null;
+export function _setStripFigureForTest(fn) { _stripFigureForTest = fn; }
 
 // ── board-editor module state (B2) ────────────────────────────────────
 // Pinned across renders so the inline accordion survives a digest re-render:
@@ -343,6 +358,9 @@ function renderCenter(host) {
     // the suggestions inbox feed — static per mount, folded in so an SSE no-op
     // re-render is a digest no-op (never rebuilds the inbox DOM).
     sug: _suggestions,
+    // the foreign-source provenance payloads — folded so a card rebuilds ONCE
+    // when its provenance arrives (never on a no-op beat).
+    prov: _provenance,
   });
   gatedSwap(host, 'center|' + digest, () => {
     const nodes = [];
@@ -644,6 +662,12 @@ function suggestionRow(s) {
   const prov = s.provenance || {};
   const lineage = Array.isArray(prov.source_lineage_ids) ? prov.source_lineage_ids : [];
   const episodes = Array.isArray(prov.source_episodes) ? prov.source_episodes : [];
+  const foreign = prov.foreign_source;
+  const isForeign = foreign && typeof foreign === 'object';
+  // A foreign-source card's provenance payload (mini-strip + render-ready
+  // admission marks) is fetched lazily + cached; kick it once (cache-guarded).
+  const provPayload = isForeign ? ensureProvenance(s) : null;
+
   const head = el('div', { class: 'dn-bld-sughead' }, [
     chip('sug', s.suggestion_type || 'suggestion'),
     el('span', { class: 'dn-bld-sugsubject dn-mono', text: s.subject || '' }),
@@ -651,21 +675,36 @@ function suggestionRow(s) {
   ]);
   const meta = [
     el('div', { class: 'dn-bld-sugsummary', text: s.summary || '' }),
-    el('div', { class: 'dn-stat dn-bld-sugadmission', text: 'admission: ' + admissionText(s.admission) }),
-    el('div', { class: 'dn-faint dn-bld-sugprov', text:
-      'provenance: ' + (episodes.length ? episodes.length + ' episode(s)' : 'no episodes')
-      + (lineage.length ? ' · lineage ' + lineage.join(', ') : '')
-      + ' · target ' + (prov.target_slice || s.target_slice || '?') }),
   ];
+  // the longer rationale (the motivating episodes + any self-trace caveat) — a
+  // quiet caption under the summary. textContent-set (never innerHTML) so a
+  // synthesised rationale can never inject markup.
+  if (s.rationale) {
+    meta.push(el('div', { class: 'dn-faint dn-bld-sugrationale', text: s.rationale }));
+  }
+  // ── the ADMISSION VISUALS (TRAJECTORY-UI.md §2.2a) — the flip-rate whisker +
+  // discrimination pips + evidence tier, replacing the bare admission numbers.
+  // Render from the provenance reader's render-ready `admission_viz` when it has
+  // landed (foreign cards), else adapt the feed's engine admission shape. The
+  // honest TEXT line stays below as the accessible readout (numbers ride marks).
+  const viz = (provPayload && provPayload.admission_viz)
+    ? provPayload.admission_viz
+    : vizFromFeedAdmission(s.admission);
+  meta.push(el('div', { class: 'dn-bld-sugadmviz' }, [admissionVisuals(viz)]));
+  meta.push(el('div', { class: 'dn-stat dn-bld-sugadmission', text: 'admission: ' + admissionText(s.admission) }));
+  meta.push(el('div', { class: 'dn-faint dn-bld-sugprov', text:
+    'provenance: ' + (episodes.length ? episodes.length + ' episode(s)' : 'no episodes')
+    + (lineage.length ? ' · lineage ' + lineage.join(', ') : '')
+    + ' · target ' + (prov.target_slice || s.target_slice || '?') }));
   // Foreign-source provenance (TRAJECTORY-BOOTSTRAP.md §6): a bootstrap
   // suggestion came from a foreign agent trace, not a reign — name the trace
-  // file + sniffed dialect so the operator sees the on-ramp. A quiet caption
-  // beside the admission banner; part of the static feed render, so a digest
-  // no-op re-render never rebuilds it.
-  const foreign = prov.foreign_source;
-  if (foreign && typeof foreign === 'object') {
+  // file + sniffed dialect so the operator sees the on-ramp, plus the PROVENANCE
+  // MINI-STRIP (trace region → episode → this suggestion) and a link into the
+  // Traces detail.
+  if (isForeign) {
     meta.push(el('div', { class: 'dn-faint dn-bld-sugforeign', text:
       'foreign source: ' + (foreign.source_file || '?') + ' (' + (foreign.dialect || '?') + ')' }));
+    meta.push(provenanceStripBlock(s, foreign, provPayload));
   }
   const kids = [head, ...meta];
   const op = s.proposed_op;
@@ -686,7 +725,114 @@ function suggestionRow(s) {
   } else {
     kids.push(el('span', { class: 'dn-faint', text: 'recommendation only — no mechanical op (an authoring decision)' }));
   }
-  return el('li', { class: 'dn-bld-sugrow' }, kids);
+  // The roll-honesty note (TRAJECTORY-UI.md §2.2a): a bootstrap entry defaults to
+  // `train` (a regression suite) — keep it there unless the trace is genuinely
+  // foreign. Recommend-only: staging forks a draft the operator seals.
+  if (isForeign && (s.target_slice || '') === 'train') {
+    kids.push(el('div', { class: 'dn-faint dn-bld-sugroll', text:
+      'drafts default to train (a regression suite) — promote out of train only when the trace is genuinely foreign. Staging forks a draft you seal.' }));
+  }
+  return el('li', { class: 'dn-bld-sugrow dn-bld-sugcard' }, kids);
+}
+
+// Kick the FOREIGN-source provenance fetch once per suggestion (cache-guarded),
+// returning the payload if it has landed. The fetch is digest-gated: on arrival
+// it re-renders the center (folding `_provenance`), so the card rebuilds ONCE
+// with the mini-strip + render-ready admission marks. A transport failure /
+// found:false payload leaves the card on its textual fallback (never a raise).
+function ensureProvenance(s) {
+  const feed = _suggestions || {};
+  const rid = feed.reflection_id;
+  const sid = s && s.suggestion_id;
+  if (!rid || !sid) return null;
+  const cached = _provenance[sid];
+  if (cached) return cached.state === 'done' ? cached.payload : null;
+  _provenance[sid] = { state: 'loading', payload: null };
+  D.suggestionProvenance(rid, sid).then((payload) => {
+    _provenance[sid] = { state: 'done', payload: (payload && typeof payload === 'object') ? payload : null };
+    _renderCenter();
+  }).catch(() => {
+    _provenance[sid] = { state: 'done', payload: null };
+    _renderCenter();
+  });
+  return null;
+}
+
+// The provenance mini-strip block: a link into the Traces detail + a host that
+// carries the trajectory-strip figure (compact mode) once BOTH the payload has
+// landed AND the shared figure resolves. Absent figure → the textual fallback
+// stays (the guarded-import seam, evals_health precedent).
+function provenanceStripBlock(s, foreign, provPayload) {
+  const feed = _suggestions || {};
+  const traceId = foreign.trace_id || (provPayload && provPayload.subject) || '';
+  const wrap = el('div', { class: 'dn-bld-sugstripwrap' });
+  // the link into the Traces DETAIL route: #/e/<epoch>/traces/<reflection>/<trace>
+  // (the review caught the earlier singular `/trace/` segment falling through
+  // parseRoute's default to the epoch view).
+  if (feed.epoch_id && feed.reflection_id && traceId) {
+    wrap.appendChild(el('a', {
+      class: 'dn-bld-sugtracelink dn-mono',
+      href: '#/e/' + encodeURIComponent(feed.epoch_id) + '/traces/'
+        + encodeURIComponent(feed.reflection_id) + '/' + encodeURIComponent(traceId),
+      text: 'trace ' + traceId + ' →',
+      'aria-label': 'open the imported trace ' + traceId + ' in the Traces view',
+    }));
+  }
+  const host = el('div', { class: 'dn-bld-sugstrip' });
+  // the textual fallback — the provenance chain in words. Rendered first; the
+  // figure replaces it if the shared trajectoryStrip resolves.
+  const seg = provStripModel(provPayload);
+  host.appendChild(stripTextFallback(provPayload, seg));
+  if (seg) mountProvenanceStrip(host, seg);
+  wrap.appendChild(host);
+  return wrap;
+}
+
+// The motivating episode's segment strip-model from the provenance payload (the
+// focus episode's `segment_strip_model`, focus_episode_id already server-set).
+function provStripModel(provPayload) {
+  if (!provPayload || !Array.isArray(provPayload.episodes)) return null;
+  for (const ep of provPayload.episodes) {
+    if (ep && ep.segment_strip_model && typeof ep.segment_strip_model === 'object') {
+      return ep.segment_strip_model;
+    }
+  }
+  return null;
+}
+
+// The textual fallback for the mini-strip — the trace → episode chain in words,
+// honest while the payload loads / when the figure is absent (never a fake bar).
+function stripTextFallback(provPayload, seg) {
+  if (!seg) {
+    const loading = provPayload === null;
+    return el('div', { class: 'dn-faint dn-bld-sugstrip-fallback', text:
+      loading ? 'loading provenance…' : 'provenance strip unavailable' });
+  }
+  const turns = (seg.lane && seg.lane.turn_count) || 0;
+  const sigs = Array.isArray(seg.signals) ? seg.signals.length : 0;
+  const eps = Array.isArray(seg.episodes) ? seg.episodes.length : 0;
+  const budget = (seg.budget && seg.budget.label) ? seg.budget.label : '';
+  return el('div', { class: 'dn-faint dn-bld-sugstrip-fallback', text:
+    'provenance: ' + turns + ' turn(s) · ' + sigs + ' signal(s) · ' + eps + ' episode(s)'
+    + (budget ? ' · ' + budget : '') });
+}
+
+// Mount the shared trajectory-strip figure (compact mode) into a host that
+// already carries the textual fallback. GUARDED: a test-injected factory renders
+// synchronously; otherwise a dynamic import of `svg.trajectoryStrip` — absent in
+// this branch → the fallback stays (the seam composes at integration, WS-TRACES).
+function mountProvenanceStrip(hostEl, stripModel) {
+  const place = (fn) => {
+    if (typeof fn !== 'function') return false;
+    try {
+      const fig = fn(stripModel, { compact: true });
+      if (fig) { clearChildren(hostEl); hostEl.appendChild(fig); return true; }
+    } catch (e) { /* additive — keep the textual fallback */ }
+    return false;
+  };
+  if (_stripFigureForTest !== null) { place(_stripFigureForTest); return; }
+  import('../svg.js').then((mod) => { place(mod && mod.trajectoryStrip); })
+    .catch(() => { /* figure absent → the textual fallback stays */ });
 }
 
 // Honest one-line admission summary — mirrors suggestions.format_admission:
@@ -873,6 +1019,8 @@ export function _resetBuilderForTest() {
   _proposerDirs = []; _confirmReset = false; _undoNote = ''; _replacedNote = '';
   _config = null; _draft = null; _flash = '';
   _active = 'structure'; _busy = false; _suggestions = null;
+  for (const k of Object.keys(_provenance)) delete _provenance[k];
+  _stripFigureForTest = null;
 }
 
 function openEdit(entry) {

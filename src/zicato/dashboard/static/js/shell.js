@@ -54,13 +54,14 @@ import * as boards from './views/boards.js';
 import * as board from './views/board.js';
 import * as mutations from './views/mutations.js';
 import * as instrument from './views/instrument.js';
+import * as traces from './views/traces.js';
 import * as evals from './views/evals.js';
 import * as publication from './views/publication.js';
 import * as builder from './views/builder.js';
 import * as logs from './views/logs.js';
 import * as settings from './views/settings.js';
 
-const RENDERERS = { home, epoch, gens, candidate, diff, boards, board, mutations, instrument, evals, publication, builder, logs, settings };
+const RENDERERS = { home, epoch, gens, candidate, diff, boards, board, mutations, instrument, traces, evals, publication, builder, logs, settings };
 
 export const THEMES = COLOR_THEMES.map((t) => t[0]);
 export const TYPEFACES = TYPE_THEMES.map((t) => t[0]);
