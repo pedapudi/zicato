@@ -3979,3 +3979,73 @@
   .dt-logs-chip.dt-logs-t-warn { color: var(--v2-caution); }
   .dt-logs-chip.dt-logs-t-faint { color: var(--v2-ink-faint); }
 }
+
+/* ===================  the trajectory strip + Traces view  ===================
+ * TRAJECTORY-UI.md §1/§2. Theme tokens ONLY (the six ROLE tokens + the secondary
+ * set) — no hardcoded hex, no new token. The strip's shared tone classes are the
+ * §3.5 table's vocabulary; the ONE structural highlight is --v2-accent. The
+ * budget ground tints --v2-caution via fill-opacity (there is no *-soft caution
+ * token, and the rule forbids inventing one). The sole new LAYOUT class is
+ * .dn-strip (the .dn-mtx precedent). */
+#variant-root[data-variant="T"] {
+  /* the strip figure — fit-to-width, aspect-locked (svg.js applyResponsive) */
+  .dn-strip { display: block; width: 100%; }
+  .dn-strip-hero { max-width: 100%; }
+  /* shared tone classes (fill for figure marks) */
+  .dn-strip-t-bad { fill: var(--v2-bad); }
+  .dn-strip-t-caution { fill: var(--v2-caution); }
+  .dn-strip-t-neutral { fill: var(--v2-ink-soft); }
+  .dn-strip-t-accent { fill: var(--v2-accent); }
+  /* budget ground: a faint frame + the caution-tinted fill (∝ ceiling fraction) */
+  .dn-strip-ground { fill: var(--v2-rule-soft); }
+  .dn-strip-budget { fill: var(--v2-caution); fill-opacity: 0.16; }
+  .dn-strip-budget-over { fill-opacity: 0.30; }
+  /* turn lane: user marks ride --v2-ink, agent marks --v2-ink-soft (neutral) */
+  .dn-strip-mark-user { fill: var(--v2-ink); }
+  .dn-strip-mark-agent { fill: var(--v2-ink-soft); }
+  .dn-strip-baseline { stroke: var(--v2-rule); stroke-width: 1; }
+  /* signal cluster: glyphs toned by kind, the count label faint */
+  .dn-strip-sig-glyph { font-family: var(--v2-mono); font-size: 12px; }
+  .dn-strip-sig-label { fill: var(--v2-ink-faint); font-family: var(--v2-mono); font-size: 9px; }
+  /* episode overlay: the bracket strokes its tone; the focused one rides accent */
+  .dn-strip-bracket { stroke: currentColor; stroke-width: 1.4; }
+  .dn-strip-ep { color: var(--v2-ink-soft); }
+  .dn-strip-ep.dn-strip-t-bad { color: var(--v2-bad); }
+  .dn-strip-ep.dn-strip-t-caution { color: var(--v2-caution); }
+  .dn-strip-ep.dn-strip-t-neutral { color: var(--v2-ink-soft); }
+  .dn-strip-ep.dn-strip-t-accent, .dn-strip-ep-focus { color: var(--v2-accent); }
+  .dn-strip-ep-glyph { fill: currentColor; font-family: var(--v2-mono); font-size: 11px; }
+  .dn-strip-ep[role="button"] { cursor: pointer; }
+
+  /* the Traces view */
+  .dn-trace-list .dn-trace-link { color: var(--v2-accent); text-decoration: none; }
+  .dn-trace-link:hover { text-decoration: underline; }
+  .dn-trace-cap { font-size: calc(11px * var(--dt-font-scale, 1)); margin: 4px 0 0; }
+  .dn-trace-rows { display: flex; flex-direction: column; gap: 10px; }
+  .dn-trace-row { padding: 10px 12px; }
+  .dn-trace-row-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+  .dn-trace-row-file { color: var(--v2-accent); text-decoration: none; font-size: calc(13px * var(--dt-font-scale, 1)); }
+  .dn-trace-row-meta { font-size: calc(11px * var(--dt-font-scale, 1)); }
+  .dn-trace-strip { padding: 10px 12px; }
+  /* the episode anchors */
+  .dn-trace-eps { display: flex; flex-direction: column; gap: 8px; }
+  .dn-trace-ep { border: 1px solid var(--v2-rule); border-left: 2px solid var(--v2-rule); border-radius: 4px;
+    padding: 7px 10px; background: var(--v2-panel); cursor: pointer; transition: border-color 0.12s, background 0.12s; }
+  .dn-trace-ep:hover { border-color: var(--v2-ink-faint); }
+  .dn-trace-ep-bad { border-left-color: var(--v2-bad); }
+  .dn-trace-ep-caution { border-left-color: var(--v2-caution); }
+  .dn-trace-ep-neutral { border-left-color: var(--v2-flat); }
+  .dn-trace-ep-on { border-color: var(--v2-accent); border-left-color: var(--v2-accent); }
+  .dn-trace-ep-head { display: flex; align-items: baseline; gap: 8px; }
+  .dn-trace-ep-glyph { font-family: var(--v2-mono); }
+  .dn-strip-t-bad.dn-trace-ep-glyph { color: var(--v2-bad); }
+  .dn-strip-t-caution.dn-trace-ep-glyph { color: var(--v2-caution); }
+  .dn-strip-t-neutral.dn-trace-ep-glyph { color: var(--v2-ink-soft); }
+  .dn-trace-ep-sum { font-size: calc(12.5px * var(--dt-font-scale, 1)); color: var(--v2-ink); }
+  .dn-trace-ep-sugs { font-size: calc(11px * var(--dt-font-scale, 1)); margin: 4px 0 0; }
+  .dn-trace-ep-sug { color: var(--v2-accent); text-decoration: none; }
+  .dn-trace-ep-sug:hover { text-decoration: underline; }
+  /* the reconstructed conversation — own-container scroll (dn-transcript) */
+  .dn-trace-convpanel { padding: 10px 12px; }
+  .dn-trace-conv-focus { outline: 1px solid var(--v2-accent); outline-offset: 2px; border-radius: 3px; }
+}

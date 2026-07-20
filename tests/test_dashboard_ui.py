@@ -637,7 +637,30 @@ def test_bundle_under_size_envelope(
     # staging forks a draft the operator seals; back-compat: an empty / cold feed
     # renders the honest empty state, every other view byte-identical). The
     # envelope is raised to 1.46 MB to cover it with headroom.
-    assert total < 1_460_000, f"bundle is {total} bytes, exceeds 1_460_000 envelope"
+    #
+    # The TRAJECTORY-BOOTSTRAP ENGINE (PR #104) then lands its foreign-trace
+    # import + miner + synthesis tier + inbox surfacing; its frontend touches
+    # (the bootstrap suggestion caption on the inbox row) rode the existing
+    # builder.js under the prior line, but the accumulated module growth on the
+    # branch drifted the served total to ~1.469 MB — a few KB above the 1.46 MB
+    # line without its own recorded raise. The TRAJECTORY-UI TRACES surface
+    # (WS-TRACES, TRAJECTORY-UI.md §2.1) then adds the real new bytes: the shared
+    # `svg.trajectoryStrip` figure + its digest (the imported-trace timeline: turn
+    # lane, unpositioned signal cluster, shaded budget ground, bracketed episode
+    # overlays — reused at list / hero / provenance-mini size, ~7 KB), the new
+    # top-level views/traces.js (the reflection-picker landing, the trace list of
+    # per-trace strips, and the trace detail = full strip over the reconstructed
+    # conversation reusing board.js's turn vocabulary, with episode anchors linking
+    # strip spans ↔ conversation ↔ the builder inbox, ~17 KB), and the
+    # router/shell/tree/data wiring for the `#/e/<e>/traces` route (~3 KB). Its CSS
+    # rides console.css (not counted here). Measured bundle 1,488,451 bytes. It is
+    # a read-only surface (recommend-only: every episode-anchor terminates at a
+    # builder draft the operator seals; back-compat: a reflection with no imported
+    # traces / a trace with no episodes renders the honest empty state, every other
+    # view byte-identical), so the house rationale — read-only surfaces that pay
+    # for themselves in operator time — covers it. The envelope is raised to
+    # 1.50 MB to cover the drift + the new surface with headroom.
+    assert total < 1_500_000, f"bundle is {total} bytes, exceeds 1_500_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

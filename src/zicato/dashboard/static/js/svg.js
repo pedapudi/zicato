@@ -844,6 +844,195 @@ export function sparkbar(opts) {
   return el('div', { class: 'dn-sparkbar-wrap' }, [svg, glyph]);
 }
 
+// ---- trajectory strip (imported foreign-trace timeline) -------------
+//
+// The ATOM of the trajectory-bootstrap UI (TRAJECTORY-UI.md §1): ONE compact
+// horizontal figure per foreign trace — the reconstructed conversation as a turn
+// lane, the trace's adverse signals as a labelled tick cluster, the cost budget
+// as a shaded ground, and each mined episode as a bracketed overlay. It draws
+// STRAIGHT from the server-derived strip-model (§3.4) — every position/size is a
+// normalized [0,1] float the reader pre-computed; this figure never derives
+// domain math (DQ1). SHARED: the Traces view uses it at list + hero size, and the
+// suggestion provenance mini-strip (WS-SUGVIZ) calls it at `compact` card size.
+//
+// HONESTY (load-bearing, §1.1): the reduced DialectSignals carries aggregate
+// COUNTS, not per-event positions, so signal ticks render as a labelled cluster
+// evenly distributed by index in a DEDICATED lane — they do NOT claim a real
+// timeline moment. Each carries `positioned:false` from the model and is tagged
+// `data-positioned="false"` here, so a future positioned reducer is a deliberate
+// change on both sides, never a silent lie.
+//
+// Colour is ONLY the design-language role tokens (§1.2): user/agent turns ride
+// the neutral ink (never good/bad — a turn is not a verdict), signals/episodes
+// ride bad/caution/neutral by the §3.5 table, and the ONE focused episode rides
+// --v2-accent (the sole structural highlight). No new colour vocabulary.
+const STRIP_DIMS = {
+  full:    { W: 680, pad: 8, epH: 22, laneH: 46, sigH: 30, gap: 1.0 },
+  compact: { W: 680, pad: 5, epH: 13, laneH: 26, sigH: 18, gap: 0.6 },
+};
+
+// signal / episode tone → the shared strip tone class (the §3.5 table's tokens).
+function stripToneClass(tone) {
+  const t = String(tone == null ? 'neutral' : tone);
+  if (t === 'bad') return 'dn-strip-t-bad';
+  if (t === 'caution') return 'dn-strip-t-caution';
+  if (t === 'accent') return 'dn-strip-t-accent';
+  return 'dn-strip-t-neutral';
+}
+
+// The stable content digest for the strip figure (the gating input the Traces
+// view + the sibling provenance card fold into their own digests). Timestamp-
+// free (the strip-model carries none), so a re-served identical model yields a
+// byte-identical digest and the gated host writes ZERO DOM (the no-flash rule).
+// `onFocusEpisode` is a function and is dropped by digestOpts (the load-bearing
+// rule) — only `compact` + the resolved focus id perturb the digest.
+export function trajectoryStripDigest(model, opts) {
+  const m = (model && typeof model === 'object') ? model : {};
+  const o = opts || {};
+  const marks = (m.lane && Array.isArray(m.lane.marks)) ? m.lane.marks : [];
+  const sigs = Array.isArray(m.signals) ? m.signals : [];
+  const eps = Array.isArray(m.episodes) ? m.episodes : [];
+  const b = m.budget || {};
+  return digestOpts({
+    trace: m.trace_id || null,
+    compact: !!o.compact,
+    focus: o.focusEpisodeId != null ? o.focusEpisodeId : (m.focus_episode_id || null),
+    lane: marks.map((k) => [k.i, k.role, k.x0, k.x1, k.size]),
+    signals: sigs.map((s) => [s.kind, s.tone, s.x, s.count, s.positioned === false ? 0 : 1, s.label || '']),
+    budget: [b.fill, b.over ? 1 : 0, b.shaded ? 1 : 0, b.label || ''],
+    episodes: eps.map((e) => [e.episode_id, e.kind, e.tone, e.x0, e.x1, e.anchor, (e.suggestion_ids || []).join(',')]),
+  });
+}
+
+// Draw the §3.4 strip-model EXACTLY as served. `opts`:
+//   * compact         — reduced height/detail (the list thumbnail + the sibling
+//                       provenance mini-strip size); signals shed their count
+//                       labels, brackets shrink.
+//   * focusEpisodeId  — override the model's `focus_episode_id` (the sole accent
+//                       highlight). Falls back to the model's own field.
+//   * onFocusEpisode(episodeId, suggestionIds) — click/keyboard handler on each
+//                       episode overlay (the provenance chain: region → episode →
+//                       suggestion). Omitted ⇒ the overlays are inert display.
+//   * responsive      — aspect-locked fit-to-width (default ON, the house rule);
+//                       set false for a fixed, letterboxed embed.
+//   * emptyLabel      — the cold-state label when the model has nothing to draw.
+export function trajectoryStrip(model, opts) {
+  const o = opts || {};
+  const m = (model && typeof model === 'object') ? model : {};
+  const dims = o.compact ? STRIP_DIMS.compact : STRIP_DIMS.full;
+  const { W, pad } = dims;
+  const H = pad + dims.epH + dims.laneH + dims.sigH + pad;
+  const innerW = W - 2 * pad;
+  const svgAttrs = {
+    class: 'dn-strip' + (o.compact ? ' dn-strip-compact' : ''),
+    width: '100%', height: H, viewBox: `0 0 ${W} ${H}`,
+    preserveAspectRatio: 'xMidYMid meet', role: 'img',
+  };
+  // aspect-locked fit-to-width (default): the CSS aspect-ratio == the viewBox
+  // aspect, so the 'none' scale applyResponsive pins is UNIFORM (no shear on the
+  // glyph text), and the height tracks the pane width up to the .dn-strip-hero cap.
+  applyResponsive(svgAttrs, { responsive: o.responsive !== false }, W, H, 'dn-strip-hero');
+  const svg = svgEl('svg', svgAttrs);
+
+  const marks = (m.lane && Array.isArray(m.lane.marks)) ? m.lane.marks : [];
+  const signals = Array.isArray(m.signals) ? m.signals : [];
+  const episodes = Array.isArray(m.episodes) ? m.episodes : [];
+  if (!marks.length && !signals.length && !episodes.length) {
+    return emptyState(svg, W, H, o.emptyLabel || 'no trace');
+  }
+
+  const yLaneTop = pad + dims.epH;
+  const yBase = yLaneTop + dims.laneH;          // the turn-mark baseline
+  const ySigTop = yBase;
+
+  // ── the budget GROUND — a shaded region behind the lane whose fill ∝ the
+  // fraction of the cost ceiling the trace reached; a crossed ceiling shades it
+  // fuller and flags `over`. A cost budget you can SEE, not read. ────────────
+  const b = m.budget || {};
+  svg.appendChild(svgEl('rect', { x: pad, y: yLaneTop, width: innerW, height: dims.laneH, class: 'dn-strip-ground' }));
+  if (b.shaded && isNum(b.fill) && b.fill > 0) {
+    const frac = Math.max(0, Math.min(1, b.fill));
+    const bg = hov(svgEl('rect', {
+      x: pad, y: yLaneTop, width: Math.max(1, frac * innerW), height: dims.laneH,
+      class: 'dn-strip-budget' + (b.over ? ' dn-strip-budget-over' : ''),
+      'data-fill': frac.toFixed(4), 'data-over': b.over ? '1' : '0',
+    }), 'budget · ' + (b.label || fmt(frac, 2)) + (b.over ? ' · crossed a ceiling' : ''));
+    svg.appendChild(bg);
+  }
+
+  // ── the TURN lane — the reconstructed conversation as alternating marks, each
+  // mark's horizontal extent ∝ its text length, height ∝ chars/max_chars. User
+  // marks ride --v2-ink, agent marks --v2-ink-soft (the neutral ground, never a
+  // verdict). The sparkbar staircase convention applied to turns. ────────────
+  const maxH = dims.laneH - 3;
+  for (const k of marks) {
+    const x0 = pad + (isNum(k.x0) ? k.x0 : 0) * innerW;
+    const x1 = pad + (isNum(k.x1) ? k.x1 : 0) * innerW;
+    const w = Math.max(1, x1 - x0 - dims.gap);
+    const h = Math.max(2, (isNum(k.size) ? k.size : 0) * maxH);
+    const role = k.role === 'user' ? 'user' : 'agent';
+    svg.appendChild(hov(svgEl('rect', {
+      x: x0, y: yBase - h, width: w, height: h,
+      class: 'dn-strip-mark dn-strip-mark-' + role, 'data-role': role, 'data-i': String(k.i),
+    }), role + ' turn' + (isNum(k.chars) ? ' · ' + k.chars + ' chars' : '')));
+  }
+  svg.appendChild(svgEl('line', { x1: pad, x2: W - pad, y1: yBase, y2: yBase, class: 'dn-strip-baseline' }));
+
+  // ── the SIGNAL lane — the trace's adverse signals as a labelled CLUSTER,
+  // evenly distributed by index (positioned:false ⇒ NOT a real timeline moment,
+  // the honesty rule). The count rides the tick's label. ─────────────────────
+  const sigGroup = svgEl('g', { class: 'dn-strip-signals', 'data-positioned': 'false' });
+  const slot = signals.length ? innerW / signals.length : innerW;
+  for (let i = 0; i < signals.length; i++) {
+    const s = signals[i];
+    const cx = pad + (isNum(s.x) ? s.x : (i + 1) / (signals.length + 1)) * innerW;
+    const g = svgEl('g', {
+      class: 'dn-strip-signal ' + stripToneClass(s.tone),
+      'data-kind': s.kind || '', 'data-tone': s.tone || 'neutral',
+      'data-positioned': 'false', 'data-count': isNum(s.count) ? String(s.count) : '',
+    });
+    const glyph = svgEl('text', { x: cx, y: ySigTop + (o.compact ? 11 : 13), class: 'dn-strip-sig-glyph', 'text-anchor': 'middle' });
+    glyph.textContent = s.glyph || '•';
+    g.appendChild(glyph);
+    if (!o.compact) {
+      g.appendChild(fitInto({ text: s.label || (isNum(s.count) ? String(s.count) : ''), x: cx, y: ySigTop + dims.sigH - 3, anchor: 'middle', maxPx: slot * 0.96, viewW: W, pad, fontPx: 9, cls: 'dn-strip-sig-label' }));
+    }
+    hov(g, s.label || s.kind || 'signal');
+    sigGroup.appendChild(g);
+  }
+  svg.appendChild(sigGroup);
+
+  // ── the EPISODE overlay — each mined episode a bracketed span with its kind
+  // glyph; the focused episode rides --v2-accent (the one structural highlight).
+  // Clicking focuses its suggestion (the provenance chain made visible). ──────
+  const focusId = o.focusEpisodeId != null ? o.focusEpisodeId : (m.focus_episode_id != null ? m.focus_episode_id : null);
+  for (const e of episodes) {
+    const x0 = pad + (isNum(e.x0) ? e.x0 : 0) * innerW;
+    const x1 = pad + (isNum(e.x1) ? e.x1 : 1) * innerW;
+    const focused = focusId != null && String(e.episode_id) === String(focusId);
+    const sugs = Array.isArray(e.suggestion_ids) ? e.suggestion_ids : [];
+    const g = svgEl('g', {
+      class: 'dn-strip-ep ' + stripToneClass(focused ? 'accent' : e.tone) + (focused ? ' dn-strip-ep-focus' : ''),
+      'data-episode-id': e.episode_id || '', 'data-anchor': e.anchor || '', 'data-kind': e.kind || '',
+      'data-suggestion-ids': sugs.join(','), tabindex: o.onFocusEpisode ? '0' : null,
+      role: o.onFocusEpisode ? 'button' : null,
+    });
+    const by = yLaneTop - 3;                     // the bracket baseline, just above the lane
+    const tick = o.compact ? 4 : 6;
+    g.appendChild(svgEl('path', {
+      d: `M${x0.toFixed(1)} ${(by - tick).toFixed(1)} L${x0.toFixed(1)} ${by.toFixed(1)} L${x1.toFixed(1)} ${by.toFixed(1)} L${x1.toFixed(1)} ${(by - tick).toFixed(1)}`,
+      class: 'dn-strip-bracket', fill: 'none',
+    }));
+    const gl = svgEl('text', { x: (x0 + x1) / 2, y: pad + (o.compact ? 9 : 12), class: 'dn-strip-ep-glyph', 'text-anchor': 'middle' });
+    gl.textContent = e.glyph || '○';
+    g.appendChild(gl);
+    hov(g, (e.signal_kind || e.kind || 'episode') + (sugs.length ? ' · ' + sugs.length + ' suggestion' + (sugs.length > 1 ? 's' : '') : ' · no suggestion'));
+    clickable(g, o.onFocusEpisode && (() => o.onFocusEpisode(e.episode_id, sugs)));
+    svg.appendChild(g);
+  }
+  return svg;
+}
+
 // A row of pass/fail/timeout glyphs — PROPORTIONAL (true circles, no oval
 // distortion). The round status marks must NOT inherit the trellis cell's
 // non-uniform width stretch, so each glyph is a FIXED 1:1-aspect SVG laid out

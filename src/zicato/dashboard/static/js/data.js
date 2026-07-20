@@ -402,6 +402,28 @@ export function reflectionXray(reflectionId, judge, runRef) {
   return cachedJson(`/api/reflection/${enc(reflectionId)}/xray/${enc(judge)}/${enc(runRef)}`);
 }
 
+// ---- Traces surface (imported foreign trajectories · TRAJECTORY-UI.md §3) ----
+//
+// The persisted `imported/*.json` + `suggestions.json` under a reflection are
+// immutable once written, so these reads are the same cacheable, reflection-
+// scoped class as the summary/scorecards/x-ray above (the live bust deliberately
+// spares `/api/reflection/` — data.js:95).
+//
+// The trace LIST for a reflection: per-trace strip-model + source/dialect/counts.
+export function traces(reflectionId) {
+  return cachedJson(`/api/reflection/${enc(reflectionId)}/traces`);
+}
+// ONE imported trace: the full strip-model + the reconstructed conversation turns
+// + the per-episode span/anchor/linked-suggestion chain.
+export function trace(reflectionId, traceId) {
+  return cachedJson(`/api/reflection/${enc(reflectionId)}/trace/${enc(traceId)}`);
+}
+// ONE suggestion's provenance chain: suggestion → episodes → trace segment strip,
+// plus the render-ready admission marks (consumed by WS-SUGVIZ's inbox card).
+export function suggestionProvenance(reflectionId, suggestionId) {
+  return cachedJson(`/api/reflection/${enc(reflectionId)}/suggestion/${enc(suggestionId)}/provenance`);
+}
+
 // The per-entry EVAL DOSSIER (EVAL-VIEW.md §3.2) — the board-as-instrument lens
 // for ONE board entry across every candidate: its A/A flip rate, discrimination,
 // runtime cost, the champion-spine trajectory, first-passed / regressed
