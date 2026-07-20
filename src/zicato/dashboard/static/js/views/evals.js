@@ -34,6 +34,7 @@ import * as D from '../data.js';
 import { section, empty, gatedSwap, verdictPill } from '../ui.js';
 import { CROWN, fmt } from '../svg.js';
 import { harmonografMini, harmonografIsLive } from '../core/harmonograf.js';
+import { flipWhisker, discriminationPips, vizFromFeedAdmission } from '../core/admission_viz.js';
 
 // ── module-level filter state ─────────────────────────────────────────
 // Persists across the shell's SSE-driven re-dispatch so a steady beat keeps the
@@ -46,6 +47,25 @@ let _failuresOnly = false;   // rows with at least one failing cell
 // per-row flip badge; a noisy channel with no cross-column change is excluded.
 let _flipsOnly = false;
 let _holdoutOnly = false;    // rows in the holdout slice
+
+// The suggestions feed for the GHOST ROWS, cached per epoch (fetched once, off
+// the hot path; on arrival it re-renders so the ghosts appear). null → no feed
+// (a pre-feature / read-only backend, or none fetched yet) → zero ghost rows.
+let _sugFeed = null;
+let _sugFeedEpoch = undefined;   // the epochId `_sugFeed` was fetched for
+function ensureSugFeed(host, ctx, epochId) {
+  if (_sugFeedEpoch === epochId) return;   // already fetched / fetching for this epoch
+  _sugFeedEpoch = epochId;
+  _sugFeed = null;
+  D.builderSuggestions().then((feed) => {
+    _sugFeed = feed;
+    if (host) render(host, ctx, { epochId });   // digest-gated: no ghosts → no-op
+  }).catch(() => { _sugFeed = null; });
+}
+// A test seam: seed the feed synchronously so a ghost-row render is deterministic
+// (no fetch race), and reset it between cases.
+export function _setGhostFeedForTest(feed, epochId) { _sugFeed = feed; _sugFeedEpoch = epochId; }
+export function _resetGhostFeedForTest() { _sugFeed = null; _sugFeedEpoch = undefined; }
 
 // A short display id for a generation column (the ids are already short —
 // 'v0' / 'gen-0042' — so this only guards a pathological long id).
@@ -104,13 +124,69 @@ function rowHasFlip(row) {
   return false;
 }
 
+// ── GHOST ROWS (TRAJECTORY-UI.md §2.2b — the "board being created") ────
+// The suggestions feed drafts board entries that do NOT exist on the board yet.
+// Each such pending entry renders as a ghost row appended below the real rows,
+// carrying its admission visuals (never a scored verdict). This joins the eval
+// matrix with the SAME `/builder/suggestions` feed the inbox reads, client-side:
+// a board_entry suggestion whose drafted id is not already a matrix row, scoped
+// to THIS epoch (the feed carries its epoch_id). The no-ghost case adds nothing
+// (byte-identical to the pre-feature matrix, digest + DOM).
+function ghostEntriesFrom(feed, entries, epochId) {
+  if (!feed || typeof feed !== 'object') return [];
+  // scope to this epoch — never surface another epoch's drafts on this matrix.
+  if (epochId != null && feed.epoch_id != null && String(feed.epoch_id) !== String(epochId)) return [];
+  const items = Array.isArray(feed.suggestions) ? feed.suggestions : [];
+  const have = new Set((entries || []).map((e) => String(e.entry_id)));
+  const ghosts = [];
+  for (const s of items) {
+    if (!s || s.artifact_kind !== 'board_entry') continue;
+    const id = ghostEntryId(s);
+    if (!id || have.has(String(id))) continue;
+    have.add(String(id));   // dedupe repeated drafts of the same id
+    ghosts.push({
+      entry_id: id,
+      suggestion_id: s.suggestion_id || '',
+      target_slice: s.target_slice || 'train',
+      viz: vizFromFeedAdmission(s.admission),
+      href_builder: true,
+    });
+  }
+  return ghosts;
+}
+
+// The drafted entry id for a board_entry suggestion — the draft artifact's id,
+// falling back to the proposed_op's entry args (the shape the inbox stages).
+function ghostEntryId(s) {
+  const art = s.draft_artifact;
+  if (art && typeof art === 'object' && art.id) return art.id;
+  const op = s.proposed_op;
+  if (op && op.args && op.args.entry && op.args.entry.id) return op.args.entry.id;
+  return null;
+}
+
+// The ghost component for the digest — folded ONLY when ghosts exist, so the
+// no-ghost digest is byte-identical to the pre-feature string (the pin).
+function ghostDigestPart(ghosts) {
+  return ghosts.map((g) => {
+    const v = g.viz || {};
+    const f = v.flip || {};
+    const d = v.discrimination || {};
+    return [g.entry_id, v.evidence_tier,
+      f.measured ? Math.round((f.rate || 0) * 100) : 'u', f.over_ceiling ? 1 : 0,
+      d.measured ? [d.separated, d.pairs] : 'u'];
+  });
+}
+
 // A stable content digest — the served fields the render reads, the filter
 // state, and the harmonograf liveness (the deep-link appears/disappears with
 // it). NO timestamps, NO raw floats beyond a rounded drift, so a no-op beat is
-// byte-identical.
-function digestOf(matrix, live) {
-  if (!matrix) return 'evals|null|' + fbits();
-  if (!matrix.found) return 'evals|notfound|' + (matrix.epoch_id || '') + '|' + fbits();
+// byte-identical. The ghost feed is appended ONLY when present (byte-identical
+// no-ghost pin).
+function digestOf(matrix, live, ghosts) {
+  const gp = (ghosts && ghosts.length) ? '|g' + JSON.stringify(ghostDigestPart(ghosts)) : '';
+  if (!matrix) return 'evals|null|' + fbits() + gp;
+  if (!matrix.found) return 'evals|notfound|' + (matrix.epoch_id || '') + '|' + fbits() + gp;
   // promoted is TRISTATE (true / false / null) — fold a 3-state token so a
   // never-raced null candidate is DISTINCT from a rejected false one (the
   // Class-B bug: null must never collapse into false).
@@ -127,7 +203,7 @@ function digestOf(matrix, live) {
     ep: matrix.epoch_id, c: cands, r: rows, x: cells,
     cal: [cal.measured ? 1 : 0, cal.runs || 0, Math.round((cal.max_abs_delta || 0) * 1000)],
     live: live ? 1 : 0, f: fbits(),
-  });
+  }) + gp;
 }
 function fbits() {
   return (_failuresOnly ? 'F' : '-') + (_flipsOnly ? 'L' : '-') + (_holdoutOnly ? 'H' : '-');
@@ -138,10 +214,18 @@ export async function render(host, ctx, params, _route) {
   const epochId = (params && params.epochId) || null;
   const matrix = epochId ? await D.evalMatrix(epochId) : null;
   const live = harmonografIsLive();
-  gatedSwap(host, digestOf(matrix, live), () => build(host, ctx, matrix, epochId, live));
+  // the suggestions feed powers the GHOST ROWS. It is fetched ONCE per epoch into
+  // a module cache (never awaited in the hot path — the gated render keeps the
+  // matrix-only microtask cadence) and re-renders once when it lands; a
+  // pre-feature / read-only backend degrades to null, so no ghosts render and
+  // the matrix is byte-identical to before the feature.
+  ensureSugFeed(host, ctx, epochId);
+  const entries = (matrix && Array.isArray(matrix.entries)) ? matrix.entries : [];
+  const ghosts = ghostEntriesFrom(_sugFeed, entries, epochId);
+  gatedSwap(host, digestOf(matrix, live, ghosts), () => build(host, ctx, matrix, epochId, live, ghosts));
 }
 
-function build(host, ctx, matrix, epochId, live) {
+function build(host, ctx, matrix, epochId, live, ghosts) {
   const nodes = [];
   nodes.push(el('div', { class: 'dt-pagehead' }, [
     el('h1', { class: 'dn-h1', text: 'Evals' }),
@@ -191,7 +275,7 @@ function build(host, ctx, matrix, epochId, live) {
   nodes.push(buildToolbar(host, ctx, matrix));
 
   // ── the matrix ────────────────────────────────────────────────────────
-  nodes.push(buildMatrix(ctx, epochId, candidates, entries, cells, live));
+  nodes.push(buildMatrix(ctx, epochId, candidates, entries, cells, live, ghosts));
 
   // the health SECTION (ranked lists) sits below the matrix.
   nodes.push(sectionHost);
@@ -235,7 +319,7 @@ function buildToolbar(host, ctx, matrix) {
   return toolbar;
 }
 
-function buildMatrix(ctx, epochId, candidates, entries, cells, live) {
+function buildMatrix(ctx, epochId, candidates, entries, cells, live, ghosts) {
   const table = el('table', { class: 'dn-mtx dn-evalmtx' });
 
   // ── column group header (round_index grouped) + the candidate header ──
@@ -264,6 +348,23 @@ function buildMatrix(ctx, epochId, candidates, entries, cells, live) {
     });
     tbody.appendChild(tr);
   });
+
+  // ── GHOST ROWS — the board being created (TRAJECTORY-UI.md §2.2b) ──────
+  // Suggested board entries not yet on the board, appended below the real rows,
+  // pending-styled + visually UNAMBIGUOUS (§4 honesty): a ghost row never reads
+  // as a scored channel. Unaffected by the scored-row filters (they are drafts,
+  // not measurements). When there are no ghosts, NOTHING is appended (the matrix
+  // is byte-identical to before the feature).
+  if (ghosts && ghosts.length) {
+    const width = candidates.length + 1;
+    const cap = el('tr', { class: 'dn-evalmtx-ghosthead' });
+    cap.appendChild(el('th', {
+      class: 'dn-evalmtx-ghostcaption dn-faint', colspan: String(width), scope: 'colgroup',
+      text: 'proposed entries — drafts, not scored (default to train). Stage in the builder to seal.',
+    }));
+    tbody.appendChild(cap);
+    for (const g of ghosts) tbody.appendChild(ghostRow(ctx, g, candidates.length));
+  }
   table.appendChild(tbody);
 
   const wrap = el('div', { class: 'dn-evalmtx-wrap' });
@@ -273,6 +374,63 @@ function buildMatrix(ctx, epochId, candidates, entries, cells, live) {
   }
   wrap.appendChild(el('p', { class: 'dn-faint dn-evalmtx-legend', text: 'row = board entry · column = candidate · ' + CROWN.current + ' = champion spine · faint cell = single-sample (unreplicated) · click a cell for its transcript' }));
   return section('Matrix', wrap);
+}
+
+// One GHOST ROW for a suggested (not-yet-on-the-board) entry. Pending-styled +
+// dashed/faint so it never reads as measured tournament data: the entry id + a
+// "suggested" marker + the flip-rate whisker in the row header (where the flip
+// badge sits), then a single spanning cell carrying the discrimination pips +
+// evidence tier (where cells would be — nothing ran it, so there is NO verdict)
+// + the apply affordance. No scored glyphs, no drift numbers.
+function ghostRow(ctx, g, candCount) {
+  const viz = g.viz || vizFromFeedAdmission(null);
+  const tr = el('tr', {
+    class: 'dn-mtx-row dn-evalmtx-row dn-evalmtx-ghost',
+    'data-ghost': '1', 'data-entry': String(g.entry_id),
+  });
+  // the row header — the entry id + the suggested marker + the flip whisker.
+  const head = el('div', { class: 'dn-evalmtx-sitehead dn-evalmtx-ghosthead-cell' }, [
+    el('span', { class: 'dn-mtx-file dn-evalmtx-entry', text: g.entry_id }),
+    el('span', {
+      class: 'dn-evalmtx-ghost-tag', title: 'suggested entry — a draft, not yet on the board',
+      text: 'suggested',
+    }),
+    el('span', { class: 'dn-evalmtx-ghost-flip', title: 'A/A flip rate the instrument would measure (admission)' },
+      [flipWhisker(viz.flip)]),
+  ]);
+  tr.appendChild(el('th', {
+    class: 'dn-mtx-site dn-evalmtx-site dn-evalmtx-ghost-site', scope: 'row',
+    'data-entry': String(g.entry_id),
+  }, [head]));
+  // one spanning cell — the admission evidence WHERE CELLS WOULD BE, never a
+  // fabricated verdict (nothing scored this draft).
+  const probed = viz.evidence_tier === 'probed';
+  const body = el('div', { class: 'dn-evalmtx-ghostbody' }, [
+    el('span', { class: 'dn-faint dn-evalmtx-ghost-note', text: 'proposed — not yet on the board' }),
+    el('span', { class: 'dn-evalmtx-ghost-marks' }, [
+      el('span', { class: 'dn-faint dn-evalmtx-ghost-lab', text: 'sep' }),
+      discriminationPips(viz.discrimination),
+      el('span', {
+        class: 'dn-evalmtx-ghost-tier' + (probed ? '' : ' dn-faint'),
+        title: probed ? 'probed — an admission probe was spent' : 'planned — no probe spent (unmeasured)',
+        text: probed ? 'probed' : 'planned',
+      }),
+    ]),
+  ]);
+  if (ctx && typeof ctx.href === 'function') {
+    body.appendChild(el('a', {
+      class: 'dn-evalmtx-ghost-apply dn-mono',
+      href: ctx.href('builder', {}),
+      title: 'stage this suggested entry to a builder draft you seal',
+      'aria-label': 'stage suggested entry ' + g.entry_id + ' in the builder',
+      text: 'stage in builder →',
+    }));
+  }
+  tr.appendChild(el('td', {
+    class: 'dn-mtx-cell dn-evalmtx-cell dn-evalmtx-ghostcell',
+    colspan: String(Math.max(1, candCount)),
+  }, [body]));
+  return tr;
 }
 
 // A super-header row grouping consecutive columns that share a round_index into

@@ -365,6 +365,44 @@ def format_admission(admission: dict[str, Any] | None) -> str:
     return "; ".join(parts)
 
 
+def format_admission_compact(admission: dict[str, Any] | None) -> str:
+    """A COMPACT, evidence-tier-led admission summary — consistent with the cards.
+
+    The Console inbox cards / Evals ghost rows lead a suggestion's admission with
+    its evidence TIER (``probed`` = a probe was spent / firm; ``planned`` =
+    unmeasured / faint), then the flip rate WITH its n (over the advisory ceiling
+    is flagged) and the discrimination as ``sep/pairs``. This renders that same
+    reading as one text line for ``reflect report``. Honest throughout: an
+    unmeasured probe reads ``unmeasured``, never a fabricated ``0.0``.
+    """
+    if not isinstance(admission, dict):
+        return "[planned] flip unmeasured · sep unmeasured"
+
+    noise = admission.get("noise")
+    disc = admission.get("discrimination")
+    noise_measured = isinstance(noise, dict) and bool(noise.get("measured"))
+    disc_measured = isinstance(disc, dict) and bool(disc.get("measured"))
+    tier = "probed" if (noise_measured or disc_measured) else "planned"
+
+    if noise_measured and isinstance(noise, dict):
+        flip = noise.get("flip_rate")
+        runs = noise.get("runs")
+        over = (
+            f" over the {RECOMMENDED_FLIP_CEILING} ceiling"
+            if isinstance(flip, int | float) and flip > RECOMMENDED_FLIP_CEILING
+            else ""
+        )
+        flip_s = f"flip {flip} (n={runs}){over}"
+    else:
+        flip_s = "flip unmeasured"
+
+    if disc_measured and isinstance(disc, dict):
+        sep_s = f"sep {disc.get('separated')}/{disc.get('pairs')}"
+    else:
+        sep_s = "sep unmeasured"
+    return f"[{tier}] {flip_s} · {sep_s}"
+
+
 def _admission_advisory(admission: dict[str, Any]) -> str:
     """Quiet advice text from the recommended bands — never an auto-verdict."""
     notes: list[str] = []
@@ -439,6 +477,7 @@ def render_suggestions_md(suggestions: list[Suggestion]) -> list[str]:
         if s.rationale:
             lines.append(f"- rationale: {s.rationale}")
         lines.append(f"- admission: {format_admission(s.admission)}")
+        lines.append(f"- admission (compact): {format_admission_compact(s.admission)}")
         prov = s.provenance or {}
         lineage = prov.get("source_lineage_ids") or []
         if lineage:
@@ -477,6 +516,7 @@ __all__ = [
     "Suggestion",
     "SynthesizeSeam",
     "format_admission",
+    "format_admission_compact",
     "plan_cost",
     "rank_suggestions",
     "read_suggestions",

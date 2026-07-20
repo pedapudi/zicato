@@ -637,7 +637,31 @@ def test_bundle_under_size_envelope(
     # staging forks a draft the operator seals; back-compat: an empty / cold feed
     # renders the honest empty state, every other view byte-identical). The
     # envelope is raised to 1.46 MB to cover it with headroom.
-    assert total < 1_460_000, f"bundle is {total} bytes, exceeds 1_460_000 envelope"
+    #
+    # The TRAJECTORY-BOOTSTRAP VISUALS (WS-SUGVIZ, TRAJECTORY-UI.md §2.2) then
+    # add the suggestion / board-creation surface. A shared admission-visuals
+    # module (js/core/admission_viz.js) renders a suggestion's admission stats as
+    # marks reusing the shipped vocabulary — the flip-rate WHISKER (the BT-whisker
+    # figure + the advisory-ceiling reference rule; over-ceiling rides caution),
+    # the discrimination PIPS (the dt-rungstep idiom), and the evidence TIER
+    # (probed = firm / planned = faint) — with honest `unmeasured` states (never a
+    # fabricated 0). The inbox rows (builder.js) upgrade to CARDS carrying those
+    # visuals + a PROVENANCE MINI-STRIP: the shared trajectory-strip figure's
+    # compact mode behind a GUARDED dynamic import (absent → a textual fallback
+    # from the real provenance payload), a Traces detail link, and the
+    # roll-honesty note. The Evals matrix (evals.js) gains GHOST ROWS for
+    # suggested-but-not-yet-scored board entries — pending-styled + visually
+    # unambiguous (never mistakable for measured data, §4), the admission marks in
+    # the row, an apply affordance, joined client-side from the same
+    # `/builder/suggestions` feed the inbox reads — plus the two data.js readers
+    # and the scoped dn-adm-* / ghost-row / card CSS. All digest-gated (a no-op
+    # beat is byte-identical; the no-ghost matrix is byte-identical to before the
+    # feature) + recommend-only (every affordance forks a builder draft the
+    # operator seals). Measured bundle 1,482,829 bytes, ~16.8 KB over the branch
+    # base — the house rationale (a read-only surface that pays for itself in
+    # operator time; TRAJECTORY-UI.md §4 pre-registers the bump) covers it. The
+    # envelope is raised to 1.49 MB to cover it with headroom.
+    assert total < 1_490_000, f"bundle is {total} bytes, exceeds 1_490_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
