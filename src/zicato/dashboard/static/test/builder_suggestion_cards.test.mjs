@@ -186,7 +186,10 @@ test('cards: an UNMEASURED admission is honest — planned tier, "unmeasured" (n
 
 test('mini-strip: absent figure → the textual fallback renders from the REAL provenance payload', async () => {
   SUGGESTIONS = feed();
-  const host = await mountBoard();  // no figure injected → the guarded import finds no svg.trajectoryStrip
+  // FORCE the absent branch: on the merged tree the real svg.trajectoryStrip
+  // exists, so `undefined` (not the null default) pins the fallback path.
+  view._setStripFigureForTest(undefined);
+  const host = await mountBoard();
   const boot = byClass(host, 'dn-bld-sugcard').find((c) => c.textContent.includes('trace-a0be332d'));
   assert(boot, 'the foreign bootstrap card exists');
   const strip = firstClass(boot, 'dn-bld-sugstrip');

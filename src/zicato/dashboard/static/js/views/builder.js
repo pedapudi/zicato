@@ -74,8 +74,9 @@ const _provenance = {};
 
 // A test seam for the guarded trajectory-strip figure. When set, the injected
 // factory renders the mini-strip SYNCHRONOUSLY (so the "figure present" branch is
-// deterministic in the node suite); when unset, the real guarded dynamic import
-// resolves `svg.trajectoryStrip` (absent in this branch → the textual fallback).
+// deterministic in the node suite); `undefined` FORCES the absent branch (the
+// textual fallback) even though the real figure ships in the merged tree; `null`
+// (the default) lets the real guarded dynamic import resolve `svg.trajectoryStrip`.
 let _stripFigureForTest = null;
 export function _setStripFigureForTest(fn) { _stripFigureForTest = fn; }
 
@@ -827,7 +828,7 @@ function mountProvenanceStrip(hostEl, stripModel) {
     } catch (e) { /* additive — keep the textual fallback */ }
     return false;
   };
-  if (_stripFigureForTest) { place(_stripFigureForTest); return; }
+  if (_stripFigureForTest !== null) { place(_stripFigureForTest); return; }
   import('../svg.js').then((mod) => { place(mod && mod.trajectoryStrip); })
     .catch(() => { /* figure absent → the textual fallback stays */ });
 }
