@@ -807,20 +807,10 @@ def _make_reflection_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         reflection_id = request.path_params["reflection_id"]
         suggestion_id = request.path_params["suggestion_id"]
         if not _is_safe_id(reflection_id) or not _is_safe_id(suggestion_id):
+            # single-sourced with the reader's own degrade (the eval endpoints'
+            # _empty_* precedent) so the two degrade routes share one shape.
             return JSONResponse(
-                {
-                    "reflection_id": reflection_id,
-                    "epoch_id": None,
-                    "found": False,
-                    "suggestion_id": suggestion_id,
-                    "suggestion_type": "",
-                    "subject": "",
-                    "summary": "",
-                    "target_slice": "",
-                    "foreign_source": None,
-                    "admission_viz": {},
-                    "episodes": [],
-                },
+                query._empty_provenance(reflection_id, suggestion_id),
                 status_code=200,
             )
         view = await run_in_threadpool(

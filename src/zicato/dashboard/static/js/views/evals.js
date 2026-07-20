@@ -53,13 +53,20 @@ let _holdoutOnly = false;    // rows in the holdout slice
 // (a pre-feature / read-only backend, or none fetched yet) → zero ghost rows.
 let _sugFeed = null;
 let _sugFeedEpoch = undefined;   // the epochId `_sugFeed` was fetched for
+let _builtRoot = null;           // the staleness sentinel for the async ghost repaint
 function ensureSugFeed(host, ctx, epochId) {
   if (_sugFeedEpoch === epochId) return;   // already fetched / fetching for this epoch
   _sugFeedEpoch = epochId;
   _sugFeed = null;
   D.builderSuggestions().then((feed) => {
     _sugFeed = feed;
-    if (host) render(host, ctx, { epochId });   // digest-gated: no ghosts → no-op
+    // STALENESS GUARD (the shell's _renderToken discipline, applied here): the
+    // shell reuses ONE persistent view host and clears its children on any
+    // selection change, so the sentinel is the node THIS view mounted — if it
+    // is no longer connected (the operator navigated while the fetch was in
+    // flight), repainting would clobber whatever view is showing now.
+    const stale = _sugFeedEpoch !== epochId || !_builtRoot || !_builtRoot.isConnected;
+    if (!stale) render(host, ctx, { epochId });   // digest-gated: no ghosts → no-op
   }).catch(() => { _sugFeed = null; });
 }
 // A test seam: seed the feed synchronously so a ghost-row render is deterministic
@@ -223,6 +230,9 @@ export async function render(host, ctx, params, _route) {
   const entries = (matrix && Array.isArray(matrix.entries)) ? matrix.entries : [];
   const ghosts = ghostEntriesFrom(_sugFeed, entries, epochId);
   gatedSwap(host, digestOf(matrix, live, ghosts), () => build(host, ctx, matrix, epochId, live, ghosts));
+  // The staleness sentinel for the async ghost-feed repaint (see ensureSugFeed):
+  // whatever node this render mounted — disconnected means the operator left.
+  _builtRoot = host.firstChild || null;
 }
 
 function build(host, ctx, matrix, epochId, live, ghosts) {

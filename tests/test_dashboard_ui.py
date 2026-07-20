@@ -662,12 +662,12 @@ def test_bundle_under_size_envelope(
     # for measured data, the no-ghost matrix byte-identical to before. ~17 KB.
     #
     # UNION NOTE (the per-wave-raise interaction, measured at the merge):
-    # ground truth from git-tracked content is main == the contract base ==
-    # 1,456,938 bytes (the readers branch added zero counted bytes; each view
-    # branch's self-measured "base" carried a worktree-local artifact), and the
-    # LIVE-MEASURED merged bundle is 1,514,051 bytes (+57 KB across the two view
-    # branches). The envelope is raised once to 1.52 MB to cover the union with
-    # a thin margin.
+    # ground truth by this test's own accounting (character counts, not bytes —
+    # the strip glyphs are multi-byte): main == the contract base == 1,456,894
+    # chars (the readers branch added zero counted content; each view branch's
+    # self-measured "base" carried a worktree-local artifact), and the merged
+    # bundle measures 1,514,097 chars (+57 K across the two view branches). The
+    # envelope is raised once to 1.52 M to cover the union with a thin margin.
     assert total < 1_520_000, f"bundle is {total} bytes, exceeds 1_520_000 envelope"
 
 

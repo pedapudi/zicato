@@ -766,12 +766,14 @@ function provenanceStripBlock(s, foreign, provPayload) {
   const feed = _suggestions || {};
   const traceId = foreign.trace_id || (provPayload && provPayload.subject) || '';
   const wrap = el('div', { class: 'dn-bld-sugstripwrap' });
-  // the link into the Traces detail (WS-TRACES route; a raw hash like the
-  // Instrument-lens link — inert until that view lands, never an error).
-  if (feed.epoch_id && traceId) {
+  // the link into the Traces DETAIL route: #/e/<epoch>/traces/<reflection>/<trace>
+  // (the review caught the earlier singular `/trace/` segment falling through
+  // parseRoute's default to the epoch view).
+  if (feed.epoch_id && feed.reflection_id && traceId) {
     wrap.appendChild(el('a', {
       class: 'dn-bld-sugtracelink dn-mono',
-      href: '#/e/' + encodeURIComponent(feed.epoch_id) + '/trace/' + encodeURIComponent(traceId),
+      href: '#/e/' + encodeURIComponent(feed.epoch_id) + '/traces/'
+        + encodeURIComponent(feed.reflection_id) + '/' + encodeURIComponent(traceId),
       text: 'trace ' + traceId + ' →',
       'aria-label': 'open the imported trace ' + traceId + ' in the Traces view',
     }));

@@ -232,6 +232,7 @@ from zicato.query.tournament_view import (
     derive_elim_states,
 )
 from zicato.query.trace_view import (
+    _empty_provenance,
     build_suggestion_provenance,
     build_trace_detail,
     build_trace_list,
@@ -272,6 +273,7 @@ __all__ = [
     "_empty_dossier",
     "_empty_health",
     "_empty_matrix",
+    "_empty_provenance",
     "_empty_search_result",
     "_empty_tournament_structure",
     "_enrich_field_status",

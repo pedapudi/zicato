@@ -927,6 +927,9 @@ export function trajectoryStrip(model, opts) {
     class: 'dn-strip' + (o.compact ? ' dn-strip-compact' : ''),
     width: '100%', height: H, viewBox: `0 0 ${W} ${H}`,
     preserveAspectRatio: 'xMidYMid meet', role: 'img',
+    'aria-label': 'imported trace: ' + ((m.lane && m.lane.length) || 0) + ' turn(s), '
+      + ((m.signals && m.signals.length) || 0) + ' signal(s), '
+      + ((m.episodes && m.episodes.length) || 0) + ' episode(s)',
   };
   // aspect-locked fit-to-width (default): the CSS aspect-ratio == the viewBox
   // aspect, so the 'none' scale applyResponsive pins is UNIFORM (no shear on the

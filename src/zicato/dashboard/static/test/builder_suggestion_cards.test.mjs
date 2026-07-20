@@ -207,9 +207,14 @@ test('mini-strip: absent figure → the textual fallback renders from the REAL p
   assert(fallback, 'the textual fallback renders when the figure is absent');
   // the fallback is derived from the REAL segment_strip_model (2 turns, signals, episodes).
   assert(/turn\(s\).*signal\(s\).*episode\(s\)/.test(fallback.textContent), 'the fallback summarises the real strip-model');
-  // the Traces detail link names the real trace id.
+  // the Traces detail link resolves to the REGISTERED route (the review caught a
+  // substring-only assert passing on a misrouted `/trace/` URL) — pin the full
+  // #/e/<epoch>/traces/<reflection>/<trace> shape, not a fragment.
   const link = firstClass(boot, 'dn-bld-sugtracelink');
-  assert(link && /trace-a0be332d/.test(link.getAttribute('href')), 'the card links into the Traces detail');
+  assert(link, 'the card carries a Traces detail link');
+  const href = link.getAttribute('href') || '';
+  assert(/^#\/e\/[^/]+\/traces\/[^/]+\/trace-a0be332d$/.test(href),
+    'the link is the Traces DETAIL route (epoch/traces/reflection/trace), got: ' + href);
 });
 
 test('mini-strip: present figure → it renders, replacing the fallback', async () => {
