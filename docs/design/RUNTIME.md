@@ -846,7 +846,356 @@ once and accepts work over a pipe). v1.1's shape spawns a fresh
 worker per run for simplicity; if import overhead becomes
 measurable, a pool lands as a follow-up. See
 [STORAGE.md](STORAGE.md) §G7 for where the worker pool fits the
-git-backed roadmap.
+git-backed roadmap. **The import overhead has now been measured** —
+§5.5 is that follow-up, written up as a gated design rather than
+built.
+
+### 5.5 Per-unit spawn cost — the measured tax, and the warm-pool design
+
+> **Status: DESIGN, NOT BUILT.** No pool exists in the tree. The
+> per-unit `create_subprocess_exec` in `runner.py` is still the
+> shipped shape and this section does not change it. What ships
+> alongside this note is only §5.5.7's **host-wide spawn limiter**
+> and §5.5.8's **lazy role resolution** — two cheap, independent
+> wins. The pool itself is gated on the fork-safety probe (§5.5.4)
+> and the measurement plan (§5.5.6) landing green first.
+
+#### 5.5.1 The measured tax
+
+Every board unit pays a full cold-start interpreter: fork/exec of
+`sys.executable -m zicato._tournament_worker`, then the import graph
+the run needs. Measured on a 12-core Linux box, CPython 3.12, best of
+five cold starts each (the harness is described in §5.5.6):
+
+| Phase reached | import s | peak RSS MB | `sys.modules` |
+|---|---|---|---|
+| bare interpreter | 0.000 | 13 | 46 |
+| `zicato._tournament_worker` imported | 0.078 | 31 | 328 |
+| `+ zicato.adapters.adk` | 0.079 | 32 | 331 |
+| `+ build_adk_model` (pulls `google.adk`) | 0.809 | 120 | 1657 |
+| `+ litellm` (first LLM call) | 1.866 | 246 | 3111 |
+
+Total process wall time for the last row — interpreter startup, exec,
+and the whole graph — is **≈2.4 s**. Two readings matter:
+
+1. **zicato's own code is not the cost.** The worker module plus the
+   ADK adapter is 0.079 s / 32 MB. Everything above that is
+   `google.adk` (+0.73 s / +88 MB) and `litellm` (+1.06 s / +126 MB).
+2. **The tax is per unit, and it is paid concurrently.** In full mode
+   one board unit is two workers (champion + challenger), so the
+   default `parallelism = 4` means up to **8 workers × 246 MB ≈ 2 GB**
+   of almost entirely *identical* module state resident at the same
+   moment, and 8 × ~2.4 s of CPU burnt re-deriving it. A 20-entry
+   board at `parallelism = 4` pays the import graph 40 times per
+   round.
+
+This is the real, unrefuted finding: **there is no worker pool, and
+the import graph is re-derived per board unit.**
+
+#### 5.5.2 What the original report got wrong
+
+The issue that prompted this section proposed a *different* mechanism
+— a spawn storm that trips the watchdog and cascades into respawns.
+Each link of that chain was checked against the tree and **does not
+hold**. Recording the refutations here so the mechanism is not
+re-believed the next time the symptom (slow rounds, high RSS) is
+observed:
+
+| Claim | Verdict | Evidence in the tree |
+|---|---|---|
+| Calibration draws spawn `K × board` workers in a burst | **Refuted** | `tournament/calibration.py` runs `for draw in range(runs): await _run_board_units_fast(...)` — the draws are **serial**, and each draw is internally bounded by the fast-mode scheduler's semaphore. Peak concurrency is one draw's worth, not `K` draws' worth. |
+| The semaphore does not really bound concurrency | **Refuted** | `scheduling._effective_unit_semaphore` + the `async with (meta_span(...), semaphore)` in each scheduler is the single admission gate every board unit passes. Measured burst at the default is 4–8 concurrent starts, and ~30–66 context switches per start — not a storm. |
+| Worker imports trip the parent's watchdog | **Refuted** | The parent's grace is `_PARENT_BUDGET_GRACE_S = 30.0` s (`tournament/worker_transport.py`) on top of the entry's own budget. A 1–2.4 s import cannot consume a 30 s grace. |
+| An aborted unit is respawned, cascading | **Refuted** | `_run_single` returns `_aborted_loss_profile(...)` and the scheduler records it; there is **no in-round retry**. An *infra* abort is additionally **not cached** (`scheduling.py`, `is_infra_abort_cause` branch), so the unit gets a correct cache MISS and is re-attempted by a **later round** — a deliberate, bounded re-attempt, not a cascade. |
+
+The symptom the issue observed is real. Its proposed cause is not.
+The cause is §5.5.1.
+
+#### 5.5.3 The binding constraint: killability
+
+The obvious fix — a persistent pool of long-lived worker processes
+that each execute many units — is **not** available as stated,
+because it breaks the invariant the whole L3 layer rests on.
+
+**The killability invariant.** One board unit maps to exactly one
+process group, and the supervisor kills that group by negating its
+pgid:
+
+* the worker is spawned with `start_new_session=True`
+  (`runner.py`), so it `setsid`s before `exec` and becomes the leader
+  of a fresh session/process group containing itself plus every
+  grandchild the inner harness spawns (shells, helper tools);
+* the worker's **first act** is writing
+  `active_runs/{run_id}.json` with its own `pid`, its
+  `pid_start_time`, and its `pgid` (§2.4);
+* the supervisor reads that record and escalates via
+  `killpg(pgid, SIGTERM)` → grace → `killpg(pgid, SIGKILL)`
+  (`crates/supervisor/src/signal.rs`: `send_sigterm_group` /
+  `send_sigkill_group`, vetted through `is_negatable_pgid` and the
+  protected-pgid set, with `pid_start_time` guarding against pid
+  reuse).
+
+A naive pool destroys this three ways at once. A pool worker that
+serves unit *A* then unit *B* has **one** pgid for both, so (a)
+`ActiveRun.pgid` no longer identifies a unit, (b) killing unit *A*
+kills the pool worker and therefore unit *B* (and every future unit
+that worker would have served), and (c) `pid_start_time` — the
+guard that proves the record still describes the process the
+supervisor is about to signal — becomes constant across units and
+stops discriminating. Losing (b) is losing the *entire reason* L3
+exists: the hard per-run wall-clock budget.
+
+**So the constraint is not "avoid a pool". It is: any pool must keep
+one killable process group per board unit, and must keep
+`ActiveRun{pid, pid_start_time, pgid}` meaning exactly what it means
+today.** The supervisor must not need a single line of change.
+
+#### 5.5.4 The design that satisfies it: warm pool, per-unit fork+setsid
+
+Exactly one pool shape preserves the invariant:
+
+```
+pool parent (one per orchestrator, long-lived)
+  ├─ imports goldfive + google.adk + litellm ONCE, at startup
+  ├─ never issues an LLM call, never runs a unit itself
+  ├─ single-threaded; blocks on a unix socket for unit requests
+  └─ per request:  os.fork()  →  child: os.setsid(); run the unit; _exit()
+```
+
+The child inherits the parent's already-imported modules through
+copy-on-write, so it pays **0 s and ~0 MB** of new import cost, and
+then `setsid()`s — making it the leader of a **fresh session and
+process group**, exactly as `start_new_session=True` does today.
+Therefore:
+
+* `ActiveRun.pid` = the forked child's pid (fresh per unit) — the
+  child writes the record itself, unchanged;
+* `ActiveRun.pgid` = the child's own new pgid (fresh per unit);
+* `ActiveRun.pid_start_time` = the child's start time (fresh per
+  unit, so the pid-reuse guard still discriminates);
+* `killpg(pgid, …)` kills that unit and its grandchildren, and
+  **nothing else** — not the pool parent, not a sibling unit.
+
+The supervisor's contract is untouched. The orchestrator-side change
+is confined to the transport: `runner._run_single` sends a request on
+the pool socket and awaits a completion notification instead of
+calling `create_subprocess_exec`, and the pool parent (not the
+orchestrator's event loop) reaps the child. The args-file payload,
+the result file, `loss.json`, the heartbeat thread, and the
+abort-cause taxonomy all stay as they are.
+
+Note what this design deliberately does *not* do: it does not reuse
+an interpreter **across** units. Each unit still gets a fresh address
+space (a fork, then never touched again by anything else), so the
+module-cache isolation argument of §5.4 — two generations' source
+must never share one `sys.modules` — survives intact. The pool
+shares only the *pre-generation* import graph, which is identical for
+every unit by construction.
+
+**Fork-safety adjudication.** This design is only sound if the
+imported graph is safe to fork. Probed against the pinned
+dependency set (goldfive at the pinned rev, `google-adk`, `litellm`),
+importing all three and inspecting the process immediately after:
+
+| Property after import, before any call | Observed | Why it matters |
+|---|---|---|
+| non-main threads | **0** (`MainThread` only) | A fork from a multi-threaded process copies only the calling thread, leaving any lock the other threads held permanently locked. Also: CPython 3.12 raises a `DeprecationWarning` on `fork()` in a multi-threaded process. |
+| open sockets | **0** (only fd 0/1/2 and `/dev/urandom`) | Two children inheriting one live TCP socket would interleave writes into the same connection — which does not crash, it silently corrupts LLM responses, i.e. corrupts *evaluation data*. This is the failure mode that must be impossible, not merely unlikely. |
+| running asyncio event loop | **none** (no loop created) | A forked loop's selector, self-pipe, and pending callbacks are duplicated into both processes. |
+| `grpc` loaded | **no** | gRPC's C core is notoriously fork-hostile. It arrives only via the harmonograf sink, which the *child* attaches. |
+
+So the verdict is: **fork-safe, but only under an invariant that no
+dependency guarantees.** `litellm` builds `module_level_client`
+(`HTTPHandler`) and `module_level_aclient` (`AsyncHTTPHandler`) at
+*import* time; today those wrap `httpx` clients that bind no loop and
+open no socket until first use, which is precisely why the posture
+above is clean. A future `litellm` or `google.adk` release that opens
+a connection, starts a background thread, or creates a loop at import
+time would break the pool **silently and in the worst possible
+direction** — corrupted responses rather than a crash.
+
+Therefore the pool is gated on a **fork-safety probe that runs in
+CI**, asserting the four rows above hold for the currently pinned
+dependencies, and on the pool parent honouring one rule absolutely:
+**the pool parent imports, and never calls.** The moment the parent
+issues an LLM call it acquires exactly the connection-pool and
+event-loop state that makes forking unsafe. A probe that goes red on
+a dependency bump is the signal to fall back to §5.5.7, not to
+"investigate later".
+
+Two smaller fork caveats, both cheap to handle in the child:
+
+* **PRNG state.** `random` and `numpy`-style global PRNGs are
+  duplicated by fork, so every child would draw the identical
+  sequence. The child must reseed from its own `run_id` / `seed`
+  before running the unit (zicato already threads a `seed` through
+  `RuntimeConfig`, so this is a call, not a design).
+* **Inherited descriptors.** The child inherits the parent's fds. The
+  parent must hold no workspace lock and no `events.jsonl` handle; the
+  per-invocation operator-log stream is opened `O_APPEND` and is
+  already written by many workers concurrently today, so that one is
+  a no-op.
+
+No GPU/CUDA caveat applies: the dependency set contains no
+`torch` / `nvidia-*` / `tensorflow` package, so there is no device
+context to be invalidated by fork.
+
+#### 5.5.5 Recycling and failure modes
+
+**Recycling policy.** The pool parent is *not* recycled per unit —
+that would reintroduce the cost. It is recycled on exactly three
+triggers, each cheap to detect:
+
+1. **Generation roll.** The parent's import graph is
+   generation-independent by construction (it imports the *framework*,
+   never a snapshot). If that ever stops being true, the parent is
+   recycled per generation rather than per unit.
+2. **RSS ceiling.** A parent whose RSS has grown past a multiple of
+   its post-import baseline is leaking and is replaced between units.
+3. **Fork failure or a poisoned parent.** Any `OSError` from `fork()`,
+   or a parent that fails its own liveness reply, retires it.
+
+Recycling is always *between* units, never during one, so no in-flight
+unit is ever affected.
+
+**Failure modes and their handling.**
+
+| Failure | Consequence | Handling |
+|---|---|---|
+| Pool parent dies with units in flight | The forked children are `setsid`-detached, so they are **not** killed with it — they keep running, keep heart-beating, and their `active_runs` records stay valid and killable by the supervisor. What is lost is the completion notification. | The orchestrator falls back to the shipped `create_subprocess_exec` path for new units, and the existing "process gone / no result file" reap (§5.3) settles any child whose notification never arrived. Degrading to today's behaviour must always be one branch away. |
+| Pool parent wedges (alive, not answering) | New units cannot start. | Liveness deadline on the request/reply; on expiry the parent is retired and the unit spawns cold. |
+| `fork()` fails (fd/pid/memory exhaustion) | Unit cannot start. | Spawn cold for that unit; count the failure toward the recycle trigger. |
+| Fork-safety probe red after a dependency bump | The pool would be *silently* unsafe. | CI fails; the pool is disabled by default until re-adjudicated. This is why the probe is a gate, not a warning. |
+| Orchestrator killed | Pool parent is orphaned. | The parent must exit when its socket peer closes, and — like the ephemeral `ztw-snap-*` trees — be GC-able by the supervisor. |
+
+#### 5.5.6 The measurement plan that gates the build
+
+The pool is a real complexity increase against a shipped, working,
+simple design. It is only worth building if the win is large **at the
+round level**, not just at the import level. The gate:
+
+**Harness.** Cold-start phase measurement — each phase in a fresh
+interpreter, best of *N* runs, reporting `perf_counter` around the
+imports, `resource.getrusage(RUSAGE_SELF).ru_maxrss` for peak RSS,
+and `len(sys.modules)`. This is the method that produced §5.5.1 and
+it is what the pool must be measured against; the numbers in §5.5.1
+are the committed **before** baseline.
+
+**Gate 1 — the tax is a material share of a round.** Instrument the
+existing `spawn_started` clock in `_run_single` to record, per unit,
+the interval from spawn to the worker's first `active_runs` write
+(≈ pure startup) alongside total unit runtime. The pool is worth
+building only if startup is **≥ 15 % of median unit runtime** on a
+representative board. If units are dominated by multi-second LLM
+latency, a 2.4 s startup is noise and the pool is not worth its
+failure modes — say so and close the issue.
+
+**Gate 2 — peak RSS is actually a constraint.** Record peak
+orchestrator-tree RSS across a round at the operator's real
+`parallelism`. The pool's memory win is COW-sharing the ~246 MB
+graph; if the box never approached its ceiling, this is not a
+motivating win either.
+
+**Gate 3 — the fork-safety probe is green** (§5.5.4), as a CI test.
+
+**Gate 4 — killability is preserved, proven by test, not by
+argument.** The existing supervisor-kill tests must pass **unchanged**
+against the pool transport, plus one new adversarial test: with two
+units in flight through one pool parent, kill unit *A*'s pgid and
+assert that unit *B* completes normally and that *A*'s abort is
+recorded with the same `abort_cause` the cold-spawn path produces.
+
+**Gate 5 — no verdict moves.** `tools/parity.sh` fully green: a
+transport change must not move a single scored artifact.
+
+Only with 1–5 green does the pool get built, behind a default-off
+runtime knob, with the cold-spawn path retained as the fallback
+branch.
+
+#### 5.5.7 The fallback: a host-wide spawn limiter (SHIPPED)
+
+If the fork-safety adjudication ever goes red, the pool is off the
+table and the remaining lever is to stop *over*-spawning. That lever
+is worth having regardless of the pool, because of a gap the
+per-orchestrator semaphore cannot close:
+
+**`parallelism` bounds one orchestrator, and nothing bounds the
+host.** Each orchestrator mints its own
+`Semaphore(config.parallelism)` (§5.5.2's second row is about that
+semaphore working correctly *within* a run). Two concurrent `evolve`
+runs on one box therefore admit `2 × parallelism` board units — i.e.
+up to `4 × parallelism` workers in full mode — and each worker's
+246 MB is real. Nothing in the tree noticed.
+
+The shipped limiter (`zicato.runtime.spawn_permit`) is a **host-wide
+permit** held for a worker's lifetime:
+
+* *N* slot files under a **workspace-external** directory
+  (`$ZICATO_WORKER_PERMIT_DIR`, else `$XDG_RUNTIME_DIR/zicato/...`,
+  else a per-uid path under the system temp dir) — external on
+  purpose, so the cap spans workspaces and orchestrators;
+* a permit is `fcntl.flock(LOCK_EX | LOCK_NB)` on the first free
+  slot; when every slot is held, the acquirer polls with jitter on
+  the event loop (never a blocking `flock`, so the orchestrator's
+  loop is never parked);
+* **`flock` releases on process death**, by the kernel. A crashed
+  orchestrator cannot leak a permit, so there is no stale-lock
+  reaper to write and no liveness protocol to get wrong. This is the
+  reason for `flock` over a counter file.
+* **it degrades OPEN.** Any failure to create the directory, open a
+  slot, or use `flock` (an unsupported filesystem, a read-only
+  runtime dir, a platform without `fcntl`) yields a permit that
+  admits immediately. An infrastructure problem in a throttle must
+  never be able to block a run.
+
+The knob is `runtime.host_worker_permits`
+(`RuntimeConfig.host_worker_permits`) — a **runtime** knob, never
+part of the frozen evaluation contract, so changing it does not roll
+the epoch. `null` (the default) means AUTO: `max(4, 2 × cores)`,
+deliberately generous enough that a single normal run never waits;
+`0` disables the cap entirely; `≥ 1` is an explicit ceiling.
+
+The limiter is a **throttle, not a speed-up** — it makes an
+over-subscribed host degrade into queueing rather than into swapping.
+It does not reduce the per-unit tax; only the pool does that.
+
+#### 5.5.8 Lazy role resolution (SHIPPED), and one refuted micro-fix
+
+A second cheap win, and a correction to a claim worth recording.
+
+**Refuted: there is no eager `litellm` import to remove.** The
+expectation was that the worker imports `litellm` at startup. It does
+not — `google.adk.models.lite_llm` calls its own
+`_ensure_litellm_imported()` from inside
+`LiteLLMClient.acompletion` / `.completion`, i.e. **at the first LLM
+call**, and no module in zicato, goldfive, or ADK imports `litellm`
+at module scope. Making it "lazy" is therefore a no-op: it is
+already lazy. The consequence is worth stating precisely, because it
+is *worse* than an eager import, not better: the +1.06 s / +126 MB is
+paid **inside the unit's wall-clock budget**, by every worker, and
+concurrently across all of them (§5.5.1). Only the pool removes it.
+
+**Shipped: the worker no longer imports `google.adk` for a role it
+may never call.** `_tournament_worker` resolved *every* configured
+model-spec role (harness, auxiliary, judge) eagerly at startup, and
+`build_adk_model` pulls the whole ADK graph — 0.73 s / 88 MB — the
+first time any of them is touched. A unit whose entry has no LLM
+judge, or which never reaches the auxiliary side, paid for ADK
+anyway. Model-spec roles now resolve through
+`models_config.lazy_text_call_llm`, which validates the spec shape
+**eagerly** (so a malformed `models` block still fails fast, at
+startup, where it is debuggable) and defers only the ADK import and
+`LiteLlm` construction to the role's first call. Roles given as a
+`call_llm` dotted path are unaffected — they never touched ADK.
+
+The saving is conditional by nature: a unit that does call the role
+pays the same cost, just later. It is `0.73 s / 88 MB / 1326 modules`
+per worker for every role a unit never exercises, and `0` otherwise —
+never a regression. The durable part of the change is the regression
+test that pins the posture: importing `zicato._tournament_worker`
+must not pull `google.adk` or `litellm` into `sys.modules`, so a
+future eager import at module scope fails CI instead of quietly
+taxing every board unit.
 
 ## 6. Atomic write helper
 
