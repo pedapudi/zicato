@@ -59,7 +59,7 @@ evaluation with a protected incumbent. Map the situation to a structure:
 
 | Situation | Structure | Why |
 |---|---|---|
-| One challenger per round; cheapest possible 1-vs-1 | **gauntlet** | The default. One full-board duel, promote-on-gate. Add `replicates >= 2` if that single duel is too noisy — no structure change needed. |
+| One challenger per round; cheapest possible 1-vs-1 | **gauntlet** | The default. One full-board duel per replicate, promote-on-gate. Raise `replicates` above its default 2 if the verdict is still too noisy — no structure change needed. |
 | A field, and you want a full RANKING in few duels | **swiss** | Fixed `rounds_n` Swiss rounds rank the whole field by Copeland (duels won); no elimination, so every candidate is rated. Cheap, non-adaptive. |
 | A field, and you only need the single best (knockout) | **single_elim** | A bracket over the challengers halves the field each round; the survivor faces the champion. Fewer duels than swiss, but loses the full ranking. |
 | Same, but you want a "second chance" against an upset | **double_elim** | Winners' + losers' bracket; eliminated only on the SECOND node loss. Offered for completeness — prefer raising `replicates` on `single_elim` (cheaper, more robust). |
@@ -69,10 +69,10 @@ Rules of thumb:
 - **More than one challenger but a tight budget** → `racing` (it never wastes
   full-board runs on obvious losers).
 - **You want to *report* a leaderboard of the field** → `swiss`.
-- **You just want a winner from a small field** → `single_elim` with
-  `replicates >= 2`.
-- **You distrust a single gauntlet duel** → stay on `gauntlet`, raise
-  `replicates`. That is strictly cheaper than switching to a bracket.
+- **You just want a winner from a small field** → `single_elim` (its
+  `replicates` already defaults to 2).
+- **You distrust the gauntlet's verdict** → stay on `gauntlet` and raise
+  `replicates` past 2. That is strictly cheaper than switching to a bracket.
 
 ## The params (read these off the strategy code, not docs/design/CLI.md)
 
@@ -195,8 +195,9 @@ promotion, so the protected-incumbent invariant is untouched.
 
 ## Worked examples
 
-**Noisy gauntlet → just replicate (no structure change).** The single duel's
-verdict flips run-to-run. Stay on `gauntlet`; set `replicates`:
+**Noisy gauntlet → just replicate harder (no structure change).** The verdict
+still flips run-to-run at the default 2 replicates. Stay on `gauntlet` and
+raise it:
 
 ```jsonc
 {"tournament": {"structure": "gauntlet", "params": {"replicates": 3}}}
