@@ -1,17 +1,16 @@
 """Triage pin for the truncated epoch objective (issue #107).
 
-``zicato.query.epoch_view._distill_brief_goal`` documents "the summary is
-always a sentence" but returns the first PHYSICAL LINE of the ``## Goal``
-section. Every shipped example brief is hard-wrapped, so the dashboard's
-objective callout renders truncated out of the box — sometimes mid-word, at
-a dangling hyphen.
+``zicato.query.epoch_view._distill_brief_goal`` used to return the first
+PHYSICAL LINE of the ``## Goal`` section while its docstring promised a
+sentence. Every shipped example brief is hard-wrapped, so the dashboard's
+objective callout rendered truncated out of the box — sometimes mid-word, at
+a dangling hyphen. It now accumulates the whole first prose PARAGRAPH,
+joining hard-wrapped lines hyphen-aware and stopping at the next block.
 
 Display-only: no effect on scoring, gating or promotion.
 """
 
 from __future__ import annotations
-
-import pytest
 
 from zicato.query.epoch_view import _distill_brief_goal
 
@@ -30,13 +29,6 @@ agent tree in `agent/`. Specifically:
 """
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "issue #107: _distill_brief_goal returns the first physical line, so a "
-        "hard-wrapped goal renders truncated mid-word"
-    ),
-)
 def test_hard_wrapped_goal_joins_the_whole_paragraph_hyphen_aware() -> None:
     """The paragraph must be reassembled, with hyphen-aware joining.
 
@@ -50,10 +42,6 @@ def test_hard_wrapped_goal_joins_the_whole_paragraph_hyphen_aware() -> None:
     assert goal.startswith("Produce coherent, structured presentation outputs")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="issue #107: accumulation must stop at the list item, not run into it",
-)
 def test_accumulation_stops_at_the_next_block() -> None:
     """A blank line, heading or list item closes the paragraph."""
     goal = _distill_brief_goal(_HARD_WRAPPED_BRIEF)

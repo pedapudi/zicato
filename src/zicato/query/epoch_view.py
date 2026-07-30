@@ -177,37 +177,83 @@ def _read_epoch_brief(epoch_dir: Path) -> str:
 
 
 def _distill_brief_goal(brief: str) -> str | None:
-    """Distil a one-line goal summary from a proposer brief.
+    """Distil a short goal summary from a proposer brief.
 
     The brief carries a ``## Goal`` section (see the dogfood targets'
-    ``brief.md``). The summary is the first non-empty prose line of that
-    section — the operator's one-line statement of what the epoch is
-    reaching for. A list-item or sub-heading line is skipped so the
-    summary is always a sentence. Returns ``None`` when the brief has no
-    ``Goal`` section or no prose line within it.
+    ``brief.md``). The summary is that section's FIRST PROSE PARAGRAPH —
+    the operator's statement of what the epoch is reaching for — length
+    capped by :func:`_preview` like every other preview in this module.
+
+    Markdown source is hard-wrapped, so a paragraph is generally several
+    physical lines: every shipped brief wraps its goal at ~74 columns, and
+    the shipped ``target_1`` brief even splits a hyphenated word across the
+    break. Reading only the first physical line therefore rendered the
+    dashboard's objective callout truncated mid-sentence — sometimes
+    mid-word at a dangling hyphen (issue #107). Consecutive prose lines are
+    accumulated instead, stopping at the first line that opens a new block:
+    a blank line, a heading, or a list item / blockquote. Lines are joined
+    with a single space, EXCEPT after a trailing hyphen, where the wrap
+    split one word and the halves are joined directly (``multi-`` + ``agent``
+    → ``multi-agent``).
+
+    A leading list-item or sub-heading line is still skipped, so the
+    summary reads as prose rather than a bullet fragment. Note this is a
+    paragraph, not necessarily one sentence — the goal paragraph's own
+    trailing clause ("… Specifically:") is part of what the operator
+    wrote and is kept. Returns ``None`` when the brief has no ``Goal``
+    section or no prose line within it.
+
+    Display-only: nothing here feeds scoring, gating or promotion.
     """
     if not brief:
         return None
     lines = brief.replace("\r\n", "\n").split("\n")
     in_goal = False
+    paragraph: list[str] = []
     for raw in lines:
         line = raw.strip()
         heading = line.lstrip("#").strip() if line.startswith("#") else None
         if heading is not None:
             if in_goal:
-                # A later heading closes the Goal section.
+                # A later heading closes the Goal section (and any
+                # paragraph accumulating inside it).
                 break
             if heading.lower() == "goal":
                 in_goal = True
             continue
-        if not in_goal or not line:
+        if not in_goal:
             continue
-        # Skip list items / blockquotes — the summary should read as a
-        # sentence, not a bullet fragment.
-        if line[0] in "-*>":
+        # Skip list items / blockquotes — the summary should read as
+        # prose, not a bullet fragment. Once a paragraph has started,
+        # a bullet CLOSES it rather than being skipped over: the
+        # paragraph ends where the next block begins.
+        if not line or (line[0] in "-*>"):
+            if paragraph:
+                break
             continue
-        return _preview(line)
-    return None
+        paragraph.append(line)
+    if not paragraph:
+        return None
+    return _preview(_join_wrapped(paragraph))
+
+
+def _join_wrapped(lines: list[str]) -> str:
+    """Reassemble hard-wrapped prose lines into one line.
+
+    Joins with a single space, except where the previous line ends in a
+    hyphen — there the wrap split a single word, so the halves are joined
+    directly. A line ending in an em-dash-style double hyphen (``--``) is
+    left space-joined; that is punctuation, not a split word.
+    """
+    out = ""
+    for line in lines:
+        if not out:
+            out = line
+        elif out.endswith("-") and not out.endswith("--"):
+            out += line
+        else:
+            out += " " + line
+    return out
 
 
 def build_epochs_summary(paths: WorkspacePaths) -> list[dict[str, Any]]:
