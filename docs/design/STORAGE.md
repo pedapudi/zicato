@@ -409,7 +409,12 @@ always-available no-git fallback, selected by
 > generation store, its object store IS the delta representation (blob
 > dedup across generations), and `checkout_ephemeral`'s per-run
 > `git worktree` is the cheap isolated materialization the sketch
-> wanted. No overlayfs/reflink layer is planned.
+> wanted. No overlayfs/reflink layer is planned. That sketch is
+> retained as a decision record —
+> [GENERATION-ISOLATION.md](GENERATION-ISOLATION.md) — for the
+> comparative analysis of the rejected alternatives (overlayfs ·
+> reflink-CoW · hardlink · `git archive`) and the measurements that
+> settled the choice.
 
 ### 7.1 Why git, and the payoff
 
@@ -555,3 +560,4 @@ when the git backend ships (§7).
 | CLI surface (`zicato reindex`, and the future `zicato repo` / `log` / `diff`) | [CLI.md](CLI.md) |
 | Why the canonical layer is filesystem-native | [RATIONALE.md](RATIONALE.md) §7 |
 | The generalized tournament record for configurable structures (§5.4) | [TOURNAMENT-DATA-MODEL.md](TOURNAMENT-DATA-MODEL.md) |
+| The rejected overlayfs/reflink/hardlink materialization alternatives §7 supersedes | [GENERATION-ISOLATION.md](GENERATION-ISOLATION.md) |
