@@ -3536,6 +3536,17 @@ async def _maybe_contract_preflight(
     verdict. ``"inert"`` is never a refusal — it says the probe, not the
     contract, came up short (issue #106). ``zicato board preflight`` is the
     manual surface.
+
+    One failure escapes the best-effort contract: a
+    :class:`~zicato.epoch.preflight.PreflightConfigError` (an unknown pinned
+    mutation id, a probe ceiling wider than the reserved replicate block)
+    under ``gate_mode == "refuse"`` raises
+    :class:`~zicato.epoch.preflight.PreflightRefusedError` from here. "An
+    outage never disqualifies a contract" is about NONDETERMINISTIC infra; a
+    config typo is deterministic operator error, and a refuse-mode run that
+    proceeds ungated because a knob was misspelled is the outcome that
+    operator explicitly ruled out. Under ``"warn"`` it stays the loud warning
+    it has always been.
     """
     from zicato.core.runtime import PREFLIGHT_GATE_DEFAULT  # noqa: PLC0415
     from zicato.tournament.calibration import DEFAULT_CALIBRATION_RUNS  # noqa: PLC0415
@@ -3584,13 +3595,30 @@ async def _maybe_contract_preflight(
         set_epoch_noise_floor,
         set_epoch_preflight,
     )
-    from zicato.epoch.preflight import VERDICT_OK, run_contract_preflight  # noqa: PLC0415
+    from zicato.epoch.preflight import (  # noqa: PLC0415
+        VERDICT_OK,
+        PreflightConfigError,
+        PreflightRefusedError,
+        run_contract_preflight,
+    )
 
     verdict_holder: list[str] = []
-    with best_effort(
-        "contract pre-flight",
-        on_error=lambda exc: log.warning("contract pre-flight skipped: %s", exc),
-    ):
+    # A probe-selection CONFIG error is the one best-effort failure a
+    # refuse-mode operator must not have swallowed. ``best_effort`` exists here
+    # because an endpoint outage must never disqualify a contract — but a
+    # mistyped ``runtime.preflight_probe_mutation_ids`` id is not an outage:
+    # it is deterministic, it will fail identically next round, and swallowing
+    # it means a run configured to HARD-GATE proceeds with no gate at all
+    # because of a typo. Captured here, escalated after the block (raising from
+    # inside ``on_error`` would work but hides the control flow).
+    config_error: list[PreflightConfigError] = []
+
+    def _on_preflight_error(exc: BaseException) -> None:
+        if isinstance(exc, PreflightConfigError):
+            config_error.append(exc)
+        log.warning("contract pre-flight skipped: %s", exc)
+
+    with best_effort("contract pre-flight", on_error=_on_preflight_error):
         report, floor = await run_contract_preflight(
             adapter=adapter,
             generation=parent_gen,
@@ -3653,6 +3681,15 @@ async def _maybe_contract_preflight(
                     else "Refusing the run (runtime.preflight_gate='refuse')."
                 ),
             )
+    if config_error and gate_mode == "refuse":
+        raise PreflightRefusedError(
+            f"contract pre-flight CONFIG ERROR for epoch {epoch_id}: "
+            f"{config_error[0]}. The pre-flight could not run at all, so the "
+            "hard gate has nothing to gate on — refusing the run rather than "
+            "spending rounds unprotected (runtime.preflight_gate='refuse'). Fix "
+            "the probe-selection config, or set runtime.preflight_gate='warn' to "
+            "proceed with the pre-flight skipped."
+        )
     return verdict_holder[0] if verdict_holder else None
 
 
@@ -3801,6 +3838,36 @@ def _workspace_health_config(workspace_root: Path) -> Any:
         return None
 
 
+def _workspace_preflight_gate(workspace_root: Path) -> str:
+    """Resolve ``runtime.preflight_gate`` for the health assessment.
+
+    Threaded into :func:`zicato.health.diagnostics.detect_preflight_verdict`,
+    which grades a persisted pre-flight REFUSAL ``critical`` only under the
+    hard gate: under the default ``"warn"`` a critical would re-fire from the
+    persisted record every round and trip the loop's degenerate-health
+    breaker, silently converting the mode the operator chose into
+    ``"refuse"``.
+
+    Read from the workspace ``config.json``'s ``runtime`` block rather than
+    from a live :class:`~zicato.core.runtime.RuntimeConfig` because that block
+    is the knob's ONLY source (:func:`zicato.runtime_factory.make_runtime_config`
+    reads it there and nowhere else) and because the health tail also runs on
+    paths — a resume, the deferred-infra round — that hold no config object.
+    Best-effort like the rest of the health path: anything unreadable yields
+    the recommend-only default, never the severity that can stop a loop.
+    """
+    from zicato.core.runtime import PREFLIGHT_GATE_DEFAULT  # noqa: PLC0415
+
+    try:
+        from zicato.workspace_loader import load_workspace_config  # noqa: PLC0415
+
+        runtime_block = load_workspace_config(workspace_root).get("runtime") or {}
+        return str(runtime_block.get("preflight_gate", PREFLIGHT_GATE_DEFAULT))
+    except Exception as exc:  # noqa: BLE001 — health inputs are best-effort
+        log.debug("preflight gate mode unavailable (%s); assuming the default", exc)
+        return PREFLIGHT_GATE_DEFAULT
+
+
 def _assess_and_persist_loop_health(
     workspace_root: Path,
     epoch_id: str,
@@ -3832,7 +3899,14 @@ def _assess_and_persist_loop_health(
       run).
     * ``has_critical`` — ``True`` when at least one finding is CRITICAL
       (the loop is producing no signal); the caller logs a prominent
-      stderr WARNING in that case.
+      stderr WARNING in that case, and ``evolve_n_rounds`` feeds it to
+      :class:`~zicato.evolve.loop.DegenerateHealthPolicy`, which stops the
+      run after two consecutive critical rounds. That second consumer is
+      why the pre-flight finding's severity is gate-aware
+      (:func:`_workspace_preflight_gate`): a per-round re-emission from a
+      persisted record is an unbroken streak, so grading it critical under
+      the default ``"warn"`` gate would stop a run the operator asked to
+      let run.
 
     Best-effort: the :mod:`zicato.health` sibling lands in parallel and
     may be absent. A missing module, or any failure assessing or writing
@@ -3874,6 +3948,7 @@ def _assess_and_persist_loop_health(
             promote_margin=promote_margin,
             evidence_gate_on=evidence_gate_on,
             preflight=_epoch_preflight_record(workspace_root, epoch_id),
+            preflight_gate=_workspace_preflight_gate(workspace_root),
             **extra_kwargs,
         )
     except Exception as exc:  # noqa: BLE001 — health assessment is best-effort

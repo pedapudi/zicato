@@ -87,6 +87,10 @@ def _install_fake_health(
         promote_margin: float | None = None,
         evidence_gate_on: bool = True,
         preflight: dict[str, Any] | None = None,
+        # Tolerant tail: the orchestrator threads further health inputs as
+        # they land (``preflight_gate``, the runtime-event pairs), and this
+        # stub exists to assert the call, not the signature.
+        **_extra: Any,
     ) -> _FakeLoopHealth:
         del config
         calls.append((losses_by_generation, experiments, board_entries, epoch_id))

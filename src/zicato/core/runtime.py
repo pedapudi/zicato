@@ -64,6 +64,21 @@ PREFLIGHT_GATE_DEFAULT: str = "warn"
 #: calling a contract unmeasurable on a sample of one.
 PREFLIGHT_PROBE_POINTS_DEFAULT: int = 5
 
+#: CEILING on :attr:`RuntimeConfig.preflight_probe_points`. Probe ``j`` draws at
+#: ``PREFLIGHT_REPLICATE_BASE + j``, so a sample wider than the pre-flight's
+#: reserved replicate block would squat the candidate screen's range (base 3000)
+#: and make ITS cache idempotence a lie — the pre-flight already refuses such a
+#: sample, but only after enumerating the snapshot, whereas a knob validated at
+#: construction fails at the config that set it.
+#:
+#: Mirrors :data:`zicato.epoch.preflight.PREFLIGHT_REPLICATE_SPAN`, which owns
+#: the fact; duplicated as a plain int rather than imported so :mod:`zicato.core`
+#: keeps no dependency on :mod:`zicato.epoch` (and so validating a dataclass
+#: field does not drag the pre-flight's import graph into every worker). The two
+#: are pinned equal by
+#: ``tests/test_preflight_severity_and_config_gate.py``.
+PREFLIGHT_PROBE_POINTS_MAX: int = 1000
+
 
 class RoundTokenLedger:
     """ONE round's mutable token accounting for ``max_tokens_per_round``.
@@ -359,8 +374,10 @@ class RuntimeConfig:
         measure achievable signal (issue #106). Defaults to
         :data:`PREFLIGHT_PROBE_POINTS_DEFAULT`; must be ``>= 1`` (``1``
         reproduces the single-probe behaviour that made one inert point able
-        to veto a whole contract). The pre-flight degrades a deterministic,
-        role-diverse sample of this size
+        to veto a whole contract) and ``<=``
+        :data:`PREFLIGHT_PROBE_POINTS_MAX` (the pre-flight's reserved
+        replicate block cannot hold a wider sample). The pre-flight degrades
+        a deterministic, role-diverse sample of this size
         (:func:`zicato.epoch.preflight.select_probe_points`) and reports the
         MAX signal, so one point that happens not to reach the deliverable can
         no longer produce a spurious ``refuse``. COST: a ceiling, not a spend
@@ -540,6 +557,14 @@ class RuntimeConfig:
                 "RuntimeConfig.preflight_probe_points must be >= 1, got "
                 f"{self.preflight_probe_points!r}; use 1 to probe a single "
                 "mutation point (the pre-#106 behaviour)"
+            )
+        if self.preflight_probe_points > PREFLIGHT_PROBE_POINTS_MAX:
+            raise ValueError(
+                "RuntimeConfig.preflight_probe_points must be <= "
+                f"{PREFLIGHT_PROBE_POINTS_MAX} (the width of the pre-flight's "
+                "reserved replicate block), got "
+                f"{self.preflight_probe_points!r}; a wider sample would draw "
+                "into the candidate screen's replicate range"
             )
 
     def effective_judge_call_llm(self) -> CallLLM:

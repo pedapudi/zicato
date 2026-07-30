@@ -131,14 +131,25 @@ def test_detector_silent_without_record_or_on_ok() -> None:
     assert detect_preflight_verdict({}) == []
 
 
-def test_detector_fires_critical_on_refuse_and_warning_on_saturation() -> None:
-    (refuse,) = detect_preflight_verdict(
-        {"verdict": "refuse", "signal": 0.1, "noise_floor_max_abs_delta": 0.5}
-    )
+def test_detector_fires_on_refuse_and_warning_on_saturation() -> None:
+    """The refusal finding's severity follows the operator's gate mode.
+
+    ``critical`` under the opt-in hard gate; ``warning`` under the default
+    ``preflight_gate="warn"``, where a critical would re-fire from the
+    persisted record every round and trip the degenerate-health breaker —
+    turning the mode the operator chose into ``"refuse"``. See
+    ``tests/test_preflight_severity_and_config_gate.py``.
+    """
+    record = {"verdict": "refuse", "signal": 0.1, "noise_floor_max_abs_delta": 0.5}
+    (refuse,) = detect_preflight_verdict(record, "refuse")
     assert refuse.code == "preflight_signal_below_floor"
     assert refuse.severity == "critical"
     assert refuse.detail["signal"] == 0.1
     assert refuse.detail["noise_floor_max_abs_delta"] == 0.5
+
+    (warned,) = detect_preflight_verdict(record)
+    assert warned.code == "preflight_signal_below_floor"
+    assert warned.severity == "warning"
 
     (warn,) = detect_preflight_verdict({"verdict": "warn", "signal": 0.0})
     assert warn.code == "preflight_saturated_contract"
@@ -468,7 +479,11 @@ def test_noisy_adapter_refuses_when_signal_below_floor(tmp_path: Path) -> None:
     assert report.verdict == VERDICT_REFUSE
     (finding,) = detect_preflight_verdict(report.to_json())
     assert finding.code == "preflight_signal_below_floor"
-    assert finding.severity == "critical"
+    # Live-measured records grade exactly like hand-written ones: the severity
+    # is the operator's gate mode, not a property of the measurement.
+    assert finding.severity == "warning"
+    (hard,) = detect_preflight_verdict(report.to_json(), "refuse")
+    assert hard.severity == "critical"
 
 
 # ---------------------------------------------------------------------------

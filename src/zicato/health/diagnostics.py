@@ -59,6 +59,7 @@ from typing import Any
 
 from zicato.config import HealthConfig, load_config
 from zicato.core.experiment import PLACEBO_HYPOTHESIS_MARKER
+from zicato.core.runtime import PREFLIGHT_GATE_DEFAULT
 from zicato.core.types import BoardEntry, LossProfile
 from zicato.util.iso_time import now_iso as _utcnow_iso
 
@@ -933,7 +934,10 @@ def detect_placebo_promoted(experiments: list[Any]) -> list[HealthFinding]:
     return findings
 
 
-def detect_preflight_verdict(preflight: dict[str, Any] | None) -> list[HealthFinding]:
+def detect_preflight_verdict(
+    preflight: dict[str, Any] | None,
+    preflight_gate: str = PREFLIGHT_GATE_DEFAULT,
+) -> list[HealthFinding]:
     """Re-surface a non-OK contract pre-flight verdict as a health finding.
 
     The contract pre-flight (:mod:`zicato.epoch.preflight`) measures the
@@ -944,9 +948,16 @@ def detect_preflight_verdict(preflight: dict[str, Any] | None) -> list[HealthFin
     long as the contract stays un-fixed. Recommend-only — like every
     finding, it never gates.
 
-    * verdict ``"refuse"`` → ``critical`` ``preflight_signal_below_floor``:
-      the measured achievable signal is at or below the measured noise
-      floor, so duels under this contract are decided by noise.
+    ``preflight_gate`` is the operator's
+    :attr:`~zicato.core.runtime.RuntimeConfig.preflight_gate` mode, and it
+    decides the SEVERITY of the refusal finding — see the severity contract
+    below.
+
+    * verdict ``"refuse"`` → ``preflight_signal_below_floor``: the measured
+      achievable signal is at or below the measured noise floor, so duels
+      under this contract are decided by noise. ``critical`` only under
+      ``preflight_gate="refuse"``; ``warning`` under ``"warn"`` (the default)
+      and ``"off"``.
     * verdict ``"warn"`` → ``warning`` ``preflight_saturated_contract``:
       every probe — K A/A draws plus a deliberately-degraded tree —
       scored identically (the historical ``1.000000`` signature); the
@@ -971,12 +982,35 @@ def detect_preflight_verdict(preflight: dict[str, Any] | None) -> list[HealthFin
       recommendation to say no margin is defensible, so an operator is not
       sent to tune a number that has no valid value.
 
+    Severity respects the gate mode
+    -------------------------------
+
+    The refusal finding is a ``critical`` ONLY when the operator asked for the
+    hard gate. Under the default ``preflight_gate="warn"`` it is a
+    ``warning``: fully visible in ``zicato health``, in the per-round report
+    and on the dashboard, but structurally unable to reach
+    :class:`zicato.evolve.loop.DegenerateHealthPolicy`, which observes
+    criticals only.
+
+    That asymmetry is the point. This detector re-emits from the PERSISTED
+    record, so a refuse verdict reappears identically every round for as long
+    as the epoch carries it — which means a ``critical`` here is not one
+    finding, it is an unbroken critical streak, and two rounds of it trip
+    ``_DEGENERATE_HEALTH_STOP_THRESHOLD`` and stop the loop. A run the
+    operator explicitly configured to WARN would then hard-stop anyway, making
+    the knob's ``"warn"`` setting indistinguishable from ``"refuse"`` except
+    for wasting two rounds first. A genuinely noise-limited contract under
+    ``"warn"`` must keep running with a loud warning — that is what "warn"
+    means. Under ``"refuse"`` the loop already stopped at the pre-flight
+    itself, so the breaker is moot and ``critical`` costs nothing.
+
     Silent when no pre-flight was ever run (``None``), when the record is
     malformed, or when the verdict is ``"ok"`` with the window intact.
     Tolerant of pre-#106/#112 records, which carry neither new key.
     """
     if not isinstance(preflight, dict):
         return []
+    hard_gate = str(preflight_gate or PREFLIGHT_GATE_DEFAULT) == "refuse"
     verdict = str(preflight.get("verdict", "") or "")
     window_failure = str(preflight.get("window_failure") or "")
     if verdict not in ("refuse", "warn", "inert") and not window_failure:
@@ -1004,6 +1038,10 @@ def detect_preflight_verdict(preflight: dict[str, Any] | None) -> list[HealthFin
         "promote_margin": margin,
         "window_verdict": preflight.get("window_verdict"),
         "window_failure": preflight.get("window_failure"),
+        # The gate mode the severity was chosen under, so a reader of a
+        # persisted report can tell "warning because the operator chose warn"
+        # from "warning because the detector graded it mild".
+        "preflight_gate": str(preflight_gate or PREFLIGHT_GATE_DEFAULT),
     }
     empty_window = window_failure == "empty_window"
     findings: list[HealthFinding] = []
@@ -1026,7 +1064,12 @@ def detect_preflight_verdict(preflight: dict[str, Any] | None) -> list[HealthFin
         findings.append(
             HealthFinding(
                 code="preflight_signal_below_floor",
-                severity="critical",
+                # Gate-aware on purpose (see the docstring): a critical here
+                # re-fires every round from the persisted record, and two of
+                # them trip the loop's degenerate-health breaker — which would
+                # turn the DEFAULT "warn" mode into a hard stop and override
+                # the operator's explicit choice.
+                severity="critical" if hard_gate else "warning",
                 summary=(
                     f"contract pre-flight: achievable signal {signal:.6g} is at/below "
                     f"the measured A/A noise floor {floor:.6g} — duels under this "
@@ -1247,6 +1290,7 @@ def assess_loop_health(
     preflight: dict[str, Any] | None = None,
     infra_outage: tuple[int, int] | None = None,
     token_clip: tuple[int, int] | None = None,
+    preflight_gate: str = PREFLIGHT_GATE_DEFAULT,
 ) -> LoopHealth:
     """Run every detector and collect the findings into a :class:`LoopHealth`.
 
@@ -1294,6 +1338,15 @@ def assess_loop_health(
         :func:`detect_preflight_verdict` can keep a REFUSE/saturation
         verdict visible in every round's report. ``None`` (the default)
         disables that detector.
+    preflight_gate:
+        The operator's
+        :attr:`~zicato.core.runtime.RuntimeConfig.preflight_gate` mode,
+        threaded so :func:`detect_preflight_verdict` can grade a refusal
+        ``critical`` only under the hard gate. Defaults to
+        :data:`~zicato.core.runtime.PREFLIGHT_GATE_DEFAULT` (``"warn"``),
+        matching the runtime default, so a caller that does not know the
+        mode gets the recommend-only severity rather than one that can stop
+        the loop.
     infra_outage:
         THIS round's endpoint-outage circuit trip, as an
         ``(infra_aborted_runs, threshold)`` pair — threaded by the
@@ -1335,7 +1388,7 @@ def assess_loop_health(
     findings.extend(detect_generalization_gap(experiments, health))
     findings.extend(detect_refresh_cadence(experiments, max_generations_per_contract))
     findings.extend(detect_margin_below_noise_floor(noise_floor, promote_margin, evidence_gate_on))
-    findings.extend(detect_preflight_verdict(preflight))
+    findings.extend(detect_preflight_verdict(preflight, preflight_gate))
     findings.extend(detect_placebo_promoted(placebo_experiments))
     findings.extend(detect_infra_outage(infra_outage))
     findings.extend(detect_token_budget_clip(token_clip))

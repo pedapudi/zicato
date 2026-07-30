@@ -69,11 +69,19 @@ Verdict
   ``1.000000`` signature).
 * ``"inert"`` when the best probe moved the scalar by EXACTLY nothing
   while the champion's own draws demonstrably did vary. The achievable
-  signal is then **unmeasured**, not zero — every point the pre-flight
-  degraded happens not to reach the deliverable — which is a different
-  diagnosis, with a different fix (pick a representative point), from a
-  noise-limited contract. Never a hard refusal: refusing here was the
-  false-``REFUSE`` bug of issue #106.
+  signal is then **unmeasured**, not zero, so the fix is to pick a
+  representative point rather than to fix the board. Read the bound
+  honestly: it requires the degraded scalar to land EXACTLY on the mean
+  of the varying champion draws, which is reachable only on a
+  **quantized** scoring scale. On a continuous noisy scale it is
+  measure-zero, and on a deterministic harness there is no champion
+  spread, so the saturation branch above fires first. So this verdict is
+  narrow — correct when it fires, but NOT the thing that keeps a healthy
+  board off a false ``refuse``. What protects issue #106's board is (1)
+  the role-diverse multi-point sample above and (2) the health finding's
+  gate-aware severity (see *Gating* below): under the default
+  ``preflight_gate="warn"`` a refusal is a WARNING, loud but structurally
+  unable to trip the loop's degenerate-health breaker.
 * ``"refuse"`` (**refuse-recommended**) when the achievable signal is
   positive but at or below the measured noise floor: the contract cannot
   distinguish a real degradation from a re-roll, so it cannot possibly
@@ -108,11 +116,23 @@ and acts on :func:`effective_gate_verdict` per the gate mode:
 * ``"warn"`` (the DEFAULT) — a refuse-worthy / saturated / inert verdict
   and any window failure are LOUDLY warned and surfaced in every round's
   health report, but the run proceeds (the recommend-only philosophy).
+  The health finding is then a WARNING, never a critical: the loop's
+  degenerate-health circuit breaker observes criticals only, so two
+  warn-mode rounds carrying a persisted refusal cannot silently become
+  the hard stop the operator explicitly declined
+  (:func:`zicato.health.diagnostics.detect_preflight_verdict`).
 * ``"refuse"`` — additionally raises :class:`PreflightRefusedError` when
   EITHER verdict refuses (signal at/below the floor, or a margin at/above
-  the achievable signal), stopping the run *before* it spends rounds. An
-  ``"inert"`` verdict never refuses: the probe, not the contract, is what
-  came up short.
+  the achievable signal), stopping the run *before* it spends rounds — and
+  only here is the health finding a CRITICAL (moot for the breaker, since
+  the run already stopped at pre-flight). A deterministic
+  probe-selection CONFIG error (an unknown pinned mutation id, a probe
+  ceiling wider than the reserved replicate block) also refuses under this
+  mode: an outage never disqualifies a contract, but an operator typo is
+  not an outage, and silently proceeding unprotected is the one outcome a
+  ``"refuse"`` operator did not ask for
+  (:class:`PreflightConfigError`). An ``"inert"`` verdict never refuses:
+  the probe, not the contract, is what came up short.
 
 Surfaces: ``zicato board preflight`` (manual, always recommend-only,
 carries ``--degrade-mutation-id``) and the number of A/A draws K from the
@@ -164,9 +184,15 @@ VERDICT_OK: str = "ok"
 VERDICT_WARN: str = "warn"
 #: Every probed point was INERT: the best probe moved the scalar by exactly
 #: nothing while the champion's own draws did vary, so the achievable signal
-#: is unmeasured rather than measured-as-zero (issue #106). Deliberately NOT
-#: a refusal — the operator must pick a representative point, not fix a board
-#: that may be perfectly healthy.
+#: is unmeasured rather than measured-as-zero. Deliberately NOT a refusal —
+#: the operator must pick a representative point, not fix a board that may be
+#: perfectly healthy. NARROW by construction: exact equality with the mean of
+#: draws that demonstrably vary is reachable only on a QUANTIZED scoring scale
+#: (measure-zero on a continuous one; on a deterministic harness the champion
+#: draws do not vary, so :data:`VERDICT_WARN` fires first). Additive and
+#: correct when it fires, but it is not the guard against issue #106's false
+#: refusal — the role-diverse sample and the warn-mode severity of
+#: ``preflight_signal_below_floor`` are.
 VERDICT_INERT: str = "inert"
 #: The achievable signal is positive but at or below the measured A/A floor.
 VERDICT_REFUSE: str = "refuse"
@@ -198,6 +224,27 @@ class PreflightRefusedError(RuntimeError):
     ``evolve_n_rounds`` and reported as a clean stop reason (never a
     traceback), so the operator sees why the run refused *before* rounds burn
     budget.
+    """
+
+
+class PreflightConfigError(ValueError):
+    """A DETERMINISTIC operator-config error in the pre-flight's probe selection.
+
+    Raised for an unknown pinned mutation id
+    (:attr:`~zicato.core.runtime.RuntimeConfig.preflight_probe_mutation_ids` /
+    ``--degrade-mutation-id``) or a probe ceiling the reserved replicate block
+    cannot hold — never for anything the endpoint or the harness did.
+
+    A :class:`ValueError` subclass so every existing ``except ValueError``
+    handler (and every test asserting one) keeps working; the distinct type
+    exists so the evolve-start hook can tell "the infrastructure hiccuped"
+    apart from "the operator mistyped a knob". The pre-flight runs under
+    ``best_effort``, and swallowing the first kind is exactly right — a
+    transient outage must never disqualify a contract. Swallowing the second
+    means a ``preflight_gate="refuse"`` run proceeds with NO gate at all
+    because of a typo, which is the one outcome that operator ruled out; so
+    under ``"refuse"`` this becomes a :class:`PreflightRefusedError`, and under
+    ``"warn"`` it stays the loud warning it has always been.
     """
 
 
@@ -397,8 +444,10 @@ def is_no_op_degradation(point: MutationPoint) -> bool:
     matter how healthy the contract is, so :func:`select_probe_points` drops it
     from the sample rather than spending a board evaluation to learn that
     ``signal == 0``. (Inertness that depends on the CONTRACT — a live span the
-    deliverable happens not to read — is invisible here and is what the
-    multi-point sample plus :data:`VERDICT_INERT` exist for.)
+    deliverable happens not to read — is invisible here, and it is the
+    multi-point role-diverse sample that covers it: such a point usually
+    measures a small NON-zero signal rather than exact zero, so it presents as
+    a weak probe the sample can out-measure, not as :data:`VERDICT_INERT`.)
     """
     return degraded_content_for(point) == point.content
 
@@ -434,11 +483,12 @@ def select_probe_points(
     :attr:`~zicato.core.runtime.RuntimeConfig.preflight_probe_mutation_ids`) —
     takes the named points in the order given and ignores ``limit``: an
     operator who names the points has answered the selection question
-    themselves. An id that no longer enumerates raises :class:`ValueError`
-    rather than silently falling back, because a silent fallback would report
-    a verdict measured on points the operator did not choose. A pinned point
-    whose degradation is a no-op is still probed, so an explicit pin measures
-    exactly what was asked (and reports ``signal == 0`` honestly).
+    themselves. An id that no longer enumerates raises
+    :class:`PreflightConfigError` rather than silently falling back, because a
+    silent fallback would report a verdict measured on points the operator did
+    not choose. A pinned point whose degradation is a no-op is still probed, so
+    an explicit pin measures exactly what was asked (and reports
+    ``signal == 0`` honestly).
 
     Absent a pin, the sample is drawn **round-robin across declared roles**.
     :func:`~zicato.mutation.enumerator.enumerate_mutations` orders by
@@ -454,15 +504,19 @@ def select_probe_points(
     span/code/file spread. Determinism is preserved throughout: group order is
     first appearance in the enumeration, within-group order is the
     enumeration's, and ties never depend on dict iteration of unordered data.
+
+    Both failure modes are :class:`PreflightConfigError` (a
+    :class:`ValueError`): they are deterministic operator-config errors, which
+    the evolve-start hook must be able to tell apart from an outage.
     """
     if limit < 1:
-        raise ValueError(f"pre-flight probe limit must be >= 1, got {limit!r}")
+        raise PreflightConfigError(f"pre-flight probe limit must be >= 1, got {limit!r}")
 
     if mutation_ids:
         by_id = {p.id: p for p in points}
         unknown = [mid for mid in mutation_ids if mid not in by_id]
         if unknown:
-            raise ValueError(
+            raise PreflightConfigError(
                 f"contract pre-flight: requested mutation point(s) "
                 f"{', '.join(sorted(unknown))} do not enumerate under the "
                 f"champion snapshot; available ids: "
@@ -520,16 +574,26 @@ def preflight_verdict(
       the actionable one (the probe moved NOTHING, so the board — not the
       noise — is the problem).
     * ``"inert"`` when the signal is EXACTLY zero while the champion's own
-      draws did vary (issue #106). Two facts hold simultaneously: the
-      harness demonstrably can move the scalar, and the degradation moved
-      it by nothing at all. That is a statement about the PROBE, not the
-      contract — with a stochastic harness, landing exactly on the mean of
-      K noisy draws is a measure-zero coincidence, and with a
-      deterministic one it means the degraded tree is behaviourally
-      identical. Reported apart from ``"refuse"`` because it sends the
-      operator to a different fix (choose a representative point) and must
-      never hard-stop a run: a healthy board whose probed points happen not
-      to reach the deliverable is exactly the false refusal #106 filed.
+      draws did vary. Two facts hold simultaneously: the harness
+      demonstrably can move the scalar, and the degradation moved it by
+      nothing at all. That is a statement about the PROBE, not the
+      contract, so it is reported apart from ``"refuse"`` (a different
+      fix: choose a representative point) and never hard-stops a run.
+
+      Its reach is narrow, and the comment that used to sit here overstated
+      it. The two conditions together — champion spread ``> 0`` and the
+      degraded scalar EXACTLY at the champion mean — are only jointly
+      satisfiable on a **quantized** scoring scale whose attainable values
+      include that mean. On a continuous noisy scale hitting the mean has
+      probability zero; on a deterministic harness the champion draws do not
+      vary at all, so the saturation branch above claims the case first
+      (degraded == champion ⇒ spread ``== 0`` ⇒ ``"warn"``). In particular
+      this branch is NOT what saves issue #106's healthy board: a live point
+      the deliverable merely routes around measures a small non-zero signal
+      and lands in ``"refuse"``. The role-diverse sample
+      (:func:`select_probe_points`) is what out-measures it, and the
+      gate-aware severity of the resulting health finding is what keeps a
+      warn-mode run alive while the operator fixes the sample.
     * ``"refuse"`` when the achievable signal is positive but at or below
       the measured floor — an A/A re-roll moves the scalar as much as a
       deliberate degradation does, so duels are decided by noise.
@@ -645,15 +709,17 @@ async def run_contract_preflight(
 ) -> tuple[PreflightReport, NoiseFloor]:
     """Measure the contract's noise floor AND achievable signal; verdict.
 
-    Steps (see the module docstring): (a) the A/A floor via
+    Steps (see the module docstring): (b0) probe SELECTION — a
+    deterministic, role-diverse SAMPLE of the champion snapshot's mutation
+    points (:func:`select_probe_points`), validated first because it is
+    free and every way it can fail is deterministic, so no draw is spent
+    to discover a mistyped knob; (a) the A/A floor via
     :func:`~zicato.tournament.calibration.measure_noise_floor` — K fresh
     draws of ``generation``, cache-shared with ``zicato board audit``;
-    (b) the scripted-perturbation duels — a deterministic, role-diverse
-    SAMPLE of the champion snapshot's mutation points
-    (:func:`select_probe_points`), each degraded in its own ephemeral
-    scratch copy (the real lineage is never touched) and scored once
-    through the same board-unit runner, until a probe's signal clears
-    every bound the verdict depends on; (c) the pure
+    (b) the scripted-perturbation duels — each sampled point degraded in
+    its own ephemeral scratch copy (the real lineage is never touched) and
+    scored once through the same board-unit runner, until a probe's signal
+    clears every bound the verdict depends on; (c) the pure
     :func:`preflight_verdict` over the best probe's scalars plus
     :func:`preflight_window_verdict` over the achievable-signal /
     ``promote_margin`` / floor window.
@@ -673,8 +739,13 @@ async def run_contract_preflight(
 
     Raises :class:`ValueError` when the champion's snapshot enumerates no
     mutation points — with no mutable surface there is nothing to degrade
-    (and nothing for an evolve loop to optimize either) — or when a pinned
-    ``degrade_mutation_id`` does not enumerate.
+    (and nothing for an evolve loop to optimize either) — or when every
+    point degrades to byte-identical content. Raises the
+    :class:`PreflightConfigError` subclass for the two OPERATOR-config
+    failures (a pinned id that does not enumerate, a probe ceiling wider
+    than the reserved replicate block), which the evolve-start hook escalates
+    to a refusal under ``preflight_gate="refuse"``. All four are raised
+    before any draw is spent.
     """
     from zicato.core.loss import is_infra_abort_cause  # noqa: PLC0415
     from zicato.mutation.applier import apply_patches  # noqa: PLC0415
@@ -691,29 +762,12 @@ async def run_contract_preflight(
         _stamp_replicate_index,
     )
 
-    # (a) The A/A noise floor — the same measurement `zicato board audit`
-    # takes, on the same cache slots (idempotent across the two surfaces).
-    floor = await measure_noise_floor(
-        adapter=adapter,
-        generation=generation,
-        board=board,
-        weights=weights,
-        config=config,
-        workspace_root=workspace_root,
-        epoch_id=epoch_id,
-        runs=runs,
-        disable_drift=disable_drift,
-        judge_only=judge_only,
-        # Void the whole pre-flight rather than persist an outage-derived
-        # floor: a transient endpoint outage during the epoch's first round
-        # must not poison the floor (and, under the hard gate, falsely
-        # disqualify the contract). The caller's ``best_effort`` turns the
-        # raised :class:`NoiseFloorInconclusive` into a skip + re-measure next
-        # round.
-        raise_on_infra_abort=True,
-    )
-
-    # (b) The scripted-perturbation duels over a deterministic sample.
+    # (b0) Probe SELECTION first, before a single draw is spent. Enumeration
+    # and selection are pure filesystem reads; every way they can fail is a
+    # deterministic property of the snapshot or of the operator's config, so
+    # learning about it costs nothing — whereas learning about it after (a)
+    # has burned K champion evaluations charges the operator real budget for a
+    # typo. Behaviour is otherwise identical: nothing here reads the floor.
     points = enumerate_mutations(_resolve_mutable_trees(adapter, generation.snapshot_root))
     if not points:
         raise ValueError(
@@ -744,13 +798,36 @@ async def run_contract_preflight(
         # the reserved block would squat the candidate screen's range and make
         # ITS idempotence a lie. Refuse rather than silently overlap.
         block_end = PREFLIGHT_REPLICATE_BASE + PREFLIGHT_REPLICATE_SPAN - 1
-        raise ValueError(
+        raise PreflightConfigError(
             f"contract pre-flight: a {len(sample)}-point probe sample exceeds the "
             f"reserved replicate block of {PREFLIGHT_REPLICATE_SPAN} "
             f"({PREFLIGHT_REPLICATE_BASE}..{block_end}); lower "
             "runtime.preflight_probe_points (or shorten "
             "runtime.preflight_probe_mutation_ids)"
         )
+
+    # (a) The A/A noise floor — the same measurement `zicato board audit`
+    # takes, on the same cache slots (idempotent across the two surfaces).
+    # This is where the pre-flight starts SPENDING: K champion draws.
+    floor = await measure_noise_floor(
+        adapter=adapter,
+        generation=generation,
+        board=board,
+        weights=weights,
+        config=config,
+        workspace_root=workspace_root,
+        epoch_id=epoch_id,
+        runs=runs,
+        disable_drift=disable_drift,
+        judge_only=judge_only,
+        # Void the whole pre-flight rather than persist an outage-derived
+        # floor: a transient endpoint outage during the epoch's first round
+        # must not poison the floor (and, under the hard gate, falsely
+        # disqualify the contract). The caller's ``best_effort`` turns the
+        # raised :class:`NoiseFloorInconclusive` into a skip + re-measure next
+        # round.
+        raise_on_infra_abort=True,
+    )
 
     margin = float(getattr(weights, "promote_margin", 0.0))
     # The bound past which more probes cannot change either verdict: a signal
@@ -765,6 +842,7 @@ async def run_contract_preflight(
     stamped_board = _stamp_judge_only(_stamp_disable_drift(board, disable_drift), judge_only)
     champion_mean = sum(floor.scalars) / len(floor.scalars) if floor.scalars else 0.0
 
+    # (b) The scripted-perturbation duels over the sample chosen in (b0).
     best_point = sample[0]
     best_scalar = champion_mean
     best_signal = -1.0
@@ -871,6 +949,7 @@ __all__ = [
     "WINDOW_EMPTY",
     "WINDOW_MARGIN_ABOVE_ACHIEVABLE",
     "WINDOW_MARGIN_BELOW_FLOOR",
+    "PreflightConfigError",
     "PreflightRefusedError",
     "PreflightReport",
     "ProbedPoint",

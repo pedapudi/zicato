@@ -401,14 +401,17 @@ ones that watch the measurement chain and decision procedure:
 | `generalization_gap` | §12 #5 | `holdout_loss − train_loss` widened past threshold |
 | `refresh_cadence` | §12 #6 | contract mined past `max_generations_per_contract` |
 | `placebo_promoted` | §11 | CRITICAL: a no-op won a tournament |
-| `preflight_signal_below_floor` / `preflight_saturated_contract` | §9 | the persisted pre-flight verdict re-surfaced every round |
+| `preflight_signal_below_floor` / `preflight_saturated_contract` | §9 | the persisted pre-flight verdict re-surfaced every round (severity follows `preflight_gate` — §9.5) |
 | `stalled_loop` | the round stream | no genuine progress (placebo arms filtered out first) |
 
-Two rules when extending this family: detectors are **recommend-only** (they
-never gate, never mutate) and they must **filter calibration probes out of
+Three rules when extending this family: detectors are **recommend-only** (they
+never gate, never mutate); they must **filter calibration probes out of
 optimization-stream logic** — a placebo arm is rejected by design every
 cadence tick, and a detector that counts it as "another failed round" will
-cry stall on a healthy loop.
+cry stall on a healthy loop; and a finding that re-fires from PERSISTED state
+every round must not be `critical` unless the operator opted into a hard gate,
+because `has_critical` feeds `DegenerateHealthPolicy` and a repeating critical
+is a stop, not a report (§9.5).
 
 ---
 
@@ -1267,9 +1270,20 @@ layers:
 3. **Explicit pin.** `runtime.preflight_probe_mutation_ids` (or
    `zicato board preflight --degrade-mutation-id`) names the points outright,
    in order, ignoring the limit. A pinned id that no longer enumerates raises
-   rather than silently falling back to the automatic sample — a silent
-   fallback would report a verdict measured on points the operator did not
-   choose, which is worse than no answer.
+   `PreflightConfigError` rather than silently falling back to the automatic
+   sample — a silent fallback would report a verdict measured on points the
+   operator did not choose, which is worse than no answer.
+
+**Selection runs BEFORE the floor is measured.** Enumeration and selection are
+pure filesystem reads, and every way they can fail is a deterministic property
+of the snapshot or of the operator's config — so `run_contract_preflight`
+validates them first and only then spends K champion draws on the A/A floor. It
+used to be the other way round, which charged an operator K real evaluations to
+be told they had mistyped a knob. `RuntimeConfig.__post_init__` catches the
+cheapest case earlier still: `preflight_probe_points` must be in
+`1..PREFLIGHT_PROBE_POINTS_MAX`, the width of the reserved replicate block
+(mirrored from `PREFLIGHT_REPLICATE_SPAN`, since `zicato.core` cannot import
+`zicato.epoch`; a test pins the two equal).
 
 **The cost is a ceiling, not a spend.** Probing stops at the first probe whose
 signal clears `max(floor_max_abs_delta, promote_margin)` — past that bound no
@@ -1298,25 +1312,45 @@ whole probe set:
 | Verdict | Condition | Pathology |
 |---|---|---|
 | `warn` (saturated) | spread across ALL probes — every A/A draw plus the best degraded draw — is **exactly zero** | zero variance / saturation: even a deliberately-broken tree scores identically. The historical signature is the `1.000000` null run — the loop spins forever with nothing to climb. The board, not the noise, is the problem. |
-| `inert` | `signal == 0` exactly, while the champion's own draws DID vary | the probe, not the contract. Two facts hold at once: the harness demonstrably can move the scalar, and the degradation moved it by nothing. So the achievable signal is **unmeasured**, not measured-as-zero. Fix = pick a representative point. |
+| `inert` | `signal == 0` exactly, while the champion's own draws DID vary | the probe, not the contract. Two facts hold at once: the harness demonstrably can move the scalar, and the degradation moved it by nothing. So the achievable signal is **unmeasured**, not measured-as-zero. Fix = pick a representative point. NARROW — see the honest reading below. |
 | `refuse` (recommended) | `0 < signal <= floor_max_abs_delta` | noise swamps the margin: an A/A re-roll moves the scalar as much as a deliberate degradation does; every duel is decided by noise. The contract cannot possibly resolve the *smaller* improvements a proposer will offer. |
 | `ok` | otherwise | signal demonstrably clears noise |
 
 Saturation is checked **first**, deliberately: a saturated contract trivially
 also has `signal == floor == 0`, and the saturation diagnosis is the
-actionable one. `inert` is checked second, before the floor comparison, because
-it is the case #106 filed — refusing there is the false refusal itself.
+actionable one. `inert` is checked second, before the floor comparison, so that
+"the probe moved nothing" is never reported as "the board is noise-limited".
 
-> Why exact zero is a defensible test for `inert`: with a stochastic harness,
-> a degraded draw landing exactly on the arithmetic mean of K noisy draws is a
-> measure-zero coincidence; with a deterministic one, exact equality means the
-> degraded tree is behaviourally identical. And whenever there IS signal,
-> `signal > 0`. So `signal == 0 and spread > 0` is precisely "the probes did
-> nothing while the harness proves it can vary" — no threshold to tune.
+> ⚠️ **The honest reading of `inert` — it is narrower than it looks, and it is
+> NOT what protects #106's board.** The branch needs BOTH champion spread `> 0`
+> AND the degraded scalar exactly equal to `mean(champion_scalars)`. Work
+> through the two realistic harnesses and neither reaches it:
+>
+> - **Noisy (continuous) harness** — hitting the arithmetic mean of K noisy
+>   draws exactly is measure-zero. A live point the deliverable merely routes
+>   around measures a small NON-zero signal, so it lands in **`refuse`**, not
+>   `inert`.
+> - **Deterministic harness** — the champion's draws do not vary, so a
+>   behaviourally-identical degraded tree gives spread `== 0` and the
+>   **saturation** branch claims the case first.
+>
+> What is left is the **quantized** case: a discrete scoring scale on which the
+> champion mean is itself an attainable score (e.g. draws {0.4, 0.6}, degraded
+> 0.5). There `inert` fires, and there it is correct and useful. The verdict is
+> kept for exactly that reason — additive, right when it fires, and removing it
+> would churn the persisted schema — but do not credit it with issue #106's
+> false refusal.
+>
+> **What actually protects a healthy board from a false `refuse` is (1) the
+> role-diverse multi-point sample of §9.1, which out-measures a routed-around
+> point, and (2) the gate-aware SEVERITY of §9.5's health finding, which keeps
+> a warn-mode run alive while the operator fixes the sample.** Pinned in
+> `tests/test_preflight_severity_and_config_gate.py`.
 
 The verdict persists onto the epoch record (`config.json`'s additive
 `preflight` field, never hashed); re-surfaced every round through loop health
-(`detect_preflight_verdict`: critical `preflight_signal_below_floor` / warning
+(`detect_preflight_verdict`: `preflight_signal_below_floor` — critical only
+under `preflight_gate="refuse"`, warning otherwise, §9.5 — / warning
 `preflight_saturated_contract` / warning `preflight_inert_probe`).
 
 ### 9.3 The promote-margin window (issue #112)
@@ -1409,8 +1443,8 @@ knob (never rolls the epoch — a runtime tuning knob like
 
 | `preflight_gate` | On a refuse-worthy / saturated / inert verdict, or any window failure |
 |---|---|
-| `"warn"` (**default**) | LOUD `log.warning` at evolve start + the per-round health finding; the run **proceeds** (recommend-only philosophy) |
-| `"refuse"` | additionally raises `PreflightRefusedError` when EITHER verdict refuses — signal at/below the floor, or margin at/above achievable — naming which; `evolve_n_rounds` catches it and stops with reason `preflight_refused` **before spending rounds**, no traceback |
+| `"warn"` (**default**) | LOUD `log.warning` at evolve start + the per-round health finding at **warning** severity; the run **proceeds** (recommend-only philosophy) |
+| `"refuse"` | additionally raises `PreflightRefusedError` when EITHER verdict refuses — signal at/below the floor, or margin at/above achievable — naming which; `evolve_n_rounds` catches it and stops with reason `preflight_refused` **before spending rounds**, no traceback. The health finding is **critical** here (and moot: no round runs) |
 | `"off"` | skip the measurement entirely — byte-identical to the pre-#84 behavior (the escape hatch deterministic oracles use so the orthogonal probe never runs the champion) |
 
 An `inert` verdict is **never** a refusal, under any gate mode: the probe came
@@ -1418,6 +1452,40 @@ up short, not the contract, and hard-stopping a possibly-healthy board there is
 exactly what #106 filed. `effective_gate_verdict` reads the persisted record
 rather than the live `PreflightReport` so a resumed / later round reaches the
 identical decision as the round that measured.
+
+> ⛔ **The health finding's severity MUST follow the gate mode.** This is not
+> presentation polish; it is the difference between the two gate modes actually
+> differing. `detect_preflight_verdict` re-emits from the **persisted** record,
+> so a refuse verdict re-fires identically every round for as long as the epoch
+> carries it. A `critical` there is therefore never one finding — it is an
+> unbroken critical streak, and `diagnostics.py`'s `healthy` flag counts
+> warnings but `orchestrator.py`'s `has_critical` counts only criticals, which
+> is exactly what `evolve_n_rounds` feeds to `DegenerateHealthPolicy`. Two
+> rounds and the loop stops with reason `degenerate_health`. Under the DEFAULT
+> `"warn"` that made the knob a lie: the operator asked to be warned and got a
+> hard stop two rounds later, i.e. `"refuse"` with extra steps. So
+> `preflight_signal_below_floor` is `critical` only under
+> `preflight_gate="refuse"` — where the run already stopped at the pre-flight,
+> so the breaker cannot fire anyway — and `warning` under `"warn"` / `"off"`,
+> where it stays fully visible in `zicato health`, the round report and the
+> dashboard (any warning makes `LoopHealth.healthy` false) while being
+> structurally unable to stop the run. The gate mode reaches the detector via
+> `_workspace_preflight_gate` (the `runtime` block is the knob's only source)
+> and rides along on the finding's `detail["preflight_gate"]` so a persisted
+> report says which choice graded it.
+
+**A config typo must not silently disable a `refuse` gate.** The evolve-start
+hook runs under `best_effort` because *an outage never disqualifies a
+contract* — a transient endpoint failure must skip the pre-flight and
+re-measure next round, never condemn the board. But that reasoning is about
+NONDETERMINISTIC infra. A misspelled `runtime.preflight_probe_mutation_ids`
+entry, or a probe ceiling the replicate block cannot hold, is deterministic
+operator error: it will fail identically every round, and swallowing it left a
+`preflight_gate="refuse"` run proceeding with **no gate at all** because of a
+typo. Those two failures raise `PreflightConfigError` (a `ValueError` subclass,
+so existing handlers still catch it), and `_maybe_contract_preflight` escalates
+it to `PreflightRefusedError` under `"refuse"` while leaving the loud warning
+alone under `"warn"`.
 
 The evolve-start warning is **per-verdict prose** (`_preflight_diagnosis` in
 `orchestrator.py`): "noise swamps the signal", "the probe was inert", "the
