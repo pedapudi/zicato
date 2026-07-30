@@ -964,16 +964,45 @@ def check_promotion_hygiene(
             recommended_promote_margin_from_floor(noise_floor) or MARGIN_FLOOR_MULTIPLE * floor_max,
             6,
         )
+        # ...which means the two statistics can DISAGREE, and only in one
+        # direction: the range grows with the calibration draw count K while
+        # the dispersion does not, so a well-measured floor (K ≳ 12 draws) can
+        # put ``max_abs_delta`` above 2.5 × delta_std. The margin then sits
+        # below the range — firing this check — while already clearing 2.5
+        # sigma of the dispersion the gate actually thresholds. Shipping the
+        # smaller number anyway would hand the operator an UNSOUND verdict
+        # whose one-command remedy LOWERS promote_margin: a machine-appliable
+        # gate weakening, emitted by the check whose whole subject is
+        # promoting on noise. Propose nothing there and say why. Provably
+        # unreachable on the no-delta_std path, where the fallback is 2.5 ×
+        # the range and the range already exceeds the margin.
+        raises_margin = recommended > margin
+        evidence["recommended_promote_margin"] = recommended
+        evidence["recommendation_raises_margin"] = raises_margin
+        if raises_margin:
+            headline = (
+                f"Your {n} promotion(s) were decided by a margin ({margin:.4g}) below the measured "
+                f"floor ({floor_max:.4g}) with no evidence gate — they promote on noise."
+            )
+            proposed_op = _op("set_gate", {"promote_margin": recommended})
+        else:
+            headline = (
+                f"Your {n} promotion(s) were decided by a margin ({margin:.4g}) below the measured "
+                f"floor ({floor_max:.4g}) with no evidence gate, but the draw-count-stable "
+                f"dispersion only supports {recommended:.4g} — at or below that margin. The two "
+                "statistics disagree because the floor's range grows with the calibration draw "
+                "count and its dispersion does not, so no margin change is proposed: applying "
+                "the smaller value would weaken the gate. Re-measure the noise floor, or turn "
+                "the evidence gate on, before acting on this."
+            )
+            proposed_op = None
         return PracticeCheck(
             check_id=CHECK_PROMOTION_HYGIENE,
             verdict=VERDICT_UNSOUND,
-            headline=(
-                f"Your {n} promotion(s) were decided by a margin ({margin:.4g}) below the measured "
-                f"floor ({floor_max:.4g}) with no evidence gate — they promote on noise."
-            ),
+            headline=headline,
             evidence=evidence,
             rationale=rationale,
-            proposed_op=_op("set_gate", {"promote_margin": recommended}),
+            proposed_op=proposed_op,
         )
     if gate_on or holdout_on:
         via = "the evidence gate" if gate_on else "holdout confirmation"
