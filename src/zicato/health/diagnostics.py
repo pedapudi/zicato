@@ -141,8 +141,11 @@ class HealthFinding:
         ``"generalization_gap"``, ``"refresh_cadence"``,
         ``"margin_below_noise_floor"``,
         ``"preflight_signal_below_floor"``,
-        ``"preflight_saturated_contract"``, ``"noisy_judge"``,
-        ``"placebo_promoted"``.
+        ``"preflight_saturated_contract"``, ``"preflight_inert_probe"``,
+        ``"preflight_margin_above_achievable"``,
+        ``"preflight_margin_below_floor"``, ``"noisy_judge"``,
+        ``"dead_judge"``, ``"placebo_promoted"``, ``"infra_outage"``,
+        ``"round_token_clipped"``, ``"tree_never_imported"``.
     severity:
         ``"info"`` | ``"warning"`` | ``"critical"``. A loop is
         considered unhealthy when any ``"warning"`` or ``"critical"``
@@ -973,9 +976,11 @@ def detect_preflight_verdict(
     (issue #112, ``window_failure``) yields ONE further finding — the two
     questions are separable and a contract can fail either alone:
 
-    * ``"margin_above_achievable"`` → ``critical``
-      ``preflight_margin_above_achievable``: nothing can be promoted, so the
-      run is guaranteed null before it starts.
+    * ``"margin_above_achievable"`` → ``warning``
+      ``preflight_margin_above_achievable``: no SINGLE-POINT change clears
+      the gate. Deliberately not critical — the achievable signal is a
+      single-point lower bound, and a compound (e.g. recombined) patch can
+      legitimately exceed it, so a hard stop would kill a viable run.
     * ``"margin_below_floor"`` → ``warning`` ``preflight_margin_below_floor``.
     * ``"empty_window"`` is NOT a finding of its own — it is the same fact the
       refuse/inert finding already carries — but it rewrites that finding's

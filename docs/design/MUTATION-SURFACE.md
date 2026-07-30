@@ -347,7 +347,7 @@ Flags:
 |---|---|
 | `--workspace PATH` | Path to the zicato workspace directory (default `.zicato`). |
 | `--id <glob>` | Filter mutation points by id glob, e.g. `--id 'researcher_*'`. |
-| `--kind span\|file` | Restrict the listing to one mutation kind. |
+| `--kind span\|file\|code` | Restrict the listing to one mutation kind. |
 | `--show preview\|full` | Truncate content previews (`preview`, the default) or dump full content (`full`). |
 | `--format table\|json` | Output format: human-readable `table` (default) or `json` (the full `MutationPoint` shape). |
 

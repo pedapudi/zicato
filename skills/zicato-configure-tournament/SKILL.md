@@ -35,7 +35,7 @@ It composes — it does not restate — the structure and builder skills. Defer:
 Specs: [TOURNAMENT-STRUCTURES.md](../../docs/design/TOURNAMENT-STRUCTURES.md),
 [EXPERIMENT-MEMORY.md](../../docs/design/EXPERIMENT-MEMORY.md),
 [SELECTION.md](../../docs/design/SELECTION.md). See
-[`../AGENTS.md`](../AGENTS.md) for operating rules (the live-run gate: never
+[`../../AGENTS.md`](../../AGENTS.md) for operating rules (the live-run gate: never
 launch a real-LLM `evolve` without the user's explicit go-ahead; derive every
 flag from `--help`, not the stale design CLI doc).
 

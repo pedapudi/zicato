@@ -29,7 +29,7 @@ board. It composes — it does not restate — the sibling skills. Defer:
 Run-time partner: [`zicato-configure-tournament`](../zicato-configure-tournament/SKILL.md)
 says "audit the board first with this skill" — a misaligned scalar makes
 *evolution* learn the wrong lesson, and no tournament config can fix that. See
-[`../AGENTS.md`](../AGENTS.md) for the operating rules every skill assumes
+[`../../AGENTS.md`](../../AGENTS.md) for the operating rules every skill assumes
 (read-only here; never start a live `evolve` to produce audit artifacts —
 audit the run directories that already exist).
 

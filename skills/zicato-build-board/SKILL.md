@@ -27,7 +27,7 @@ The design-principles siblings remain the authority on *what belongs* on a
 board ([`zicato-design-boards`](../zicato-design-boards/SKILL.md)) and *what to
 measure* ([`zicato-design-judges`](../zicato-design-judges/SKILL.md)); this
 skill is how the copilot *operates the builder* over those principles. See
-[`../AGENTS.md`](../AGENTS.md) for the operating rules.
+[`../../AGENTS.md`](../../AGENTS.md) for the operating rules.
 
 ## Board entries — the unit the copilot edits
 
@@ -237,7 +237,7 @@ The loop on every operator request:
 
 The board copilot, like the tournament copilot, **never starts a live `zicato
 evolve`** — it produces a validated board, and the live run is the operator's
-separate explicit go-ahead (see [`../AGENTS.md`](../AGENTS.md)).
+separate explicit go-ahead (see [`../../AGENTS.md`](../../AGENTS.md)).
 
 ## The direct GUI — the board editor
 

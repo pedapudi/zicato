@@ -25,7 +25,7 @@ it does NOT restate the design knowledge it composes. Defer:
 
 Design docs: [TOURNAMENT-STRUCTURES.md](../../docs/design/TOURNAMENT-STRUCTURES.md),
 [EPOCHS-AND-JOURNALING.md](../../docs/design/EPOCHS-AND-JOURNALING.md). See
-[`../AGENTS.md`](../AGENTS.md) for the operating rules every skill assumes.
+[`../../AGENTS.md`](../../AGENTS.md) for the operating rules every skill assumes.
 
 ## The one discipline: be consequence-forward
 
@@ -252,7 +252,7 @@ Two hard rules for the copilot:
 
 - **It NEVER starts a live `zicato evolve`.** Building and applying a contract
   is design-time work; launching the loop is the operator's separate, explicit
-  go-ahead (the live-run gate — see [`../AGENTS.md`](../AGENTS.md) and
+  go-ahead (the live-run gate — see [`../../AGENTS.md`](../../AGENTS.md) and
   `zicato-evolve`). The builder produces a ready contract; it does not run it.
 - **It batches contract changes.** Because every contract edit rolls the epoch
   on apply, the copilot collects the operator's structure + board + holdout +

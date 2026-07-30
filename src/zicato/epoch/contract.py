@@ -56,7 +56,7 @@ _SEP = "\x00--zicato-contract-component--\x00"
 
 @dataclass(frozen=True, slots=True)
 class ContractInputs:
-    """The four contract components, resolved to concrete inputs.
+    """The six contract components, resolved to concrete inputs.
 
     Fields
     ------
