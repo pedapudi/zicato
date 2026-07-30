@@ -1051,6 +1051,29 @@ async def evolve_once(
 
     child_diff_size = _diff_size(experiment)
     if fast_mode and parent_historical is not None:
+        # The contract's replication knob reaches the gauntlet fast path
+        # (issue #109): the challenger board runs ``replicates`` times and
+        # the per-entry losses are folded, exactly as ``run_matchup``
+        # already does under ``fast=True``. Before this the parameter did
+        # not exist on ``run_fast_mode`` at all, so the default
+        # configuration — ``--mode fast`` is the CLI default and the
+        # gauntlet's default ``replicates`` is 2 — silently executed as 1.
+        #
+        # The champion side stays ONE frozen cached draw (that is what fast
+        # mode IS), so the contrast is a replicated challenger against an
+        # unreplicated champion. Say so out loud rather than letting the
+        # operator infer a symmetric √K from the contract: an operator who
+        # wants independent draws on both sides wants --mode full.
+        fast_replicates = strategy.replicates()
+        if fast_replicates > 1:
+            log.warning(
+                "fast-mode gauntlet round: replicating the CHALLENGER board %d× "
+                "(contract replicates=%d), but the champion side is a single "
+                "frozen cached aggregate — the noise reduction is one-sided. "
+                "Use --mode full for independent draws on both sides.",
+                fast_replicates,
+                fast_replicates,
+            )
         tournament_result = await run_fast_mode(
             adapter=adapter,
             child_gen=child_gen,
@@ -1064,6 +1087,7 @@ async def evolve_once(
             judge_only=judge_only,
             round_index=round_index,
             total_rounds=total_rounds,
+            replicates=fast_replicates,
         )
     else:
         tournament_result = await run_tournament(
@@ -1147,7 +1171,13 @@ async def evolve_once(
     # Ladder's release, all onto the round's durable event log.
     _emit_tournament_units(round_log, tournament_result)
     _emit_harness_loaded(round_log, workspace_root, resolved_epoch_id, tournament_result)
-    _emit_gate_evaluated(round_log, tournament_result.outcome)
+    _emit_gate_evaluated(
+        round_log,
+        tournament_result.outcome,
+        parent_agg=tournament_result.parent_agg,
+        child_agg=tournament_result.child_agg,
+        weights=weights,
+    )
     _holdout_block = getattr(tournament_result, "holdout", None)
     if _holdout_block is not None:
         round_log.emit(
@@ -2039,7 +2069,13 @@ async def _evolve_multi_challenger(
         # WS8: this matchup's board units + gate verdict onto the round log.
         _emit_tournament_units(round_log, result)
         _emit_harness_loaded(round_log, workspace_root, epoch_id, result)
-        _emit_gate_evaluated(round_log, result.outcome)
+        _emit_gate_evaluated(
+            round_log,
+            result.outcome,
+            parent_agg=result.parent_agg,
+            child_agg=result.child_agg,
+            weights=weights,
+        )
         return MatchupResult(
             matchup_id=m.matchup_id,
             left_id=m.left.generation_id,
@@ -3332,20 +3368,47 @@ def _epoch_tree_import_gaps(workspace_root: Path, epoch_id: str) -> dict[str, tu
     return gaps
 
 
-def _emit_gate_evaluated(round_log: _RoundLogEmitter, outcome: Any) -> None:
+def _emit_gate_evaluated(
+    round_log: _RoundLogEmitter,
+    outcome: Any,
+    *,
+    parent_agg: Any = None,
+    child_agg: Any = None,
+    weights: Any = None,
+) -> None:
     """Emit the ``gate_evaluated`` event for one settled duel's gate verdict.
 
     ``rule_fired`` carries the gate's own ``reason`` verbatim (the string
     that names which rule rejected; empty on a clean promote — the gate
-    reports no rule for a pass).
+    reports no rule for a pass). UNCHANGED.
+
+    The scalars the gate decided on are recorded STRUCTURALLY alongside it, on
+    BOTH decisions, so a promoted duel is no longer a numberless record and a
+    downstream effect-size analysis is not missing exactly its promotions (see
+    :class:`~zicato.epoch.round_log.GateEvaluated`). They come from the same
+    aggregates and weights the gate itself was handed, so the event cannot
+    disagree with the decision it describes.
+
+    The three sources are keyword-optional: an older caller still emits a
+    well-formed event with the scalars ABSENT (``None``) rather than
+    fabricating zeros. Same tolerance within a call — a hand-built aggregate
+    carrying no ``scalar``, or a non-numeric one, leaves that field absent
+    rather than failing the round, matching the best-effort discipline of
+    every other emission.
     """
-    round_log.emit(
-        "gate_evaluated",
-        {
-            "rule_fired": str(getattr(outcome, "reason", "") or ""),
-            "decision": str(getattr(outcome, "decision", "") or ""),
-        },
-    )
+    fields: dict[str, Any] = {
+        "rule_fired": str(getattr(outcome, "reason", "") or ""),
+        "decision": str(getattr(outcome, "decision", "") or ""),
+    }
+    for key, agg in (("champion_scalar", parent_agg), ("challenger_scalar", child_agg)):
+        if isinstance(agg, dict):
+            raw = agg.get("scalar")
+            if isinstance(raw, int | float):
+                fields[key] = float(raw)
+    margin = getattr(weights, "promote_margin", None)
+    if isinstance(margin, int | float):
+        fields["margin_required"] = float(margin)
+    round_log.emit("gate_evaluated", fields)
 
 
 # ---------------------------------------------------------------------------

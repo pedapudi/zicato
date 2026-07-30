@@ -5,7 +5,7 @@
 > is the source of truth; if this document and the binary ever disagree,
 > trust `zicato --help` / `zicato help <command>`.
 >
-> *Last reconciled against the live `--help` on 2026-07-18.* Verified the
+> *Last reconciled against the live `--help` on 2026-07-29.* Verified the
 > full command set (`init`, `evolve`, and the advanced/debugging group:
 > `analyze-telemetry`, `board`, `builder`, `config`, `dashboard`, `epoch`,
 > `health`, `help`, `logs`, `mutations`, `propose`, `reflect`, `regenerate-report`,
@@ -119,7 +119,7 @@ zicato evolve [OPTIONS]
 | `--workspace PATH` | `.zicato` | Path to the zicato workspace root (the directory `zicato init` made). |
 | `--epoch TEXT` | current epoch | Epoch id. Defaults to the workspace's current epoch. Pinning an epoch skips auto-epoching entirely. |
 | `--rounds INTEGER RANGE` | `1` (x>=1) | Number of evolve rounds to attempt. |
-| `--mode [full\|fast]` | `fast` | `fast` = cache-first: every (generation, entry, replicate) board unit is evaluated at most once and reused across all pairings / rounds / structures; only cache misses run. `full` = bypass the cache and force a fresh evaluation of every unit (noise re-sampling / debugging). |
+| `--mode [full\|fast]` | `fast` | `fast` = cache-first: every (generation, entry, replicate) board unit is evaluated at most once and reused across all pairings / rounds / structures; only cache misses run. On the gauntlet the champion is a frozen cached aggregate, so replicates reduce CHALLENGER-side noise only — repeated rounds are not independent draws of the contrast. `full` = bypass the cache and force a fresh evaluation of every unit, both sides (noise re-sampling / debugging). |
 | `--harness-call-llm TEXT` | **required** | Dotted import path of the harness `call_llm` (e.g. `mymodule:harness`). |
 | `--auxiliary-call-llm TEXT` | **required** | Dotted import path of the auxiliary `call_llm` (e.g. `mymodule:aux`). |
 | `--max-consecutive-rejections INTEGER RANGE` | `3` (x>=1) | Stop early when this many rounds in a row are rejected. |

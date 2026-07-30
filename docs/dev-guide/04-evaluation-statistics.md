@@ -1048,18 +1048,66 @@ Replication is the loop's power lever (§3, fact #3). Its mechanics:
 
 ### 7.1 Averaging and the strict-majority pass
 
-`run_matchup(..., replicates=N)` runs the paired board N times;
-`_average_losses` (`src/zicato/tournament/unit_cache.py`) folds the N runs
-into one per-entry loss map *before* aggregation:
+`run_matchup(..., replicates=N)` runs the paired board N times — as do
+`run_tournament` on the full A/B gauntlet path and `run_fast_mode` on the fast
+gauntlet path (challenger side only; see §7.4). `_average_losses`
+(`src/zicato/tournament/unit_cache.py`) folds the N runs into one per-entry
+loss map *before* aggregation.
 
-- `drift_loss` — the arithmetic mean across replicates (the scalar-bearing
-  field);
-- `pass_fail` — the **strict-majority vote** (`true_count * 2 > len(votes)`;
-  an even split is a fail), with `None` preserved when no replicate produced a
-  pass/fail — so the pass-rate monotonicity rule stays meaningful under
-  replication;
-- every other field — taken from the first run's profile (not scalar-bearing
-  in the gate).
+Scoring never sees the individual replicates, so a field the fold does not
+aggregate is DISCARDED, not merely unaveraged. The rule the fold holds to is:
+**a field the scalar or the gate reads is aggregated; a field neither reads
+carries the representative replicate (slot 0)**, and its docstring names every
+pass-through with the reason it may be one.
+
+Aggregated:
+
+- `drift_loss` — the arithmetic mean; reaches the scalar as the `"drift"`
+  component;
+- `score` — the mean of each replicate's **resolved outcome**, i.e. of
+  `entry_score(replicate)`, not of the raw `score` field. This is the field
+  `entry_score` reads FIRST, hence the continuous outcome axis the duel actually
+  turns on, and folding the resolved outcome is what makes the fold correct in
+  the two cases where the raw field is unset. Only ONE of them is an
+  abstention: an entry with **no expectation at all** produces no outcome on any
+  replicate and folds to `None`, excluded from `mean_score` exactly as before
+  replication. An **aborted** replicate (spent budget, infra kill) records
+  `score=None` with `pass_fail=False` — it observed a failure, not nothing — so
+  `entry_score` maps it to `0.0` and it votes. Treating that as an abstention is
+  how a K-replicate duel silently reverts to slot 0: one clean pass plus one
+  abort reported the clean replicate's `1.0` verbatim while `pass_fail`'s
+  majority said `False`, a folded profile contradicting itself. Folding the
+  resolved outcome also means an all-bool board (score-less, `pass_fail` only)
+  gets the same arithmetic as a scored one — 1 of 4 replicates passing reads
+  `0.25`, not the single majority bit;
+- `metrics` — per-key mean over the replicates reporting the key, so the
+  decomposition decomposes the folded `score` beside it;
+- `metric_counts` (and the `tokens_spent` / `output_chars` / `schema_failures`
+  scalars) — namespace-bearing via `aggregate_namespaced_metrics`, whose
+  per-namespace values are summed into the scalar for any contract with a
+  non-zero `cost:` / `output:` / `schema:` weight. Meaned with an
+  absent-bucket-contributes-zero divisor, which is exactly the per-run-mean
+  model that aggregator uses — so the namespace aggregate over the fold equals
+  the aggregate over the replicates it folded;
+- `per_judge_loss` — meaned per judge; it rides `ScalarContext`, so a scalar
+  plugin can read it;
+- `pass_fail` — the **strict-majority vote** (`true_count * 2 > len(votes)`; an
+  even split is a fail), with `None` preserved when no replicate produced a
+  pass/fail. NOTE: now that `score` is folded, this vote no longer decides the
+  scalar — `entry_score` returns the folded continuous outcome before it can
+  consult `pass_fail`. The vote still drives the binary `pass_rate` and the
+  gate's `pass_fail` fallback for score-less aggregates, so it stays a majority
+  rather than a mean, and it can legitimately disagree in sign with the folded
+  `score` (2 of 5 replicates passing is `pass_fail` `False` and `score` `0.4`).
+  That is the binary and continuous views of one duel, not an inconsistency.
+
+Pass-through from slot 0, and why each may be: `run_id` /
+`expectation_result` (raw provenance of the representative replicate — the fold
+is not a run and has no matcher verdict of its own); `drift_counts` (the
+`"drift:"` namespace is explicitly excluded from the namespace terms precisely
+because `drift_loss`, which IS meaned, owns the drift axis); `runtime_ms` /
+`abort_cause` / cache provenance and friends (they describe ONE execution and
+have no meaningful fold).
 
 A noisy single run no longer decides a duel; the gate itself is unchanged.
 
@@ -1113,6 +1161,38 @@ Corollaries you must not violate:
 `champion_eval_mode` provenance (`"full"` / `"fast"` / `"fast-degraded"`) is
 derived from the LEFT side's pre-run cache state and is journal provenance
 only — it never enters the gate or the contract.
+
+---
+
+### 7.4 Where replication does and does not reduce variance
+
+Every replication path folds through the one `_average_losses` primitive, but
+they do not all replicate both SIDES of the contrast:
+
+- `run_tournament` (`--mode full`) and `run_matchup` replicate the paired
+  board — both sides get independent draws;
+- `run_fast_mode` (the gauntlet under `--mode fast`, the CLI default)
+  replicates the CHALLENGER board and compares the fold against the champion's
+  frozen cached aggregate. That is what makes fast mode cheap, and it means the
+  noise reduction is one-sided at any `replicates`.
+
+Two consequences to price in under fast mode. Repeated *rounds* are not
+repeated *draws* of the contrast — the champion side is the same numbers every
+round, so round-to-round variation understates the true variance. And
+`power_analysis`'s two-sample `sqrt(2/(k·n))` is optimistic by roughly
+`sqrt((k+1)/2)`, because it assumes both sides were drawn `k` times;
+`check_statistical_power` reads the CONTRACT and the runtime mode is not a
+contract field, so the check cannot gate on it. `--mode full` is the
+configuration the formula actually describes.
+
+Both replicate loops also stop scheduling FURTHER slots once the per-round
+token budget is spent, and settle the fold over the slots that completed. The
+alternative is worse than it looks: a spent budget turns the remaining slots'
+units into skips — synthesised worst-case budget-exceeded losses — and
+`budget_exhausted` is the one cache-*persistable* abort cause, so those worst
+cases would be both averaged into entries that already measured cleanly AND
+written to their cache slots, making the penalty a permanent HIT for the rest
+of the epoch on units that were never attempted.
 
 ---
 
