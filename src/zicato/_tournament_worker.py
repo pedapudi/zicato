@@ -120,6 +120,15 @@ def _resolve_role_call_llm(spec: Any, *, role: str) -> Any:
     * ``{"models_role": {...}}`` — a workspace ``models.<role>`` spec, which
       this worker re-resolves with the same machinery the runtime factory
       uses (reading any ``api_key_env`` from the worker's OWN os.environ).
+
+    The model-spec form resolves through
+    :func:`zicato.models_config.lazy_text_call_llm`, so the ADK import graph
+    (measured at 0.80 s / 88 MB per worker — RUNTIME.md §5.5.8) is paid on the
+    role's FIRST CALL rather than at worker startup. A unit that never
+    exercises a role — an entry with no LLM judge, a run that never reaches
+    the auxiliary side — therefore never pays for it, and a unit that does
+    exercise it pays exactly the same cost, just later. The spec *shape* is
+    still validated eagerly, so a malformed ``models`` block fails fast here.
     """
     if not isinstance(spec, dict):
         raise ValueError(f"{role} role spec must be a JSON object, got {type(spec).__name__}")
@@ -128,9 +137,9 @@ def _resolve_role_call_llm(spec: Any, *, role: str) -> Any:
         return _import_callable(str(dotted))
     raw_role = spec.get("models_role")
     if isinstance(raw_role, dict):
-        from zicato.models_config import resolve_text_call_llm, role_spec_from_dict  # noqa: PLC0415
+        from zicato.models_config import lazy_text_call_llm, role_spec_from_dict  # noqa: PLC0415
 
-        return resolve_text_call_llm(role_spec_from_dict(raw_role), role=role)
+        return lazy_text_call_llm(role_spec_from_dict(raw_role), role=role)
     raise ValueError(f"{role} role spec has neither 'dotted' nor 'models_role': {spec!r}")
 
 

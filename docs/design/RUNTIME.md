@@ -1142,6 +1142,16 @@ permit** held for a worker's lifetime:
   orchestrator cannot leak a permit, so there is no stale-lock
   reaper to write and no liveness protocol to get wrong. This is the
   reason for `flock` over a counter file.
+
+  Note this is the *opposite* choice from the workspace lock (§2.1),
+  which deliberately rejected `flock` because it "is released
+  invisibly on process death" and leaves no human-readable owner.
+  Both choices are right for their problem. The workspace lock is
+  about **identity** — an operator needs to know *which* process owns
+  the epoch, and a stale owner is a decision to surface, not to
+  silently reclaim. A permit is about **counting**: nobody ever needs
+  to know who holds slot 3, and invisible release on death is exactly
+  the property that makes a permit unleakable.
 * **it degrades OPEN.** Any failure to create the directory, open a
   slot, or use `flock` (an unsupported filesystem, a read-only
   runtime dir, a platform without `fcntl`) yields a permit that
@@ -1178,7 +1188,7 @@ concurrently across all of them (§5.5.1). Only the pool removes it.
 **Shipped: the worker no longer imports `google.adk` for a role it
 may never call.** `_tournament_worker` resolved *every* configured
 model-spec role (harness, auxiliary, judge) eagerly at startup, and
-`build_adk_model` pulls the whole ADK graph — 0.73 s / 88 MB — the
+`build_adk_model` pulls the whole ADK graph — 0.80 s / 88 MB — the
 first time any of them is touched. A unit whose entry has no LLM
 judge, or which never reaches the auxiliary side, paid for ADK
 anyway. Model-spec roles now resolve through
@@ -1188,8 +1198,16 @@ startup, where it is debuggable) and defers only the ADK import and
 `LiteLlm` construction to the role's first call. Roles given as a
 `call_llm` dotted path are unaffected — they never touched ADK.
 
+Measured before/after, same harness, cold start, best of five:
+
+| Worker reaches | s | RSS MB | `sys.modules` |
+|---|---|---|---|
+| worker only, no role resolved | 0.094 | 31 | 328 |
+| **before** — eager `resolve_text_call_llm` | 0.881 | 120 | 1657 |
+| **after** — `lazy_text_call_llm`, role never called | 0.080 | 32 | 329 |
+
 The saving is conditional by nature: a unit that does call the role
-pays the same cost, just later. It is `0.73 s / 88 MB / 1326 modules`
+pays the same cost, just later. It is **0.80 s / 88 MB / 1328 modules**
 per worker for every role a unit never exercises, and `0` otherwise —
 never a regression. The durable part of the change is the regression
 test that pins the posture: importing `zicato._tournament_worker`

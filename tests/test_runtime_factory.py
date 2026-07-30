@@ -166,6 +166,40 @@ def test_runtime_config_parallelism_default(tmp_path: Path) -> None:
     assert cfg.parallelism == 4
 
 
+def test_host_worker_permits_defaults_to_auto(tmp_path: Path) -> None:
+    """Absent from the ``runtime`` block ⇒ ``None`` = AUTO (max(4, 2 x cores)).
+
+    ``parallelism`` bounds THIS process; ``host_worker_permits`` bounds the
+    host across orchestrators (RUNTIME.md §5.5.7).
+    """
+    cfg = make_runtime_config(
+        {},
+        workspace_root=tmp_path,
+        harness_call_llm=_stub_harness,
+        auxiliary_call_llm=_stub_aux,
+    )
+    assert cfg.host_worker_permits is None
+
+
+def test_host_worker_permits_reads_the_runtime_block(tmp_path: Path) -> None:
+    """An explicit ceiling — and ``0``, the explicit off switch — pass through."""
+    cfg = make_runtime_config(
+        {"runtime": {"host_worker_permits": 6}},
+        workspace_root=tmp_path,
+        harness_call_llm=_stub_harness,
+        auxiliary_call_llm=_stub_aux,
+    )
+    assert cfg.host_worker_permits == 6
+
+    off = make_runtime_config(
+        {"runtime": {"host_worker_permits": 0}},
+        workspace_root=tmp_path,
+        harness_call_llm=_stub_harness,
+        auxiliary_call_llm=_stub_aux,
+    )
+    assert off.host_worker_permits == 0
+
+
 def test_runtime_config_default_instance_id(tmp_path: Path) -> None:
     cfg = make_runtime_config(
         {},

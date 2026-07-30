@@ -353,6 +353,60 @@ def _resolve_model_spec_call_llm(spec: RoleSpec, *, role: str) -> CallLLM:
     return call_llm
 
 
+def lazy_text_call_llm(spec: RoleSpec, *, role: str) -> CallLLM:
+    """Like :func:`resolve_text_call_llm`, but ADK is imported on FIRST CALL.
+
+    Why this exists (RUNTIME.md §5.5.8). Every board unit runs in a fresh
+    subprocess worker, and resolving a *model spec* role calls
+    :func:`build_adk_model`, which pulls the whole ``google.adk`` import graph
+    — measured at **0.80 s / 88 MB / 1328 modules** on top of the worker's own
+    0.08 s / 32 MB. The worker resolved every configured role eagerly at
+    startup, so a unit whose entry has no LLM judge (or which never reaches
+    the auxiliary side) paid the ADK tax for a role it never called. This
+    wrapper defers that cost to the role's first actual invocation: a role
+    that IS called pays exactly the same cost, just later, so the change is
+    never a regression.
+
+    What is still EAGER, deliberately: the spec *shape* is validated here, at
+    resolve time, by the same rules :func:`resolve_text_call_llm` applies. A
+    ``models`` block that names neither a ``call_llm`` dotted path nor a
+    ``model`` string still fails fast at worker startup, where it is
+    debuggable, rather than surfacing mid-run. Only the ADK import,
+    the ``LiteLlm`` construction, and goldfive's wrapper move.
+
+    What is DEFERRED, and therefore what moves: an environment problem —
+    the ``adk`` extra missing, or a ``model`` string ADK cannot resolve —
+    now raises :class:`ValueError` from the first call instead of from
+    startup. Both surface as a failed run either way.
+
+    The dotted-path form is resolved EAGERLY and returned unwrapped: it
+    imports a plain callable and never touched ADK, so there is nothing to
+    defer and no reason to add a layer of indirection to it.
+
+    Each call to this function returns a DISTINCT callable object, so the
+    harness/auxiliary collusion guard
+    (:func:`zicato.core.workspace.assert_distinct_callables`, an identity
+    comparison) behaves exactly as it does for eagerly-resolved model specs.
+    """
+    if spec.uses_call_llm:
+        assert spec.call_llm is not None  # narrowed by uses_call_llm
+        return _import_call_llm(spec.call_llm, role=role)
+    if not spec.model:
+        raise ValueError(f"models.{role}: neither a call_llm dotted path nor a model string is set")
+
+    # One-slot cache: the underlying call_llm is built once, on the first
+    # call, and reused for every later call of this role. A list (not a
+    # ``nonlocal``) keeps the closure trivially readable.
+    resolved: list[CallLLM] = []
+
+    async def _lazy_call_llm(system: str, user: str, model: str) -> str:
+        if not resolved:
+            resolved.append(_resolve_model_spec_call_llm(spec, role=role))
+        return await resolved[0](system, user, model)
+
+    return _lazy_call_llm
+
+
 def resolve_builder_model(spec: RoleSpec, *, role: str = "builder") -> Any:
     """Resolve the BUILDER role to an ADK model object (not a text call_llm).
 
@@ -391,6 +445,7 @@ __all__ = [
     "models_config_from_dict",
     "load_models_config",
     "resolve_text_call_llm",
+    "lazy_text_call_llm",
     "resolve_builder_model",
     "build_adk_model",
 ]
