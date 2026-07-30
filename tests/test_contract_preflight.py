@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace as _replace
 from pathlib import Path
 
 import zicato_examples.target_0_convergence as _t0_pkg
@@ -28,6 +29,7 @@ from zicato.epoch.preflight import (
     VERDICT_REFUSE,
     VERDICT_WARN,
     degraded_content_for,
+    effective_gate_verdict,
     preflight_verdict,
     run_contract_preflight,
 )
@@ -143,6 +145,118 @@ def test_detector_fires_critical_on_refuse_and_warning_on_saturation() -> None:
     assert warn.severity == "warning"
 
 
+def test_detector_separates_an_inert_probe_from_a_noise_limited_contract() -> None:
+    """Issue #106: two zero-signal causes must not read as the same finding.
+
+    An inert probe is a ``warning`` (the measurement is missing) rather than a
+    ``critical`` (the contract is broken), and its recommendation points at
+    probe selection instead of at the board.
+    """
+    (inert,) = detect_preflight_verdict(
+        {
+            "verdict": "inert",
+            "signal": 0.0,
+            "noise_floor_max_abs_delta": 0.08,
+            "probed_points": [{"mutation_id": "docs_tone", "signal": 0.0}],
+        }
+    )
+    assert inert.code == "preflight_inert_probe"
+    assert inert.severity == "warning"
+    assert "UNMEASURED" in inert.summary
+    assert "preflight_probe_mutation_ids" in inert.detail["recommendation"]
+
+
+def test_detector_fires_on_a_margin_window_failure_alone() -> None:
+    """Issue #112: a contract can clear its noise floor and still be null.
+
+    The window is a separate question, so the finding must fire even when the
+    signal verdict is ``ok``. It is a WARNING and not a critical on purpose: the
+    probe degrades ONE point per draw, so the achievable signal lower-bounds the
+    loop's reach and a compound patch can exceed it. Critical would trip the
+    loop's degenerate-health circuit breaker and kill a legitimate recombination
+    run whose margin sits above single-point reach by design.
+    """
+    (finding,) = detect_preflight_verdict(
+        {
+            "verdict": "ok",
+            "signal": 0.041,
+            "noise_floor_max_abs_delta": 0.02,
+            "promote_margin": 0.10,
+            "window_verdict": "refuse",
+            "window_failure": "margin_above_achievable",
+        }
+    )
+    assert finding.code == "preflight_margin_above_achievable"
+    assert finding.severity == "warning"
+    assert "single-point" in finding.summary
+    assert finding.detail["promote_margin"] == 0.10
+
+    (below,) = detect_preflight_verdict(
+        {
+            "verdict": "ok",
+            "signal": 0.50,
+            "noise_floor_max_abs_delta": 0.20,
+            "promote_margin": 0.10,
+            "window_verdict": "warn",
+            "window_failure": "margin_below_floor",
+        }
+    )
+    assert below.code == "preflight_margin_below_floor"
+    assert below.severity == "warning"
+
+
+def test_margin_window_finding_never_trips_the_degenerate_health_breaker() -> None:
+    """A recombination contract must survive its own deliberately-high margin.
+
+    ``recombine`` exists to union two individually sub-margin fixes, so such a
+    contract legitimately runs with ``promote_margin`` above what any SINGLE
+    mutation point can move — and the pre-flight's achievable signal is exactly
+    a single-point measurement. Were the window finding a ``critical``,
+    ``evolve_n_rounds``'s degenerate-health circuit breaker would stop the run
+    after two rounds and the known-answer recombination tests could never
+    promote. This pins the severity contract that keeps them running.
+    """
+    from zicato.evolve.loop import _DEGENERATE_HEALTH_STOP_THRESHOLD
+
+    assert _DEGENERATE_HEALTH_STOP_THRESHOLD >= 1  # the breaker exists
+    findings = detect_preflight_verdict(
+        {
+            "verdict": "ok",
+            "signal": 0.2,
+            "noise_floor_max_abs_delta": 0.0,
+            "promote_margin": 1.5,
+            "window_verdict": "refuse",
+            "window_failure": "margin_above_achievable",
+        }
+    )
+    assert findings, "the window failure must still be reported"
+    assert not any(f.severity == "critical" for f in findings), (
+        "a single-point achievable-signal bound is evidence, not proof — a "
+        "critical here trips the degenerate-health breaker and kills legitimate "
+        "compound-patch (recombination) runs"
+    )
+
+
+def test_detector_does_not_double_report_an_empty_window() -> None:
+    """``empty_window`` IS the refusal, so it rewrites the recommendation.
+
+    Emitting a second critical for the same fact would be noise; issue #112's
+    ask is that the operator be told not to tune the margin at all.
+    """
+    (finding,) = detect_preflight_verdict(
+        {
+            "verdict": "refuse",
+            "signal": 0.041,
+            "noise_floor_max_abs_delta": 0.10,
+            "promote_margin": 0.10,
+            "window_verdict": "warn",
+            "window_failure": "empty_window",
+        }
+    )
+    assert finding.code == "preflight_signal_below_floor"
+    assert "no promote_margin is defensible" in finding.detail["recommendation"]
+
+
 # ---------------------------------------------------------------------------
 # Integration — target_0 through the real board-unit workers
 # ---------------------------------------------------------------------------
@@ -155,9 +269,10 @@ def _bootstrap(
     board_source: Path | None = None,
     extra_config: dict | None = None,
     agent_dir: Path | None = None,
+    weights: object | None = None,
 ) -> tuple[Path, str]:
     workspace = tmp_path / ".zicato"
-    workspace.mkdir()
+    workspace.mkdir(parents=True)
     (workspace / "config.json").write_text(
         json.dumps(
             {
@@ -171,13 +286,15 @@ def _bootstrap(
     )
     brief = tmp_path / "brief.md"
     brief.write_text("# Pre-flight brief\n- Remove defect tokens.\n")
-    weights = _scoring_from_dict(json.loads(SCORING_PATH.read_text()))
+    resolved_weights = (
+        weights if weights is not None else _scoring_from_dict(json.loads(SCORING_PATH.read_text()))
+    )
     cfg = new_epoch(
         workspace,
         name="t0-preflight",
         board_source=board_source or BOARD_PATH,
         brief_source=brief,
-        weights=weights,
+        weights=resolved_weights,  # type: ignore[arg-type]
         auto_close_previous=False,
         proposer_path=EXAMPLE_DIR / "proposer",
     )
@@ -207,7 +324,7 @@ def _seed_baseline(workspace: Path, epoch_id: str) -> object:
     )
 
 
-def _run_preflight(workspace: Path, epoch_id: str, runs: int = 3) -> tuple:
+def _run_preflight(workspace: Path, epoch_id: str, runs: int = 3, **kwargs: object) -> tuple:
     from zicato import adapter_factory, runtime_factory, workspace_loader
 
     champion = _seed_baseline(workspace, epoch_id)
@@ -230,6 +347,7 @@ def _run_preflight(workspace: Path, epoch_id: str, runs: int = 3) -> tuple:
             workspace_root=workspace,
             epoch_id=epoch_id,
             runs=runs,
+            **kwargs,  # type: ignore[arg-type]
         )
     )
 
@@ -244,9 +362,14 @@ def test_deterministic_adapter_ok_verdict(tmp_path: Path) -> None:
     assert report.verdict == VERDICT_OK
     assert report.signal > 0.0
     assert report.noise_floor_max_abs_delta == 0.0
-    # The synthetic degradation targeted the FIRST enumerated point.
+    # target_0 enumerates exactly one mutation point, so the sample IS that
+    # point and it settles the verdict on the first probe.
     assert report.degraded_mutation_id == "style_rules"
     assert report.degraded_mutation_kind == "span"
+    assert [(p.mutation_id, p.skipped) for p in report.probed_points] == [("style_rules", "")]
+    # A healthy contract still costs exactly ONE degraded draw (issue #106's
+    # multi-point sample is a ceiling, not a spend).
+    assert report.probed_points[0].signal == report.signal
     # The degraded tree never entered the lineage: only v0 exists.
     from zicato.epoch.genstore import default_generation_store
 
@@ -346,6 +469,229 @@ def test_noisy_adapter_refuses_when_signal_below_floor(tmp_path: Path) -> None:
     (finding,) = detect_preflight_verdict(report.to_json())
     assert finding.code == "preflight_signal_below_floor"
     assert finding.severity == "critical"
+
+
+# ---------------------------------------------------------------------------
+# Issue #106 — an inert FIRST point must not decide the verdict
+# ---------------------------------------------------------------------------
+
+
+def _inert_first_point_agent(tmp_path: Path) -> Path:
+    """An agent whose FIRST enumerated point is inert under the contract.
+
+    The real shape #106 filed: the harness synthesises its deliverable from
+    ``agent/policy.py``'s ``STYLE_RULES`` and reads nothing else, so
+    ``docs_policy.py``'s span — annotated, enumerable, a perfectly legitimate
+    mutation point — cannot influence any measurement. Enumeration sorts by
+    ``(source_root, file, line_start, id)``, so ``docs_policy.py`` lands
+    BEFORE ``policy.py``: pre-#106 this dead point was the only point ever
+    probed, and a healthy board measured signal 0.
+    """
+    agent = tmp_path / "agent"
+    agent.mkdir()
+    (agent / "__init__.py").write_text("")
+    (agent / "docs_policy.py").write_text(
+        '"""Documentation tone — never read by the deliverable harness."""\n'
+        "\n"
+        "from __future__ import annotations\n"
+        "\n"
+        '# zicato:mutable id="docs_tone" role="doc_tone"\n'
+        'DOCS_TONE = "friendly; second-person; short-sentences"\n'
+        "\n"
+        '__all__ = ["DOCS_TONE"]\n'
+    )
+    (agent / "policy.py").write_text(
+        (AGENT_DIR / "policy.py").read_text(),
+    )
+    return agent
+
+
+def test_the_inert_fixture_really_enumerates_first(tmp_path: Path) -> None:
+    """Guard the guard: the fixture must reproduce the pre-fix SELECTION.
+
+    If ``docs_tone`` ever stopped sorting ahead of ``style_rules`` the
+    regression test below would pass for the wrong reason — it would no longer
+    be exercising an inert FIRST point at all.
+    """
+    from zicato.mutation.enumerator import enumerate_mutations
+
+    points = enumerate_mutations([_inert_first_point_agent(tmp_path)])
+    assert [p.id for p in points] == ["docs_tone", "style_rules"]
+
+
+def test_inert_first_point_no_longer_decides_the_verdict(tmp_path: Path) -> None:
+    """THE issue-#106 regression: a healthy board is no longer condemned.
+
+    Pre-fix, ``points[0]`` was the only probe, so ``docs_tone`` — inert under
+    this contract — produced signal 0 on a board that discriminates perfectly,
+    and the pre-flight reported the unmeasurable-contract verdict every round
+    (deterministically, never flakily). The sample now reaches ``style_rules``
+    and the max over probes clears the floor.
+    """
+    workspace, epoch_id = _bootstrap(tmp_path, agent_dir=_inert_first_point_agent(tmp_path))
+    report, floor = _run_preflight(workspace, epoch_id)
+
+    assert floor.max_abs_delta == 0.0
+    assert report.verdict == VERDICT_OK
+    assert report.signal > 0.0
+    # Both points are on the record, with the diagnosis #106 asked for: the
+    # operator can see that one was inert and the other was not, rather than
+    # only the winner.
+    probes = {p.mutation_id: p for p in report.probed_points}
+    assert set(probes) == {"docs_tone", "style_rules"}
+    assert probes["docs_tone"].signal == 0.0, "the inert point moved nothing"
+    assert probes["style_rules"].signal == report.signal
+
+
+def test_single_point_probe_reproduces_the_pre_fix_measurement(tmp_path: Path) -> None:
+    """``probe_points=1`` is the pre-#106 behaviour, and it is now opt-in.
+
+    Confining the sample to the first point measures signal 0 on the same
+    healthy board — which is the whole reason the ceiling defaults above 1.
+    """
+    workspace, epoch_id = _bootstrap(tmp_path, agent_dir=_inert_first_point_agent(tmp_path))
+    report, _floor = _run_preflight(workspace, epoch_id, probe_points=1)
+
+    assert [p.mutation_id for p in report.probed_points] == ["docs_tone"]
+    assert report.signal == 0.0
+    assert report.verdict != VERDICT_OK
+
+
+def test_explicit_pin_probes_exactly_the_named_point(tmp_path: Path) -> None:
+    """``--degrade-mutation-id`` answers the selection question by hand."""
+    workspace, epoch_id = _bootstrap(tmp_path, agent_dir=_inert_first_point_agent(tmp_path))
+    report, _floor = _run_preflight(workspace, epoch_id, degrade_mutation_id="style_rules")
+
+    assert [p.mutation_id for p in report.probed_points] == ["style_rules"]
+    assert report.verdict == VERDICT_OK
+    assert report.signal > 0.0
+
+    # An id that does not enumerate fails the measurement loudly rather than
+    # quietly measuring something the operator did not choose.
+    import pytest
+
+    with pytest.raises(ValueError, match="do not enumerate"):
+        _run_preflight(workspace, epoch_id, degrade_mutation_id="not_a_point")
+
+
+def test_probe_draws_use_distinct_reserved_cache_slots(tmp_path: Path) -> None:
+    """Probe ``j`` draws at ``PREFLIGHT_REPLICATE_BASE + j``.
+
+    One slot per probe: sharing a slot would make probe 2 a cache HIT on probe
+    1's degraded tree and silently report the first probe's number twice. The
+    slots stay inside the pre-flight's reserved range (below reflection's
+    5000), so no tournament or audit evidence is touched.
+    """
+    from zicato import workspace_loader
+    from zicato.epoch.preflight import PREFLIGHT_REPLICATE_SPAN
+    from zicato.epoch.screen import SCREEN_REPLICATE_BASE
+    from zicato.tournament.unit_cache import _unit_loss_path
+
+    workspace, epoch_id = _bootstrap(tmp_path, agent_dir=_inert_first_point_agent(tmp_path))
+    report, _floor = _run_preflight(workspace, epoch_id)
+    n_probes = len(report.probed_points)
+    assert n_probes == 2
+    # The block the pre-flight owns must stop short of the screen's — squatting
+    # a neighbour's range makes their idempotence a lie (dev-guide ch.04 §8.2).
+    assert PREFLIGHT_REPLICATE_BASE + PREFLIGHT_REPLICATE_SPAN <= SCREEN_REPLICATE_BASE
+    assert n_probes <= PREFLIGHT_REPLICATE_SPAN
+
+    entry_id = workspace_loader.load_current_board(workspace)[0].id
+    for ordinal in range(n_probes):
+        # Cached under the CHAMPION's id — the degraded trees are ephemeral.
+        assert _unit_loss_path(
+            workspace,
+            epoch_id,
+            "v0",
+            entry_id,
+            PREFLIGHT_REPLICATE_BASE + ordinal,
+        ).exists(), f"probe {ordinal} did not draw its own reserved cache slot"
+
+
+# ---------------------------------------------------------------------------
+# Issue #112 — the promote_margin window
+# ---------------------------------------------------------------------------
+
+
+def test_margin_above_achievable_signal_refuses_a_guaranteed_null_run(
+    tmp_path: Path,
+) -> None:
+    """A margin nothing can clear is caught in seconds, not after hours.
+
+    The contract out-signals its noise (verdict OK — the check that existed),
+    yet no challenger could ever be promoted because the gate sits above the
+    largest improvement the loop demonstrably produces. The window verdict is
+    what makes that a refusal.
+    """
+    weights = _scoring_from_dict(json.loads(SCORING_PATH.read_text()))
+    # Above any scalar movement target_0's single mutation point can produce.
+    weights = _replace(weights, promote_margin=99.0)
+    workspace, epoch_id = _bootstrap(tmp_path, weights=weights)
+    report, _floor = _run_preflight(workspace, epoch_id)
+
+    assert report.verdict == VERDICT_OK, "the signal DOES clear the noise floor"
+    assert report.signal > 0.0
+    assert report.promote_margin == 99.0
+    assert report.window_failure == "margin_above_achievable"
+    assert report.window_verdict == VERDICT_REFUSE
+    # The gate collapses both verdicts, so the hard gate now stops this run.
+    assert effective_gate_verdict(report.to_json()) == VERDICT_REFUSE
+
+    (finding,) = detect_preflight_verdict(report.to_json())
+    assert finding.code == "preflight_margin_above_achievable"
+    assert finding.severity == "warning"
+
+
+def test_healthy_contract_reports_an_intact_window(tmp_path: Path) -> None:
+    """target_0's shipped margin sits strictly inside the window."""
+    workspace, epoch_id = _bootstrap(tmp_path)
+    report, _floor = _run_preflight(workspace, epoch_id)
+
+    assert report.window_verdict == VERDICT_OK
+    assert report.window_failure is None
+    assert report.noise_floor_max_abs_delta < report.promote_margin < report.signal
+    assert detect_preflight_verdict(report.to_json()) == []
+
+
+def test_saturated_board_reports_an_empty_window_not_a_mis_set_margin(
+    tmp_path: Path,
+) -> None:
+    """``achievable <= noise`` means NO margin is defensible — say that.
+
+    Issue #112 item 3: an operator told "your margin is mis-set" spends a
+    cycle tuning a number that has no valid value on this board.
+    """
+    board = _no_expectation_board(tmp_path)
+    workspace, epoch_id = _bootstrap(tmp_path, board_source=board)
+    report, _floor = _run_preflight(workspace, epoch_id)
+
+    assert report.signal == 0.0
+    assert report.window_failure == "empty_window"
+    # An empty window is NOT re-gated: the signal verdict already carries that
+    # fact (here as saturation), so there is exactly one finding, not two.
+    assert report.window_verdict != VERDICT_REFUSE
+    (finding,) = detect_preflight_verdict(report.to_json())
+    assert finding.code == "preflight_saturated_contract"
+
+
+def test_recommended_margin_rides_along_on_the_record(tmp_path: Path) -> None:
+    """The record carries a margin recommendation from the STABLE statistic.
+
+    A deterministic harness measures no noise, so it recommends nothing rather
+    than a meaningless 0.0; a noisy one recommends 2.5 sigma of ``delta_std``.
+    """
+    from zicato.tournament.calibration import MARGIN_NOISE_MULTIPLE
+
+    workspace, epoch_id = _bootstrap(tmp_path)
+    report, _floor = _run_preflight(workspace, epoch_id)
+    assert report.recommended_margin is None, "no measured noise ⇒ nothing to recommend"
+
+    noisy_workspace, noisy_epoch = _bootstrap(
+        tmp_path / "noisy", adapter_block=_noisy_adapter(0.45)
+    )
+    noisy_report, noisy_floor = _run_preflight(noisy_workspace, noisy_epoch, runs=5)
+    assert noisy_floor.delta_std > 0.0
+    assert noisy_report.recommended_margin == MARGIN_NOISE_MULTIPLE * noisy_floor.delta_std
 
 
 # ---------------------------------------------------------------------------

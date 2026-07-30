@@ -228,6 +228,7 @@ def make_runtime_config(
         INFRA_BACKOFF_BASE_S_DEFAULT,
         INFRA_BACKOFF_CAP_S_DEFAULT,
         PREFLIGHT_GATE_DEFAULT,
+        PREFLIGHT_PROBE_POINTS_DEFAULT,
     )
 
     infra_threshold_raw = runtime_dict.get("infra_abort_round_threshold")
@@ -264,6 +265,24 @@ def make_runtime_config(
     # block). ``"refuse"`` hard-stops such a run; ``"off"`` skips the
     # measurement. Validated by ``RuntimeConfig.__post_init__``.
     preflight_gate = str(runtime_dict.get("preflight_gate", PREFLIGHT_GATE_DEFAULT))
+
+    # Pre-flight probe selection (issue #106): how many mutation points the
+    # achievable-signal probe may degrade (a CEILING — probing short-circuits
+    # once the verdict is settled), and an optional explicit list of point ids
+    # that replaces the automatic role-diverse sample. Both runtime-only and
+    # never hashed: tuning which points get probed must not roll the epoch.
+    probe_points_raw = runtime_dict.get("preflight_probe_points")
+    preflight_probe_points = (
+        int(probe_points_raw) if probe_points_raw is not None else PREFLIGHT_PROBE_POINTS_DEFAULT
+    )
+    probe_ids_raw = runtime_dict.get("preflight_probe_mutation_ids") or ()
+    if isinstance(probe_ids_raw, str):
+        raise ValueError(
+            "runtime.preflight_probe_mutation_ids must be a LIST of mutation-point "
+            f"ids, not a bare string ({probe_ids_raw!r}); a string would be read "
+            "character-by-character as ids"
+        )
+    preflight_probe_mutation_ids = tuple(str(mid) for mid in probe_ids_raw)
 
     # Inner ADK agent model: when ``models.harness`` is a *model spec* (a
     # model string, optionally + endpoint/api_key_env), build the ADK model
@@ -308,6 +327,8 @@ def make_runtime_config(
         infra_backoff_cap_s=infra_backoff_cap_s,
         max_tokens_per_round=max_tokens_per_round,
         preflight_gate=preflight_gate,
+        preflight_probe_points=preflight_probe_points,
+        preflight_probe_mutation_ids=preflight_probe_mutation_ids,
         persist_run_results=persist_run_results,
         persist_judge_io=persist_judge_io,
     )

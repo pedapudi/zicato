@@ -151,7 +151,7 @@ any new replicated evaluation:
 |---|---|---|---|
 | `0..` | (none — the natural range) | Real tournament duels + the `replicates` knob | Replicate `i` of a duel is slot `i`; the canonical `loss.json` is slot 0 |
 | `1000` | `CALIBRATION_REPLICATE_BASE` (`zicato.tournament.calibration`) | A/A calibration draws (the noise floor) | An A/A pair re-run of the champion against itself must not touch a real duel's slots — see 04-evaluation-statistics.md §"The noise floor" |
-| `2000` | `PREFLIGHT_REPLICATE_BASE` (`zicato.epoch.preflight`) | Contract pre-flight | A dry-run of the contract before the first real round |
+| `2000..2999` | `PREFLIGHT_REPLICATE_BASE` + probe ordinal, width `PREFLIGHT_REPLICATE_SPAN` (`zicato.epoch.preflight`) | Contract pre-flight | A dry-run of the contract before the first real round; probe `j` of the achievable-signal sample draws at `2000 + j` (issue #106), and the sample may never outgrow the block |
 | `3000` / `3001` | `SCREEN_REPLICATE_BASE` (+1 confirm) (`zicato.epoch.screen`) | The pre-tournament candidate screen | The best-of-N screen tries out candidates on an ephemeral tree; its confirm-before-veto re-run is `3001` — see 05-proposer.md §"5.6.2 The candidate SCREEN" |
 | `4000` | `EVIDENCE_REPLICATE_BASE` (`zicato.selection.evidence_gate`) | The Bradley–Terry pre-gate's evidence duels | Each BT replicate draws BOTH sides fresh; a replay at slot 0 would shrink the fit's SE by repetition (fast mode) or clobber the child's canonical `loss.json` (full mode) — Case 8 |
 

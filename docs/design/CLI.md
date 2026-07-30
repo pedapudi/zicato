@@ -250,14 +250,18 @@ Measure the contract's noise floor AND achievable signal; verdict.
 
 Board-reflection v1. Two measurements: (a) the A/A noise floor — the
 champion duels ITSELF `--runs` times (same draws `zicato board audit`
-takes); (b) the scripted-perturbation duel — the champion vs a
-deliberately-degraded ephemeral copy of itself (the FIRST enumerated
-mutation point blanked/scrambled in a scratch tree; the real lineage is
-never touched). Verdict: REFUSE-recommended when the achievable signal is
-at/below the floor; WARN when every probe scored identically (a saturated
-contract — the 1.000000 signature); OK otherwise. Recommend-only — never
-gates. The verdict persists onto the epoch record and flows into the
-per-round health report.
+takes); (b) the scripted-perturbation duels — the champion vs
+deliberately-degraded ephemeral copies of itself (a deterministic,
+role-diverse sample of mutation points blanked/scrambled in scratch trees;
+the real lineage is never touched), reporting the MAX signal so one inert
+point cannot veto a healthy contract. Verdicts: REFUSE-recommended when the
+achievable signal is at/below the floor; WARN when every probe scored
+identically (a saturated contract — the 1.000000 signature); INERT when the
+probes moved nothing while the A/A draws varied (the signal is unmeasured,
+not zero — pick a representative point); OK otherwise. Also asserts the
+promote_margin window `noise < margin < achievable` and names the side that
+failed. Recommend-only — never gates. The verdict persists onto the epoch
+record and flows into the per-round health report.
 
 ```
 zicato board preflight [OPTIONS]
@@ -268,6 +272,8 @@ zicato board preflight [OPTIONS]
 | `--workspace TEXT` | `.zicato` | Path to the zicato workspace root. |
 | `--epoch TEXT` | current epoch | Epoch to pre-flight. |
 | `--runs INTEGER RANGE` | `5` (>=2) | How many independent A/A draws of the champion to take. |
+| `--degrade-mutation-id TEXT` | automatic sample | Degrade exactly this mutation point instead of the automatic role-diverse sample (use when you know which point carries the contract's signal). |
+| `--probe-points INTEGER RANGE` | `runtime.preflight_probe_points` (>=1) | Ceiling on how many mutation points the automatic sample degrades. Probing stops early once the verdict is settled, so this rarely costs the full count. |
 | `--harness-call-llm TEXT` | required | Dotted import path of the harness call_llm (e.g. `mymodule:harness`). |
 | `--auxiliary-call-llm TEXT` | required | Dotted import path of the auxiliary call_llm (e.g. `mymodule:aux`). |
 

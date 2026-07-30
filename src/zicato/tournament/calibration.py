@@ -46,6 +46,15 @@ DEFAULT_CALIBRATION_RUNS: int = 5
 #: slots a tournament will actually read.
 CALIBRATION_REPLICATE_BASE: int = 1000
 
+#: How many noise standard deviations a recommended ``promote_margin`` sits
+#: above zero. The gate compares two aggregate scalars, so the quantity that
+#: must be cleared is the standard deviation of their DIFFERENCE
+#: (:attr:`NoiseFloor.delta_std`); at 2.5 sigma an A/A pair clears the margin
+#: by chance ~1.2% of the time (two-sided). The same 2.5 the reflection tier
+#: has always recommended — applied to a draw-count-stable statistic instead
+#: of the range (see :func:`recommended_promote_margin`).
+MARGIN_NOISE_MULTIPLE: float = 2.5
+
 
 class NoiseFloorInconclusive(RuntimeError):
     """An A/A noise-floor draw hit an INFRA abort — the measurement is void.
@@ -77,12 +86,17 @@ class NoiseFloor:
     max_abs_delta:
         ``max(scalars) - min(scalars)`` — the largest ``|delta_scalar|`` any
         A/A duel between two of the draws could have shown. THE measured
-        floor: a ``promote_margin`` below this cannot distinguish a real
-        improvement from a re-roll of the same generation.
+        floor for the "is my margin inside the noise?" comparison: a
+        ``promote_margin`` below this cannot distinguish a real improvement
+        from a re-roll of the same generation. A **range** statistic, so it
+        grows with K — never base a margin RECOMMENDATION on it
+        (:func:`recommended_promote_margin`).
     delta_std:
         The standard deviation of the A/A ``delta_scalar`` — i.e. of the
         difference between two independent draws: ``sqrt(2)`` times the
-        population standard deviation of the draw scalars.
+        population standard deviation of the draw scalars. Unlike
+        :attr:`max_abs_delta` this does NOT drift with K, which is why it —
+        not the range — is what a margin recommendation scales.
     measured_at:
         ISO-8601 UTC timestamp of the measurement.
     """
@@ -230,6 +244,83 @@ async def measure_noise_floor(
     )
 
 
+def recommended_promote_margin(
+    *,
+    scalars: list[float] | tuple[float, ...] | None = None,
+    delta_std: float | None = None,
+    max_abs_delta: float | None = None,
+    multiple: float = MARGIN_NOISE_MULTIPLE,
+) -> float:
+    """A ``promote_margin`` recommendation that does not drift with K. Pure.
+
+    The historical recommendation was ``multiple * max_abs_delta``, and
+    ``max_abs_delta`` is a **range** statistic: the expected range of K draws
+    from a fixed distribution grows without bound in K. On an UNCHANGED board,
+    raising the calibration draw count therefore raises the recommended margin
+    — and pushes it toward (issue #112: past) the largest improvement the loop
+    can actually produce, which is the one place a margin must never go. The
+    recommendation degrading as the measurement improves is backwards.
+
+    ``delta_std`` — already computed and persisted alongside the range by
+    :func:`delta_spread` — is the standard deviation of the A/A
+    ``delta_scalar``, i.e. of exactly the difference the promote gate
+    thresholds. It is a consistent estimator: more draws sharpen it rather
+    than inflate it. The recommendation is ``multiple * delta_std``
+    (:data:`MARGIN_NOISE_MULTIPLE` sigma).
+
+    Supply the dispersion in whichever form the caller has:
+
+    * ``scalars`` — K raw draw scalars; ``delta_std`` is derived via
+      :func:`delta_spread`.
+    * ``delta_std`` — the persisted statistic, straight from a
+      :meth:`NoiseFloor.to_json` record.
+    * ``max_abs_delta`` — the RANGE, used only as a degraded fallback when no
+      ``delta_std`` is available (a hand-written floor record that predates
+      the field). A real measurement with a positive range always has a
+      positive ``delta_std``, so this branch never fires on measured data.
+
+    Returns ``0.0`` when no dispersion is available at all: an unmeasured
+    floor recommends nothing.
+    """
+    if scalars is not None:
+        _, derived_std = delta_spread(scalars)
+        if derived_std > 0.0:
+            return multiple * derived_std
+        if max_abs_delta is None:
+            # A zero-spread measurement (a deterministic harness) recommends
+            # nothing — there is no noise for a margin to clear.
+            return 0.0
+    if delta_std is not None and delta_std > 0.0:
+        return multiple * float(delta_std)
+    if max_abs_delta is not None and max_abs_delta > 0.0:
+        return multiple * float(max_abs_delta)
+    return 0.0
+
+
+def recommended_promote_margin_from_floor(floor: dict[str, Any] | None) -> float | None:
+    """:func:`recommended_promote_margin` from a persisted floor record.
+
+    Reads a :meth:`NoiseFloor.to_json` dict, preferring the draw-count-stable
+    ``delta_std`` and falling back to ``max_abs_delta`` only when the record
+    carries no usable std. Tolerant like :func:`margin_below_floor`: ``None`` /
+    malformed / all-zero dispersion yields ``None`` (nothing to recommend).
+    """
+    if not isinstance(floor, dict):
+        return None
+
+    def _num(key: str) -> float | None:
+        try:
+            return float(floor[key])
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    recommended = recommended_promote_margin(
+        delta_std=_num("delta_std"),
+        max_abs_delta=_num("max_abs_delta"),
+    )
+    return recommended if recommended > 0.0 else None
+
+
 def margin_below_floor(promote_margin: float, floor: dict[str, Any] | None) -> bool:
     """Whether the contract's ``promote_margin`` is inside the measured noise.
 
@@ -250,8 +341,11 @@ def margin_below_floor(promote_margin: float, floor: dict[str, Any] | None) -> b
 __all__ = [
     "CALIBRATION_REPLICATE_BASE",
     "DEFAULT_CALIBRATION_RUNS",
+    "MARGIN_NOISE_MULTIPLE",
     "NoiseFloor",
     "delta_spread",
     "margin_below_floor",
     "measure_noise_floor",
+    "recommended_promote_margin",
+    "recommended_promote_margin_from_floor",
 ]

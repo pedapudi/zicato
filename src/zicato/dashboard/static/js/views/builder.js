@@ -1804,10 +1804,17 @@ function preflightVerdict(pf) {
   } else {
     const r = pf.report || {};
     reasons.push(`noise floor ${fmtSig(r.noise_floor_max_abs_delta)} (max |Δ| over ${r.noise_floor_runs != null ? r.noise_floor_runs : '?'} A/A draws)`);
-    reasons.push(`achievable signal ${fmtSig(r.signal)} (degraded point ${r.degraded_mutation_id || '?'})`);
+    const probed = Array.isArray(r.probed_points) ? r.probed_points.length : 0;
+    reasons.push(`achievable signal ${fmtSig(r.signal)} (best of ${probed || 1} probed point${probed === 1 ? '' : 's'}: ${r.degraded_mutation_id || '?'})`);
     if (verdict === 'refuse') reasons.push('the signal is at or below the floor — duels under this contract would be decided by noise');
     if (verdict === 'warn') reasons.push('saturated: every probe scored identically — the board cannot discriminate even a deliberate degradation');
+    if (verdict === 'inert') reasons.push('every probed point left the scalar exactly at the champion mean while the A/A draws varied — the signal is UNMEASURED, not zero; pin a point the deliverable depends on');
     if (verdict === 'ok') reasons.push('the achievable signal clears the measured floor');
+    // The promote_margin window is a separate question from signal-vs-noise:
+    // a contract can pass the floor check and still be guaranteed null.
+    if (r.window_failure === 'margin_above_achievable') reasons.push(`promote_margin ${fmtSig(r.promote_margin)} is at or above the achievable signal — no challenger could ever be promoted`);
+    else if (r.window_failure === 'margin_below_floor') reasons.push(`promote_margin ${fmtSig(r.promote_margin)} is inside the measured noise — promotions could not be told from re-rolls`);
+    else if (r.window_failure === 'empty_window') reasons.push('the window noise < margin < achievable is EMPTY — no promote_margin is defensible on this board');
   }
   return el('div', { class: 'dn-bld-pf', role: 'status' }, [
     el('div', { class: 'dn-bld-pf-head' }, [

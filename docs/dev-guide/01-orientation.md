@@ -1092,7 +1092,7 @@ The ledger, as documented at its anchor constant:
 |---|---|---|
 | `0..` | real tournament duels | (implicit — duel replicates count up from 0) |
 | `1000` | A/A noise-floor calibration | `CALIBRATION_REPLICATE_BASE` (`src/zicato/tournament/calibration.py`) |
-| `2000` | contract pre-flight degraded draw | `PREFLIGHT_REPLICATE_BASE` (`src/zicato/epoch/preflight.py`) |
+| `2000 + j` | contract pre-flight degraded draw, probe `j` | `PREFLIGHT_REPLICATE_BASE` / `PREFLIGHT_REPLICATE_SPAN` (`src/zicato/epoch/preflight.py`) |
 | `3000` / `3001` | candidate screen / its confirm-before-veto re-run | `SCREEN_REPLICATE_BASE` (`src/zicato/epoch/screen.py`) |
 | `4000` | evidence-gate replicate duels | `EVIDENCE_REPLICATE_BASE` (`src/zicato/selection/evidence_gate.py`) |
 
