@@ -34,7 +34,7 @@ import time  # noqa: F401  — kept as the ``orch.time`` clock seam (see __all__
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeGuard
 
 from zicato.core.types import (
     Experiment,
@@ -3403,12 +3403,26 @@ def _emit_gate_evaluated(
     for key, agg in (("champion_scalar", parent_agg), ("challenger_scalar", child_agg)):
         if isinstance(agg, dict):
             raw = agg.get("scalar")
-            if isinstance(raw, int | float):
+            if _is_real_number(raw):
                 fields[key] = float(raw)
     margin = getattr(weights, "promote_margin", None)
-    if isinstance(margin, int | float):
+    if _is_real_number(margin):
         fields["margin_required"] = float(margin)
     round_log.emit("gate_evaluated", fields)
+
+
+def _is_real_number(value: Any) -> TypeGuard[int | float]:
+    """``True`` iff ``value`` is a genuine ``int``/``float``, never a ``bool``.
+
+    ``bool`` is an ``int`` subclass, so a bare ``isinstance(x, int | float)``
+    admits ``True``/``False`` — a malformed aggregate carrying
+    ``{"scalar": True}`` would silently record a ``champion_scalar`` of
+    ``1.0``. Used everywhere :func:`_emit_gate_evaluated` extracts a
+    numeric field from an untrusted ``dict``/attribute so a boolean is
+    treated the same as any other non-numeric value: the field is left
+    absent rather than fabricated.
+    """
+    return isinstance(value, int | float) and not isinstance(value, bool)
 
 
 # ---------------------------------------------------------------------------
