@@ -4062,7 +4062,18 @@
 #variant-root[data-variant="T"] {
   /* the strip figure — fit-to-width, aspect-locked (svg.js applyResponsive) */
   .dn-strip { display: block; width: 100%; }
-  .dn-strip-hero { max-width: 100%; }
+  /* Responsive but SENSIBLY SIZED (the house rule at the top of the figure
+   * block): these are aspect-locked heroes with preserveAspectRatio:'none', so
+   * the ONLY cap that avoids shear is max-WIDTH — the height then follows the
+   * aspect. `max-width:100%` was NOT a cap at all: on a wide pane the "~120 px"
+   * strip ballooned to ~2100 × 355 px, scaling every glyph/label ~3× with it and
+   * turning the lane into a wall. The cap is the viewBox width (680, both the
+   * full 680×114 and the compact 680×62 model), so the figure renders 1:1 at its
+   * designed height with unscaled mono text and stays left-aligned past the cap.
+   * The `svg.` type qualifier is LOAD-BEARING: `.dn-panel > svg { max-width:100% }`
+   * above carries a type selector, and a bare class cap would lose to it and
+   * balloon straight back. Do NOT add a max-height (it would shear the aspect). */
+  svg.dn-strip-hero { display: block; width: 100%; height: auto; max-width: 680px; }
   /* shared tone classes (fill for figure marks) */
   .dn-strip-t-bad { fill: var(--v2-bad); }
   .dn-strip-t-caution { fill: var(--v2-caution); }
@@ -4072,9 +4083,18 @@
   .dn-strip-ground { fill: var(--v2-rule-soft); }
   .dn-strip-budget { fill: var(--v2-caution); fill-opacity: 0.16; }
   .dn-strip-budget-over { fill-opacity: 0.30; }
-  /* turn lane: user marks ride --v2-ink, agent marks --v2-ink-soft (neutral) */
-  .dn-strip-mark-user { fill: var(--v2-ink); }
-  .dn-strip-mark-agent { fill: var(--v2-ink-soft); }
+  /* Turn lane. The marks are AREA marks, so they take the SOFT area treatment the
+   * house gives every filled region (.dn-spark-band / .dn-spark-noise /
+   * .dn-strip-budget): the neutral --v2-ink-soft token at a low fill-opacity,
+   * NEVER a raw --v2-ink foreground token — a large area of foreground ink is the
+   * "black blob" (in a light theme --v2-ink is near-black, and the user marks
+   * painted it edge to edge). The two sides stay distinguishable by their SIDE of
+   * the baseline (user above, agent below — svg.js) plus a density step, so the
+   * alternation survives both themes without either side going solid. A hairline
+   * same-token edge keeps a 1 px-wide mark on a dense lane visible. */
+  .dn-strip-mark { stroke: var(--v2-ink-soft); stroke-opacity: 0.45; stroke-width: 0.4; }
+  .dn-strip-mark-user { fill: var(--v2-ink-soft); fill-opacity: 0.55; }
+  .dn-strip-mark-agent { fill: var(--v2-ink-soft); fill-opacity: 0.26; }
   .dn-strip-baseline { stroke: var(--v2-rule); stroke-width: 1; }
   /* signal cluster: glyphs toned by kind, the count label faint */
   .dn-strip-sig-glyph { font-family: var(--v2-mono); font-size: 12px; }

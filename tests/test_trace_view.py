@@ -9,7 +9,10 @@ are exactly what the shipped readers emit.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
+
+import pytest
 
 from tests._trace_view_harness import (
     REFLECTION_ID,
@@ -25,7 +28,12 @@ from zicato.query import (
     build_trace_list,
 )
 from zicato.query.paths import WorkspacePaths
-from zicato.query.trace_view import budget_fill, lane_marks, signal_ticks
+from zicato.query.trace_view import (
+    LANE_EXTENT_CAP,
+    budget_fill,
+    lane_marks,
+    signal_ticks,
+)
 
 _FIXTURE_DIR = (
     Path(__file__).resolve().parent.parent
@@ -45,11 +53,36 @@ _FIXTURE_DIR = (
 def test_lane_marks_size_by_text_length() -> None:
     marks = lane_marks(["aaaa"], ["bbbbbbbbbbbb"])  # 4 + 12 chars
     assert [m["role"] for m in marks] == ["user", "agent"]
+    # the compressive extent scale: weights sqrt(5) / sqrt(13), the widest mark
+    # pinned to the per-mark cap, the RATIO preserved exactly.
     assert marks[0]["x0"] == 0.0
-    assert marks[0]["x1"] == 0.25  # 4 / 16
-    assert marks[1]["x1"] == 1.0  # pinned to the right edge
+    assert marks[1]["x1"] - marks[1]["x0"] == pytest.approx(LANE_EXTENT_CAP)
+    ratio = (marks[1]["x1"] - marks[1]["x0"]) / (marks[0]["x1"] - marks[0]["x0"])
+    assert ratio == pytest.approx(math.sqrt(13) / math.sqrt(5), rel=1e-3)
+    # height stays the RAW char share (the figure bounds it to ≤40 % of the lane)
     assert marks[0]["size"] == 0.3333  # 4 / 12 (tallest = 1.0)
     assert marks[1]["size"] == 1.0
+
+
+def test_lane_marks_cap_the_widest_extent_and_never_wall_the_lane() -> None:
+    """A 2-turn trace must NOT tile the lane (the black-blob regression)."""
+    marks = lane_marks(["hi"], ["x" * 4000])
+    assert len(marks) == 2
+    assert all(m["x1"] - m["x0"] <= LANE_EXTENT_CAP + 1e-9 for m in marks)
+    assert marks[-1]["x1"] < 1.0, "a 2-turn lane stays UNDER-filled, never edge to edge"
+    # sqrt compression: a 4000-char answer is ~44× the 2-char prompt's weight,
+    # not 2000× — but it is still capped, so the terse turn stays visible.
+    assert marks[0]["x1"] - marks[0]["x0"] > 0.004
+
+
+def test_lane_marks_saturate_and_tile_exactly_when_the_lane_fills() -> None:
+    marks = lane_marks(["u" * 20] * 30, ["a" * 40] * 30)  # 60 turns
+    assert marks[0]["x0"] == 0.0
+    assert marks[-1]["x1"] == 1.0  # pinned to the right edge on saturation
+    assert all(m["x1"] - m["x0"] <= LANE_EXTENT_CAP + 1e-9 for m in marks)
+    # laid end-to-end, monotone, non-overlapping
+    for prev, nxt in zip(marks, marks[1:], strict=False):
+        assert nxt["x0"] == prev["x1"]
 
 
 def test_lane_marks_alternate_and_append_trailing() -> None:
@@ -65,6 +98,11 @@ def test_lane_marks_zero_char_even_spacing() -> None:
     marks = lane_marks(["", ""], ["", ""])  # 4 empty turns → even quarters
     assert [m["x0"] for m in marks] == [0.0, 0.25, 0.5, 0.75]
     assert marks[-1]["x1"] == 1.0
+    # No length ⇒ NO height claim. This must not be 1.0: a text-free lane
+    # saturates (even quarters, edge to edge), so `size` 1.0 would render four
+    # MAXIMUM-height bars tiling the lane — the densest mark field the figure can
+    # paint, for the input that carries the least information.
+    assert all(m["size"] == 0.0 for m in marks)
 
 
 def test_signal_ticks_evenly_distributed_and_unpositioned() -> None:

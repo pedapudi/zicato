@@ -866,10 +866,32 @@ export function sparkbar(opts) {
 // the neutral ink (never good/bad — a turn is not a verdict), signals/episodes
 // ride bad/caution/neutral by the §3.5 table, and the ONE focused episode rides
 // --v2-accent (the sole structural highlight). No new colour vocabulary.
+//
+// THE LANE GEOMETRY (the blob fix — see LANE_BAR_FRAC below). Turn marks are
+// BOUNDED bars straddling a mid-lane baseline (user above, agent below), never
+// full-lane slabs, and they carry a SOFT area fill (`--v2-ink-soft` at a low
+// fill-opacity, console.css) — never a raw `--v2-ink` foreground token over a
+// large area (the design-language large-area rule; matches how .dn-spark-band /
+// .dn-strip-budget tint their regions). The server pre-compresses the horizontal
+// extents (trace_view.lane_marks: extent ∝ sqrt(chars+1) under one global scale,
+// capped at LANE_EXTENT_CAP of the lane), so a 2-turn trace arrives as two
+// proportioned bars over a mostly-empty lane instead of two half-lane blocks
+// that fuse into one solid rectangle. This figure only maps that model to px.
 const STRIP_DIMS = {
-  full:    { W: 680, pad: 8, epH: 22, laneH: 46, sigH: 30, gap: 1.0 },
-  compact: { W: 680, pad: 5, epH: 13, laneH: 26, sigH: 18, gap: 0.6 },
+  full:    { W: 680, pad: 8, epH: 22, laneH: 46, sigH: 30, gap: 1.2 },
+  compact: { W: 680, pad: 5, epH: 13, laneH: 26, sigH: 18, gap: 1.0 },
 };
+
+// A turn mark's bar height is at most this fraction of the LANE height, split
+// about the mid-lane baseline (user up / agent down) — so the tallest possible
+// mark still leaves ~60 % of the lane as air and a run of marks can never fuse
+// into a solid block. The lane's remaining room is the budget ground + the air
+// that makes the alternation legible.
+const LANE_BAR_FRAC = 0.40;
+const LANE_BAR_MIN = 1.5;          // px — a zero-char turn is still a visible hairline
+const MARK_MIN_W = 0.75;           // px — a 500-turn lane still resolves as a comb
+const MARK_HOV_MIN_W = 2.5;        // px — below this a mark cannot be aimed at, so it
+                                   // sheds its hovercard (bounds listeners on dense lanes)
 
 // signal / episode tone → the shared strip tone class (the §3.5 table's tokens).
 function stripToneClass(tone) {
@@ -923,30 +945,34 @@ export function trajectoryStrip(model, opts) {
   const { W, pad } = dims;
   const H = pad + dims.epH + dims.laneH + dims.sigH + pad;
   const innerW = W - 2 * pad;
+  const marks = (m.lane && Array.isArray(m.lane.marks)) ? m.lane.marks : [];
+  const signals = Array.isArray(m.signals) ? m.signals : [];
+  const episodes = Array.isArray(m.episodes) ? m.episodes : [];
   const svgAttrs = {
     class: 'dn-strip' + (o.compact ? ' dn-strip-compact' : ''),
     width: '100%', height: H, viewBox: `0 0 ${W} ${H}`,
     preserveAspectRatio: 'xMidYMid meet', role: 'img',
-    'aria-label': 'imported trace: ' + ((m.lane && m.lane.length) || 0) + ' turn(s), '
-      + ((m.signals && m.signals.length) || 0) + ' signal(s), '
-      + ((m.episodes && m.episodes.length) || 0) + ' episode(s)',
+    // the counts are the MODEL's own (marks/signals/episodes as served) — the
+    // label may not invent a number the figure does not draw.
+    'aria-label': 'imported trace: ' + marks.length + ' turn(s), '
+      + signals.length + ' signal(s), ' + episodes.length + ' episode(s)',
   };
   // aspect-locked fit-to-width (default): the CSS aspect-ratio == the viewBox
   // aspect, so the 'none' scale applyResponsive pins is UNIFORM (no shear on the
-  // glyph text), and the height tracks the pane width up to the .dn-strip-hero cap.
+  // glyph text). svg.dn-strip-hero caps max-WIDTH at the viewBox width, so the
+  // figure renders 1:1 at its designed height and never balloons full-bleed on a
+  // wide pane (the house "responsive but SENSIBLY sized" rule, console.css).
   applyResponsive(svgAttrs, { responsive: o.responsive !== false }, W, H, 'dn-strip-hero');
   const svg = svgEl('svg', svgAttrs);
 
-  const marks = (m.lane && Array.isArray(m.lane.marks)) ? m.lane.marks : [];
-  const signals = Array.isArray(m.signals) ? m.signals : [];
-  const episodes = Array.isArray(m.episodes) ? m.episodes : [];
   if (!marks.length && !signals.length && !episodes.length) {
     return emptyState(svg, W, H, o.emptyLabel || 'no trace');
   }
 
   const yLaneTop = pad + dims.epH;
-  const yBase = yLaneTop + dims.laneH;          // the turn-mark baseline
-  const ySigTop = yBase;
+  const yLaneBot = yLaneTop + dims.laneH;
+  const yBase = yLaneTop + dims.laneH / 2;      // the MID-lane turn baseline
+  const ySigTop = yLaneBot;
 
   // ── the budget GROUND — a shaded region behind the lane whose fill ∝ the
   // fraction of the cost ceiling the trace reached; a crossed ceiling shades it
@@ -963,21 +989,32 @@ export function trajectoryStrip(model, opts) {
     svg.appendChild(bg);
   }
 
-  // ── the TURN lane — the reconstructed conversation as alternating marks, each
-  // mark's horizontal extent ∝ its text length, height ∝ chars/max_chars. User
-  // marks ride --v2-ink, agent marks --v2-ink-soft (the neutral ground, never a
-  // verdict). The sparkbar staircase convention applied to turns. ────────────
-  const maxH = dims.laneH - 3;
+  // ── the TURN lane — the reconstructed conversation as alternating BOUNDED
+  // bars straddling a mid-lane baseline: a USER turn rises above it, an AGENT
+  // turn drops below it (the alternation you can read at a glance), each bar's
+  // horizontal extent the server's compressed extent and its height ≤
+  // LANE_BAR_FRAC of the lane. Both sides ride the SOFT neutral fill (never
+  // good/bad — a turn is not a verdict; never raw --v2-ink over a large area).
+  // The sparkbar staircase convention applied to turns, bounded. ─────────────
+  const maxBar = Math.max(LANE_BAR_MIN, LANE_BAR_FRAC * dims.laneH);
   for (const k of marks) {
     const x0 = pad + (isNum(k.x0) ? k.x0 : 0) * innerW;
     const x1 = pad + (isNum(k.x1) ? k.x1 : 0) * innerW;
-    const w = Math.max(1, x1 - x0 - dims.gap);
-    const h = Math.max(2, (isNum(k.size) ? k.size : 0) * maxH);
+    const span = Math.max(0, x1 - x0);
+    // reserve the inter-mark GAP (≥1 px wherever the span allows it) so adjacent
+    // marks never touch and a run of turns reads as marks, not one slab; on an
+    // ultra-dense lane the gap degrades but the mark stays visible.
+    const gap = Math.min(dims.gap, Math.max(0, span - MARK_MIN_W));
+    const w = Math.max(MARK_MIN_W, span - gap);
+    const h = LANE_BAR_MIN + (isNum(k.size) ? Math.max(0, Math.min(1, k.size)) : 0) * (maxBar - LANE_BAR_MIN);
     const role = k.role === 'user' ? 'user' : 'agent';
-    svg.appendChild(hov(svgEl('rect', {
-      x: x0, y: yBase - h, width: w, height: h,
+    const rect = svgEl('rect', {
+      x: x0, y: role === 'user' ? yBase - h : yBase, width: w, height: h,
       class: 'dn-strip-mark dn-strip-mark-' + role, 'data-role': role, 'data-i': String(k.i),
-    }), role + ' turn' + (isNum(k.chars) ? ' · ' + k.chars + ' chars' : '')));
+    });
+    svg.appendChild(w >= MARK_HOV_MIN_W
+      ? hov(rect, role + ' turn' + (isNum(k.chars) ? ' · ' + k.chars + ' chars' : ''))
+      : rect);
   }
   svg.appendChild(svgEl('line', { x1: pad, x2: W - pad, y1: yBase, y2: yBase, class: 'dn-strip-baseline' }));
 
