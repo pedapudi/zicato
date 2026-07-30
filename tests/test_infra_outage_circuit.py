@@ -46,13 +46,6 @@ from zicato.core.types import DriftCount, LossProfile
 from zicato.orchestrator import DEFERRED_INFRA_DECISION, EvolveRoundOutcome, evolve_once
 from zicato.runtime.resume import prepare_resume
 
-# Grab the REAL reducer helper before any test masks zicato.telemetry in
-# sys.modules — the health input collector lazy-imports it at call time,
-# and the deferral path's round report must be assessable under the stubs.
-from zicato.telemetry.reducer import (  # isort: skip
-    split_judge_attributed_kind as _real_split_judge_attributed_kind,
-)
-
 # ---------------------------------------------------------------------------
 # Rig: an always-infra-abort _run_single
 # ---------------------------------------------------------------------------
@@ -120,15 +113,6 @@ def _rig_outage_workspace(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
     _install_infra_abort_run_single(monkeypatch)
-    # The telemetry stub masks the real reducer module; the health input
-    # collector needs this one helper at call time — reattach the real one
-    # so the deferral's round health report is genuinely assessed + written.
-    import sys
-
-    stub_reducer = sys.modules["zicato.telemetry.reducer"]
-    stub_reducer.split_judge_attributed_kind = (  # type: ignore[attr-defined]
-        _real_split_judge_attributed_kind
-    )
     if threshold is not None:
         _set_runtime_block(workspace, {"infra_abort_round_threshold": threshold})
     return workspace, epoch_id

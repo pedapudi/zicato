@@ -44,12 +44,10 @@ from zicato.core.types import DriftCount, LossProfile
 from zicato.epoch.lifecycle import new_epoch
 from zicato.orchestrator import evolve_once
 
-# Grab the REAL reducer helpers before any test masks zicato.telemetry in
+# Grab the REAL reducer helper before any test masks zicato.telemetry in
 # sys.modules — the unit cache persists a skipped unit through the writer
-# (the clip test asserts on those persisted budget-exceeded losses), and
-# the health input collector lazy-imports the splitter at call time.
+# (the clip test asserts on those persisted budget-exceeded losses).
 from zicato.telemetry.reducer import (  # isort: skip
-    split_judge_attributed_kind as _real_split_judge_attributed_kind,
     write_loss_profile as _real_write_loss_profile,
 )
 
@@ -190,9 +188,6 @@ def _run_one_round(
 
     stub_reducer = sys.modules["zicato.telemetry.reducer"]
     stub_reducer.write_loss_profile = _real_write_loss_profile  # type: ignore[attr-defined]
-    stub_reducer.split_judge_attributed_kind = (  # type: ignore[attr-defined]
-        _real_split_judge_attributed_kind
-    )
 
     outcome = asyncio.run(
         evolve_once(
