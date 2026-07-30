@@ -89,11 +89,20 @@ _UNCOUNTED_DIRS = {"test", "brand", "fonts"}
 # under the static root — both at `/` and under `/static/`). Binary
 # formats (png, ico, woff2, ...) are excluded; they never drift the way
 # hand-written text does and aren't what this envelope is guarding.
-_TEXT_EXTENSIONS = {".html", ".css", ".js", ".svg", ".md"}
+# ``.mjs`` is listed even though every ``.mjs`` on disk today lives under the
+# already-excluded ``test/`` harness: an ES module dropped under ``js/`` would
+# otherwise be served to the browser and silently sit outside this count —
+# which is the exact gap (a served asset nothing forced into the sum) that
+# walking the tree exists to close.
+_TEXT_EXTENSIONS = {".html", ".css", ".js", ".mjs", ".svg", ".md"}
 
 
 def _served_text_files() -> list[Path]:
-    """Every hand-written text asset the dashboard server can serve.
+    """Every hand-written text asset of the served dashboard BUNDLE.
+
+    Not literally everything the static route can hand back — that route
+    serves any file under the static root, ``brand/`` and ``test/`` included
+    (see ``_UNCOUNTED_DIRS`` for why those are out of scope here).
 
     This walks the actual served tree (mirroring what
     ``server.py``'s catch-all static route exposes) rather than

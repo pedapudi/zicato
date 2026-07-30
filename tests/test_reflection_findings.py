@@ -168,6 +168,36 @@ def test_margin_finding_recommendation_scales_delta_std_when_present() -> None:
     assert "draw-count-stable" in margin[0].detail
 
 
+def test_margin_finding_never_proposes_an_op_that_lowers_the_margin() -> None:
+    """A K-inflated range must not ship an appliable gate WEAKENING.
+
+    ``max_abs_delta`` is a range and grows with the calibration draw count;
+    ``delta_std`` does not. For a well-calibrated floor the two disagree: the
+    margin can sit below the range (firing this CRITICAL finding) while
+    already clearing 2.5x the dispersion the gate actually thresholds. Here
+    ``2.5 x 0.01 = 0.025`` is BELOW the live ``promote_margin=0.05``, so
+    emitting it verbatim would give the operator a one-command
+    ``zicato reflect apply`` that HALVES the promote margin under a headline
+    promising to raise it. The finding must report the disagreement and carry
+    no op at all.
+    """
+    findings = derive_findings(
+        scorecards=[],
+        adjudications=[],
+        promote_margin=0.05,
+        noise_floor_max_abs_delta=0.10,
+        noise_floor_delta_std=0.01,
+    )
+    margin = [f for f in findings if f.pillar == "calibration"]
+    assert len(margin) == 1
+    assert margin[0].proposed_op is None
+    assert "WEAKEN" in margin[0].detail
+    assert "0.025" in margin[0].detail
+    # The recommendation text must not tell the operator to raise the margin
+    # to a number below where it already sits.
+    assert "raise promote_margin to 0.025" not in margin[0].recommendation
+
+
 def test_margin_finding_falls_back_to_range_when_delta_std_absent() -> None:
     # A pre-#112 record with no delta_std keeps the old range-scaled
     # recommendation (and says so in the finding text).

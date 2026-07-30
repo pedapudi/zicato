@@ -206,7 +206,11 @@ def derive_findings(
     calibration draw count K, so a recommendation built on it drifts upward
     on an unchanged board as calibration improves (issue #112, ch.04 §9.4).
     ``noise_floor_max_abs_delta`` stays the COMPARISON statistic that decides
-    whether the finding fires at all — only the recommended value moves.
+    whether the finding fires at all — only the recommended value moves. When
+    the two statistics disagree (the K-inflated range fires the finding but
+    ``2.5 × delta_std`` lands at or below the current margin) the finding still
+    reports the disagreement but carries NO ``proposed_op``, because the only
+    op it could carry would lower the gate.
 
     Returns findings sorted by descending severity (ties keep emission order).
     Every ``proposed_op`` is validated against the real op signature before the
@@ -240,21 +244,54 @@ def derive_findings(
             if used_delta_std
             else f"max_abs_delta={noise_floor_max_abs_delta} (range — no delta_std on this record)"
         )
+        # The two statistics can DISAGREE, and only in one direction: the range
+        # grows with the calibration draw count K while ``delta_std`` does not,
+        # so for a well-calibrated floor (K ≳ 12 draws) ``max_abs_delta`` can
+        # exceed 2.5 × delta_std. The margin then sits below the range — firing
+        # this finding — while already clearing 2.5 sigma of the dispersion the
+        # gate actually thresholds. Emitting the delta_std recommendation
+        # verbatim there would ship a CRITICAL, one-command-appliable
+        # ``set_gate`` that LOWERS promote_margin under a headline promising to
+        # raise it. Report the disagreement instead and propose nothing: the
+        # range fired, the stable statistic does not corroborate it, and the
+        # answer is a re-measurement, not a weaker gate.
+        raises_margin = recommended > promote_margin
+        if raises_margin:
+            detail = (
+                f"promote_margin={promote_margin} is below the measured noise floor "
+                f"max_abs_delta={noise_floor_max_abs_delta} — the gate is promoting on "
+                f"measurement noise. Recommend lifting it to {recommended} "
+                f"({MARGIN_FLOOR_MULTIPLE}× {stat_desc})."
+            )
+            recommendation = f"raise promote_margin to {recommended}"
+            proposed_op: dict[str, Any] | None = validate_proposed_op(
+                "set_gate", {"promote_margin": recommended}
+            )
+        else:
+            detail = (
+                f"promote_margin={promote_margin} is below the measured noise floor "
+                f"max_abs_delta={noise_floor_max_abs_delta}, but {MARGIN_FLOOR_MULTIPLE}× "
+                f"{stat_desc} is only {recommended} — at or below the current margin. The "
+                "range statistic grows with the calibration draw count while the dispersion "
+                "the gate actually thresholds does not (issue #112), so the two disagree and "
+                "no margin change is proposed: applying the smaller value would WEAKEN the "
+                "gate. Re-measure the noise floor before acting on this."
+            )
+            recommendation = (
+                "re-measure the noise floor — the draw-count-stable dispersion does not "
+                f"support raising promote_margin above {promote_margin}"
+            )
+            proposed_op = None
         findings.append(
             Finding(
                 finding_id=_finding_id("calibration", "gate", "margin_below_floor"),
                 pillar="calibration",
                 severity=SEVERITY_CRITICAL,
                 title="Promote margin is below the noise floor",
-                detail=(
-                    f"promote_margin={promote_margin} is below the measured noise floor "
-                    f"max_abs_delta={noise_floor_max_abs_delta} — the gate is promoting on "
-                    f"measurement noise. Recommend lifting it to {recommended} "
-                    f"({MARGIN_FLOOR_MULTIPLE}× {stat_desc})."
-                ),
+                detail=detail,
                 evidence=(),
-                recommendation=f"raise promote_margin to {recommended}",
-                proposed_op=validate_proposed_op("set_gate", {"promote_margin": recommended}),
+                recommendation=recommendation,
+                proposed_op=proposed_op,
             )
         )
 

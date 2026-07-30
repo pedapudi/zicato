@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -324,6 +325,130 @@ async def test_gathered_slate_overlaps_the_per_slot_wait() -> None:
 
 
 # --------------------------------------------------------------------------
+# Proof 2b — no scratch lease is still open when the slate raises
+# --------------------------------------------------------------------------
+
+
+#: Event-loop turns to pump before concluding the slate is genuinely parked
+#: on its sibling. Turns, not seconds — a saturated runner adds wall-clock
+#: time but never extra turns, so this cannot flake the way a sleep would.
+#: The pre-fix gather surfaces its exception on turn 2.
+_SETTLE_TURNS = 50
+
+
+class _LeaseLedger:
+    """A ``scratch_validator_factory`` that counts OPEN per-slot leases.
+
+    Stands in for the real per-slot scratch tree: ``open_count`` is how many
+    slots currently hold a scratch parent on disk, i.e. exactly the residue
+    the WS-CONC leak was about.
+    """
+
+    def __init__(self) -> None:
+        self.open_count = 0
+        self.leased = 0
+
+    def __call__(self) -> tuple[object, object]:
+        self.open_count += 1
+        self.leased += 1
+
+        def _cleanup() -> None:
+            self.open_count -= 1
+
+        async def _validate(_experiment: Experiment) -> list[str]:
+            return []
+
+        return _validate, _cleanup
+
+
+class _BoomAndHoldAgent:
+    """Slot 0 raises an UNEXPECTED exception; slot 1 keeps its lease open.
+
+    ``_sample_slot`` folds a :class:`ProposerError` into a normal
+    ``_SlotOutcome``, so the only thing that reaches the gather is an
+    exception the slate never anticipated — a bug in the inner proposer, a
+    cleanup failure, an ``asyncio`` error. That is the path this rig drives.
+    Slot 1 parks on ``release`` (held by the test) so it is guaranteed to
+    still be mid-flight, holding its scratch lease, at the instant slot 0
+    blows up.
+    """
+
+    def __init__(self) -> None:
+        self.boom_raised = asyncio.Event()
+        self.slot1_parked = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def propose(self, ctx: ProposerContext) -> Experiment:
+        slot = _slot_of_hint(ctx.sample_hint)
+        if slot == 0:
+            await self.slot1_parked.wait()
+            self.boom_raised.set()
+            raise RuntimeError("slot 0 exploded")
+        self.slot1_parked.set()
+        await self.release.wait()
+        return _experiment(slot, f"content-{slot}")
+
+
+@pytest.mark.asyncio
+async def test_slate_raise_waits_for_every_sibling_lease_to_be_released() -> None:
+    """The slate's exception must not outrun its siblings' scratch cleanup.
+
+    This is the WS-CONC leak itself, and nothing else in this file covers
+    it. Plain ``asyncio.gather()`` completes its outer future the instant
+    ONE child raises, leaving the others running as orphans — so the caller
+    regained control while a sibling's scratch parent was still on disk, and
+    the round's residue sweep could see a lease that was about to be
+    released by a task nobody was awaiting.
+
+    The proof is structural, not timed. Slot 1 parks on an event only the
+    TEST can set, so once slot 0 has raised the propose task can never
+    complete while the fix holds — no number of event-loop turns will let
+    it — whereas the pre-fix gather completes within a couple of turns,
+    exception in hand and slot 1's lease still open. Pumping the loop a
+    bounded number of turns and asserting the task never finished therefore
+    separates the two behaviours without depending on any wall clock
+    (measured: pre-fix finishes on turn 2).
+    """
+    inner = _BoomAndHoldAgent()
+    ledger = _LeaseLedger()
+    agent = BestOfNProposerAgent(
+        inner=inner,
+        config=ProposerQualityConfig(best_of_n=2, critique_enabled=False),
+        propose_parallelism=2,
+    )
+    events: list[tuple[str, dict]] = []
+    ctx = replace(
+        _ctx(_FixedCritic("0"), events),
+        scratch_validator_factory=ledger,  # type: ignore[arg-type]
+    )
+
+    task = asyncio.create_task(agent.propose(ctx))
+    async with asyncio.timeout(_GATED_SLATE_TIMEOUT_S):
+        await inner.boom_raised.wait()
+    # Slot 0 has raised and slot 1 is parked holding its lease. Pump the loop:
+    # while the fix holds the slate simply cannot finish here, so any turn on
+    # which it does is the orphaned-sibling bug.
+    for turn in range(_SETTLE_TURNS):
+        await asyncio.sleep(0)
+        assert not task.done(), (
+            f"on event-loop turn {turn} the slate surfaced slot 0's failure while "
+            f"slot 1 still held its scratch lease ({ledger.open_count} open) — the "
+            "caller regained control with an orphaned slot writing to a live "
+            "scratch tree"
+        )
+
+    inner.release.set()
+    with pytest.raises(RuntimeError, match="slot 0 exploded"):
+        async with asyncio.timeout(_GATED_SLATE_TIMEOUT_S):
+            await task
+    assert ledger.leased == 2, "both slots should have leased a scratch tree"
+    assert ledger.open_count == 0, (
+        f"{ledger.open_count} scratch lease(s) still open after the slate raised — "
+        "the caller can observe a scratch parent that is still on disk"
+    )
+
+
+# --------------------------------------------------------------------------
 # Proof 3 — real concurrent derive_scratch is disjoint + intact
 # --------------------------------------------------------------------------
 
@@ -454,7 +579,6 @@ async def test_composed_real_git_slate_out_of_order_mounts_the_chosen(
     chosen candidate, and NO ``ztw-slate-*`` scratch residue is left behind.
     """
     import tempfile
-    from dataclasses import replace
 
     # Route the in-process slate scratch (``ztw-slate-*``) into a test-local
     # temp dir — the ``test_best_of_n_tree_integrity.py`` precedent — so the
