@@ -126,6 +126,39 @@ async def test_release_is_idempotent_and_never_raises(permit_root: Path) -> None
     OPEN_PERMIT.release()  # the shared open permit tolerates it too
 
 
+async def test_cancelling_a_waiter_leaks_no_slot_and_no_descriptor(
+    permit_root: Path,
+) -> None:
+    """A round cancelled by ``max_wall_clock_seconds`` unwinds waiters.
+
+    ``evolve/loop.py`` wraps a round in ``asyncio.wait_for``, so a queued
+    board unit can be cancelled while parked in the poll loop. A cancellation
+    that stranded a descriptor would burn a slot for the life of the
+    orchestrator — the cap would tighten silently, run after run.
+    """
+    fd_dir = Path(f"/proc/{os.getpid()}/fd")
+    if not fd_dir.exists():  # pragma: no cover — Linux-only assertion
+        pytest.skip("no /proc fd table on this platform")
+
+    # The ONLY slot is held, so every waiter below really parks in the poll
+    # loop rather than acquiring on its first sweep.
+    held = await acquire_worker_permit(1)
+    before = len(list(fd_dir.iterdir()))
+    for _ in range(50):
+        waiter = asyncio.create_task(acquire_worker_permit(1))
+        await asyncio.sleep(0)
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+    assert len(list(fd_dir.iterdir())) == before, "a cancelled waiter leaked a descriptor"
+    held.release()
+
+    # The slot is free again, so nothing was stranded.
+    again = await asyncio.wait_for(acquire_worker_permit(1), timeout=5.0)
+    assert again.held
+    again.release()
+
+
 async def test_released_slot_is_immediately_reusable(permit_root: Path) -> None:
     """A released permit frees its slot for the next acquirer."""
     for _ in range(5):
@@ -149,6 +182,52 @@ async def test_unusable_permit_dir_degrades_open(
     permit = await acquire_worker_permit(1)
     assert not permit.held, "an uncreatable permit dir must degrade OPEN"
     permit.release()
+
+
+async def test_degrade_open_warns_once_per_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A degraded cap is the one throttle failure with no other symptom.
+
+    The runs proceed, so nothing looks wrong and the configured cap is simply
+    absent. At debug level an operator would never learn that. So the first
+    degrade WARNS — and only the first, or a permanently unwritable runtime
+    dir would emit a line per board unit.
+    """
+    from zicato.runtime import spawn_permit
+
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("i am a file", encoding="utf-8")
+    monkeypatch.setenv(PERMIT_DIR_ENV, str(blocker / "under-a-file"))
+    monkeypatch.setattr(spawn_permit, "_degraded_open_warned", False)
+
+    with caplog.at_level("DEBUG", logger="zicato.runtime.spawn_permit"):
+        for _ in range(5):
+            (await acquire_worker_permit(1)).release()
+
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1, f"expected exactly one warning, got {len(warnings)}"
+    assert "NOT in force" in warnings[0].getMessage()
+
+
+def test_auto_count_follows_the_cpus_this_process_may_USE(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AUTO must honour a cpuset, not the host's core count.
+
+    ``os.cpu_count()`` reports the HOST, so a container pinned to 2 CPUs on a
+    128-core box would get 256 permits — a cap that cannot bind exactly where
+    over-subscription hurts most.
+    """
+    from zicato.runtime import spawn_permit
+
+    monkeypatch.setattr(os, "cpu_count", lambda: 128)
+    monkeypatch.setattr(os, "sched_getaffinity", lambda pid: {0, 1}, raising=False)
+    assert default_host_worker_permits() == max(MIN_AUTO_PERMITS, 4)
+
+    # No ``sched_getaffinity`` (macOS / Windows) ⇒ fall back to cpu_count.
+    monkeypatch.delattr(os, "sched_getaffinity", raising=False)
+    assert spawn_permit._usable_cpus() == 128
 
 
 async def test_missing_fcntl_degrades_open(

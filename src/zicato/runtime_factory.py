@@ -210,8 +210,16 @@ def make_runtime_config(
     # disables it entirely. Unlike ``parallelism`` this bound spans
     # orchestrators, so two concurrent evolve runs cannot over-subscribe the
     # box. A runtime tuning knob only — never contract-hashed.
+    # A JSON ``true`` here would otherwise ``int()`` to 1 — pinning the whole
+    # host to ONE worker at a time, a silent throughput collapse — and ``false``
+    # to 0. The name reads boolean-ish enough that an operator writing "on" is
+    # plausible, and neither number is what they meant, so map the intent:
+    # true ⇒ AUTO, false ⇒ off.
     host_permits_raw = runtime_dict.get("host_worker_permits")
-    host_worker_permits = int(host_permits_raw) if host_permits_raw is not None else None
+    if isinstance(host_permits_raw, bool):
+        host_worker_permits = None if host_permits_raw else 0
+    else:
+        host_worker_permits = int(host_permits_raw) if host_permits_raw is not None else None
 
     # Worker env-scrub: opt-in containment read from the same ``runtime``
     # block. Absent ⇒ off (full env inheritance — today's behavior, byte-for-

@@ -28,11 +28,19 @@ exclusive ``flock`` on one slot:
   both.
 * **Never a blocking ``flock``.** Slots are probed with ``LOCK_NB``; when
   every slot is held the acquirer sleeps on the event loop with jitter and
-  retries, so the orchestrator's loop is never parked inside a syscall.
-* **Degrades OPEN.** Any infrastructure failure — the directory cannot be
-  created, a slot cannot be opened, ``fcntl`` is unavailable, the
-  filesystem does not support ``flock`` — yields a permit that admits
-  immediately. A throttle must never be the reason a run cannot start.
+  retries, so the loop is never parked for the *duration of a hold*. One
+  sweep is still synchronous, and it costs an ``open``/``flock``/``close``
+  per slot: measured at 13.9 ms for a fully-held 256-slot pool, ~0.2 ms for
+  a 4-slot one. That is why the AUTO count tracks usable cores rather than
+  being large "just in case" — a pool big enough for the sweep to matter
+  only exists on a host with that many cores.
+* **Degrades OPEN, loudly once.** Any infrastructure failure — the
+  directory cannot be created, a slot cannot be opened, ``fcntl`` is
+  unavailable, the filesystem does not support ``flock`` — yields a permit
+  that admits immediately. A throttle must never be the reason a run cannot
+  start. Because a degraded cap has no other symptom (the runs simply
+  proceed uncapped), the first degrade in a process is a WARNING and the
+  rest are debug.
 
 This is a **throttle, not a speed-up**: it makes an over-subscribed host
 degrade into queueing instead of into swapping. It does not reduce the
@@ -54,6 +62,7 @@ import logging
 import os
 import random
 import tempfile
+import time
 from pathlib import Path
 
 log = logging.getLogger("zicato.runtime.spawn_permit")
@@ -64,7 +73,7 @@ log = logging.getLogger("zicato.runtime.spawn_permit")
 PERMIT_DIR_ENV = "ZICATO_WORKER_PERMIT_DIR"
 
 #: Floor on the AUTO permit count. Keeps a small (or cgroup-limited)
-#: machine — where ``os.cpu_count()`` can report 1 — from serialising a
+#: machine — where :func:`_usable_cpus` can report 1 — from serialising a
 #: normal run down to one worker at a time.
 MIN_AUTO_PERMITS = 4
 
@@ -73,16 +82,38 @@ MIN_AUTO_PERMITS = 4
 _POLL_MIN_S = 0.05
 _POLL_MAX_S = 0.25
 
+#: Set once the mechanism has degraded OPEN in this process, so the WARNING
+#: that says "the cap is not in force" is emitted once rather than per unit.
+_degraded_open_warned = False
+
+
+def _usable_cpus() -> int:
+    """Cores this process may actually run on, never ``0``.
+
+    :func:`os.cpu_count` reports the HOST's cores, so inside a container
+    pinned to two CPUs on a 128-core box it still answers 128 — which would
+    make AUTO 256, a cap that cannot bind exactly where over-subscription
+    hurts most. ``os.sched_getaffinity`` honours the cpuset, so prefer it and
+    fall back only where it does not exist (macOS, Windows).
+    """
+    getaffinity = getattr(os, "sched_getaffinity", None)
+    if getaffinity is not None:
+        try:
+            return len(getaffinity(0)) or 1
+        except OSError:
+            pass
+    return os.cpu_count() or 1
+
 
 def default_host_worker_permits() -> int:
-    """The AUTO permit count: ``max(MIN_AUTO_PERMITS, 2 x cores)``.
+    """The AUTO permit count: ``max(MIN_AUTO_PERMITS, 2 x usable cores)``.
 
     Deliberately generous. The default must be high enough that a single
     normal run never waits on a permit — the cap exists to stop several
     concurrent runs from over-subscribing a host, not to slow down the
     ordinary case. Operators who want a real ceiling set the knob.
     """
-    return max(MIN_AUTO_PERMITS, 2 * (os.cpu_count() or 1))
+    return max(MIN_AUTO_PERMITS, 2 * _usable_cpus())
 
 
 def effective_permit_count(limit: int | None) -> int:
@@ -175,6 +206,28 @@ class WorkerPermit:
 OPEN_PERMIT = WorkerPermit()
 
 
+def _warn_degraded_open(reason: str) -> None:
+    """Say ONCE per process that the host-wide cap is not in force.
+
+    A degrade-open is the one throttle failure with no other symptom: the
+    runs proceed, so nothing looks wrong, and the cap the operator configured
+    is simply absent. So the first occurrence is a WARNING; every later one
+    is debug, because a permanently unusable runtime dir must not turn into a
+    log line per board unit.
+    """
+    global _degraded_open_warned  # noqa: PLW0603 — once-per-process latch
+    message = "host-wide worker permits are NOT in force: %s; admitting unbounded"
+    if _degraded_open_warned:
+        log.debug(message, reason)
+        return
+    _degraded_open_warned = True
+    log.warning(
+        message + " (set runtime.host_worker_permits to 0 to disable this cap "
+        "deliberately, or $ZICATO_WORKER_PERMIT_DIR to a writable path)",
+        reason,
+    )
+
+
 def _try_slot(path: Path) -> int | None:
     """Try to take the exclusive lock on one slot file.
 
@@ -230,10 +283,14 @@ async def acquire_worker_permit(limit: int | None) -> WorkerPermit:
         Held or open. The caller MUST call :meth:`WorkerPermit.release`
         from a ``finally``.
 
-    Never raises. Every infrastructure failure degrades OPEN — with one
-    debug-level log line, because an operator investigating "why is the
-    cap not holding" needs to be able to find out, and an ERROR here
-    would be noise on a machine that simply has no usable runtime dir.
+    Never raises. Every infrastructure failure degrades OPEN, and says so
+    ONCE per process at WARNING (:func:`_warn_degraded_open`). A permanent
+    infra problem — an unwritable runtime dir, a filesystem without
+    ``flock`` — would otherwise disable the cap for the whole run in total
+    silence at the default log level, which is the one failure of a throttle
+    an operator cannot deduce from anything else. Once per process, not per
+    unit: on a machine that simply has no usable runtime dir this must not
+    become a line per board unit.
     """
     count = effective_permit_count(limit)
     if count <= 0:
@@ -243,29 +300,36 @@ async def acquire_worker_permit(limit: int | None) -> WorkerPermit:
     try:
         directory.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        log.debug("worker permit dir %s unavailable (%s); admitting unbounded", directory, exc)
+        _warn_degraded_open(f"permit dir {directory} unavailable ({exc})")
         return OPEN_PERMIT
 
     # Rotate the probe order per acquirer so N waiters do not stampede
     # slot 0. The pid is a stable, cheap, contention-spreading seed.
     start = os.getpid() % count
-    waited = False
+    waited_from: float | None = None
     while True:
         try:
             permit = _acquire_once(directory, count, start)
         except (OSError, ImportError) as exc:
-            log.debug(
-                "worker permit slots under %s unusable (%s); admitting unbounded", directory, exc
-            )
+            _warn_degraded_open(f"permit slots under {directory} unusable ({exc})")
             return OPEN_PERMIT
         if permit is not None:
-            if waited:
-                log.debug(
-                    "worker permit acquired (slot %d of %d) after waiting", permit.slot, count
+            if waited_from is not None:
+                # The wait is deliberately NOT part of the unit's reported
+                # ``runtime_ms``, but it IS charged against an evolve run's
+                # ``max_wall_clock_seconds``. Logging the duration is what
+                # lets an operator reconcile the two; without it a round cut
+                # short by the total budget is unexplainable from the
+                # recorded per-unit runtimes.
+                log.info(
+                    "worker permit acquired (slot %d of %d) after waiting %.1fs",
+                    permit.slot,
+                    count,
+                    time.monotonic() - waited_from,
                 )
             return permit
-        if not waited:
-            waited = True
+        if waited_from is None:
+            waited_from = time.monotonic()
             log.info(
                 "all %d host-wide worker permits are held (%s); queueing this board unit — "
                 "raise runtime.host_worker_permits, or set it to 0, to change this",

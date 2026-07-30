@@ -51,12 +51,15 @@ never stored on the spec, serialized, logged, or returned to the frontend.
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from zicato.core.types import CallLLM
+
+log = logging.getLogger("zicato.models_config")
 
 #: The LLM roles the unified ``models`` block configures, in the order the
 #: settings UI lists them. ``proposer_breadth`` / ``proposer_depth`` are the
@@ -353,6 +356,47 @@ def _resolve_model_spec_call_llm(spec: RoleSpec, *, role: str) -> CallLLM:
     return call_llm
 
 
+class RoleResolutionError(ValueError):
+    """A DEFERRED model-spec role resolution failed at its first call.
+
+    Distinct from the eager :class:`ValueError`s the resolvers raise so the
+    failure stays identifiable after it has crossed a judge boundary — see
+    :func:`deferred_role_failures` for why that matters.
+    """
+
+
+#: Roles whose DEFERRED resolution failed in this process, ``role`` ⇒ message.
+#: Written by :func:`lazy_text_call_llm`'s first-call path, read by
+#: :func:`zicato._tournament_worker.main`.
+_DEFERRED_ROLE_FAILURES: dict[str, str] = {}
+
+
+def deferred_role_failures() -> dict[str, str]:
+    """Roles whose deferred resolution failed in this process (a copy).
+
+    The reason this register exists. Deferring resolution to the first call
+    moves the failure from worker STARTUP — where a non-zero exit made the
+    board unit an infra abort — to somewhere inside the run, and the judge
+    path SWALLOWS exceptions by hard contract (zicato's
+    ``_InlineCriterionJudge`` and goldfive's ``DefaultSteerer`` both catch
+    and log, because a misbehaving judge must not crash a run). A
+    misconfigured judge model would therefore score as "no signal" on every
+    observation point: the unit completes, drift is undercounted, and the
+    scalar is *better* than the truth. That is evaluation-data corruption
+    from a config typo, so it must not be possible.
+
+    A role-resolution failure is a deterministic CONFIGURATION fault, not a
+    transient call failure, so the worker turns a non-empty register into a
+    non-zero exit — restoring exactly the outcome the eager path produced.
+    """
+    return dict(_DEFERRED_ROLE_FAILURES)
+
+
+def clear_deferred_role_failures() -> None:
+    """Reset the register. For tests; a worker process resolves once."""
+    _DEFERRED_ROLE_FAILURES.clear()
+
+
 def lazy_text_call_llm(spec: RoleSpec, *, role: str) -> CallLLM:
     """Like :func:`resolve_text_call_llm`, but ADK is imported on FIRST CALL.
 
@@ -376,8 +420,13 @@ def lazy_text_call_llm(spec: RoleSpec, *, role: str) -> CallLLM:
 
     What is DEFERRED, and therefore what moves: an environment problem —
     the ``adk`` extra missing, or a ``model`` string ADK cannot resolve —
-    now raises :class:`ValueError` from the first call instead of from
-    startup. Both surface as a failed run either way.
+    now raises :class:`RoleResolutionError` from the first call instead of
+    from startup. Such a failure is ALSO recorded in the process-wide
+    register :func:`deferred_role_failures`, because the first call may be a
+    judge's, and every judge boundary swallows exceptions by hard contract —
+    without the register a misconfigured judge would silently score as "no
+    signal" instead of failing the unit. The worker turns a non-empty
+    register into a non-zero exit, so the outcome matches the eager path.
 
     The dotted-path form is resolved EAGERLY and returned unwrapped: it
     imports a plain callable and never touched ADK, so there is nothing to
@@ -401,7 +450,20 @@ def lazy_text_call_llm(spec: RoleSpec, *, role: str) -> CallLLM:
 
     async def _lazy_call_llm(system: str, user: str, model: str) -> str:
         if not resolved:
-            resolved.append(_resolve_model_spec_call_llm(spec, role=role))
+            try:
+                resolved.append(_resolve_model_spec_call_llm(spec, role=role))
+            except Exception as exc:
+                # Record BEFORE raising: the caller may be a judge, and every
+                # judge boundary swallows. See ``deferred_role_failures``.
+                _DEFERRED_ROLE_FAILURES.setdefault(role, str(exc))
+                log.error(
+                    "models.%s: deferred resolution of model %r failed at its first "
+                    "call (%s); this board unit will be reported as a failed run",
+                    role,
+                    spec.model,
+                    exc,
+                )
+                raise RoleResolutionError(str(exc)) from exc
         return await resolved[0](system, user, model)
 
     return _lazy_call_llm
@@ -446,6 +508,9 @@ __all__ = [
     "load_models_config",
     "resolve_text_call_llm",
     "lazy_text_call_llm",
+    "RoleResolutionError",
+    "deferred_role_failures",
+    "clear_deferred_role_failures",
     "resolve_builder_model",
     "build_adk_model",
 ]

@@ -1169,6 +1169,29 @@ The limiter is a **throttle, not a speed-up** — it makes an
 over-subscribed host degrade into queueing rather than into swapping.
 It does not reduce the per-unit tax; only the pool does that.
 
+**Which clocks the queue wait is charged to.** The permit is taken
+*before* `spawn_started` is stamped, so a wait never inflates the unit's
+reported `runtime_ms` — and it is invisible to the per-entry
+`wall_clock_budget_seconds`, which the worker enforces on itself only
+after it starts. But the wait *is* real time inside the round, so it IS
+charged against an evolve invocation's `max_wall_clock_seconds` (the
+`asyncio.wait_for` in `evolve/loop.py`) and against an opt-in
+`matchup_budget_seconds` deadline. Under heavy contention with both a
+tight explicit cap and a total budget set, a healthy round can therefore
+be cancelled as `wall_clock_budget_mid_round` while every unit's recorded
+runtime sums to well under the budget — accounting an operator cannot
+reconcile from the artifacts. This is why a wait logs its **duration** at
+INFO: the log line is the only place the missing time appears. The
+supervisor's reaper is unaffected either way — it declares an
+orchestrator dead only on confirmed pid death, never on staleness, so a
+queueing run is never reaped.
+
+Neither budget can deadlock against the permit: nothing held while
+waiting for a permit is needed to release one. `parallelism`'s semaphore
+slot IS held across the wait, so an orchestrator whose units are all
+queued makes no progress until a slot frees — queueing, which is the
+intent.
+
 #### 5.5.8 Lazy role resolution (SHIPPED), and one refuted micro-fix
 
 A second cheap win, and a correction to a claim worth recording.
@@ -1209,11 +1232,47 @@ Measured before/after, same harness, cold start, best of five:
 The saving is conditional by nature: a unit that does call the role
 pays the same cost, just later. It is **0.80 s / 88 MB / 1328 modules**
 per worker for every role a unit never exercises, and `0` otherwise —
-never a regression. The durable part of the change is the regression
-test that pins the posture: importing `zicato._tournament_worker`
-must not pull `google.adk` or `litellm` into `sys.modules`, so a
-future eager import at module scope fails CI instead of quietly
-taxing every board unit.
+never a regression. (Re-measured on a different box: the module count
+and peak RSS reproduce exactly — +1329 modules, 44 MB → 121 MB — while
+the wall time was 2.1 s, not 0.80 s. Trust the *shape* of the table; the
+seconds column is machine-specific.)
+
+**The bound on that saving, stated honestly.** It does NOT apply to the
+harness role whenever that role's spec sets `endpoint` or `api_key_env`,
+because the very next line of the worker calls
+`_resolve_inner_model_from_role(args["harness_role"])` — the inner-model
+build that lets the target's agents use native function calling instead
+of the text shim — and that reaches `build_adk_model` eagerly. In the
+endpoint-configured shape (the one live validation uses) ADK is
+therefore resident at worker startup regardless, and deferring the
+*call_llm* resolution saves nothing on top. The saving is real for a
+bare `model`-only spec (where `build_adk_model` returns the model string
+and imports nothing) and for the auxiliary / judge roles on a worker
+whose harness role is a dotted `call_llm`. Making the inner model lazy
+too is not a wrapper away — the adapter rebinds agent trees to a model
+*object* at setup — so it is the remaining half of this win.
+
+**Deferral must not turn a config fault into a silent score.** A spec
+that validates but cannot RESOLVE (the `adk` extra absent, a `model` id
+ADK cannot resolve) used to fail at worker startup, exiting non-zero, so
+the parent recorded an infra abort. Deferred, that failure surfaces at
+the role's first call — and if that first call is a judge's it is
+*swallowed*: `_InlineCriterionJudge` and goldfive's
+`DefaultSteerer.evaluate_judges` both catch and log, by hard contract,
+because a misbehaving judge must not crash a run. The unit would
+otherwise complete with the judge reporting "no signal" at every
+observation point: drift undercounted, the scalar better than the truth,
+a crowning decided on a judge that never ran. So `lazy_text_call_llm`
+records each deferred resolution failure in a process-wide register
+(`models_config.deferred_role_failures`) and raises a distinguishable
+`RoleResolutionError`, and `_tournament_worker.main` turns a non-empty
+register into a non-zero exit — restoring exactly the outcome the eager
+path produced.
+
+The durable part of the change is the regression test that pins the
+posture: importing `zicato._tournament_worker` must not pull
+`google.adk` or `litellm` into `sys.modules`, so a future eager import
+at module scope fails CI instead of quietly taxing every board unit.
 
 ## 6. Atomic write helper
 

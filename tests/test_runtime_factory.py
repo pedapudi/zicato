@@ -200,6 +200,30 @@ def test_host_worker_permits_reads_the_runtime_block(tmp_path: Path) -> None:
     assert off.host_worker_permits == 0
 
 
+def test_host_worker_permits_reads_a_json_boolean_as_intent(tmp_path: Path) -> None:
+    """``true`` means AUTO, not ``int(True) == 1``.
+
+    The knob name reads boolean-ish, so "on" is a plausible thing to write —
+    and one permit host-wide would silently serialise every concurrent run
+    down to a single worker, which is emphatically not what "on" meant.
+    """
+    on = make_runtime_config(
+        {"runtime": {"host_worker_permits": True}},
+        workspace_root=tmp_path,
+        harness_call_llm=_stub_harness,
+        auxiliary_call_llm=_stub_aux,
+    )
+    assert on.host_worker_permits is None, "true must mean AUTO, never a cap of 1"
+
+    off = make_runtime_config(
+        {"runtime": {"host_worker_permits": False}},
+        workspace_root=tmp_path,
+        harness_call_llm=_stub_harness,
+        auxiliary_call_llm=_stub_aux,
+    )
+    assert off.host_worker_permits == 0
+
+
 def test_runtime_config_default_instance_id(tmp_path: Path) -> None:
     cfg = make_runtime_config(
         {},

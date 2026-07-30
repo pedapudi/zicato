@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -81,6 +82,70 @@ def test_dotted_role_is_still_resolved_eagerly_and_unwrapped() -> None:
 
     spec = role_spec_from_dict({"call_llm": "tests._subprocess_worker_support:harness_call_llm"})
     assert lazy_text_call_llm(spec, role="harness") is harness_call_llm
+
+
+async def test_deferred_resolution_failure_is_registered_and_typed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A shape-valid, unresolvable spec must not become a silent "no signal".
+
+    The judge path swallows every exception by hard contract (zicato's
+    ``_InlineCriterionJudge`` and goldfive's ``DefaultSteerer`` both catch and
+    log, because a misbehaving judge must not crash a run). Deferring
+    resolution therefore moves a CONFIG fault — the ``adk`` extra missing, a
+    model id ADK cannot resolve — from "worker exits non-zero at startup" to
+    "judge reports no drift on every observation point, and the unit banks a
+    scalar better than the truth". The register is what keeps that impossible.
+    """
+    import zicato.models_config as models_config
+
+    def _boom(spec: object, *, role: str) -> object:
+        raise ValueError(f"models.{role}: could not build a call_llm")
+
+    monkeypatch.setattr(models_config, "_resolve_model_spec_call_llm", _boom)
+    models_config.clear_deferred_role_failures()
+    try:
+        call_llm = lazy_text_call_llm(role_spec_from_dict(_MODEL_SPEC), role="judge")
+        assert models_config.deferred_role_failures() == {}, "nothing has been called yet"
+
+        with pytest.raises(models_config.RoleResolutionError):
+            await call_llm("s", "u", "m")
+        assert "judge" in models_config.deferred_role_failures()
+    finally:
+        models_config.clear_deferred_role_failures()
+
+
+def test_worker_main_exits_nonzero_when_a_deferred_role_failed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A registered failure fails the UNIT, exactly as the eager path did.
+
+    A non-zero worker exit is what the runner turns into an infra abort (which
+    is never cached, so a later round re-attempts it). Anything less would let
+    a misconfigured judge bank a score.
+    """
+    import zicato._tournament_worker as worker
+    import zicato.models_config as models_config
+
+    args_path = tmp_path / "args.json"
+    args_path.write_text("{}", encoding="utf-8")
+
+    async def _noop_run(args: dict[str, object]) -> None:
+        del args
+
+    monkeypatch.setattr(worker, "_load_args", lambda path: {"instance_id": "test"})
+    monkeypatch.setattr(worker, "_run", _noop_run)
+    monkeypatch.setattr(worker, "_install_worker_log_stream_from_args", lambda args: None)
+
+    models_config.clear_deferred_role_failures()
+    try:
+        assert worker.main([str(args_path)]) == 0, "a clean run exits 0"
+
+        # Now with a registered failure, the same clean run must fail the unit.
+        models_config._DEFERRED_ROLE_FAILURES["judge"] = "could not build a call_llm"
+        assert worker.main([str(args_path)]) == 1
+    finally:
+        models_config.clear_deferred_role_failures()
 
 
 def test_malformed_spec_still_fails_eagerly() -> None:

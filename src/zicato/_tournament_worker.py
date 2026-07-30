@@ -934,6 +934,25 @@ def main(argv: list[str] | None = None) -> int:
         log.exception("zicato._tournament_worker: run failed")
         print(f"zicato._tournament_worker: run failed: {exc}", file=sys.stderr)
         return 1
+
+    # A model-spec role whose resolution was DEFERRED (§5.5.8) can fail at its
+    # first call, and if that first call was a judge's the exception was
+    # swallowed — every judge boundary swallows by hard contract, so the run
+    # would otherwise complete with the judge silently reporting "no signal"
+    # and a scalar better than the truth. A role that cannot be resolved is a
+    # deterministic CONFIG fault, so it exits non-zero exactly as the eager
+    # path did: the parent records an infra abort instead of banking a score.
+    from zicato.models_config import deferred_role_failures  # noqa: PLC0415
+
+    failures = deferred_role_failures()
+    if failures:
+        detail = "; ".join(f"models.{role}: {msg}" for role, msg in sorted(failures.items()))
+        log.error("zicato._tournament_worker: role resolution failed (%s)", detail)
+        print(
+            f"zicato._tournament_worker: role resolution failed: {detail}",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 
