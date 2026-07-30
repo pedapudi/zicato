@@ -179,6 +179,7 @@ from zicato.tournament.scheduling import (  # noqa: F401
     _run_full_board_unit,
     _run_replicated,
     _run_unit_cache_first,
+    _token_budget_spent,
 )
 from zicato.tournament.scoring import aggregate_generation_score
 
@@ -1242,7 +1243,11 @@ async def run_fast_mode(
     same :func:`~zicato.tournament.unit_cache._average_losses` every other
     path uses. ``1`` (this function's own default; the orchestrator threads
     the structure's resolved value) is the historical single-run path,
-    byte-identical to before the knob existed.
+    byte-identical to before the knob existed. A spent per-round token
+    budget stops scheduling further slots and the fold settles over the
+    completed ones, matching :func:`_run_replicated` — the alternative is
+    averaging synthesised worst-case skips into entries that already
+    measured cleanly.
 
     The asymmetry is deliberate and is NOT variance reduction on both
     sides: the champion remains ONE frozen cached draw no matter how high
@@ -1372,6 +1377,25 @@ async def run_fast_mode(
         replicate_count = max(1, replicates)
         replicate_runs: list[dict[str, LossProfile]] = []
         for replicate_index in range(replicate_count):
+            # Per-round token budget (WS-H): stop scheduling FURTHER
+            # replicate slots once the budget is spent, exactly as
+            # ``_run_replicated`` does. Without this the spent budget makes
+            # the remaining slots' units SKIPS — synthesised worst-case
+            # budget-exceeded losses, persisted to their cache slots — which
+            # the fold then averages into entries that already measured
+            # cleanly, degrading the challenger for the rest of the epoch on
+            # units that were never attempted. Settling with the completed
+            # slots is the honest reading. Slot 0 always enters the loop (its
+            # own between-unit checks skip-record if the budget was already
+            # spent) so the return shape is intact. Inert with the knob off.
+            if replicate_index > 0 and _token_budget_spent(config):
+                log.warning(
+                    "fast-mode round: per-round token budget reached after %d/%d "
+                    "replicate slot(s); settling with the completed replicates",
+                    replicate_index,
+                    replicate_count,
+                )
+                break
             replicate_runs.append(
                 await _run_board_units_fast(
                     adapter=adapter,
@@ -1384,7 +1408,7 @@ async def run_fast_mode(
                     replicate_index=replicate_index,
                 )
             )
-        if replicate_count == 1:
+        if len(replicate_runs) == 1:
             child_losses = replicate_runs[0]
         else:
             child_losses = _average_losses(replicate_runs)
