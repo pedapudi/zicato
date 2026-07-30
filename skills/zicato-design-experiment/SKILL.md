@@ -63,7 +63,8 @@ and is NOT a mutation point (see `zicato-mutation-audit`).
 ## Step 2 — pick a mutation target that is allowed and justified
 
 The proposer may only touch enumerated mutation points, and never anything in
-the proposer brief's `## Forbidden` list (validator V5).
+the proposer brief's `## Forbidden` list (enforced by
+`zicato.proposer.brief.enforce_forbidden`).
 
 ```sh
 $Z mutations --show preview                 # the mutable surface
@@ -78,24 +79,25 @@ mutation target is the heart of the hypothesis.
 
 ## Step 3 — write the hypothesis (schema is mandatory, enforced at propose time)
 
-Schema-invalid hypotheses are rejected (exit `4`) and re-prompted. Every field
-is required. Shape (`docs/design/EPOCHS-AND-JOURNALING.md` §3.1):
+Schema-invalid hypotheses are rejected and the proposer is re-prompted with the
+validator's findings. Shape as it lands in `experiment.json`
+(`docs/design/EPOCHS-AND-JOURNALING.md` §3.1; the proposer's own raw response
+carries `patches` objects instead, which the applier splits into per-patch
+files and references here by id):
 
 ```json
 {
   "hypothesis": {
     "core_idea": "Tighten the researcher's instruction so it cites sources before asserting facts.",
-    "modulating": ["researcher.instruction", "researcher.description"],
-    "why": "Pattern across rounds 3-5: CONFABULATION_RISK fires on 70% of [research] entries, 0% on [summarise]. The current instruction does not require citations.",
+    "modulating": ["researcher_instruction", "researcher_description"],
+    "why": "Pattern across rounds 3-5: confabulation_risk fires on 70% of [research] entries, 0% on [summarise]. The current instruction does not require citations.",
     "expected_drift_movements": [
-      {"kind": "CONFABULATION_RISK", "direction": "down", "magnitude": "moderate"},
-      {"kind": "TOOL_ERROR",        "direction": "up",   "magnitude": "minor"}
+      {"kind": "confabulation_risk", "direction": "decrease", "magnitude": "medium"},
+      {"kind": "tool_error",         "direction": "increase", "magnitude": "small"}
     ],
-    "expected_pass_rate_delta": {"low": 0.0, "high": 0.15},
-    "risks": [
-      "Tighter prompt may add tool calls per turn (slower).",
-      "If sources are unavailable the researcher may refuse instead of approximating."
-    ]
+    "expected_metric_movements": [],
+    "expected_pass_rate_delta": "+0.00 to +0.15",
+    "risks": "Tighter prompt may add tool calls per turn (slower); if sources are unavailable the researcher may refuse instead of approximating."
   },
   "patch_ids": ["<patch hash>", "..."]
 }
@@ -106,17 +108,24 @@ Field discipline:
 - **core_idea** — one sentence, plain language; the journal cites it verbatim.
 - **modulating** — non-empty subset of `zicato mutations` ids; not in `## Forbidden`.
 - **why** — the pattern observation from Step 1, citing pattern/metric ids.
-- **expected_drift_movements** — per drift kind: `direction` ∈ `up`/`down`/`flat`,
-  `magnitude` ∈ `minor`/`moderate`/`major`. Predict honestly, including the
+- **expected_drift_movements** — per drift kind: `direction` ∈ `decrease` /
+  `increase` / `neutral` / `decrease_or_neutral` / `increase_or_neutral`,
+  `magnitude` ∈ `small` / `medium` / `large`. Predict honestly, including the
   kinds you expect to get *worse* (that is what makes the match informative).
-- **expected_pass_rate_delta** — `{low, high}` band, e.g. `{0.0, 0.15}` = "no
-  worse, up to 15 points better". Note the gate's pass-rate monotonicity has a
+- **expected_metric_movements** — the same shape over any namespaced metric
+  (`metric_name` instead of `kind`: `"cost:tokens_spent"`,
+  `"latency:p95_turn_ms"`, `"rubric:slide_structure"`, or a declared board
+  judge's BARE name). Preferred for non-drift objectives. At least one of the
+  two movement arrays must be non-empty.
+- **expected_pass_rate_delta** — free-text band, e.g. `"+0.00 to +0.15"` = "no
+  worse, up to 15 points better". Free text is deliberate: a typed range would
+  force false precision. Note the gate's pass-rate monotonicity has a
   `pass_rate_monotonicity_scope` (`scoring.json`): under `per_entry` (default) a
   single entry the champion passed regressing is a hard reject regardless of the
   band; under `aggregate` only the board-wide pass-rate matters. Predict with
   the active scope in mind (`zicato-tune-scoring` owns the values).
-- **risks** — plausible failure modes; these become the things to check first
-  if the outcome disappoints.
+- **risks** — one paragraph (a string, not a list) of plausible failure modes;
+  these become the things to check first if the outcome disappoints. Optional.
 
 ## Step 4 — predict, then run, then let the outcome land on its own
 

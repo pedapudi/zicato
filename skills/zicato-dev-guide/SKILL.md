@@ -1,11 +1,11 @@
 ---
 name: zicato-dev-guide
-description: The entry point for CHANGING zicato's own source (not operating a workspace). Routes to the full 14-chapter development guide under docs/dev-guide/ (~22k lines, code-grounded), and inlines the non-negotiables an agent must never skip — the 10 Golden Rules, the chapter map (which chapter owns which surface), the pre-commit verification ladder, and the ten shipped bugs with the one-line tell for each. Use whenever you edit orchestrator/proposer/tournament/selection/scoring/runtime/storage/supervisor/dashboard/builder/CLI code, add a contract knob, touch the evaluation statistics or the overfitting envelope, or write tests. The operator skills (zicato-evolve, zicato-design-boards, …) teach how to RUN the loop; this teaches how to safely CHANGE it.
+description: The entry point for CHANGING zicato's own source (not operating a workspace). Routes to the full 14-chapter development guide under docs/dev-guide/ (~23k lines, code-grounded), and inlines the non-negotiables an agent must never skip — the 10 Golden Rules, the chapter map (which chapter owns which surface), the pre-commit verification ladder, and the twelve shipped bugs with the one-line tell for each. Use whenever you edit orchestrator/proposer/tournament/selection/scoring/runtime/storage/supervisor/dashboard/builder/CLI code, add a contract knob, touch the evaluation statistics or the overfitting envelope, or write tests. The operator skills (zicato-evolve, zicato-design-boards, …) teach how to RUN the loop; this teaches how to safely CHANGE it.
 ---
 
 # Contributing to zicato
 
-**The authoritative reference is the development guide: [`docs/dev-guide/`](../../docs/dev-guide/).**
+**The authoritative reference is the development guide: [`docs/dev-guide/`](../../docs/dev-guide/)** (14 chapters, ~23k lines).
 Start at **[`docs/dev-guide/00-INDEX.md`](../../docs/dev-guide/00-INDEX.md)** — it
 has the how-to-read path, the chapter map, the master invariant index, and the
 recipe index. It is a *reference book, not a tutorial*: read the Golden Rules
@@ -34,7 +34,7 @@ because breaking it caused a real failure.
 - **G3 — No live model run without explicit operator go-ahead.** The deterministic `examples/zicato_examples/target_0_convergence/RUN.md` is the sanctioned e2e vehicle. Every live run also reports its dashboard URL.
 - **G4 — The two oracles are green before ANY commit.** `tests/test_convergence_known_answer.py` (the loop converges to an exact floor) + `tests/test_decision_procedure_power.py` (the decision procedure's measured operating characteristics).
 - **G5 — Parity + import contracts + node.** `bash tools/parity.sh` (6 gates), `uv run lint-imports` (5 contracts), `make node-test`.
-- **G6 — Omit-at-default.** A new default-off contract field MUST be registered in `_SCORING_OMIT_AT_DEFAULT_FIELDS`, or every workspace spuriously rolls its epoch (`03-contract-and-epochs.md`).
+- **G6 — Omit-at-default.** A new default-off contract field MUST declare `metadata=_knob(omit_at_default=True)` — `_SCORING_OMIT_AT_DEFAULT_FIELDS` is DERIVED from that flag — or every workspace spuriously rolls its epoch (`03-contract-and-epochs.md`).
 - **G7 — Reserved replicate-base ledger.** Duels `0..`, calibration `1000`, preflight `2000`, screening `3000/3001`, evidence `4000`. Squatting a base corrupts the unit cache — this was bugs #1 and #8 (`04-evaluation-statistics.md`).
 - **G8 — Restricted-visibility envelope.** Nothing entry-identifying (entry ids, task text, holdout data, raw per-entry outcomes) reaches the proposer; every channel is banded/aggregated/anonymized/redacted (`05-proposer.md`).
 - **G9 — Module-level callables only across the worker boundary.** Closures are rejected by `_callable_dotted_path`; scripted proposers/harnesses are module-level functions + module state + `reset()` (`06-tournament-and-selection.md`).
@@ -48,7 +48,7 @@ because breaking it caused a real failure.
 |---|---|---|
 | the round pipeline / orchestrator seams | `02-architecture.md`, `13-recipes.md` recipe 9 | the extracted seams; never inline into the god-functions |
 | a contract knob / epoch behavior | `03-contract-and-epochs.md` | contract invariants 1–8 (+ G6) |
-| scoring / the gate / replication / calibration / evidence gate | `04-evaluation-statistics.md` | statistics 1–10 (+ G7) |
+| scoring / the gate / replication / calibration / evidence gate / contract pre-flight | `04-evaluation-statistics.md` | statistics 1–10 (+ G7) |
 | how candidates are generated / what the proposer sees | `05-proposer.md` | proposer 1–6 (+ G8) |
 | tournament execution / structures / the worker / caching | `06-tournament-and-selection.md` | **T1–T11** (+ G9) |
 | state files / storage / resume / the round log | `07-runtime-and-durability.md` | **D1–D12** |
@@ -81,12 +81,13 @@ bash tools/parity.sh                                    # 6. parity gates (G5)
 make node-test ; echo "node exit: $?"                   # 7. JS suite (G5/G10)
 uv run pytest tests/test_convergence_known_answer.py \
              tests/test_decision_procedure_power.py -q  # 8. the two oracles (G4)
-git log -p <base>..HEAD | grep -icE "$pat"    # 9. vendor scan (G1): assemble $pat per 01-orientation §G1 → 0
+cargo test -p zicato-supervisor                         # 9. if you touched a two-language contract
+git log -p <base>..HEAD | grep -icE "$pat"    # 10. vendor scan (G1): assemble $pat per 01-orientation §G1 → 0
 ```
 
 ---
 
-## 4. The ten shipped bugs — the tell you're about to repeat one (`12-bug-casebook.md`)
+## 4. The twelve shipped bugs — the tell you're about to repeat one (`12-bug-casebook.md`)
 
 Every one escaped the whole suite because a deterministic test contract pinned the
 interacting knob OFF. The recurring class is **shared mutable state across
@@ -103,6 +104,8 @@ touch its surface.
 8. **Evidence-gate replicate reuse** — your "replicates" reuse a canonical slot → replay shrinks the CI.
 9. **Git stale shared worktree** — you move a tag but leave a shared worktree at the old commit.
 10. **Contract hash embeds cwd/checkout** — you `resolve()` a path into an identity that must be location-independent.
+11. **`judge_view` opened the index READ-WRITE on a read path** — a reader holds a writable connection, contends with the live ingester and drifts the parity goldens.
+12. **`elimFlow`'s defensive-guard family** — the client derives a domain model the payload should have served (a DQ1 breach that accretes ~100 lines of guards).
 
 **Two hard test rules (V-invariants):** a regression test MUST fail with the fix
 stashed; never weaken an assertion — pin the knob and add an adversarial knob-ON

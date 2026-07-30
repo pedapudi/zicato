@@ -108,6 +108,9 @@ The read-only tool registry (`zicato.proposer.tools.DEFAULT_PROPOSER_TOOLS`):
 | `grep_mutable` | Regex search across the mutable subtrees (`path:line: text`, match-capped). |
 | `read_journal` | The epoch's running narrative journal. |
 | `read_insights` | The epoch's latest analyzer insights. |
+| `mutation_track_record` | One mutation point's banded per-epoch fertility record — touches, promotions, a BUCKETED Δscalar summary, a coarse recency flag. Aggregates only. |
+| `read_parent_diff` | What the LAST PROMOTION changed, so the agent can build on (or depart from) what just worked. |
+| `mutation_usage` | Where a mutation point's symbol / current value is referenced across the parent snapshot's mutable subtrees. |
 
 Every tool is **read-only** — a proposer that wrote to the snapshot would
 corrupt the tree the round is about to patch. A custom agent opts in with:
@@ -127,6 +130,29 @@ tool list to what the agent actually uses. The agent's instruction should tell
 it HOW to work (use the tools, then emit the `{hypothesis, patches}` JSON); the
 per-round WHAT (brief, skills, manifest, loss, prior experiments, the schema)
 is delivered by zicato as the run input.
+
+## The `proposer_quality` knobs (how it proposes, independent of the tier)
+
+Whichever tier you pick, `scoring.json`'s `proposer_quality` block
+(`ProposerQualityConfig`) shapes the propose-step itself. It is part of the
+frozen contract, so every knob here **rolls the epoch**.
+
+| Knob | Default | What it does |
+|---|---|---|
+| `best_of_n` | `3` | Sample N candidate experiments per propose-step. Pin `1` for the historical single-sample proposer (scripted/mock proposers do). |
+| `critique_enabled` | `true` | The self-critique pass that selects the best of the slate. Sees ONLY the same restricted prompt context the proposer sees. |
+| `recombine` | `false` | Offer a recombination slot in the slate — union two prior patches instead of proposing fresh. |
+| `recombine_merge` | `"mechanical"` | `mechanical` unions the patches directly; `llm` spends one auxiliary merge call (the depth role). |
+| `genealogy` | `0` | Rounds of candidate-genealogy context handed to the proposer. Carries lineage only, never board data. |
+| `calibration_feedback` | `0` | Rounds of per-claim-type hit/miss/unresolved COUNTS — did its own predictions land — fed back into the prompt. |
+| `process_exemplars` | `0` | Number of process exemplars included. |
+| `screen_entries` / `screen_veto_only` | `0` / `false` | Pre-tournament candidate screening (tryouts); `zicato-tune-scoring` owns the values. |
+
+The slate also splits across two **ensemble roles**: `breadth` steers the slate
+sampling, `depth` the critique + revise calls. Both default to the auxiliary
+role, and can be pointed at separate models via a `models.proposer_breadth` /
+`models.proposer_depth` block. The collusion identity-guard deliberately does
+NOT apply between them — they are two halves of one proposer.
 
 ## The failure-mode feedback channel (what every proposer reads)
 
