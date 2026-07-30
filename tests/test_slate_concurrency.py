@@ -3,10 +3,12 @@
 Three independent guarantees the gather rests on:
 
 * **Determinism under out-of-order completion.** A scripted inner agent whose
-  slots finish in the REVERSE of slot order (varying async delays) must
-  produce a slate, event sequence, and chosen candidate byte-identical to the
-  serial (``propose_parallelism=1``) reference — the deterministic post-gather
-  pass restores slot order.
+  slots finish in the REVERSE of slot order must produce a slate, event
+  sequence, and chosen candidate byte-identical to the serial
+  (``propose_parallelism=1``) reference — the deterministic post-gather pass
+  restores slot order. The reversal is forced by an ``asyncio.Event`` chain
+  (:class:`_CompletionGate`), not by per-slot sleeps: sleeps made the
+  assertion timing-dependent and it flaked under saturated xdist (issue #103).
 * **The wall-clock overlap is real.** ~100 ms-per-slot scripted slots take
   ≈ ``n × 100 ms`` serially and ≈ ``100 ms`` gathered.
 * **Real per-slot scratch derives are disjoint + intact.** N concurrent
@@ -83,24 +85,92 @@ def _slot_of_hint(sample_hint: str) -> int:
     raise AssertionError(f"unrecognised sample hint: {sample_hint!r}")
 
 
-class _HintKeyedDelayedAgent:
-    """Inner agent whose per-slot output + delay are keyed by the slot hint.
+#: Ceiling on a gated slate propose. The event chain below completes in
+#: microseconds when the gather is genuinely concurrent, so anything near
+#: this bound means the slots serialised and the chain deadlocked.
+_GATED_SLATE_TIMEOUT_S = 20.0
 
-    ``delays[slot]`` seconds of ``asyncio.sleep`` before returning
-    ``_experiment(slot, contents[slot])``, so the completion ORDER is chosen
-    by the test independently of slot order. Records the completion order so a
-    test can assert the slots really did finish out of order.
+
+class _CompletionGate:
+    """Event chain that pins slate-slot COMPLETION ORDER without any sleeps.
+
+    Forcing out-of-order completion by giving slot ``s`` a shorter
+    ``asyncio.sleep`` than slot ``s-1`` is timing-dependent, and the margin
+    was lost under a saturated ``pytest -n`` (issue #103): ``_run_one_slot``
+    runs a SYNCHRONOUS prelude (``ctx.scratch_validator_factory()`` →
+    ``tempfile.mkdtemp``) inside each slot coroutine BEFORE the inner
+    ``propose`` awaits, so slot ``s``'s clock starts after every earlier
+    slot's prelude. Prelude jitter above the inter-slot delta inverts the
+    order and the assertion flakes.
+
+    This gate removes the clock entirely. With ``reverse=True`` slot ``s``
+    waits for slot ``s+1``'s event before recording, so the highest slot
+    always completes FIRST and the order is exactly ``[n-1, …, 1, 0]`` no
+    matter how the preludes interleave. It is also a STRICTLY STRONGER
+    probe: if the slate ever silently serialises in slot order, slot 0
+    waits forever on a gate no one will set, so the chain DEADLOCKS instead
+    of quietly passing — which is why every gated propose is wrapped in
+    :data:`_GATED_SLATE_TIMEOUT_S` to fail fast with a clear message.
+
+    Requires the slate's ``propose_parallelism`` to be ``>= n`` (all slots
+    in flight at once). ``reverse=False`` records the natural arrival order
+    and never waits — the serial (``propose_parallelism=1``) reference.
     """
 
-    def __init__(self, contents: list[str], delays: list[float]) -> None:
-        self._contents = contents
-        self._delays = delays
+    def __init__(self, n: int, *, reverse: bool) -> None:
+        self._gates = [asyncio.Event() for _ in range(n)]
+        self._reverse = reverse
         self.completion_order: list[int] = []
+
+    async def record(self, slot: int) -> None:
+        if self._reverse:
+            nxt = slot + 1
+            if nxt < len(self._gates):
+                await self._gates[nxt].wait()
+        self.completion_order.append(slot)
+        self._gates[slot].set()
+
+
+async def _gated_propose(agent: BestOfNProposerAgent, ctx: ProposerContext) -> Experiment:
+    """Run an event-gated slate propose under a hard ceiling.
+
+    A timeout here is a diagnosis, not a slow machine: the gates resolve in
+    microseconds once the gather genuinely overlaps, so exhausting
+    :data:`_GATED_SLATE_TIMEOUT_S` means the reverse-order chain deadlocked —
+    the slots ran serially in slot order (or one died before setting its
+    gate) and slot 0 is waiting on an event nobody will set.
+    """
+    try:
+        async with asyncio.timeout(_GATED_SLATE_TIMEOUT_S):
+            return await agent.propose(ctx)
+    except TimeoutError:
+        pytest.fail(
+            f"gated slate propose did not finish within {_GATED_SLATE_TIMEOUT_S}s: "
+            "the reverse-order completion gate deadlocked, so the slate slots "
+            "did NOT run concurrently (serialisation regression)"
+        )
+
+
+class _HintKeyedDelayedAgent:
+    """Inner agent whose per-slot output is keyed by the slot hint.
+
+    Returns ``_experiment(slot, contents[slot])`` after recording through a
+    :class:`_CompletionGate`, so the completion ORDER is chosen by the test
+    independently of slot order — and independently of wall-clock timing.
+    ``reverse=True`` forces the exact reverse of slot order.
+    """
+
+    def __init__(self, contents: list[str], *, reverse: bool) -> None:
+        self._contents = contents
+        self._gate = _CompletionGate(len(contents), reverse=reverse)
+
+    @property
+    def completion_order(self) -> list[int]:
+        return self._gate.completion_order
 
     async def propose(self, ctx: ProposerContext) -> Experiment:
         slot = _slot_of_hint(ctx.sample_hint)
-        await asyncio.sleep(self._delays[slot])
-        self.completion_order.append(slot)
+        await self._gate.record(slot)
         return _experiment(slot, self._contents[slot])
 
 
@@ -146,7 +216,7 @@ async def test_out_of_order_slate_is_byte_identical_to_serial() -> None:
 
     # Serial reference (propose_parallelism=1): slots complete in slot order.
     serial_events: list[tuple[str, dict]] = []
-    serial_inner = _HintKeyedDelayedAgent(contents, [0.0, 0.0, 0.0])
+    serial_inner = _HintKeyedDelayedAgent(contents, reverse=False)
     serial_agent = BestOfNProposerAgent(
         inner=serial_inner,
         config=ProposerQualityConfig(best_of_n=3),
@@ -154,16 +224,17 @@ async def test_out_of_order_slate_is_byte_identical_to_serial() -> None:
     )
     serial_out = await serial_agent.propose(_ctx(_FixedCritic("0"), serial_events))
 
-    # Concurrent gather with delays chosen so slot 2 finishes FIRST and slot 0
-    # LAST — the reverse of slot order.
+    # Concurrent gather, event-gated so slot 2 finishes FIRST and slot 0 LAST —
+    # the exact reverse of slot order, with no timing dependence at all. A
+    # slate that serialised would deadlock here, not pass: hence the timeout.
     conc_events: list[tuple[str, dict]] = []
-    conc_inner = _HintKeyedDelayedAgent(contents, [0.05, 0.03, 0.01])
+    conc_inner = _HintKeyedDelayedAgent(contents, reverse=True)
     conc_agent = BestOfNProposerAgent(
         inner=conc_inner,
         config=ProposerQualityConfig(best_of_n=3),
         propose_parallelism=4,
     )
-    conc_out = await conc_agent.propose(_ctx(_FixedCritic("0"), conc_events))
+    conc_out = await _gated_propose(conc_agent, _ctx(_FixedCritic("0"), conc_events))
 
     # The slots really did finish out of order under the gather...
     assert conc_inner.completion_order == [2, 1, 0]
@@ -312,24 +383,32 @@ def test_concurrent_derive_scratch_is_disjoint_and_intact(tmp_path: Path, backen
 
 
 class _GitDeriveDelayedInner:
-    """Inner proposer keyed by slot hint: yields inversely to slot, then returns.
+    """Inner proposer keyed by slot hint: completes inversely to slot order.
 
-    ``asyncio.sleep(base * (n - slot))`` makes LOW slots finish LAST, so the
-    gather genuinely completes out of slot order (unlike the scripted doubles
-    the tree-integrity goldens use, which never await and degrade to serial).
-    Each slot returns a ``style_rules`` candidate carrying its OWN token, so
-    the real per-slot ``derive_scratch`` produces a distinguishable tree.
+    Gated on a :class:`_CompletionGate` chain (``reverse=True``), so LOW slots
+    finish LAST and the gather genuinely completes out of slot order — unlike
+    the scripted doubles the tree-integrity goldens use, which never await and
+    degrade to serial. Each slot returns a ``style_rules`` candidate carrying
+    its OWN token, so the real per-slot ``derive_scratch`` produces a
+    distinguishable tree.
+
+    The chain replaced the previous ``asyncio.sleep(base * (n - slot))``
+    ladder, whose 20 ms inter-slot margin was lost to ``_run_one_slot``'s
+    synchronous ``mkdtemp`` prelude under a saturated ``pytest -n`` — the
+    xdist flake in issue #103. See :class:`_CompletionGate`.
     """
 
-    def __init__(self, contents: list[str], base_delay: float) -> None:
+    def __init__(self, contents: list[str]) -> None:
         self._contents = contents
-        self._base = base_delay
-        self.completion_order: list[int] = []
+        self._gate = _CompletionGate(len(contents), reverse=True)
+
+    @property
+    def completion_order(self) -> list[int]:
+        return self._gate.completion_order
 
     async def propose(self, ctx: ProposerContext) -> Experiment:
         slot = _slot_of_hint(ctx.sample_hint)
-        await asyncio.sleep(self._base * (len(self._contents) - slot))
-        self.completion_order.append(slot)
+        await self._gate.record(slot)
         return _experiment(slot, self._contents[slot])
 
 
@@ -366,7 +445,7 @@ async def test_composed_real_git_slate_out_of_order_mounts_the_chosen(tmp_path: 
 
     n = 3
     contents = [f"verbose-prose; slot-{i}-token" for i in range(n)]
-    inner = _GitDeriveDelayedInner(contents, base_delay=0.02)
+    inner = _GitDeriveDelayedInner(contents)
 
     last_child_snapshot: dict[str, Path] = {}
     validate = build_post_apply_validator(
@@ -400,7 +479,7 @@ async def test_composed_real_git_slate_out_of_order_mounts_the_chosen(tmp_path: 
         config=ProposerQualityConfig(best_of_n=n),
         propose_parallelism=4,
     )
-    chosen = await agent.propose(ctx)
+    chosen = await _gated_propose(agent, ctx)
 
     # The slots really did finish out of slot order (low slots last)...
     assert inner.completion_order == [2, 1, 0]
