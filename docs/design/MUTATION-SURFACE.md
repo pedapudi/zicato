@@ -250,11 +250,14 @@ zicato register --adk agent_package.agent:root_agent \
     --mutable-tree path/to/another/package
 ```
 
-`--adk` is a dotted module path whose top-level module must be the basename of
-one registered root (`agent_package` above): the snapshot copies each root
+`--adk` is a dotted module path. Each registered root's basename must be the
+importable package name (`agent_package` above): the snapshot copies each root
 under its basename and is prepended to `sys.path`, which resolves top-level
-packages only. Any other form imports the installed copy — every mutation
-becomes a scored no-op — so `register` refuses it (issue #110).
+names only, so a root Python cannot name as a module could never be shown to
+have run from the snapshot — `register` refuses that (issue #110). The
+entrypoint itself may sit inside a root or outside all of them (the dependency
+shape: mutate a package the harness imports); every root is verified per run
+either way — see [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md) §2.4.
 
 The first registered root is conventionally the package containing the
 agent factory; additional roots are added with repeated

@@ -2,11 +2,11 @@
 
 * **Issue #110** — :meth:`zicato.adapters.adk.ADKHarnessAdapter.load` inserts
   the generation snapshot at the front of ``sys.path`` and re-imports the
-  entrypoint, but never verifies the module actually came from the snapshot.
-  When the entrypoint's TOP-LEVEL package is already importable from
-  elsewhere, the insert cannot shadow it: the installed copy wins, the
-  snapshot is ignored, and every mutation the loop applies is a no-op that
-  still scores, gates, promotes and reports.
+  entrypoint, but never verifies that the MUTATED TREE is what runs. When a
+  tree's TOP-LEVEL name is already importable from elsewhere, the insert
+  cannot shadow it: the installed copy wins, the snapshot is ignored, and
+  every mutation the loop applies is a no-op that still scores, gates,
+  promotes and reports.
 * **Issue #98** — :func:`zicato.adapters.adk._resolves_to_native_function_calling`
   classifies function-calling capability as ``issubclass(cls, LiteLlm)``, so a
   bare native ``gemini-*`` / ``gemma-*`` model is judged incapable and gets
@@ -14,11 +14,12 @@
 
 Both defects are FIXED; the pins below are live regression tests (the
 ``xfail(strict=True)`` markers the triage landed them under were removed as
-each fix landed). ``load`` now asserts the resolved ``module.__file__`` lies
-under the generation snapshot and refuses otherwise, ``register`` refuses a
-registration that could never load from a snapshot, and the capability
-classifier answers on registry-resolvability so a native Gemini/Gemma tool
-agent keeps its model.
+each fix landed). The #110 half is verified in three layers — a lexical
+register-time refusal, a per-tree resolution assert at load, and a post-run
+``sys.modules`` inspection — because the invariant is "the mutated tree is what
+runs", which the entrypoint's own origin only answers when the entrypoint lives
+inside a tree. The #98 half classifies capability on registry-resolvability so a
+native Gemini/Gemma tool agent keeps its model.
 """
 
 from __future__ import annotations
@@ -34,65 +35,267 @@ pytest.importorskip("goldfive")
 
 
 # ---------------------------------------------------------------------------
-# Issue #110 — the snapshot-origin assertion
+# Issue #110 — the mutated-tree invariant
 # ---------------------------------------------------------------------------
 
 
-def test_load_refuses_an_entrypoint_resolved_outside_the_snapshot(
+def _write_pkg(root: Path, name: str, body: str) -> Path:
+    """Write ``root/name/{__init__,agent}.py`` and return the package dir."""
+    pkg = root / name
+    pkg.mkdir(parents=True, exist_ok=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "agent.py").write_text(textwrap.dedent(body), encoding="utf-8")
+    return pkg
+
+
+def _forget(monkeypatch: pytest.MonkeyPatch, *prefixes: str) -> None:
+    """Drop every ``sys.modules`` entry under ``prefixes`` for this test."""
+    for name in [m for m in sys.modules if m.split(".")[0] in prefixes]:
+        monkeypatch.delitem(sys.modules, name, raising=False)
+
+
+def test_load_refuses_an_in_tree_entrypoint_resolved_outside_the_snapshot(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A load that did not come from the snapshot must fail LOUD.
+    """An IN-TREE entrypoint that did not come from the snapshot fails LOUD.
 
-    Models the real wiring: the entrypoint is ``ztriage_pkg.agent.agent``,
-    ``ztriage_pkg`` is already importable from an "installed" root, and the
-    generation snapshot contains only the mutable tree's own top-level
-    directory (``agent/``) — so it cannot shadow ``ztriage_pkg`` and the
-    installed copy wins.
+    The entrypoint's top-level module IS the registered tree's basename, so
+    "the entrypoint came from the snapshot" and "the mutated tree is what runs"
+    are the same question — and the snapshot here does not contain the tree at
+    all, so the installed copy wins and every mutation is a scored no-op.
     """
     from zicato.adapters.adk import ADKHarnessAdapter
 
     installed = tmp_path / "site"
-    pkg = installed / "ztriage_pkg"
-    (pkg / "agent").mkdir(parents=True)
-    (pkg / "__init__.py").write_text("", encoding="utf-8")
-    (pkg / "agent" / "__init__.py").write_text("", encoding="utf-8")
-    (pkg / "agent" / "agent.py").write_text(
-        textwrap.dedent(
-            '''
-            # zicato:mutable id="root_instruction"
-            INSTRUCTION = """installed copy"""
-            root_agent = {"instruction": INSTRUCTION}
-            '''
-        ),
-        encoding="utf-8",
+    _write_pkg(
+        installed,
+        "ztriage_pkg",
+        '''
+        # zicato:mutable id="root_instruction"
+        INSTRUCTION = """installed copy"""
+        root_agent = {"instruction": INSTRUCTION}
+        ''',
     )
-
-    # The generation snapshot: only the mutable tree's own top-level dir.
+    # The generation snapshot does NOT contain ztriage_pkg (a registration
+    # whose tree the seed step could not materialise under that basename).
     snapshot = tmp_path / "snapshot"
-    (snapshot / "agent").mkdir(parents=True)
-    (snapshot / "agent" / "__init__.py").write_text("", encoding="utf-8")
-    (snapshot / "agent" / "agent.py").write_text(
-        textwrap.dedent(
-            '''
-            # zicato:mutable id="root_instruction"
-            INSTRUCTION = """snapshot copy"""
-            root_agent = {"instruction": INSTRUCTION}
-            '''
-        ),
-        encoding="utf-8",
-    )
+    snapshot.mkdir()
 
     monkeypatch.syspath_prepend(str(installed))
-    for name in [m for m in sys.modules if m.startswith("ztriage_pkg")]:
-        monkeypatch.delitem(sys.modules, name, raising=False)
+    _forget(monkeypatch, "ztriage_pkg")
 
     adapter = ADKHarnessAdapter(
-        "ztriage_pkg.agent.agent:root_agent",
-        mutable_trees=[snapshot / "agent"],
+        "ztriage_pkg.agent:root_agent",
+        mutable_trees=[snapshot / "ztriage_pkg"],
     )
     with pytest.raises(RuntimeError, match="snapshot"):
         adapter.load(snapshot)
+
+
+def test_load_fails_closed_when_a_SECOND_tree_resolves_to_an_installed_copy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every tree is verified, not just the entrypoint's (the two-tree hole).
+
+    With trees ``[agent, ztriage_other]`` and entrypoint ``agent.agent:...``,
+    the entrypoint check passes — it resolved from the snapshot — while
+    ``ztriage_other`` resolves to an INSTALLED copy the snapshot never shadowed,
+    so every mutation to that tree is a silent scored no-op. FAILS against the
+    entrypoint-only check: nothing there ever looks at a second tree.
+    """
+    from zicato.adapters.adk import ADKHarnessAdapter
+
+    installed = tmp_path / "site"
+    _write_pkg(installed, "ztriage_other", 'VALUE = "installed copy"\n')
+
+    snapshot = tmp_path / "snapshot"
+    _write_pkg(snapshot, "agent", 'root_agent = {"instruction": "snapshot copy"}\n')
+    # ztriage_other is registered as mutable but ABSENT from the snapshot.
+
+    monkeypatch.syspath_prepend(str(installed))
+    _forget(monkeypatch, "agent", "ztriage_other")
+
+    adapter = ADKHarnessAdapter(
+        "agent.agent:root_agent",
+        mutable_trees=[snapshot / "agent", snapshot / "ztriage_other"],
+    )
+    with pytest.raises(RuntimeError, match="ztriage_other"):
+        adapter.load(snapshot)
+
+
+def test_the_dependency_shape_registers_loads_and_verifies_per_tree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Target 2's shape: entrypoint OUTSIDE every tree, tree imported by it.
+
+    The mutable tree is a DEPENDENCY of the entrypoint (mutate goldfive, drive
+    it from a harness module that lives elsewhere). Register accepts it with a
+    notice, load passes — the tree resolves inside the snapshot — and the
+    post-run inspection reports the tree VERIFIED, because the harness imported
+    it from the snapshot. FAILS against the entrypoint-only rule, which refused
+    this registration outright.
+    """
+    from zicato.adapters.adk import (
+        TREE_IMPORT_VERIFIED,
+        ADKHarnessAdapter,
+        entrypoint_outside_trees_notice,
+        entrypoint_snapshot_origin_error,
+    )
+
+    snapshot = tmp_path / "snapshot"
+    _write_pkg(snapshot, "ztriage_dep", 'SETTING = "snapshot copy"\n')
+
+    # The harness lives outside every tree and IMPORTS the mutable tree.
+    harness = tmp_path / "site"
+    _write_pkg(
+        harness,
+        "ztriage_harness",
+        """
+        from ztriage_dep.agent import SETTING
+
+        root_agent = {"instruction": SETTING}
+        """,
+    )
+
+    trees = [snapshot / "ztriage_dep"]
+    entrypoint = "ztriage_harness.agent:root_agent"
+    assert entrypoint_snapshot_origin_error(entrypoint, trees) is None
+    notice = entrypoint_outside_trees_notice(entrypoint, trees)
+    assert notice is not None
+    assert "harness_load.json" in notice
+
+    monkeypatch.syspath_prepend(str(harness))
+    _forget(monkeypatch, "ztriage_dep", "ztriage_harness")
+
+    adapter = ADKHarnessAdapter(entrypoint, mutable_trees=trees)
+    runnable = adapter.load(snapshot)
+    assert runnable._agent == {"instruction": "snapshot copy"}
+    # No snapshot-relative entrypoint file exists for this shape; the per-tree
+    # verdict is what carries the provenance.
+    assert runnable.entrypoint_file == ""
+    assert runnable.tree_import_status() == {"ztriage_dep": TREE_IMPORT_VERIFIED}
+
+
+def test_the_original_110_shape_is_caught_post_run_and_warns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shape #110 was reported as: the tree is never imported at all.
+
+    The entrypoint is an INSTALLED module under a different top level that does
+    not import the mutable tree. Nothing lexical or resolution-based can see
+    this — the tree does resolve inside the snapshot, it is simply never used —
+    so the run succeeds and the POST-RUN inspection is the only detector: the
+    tree reports ``never_imported``, which the loop-health check turns into a
+    warning naming the generation.
+    """
+    from zicato.adapters.adk import (
+        TREE_IMPORT_NEVER_IMPORTED,
+        ADKHarnessAdapter,
+    )
+    from zicato.health.diagnostics import detect_tree_never_imported
+
+    snapshot = tmp_path / "snapshot"
+    _write_pkg(snapshot, "ztriage_unused", 'SETTING = "snapshot copy"\n')
+
+    installed = tmp_path / "site"
+    _write_pkg(installed, "ztriage_installed", 'root_agent = {"instruction": "installed"}\n')
+
+    monkeypatch.syspath_prepend(str(installed))
+    _forget(monkeypatch, "ztriage_unused", "ztriage_installed")
+
+    adapter = ADKHarnessAdapter(
+        "ztriage_installed.agent:root_agent",
+        mutable_trees=[snapshot / "ztriage_unused"],
+    )
+    runnable = adapter.load(snapshot)
+    assert runnable._agent == {"instruction": "installed"}
+    assert runnable.tree_import_status() == {"ztriage_unused": TREE_IMPORT_NEVER_IMPORTED}
+
+    findings = detect_tree_never_imported({"v3": ("ztriage_unused",)})
+    assert [f.severity for f in findings] == ["warning"]
+    assert [f.code for f in findings] == ["tree_never_imported"]
+    assert (
+        "mutations to tree ztriage_unused cannot have been under test in generation v3"
+        in findings[0].summary
+    )
+
+
+def test_layer_two_resolves_an_unimported_tree_without_executing_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tree not yet imported is verified by RESOLUTION, both ways.
+
+    ``find_spec`` runs the finder without executing the target's module body:
+    a tree present in the snapshot passes, and the same tree present only
+    OUTSIDE the snapshot raises naming it. The module bodies write a marker
+    file, so "no execution" is asserted, not assumed.
+    """
+    from zicato.adapters.adk import ADKHarnessAdapter
+
+    marker = tmp_path / "executed.txt"
+    body = f"""
+        from pathlib import Path
+
+        Path({str(marker)!r}).write_text("executed", encoding="utf-8")
+        SETTING = "tree"
+        """
+
+    snapshot = tmp_path / "snapshot"
+    _write_pkg(snapshot, "ztriage_entry", 'root_agent = {"instruction": "snapshot"}\n')
+    _write_pkg(snapshot, "ztriage_resolved", body)
+    outside = tmp_path / "site"
+    _write_pkg(outside, "ztriage_elsewhere", body)
+
+    monkeypatch.syspath_prepend(str(outside))
+    _forget(monkeypatch, "ztriage_entry", "ztriage_resolved", "ztriage_elsewhere")
+
+    in_snapshot = ADKHarnessAdapter(
+        "ztriage_entry.agent:root_agent",
+        mutable_trees=[snapshot / "ztriage_entry", snapshot / "ztriage_resolved"],
+    )
+    in_snapshot.load(snapshot)
+    assert not marker.exists(), "resolving a tree must not execute the target's code"
+
+    # The same tree name registered as mutable but resolvable only OUTSIDE the
+    # snapshot: the mutated copy is not what would run.
+    elsewhere = ADKHarnessAdapter(
+        "ztriage_entry.agent:root_agent",
+        mutable_trees=[snapshot / "ztriage_entry", snapshot / "ztriage_elsewhere"],
+    )
+    with pytest.raises(RuntimeError, match="ztriage_elsewhere"):
+        elsewhere.load(snapshot)
+    assert not marker.exists()
+
+
+def test_register_refuses_a_tree_whose_basename_is_not_importable(tmp_path: Path) -> None:
+    """Target 2's declared registration is the refusable shape, for the real reason.
+
+    ``--mutable-tree <repo>`` where the repo directory is
+    ``goldfive-zicato-optimization-surface`` can never be verified: a snapshot
+    exposes each tree under its basename and that basename is not a possible
+    module name. The fix is the PACKAGE directory inside it, with the
+    entrypoint left outside every tree.
+    """
+    from zicato.adapters.adk import entrypoint_snapshot_origin_error
+
+    entrypoint = "zicato_examples.target_2.agent_under_test:agent"
+    repo = tmp_path / "goldfive-zicato-optimization-surface"
+    (repo / "goldfive").mkdir(parents=True)
+
+    refusal = entrypoint_snapshot_origin_error(entrypoint, [repo])
+    assert refusal is not None
+    assert "goldfive-zicato-optimization-surface" in refusal
+    assert "--mutable-tree" in refusal
+    # The corrected registration — the importable package dir — is accepted
+    # even though the entrypoint is outside it (the dependency shape).
+    assert entrypoint_snapshot_origin_error(entrypoint, [repo / "goldfive"]) is None
+    # A tree that resolves to the filesystem root has no basename at all.
+    assert entrypoint_snapshot_origin_error(entrypoint, ["/"]) is not None
 
 
 def test_load_from_a_snapshot_relative_entrypoint_still_works(
@@ -125,14 +328,14 @@ def test_load_from_a_snapshot_relative_entrypoint_still_works(
     assert harness.entrypoint_file == str((snapshot / "ztriage_ok" / "agent.py").resolve())
 
 
-def test_register_refuses_an_entrypoint_no_snapshot_could_supply(tmp_path: Path) -> None:
-    """``zicato register`` refuses the mis-wiring BEFORE a single round runs.
+def test_register_accepts_an_out_of_tree_entrypoint_with_a_notice(tmp_path: Path) -> None:
+    """``zicato register`` ACCEPTS the dependency shape, and says what verifies it.
 
-    The static, import-free half of the #110 fix. The snapshot copies each
-    mutable tree under its BASENAME, so an entrypoint whose top-level module
-    is not one of those basenames can only ever import the installed copy.
-    ``register`` says so up front rather than letting the loop score no-ops
-    for an epoch.
+    An entrypoint outside every mutable tree is the legitimate "mutate a
+    dependency" registration, so refusing it (as the entrypoint-only rule did)
+    is a false refusal of target 2's declared shape. It is accepted with a
+    NOTICE pointing at the per-run verification; a tree whose basename could
+    never be imported is still refused.
     """
     from click.testing import CliRunner
 
@@ -145,7 +348,7 @@ def test_register_refuses_an_entrypoint_no_snapshot_could_supply(tmp_path: Path)
     runner = CliRunner()
     assert runner.invoke(init_cmd, ["--workspace", str(workspace)]).exit_code == 0
 
-    refused = runner.invoke(
+    accepted = runner.invoke(
         register_cmd,
         [
             "--workspace",
@@ -156,12 +359,12 @@ def test_register_refuses_an_entrypoint_no_snapshot_could_supply(tmp_path: Path)
             str(tree),
         ],
     )
-    assert refused.exit_code != 0, refused.output
-    assert "snapshot" in refused.output
-    assert "installed_pkg" in refused.output
+    assert accepted.exit_code == 0, accepted.output
+    assert "NOTICE" in accepted.output
+    assert "harness_load.json" in accepted.output
 
-    # The tree-relative form is accepted (the guard does not over-reach).
-    accepted = runner.invoke(
+    # The in-tree form is accepted silently — nothing to warn about.
+    in_tree = runner.invoke(
         register_cmd,
         [
             "--workspace",
@@ -172,16 +375,34 @@ def test_register_refuses_an_entrypoint_no_snapshot_could_supply(tmp_path: Path)
             str(tree),
         ],
     )
-    assert accepted.exit_code == 0, accepted.output
+    assert in_tree.exit_code == 0, in_tree.output
+    assert "NOTICE" not in in_tree.output
+
+    # A tree Python could never name as a module IS refused.
+    hyphenated = tmp_path / "not-a-module"
+    hyphenated.mkdir()
+    refused = runner.invoke(
+        register_cmd,
+        [
+            "--workspace",
+            str(workspace),
+            "--adk",
+            "agent.agent:root_agent",
+            "--mutable-tree",
+            str(hyphenated),
+        ],
+    )
+    assert refused.exit_code != 0, refused.output
+    assert "not-a-module" in refused.output
 
 
 def test_register_time_rule_matches_the_snapshot_basename_layout(tmp_path: Path) -> None:
     """The static rule is the adapter's own ``mutable_subpaths`` rule.
 
-    Pins the two halves to the SAME layout fact: ``mutable_subpaths``
-    re-bases each registered tree onto ``snapshot/<basename>``, and the
-    refusal accepts exactly the entrypoints whose top-level module is one of
-    those basenames.
+    Pins both to the SAME layout fact: ``mutable_subpaths`` re-bases each
+    registered tree onto ``snapshot/<basename>``, so that basename is the only
+    handle the snapshot gives the tree — and the refusal fires exactly when
+    that basename could not be a module name.
     """
     from zicato.adapters.adk import ADKHarnessAdapter, entrypoint_snapshot_origin_error
 
@@ -192,8 +413,10 @@ def test_register_time_rule_matches_the_snapshot_basename_layout(tmp_path: Path)
 
     adapter = ADKHarnessAdapter("my_agent.agent:root_agent", mutable_trees=[tree])
     assert adapter.mutable_subpaths(snapshot) == [snapshot / "my_agent"]
+    assert adapter.tree_basenames() == ["my_agent"]
     assert entrypoint_snapshot_origin_error("my_agent.agent:root_agent", [tree]) is None
-    assert entrypoint_snapshot_origin_error("src.my_agent.agent:root_agent", [tree]) is not None
+    # Outside every tree is the dependency shape, verified per run, not refused.
+    assert entrypoint_snapshot_origin_error("src.my_agent.agent:root_agent", [tree]) is None
     # No registered trees ⇒ the rule does not apply (the seed step owns that).
     assert entrypoint_snapshot_origin_error("anything.at:all", []) is None
 
@@ -208,22 +431,28 @@ def test_register_time_rule_takes_the_basename_the_seed_step_will(
     (``Path(raw).resolve().name``), so ``--mutable-tree .`` from inside the
     target materialises ``snapshot/<target-dir-name>/`` and the entrypoint
     ``<target-dir-name>.mod:sym`` loads fine. A purely lexical
-    ``Path(".").name`` is the EMPTY string, which matches no entrypoint and
-    refused that registration outright — while suggesting the nonsense
-    ``--adk .<module>:<symbol>``. The refusal must speak the same layout the
+    ``Path(".").name`` is the EMPTY string, which read as an unimportable tree
+    and refused that registration outright — while suggesting the nonsense
+    ``--adk .<module>:<symbol>``. Every rule must speak the same layout the
     seed step materialises.
     """
-    from zicato.adapters.adk import entrypoint_snapshot_origin_error
+    from zicato.adapters.adk import (
+        entrypoint_outside_trees_notice,
+        entrypoint_snapshot_origin_error,
+    )
 
     target = tmp_path / "mytarget"
     (target / "mytarget").mkdir(parents=True)
     monkeypatch.chdir(target)
 
-    assert entrypoint_snapshot_origin_error("mytarget.mod:root_agent", ["."]) is None
-    assert entrypoint_snapshot_origin_error("mytarget.mod:root_agent", ["./"]) is None
-    assert entrypoint_snapshot_origin_error("mytarget.mod:root_agent", ["mytarget/.."]) is None
-    # The guard still bites on a genuinely unreachable top-level module.
-    assert entrypoint_snapshot_origin_error("installed_pkg.mod:root_agent", ["."]) is not None
+    for tree in (".", "./", "mytarget/.."):
+        assert entrypoint_snapshot_origin_error("mytarget.mod:root_agent", [tree]) is None
+        # The resolved basename is what the notice compares against, so the
+        # in-tree registration draws no notice through any of the three forms.
+        assert entrypoint_outside_trees_notice("mytarget.mod:root_agent", [tree]) is None
+    # An entrypoint outside the tree is the dependency shape: accepted, noticed.
+    assert entrypoint_snapshot_origin_error("installed_pkg.mod:root_agent", ["."]) is None
+    assert entrypoint_outside_trees_notice("installed_pkg.mod:root_agent", ["."]) is not None
 
 
 def test_second_in_process_load_of_a_dotted_entrypoint_fails_closed(

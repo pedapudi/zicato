@@ -58,7 +58,7 @@ mutable tree:
 python -m zicato.cli init --workspace .zicato
 python -m zicato.cli register --workspace .zicato \
     --adk zicato_examples.target_2_goldfive_steering.agent_under_test:agent \
-    --mutable-tree /home/sunil/git/goldfive-zicato-optimization-surface
+    --mutable-tree /home/sunil/git/goldfive-zicato-optimization-surface/goldfive
 ```
 
 The `--adk` flag points at the tiny `LlmAgent` shipped in this example
@@ -68,18 +68,27 @@ and **clean** entries use `goldfive.testkit.adversarial:LoopingAgent`
 resolved at runtime by `zicato.synthetic.resolve_adversarial_agent` so
 no separate registration is needed.
 
-> **This registration is REFUSED as written (issue #110).** `register` now
-> requires the entrypoint's top-level module to be the basename of one
-> `--mutable-tree`, because a generation snapshot copies each tree under its
-> basename and the loader only prepends the snapshot root to `sys.path` —
-> which resolves top-level packages only. Here the entrypoint
-> (`zicato_examples...`) lives OUTSIDE the mutable tree (the goldfive
-> worktree), so the snapshot could never supply it: the import would return
-> the installed copy and every mutation would be a scored no-op. Target 2's
-> "mutate the harness, not the agent" shape needs a mutable-tree layout whose
-> basename the entrypoint resolves through (e.g. registering the goldfive
-> package itself as the tree AND driving an entrypoint under it) before this
-> recipe can run. Target 1 is unaffected.
+> **`--mutable-tree` names the PACKAGE, not the repo (issue #110).** A
+> generation snapshot copies each mutable tree under its basename and the
+> loader only prepends the snapshot root to `sys.path`, which resolves
+> TOP-LEVEL module names — so the tree's basename must be the importable
+> package name. Registering the repo root
+> (`.../goldfive-zicato-optimization-surface`) is refused: nothing can import
+> a hyphenated directory name, so the snapshot's mutated copy could never be
+> shown to be the goldfive that ran. Registering
+> `.../goldfive-zicato-optimization-surface/goldfive` — the package directory
+> — is the supported form.
+>
+> The entrypoint stays OUTSIDE the mutable tree, and that is fine: this is the
+> dependency shape (mutate goldfive; drive it from a harness module that
+> imports it). `register` accepts it and prints a NOTICE saying the trees must
+> be imported by the harness at run time. The verification moves to where
+> that truth exists — `load` asserts every registered tree resolves inside the
+> generation snapshot, and after each unit the worker records which trees were
+> actually imported in `generations/{gen}/harness_load.json`. A tree no unit of
+> a generation ever imported raises a WARNING loop-health finding
+> (`tree_never_imported`), which is the one signal that catches "the mutations
+> were never under test".
 
 ## 2. Enumerate the goldfive optimization surface
 

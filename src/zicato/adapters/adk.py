@@ -31,17 +31,27 @@ tournament-runner contract in v0+1 is "fresh process per generation",
 so a single-process pass-through here is enough. Multi-generation
 processes can wrap calls themselves if they need stricter isolation.
 
-The snapshot-origin invariant (fail CLOSED)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The mutated-tree invariant (fail CLOSED)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The invariant a scored round depends on is **"the MUTATED TREE is what
+runs"** — not the narrower "the entrypoint came from the snapshot". The
+two coincide only when the entrypoint lives INSIDE a mutable tree; for
+the equally legitimate *dependency* shape (mutate a package the
+entrypoint merely imports — target 2 mutates goldfive and drives it from
+a harness module outside every tree) the entrypoint's own origin says
+nothing about whether the mutations were under test, and a registration
+with two trees can satisfy the entrypoint rule while every mutation to
+the second tree is a silent scored no-op.
 
 Putting the snapshot on ``sys.path`` is NOT sufficient to guarantee the
 snapshot's code is what runs. ``sys.path`` governs only TOP-LEVEL name
 resolution, and being FIRST on it shadows nothing it does not itself
-contain: an entrypoint whose first dotted component is absent from the
-snapshot falls straight through to the next entry and loads the
-INSTALLED copy (a distribution, an editable checkout). Every mutation
-the loop applies is then a no-op that still scores, gates, promotes and
-reports a plausible null result.
+contain: a top-level name absent from the snapshot falls straight
+through to the next entry and loads the INSTALLED copy (a distribution,
+an editable checkout). Every mutation the loop applies is then a no-op
+that still scores, gates, promotes and reports a plausible null result
+(issue #110).
 
 Two secondary effects can defeat the insert even when the snapshot DOES
 contain the name, both consequences of something already being imported:
@@ -52,23 +62,41 @@ parent was first found. Neither arises in the worker (fresh process per
 generation, nothing pre-imported), which is why the invariant is
 asserted rather than repaired.
 
-Two layers close that hole:
+Three layers close the hole, each verifying where its truth exists:
 
-* **Load time** — after the import, :meth:`ADKHarnessAdapter.load`
-  asserts ``module.__file__`` is under ``generation_root`` and raises
-  :class:`RuntimeError` otherwise. A mis-resolved entrypoint can never
-  score.
-* **Register time** — :func:`entrypoint_snapshot_origin_error` states the
-  same invariant statically (no import, microseconds): a snapshot copies
-  each registered mutable tree under its BASENAME
-  (:meth:`ADKHarnessAdapter.mutable_subpaths`), so the entrypoint's
-  top-level component must equal ``Path(tree).name`` for one of the
-  registered trees. ``zicato register`` refuses a registration that
-  cannot possibly load from a snapshot.
+* **Register time** (static, lexical, import-free) —
+  :func:`entrypoint_snapshot_origin_error` refuses only what it can
+  PROVE wrong without importing: a registered tree whose basename could
+  never be a top-level importable name (empty after resolve, or not an
+  identifier), because a snapshot copies each tree under its basename
+  (:meth:`ADKHarnessAdapter.mutable_subpaths`) and that basename is the
+  only handle ``sys.path`` gives the tree. An entrypoint OUTSIDE every
+  tree is accepted — that is the dependency shape — and
+  :func:`entrypoint_outside_trees_notice` states what then carries the
+  verification (per run, at load and post-run).
+* **Load time** — :meth:`ADKHarnessAdapter.load` asserts, for EVERY
+  registered tree, that the tree's top-level name resolves inside
+  ``generation_root``: an already-imported module must have its file
+  under the root (a pre-imported installed copy is the #110 condition),
+  and an unimported one must ``find_spec`` to a location under the root
+  (pure resolution — no target code executes). When the entrypoint's own
+  top level is one of those tree names, its imported ``__file__`` is
+  asserted under the root too.
+* **Post-run** (the truth layer) — :func:`tree_import_status` inspects
+  ``sys.modules`` once per tree after a unit ran: imported from under the
+  root is VERIFIED, imported from outside is a loud failure (defence in
+  depth — load time should already have caught it), and NEVER IMPORTED is
+  recorded as ``tree_never_imported`` in ``harness_load.json``. The last
+  is not a run failure (a board entry may legitimately not touch a tree)
+  but it is the ONLY detector of the original #110 shape — an installed
+  entrypoint under a different top-level name that never imports the
+  tree at all — so a generation whose units never imported a tree raises
+  a WARNING loop-health finding.
 
-The resolved file is surfaced on
+The resolved entrypoint file is surfaced on
 :attr:`ADKRunnableHarness.entrypoint_file` so the caller (the subprocess
-worker) can record which file the generation actually ran.
+worker) can record which file the generation actually ran; the per-tree
+status is surfaced on :meth:`ADKRunnableHarness.tree_import_status`.
 
 Transcript extraction
 ---------------------
@@ -149,6 +177,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import importlib.util
+import keyword
 import logging
 import sys
 import time
@@ -198,72 +227,231 @@ def _split_entrypoint(entrypoint: str) -> tuple[str, str]:
     return module_path, symbol
 
 
+def _tree_basename(tree: str | Path) -> str:
+    """The top-level name a snapshot will expose ``tree`` under.
+
+    ``seed_generation`` copies each registered tree to
+    ``generation_root / Path(raw).resolve().name``, so the FILESYSTEM-RESOLVED
+    basename — not the lexical one — is the name ``sys.path`` can supply.
+    Without the resolve a relative registration whose last component is ``.``
+    or ``..`` (``--mutable-tree .`` from inside the target) yields an EMPTY
+    basename and every rule built on it misfires. This resolve feeds
+    operator-facing checks only; it is deliberately NOT the canonical form of
+    anything hashed (folding the checkout path into a contract hash is its own
+    bug — see ``_canon_mutable_trees``).
+    """
+    return Path(tree).resolve().name
+
+
+def _is_importable_top_level(name: str) -> bool:
+    """True when ``name`` could be a top-level module/package name.
+
+    Lexical only: a non-empty Python identifier that is not a keyword. A
+    directory named ``goldfive-zicato-optimization-surface`` or ``my-project``
+    fails, which is exactly the registration
+    :func:`entrypoint_snapshot_origin_error` refuses — a snapshot exposes a
+    tree under its basename, and a basename Python cannot name as a module can
+    never be verified to have loaded from the snapshot.
+    """
+    return bool(name) and name.isidentifier() and not keyword.iskeyword(name)
+
+
 def entrypoint_snapshot_origin_error(
     entrypoint: str,
     mutable_trees: Iterable[str | Path],
 ) -> str | None:
-    """Refusal message when ``entrypoint`` can never load from a snapshot.
+    """Refusal message when a registration can never put its trees under test.
 
-    The static, IMPORT-FREE half of the snapshot-origin invariant (see the
-    module docstring). A generation snapshot copies each registered mutable
+    The static, IMPORT-FREE, LEXICAL layer of the mutated-tree invariant (see
+    the module docstring). A generation snapshot copies each registered mutable
     tree under its own BASENAME — ``generation_root / Path(tree).name`` (the
     rule :meth:`ADKHarnessAdapter.mutable_subpaths` re-bases on, and the one
     ``seed_generation`` materialises) — and the loader only prepends
-    ``generation_root`` to ``sys.path``. ``sys.path`` resolves TOP-LEVEL
-    packages, so the entrypoint's first dotted component is the ONLY name the
-    snapshot can supply: unless it equals one of the registered trees'
-    basenames, the import resolves somewhere else entirely (an installed
-    distribution, an editable checkout) and the generation's mutated code is
-    never executed — every round is a scored no-op (issue #110).
+    ``generation_root`` to ``sys.path``, which resolves TOP-LEVEL names. That
+    basename is therefore the ONLY handle the snapshot gives the tree: a tree
+    whose basename is not a possible top-level module name can never be shown
+    to have run from the snapshot, so it is refused here, before an epoch of
+    rounds scores no-ops (issue #110).
 
-    Returns ``None`` when the registration is loadable-from-snapshot (or when
-    the check does not apply: a malformed entrypoint, which
-    :func:`_split_entrypoint` / the CLI's own syntactic check owns, or no
-    registered mutable trees at all — the snapshot surface is then the whole
-    root and the seed step raises its own error). Otherwise returns a single
-    operator-actionable line ready to be wrapped in the caller's error type.
+    What this does NOT refuse: an entrypoint whose top-level component matches
+    no registered tree. That is the DEPENDENCY shape — the mutable tree is a
+    dependency the entrypoint imports, which is target 2's declared form
+    (mutate goldfive, drive it from a harness module outside every tree) — and
+    it is verified per run instead, at load time and post-run, for every tree.
+    :func:`entrypoint_outside_trees_notice` returns the operator notice for it.
+
+    Returns ``None`` when nothing is lexically provable: a well-shaped
+    registration, a malformed entrypoint (:func:`_split_entrypoint` / the
+    CLI's own syntactic check owns that), or no registered mutable trees at all
+    (the snapshot surface is then the whole root and the seed step raises its
+    own error). Otherwise returns a single operator-actionable line ready to be
+    wrapped in the caller's error type.
 
     Import-free by construction: pure path math, no ``importlib``, so
     ``zicato register`` still works in an environment where the target's own
     runtime deps are not installed.
-
-    Each tree is filesystem-resolved before its basename is taken, because
-    that is what ``seed_generation`` does (``Path(raw).resolve().name``) and
-    the refusal must accept exactly the layouts the seed step materialises.
-    Without it a relative registration whose last component is ``.`` or ``..``
-    — ``--mutable-tree .`` from inside the target — yields an EMPTY basename
-    and the check refuses a registration that would in fact have loaded. This
-    resolve feeds an operator-facing message only; it is deliberately NOT the
-    canonical form of anything hashed (folding the checkout path into a
-    contract hash is its own bug — see ``_canon_mutable_trees``).
     """
     trees = list(mutable_trees)
     if not trees:
         return None
-    if ":" not in entrypoint:
+    unimportable = [
+        (str(tree), _tree_basename(tree))
+        for tree in trees
+        if not _is_importable_top_level(_tree_basename(tree))
+    ]
+    if not unimportable:
+        return None
+    raw, basename = unimportable[0]
+    shown = basename or "<empty>"
+    return (
+        f"mutable tree {raw!r} can never be verified to have run from a "
+        f"generation snapshot: a snapshot copies each tree under its basename "
+        f"(snapshot/<basename>/...) and the loader only prepends the snapshot "
+        f"root to sys.path — which resolves TOP-LEVEL module names only — but "
+        f"{shown!r} is not a possible module name. Every mutation to this tree "
+        f"would be a scored no-op. Register the IMPORTABLE package directory "
+        f"instead (e.g. --mutable-tree {raw.rstrip('/')}/<package_name>), whose "
+        f"basename is the package the target imports."
+    )
+
+
+def entrypoint_outside_trees_notice(
+    entrypoint: str,
+    mutable_trees: Iterable[str | Path],
+) -> str | None:
+    """Operator notice when ``entrypoint`` lives outside every mutable tree.
+
+    The accepted DEPENDENCY shape: the entrypoint is a harness module that
+    imports the mutable tree rather than living inside it (target 2 — mutate
+    goldfive, drive it from ``zicato_examples...``). Nothing lexical can
+    verify it, because whether the mutated tree runs depends on what the
+    harness imports at RUN time — so the registration is accepted and the
+    verification moves to where that truth exists: the per-tree resolution
+    assert in :meth:`ADKHarnessAdapter.load` and the post-run
+    :func:`tree_import_status` record in ``harness_load.json``.
+
+    Returns ``None`` for a registration where the entrypoint's top-level
+    component IS a registered tree basename (the in-tree shape, verified
+    lexically), for a malformed entrypoint, and when no trees are registered.
+    """
+    trees = list(mutable_trees)
+    if not trees or ":" not in entrypoint:
         return None
     module_path = entrypoint.partition(":")[0].strip()
     if not module_path:
         return None
     top_level = module_path.split(".")[0]
-    basenames = [Path(tree).resolve().name for tree in trees]
+    basenames = [_tree_basename(tree) for tree in trees]
     if top_level in basenames:
         return None
-    # A tree that resolves to the filesystem root has no basename to match on;
-    # the rule is unanswerable, so fail OPEN and let load time decide.
-    if not all(basenames):
-        return None
     return (
-        f"entrypoint {entrypoint!r} can never load from a generation snapshot: "
-        f"its top-level module {top_level!r} is not one of the registered "
-        f"mutable trees {basenames!r}. A snapshot copies each mutable tree "
-        f"under its basename (snapshot/<basename>/...) and the loader only "
-        f"prepends the snapshot root to sys.path — which resolves TOP-LEVEL "
-        f"packages only — so this entrypoint would import the INSTALLED copy "
-        f"and every mutation would be a scored no-op. Register the entrypoint "
-        f"relative to a mutable tree, e.g. "
-        f"--adk {basenames[0]}.<module>:<symbol>."
+        f"entrypoint {entrypoint!r} is outside every mutable tree "
+        f"{basenames!r}: the trees must be imported by the harness at run "
+        f"time for the mutations to be under test — verified per run, see "
+        f"harness_load.json."
     )
+
+
+# ---------------------------------------------------------------------------
+# Per-tree verification (load time + post-run)
+# ---------------------------------------------------------------------------
+
+#: One tree's post-run verdict: its top-level module was imported from under
+#: the generation snapshot. The mutations to it were under test.
+TREE_IMPORT_VERIFIED = "verified"
+
+#: One tree's post-run verdict: its top-level module was imported from OUTSIDE
+#: the snapshot. The load-time assert should have caught this; reaching it
+#: post-run is a defence-in-depth failure and fails the run.
+TREE_IMPORT_OUTSIDE_ROOT = "outside_root"
+
+#: One tree's post-run verdict: its top-level module was never imported at
+#: all. Not a run failure (a board entry may legitimately not touch a tree),
+#: but a generation whose every unit reports it means the tree's mutations
+#: cannot have been under test — the original #110 shape.
+TREE_IMPORT_NEVER_IMPORTED = "never_imported"
+
+
+def _module_locations(module: Any) -> list[Path]:
+    """Every filesystem location an already-imported ``module`` serves from.
+
+    ``__file__`` for a module or a regular package's ``__init__``, plus every
+    ``__path__`` entry (a namespace package has no ``__file__`` at all and can
+    span several portions — each one is a location its submodules could come
+    from). Returns an empty list for a module with neither, which callers treat
+    as unverifiable and therefore a failure.
+    """
+    locations: list[Path] = []
+    raw_file = getattr(module, "__file__", None)
+    if raw_file:
+        locations.append(Path(str(raw_file)).resolve())
+    for entry in list(getattr(module, "__path__", None) or []):
+        locations.append(Path(str(entry)).resolve())
+    return locations
+
+
+def _spec_locations(spec: Any) -> list[Path]:
+    """Every filesystem location a resolved (not yet executed) ``spec`` names.
+
+    The :func:`importlib.util.find_spec` counterpart of
+    :func:`_module_locations`: ``origin`` plus every
+    ``submodule_search_locations`` portion. A non-path origin (``"built-in"``,
+    ``"frozen"``) is kept verbatim so the caller's under-the-root test fails it
+    — a tree basename that resolves to a builtin is not the tree.
+    """
+    if spec is None:
+        return []
+    locations: list[Path] = []
+    origin = getattr(spec, "origin", None)
+    if origin:
+        locations.append(Path(str(origin)).resolve())
+    for entry in list(getattr(spec, "submodule_search_locations", None) or []):
+        locations.append(Path(str(entry)).resolve())
+    return locations
+
+
+def _all_under(locations: list[Path], root: Path) -> bool:
+    """True when ``locations`` is non-empty and every entry is under ``root``.
+
+    Fail-closed by shape: an empty location list (a namespace/builtin module
+    with nothing to point at) is NOT under the root, and one outside portion
+    condemns the whole resolution — a namespace package with a portion in
+    site-packages can serve unmutated submodules from there.
+    """
+    return bool(locations) and all(loc.is_relative_to(root) for loc in locations)
+
+
+def tree_import_status(
+    tree_basenames: Iterable[str],
+    generation_root: Path,
+) -> dict[str, str]:
+    """Classify, per tree, where its top-level module was imported from.
+
+    The POST-RUN truth layer of the mutated-tree invariant (module docstring):
+    called after a unit's run has finished, when ``sys.modules`` records what
+    the run actually imported. Returns ``{tree_basename: verdict}`` over
+    :data:`TREE_IMPORT_VERIFIED` / :data:`TREE_IMPORT_OUTSIDE_ROOT` /
+    :data:`TREE_IMPORT_NEVER_IMPORTED`, deduplicated and in first-seen order.
+
+    Pure observation — imports nothing, executes nothing, mutates no state — so
+    it is safe to call on the way out of any run, including an aborted one (a
+    run that timed out simply reports whatever it had imported by then).
+    """
+    root = Path(generation_root).resolve()
+    status: dict[str, str] = {}
+    for name in dict.fromkeys(tree_basenames):
+        if not name:
+            continue
+        module = sys.modules.get(name)
+        if module is None:
+            status[name] = TREE_IMPORT_NEVER_IMPORTED
+            continue
+        status[name] = (
+            TREE_IMPORT_VERIFIED
+            if _all_under(_module_locations(module), root)
+            else TREE_IMPORT_OUTSIDE_ROOT
+        )
+    return status
 
 
 def _default_mutable_trees(module_path: str) -> list[Path]:
@@ -1088,40 +1276,73 @@ class ADKRunnableHarness:
     ``runtime_checkable`` check passes.
     """
 
-    __slots__ = ("_agent", "_entrypoint_file", "_mutable_trees")
+    __slots__ = ("_agent", "_entrypoint_file", "_generation_root", "_mutable_trees")
 
     def __init__(
         self,
         agent: Any,
         mutable_trees: list[Path],
         entrypoint_file: str = "",
+        generation_root: Path | None = None,
     ) -> None:
         """Bind a loaded ADK ``agent`` and remember the mutable-tree set.
 
-        ``mutable_trees`` is kept on the runnable purely for diagnostics;
-        the runner does not consult it on the runnable, only on the
-        adapter that produced this instance.
+        ``mutable_trees`` is kept on the runnable for diagnostics and for
+        the post-run :meth:`tree_import_status` check; the runner does not
+        consult it on the runnable, only on the adapter that produced this
+        instance.
 
         ``entrypoint_file`` is the ``__file__`` the entrypoint module
         actually resolved to under the generation snapshot — the value
-        :meth:`ADKHarnessAdapter.load` asserted is snapshot-relative. The
+        :meth:`ADKHarnessAdapter.load` asserted is under the snapshot. The
         subprocess worker records it per generation so an operator can
-        audit WHICH file a generation ran (issue #110). Defaults to ``""``
-        for a directly-constructed runnable.
+        audit WHICH file a generation ran (issue #110). Empty for the
+        dependency shape (the entrypoint legitimately lives outside every
+        tree, so there is no snapshot-relative file to name) and for a
+        directly-constructed runnable.
+
+        ``generation_root`` is the snapshot this agent was loaded from,
+        remembered so :meth:`tree_import_status` can answer the post-run
+        question without the caller re-deriving it. ``None`` for a
+        directly-constructed runnable, which then reports no tree status.
         """
         self._agent = agent
         self._mutable_trees = list(mutable_trees)
         self._entrypoint_file = str(entrypoint_file or "")
+        self._generation_root = Path(generation_root) if generation_root is not None else None
 
     @property
     def entrypoint_file(self) -> str:
-        """The snapshot-relative ``__file__`` the entrypoint resolved to.
+        """The ``__file__`` the entrypoint resolved to under the snapshot.
 
-        Empty when the runnable was constructed without one. Read
+        Empty when the runnable was constructed without one, and for the
+        dependency shape (entrypoint outside every mutable tree). Read
         best-effort by the worker for the round log's ``harness_loaded``
         provenance; nothing in the run path depends on it.
         """
         return self._entrypoint_file
+
+    def tree_import_status(self) -> dict[str, str]:
+        """Per-tree post-run verdict: ``{tree_basename: verdict}``.
+
+        The runnable's view of :func:`tree_import_status` — the POST-RUN truth
+        layer of the mutated-tree invariant. Called by the subprocess worker
+        once a unit's run has finished, when ``sys.modules`` records what the
+        run actually imported: a tree imported from under this generation's
+        snapshot was genuinely under test, one imported from outside was not
+        (and fails the run), and one never imported means the mutations to it
+        could not have been exercised by that unit.
+
+        Empty for a runnable with no remembered snapshot or no declared trees
+        — there is then nothing to attribute, and the entrypoint assert in
+        :meth:`ADKHarnessAdapter.load` is the whole verification.
+        """
+        if self._generation_root is None:
+            return {}
+        return tree_import_status(
+            (Path(tree).name for tree in self._mutable_trees),
+            self._generation_root,
+        )
 
     async def run(
         self,
@@ -1625,16 +1846,27 @@ class ADKHarnessAdapter:
         named symbol, and returns an :class:`ADKRunnableHarness`
         wrapping it.
 
-        Fails CLOSED on a mis-resolved entrypoint: after the import, the
-        module's ``__file__`` MUST be under ``generation_root``, else
-        :class:`RuntimeError`. Prepending the snapshot to ``sys.path``
-        shadows only the TOP-LEVEL names the snapshot itself contains —
-        an entrypoint whose first dotted component is not one of them
-        falls through to its installed location and runs the UNMUTATED
-        copy, making every round a no-op that still scores, gates,
-        promotes and reports (issue #110). The same invariant is checked
-        statically, without importing, at register time
-        (:func:`entrypoint_snapshot_origin_error`).
+        Fails CLOSED on a tree that cannot be running from the snapshot.
+        Prepending the snapshot to ``sys.path`` shadows only the TOP-LEVEL
+        names the snapshot itself contains — a name absent from it falls
+        through to its installed location and runs the UNMUTATED copy,
+        making every round a no-op that still scores, gates, promotes and
+        reports (issue #110). Two asserts, both :class:`RuntimeError`:
+
+        * EVERY registered mutable tree's top-level name must resolve
+          under ``generation_root`` — already-imported (a pre-imported
+          installed copy is the #110 condition) or resolvable by
+          :func:`importlib.util.find_spec`, which finds without executing
+          the target's code. This is the assert that covers a tree the
+          entrypoint merely depends on, and every tree of a multi-tree
+          registration rather than only the entrypoint's own.
+        * When the entrypoint's top-level component IS one of those tree
+          names, the imported module's ``__file__`` must be under
+          ``generation_root`` too. For the dependency shape (entrypoint
+          outside every tree — target 2) that assert does not apply: the
+          harness module legitimately lives elsewhere, and the per-tree
+          assert above plus the post-run :func:`tree_import_status` record
+          are what verify the mutations were under test.
 
         DETECT, not repair: a second ``load`` in the SAME process against
         a different ``generation_root`` still resolves a dotted entrypoint
@@ -1666,7 +1898,10 @@ class ADKHarnessAdapter:
         else:
             module = importlib.import_module(self._module_path)
 
-        entrypoint_file = self._assert_loaded_from_snapshot(module, root)
+        entrypoint_file = ""
+        if self._entrypoint_is_in_a_tree():
+            entrypoint_file = self._assert_loaded_from_snapshot(module, root)
+        self._assert_trees_resolve_in_snapshot(root)
 
         try:
             agent = getattr(module, self._symbol)
@@ -1681,7 +1916,107 @@ class ADKHarnessAdapter:
             agent=agent,
             mutable_trees=list(self.mutable_trees),
             entrypoint_file=entrypoint_file,
+            generation_root=root,
         )
+
+    def tree_basenames(self) -> list[str]:
+        """The top-level names the snapshot exposes this adapter's trees under.
+
+        One per registered mutable tree, deduplicated and in registration
+        order. ``mutable_trees`` is already filesystem-resolved at
+        construction, so a plain ``Path.name`` here is the same value
+        :func:`_tree_basename` computes at register time and
+        ``seed_generation`` materialises.
+        """
+        return list(dict.fromkeys(Path(tree).name for tree in self.mutable_trees))
+
+    def _entrypoint_is_in_a_tree(self) -> bool:
+        """True when the entrypoint's top-level component names a mutable tree.
+
+        The in-tree shape, where "the entrypoint came from the snapshot" and
+        "the mutated tree is what runs" coincide, so
+        :meth:`_assert_loaded_from_snapshot` applies. ``False`` is the
+        dependency shape (see :func:`entrypoint_outside_trees_notice`), where
+        the entrypoint's origin carries no information about the mutations and
+        the per-tree asserts are the whole verification.
+
+        An adapter with NO declared trees counts as in-tree: the mutable
+        surface is then the entire snapshot (:meth:`mutable_subpaths` falls
+        back to ``[generation_root]``), so the entrypoint's own origin is the
+        only signal there is and it must be under the root.
+        """
+        basenames = self.tree_basenames()
+        if not basenames:
+            return True
+        return self._module_path.split(".")[0] in basenames
+
+    def _assert_trees_resolve_in_snapshot(self, generation_root: Path) -> None:
+        """Assert EVERY mutable tree's top-level name resolves in the snapshot.
+
+        The load-time half of the mutated-tree invariant, and the layer that
+        closes the multi-tree hole the entrypoint assert leaves: with trees
+        ``[agent, otherpkg]`` and entrypoint ``agent.agent:root_agent``, the
+        entrypoint check passes while every mutation to ``otherpkg`` is a
+        silent scored no-op if ``otherpkg`` resolves to an installed copy.
+
+        Per tree, fail closed:
+
+        * ALREADY IMPORTED (``sys.modules``) — its locations must be under
+          ``generation_root``. A pre-imported installed copy short-circuits the
+          path search entirely, which is exactly the #110 condition; the
+          message names the shadowing file.
+        * NOT YET IMPORTED — :func:`importlib.util.find_spec` must resolve it
+          under ``generation_root``. Pure RESOLUTION: the finder runs, the
+          target's module body does not, so this cannot perturb what the run
+          then imports. An unresolvable or elsewhere-resolving name raises.
+
+        Raises :class:`RuntimeError` naming the tree, what it resolved to, and
+        the registration that fixes it.
+        """
+        root = Path(generation_root).resolve()
+        for basename in self.tree_basenames():
+            module = sys.modules.get(basename)
+            if module is not None:
+                locations = _module_locations(module)
+                if _all_under(locations, root):
+                    continue
+                shadow = str(locations[0]) if locations else "<no __file__>"
+                raise RuntimeError(
+                    f"ADKHarnessAdapter: mutable tree {basename!r} was ALREADY "
+                    f"IMPORTED from {shadow!r}, which is NOT under the generation "
+                    f"snapshot {str(root)!r} — a module already in sys.modules "
+                    f"short-circuits the path search, so the snapshot's mutated "
+                    f"copy can never load and every mutation to this tree is a "
+                    f"silent scored no-op (issue #110). The tree must not be "
+                    f"pre-imported before the adapter loads (the tournament "
+                    f"worker's contract is a fresh process per generation)."
+                )
+            try:
+                spec = importlib.util.find_spec(basename)
+            except (ImportError, ValueError) as exc:
+                raise RuntimeError(
+                    f"ADKHarnessAdapter: mutable tree {basename!r} does not "
+                    f"resolve as a top-level module ({exc}) — the generation "
+                    f"snapshot {str(root)!r} is first on sys.path, so a tree it "
+                    f"exposes must resolve there; every mutation to this tree "
+                    f"would be a scored no-op. Register the tree's IMPORTABLE "
+                    f"package directory (--mutable-tree <...>/{basename})."
+                ) from exc
+            locations = _spec_locations(spec)
+            if _all_under(locations, root):
+                continue
+            resolved = str(locations[0]) if locations else "<unresolvable>"
+            raise RuntimeError(
+                f"ADKHarnessAdapter: mutable tree {basename!r} resolves to "
+                f"{resolved!r}, which is NOT under the generation snapshot "
+                f"{str(root)!r} — the mutated copy of this tree is not what "
+                f"would run, so every mutation to it is a silent scored no-op "
+                f"(issue #110). sys.path resolves TOP-LEVEL names only and the "
+                f"snapshot exposes each tree under its basename, so "
+                f"{basename!r} must be the importable package name "
+                f"(--mutable-tree <...>/{basename}) and must not be shadowed by "
+                f"an earlier sys.path entry."
+            )
 
     def _assert_loaded_from_snapshot(self, module: Any, generation_root: Path) -> str:
         """Return ``module.__file__``, asserting it lies under the snapshot.
@@ -1766,9 +2101,14 @@ def _coerce_to_list(points: Iterable[MutationPoint]) -> list[MutationPoint]:
 
 __all__ = [
     "ADKHarnessAdapter",
+    "TREE_IMPORT_NEVER_IMPORTED",
+    "TREE_IMPORT_OUTSIDE_ROOT",
+    "TREE_IMPORT_VERIFIED",
     "entry_disable_drift",
     "entry_judge_only",
+    "entrypoint_outside_trees_notice",
     "entrypoint_snapshot_origin_error",
+    "tree_import_status",
     "ADKRunnableHarness",
     "rebind_tree_models_to_adk_model",
     "rebind_tree_models_to_call_llm",

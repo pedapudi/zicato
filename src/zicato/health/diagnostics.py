@@ -1101,6 +1101,58 @@ def detect_token_budget_clip(token_clip: tuple[int, int] | None) -> list[HealthF
     ]
 
 
+def detect_tree_never_imported(
+    tree_import_gaps: dict[str, tuple[str, ...]] | None,
+) -> list[HealthFinding]:
+    """Surface a generation whose units NEVER imported a mutable tree (#110).
+
+    ``tree_import_gaps`` is ``{generation_id: (tree_basename, ...)}`` — the
+    trees no unit of that generation ever imported, accumulated by the
+    tournament workers into each generation's ``harness_load.json`` and read
+    back by the orchestrator (``_epoch_tree_import_gaps``).
+
+    This is the ONLY detector of the original #110 shape: an entrypoint that
+    resolves to an INSTALLED copy under a different top-level name and never
+    imports the mutated tree at all. Nothing else notices — the run completes,
+    the board scores, the gate fires, the round promotes or rejects on a
+    comparison between two identical unmutated trees. A ``warning`` rather than
+    ``critical`` because a single generation can have a benign cause (a board
+    whose entries genuinely exercise only part of the surface), and the
+    operator, not the detector, owns that judgement.
+
+    ``None`` / empty (every healthy round) is silent.
+    """
+    if not tree_import_gaps:
+        return []
+    findings: list[HealthFinding] = []
+    for generation_id in sorted(tree_import_gaps):
+        for tree in tree_import_gaps[generation_id]:
+            findings.append(
+                HealthFinding(
+                    code="tree_never_imported",
+                    severity="warning",
+                    summary=(
+                        f"mutations to tree {tree} cannot have been under test in "
+                        f"generation {generation_id}: no run of that generation ever "
+                        f"imported {tree}, so the board scored code the loop never "
+                        "changed"
+                    ),
+                    detail={
+                        "generation_id": generation_id,
+                        "tree": tree,
+                        "recommendation": (
+                            "check that the harness entrypoint imports the mutable "
+                            f"tree ({tree}) rather than an installed copy under "
+                            "another name, and that the board exercises the code "
+                            "path the mutations target; the per-generation record is "
+                            "generations/<gen>/harness_load.json"
+                        ),
+                    },
+                )
+            )
+    return findings
+
+
 def assess_loop_health(
     losses_by_generation: dict[str, list[LossProfile]],
     experiments: list[Any],
@@ -1114,6 +1166,7 @@ def assess_loop_health(
     preflight: dict[str, Any] | None = None,
     infra_outage: tuple[int, int] | None = None,
     token_clip: tuple[int, int] | None = None,
+    tree_import_gaps: dict[str, tuple[str, ...]] | None = None,
 ) -> LoopHealth:
     """Run every detector and collect the findings into a :class:`LoopHealth`.
 
@@ -1174,6 +1227,13 @@ def assess_loop_health(
         orchestrator only for a round the budget actually clipped (see
         :func:`detect_token_budget_clip`). ``None`` (the default) is
         silent.
+    tree_import_gaps:
+        ``{generation_id: (tree_basename, ...)}`` for the mutable trees no
+        unit of that generation ever imported, read off the per-generation
+        ``harness_load.json`` records — threaded so
+        :func:`detect_tree_never_imported` can warn that a generation's
+        mutations cannot have been under test (issue #110). ``None`` /
+        empty (the default, and every healthy epoch) is silent.
 
     Returns
     -------
@@ -1206,6 +1266,7 @@ def assess_loop_health(
     findings.extend(detect_placebo_promoted(placebo_experiments))
     findings.extend(detect_infra_outage(infra_outage))
     findings.extend(detect_token_budget_clip(token_clip))
+    findings.extend(detect_tree_never_imported(tree_import_gaps))
 
     healthy = not any(finding.severity in ("warning", "critical") for finding in findings)
     return LoopHealth(
@@ -1239,4 +1300,5 @@ __all__ = [
     "detect_preflight_verdict",
     "detect_refresh_cadence",
     "detect_token_budget_clip",
+    "detect_tree_never_imported",
 ]

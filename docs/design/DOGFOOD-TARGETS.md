@@ -186,12 +186,22 @@ zicato register --adk presentation_agent_package.agent:root_agent \
     --mutable-tree path/to/goldfive/goldfive
 ```
 
-`--adk` is a DOTTED MODULE PATH (never a filesystem path) whose top-level
-module is the basename of one registered root — `presentation_agent_package`
-above. The snapshot copies each root under its basename and the loader only
-prepends the snapshot root to `sys.path`, which resolves top-level packages
-only; any other form imports the installed copy and every mutation is a
-scored no-op (issue #110), so `register` refuses it.
+`--adk` is a DOTTED MODULE PATH, never a filesystem path. Each registered
+root's BASENAME must be the importable package name (`presentation_agent_package`,
+`goldfive` above): the snapshot copies each root under its basename and the
+loader only prepends the snapshot root to `sys.path`, which resolves top-level
+names only — a root whose basename Python cannot name as a module could never
+be shown to have run from the snapshot, so `register` refuses it (issue #110).
+
+The entrypoint may live inside one of those roots (as above) or outside all of
+them — the dependency shape, which target 2 uses: mutate `goldfive` and drive
+it from a harness module that imports it. Either way EVERY registered root is
+verified per run, not just the entrypoint's: `load` asserts each root's
+top-level name resolves inside the generation snapshot, and after each unit the
+worker records which roots were actually imported in
+`generations/{gen}/harness_load.json`. In the two-root example above, a round
+that mutates `goldfive` but whose units never import it raises the
+`tree_never_imported` loop-health WARNING instead of scoring a no-op.
 
 The first registered root is conventionally the package containing the
 agent factory; additional roots are added with repeated
