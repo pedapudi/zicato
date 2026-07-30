@@ -241,6 +241,18 @@ class WorkspaceLayout:
         """One generation's cached ``gen_score.json`` aggregate."""
         return self.generation_dir(epoch_id, generation_id) / "gen_score.json"
 
+    def harness_load(self, epoch_id: str, generation_id: str) -> Path:
+        """One generation's ``harness_load.json`` snapshot-origin provenance.
+
+        Written best-effort by the subprocess worker once it has loaded the
+        harness (the only process that knows the resolved ``__file__``), read
+        best-effort by the orchestrator to emit the round log's
+        ``harness_loaded`` event. Every reader tolerates absence: an adapter
+        kind that reports no entrypoint file, a fully cache-served
+        generation, or a failed write all leave no file.
+        """
+        return self.generation_dir(epoch_id, generation_id) / "harness_load.json"
+
     def patches_dir(self, epoch_id: str, generation_id: str) -> Path:
         """One generation's per-patch JSON directory (``patches/``)."""
         return self.generation_dir(epoch_id, generation_id) / "patches"

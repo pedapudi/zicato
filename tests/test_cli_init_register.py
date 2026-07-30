@@ -89,10 +89,13 @@ def _init_workspace(tmp_path: Path) -> Path:
 
 
 def test_register_writes_entrypoint_and_trees(tmp_path: Path) -> None:
+    """Both keys land. The entrypoint is tree-relative: its top-level module
+    is a registered tree's basename, the only form a generation snapshot can
+    supply (issue #110)."""
     workspace = _init_workspace(tmp_path)
-    src_a = tmp_path / "src_a"
+    src_a = tmp_path / "my_pkg"
     src_a.mkdir()
-    src_b = tmp_path / "src_b"
+    src_b = tmp_path / "extra_pkg"
     src_b.mkdir()
 
     runner = CliRunner()

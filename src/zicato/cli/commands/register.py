@@ -10,6 +10,16 @@ allowed to mutate. The entrypoint follows the common Python convention
 ``module.path:symbol``; mutable trees are filesystem roots (one or
 many, passed as repeated ``--mutable-tree`` flags).
 
+The two are NOT independent. A generation snapshot copies each mutable
+tree under its BASENAME and the harness loader prepends the snapshot
+root to ``sys.path`` — which resolves TOP-LEVEL packages only. So the
+entrypoint's top-level module must be one of the mutable trees'
+basenames, or the import silently returns whatever copy is already
+installed and every round scores unmutated code (issue #110).
+``register`` refuses such a registration up front, import-free (see
+:func:`_validate_entrypoint`); the adapter re-checks the invariant
+against the real ``module.__file__`` at load time.
+
 ``register`` also records the canonical *contract source paths* — the
 operator's live, editable ``board.jsonl`` / proposer brief (``brief.md``)
 / ``scoring.json``. These default to the conventional location next to
@@ -42,12 +52,30 @@ from zicato.workspace.config_io import (
 )
 
 
-def _validate_entrypoint(entrypoint: str) -> None:
-    """Ensure ``entrypoint`` looks like ``module.path:symbol``.
+def _validate_entrypoint(entrypoint: str, mutable_trees: tuple[str, ...] = ()) -> None:
+    """Ensure ``entrypoint`` is well-formed AND the trees can be under test.
 
-    This is a syntactic check only — we don't import the module here so
+    Two static checks plus one notice, all IMPORT-FREE (milliseconds) so
     ``register`` works in environments where the agent's runtime deps
-    aren't installed yet.
+    aren't installed yet:
+
+    1. **Syntax** — ``module.path:symbol``, both halves non-empty.
+    2. **Tree importability** (issue #110) — every ``--mutable-tree``
+       basename must be a possible top-level module name, because a
+       generation snapshot copies each tree under its basename and the
+       loader only prepends the snapshot root to ``sys.path`` (which
+       resolves top-level names only). A tree Python cannot name can never
+       be shown to have run from the snapshot, so every mutation to it
+       would be a scored no-op. The rule lives with the adapter that owns
+       the snapshot layout
+       (:func:`zicato.adapters.adk.entrypoint_snapshot_origin_error`);
+       skipped when no mutable tree was passed.
+    3. **Dependency-shape notice** — an entrypoint OUTSIDE every mutable
+       tree is legitimate (the tree is a dependency the harness imports —
+       target 2's shape) and is ACCEPTED, with a printed notice saying
+       what carries the verification instead: the per-tree resolution
+       assert at load time and the post-run record in ``harness_load.json``
+       (:func:`zicato.adapters.adk.entrypoint_outside_trees_notice`).
     """
     if ":" not in entrypoint:
         raise click.BadParameter(
@@ -60,6 +88,19 @@ def _validate_entrypoint(entrypoint: str) -> None:
             f"entrypoint {entrypoint!r} must have both module and symbol",
             param_hint="--adk",
         )
+    # Import-free: the adapter module's own imports are lazy, so this does
+    # not pull in google-adk / goldfive.
+    from zicato.adapters.adk import (  # noqa: PLC0415
+        entrypoint_outside_trees_notice,
+        entrypoint_snapshot_origin_error,
+    )
+
+    refusal = entrypoint_snapshot_origin_error(entrypoint, mutable_trees)
+    if refusal is not None:
+        raise click.BadParameter(refusal, param_hint="--adk")
+    notice = entrypoint_outside_trees_notice(entrypoint, mutable_trees)
+    if notice is not None:
+        click.echo(f"NOTICE: {notice}")
 
 
 @click.command(
@@ -77,14 +118,24 @@ def _validate_entrypoint(entrypoint: str) -> None:
     "--adk",
     "entrypoint",
     required=True,
-    help="Adapter entrypoint in 'module.path:agent_symbol' form.",
+    help=(
+        "Adapter entrypoint in 'module.path:agent_symbol' form. Either inside a "
+        "--mutable-tree (its TOP-LEVEL module is the tree's basename) or outside "
+        "every tree, which is the dependency shape: the harness imports the "
+        "mutable trees, and each tree is verified to have loaded from the "
+        "generation snapshot per run instead."
+    ),
 )
 @click.option(
     "--mutable-tree",
     "mutable_trees",
     multiple=True,
     type=click.Path(),
-    help="Source root the proposer is allowed to mutate (repeatable).",
+    help=(
+        "Source root the proposer is allowed to mutate (repeatable). Its "
+        "BASENAME must be the importable package name — the snapshot exposes "
+        "each tree under its basename on sys.path."
+    ),
 )
 @click.option(
     "--board",
@@ -149,7 +200,7 @@ def register_cmd(
     leaves the key unset, which resolves to the built-in default
     proposer.
     """
-    _validate_entrypoint(entrypoint)
+    _validate_entrypoint(entrypoint, mutable_trees)
     workspace_root = Path(workspace)
     if not workspace_is_initialized(workspace_root):
         raise click.UsageError(

@@ -245,10 +245,19 @@ adapter-instrumented goldfive checkout it wraps (target 2 — see
 The CLI exposes this with the `--mutable-tree` flag on `register`:
 
 ```
-zicato register --adk path/to/agent.py:root_agent \
+zicato register --adk agent_package.agent:root_agent \
     --mutable-tree path/to/agent_package \
     --mutable-tree path/to/another/package
 ```
+
+`--adk` is a dotted module path. Each registered root's basename must be the
+importable package name (`agent_package` above): the snapshot copies each root
+under its basename and is prepended to `sys.path`, which resolves top-level
+names only, so a root Python cannot name as a module could never be shown to
+have run from the snapshot — `register` refuses that (issue #110). The
+entrypoint itself may sit inside a root or outside all of them (the dependency
+shape: mutate a package the harness imports); every root is verified per run
+either way — see [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md) §2.4.
 
 The first registered root is conventionally the package containing the
 agent factory; additional roots are added with repeated

@@ -59,7 +59,7 @@ $PY -m zicato.cli init --workspace .zicato
 
 # 2. Register the agent + the mutable source tree.
 $PY -m zicato.cli register --workspace .zicato \
-    --adk zicato_examples.target_1_presentation.agent.agent:root_agent \
+    --adk agent.agent:root_agent \
     --mutable-tree $EX/agent
 
 # 3. Open an epoch from the example's board / brief / scoring. epoch new
@@ -190,7 +190,7 @@ PY=/home/sunil/git/zicato/.venv/bin/python
 # Steps 1-2 (init + register) are identical to the gauntlet recipe.
 $PY -m zicato.cli init     --workspace .zicato
 $PY -m zicato.cli register --workspace .zicato \
-    --adk zicato_examples.target_1_presentation.agent.agent:root_agent \
+    --adk agent.agent:root_agent \
     --mutable-tree $EX/agent
 
 # Open the epoch from the RACING scoring contract.

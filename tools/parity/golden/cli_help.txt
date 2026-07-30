@@ -892,9 +892,15 @@ Usage: zicato register [OPTIONS]
 Options:
   --workspace DIRECTORY  Workspace directory to update.  [default: .zicato]
   --adk TEXT             Adapter entrypoint in 'module.path:agent_symbol' form.
-                         [required]
+                         Either inside a --mutable-tree (its TOP-LEVEL module is
+                         the tree's basename) or outside every tree, which is
+                         the dependency shape: the harness imports the mutable
+                         trees, and each tree is verified to have loaded from
+                         the generation snapshot per run instead.  [required]
   --mutable-tree PATH    Source root the proposer is allowed to mutate
-                         (repeatable).
+                         (repeatable). Its BASENAME must be the importable
+                         package name — the snapshot exposes each tree under its
+                         basename on sys.path.
   --board PATH           Canonical board.jsonl path (default:
                          <workspace_parent>/board.jsonl).
   --brief PATH           Canonical proposer-brief path (default:

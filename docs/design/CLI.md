@@ -599,8 +599,8 @@ zicato register [OPTIONS]
 | Option | Default | Meaning |
 |---|---|---|
 | `--workspace DIRECTORY` | `.zicato` | Workspace directory to update. |
-| `--adk TEXT` | **required** | Adapter entrypoint in `module.path:agent_symbol` form. |
-| `--mutable-tree PATH` | — (repeatable) | Source root the proposer is allowed to mutate. |
+| `--adk TEXT` | **required** | Adapter entrypoint in `module.path:agent_symbol` form. Either inside a `--mutable-tree` (its TOP-LEVEL module is the tree's basename) or outside every tree, which is the dependency shape: the harness imports the mutable trees, and each tree is verified to have loaded from the generation snapshot per run instead. |
+| `--mutable-tree PATH` | — (repeatable) | Source root the proposer is allowed to mutate. Its BASENAME must be the importable package name — the snapshot exposes each tree under its basename on `sys.path`. |
 | `--board PATH` | `<workspace_parent>/board.jsonl` | Canonical `board.jsonl` path. |
 | `--brief PATH` | `<workspace_parent>/brief.md` | Canonical proposer-brief path. |
 | `--scoring PATH` | `<workspace_parent>/scoring.json` | Canonical `scoring.json` path. |

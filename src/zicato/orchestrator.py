@@ -1127,6 +1127,7 @@ async def evolve_once(
     # the gate verdict, and — when the runner consulted a holdout — the
     # Ladder's release, all onto the round's durable event log.
     _emit_tournament_units(round_log, tournament_result)
+    _emit_harness_loaded(round_log, workspace_root, resolved_epoch_id, tournament_result)
     _emit_gate_evaluated(round_log, tournament_result.outcome)
     _holdout_block = getattr(tournament_result, "holdout", None)
     if _holdout_block is not None:
@@ -2018,6 +2019,7 @@ async def _evolve_multi_challenger(
             _cache_gen_score(workspace_root, epoch_id, m.right.generation_id, result.child_agg)
         # WS8: this matchup's board units + gate verdict onto the round log.
         _emit_tournament_units(round_log, result)
+        _emit_harness_loaded(round_log, workspace_root, epoch_id, result)
         _emit_gate_evaluated(round_log, result.outcome)
         return MatchupResult(
             matchup_id=m.matchup_id,
@@ -3215,6 +3217,102 @@ def _emit_tournament_units(round_log: _RoundLogEmitter, tournament_result: Any) 
             )
 
 
+def _emit_harness_loaded(
+    round_log: _RoundLogEmitter,
+    workspace_root: Path,
+    epoch_id: str,
+    tournament_result: Any,
+) -> None:
+    """Emit ``harness_loaded`` once per generation the duel actually ran.
+
+    The mutated-tree provenance for issue #110: the subprocess worker records
+    what each generation actually loaded in its ``harness_load.json`` (it is the
+    only process that imports the entrypoint or the mutable trees) — the
+    resolved entrypoint file plus the accumulated per-tree verdicts; the
+    orchestrator — the round log's single writer — folds that into ONE event per
+    generation here, so the durable round record names both the file each side
+    ran and any tree its units never imported.
+
+    Best-effort and additive throughout: a generation with no record (a
+    non-ADK adapter kind, a fully cache-served side, a failed write) simply
+    contributes no event, and readers tolerate the absence.
+    """
+    generation_ids: list[str] = []
+    for attr in ("parent_generation_id", "child_generation_id"):
+        gen_id = str(getattr(tournament_result, attr, "") or "")
+        if gen_id and gen_id not in generation_ids:
+            generation_ids.append(gen_id)
+    for gen_id in generation_ids:
+        try:
+            from zicato.core.workspace import harness_load_path  # noqa: PLC0415
+            from zicato.storage import read_json  # noqa: PLC0415
+
+            record = read_json(harness_load_path(workspace_root, epoch_id, gen_id))
+        except Exception as exc:  # noqa: BLE001 — emission must never fail a round
+            log.debug("round-log harness_loaded read skipped for %s: %s", gen_id, exc)
+            continue
+        entrypoint_file = str((record or {}).get("entrypoint_file", "") or "")
+        verified = _str_tuple((record or {}).get("trees_verified"))
+        never_imported = _str_tuple((record or {}).get("trees_never_imported"))
+        if not entrypoint_file and not verified and not never_imported:
+            continue
+        round_log.emit(
+            "harness_loaded",
+            {
+                "generation_id": gen_id,
+                "entrypoint_file": entrypoint_file,
+                "trees_verified": verified,
+                "trees_never_imported": never_imported,
+            },
+        )
+
+
+def _str_tuple(raw: Any) -> tuple[str, ...]:
+    """Coerce a JSON list of names to a tuple of non-empty strings.
+
+    Tolerant by design — the records this reads are written by another process
+    and a malformed / absent field must degrade to "nothing recorded", never
+    raise into a round.
+    """
+    if not isinstance(raw, list):
+        return ()
+    return tuple(str(item) for item in raw if str(item))
+
+
+def _epoch_tree_import_gaps(workspace_root: Path, epoch_id: str) -> dict[str, tuple[str, ...]]:
+    """Per-generation mutable trees NO unit of that generation ever imported.
+
+    Reads each generation's ``harness_load.json`` — the worker-written record of
+    what the generation actually loaded — and returns
+    ``{generation_id: (tree_basename, ...)}`` for the generations with a
+    non-empty gap. Threaded into
+    :func:`zicato.health.diagnostics.detect_tree_never_imported`, which turns
+    each entry into a WARNING: that generation's mutations to those trees
+    cannot have been under test (issue #110's original shape — an installed
+    entrypoint that never imports the mutated tree at all).
+
+    Best-effort like every other health input: a missing / unreadable record
+    contributes nothing.
+    """
+    gaps: dict[str, tuple[str, ...]] = {}
+    gens_root = WorkspaceLayout.from_root(workspace_root).generations_dir(epoch_id)
+    if not gens_root.exists():
+        return gaps
+    from zicato.core.workspace import harness_load_path  # noqa: PLC0415
+    from zicato.storage import read_json  # noqa: PLC0415
+
+    for gen_dir in sorted(p for p in gens_root.iterdir() if p.is_dir()):
+        try:
+            record = read_json(harness_load_path(workspace_root, epoch_id, gen_dir.name))
+        except Exception as exc:  # noqa: BLE001 — health inputs are best-effort
+            log.debug("harness-load record unreadable for %s: %s", gen_dir.name, exc)
+            continue
+        never_imported = _str_tuple((record or {}).get("trees_never_imported"))
+        if never_imported:
+            gaps[gen_dir.name] = never_imported
+    return gaps
+
+
 def _emit_gate_evaluated(round_log: _RoundLogEmitter, outcome: Any) -> None:
     """Emit the ``gate_evaluated`` event for one settled duel's gate verdict.
 
@@ -3705,6 +3803,9 @@ def _assess_and_persist_loop_health(
             extra_kwargs["infra_outage"] = infra_outage
         if token_clip is not None:
             extra_kwargs["token_clip"] = token_clip
+        tree_import_gaps = _epoch_tree_import_gaps(workspace_root, epoch_id)
+        if tree_import_gaps:
+            extra_kwargs["tree_import_gaps"] = tree_import_gaps
         health = assess_loop_health(
             losses_by_generation,
             experiments,
@@ -3733,6 +3834,11 @@ def _assess_and_persist_loop_health(
     # and passed — so it must be surfaced on the terminal, not only in the
     # round's health JSON (issue #84).
     _warn_dead_judges(epoch_id, round_n, health)
+
+    # Same discipline for the mutated-tree alarm: a generation whose units never
+    # imported a mutable tree scored code the loop never changed, which is
+    # indistinguishable — from the terminal — from an honest null result.
+    _warn_trees_never_imported(epoch_id, round_n, health)
 
     with best_effort(
         "loop-health report write",
@@ -3885,6 +3991,35 @@ def _warn_dead_judges(epoch_id: str, round_n: int, health: Any) -> None:
             f" (dead: {named})" if named else "",
         )
         return
+
+
+def _warn_trees_never_imported(epoch_id: str, round_n: int, health: Any) -> None:
+    """Emit a prominent stderr WARNING for a tree no unit of a generation imported.
+
+    The ``tree_never_imported`` finding says the loop mutated code that was
+    never executed: the board scored, the gate fired and the round promoted or
+    rejected on a comparison between two identical unmutated trees. Buried in
+    the per-round health JSON it reads like any other warning, and an operator
+    cannot tell "the mutations did not help" from "the mutations were never
+    under test" — the same argument that lifted ``dead_judge`` to the terminal
+    (:func:`_warn_dead_judges`). Fired every round the finding is present
+    (idempotent, best-effort), and tolerant of the health sibling's exact shape.
+    """
+    for finding in getattr(health, "findings", ()) or ():
+        if str(getattr(finding, "code", "") or "") != "tree_never_imported":
+            continue
+        log.warning(
+            "MUTATED TREE NEVER IMPORTED — epoch %s round %d: %s. The round's "
+            "verdict compared two IDENTICAL unmutated trees, so it carries no "
+            "optimization signal. Check that the harness entrypoint imports the "
+            "mutable tree rather than an installed copy under another name, and "
+            "that the board exercises the code path the mutations target; the "
+            "per-generation record is generations/<gen>/harness_load.json "
+            "(issue #110).",
+            epoch_id,
+            round_n,
+            str(getattr(finding, "summary", "") or "a mutable tree was never imported"),
+        )
 
 
 def _atomic_write_text(path: Path, text: str) -> None:

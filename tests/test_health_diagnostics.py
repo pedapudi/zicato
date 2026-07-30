@@ -31,6 +31,7 @@ from zicato.health.diagnostics import (
     detect_non_differentiating_entry,
     detect_refresh_cadence,
     detect_stalled_loop,
+    detect_tree_never_imported,
 )
 
 # ---------------------------------------------------------------------------
@@ -615,6 +616,41 @@ def test_deleted_health_env_vars_are_ignored(monkeypatch) -> None:
     # widen it, so the detector fires.
     experiments = [_experiment(f"v{n}", scalar_delta=0.0, decision="rejected") for n in range(1, 4)]
     assert detect_degenerate_scoring(experiments) != []
+
+
+# ---------------------------------------------------------------------------
+# tree_never_imported
+# ---------------------------------------------------------------------------
+
+
+def test_tree_never_imported_warns_once_per_generation_and_tree() -> None:
+    """One warning per (generation, tree), naming both — issue #110's alarm."""
+    findings = detect_tree_never_imported({"v2": ("goldfive", "agent_pkg"), "v1": ("goldfive",)})
+    assert [(f.code, f.severity) for f in findings] == [("tree_never_imported", "warning")] * 3
+    # Deterministic order: generations sorted, trees in the recorded order.
+    assert [(f.detail["generation_id"], f.detail["tree"]) for f in findings] == [
+        ("v1", "goldfive"),
+        ("v2", "goldfive"),
+        ("v2", "agent_pkg"),
+    ]
+    assert (
+        "mutations to tree goldfive cannot have been under test in generation v1"
+        in findings[0].summary
+    )
+
+
+def test_tree_never_imported_silent_without_a_gap() -> None:
+    """Every healthy epoch — and every non-ADK adapter kind — is silent."""
+    assert detect_tree_never_imported(None) == []
+    assert detect_tree_never_imported({}) == []
+    assert detect_tree_never_imported({"v1": ()}) == []
+
+
+def test_tree_never_imported_flips_the_report_unhealthy() -> None:
+    """A warning-severity finding is enough to make the epoch report unhealthy."""
+    health = assess_loop_health({}, [], [], "e1", tree_import_gaps={"v1": ("goldfive",)})
+    assert health.healthy is False
+    assert [f.code for f in health.findings] == ["tree_never_imported"]
 
 
 # ---------------------------------------------------------------------------
