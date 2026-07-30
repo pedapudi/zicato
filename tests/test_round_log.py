@@ -292,8 +292,10 @@ def test_harness_loaded_round_trips_and_folds_per_generation(tmp_path):
     log = RoundLog(tmp_path, "epoch-01", 9)
     log.append(RoundOpened(contract_hash="h"))
     log.append(PatchesApplied(generation_id="v1"))
-    log.append(HarnessLoaded(generation_id="v0", entrypoint_file="/snap/v0/agent/agent.py"))
-    log.append(HarnessLoaded(generation_id="v1", entrypoint_file="/snap/v1/agent/agent.py"))
+    # Snapshot-RELATIVE paths, as the worker records them. Distinct here
+    # because a proposer may move the entrypoint module between generations.
+    log.append(HarnessLoaded(generation_id="v0", entrypoint_file="agent/agent.py"))
+    log.append(HarnessLoaded(generation_id="v1", entrypoint_file="agent/root.py"))
     log.append(RoundClosed())
 
     events = log.read()
@@ -302,8 +304,8 @@ def test_harness_loaded_round_trips_and_folds_per_generation(tmp_path):
 
     record = fold_round_record(events)
     assert record.harness_entrypoint_files == {
-        "v0": "/snap/v0/agent/agent.py",
-        "v1": "/snap/v1/agent/agent.py",
+        "v0": "agent/agent.py",
+        "v1": "agent/root.py",
     }
 
 

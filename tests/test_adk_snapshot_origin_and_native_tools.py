@@ -198,9 +198,162 @@ def test_register_time_rule_matches_the_snapshot_basename_layout(tmp_path: Path)
     assert entrypoint_snapshot_origin_error("anything.at:all", []) is None
 
 
+def test_register_time_rule_takes_the_basename_the_seed_step_will(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dot-suffixed relative tree must not be a FALSE refusal.
+
+    ``seed_generation`` resolves each source before taking its basename
+    (``Path(raw).resolve().name``), so ``--mutable-tree .`` from inside the
+    target materialises ``snapshot/<target-dir-name>/`` and the entrypoint
+    ``<target-dir-name>.mod:sym`` loads fine. A purely lexical
+    ``Path(".").name`` is the EMPTY string, which matches no entrypoint and
+    refused that registration outright — while suggesting the nonsense
+    ``--adk .<module>:<symbol>``. The refusal must speak the same layout the
+    seed step materialises.
+    """
+    from zicato.adapters.adk import entrypoint_snapshot_origin_error
+
+    target = tmp_path / "mytarget"
+    (target / "mytarget").mkdir(parents=True)
+    monkeypatch.chdir(target)
+
+    assert entrypoint_snapshot_origin_error("mytarget.mod:root_agent", ["."]) is None
+    assert entrypoint_snapshot_origin_error("mytarget.mod:root_agent", ["./"]) is None
+    assert entrypoint_snapshot_origin_error("mytarget.mod:root_agent", ["mytarget/.."]) is None
+    # The guard still bites on a genuinely unreachable top-level module.
+    assert entrypoint_snapshot_origin_error("installed_pkg.mod:root_agent", ["."]) is not None
+
+
+def test_second_in_process_load_of_a_dotted_entrypoint_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two generations in ONE process: the loader DETECTS, it does not repair.
+
+    ``importlib.reload`` of a dotted module re-runs the finder against its
+    parent package's ``__path__``, which still points at the FIRST
+    generation's snapshot — so generation 2 gets generation 1's bytes. Before
+    #110 that scored silently; now it raises. Pinned because the fresh-
+    process-per-generation contract is the only thing keeping it unreachable:
+    if anything ever drives two generations in one process, this is a loud
+    failure and not a silent no-op.
+    """
+    from zicato.adapters.adk import ADKHarnessAdapter
+
+    roots = {}
+    for gen in ("g1", "g2"):
+        pkg = tmp_path / gen / "ztriage_multi"
+        pkg.mkdir(parents=True)
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+        (pkg / "agent.py").write_text(f'root_agent = {{"gen": "{gen}"}}\n', encoding="utf-8")
+        roots[gen] = tmp_path / gen
+    for name in [m for m in sys.modules if m.startswith("ztriage_multi")]:
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+
+    adapter = ADKHarnessAdapter(
+        "ztriage_multi.agent:root_agent",
+        mutable_trees=[roots["g1"] / "ztriage_multi"],
+    )
+    assert adapter.load(roots["g1"])._agent == {"gen": "g1"}
+    with pytest.raises(RuntimeError, match="NOT under the generation snapshot"):
+        adapter.load(roots["g2"])
+
+
 # ---------------------------------------------------------------------------
 # Issue #98 — native Gemini/Gemma IS function-calling capable
 # ---------------------------------------------------------------------------
+
+
+def test_genai_client_classification_survives_an_unimportable_litellm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The flood guard must not fail OPEN where ``LiteLlm`` cannot be imported.
+
+    ``litellm`` arrives via ``google-adk``'s ``extensions`` extra, so ADK can
+    resolve a native ``gemini-*`` id in an install where
+    ``google.adk.models.lite_llm`` raises on import. Answering
+    "is this genai-backed?" as ``not issubclass(cls, LiteLlm)`` is
+    unanswerable there and returned ``False`` — leaving a tool-free agent on
+    its native model string, rebuilding the unused genai client, and bringing
+    back the per-turn ``AttributeError`` GC flood the shim exists to stop. The
+    classification is positive (``issubclass(cls, Gemini)``) and needs no
+    ``litellm`` at all.
+    """
+    import builtins
+
+    from zicato.adapters.adk import _resolves_to_genai_client
+
+    real_import = builtins.__import__
+
+    def _no_litellm(name: str, *args: object, **kwargs: object) -> object:
+        if name in {"litellm", "google.adk.models.lite_llm"}:
+            raise ImportError("litellm is not installed")
+        return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(builtins, "__import__", _no_litellm)
+    monkeypatch.delitem(sys.modules, "google.adk.models.lite_llm", raising=False)
+
+    assert _resolves_to_genai_client("gemini-2.0-flash") is True
+    assert _resolves_to_genai_client("gemma-3-12b-it") is True
+    assert _resolves_to_genai_client("not-a-real-model-xyz") is False
+
+
+def test_a_tool_subagent_inheriting_the_root_model_is_left_alone() -> None:
+    """An empty ``model`` INHERITS; it must not read as "no model".
+
+    ADK's ``LlmAgent.model`` defaults to ``""`` and ``canonical_model`` then
+    walks ``parent_agent`` — so the idiomatic multi-agent tree names a model on
+    the ROOT only. The #98 hardening backstop must not fire on such a
+    sub-agent: it has a real function-calling model (the root's), and raising
+    would abort every unit of every round for a perfectly well-formed target.
+    Nor may the shim displace it, which would override the root's binding and
+    strip the sub-agent's tools.
+    """
+    from google.adk.agents import LlmAgent
+
+    from zicato.adapters.adk import rebind_tree_models_to_call_llm
+
+    def _a_tool(x: str) -> str:
+        """A tool.
+
+        Args:
+            x: input.
+        """
+        return x
+
+    child = LlmAgent(name="worker", instruction="work", tools=[_a_tool])
+    root = LlmAgent(
+        name="root",
+        instruction="route",
+        model="openai/gpt-4o-mini",
+        sub_agents=[child],
+    )
+    # ADK itself resolves the child to the root's function-calling model.
+    assert child.model == ""
+    assert child.canonical_model.model == "openai/gpt-4o-mini"
+    assert rebind_tree_models_to_call_llm(root, lambda s, u, m: "text") == 0
+    assert root.model == "openai/gpt-4o-mini"
+    assert child.model == ""
+
+    # The genuinely modelless ROOT of a tool-declaring tree still raises: it
+    # has nothing to inherit from, so no function-calling model exists.
+    orphan = LlmAgent(name="orphan", instruction="work", tools=[_a_tool])
+    with pytest.raises(RuntimeError, match="declares tools"):
+        rebind_tree_models_to_call_llm(orphan, lambda s, u, m: "text")
+
+    # A tool-FREE sub-agent inherits too — the root's binding governs, so the
+    # shim must not displace it either.
+    plain_child = LlmAgent(name="plain", instruction="chat")
+    plain_root = LlmAgent(
+        name="proot",
+        instruction="route",
+        model="openai/gpt-4o-mini",
+        sub_agents=[plain_child],
+    )
+    assert rebind_tree_models_to_call_llm(plain_root, lambda s, u, m: "text") == 0
 
 
 @pytest.mark.parametrize("model_str", ["gemini-2.0-flash", "gemini-1.5-pro"])

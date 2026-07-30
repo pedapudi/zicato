@@ -35,13 +35,22 @@ The snapshot-origin invariant (fail CLOSED)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Putting the snapshot on ``sys.path`` is NOT sufficient to guarantee the
-snapshot's code is what runs. ``sys.path`` governs only TOP-LEVEL
-package resolution, and :func:`importlib.reload` re-executes the module's
-EXISTING spec — so an entrypoint whose first dotted component names a
-package that is already importable from somewhere else (an installed
-distribution, an editable checkout) silently loads the INSTALLED copy.
-Every mutation the loop applies is then a no-op that still scores, gates,
-promotes and reports a plausible null result.
+snapshot's code is what runs. ``sys.path`` governs only TOP-LEVEL name
+resolution, and being FIRST on it shadows nothing it does not itself
+contain: an entrypoint whose first dotted component is absent from the
+snapshot falls straight through to the next entry and loads the
+INSTALLED copy (a distribution, an editable checkout). Every mutation
+the loop applies is then a no-op that still scores, gates, promotes and
+reports a plausible null result.
+
+Two secondary effects can defeat the insert even when the snapshot DOES
+contain the name, both consequences of something already being imported:
+a ``sys.modules`` hit short-circuits the path search entirely, and
+:func:`importlib.reload` of a DOTTED module re-runs the finder against
+only its parent package's ``__path__`` — still pointing wherever that
+parent was first found. Neither arises in the worker (fresh process per
+generation, nothing pre-imported), which is why the invariant is
+asserted rather than repaired.
 
 Two layers close that hole:
 
@@ -214,11 +223,21 @@ def entrypoint_snapshot_origin_error(
     root and the seed step raises its own error). Otherwise returns a single
     operator-actionable line ready to be wrapped in the caller's error type.
 
-    Import-free by construction: pure string / :class:`~pathlib.Path` math, no
-    ``importlib`` and no filesystem access, so ``zicato register`` still works
-    in an environment where the target's own runtime deps are not installed.
+    Import-free by construction: pure path math, no ``importlib``, so
+    ``zicato register`` still works in an environment where the target's own
+    runtime deps are not installed.
+
+    Each tree is filesystem-resolved before its basename is taken, because
+    that is what ``seed_generation`` does (``Path(raw).resolve().name``) and
+    the refusal must accept exactly the layouts the seed step materialises.
+    Without it a relative registration whose last component is ``.`` or ``..``
+    — ``--mutable-tree .`` from inside the target — yields an EMPTY basename
+    and the check refuses a registration that would in fact have loaded. This
+    resolve feeds an operator-facing message only; it is deliberately NOT the
+    canonical form of anything hashed (folding the checkout path into a
+    contract hash is its own bug — see ``_canon_mutable_trees``).
     """
-    trees = [Path(tree) for tree in mutable_trees]
+    trees = list(mutable_trees)
     if not trees:
         return None
     if ":" not in entrypoint:
@@ -227,8 +246,12 @@ def entrypoint_snapshot_origin_error(
     if not module_path:
         return None
     top_level = module_path.split(".")[0]
-    basenames = [tree.name for tree in trees]
+    basenames = [Path(tree).resolve().name for tree in trees]
     if top_level in basenames:
+        return None
+    # A tree that resolves to the filesystem root has no basename to match on;
+    # the rule is unanswerable, so fail OPEN and let load time decide.
+    if not all(basenames):
         return None
     return (
         f"entrypoint {entrypoint!r} can never load from a generation snapshot: "
@@ -350,8 +373,10 @@ def _goldfive_runtime() -> Any:
 #      tool/function calling; :func:`_resolves_to_native_function_calling`
 #      detects it and the shim LEAVES IT ALONE.
 #   3. THIS shim (:func:`rebind_tree_models_to_call_llm`) — fires ONLY on a
-#      TOOL-FREE agent whose bare string resolves to a ``google.genai``-backed
-#      client (``gemini-*`` / ``gemma-*``) or is wholly unresolvable. It exists
+#      TOOL-FREE agent that owns a model string of its own (an EMPTY model
+#      inherits the root's binding and is left alone) which resolves to a
+#      ``google.genai``-backed client (``gemini-*`` / ``gemma-*``) or is wholly
+#      unresolvable. It exists
 #      to stop the genai-client GC flood (below) for an UNCONFIGURED /
 #      misconfigured target — and it is TEXT-ONLY: it carries NO
 #      ``function_declarations``, so any agent rebound to it loses native
@@ -571,12 +596,23 @@ def _resolves_to_genai_client(model_str: str) -> bool:
     shim would be a silent no-op, which is strictly worse than a loud
     credential error.
 
+    Identifies the genai-backed classes POSITIVELY — ``issubclass(cls,
+    Gemini)``, which covers :class:`Gemma` (it subclasses :class:`Gemini`) and
+    nothing else in the registry. The tempting shorthand ``not
+    issubclass(cls, LiteLlm)`` is wrong in two directions: it is unanswerable
+    when ``litellm`` is not importable (``google-adk``'s ``extensions`` extra
+    owns it, so ADK can resolve ``gemini-*`` in an install that cannot import
+    :class:`LiteLlm`), where returning ``False`` would fail OPEN and let the
+    flood back in; and it misreads every OTHER native provider class the
+    registry grows as genai-backed, displacing a real function-calling model
+    for a flood it could never cause.
+
     ``False`` for a :class:`LiteLlm`-resolvable string (its construction builds
-    no genai client), for an unresolvable string, and when ADK / litellm is
-    unavailable.
+    no genai client), for any other non-genai provider class, for an
+    unresolvable string, and when ADK is unavailable.
     """
     try:
-        from google.adk.models.lite_llm import LiteLlm  # noqa: PLC0415
+        from google.adk.models.google_llm import Gemini  # noqa: PLC0415
         from google.adk.models.registry import LLMRegistry  # noqa: PLC0415
     except ImportError:
         return False
@@ -584,7 +620,7 @@ def _resolves_to_genai_client(model_str: str) -> bool:
         cls = LLMRegistry.resolve(model_str)
     except Exception:  # noqa: BLE001 — unresolvable string: not a genai client
         return False
-    return not issubclass(cls, LiteLlm)
+    return issubclass(cls, Gemini)
 
 
 def _agent_declares_tools(agent: Any) -> bool:
@@ -598,6 +634,32 @@ def _agent_declares_tools(agent: Any) -> bool:
     wrapper) carries no ``tools`` field at all.
     """
     return bool(getattr(agent, "tools", None))
+
+
+def _inherits_model_from_ancestor(agent: Any) -> bool:
+    """True if ``agent`` has a model-carrying ancestor to inherit from.
+
+    An EMPTY ``model`` is NOT "no model" — it is ADK's default, and it means
+    "use the nearest ``LlmAgent`` ancestor's model". ``canonical_model`` walks
+    ``parent_agent`` for exactly that, so an idiomatic tree names a model on
+    the ROOT only and every sub-agent inherits it. This mirrors that walk
+    (duck-typed on the ``model`` field, the same test
+    :func:`_iter_agent_tree`'s callers use to recognise an ``LlmAgent``-shaped
+    node) so :func:`rebind_tree_models_to_call_llm` can leave those agents
+    alone: rebinding one would OVERRIDE a binding the root already owns, and
+    treating it as modelless would refuse a perfectly well-formed tree.
+
+    ``False`` for a tree root, and for an agent reached through an
+    ``AgentTool`` edge (ADK sets no ``parent_agent`` across it, and its
+    ``canonical_model`` falls through to ADK's default the same way) — in both
+    cases an empty ``model`` genuinely has nothing to inherit.
+    """
+    parent = getattr(agent, "parent_agent", None)
+    while parent is not None:
+        if hasattr(parent, "model"):
+            return True
+        parent = getattr(parent, "parent_agent", None)
+    return False
 
 
 def rebind_tree_models_to_call_llm(root: Any, call_llm: Any) -> int:
@@ -614,27 +676,35 @@ def rebind_tree_models_to_call_llm(root: Any, call_llm: Any) -> int:
     every rebound agent loses native tool/function calling — which is why it
     only fires where nothing is lost.
 
-    An agent qualifies for the shim only when it declares NO ``tools=`` and its
-    ``model`` either resolves to a ``google.genai``-backed class (the flood
-    source — see :func:`_resolves_to_genai_client`) or does not resolve at all.
-    Three kinds of agent are deliberately LEFT UNTOUCHED:
+    An agent qualifies for the shim only when it declares NO ``tools=``, owns a
+    ``model`` of its own, and that model either resolves to a
+    ``google.genai``-backed class (the flood source — see
+    :func:`_resolves_to_genai_client`) or does not resolve at all. Four kinds of
+    agent are deliberately LEFT UNTOUCHED:
 
     * an agent whose ``model`` is already a :class:`BaseLlm` — an author who
       wired a real model object owns it;
     * an agent whose ``model`` string resolves to a function-calling
       :class:`LiteLlm` (e.g. ``"openai/<model>"`` against a local endpoint) —
       rebinding it to the text-only shim would strip native tool/function
-      calling and reduce a tool-calling tree to a single text turn; and
+      calling and reduce a tool-calling tree to a single text turn;
     * an agent that DECLARES TOOLS on a registry-resolvable model (including a
       native ``gemini-*`` / ``gemma-*`` id — issue #98). Displacing a real
       function-calling model to dodge the genai-client flood would turn a
       tool-using target into a silent text-only no-op; a loud credential error
-      from the real client is strictly better. A ``warning`` names them.
+      from the real client is strictly better. A ``warning`` names them; and
+    * an agent with an EMPTY ``model`` under a model-carrying ancestor, which
+      INHERITS that ancestor's binding (see
+      :func:`_inherits_model_from_ancestor`). ADK's default ``model`` IS the
+      empty string, so the idiomatic multi-agent tree names a model on the root
+      only — rebinding a sub-agent would override a binding the root owns, and
+      reading its empty model as "no model" would refuse a well-formed tree.
 
     The hardening backstop: an agent that declares tools and has NO
-    function-calling model left raises :class:`RuntimeError` rather than being
-    quietly rebound — a tool-using target must never silently become a
-    text-only no-op that still scores, gates and promotes.
+    function-calling model left — its OWN model string is unresolvable, or it
+    has no model and nothing to inherit one from — raises :class:`RuntimeError`
+    rather than being quietly rebound. A tool-using target must never silently
+    become a text-only no-op that still scores, gates and promotes.
 
     Returns the number of agents rebound. A no-op (returns 0) when ``call_llm``
     is falsy. Idempotent — a second pass finds every model already a
@@ -657,6 +727,12 @@ def rebind_tree_models_to_call_llm(root: Any, call_llm: Any) -> int:
             continue  # author-supplied model object — leave it.
         name = str(getattr(agent, "name", "?"))
         model_str = current if isinstance(current, str) and current else ""
+        if not model_str and _inherits_model_from_ancestor(agent):
+            # An empty ``model`` under a model-carrying ancestor INHERITS that
+            # ancestor's binding (ADK's ``canonical_model`` walk). Whatever the
+            # ancestor ends up on — its own native model, or the shim if it
+            # qualified — governs here too, so this node is not ours to touch.
+            continue
         declares_tools = _agent_declares_tools(agent)
         if model_str and _resolves_to_native_function_calling(model_str):
             if not _resolves_to_genai_client(model_str):
@@ -1552,13 +1628,21 @@ class ADKHarnessAdapter:
         Fails CLOSED on a mis-resolved entrypoint: after the import, the
         module's ``__file__`` MUST be under ``generation_root``, else
         :class:`RuntimeError`. Prepending the snapshot to ``sys.path``
-        shadows only TOP-LEVEL names, and :func:`importlib.reload`
-        re-executes the module's existing spec — so an entrypoint whose
-        first dotted component is importable from elsewhere silently runs
-        the INSTALLED copy, making every mutation a no-op that still
-        scores, gates, promotes and reports (issue #110). The same
-        invariant is checked statically, without importing, at register
-        time (:func:`entrypoint_snapshot_origin_error`).
+        shadows only the TOP-LEVEL names the snapshot itself contains —
+        an entrypoint whose first dotted component is not one of them
+        falls through to its installed location and runs the UNMUTATED
+        copy, making every round a no-op that still scores, gates,
+        promotes and reports (issue #110). The same invariant is checked
+        statically, without importing, at register time
+        (:func:`entrypoint_snapshot_origin_error`).
+
+        DETECT, not repair: a second ``load`` in the SAME process against
+        a different ``generation_root`` still resolves a dotted entrypoint
+        to the first generation's files (``reload`` re-runs the finder
+        against the parent package's unchanged ``__path__``) and therefore
+        raises. The fresh-process-per-generation contract above is what
+        makes that unreachable in the worker; nothing here relies on
+        reload picking up a new root.
 
         We do not restore ``sys.path`` or ``sys.modules`` — see this
         module's docstring on the fresh-process-per-generation
@@ -1622,10 +1706,10 @@ class ADKHarnessAdapter:
             f"which is NOT under the generation snapshot {str(generation_root)!r} "
             f"— the mutated code under test was never loaded, so this run would "
             f"score an unmutated copy (every round a silent no-op). Prepending "
-            f"the snapshot to sys.path shadows TOP-LEVEL names only, and "
-            f"importlib.reload re-executes the module's existing spec, so "
-            f"top-level package {top_level!r} kept resolving to its installed "
-            f"location. Register the entrypoint relative to a mutable tree: a "
+            f"the snapshot to sys.path shadows only the TOP-LEVEL names the "
+            f"snapshot itself contains, so top-level module {top_level!r} fell "
+            f"through to its installed location. Register the entrypoint "
+            f"relative to a mutable tree: a "
             f"snapshot copies each tree under its basename, so the entrypoint's "
             f"top-level module must be one of {expected!r} "
             f"(`zicato register --adk <tree_basename>.<module>:<symbol> "

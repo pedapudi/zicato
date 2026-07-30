@@ -180,8 +180,12 @@ class HarnessLoaded:
     """WHICH file a generation's harness entrypoint actually resolved to.
 
     The snapshot-origin provenance (issue #110): ``entrypoint_file`` is the
-    ``module.__file__`` the adapter imported for ``generation_id``, after
-    asserting it lies under that generation's snapshot. Emitted at most once
+    SNAPSHOT-RELATIVE path (``agent/agent.py``) of the ``module.__file__`` the
+    adapter imported for ``generation_id``, after asserting it lies under that
+    generation's snapshot. Relative, not absolute, because the snapshot a
+    worker loads is a per-run ephemeral checkout that is deleted when the run
+    ends — the durable, comparable fact is WHICH module inside the snapshot
+    ran, not where the throwaway copy of it lived. Emitted at most once
     per generation per round (the champion and the challenger each get one),
     and only for an adapter that reports a resolved file — an adapter kind
     that does not, or a generation whose units all came from the unit cache,
@@ -510,7 +514,8 @@ class RoundRecord:
     proposal: ProposalSession = field(default_factory=ProposalSession)
     generation_ids: tuple[str, ...] = ()
     #: Per-generation snapshot-origin provenance folded from the
-    #: ``harness_loaded`` events: ``{generation_id: entrypoint __file__}``.
+    #: ``harness_loaded`` events: ``{generation_id: snapshot-relative
+    #: entrypoint path}``.
     #: Additive — empty for every log written before the event existed, for
     #: a non-reporting adapter kind, and for a fully cache-served round.
     harness_entrypoint_files: dict[str, str] = field(default_factory=dict)

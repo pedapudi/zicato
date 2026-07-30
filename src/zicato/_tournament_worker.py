@@ -260,6 +260,7 @@ def _record_harness_load(
     epoch_id: str,
     generation_id: str,
     session: Any,
+    snapshot_root: Path,
 ) -> None:
     """Record WHICH file this generation's entrypoint resolved to (issue #110).
 
@@ -271,19 +272,36 @@ def _record_harness_load(
     round log has a single writer, the orchestrator, so the worker must not
     append to it directly).
 
+    The recorded value is SNAPSHOT-RELATIVE (``agent/agent.py``), not the
+    absolute ``__file__``. ``snapshot_root`` here is the per-run EPHEMERAL
+    checkout (``ztw-snap-*`` under system temp, deleted in ``_run_single``'s
+    ``finally``), so the absolute path names a directory that no longer exists
+    by the time anyone reads the round log, differs for every unit of the same
+    generation, and folds the operator's machine layout into a durable record.
+    The relative path is the part that carries the provenance — which module
+    inside the snapshot ran — and it is comparable across generations, runs and
+    checkouts. The absolute path still goes to the log line below for live
+    debugging. Falls back to the raw string if it is somehow not under the
+    snapshot (``load`` asserts it is, so this is belt-and-braces).
+
     Idempotent by construction: every worker for a generation resolves the
     same file and the write is a whole-file atomic replace, so N concurrent
     units converge on one record. Best-effort in both directions — an adapter
     that exposes no ``entrypoint_file`` (any non-ADK kind) writes nothing, and
     a write failure is logged at debug and never fails a run.
     """
-    entrypoint_file = str(getattr(session, "entrypoint_file", "") or "")
-    if not entrypoint_file:
+    absolute_file = str(getattr(session, "entrypoint_file", "") or "")
+    if not absolute_file:
         return
     log.info(
         "worker: generation %s harness entrypoint resolved to %s",
         generation_id,
-        entrypoint_file,
+        absolute_file,
+    )
+    resolved = Path(absolute_file)
+    root = Path(snapshot_root).resolve()
+    entrypoint_file = (
+        str(resolved.relative_to(root)) if resolved.is_relative_to(root) else str(resolved)
     )
     with best_effort(
         "worker harness-load record",
@@ -741,6 +759,7 @@ async def _run(args: dict[str, Any]) -> None:
             epoch_id=epoch_id,
             generation_id=generation_id,
             session=session,
+            snapshot_root=snapshot_root,
         )
 
         async def _drive() -> tuple[RunResult | None, int, bool]:

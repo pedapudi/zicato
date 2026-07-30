@@ -119,12 +119,17 @@ class TestHarnessLoadedEmission:
         from zicato.orchestrator import _emit_harness_loaded
 
         (tmp_path / "epochs").mkdir()
-        for gen_id, path in (("v0", "/snap/v0/agent/agent.py"), ("v1", "/snap/v1/agent/agent.py")):
+        # The worker sees a per-run EPHEMERAL snapshot root; what it records is
+        # the snapshot-RELATIVE path, so the durable record survives the
+        # checkout being deleted and is comparable across generations.
+        for gen_id in ("v0", "v1"):
+            checkout = tmp_path / "ztw-snap" / gen_id
             _record_harness_load(
                 tmp_path,
                 epoch_id="e1",
                 generation_id=gen_id,
-                session=SimpleNamespace(entrypoint_file=path),
+                session=SimpleNamespace(entrypoint_file=str(checkout / "agent" / "agent.py")),
+                snapshot_root=checkout,
             )
 
         emitter = _RoundLogEmitter(tmp_path, "e1", 4)
@@ -132,8 +137,8 @@ class TestHarnessLoadedEmission:
 
         record = fold_round_record(RoundLog(tmp_path, "e1", 4).read())
         assert record.harness_entrypoint_files == {
-            "v0": "/snap/v0/agent/agent.py",
-            "v1": "/snap/v1/agent/agent.py",
+            "v0": "agent/agent.py",
+            "v1": "agent/agent.py",
         }
 
     def test_absent_record_emits_nothing(self, tmp_path: Path) -> None:
@@ -145,7 +150,13 @@ class TestHarnessLoadedEmission:
 
         (tmp_path / "epochs").mkdir()
         # An adapter exposing no entrypoint_file writes nothing at all.
-        _record_harness_load(tmp_path, epoch_id="e1", generation_id="v0", session=SimpleNamespace())
+        _record_harness_load(
+            tmp_path,
+            epoch_id="e1",
+            generation_id="v0",
+            session=SimpleNamespace(),
+            snapshot_root=tmp_path / "ztw-snap" / "v0",
+        )
         emitter = _RoundLogEmitter(tmp_path, "e1", 5)
         _emit_harness_loaded(emitter, tmp_path, "e1", self._duel("v0", "v1"))
         assert RoundLog(tmp_path, "e1", 5).read() == []
