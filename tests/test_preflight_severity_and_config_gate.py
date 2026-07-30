@@ -142,26 +142,12 @@ def test_the_breaker_observes_criticals_only() -> None:
 
 
 def _canned_losses(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Telemetry stubs that let four consecutive rounds all promote.
-
-    The shared stub reducer omits ``split_judge_attributed_kind``, which
-    ``detect_dead_judge`` imports — so with it alone the ENTIRE health
-    assessment fails best-effort and no round report is written. That is
-    invisible to every other orchestrator test and fatal to this one, whose
-    subject is a health finding's severity, so the real helper is grafted back
-    onto the stub. Captured before the stub replaces the module.
-    """
-    import sys
-
-    from zicato.telemetry.reducer import split_judge_attributed_kind
-
+    """Telemetry stubs that let four consecutive rounds all promote."""
     _install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 4.0, "v1": 3.0, "v2": 2.0, "v3": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True, "v3": True},
     )
-    stub = sys.modules["zicato.telemetry.reducer"]
-    stub.split_judge_attributed_kind = split_judge_attributed_kind  # type: ignore[attr-defined]
 
 
 def test_warn_mode_survives_an_all_refuse_preflight_past_the_breaker_threshold(

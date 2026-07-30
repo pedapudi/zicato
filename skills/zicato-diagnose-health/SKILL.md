@@ -35,7 +35,12 @@ With no findings the loop has signal.
 ## The detectors the CLI runs
 
 Thresholds come from the workspace `config.json`'s `health` block
-(`HealthConfig`, `config.py`); defaults in parentheses.
+(`HealthConfig`, `config.py`); defaults in parentheses. The pre-flight /
+noise-floor / mutated-tree-import findings below are sourced from the same
+persisted workspace records the orchestrator's per-round assessment reads —
+`zicato.health.inputs` (`epoch_preflight_record`, `epoch_noise_floor_inputs`,
+`epoch_tree_import_gaps`, `workspace_preflight_gate`) — so the CLI and a live
+round now see the identical finding set for anything already written to disk.
 
 | Detector | Severity | Fires when |
 |---|---|---|
@@ -48,19 +53,6 @@ Thresholds come from the workspace `config.json`'s `health` block
 | `generalization_gap` | `warning` / `critical` | the champion's `holdout_loss - train_loss` **widened** since the first measured generation AND reached `generalization_gap_warn` (0.05) / `_crit` (0.15) — board memorization; critical recommends rolling the epoch |
 | `refresh_cadence` | `info` | evaluated generations reached `overfitting.max_generations_per_contract` (unset by default) — the contract has been mined enough |
 | `placebo_promoted` | `critical` | a random-baseline placebo challenger was **promoted** — a no-op won a tournament, so gate discrimination is broken and recent wins are suspect |
-
-The placebo arm is split out of the optimization stream before the other
-detectors run, so an always-rejected control never reads as a stall or a
-flat-scoring window.
-
-## Findings only the per-round report carries
-
-`assess_loop_health` takes more inputs than the CLI threads. These fire only
-in the orchestrator's per-round assessment (`epochs/{epoch}/health/round_{N}.json`)
-— running `zicato health` will never print them:
-
-| Detector | Severity | Fires when |
-|---|---|---|
 | `margin_below_noise_floor` | `info` gate ON / `warning` gate OFF | `promote_margin` sits inside the measured A/A noise floor |
 | `preflight_signal_below_floor` | `critical` **only** under `runtime.preflight_gate="refuse"`, else `warning` | pre-flight verdict `refuse` — achievable signal at/below the noise floor. Gate-aware on purpose: this re-fires from the persisted record every round, and two criticals in a row would stop a run the operator explicitly set to `"warn"` |
 | `preflight_inert_probe` | `warning` | every probed mutation point left the scalar exactly at the champion mean while the A/A draws varied — the achievable signal is UNMEASURED, not zero |
@@ -68,6 +60,19 @@ in the orchestrator's per-round assessment (`epochs/{epoch}/health/round_{N}.jso
 | `preflight_margin_above_achievable` | `warning` | `promote_margin` ≥ measured achievable signal. Warning, not critical: the probe degrades ONE point, so its signal is a lower bound a compound/recombined patch can exceed |
 | `preflight_margin_below_floor` | `warning` | the margin window's lower bound fails — margin inside the floor |
 | `tree_never_imported` | `warning`, one per (generation, tree) | no unit of a generation ever imported a mutable tree, so **mutations to it cannot have been under test** — the board scored code the loop never changed. Read `generations/<gen>/harness_load.json` |
+
+The placebo arm is split out of the optimization stream before the other
+detectors run, so an always-rejected control never reads as a stall or a
+flat-scoring window.
+
+## Findings only the per-round report carries
+
+Two findings stay orchestrator-only because their inputs are live-round
+state with no persisted workspace record for the CLI to read after the
+fact — a later `zicato health` invocation cannot reconstruct them:
+
+| Detector | Severity | Fires when |
+|---|---|---|
 | `infra_outage` | `warning` | the round deferred on `runtime.infra_abort_round_threshold` — the endpoint, not the loop, is failing |
 | `round_token_clipped` | `warning` | `runtime.max_tokens_per_round` clipped the round; the verdict rests on partial coverage |
 
@@ -157,9 +162,11 @@ report) — see [zicato-watch-dashboard](../zicato-watch-dashboard/SKILL.md).
 - Cite only flags present in real `--help`. `zicato health` has no `--round` /
   `--format`; there is no `--stop-on-degenerate` evolve flag — degenerate-stop
   is on by default, not a flag.
-- Don't promise the operator a finding `zicato health` cannot print: the CLI
-  threads only board/loss/experiment inputs, so every `preflight_*`,
-  `margin_below_noise_floor`, `tree_never_imported`, `infra_outage` and
-  `round_token_clipped` finding lives in the per-round report only.
+- Don't promise the operator a finding `zicato health` cannot print:
+  `infra_outage` and `round_token_clipped` are live-round-only (no persisted
+  reader), so they live in the per-round report exclusively. Every other
+  finding — including the `preflight_*` family, `margin_below_noise_floor`,
+  and `tree_never_imported` — now reaches the CLI too, from the same
+  persisted records.
 - Never launch a live `evolve` to test health — read the on-disk
   `epochs/{epoch}/health/round_{N}.json` reports instead.

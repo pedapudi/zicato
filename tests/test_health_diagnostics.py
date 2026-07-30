@@ -808,3 +808,102 @@ def test_cli_health_missing_epoch_marker_errors_cleanly(tmp_path: Path) -> None:
     result = runner.invoke(health_cmd, ["--workspace", str(workspace)])
     assert result.exit_code != 0
     assert "No active epoch" in result.output
+
+
+def test_cli_health_surfaces_preflight_and_tree_import_findings(tmp_path: Path) -> None:
+    """The orchestrator-only findings now reach the CLI too.
+
+    Before ``zicato.health.inputs`` existed, ``zicato health`` never threaded
+    the persisted pre-flight verdict, noise-floor, or mutated-tree-import-gap
+    records into ``assess_loop_health`` — those readers were private to the
+    orchestrator, so an operator running the standalone CLI after a live run
+    would see none of them, only the losses/experiments/board-derived
+    findings. This pins that a persisted pre-flight REFUSE record and a
+    ``tree_never_imported`` record now both surface through the CLI path,
+    sourced from the same :mod:`zicato.health.inputs` readers the per-round
+    assessment uses — and that a gate-aware CRITICAL still drives exit 1
+    (the exit-code contract is unchanged: nonzero only on a critical
+    finding).
+    """
+    from tests._contract_pins import deterministic_weights
+    from zicato.epoch.lifecycle import new_epoch, set_epoch_preflight
+
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    (workspace / "config.json").write_text(
+        json.dumps(
+            {
+                "instance_id": "test",
+                "created_at": "2026-07-29T00:00:00Z",
+                "storage_backend": "directory",
+                "adapter": {"kind": "stub"},
+                # The hard gate: a persisted REFUSE record is graded
+                # critical only under runtime.preflight_gate == "refuse".
+                "runtime": {"preflight_gate": "refuse"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    board_src = tmp_path / "board.jsonl"
+    board_src.write_text(
+        json.dumps(
+            {
+                "id": "entry_a",
+                "kind": "single_turn",
+                "wall_clock_budget_seconds": 60,
+                "input": "hello",
+                "expectation": {"kind": "expected_text", "spec": "ok"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    brief_src = tmp_path / "brief.md"
+    brief_src.write_text("# Proposer brief\n- Be careful.\n", encoding="utf-8")
+
+    cfg = new_epoch(
+        workspace,
+        name="alpha",
+        board_source=board_src,
+        brief_source=brief_src,
+        weights=deterministic_weights(promote_margin=0.01),
+        auto_close_previous=False,
+    )
+    epoch_id = cfg.id
+
+    # A persisted contract pre-flight REFUSE verdict — the shape
+    # zicato.epoch.preflight.PreflightReport.to_json() writes.
+    set_epoch_preflight(
+        workspace,
+        epoch_id,
+        {
+            "verdict": "refuse",
+            "signal": 0.02,
+            "noise_floor_max_abs_delta": 0.08,
+            "promote_margin": 0.05,
+            "window_verdict": "warn",
+            "window_failure": "empty_window",
+        },
+    )
+
+    # A generation whose units never imported a mutable tree (issue #110).
+    gen_dir = workspace / "epochs" / epoch_id / "generations" / "v1"
+    gen_dir.mkdir(parents=True)
+    (gen_dir / "harness_load.json").write_text(
+        json.dumps(
+            {
+                "entrypoint_file": "/tmp/agent.py",
+                "trees_verified": [],
+                "trees_never_imported": ["helper_tree"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(health_cmd, ["--workspace", str(workspace)])
+    assert result.exit_code == 1, result.output
+    assert "UNHEALTHY" in result.output
+    assert "preflight_signal_below_floor" in result.output
+    assert "tree_never_imported" in result.output

@@ -258,7 +258,8 @@ class TestTreeImportStatusRecord:
         """The worker's record folds through the round log AND loop health."""
         from zicato._tournament_worker import _verify_trees_after_run
         from zicato.health.diagnostics import detect_tree_never_imported
-        from zicato.orchestrator import _emit_harness_loaded, _epoch_tree_import_gaps
+        from zicato.health.inputs import epoch_tree_import_gaps
+        from zicato.orchestrator import _emit_harness_loaded
 
         (tmp_path / "epochs" / "e1" / "generations" / "v1").mkdir(parents=True)
         _verify_trees_after_run(
@@ -274,7 +275,7 @@ class TestTreeImportStatusRecord:
         record = fold_round_record(RoundLog(tmp_path, "e1", 6).read())
         assert record.harness_never_imported_trees == {"v1": ("otherpkg",)}
 
-        gaps = _epoch_tree_import_gaps(tmp_path, "e1")
+        gaps = epoch_tree_import_gaps(tmp_path, "e1")
         assert gaps == {"v1": ("otherpkg",)}
         findings = detect_tree_never_imported(gaps)
         assert [(f.code, f.severity) for f in findings] == [("tree_never_imported", "warning")]
@@ -289,7 +290,8 @@ class TestTreeImportStatusRecord:
         """
         from zicato._tournament_worker import _verify_trees_after_run
         from zicato.core.workspace import harness_load_path
-        from zicato.orchestrator import _emit_harness_loaded, _epoch_tree_import_gaps
+        from zicato.health.inputs import epoch_tree_import_gaps
+        from zicato.orchestrator import _emit_harness_loaded
         from zicato.storage import atomic_write_json, read_json
 
         (tmp_path / "epochs" / "e1" / "generations" / "v1").mkdir(parents=True)
@@ -301,7 +303,7 @@ class TestTreeImportStatusRecord:
                 "entrypoint_file": "agent/agent.py",
             },
         )
-        assert _epoch_tree_import_gaps(tmp_path, "e1") == {}
+        assert epoch_tree_import_gaps(tmp_path, "e1") == {}
 
         emitter = _RoundLogEmitter(tmp_path, "e1", 7)
         _emit_harness_loaded(emitter, tmp_path, "e1", self._duel("v0", "v1"))
