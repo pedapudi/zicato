@@ -49,7 +49,15 @@ def _set_preflight_gate(workspace: Path, mode: str) -> None:
     cfg_path.write_text(json.dumps(cfg))
 
 
-def _canned(verdict: str, *, signal: float, floor_max: float) -> tuple[PreflightReport, NoiseFloor]:
+def _canned(
+    verdict: str,
+    *,
+    signal: float,
+    floor_max: float,
+    promote_margin: float = 0.0,
+    window_verdict: str = "ok",
+    window_failure: str | None = None,
+) -> tuple[PreflightReport, NoiseFloor]:
     report = PreflightReport(
         epoch_id="e",
         generation_id="v0",
@@ -63,6 +71,9 @@ def _canned(verdict: str, *, signal: float, floor_max: float) -> tuple[Preflight
         degraded_mutation_kind="span",
         degraded_file="agent.py",
         measured_at="2026-01-01T00:00:00+00:00",
+        promote_margin=promote_margin,
+        window_verdict=window_verdict,
+        window_failure=window_failure,
     )
     floor = NoiseFloor(
         generation_id="v0",
@@ -83,12 +94,13 @@ def _install_canned_preflight(
     signal: float,
     floor_max: float,
     calls: list[Any],
+    **window: Any,
 ) -> None:
     """Monkeypatch ``run_contract_preflight`` to a canned verdict (no probe run)."""
 
     async def _fake(**kwargs: Any) -> tuple[PreflightReport, NoiseFloor]:
         calls.append(kwargs)
-        return _canned(verdict, signal=signal, floor_max=floor_max)
+        return _canned(verdict, signal=signal, floor_max=floor_max, **window)
 
     monkeypatch.setattr("zicato.epoch.preflight.run_contract_preflight", _fake)
 
@@ -101,6 +113,7 @@ def _prepare(
     verdict: str,
     signal: float = 0.0,
     floor_max: float = 0.0,
+    **window: Any,
 ) -> tuple[Path, str, list[Any]]:
     workspace, epoch_id = _bootstrap_workspace(tmp_path)
     _set_preflight_gate(workspace, gate)
@@ -112,7 +125,12 @@ def _prepare(
     )
     calls: list[Any] = []
     _install_canned_preflight(
-        monkeypatch, verdict=verdict, signal=signal, floor_max=floor_max, calls=calls
+        monkeypatch,
+        verdict=verdict,
+        signal=signal,
+        floor_max=floor_max,
+        calls=calls,
+        **window,
     )
     return workspace, epoch_id, calls
 
@@ -204,6 +222,78 @@ def test_ok_verdict_proceeds_without_warning(
     assert not any(
         "CONTRACT PRE-FLIGHT" in r.getMessage() for r in caplog.records
     ), "an ok verdict must not warn about the noise floor"
+
+
+def test_inert_verdict_never_hard_stops_the_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Issue #106: the false refusal must not survive as an ``inert`` refusal.
+
+    An inert probe says the MEASUREMENT came up short, not the contract, so even
+    the opt-in hard gate has to let the run proceed — while still warning loudly
+    that the pre-flight's protection is not in force.
+    """
+    workspace, epoch_id, calls = _prepare(
+        monkeypatch, tmp_path, gate="refuse", verdict="inert", signal=0.0, floor_max=0.08
+    )
+    with caplog.at_level(logging.WARNING, logger="zicato.orchestrator"):
+        outcome = _run_once(monkeypatch, workspace, epoch_id)
+
+    assert outcome is not None, "an inert probe must never block a run"
+    assert len(calls) == 1
+    msgs = [r.getMessage() for r in caplog.records if r.name == "zicato.orchestrator"]
+    assert any("CONTRACT PRE-FLIGHT INERT" in m for m in msgs), msgs
+    # And the diagnosis must point at probe selection, not at the board.
+    assert any("preflight_probe_mutation_ids" in m for m in msgs), msgs
+
+
+def test_margin_above_achievable_hard_stops_the_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #112: the window refusal reaches the gate on its own.
+
+    The signal verdict is ``ok`` — the contract DOES out-signal its noise — yet
+    no challenger can clear the margin, so the run is null by construction and
+    the opt-in gate must stop it before it spends rounds.
+    """
+    from zicato.epoch.preflight import PreflightRefusedError
+
+    workspace, epoch_id, _ = _prepare(
+        monkeypatch,
+        tmp_path,
+        gate="refuse",
+        verdict="ok",
+        signal=0.041,
+        floor_max=0.02,
+        promote_margin=0.10,
+        window_verdict="refuse",
+        window_failure="margin_above_achievable",
+    )
+    with pytest.raises(PreflightRefusedError, match="promote_margin"):
+        _run_once(monkeypatch, workspace, epoch_id)
+
+
+def test_margin_above_achievable_only_warns_by_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Default gate stays recommend-only for the window failure too."""
+    workspace, epoch_id, _ = _prepare(
+        monkeypatch,
+        tmp_path,
+        gate="warn",
+        verdict="ok",
+        signal=0.041,
+        floor_max=0.02,
+        promote_margin=0.10,
+        window_verdict="refuse",
+        window_failure="margin_above_achievable",
+    )
+    with caplog.at_level(logging.WARNING, logger="zicato.orchestrator"):
+        outcome = _run_once(monkeypatch, workspace, epoch_id)
+
+    assert outcome is not None
+    msgs = [r.getMessage() for r in caplog.records if r.name == "zicato.orchestrator"]
+    assert any("CONTRACT PRE-FLIGHT MARGIN_ABOVE_ACHIEVABLE" in m for m in msgs), msgs
 
 
 def test_off_mode_skips_the_measurement(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

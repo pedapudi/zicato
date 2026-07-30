@@ -672,9 +672,13 @@ EX=/home/sunil/git/zicato/examples/zicato_examples/target_1_presentation
 zicato init --workspace .zicato
 # Register the ADK agent by its DOTTED IMPORT PATH + the vetted mutable
 # subtree (the example's own RUN.md — evolve resolves the adapter via
-# importlib, so this MUST be a module path, not a filesystem path):
+# importlib, so this MUST be a module path, not a filesystem path). The
+# path is SNAPSHOT-RELATIVE: the snapshot copies "$EX/agent" under its
+# basename, so the entrypoint's top-level module is `agent`, not
+# `zicato_examples` — the installed-package form would silently run the
+# INSTALLED copy and score no-ops (issue #110), and `register` refuses it:
 zicato register --workspace .zicato \
-    --adk zicato_examples.target_1_presentation.agent.agent:root_agent \
+    --adk agent.agent:root_agent \
     --mutable-tree "$EX/agent"
 
 # Open the epoch from the example's board / brief / scoring, using THIS

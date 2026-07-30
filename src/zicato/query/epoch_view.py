@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -177,37 +178,111 @@ def _read_epoch_brief(epoch_dir: Path) -> str:
 
 
 def _distill_brief_goal(brief: str) -> str | None:
-    """Distil a one-line goal summary from a proposer brief.
+    """Distil a short goal summary from a proposer brief.
 
     The brief carries a ``## Goal`` section (see the dogfood targets'
-    ``brief.md``). The summary is the first non-empty prose line of that
-    section — the operator's one-line statement of what the epoch is
-    reaching for. A list-item or sub-heading line is skipped so the
-    summary is always a sentence. Returns ``None`` when the brief has no
-    ``Goal`` section or no prose line within it.
+    ``brief.md``). The summary is that section's FIRST PROSE PARAGRAPH —
+    the operator's statement of what the epoch is reaching for — length
+    capped by :func:`_preview` like every other preview in this module.
+
+    Markdown source is hard-wrapped, so a paragraph is generally several
+    physical lines: every shipped brief wraps its goal at ~74 columns, and
+    the shipped ``target_1`` brief even splits a hyphenated word across the
+    break. Reading only the first physical line therefore rendered the
+    dashboard's objective callout truncated mid-sentence — sometimes
+    mid-word at a dangling hyphen (issue #107). Consecutive prose lines are
+    accumulated instead, stopping at the first line that opens a new block:
+    a blank line, a heading, a list item (bulleted OR numbered), a
+    blockquote, or a code fence. Lines are joined with a single space,
+    EXCEPT after a trailing hyphen, where the wrap split one word and the
+    halves are joined directly (``multi-`` + ``agent`` → ``multi-agent``).
+
+    A leading list-item or sub-heading line is still skipped, so the
+    summary reads as prose rather than a bullet fragment. Note this is a
+    paragraph, not necessarily one sentence — the goal paragraph's own
+    trailing clause ("… Specifically:") is part of what the operator
+    wrote and is kept. Returns ``None`` when the brief has no ``Goal``
+    section or no prose line within it.
+
+    Display-only: nothing here feeds scoring, gating or promotion.
+
+    :func:`zicato.analyzer.report_data._distill_brief_goal` delegates here
+    so the publication masthead names the same goal the dashboard shows.
     """
     if not brief:
         return None
     lines = brief.replace("\r\n", "\n").split("\n")
     in_goal = False
+    paragraph: list[str] = []
     for raw in lines:
         line = raw.strip()
         heading = line.lstrip("#").strip() if line.startswith("#") else None
         if heading is not None:
             if in_goal:
-                # A later heading closes the Goal section.
+                # A later heading closes the Goal section (and any
+                # paragraph accumulating inside it).
                 break
             if heading.lower() == "goal":
                 in_goal = True
             continue
-        if not in_goal or not line:
+        if not in_goal:
             continue
-        # Skip list items / blockquotes — the summary should read as a
-        # sentence, not a bullet fragment.
-        if line[0] in "-*>":
+        # Skip list items / blockquotes / code fences — the summary should
+        # read as prose, not a bullet fragment. Once a paragraph has
+        # started, such a line CLOSES it rather than being skipped over:
+        # the paragraph ends where the next block begins.
+        if not line or _opens_a_block(line):
+            if paragraph:
+                break
             continue
-        return _preview(line)
-    return None
+        paragraph.append(line)
+    if not paragraph:
+        return None
+    return _preview(_join_wrapped(paragraph))
+
+
+#: A markdown line that opens a block other than a paragraph: a bulleted
+#: item (``-``/``*``/``+``), a blockquote (``>``), a fenced code block
+#: (``` or ``~~~``), or an ordered item (``1.`` / ``1)``). Bulleted items
+#: alone are not enough: a numbered goal list joined as prose reads as one
+#: run-on sentence ("1. first 2. second").
+_BLOCK_OPENER_RE = re.compile(r"^(?:[-*+>]|```|~~~|\d+[.)]\s)")
+
+
+def _opens_a_block(line: str) -> bool:
+    """True when a stripped brief line begins a non-paragraph block."""
+    return _BLOCK_OPENER_RE.match(line) is not None
+
+
+def _join_wrapped(lines: list[str]) -> str:
+    """Reassemble hard-wrapped prose lines into one line.
+
+    Joins with a single space, except where the previous line ends in a
+    hyphen that a word character precedes — there the wrap split a single
+    word, so the halves are joined directly (``multi-`` + ``agent``). The
+    word-character guard is what keeps a hyphen used as PUNCTUATION
+    ("reaching for this -" + "namely speed") space-joined; so is a
+    trailing em-dash-style double hyphen (``--``).
+    """
+    out = ""
+    for line in lines:
+        if not out:
+            out = line
+        elif _splits_a_word(out):
+            out += line
+        else:
+            out += " " + line
+    return out
+
+
+def _splits_a_word(text: str) -> bool:
+    """True when ``text`` ends mid-word at a hard-wrap hyphen.
+
+    A single trailing hyphen preceded by a word character; a ``--`` tail is
+    punctuation, and a hyphen preceded by whitespace is a dash the operator
+    typed, not a wrap.
+    """
+    return len(text) >= 2 and text.endswith("-") and not text.endswith("--") and text[-2].isalnum()
 
 
 def build_epochs_summary(paths: WorkspacePaths) -> list[dict[str, Any]]:

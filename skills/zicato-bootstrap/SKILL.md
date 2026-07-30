@@ -34,10 +34,15 @@ wrote).
 ```sh
 .venv/bin/zicato register --workspace .zicato \
     --adk my_pkg.agent:root_agent \
-    --mutable-tree ./agent
+    --mutable-tree ./my_pkg
 ```
 
-- `--adk module.path:agent_symbol` — the ADK adapter entrypoint (required).
+- `--adk module.path:agent_symbol` — the ADK adapter entrypoint (required). Its
+  **top-level module must be the basename of one `--mutable-tree`** (above:
+  `my_pkg` ↔ `./my_pkg`). A generation snapshot copies each mutable tree under
+  its basename and the loader only prepends the snapshot root to `sys.path`,
+  which resolves top-level packages only — so any other form imports the
+  INSTALLED copy and every mutation is a scored no-op. `register` refuses it.
 - `--mutable-tree PATH` — a source root the proposer may mutate; **repeatable**,
   pass it once per tree.
 - `--board` / `--brief` / `--scoring` — optional; pin the canonical contract
@@ -78,7 +83,7 @@ rm -rf /tmp/zicato-smoke && mkdir -p /tmp/zicato-smoke && cd /tmp/zicato-smoke
 
 $PY -m zicato.cli init --workspace .zicato
 $PY -m zicato.cli register --workspace .zicato \
-    --adk zicato_examples.target_1_presentation.agent.agent:root_agent \
+    --adk agent.agent:root_agent \
     --mutable-tree "$OLDPWD/$EX/agent"
 $PY -m zicato.cli epoch new t1_smoke --workspace .zicato \
     --board "$OLDPWD/$EX/board.jsonl" \

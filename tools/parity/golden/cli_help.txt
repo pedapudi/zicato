@@ -217,25 +217,39 @@ Usage: zicato board preflight [OPTIONS]
 
   Board-reflection v1. Two measurements: (a) the A/A noise floor — the champion
   duels ITSELF --runs times (same draws `zicato board audit` takes); (b) the
-  scripted-perturbation duel — the champion vs a deliberately-degraded ephemeral
-  copy of itself (the FIRST enumerated mutation point blanked/scrambled in a
-  scratch tree; the real lineage is never touched). Verdict: REFUSE-recommended
-  when the achievable signal is at/below the floor; WARN when every probe scored
-  identically (a saturated contract — the 1.000000 signature); OK otherwise.
-  Recommend-only — never gates. The verdict persists onto the epoch record and
-  flows into the per-round health report.
+  scripted-perturbation duels — the champion vs deliberately-degraded ephemeral
+  copies of itself (a deterministic, role-diverse sample of mutation points
+  blanked/scrambled in scratch trees; the real lineage is never touched),
+  reporting the MAX signal so one inert point cannot veto a healthy contract.
+  Verdicts: REFUSE-recommended when the achievable signal is at/below the floor;
+  WARN when every probe scored identically (a saturated contract — the 1.000000
+  signature); INERT when the probes moved nothing while the A/A draws varied
+  (the signal is unmeasured, not zero — pick a representative point); OK
+  otherwise. Also asserts the promote_margin window `noise < margin <
+  achievable` and names the side that failed. Recommend-only — never gates. The
+  verdict persists onto the epoch record and flows into the per-round health
+  report.
 
 Options:
-  --workspace TEXT           Path to the zicato workspace root.  [default:
-                             .zicato]
-  --epoch TEXT               Epoch to pre-flight (default: the current epoch).
-  --runs INTEGER RANGE       How many independent A/A draws of the champion to
-                             take.  [default: 5; x>=2]
-  --harness-call-llm TEXT    Dotted import path of the harness call_llm (e.g.
-                             mymodule:harness).  [required]
-  --auxiliary-call-llm TEXT  Dotted import path of the auxiliary call_llm (e.g.
-                             mymodule:aux).  [required]
-  --help                     Show this message and exit.
+  --workspace TEXT              Path to the zicato workspace root.  [default:
+                                .zicato]
+  --epoch TEXT                  Epoch to pre-flight (default: the current
+                                epoch).
+  --runs INTEGER RANGE          How many independent A/A draws of the champion
+                                to take.  [default: 5; x>=2]
+  --degrade-mutation-id TEXT    Degrade exactly this mutation point instead of
+                                the automatic role-diverse sample (use when you
+                                know which point carries the contract's signal).
+  --probe-points INTEGER RANGE  Ceiling on how many mutation points the
+                                automatic sample degrades [default:
+                                runtime.preflight_probe_points]. Probing stops
+                                early once the verdict is settled, so this
+                                rarely costs the full count.  [x>=1]
+  --harness-call-llm TEXT       Dotted import path of the harness call_llm (e.g.
+                                mymodule:harness).  [required]
+  --auxiliary-call-llm TEXT     Dotted import path of the auxiliary call_llm
+                                (e.g. mymodule:aux).  [required]
+  --help                        Show this message and exit.
 
 ===== zicato board remove --help =====
 Usage: zicato board remove [OPTIONS] ENTRY_ID
@@ -496,9 +510,13 @@ Options:
                                   (generation, entry, replicate) board unit is
                                   evaluated at most once and reused across all
                                   pairings/rounds/structures; only cache misses
-                                  run. full = bypass the cache and force a fresh
-                                  evaluation of every unit (noise re-sampling /
-                                  debugging).  [default: fast]
+                                  run. On the gauntlet the champion is a frozen
+                                  cached aggregate, so replicates reduce
+                                  CHALLENGER-side noise only — repeated rounds
+                                  are not independent draws of the contrast.
+                                  full = bypass the cache and force a fresh
+                                  evaluation of every unit, both sides (noise
+                                  re-sampling / debugging).  [default: fast]
   --harness-call-llm TEXT         Dotted import path of the harness call_llm
                                   (e.g. mymodule:harness).  [required]
   --auxiliary-call-llm TEXT       Dotted import path of the auxiliary call_llm
@@ -892,9 +910,15 @@ Usage: zicato register [OPTIONS]
 Options:
   --workspace DIRECTORY  Workspace directory to update.  [default: .zicato]
   --adk TEXT             Adapter entrypoint in 'module.path:agent_symbol' form.
-                         [required]
+                         Either inside a --mutable-tree (its TOP-LEVEL module is
+                         the tree's basename) or outside every tree, which is
+                         the dependency shape: the harness imports the mutable
+                         trees, and each tree is verified to have loaded from
+                         the generation snapshot per run instead.  [required]
   --mutable-tree PATH    Source root the proposer is allowed to mutate
-                         (repeatable).
+                         (repeatable). Its BASENAME must be the importable
+                         package name — the snapshot exposes each tree under its
+                         basename on sys.path.
   --board PATH           Canonical board.jsonl path (default:
                          <workspace_parent>/board.jsonl).
   --brief PATH           Canonical proposer-brief path (default:

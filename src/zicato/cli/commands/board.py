@@ -350,6 +350,27 @@ def audit_cmd(
     help="How many independent A/A draws of the champion to take.",
 )
 @click.option(
+    "--degrade-mutation-id",
+    "degrade_mutation_id",
+    default=None,
+    help=(
+        "Degrade exactly this mutation point instead of the automatic "
+        "role-diverse sample (use when you know which point carries the "
+        "contract's signal)."
+    ),
+)
+@click.option(
+    "--probe-points",
+    "probe_points",
+    default=None,
+    type=click.IntRange(min=1),
+    help=(
+        "Ceiling on how many mutation points the automatic sample degrades "
+        "[default: runtime.preflight_probe_points]. Probing stops early once "
+        "the verdict is settled, so this rarely costs the full count."
+    ),
+)
+@click.option(
     "--harness-call-llm",
     "harness_dotted",
     required=True,
@@ -365,6 +386,8 @@ def preflight_cmd(
     workspace: str,
     epoch_id: str | None,
     runs: int,
+    degrade_mutation_id: str | None,
+    probe_points: int | None,
     harness_dotted: str,
     auxiliary_dotted: str,
 ) -> None:
@@ -372,14 +395,19 @@ def preflight_cmd(
 
     Board-reflection v1. Two measurements: (a) the A/A noise floor —
     the champion duels ITSELF --runs times (same draws `zicato board
-    audit` takes); (b) the scripted-perturbation duel — the champion vs
-    a deliberately-degraded ephemeral copy of itself (the FIRST
-    enumerated mutation point blanked/scrambled in a scratch tree; the
-    real lineage is never touched). Verdict: REFUSE-recommended when the
-    achievable signal is at/below the floor; WARN when every probe
-    scored identically (a saturated contract — the 1.000000 signature);
-    OK otherwise. Recommend-only — never gates. The verdict persists
-    onto the epoch record and flows into the per-round health report.
+    audit` takes); (b) the scripted-perturbation duels — the champion vs
+    deliberately-degraded ephemeral copies of itself (a deterministic,
+    role-diverse sample of mutation points blanked/scrambled in scratch
+    trees; the real lineage is never touched), reporting the MAX signal
+    so one inert point cannot veto a healthy contract. Verdicts:
+    REFUSE-recommended when the achievable signal is at/below the floor;
+    WARN when every probe scored identically (a saturated contract — the
+    1.000000 signature); INERT when the probes moved nothing while the
+    A/A draws varied (the signal is unmeasured, not zero — pick a
+    representative point); OK otherwise. Also asserts the promote_margin
+    window `noise < margin < achievable` and names the side that failed.
+    Recommend-only — never gates. The verdict persists onto the epoch
+    record and flows into the per-round health report.
     """
     import asyncio  # noqa: PLC0415
 
@@ -393,8 +421,12 @@ def preflight_cmd(
         set_epoch_preflight,
     )
     from zicato.epoch.preflight import (  # noqa: PLC0415
+        VERDICT_INERT,
         VERDICT_REFUSE,
         VERDICT_WARN,
+        WINDOW_EMPTY,
+        WINDOW_MARGIN_ABOVE_ACHIEVABLE,
+        WINDOW_MARGIN_BELOW_FLOOR,
         run_contract_preflight,
     )
 
@@ -463,6 +495,8 @@ def preflight_cmd(
                 runs=runs,
                 disable_drift=disable_drift,
                 judge_only=judge_only,
+                degrade_mutation_id=degrade_mutation_id,
+                probe_points=probe_points,
             )
         )
     except ValueError as exc:
@@ -475,13 +509,26 @@ def preflight_cmd(
     click.echo(f"Contract pre-flight for {resolved_epoch} ({champion_id}, {runs} A/A draws):")
     click.echo(f"  A/A scalars:       {', '.join(f'{s:.6g}' for s in report.champion_scalars)}")
     click.echo(f"  noise floor:       {report.noise_floor_max_abs_delta:.6g} (max |delta|)")
+    # Every probe, not just the winner: an operator judging whether a REFUSE is
+    # about the board or about the sample needs to see an inert point next to a
+    # live one (issue #106).
+    for probe in report.probed_points:
+        if probe.skipped:
+            detail = f"skipped ({probe.skipped})"
+        else:
+            detail = f"signal {probe.signal:.6g} (scalar {probe.degraded_scalar:.6g})"
+        click.echo(
+            f"  probe:             {probe.mutation_id} [{probe.role or probe.kind}] {detail}"
+        )
     click.echo(
-        f"  degraded point:    {report.degraded_mutation_id} "
+        f"  best point:        {report.degraded_mutation_id} "
         f"({report.degraded_mutation_kind} @ {report.degraded_file})"
     )
     click.echo(f"  degraded scalar:   {report.degraded_scalar:.6g}")
     click.echo(f"  achievable signal: {report.signal:.6g}")
     click.echo(f"  promote_margin:    {margin:.6g}")
+    if report.recommended_margin is not None:
+        click.echo(f"  recommended margin:{report.recommended_margin:.6g} (from delta_std)")
     if report.verdict == VERDICT_REFUSE:
         click.echo("  verdict:           REFUSE-recommended (signal <= noise floor)")
         click.echo(
@@ -503,8 +550,64 @@ def preflight_cmd(
             "Recommend-only: nothing is blocked.",
             err=True,
         )
+    elif report.verdict == VERDICT_INERT:
+        click.echo("  verdict:           INERT probe (achievable signal UNMEASURED)")
+        click.echo(
+            "  WARNING: every probed mutation point left the scalar exactly at "
+            "the champion mean while the A/A draws did vary — the probe moved "
+            "nothing, so the achievable signal is unmeasured rather than zero. "
+            "This is NOT evidence against the contract: a point can be inert "
+            "because the contract routes around it (e.g. a tool description no "
+            "longer reached once a structured-output schema produces the "
+            "deliverable). Re-run with --degrade-mutation-id naming a point the "
+            "deliverable demonstrably depends on, or raise --probe-points.",
+            err=True,
+        )
     else:
         click.echo("  verdict:           OK (signal clears the measured floor)")
+    # The promote_margin window (issue #112) — a separate question from
+    # signal-vs-noise, and a run can be guaranteed null by this alone.
+    if report.window_failure == WINDOW_MARGIN_ABOVE_ACHIEVABLE:
+        click.echo("  window:            REFUSE-recommended (margin above achievable)")
+        click.echo(
+            f"  WARNING: promote_margin {margin:.6g} is at or above the measured "
+            f"achievable signal {report.signal:.6g} — no SINGLE-point change the "
+            "probe could demonstrate clears the gate, so barring a compound patch "
+            "a run under this contract is null by construction and will spend its "
+            "whole budget confirming that. Lower promote_margin to sit strictly "
+            "inside the window "
+            f"({report.noise_floor_max_abs_delta:.6g} < margin < {report.signal:.6g}), "
+            "or strengthen the board to raise the achievable signal. The probe "
+            "degrades ONE point at a time, so this is a lower bound on the loop's "
+            "reach: if the margin is deliberately above single-point reach (e.g. "
+            "recombination unions two sub-margin fixes) this is informational.",
+            err=True,
+        )
+    elif report.window_failure == WINDOW_MARGIN_BELOW_FLOOR:
+        click.echo("  window:            WARN (margin below the noise floor)")
+        click.echo(
+            f"  WARNING: promote_margin {margin:.6g} is at or below the measured "
+            "noise floor — promotions cannot be distinguished from re-rolls of "
+            "the same generation. Raise it above the noise (the recommended "
+            "margin above scales delta_std, which does not drift upward as "
+            "calibration draws accumulate) and/or keep the evidence gate on.",
+            err=True,
+        )
+    elif report.window_failure == WINDOW_EMPTY:
+        click.echo("  window:            EMPTY (no promote_margin is defensible)")
+        click.echo(
+            "  WARNING: the achievable signal does not clear the noise floor, so "
+            "the window noise < promote_margin < achievable is EMPTY — below the "
+            "floor promotions are noise and above it nothing promotes. Do NOT "
+            "tune promote_margin; no value of it is defensible on this board. "
+            "Reduce evaluation noise or strengthen the board.",
+            err=True,
+        )
+    else:
+        click.echo(
+            "  window:            OK "
+            f"({report.noise_floor_max_abs_delta:.6g} < {margin:.6g} < {report.signal:.6g})"
+        )
 
 
 @board_grp.command(

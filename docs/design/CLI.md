@@ -5,7 +5,7 @@
 > is the source of truth; if this document and the binary ever disagree,
 > trust `zicato --help` / `zicato help <command>`.
 >
-> *Last reconciled against the live `--help` on 2026-07-18.* Verified the
+> *Last reconciled against the live `--help` on 2026-07-29.* Verified the
 > full command set (`init`, `evolve`, and the advanced/debugging group:
 > `analyze-telemetry`, `board`, `builder`, `config`, `dashboard`, `epoch`,
 > `health`, `help`, `logs`, `mutations`, `propose`, `reflect`, `regenerate-report`,
@@ -119,7 +119,7 @@ zicato evolve [OPTIONS]
 | `--workspace PATH` | `.zicato` | Path to the zicato workspace root (the directory `zicato init` made). |
 | `--epoch TEXT` | current epoch | Epoch id. Defaults to the workspace's current epoch. Pinning an epoch skips auto-epoching entirely. |
 | `--rounds INTEGER RANGE` | `1` (x>=1) | Number of evolve rounds to attempt. |
-| `--mode [full\|fast]` | `fast` | `fast` = cache-first: every (generation, entry, replicate) board unit is evaluated at most once and reused across all pairings / rounds / structures; only cache misses run. `full` = bypass the cache and force a fresh evaluation of every unit (noise re-sampling / debugging). |
+| `--mode [full\|fast]` | `fast` | `fast` = cache-first: every (generation, entry, replicate) board unit is evaluated at most once and reused across all pairings / rounds / structures; only cache misses run. On the gauntlet the champion is a frozen cached aggregate, so replicates reduce CHALLENGER-side noise only — repeated rounds are not independent draws of the contrast. `full` = bypass the cache and force a fresh evaluation of every unit, both sides (noise re-sampling / debugging). |
 | `--harness-call-llm TEXT` | **required** | Dotted import path of the harness `call_llm` (e.g. `mymodule:harness`). |
 | `--auxiliary-call-llm TEXT` | **required** | Dotted import path of the auxiliary `call_llm` (e.g. `mymodule:aux`). |
 | `--max-consecutive-rejections INTEGER RANGE` | `3` (x>=1) | Stop early when this many rounds in a row are rejected. |
@@ -250,14 +250,18 @@ Measure the contract's noise floor AND achievable signal; verdict.
 
 Board-reflection v1. Two measurements: (a) the A/A noise floor — the
 champion duels ITSELF `--runs` times (same draws `zicato board audit`
-takes); (b) the scripted-perturbation duel — the champion vs a
-deliberately-degraded ephemeral copy of itself (the FIRST enumerated
-mutation point blanked/scrambled in a scratch tree; the real lineage is
-never touched). Verdict: REFUSE-recommended when the achievable signal is
-at/below the floor; WARN when every probe scored identically (a saturated
-contract — the 1.000000 signature); OK otherwise. Recommend-only — never
-gates. The verdict persists onto the epoch record and flows into the
-per-round health report.
+takes); (b) the scripted-perturbation duels — the champion vs
+deliberately-degraded ephemeral copies of itself (a deterministic,
+role-diverse sample of mutation points blanked/scrambled in scratch trees;
+the real lineage is never touched), reporting the MAX signal so one inert
+point cannot veto a healthy contract. Verdicts: REFUSE-recommended when the
+achievable signal is at/below the floor; WARN when every probe scored
+identically (a saturated contract — the 1.000000 signature); INERT when the
+probes moved nothing while the A/A draws varied (the signal is unmeasured,
+not zero — pick a representative point); OK otherwise. Also asserts the
+promote_margin window `noise < margin < achievable` and names the side that
+failed. Recommend-only — never gates. The verdict persists onto the epoch
+record and flows into the per-round health report.
 
 ```
 zicato board preflight [OPTIONS]
@@ -268,6 +272,8 @@ zicato board preflight [OPTIONS]
 | `--workspace TEXT` | `.zicato` | Path to the zicato workspace root. |
 | `--epoch TEXT` | current epoch | Epoch to pre-flight. |
 | `--runs INTEGER RANGE` | `5` (>=2) | How many independent A/A draws of the champion to take. |
+| `--degrade-mutation-id TEXT` | automatic sample | Degrade exactly this mutation point instead of the automatic role-diverse sample (use when you know which point carries the contract's signal). |
+| `--probe-points INTEGER RANGE` | `runtime.preflight_probe_points` (>=1) | Ceiling on how many mutation points the automatic sample degrades. Probing stops early once the verdict is settled, so this rarely costs the full count. |
 | `--harness-call-llm TEXT` | required | Dotted import path of the harness call_llm (e.g. `mymodule:harness`). |
 | `--auxiliary-call-llm TEXT` | required | Dotted import path of the auxiliary call_llm (e.g. `mymodule:aux`). |
 
@@ -599,8 +605,8 @@ zicato register [OPTIONS]
 | Option | Default | Meaning |
 |---|---|---|
 | `--workspace DIRECTORY` | `.zicato` | Workspace directory to update. |
-| `--adk TEXT` | **required** | Adapter entrypoint in `module.path:agent_symbol` form. |
-| `--mutable-tree PATH` | — (repeatable) | Source root the proposer is allowed to mutate. |
+| `--adk TEXT` | **required** | Adapter entrypoint in `module.path:agent_symbol` form. Either inside a `--mutable-tree` (its TOP-LEVEL module is the tree's basename) or outside every tree, which is the dependency shape: the harness imports the mutable trees, and each tree is verified to have loaded from the generation snapshot per run instead. |
+| `--mutable-tree PATH` | — (repeatable) | Source root the proposer is allowed to mutate. Its BASENAME must be the importable package name — the snapshot exposes each tree under its basename on `sys.path`. |
 | `--board PATH` | `<workspace_parent>/board.jsonl` | Canonical `board.jsonl` path. |
 | `--brief PATH` | `<workspace_parent>/brief.md` | Canonical proposer-brief path. |
 | `--scoring PATH` | `<workspace_parent>/scoring.json` | Canonical `scoring.json` path. |

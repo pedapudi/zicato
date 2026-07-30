@@ -87,6 +87,10 @@ def _install_fake_health(
         promote_margin: float | None = None,
         evidence_gate_on: bool = True,
         preflight: dict[str, Any] | None = None,
+        # Tolerant tail: the orchestrator threads further health inputs as
+        # they land (``preflight_gate``, the runtime-event pairs), and this
+        # stub exists to assert the call, not the signature.
+        **_extra: Any,
     ) -> _FakeLoopHealth:
         del config
         calls.append((losses_by_generation, experiments, board_entries, epoch_id))
@@ -263,6 +267,48 @@ def test_evolve_once_dead_judge_finding_logs_loud_warning(
     assert any("DECLARED JUDGE NEVER FIRED" in m for m in warnings), warnings
     # The dead judges are named so the operator knows which to fix.
     assert any("audience_appropriate" in m for m in warnings)
+
+
+def test_evolve_once_tree_never_imported_logs_loud_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A ``tree_never_imported`` finding is promoted to a LOUD WARNING (issue #110).
+
+    The round's verdict compared two identical unmutated trees, which reads
+    exactly like an honest null result from the terminal. It must be as visible
+    as the dead-judge alarm, for the same reason.
+    """
+    calls: list[tuple[Any, ...]] = []
+    health = _FakeLoopHealth(
+        healthy=False,
+        findings=(
+            _FakeFinding(
+                severity="WARNING",
+                message="a mutable tree was never imported",
+                code="tree_never_imported",
+                summary=(
+                    "mutations to tree goldfive cannot have been under test in "
+                    "generation v3: no run of that generation ever imported goldfive"
+                ),
+                detail={"generation_id": "v3", "tree": "goldfive"},
+            ),
+        ),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="zicato.orchestrator"):
+        _, _, outcome = _run_one_round(monkeypatch, tmp_path, health=health, calls=calls)
+
+    # A warning, not a critical — the operator, not the detector, judges it.
+    assert outcome.health_critical is False
+    warnings = [
+        rec.getMessage()
+        for rec in caplog.records
+        if rec.levelno >= logging.WARNING and rec.name == "zicato.orchestrator"
+    ]
+    assert any("MUTATED TREE NEVER IMPORTED" in m for m in warnings), warnings
+    assert any("goldfive" in m for m in warnings)
 
 
 def test_evolve_once_no_dead_judge_warning_when_absent(

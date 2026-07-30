@@ -1788,28 +1788,40 @@ def test_provider_string_resolves_to_litellm_and_guard_leaves_it_alone() -> None
 
     Two halves of the same guard:
 
-    * :func:`_resolves_to_native_function_calling` classifies the
-      provider-style string as a real function-calling ``LiteLlm`` (the
+    * :func:`_resolves_to_native_function_calling` classifies every
+      registry-resolvable string as function-calling capable — the
+      provider-style ``openai/<model>`` (``LiteLlm``) AND a native
+      ``gemini-*`` / ``gemma-*`` id (``Gemini`` / ``Gemma``, issue #98). The
       classifier resolves the model *class* without instantiating it, so it
-      never builds a genai client); while bare ``gemma-*`` / ``gemini-*`` and
-      unresolvable strings classify ``False`` (they route to the shim).
+      never builds a genai client. Only a string ADK cannot resolve at all
+      classifies ``False``.
     * :func:`rebind_tree_models_to_call_llm` therefore LEAVES the
       ``openai/<model>`` agent untouched — rebinding it to the text-only shim
-      would strip its native tool/function calling.
+      would strip its native tool/function calling. A genai-backed string is
+      still shimmed for a TOOL-FREE agent (the client-flood guard, now a
+      construction-path concern: :func:`_resolves_to_genai_client`).
 
     Skipped without ``litellm``: the provider string is then unresolvable, so
     the shim fallback (rebind) is the correct behaviour.
     """
     pytest.importorskip("litellm")
 
-    from zicato.adapters.adk import _resolves_to_native_function_calling
+    from zicato.adapters.adk import (
+        _resolves_to_genai_client,
+        _resolves_to_native_function_calling,
+    )
 
-    # The classifier: provider string -> LiteLlm (True); genai-backed /
-    # unresolvable -> False (shim fallback).
+    # The capability classifier: registry-resolvable -> True; garbage -> False.
     assert _resolves_to_native_function_calling("openai/gpt-4o-mini") is True
-    assert _resolves_to_native_function_calling("gemma-3-12b-it") is False
-    assert _resolves_to_native_function_calling("gemini-2.0-flash") is False
+    assert _resolves_to_native_function_calling("gemma-3-12b-it") is True
+    assert _resolves_to_native_function_calling("gemini-2.0-flash") is True
     assert _resolves_to_native_function_calling("not-a-real-model-xyz") is False
+    # The separate construction-path concern: which of them builds a genai
+    # client (the GC-flood source the shim displaces for tool-free agents).
+    assert _resolves_to_genai_client("openai/gpt-4o-mini") is False
+    assert _resolves_to_genai_client("gemma-3-12b-it") is True
+    assert _resolves_to_genai_client("gemini-2.0-flash") is True
+    assert _resolves_to_genai_client("not-a-real-model-xyz") is False
 
     # The guard: the shim leaves the LiteLlm-resolvable agent's string in place.
     agent = LlmAgent(name="solo", instruction="s", model="openai/gpt-4o-mini")
@@ -1905,11 +1917,15 @@ async def test_inner_model_rebind_preserves_tool_function_declarations() -> None
     )
 
     # --- contrast: the text-only shim DROPS the tools. ---
+    # A TOOL-FREE agent is the only kind the shim may displace (issue #98: a
+    # tool-declaring agent keeps its native model or raises — see
+    # ``test_rebind_raises_rather_than_silently_stripping_tools``). The shim it
+    # gets is the same object either way, so handing THAT shim a
+    # tool-carrying request still proves the no-tools limitation.
     shim_agent = LlmAgent(
         name="weatherbot2",
         instruction="help the user",
         model="gemma-3-12b-it",
-        tools=[_weather_tool()],
     )
 
     async def call_llm(system: str, user: str, model: str) -> str:

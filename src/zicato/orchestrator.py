@@ -518,11 +518,13 @@ async def evolve_once(
     # DEFAULT-ON (issue #84): unless runtime.preflight_gate == "off", measure
     # the A/A floor AND the achievable signal (champion vs a deliberately-
     # degraded ephemeral copy of itself) once per epoch and persist the
-    # verdict. A below-floor / saturated verdict is LOUDLY warned (inside the
-    # helper) and flows into the per-round health report. Under the opt-in
-    # HARD gate (preflight_gate == "refuse") a ``refuse`` verdict STOPS the
-    # run here — before rounds burn budget on a contract that cannot be
-    # optimized. ``zicato board preflight`` is the manual surface.
+    # verdict. A below-floor / saturated / inert verdict — or a promote_margin
+    # outside the noise < margin < achievable window (issue #112) — is LOUDLY
+    # warned (inside the helper) and flows into the per-round health report.
+    # Under the opt-in HARD gate (preflight_gate == "refuse") a refuse-worthy
+    # verdict STOPS the run here — before rounds burn budget on a contract that
+    # cannot be optimized, or on a margin nothing can clear.
+    # ``zicato board preflight`` is the manual surface.
     _preflight_verdict = await _maybe_contract_preflight(
         workspace_root=workspace_root,
         epoch_id=resolved_epoch_id,
@@ -545,13 +547,30 @@ async def evolve_once(
         str(getattr(config, "preflight_gate", "warn") or "warn") == "refuse"
         and _preflight_verdict == VERDICT_REFUSE
     ):
+        # Name WHICH refusal: "noise swamps the signal" and "the margin is
+        # above anything the loop can produce" are both guaranteed-null runs
+        # with entirely different fixes, so a single generic message would send
+        # half of them to the wrong one.
+        _record = _epoch_preflight_record(workspace_root, resolved_epoch_id) or {}
+        _cause = (
+            "the configured promote_margin sits at or above the contract's "
+            "measured achievable signal, so barring a compound patch no "
+            "challenger could be promoted and the run would be null by "
+            "construction. Lower promote_margin inside the window "
+            "(noise < margin < achievable) — or, if the margin is deliberately "
+            "above what a SINGLE mutation point can move (e.g. recombination is "
+            "meant to union two sub-margin fixes), set "
+            "runtime.preflight_gate='warn'"
+            if str(_record.get("window_failure") or "") == "margin_above_achievable"
+            else "the contract's achievable signal is at or below its measured "
+            "A/A noise floor, so every duel would be decided by noise. "
+            "Strengthen the board / reduce evaluation noise"
+        )
         raise PreflightRefusedError(
-            f"contract pre-flight REFUSE for epoch {resolved_epoch_id}: the "
-            "contract's achievable signal is at or below its measured A/A "
-            "noise floor, so every duel would be decided by noise. Refusing "
-            "the run before it spends rounds (runtime.preflight_gate='refuse'). "
-            "Strengthen the board / reduce evaluation noise, or set "
-            "runtime.preflight_gate='warn' to proceed anyway."
+            f"contract pre-flight REFUSE for epoch {resolved_epoch_id}: {_cause}. "
+            "Refusing the run before it spends rounds "
+            "(runtime.preflight_gate='refuse'); set runtime.preflight_gate='warn' "
+            "to proceed anyway."
         )
 
     # --- 2b. Margin-vs-noise-floor sanity check (once per invocation) -----
@@ -1032,6 +1051,29 @@ async def evolve_once(
 
     child_diff_size = _diff_size(experiment)
     if fast_mode and parent_historical is not None:
+        # The contract's replication knob reaches the gauntlet fast path
+        # (issue #109): the challenger board runs ``replicates`` times and
+        # the per-entry losses are folded, exactly as ``run_matchup``
+        # already does under ``fast=True``. Before this the parameter did
+        # not exist on ``run_fast_mode`` at all, so the default
+        # configuration — ``--mode fast`` is the CLI default and the
+        # gauntlet's default ``replicates`` is 2 — silently executed as 1.
+        #
+        # The champion side stays ONE frozen cached draw (that is what fast
+        # mode IS), so the contrast is a replicated challenger against an
+        # unreplicated champion. Say so out loud rather than letting the
+        # operator infer a symmetric √K from the contract: an operator who
+        # wants independent draws on both sides wants --mode full.
+        fast_replicates = strategy.replicates()
+        if fast_replicates > 1:
+            log.warning(
+                "fast-mode gauntlet round: replicating the CHALLENGER board %d× "
+                "(contract replicates=%d), but the champion side is a single "
+                "frozen cached aggregate — the noise reduction is one-sided. "
+                "Use --mode full for independent draws on both sides.",
+                fast_replicates,
+                fast_replicates,
+            )
         tournament_result = await run_fast_mode(
             adapter=adapter,
             child_gen=child_gen,
@@ -1045,6 +1087,7 @@ async def evolve_once(
             judge_only=judge_only,
             round_index=round_index,
             total_rounds=total_rounds,
+            replicates=fast_replicates,
         )
     else:
         tournament_result = await run_tournament(
@@ -1127,7 +1170,14 @@ async def evolve_once(
     # the gate verdict, and — when the runner consulted a holdout — the
     # Ladder's release, all onto the round's durable event log.
     _emit_tournament_units(round_log, tournament_result)
-    _emit_gate_evaluated(round_log, tournament_result.outcome)
+    _emit_harness_loaded(round_log, workspace_root, resolved_epoch_id, tournament_result)
+    _emit_gate_evaluated(
+        round_log,
+        tournament_result.outcome,
+        parent_agg=tournament_result.parent_agg,
+        child_agg=tournament_result.child_agg,
+        weights=weights,
+    )
     _holdout_block = getattr(tournament_result, "holdout", None)
     if _holdout_block is not None:
         round_log.emit(
@@ -2018,7 +2068,14 @@ async def _evolve_multi_challenger(
             _cache_gen_score(workspace_root, epoch_id, m.right.generation_id, result.child_agg)
         # WS8: this matchup's board units + gate verdict onto the round log.
         _emit_tournament_units(round_log, result)
-        _emit_gate_evaluated(round_log, result.outcome)
+        _emit_harness_loaded(round_log, workspace_root, epoch_id, result)
+        _emit_gate_evaluated(
+            round_log,
+            result.outcome,
+            parent_agg=result.parent_agg,
+            child_agg=result.child_agg,
+            weights=weights,
+        )
         return MatchupResult(
             matchup_id=m.matchup_id,
             left_id=m.left.generation_id,
@@ -3215,20 +3272,143 @@ def _emit_tournament_units(round_log: _RoundLogEmitter, tournament_result: Any) 
             )
 
 
-def _emit_gate_evaluated(round_log: _RoundLogEmitter, outcome: Any) -> None:
+def _emit_harness_loaded(
+    round_log: _RoundLogEmitter,
+    workspace_root: Path,
+    epoch_id: str,
+    tournament_result: Any,
+) -> None:
+    """Emit ``harness_loaded`` once per generation the duel actually ran.
+
+    The mutated-tree provenance for issue #110: the subprocess worker records
+    what each generation actually loaded in its ``harness_load.json`` (it is the
+    only process that imports the entrypoint or the mutable trees) — the
+    resolved entrypoint file plus the accumulated per-tree verdicts; the
+    orchestrator — the round log's single writer — folds that into ONE event per
+    generation here, so the durable round record names both the file each side
+    ran and any tree its units never imported.
+
+    Best-effort and additive throughout: a generation with no record (a
+    non-ADK adapter kind, a fully cache-served side, a failed write) simply
+    contributes no event, and readers tolerate the absence.
+    """
+    generation_ids: list[str] = []
+    for attr in ("parent_generation_id", "child_generation_id"):
+        gen_id = str(getattr(tournament_result, attr, "") or "")
+        if gen_id and gen_id not in generation_ids:
+            generation_ids.append(gen_id)
+    for gen_id in generation_ids:
+        try:
+            from zicato.core.workspace import harness_load_path  # noqa: PLC0415
+            from zicato.storage import read_json  # noqa: PLC0415
+
+            record = read_json(harness_load_path(workspace_root, epoch_id, gen_id))
+        except Exception as exc:  # noqa: BLE001 — emission must never fail a round
+            log.debug("round-log harness_loaded read skipped for %s: %s", gen_id, exc)
+            continue
+        entrypoint_file = str((record or {}).get("entrypoint_file", "") or "")
+        verified = _str_tuple((record or {}).get("trees_verified"))
+        never_imported = _str_tuple((record or {}).get("trees_never_imported"))
+        if not entrypoint_file and not verified and not never_imported:
+            continue
+        round_log.emit(
+            "harness_loaded",
+            {
+                "generation_id": gen_id,
+                "entrypoint_file": entrypoint_file,
+                "trees_verified": verified,
+                "trees_never_imported": never_imported,
+            },
+        )
+
+
+def _str_tuple(raw: Any) -> tuple[str, ...]:
+    """Coerce a JSON list of names to a tuple of non-empty strings.
+
+    Tolerant by design — the records this reads are written by another process
+    and a malformed / absent field must degrade to "nothing recorded", never
+    raise into a round.
+    """
+    if not isinstance(raw, list):
+        return ()
+    return tuple(str(item) for item in raw if str(item))
+
+
+def _epoch_tree_import_gaps(workspace_root: Path, epoch_id: str) -> dict[str, tuple[str, ...]]:
+    """Per-generation mutable trees NO unit of that generation ever imported.
+
+    Reads each generation's ``harness_load.json`` — the worker-written record of
+    what the generation actually loaded — and returns
+    ``{generation_id: (tree_basename, ...)}`` for the generations with a
+    non-empty gap. Threaded into
+    :func:`zicato.health.diagnostics.detect_tree_never_imported`, which turns
+    each entry into a WARNING: that generation's mutations to those trees
+    cannot have been under test (issue #110's original shape — an installed
+    entrypoint that never imports the mutated tree at all).
+
+    Best-effort like every other health input: a missing / unreadable record
+    contributes nothing.
+    """
+    gaps: dict[str, tuple[str, ...]] = {}
+    gens_root = WorkspaceLayout.from_root(workspace_root).generations_dir(epoch_id)
+    if not gens_root.exists():
+        return gaps
+    from zicato.core.workspace import harness_load_path  # noqa: PLC0415
+    from zicato.storage import read_json  # noqa: PLC0415
+
+    for gen_dir in sorted(p for p in gens_root.iterdir() if p.is_dir()):
+        try:
+            record = read_json(harness_load_path(workspace_root, epoch_id, gen_dir.name))
+        except Exception as exc:  # noqa: BLE001 — health inputs are best-effort
+            log.debug("harness-load record unreadable for %s: %s", gen_dir.name, exc)
+            continue
+        never_imported = _str_tuple((record or {}).get("trees_never_imported"))
+        if never_imported:
+            gaps[gen_dir.name] = never_imported
+    return gaps
+
+
+def _emit_gate_evaluated(
+    round_log: _RoundLogEmitter,
+    outcome: Any,
+    *,
+    parent_agg: Any = None,
+    child_agg: Any = None,
+    weights: Any = None,
+) -> None:
     """Emit the ``gate_evaluated`` event for one settled duel's gate verdict.
 
     ``rule_fired`` carries the gate's own ``reason`` verbatim (the string
     that names which rule rejected; empty on a clean promote — the gate
-    reports no rule for a pass).
+    reports no rule for a pass). UNCHANGED.
+
+    The scalars the gate decided on are recorded STRUCTURALLY alongside it, on
+    BOTH decisions, so a promoted duel is no longer a numberless record and a
+    downstream effect-size analysis is not missing exactly its promotions (see
+    :class:`~zicato.epoch.round_log.GateEvaluated`). They come from the same
+    aggregates and weights the gate itself was handed, so the event cannot
+    disagree with the decision it describes.
+
+    The three sources are keyword-optional: an older caller still emits a
+    well-formed event with the scalars ABSENT (``None``) rather than
+    fabricating zeros. Same tolerance within a call — a hand-built aggregate
+    carrying no ``scalar``, or a non-numeric one, leaves that field absent
+    rather than failing the round, matching the best-effort discipline of
+    every other emission.
     """
-    round_log.emit(
-        "gate_evaluated",
-        {
-            "rule_fired": str(getattr(outcome, "reason", "") or ""),
-            "decision": str(getattr(outcome, "decision", "") or ""),
-        },
-    )
+    fields: dict[str, Any] = {
+        "rule_fired": str(getattr(outcome, "reason", "") or ""),
+        "decision": str(getattr(outcome, "decision", "") or ""),
+    }
+    for key, agg in (("champion_scalar", parent_agg), ("challenger_scalar", child_agg)):
+        if isinstance(agg, dict):
+            raw = agg.get("scalar")
+            if isinstance(raw, int | float):
+                fields[key] = float(raw)
+    margin = getattr(weights, "promote_margin", None)
+    if isinstance(margin, int | float):
+        fields["margin_required"] = float(margin)
+    round_log.emit("gate_evaluated", fields)
 
 
 # ---------------------------------------------------------------------------
@@ -3462,12 +3642,28 @@ async def _maybe_contract_preflight(
     ``"contract_preflight": K`` key when present (K >= 2), else defaults to
     :data:`~zicato.tournament.calibration.DEFAULT_CALIBRATION_RUNS`.
 
-    Returns the verdict string (``"ok"`` / ``"warn"`` / ``"refuse"``) when a
-    verdict is available (freshly measured or already persisted), else
-    ``None`` (skipped / measurement failed). The caller enforces the gate:
-    ``"warn"`` mode only warns (done here); ``"refuse"`` mode raises
+    Returns the GATE verdict
+    (:func:`~zicato.epoch.preflight.effective_gate_verdict` — ``"refuse"``
+    when either the signal verdict or the ``promote_margin`` window refuses,
+    else the signal verdict verbatim) when one is available (freshly measured
+    or already persisted), else ``None`` (skipped / measurement failed). The
+    caller enforces the gate: ``"warn"`` mode only warns (done here);
+    ``"refuse"`` mode raises
     :class:`~zicato.epoch.preflight.PreflightRefusedError` on a ``refuse``
-    verdict. ``zicato board preflight`` is the manual surface.
+    verdict. ``"inert"`` is never a refusal — it says the probe, not the
+    contract, came up short (issue #106). ``zicato board preflight`` is the
+    manual surface.
+
+    One failure escapes the best-effort contract: a
+    :class:`~zicato.epoch.preflight.PreflightConfigError` (an unknown pinned
+    mutation id, a probe ceiling wider than the reserved replicate block)
+    under ``gate_mode == "refuse"`` raises
+    :class:`~zicato.epoch.preflight.PreflightRefusedError` from here. "An
+    outage never disqualifies a contract" is about NONDETERMINISTIC infra; a
+    config typo is deterministic operator error, and a refuse-mode run that
+    proceeds ungated because a knob was misspelled is the outcome that
+    operator explicitly ruled out. Under ``"warn"`` it stays the loud warning
+    it has always been.
     """
     from zicato.core.runtime import PREFLIGHT_GATE_DEFAULT  # noqa: PLC0415
     from zicato.tournament.calibration import DEFAULT_CALIBRATION_RUNS  # noqa: PLC0415
@@ -3499,11 +3695,15 @@ async def _maybe_contract_preflight(
     if gate_mode == "off" and not raw:
         return None
 
+    from zicato.epoch.preflight import effective_gate_verdict  # noqa: PLC0415
+
     # Already measured ⇒ re-report the persisted verdict so the hard gate
-    # still applies on a resumed / later round without re-measuring.
+    # still applies on a resumed / later round without re-measuring. Collapsed
+    # through the SAME helper the fresh path uses, so a resume reaches the
+    # identical gate decision as the round that measured.
     existing = getattr(epoch_cfg, "preflight", None)
     if isinstance(existing, dict):
-        return str(existing.get("verdict") or "") or None
+        return effective_gate_verdict(existing)
     if runs is None:
         return None
 
@@ -3512,13 +3712,30 @@ async def _maybe_contract_preflight(
         set_epoch_noise_floor,
         set_epoch_preflight,
     )
-    from zicato.epoch.preflight import VERDICT_OK, run_contract_preflight  # noqa: PLC0415
+    from zicato.epoch.preflight import (  # noqa: PLC0415
+        VERDICT_OK,
+        PreflightConfigError,
+        PreflightRefusedError,
+        run_contract_preflight,
+    )
 
     verdict_holder: list[str] = []
-    with best_effort(
-        "contract pre-flight",
-        on_error=lambda exc: log.warning("contract pre-flight skipped: %s", exc),
-    ):
+    # A probe-selection CONFIG error is the one best-effort failure a
+    # refuse-mode operator must not have swallowed. ``best_effort`` exists here
+    # because an endpoint outage must never disqualify a contract — but a
+    # mistyped ``runtime.preflight_probe_mutation_ids`` id is not an outage:
+    # it is deterministic, it will fail identically next round, and swallowing
+    # it means a run configured to HARD-GATE proceeds with no gate at all
+    # because of a typo. Captured here, escalated after the block (raising from
+    # inside ``on_error`` would work but hides the control flow).
+    config_error: list[PreflightConfigError] = []
+
+    def _on_preflight_error(exc: BaseException) -> None:
+        if isinstance(exc, PreflightConfigError):
+            config_error.append(exc)
+        log.warning("contract pre-flight skipped: %s", exc)
+
+    with best_effort("contract pre-flight", on_error=_on_preflight_error):
         report, floor = await run_contract_preflight(
             adapter=adapter,
             generation=parent_gen,
@@ -3531,51 +3748,130 @@ async def _maybe_contract_preflight(
             disable_drift=disable_drift,
             judge_only=judge_only,
         )
-        set_epoch_preflight(workspace_root, epoch_id, report.to_json())
-        verdict_holder.append(report.verdict)
+        record = report.to_json()
+        set_epoch_preflight(workspace_root, epoch_id, record)
+        verdict_holder.append(effective_gate_verdict(record) or report.verdict)
         # The pre-flight's step (a) IS the A/A calibration; persist the
         # floor too when the epoch has none yet (reload — the calibration
         # hook may have written one after ``epoch_cfg`` was loaded), so the
         # margin check + noise-floor detector benefit from the same draws.
         if load_epoch(workspace_root, epoch_id).noise_floor is None:
             set_epoch_noise_floor(workspace_root, epoch_id, floor.to_json())
-        if report.verdict == VERDICT_OK:
+        if report.verdict == VERDICT_OK and report.window_failure is None:
             log.info(
                 "contract pre-flight OK for epoch %s (%s): achievable signal "
-                "%.6g clears the measured noise floor %.6g",
+                "%.6g clears the measured noise floor %.6g and leaves "
+                "promote_margin %.6g inside the window (probed %d point(s))",
                 epoch_id,
                 parent_gen.id,
                 report.signal,
                 report.noise_floor_max_abs_delta,
+                report.promote_margin,
+                report.drawn_probe_count(),
             )
         else:
-            # LOUD run-level warning: the achievable signal does not clear the
-            # measured noise floor (``refuse``) or the contract is saturated
-            # (``warn``). Whether this also STOPS the run is the caller's
-            # decision, per the runtime ``preflight_gate`` mode.
+            # LOUD run-level warning. The diagnosis is per-verdict on purpose:
+            # "noise swamps the signal", "the probe was inert", "the margin is
+            # unreachable" and "the margin is inside the noise" have four
+            # different fixes, and issue #106/#112 both trace operator time
+            # wasted to these being reported in the same words. Whether this
+            # also STOPS the run is the caller's decision, per ``gate_mode``.
             log.warning(
                 "CONTRACT PRE-FLIGHT %s — epoch %s (%s): achievable signal "
-                "%.6g vs measured A/A noise floor %.6g (degraded point %s → "
-                "scalar %.6g). Under this contract every duel is decided by "
-                "noise, so no challenger can be distinguished from the "
-                "champion. %s See the per-round health report / "
-                "`zicato board preflight`.",
-                report.verdict.upper(),
+                "%.6g vs measured A/A noise floor %.6g vs promote_margin %.6g "
+                "(best of %d probed point(s): %s → scalar %.6g). %s %s See the "
+                "per-round health report / `zicato board preflight`.",
+                (report.window_failure or report.verdict).upper(),
                 epoch_id,
                 parent_gen.id,
                 report.signal,
                 report.noise_floor_max_abs_delta,
+                report.promote_margin,
+                report.drawn_probe_count(),
                 report.degraded_mutation_id,
                 report.degraded_scalar,
+                _preflight_diagnosis(report),
                 (
                     "Set runtime.preflight_gate='refuse' to stop such a run "
-                    "before it spends rounds; strengthen the board / reduce "
-                    "evaluation noise to fix it."
+                    "before it spends rounds."
                     if gate_mode != "refuse"
                     else "Refusing the run (runtime.preflight_gate='refuse')."
                 ),
             )
+    if config_error and gate_mode == "refuse":
+        raise PreflightRefusedError(
+            f"contract pre-flight CONFIG ERROR for epoch {epoch_id}: "
+            f"{config_error[0]}. The pre-flight could not run at all, so the "
+            "hard gate has nothing to gate on — refusing the run rather than "
+            "spending rounds unprotected (runtime.preflight_gate='refuse'). Fix "
+            "the probe-selection config, or set runtime.preflight_gate='warn' to "
+            "proceed with the pre-flight skipped."
+        )
     return verdict_holder[0] if verdict_holder else None
+
+
+def _preflight_diagnosis(report: Any) -> str:
+    """The one-sentence "what is wrong and what fixes it" for a pre-flight.
+
+    Kept beside the warning it feeds rather than inside
+    :mod:`zicato.epoch.preflight` because it is operator prose for the evolve
+    log; the machine-readable equivalents are the verdict constants and the
+    health findings (:func:`zicato.health.diagnostics.detect_preflight_verdict`).
+    """
+    from zicato.epoch.preflight import (  # noqa: PLC0415
+        VERDICT_INERT,
+        VERDICT_WARN,
+        WINDOW_EMPTY,
+        WINDOW_MARGIN_ABOVE_ACHIEVABLE,
+        WINDOW_MARGIN_BELOW_FLOOR,
+    )
+
+    if report.verdict == VERDICT_INERT:
+        return (
+            "Every probed mutation point left the scalar exactly at the champion "
+            "mean while the A/A draws varied, so the achievable signal is "
+            "UNMEASURED rather than zero — the probe was inert, which is NOT "
+            "evidence against the contract. Pin a point the deliverable "
+            "demonstrably depends on via runtime.preflight_probe_mutation_ids "
+            "(or widen the sample with runtime.preflight_probe_points)."
+        )
+    if report.verdict == VERDICT_WARN:
+        return (
+            "Scalar spread was exactly zero across every probe — even a "
+            "deliberately-degraded tree scored identically to the champion, so "
+            "the board cannot discriminate candidates at all. Add expectations "
+            "or strengthen judges."
+        )
+    if report.window_failure == WINDOW_MARGIN_ABOVE_ACHIEVABLE:
+        return (
+            "promote_margin sits at or above the largest improvement any single "
+            "probed mutation point produces, so barring a compound patch no "
+            "challenger can be promoted and the run is null by construction. "
+            "Lower the margin inside the window (noise < margin < achievable). "
+            "The probe degrades ONE point at a time, so this bound is a lower "
+            "bound on the loop's reach — if the margin is deliberately above "
+            "single-point reach (e.g. recombination is meant to union two "
+            "sub-margin fixes) this is expected and informational."
+        )
+    if report.window_failure == WINDOW_MARGIN_BELOW_FLOOR:
+        return (
+            "promote_margin sits inside the measured noise, so promotions cannot "
+            "be told from re-rolls of the same generation. Raise it above the "
+            "noise (the record's recommended_margin scales delta_std, which does "
+            "not drift with the draw count) and/or keep the evidence gate on."
+        )
+    if report.window_failure == WINDOW_EMPTY:
+        return (
+            "The achievable signal does not clear the noise floor, so the window "
+            "noise < margin < achievable is EMPTY and no promote_margin is "
+            "defensible — do not tune the margin. Reduce evaluation noise (more "
+            "replicates, steadier judges) or strengthen the board."
+        )
+    return (
+        "Under this contract every duel is decided by noise, so no challenger "
+        "can be distinguished from the champion. Strengthen the board / reduce "
+        "evaluation noise."
+    )
 
 
 def _warn_margin_below_noise_floor(workspace_root: Path, epoch_id: str) -> None:
@@ -3586,13 +3882,23 @@ def _warn_margin_below_noise_floor(workspace_root: Path, epoch_id: str) -> None:
     holds promotions to CI separation, so the margin being inside the noise
     is an informational note, not a decision hazard. Never hard-refuses.
     """
-    from zicato.tournament.calibration import margin_below_floor  # noqa: PLC0415
+    from zicato.tournament.calibration import (  # noqa: PLC0415
+        MARGIN_NOISE_MULTIPLE,
+        margin_below_floor,
+        recommended_promote_margin_from_floor,
+    )
 
     floor, margin, gate_on = _epoch_noise_floor_inputs(workspace_root, epoch_id)
     if margin is None or not margin_below_floor(margin, floor):
         return
     assert isinstance(floor, dict)  # narrowed by margin_below_floor
     max_abs = float(floor.get("max_abs_delta", 0.0))
+    # Recommend from the draw-count-STABLE dispersion, never from the range
+    # (issue #112): ``max_abs_delta`` grows with K on an unchanged board, so
+    # "set the margin above the measured floor" drifts upward as calibration
+    # improves — and a campaign followed it straight past the achievable
+    # signal, making every duel a rejection by arithmetic.
+    recommended = recommended_promote_margin_from_floor(floor) or max_abs
     if gate_on:
         log.info(
             "promote_margin %.6g is below the measured A/A noise floor %.6g "
@@ -3608,17 +3914,21 @@ def _warn_margin_below_noise_floor(workspace_root: Path, epoch_id: str) -> None:
         "epoch %s and the evidence gate is off: duels decided by the margin "
         "alone CANNOT distinguish a real improvement from a re-roll of the "
         "same generation (measured: a naive margin below the floor promotes "
-        "pure noise). RECOMMENDED: set promote_margin above the measured "
-        "floor (%.6g), and/or enable the evidence gate — "
+        "pure noise). RECOMMENDED: raise promote_margin to about %.6g — "
+        "%.6g sigma of the measured A/A delta_std, a statistic that does NOT "
+        "drift upward as calibration draws accumulate the way the max |delta| "
+        "range does — and/or enable the evidence gate — "
         '"promote_confidence_threshold": 0.8 with an honest '
         '"promote_confidence_replicates" budget (the scaffolded contracts '
-        "use 32) — so promotions must replicate to CI separation. "
-        "(Floor measured by `zicato board audit`; this run continues "
-        "unchanged.)",
+        "use 32) — so promotions must replicate to CI separation. Check the "
+        "result against the pre-flight's achievable signal: a margin ABOVE it "
+        "promotes nothing at all. (Floor measured by `zicato board audit`; "
+        "this run continues unchanged.)",
         margin,
         max_abs,
         epoch_id,
-        max_abs,
+        recommended,
+        MARGIN_NOISE_MULTIPLE,
     )
 
 
@@ -3643,6 +3953,36 @@ def _workspace_health_config(workspace_root: Path) -> Any:
     except Exception as exc:  # noqa: BLE001 — health tuning is best-effort here
         log.debug("workspace health config unavailable (%s); using defaults", exc)
         return None
+
+
+def _workspace_preflight_gate(workspace_root: Path) -> str:
+    """Resolve ``runtime.preflight_gate`` for the health assessment.
+
+    Threaded into :func:`zicato.health.diagnostics.detect_preflight_verdict`,
+    which grades a persisted pre-flight REFUSAL ``critical`` only under the
+    hard gate: under the default ``"warn"`` a critical would re-fire from the
+    persisted record every round and trip the loop's degenerate-health
+    breaker, silently converting the mode the operator chose into
+    ``"refuse"``.
+
+    Read from the workspace ``config.json``'s ``runtime`` block rather than
+    from a live :class:`~zicato.core.runtime.RuntimeConfig` because that block
+    is the knob's ONLY source (:func:`zicato.runtime_factory.make_runtime_config`
+    reads it there and nowhere else) and because the health tail also runs on
+    paths — a resume, the deferred-infra round — that hold no config object.
+    Best-effort like the rest of the health path: anything unreadable yields
+    the recommend-only default, never the severity that can stop a loop.
+    """
+    from zicato.core.runtime import PREFLIGHT_GATE_DEFAULT  # noqa: PLC0415
+
+    try:
+        from zicato.workspace_loader import load_workspace_config  # noqa: PLC0415
+
+        runtime_block = load_workspace_config(workspace_root).get("runtime") or {}
+        return str(runtime_block.get("preflight_gate", PREFLIGHT_GATE_DEFAULT))
+    except Exception as exc:  # noqa: BLE001 — health inputs are best-effort
+        log.debug("preflight gate mode unavailable (%s); assuming the default", exc)
+        return PREFLIGHT_GATE_DEFAULT
 
 
 def _assess_and_persist_loop_health(
@@ -3676,7 +4016,14 @@ def _assess_and_persist_loop_health(
       run).
     * ``has_critical`` — ``True`` when at least one finding is CRITICAL
       (the loop is producing no signal); the caller logs a prominent
-      stderr WARNING in that case.
+      stderr WARNING in that case, and ``evolve_n_rounds`` feeds it to
+      :class:`~zicato.evolve.loop.DegenerateHealthPolicy`, which stops the
+      run after two consecutive critical rounds. That second consumer is
+      why the pre-flight finding's severity is gate-aware
+      (:func:`_workspace_preflight_gate`): a per-round re-emission from a
+      persisted record is an unbroken streak, so grading it critical under
+      the default ``"warn"`` gate would stop a run the operator asked to
+      let run.
 
     Best-effort: the :mod:`zicato.health` sibling lands in parallel and
     may be absent. A missing module, or any failure assessing or writing
@@ -3705,6 +4052,9 @@ def _assess_and_persist_loop_health(
             extra_kwargs["infra_outage"] = infra_outage
         if token_clip is not None:
             extra_kwargs["token_clip"] = token_clip
+        tree_import_gaps = _epoch_tree_import_gaps(workspace_root, epoch_id)
+        if tree_import_gaps:
+            extra_kwargs["tree_import_gaps"] = tree_import_gaps
         health = assess_loop_health(
             losses_by_generation,
             experiments,
@@ -3718,6 +4068,7 @@ def _assess_and_persist_loop_health(
             promote_margin=promote_margin,
             evidence_gate_on=evidence_gate_on,
             preflight=_epoch_preflight_record(workspace_root, epoch_id),
+            preflight_gate=_workspace_preflight_gate(workspace_root),
             **extra_kwargs,
         )
     except Exception as exc:  # noqa: BLE001 — health assessment is best-effort
@@ -3733,6 +4084,11 @@ def _assess_and_persist_loop_health(
     # and passed — so it must be surfaced on the terminal, not only in the
     # round's health JSON (issue #84).
     _warn_dead_judges(epoch_id, round_n, health)
+
+    # Same discipline for the mutated-tree alarm: a generation whose units never
+    # imported a mutable tree scored code the loop never changed, which is
+    # indistinguishable — from the terminal — from an honest null result.
+    _warn_trees_never_imported(epoch_id, round_n, health)
 
     with best_effort(
         "loop-health report write",
@@ -3885,6 +4241,35 @@ def _warn_dead_judges(epoch_id: str, round_n: int, health: Any) -> None:
             f" (dead: {named})" if named else "",
         )
         return
+
+
+def _warn_trees_never_imported(epoch_id: str, round_n: int, health: Any) -> None:
+    """Emit a prominent stderr WARNING for a tree no unit of a generation imported.
+
+    The ``tree_never_imported`` finding says the loop mutated code that was
+    never executed: the board scored, the gate fired and the round promoted or
+    rejected on a comparison between two identical unmutated trees. Buried in
+    the per-round health JSON it reads like any other warning, and an operator
+    cannot tell "the mutations did not help" from "the mutations were never
+    under test" — the same argument that lifted ``dead_judge`` to the terminal
+    (:func:`_warn_dead_judges`). Fired every round the finding is present
+    (idempotent, best-effort), and tolerant of the health sibling's exact shape.
+    """
+    for finding in getattr(health, "findings", ()) or ():
+        if str(getattr(finding, "code", "") or "") != "tree_never_imported":
+            continue
+        log.warning(
+            "MUTATED TREE NEVER IMPORTED — epoch %s round %d: %s. The round's "
+            "verdict compared two IDENTICAL unmutated trees, so it carries no "
+            "optimization signal. Check that the harness entrypoint imports the "
+            "mutable tree rather than an installed copy under another name, and "
+            "that the board exercises the code path the mutations target; the "
+            "per-generation record is generations/<gen>/harness_load.json "
+            "(issue #110).",
+            epoch_id,
+            round_n,
+            str(getattr(finding, "summary", "") or "a mutable tree was never imported"),
+        )
 
 
 def _atomic_write_text(path: Path, text: str) -> None:

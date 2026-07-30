@@ -20,10 +20,14 @@ Public API
 ``apply_patches(source_root, patches, target_root)``
     Copy the source tree into ``target_root``, run ``validate_patches``,
     and atomically apply the batch (all-or-nothing) against a fresh
-    enumeration of the copied tree.
+    enumeration of the copied tree. Every unapplyable-patch-set
+    condition — pre-check, apply-time missing anchor, post-apply syntax
+    gate — raises ``ValueError``.
 ``apply_patches_unchecked(source_root, patches, target_root)``
-    Legacy best-effort-sequential apply with no atomic pre-check, for
-    callers that have already validated the patch set themselves.
+    Legacy INTERNAL best-effort-sequential apply with no atomic
+    pre-check, for callers that have already validated the patch set
+    themselves. Keeps its ``KeyError``-on-missing-anchor contract; the
+    checked surface above converts that to ``ValueError``.
 ``validate_post_apply(target_root, patches, pre_apply_mutations)``
     Return a list of validation errors after a patch application; empty
     list means clean.

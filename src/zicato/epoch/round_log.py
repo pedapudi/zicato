@@ -39,9 +39,10 @@ Event vocabulary
 One frozen dataclass per event type (see :data:`EVENT_TYPES`), covering
 the round's full arc: open (contract hash) → proposal session (attempts,
 sampled candidates, critique selection, minted experiment) → apply/
-validate → tournament units → gate/holdout/evidence → recorded decision →
-close. Unknown event types read back as raw envelopes (typed payload
-``None``) so a newer writer's log still folds on an older reader.
+validate → harness load provenance → tournament units → gate/holdout/
+evidence → recorded decision → close. Unknown event types read back as
+raw envelopes (typed payload ``None``) so a newer writer's log still
+folds on an older reader.
 """
 
 from __future__ import annotations
@@ -175,6 +176,43 @@ class PatchesApplied:
 
 
 @dataclass(frozen=True, slots=True)
+class HarnessLoaded:
+    """WHAT a generation's harness actually loaded from its snapshot.
+
+    The mutated-tree provenance (issue #110). ``entrypoint_file`` is the
+    SNAPSHOT-RELATIVE path (``agent/agent.py``) of the ``module.__file__`` the
+    adapter imported for ``generation_id``, after asserting it lies under that
+    generation's snapshot. Relative, not absolute, because the snapshot a
+    worker loads is a per-run ephemeral checkout that is deleted when the run
+    ends — the durable, comparable fact is WHICH module inside the snapshot
+    ran, not where the throwaway copy of it lived. Empty for the dependency
+    shape, where the entrypoint legitimately lives outside every mutable tree
+    (target 2 mutates goldfive and drives it from a harness module elsewhere).
+
+    ``trees_verified`` / ``trees_never_imported`` carry the per-tree half — the
+    one that answers "were the MUTATIONS under test?" rather than "where did
+    the entrypoint come from?". A verified tree was imported from under the
+    generation's snapshot by at least one of its units; a never-imported tree
+    was touched by none of them, which means its mutations cannot have been
+    exercised (a tree imported from OUTSIDE the snapshot never reaches this
+    event — it fails its unit).
+
+    Emitted at most once per generation per round (the champion and the
+    challenger each get one), and only for an adapter that reports something —
+    an adapter kind that does not, or a generation whose units all came from
+    the unit cache, simply contributes no event. Purely additive provenance:
+    readers MUST tolerate its absence, unknown tokens are ignored by the fold,
+    and every field defaults, so every pre-existing log decodes unchanged.
+    """
+
+    TYPE: ClassVar[str] = "harness_loaded"
+    generation_id: str = ""
+    entrypoint_file: str = ""
+    trees_verified: tuple[str, ...] = ()
+    trees_never_imported: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class ValidationFailed:
     """Snapshot validation rejected the applied patches."""
 
@@ -194,11 +232,51 @@ class UnitCompleted:
 
 @dataclass(frozen=True, slots=True)
 class GateEvaluated:
-    """The promote gate fired ``rule_fired`` and returned ``decision``."""
+    """The promote gate fired ``rule_fired`` and returned ``decision``.
+
+    ``champion_scalar`` / ``challenger_scalar`` / ``margin_required`` are the
+    inputs to the gate's CONTINUOUS decision axis — Rule 1 is literally
+    ``challenger_scalar > champion_scalar - margin_required`` ⇒ reject — recorded
+    on BOTH decisions so the duel's effect size is reconstructable from the log
+    alone.
+
+    Before they existed the compared scalars survived only inside the
+    human-readable REJECT text (``rule_fired``, which is empty on a clean
+    promote — unchanged by this addition). A promoted duel therefore recorded no
+    numbers at all, and that gap is not merely missing data: it is CORRELATED
+    with the quantity being measured. A sample recovered from the log is missing
+    exactly its promotions, which are by definition the largest improvements, so
+    comparing configurations biases the ranking toward whichever one promotes
+    least — close to the opposite of what the analysis is looking for. Nothing in
+    the output signals it; the per-arm sample sizes still look plausible.
+
+    Division of labour: these three fields are the CONTRACT for anything a
+    consumer computes on; ``rule_fired`` names which rule actually decided and is
+    PRESENTATION. Its phrasing varies by rule (``insufficient improvement: ...``,
+    ``challenger regressed: ...``, ``pass-rate regression on entries: ...``,
+    ``diff_complexity_ceiling: ...``), so nothing should be regexed out of it —
+    and it is empty whenever the gate promotes, which is why the numbers had to
+    move somewhere structural rather than into the prose.
+
+    Rules 2 and 3 (pass-rate and per-namespace monotonicity) decide on per-entry
+    and per-namespace maps that would not fit an event payload; ``rule_fired``
+    names them when they fire, and the aggregates themselves live in the
+    generations' ``gen_score.json``.
+
+    Additive with ``None`` — NOT ``0.0`` — defaults: a scalar of ``0.0`` is a
+    legal measurement, so a numeric default would make "this log predates the
+    fields" indistinguishable from "both sides scored zero", reintroducing the
+    same ambiguity one layer down. Every pre-existing log decodes with all three
+    ``None`` (:func:`_decode_event` defaults absent keys), following the
+    ``revise: bool = False`` precedent above.
+    """
 
     TYPE: ClassVar[str] = "gate_evaluated"
     rule_fired: str = ""
     decision: str = ""
+    champion_scalar: float | None = None
+    challenger_scalar: float | None = None
+    margin_required: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,6 +325,7 @@ EVENT_TYPES: dict[str, type] = {
         CritiqueSelected,
         ExperimentMinted,
         PatchesApplied,
+        HarnessLoaded,
         ValidationFailed,
         UnitCompleted,
         GateEvaluated,
@@ -266,6 +345,7 @@ RoundEvent = (
     | CritiqueSelected
     | ExperimentMinted
     | PatchesApplied
+    | HarnessLoaded
     | ValidationFailed
     | UnitCompleted
     | GateEvaluated
@@ -486,6 +566,19 @@ class RoundRecord:
     contract_hash: str = ""
     proposal: ProposalSession = field(default_factory=ProposalSession)
     generation_ids: tuple[str, ...] = ()
+    #: Per-generation snapshot-origin provenance folded from the
+    #: ``harness_loaded`` events: ``{generation_id: snapshot-relative
+    #: entrypoint path}``.
+    #: Additive — empty for every log written before the event existed, for
+    #: a non-reporting adapter kind, and for a fully cache-served round.
+    harness_entrypoint_files: dict[str, str] = field(default_factory=dict)
+    #: Per-generation mutable trees NO unit of that generation ever imported,
+    #: folded from the same events: ``{generation_id: (tree_basename, ...)}``.
+    #: A non-empty entry means that generation's mutations to those trees
+    #: cannot have been under test (issue #110's original shape) — the
+    #: loop-health check turns it into a WARNING finding. Additive and
+    #: normally empty.
+    harness_never_imported_trees: dict[str, tuple[str, ...]] = field(default_factory=dict)
     validation_findings: tuple[str, ...] = ()
     units: tuple[UnitCompleted, ...] = ()
     gates: tuple[GateEvaluated, ...] = ()
@@ -524,6 +617,8 @@ def fold_round_record(events: list[RoundLogEnvelope]) -> RoundRecord:
     critique_reason = ""
     experiment_ids: list[str] = []
     generation_ids: list[str] = []
+    entrypoint_files: dict[str, str] = {}
+    never_imported_trees: dict[str, tuple[str, ...]] = {}
     findings: list[str] = []
     units: list[UnitCompleted] = []
     gates: list[GateEvaluated] = []
@@ -559,6 +654,15 @@ def fold_round_record(events: list[RoundLogEnvelope]) -> RoundRecord:
             experiment_ids.append(event.experiment_id)
         elif isinstance(event, PatchesApplied):
             generation_ids.append(event.generation_id)
+        elif isinstance(event, HarnessLoaded):
+            # Last word wins per generation: a re-load inside the same round
+            # (a replicate duel) reports the same file and the same accumulated
+            # tree verdicts, so both maps are stable.
+            entrypoint_files[event.generation_id] = event.entrypoint_file
+            if event.trees_never_imported:
+                never_imported_trees[event.generation_id] = tuple(event.trees_never_imported)
+            else:
+                never_imported_trees.pop(event.generation_id, None)
         elif isinstance(event, ValidationFailed):
             findings.extend(event.findings)
         elif isinstance(event, UnitCompleted):
@@ -591,6 +695,8 @@ def fold_round_record(events: list[RoundLogEnvelope]) -> RoundRecord:
             experiment_ids=tuple(experiment_ids),
         ),
         generation_ids=tuple(generation_ids),
+        harness_entrypoint_files=dict(entrypoint_files),
+        harness_never_imported_trees=dict(never_imported_trees),
         validation_findings=tuple(findings),
         units=tuple(units),
         gates=tuple(gates),
@@ -614,6 +720,7 @@ __all__ = [
     "CritiqueSelected",
     "ExperimentMinted",
     "PatchesApplied",
+    "HarnessLoaded",
     "ValidationFailed",
     "UnitCompleted",
     "GateEvaluated",

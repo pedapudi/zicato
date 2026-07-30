@@ -54,7 +54,7 @@ from zicato.core import BoardEntry, Generation, RuntimeConfig, ScoringWeights
 #:
 #:   * ``0..``           tournament duels (r0 is the canonical ``loss.json``)
 #:   * ``1000``          A/A noise-floor calibration
-#:   * ``2000``          contract pre-flight degraded probe
+#:   * ``2000..2999``    contract pre-flight degraded probes (one per probed point)
 #:   * ``3000`` / ``3001`` candidate screen (+ confirm-before-veto)
 #:   * ``4000``          evidence gate (both-sides-fresh)
 #:   * ``5000``          board reflection (this owner)
@@ -410,10 +410,12 @@ def _is_ingestable_replicate(index: int) -> bool:
 
     EXCLUDED — ``2000..3999``:
 
-      * ``2000`` (``PREFLIGHT_REPLICATE_BASE``) is the contract pre-flight's
-        DELIBERATELY-DEGRADED champion probe, cached under the champion's OWN
-        generation id — folding it in would poison the corpus with a
-        known-bad draw of a mutilated board.
+      * ``2000..2999`` (``PREFLIGHT_REPLICATE_BASE`` + probe ordinal) are the
+        contract pre-flight's DELIBERATELY-DEGRADED champion probes, cached
+        under the champion's OWN generation id — folding one in would poison the
+        corpus with a known-bad draw of a mutilated board. The whole block is
+        excluded, so widening the pre-flight's probe sample (issue #106) can
+        never leak a degraded draw into the corpus.
       * ``3000``/``3001`` (``SCREEN_REPLICATE_BASE``) are candidate-screen
         bases — fast-mode probes, not clean duels; excluded defensively.
 
@@ -438,7 +440,7 @@ def _discover_replicate_losses(run_dir: Path) -> list[tuple[int, Path]]:
     slots the reserved-base ledger vouches for are returned
     (:func:`_is_ingestable_replicate`): r0, the calibration slots at 1000+, the
     evidence slots at 4000+, and any prior reflection draws at 5000+ — never the
-    pre-flight's degraded r2000 probe or the 3000s screen bases.
+    pre-flight's degraded 2000s probes or the 3000s screen bases.
     """
     found: list[tuple[int, Path]] = []
     canonical = run_dir / "loss.json"

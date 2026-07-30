@@ -553,10 +553,29 @@ onto the epoch record and surfaces through the loop-health channel.
 
 - **Noise floor** — K champion A/A draws; scalar SD
   (`tournament/calibration.py`, cache-idempotent with `zicato board audit`).
-- **Achievable signal** — champion vs a deliberately-degraded ephemeral copy
-  of itself; `refuse` when the signal does not clear the noise floor,
-  `saturated` warn when every probe scores identically.
-- **Margin sanity** — `detect_margin_below_noise_floor` (promoting on noise).
+- **Achievable signal** — champion vs deliberately-degraded ephemeral copies of
+  itself over a deterministic, role-diverse SAMPLE of mutation points
+  (`select_probe_points`, issue #106 — one inert point can no longer veto a
+  contract, and probing short-circuits once the verdict is settled so the
+  healthy case still costs one draw); `refuse` when the max signal does not
+  clear the noise floor, `saturated` warn when every probe scores identically,
+  and the distinct `inert` verdict when the probes moved nothing while the A/A
+  draws did vary (the signal is then *unmeasured*, not zero — never a refusal;
+  narrow in practice, since exact equality with the champion mean needs a
+  quantized scoring scale). The `refuse` verdict's health finding is
+  **critical only under `preflight_gate="refuse"`** and a warning otherwise:
+  it re-fires from the persisted record every round, so grading it critical
+  under the default gate would trip the degenerate-health breaker and hard-stop
+  a run the operator asked to let run. A deterministic probe-selection CONFIG
+  error (unknown pinned id, over-wide ceiling) also refuses under the hard gate
+  — best-effort exists for outages, not for typos.
+- **Margin sanity** — `detect_margin_below_noise_floor` (promoting on noise),
+  plus the full `noise < promote_margin < achievable` window
+  (`preflight_window_verdict`, issue #112): `margin_above_achievable` is
+  refuse-worthy because no challenger could ever be promoted, `empty_window`
+  says no margin is defensible at all, and margin *recommendations* scale the
+  draw-count-stable `delta_std` rather than the range that drifts upward as
+  calibration improves (`recommended_promote_margin`).
 - **Dead judge / dead entry / degenerate scoring / flat drift** — the
   loop-health detectors (`detect_dead_judge`,
   `detect_non_differentiating_entry`, `detect_degenerate_scoring`,

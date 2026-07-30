@@ -433,7 +433,18 @@ def check_statistical_power(
     board_entries: list[Any],
     noise_floor: dict[str, Any] | None,
 ) -> PracticeCheck:
-    """A loop whose min detectable Δ exceeds the margin is theater at this power (ch.04 §3)."""
+    """A loop whose min detectable Δ exceeds the margin is theater at this power (ch.04 §3).
+
+    ``k`` comes from the CONTRACT (``params["replicates"]``, falling back to
+    the structure's default), and every path now honours it — including the
+    gauntlet under ``--mode fast``, which used to ignore it outright (issue
+    #109). One caveat the contract cannot express: fast mode replicates the
+    CHALLENGER against a frozen cached champion aggregate, so the contrast
+    keeps one unreplicated side and ``power_analysis``'s two-sample
+    ``sqrt(2/(k·n))`` is optimistic there by roughly ``sqrt((k+1)/2)``. The
+    runtime mode is not a contract field, so this check cannot gate on it;
+    ``--mode full`` is the configuration the formula actually describes.
+    """
     from zicato.reflection.analysis import power_analysis, sigma_from_noise_floor  # noqa: PLC0415
     from zicato.selection.registry import default_replicates_for  # noqa: PLC0415
 
@@ -899,7 +910,10 @@ def check_promotion_hygiene(
     """A promotion on a sub-floor margin with no evidence gate promotes noise (ch.04 §3/§6)."""
     from zicato.health.diagnostics import detect_margin_below_noise_floor  # noqa: PLC0415
     from zicato.selection.evidence_gate import read_promote_confidence_threshold  # noqa: PLC0415
-    from zicato.tournament.calibration import margin_below_floor  # noqa: PLC0415
+    from zicato.tournament.calibration import (  # noqa: PLC0415
+        margin_below_floor,
+        recommended_promote_margin_from_floor,
+    )
 
     rationale = "a promotion on a sub-floor margin with no evidence gate promotes noise (§3/§6)."
     promotions = [e for e in experiments if _tournament_decision(e) == "promoted"]
@@ -938,7 +952,18 @@ def check_promotion_hygiene(
         floor_max = (
             float(noise_floor.get("max_abs_delta", 0.0)) if isinstance(noise_floor, dict) else 0.0
         )
-        recommended = round(MARGIN_FLOOR_MULTIPLE * floor_max, 6)
+        # Scale the draw-count-STABLE dispersion, never the range (ch.04 §9.4):
+        # ``max_abs_delta`` grows in K, so a recommendation scaled off it drifts
+        # upward on an unchanged board as calibration improves — and this
+        # recommendation is APPLIABLE (``set_gate``), so the drift lands in the
+        # contract and can push the margin past the achievable signal. The range
+        # stays the COMPARISON statistic (``margin_below_floor`` above); only
+        # the recommendation moves. Falls back to the range for a record that
+        # carries no usable ``delta_std``.
+        recommended = round(
+            recommended_promote_margin_from_floor(noise_floor) or MARGIN_FLOOR_MULTIPLE * floor_max,
+            6,
+        )
         return PracticeCheck(
             check_id=CHECK_PROMOTION_HYGIENE,
             verdict=VERDICT_UNSOUND,

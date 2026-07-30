@@ -58,7 +58,7 @@ mutable tree:
 python -m zicato.cli init --workspace .zicato
 python -m zicato.cli register --workspace .zicato \
     --adk zicato_examples.target_2_goldfive_steering.agent_under_test:agent \
-    --mutable-tree /home/sunil/git/goldfive-zicato-optimization-surface
+    --mutable-tree /home/sunil/git/goldfive-zicato-optimization-surface/goldfive
 ```
 
 The `--adk` flag points at the tiny `LlmAgent` shipped in this example
@@ -67,6 +67,28 @@ and **clean** entries use `goldfive.testkit.adversarial:LoopingAgent`
 (et al.) and `goldfive.testkit.adversarial:CleanAgent`; those are
 resolved at runtime by `zicato.synthetic.resolve_adversarial_agent` so
 no separate registration is needed.
+
+> **`--mutable-tree` names the PACKAGE, not the repo (issue #110).** A
+> generation snapshot copies each mutable tree under its basename and the
+> loader only prepends the snapshot root to `sys.path`, which resolves
+> TOP-LEVEL module names — so the tree's basename must be the importable
+> package name. Registering the repo root
+> (`.../goldfive-zicato-optimization-surface`) is refused: nothing can import
+> a hyphenated directory name, so the snapshot's mutated copy could never be
+> shown to be the goldfive that ran. Registering
+> `.../goldfive-zicato-optimization-surface/goldfive` — the package directory
+> — is the supported form.
+>
+> The entrypoint stays OUTSIDE the mutable tree, and that is fine: this is the
+> dependency shape (mutate goldfive; drive it from a harness module that
+> imports it). `register` accepts it and prints a NOTICE saying the trees must
+> be imported by the harness at run time. The verification moves to where
+> that truth exists — `load` asserts every registered tree resolves inside the
+> generation snapshot, and after each unit the worker records which trees were
+> actually imported in `generations/{gen}/harness_load.json`. A tree no unit of
+> a generation ever imported raises a WARNING loop-health finding
+> (`tree_never_imported`), which is the one signal that catches "the mutations
+> were never under test".
 
 ## 2. Enumerate the goldfive optimization surface
 

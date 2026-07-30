@@ -247,6 +247,18 @@ def experiment_json_path(workspace_root: Path, epoch_id: str, generation_id: str
     return _layout(workspace_root).experiment(epoch_id, generation_id)
 
 
+def harness_load_path(workspace_root: Path, epoch_id: str, generation_id: str) -> Path:
+    """Path to a generation's ``harness_load.json`` snapshot-origin record.
+
+    The worker writes it after a successful harness load (it is the only
+    process that sees the resolved entrypoint ``__file__``); the
+    orchestrator reads it to emit the round log's ``harness_loaded`` event
+    (issue #110). Readers MUST tolerate absence — see
+    :meth:`zicato.workspace.layout.WorkspaceLayout.harness_load`.
+    """
+    return _layout(workspace_root).harness_load(epoch_id, generation_id)
+
+
 def patches_dir(workspace_root: Path, epoch_id: str, generation_id: str) -> Path:
     """Path to the per-patch JSON directory under a generation.
 
@@ -423,6 +435,7 @@ __all__ = [
     "loss_profile_path",
     "run_result_path",
     "experiment_json_path",
+    "harness_load_path",
     "patches_dir",
     "patch_json_path",
     "mutations_json_path",

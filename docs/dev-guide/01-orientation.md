@@ -416,8 +416,10 @@ champion pointer must agree — checked loudly in
 **replicate** — one repeated evaluation of the same (generation, entry)
 under a distinct cache slot, used to average out noise. The per-duel
 `replicates` knob (structure param; default 2 for gauntlet/elim/swiss,
-1 for racing) averages paired runs before the gate. Replicate indices
-form a **reserved ledger** — see Golden Rule G7.
+1 for racing) averages paired runs before the gate, on EVERY runner
+entry point — including `run_fast_mode`, where only the challenger side
+is drawn again (ch.04 §7.4). Replicate indices form a **reserved
+ledger** — see Golden Rule G7.
 
 **evidence gate / pre-gate** — the opt-in Bradley–Terry confirmation of a
 crowning promote (`promote_confidence_threshold` structure param):
@@ -462,10 +464,11 @@ health finding (gate discrimination is broken). Minted by
 
 **fast mode / `champion_eval_mode`** — `--mode fast` reuses the
 champion's cached per-board scalars instead of re-running the immutable
-champion. The resolved provenance (`"full"` / `"fast"` /
-`"fast-degraded"`) is journaled on the `OutcomeRecord` — it is RUNTIME
-provenance, never a contract input; flipping fast↔full does not roll the
-epoch.
+champion. It is the champion side that is skipped, NOT replication: the
+challenger board still runs `replicates` times and folds. The resolved
+provenance (`"full"` / `"fast"` / `"fast-degraded"`) is journaled on the
+`OutcomeRecord` — it is RUNTIME provenance, never a contract input;
+flipping fast↔full does not roll the epoch.
 
 ### 2.5 The record side
 
@@ -1092,7 +1095,7 @@ The ledger, as documented at its anchor constant:
 |---|---|---|
 | `0..` | real tournament duels | (implicit — duel replicates count up from 0) |
 | `1000` | A/A noise-floor calibration | `CALIBRATION_REPLICATE_BASE` (`src/zicato/tournament/calibration.py`) |
-| `2000` | contract pre-flight degraded draw | `PREFLIGHT_REPLICATE_BASE` (`src/zicato/epoch/preflight.py`) |
+| `2000 + j` | contract pre-flight degraded draw, probe `j` | `PREFLIGHT_REPLICATE_BASE` / `PREFLIGHT_REPLICATE_SPAN` (`src/zicato/epoch/preflight.py`) |
 | `3000` / `3001` | candidate screen / its confirm-before-veto re-run | `SCREEN_REPLICATE_BASE` (`src/zicato/epoch/screen.py`) |
 | `4000` | evidence-gate replicate duels | `EVIDENCE_REPLICATE_BASE` (`src/zicato/selection/evidence_gate.py`) |
 

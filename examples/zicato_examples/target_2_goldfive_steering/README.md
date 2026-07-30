@@ -80,8 +80,18 @@ in a different repo from the entrypoint" path. Use `--mutable-tree`:
 ```
 zicato register \
   --adk zicato_examples.target_2_goldfive_steering.agent_under_test:agent \
-  --mutable-tree /home/sunil/git/goldfive
+  --mutable-tree /home/sunil/git/goldfive/goldfive
 ```
+
+> **The tree is the PACKAGE directory (issue #110).** A snapshot copies each
+> mutable tree under its basename and the loader only prepends the snapshot
+> root to `sys.path`, which resolves TOP-LEVEL module names — so the basename
+> must be the importable package name (`goldfive`, the package inside the
+> repo), not the repo directory. The entrypoint deliberately stays outside the
+> tree: this is the dependency shape, `register` accepts it with a NOTICE, and
+> each tree is verified to have loaded from the generation snapshot per run
+> (load-time resolution assert + the post-run record in
+> `generations/{gen}/harness_load.json`). See RUN.md §1.
 
 The adapter walks the goldfive source tree for `# zicato:mutable`
 annotations (or the equivalent file-level marker) and produces a

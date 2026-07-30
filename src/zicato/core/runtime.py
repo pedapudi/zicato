@@ -51,6 +51,34 @@ PREFLIGHT_GATE_MODES: tuple[str, ...] = ("off", "warn", "refuse")
 #: Default pre-flight gate mode — measure + warn, never block (recommend-only).
 PREFLIGHT_GATE_DEFAULT: str = "warn"
 
+#: Default CEILING on how many mutation points the pre-flight may degrade
+#: (:attr:`RuntimeConfig.preflight_probe_points`). Five is chosen to cover one
+#: point per declared ``role`` on a realistic multi-agent harness (the
+#: presentation target declares five: coordinator routing, system instruction,
+#: tool description, path logic, topic naming), which is the sample the
+#: round-robin selection in :func:`zicato.epoch.preflight.select_probe_points`
+#: draws. It is a ceiling and not a cost: probing stops at the first point
+#: whose signal clears both the noise floor and ``promote_margin``, so a
+#: healthy contract spends exactly ONE degraded draw, exactly as it did before
+#: issue #106 — the extra evidence is bought only where the alternative is
+#: calling a contract unmeasurable on a sample of one.
+PREFLIGHT_PROBE_POINTS_DEFAULT: int = 5
+
+#: CEILING on :attr:`RuntimeConfig.preflight_probe_points`. Probe ``j`` draws at
+#: ``PREFLIGHT_REPLICATE_BASE + j``, so a sample wider than the pre-flight's
+#: reserved replicate block would squat the candidate screen's range (base 3000)
+#: and make ITS cache idempotence a lie — the pre-flight already refuses such a
+#: sample, but only after enumerating the snapshot, whereas a knob validated at
+#: construction fails at the config that set it.
+#:
+#: Mirrors :data:`zicato.epoch.preflight.PREFLIGHT_REPLICATE_SPAN`, which owns
+#: the fact; duplicated as a plain int rather than imported so :mod:`zicato.core`
+#: keeps no dependency on :mod:`zicato.epoch` (and so validating a dataclass
+#: field does not drag the pre-flight's import graph into every worker). The two
+#: are pinned equal by
+#: ``tests/test_preflight_severity_and_config_gate.py``.
+PREFLIGHT_PROBE_POINTS_MAX: int = 1000
+
 
 class RoundTokenLedger:
     """ONE round's mutable token accounting for ``max_tokens_per_round``.
@@ -367,6 +395,37 @@ class RuntimeConfig:
         and skipped entirely on any infra abort (an outage never disqualifies a
         contract), but on a real endpoint it is real budget counted against
         round 0.
+    preflight_probe_points:
+        CEILING on how many mutation points the pre-flight may degrade to
+        measure achievable signal (issue #106). Defaults to
+        :data:`PREFLIGHT_PROBE_POINTS_DEFAULT`; must be ``>= 1`` (``1``
+        reproduces the single-probe behaviour that made one inert point able
+        to veto a whole contract) and ``<=``
+        :data:`PREFLIGHT_PROBE_POINTS_MAX` (the pre-flight's reserved
+        replicate block cannot hold a wider sample). The pre-flight degrades
+        a deterministic, role-diverse sample of this size
+        (:func:`zicato.epoch.preflight.select_probe_points`) and reports the
+        MAX signal, so one point that happens not to reach the deliverable can
+        no longer produce a spurious ``refuse``. COST: a ceiling, not a spend
+        — probing stops at the first point clearing both the noise floor and
+        ``promote_margin``, so the healthy case is one degraded draw and the
+        extra evaluations are paid only on a contract that looks unmeasurable.
+        A RUNTIME tuning knob, NOT part of the frozen evaluation contract —
+        changing it does not roll the epoch.
+    preflight_probe_mutation_ids:
+        Explicit pre-flight probe selection: the mutation-point ids to degrade,
+        in order, INSTEAD of the automatic sample (``()`` — the default — means
+        sample automatically). Use it when the operator knows which point
+        carries the contract's signal, e.g. a coordinator instruction that
+        every run exercises. Ignores :attr:`preflight_probe_points` (naming the
+        points answers the selection question) and probes named points even
+        when their degradation is a no-op, so a pin measures exactly what was
+        asked. An id that does not enumerate under the champion snapshot fails
+        the measurement loudly rather than silently falling back to the
+        automatic sample, which would report a verdict measured on points the
+        operator did not choose. ``zicato board preflight
+        --degrade-mutation-id`` is the one-shot equivalent. A RUNTIME tuning
+        knob, NOT part of the frozen evaluation contract.
     max_tokens_per_round:
         Per-round token budget (WS-H). ``0`` (the DEFAULT) is OFF —
         byte-identical scheduling. When ``>= 1``, the orchestrator mints
@@ -461,6 +520,8 @@ class RuntimeConfig:
     infra_backoff_cap_s: float = INFRA_BACKOFF_CAP_S_DEFAULT
     max_tokens_per_round: int = 0
     preflight_gate: str = PREFLIGHT_GATE_DEFAULT
+    preflight_probe_points: int = PREFLIGHT_PROBE_POINTS_DEFAULT
+    preflight_probe_mutation_ids: tuple[str, ...] = ()
     token_ledger: RoundTokenLedger | None = None
     #: The ADK model object (a ``BaseLlm``, typically a ``LiteLlm``) the inner
     #: ADK agents run on, built from a ``models.harness`` *model spec* (model +
@@ -524,6 +585,20 @@ class RuntimeConfig:
             raise ValueError(
                 f"RuntimeConfig.preflight_gate must be one of {PREFLIGHT_GATE_MODES}, "
                 f"got {self.preflight_gate!r}"
+            )
+        if self.preflight_probe_points < 1:
+            raise ValueError(
+                "RuntimeConfig.preflight_probe_points must be >= 1, got "
+                f"{self.preflight_probe_points!r}; use 1 to probe a single "
+                "mutation point (the pre-#106 behaviour)"
+            )
+        if self.preflight_probe_points > PREFLIGHT_PROBE_POINTS_MAX:
+            raise ValueError(
+                "RuntimeConfig.preflight_probe_points must be <= "
+                f"{PREFLIGHT_PROBE_POINTS_MAX} (the width of the pre-flight's "
+                "reserved replicate block), got "
+                f"{self.preflight_probe_points!r}; a wider sample would draw "
+                "into the candidate screen's replicate range"
             )
 
     def effective_judge_call_llm(self) -> CallLLM:
