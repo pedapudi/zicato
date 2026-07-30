@@ -1,6 +1,6 @@
 ---
 name: zicato-manage-epochs-and-rounds
-description: The mental model + operations for zicato's epoch/round/generation hierarchy — what an epoch is (a sealed evaluation CONTRACT), how contract-hash auto-epoching rolls epochs, the TWO senses of "round" (outer evolve round vs a tournament's inner rounds), champion/challenger vs parent/child, champion_eval_mode (full/fast/fast-degraded), the mandatory pre-run hypothesis, and the advanced `zicato epoch` escape hatches (list/new/close/switch/set-goal). Use this when an operator is confused about epoch boundaries, "rounds", lineage attribution, or wants to force an epoch by hand.
+description: The mental model + operations for zicato's epoch/round/generation hierarchy — what an epoch is (a sealed evaluation CONTRACT), how contract-hash auto-epoching rolls epochs, the TWO senses of "round" (outer evolve round vs a tournament's inner rounds), champion/challenger vs parent/child, champion_eval_mode (full/fast/fast-degraded), the mandatory pre-run hypothesis, and the advanced `zicato epoch` escape hatches (list/new/close/switch/set-goal/gc). Use this when an operator is confused about epoch boundaries, "rounds", lineage attribution, or wants to force an epoch by hand.
 ---
 
 # zicato — epochs and rounds
@@ -51,7 +51,7 @@ When someone says "round", disambiguate FIRST. They mean one of two things:
 | What it is | One meta-loop step (`--rounds N`) | One scheduling step *inside* a single tournament |
 | Count | One tournament per outer round | Many, only for non-gauntlet structures |
 | Examples | round 0, round 1, … | swiss rounds, single/double-elim **bracket** rounds, racing **rungs** |
-| Code | `for round_idx in range(rounds)` in `orchestrator.evolve_n_rounds` | `Matchup.round_index` / `Round.round_index` in `zicato/selection/` |
+| Code | the round loop in `zicato/evolve/loop.py::evolve_n_rounds` | `Matchup.stage_index` / `RoundRecord` in `zicato/selection/strategy.py` (the field was once *also* called `round_index`, which is exactly why this table exists; readers still accept the legacy key) |
 | Stamped where | `Generation.round_index` / `Experiment.round_index` (§3) | the selection strategy's bracket state + the settled `tournaments` index row |
 
 - A **gauntlet** (the default) tournament has exactly one inner round: champion
@@ -176,7 +176,10 @@ sample freshness + cost.
   champion was **NOT executed** this round. `--mode fast` (the default) is
   cache-first: every `(generation, entry, replicate)` board unit is evaluated
   at most once and reused across pairings/rounds/structures; only cache misses
-  run.
+  run. The contract's `replicates` still applies to the CHALLENGER side (2 by
+  default on the gauntlet), so the round contrasts a replicated challenger
+  against one frozen champion aggregate — the noise reduction is one-sided, and
+  repeated rounds are not independent draws of the contrast.
 - **`fast-degraded`** — fast was requested but **no cache** covered the needed
   boards (the seed/first champion, or a not-yet-covered subset), so the
   champion ran live **once** to seed the cache.
@@ -212,11 +215,35 @@ rejected and re-prompted.
   `skills/zicato-design-experiment` and `skills/zicato-write-brief`; to read the
   ledger after, see `skills/zicato-analyze-epoch`.
 
+### The per-round event log (the round's store-of-record)
+
+Alongside the journal, every settled round writes an append-only typed event
+log at `epochs/{epoch}/rounds/{round}/round_log.jsonl`, sequenced (`seq` starts
+at 1, +1 per append) and durable under `epochs/` rather than `runtime/`. It
+covers the round's whole arc — open (contract hash) → proposal session → apply /
+validate → harness-load provenance → tournament units → gate / holdout /
+evidence → decision → close — and folds to a typed `RoundRecord`. Read it when
+"why did this round decide that?" needs more than the outcome record. Two
+fields worth knowing:
+
+- **`gate_evaluated`** carries `champion_scalar` / `challenger_scalar` /
+  `margin_required` on **both** decisions, so a duel's effect size is
+  reconstructable from the log alone. They default to `None` (not `0.0`) on logs
+  that predate them. `rule_fired` is presentation — it names which rule decided
+  and is *empty on a clean promote*; never regex numbers out of it.
+- **`harness_loaded`** records which module inside a generation's snapshot was
+  actually imported (`harness_entrypoint_files`) and which declared mutable trees
+  **no** unit imported (`harness_never_imported_trees`). A non-empty entry there
+  means that generation's mutations to those trees could not have been under
+  test — loop health turns it into a warning. Both are additive and normally
+  empty (also empty for a fully cache-served round).
+
 ## 7. Operations — the advanced `zicato epoch` subcommands
 
 `zicato evolve` opens / closes / rolls epochs on its own. The `zicato epoch`
-group is **off the happy path** — for inspection, or to force an epoch boundary
-by hand. Confirmed via `--help` (do **not** trust `docs/design/CLI.md`):
+group is **off the happy path** — for inspection, to force an epoch boundary by
+hand, or to reclaim disk. Confirmed via `--help`, which is always canonical
+(`docs/design/CLI.md` is generated from it and says so):
 
 ```sh
 .venv/bin/zicato epoch --help        # group overview
@@ -226,6 +253,8 @@ by hand. Confirmed via `--help` (do **not** trust `docs/design/CLI.md`):
 .venv/bin/zicato epoch close [EPOCH_ID] --workspace .zicato
 .venv/bin/zicato epoch switch EPOCH_ID  --workspace .zicato
 .venv/bin/zicato epoch set-goal --epoch EPOCH_ID --goal "..." --workspace .zicato
+.venv/bin/zicato epoch gc [EPOCH_ID] --workspace .zicato \
+                                 (--keep-last N | --keep-promoted-only) [--apply]
 ```
 
 - **`list`** — every epoch as a markdown table (rendered from `lineage.json`:
@@ -243,6 +272,13 @@ by hand. Confirmed via `--help` (do **not** trust `docs/design/CLI.md`):
   closed epoch is frozen — read-only. See `skills/zicato-analyze-epoch`.
 - **`switch EPOCH_ID`** — re-point the `current_epoch` marker (target must
   exist).
+- **`gc [EPOCH_ID]`** — reclaim the disk held by settled-**rejected**
+  generations' SOURCE TREES. Records survive: `lineage.json`, the journal,
+  experiment/score records, and run telemetry are never touched, so a pruned
+  generation stays fully analysable and only loses its browsable tree. The
+  promoted chain, in-flight generations, and the seed `v0` are never pruned.
+  Pick exactly one of `--keep-last N` / `--keep-promoted-only`; **dry-run by
+  default** — pass `--apply` to actually prune.
 - **`set-goal --epoch … --goal …`** — fill in (or overwrite) an epoch's goal.
   The intended use is the auto-roll case: a mid-`evolve` roll has no chance to
   prompt, so the new epoch lands with an empty goal + a warning recommending
@@ -284,7 +320,8 @@ challenger's snapshot provenance.
 - Do **not** launch a live `evolve` to demonstrate a roll — that spends budget
   and trips the live-run gate. Verify wiring with the test suite / the
   deterministic mock target (`skills/zicato-bootstrap`).
-- Derive the CLI from `--help`, never from `docs/design/CLI.md` (stale).
+- Derive the CLI from `--help` — it is canonical; `docs/design/CLI.md` is a
+  generated mirror, so trust `--help` whenever the two disagree.
 - A closed epoch is frozen / read-only; never re-open or re-run one.
 - An auto-rolled epoch has an empty goal until you run `epoch set-goal`.
 
