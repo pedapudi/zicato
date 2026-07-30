@@ -23,27 +23,57 @@ exists so that never depends on a human noticing a suspicious number again.
 .venv/bin/zicato health --epoch <epoch_id>       # target a non-current epoch
 ```
 
-Real flags only: `zicato health` exposes `--workspace` and `--epoch`. (The
-design doc shows `--round` / `--format json`; those are **not** in the
-shipped `--help` — do not pass them. If you need the raw report, read
-`.zicato/epochs/{epoch}/loop_health/round_{NNN}.json` directly.)
+Real flags only: `zicato health` exposes `--workspace` and `--epoch`. (There
+is no `--round` / `--format json` — the design doc now documents their
+absence too. If you need the raw report, read
+`.zicato/epochs/{epoch}/health/round_{N}.json` directly.)
 
-It prints one block per firing detector — `[severity] detector_name`, a
-one-sentence summary, and a `→ remedy`. With no findings the loop has signal.
+It prints one line per firing detector — `[SEVERITY] detector_code:` a
+one-sentence summary, then its `detail` keys (including a `recommendation`).
+With no findings the loop has signal.
 
-## The five detectors
+## The detectors the CLI runs
 
-| Detector | What it catches | `info` | `warning` | `critical` |
-|---|---|---|---|---|
-| `degenerate_scoring` | parent and candidate produce identical/near-identical gen scores round after round — scoring isn't distinguishing them | one round of tied scores (`|Δscore| < 1e-6`) | — | N consecutive degenerate rounds (default 3), **or** one shared-constant score across the whole lineage (the §1 fingerprint) |
-| `non_differentiating_entries` | board entries that always return the same `drift_loss` + `pass_fail` for every generation — dead weight that can't move a tournament | — | a minority of entries are dead weight | the **majority** of entries are dead weight |
-| `flat_drift_signal` | drift telemetry — zicato's primary loss signal — not moving across the epoch | — | drift low-but-nonzero and static | drift **identically zero** across the whole epoch (suggests goldfive telemetry isn't reaching the reducer) |
-| `no_expectations` | no board entry carries an expectation, so `pass_fail` is `None` everywhere and scoring runs on drift loss alone | always `info` — drift-loss-only is a supported mode, this is a reminder, not an alarm | — | — |
-| `stalled_loop` | no promotions for K rounds **AND** another detector firing — structural reason the loop *cannot* promote | — | — | the conjunction fires |
+Thresholds come from the workspace `config.json`'s `health` block
+(`HealthConfig`, `config.py`); defaults in parentheses.
 
-`stalled_loop` is the bridge to the L5 circuit breaker: "no promotions for K
-rounds" alone is L5's job (the proposer just isn't winning); loop-health
-fires only when there's *also* a degenerate-eval reason.
+| Detector | Severity | Fires when |
+|---|---|---|
+| `degenerate_scoring` | `critical` | every one of the last `scoring_window` (3) evaluated tournaments had `abs(scalar_score_delta)` at or below `scoring_epsilon` (1e-6) — the loop is spinning on a flat loss surface |
+| `non_differentiating_entry` | `warning`, one per entry | a board entry ran under ≥2 generations and produced an *identical* `drift_loss` every time — a dead test |
+| `flat_drift_signal` | `warning` | zero `drift:`-namespace metric counts across every run in the epoch — the drift half of the loss is inert (goldfive drift detection likely unwired) |
+| `no_expectations` | `info` | more than `no_expectations_fraction` (0.5) of board entries carry no expectation — the pass/fail half is mostly absent |
+| `dead_judge` | `warning` | a board-declared judge's `custom:<name>` drift never appears in ANY run of the epoch — 0-fire dead weight, not coverage |
+| `stalled_loop` | `warning` | `stalled_rejects` (3) consecutive generations were `rejected` — the proposer isn't finding improvements; the L5 breaker is about to or has fired |
+| `generalization_gap` | `warning` / `critical` | the champion's `holdout_loss - train_loss` **widened** since the first measured generation AND reached `generalization_gap_warn` (0.05) / `_crit` (0.15) — board memorization; critical recommends rolling the epoch |
+| `refresh_cadence` | `info` | evaluated generations reached `overfitting.max_generations_per_contract` (unset by default) — the contract has been mined enough |
+| `placebo_promoted` | `critical` | a random-baseline placebo challenger was **promoted** — a no-op won a tournament, so gate discrimination is broken and recent wins are suspect |
+
+The placebo arm is split out of the optimization stream before the other
+detectors run, so an always-rejected control never reads as a stall or a
+flat-scoring window.
+
+## Findings only the per-round report carries
+
+`assess_loop_health` takes more inputs than the CLI threads. These fire only
+in the orchestrator's per-round assessment (`epochs/{epoch}/health/round_{N}.json`)
+— running `zicato health` will never print them:
+
+| Detector | Severity | Fires when |
+|---|---|---|
+| `margin_below_noise_floor` | `info` gate ON / `warning` gate OFF | `promote_margin` sits inside the measured A/A noise floor |
+| `preflight_signal_below_floor` | `critical` **only** under `runtime.preflight_gate="refuse"`, else `warning` | pre-flight verdict `refuse` — achievable signal at/below the noise floor. Gate-aware on purpose: this re-fires from the persisted record every round, and two criticals in a row would stop a run the operator explicitly set to `"warn"` |
+| `preflight_inert_probe` | `warning` | every probed mutation point left the scalar exactly at the champion mean while the A/A draws varied — the achievable signal is UNMEASURED, not zero |
+| `preflight_saturated_contract` | `warning` | pre-flight verdict `warn` — zero spread across every probe including a deliberately-degraded tree (the `1.000000` signature) |
+| `preflight_margin_above_achievable` | `warning` | `promote_margin` ≥ measured achievable signal. Warning, not critical: the probe degrades ONE point, so its signal is a lower bound a compound/recombined patch can exceed |
+| `preflight_margin_below_floor` | `warning` | the margin window's lower bound fails — margin inside the floor |
+| `tree_never_imported` | `warning`, one per (generation, tree) | no unit of a generation ever imported a mutable tree, so **mutations to it cannot have been under test** — the board scored code the loop never changed. Read `generations/<gen>/harness_load.json` |
+| `infra_outage` | `warning` | the round deferred on `runtime.infra_abort_round_threshold` — the endpoint, not the loop, is failing |
+| `round_token_clipped` | `warning` | `runtime.max_tokens_per_round` clipped the round; the verdict rests on partial coverage |
+
+`detect_noisy_judge` (`warning` per judge whose test–retest disagreement
+exceeds 0.25) is not part of `assess_loop_health` at all — it is reached via
+`zicato board judges --test-retest` and the reflection analysis.
 
 ## Severities and exit codes
 
@@ -53,11 +83,11 @@ fires only when there's *also* a degenerate-eval reason.
 
 | Exit code | When |
 |---|---|
-| `0` | report produced; `overall` is `ok` / `info` / **`warning`** — only `critical` exits non-zero |
-| `1` | a **`critical`** finding is present (`raise SystemExit(1)`, `health.py:241`) — the "do not trust the lineage" signal |
+| `0` | report produced; the worst finding is `info` or **`warning`** (or there are none) — only `critical` exits non-zero |
+| `1` | a **`critical`** finding is present (`raise SystemExit(1)`, `cli/commands/health.py:268`) — the "do not trust the lineage" signal |
 | `1` | usage / configuration error too (no active epoch, unreadable board) — these raise `click.ClickException`, which also exits `1` |
 
-**The `9` in the design docs is aspirational, not implemented.** The shipped
+**There is no distinct "degenerate" exit code.** The shipped
 CLI exits `1` on a critical finding (and `1` on a config error), so you cannot
 distinguish "degenerate" from "bad usage" on the code alone — read the printed
 report. A CI wrapper branches on non-zero plus the report text:
@@ -69,20 +99,26 @@ if [ "$rc" -ne 0 ]; then echo "health critical or usage error — read the repor
 
 Note: a `warning`-only report exits `0` — health only fails the process on
 `critical`. For a programmatic warning/critical distinction, read the raw
-`.zicato/epochs/{epoch}/loop_health/round_{NNN}.json` report's `overall` field.
+`.zicato/epochs/{epoch}/health/round_{N}.json` report: `healthy` is `false`
+for any warning or critical, `has_critical` isolates the criticals. (Or
+`GET /api/health-report`, which serves the latest round report.)
 
 ## Prescribe the fix for a toothless loop
 
-Each finding carries its own `remedy`; the contract-level fixes:
+Each finding carries its own `recommendation` in its `detail`; the
+contract-level fixes:
 
-- **`degenerate_scoring` / `non_differentiating_entries`** → inspect
+- **`degenerate_scoring` / `non_differentiating_entry`** → inspect
   `scoring.json` weights and the per-entry `loss.json` files; the board
   cannot drive a tournament when every entry scores identically. Replace the
   dead-weight entries with tasks that provoke *variable* behaviour, or check
   the adapter is actually running distinct generations.
-- **`flat_drift_signal` (critical/zero)** → drift detection is likely not
+- **`flat_drift_signal`** → drift detection is likely not
   wired; verify goldfive's event stream reaches the reducer (see
   [zicato-read-telemetry](../zicato-read-telemetry/SKILL.md)).
+- **`tree_never_imported`** → the strongest finding in the set: it says the
+  mutations were not under test at all. Check the harness entrypoint imports
+  the mutable tree rather than an installed copy under another top-level name.
 - **`no_expectations`** → if pass/fail ground truth was intended, attach
   expectations to board entries (BOARD-FORMAT). Drift-loss-only is valid but
   is only half the signal — and silent degeneracy is far more likely with
@@ -91,30 +127,39 @@ Each finding carries its own `remedy`; the contract-level fixes:
 ## `evolve` stops itself on a degenerate loop (on by default)
 
 For unattended runs you do not need a flag: `zicato evolve` **stops itself**
-the first time it sees a `critical` health finding whose cause is *sustained*
-degeneracy, so a degenerate epoch doesn't burn the rest of the budget. This is
-the orchestrator's `stop_on_degenerate_health` behaviour, **on by default**
-(`orchestrator.py:2982`); the loop halts cleanly — state fully written — and the
-terminal round records `stop_reason == "degenerate_health"` (`evolve.py:775`).
+after `_DEGENERATE_HEALTH_STOP_THRESHOLD` (2) *consecutive* rounds whose
+health assessment carried a `critical` finding, so a degenerate epoch doesn't
+burn the rest of the budget. This is `DegenerateHealthPolicy`
+(`evolve/loop.py:295`), enabled by the `stop_on_degenerate_health` argument,
+**true by default** (`evolve/loop.py:375`); a non-critical round resets the
+streak. The loop halts cleanly — state fully written — and the terminal round
+records `stop_reason == "degenerate_health"` (`cli/commands/evolve.py:1001`).
 
-A single tied round or a mere `no_expectations` notice does **not** stop the
-loop — only provably-wasted compute does (the N-consecutive / shared-constant
-trigger, or a majority-non-differentiating board). There is **no
-`--stop-on-degenerate` CLI flag** — it is not opt-in, it is the default
-behaviour; the opt-out lives at the API level (`stop_on_degenerate_health=False`
-on `evolve_n_rounds`), not on the CLI. Confirm the flag surface against
-`zicato evolve --help` (the design docs drift). Per project policy, never start
-a live `evolve` yourself — verify via the test suite (`test_orchestrator_health.py`)
-and the on-disk report files.
+Only `critical` findings advance the streak, so warnings — including every
+`preflight_*` finding under the default `preflight_gate="warn"`, every
+`tree_never_imported`, and a `stalled_loop` — are loud but structurally
+unable to stop the loop. There is **no `--stop-on-degenerate` CLI flag** — it
+is not opt-in, it is the default behaviour; the opt-out lives at the API level
+(`stop_on_degenerate_health=False` on `evolve_n_rounds`), not on the CLI.
+Confirm the flag surface against `zicato evolve --help` (the design docs
+drift). Per project policy, never start a live `evolve` yourself — verify via
+the test suite (`test_orchestrator_health.py`) and the on-disk report files.
 
-Critical findings also fire a bannered orchestrator warning to stderr and a
-`loop_health_critical` SSE event that turns the dashboard's loop-health panel
-red — see [zicato-watch-dashboard](../zicato-watch-dashboard/SKILL.md).
+Critical findings also fire a bannered `LOOP HEALTH CRITICAL` orchestrator
+warning to stderr; `dead_judge` and `tree_never_imported` get their own
+terminal warnings even though they are only warnings, because from the
+terminal they are indistinguishable from an honest null result. The
+dashboard's loop-health panel reads `/api/health-report` (the latest round
+report) — see [zicato-watch-dashboard](../zicato-watch-dashboard/SKILL.md).
 
 ## Guardrails
 
-- Cite only flags present in real `--help`. `--round` / `--format` are
-  doc-only (not on `zicato health`); there is no `--stop-on-degenerate` evolve
-  flag — degenerate-stop is on by default, not a flag.
+- Cite only flags present in real `--help`. `zicato health` has no `--round` /
+  `--format`; there is no `--stop-on-degenerate` evolve flag — degenerate-stop
+  is on by default, not a flag.
+- Don't promise the operator a finding `zicato health` cannot print: the CLI
+  threads only board/loss/experiment inputs, so every `preflight_*`,
+  `margin_below_noise_floor`, `tree_never_imported`, `infra_outage` and
+  `round_token_clipped` finding lives in the per-round report only.
 - Never launch a live `evolve` to test health — read the on-disk
-  `loop_health/round_{NNN}.json` reports instead.
+  `epochs/{epoch}/health/round_{N}.json` reports instead.

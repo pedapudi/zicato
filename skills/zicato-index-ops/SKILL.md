@@ -33,20 +33,16 @@ $Z reindex --workspace path/to/.zicato
 $Z reindex-generations
 ```
 
-> Divergence from the docs: `docs/design/CLI.md` §3.x describes
-> `zicato reindex [--epoch <id>] [--verify]`. **Those flags are not in the
-> shipped CLI** — the real `reindex` takes only `--workspace`. There is no
-> `--verify` integrity check and no per-epoch reindex today; treat them as
-> planned. To check for drift, rebuild and diff (see below), or open the DB
-> read-only and sanity-check counts against the files. Verify with
-> `.venv/bin/zicato reindex --help` before scripting either flag.
+> Both commands take **only** `--workspace`. There is no `--verify` integrity
+> check and no per-epoch reindex; a rebuild is always whole-workspace. Verify
+> with `.venv/bin/zicato reindex --help` before scripting a flag.
 
-A cheap stand-in for the documented `--verify`: copy the workspace, reindex the
-copy, and `diff` the two `index.db` files (binary) or compare row counts from
-the SQL below against a `find … | wc -l` of the canonical files. Exit-1-on-drift
-behaviour does not exist yet.
+A cheap stand-in for a `--verify`: copy the workspace, reindex the copy, and
+`diff` the two `index.db` files (binary) or compare row counts from the SQL
+below against a `find … | wc -l` of the canonical files. Exit-1-on-drift
+behaviour does not exist.
 
-## Schema (`src/zicato/index/schema.py`, SCHEMA_VERSION 8)
+## Schema (`src/zicato/index/schema.py`, SCHEMA_VERSION 12)
 
 `PRAGMA user_version` is authoritative; a mismatch means run `zicato reindex`.
 (The version number rises as columns are added — read `SCHEMA_VERSION` in
@@ -55,7 +51,15 @@ behaviour does not exist yet.
 - **epochs** — `epoch_id` (PK), `contract_hash`, `created_at`, `closed`,
   `goal`, `parent_epoch_id`.
 - **generations** — (`epoch_id`,`generation_id`) PK, `parent_generation_id`,
-  `promoted`, `created_at`.
+  `promoted`, `created_at`, `round_index`, plus the rating columns `elo`,
+  `elo_se`, `elo_games`. The ratings come from a **batch Bradley-Terry /
+  Plackett-Luce fit** folded in at the END of a rebuild, over the whole
+  `tournaments` match ledger — order-independent, so any re-derivation reproduces
+  identical ratings. `elo_games` counts the observations a generation appeared in
+  (a racing rung counts once per survivor and per cut arm), and a generation that
+  appeared in none has NULL `elo`/`elo_se` rather than a carried-forward number.
+  Ratings are visibility only, never gate inputs, and the fold is best-effort —
+  a fold failure leaves the canonical rows intact with the rating columns unset.
 - **experiments** — (`epoch_id`,`generation_id`) PK, `hypothesis_core_idea`,
   `hypothesis_why`, `hypothesis_json`, `tournament_decision`,
   `rejection_reason`, `scalar_score_delta`, `drift_loss_delta`,
@@ -63,13 +67,22 @@ behaviour does not exist yet.
 - **patches** — `patch_id` (PK), `epoch_id`, `generation_id`, `mutation_id`,
   `op`, `rationale`.
 - **runs** — `run_id` (PK), `epoch_id`, `generation_id`, `entry_id`,
-  `started_at`, `ended_at`, `aborted`, `runtime_ms`, `tournament_id`.
+  `started_at`, `ended_at`, `aborted`, `runtime_ms`, `tournament_id`,
+  `match_id`. (`started_at`/`ended_at` are empty — `loss.json` carries only the
+  duration, so `runtime_ms` is the authoritative timing field.)
 - **loss_profiles** — `run_id` (PK), `epoch_id`, `generation_id`, `entry_id`,
   `drift_loss`, `pass_fail`, `runtime_ms`, `wall_clock_budget_exceeded`,
   `loss_json`, `tournament_id`, `match_id`, `cached`, `source_epoch`,
-  `source_run`. (The continuous per-entry `score` / `metrics` stay inside
-  `loss_json` — they are not promoted to columns; read them via
+  `source_run`, `abort_cause`. (The continuous per-entry `score` / `metrics` stay
+  inside `loss_json` — they are not promoted to columns; read them via
   `json_extract(loss_json, '$.score')` / `'$.metrics'`.)
+  **Replicates are not here.** Ingest reads each run directory's canonical
+  `loss.json` only, so there is one row per `(generation, entry)`; a replicate's
+  sibling `loss.r<N>.json` is never ingested. `tournament_id`/`match_id` upsert under
+  `COALESCE(excluded, existing)`, so a re-ingest that resolves a tag overwrites
+  (last non-NULL wins) and one that cannot resolve leaves the old value intact —
+  an entry replayed across several matchups ends up tagged with the last one.
+  Per-replicate and per-matchup detail lives in the workspace files.
 - **metric_counts** — `run_id`, `namespace`, `name`, `severity`, `count`.
 - **tournaments** — `tournament_id` (PK), `epoch_id`, `parent_generation_id`,
   `child_generation_id`, `decision`, `parent_scalar`, `child_scalar`,
@@ -79,6 +92,14 @@ behaviour does not exist yet.
   `champion_run_ref`.
 - **judge_losses** — (`run_id`,`judge_name`) PK, `weighted_loss`, `raw_loss`,
   `weight`.
+- **reflections** — `reflection_id` (PK), `epoch_id`, `created_at`, `mode`,
+  `executed`, `noise_floor_max_abs_delta`, `decision_flip_p`, `n_findings`,
+  `n_judges`, `verdict_counts_json`.
+- **judge_scorecards** — (`reflection_id`,`judge_name`) PK, the confusion counts
+  `tp`/`fp`/`fn`/`tn`/`ambiguous`, `precision`, `recall`, `f1`,
+  `severity_accuracy`, `disagreement_rate`, `kappa`, `exercised`,
+  `redundant_with_json`. Both tables are written by `zicato reflect run` (board
+  reflection), not by the evolve loop — empty in a workspace that never reflected.
 
 ## Read-only queries
 

@@ -5,12 +5,31 @@ description: Trace a zicato run through its telemetry — the canonical per-run 
 
 # Read zicato telemetry
 
-zicato **consumes** telemetry, it does not invent a wire format. Every run of
-the inner harness emits a goldfive `goldfive.v1.Event` stream, captured
-verbatim via goldfive's `JSONLPersistenceSink`, then reduced post-run into a
-typed `LossProfile`. **The JSONL file is canonical; the `LossProfile`
-(`loss.json`) is the surface every other component reads.** Full spec:
+zicato **consumes** telemetry, it does not invent a wire format. A run emits a
+JSONL stream, which is reduced post-run into a typed `LossProfile`. **The JSONL
+file is canonical; the `LossProfile` (`loss.json`) is the surface every other
+component reads.** Full spec:
 [../../docs/design/TELEMETRY.md](../../docs/design/TELEMETRY.md).
+
+**Which producer read that JSONL is a contract knob.** `LossProfile` is the
+convergence point and a *dialect* is a named producer feeding it, chosen by
+`scoring.json`'s `telemetry_dialect`
+([TELEMETRY-DIALECTS.md](../../docs/design/TELEMETRY-DIALECTS.md)):
+
+- **`goldfive`** (the DEFAULT, and everything below describes it) — a
+  drift-instrumented `goldfive.v1.Event` stream captured verbatim via goldfive's
+  `JSONLPersistenceSink`. The only dialect that produces drift kinds and plan
+  revisions.
+- **`adk_events`** / **`transcript`** — tolerant readers for a harness that does
+  NOT run under the drift-instrumented ecosystem harness. goldfive is no longer
+  required. Under `transcript` the drift knobs (`drift_weight`,
+  `plan_revision_weight`, `per_kind_weights`, `drift_reducer`) are **inert** —
+  zicato warns rather than failing, because no drift kinds are produced.
+
+Everything downstream of the reducer (scoring, the gate, the index, board
+reflection) reads `LossProfile` and never knows which dialect produced it. The
+knob is omitted from the contract hash at its `goldfive` default; setting it to
+anything else rolls the epoch.
 
 ## The two canonical per-run files
 
@@ -97,6 +116,24 @@ that's the `flat_drift_signal` critical in
 (re)generate an insight after the fact. Real flags: `--workspace`,
 `--epoch`, `--round`.
 
+## The third stream: one structured log per invocation
+
+Distinct from run telemetry, each `evolve` / `reflect run` invocation writes
+`.zicato/logs/<utc-stamp>-<pid>.jsonl` — every `zicato.*` log record, structured,
+with the `epoch_id` / `generation_id` / `run_id` context bound in. Worker
+subprocesses append to the SAME file, so a parallel round's records land in one
+stream. At most 20 streams are retained, oldest pruned first.
+
+```sh
+.venv/bin/zicato logs --workspace .zicato --list             # streams, newest first
+.venv/bin/zicato logs --workspace .zicato --follow           # tail the latest
+.venv/bin/zicato logs --workspace .zicato --invocation <stamp>-<pid> --level WARNING
+```
+
+Capture floor is INFO (override with `ZICATO_LOG_LEVEL`); `--level` re-filters on
+read. **Logs are observability only** — nothing in scoring / gate / journal reads
+them back, so they explain a run but never define it.
+
 ## One harmonograf server, many sessions
 
 There is exactly **one** harmonograf server for an evolve invocation (zicato
@@ -126,9 +163,11 @@ blocks or breaks the evolve loop.
 ### Following a run into harmonograf
 
 From the dashboard, each L4 run drill-down renders an **Open in harmonograf**
-link with exactly the `/#/session/<adk_session_id>` href above (the dashboard
-only renders it when both `harmonograf_url` and the run's `adk_session_id`
-are known). The `adk_session_id` comes off the run's events
+link with exactly the `/#/session/<adk_session_id>` href above — but only while a
+run is **LIVE**. zicato's auto-launched harmonograf dies with the run while the
+heartbeat's `harmonograf_url` lingers, so a link built from a known URL alone
+would point at a dead port; the builders return nothing unless an active
+tournament or active run says otherwise. The `adk_session_id` comes off the run's events
 (`session_id` / `sessionId`) and is carried on its `loss.json`. To go from a
 run directory to its harmonograf view: read `adk_session_id` from the run,
 then open `<harmonograf_url>/#/session/<that_id>`. See

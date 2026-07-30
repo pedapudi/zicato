@@ -1,6 +1,6 @@
 ---
 name: zicato-watch-dashboard
-description: Open and read zicato's live "Console" dashboard during (or after) an evolve run — navigate the view hierarchy Environment → Epoch → Generations/round Match-ups → Boards → Mutation surface → Publication, read the configured tournament structure's match-up figure (racing survival funnel / swiss ladder / elim flow / gauntlet Δ-lanes), tell whether the loop improved, and narrate what is running. Screenshot it with browser-use. Use whenever you need to observe an in-flight or post-mortem epoch.
+description: Open and read zicato's live "Console" dashboard during (or after) an evolve run — navigate the view hierarchy Environment → Epoch → Generations/round Match-ups → Boards → Evals → Mutation surface → Instrument/Traces → Publication, read the configured tournament structure's match-up figure (racing survival funnel / swiss ladder / elim flow / gauntlet Δ-lanes), tell whether the loop improved, and narrate what is running. Screenshot it with browser-use. Use whenever you need to observe an in-flight or post-mortem epoch.
 ---
 
 # Watch the zicato dashboard (Console)
@@ -34,10 +34,10 @@ uv run --project . zicato dashboard --port 7892                # default host 12
 ```
 
 Real flags only — `zicato dashboard` exposes `--workspace` (default `.zicato`),
-`--host` (default `127.0.0.1`), `--port` (default `7892`). Do not pass flags
-`--help` does not list (the design-doc `--read-only`/`--daemon` modes are not in
-the shipped CLI). In an agent run, prefer reading the URL `evolve` already
-printed over binding a port yourself.
+`--host` (default `127.0.0.1`), `--port` (default `7892`), and `--static-dir`
+(unset ⇒ the bundled `zicato/dashboard/static`). That is the whole surface;
+there is no read-only or daemon mode. In an agent run, prefer reading the URL
+`evolve` already printed over binding a port yourself.
 
 ## 2. The view hierarchy (navigate top-down)
 
@@ -52,8 +52,14 @@ bare `#/`:
 | **Generations / round Match-ups** | `#/e/<epoch>/gens` (all rounds) · `#/e/<epoch>/gens/r/<round>` (one round) | the **Match-ups** — the per-structure tournament figure (see §3), the standings, and (for gauntlet) the per-round Δ-vs-champion lanes + roster. A `/r/<round>` drill scopes it to ONE evolve round's tournament. |
 | **Candidate** | `#/e/<epoch>/gen/<gen>[/<entry>]` | one challenger's life as a lifecycle DAG → gate; comparison-first (a **"compare with…"** picker sets a `~cmp=<gen>` hash suffix and splits the pane side-by-side). `/diff` shows its patch diff. |
 | **Boards** | `#/e/<epoch>/boards` · `#/e/<epoch>/board/<entry>[/<gen>]` | the small-multiples **board trellis** (one sparkbar + pass/fail dot row per entry); a board entry opens per-board scoring with champion-vs-challenger transcripts read **side-by-side inline**. Per-entry rows fold in the **continuous score** (a float in [0,1]) and its **precision/recall** decomposition when a scorer populated them — so a row shows *how well*, not just pass/fail. |
+| **Evals** | `#/e/<epoch>/evals` | the **outcomes lens** — the transpose of the candidate-centric UI: rows are board entries (the instrument), columns are candidates (what it measured). Cells shade by **evidence, not verdict** (a single-sample cell renders faint, a replicated one firm) and every row carries its `flip_rate` badge — or `unmeasured`, never a fabricated `0.0` — so a lone red cell is not read as truth on a noisy channel. Above the matrix: the measured noise floor + the live **MDE ladder** and the ranked instrument-quality findings. |
 | **Mutation surface** | `#/e/<epoch>/mutations[/<mutId>[/<gen>]]` | the mutable surface + the mutation matrix; a `mutId` pins one site (all gens that patched it), `mutId/gen` pins one site×generation diff. |
+| **Instrument** | `#/e/<epoch>/instrument[/<reflectionId>[/<judge>[/<runRef>]]]` | the board-reflection lens: bare = the epoch's reflections, `+reflectionId` = the bill of health (practice review, four-pillar quadrant, ranked findings, per-judge audit), `+judge+runRef` = the x-ray (annotated transcript, judge verdict vs meta-judge adjudication). |
+| **Traces** | `#/e/<epoch>/traces[/<reflectionId>[/<traceId>]]` | imported foreign trajectories: one **trajectory strip** per trace with mined episodes bracketed and cross-linked to the board-entry suggestions they motivated; the detail view lays the strip over the reconstructed conversation. |
 | **Publication** | `#/e/<epoch>/paper` | the **ACM-style epoch report** (eyebrow / title / abstract / body, GFM tables render, figures splice in). |
+
+Two views are workspace-scoped rather than epoch-scoped: `#/logs` (the
+per-invocation operator-log stream) and `#/builder` (below).
 
 Navigation: the top-left **`↑ up`** control climbs the selection hierarchy
 (candidate → generations → epoch → environment; a compare split collapses to the
@@ -201,7 +207,8 @@ completed record so a mid-run epoch never shows an empty ladder.
   starts live runs (the live-run gate). *Reading* a running dashboard, attaching
   with `zicato dashboard`, or post-morteming a finished epoch is always fine.
 - Cite only flags that appear in real `uv run --project . zicato dashboard
-  --help` output — the design docs (`docs/design/CLI.md`) are stale.
+  --help` output. `docs/design/CLI.md` is generated from `--help` and reconciled
+  against it, but `--help` stays canonical when they disagree.
 - Files are canonical; the live panels read JSON/JSONL, the index is derived and
   lags to generation boundaries.
 

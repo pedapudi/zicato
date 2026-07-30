@@ -51,14 +51,15 @@ The dashboard is launched automatically; its URL is printed
 | `--harness-call-llm TEXT` | **Required.** Dotted import path of the inner-harness call_llm (`module:symbol`). |
 | `--auxiliary-call-llm TEXT` | **Required.** Dotted path of the auxiliary call_llm — proposer/judge side. Must be a different Python object from the harness callable (collusion guard, `is`-distinct). |
 | `--rounds INTEGER` | Number of propose/tournament/promote rounds to attempt (default 1, must be >=1). |
-| `--mode full\|fast` | `fast` (default) = **cache-first**: every `(generation, entry, replicate)` board UNIT is evaluated at most once and reused across all pairings / rounds / structures — only cache misses run. So a carried champion is reused, not re-run (the round records `champion_eval_mode` = `fast`, or `fast-degraded` when some units had to run to seed the cache). `full` = bypass the cache and re-run every unit. Use `full` for the mock smoke and when you don't trust the cache; `fast` for cheaper real runs (and it is what makes a multi-challenger field affordable). |
+| `--mode full\|fast` | `fast` (default) = **cache-first**: every `(generation, entry, replicate)` board UNIT is evaluated at most once and reused across all pairings / rounds / structures — only cache misses run. So a carried champion is reused, not re-run (the round records `champion_eval_mode` = `fast`, or `fast-degraded` when some units had to run to seed the cache). The contract's `replicates` knob reaches this path: on the gauntlet the challenger board runs `replicates` times (default **2** — so the default configuration doubles challenger board runs) while the champion stays ONE frozen cached aggregate, making the noise reduction one-sided; a warning says so and names `--mode full`. `full` = bypass the cache and re-run every unit on both sides. Use `full` for the mock smoke, for independent draws on both sides, and when you don't trust the cache; `fast` for cheaper real runs (and it is what makes a multi-challenger field affordable). |
 | `--max-wall-clock-seconds INTEGER` | Total wall-clock budget for the whole invocation. The loop stops cleanly between rounds once spent; a single round that would overrun is cancelled and recorded as aborted. Unset = unbounded. Stacks on top of each board entry's own `wall_clock_budget_seconds`. |
-| `--parallelism INTEGER` | Board units in flight at once. Shadows `runtime.parallelism`; wins over the workspace `config.json` value (default 4). |
+| `--parallelism INTEGER` | Board units in flight at once. Shadows `runtime.parallelism`; wins over the workspace `config.json` value (default 4). Per-*process* only — two concurrent runs on one box admit `2 × parallelism` between them, which is what the host-wide `runtime.host_worker_permits` bounds (`None` = AUTO `max(4, 2 × cpu_count)`, `0` = off; a run whose permits are held queues rather than over-subscribing). |
 | `--harness-call-timeout-ms INTEGER` | Per-LLM-call budget for the inner harness agent's calls. Shadows `runtime.harness_call_timeout_ms` (default 1800000); an explicit `GOLDFIVE_AGENT_CALL_TIMEOUT_MS` still wins. |
 | `--aux-call-timeout FLOAT` | Per-call budget (seconds) for auxiliary-LLM (proposer/judge/emulator/analysis) calls. Shadows `aux.call_timeout_s` (default 120). |
 | `--supervisor-binary PATH` | Path to the zicato-supervisor watchdog binary. Shadows `integration.supervisor_binary`. |
 | `--harmonograf-url TEXT` | External harmonograf server URL (opt out of auto-launch). Shadows `integration.harmonograf_url`; wins over the `config.json` `harmonograf_url` key. |
 | `--max-consecutive-rejections INTEGER` | Stop early after this many rounds rejected in a row (default 3). |
+| `--tournament-structure gauntlet\|single_elim\|double_elim\|swiss\|racing` + `--tournament-param KEY=VALUE` | **Contract-mutating convenience.** Writes `{structure, params}` into the live `scoring.json` *before* the contract hash is computed, so it participates in the hash and auto-rolls the epoch exactly as a hand-edit would. `--tournament-param` (repeatable, JSON-parsed when possible) applies only alongside `--tournament-structure`. Unset = whatever `scoring.json` says (gauntlet when absent). See `skills/zicato-design-tournament-structure`. |
 | `--epoch TEXT` | Pin an explicit epoch, skipping the auto-epoch check entirely. |
 | `--no-auto-epoch` | Strict mode: error out on a drifted contract instead of rolling a fresh epoch. |
 | `--epoch-name TEXT` | Name for an auto-created epoch (default: the `e{N}` scheme). |
@@ -75,9 +76,10 @@ concern (e.g. an SSH tunnel), not a zicato flag.
   tournament across the board.
 - **Mode:** `fast` is the default and the right call for real budget — it reuses
   every board unit already evaluated under this contract (the carried champion,
-  and any shared challenger pairing) instead of re-running it. Use `full` when
-  you want every unit freshly scored (the mock smoke, or when you don't trust
-  the cache).
+  and any shared challenger pairing) instead of re-running it. Budget for the
+  challenger side being replicated `replicates` times (2 by default) even so.
+  Use `full` when you want every unit freshly scored (the mock smoke, or when
+  you don't trust the cache).
 - **Budget:** on any real run set `--max-wall-clock-seconds` as a hard ceiling so
   a runaway loop cannot burn unbounded budget. `--max-consecutive-rejections`
   gives a quality-based early stop when the proposer stalls.
@@ -87,6 +89,30 @@ concern (e.g. an SSH tunnel), not a zicato flag.
   (`register --proposer-path`) or editing one of its skills — see
   `skills/zicato-design-proposer`. Use `--no-auto-epoch` only when you want a
   drifted contract to be a hard error.
+
+## The epoch-open pre-flight (it spends budget at round 0)
+
+At evolve start — once per epoch, idempotent, persisted — the loop measures the
+contract's A/A noise floor and its *achievable* signal (the champion vs
+deliberately-degraded ephemeral copies of itself, sampled round-robin across the
+mutation points' declared `role` metadata), then asserts the margin window
+`noise < promote_margin < achievable`. Budget for roughly six extra champion
+board evaluations before round 0 does anything (5 A/A draws plus the probes); it
+is skipped on an infra abort and a resume re-reads the persisted record.
+
+The knobs are all `runtime.*` (tuning, never contract — flipping them does not
+roll the epoch):
+
+- `runtime.preflight_gate` — `"warn"` (default) warns loudly and **always lets
+  the run proceed**; `"refuse"` hard-stops before rounds burn budget on a
+  contract that cannot be optimized (recorded as `preflight_refused`); `"off"`
+  runs no measurement.
+- `runtime.preflight_probe_points` — ceiling on how many points the automatic
+  sample degrades (default 5; probing stops early once the verdict settles).
+- `runtime.preflight_probe_mutation_ids` — pin the points to probe by id
+  instead of sampling, when you know which point carries the signal.
+
+`zicato board preflight` is the manual surface for the same measurement.
 
 ## Reading the result
 
@@ -102,6 +128,16 @@ optimization signal — a flat/toothless evaluation is worse than no run:
 
 ```sh
 .venv/bin/zicato health --workspace .zicato      # exits non-zero on a critical finding
+```
+
+Every invocation also writes a structured log stream to
+`.zicato/logs/<stamp>-<pid>.jsonl` (the same stream the dashboard's log pane
+reads). Tail it live or after the fact — this is where the fast-mode replicate
+warning and the pre-flight verdict land:
+
+```sh
+.venv/bin/zicato logs --workspace .zicato --follow            # latest invocation
+.venv/bin/zicato logs --workspace .zicato --list              # pick an older one
 ```
 
 To re-serve the dashboard for a finished or in-flight workspace (post-mortem):

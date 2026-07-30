@@ -29,7 +29,7 @@ board. It composes — it does not restate — the sibling skills. Defer:
 Run-time partner: [`zicato-configure-tournament`](../zicato-configure-tournament/SKILL.md)
 says "audit the board first with this skill" — a misaligned scalar makes
 *evolution* learn the wrong lesson, and no tournament config can fix that. See
-[`../AGENTS.md`](../AGENTS.md) for the operating rules every skill assumes
+[`../../AGENTS.md`](../../AGENTS.md) for the operating rules every skill assumes
 (read-only here; never start a live `evolve` to produce audit artifacts —
 audit the run directories that already exist).
 
@@ -124,7 +124,10 @@ Each item: what to check, why, and the pass/fail bar.
       should silently dominate and invert the intended ranking.
 - [ ] **Determinism.** Re-run identical behavior; confirm an identical verdict.
       Confirm previews/inputs handed to judges are not truncated below the
-      signal needed to grade.
+      signal needed to grade. **Partly automated:** `zicato board judges
+      --test-retest` measures each judge's self-disagreement on one frozen
+      transcript, and `zicato board audit` measures the whole evaluation's A/A
+      noise floor (see the recipes below).
 - [ ] **Monotonicity scope matches intent.** The gate's pass-rate
       monotonicity (the no-pass-regression rule) honors a
       `pass_rate_monotonicity_scope` in `scoring.json`: `per_entry` (default —
@@ -273,11 +276,32 @@ full list). Run it first; it is cheap and read-only:
 | Drift telemetry not reaching the reducer | `flat_drift_signal` (`[WARNING]`/`[CRITICAL]`) |
 | Scoring not distinguishing candidates | `degenerate_scoring` (`[CRITICAL]`) |
 | Pass/fail side mostly absent | `no_expectations` (`[INFO]`) |
+| A judge that disagrees with itself | `zicato board judges --test-retest` (separate command) |
+| The board cannot out-signal its own noise | `zicato board preflight` / `board audit` (separate commands) |
 
 ```sh
 .venv/bin/zicato health --workspace .zicato; rc=$?
-# exit 9 == the loop is degenerate; do NOT trust the lineage until fixed.
+# exit 1 == a critical finding is present; do NOT trust the lineage until fixed.
 ```
+
+Two more read-only checks automate audit items `health` does not cover:
+
+```sh
+# judge determinism — a judge that disagrees with ITSELF on one frozen
+# transcript is pure noise in every custom:<name> drift it emits:
+.venv/bin/zicato board judges --workspace .zicato --test-retest \
+    --auxiliary-call-llm my_pkg.llms:aux
+# the contract's A/A noise floor + whether a deliberate degradation can
+# out-signal it (verdict ok / warn / inert / refuse; recommend-only):
+.venv/bin/zicato board preflight --workspace .zicato \
+    --harness-call-llm my_pkg.llms:harness --auxiliary-call-llm my_pkg.llms:aux
+```
+
+`board preflight` spends a small measurement budget (K A/A draws plus the
+degradation probes), so it is not free the way `health` is — but a `warn`
+(every probe scored identically: the board is saturated) or `refuse` (the
+achievable signal is at or below the floor) verdict is the mechanised form of
+"this board cannot resolve the difference you are asking it about."
 
 What `zicato health` does **not** yet automate — do these by hand (recipes 2,
 3, 5 above): **graded-artifact fidelity** (is the predicate reading the real
@@ -323,7 +347,9 @@ but it is inherently project-specific — see "Recommendations" below.)
 
 - A **GT-existence / winnability preflight** (`zicato board verify` reading a
   project-supplied corpus index, flagging GT ids absent from the corpus and
-  expectations that demand a single one-of-many answer). Genuinely useful, but
+  expectations that demand a single one-of-many answer). Not to be confused with
+  the shipped `zicato board preflight`, which measures *noise vs achievable
+  signal*, never whether a ground truth exists. Genuinely useful, but
   inherently project-specific — the corpus is not zicato's — so it would need a
   pluggable corpus-resolver hook. Left as a recommendation rather than built.
 - A **graded-artifact-fidelity lint** that warns when a `predicate` spec's

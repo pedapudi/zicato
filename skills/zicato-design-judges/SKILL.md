@@ -17,7 +17,7 @@ It is the design-principles sibling of
 [BOARD-FORMAT.md](../../docs/design/BOARD-FORMAT.md),
 [SCORING.md](../../docs/design/SCORING.md),
 [TELEMETRY.md](../../docs/design/TELEMETRY.md). See
-[`../AGENTS.md`](../AGENTS.md) for the operating rules.
+[`AGENTS.md`](../../AGENTS.md) for the operating rules.
 
 ## OUTCOME vs PROCESS — pick the right axis
 
@@ -75,6 +75,15 @@ goldfive `custom` drift tagged with the judge's `name`. Two modes:
 sets how hard the violation weighs (see severity weighting below). `name` is a
 stable slug, board-unique, and becomes goldfive's `judge_name` — the key
 `per_judge_weights` uses, so choose it deliberately.
+
+An aux-backed judge's model is resolved **lazily** — the spec *shape* is still
+validated at worker startup, but the ADK import and model construction happen
+on the role's first actual call. Because every judge boundary swallows
+exceptions by hard contract, a judge whose model cannot resolve would otherwise
+score as "no signal" and *undercount* drift. It cannot: the failure is recorded
+as a `RoleResolutionError` in a process-wide register, and the worker turns a
+non-empty register into a non-zero exit (the board unit becomes an infra abort,
+never a clean zero-drift run).
 
 ### Judge the tool-call ledger, not the narration
 
@@ -205,8 +214,8 @@ before it's counted), so design them to stand alone. Default is `false`
 
 - A judge that never fires (no `custom:<name>` bucket ever populated) is dead
   weight — it adds no discrimination. Either the criterion is unreachable or
-  the behavior never occurs; cut it or sharpen the criterion. Cross-ref
-  `non_differentiating_entries` in
+  the behavior never occurs; cut it or sharpen the criterion. Cross-ref the
+  `dead_judge` detector in
   [`zicato-diagnose-health`](../zicato-diagnose-health/SKILL.md).
 - An `expected_text` expectation that always matches (or a `regex` with no
   anchors that any plausible output satisfies) is all-pass — it pins pass-rate

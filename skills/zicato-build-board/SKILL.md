@@ -27,7 +27,7 @@ The design-principles siblings remain the authority on *what belongs* on a
 board ([`zicato-design-boards`](../zicato-design-boards/SKILL.md)) and *what to
 measure* ([`zicato-design-judges`](../zicato-design-judges/SKILL.md)); this
 skill is how the copilot *operates the builder* over those principles. See
-[`../AGENTS.md`](../AGENTS.md) for the operating rules.
+[`../../AGENTS.md`](../../AGENTS.md) for the operating rules.
 
 ## Board entries — the unit the copilot edits
 
@@ -222,7 +222,7 @@ directly. The copilot's tools (conceptual):
 | `set_namespace_weights` | the multi-objective namespace coefficients (`namespace_weights`) + the `diff_complexity_weight` parsimony term |
 | `set_holdout` | the train/holdout split (`holdout`-tagged ids and/or fraction) + the wider anti-overfitting block (Ladder, rotation, placebo cadence — detail in `zicato-build-tournament`) |
 | `validate` | (read-only) re-runs board validation (ids unique + filesystem-safe, per-kind fields present, expectation `reads` valid for the kind, judge slugs unique, `disable_drift` tokens resolve) — plus the statistical margin-vs-noise-floor rule when the epoch carries a measured A/A floor |
-| `preflight` | (read-only) measures whether THIS board can out-signal its own noise — the A/A floor vs a deliberate-degradation signal; a `warn` verdict means the board is saturated (cannot discriminate even a broken tree). CLI: `zicato board preflight` / `board audit` |
+| `preflight` | (read-only) measures whether THIS board can out-signal its own noise — the A/A floor vs a deliberate-degradation signal, sampled role-diversely over several mutation points. A `warn` verdict means the board is saturated (every probe scored identically — it cannot discriminate even a broken tree); `inert` means the probes moved nothing while the A/A draws varied, so the signal is unmeasured rather than absent — re-probe a point the board actually exercises. CLI: `zicato board preflight` / `board audit` |
 
 The loop on every operator request:
 
@@ -237,7 +237,7 @@ The loop on every operator request:
 
 The board copilot, like the tournament copilot, **never starts a live `zicato
 evolve`** — it produces a validated board, and the live run is the operator's
-separate explicit go-ahead (see [`../AGENTS.md`](../AGENTS.md)).
+separate explicit go-ahead (see [`../../AGENTS.md`](../../AGENTS.md)).
 
 ## The direct GUI — the board editor
 

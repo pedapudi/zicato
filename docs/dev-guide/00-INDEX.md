@@ -138,6 +138,8 @@ case; it ends with "you are about to reintroduce this if…".
 | 8 | Evidence-gate replicate-slot reuse | evidence gate | your "replicates" reuse a canonical slot → replay shrinks the CI |
 | 9 | Git `derive_generation` stale shared worktree | git store | you move a tag but leave a shared worktree at the old commit |
 | 10 | Contract hash embedding cwd/checkout | contract | you `resolve()` a path into an identity that must be location-independent |
+| 11 | `judge_view` opened the index READ-WRITE on a read path | index | a read-only query path constructs the connection without the read flag |
+| 12 | The `elimFlow` defensive-guard family died with the served model | dashboard | you keep client guards for a shape the server no longer emits |
 
 ---
 

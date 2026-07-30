@@ -21,7 +21,7 @@ here. When a finished board can't tell candidates apart, jump to
 [`zicato-diagnose-health`](../zicato-diagnose-health/SKILL.md). Design docs:
 [BOARD-FORMAT.md](../../docs/design/BOARD-FORMAT.md),
 [BOARD-AUTHORING.md](../../docs/design/BOARD-AUTHORING.md),
-[EMULATOR.md](../../docs/design/EMULATOR.md). See [`../AGENTS.md`](../AGENTS.md)
+[EMULATOR.md](../../docs/design/EMULATOR.md). See [`AGENTS.md`](../../AGENTS.md)
 for the operating rules every skill assumes.
 
 ## The one principle: discrimination
@@ -31,7 +31,8 @@ by `promote_margin`. That decision is only meaningful if the board's entries
 **move** between the two candidates. An entry that returns the same
 `drift_loss` and the same expectation pass/fail for *every* generation is dead
 weight — it can never break a tie, and a board made mostly of dead weight is a
-**toothless loop** (`zicato health` fires `non_differentiating_entries`).
+**toothless loop** (`zicato health` fires one `non_differentiating_entry`
+warning per such entry).
 
 The failure modes to design against:
 
@@ -186,7 +187,7 @@ agent the exact answer you want"`), so the entry tests whether the harness can
 
 | Smell | Likely cause | Fix |
 |---|---|---|
-| Loop runs clean, promotes nothing, journal full of ties | board is mostly dead weight | run `zicato health`; cut/retune `non_differentiating_entries` |
+| Loop runs clean, promotes nothing, journal full of ties | board is mostly dead weight | run `zicato health`; cut/retune every entry it names in a `non_differentiating_entry` finding |
 | Two generations score *identically* round after round | nothing on the board discriminates them | `degenerate_scoring` detector; tighten expectations or add a sensitive-band entry |
 | Pass-rate pinned at 1.0 | all-pass — expectations too lenient | tighten predicates/regex; add a harder discriminating entry |
 | Pass-rate pinned at 0.0 | all-fail — task beyond the harness, or predicate over-specified | simplify the task or relax the predicate to the sensitive band |
