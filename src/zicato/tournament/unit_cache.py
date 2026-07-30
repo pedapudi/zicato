@@ -14,8 +14,10 @@ structure-agnostic cache:
   cache-eligible budget-exceeded loss (:func:`_skipped_unit_loss`);
 * the per-generation cached-vs-fresh provenance tally
   (:class:`_UnitProvenance`, :func:`_record_provenance`);
-* the replicate averaging used to fold N paired runs into one per-entry
-  loss map (:func:`_average_losses`);
+* the replicate fold that collapses N paired runs into one per-entry
+  loss map (:func:`_average_losses`) — the replication primitive, which
+  must aggregate every scalar-bearing field because scoring never sees
+  the individual replicates;
 * the ``result.json`` twin — the persisted RunResult capture that rides
   the same replicate slotting as ``loss.json``
   (:func:`unit_result_path`, :func:`run_result_to_payload`,
@@ -40,7 +42,10 @@ from zicato.core import (
     BUDGET_ABORT_CAUSE,
     BoardEntry,
     Generation,
+    JudgeLoss,
     LossProfile,
+    MetricCount,
+    MetricSeverity,
     ScoringWeights,
 )
 from zicato.tournament.worker_transport import (
@@ -347,17 +352,225 @@ def _record_provenance(
     provenance[generation_id] = current.with_hit() if cached else current.with_miss()
 
 
+def _mean_over_present(values: list[float | None]) -> float | None:
+    """Mean of the values that are present; ``None`` when none are.
+
+    The "not measured is not zero" fold used for optional continuous
+    fields (:attr:`LossProfile.score`, per-key
+    :attr:`LossProfile.metrics`): a replicate that produced no value does
+    not drag the mean toward zero, it simply does not vote. ``None`` is
+    returned only when EVERY replicate abstained, so an entry with no
+    expectation folds to ``None`` exactly as it did before replication.
+    """
+    present = [float(v) for v in values if v is not None]
+    if not present:
+        return None
+    return sum(present) / len(present)
+
+
+def _mean_metrics(profiles: list[LossProfile]) -> dict[str, float] | None:
+    """Fold the per-entry ``metrics`` decomposition across replicates.
+
+    Each key is meaned over the replicates that REPORT it (the
+    "not measured is not zero" model of :func:`_mean_over_present`) —
+    a scorer that emitted ``precision`` on three of four replicates
+    reports the mean of those three. Returns ``None`` when no replicate
+    carried a decomposition, so a board whose scorers expose none folds
+    byte-identically to the pre-replication path.
+
+    This exists so the folded decomposition actually decomposes the
+    folded :attr:`LossProfile.score` beside it. Carrying replicate 0's
+    ``metrics`` next to an averaged ``score`` would be the one option
+    that is actively misleading.
+    """
+    keys: list[str] = []
+    seen: set[str] = set()
+    for p in profiles:
+        for key in p.metrics or {}:
+            if key not in seen:
+                seen.add(key)
+                keys.append(key)
+    if not keys:
+        return None
+    folded: dict[str, float] = {}
+    for key in keys:
+        mean = _mean_over_present([(p.metrics or {}).get(key) for p in profiles])
+        if mean is not None:
+            folded[key] = mean
+    return folded
+
+
+def _mean_metric_counts(profiles: list[LossProfile]) -> tuple[MetricCount, ...]:
+    """Fold the namespaced ``metric_counts`` view across replicates.
+
+    Each ``(name, severity)`` bucket is meaned over ALL replicates, with
+    an absent bucket contributing ``0.0``. That divisor is deliberate: it
+    is exactly the per-run-mean model
+    :func:`~zicato.tournament.scoring.aggregate_namespaced_metrics` uses
+    ("a loss with none contributes zero"), so the namespace aggregate
+    computed over the folded profiles equals the aggregate computed over
+    every replicate run individually. Using a present-only divisor here
+    would inflate a sparse namespace by the number of replicates that
+    never saw it.
+
+    Bucket ORDER is the first-seen order across replicates, so the fold
+    is deterministic and replicate 0's ordering is preserved for the
+    buckets it carried.
+    """
+    keys: list[tuple[str, MetricSeverity]] = []
+    seen: set[tuple[str, MetricSeverity]] = set()
+    for p in profiles:
+        for mc in p.metric_counts:
+            key = (mc.name, mc.severity)
+            if key not in seen:
+                seen.add(key)
+                keys.append(key)
+    if not keys:
+        return ()
+    n = len(profiles)
+    folded: list[MetricCount] = []
+    for name, severity in keys:
+        total = 0.0
+        for p in profiles:
+            for mc in p.metric_counts:
+                if mc.name == name and mc.severity == severity:
+                    total += float(mc.count)
+        folded.append(MetricCount(name=name, severity=severity, count=total / n))
+    return tuple(folded)
+
+
+def _mean_per_judge_loss(profiles: list[LossProfile]) -> tuple[JudgeLoss, ...]:
+    """Fold the per-judge loss attribution across replicates.
+
+    ``raw_loss`` / ``weighted_loss`` are meaned over ALL replicates with
+    an absent judge contributing zero — the same divisor
+    :func:`~zicato.tournament.scoring._per_judge_loss_aggregate` applies
+    ("a judge absent from a run contributes zero to its sum"), so the
+    per-judge aggregate carried onto
+    :class:`~zicato.scoring.api.ScalarContext` is the same whether it is
+    taken over the folded profiles or over every replicate run. ``weight``
+    is the contract's per-judge multiplier — constant across replicates of
+    one epoch — so the first replicate that reports the judge supplies it.
+    """
+    order: list[str] = []
+    weights: dict[str, float] = {}
+    for p in profiles:
+        for jl in p.per_judge_loss:
+            if jl.judge_name not in weights:
+                order.append(jl.judge_name)
+                weights[jl.judge_name] = jl.weight
+    if not order:
+        return ()
+    n = len(profiles)
+    folded: list[JudgeLoss] = []
+    for name in order:
+        raw_total = 0.0
+        weighted_total = 0.0
+        for p in profiles:
+            for jl in p.per_judge_loss:
+                if jl.judge_name == name:
+                    raw_total += float(jl.raw_loss)
+                    weighted_total += float(jl.weighted_loss)
+        folded.append(
+            JudgeLoss(
+                judge_name=name,
+                raw_loss=raw_total / n,
+                weight=weights[name],
+                weighted_loss=weighted_total / n,
+            )
+        )
+    return tuple(folded)
+
+
 def _average_losses(
     runs: list[dict[str, LossProfile]],
 ) -> dict[str, LossProfile]:
-    """Average per-entry ``drift_loss`` across replicate runs.
+    """Fold N replicate runs of a board into one per-entry loss map.
 
-    Returns one ``entry_id -> LossProfile`` map whose ``drift_loss`` is
-    the mean across runs and whose ``pass_fail`` is the strict-majority
-    vote (``None`` is preserved when the entry has no expectation). All
-    other fields are taken from the first run's profile (they are not
-    scalar-bearing in the gate). ``dataclasses.replace`` keeps the
-    profile shape intact.
+    This is the replication primitive: :attr:`ScoringWeights` never sees
+    the individual replicates, so EVERY scalar-bearing field must be
+    aggregated here or the replicates buy nothing. The rule this function
+    holds to is: **a field the scalar or the gate reads is aggregated; a
+    field neither reads carries the representative replicate (replicate
+    ``0``) and is named below with the reason it may.**
+
+    Aggregated
+    ----------
+    ``drift_loss``
+        Mean across replicates. Reaches the scalar as the ``"drift"``
+        component (``drift_weight × drift_loss_mean``).
+    ``score``
+        Mean across the replicates that HAVE one (:func:`_mean_over_present`);
+        ``None`` only when every replicate's is ``None``, so a board with
+        no expectations is unchanged. This is the field
+        :func:`~zicato.tournament.scoring.entry_score` reads FIRST, hence
+        the continuous outcome axis the duel actually turns on — the
+        reducer populates it whenever an expectation fired (a bool matcher
+        yields ``1.0`` / ``0.0`` just as a float scorer yields its clamped
+        value), so it is populated on essentially every scored entry, not
+        just float-scorer boards.
+    ``metrics``
+        Per-key mean over the replicates reporting the key
+        (:func:`_mean_metrics`) — the decomposition has to decompose the
+        folded ``score`` sitting next to it.
+    ``metric_counts``, ``tokens_spent``, ``output_chars``, ``schema_failures``
+        Namespace-bearing: they reach the scalar through
+        :func:`~zicato.tournament.scoring.aggregate_namespaced_metrics`,
+        whose per-namespace values are appended to ``scalar_components``
+        and summed into the scalar for any contract with a non-zero
+        ``cost:`` / ``output:`` / ``schema:`` weight. ``metric_counts`` is
+        the one that matters in production — the reducer always populates
+        it, and :meth:`LossProfile.unified_metrics` then reads it in
+        preference to synthesising from the three scalars — so it is
+        meaned exactly (:func:`_mean_metric_counts`). The three int-typed
+        scalars carry the ROUNDED mean: the fields are integer counts by
+        contract, and they are consulted only on the synthesised path
+        (a profile with no ``metric_counts``) and by display.
+    ``per_judge_loss``
+        Meaned per judge (:func:`_mean_per_judge_loss`); it is carried onto
+        :class:`~zicato.scoring.api.ScalarContext`, so a scalar PLUGIN can
+        read it.
+    ``pass_fail``
+        Strict-majority vote (``None`` preserved when the entry has no
+        expectation). NOTE: now that ``score`` is folded, this vote is
+        DISPLAY-only for the scalar — :func:`entry_score` returns the
+        continuous ``score`` before it can consult ``pass_fail``, and the
+        reducer leaves ``score`` unset only on entries that have no
+        expectation at all. The vote still drives the binary ``pass_rate``
+        and the gate's ``pass_fail`` fallback for score-less aggregates.
+
+    Replicate-0 pass-through, and why each may be
+    ---------------------------------------------
+    ``run_id``, ``expectation_result``
+        Raw provenance of the representative replicate, deliberately NOT
+        synthesised: the fold is not a run and has no matcher verdict of
+        its own. The AGGREGATED outcome lives in the first-class ``score``
+        / ``metrics`` / ``pass_fail`` fields, which are the ones scoring
+        and the gate read; ``expectation_result`` stays the untouched raw
+        evidence from one replicate.
+    ``drift_counts``
+        The per-``(kind, severity)`` buckets are NOT scalar-bearing: the
+        ``"drift:"`` namespace is explicitly excluded from
+        :func:`aggregate_namespaced_metrics` precisely because
+        ``drift_loss`` — which IS meaned above — owns the drift axis. The
+        buckets are int-typed attribution/display, and the folded
+        ``metric_counts`` already carries their meaned ``"drift:"`` mirror.
+    ``entry_id``, ``generation_id``, ``epoch_id``, ``match_id``
+        Invariant across the replicates of one unit by construction.
+    ``runtime_ms``, ``plan_revisions``, ``task_failure_ratio``,
+    ``turns_completed``, ``memory_failure_count``, ``context_loss_count``,
+    ``adk_session_id``, ``cached`` / ``source_epoch`` / ``source_run``,
+    ``scoring_provenance``, ``wall_clock_budget_exceeded``, ``abort_cause``
+        Neither the scalar nor the gate reads them. They describe ONE
+        execution (its duration, its abort, which cache slot it came from)
+        and have no meaningful fold, so they report the representative
+        replicate. Consumers that count per-round infra aborts across a
+        duel therefore see replicate 0's provenance only — see the
+        follow-up note on ``_count_infra_aborted_runs``.
+
+    ``dataclasses.replace`` keeps the profile shape intact, so a field
+    added to :class:`LossProfile` later defaults to pass-through and this
+    docstring is the place to justify it.
     """
     from dataclasses import replace as _replace  # noqa: PLC0415
 
@@ -369,14 +582,26 @@ def _average_losses(
         profiles = [r[entry_id] for r in runs if entry_id in r]
         if not profiles:
             continue
-        mean_drift = sum(float(p.drift_loss) for p in profiles) / len(profiles)
+        n = len(profiles)
+        mean_drift = sum(float(p.drift_loss) for p in profiles) / n
         pass_votes = [p.pass_fail for p in profiles if p.pass_fail is not None]
         if pass_votes:
             true_count = sum(1 for v in pass_votes if v)
             majority_pass: bool | None = true_count * 2 > len(pass_votes)
         else:
             majority_pass = None
-        out[entry_id] = _replace(profiles[0], drift_loss=mean_drift, pass_fail=majority_pass)
+        out[entry_id] = _replace(
+            profiles[0],
+            drift_loss=mean_drift,
+            pass_fail=majority_pass,
+            score=_mean_over_present([p.score for p in profiles]),
+            metrics=_mean_metrics(profiles),
+            metric_counts=_mean_metric_counts(profiles),
+            tokens_spent=round(sum(p.tokens_spent for p in profiles) / n),
+            output_chars=round(sum(p.output_chars for p in profiles) / n),
+            schema_failures=round(sum(p.schema_failures for p in profiles) / n),
+            per_judge_loss=_mean_per_judge_loss(profiles),
+        )
     return out
 
 

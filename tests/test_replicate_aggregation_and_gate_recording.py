@@ -23,7 +23,14 @@ from __future__ import annotations
 
 import pytest
 
-from zicato.core import DriftCount, ExpectationResult, LossProfile, ScoringWeights
+from zicato.core import (
+    DriftCount,
+    ExpectationResult,
+    JudgeLoss,
+    LossProfile,
+    MetricCount,
+    ScoringWeights,
+)
 
 
 def _loss(
@@ -33,6 +40,9 @@ def _loss(
     score: float | None = None,
     pass_fail: bool | None = None,
     tokens_spent: int = 0,
+    metrics: dict[str, float] | None = None,
+    metric_counts: tuple[MetricCount, ...] = (),
+    per_judge_loss: tuple[JudgeLoss, ...] = (),
 ) -> LossProfile:
     """A LossProfile carrying an explicit continuous ``score``.
 
@@ -58,7 +68,10 @@ def _loss(
         drift_loss=drift_loss,
         pass_fail=pass_fail,
         score=score,
+        metrics=metrics,
         tokens_spent=tokens_spent,
+        metric_counts=metric_counts,
+        per_judge_loss=per_judge_loss,
     )
 
 
@@ -67,13 +80,6 @@ def _loss(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "issue #108: _average_losses takes `score` from replicate 0, so K "
-        "replicates buy zero variance reduction on the axis that decides the duel"
-    ),
-)
 def test_average_losses_averages_score() -> None:
     """A 4-replicate list scoring [1, 0, 0, 0] averages to 0.25, not 1.0."""
     from zicato.tournament.unit_cache import _average_losses
@@ -83,10 +89,6 @@ def test_average_losses_averages_score() -> None:
     assert out["e"].score == pytest.approx(0.25)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="issue #108: the averaged profile's entry_score is replicate 0's",
-)
 def test_averaged_entry_score_reflects_every_replicate() -> None:
     """``entry_score`` over the averaged profile is the mean, not replicate 0.
 
@@ -110,13 +112,6 @@ def test_average_losses_all_none_score_stays_none() -> None:
     assert out["e"].score is None
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "issue #108: metric_counts / tokens_spent are namespace-scalar-bearing "
-        "via aggregate_namespaced_metrics and are also replicate-0-only"
-    ),
-)
 def test_average_losses_averages_namespace_bearing_counters() -> None:
     """``tokens_spent`` feeds the ``cost:`` namespace term of the scalar."""
     from zicato.tournament.unit_cache import _average_losses
@@ -124,6 +119,131 @@ def test_average_losses_averages_namespace_bearing_counters() -> None:
     runs = [{"e": _loss(tokens_spent=t, score=0.5)} for t in (400, 0, 0, 0)]
     out = _average_losses(runs)
     assert out["e"].tokens_spent == pytest.approx(100)
+
+
+def test_average_losses_score_means_only_the_replicates_that_have_one() -> None:
+    """An unmeasured replicate must not be read as zero on the outcome axis.
+
+    A replicate whose expectation could not fire (aborted before the
+    matcher ran) carries ``score=None``; it abstains from the mean rather
+    than dragging it toward a miss it never observed.
+    """
+    from zicato.tournament.unit_cache import _average_losses
+
+    runs = [{"e": _loss(score=s)} for s in (1.0, None, 0.5, None)]
+    out = _average_losses(runs)
+    assert out["e"].score == pytest.approx(0.75)
+
+
+def test_average_losses_folds_the_metrics_decomposition() -> None:
+    """The folded ``metrics`` must decompose the folded ``score`` beside it.
+
+    Per-key mean over the replicates REPORTING the key: ``recall`` is on
+    two of the three replicates, so its mean is over those two.
+    """
+    from zicato.tournament.unit_cache import _average_losses
+
+    runs = [
+        {"e": _loss(score=1.0, metrics={"precision": 1.0, "recall": 0.5})},
+        {"e": _loss(score=0.0, metrics={"precision": 0.4})},
+        {"e": _loss(score=0.5, metrics={"precision": 0.1, "recall": 0.1})},
+    ]
+    out = _average_losses(runs)
+    assert out["e"].metrics == {
+        "precision": pytest.approx(0.5),
+        "recall": pytest.approx(0.3),
+    }
+
+
+def test_average_losses_no_metrics_stays_none() -> None:
+    """A board whose scorers expose no decomposition folds unchanged."""
+    from zicato.tournament.unit_cache import _average_losses
+
+    out = _average_losses([{"e": _loss(score=0.5)} for _ in range(3)])
+    assert out["e"].metrics is None
+
+
+def test_folded_namespace_aggregate_matches_the_per_replicate_aggregate() -> None:
+    """The load-bearing invariant behind the counter fold.
+
+    In production the reducer ALWAYS populates ``metric_counts``, and
+    :meth:`LossProfile.unified_metrics` then reads it in preference to
+    synthesising from the int scalars — so ``metric_counts`` is what the
+    ``cost:`` namespace term of the scalar actually runs on. Folding it
+    must be aggregate-preserving: the namespace aggregate over the ONE
+    folded profile has to equal the aggregate over the K replicate runs
+    it folded, or replication silently moves the scalar.
+    """
+    from zicato.core import MetricCount
+    from zicato.tournament.scoring import aggregate_namespaced_metrics
+    from zicato.tournament.unit_cache import _average_losses
+
+    weights = ScoringWeights(namespace_weights={"cost:": 1.0})
+    profiles = [
+        _loss(score=0.5, metric_counts=(MetricCount(name="cost:tokens_spent", count=c),))
+        for c in (300.0, 0.0, 0.0)
+    ]
+    folded = _average_losses([{"e": p} for p in profiles])
+    assert aggregate_namespaced_metrics([folded["e"]], weights)["cost:"] == pytest.approx(
+        aggregate_namespaced_metrics(profiles, weights)["cost:"]
+    )
+    # And concretely: 300 tokens on one of three replicates is a mean of 100.
+    assert aggregate_namespaced_metrics([folded["e"]], weights)["cost:"] == pytest.approx(100.0)
+
+
+def test_average_losses_folds_per_judge_loss() -> None:
+    """``per_judge_loss`` rides :class:`ScalarContext`, so a plugin can read it.
+
+    Meaned over ALL replicates with an absent judge contributing zero —
+    the same divisor :func:`_per_judge_loss_aggregate` applies, so the
+    aggregate is identical taken over the fold or over the replicates.
+    """
+    from zicato.core import JudgeLoss
+    from zicato.tournament.scoring import _per_judge_loss_aggregate
+    from zicato.tournament.unit_cache import _average_losses
+
+    def _jl(raw: float) -> tuple[JudgeLoss, ...]:
+        return (JudgeLoss(judge_name="tone", raw_loss=raw, weight=2.0, weighted_loss=raw * 2.0),)
+
+    profiles = [_loss(score=0.5, per_judge_loss=_jl(r)) for r in (3.0, 0.0)]
+    folded = _average_losses([{"e": p} for p in profiles])
+    assert folded["e"].per_judge_loss == (
+        JudgeLoss(judge_name="tone", raw_loss=1.5, weight=2.0, weighted_loss=3.0),
+    )
+    assert _per_judge_loss_aggregate([folded["e"]]) == _per_judge_loss_aggregate(profiles)
+
+
+def test_average_losses_leaves_the_raw_matcher_evidence_alone() -> None:
+    """``expectation_result`` is replicate 0's raw verdict, by design.
+
+    The fold is not a run and has no matcher verdict of its own; the
+    AGGREGATED outcome lives in the first-class ``score`` / ``pass_fail``
+    fields that scoring and the gate read. Pinned so a later change that
+    starts synthesising a fake ``ExpectationResult`` is a deliberate one.
+    """
+    from zicato.tournament.unit_cache import _average_losses
+
+    runs = [{"e": _loss(score=s, pass_fail=bool(s))} for s in (1.0, 0.0)]
+    out = _average_losses(runs)
+    assert out["e"].expectation_result == runs[0]["e"].expectation_result
+    assert out["e"].score == pytest.approx(0.5)
+
+
+def test_replicated_mean_score_is_the_replicate_mean_end_to_end() -> None:
+    """The whole point: K replicates move the axis the duel turns on.
+
+    ``mean_score`` is what the scalar's outcome term
+    (``pass_weight * (1 - mean_score)``) runs on. A board entry that
+    passes 1 of 4 replicates must score 0.25 there, not replicate 0's 1.0.
+    """
+    from zicato.tournament.scoring import aggregate_generation_score
+    from zicato.tournament.unit_cache import _average_losses
+
+    weights = ScoringWeights(drift_weight=0.0, pass_weight=1.0)
+    runs = [{"e": _loss(drift_loss=0.0, score=s, pass_fail=bool(s))} for s in (1.0, 0.0, 0.0, 0.0)]
+    agg = aggregate_generation_score(list(_average_losses(runs).values()), weights)
+    assert agg["mean_score"] == pytest.approx(0.25)
+    assert agg["scalar_components"]["pass"] == pytest.approx(0.75)
 
 
 # ---------------------------------------------------------------------------
