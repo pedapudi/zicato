@@ -194,11 +194,51 @@ class UnitCompleted:
 
 @dataclass(frozen=True, slots=True)
 class GateEvaluated:
-    """The promote gate fired ``rule_fired`` and returned ``decision``."""
+    """The promote gate fired ``rule_fired`` and returned ``decision``.
+
+    ``champion_scalar`` / ``challenger_scalar`` / ``margin_required`` are the
+    inputs to the gate's CONTINUOUS decision axis — Rule 1 is literally
+    ``challenger_scalar > champion_scalar - margin_required`` ⇒ reject — recorded
+    on BOTH decisions so the duel's effect size is reconstructable from the log
+    alone.
+
+    Before they existed the compared scalars survived only inside the
+    human-readable REJECT text (``rule_fired``, which is empty on a clean
+    promote — unchanged by this addition). A promoted duel therefore recorded no
+    numbers at all, and that gap is not merely missing data: it is CORRELATED
+    with the quantity being measured. A sample recovered from the log is missing
+    exactly its promotions, which are by definition the largest improvements, so
+    comparing configurations biases the ranking toward whichever one promotes
+    least — close to the opposite of what the analysis is looking for. Nothing in
+    the output signals it; the per-arm sample sizes still look plausible.
+
+    Division of labour: these three fields are the CONTRACT for anything a
+    consumer computes on; ``rule_fired`` names which rule actually decided and is
+    PRESENTATION. Its phrasing varies by rule (``insufficient improvement: ...``,
+    ``challenger regressed: ...``, ``pass-rate regression on entries: ...``,
+    ``diff_complexity_ceiling: ...``), so nothing should be regexed out of it —
+    and it is empty whenever the gate promotes, which is why the numbers had to
+    move somewhere structural rather than into the prose.
+
+    Rules 2 and 3 (pass-rate and per-namespace monotonicity) decide on per-entry
+    and per-namespace maps that would not fit an event payload; ``rule_fired``
+    names them when they fire, and the aggregates themselves live in the
+    generations' ``gen_score.json``.
+
+    Additive with ``None`` — NOT ``0.0`` — defaults: a scalar of ``0.0`` is a
+    legal measurement, so a numeric default would make "this log predates the
+    fields" indistinguishable from "both sides scored zero", reintroducing the
+    same ambiguity one layer down. Every pre-existing log decodes with all three
+    ``None`` (:func:`_decode_event` defaults absent keys), following the
+    ``revise: bool = False`` precedent above.
+    """
 
     TYPE: ClassVar[str] = "gate_evaluated"
     rule_fired: str = ""
     decision: str = ""
+    champion_scalar: float | None = None
+    challenger_scalar: float | None = None
+    margin_required: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
