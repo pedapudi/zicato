@@ -394,28 +394,53 @@ into a slot".
 ### 6.2.5 Averaging replicates: `_average_losses`
 
 When a matchup runs R>1 replicates, the per-entry losses are folded to one map
-BEFORE aggregation. Only the scalar-bearing field is averaged; pass/fail is a
-strict-majority vote:
+BEFORE aggregation. This is the replication primitive, and the invariant it
+carries is load-bearing: **scoring never sees the individual replicates, so a
+field the fold does not aggregate is DISCARDED, not merely unaveraged.**
 
 ```python
-        mean_drift = sum(float(p.drift_loss) for p in profiles) / len(profiles)
-        pass_votes = [p.pass_fail for p in profiles if p.pass_fail is not None]
-        if pass_votes:
-            true_count = sum(1 for v in pass_votes if v)
-            majority_pass: bool | None = true_count * 2 > len(pass_votes)
-        else:
-            majority_pass = None
-        out[entry_id] = _replace(profiles[0], drift_loss=mean_drift, pass_fail=majority_pass)
+        out[entry_id] = _replace(
+            profiles[0],
+            drift_loss=mean_drift,
+            pass_fail=majority_pass,
+            score=_mean_over_present([p.score for p in profiles]),
+            metrics=_mean_metrics(profiles),
+            metric_counts=_mean_metric_counts(profiles),
+            tokens_spent=round(sum(p.tokens_spent for p in profiles) / n),
+            output_chars=round(sum(p.output_chars for p in profiles) / n),
+            schema_failures=round(sum(p.schema_failures for p in profiles) / n),
+            per_judge_loss=_mean_per_judge_loss(profiles),
+        )
 ```
 — `src/zicato/tournament/unit_cache.py`, `_average_losses`
 
-Two design choices that matter for the gate: the mean over `drift_loss` is what
-makes replication a genuine noise hedge (one paired run is one noise draw); and
-the **strict**-majority vote (`true_count * 2 > len`) keeps the pass-rate
-monotonicity rule meaningful under replication — a 1-of-2 split is `False`, not
-`True`, so a flaky entry does not "pass" on a coin flip. All other fields are
-taken from the first profile (they are not scalar-bearing in the gate), via
-`dataclasses.replace` so the profile shape is intact.
+The rule: a field the scalar or the gate reads is aggregated; a field neither
+reads carries the representative replicate (slot 0), and the docstring names
+every pass-through with the reason it may be one. `dataclasses.replace` keeps
+the profile shape intact, so a field added to `LossProfile` later defaults to
+pass-through — which is exactly why that docstring, not this chapter, is the
+place a new field's treatment gets justified.
+
+Three design choices that matter for the gate:
+
+- the mean over `drift_loss` is what makes replication a genuine noise hedge
+  (one paired run is one noise draw);
+- the mean over `score` is what makes it a hedge on the axis that actually
+  decides the duel. `entry_score` reads `score` BEFORE `pass_fail`, and the
+  reducer populates `score` whenever an expectation fired (a bool matcher
+  yields `1.0`/`0.0` too), so an unfolded `score` would leave `mean_score` —
+  the whole outcome term of the scalar — computed from slot 0 alone;
+- the **strict**-majority vote (`true_count * 2 > len`) keeps a flaky entry
+  from "passing" on a coin flip: a 1-of-2 split is `False`, not `True`. Note
+  this vote is now DISPLAY-only for the scalar (`entry_score` returns the
+  folded `score` before it can consult it); it still drives the binary
+  `pass_rate` and the gate's `pass_fail` fallback for score-less aggregates.
+
+The namespace-bearing counters (`metric_counts` and the three int scalars) are
+meaned with an absent-bucket-contributes-zero divisor — the same per-run-mean
+model `aggregate_namespaced_metrics` applies — so the namespace aggregate over
+the fold equals the aggregate over the replicates it folded. Full field-by-field
+treatment: ch.04 §7.1.
 
 ### 6.2.6 Provenance and the `champion_eval_mode`
 
@@ -1190,7 +1215,7 @@ scoring signal looks perfect."
 | Entry point | Runs | Champion side | Holdout | Used by |
 |---|---|---|---|---|
 | `run_tournament` | full A/B: both sides, every entry, `replicates` averaged | run live OR cache-read (immutable-champion reuse) | Ladder-mediated confirmation | the gauntlet path |
-| `run_fast_mode` | challenger only | the cached `parent_historical_agg` is reused wholesale | none (apples-to-oranges) | inline keep/discard |
+| `run_fast_mode` | challenger only, every entry, `replicates` averaged | the cached `parent_historical_agg` is reused wholesale | none (apples-to-oranges) | inline keep/discard |
 | `run_matchup` | ONE duel between any two generations | `left` is the nominal parent; `fast` reuses its cache | none (the strategy runs `confirm_crowning_holdout` separately) | every non-gauntlet structure's driver |
 | `confirm_crowning_holdout` | ONE extra holdout-slice duel | reused under `fast` | the SAME Ladder-mediated confirmation | non-gauntlet crowning |
 
@@ -1306,9 +1331,13 @@ Points where the trace changes under non-default knobs:
 
 - `replicates: 1` (a deterministic harness) → one pass, no `_average_losses`,
   slot 0 only; byte-identical to the pre-replication gauntlet.
-- `--mode fast` → `run_fast_mode`: only the challenger runs, compared against
-  the cached `parent_historical_agg`; no holdout (apples-to-oranges), champion
-  rows pre-filled `CACHED` in the dashboard hall.
+- `--mode fast` → `run_fast_mode`: only the challenger runs — `replicates`
+  times, each on its own cache slot and folded by `_average_losses` exactly as
+  the full path folds — compared against the cached `parent_historical_agg`; no
+  holdout (apples-to-oranges), champion rows pre-filled `CACHED` in the
+  dashboard hall. The champion side is never drawn again, so the variance
+  reduction is one-sided (ch.04 §7.4); the branch logs that whenever
+  `replicates > 1`.
 - `--mode full` → `champion_force_fresh=True` re-samples the champion too
   (`force_fresh` on both sides — every unit re-runs, ignoring the cache).
 - a crash-resume-in-place round → `run_tournament(force_fresh=False)`: the
@@ -1395,11 +1424,14 @@ special-casing in the orchestrator.
 
 `_default_replicates` is a `ClassVar` on the base (`2` — the noise-aware
 posture) that racing overrides to `1`. It is the SINGLE source of truth read by
-three consumers: the strategy's own `__init__` (resolving `params["replicates"]`
+four consumers: the strategy's own `__init__` (resolving `params["replicates"]`
 against it), the public `replicates()` read the orchestrator uses to thread the
-same value into the gauntlet's `run_tournament` call, and the builder cost
-estimator (via `STRUCTURE_DEFAULT_REPLICATES`). This is why the cost meter can
-never under-report by assuming a flat `1`.
+same value into the gauntlet's `run_tournament` call, the SAME read threading it
+into `run_fast_mode` on the gauntlet's fast path, and the builder cost estimator
+(via `STRUCTURE_DEFAULT_REPLICATES`). This is why the cost meter can never
+under-report by assuming a flat `1` — and why the meter's gauntlet term
+(`field_size × replicates × board`) is now the schedule that actually runs under
+the default mode, where it used to be `replicates`× the truth.
 
 ---
 

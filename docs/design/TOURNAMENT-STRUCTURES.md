@@ -273,6 +273,21 @@ the migration target is *byte-for-byte equivalent behaviour* with
 `replicates = 1`. Maps to the degenerate single-replicate dueling bandit
 (`SELECTION.md §6.3`).
 
+- **noise under `--mode fast`** (the CLI default): the gauntlet fast path
+  (`run_fast_mode`) runs the challenger board `replicates` times and folds
+  the per-entry losses, exactly as `run_matchup` does — but it compares the
+  fold against the champion's **frozen cached aggregate** rather than
+  drawing the champion again. So `replicates` reduces challenger-side noise
+  only, and the contrast keeps one unreplicated side. Two consequences an
+  operator has to price in: repeated *rounds* are not repeated *draws* of
+  the contrast (the champion side is the same numbers every round, so
+  round-to-round variation understates the true variance), and the
+  contract-level power check's two-sample `sqrt(2/(k·n))` is therefore
+  optimistic under this mode. `--mode full` re-samples both sides;
+  independent draws of the whole contrast means separate runs/seeds.
+  The branch logs the asymmetry whenever `replicates > 1` meets the fast
+  path, so it is never silent.
+
 ### 3.2 `single_elim`
 
 - **field_size**: `params.field_size` (a power of two after the
@@ -632,9 +647,13 @@ deliverable** (§7).
   policy, not a gate change). The *final* champion-gate is the real,
   full three-rule test.
 - **Replication (§9 lever 1)**: surfaced as `Matchup.replicates`, applied
-  in `_run_replicated`. The gauntlet keeps `replicates = 1`; the bracket
-  structures default to `≥ 2` because `SELECTION.md §8` makes replication,
-  not bracket shape, the noise lever.
+  in `_run_replicated` on the structure path, in `run_tournament` on the
+  full A/B gauntlet path, and in `run_fast_mode` on the fast gauntlet path
+  (challenger side only — §3.1). Every path folds through the one
+  `_average_losses` primitive. The gauntlet's own default is `2`, like the
+  bracket structures — `SELECTION.md §8` makes replication, not bracket
+  shape, the noise lever, so no structure opts out of it (only `racing`
+  pins `1`, replicating intrinsically via escalating board slices).
 - **§5 optimal-stopping**: stays in `evolve_n_rounds`
   (`orchestrator.py:1263-1294`), outside the strategy. The strategy
   resolves the *intra-tournament* bracket; `evolve_n_rounds` decides

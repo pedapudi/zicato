@@ -433,7 +433,18 @@ def check_statistical_power(
     board_entries: list[Any],
     noise_floor: dict[str, Any] | None,
 ) -> PracticeCheck:
-    """A loop whose min detectable Δ exceeds the margin is theater at this power (ch.04 §3)."""
+    """A loop whose min detectable Δ exceeds the margin is theater at this power (ch.04 §3).
+
+    ``k`` comes from the CONTRACT (``params["replicates"]``, falling back to
+    the structure's default), and every path now honours it — including the
+    gauntlet under ``--mode fast``, which used to ignore it outright (issue
+    #109). One caveat the contract cannot express: fast mode replicates the
+    CHALLENGER against a frozen cached champion aggregate, so the contrast
+    keeps one unreplicated side and ``power_analysis``'s two-sample
+    ``sqrt(2/(k·n))`` is optimistic there by roughly ``sqrt((k+1)/2)``. The
+    runtime mode is not a contract field, so this check cannot gate on it;
+    ``--mode full`` is the configuration the formula actually describes.
+    """
     from zicato.reflection.analysis import power_analysis, sigma_from_noise_floor  # noqa: PLC0415
     from zicato.selection.registry import default_replicates_for  # noqa: PLC0415
 

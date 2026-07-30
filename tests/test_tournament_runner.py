@@ -527,6 +527,10 @@ def test_run_fast_mode_never_runs_the_champion(
             workspace_root=tmp_path,
             epoch_id="e0",
             parent_historical_agg=parent_historical,
+            # Explicit: this test pins SINGLE-PASS arithmetic (one run per
+            # board unit). The knob-ON companion is
+            # test_run_fast_mode_honours_replicates.
+            replicates=1,
         )
     )
 
@@ -535,6 +539,133 @@ def test_run_fast_mode_never_runs_the_champion(
     assert all(gen == "v1" for gen, _ in call_log)
     assert {entry for _, entry in call_log} == {e.id for e in board}
     assert len(call_log) == len(board)
+
+
+def test_run_fast_mode_honours_replicates(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """``replicates=K`` runs the challenger board K times and folds (issue #109).
+
+    Before the fix ``run_fast_mode`` had no ``replicates`` parameter, so the
+    default configuration — ``--mode fast`` is the CLI default and the
+    gauntlet's default ``replicates`` is 2 — silently ran the board once.
+
+    Each replicate slot draws a different outcome here (a pass then a miss),
+    so the folded ``mean_score`` can only be right if BOTH slots ran and
+    were averaged: 0.5, not replicate 0's 1.0.
+    """
+    from zicato.tournament.worker_transport import _entry_replicate_index
+
+    child_gen = _make_generation(tmp_path, "v1", "v0")
+    board = _make_board()
+    per_slot_pass = {0: True, 1: False}
+    call_log: list[tuple[str, int]] = []
+
+    async def fake_run_single(
+        *,
+        adapter: Any,
+        generation: Generation,
+        entry: BoardEntry,
+        weights: ScoringWeights,
+        config: RuntimeConfig,
+        workspace_root: Path,
+        epoch_id: str,
+        side: str,
+        match_id: str = "",
+    ) -> LossProfile:
+        del adapter, weights, config, workspace_root, epoch_id, side, match_id
+        # The replicate index reaches the run through the entry context —
+        # the same seam a seeded harness reads to vary its noise draw.
+        slot = _entry_replicate_index(entry)
+        call_log.append((entry.id, slot))
+        passed = per_slot_pass[slot]
+        # Production shape: the reducer populates ``score`` whenever an
+        # expectation fired (1.0/0.0 for a bool matcher), and ``score`` is
+        # the continuous outcome axis the scalar reads.
+        return dataclasses.replace(
+            _loss(
+                generation_id=generation.id,
+                entry_id=entry.id,
+                drift_loss=1.0 if passed else 3.0,
+                pass_fail=passed,
+            ),
+            score=1.0 if passed else 0.0,
+        )
+
+    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+
+    parent_historical = {
+        "drift_loss_mean": 2.0,
+        "pass_rate": 1.0,
+        "mean_score": 1.0,
+        "expectation_count": len(board),
+        "entry_count": len(board),
+        "scalar": 2.0,
+        "per_entry": {e.id: {"drift_loss": 2.0, "pass_fail": True} for e in board},
+        "generation_id": "v0",
+    }
+
+    result = asyncio.run(
+        run_fast_mode(
+            adapter=object(),
+            child_gen=child_gen,
+            board=board,
+            weights=ScoringWeights(drift_weight=1.0, pass_weight=1.0),
+            config=_make_runtime_config(tmp_path),
+            workspace_root=tmp_path,
+            epoch_id="e0",
+            parent_historical_agg=parent_historical,
+            replicates=2,
+        )
+    )
+
+    # Both replicate slots ran, for every board entry.
+    assert sorted(call_log) == sorted((e.id, slot) for e in board for slot in (0, 1))
+    # ...and the aggregate is the FOLD of the two slots, not slot 0's.
+    assert result.child_agg["mean_score"] == pytest.approx(0.5)
+    assert result.child_agg["drift_loss_mean"] == pytest.approx(2.0)
+
+
+def test_run_fast_mode_single_replicate_is_byte_identical(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``replicates=1`` and the default are the same single-run path.
+
+    The knob's back-compat floor: an explicit 1 must not stamp a replicate
+    index, add a slot, or route through the fold.
+    """
+    child_gen = _make_generation(tmp_path, "v1", "v0")
+    board = _make_board()
+    canned = {
+        ("v1", e.id): _loss(generation_id="v1", entry_id=e.id, drift_loss=0.5, pass_fail=True)
+        for e in board
+    }
+    call_log = _stub_run_single(monkeypatch, canned=canned)
+
+    parent_historical = {
+        "drift_loss_mean": 2.0,
+        "pass_rate": 1.0,
+        "expectation_count": len(board),
+        "entry_count": len(board),
+        "scalar": 2.0,
+        "per_entry": {e.id: {"drift_loss": 2.0, "pass_fail": True} for e in board},
+        "generation_id": "v0",
+    }
+
+    result = asyncio.run(
+        run_fast_mode(
+            adapter=object(),
+            child_gen=child_gen,
+            board=board,
+            weights=ScoringWeights(promote_margin=0.01),
+            config=_make_runtime_config(tmp_path),
+            workspace_root=tmp_path,
+            epoch_id="e0",
+            parent_historical_agg=parent_historical,
+            replicates=1,
+        )
+    )
+
+    assert len(call_log) == len(board)
+    assert result.child_agg["scalar"] == 0.5
 
 
 def test_no_cache_first_round_runs_champion_via_full_path(
@@ -621,6 +752,10 @@ def test_run_fast_mode_respects_parallelism_bound(
             workspace_root=tmp_path,
             epoch_id="e0",
             parent_historical_agg=parent_historical,
+            # Explicit: this test pins SINGLE-PASS arithmetic (one run per
+            # board unit). The knob-ON companion is
+            # test_run_fast_mode_honours_replicates.
+            replicates=1,
         )
     )
 
@@ -1495,6 +1630,10 @@ def test_fast_mode_persists_running_partial_aggregate(
             workspace_root=tmp_path,
             epoch_id="e0",
             parent_historical_agg=parent_historical,
+            # Explicit: this test pins SINGLE-PASS arithmetic (one run per
+            # board unit). The knob-ON companion is
+            # test_run_fast_mode_honours_replicates.
+            replicates=1,
         )
     )
 

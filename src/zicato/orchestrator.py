@@ -1032,6 +1032,29 @@ async def evolve_once(
 
     child_diff_size = _diff_size(experiment)
     if fast_mode and parent_historical is not None:
+        # The contract's replication knob reaches the gauntlet fast path
+        # (issue #109): the challenger board runs ``replicates`` times and
+        # the per-entry losses are folded, exactly as ``run_matchup``
+        # already does under ``fast=True``. Before this the parameter did
+        # not exist on ``run_fast_mode`` at all, so the default
+        # configuration — ``--mode fast`` is the CLI default and the
+        # gauntlet's default ``replicates`` is 2 — silently executed as 1.
+        #
+        # The champion side stays ONE frozen cached draw (that is what fast
+        # mode IS), so the contrast is a replicated challenger against an
+        # unreplicated champion. Say so out loud rather than letting the
+        # operator infer a symmetric √K from the contract: an operator who
+        # wants independent draws on both sides wants --mode full.
+        fast_replicates = strategy.replicates()
+        if fast_replicates > 1:
+            log.warning(
+                "fast-mode gauntlet round: replicating the CHALLENGER board %d× "
+                "(contract replicates=%d), but the champion side is a single "
+                "frozen cached aggregate — the noise reduction is one-sided. "
+                "Use --mode full for independent draws on both sides.",
+                fast_replicates,
+                fast_replicates,
+            )
         tournament_result = await run_fast_mode(
             adapter=adapter,
             child_gen=child_gen,
@@ -1045,6 +1068,7 @@ async def evolve_once(
             judge_only=judge_only,
             round_index=round_index,
             total_rounds=total_rounds,
+            replicates=fast_replicates,
         )
     else:
         tournament_result = await run_tournament(

@@ -1218,15 +1218,13 @@ async def run_fast_mode(
     judge_only: bool = False,
     round_index: int = 0,
     total_rounds: int = 0,
+    replicates: int = 1,
 ) -> TournamentResult:
     """Inline keep/discard against a historical aggregate.
 
-    Runs only the child generation, ONCE — fast mode is the explicit
-    cheap inline keep/discard and does not replicate (the contract's
-    ``replicates`` knob applies to the full A/B path and the structure
-    matchup runner; under fast mode the noise hedge is the evidence
-    gate's crowning confirmation instead). Compares the result against
-    the caller-supplied ``parent_historical_agg`` — typically the
+    Runs only the CHILD generation — the champion's cached aggregate is
+    reused, which is what makes fast mode cheap. Compares the result
+    against the caller-supplied ``parent_historical_agg`` — typically the
     parent's last full-mode aggregate dict cached in the journal. Same
     gate logic, so the decision shape is identical to full mode. Per-entry
     losses contain only the child side; the parent tuple slot is left
@@ -1234,6 +1232,27 @@ async def run_fast_mode(
     keep parent slot ``None``-equivalent by simply omitting parent
     losses from the per-entry map. (Fast mode has no parent
     per-entry loss profiles to report.)
+
+    ``replicates`` is the §9-lever-1 replication knob, honoured here on
+    the CHALLENGER side exactly as :func:`run_matchup` honours it under
+    ``fast=True``: the child board is run ``replicates`` times, each
+    replicate on its own per-unit cache slot (the
+    ``(generation, entry, replicate)`` key) with its index stamped onto
+    each entry's context, and the per-entry losses are folded through the
+    same :func:`~zicato.tournament.unit_cache._average_losses` every other
+    path uses. ``1`` (this function's own default; the orchestrator threads
+    the structure's resolved value) is the historical single-run path,
+    byte-identical to before the knob existed.
+
+    The asymmetry is deliberate and is NOT variance reduction on both
+    sides: the champion remains ONE frozen cached draw no matter how high
+    ``replicates`` goes, so the contrast has a replicated challenger
+    against an unreplicated champion. That halves the noise the knob was
+    bought for rather than removing it — an operator who wants independent
+    draws on BOTH sides wants ``--mode full``, and the branch selection
+    logs this explicitly whenever ``replicates > 1`` meets the fast path
+    (see :func:`zicato.orchestrator.evolve_once`). Fast mode's own noise
+    hedge remains the evidence gate's crowning confirmation.
 
     ``disable_drift`` is the board-level drift-suppression set, stamped
     onto each board entry's context exactly as in :func:`run_tournament`;
@@ -1343,15 +1362,32 @@ async def run_fast_mode(
         # bounds the number of board units in flight — up to
         # ``parallelism`` run subprocesses at once (one challenger run
         # per unit).
-        child_losses = await _run_board_units_fast(
-            adapter=adapter,
-            child_gen=child_gen,
-            board=board,
-            weights=weights,
-            config=config,
-            workspace_root=workspace_root,
-            epoch_id=epoch_id,
-        )
+        #
+        # Replicate slots are sequential, mirroring ``_run_replicated``:
+        # each slot keys a distinct per-unit cache slot, so an already-
+        # evaluated replicate is reused and only missing slots run. The
+        # index is stamped onto each entry's context as run provenance for
+        # the harness under test (a seeded harness varies its noise draw by
+        # it); slot 0 is left untouched, byte-identical to before.
+        replicate_count = max(1, replicates)
+        replicate_runs: list[dict[str, LossProfile]] = []
+        for replicate_index in range(replicate_count):
+            replicate_runs.append(
+                await _run_board_units_fast(
+                    adapter=adapter,
+                    child_gen=child_gen,
+                    board=_stamp_replicate_index(board, replicate_index),
+                    weights=weights,
+                    config=config,
+                    workspace_root=workspace_root,
+                    epoch_id=epoch_id,
+                    replicate_index=replicate_index,
+                )
+            )
+        if replicate_count == 1:
+            child_losses = replicate_runs[0]
+        else:
+            child_losses = _average_losses(replicate_runs)
     finally:
         if rt is not None:
             state_mod, _ = rt

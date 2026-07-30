@@ -614,8 +614,11 @@ def _import_callable(dotted: str, *, kind: str) -> Any:
         "fast (default) = cache-first: every (generation, entry, "
         "replicate) board unit is evaluated at most once and reused "
         "across all pairings/rounds/structures; only cache misses run. "
+        "On the gauntlet the champion is a frozen cached aggregate, so "
+        "replicates reduce CHALLENGER-side noise only — repeated rounds "
+        "are not independent draws of the contrast. "
         "full = bypass the cache and force a fresh evaluation of every "
-        "unit (noise re-sampling / debugging)."
+        "unit, both sides (noise re-sampling / debugging)."
     ),
 )
 @click.option(

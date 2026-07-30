@@ -251,18 +251,12 @@ def test_replicated_mean_score_is_the_replicate_mean_end_to_end() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "issue #109: run_fast_mode takes no `replicates` parameter, so the "
-        "gauntlet under the default --mode fast runs the challenger board once"
-    ),
-)
 def test_run_fast_mode_accepts_replicates() -> None:
     """``run_fast_mode`` must expose the knob its contract advertises.
 
-    A signature pin rather than a behavioural one: today the parameter does
-    not exist, so no caller can even ask for replication on this path.
+    A signature pin; the behavioural half lives in
+    ``tests/test_tournament_runner.py::test_run_fast_mode_honours_replicates``
+    (both slots run, and the aggregate is their fold).
     """
     import inspect
 
@@ -271,19 +265,12 @@ def test_run_fast_mode_accepts_replicates() -> None:
     assert "replicates" in inspect.signature(run_fast_mode).parameters
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "issue #109: evolve_once's fast branch never passes strategy.replicates() "
-        "to run_fast_mode, so the contract's knob cannot reach the gauntlet path"
-    ),
-)
 def test_evolve_once_threads_replicates_into_the_fast_branch() -> None:
     """The fast branch must forward the resolved replicate count.
 
     Source-level pin on the ONE call site (``zicato/orchestrator.py``); a
-    live-run assertion is out of scope for triage, and the defect is the
-    missing argument, not its downstream behaviour.
+    live-run assertion is out of scope, and the defect was the missing
+    argument, not its downstream behaviour.
     """
     import inspect
 
@@ -292,6 +279,24 @@ def test_evolve_once_threads_replicates_into_the_fast_branch() -> None:
     src = inspect.getsource(orchestrator.evolve_once)
     fast_call = src.split("run_fast_mode(", 1)[1].split(")", 1)[0]
     assert "replicates" in fast_call
+
+
+def test_fast_branch_is_loud_about_the_one_sided_noise_reduction() -> None:
+    """Honouring the knob is not the same as making the contrast symmetric.
+
+    Fast mode compares a replicated challenger against ONE frozen cached
+    champion aggregate, so the variance reduction is one-sided no matter
+    how high ``replicates`` goes — the operator must be told, not left to
+    infer a symmetric improvement from the contract.
+    """
+    import inspect
+
+    from zicato import orchestrator
+
+    src = inspect.getsource(orchestrator.evolve_once)
+    fast_branch = src.split("run_fast_mode(", 1)[0]
+    assert "log.warning" in fast_branch
+    assert "--mode full" in fast_branch
 
 
 # ---------------------------------------------------------------------------
