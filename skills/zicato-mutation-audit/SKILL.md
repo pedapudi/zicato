@@ -44,6 +44,13 @@ slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
 A point's `id` is its stable handle; `kind` is `span`, `file`, or `code`. See
 [docs/design/MUTATION-SURFACE.md](../../docs/design/MUTATION-SURFACE.md).
 
+The optional `role="…"` metadata is **load-bearing beyond documentation**: the
+epoch-open pre-flight samples probe points **round-robin across declared roles**
+so its achievable-signal measurement spans the harness instead of hammering one
+kind of point (points with no `role` fall back to grouping by `kind`). Annotating
+roles is how you get a representative pre-flight verdict — see
+`skills/zicato-evolve`.
+
 > **Not a mutation point: the proposer's failure-mode feedback channel.** The
 > proposer now receives a board-anonymized, train-slice-only *outcome-marginal
 > failure profile*, optionally extended by a `scoring.json`
@@ -90,29 +97,35 @@ The JSON gives per-point `id`, `kind`, `file`, `source_root`,
 `{"role": "coordinator_routing"}`), plus a `summary` with `total`, `by_kind`,
 and `mutable_lines`.
 
-Note: the CLI exposes the flags above only. The design doc mentions a
-`--root` filter that the real CLI does **not** implement — do not rely on it.
+Note: the CLI exposes the flags above only. There is no `--root` filter — the
+listing always covers every registered source root; filter with `--id` when you
+want a subset.
 
 ## Forbidden ids
 
-An operator marks ids off-limits in the proposer brief's `## Forbidden` list
-(validator constraint V5 — the post-apply validator rejects any patch touching
-a forbidden id). `zicato mutations` surfaces those ids with a `[forbidden]`
-annotation next to the kind, so this command is the place to sanity-check that
-the right ids are excluded after you edit the brief.
+An operator marks ids off-limits in the proposer brief's `## Forbidden` list.
+Enforcement is mechanical and lives on the patch path, not in this listing:
+`check_forbidden_ids` (`mutation/validator.py`) / `enforce_forbidden`
+(`proposer/brief.py`) reject any patch whose `mutation_id` is in the set, matching
+on the **literal id**.
 
-Workflow:
-1. Edit the proposer brief's `## Forbidden` list to add/remove ids.
-2. Re-run `zicato mutations` and confirm the intended ids now show `[forbidden]`
-   and the rest are still open.
+`zicato mutations` does **not** read the brief and does **not** annotate
+forbidden ids — its rows are the whole enumerated surface either way. What it is
+good for is getting the id spellings exactly right:
+
+1. Run `zicato mutations` (or `--id '<glob>'`) and copy the id verbatim out of
+   the listing.
+2. Paste it into the brief's `## Forbidden` list — a typo'd id silently forbids
+   nothing, and nothing in the listing will tell you.
+3. Editing the brief rolls the epoch (the brief is a contract component).
 
 ## What success looks like
 
 - Every marker resolves: the table prints with no warnings and no duplicate-id
   errors.
 - The exposed ids are exactly the surface you intend the proposer to touch.
-- Ids you marked in `## Forbidden` show `[forbidden]`; nothing off-limits is
-  left open.
+- Every id you put in the brief's `## Forbidden` list appears — spelled
+  identically — in this listing.
 
 With the surface confirmed, hand off to `skills/zicato-evolve` to run the loop —
 the proposer addresses patches only against the points you just verified.

@@ -5,9 +5,12 @@ description: Read how the harness got here across epochs and generations — lis
 
 # zicato lineage — read the tree across epochs and generations
 
-The **lineage** is how the inner harness evolved: a shallow DAG of epochs, each
-holding a linear chain of generations, joined across epochs by a baselining
-edge. Use this skill to answer "how did the harness get here?". For one round's
+The **lineage** is how the inner harness evolved: a shallow DAG of epochs joined
+by baselining edges. Within an epoch the *promoted* generations form a linear
+spine; a multi-challenger round also mints sibling challengers that all fork
+from the same champion, so the epoch is a fan whose winners are that spine.
+
+Use this skill to answer "how did the harness get here?". For one round's
 verdict see `skills/zicato-tournament-forensics`; for an epoch's retrospective
 see `skills/zicato-analyze-epoch`; for the live UI see `skills/zicato-watch-dashboard`.
 
@@ -23,14 +26,18 @@ The same pair of generations gets named two ways depending on framing
 - **parent / child** — the **lineage** axis. The child generation `vN+1` was
   forked from its parent `vN`. This is the structural edge in `lineage.json`
   (`generations[].parent_id`).
-- **champion / challenger** — the **tournament** axis. In a matchup the
-  champion is the reigning best (always the parent), the challenger is the
-  candidate (always the child). Every matchup is parent-vs-child; there is never
-  a child-vs-child matchup.
+- **champion / challenger** — the **tournament** axis. The champion is the
+  reigning best, the challenger the candidate trying to unseat it. In the
+  **gauntlet** (the default) every matchup is champion-vs-challenger = parent-vs-child,
+  which is why the two axes collapse there. The non-gauntlet structures also
+  play **challenger-vs-challenger** nodes (elim brackets, swiss pairings, racing
+  rungs) — those have no incumbent, so the winner is just the better side and
+  the pair is *not* a lineage edge.
 
-So "champion = parent" and "challenger = child" name the *same pair* from two
-angles. Standardize **champion/challenger** for tournament framing,
-**parent/child** for lineage framing.
+So on a gauntlet crowning, "champion = parent" and "challenger = child" name the
+*same pair* from two angles. Standardize **champion/challenger** for tournament
+framing, **parent/child** for lineage framing — and never read a
+challenger-vs-challenger match as a lineage relation.
 
 ## 1. List every epoch
 
@@ -80,12 +87,25 @@ Key fields:
   ([EPOCHS-AND-JOURNALING.md §10.5](../../docs/design/EPOCHS-AND-JOURNALING.md#105-baselining-a-rolled-epoch)).
 - `generations[].promoted` — `true` generations are on the **winners' spine**;
   `false` (excluding `v0`) are discarded challengers — recoverable, inspectable,
-  off-spine.
+  off-spine. `null` means in-flight: the tournament has not settled, so the
+  generation counts toward neither the promoted nor the rejected column.
 - `generations[].parent_id` — the lineage edge (`null` for `v0`).
 
-There is **no `zicato lineage` subcommand** in the shipped CLI; `epoch list` is
-the rendered view and `lineage.json` is the structured source. (The
-[CLI.md](../../docs/design/CLI.md) `zicato lineage` reference is aspirational.)
+There is **no `zicato lineage` subcommand** in the shipped CLI (nor in
+[CLI.md](../../docs/design/CLI.md)); `epoch list` is the rendered view and
+`lineage.json` is the structured source.
+
+### Recombined children have provenance the DAG does not carry
+
+A mechanically **recombined** challenger merges the patch sets of two *rejected*
+complementary siblings. Its `lineage.json` `parent_id` is still the single
+champion it was patched onto — the two donors are recorded only on the
+generation's `experiment.json` as `recombined_from` (a 2-tuple of generation ids,
+ascending; the key is **omitted entirely** on ordinary experiments, so its
+absence means "not recombined"). Its `hypothesis.core_idea` also carries a
+`[recombined]` display prefix, but read the field, never the prefix. So: to
+reconstruct where a generation's *content* came from, check `recombined_from`
+alongside the lineage edge.
 
 ## 3. Bracket vs tree — what is scoped to what
 
@@ -112,15 +132,18 @@ view**, linked by a per-run drill-down
 1. Launch the dashboard for the workspace (`skills/zicato-watch-dashboard` — `evolve`
    auto-spawns it, or `zicato dashboard` serves an existing workspace). Default
    URL `http://127.0.0.1:7892`.
-2. Open the **Tournament view → matchup detail** for the round, or the
-   **Lineage** view and pick the two generation nodes to compare.
-3. In the **per-entry A/B grid**, pick the board entry — the picker syncs
-   selection to the URL hash and defaults the comparison to the parent
-   generation.
-4. Each cell drills into that one run; "open in harmonograf →" hands off to the
-   run's `events.jsonl` for the full turn-by-turn trace (Gantt, drift, the
-   intervention history). The competition view never renders a turn timeline;
-   the execution view never renders a bracket — the drill-down stitches them.
+2. Navigate **epoch → generations → the candidate** you care about.
+3. Use the **"compare with…"** picker on the candidate detail. It splits the
+   same pane into two columns (side A the candidate, side B the comparison) and
+   encodes the choice as `cmp` in the route, so the comparison deep-links.
+   Nothing is compared until you pick — there is no default second side, so
+   choose the parent explicitly to read the champion/challenger pair.
+4. Each side's per-board scoring drills into the individual run and its
+   transcript. A **harmonograf** deep-link to the full turn-by-turn execution
+   trace is rendered only while a run is LIVE (zicato's auto-launched
+   harmonograf dies with the run, so the link is gated on liveness, not merely
+   on a known URL). The competition view never renders a turn timeline; the
+   execution view never renders a bracket — the drill-down stitches them.
 
 The diff is *champion side vs challenger side* of the same board entry, so it is
 exactly the parent/child (= champion/challenger) pair from the lineage edge,
