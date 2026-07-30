@@ -46,9 +46,11 @@ a duel. Two consequences drive every design choice:
 - **Replication — not bracket shape — is the noise lever.** Loss is a noisy
   absolute measurement. The robust way to trust a duel is to run it more
   times (`replicates`), not to give a candidate a "second life" in a losers'
-  bracket. The gauntlet defaults `replicates = 1`; bracket structures default
-  `replicates >= 2`. (`racing` is the exception: it gets replication
-  intrinsically from escalating board slices, so it defaults to `1`.)
+  bracket. `replicates = 2` is the base default every structure inherits —
+  gauntlet included, the noise-aware default. (`racing` is the exception: it
+  gets replication intrinsically from escalating board slices, so it pins
+  `1`.) Pin `"replicates": 1` for the historical single-run duel, which is
+  what deterministic harnesses do.
 
 ## Decision guide — which structure, when
 
@@ -80,10 +82,10 @@ Defaults below are the strategy constructors' real defaults.
 | Param | Structures | Default | Meaning |
 |---|---|---|---|
 | `field_size` | all | `1` (gauntlet fixes it), else `2` | How many challengers the proposer must emit this round. `field_size == 1` degrades ANY structure to gauntlet semantics organically. |
-| `replicates` | all | `1` gauntlet/racing; `2` swiss/single_elim/double_elim | Paired board runs averaged before scoring a duel (`>= 1`). The NOISE lever. |
+| `replicates` | all | `2` (the base default; `1` for racing) | Paired board runs averaged before scoring a duel (`>= 1`). The NOISE lever. Also honoured in fast mode, but on the CHALLENGER side only — the champion stays one cached draw, so fast-mode replication halves the noise rather than removing it. |
 | `rounds_n` | swiss | `4` | Number of Swiss rounds (the INNER rounds). Each round re-pairs near-equal standings; the leader then faces the champion gate. |
 | `eta` | racing | `2` (clamped `>= 2`) | Halving factor. Each rung keeps the top `floor(alive / eta)` by scalar and cuts the rest. |
-| `board_fraction` | racing | `0.25` | Rung-0 board slice = `ceil(board_fraction * |board|)`; the slice grows by `eta` each rung until it reaches the full board (the final rung). |
+| `board_fraction` | racing | `0.25` | Rung-0 board slice = `ceil(board_fraction × board size)`; the slice grows by `eta` each rung until it reaches the full board (the final rung). |
 | `rung0_board_size` | racing | `0` | Explicit rung-0 slice size in entries. `0` ⇒ derive it from `board_fraction`. |
 | `board_ids` | racing | full epoch board (auto-injected) | OPTIONAL. The board entry ids to slice. Omit it — the orchestrator defaults it to the whole epoch board. Pass an explicit list ONLY to race on a subset. |
 | `matchup_budget_seconds` | racing | unset (uncapped) | OPTIONAL. Wall-clock cap on EVERY duel's total board-unit time. Once spent the duel stops launching units and records the rest as budget-exceeded (a partial aggregate). The grind guard for a racing run. |
@@ -168,15 +170,22 @@ lineage. See `zicato-analyze-epoch` and
 
 ## Winner-resolution & rating (beyond Copeland)
 
-Today swiss collapses its duel matrix with **Copeland** (count of duels won),
-which is margin-blind, and a noisy loss can leave the matrix **cyclic** (A>B,
-B>C, C>A). A research note —
-[SELECTION-THEORY.md](../../docs/design/SELECTION-THEORY.md) — surveys
-tournament-solution / social-choice / rating methods (Smith set, Ranked Pairs,
-Schulze, maximal lotteries, Bradley–Terry) and how they'd map to zicato as a
-*winner-resolution* layer plus a *rating* layer **underneath** the existing
-structures. **None of it is implemented yet** — it would arrive as future
-`tournament.params` knobs (`resolver`, `rating`), not new structures.
+By default swiss collapses its duel matrix with **Copeland** (count of duels
+won), which is margin-blind, and a noisy loss can leave the matrix **cyclic**
+(A>B, B>C, C>A). Three **opt-in** `tournament.params` knobs — read by `swiss`,
+`single_elim` and `double_elim` only — now sit over that
+([SELECTION-THEORY.md](../../docs/design/SELECTION-THEORY.md)):
+
+| Param | Values | Effect |
+|---|---|---|
+| `resolver` | `ranked_pairs` \| `copeland` | Re-picks the INTERNAL leader from the net-margin matrix: Condorcet fast path, then Smith-set prune, then Ranked Pairs (recommended) or Copeland order. |
+| `rating` | `bradley_terry` | Fits BT strengths from the audited duels for standings + the `P(θ_child > θ_parent)` uncertainty it needs. |
+| `uncertainty_gate` | a probability in `(0, 1)` | Promote only when `P(θ_child > θ_parent)` clears the bar, else defer. It can only ever BLOCK a promotion. |
+
+All three are derived from already-measured duel data (the gate's
+`delta_scalar` and the two side scalars), so they cost **zero new board runs**;
+absent or set to `none` they leave each structure's existing pick
+byte-identical. Maximal lotteries remain unimplemented.
 
 The one operating rule to remember now: **replicate first, resolve second.**
 Most cycles zicato sees are noise artifacts that replication dissolves; only
