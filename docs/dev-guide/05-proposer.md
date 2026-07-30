@@ -440,7 +440,7 @@ should crash an evolve loop; if one does, that is the bug.
 |---|---|---|
 | `proposer failed after N attempt(s): attempt 1: empty response…` in a rejected round's journal entry | the model burned its output budget on reasoning every attempt; the empty-variant repair prompt did not rescue it | gauntlet: `_persist_rejected_round`; the round journals `rejected` with `proposer_retries_exhausted` |
 | `attempt k: schema violation at hypothesis/modulating: …` | shape failure at pass 1; the next attempt carried the JSON-pointer path | §5.4.2 |
-| `attempt k: patch[0]: unknown mutation_id '…'` | the model targeted an id not in the manifest — usually it hallucinated a plausible-sounding id or reused one from the memory digest that no longer exists | §5.4.3; also re-checked post-propose by `check_patch_manifest_and_forbidden`, which RAISES `RuntimeError` (a hard error — by then the proposer already validated, so a stale id means the manifest changed under the round) |
+| `attempt k: patch[0]: unknown mutation_id '…'` | the model targeted an id not in the manifest — usually it hallucinated a plausible-sounding id or reused one from the memory digest that no longer exists | §5.4.3; also re-checked post-propose by `check_patch_manifest_and_forbidden`, which RAISES `ValueError` (a hard error — by then the proposer already validated, so a stale id means the manifest changed under the round) |
 | `attempt k: patches violate proposer-brief forbidden-edits list: …` | the brief's `# Forbidden edits` section named the id; the retry feedback names the offending ids | §5.3.1 row 4 |
 | `attempt k: patches failed post-apply validation: …` | the patch applied but broke the snapshot (dropped import / marker / syntax); `derive_generation` or `validate_post_apply` findings fed back | §5.3.3 |
 | `attempt k: derive_generation rejected the patch set: …` | `apply_patches`' own post-apply syntax gate raised `ValueError` — surfaced as a single retryable finding rather than crashing the loop | `build_post_apply_validator` step 2 |
@@ -486,7 +486,7 @@ the model.
 
 > ⚠️ TRAP — the forbidden check is enforced in THREE places, deliberately:
 > (1) inside both proposer engines per attempt (retryable feedback), (2)
-> post-propose by `check_patch_manifest_and_forbidden` (hard `RuntimeError` —
+> post-propose by `check_patch_manifest_and_forbidden` (hard `ValueError` —
 > defense in depth against an agent implementation that skipped step 1), and
 > (3) the mutation validator's own `check_forbidden_ids` before apply. Do not
 > remove any layer because "another one already checks" — each guards a

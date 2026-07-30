@@ -189,7 +189,12 @@ def build_post_apply_validator(
                     child_generation_id=next_id,
                     patches=list(candidate.patches),
                 )
-        except ValueError as exc:
+        except (ValueError, KeyError) as exc:
+            # ``ValueError`` is the checked applier's single bad-patch-set
+            # signal. ``KeyError`` is caught as defence in depth: the
+            # unchecked applier path still raises it for a missing anchor,
+            # and a bad patch set must reject ONE candidate rather than
+            # abort the whole evolve run (issue #83).
             return [f"derive_generation rejected the patch set: {exc}"]
         last_child_snapshot["path"] = child
         return validate_post_apply(child, list(candidate.patches), mutations)
@@ -278,7 +283,10 @@ def build_scratch_validator_factory(
                         patches=list(candidate.patches),
                         scratch_root=scratch_root,
                     )
-            except ValueError as exc:
+            except (ValueError, KeyError) as exc:
+                # Same unified bad-patch-set boundary as
+                # :func:`build_post_apply_validator` — see the note there
+                # on why ``KeyError`` is caught too (issue #83).
                 return [f"derive_generation rejected the patch set: {exc}"]
             return validate_post_apply(child, list(candidate.patches), mutations)
 
@@ -305,20 +313,33 @@ def check_patch_manifest_and_forbidden(
     * no patch may touch a ``forbidden_ids`` mutation (the operator's
       explicit no-go list).
 
-    Raises :class:`RuntimeError` with the same message either pipeline raised
+    Raises :class:`ValueError` with the same message either pipeline raised
     on the first violation; returns ``None`` when the patch set is clean.
+
+    The exception TYPE is load-bearing (issue #83): "this patch set cannot
+    be applied" is ONE logical condition, and it now reaches callers as
+    exactly one type across the whole apply path — this cross-check, the
+    :func:`~zicato.mutation.applier.apply_patches` pre-check, its
+    apply-time missing-anchor sites and its post-apply syntax gate all
+    raise ``ValueError``. This function previously raised ``RuntimeError``,
+    a third type for the same class, which no bad-patch-set boundary could
+    catch without also swallowing unrelated runtime faults. The severity is
+    unchanged: neither call site wraps this in a try, so a stale/forbidden
+    id is still a hard error that stops the round — by the time it runs the
+    proposer already validated its own patch set, so a violation here means
+    the manifest changed under the round.
     """
     from zicato.mutation.validator import check_forbidden_ids  # noqa: PLC0415
 
     mutations_by_id = {m.id: m for m in mutations}
     for patch in experiment.patches:
         if patch.mutation_id not in mutations_by_id:
-            raise RuntimeError(
+            raise ValueError(
                 f"proposer-emitted patch {patch.id!r} targets unknown "
                 f"mutation_id {patch.mutation_id!r}"
             )
     forbidden_violations = check_forbidden_ids(list(experiment.patches), list(forbidden_ids))
     if forbidden_violations:
-        raise RuntimeError(
+        raise ValueError(
             "proposer-emitted patches violate forbidden_ids: " + "; ".join(forbidden_violations)
         )

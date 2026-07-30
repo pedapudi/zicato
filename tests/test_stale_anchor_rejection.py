@@ -1,10 +1,11 @@
 """Triage pins for the stale-anchor crash (issue #83).
 
-The generation-level transaction boundary in :mod:`zicato.evolve.round`
-catches ``ValueError`` only. Every "bad patch set" condition inside
-:mod:`zicato.mutation.applier` must therefore signal ``ValueError`` so a
+Every "bad patch set" condition on the CHECKED
+:func:`zicato.mutation.applier.apply_patches` surface must signal
+``ValueError`` — one logical condition, one exception type — so a
 hallucinated / stale anchor rejects ONE candidate instead of aborting the
-whole evolve run.
+whole evolve run. The generation-level transaction boundary in
+:mod:`zicato.evolve.round` then degrades it to a retryable finding.
 
 Adjudication note (triage, 2026-07-29): the SIMPLE hallucinated-id case
 reported in #83 IS fixed on current main — :func:`apply_patches` runs
@@ -16,8 +17,10 @@ removes the anchor a later patch resolves against. The pre-check passes
 re-enumeration then drops the later id — reaching the ``KeyError`` sites in
 ``_apply_patches_into_tree`` that the transaction boundary does not catch.
 
-Both tests below are ``xfail(strict=True)``: they fail on current main and
-must XPASS once the fix lands, at which point the marker is removed.
+Both tests below pinned that gap as ``xfail(strict=True)`` during triage;
+the fix landed (the checked ``apply_patches`` surface converts every
+missing-anchor site to ``ValueError``, and the round-level boundary catches
+``ValueError`` and ``KeyError`` alike), so they are now plain pins.
 """
 
 from __future__ import annotations
@@ -49,14 +52,6 @@ def _patch(*, pid: str, mutation_id: str, new_content: str) -> Patch:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "issue #83: _apply_patches_into_tree raises KeyError for an anchor an "
-        "earlier patch in the same batch erased; the evolve transaction "
-        "boundary only catches ValueError, so the run aborts"
-    ),
-)
 def test_batch_erased_anchor_raises_value_error(tmp_path: Path) -> None:
     """A patch whose anchor an EARLIER patch erased is a bad patch set.
 
@@ -85,13 +80,6 @@ def test_batch_erased_anchor_raises_value_error(tmp_path: Path) -> None:
         apply_patches(src, patches, tgt)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "issue #83: build_post_apply_validator guards only ValueError, so a "
-        "KeyError out of derive_generation escapes the retryable-finding path"
-    ),
-)
 @pytest.mark.asyncio
 async def test_transaction_boundary_surfaces_key_error_as_a_finding(tmp_path: Path) -> None:
     """The transaction boundary degrades ANY bad-patch-set signal to a finding.
@@ -100,7 +88,7 @@ async def test_transaction_boundary_surfaces_key_error_as_a_finding(tmp_path: Pa
     raising ``KeyError``, the round-level boundary must turn it into a
     retryable rejected-patch finding rather than let it abort the round.
     """
-    from zicato.core.experiment import Experiment
+    from zicato.core.types import Experiment, HypothesisSpec
     from zicato.evolve.round import build_post_apply_validator
 
     class _KeyErrorGenstore:
@@ -118,10 +106,20 @@ async def test_transaction_boundary_surfaces_key_error_as_a_finding(tmp_path: Pa
         last_child_snapshot={},
     )
     candidate = Experiment(
-        generation_id="v1",
+        id="exp_e1_v1",
         epoch_id="e1",
-        hypothesis="triage probe",
+        generation_id="v1",
+        parent_generation_id="v0",
+        proposed_at="2026-07-29T00:00:00Z",
+        hypothesis=HypothesisSpec(
+            core_idea="triage probe",
+            modulating=("instr",),
+            why="because",
+            expected_drift_movements=(),
+            expected_pass_rate_delta="+0.00",
+        ),
         patches=(),
+        outcome=None,
     )
     findings = await validate(candidate)
     assert findings, "a bad patch set must surface as a finding, not propagate"
