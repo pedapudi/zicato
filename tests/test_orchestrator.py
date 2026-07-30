@@ -210,6 +210,21 @@ def _install_telemetry_stubs(
 
     reducer_mod = types.ModuleType("zicato.telemetry.reducer")
 
+    # The real, dependency-light judge-attribution parse — zicato.health's
+    # detect_dead_judge imports this from zicato.telemetry.reducer. Grafting
+    # it onto the stub (rather than leaving it absent) keeps the real health
+    # assessment running for every orchestrator test instead of raising
+    # ImportError inside orchestrator._assess_and_persist_loop_health's
+    # best-effort try/except, which used to swallow the whole health check
+    # silently — no round ever wrote health/round_*.json under this stub.
+    from zicato.telemetry.reducer import (
+        split_judge_attributed_kind as _real_split_judge_attributed_kind,
+    )
+
+    reducer_mod.split_judge_attributed_kind = (  # type: ignore[attr-defined]
+        _real_split_judge_attributed_kind
+    )
+
     def reduce_loss(
         events_jsonl_path: Path,
         entry: BoardEntry,
@@ -460,6 +475,48 @@ def test_evolve_once_promotes_on_improvement(
     # Journal entry appended.
     journal = (workspace / "epochs" / epoch_id / "journal.md").read_text()
     assert "swap the greeting string" in journal
+
+
+def test_evolve_once_writes_a_real_health_round_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An orchestrator-driven round writes a genuine ``health/round_N.json``.
+
+    Every other orchestrator test drives the REAL ``zicato.health``
+    package (unlike ``test_orchestrator_health.py``, which substitutes its
+    own fake ``zicato.health.diagnostics`` module) through this file's
+    shared ``_install_telemetry_stubs`` reducer stub. That stub used to
+    omit ``split_judge_attributed_kind``, which ``detect_dead_judge``
+    imports — so the real ``assess_loop_health`` raised ``ImportError``
+    inside the orchestrator's best-effort wrapper on every one of these
+    tests, and no ``health/round_*.json`` was ever written. Nothing
+    asserted that file's existence, so the whole health tail silently
+    exercised nothing. This pins the fixed behaviour.
+    """
+    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
+        canned_pass_by_gen={"v0": True, "v1": True},
+    )
+
+    from zicato.orchestrator import evolve_once
+
+    outcome = asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+        )
+    )
+    assert outcome.tournament_decision == "promoted"
+
+    report_path = workspace / "epochs" / epoch_id / "health" / "round_1.json"
+    assert report_path.exists()
+    body = json.loads(report_path.read_text())
+    assert body["epoch_id"] == epoch_id
 
 
 def test_evolve_round_stamps_birth_round_index_on_lineage(

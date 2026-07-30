@@ -1550,9 +1550,10 @@ identical decision as the round that measured.
 > where it stays fully visible in `zicato health`, the round report and the
 > dashboard (any warning makes `LoopHealth.healthy` false) while being
 > structurally unable to stop the run. The gate mode reaches the detector via
-> `_workspace_preflight_gate` (the `runtime` block is the knob's only source)
-> and rides along on the finding's `detail["preflight_gate"]` so a persisted
-> report says which choice graded it.
+> `zicato.health.inputs.workspace_preflight_gate` (the `runtime` block is the
+> knob's only source) — shared by both the orchestrator's per-round assessment
+> and the standalone `zicato health` CLI — and rides along on the finding's
+> `detail["preflight_gate"]` so a persisted report says which choice graded it.
 
 **A config typo must not silently disable a `refuse` gate.** The evolve-start
 hook runs under `best_effort` because *an outage never disqualifies a

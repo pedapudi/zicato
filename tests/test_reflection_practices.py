@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 from goldfive import DriftSeverity
 
 from zicato.core.board import Expectation, ExpectationKind, JudgeMode, JudgeSpec
@@ -439,6 +440,79 @@ def test_promotion_below_floor_no_gate_is_unsound() -> None:
     )
     assert c.verdict == P.VERDICT_UNSOUND
     assert c.proposed_op["op"] == "set_gate"
+
+
+def test_promotion_hygiene_never_proposes_an_op_that_lowers_the_margin() -> None:
+    """A K-inflated range must not ship an appliable gate WEAKENING.
+
+    ``max_abs_delta`` is a range and grows with the calibration draw count;
+    ``delta_std`` does not. For a well-measured floor the two disagree, and
+    the margin can sit below the range — firing this UNSOUND check — while
+    already clearing 2.5x the dispersion the gate actually thresholds. Here
+    ``2.5 x 0.01 = 0.025`` is BELOW the live ``promote_margin=0.05``, so
+    emitting it would give the operator (or the applier) a one-command
+    ``set_gate`` that HALVES the promote margin — from the very check whose
+    subject is promoting on noise. The check must diagnose the disagreement
+    and carry no op.
+    """
+    exps = [_exp("g1", decision="promoted")]
+    floor = _floor([1.0, 1.5], max_abs=0.10)
+    floor["delta_std"] = 0.01
+    c = P.check_promotion_hygiene(
+        weights=_weights(promote_margin=0.05),
+        experiments=exps,
+        board_entries=_big_board(),
+        noise_floor=floor,
+    )
+    assert c.verdict == P.VERDICT_UNSOUND
+    assert c.proposed_op is None
+    assert c.evidence["recommendation_raises_margin"] is False
+    assert c.evidence["recommended_promote_margin"] == pytest.approx(0.025)
+    assert "weaken the gate" in c.headline
+
+
+def test_promotion_hygiene_still_proposes_a_genuine_raise() -> None:
+    """The guard above must not silence the ordinary case.
+
+    With the margin far below both statistics the delta_std recommendation
+    genuinely raises it, so the appliable ``set_gate`` op still ships.
+    """
+    exps = [_exp("g1", decision="promoted")]
+    floor = _floor([1.0, 1.5], max_abs=0.10)
+    floor["delta_std"] = 0.01
+    c = P.check_promotion_hygiene(
+        weights=_weights(promote_margin=0.001),
+        experiments=exps,
+        board_entries=_big_board(),
+        noise_floor=floor,
+    )
+    assert c.verdict == P.VERDICT_UNSOUND
+    assert c.proposed_op is not None
+    assert c.proposed_op["args"]["promote_margin"] == pytest.approx(0.025)
+    assert c.evidence["recommendation_raises_margin"] is True
+
+
+def test_promotion_hygiene_range_fallback_always_raises_the_margin() -> None:
+    """The legacy no-delta_std path is provably unaffected by the guard.
+
+    Without a usable ``delta_std`` the recommendation is 2.5x the RANGE, and
+    the check only fires when the margin is already below that range — so
+    the recommendation necessarily exceeds the margin and the op always
+    ships. Pinned so a future edit to the guard cannot silently strip the
+    recommendation from pre-#112 floor records.
+    """
+    exps = [_exp("g1", decision="promoted")]
+    floor = _floor([1.0, 1.5], max_abs=0.10)
+    del floor["delta_std"]
+    c = P.check_promotion_hygiene(
+        weights=_weights(promote_margin=0.099),
+        experiments=exps,
+        board_entries=_big_board(),
+        noise_floor=floor,
+    )
+    assert c.verdict == P.VERDICT_UNSOUND
+    assert c.proposed_op is not None
+    assert c.proposed_op["args"]["promote_margin"] == pytest.approx(P.MARGIN_FLOOR_MULTIPLE * 0.10)
 
 
 def test_promotion_with_evidence_gate_is_sound() -> None:

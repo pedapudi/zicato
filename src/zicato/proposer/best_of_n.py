@@ -768,6 +768,24 @@ class BestOfNProposerAgent:
         ``propose_parallelism == 1`` runs the slots strictly serially — the
         exact pre-concurrency ordering — and skips the task/semaphore
         machinery so the no-factory unit-test path stays a plain loop.
+
+        Scratch-lease safety (WS-CONC scratch-leak): ``_run_one_slot``'s own
+        ``try/finally`` always releases ITS slot's scratch lease, but plain
+        ``asyncio.gather()`` (``return_exceptions=False``) propagates the
+        FIRST exception the instant any one slot raises, WITHOUT cancelling
+        or awaiting the remaining slots — they keep running as orphaned
+        background tasks, so a sibling's scratch parent can still be on disk
+        at the exact moment this call returns control to the caller. Passing
+        ``return_exceptions=True`` makes ``gather`` wait for every slot to
+        actually finish (success or exception) — and therefore for every
+        slot's ``finally: cleanup()`` to have already run — before this
+        method ever returns or raises, so the caller can never observe a
+        still-open lease. Findings are re-raised in SLOT order (not
+        completion order) for the same determinism the rest of the gather
+        provides; a slot's own :class:`~zicato.proposer.proposer.ProposerError`
+        never reaches here (:meth:`_sample_slot` already folds it into a
+        normal ``_SlotOutcome``), so only a genuinely unexpected exception
+        takes this path.
         """
         parallelism = max(1, min(self.propose_parallelism, n))
         if parallelism == 1:
@@ -778,7 +796,15 @@ class BestOfNProposerAgent:
             async with sem:
                 return await self._run_one_slot(ctx, sample, n)
 
-        return list(await asyncio.gather(*(_guarded(sample) for sample in range(n))))
+        results = await asyncio.gather(
+            *(_guarded(sample) for sample in range(n)), return_exceptions=True
+        )
+        outcomes: list[_SlotOutcome] = []
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+            outcomes.append(result)
+        return outcomes
 
     async def _run_one_slot(self, ctx: ProposerContext, sample: int, n: int) -> _SlotOutcome:
         """Run ONE slate slot into its OWN scratch validation tree.

@@ -555,6 +555,34 @@ def test_emitter_omits_scalars_it_was_not_given() -> None:
     assert scalarless.margin_required == pytest.approx(0.1)
 
 
+def test_emitter_treats_a_boolean_scalar_as_non_numeric() -> None:
+    """``bool`` is an ``int`` subclass — a boolean scalar must not fabricate
+    a numeric field.
+
+    ``isinstance(True, int | float)`` is ``True``, so a naive numeric guard
+    would record ``champion_scalar=1.0`` for a malformed aggregate carrying
+    ``{"scalar": True}`` — indistinguishable from a genuinely measured
+    ``1.0``. A boolean must be treated exactly like the ``"nope"`` string
+    case above: non-numeric, field left absent. Covers both extraction
+    sites in ``_emit_gate_evaluated`` — the per-side scalar AND
+    ``margin_required``.
+    """
+    from zicato.tournament.gate import evaluate_gate
+
+    weights = ScoringWeights(promote_margin=0.1)
+    parent = {"scalar": 0.6, "pass_rate": 1.0, "per_entry": {}}
+    child = {"scalar": 0.3, "pass_rate": 1.0, "per_entry": {}}
+    outcome = evaluate_gate(parent, child, weights)
+
+    class _BoolMargin:
+        promote_margin = True
+
+    boolean = _emitted_gate_event(outcome, {"scalar": True}, {"scalar": False}, _BoolMargin())
+    assert boolean.champion_scalar is None
+    assert boolean.challenger_scalar is None
+    assert boolean.margin_required is None
+
+
 def _emitted_gate_event(
     outcome: object,
     parent_agg: object = None,

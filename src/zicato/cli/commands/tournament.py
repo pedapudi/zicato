@@ -74,6 +74,16 @@ from zicato.core.workspace import generation_dir
     is_flag=True,
     help="Skip the regression-suite gate even when enabled in scoring.",
 )
+@click.option(
+    "--replicates",
+    type=int,
+    default=None,
+    help=(
+        "Debug override for the per-duel replicate count. Defaults to the "
+        "contract's resolved structure value (what `zicato evolve` uses) — "
+        "pass this only to force a different count for this one invocation."
+    ),
+)
 def tournament_cmd(
     parent: str,
     child: str,
@@ -81,6 +91,7 @@ def tournament_cmd(
     epoch: str | None,
     mode: str,
     skip_regression: bool,
+    replicates: int | None,
 ) -> None:
     """Advanced: run a tournament between PARENT and CHILD generations.
 
@@ -119,7 +130,17 @@ def tournament_cmd(
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
 
+    # Resolve replicates exactly the way ``evolve_once`` does (orchestrator.py)
+    # so a debug re-score matches the live loop's numbers for the same
+    # contract: build the strategy from the contract's tournament structure
+    # and read its resolved ``.replicates()`` — never the bare default of 1
+    # ``run_tournament`` / ``run_fast_mode`` fall back to on their own.
+    # ``--replicates`` is an explicit per-invocation override on top of that.
+    from zicato.selection.registry import make_strategy  # noqa: PLC0415
     from zicato.tournament import run_fast_mode, run_tournament  # noqa: PLC0415
+
+    strategy = make_strategy(weights.tournament_structure, board_ids=[e.id for e in board])
+    resolved_replicates = replicates if replicates is not None else strategy.replicates()
 
     if mode == "full":
         result = asyncio.run(
@@ -138,6 +159,7 @@ def tournament_cmd(
                 # the cache by design); force-fresh the champion too rather
                 # than reusing its cached per-board units.
                 champion_force_fresh=True,
+                replicates=resolved_replicates,
             )
         )
     else:
@@ -156,6 +178,7 @@ def tournament_cmd(
                 parent_historical_agg=parent_historical,
                 disable_drift=disable_drift,
                 judge_only=judge_only,
+                replicates=resolved_replicates,
             )
         )
 

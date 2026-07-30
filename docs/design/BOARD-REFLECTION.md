@@ -288,7 +288,7 @@ constants in `reflection/practices.py` with rationale comments.
 | `calibration_freshness` | `noise_floor` age vs lineage, `promote_margin` | a stale floor calibrates today's gate against yesterday's noise (ch.04 §3, §4) | re-run `zicato board audit` |
 | `placebo_outcomes` | placebo `experiments`, cadence | a rejected placebo proves gate discrimination; a promoted one disproves it (ch.04 §11) | `set_holdout` (set/keep the placebo cadence) |
 | `generalization_trend` | holdout/train gap over lineage, rotation | a widening holdout gap is board memorization (OVERFITTING.md §6/§7) | roll the epoch / `set_holdout` rotation |
-| `promotion_hygiene` | promotions, evidence gate, margin vs floor, holdout | a promotion on a sub-floor margin with no evidence gate promotes noise (ch.04 §3, §6) | `set_gate` — lift `promote_margin` clear of the floor |
+| `promotion_hygiene` | promotions, evidence gate, margin vs floor, holdout | a promotion on a sub-floor margin with no evidence gate promotes noise (ch.04 §3, §6) | `set_gate` — lift `promote_margin` clear of the floor, but only when `2.5 × delta_std` genuinely exceeds it; when the floor's range and its dispersion disagree the check diagnoses and proposes nothing rather than shipping an op that would LOWER the margin |
 | `weight_revisit` | default-weighted judges, `scorecards` reliabilities | a judge left at default weight despite divergent measured reliability mis-weights the loss (ch.04 §10) | `set_weights` (advisory `per_judge_weights`) |
 
 ### Output shape and the apply path

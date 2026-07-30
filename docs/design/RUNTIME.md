@@ -1192,9 +1192,9 @@ slot IS held across the wait, so an orchestrator whose units are all
 queued makes no progress until a slot frees — queueing, which is the
 intent.
 
-#### 5.5.8 Lazy role resolution (SHIPPED), and one refuted micro-fix
+#### 5.5.8 Lazy role resolution (SHIPPED), and two refuted micro-fixes
 
-A second cheap win, and a correction to a claim worth recording.
+A second cheap win, and two corrections to claims worth recording.
 
 **Refuted: there is no eager `litellm` import to remove.** The
 expectation was that the worker imports `litellm` at startup. It does
@@ -1250,7 +1250,64 @@ bare `model`-only spec (where `build_adk_model` returns the model string
 and imports nothing) and for the auxiliary / judge roles on a worker
 whose harness role is a dotted `call_llm`. Making the inner model lazy
 too is not a wrapper away — the adapter rebinds agent trees to a model
-*object* at setup — so it is the remaining half of this win.
+*object* at setup. See "The inner-model half, resolved" below for what
+was actually achievable here.
+
+**The inner-model half, resolved: refuted as a cost reduction, real as a
+reordering.** Investigated by measuring the two costs directly rather
+than assuming importing `google.adk` and building a `LiteLlm` are one
+lump sum:
+
+| Step | s (best of two, warm interpreter) | new `sys.modules` |
+|---|---|---|
+| `import google.adk` (bare — what `ADKHarnessAdapter.load` does) | 0.90–1.17 | ~1500 |
+| `build_adk_model(...)` cold (nothing imported yet — today's eager path) | 0.89–0.92 | ~1500 |
+| `build_adk_model(...)` AFTER `google.adk` is already resident | 0.002 | +3 |
+
+`from google.adk.models.lite_llm import LiteLlm` forces the same
+package-level `google.adk` import as a bare `import google.adk` — the
+`LiteLlm` construction itself is nearly free once that has happened
+(`LiteLlm.__init__` does not touch `litellm`; `_ensure_litellm_imported`
+runs from inside `generate_content_async`, at the first actual model
+call, matching this section's earlier "refuted litellm" finding).
+Because `ADKHarnessAdapter.load()` calls `import google.adk`
+*unconditionally* for every ADK-adapter run — it needs the agent-tree
+classes to load the entrypoint, whether or not a `harness_role` is
+endpoint-shaped — that ~1 s import is paid regardless of when
+`inner_model` is resolved. A "clean" deferred-construction path (a
+thunk in `RuntimeConfig.inner_model` realised at
+`ADKHarnessAdapter.run`'s first-use point, right before
+`rebind_tree_models_to_adk_model`) was designed but never built, because
+the table above already answers the question it would measure: since
+`.load()` unconditionally pays the ~1 s `google.adk` tax moments before
+`run()` would resolve the thunk, and building `LiteLlm` after that
+import is ~2 ms, the thunk's own construction cost would round to zero
+and its total-cost effect would too — deferring past `.load()` cannot
+reduce total worker wall-clock, RSS, or module count for the production
+shape (ADK adapter + endpoint-configured harness role). That result is
+refuted on measurement, not shipped, and no thunk/proxy sits in
+`RuntimeConfig` — it would be complexity with no payoff.
+
+Two things *were* worth shipping, and are: (1) `_tournament_worker._run`
+now resolves `inner_model` (and every other role) **after** it writes
+the `active_runs` state file and starts the per-run heartbeat thread,
+not before — a pure reordering, zero behavior change (nothing between
+the old and new call sites reads the resolved config). The worker used
+to pay its ~1 s ADK-import tax *before* the supervisor watchdog and the
+orchestrator's staleness check could see it as a registered, alive run;
+now that registration happens first, closing the window where a live
+worker looks unregistered while eating an unavoidable import cost.
+Pinned by `test_inner_model_resolved_after_active_run_and_heartbeat`
+(`tests/test_worker_lazy_roles.py`), which orders three mocked calls and
+asserts `active_run_write` and `heartbeat_start` precede
+`inner_model_resolve`. (2) `inner_model` resolution is now gated on
+`args["adapter"]["kind"] == "adk"` — only `ADKHarnessAdapter.run` ever
+reads `config.inner_model`, so a non-ADK adapter kind (the `"import"`
+shape, unused by the runner today but not disallowed) no longer forces
+an ADK import for a value nothing would consume. Pinned by
+`test_non_adk_adapter_never_resolves_inner_model`, which runs a real
+end-to-end worker with a stub adapter and an endpoint-shaped harness
+role and asserts `google.adk` never lands in `sys.modules`.
 
 **Deferral must not turn a config fault into a silent score.** A spec
 that validates but cannot RESOLVE (the `adk` extra absent, a `model` id

@@ -815,3 +815,4 @@ zicato tournament [OPTIONS] PARENT CHILD
 | `--epoch TEXT` | current epoch | Epoch id. Defaults to the workspace's current epoch. |
 | `--mode [full\|fast]` | `full` | `full` = run both generations; `fast` = child vs parent's historical aggregate. |
 | `--skip-regression` | off | Skip the regression-suite gate even when enabled in scoring. |
+| `--replicates INTEGER` | contract's resolved structure value | Debug override for the per-duel replicate count. Defaults to the contract's resolved structure value (what `evolve` uses) — pass this only to force a different count for this one invocation. |

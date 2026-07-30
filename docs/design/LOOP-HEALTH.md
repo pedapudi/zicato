@@ -304,6 +304,10 @@ stay silent):
 | `stalled_loop` | `warning` | trailing run of `rejected` decisions reaches `stalled_rejects` |
 | `generalization_gap` | `warning` / `critical` | the champion's `holdout_loss - train_loss` gap has *widened* past `generalization_gap_warn` / `_crit` (board memorization) |
 | `refresh_cadence` | `info` | evaluated generations under the contract reach `max_generations_per_contract` |
+| `placebo_promoted` | `critical` | a random-baseline placebo challenger (OVERFITTING.md #7) was PROMOTED — gate discrimination is broken |
+| `preflight_signal_below_floor` | `critical` under `runtime.preflight_gate="refuse"`, else `warning` | the contract pre-flight verdict is `refuse` (the achievable signal did not clear the measured A/A noise floor) |
+
+Two more detectors — `margin_below_noise_floor` (`info` / `warning`), `infra_outage` / `token_budget_clip` / `tree_never_imported` (`warning`) — shipped alongside the overfitting / pre-flight / infra-robustness programs after this table was first written; none of them emit `critical`, so they are omitted here for brevity. `health/diagnostics.py`'s `assess_loop_health` is the authoritative full detector list.
 
 Severities mean:
 
@@ -448,8 +452,13 @@ Exit codes:
 
 Note this is narrower than a separate "degenerate" exit code: the
 shipped command branches solely on the presence of a `critical`
-finding (currently only `degenerate_scoring` is `critical`), exiting
-`1` rather than a bespoke code.
+finding, exiting `1` rather than a bespoke code. `degenerate_scoring`
+and `placebo_promoted` are unconditionally `critical`;
+`generalization_gap` and `preflight_signal_below_floor` escalate to
+`critical` conditionally — the former past `generalization_gap_crit`,
+the latter only under the hard `runtime.preflight_gate="refuse"` gate
+(§3.9) — so any of the four can trip this exit code, not only
+`degenerate_scoring`.
 
 A CI wrapper that runs `zicato evolve` overnight pairs it with
 `zicato health` so a degenerate epoch is caught the next morning
@@ -510,8 +519,12 @@ be a transient (one degenerate tournament), but two in a row means the
 loop is genuinely producing no signal. A `no_expectations` finding is
 only `info` and a `non_differentiating_entry` / `flat_drift_signal`
 finding is only `warning`, so none of those alone trips the breaker —
-only a `critical` finding (today, `degenerate_scoring`) counts toward
-the consecutive-critical run.
+only a `critical` finding counts toward the consecutive-critical run.
+That is `degenerate_scoring` or `placebo_promoted` (always `critical`),
+or `generalization_gap` / `preflight_signal_below_floor` when they
+escalate (past `generalization_gap_crit`, or under the hard
+`preflight_gate="refuse"` gate respectively) — see the severity
+summary in §3.9.
 
 ## 7. Cross-references
 

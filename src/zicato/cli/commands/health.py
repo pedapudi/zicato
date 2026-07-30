@@ -3,17 +3,20 @@
 Standalone command file picked up by :mod:`zicato.cli.discovery`.
 
 The command loads the current epoch's per-generation loss profiles,
-its experiment records, and its frozen board, runs every detector in
-:mod:`zicato.health.diagnostics`, and prints the resulting
-:class:`~zicato.health.diagnostics.LoopHealth` report. Findings are
-colour-coded by severity. The command exits non-zero when any
-``critical`` finding is present so a CI / supervisor wrapper notices a
-toothless evaluation without an operator having to read the output.
+its experiment records, and its frozen board, resolves the pre-flight
+verdict / noise-floor / mutated-tree-import readers shared with the
+orchestrator's per-round assessment (:mod:`zicato.health.inputs`), runs
+every detector in :mod:`zicato.health.diagnostics`, and prints the
+resulting :class:`~zicato.health.diagnostics.LoopHealth` report.
+Findings are colour-coded by severity. The command exits non-zero when
+any ``critical`` finding is present so a CI / supervisor wrapper
+notices a toothless evaluation without an operator having to read the
+output.
 
-All workspace I/O lives here — the diagnostics module itself is pure.
-Generation directories are enumerated under ``epochs/{id}/generations``
-and sorted numerically (``v2`` before ``v10``) so window-based
-detectors see lineage order.
+Losses / experiments / board loading is this file's own workspace I/O —
+the diagnostics module itself is pure. Generation directories are
+enumerated under ``epochs/{id}/generations`` and sorted numerically
+(``v2`` before ``v10``) so window-based detectors see lineage order.
 """
 
 from __future__ import annotations
@@ -31,6 +34,12 @@ from zicato.core.workspace import (
     loss_profile_path,
 )
 from zicato.health.diagnostics import LoopHealth, assess_loop_health
+from zicato.health.inputs import (
+    epoch_noise_floor_inputs,
+    epoch_preflight_record,
+    epoch_tree_import_gaps,
+    workspace_preflight_gate,
+)
 
 #: ANSI-ish colour names click understands, keyed by finding severity.
 _SEVERITY_COLOR: dict[str, str] = {
@@ -253,6 +262,14 @@ def health_cmd(workspace: str, epoch: str | None) -> None:
     )
     experiments = _load_experiments(workspace_dir, epoch_id, generation_ids)
 
+    # The orchestrator-only findings (issue #110's tree-import gap, the
+    # pre-flight verdict, the margin-vs-noise-floor check) share their
+    # readers with the per-round loop-health assessment
+    # (zicato.health.inputs) — every finding a live round sees, `zicato
+    # health` now sees too from the same persisted workspace records.
+    noise_floor, promote_margin, evidence_gate_on = epoch_noise_floor_inputs(
+        workspace_dir, epoch_id
+    )
     report = assess_loop_health(
         losses_by_generation=losses_by_generation,
         experiments=experiments,
@@ -260,6 +277,12 @@ def health_cmd(workspace: str, epoch: str | None) -> None:
         epoch_id=epoch_id,
         config=_workspace_health_config(workspace_dir),
         max_generations_per_contract=_max_generations_per_contract(workspace_dir, epoch_id),
+        noise_floor=noise_floor,
+        promote_margin=promote_margin,
+        evidence_gate_on=evidence_gate_on,
+        preflight=epoch_preflight_record(workspace_dir, epoch_id),
+        preflight_gate=workspace_preflight_gate(workspace_dir),
+        tree_import_gaps=epoch_tree_import_gaps(workspace_dir, epoch_id) or None,
     )
 
     click.echo(render_report(report))

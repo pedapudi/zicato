@@ -99,11 +99,21 @@ def _install_fake_health(
     diagnostics_mod.assess_loop_health = assess_loop_health  # type: ignore[attr-defined]
     diagnostics_mod.LoopHealth = _FakeLoopHealth  # type: ignore[attr-defined]
 
+    # zicato.health.inputs is real, dependency-light, side-effect-free
+    # workspace-reading code that ships in the same package as
+    # diagnostics — unlike diagnostics (faked here to control the report
+    # this test asserts on), there is no scenario where it is genuinely
+    # absent, so the orchestrator's ``_assess_and_persist_loop_health``
+    # (and ``_warn_margin_below_noise_floor``) import the real module.
+    import zicato.health.inputs as inputs_mod
+
     health_pkg = types.ModuleType("zicato.health")
     health_pkg.diagnostics = diagnostics_mod  # type: ignore[attr-defined]
+    health_pkg.inputs = inputs_mod  # type: ignore[attr-defined]
 
     monkeypatch.setitem(sys.modules, "zicato.health", health_pkg)
     monkeypatch.setitem(sys.modules, "zicato.health.diagnostics", diagnostics_mod)
+    monkeypatch.setitem(sys.modules, "zicato.health.inputs", inputs_mod)
 
 
 def _run_one_round(

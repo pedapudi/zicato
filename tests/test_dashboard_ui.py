@@ -73,6 +73,61 @@ def icons_svg() -> str:
     return (STATIC_DIR / "icons.svg").read_text(encoding="utf-8")
 
 
+# Directories under static/ that are NOT part of the served bundle the
+# browser loads to render the dashboard:
+#   * test/    — the dev-only JS test harness; excluded from the wheel
+#                itself (see pyproject.toml [tool.hatch.build.targets.wheel]
+#                `exclude`), never fetched by the running app.
+#   * brand/   — favicons/wordmarks/lockups; mostly binary (png/ico) and the
+#                handful of SVGs in there are brand assets tracked
+#                separately from the UI bundle, not counted here.
+#   * fonts/   — binary woff2 files, referenced only via @font-face url().
+_UNCOUNTED_DIRS = {"test", "brand", "fonts"}
+
+# Text-file extensions the dashboard server will hand back verbatim from
+# `static_dir` (see `server.py::_serve_static`, which serves ANY file
+# under the static root — both at `/` and under `/static/`). Binary
+# formats (png, ico, woff2, ...) are excluded; they never drift the way
+# hand-written text does and aren't what this envelope is guarding.
+# ``.mjs`` is listed even though every ``.mjs`` on disk today lives under the
+# already-excluded ``test/`` harness: an ES module dropped under ``js/`` would
+# otherwise be served to the browser and silently sit outside this count —
+# which is the exact gap (a served asset nothing forced into the sum) that
+# walking the tree exists to close.
+_TEXT_EXTENSIONS = {".html", ".css", ".js", ".mjs", ".svg", ".md"}
+
+
+def _served_text_files() -> list[Path]:
+    """Every hand-written text asset of the served dashboard BUNDLE.
+
+    Not literally everything the static route can hand back — that route
+    serves any file under the static root, ``brand/`` and ``test/`` included
+    (see ``_UNCOUNTED_DIRS`` for why those are out of scope here).
+
+    This walks the actual served tree (mirroring what
+    ``server.py``'s catch-all static route exposes) rather than
+    hand-listing fixtures per file. A prior version of this test summed
+    four hand-picked fixtures (``index.html`` + ``style.css`` + the JS
+    bundle + ``icons.svg``) and silently missed ``css/console.css`` —
+    loaded at runtime by ``app_T.js`` via a dynamic ``<link>`` — because
+    nothing forced the fixture list to track what's actually on disk.
+    Walking the tree closes that gap structurally: a new text asset
+    dropped anywhere under ``static/`` (outside the excluded
+    dev/binary/brand directories) is counted automatically.
+    """
+    files = []
+    for path in STATIC_DIR.rglob("*"):
+        if not path.is_file():
+            continue
+        if path.suffix not in _TEXT_EXTENSIONS:
+            continue
+        rel_parts = path.relative_to(STATIC_DIR).parts
+        if rel_parts[0] in _UNCOUNTED_DIRS:
+            continue
+        files.append(path)
+    return sorted(files)
+
+
 # ---------------------------------------------------------------------------
 # No external resource references
 # ---------------------------------------------------------------------------
@@ -238,19 +293,23 @@ def test_palette_matches_html_report(style_css: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_bundle_under_size_envelope(
-    index_html: str, style_css: str, app_js: str, icons_svg: str
-) -> None:
+def test_bundle_under_size_envelope() -> None:
     """The bundle stays under its uncompressed envelope.
 
     The dashboard is served off disk by the standalone Python service
     with no network cost; this guard only keeps the vanilla bundle from
-    drifting unboundedly. The ``app_js`` fixture concatenates every
-    shipped JS file (the Variant-T entry ``app_T.js`` + the modules under
-    ``static/js/``); the dev-only JS test harness under ``static/test/``
-    is NOT shipped and is excluded.
+    drifting unboundedly. The total is the sum of every hand-written text
+    asset the server can actually hand back (see ``_served_text_files``) —
+    not a hand-picked fixture list — so a new served file can't silently
+    sit outside the count the way ``css/console.css`` did (see the HONEST
+    REBASE entry below). The dev-only JS test harness under
+    ``static/test/`` is NOT shipped (excluded from the wheel) and is
+    excluded here too; ``brand/`` and ``fonts/`` are binary/vendor assets
+    tracked separately from the UI bundle.
     """
-    total = len(index_html) + len(style_css) + len(app_js) + len(icons_svg)
+    files = _served_text_files()
+    sizes = {str(p.relative_to(STATIC_DIR)): len(p.read_text(encoding="utf-8")) for p in files}
+    total = sum(sizes.values())
     # The dashboard converged on Variant T (Console IV). The retired v1
     # (phase0 shell) and v2 (Notebook/Bench) UIs — and the bake-off field
     # A–W before them — were removed from `main` and archived at the git
@@ -668,7 +727,25 @@ def test_bundle_under_size_envelope(
     # self-measured "base" carried a worktree-local artifact), and the merged
     # bundle measures 1,514,097 chars (+57 K across the two view branches). The
     # envelope is raised once to 1.52 M to cover the union with a thin margin.
-    assert total < 1_520_000, f"bundle is {total} bytes, exceeds 1_520_000 envelope"
+    #
+    # HONEST REBASE: this test's own accounting had drifted from what the
+    # server actually serves. Two gaps: (1) ``css/console.css`` — loaded at
+    # runtime by ``app_T.js`` via a dynamic ``<link>``, and by far the
+    # largest single stylesheet (~277 KB) — was never in the summed fixture
+    # set; (2) ``js/CONTRACTS.md`` and the top-level ``README.md`` are
+    # hand-written text the static route serves like any other file and
+    # were likewise uncounted. None of the three are new content — they
+    # already existed on disk — so this is a measurement correction, not a
+    # feature landing. Switching to walking the served tree
+    # (``_served_text_files``) measured the honest total at 1,825,961 chars
+    # against the old (dishonest) 1,519,923 the four-fixture sum reported —
+    # i.e. the guard had 77 chars of headroom while the real bundle was
+    # already ~306 KB over its stated 1.52 M line. The envelope is rebased
+    # to 1.89 M (honest total + ~3% slack) so it reflects what the browser
+    # actually loads, with headroom for continued iteration.
+    assert total < 1_890_000, f"bundle is {total} chars, exceeds 1_890_000 envelope\n" + "\n".join(
+        f"  {name:40s} {size:>10,}" for name, size in sorted(sizes.items(), key=lambda kv: -kv[1])
+    )
 
 
 def test_each_file_is_non_empty() -> None:

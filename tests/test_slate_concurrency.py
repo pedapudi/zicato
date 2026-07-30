@@ -9,8 +9,12 @@ Three independent guarantees the gather rests on:
   restores slot order. The reversal is forced by an ``asyncio.Event`` chain
   (:class:`_CompletionGate`), not by per-slot sleeps: sleeps made the
   assertion timing-dependent and it flaked under saturated xdist (issue #103).
-* **The wall-clock overlap is real.** ~100 ms-per-slot scripted slots take
-  ≈ ``n × 100 ms`` serially and ≈ ``100 ms`` gathered.
+* **The overlap is real.** All N slate slots are genuinely in flight AT
+  ONCE, proven structurally by a rendezvous every slot must reach together
+  (:class:`_RendezvousAgent`) rather than by a wall-clock margin — a slate
+  that silently serialised deadlocks the rendezvous instead of just running
+  slower, so this cannot flake under a saturated CI runner the way a timing
+  ratio can (issue #103's discipline applied to the overlap proof too).
 * **Real per-slot scratch derives are disjoint + intact.** N concurrent
   ``GenerationStore.derive_scratch`` calls into disjoint scratch roots each
   materialise their OWN candidate's tree with no cross-contamination and no
@@ -20,8 +24,8 @@ Three independent guarantees the gather rests on:
 from __future__ import annotations
 
 import asyncio
-import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -136,9 +140,12 @@ async def _gated_propose(agent: BestOfNProposerAgent, ctx: ProposerContext) -> E
 
     A timeout here is a diagnosis, not a slow machine: the gates resolve in
     microseconds once the gather genuinely overlaps, so exhausting
-    :data:`_GATED_SLATE_TIMEOUT_S` means the reverse-order chain deadlocked —
-    the slots ran serially in slot order (or one died before setting its
-    gate) and slot 0 is waiting on an event nobody will set.
+    :data:`_GATED_SLATE_TIMEOUT_S` means the event chain deadlocked — the
+    slots ran serially instead of concurrently (or one died before signalling
+    its gate) and at least one slot is waiting on an event nobody will ever
+    set. Shared by every event-gated proof in this module — the reverse-order
+    completion gate (:class:`_CompletionGate`) and the rendezvous overlap
+    proof (:class:`_RendezvousAgent`) alike.
     """
     try:
         async with asyncio.timeout(_GATED_SLATE_TIMEOUT_S):
@@ -146,8 +153,8 @@ async def _gated_propose(agent: BestOfNProposerAgent, ctx: ProposerContext) -> E
     except TimeoutError:
         pytest.fail(
             f"gated slate propose did not finish within {_GATED_SLATE_TIMEOUT_S}s: "
-            "the reverse-order completion gate deadlocked, so the slate slots "
-            "did NOT run concurrently (serialisation regression)"
+            "the event chain deadlocked, so the slate slots did NOT run "
+            "concurrently (serialisation regression)"
         )
 
 
@@ -255,47 +262,190 @@ async def test_out_of_order_slate_is_byte_identical_to_serial() -> None:
 
 
 # --------------------------------------------------------------------------
-# Proof 2 — the wall-clock overlap is real
+# Proof 2 — the gathered execution genuinely overlaps
 # --------------------------------------------------------------------------
 
 
-class _SleepAgent:
-    """Inner agent that sleeps a fixed time per slot then returns a candidate."""
+class _RendezvousAgent:
+    """Inner agent proving genuine N-way overlap structurally — no sleeps.
 
-    def __init__(self, per_slot_s: float) -> None:
-        self._per_slot_s = per_slot_s
+    Each slot records its arrival (bumping the shared in-flight counter and
+    the observed peak), then waits for EVERY slot to have arrived before
+    returning. All N slots can only complete if all N were in flight AT
+    ONCE: a slate that silently serialised would deadlock here — slot 0
+    can never observe slot 1's arrival, because slot 1 cannot even START
+    until slot 0 already returned — rather than merely finishing slower.
+    That is the same "wrong behaviour deadlocks, not just runs oddly"
+    discipline :class:`_CompletionGate` uses above (issue #103: a
+    wall-clock margin can flake under a saturated ``pytest -n`` with no
+    real regression; a deadlock cannot).
+    """
+
+    def __init__(self, n: int) -> None:
+        self._events = [asyncio.Event() for _ in range(n)]
+        self.peak_in_flight = 0
+        self._in_flight = 0
 
     async def propose(self, ctx: ProposerContext) -> Experiment:
         slot = _slot_of_hint(ctx.sample_hint)
-        await asyncio.sleep(self._per_slot_s)
+        self._in_flight += 1
+        self.peak_in_flight = max(self.peak_in_flight, self._in_flight)
+        self._events[slot].set()
+        for event in self._events:
+            await event.wait()
+        self._in_flight -= 1
         return _experiment(slot, f"content-{slot}")
-
-
-async def _time_slate(parallelism: int, per_slot_s: float) -> float:
-    inner = _SleepAgent(per_slot_s)
-    # critique_enabled=False ⇒ deterministic heuristic selection, NO aux call,
-    # so only the sampling time is measured.
-    agent = BestOfNProposerAgent(
-        inner=inner,
-        config=ProposerQualityConfig(best_of_n=3, critique_enabled=False),
-        propose_parallelism=parallelism,
-    )
-    events: list[tuple[str, dict]] = []
-    t0 = time.monotonic()
-    await agent.propose(_ctx(_FixedCritic("0"), events))
-    return time.monotonic() - t0
 
 
 @pytest.mark.asyncio
 async def test_gathered_slate_overlaps_the_per_slot_wait() -> None:
-    per_slot = 0.1
+    """The gathered slate is genuinely concurrent: all N slots are in flight
+    AT ONCE, proven structurally (a rendezvous every slot must reach
+    together) instead of by a wall-clock ratio — the flake class issue
+    #103 eliminated elsewhere in this file (``gathered < 1.8 * per_slot``
+    could flake under a saturated CI runner with no real serialisation
+    regression). A slate that silently serialised would DEADLOCK the
+    rendezvous rather than just finish slowly — a strictly stronger probe
+    than the margin it replaces — so the gated propose is wrapped in the
+    same hard ceiling as the reverse-order proof above, to fail fast with
+    a clear diagnosis instead of hanging.
+    """
     n = 3
-    serial = await _time_slate(1, per_slot)
-    gathered = await _time_slate(n, per_slot)
-    # Serial pays the full n × 100 ms; the gather overlaps to ≈ one slot.
-    assert serial >= (n - 0.5) * per_slot, f"serial too fast: {serial:.3f}s"
-    assert gathered < 1.8 * per_slot, f"gather did not overlap: {gathered:.3f}s"
-    assert gathered < serial / 2, f"gather ({gathered:.3f}s) not faster than serial ({serial:.3f}s)"
+    tracker = _RendezvousAgent(n)
+    agent = BestOfNProposerAgent(
+        inner=tracker,
+        config=ProposerQualityConfig(best_of_n=n, critique_enabled=False),
+        propose_parallelism=n,
+    )
+    events: list[tuple[str, dict]] = []
+    await _gated_propose(agent, _ctx(_FixedCritic("0"), events))
+    assert (
+        tracker.peak_in_flight == n
+    ), f"gather did not overlap: peak concurrency was {tracker.peak_in_flight}, expected {n}"
+
+
+# --------------------------------------------------------------------------
+# Proof 2b — no scratch lease is still open when the slate raises
+# --------------------------------------------------------------------------
+
+
+#: Event-loop turns to pump before concluding the slate is genuinely parked
+#: on its sibling. Turns, not seconds — a saturated runner adds wall-clock
+#: time but never extra turns, so this cannot flake the way a sleep would.
+#: The pre-fix gather surfaces its exception on turn 2.
+_SETTLE_TURNS = 50
+
+
+class _LeaseLedger:
+    """A ``scratch_validator_factory`` that counts OPEN per-slot leases.
+
+    Stands in for the real per-slot scratch tree: ``open_count`` is how many
+    slots currently hold a scratch parent on disk, i.e. exactly the residue
+    the WS-CONC leak was about.
+    """
+
+    def __init__(self) -> None:
+        self.open_count = 0
+        self.leased = 0
+
+    def __call__(self) -> tuple[object, object]:
+        self.open_count += 1
+        self.leased += 1
+
+        def _cleanup() -> None:
+            self.open_count -= 1
+
+        async def _validate(_experiment: Experiment) -> list[str]:
+            return []
+
+        return _validate, _cleanup
+
+
+class _BoomAndHoldAgent:
+    """Slot 0 raises an UNEXPECTED exception; slot 1 keeps its lease open.
+
+    ``_sample_slot`` folds a :class:`ProposerError` into a normal
+    ``_SlotOutcome``, so the only thing that reaches the gather is an
+    exception the slate never anticipated — a bug in the inner proposer, a
+    cleanup failure, an ``asyncio`` error. That is the path this rig drives.
+    Slot 1 parks on ``release`` (held by the test) so it is guaranteed to
+    still be mid-flight, holding its scratch lease, at the instant slot 0
+    blows up.
+    """
+
+    def __init__(self) -> None:
+        self.boom_raised = asyncio.Event()
+        self.slot1_parked = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def propose(self, ctx: ProposerContext) -> Experiment:
+        slot = _slot_of_hint(ctx.sample_hint)
+        if slot == 0:
+            await self.slot1_parked.wait()
+            self.boom_raised.set()
+            raise RuntimeError("slot 0 exploded")
+        self.slot1_parked.set()
+        await self.release.wait()
+        return _experiment(slot, f"content-{slot}")
+
+
+@pytest.mark.asyncio
+async def test_slate_raise_waits_for_every_sibling_lease_to_be_released() -> None:
+    """The slate's exception must not outrun its siblings' scratch cleanup.
+
+    This is the WS-CONC leak itself, and nothing else in this file covers
+    it. Plain ``asyncio.gather()`` completes its outer future the instant
+    ONE child raises, leaving the others running as orphans — so the caller
+    regained control while a sibling's scratch parent was still on disk, and
+    the round's residue sweep could see a lease that was about to be
+    released by a task nobody was awaiting.
+
+    The proof is structural, not timed. Slot 1 parks on an event only the
+    TEST can set, so once slot 0 has raised the propose task can never
+    complete while the fix holds — no number of event-loop turns will let
+    it — whereas the pre-fix gather completes within a couple of turns,
+    exception in hand and slot 1's lease still open. Pumping the loop a
+    bounded number of turns and asserting the task never finished therefore
+    separates the two behaviours without depending on any wall clock
+    (measured: pre-fix finishes on turn 2).
+    """
+    inner = _BoomAndHoldAgent()
+    ledger = _LeaseLedger()
+    agent = BestOfNProposerAgent(
+        inner=inner,
+        config=ProposerQualityConfig(best_of_n=2, critique_enabled=False),
+        propose_parallelism=2,
+    )
+    events: list[tuple[str, dict]] = []
+    ctx = replace(
+        _ctx(_FixedCritic("0"), events),
+        scratch_validator_factory=ledger,  # type: ignore[arg-type]
+    )
+
+    task = asyncio.create_task(agent.propose(ctx))
+    async with asyncio.timeout(_GATED_SLATE_TIMEOUT_S):
+        await inner.boom_raised.wait()
+    # Slot 0 has raised and slot 1 is parked holding its lease. Pump the loop:
+    # while the fix holds the slate simply cannot finish here, so any turn on
+    # which it does is the orphaned-sibling bug.
+    for turn in range(_SETTLE_TURNS):
+        await asyncio.sleep(0)
+        assert not task.done(), (
+            f"on event-loop turn {turn} the slate surfaced slot 0's failure while "
+            f"slot 1 still held its scratch lease ({ledger.open_count} open) — the "
+            "caller regained control with an orphaned slot writing to a live "
+            "scratch tree"
+        )
+
+    inner.release.set()
+    with pytest.raises(RuntimeError, match="slot 0 exploded"):
+        async with asyncio.timeout(_GATED_SLATE_TIMEOUT_S):
+            await task
+    assert ledger.leased == 2, "both slots should have leased a scratch tree"
+    assert ledger.open_count == 0, (
+        f"{ledger.open_count} scratch lease(s) still open after the slate raised — "
+        "the caller can observe a scratch parent that is still on disk"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -415,7 +565,9 @@ class _GitDeriveDelayedInner:
 @pytest.mark.slow
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_composed_real_git_slate_out_of_order_mounts_the_chosen(tmp_path: Path) -> None:
+async def test_composed_real_git_slate_out_of_order_mounts_the_chosen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The whole slate path, end-to-end, on the REAL git genstore at p=4.
 
     Threads the real ``build_scratch_validator_factory`` (per-slot scratch
@@ -427,7 +579,18 @@ async def test_composed_real_git_slate_out_of_order_mounts_the_chosen(tmp_path: 
     chosen candidate, and NO ``ztw-slate-*`` scratch residue is left behind.
     """
     import tempfile
-    from dataclasses import replace
+
+    # Route the in-process slate scratch (``ztw-slate-*``) into a test-local
+    # temp dir — the ``test_best_of_n_tree_integrity.py`` precedent — so the
+    # residue check below cannot pick up an unrelated ``ztw-slate-*`` a
+    # sibling xdist worker (or a concurrent CI job on a shared runner)
+    # happens to still have open in the REAL system temp dir at the instant
+    # this test snapshots it. ``tempfile.mkdtemp`` with no ``dir=`` resolves
+    # through ``tempfile.gettempdir()``, which honours this module attribute
+    # first, so every ``ztw-slate-*`` this test creates lands here instead.
+    scratch_tmp = tmp_path / "tmp"
+    scratch_tmp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(scratch_tmp))
 
     from zicato.epoch.git_genstore import GitGenerationStore
     from zicato.evolve.round import (

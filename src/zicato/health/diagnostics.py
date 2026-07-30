@@ -1290,7 +1290,7 @@ def detect_tree_never_imported(
     ``tree_import_gaps`` is ``{generation_id: (tree_basename, ...)}`` — the
     trees no unit of that generation ever imported, accumulated by the
     tournament workers into each generation's ``harness_load.json`` and read
-    back by the orchestrator (``_epoch_tree_import_gaps``).
+    back by :func:`zicato.health.inputs.epoch_tree_import_gaps`.
 
     This is the ONLY detector of the original #110 shape: an entrypoint that
     resolves to an INSTALLED copy under a different top-level name and never

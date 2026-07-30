@@ -179,6 +179,11 @@ select = [
 "zicato.analyzer.aggregator._to_snake".msg = "private to the aggregator: use zicato.query.paths.to_snake"
 "zicato.adapters.adk._entry_judge_only".msg = "promoted: use zicato.adapters.entry_judge_only"
 "zicato.adapters.adk._entry_disable_drift".msg = "promoted: use zicato.adapters.entry_disable_drift"
+"zicato.orchestrator._epoch_preflight_record".msg = "moved: use zicato.health.inputs.epoch_preflight_record"
+"zicato.orchestrator._epoch_noise_floor_inputs".msg = "moved: use zicato.health.inputs.epoch_noise_floor_inputs"
+"zicato.orchestrator._epoch_tree_import_gaps".msg = "moved: use zicato.health.inputs.epoch_tree_import_gaps"
+"zicato.orchestrator._workspace_preflight_gate".msg = "moved: use zicato.health.inputs.workspace_preflight_gate"
+"zicato.orchestrator._str_tuple".msg = "moved: use zicato.health.inputs.str_tuple"
 
 [tool.ruff.lint.per-file-ignores]
 # The storage package owns its private _atomic module; its own modules

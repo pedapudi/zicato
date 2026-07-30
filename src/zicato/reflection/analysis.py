@@ -129,12 +129,20 @@ def noise_floor_summary(
     per replicate index) and their population SD.
     """
     floor_max_abs = None
+    floor_delta_std = None
     floor_runs = None
     if isinstance(epoch_noise_floor, dict):
         try:
             floor_max_abs = float(epoch_noise_floor.get("max_abs_delta", 0.0))
         except (TypeError, ValueError):
             floor_max_abs = None
+        # Additive: pre-#112 floor records carry no ``delta_std`` field, so
+        # this stays ``None`` for them (the draw-count-stable statistic is
+        # simply unavailable, not zero).
+        try:
+            floor_delta_std = float(epoch_noise_floor["delta_std"])
+        except (KeyError, TypeError, ValueError):
+            floor_delta_std = None
         floor_runs = epoch_noise_floor.get("runs")
 
     per_candidate: dict[str, dict[str, Any]] = {}
@@ -155,6 +163,7 @@ def noise_floor_summary(
         "consumed": not fresh,
         "fresh": fresh,
         "noise_floor_max_abs_delta": floor_max_abs,
+        "noise_floor_delta_std": floor_delta_std,
         "noise_floor_runs": floor_runs,
         "preflight_verdict": (
             epoch_preflight.get("verdict") if isinstance(epoch_preflight, dict) else None
