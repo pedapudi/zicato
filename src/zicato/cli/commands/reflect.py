@@ -247,9 +247,11 @@ def _build_bill_of_health(
     }
 
     floor_max_abs = reliability.get("noise_floor_max_abs_delta")
+    floor_delta_std = reliability.get("noise_floor_delta_std")
     calibration = {
         "promote_margin": promote_margin,
         "noise_floor_max_abs_delta": floor_max_abs,
+        "noise_floor_delta_std": floor_delta_std,
         "margin_clears_floor": (
             None if floor_max_abs is None else promote_margin >= float(floor_max_abs)
         ),
@@ -258,6 +260,7 @@ def _build_bill_of_health(
     return {
         "reflection_id": reflection_id,
         "noise_floor_max_abs_delta": floor_max_abs,
+        "noise_floor_delta_std": floor_delta_std,
         "decision_flip_p": (flip.get("p_flip") if isinstance(flip, dict) else None),
         "pillars": {
             "reliability": reliability,
@@ -556,11 +559,13 @@ def _reflect_execute(
     )
 
     floor_max_abs = summary.get("noise_floor_max_abs_delta")
+    floor_delta_std = summary.get("noise_floor_delta_std")
     derived = findings_mod.derive_findings(
         scorecards=scorecards,
         adjudications=adjudications,
         promote_margin=promote_margin,
         noise_floor_max_abs_delta=(float(floor_max_abs) if floor_max_abs is not None else None),
+        noise_floor_delta_std=(float(floor_delta_std) if floor_delta_std is not None else None),
         workspace_root=workspace_root,
         epoch_id=resolved_epoch,
         reflection_id=reflection_id,

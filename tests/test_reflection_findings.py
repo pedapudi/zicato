@@ -147,6 +147,47 @@ def test_no_margin_finding_when_margin_clears_floor() -> None:
     assert not [f for f in findings if "margin" in f.title.lower()]
 
 
+def test_margin_finding_recommendation_scales_delta_std_when_present() -> None:
+    # issue #112 / ch.04 §9.4: the RECOMMENDED value scales the draw-count-
+    # stable delta_std, not the range, when delta_std is available — even
+    # though the range still decides whether the finding fires at all.
+    findings = derive_findings(
+        scorecards=[],
+        adjudications=[],
+        promote_margin=0.01,
+        noise_floor_max_abs_delta=0.10,
+        noise_floor_delta_std=0.03,
+    )
+    margin = [f for f in findings if f.pillar == "calibration"]
+    assert len(margin) == 1
+    assert margin[0].proposed_op == {
+        "op": "set_gate",
+        "args": {"promote_margin": round(MARGIN_FLOOR_MULTIPLE * 0.03, 6)},
+    }
+    assert "delta_std=0.03" in margin[0].detail
+    assert "draw-count-stable" in margin[0].detail
+
+
+def test_margin_finding_falls_back_to_range_when_delta_std_absent() -> None:
+    # A pre-#112 record with no delta_std keeps the old range-scaled
+    # recommendation (and says so in the finding text).
+    findings = derive_findings(
+        scorecards=[],
+        adjudications=[],
+        promote_margin=0.01,
+        noise_floor_max_abs_delta=0.10,
+        noise_floor_delta_std=None,
+    )
+    margin = [f for f in findings if f.pillar == "calibration"]
+    assert len(margin) == 1
+    assert margin[0].proposed_op == {
+        "op": "set_gate",
+        "args": {"promote_margin": round(MARGIN_FLOOR_MULTIPLE * 0.10, 6)},
+    }
+    assert "max_abs_delta=0.1" in margin[0].detail
+    assert "range" in margin[0].detail
+
+
 def test_no_margin_finding_when_floor_is_zero() -> None:
     # NIT: a zero (unmeasured-as-0) floor yields no set_gate margin finding —
     # the 2.5x recommendation would be a useless 0.0, and "below a zero floor"
