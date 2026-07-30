@@ -245,10 +245,16 @@ adapter-instrumented goldfive checkout it wraps (target 2 — see
 The CLI exposes this with the `--mutable-tree` flag on `register`:
 
 ```
-zicato register --adk path/to/agent.py:root_agent \
+zicato register --adk agent_package.agent:root_agent \
     --mutable-tree path/to/agent_package \
     --mutable-tree path/to/another/package
 ```
+
+`--adk` is a dotted module path whose top-level module must be the basename of
+one registered root (`agent_package` above): the snapshot copies each root
+under its basename and is prepended to `sys.path`, which resolves top-level
+packages only. Any other form imports the installed copy — every mutation
+becomes a scored no-op — so `register` refuses it (issue #110).
 
 The first registered root is conventionally the package containing the
 agent factory; additional roots are added with repeated

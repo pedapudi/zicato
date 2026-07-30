@@ -83,6 +83,14 @@ zicato register \
   --mutable-tree /home/sunil/git/goldfive
 ```
 
+> **Refused as written (issue #110).** `register` requires the entrypoint's
+> top-level module to be the basename of one registered `--mutable-tree`: the
+> snapshot copies each tree under its basename and the loader only prepends the
+> snapshot root to `sys.path`, so an entrypoint outside every mutable tree can
+> only ever import the installed copy — a scored no-op. See RUN.md §1 for the
+> full note; target 2's cross-repo shape needs a snapshot-resolvable entrypoint
+> before this recipe runs.
+
 The adapter walks the goldfive source tree for `# zicato:mutable`
 annotations (or the equivalent file-level marker) and produces a
 `MutationPoint` per annotated region — judge-prompt strings,

@@ -181,10 +181,17 @@ markers are inert Python comments to goldfive's runtime.
 `zicato register` accepts repeated `--mutable-tree` flags:
 
 ```
-zicato register --adk path/to/presentation_agent/agent.py:root_agent \
+zicato register --adk presentation_agent_package.agent:root_agent \
     --mutable-tree path/to/presentation_agent_package \
     --mutable-tree path/to/goldfive/goldfive
 ```
+
+`--adk` is a DOTTED MODULE PATH (never a filesystem path) whose top-level
+module is the basename of one registered root — `presentation_agent_package`
+above. The snapshot copies each root under its basename and the loader only
+prepends the snapshot root to `sys.path`, which resolves top-level packages
+only; any other form imports the installed copy and every mutation is a
+scored no-op (issue #110), so `register` refuses it.
 
 The first registered root is conventionally the package containing the
 agent factory; additional roots are added with repeated

@@ -31,6 +31,36 @@ tournament-runner contract in v0+1 is "fresh process per generation",
 so a single-process pass-through here is enough. Multi-generation
 processes can wrap calls themselves if they need stricter isolation.
 
+The snapshot-origin invariant (fail CLOSED)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Putting the snapshot on ``sys.path`` is NOT sufficient to guarantee the
+snapshot's code is what runs. ``sys.path`` governs only TOP-LEVEL
+package resolution, and :func:`importlib.reload` re-executes the module's
+EXISTING spec — so an entrypoint whose first dotted component names a
+package that is already importable from somewhere else (an installed
+distribution, an editable checkout) silently loads the INSTALLED copy.
+Every mutation the loop applies is then a no-op that still scores, gates,
+promotes and reports a plausible null result.
+
+Two layers close that hole:
+
+* **Load time** — after the import, :meth:`ADKHarnessAdapter.load`
+  asserts ``module.__file__`` is under ``generation_root`` and raises
+  :class:`RuntimeError` otherwise. A mis-resolved entrypoint can never
+  score.
+* **Register time** — :func:`entrypoint_snapshot_origin_error` states the
+  same invariant statically (no import, microseconds): a snapshot copies
+  each registered mutable tree under its BASENAME
+  (:meth:`ADKHarnessAdapter.mutable_subpaths`), so the entrypoint's
+  top-level component must equal ``Path(tree).name`` for one of the
+  registered trees. ``zicato register`` refuses a registration that
+  cannot possibly load from a snapshot.
+
+The resolved file is surfaced on
+:attr:`ADKRunnableHarness.entrypoint_file` so the caller (the subprocess
+worker) can record which file the generation actually ran.
+
 Transcript extraction
 ---------------------
 
@@ -159,6 +189,60 @@ def _split_entrypoint(entrypoint: str) -> tuple[str, str]:
     return module_path, symbol
 
 
+def entrypoint_snapshot_origin_error(
+    entrypoint: str,
+    mutable_trees: Iterable[str | Path],
+) -> str | None:
+    """Refusal message when ``entrypoint`` can never load from a snapshot.
+
+    The static, IMPORT-FREE half of the snapshot-origin invariant (see the
+    module docstring). A generation snapshot copies each registered mutable
+    tree under its own BASENAME — ``generation_root / Path(tree).name`` (the
+    rule :meth:`ADKHarnessAdapter.mutable_subpaths` re-bases on, and the one
+    ``seed_generation`` materialises) — and the loader only prepends
+    ``generation_root`` to ``sys.path``. ``sys.path`` resolves TOP-LEVEL
+    packages, so the entrypoint's first dotted component is the ONLY name the
+    snapshot can supply: unless it equals one of the registered trees'
+    basenames, the import resolves somewhere else entirely (an installed
+    distribution, an editable checkout) and the generation's mutated code is
+    never executed — every round is a scored no-op (issue #110).
+
+    Returns ``None`` when the registration is loadable-from-snapshot (or when
+    the check does not apply: a malformed entrypoint, which
+    :func:`_split_entrypoint` / the CLI's own syntactic check owns, or no
+    registered mutable trees at all — the snapshot surface is then the whole
+    root and the seed step raises its own error). Otherwise returns a single
+    operator-actionable line ready to be wrapped in the caller's error type.
+
+    Import-free by construction: pure string / :class:`~pathlib.Path` math, no
+    ``importlib`` and no filesystem access, so ``zicato register`` still works
+    in an environment where the target's own runtime deps are not installed.
+    """
+    trees = [Path(tree) for tree in mutable_trees]
+    if not trees:
+        return None
+    if ":" not in entrypoint:
+        return None
+    module_path = entrypoint.partition(":")[0].strip()
+    if not module_path:
+        return None
+    top_level = module_path.split(".")[0]
+    basenames = [tree.name for tree in trees]
+    if top_level in basenames:
+        return None
+    return (
+        f"entrypoint {entrypoint!r} can never load from a generation snapshot: "
+        f"its top-level module {top_level!r} is not one of the registered "
+        f"mutable trees {basenames!r}. A snapshot copies each mutable tree "
+        f"under its basename (snapshot/<basename>/...) and the loader only "
+        f"prepends the snapshot root to sys.path — which resolves TOP-LEVEL "
+        f"packages only — so this entrypoint would import the INSTALLED copy "
+        f"and every mutation would be a scored no-op. Register the entrypoint "
+        f"relative to a mutable tree, e.g. "
+        f"--adk {basenames[0]}.<module>:<symbol>."
+    )
+
+
 def _default_mutable_trees(module_path: str) -> list[Path]:
     """Best-effort default for :attr:`ADKHarnessAdapter.mutable_trees`.
 
@@ -260,17 +344,20 @@ def _goldfive_runtime() -> Any:
 #      (typically function-calling ``LiteLlm``) ``BaseLlm`` from a configured
 #      ``{model, endpoint, api_key_env}`` spec. PREFERRED. Injected by
 #      :func:`rebind_tree_models_to_adk_model` when ``models.harness`` is set.
-#   2. ADK's own ``LLMRegistry`` native resolution — a bare ``"openai/<model>"``
-#      / ``LiteLlm``-resolvable string an author hardcoded keeps native
+#   2. ADK's own ``LLMRegistry`` native resolution — ANY registry-resolvable
+#      string an author hardcoded (``"openai/<model>"`` → ``LiteLlm``, a native
+#      ``"gemini-*"`` / ``"gemma-*"`` id → ``Gemini`` / ``Gemma``) keeps native
 #      tool/function calling; :func:`_resolves_to_native_function_calling`
 #      detects it and the shim LEAVES IT ALONE.
 #   3. THIS shim (:func:`rebind_tree_models_to_call_llm`) — fires ONLY on a
-#      bare string that resolves to a ``google.genai``-backed client
-#      (``gemini-*`` / ``gemma-*``) or is wholly unresolvable. It exists to
-#      stop the genai-client GC flood (below) for an UNCONFIGURED / misconfigured
-#      target — and it is TEXT-ONLY: it carries NO ``function_declarations``,
-#      so any agent rebound to it loses native tool/function calling and a
-#      tool-driven tree degenerates to a single text turn. Hence last-resort.
+#      TOOL-FREE agent whose bare string resolves to a ``google.genai``-backed
+#      client (``gemini-*`` / ``gemma-*``) or is wholly unresolvable. It exists
+#      to stop the genai-client GC flood (below) for an UNCONFIGURED /
+#      misconfigured target — and it is TEXT-ONLY: it carries NO
+#      ``function_declarations``, so any agent rebound to it loses native
+#      tool/function calling and a tool-driven tree degenerates to a single
+#      text turn. Hence last-resort, and hence never for an agent that declares
+#      tools: that case keeps its native model, or raises (issue #98).
 # ---------------------------------------------------------------------------
 
 
@@ -431,21 +518,62 @@ def _iter_agent_tree(root: Any) -> Iterable[Any]:
 def _resolves_to_native_function_calling(model_str: str) -> bool:
     """True if ``model_str`` resolves to a real function-calling ``BaseLlm``.
 
+    Answers exactly the question its caller asks — *can a model built from this
+    string make tool/function calls?* — and nothing else. ADK's
+    :class:`LLMRegistry` is the authority: every class it resolves is a real
+    ``BaseLlm`` implementation that carries ``function_declarations`` through to
+    its provider (``LiteLlm`` against an OpenAI-compatible endpoint,
+    ``Gemini`` / ``Gemma`` against ``google.genai``). So registry-resolvable
+    ⇒ ``True``; only a string ADK cannot resolve at all ⇒ ``False``.
+
     Uses :meth:`LLMRegistry.resolve`, which returns the model *class* without
-    instantiating it — so this classifier never constructs (and therefore
-    never floods on the garbage-collection of) a ``google.genai`` client.
+    instantiating it — so this classifier never constructs (and therefore never
+    floods on the garbage-collection of) a ``google.genai`` client.
 
-    A provider-style identifier such as ``"openai/<model>"`` resolves to ADK's
-    :class:`LiteLlm`, which carries native tool/function calling against an
-    OpenAI-compatible endpoint (e.g. a local vLLM). Those agents must NOT be
-    rebound to the text-only ``call_llm`` shim — doing so silently strips
-    function calls and reduces a tool-calling tree to a single text turn.
+    Historical note (issue #98): this predicate used to return
+    ``issubclass(cls, LiteLlm)``, conflating "is function-calling capable" with
+    "is not a ``google.genai``-backed class". A native ``gemini-*`` / ``gemma-*``
+    id resolves to :class:`Gemini` / :class:`Gemma`, NOT a ``LiteLlm``
+    subclass — so every native Gemini/Gemma target was judged tool-INCAPABLE
+    and its tool agents were rebound to the text-only shim, silently stripping
+    every tool. The genai-client-flood concern that motivated the old answer is
+    a property of CONSTRUCTING such a model, not of its capability, and now
+    lives on the construction path where it belongs
+    (:func:`_resolves_to_genai_client` in
+    :func:`rebind_tree_models_to_call_llm`).
 
-    Bare ``gemini-*`` / ``gemma-*`` strings resolve to the ``google.genai``
-    backed clients (``Gemini`` / ``Gemma``) — the unused-client flood source
-    the shim exists to avoid — and unresolvable strings raise; both return
-    ``False`` so the caller routes them through the shim as a last resort.
-    Returns ``False`` if ADK / litellm is unavailable (no native path exists).
+    Returns ``False`` if ADK is unavailable (no native path exists at all).
+    """
+    try:
+        from google.adk.models.registry import LLMRegistry  # noqa: PLC0415
+    except ImportError:
+        return False
+    try:
+        LLMRegistry.resolve(model_str)
+    except Exception:  # noqa: BLE001 — unresolvable string → shim fallback
+        return False
+    return True
+
+
+def _resolves_to_genai_client(model_str: str) -> bool:
+    """True if ``model_str`` resolves to a ``google.genai``-backed ADK class.
+
+    The CONSTRUCTION-path concern, kept separate from the capability question
+    :func:`_resolves_to_native_function_calling` answers. A bare ``gemini-*`` /
+    ``gemma-*`` id resolves to :class:`Gemini` / :class:`Gemma`, whose
+    construction builds a :class:`google.genai.Client`. With no Google API key
+    present (the vLLM / call_llm path never needs one) that constructor raises
+    before it sets ``_async_httpx_client``, and the partial client's
+    ``__del__`` floods the log with ``AttributeError`` tracebacks on GC — one
+    per turn (see :func:`_build_call_llm_adk_model_class`). Avoiding that flood
+    is the ONLY reason the text-only shim ever displaces a resolvable model,
+    and it applies only to a TOOL-FREE agent: for a tool-declaring agent the
+    shim would be a silent no-op, which is strictly worse than a loud
+    credential error.
+
+    ``False`` for a :class:`LiteLlm`-resolvable string (its construction builds
+    no genai client), for an unresolvable string, and when ADK / litellm is
+    unavailable.
     """
     try:
         from google.adk.models.lite_llm import LiteLlm  # noqa: PLC0415
@@ -454,50 +582,71 @@ def _resolves_to_native_function_calling(model_str: str) -> bool:
         return False
     try:
         cls = LLMRegistry.resolve(model_str)
-    except Exception:  # noqa: BLE001 — unresolvable string → shim fallback
+    except Exception:  # noqa: BLE001 — unresolvable string: not a genai client
         return False
-    return issubclass(cls, LiteLlm)
+    return not issubclass(cls, LiteLlm)
+
+
+def _agent_declares_tools(agent: Any) -> bool:
+    """True if ``agent`` declares any ``tools=`` entry.
+
+    The hardening backstop's predicate (issue #98): an agent with tools is a
+    FUNCTION-CALLING target, and the text-only ``call_llm`` shim can never
+    serve it — it sends no ``function_declarations`` and can return no
+    ``function_call``, so the tree would degenerate to one text turn while
+    still scoring. Read defensively: a plain ``BaseAgent`` (or an overlay
+    wrapper) carries no ``tools`` field at all.
+    """
+    return bool(getattr(agent, "tools", None))
 
 
 def rebind_tree_models_to_call_llm(root: Any, call_llm: Any) -> int:
-    """LAST-RESORT: rebind only *unresolvable* string models to the text shim.
+    """LAST-RESORT: rebind only TOOL-FREE non-endpoint models to the text shim.
 
     The third and last ADK-model path (see the section banner): used only when
-    no configured inner model (:func:`rebind_tree_models_to_adk_model`) and no
-    natively-resolvable ``LiteLlm`` string is available. Walks the agent tree
-    (root + ``sub_agents`` / ``inner_agent`` / ``AgentTool.agent`` edges). For
-    each agent whose ``model`` is a bare string that does NOT resolve to a real
-    function-calling model, replaces it with the TEXT-ONLY :class:`BaseLlm`
-    shim backed by ``call_llm`` so ADK's ``canonical_model`` returns it
-    directly and NEVER resolves the string through ``LLMRegistry.new_llm``
-    (which would build the unused, flood-causing google.genai client). Because
-    the shim carries no tools, every rebound agent loses native tool/function
-    calling — which is why this only fires when no tool-preserving path exists.
+    no configured inner model (:func:`rebind_tree_models_to_adk_model`) is
+    available. Walks the agent tree (root + ``sub_agents`` / ``inner_agent`` /
+    ``AgentTool.agent`` edges) and replaces a qualifying agent's bare string
+    ``model`` with the TEXT-ONLY :class:`BaseLlm` shim backed by ``call_llm``,
+    so ADK's ``canonical_model`` returns it directly and never resolves the
+    string through ``LLMRegistry.new_llm`` (which would build the unused,
+    flood-causing google.genai client). Because the shim carries no tools,
+    every rebound agent loses native tool/function calling — which is why it
+    only fires where nothing is lost.
 
-    Two kinds of agent are deliberately LEFT UNTOUCHED:
+    An agent qualifies for the shim only when it declares NO ``tools=`` and its
+    ``model`` either resolves to a ``google.genai``-backed class (the flood
+    source — see :func:`_resolves_to_genai_client`) or does not resolve at all.
+    Three kinds of agent are deliberately LEFT UNTOUCHED:
 
     * an agent whose ``model`` is already a :class:`BaseLlm` — an author who
-      wired a real model object owns it; and
+      wired a real model object owns it;
     * an agent whose ``model`` string resolves to a function-calling
       :class:`LiteLlm` (e.g. ``"openai/<model>"`` against a local endpoint) —
-      rebinding it to the text-only ``call_llm`` shim would strip native
-      tool/function calling and reduce a tool-calling tree to a single text
-      turn (see :func:`_resolves_to_native_function_calling`).
+      rebinding it to the text-only shim would strip native tool/function
+      calling and reduce a tool-calling tree to a single text turn; and
+    * an agent that DECLARES TOOLS on a registry-resolvable model (including a
+      native ``gemini-*`` / ``gemma-*`` id — issue #98). Displacing a real
+      function-calling model to dodge the genai-client flood would turn a
+      tool-using target into a silent text-only no-op; a loud credential error
+      from the real client is strictly better. A ``warning`` names them.
 
-    Any agent that IS rebound has its native tool-calling disabled (the shim is
-    text-only); a single ``warning`` names them so a degraded target is loud
-    rather than silently inert.
+    The hardening backstop: an agent that declares tools and has NO
+    function-calling model left raises :class:`RuntimeError` rather than being
+    quietly rebound — a tool-using target must never silently become a
+    text-only no-op that still scores, gates and promotes.
 
     Returns the number of agents rebound. A no-op (returns 0) when ``call_llm``
     is falsy. Idempotent — a second pass finds every model already a
-    ``BaseLlm`` (or LiteLlm-resolvable) and rebinds none.
+    ``BaseLlm`` (or left untouched by the rules above) and rebinds none.
     """
     if not call_llm:
         return 0
     from google.adk.models import BaseLlm  # noqa: PLC0415
 
     model_cls = _build_call_llm_adk_model_class()
-    rebound_names: list[str] = []
+    rebound: list[tuple[str, str]] = []  # (agent name, why the shim was needed)
+    kept_native: list[str] = []  # tool agents kept on a genai-backed model
     for agent in _iter_agent_tree(root):
         # Only ``LlmAgent``-shaped nodes carry a ``model``; a plain
         # ``BaseAgent`` (or an overlay wrapper) simply has no such field.
@@ -506,22 +655,61 @@ def rebind_tree_models_to_call_llm(root: Any, call_llm: Any) -> int:
         current = agent.model
         if isinstance(current, BaseLlm):
             continue  # author-supplied model object — leave it.
-        if isinstance(current, str) and current and _resolves_to_native_function_calling(current):
-            continue  # real LiteLlm endpoint model — keep native tool-calling.
-        label = current if isinstance(current, str) and current else "call-llm"
-        agent.model = model_cls(model=label, call_llm=call_llm)
-        rebound_names.append(getattr(agent, "name", "?"))
-    if rebound_names:
+        name = str(getattr(agent, "name", "?"))
+        model_str = current if isinstance(current, str) and current else ""
+        declares_tools = _agent_declares_tools(agent)
+        if model_str and _resolves_to_native_function_calling(model_str):
+            if not _resolves_to_genai_client(model_str):
+                continue  # real LiteLlm endpoint model — keep native tool-calling.
+            if declares_tools:
+                # #98: a native Gemini/Gemma tool agent keeps its model. The
+                # shim would strip its tools silently; the genai client's own
+                # "No API key" failure is loud and diagnosable.
+                kept_native.append(name)
+                continue
+            reason = "a google.genai-backed model with no configured endpoint"
+        else:
+            reason = f"an unresolvable model string {model_str!r}" if model_str else "no model"
+        if declares_tools:
+            raise RuntimeError(
+                f"ADK model binding: agent {name!r} declares tools but has "
+                f"{reason} — the only remaining path is the TEXT-ONLY harness "
+                f"call_llm shim, which sends no function_declarations and can "
+                f"return no function_call. Rebinding it would silently reduce "
+                f"this tool-using tree to a single text turn that still scores, "
+                f"gates and promotes. Configure a function-calling model for the "
+                f"inner harness (models.harness — e.g. 'openai/<model>' against "
+                f"your endpoint with the 'adk' extra, or a native 'gemini-*' id "
+                f"with Google credentials) instead."
+            )
+        agent.model = model_cls(model=model_str or "call-llm", call_llm=call_llm)
+        rebound.append((name, reason))
+    if rebound:
         log.warning(
-            "ADK rebind: %d agent(s) %s had no resolvable function-calling "
-            "model; routing their turns through the harness call_llm "
-            "(TEXT-ONLY — native tool/function calling is DISABLED for them). "
-            "Configure a LiteLlm endpoint model (e.g. 'openai/<model>' with an "
-            "endpoint + the 'adk' extra) to restore tool-calling.",
-            len(rebound_names),
-            rebound_names,
+            "ADK model binding: %d tool-free agent(s) %s were routed through "
+            "the harness call_llm TEXT-ONLY shim (each had %s). Those agents "
+            "can no longer make tool/function calls — the shim carries no "
+            "function_declarations — so any tool or sub-agent transfer they "
+            "would have driven is INERT; they answer in one text turn. "
+            "Configure an inner-harness model (models.harness — e.g. "
+            "'openai/<model>' against your endpoint with the 'adk' extra) to "
+            "run them on a real function-calling model.",
+            len(rebound),
+            [name for name, _ in rebound],
+            "; ".join(sorted({reason for _, reason in rebound})),
         )
-    return len(rebound_names)
+    if kept_native:
+        log.warning(
+            "ADK model binding: %d tool-declaring agent(s) %s were LEFT on "
+            "their native google.genai model string rather than routed through "
+            "the text-only harness call_llm shim, which would have stripped "
+            "their tools. Their turns need Google credentials (or a configured "
+            "models.harness endpoint model); without them ADK's genai client "
+            "fails loudly per turn.",
+            len(kept_native),
+            kept_native,
+        )
+    return len(rebound)
 
 
 def rebind_tree_models_to_adk_model(root: Any, model: Any) -> int:
@@ -824,17 +1012,40 @@ class ADKRunnableHarness:
     ``runtime_checkable`` check passes.
     """
 
-    __slots__ = ("_agent", "_mutable_trees")
+    __slots__ = ("_agent", "_entrypoint_file", "_mutable_trees")
 
-    def __init__(self, agent: Any, mutable_trees: list[Path]) -> None:
+    def __init__(
+        self,
+        agent: Any,
+        mutable_trees: list[Path],
+        entrypoint_file: str = "",
+    ) -> None:
         """Bind a loaded ADK ``agent`` and remember the mutable-tree set.
 
         ``mutable_trees`` is kept on the runnable purely for diagnostics;
         the runner does not consult it on the runnable, only on the
         adapter that produced this instance.
+
+        ``entrypoint_file`` is the ``__file__`` the entrypoint module
+        actually resolved to under the generation snapshot — the value
+        :meth:`ADKHarnessAdapter.load` asserted is snapshot-relative. The
+        subprocess worker records it per generation so an operator can
+        audit WHICH file a generation ran (issue #110). Defaults to ``""``
+        for a directly-constructed runnable.
         """
         self._agent = agent
         self._mutable_trees = list(mutable_trees)
+        self._entrypoint_file = str(entrypoint_file or "")
+
+    @property
+    def entrypoint_file(self) -> str:
+        """The snapshot-relative ``__file__`` the entrypoint resolved to.
+
+        Empty when the runnable was constructed without one. Read
+        best-effort by the worker for the round log's ``harness_loaded``
+        provenance; nothing in the run path depends on it.
+        """
+        return self._entrypoint_file
 
     async def run(
         self,
@@ -869,6 +1080,14 @@ class ADKRunnableHarness:
         colon. The runner's outer scope still sees no exception — the
         invariant the runner relies on is "one RunResult per entry,
         always".
+
+        ONE deliberate exception to that invariant: the model-binding step
+        below runs BEFORE the guarded block and RAISES when a tool-declaring
+        agent has no function-calling model left (issue #98). That is a
+        target misconfiguration, not a run outcome — a tool-using tree
+        driven by the text-only shim would produce a plausible one-turn
+        transcript and SCORE it. Failing the run (the worker surfaces it as
+        an infra abort) is the fail-closed answer.
         """
         run_id = uuid.uuid4().hex
         budget_s = float(entry.wall_clock_budget_seconds)
@@ -882,14 +1101,16 @@ class ADKRunnableHarness:
         #    string-model agent. This is the preferred, idiomatic path: the
         #    agents reach the live endpoint with native tool/function calling
         #    intact, overriding the target's hardcoded default model string.
-        # 2. Otherwise, fall back to the guarded call_llm shim rebind: only the
-        #    UNRESOLVABLE bare strings (a "gemma-*"/"gemini-*" id that would
-        #    resolve to an unused google.genai client and flood the log with
-        #    AttributeError('_async_httpx_client') tracebacks on GC) are routed
-        #    through the harness call_llm. A string that resolves to a real
-        #    LiteLlm is left for ADK so native tool-calling survives; routing it
+        # 2. Otherwise, fall back to the guarded call_llm shim rebind: only a
+        #    TOOL-FREE agent whose bare string is unresolvable, or would build
+        #    an unused google.genai client (a "gemma-*"/"gemini-*" id that
+        #    floods the log with AttributeError('_async_httpx_client')
+        #    tracebacks on GC), is routed through the harness call_llm. Any
+        #    registry-resolvable model is left for ADK so native tool-calling
+        #    survives, and a TOOL-DECLARING agent is never shimmed — routing it
         #    through the text-only shim would reduce a tool-calling tree to a
-        #    single text turn (the presentation target writes no files then).
+        #    single text turn (the presentation target writes no files then);
+        #    with no function-calling model left it raises instead (#98).
         #
         # See rebind_tree_models_to_adk_model / rebind_tree_models_to_call_llm /
         # _resolves_to_native_function_calling. Both are idempotent.
@@ -1328,6 +1549,17 @@ class ADKHarnessAdapter:
         named symbol, and returns an :class:`ADKRunnableHarness`
         wrapping it.
 
+        Fails CLOSED on a mis-resolved entrypoint: after the import, the
+        module's ``__file__`` MUST be under ``generation_root``, else
+        :class:`RuntimeError`. Prepending the snapshot to ``sys.path``
+        shadows only TOP-LEVEL names, and :func:`importlib.reload`
+        re-executes the module's existing spec — so an entrypoint whose
+        first dotted component is importable from elsewhere silently runs
+        the INSTALLED copy, making every mutation a no-op that still
+        scores, gates, promotes and reports (issue #110). The same
+        invariant is checked statically, without importing, at register
+        time (:func:`entrypoint_snapshot_origin_error`).
+
         We do not restore ``sys.path`` or ``sys.modules`` — see this
         module's docstring on the fresh-process-per-generation
         contract.
@@ -1336,7 +1568,8 @@ class ADKHarnessAdapter:
         import goldfive  # noqa: F401 — surface the dep here so missing extra fails clean
         import google.adk  # noqa: F401 — same; google-adk is the ADK extra
 
-        root_str = str(Path(generation_root).resolve())
+        root = Path(generation_root).resolve()
+        root_str = str(root)
         if root_str not in sys.path:
             sys.path.insert(0, root_str)
 
@@ -1349,6 +1582,8 @@ class ADKHarnessAdapter:
         else:
             module = importlib.import_module(self._module_path)
 
+        entrypoint_file = self._assert_loaded_from_snapshot(module, root)
+
         try:
             agent = getattr(module, self._symbol)
         except AttributeError as exc:
@@ -1358,7 +1593,44 @@ class ADKHarnessAdapter:
                 f"{getattr(module, '__file__', '<unknown>')!r})"
             ) from exc
 
-        return ADKRunnableHarness(agent=agent, mutable_trees=list(self.mutable_trees))
+        return ADKRunnableHarness(
+            agent=agent,
+            mutable_trees=list(self.mutable_trees),
+            entrypoint_file=entrypoint_file,
+        )
+
+    def _assert_loaded_from_snapshot(self, module: Any, generation_root: Path) -> str:
+        """Return ``module.__file__``, asserting it lies under the snapshot.
+
+        The load-time half of the snapshot-origin invariant (issue #110).
+        Raises :class:`RuntimeError` when the resolved module did not come
+        from ``generation_root`` — including the namespace-package /
+        builtin case where there is no ``__file__`` to check at all. The
+        message names the file that WAS resolved, the root it had to be
+        under, and the register-time rule that fixes the registration, so
+        the operator can act without reading this source.
+        """
+        raw_file = getattr(module, "__file__", None)
+        resolved = Path(raw_file).resolve() if raw_file else None
+        if resolved is not None and resolved.is_relative_to(generation_root):
+            return str(resolved)
+        top_level = self._module_path.split(".")[0]
+        expected = [Path(tree).name for tree in self.mutable_trees]
+        raise RuntimeError(
+            f"ADKHarnessAdapter: entrypoint {self._entrypoint!r} resolved to "
+            f"{str(resolved) if resolved is not None else '<no __file__>'!r}, "
+            f"which is NOT under the generation snapshot {str(generation_root)!r} "
+            f"— the mutated code under test was never loaded, so this run would "
+            f"score an unmutated copy (every round a silent no-op). Prepending "
+            f"the snapshot to sys.path shadows TOP-LEVEL names only, and "
+            f"importlib.reload re-executes the module's existing spec, so "
+            f"top-level package {top_level!r} kept resolving to its installed "
+            f"location. Register the entrypoint relative to a mutable tree: a "
+            f"snapshot copies each tree under its basename, so the entrypoint's "
+            f"top-level module must be one of {expected!r} "
+            f"(`zicato register --adk <tree_basename>.<module>:<symbol> "
+            f"--mutable-tree <tree>`)."
+        )
 
     def mutation_points(self, source_roots: list[Path] | None = None) -> list[MutationPoint]:
         """Enumerate mutation points across ``source_roots``.
@@ -1412,6 +1684,7 @@ __all__ = [
     "ADKHarnessAdapter",
     "entry_disable_drift",
     "entry_judge_only",
+    "entrypoint_snapshot_origin_error",
     "ADKRunnableHarness",
     "rebind_tree_models_to_adk_model",
     "rebind_tree_models_to_call_llm",

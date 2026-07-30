@@ -1127,6 +1127,7 @@ async def evolve_once(
     # the gate verdict, and — when the runner consulted a holdout — the
     # Ladder's release, all onto the round's durable event log.
     _emit_tournament_units(round_log, tournament_result)
+    _emit_harness_loaded(round_log, workspace_root, resolved_epoch_id, tournament_result)
     _emit_gate_evaluated(round_log, tournament_result.outcome)
     _holdout_block = getattr(tournament_result, "holdout", None)
     if _holdout_block is not None:
@@ -2018,6 +2019,7 @@ async def _evolve_multi_challenger(
             _cache_gen_score(workspace_root, epoch_id, m.right.generation_id, result.child_agg)
         # WS8: this matchup's board units + gate verdict onto the round log.
         _emit_tournament_units(round_log, result)
+        _emit_harness_loaded(round_log, workspace_root, epoch_id, result)
         _emit_gate_evaluated(round_log, result.outcome)
         return MatchupResult(
             matchup_id=m.matchup_id,
@@ -3213,6 +3215,48 @@ def _emit_tournament_units(round_log: _RoundLogEmitter, tournament_result: Any) 
                 "unit_completed",
                 {"entry_id": str(entry_id), "replicate": 0, "side": side},
             )
+
+
+def _emit_harness_loaded(
+    round_log: _RoundLogEmitter,
+    workspace_root: Path,
+    epoch_id: str,
+    tournament_result: Any,
+) -> None:
+    """Emit ``harness_loaded`` once per generation the duel actually ran.
+
+    The snapshot-origin provenance for issue #110: the subprocess worker
+    records the resolved entrypoint ``__file__`` in each generation's
+    ``harness_load.json`` (it is the only process that imports the
+    entrypoint); the orchestrator — the round log's single writer — folds
+    that into ONE event per generation here, so the durable round record
+    names the file each side actually ran.
+
+    Best-effort and additive throughout: a generation with no record (a
+    non-ADK adapter kind, a fully cache-served side, a failed write) simply
+    contributes no event, and readers tolerate the absence.
+    """
+    generation_ids: list[str] = []
+    for attr in ("parent_generation_id", "child_generation_id"):
+        gen_id = str(getattr(tournament_result, attr, "") or "")
+        if gen_id and gen_id not in generation_ids:
+            generation_ids.append(gen_id)
+    for gen_id in generation_ids:
+        try:
+            from zicato.core.workspace import harness_load_path  # noqa: PLC0415
+            from zicato.storage import read_json  # noqa: PLC0415
+
+            record = read_json(harness_load_path(workspace_root, epoch_id, gen_id))
+        except Exception as exc:  # noqa: BLE001 — emission must never fail a round
+            log.debug("round-log harness_loaded read skipped for %s: %s", gen_id, exc)
+            continue
+        entrypoint_file = str((record or {}).get("entrypoint_file", "") or "")
+        if not entrypoint_file:
+            continue
+        round_log.emit(
+            "harness_loaded",
+            {"generation_id": gen_id, "entrypoint_file": entrypoint_file},
+        )
 
 
 def _emit_gate_evaluated(round_log: _RoundLogEmitter, outcome: Any) -> None:

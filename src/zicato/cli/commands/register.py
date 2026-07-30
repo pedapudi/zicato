@@ -10,6 +10,16 @@ allowed to mutate. The entrypoint follows the common Python convention
 ``module.path:symbol``; mutable trees are filesystem roots (one or
 many, passed as repeated ``--mutable-tree`` flags).
 
+The two are NOT independent. A generation snapshot copies each mutable
+tree under its BASENAME and the harness loader prepends the snapshot
+root to ``sys.path`` — which resolves TOP-LEVEL packages only. So the
+entrypoint's top-level module must be one of the mutable trees'
+basenames, or the import silently returns whatever copy is already
+installed and every round scores unmutated code (issue #110).
+``register`` refuses such a registration up front, import-free (see
+:func:`_validate_entrypoint`); the adapter re-checks the invariant
+against the real ``module.__file__`` at load time.
+
 ``register`` also records the canonical *contract source paths* — the
 operator's live, editable ``board.jsonl`` / proposer brief (``brief.md``)
 / ``scoring.json``. These default to the conventional location next to
@@ -42,12 +52,25 @@ from zicato.workspace.config_io import (
 )
 
 
-def _validate_entrypoint(entrypoint: str) -> None:
-    """Ensure ``entrypoint`` looks like ``module.path:symbol``.
+def _validate_entrypoint(entrypoint: str, mutable_trees: tuple[str, ...] = ()) -> None:
+    """Ensure ``entrypoint`` is well-formed AND loadable from a snapshot.
 
-    This is a syntactic check only — we don't import the module here so
-    ``register`` works in environments where the agent's runtime deps
-    aren't installed yet.
+    Two static checks, both IMPORT-FREE (milliseconds) so ``register``
+    works in environments where the agent's runtime deps aren't installed
+    yet:
+
+    1. **Syntax** — ``module.path:symbol``, both halves non-empty.
+    2. **Snapshot origin** (issue #110) — the entrypoint's TOP-LEVEL
+       module must name one of the registered ``--mutable-tree`` roots by
+       basename, because a generation snapshot copies each tree under its
+       basename and the loader only prepends the snapshot root to
+       ``sys.path`` (which resolves top-level packages only). A
+       registration that fails this can never run the mutated code: the
+       import silently returns the INSTALLED copy and every round becomes
+       a scored no-op. The rule lives with the adapter that owns the
+       snapshot layout
+       (:func:`zicato.adapters.adk.entrypoint_snapshot_origin_error`);
+       skipped when no mutable tree was passed.
     """
     if ":" not in entrypoint:
         raise click.BadParameter(
@@ -60,6 +83,13 @@ def _validate_entrypoint(entrypoint: str) -> None:
             f"entrypoint {entrypoint!r} must have both module and symbol",
             param_hint="--adk",
         )
+    # Import-free: the adapter module's own imports are lazy, so this does
+    # not pull in google-adk / goldfive.
+    from zicato.adapters.adk import entrypoint_snapshot_origin_error  # noqa: PLC0415
+
+    refusal = entrypoint_snapshot_origin_error(entrypoint, mutable_trees)
+    if refusal is not None:
+        raise click.BadParameter(refusal, param_hint="--adk")
 
 
 @click.command(
@@ -77,7 +107,14 @@ def _validate_entrypoint(entrypoint: str) -> None:
     "--adk",
     "entrypoint",
     required=True,
-    help="Adapter entrypoint in 'module.path:agent_symbol' form.",
+    help=(
+        "Adapter entrypoint in 'module.path:agent_symbol' form. Its TOP-LEVEL "
+        "module must be the basename of one --mutable-tree: a generation "
+        "snapshot copies each tree under its basename and is prepended to "
+        "sys.path, which resolves top-level packages only — so any other "
+        "entrypoint imports the INSTALLED copy and every mutation is a scored "
+        "no-op. Refused up front."
+    ),
 )
 @click.option(
     "--mutable-tree",
@@ -149,7 +186,7 @@ def register_cmd(
     leaves the key unset, which resolves to the built-in default
     proposer.
     """
-    _validate_entrypoint(entrypoint)
+    _validate_entrypoint(entrypoint, mutable_trees)
     workspace_root = Path(workspace)
     if not workspace_is_initialized(workspace_root):
         raise click.UsageError(

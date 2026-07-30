@@ -97,6 +97,60 @@ class TestRoundLogEmitter:
         emitter.emit("round_opened", {"contract_hash": "abc"})  # must not raise
 
 
+class TestHarnessLoadedEmission:
+    """The worker → orchestrator snapshot-origin seam (issue #110).
+
+    The worker is the only process that imports the entrypoint, so it writes
+    the resolved ``__file__`` to the generation's ``harness_load.json``; the
+    orchestrator — the round log's single writer — folds it into one
+    ``harness_loaded`` event per generation that ran.
+    """
+
+    @staticmethod
+    def _duel(parent_id: str, child_id: str) -> Any:
+        from types import SimpleNamespace
+
+        return SimpleNamespace(parent_generation_id=parent_id, child_generation_id=child_id)
+
+    def test_worker_record_is_emitted_once_per_generation(self, tmp_path: Path) -> None:
+        from types import SimpleNamespace
+
+        from zicato._tournament_worker import _record_harness_load
+        from zicato.orchestrator import _emit_harness_loaded
+
+        (tmp_path / "epochs").mkdir()
+        for gen_id, path in (("v0", "/snap/v0/agent/agent.py"), ("v1", "/snap/v1/agent/agent.py")):
+            _record_harness_load(
+                tmp_path,
+                epoch_id="e1",
+                generation_id=gen_id,
+                session=SimpleNamespace(entrypoint_file=path),
+            )
+
+        emitter = _RoundLogEmitter(tmp_path, "e1", 4)
+        _emit_harness_loaded(emitter, tmp_path, "e1", self._duel("v0", "v1"))
+
+        record = fold_round_record(RoundLog(tmp_path, "e1", 4).read())
+        assert record.harness_entrypoint_files == {
+            "v0": "/snap/v0/agent/agent.py",
+            "v1": "/snap/v1/agent/agent.py",
+        }
+
+    def test_absent_record_emits_nothing(self, tmp_path: Path) -> None:
+        """No record (a non-ADK adapter, a cache-served side) ⇒ no event."""
+        from types import SimpleNamespace
+
+        from zicato._tournament_worker import _record_harness_load
+        from zicato.orchestrator import _emit_harness_loaded
+
+        (tmp_path / "epochs").mkdir()
+        # An adapter exposing no entrypoint_file writes nothing at all.
+        _record_harness_load(tmp_path, epoch_id="e1", generation_id="v0", session=SimpleNamespace())
+        emitter = _RoundLogEmitter(tmp_path, "e1", 5)
+        _emit_harness_loaded(emitter, tmp_path, "e1", self._duel("v0", "v1"))
+        assert RoundLog(tmp_path, "e1", 5).read() == []
+
+
 class TestBestOfNEmission:
     def test_candidate_and_critique_events_emitted(self) -> None:
         emitted: list[tuple[str, dict[str, Any]]] = []

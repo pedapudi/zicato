@@ -97,7 +97,9 @@ def _bootstrap_explicit_flow(
             "--workspace",
             str(workspace),
             "--adk",
-            "pkg.mod:agent",
+            # Tree-relative: the snapshot copies ``agent/`` under its
+            # basename, so ``agent.agent`` is the only loadable form (#110).
+            "agent.agent:agent",
             "--mutable-tree",
             str(agent),
         ],
@@ -140,7 +142,7 @@ def test_epoch_new_publishes_contract_so_evolve_can_resolve_it(tmp_path: Path) -
     assert inputs.brief_path.exists(), f"brief missing at {inputs.brief_path}"
     assert inputs.scoring_path.exists(), f"scoring missing at {inputs.scoring_path}"
     # The registered inner-harness identity still resolves too.
-    assert inputs.entrypoint == "pkg.mod:agent"
+    assert inputs.entrypoint == "agent.agent:agent"
     assert inputs.mutable_trees
 
 
@@ -332,7 +334,7 @@ def test_epoch_new_streamlined_flow_files_already_in_place(tmp_path: Path) -> No
                 "--workspace",
                 str(workspace),
                 "--adk",
-                "pkg.mod:agent",
+                "agent.agent:agent",
                 "--mutable-tree",
                 str(agent),
             ],

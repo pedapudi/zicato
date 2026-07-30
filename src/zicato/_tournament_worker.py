@@ -250,6 +250,60 @@ def _build_adapter(spec: dict[str, Any]) -> Any:
     raise ValueError(f"worker cannot reconstruct adapter kind {kind!r}")
 
 
+#: Schema token of the per-generation harness-load provenance file.
+HARNESS_LOAD_SCHEMA = "zicato.harness_load/1"
+
+
+def _record_harness_load(
+    workspace_root: Path,
+    *,
+    epoch_id: str,
+    generation_id: str,
+    session: Any,
+) -> None:
+    """Record WHICH file this generation's entrypoint resolved to (issue #110).
+
+    The worker is the only process that ever imports the entrypoint, so it is
+    the only one that knows the resolved ``module.__file__`` — the value the
+    adapter just asserted lies under this run's snapshot. It writes that value
+    to the generation's ``harness_load.json``; the orchestrator reads it back
+    after the duel and emits the round log's ``harness_loaded`` event (the
+    round log has a single writer, the orchestrator, so the worker must not
+    append to it directly).
+
+    Idempotent by construction: every worker for a generation resolves the
+    same file and the write is a whole-file atomic replace, so N concurrent
+    units converge on one record. Best-effort in both directions — an adapter
+    that exposes no ``entrypoint_file`` (any non-ADK kind) writes nothing, and
+    a write failure is logged at debug and never fails a run.
+    """
+    entrypoint_file = str(getattr(session, "entrypoint_file", "") or "")
+    if not entrypoint_file:
+        return
+    log.info(
+        "worker: generation %s harness entrypoint resolved to %s",
+        generation_id,
+        entrypoint_file,
+    )
+    with best_effort(
+        "worker harness-load record",
+        on_error=lambda exc: log.debug(
+            "worker could not record harness load for %s: %s", generation_id, exc
+        ),
+    ):
+        from zicato.core.workspace import harness_load_path  # noqa: PLC0415
+        from zicato.storage import atomic_write_json  # noqa: PLC0415
+
+        atomic_write_json(
+            harness_load_path(workspace_root, epoch_id, generation_id),
+            {
+                "schema": HARNESS_LOAD_SCHEMA,
+                "generation_id": generation_id,
+                "entrypoint_file": entrypoint_file,
+            },
+        )
+
+
 # ---------------------------------------------------------------------------
 # Sink wiring
 # ---------------------------------------------------------------------------
@@ -682,6 +736,12 @@ async def _run(args: dict[str, Any]) -> None:
     budget_exceeded = False
     try:
         session = adapter.load(snapshot_root)
+        _record_harness_load(
+            workspace_root,
+            epoch_id=epoch_id,
+            generation_id=generation_id,
+            session=session,
+        )
 
         async def _drive() -> tuple[RunResult | None, int, bool]:
             return await _drive_session(

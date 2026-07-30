@@ -278,3 +278,50 @@ def test_pre_recombine_log_decodes_with_flag_defaulted(tmp_path):
     assert sampled.recombined is False
     record = fold_round_record(events)
     assert record.proposal.recombined_sampled == 0
+
+
+def test_harness_loaded_round_trips_and_folds_per_generation(tmp_path):
+    """Issue #110: the snapshot-origin provenance decodes + folds per generation.
+
+    ``harness_loaded`` records WHICH file each side's entrypoint resolved to.
+    The fold reduces the events to one entry per generation (last word wins),
+    which is what an operator auditing "did the mutation actually run?" reads.
+    """
+    from zicato.epoch.round_log import HarnessLoaded
+
+    log = RoundLog(tmp_path, "epoch-01", 9)
+    log.append(RoundOpened(contract_hash="h"))
+    log.append(PatchesApplied(generation_id="v1"))
+    log.append(HarnessLoaded(generation_id="v0", entrypoint_file="/snap/v0/agent/agent.py"))
+    log.append(HarnessLoaded(generation_id="v1", entrypoint_file="/snap/v1/agent/agent.py"))
+    log.append(RoundClosed())
+
+    events = log.read()
+    loaded = [e.event for e in events if isinstance(e.event, HarnessLoaded)]
+    assert [x.generation_id for x in loaded] == ["v0", "v1"]
+
+    record = fold_round_record(events)
+    assert record.harness_entrypoint_files == {
+        "v0": "/snap/v0/agent/agent.py",
+        "v1": "/snap/v1/agent/agent.py",
+    }
+
+
+def test_pre_harness_loaded_log_folds_with_an_empty_map(tmp_path):
+    """A log written BEFORE the event existed folds to an empty map.
+
+    The additive-field discipline: readers tolerate absence, so every
+    pre-existing round log decodes and folds unchanged.
+    """
+    path = round_log_path(tmp_path, "epoch-01", 10)
+    path.parent.mkdir(parents=True)
+    lines = [
+        {"seq": 1, "ts": "t", "type": "round_opened", "payload": {"contract_hash": "h"}},
+        {"seq": 2, "ts": "t", "type": "patches_applied", "payload": {"generation_id": "v1"}},
+        {"seq": 3, "ts": "t", "type": "round_closed", "payload": {}},
+    ]
+    path.write_text("".join(json.dumps(rec) + "\n" for rec in lines), encoding="utf-8")
+
+    record = fold_round_record(RoundLog(tmp_path, "epoch-01", 10).read())
+    assert record.harness_entrypoint_files == {}
+    assert record.complete is True

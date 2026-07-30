@@ -68,6 +68,19 @@ and **clean** entries use `goldfive.testkit.adversarial:LoopingAgent`
 resolved at runtime by `zicato.synthetic.resolve_adversarial_agent` so
 no separate registration is needed.
 
+> **This registration is REFUSED as written (issue #110).** `register` now
+> requires the entrypoint's top-level module to be the basename of one
+> `--mutable-tree`, because a generation snapshot copies each tree under its
+> basename and the loader only prepends the snapshot root to `sys.path` —
+> which resolves top-level packages only. Here the entrypoint
+> (`zicato_examples...`) lives OUTSIDE the mutable tree (the goldfive
+> worktree), so the snapshot could never supply it: the import would return
+> the installed copy and every mutation would be a scored no-op. Target 2's
+> "mutate the harness, not the agent" shape needs a mutable-tree layout whose
+> basename the entrypoint resolves through (e.g. registering the goldfive
+> package itself as the tree AND driving an entrypoint under it) before this
+> recipe can run. Target 1 is unaffected.
+
 ## 2. Enumerate the goldfive optimization surface
 
 The `mutations` command exercises the same enumeration the orchestrator

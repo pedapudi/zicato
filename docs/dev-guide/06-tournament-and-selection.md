@@ -780,7 +780,13 @@ in `_run`:
    every ~3s and keeps beating through GIL-releasing LLM waits, so the
    supervisor's staleness watchdog does not false-positive on a slow model call.
 5. Build sinks (`JSONLPersistenceSink` + optional harmonograf), build the
-   adapter, `session = adapter.load(snapshot_root)`.
+   adapter, `session = adapter.load(snapshot_root)`. `load` fails CLOSED when
+   the entrypoint did not resolve from the snapshot (`module.__file__` must be
+   under `snapshot_root` — issue #110; otherwise the installed copy runs and
+   every mutation is a scored no-op), then the worker records the resolved
+   `__file__` in `generations/{gen}/harness_load.json` — the only process that
+   knows it. The orchestrator (the round log's single writer) folds that into
+   one `harness_loaded` event per generation.
 6. Drive the entry under the worker's OWN cooperative `asyncio.wait_for(budget)`
    — the first of three defence lines (§6.4).
 7. Evaluate the expectation, `reduce_loss` → `loss.json`, stamp the abort

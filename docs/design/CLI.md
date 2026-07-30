@@ -599,7 +599,7 @@ zicato register [OPTIONS]
 | Option | Default | Meaning |
 |---|---|---|
 | `--workspace DIRECTORY` | `.zicato` | Workspace directory to update. |
-| `--adk TEXT` | **required** | Adapter entrypoint in `module.path:agent_symbol` form. |
+| `--adk TEXT` | **required** | Adapter entrypoint in `module.path:agent_symbol` form. Its TOP-LEVEL module must be the basename of one `--mutable-tree`: a generation snapshot copies each tree under its basename and is prepended to `sys.path`, which resolves top-level packages only — so any other entrypoint imports the INSTALLED copy and every mutation is a scored no-op. Refused up front. |
 | `--mutable-tree PATH` | — (repeatable) | Source root the proposer is allowed to mutate. |
 | `--board PATH` | `<workspace_parent>/board.jsonl` | Canonical `board.jsonl` path. |
 | `--brief PATH` | `<workspace_parent>/brief.md` | Canonical proposer-brief path. |

@@ -12,8 +12,13 @@
   bare native ``gemini-*`` / ``gemma-*`` model is judged incapable and gets
   rebound to the TEXT-ONLY ``call_llm`` shim, which strips every tool.
 
-Both tests are ``xfail(strict=True)``; they must XPASS once fixed, at which
-point the marker is removed.
+Both defects are FIXED; the pins below are live regression tests (the
+``xfail(strict=True)`` markers the triage landed them under were removed as
+each fix landed). ``load`` now asserts the resolved ``module.__file__`` lies
+under the generation snapshot and refuses otherwise, ``register`` refuses a
+registration that could never load from a snapshot, and the capability
+classifier answers on registry-resolvability so a native Gemini/Gemma tool
+agent keeps its model.
 """
 
 from __future__ import annotations
@@ -33,15 +38,6 @@ pytest.importorskip("goldfive")
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "issue #110: load() never checks module.__file__ is under the "
-        "generation snapshot, so an entrypoint whose top-level package is "
-        "importable elsewhere silently runs the INSTALLED copy and every "
-        "mutation becomes a no-op"
-    ),
-)
 def test_load_refuses_an_entrypoint_resolved_outside_the_snapshot(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -125,6 +121,81 @@ def test_load_from_a_snapshot_relative_entrypoint_still_works(
     )
     harness = adapter.load(snapshot)
     assert harness._agent == {"instruction": "snapshot copy"}
+    # The resolved file is surfaced so the worker can record WHICH file ran.
+    assert harness.entrypoint_file == str((snapshot / "ztriage_ok" / "agent.py").resolve())
+
+
+def test_register_refuses_an_entrypoint_no_snapshot_could_supply(tmp_path: Path) -> None:
+    """``zicato register`` refuses the mis-wiring BEFORE a single round runs.
+
+    The static, import-free half of the #110 fix. The snapshot copies each
+    mutable tree under its BASENAME, so an entrypoint whose top-level module
+    is not one of those basenames can only ever import the installed copy.
+    ``register`` says so up front rather than letting the loop score no-ops
+    for an epoch.
+    """
+    from click.testing import CliRunner
+
+    from zicato.cli.commands.init import init_cmd
+    from zicato.cli.commands.register import register_cmd
+
+    workspace = tmp_path / ".zicato"
+    tree = tmp_path / "agent"
+    tree.mkdir()
+    runner = CliRunner()
+    assert runner.invoke(init_cmd, ["--workspace", str(workspace)]).exit_code == 0
+
+    refused = runner.invoke(
+        register_cmd,
+        [
+            "--workspace",
+            str(workspace),
+            "--adk",
+            "installed_pkg.agent.agent:root_agent",
+            "--mutable-tree",
+            str(tree),
+        ],
+    )
+    assert refused.exit_code != 0, refused.output
+    assert "snapshot" in refused.output
+    assert "installed_pkg" in refused.output
+
+    # The tree-relative form is accepted (the guard does not over-reach).
+    accepted = runner.invoke(
+        register_cmd,
+        [
+            "--workspace",
+            str(workspace),
+            "--adk",
+            "agent.agent:root_agent",
+            "--mutable-tree",
+            str(tree),
+        ],
+    )
+    assert accepted.exit_code == 0, accepted.output
+
+
+def test_register_time_rule_matches_the_snapshot_basename_layout(tmp_path: Path) -> None:
+    """The static rule is the adapter's own ``mutable_subpaths`` rule.
+
+    Pins the two halves to the SAME layout fact: ``mutable_subpaths``
+    re-bases each registered tree onto ``snapshot/<basename>``, and the
+    refusal accepts exactly the entrypoints whose top-level module is one of
+    those basenames.
+    """
+    from zicato.adapters.adk import ADKHarnessAdapter, entrypoint_snapshot_origin_error
+
+    tree = tmp_path / "src" / "my_agent"
+    tree.mkdir(parents=True)
+    snapshot = tmp_path / "snapshot"
+    (snapshot / "my_agent").mkdir(parents=True)
+
+    adapter = ADKHarnessAdapter("my_agent.agent:root_agent", mutable_trees=[tree])
+    assert adapter.mutable_subpaths(snapshot) == [snapshot / "my_agent"]
+    assert entrypoint_snapshot_origin_error("my_agent.agent:root_agent", [tree]) is None
+    assert entrypoint_snapshot_origin_error("src.my_agent.agent:root_agent", [tree]) is not None
+    # No registered trees ⇒ the rule does not apply (the seed step owns that).
+    assert entrypoint_snapshot_origin_error("anything.at:all", []) is None
 
 
 # ---------------------------------------------------------------------------
@@ -132,13 +203,6 @@ def test_load_from_a_snapshot_relative_entrypoint_still_works(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "issue #98: the classifier is LiteLlm-only, so a native Gemini model "
-        "is judged tool-incapable and rebound to the text-only shim"
-    ),
-)
 @pytest.mark.parametrize("model_str", ["gemini-2.0-flash", "gemini-1.5-pro"])
 def test_native_gemini_counts_as_function_calling(model_str: str) -> None:
     from zicato.adapters.adk import _resolves_to_native_function_calling
@@ -154,13 +218,6 @@ def test_litellm_and_unresolvable_classification_is_unchanged() -> None:
     assert _resolves_to_native_function_calling("not-a-model-at-all") is False
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "issue #98: rebind_tree_models_to_call_llm strips the tools off an "
-        "agent running on a native Gemini model"
-    ),
-)
 def test_rebind_leaves_a_native_gemini_tool_agent_alone() -> None:
     """A tool-declaring agent on a native Gemini model must keep its model.
 
@@ -180,3 +237,27 @@ def test_rebind_leaves_a_native_gemini_tool_agent_alone() -> None:
     rebound = rebind_tree_models_to_call_llm(agent, lambda s, u, m: "text")
     assert rebound == 0, "a native Gemini tool agent must not be rebound"
     assert agent.model == "gemini-2.0-flash"
+
+
+def test_rebind_raises_rather_than_silently_stripping_tools() -> None:
+    """The hardening backstop: a tool agent never becomes a text-only no-op.
+
+    When NO function-calling model is left for a tool-declaring agent (an
+    unresolvable model string), the shim would strip its tools and the tree
+    would score one text turn. That must be a loud refusal, not a silent
+    degradation.
+    """
+    from google.adk.agents import LlmAgent
+
+    from zicato.adapters.adk import rebind_tree_models_to_call_llm
+
+    def _a_tool(x: str) -> str:
+        """A tool."""
+        return x
+
+    agent = LlmAgent(name="root", model="not-a-model-at-all", tools=[_a_tool])
+    with pytest.raises(RuntimeError, match="declares tools"):
+        rebind_tree_models_to_call_llm(agent, lambda s, u, m: "text")
+    # A tool-FREE agent on the same unresolvable string still takes the shim.
+    tool_free = LlmAgent(name="plain", model="not-a-model-at-all")
+    assert rebind_tree_models_to_call_llm(tool_free, lambda s, u, m: "text") == 1
