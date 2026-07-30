@@ -35,7 +35,7 @@ installFixtureMap({
   [`/api/reflection/${REFL_ID}/trace/${TRACE_ID}`]: DETAIL,
 });
 
-// the LIST route, then the DETAIL route (the route the freeze was reported on),
+// the LIST route, then the DETAIL route (the heaviest render on the surface),
 // then a second identical detail render (the digest-gated no-op path).
 const listHost = document.createElement('div');
 await traces.render(listHost, CTX, { epochId: EPOCH_ID, reflectionId: REFL_ID });

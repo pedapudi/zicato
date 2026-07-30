@@ -200,7 +200,8 @@ def lane_marks(user_turns: list[str], agent_turns: list[str]) -> list[dict[str, 
     the figure: ``size`` = ``chars / max_chars`` and ``svg.js`` maps it onto a
     BOUNDED bar (≤ 40 % of the lane height), never a full-lane slab.
 
-    A zero-char trace degrades to even spacing (all weights equal).
+    A zero-char trace degrades to even spacing (all weights equal) and to
+    ``size`` 0.0 — no text, no height claim.
     """
     seq: list[tuple[str, str]] = []
     for i in range(max(len(user_turns), len(agent_turns))):
@@ -227,7 +228,12 @@ def lane_marks(user_turns: list[str], agent_turns: list[str]) -> list[dict[str, 
         x0 = cursor
         x1 = cursor + weights[i] * scale
         cursor = x1
-        size = (c / max_chars) if max_chars > 0 else 1.0
+        # A text-free lane makes NO height claim: ``size`` 0.0 ⇒ the figure's
+        # minimum hairline. It must never be 1.0 — that would draw the tallest
+        # possible bar for the least informative input (a dialect reader that
+        # extracted no turn bodies), and a saturated all-empty lane of maximum
+        # bars is the densest thing this figure can still paint.
+        size = (c / max_chars) if max_chars > 0 else 0.0
         marks.append(
             {
                 "i": i,

@@ -250,7 +250,7 @@ function buildDetail(d, ctx) {
   // the full strip (hero size) — clicking an episode focuses it.
   nodes.push(section('Strip', el('div', { class: 'dn-panel dn-trace-strip' }, [
     svg.trajectoryStrip(x.strip_model || {}, { onFocusEpisode: (epId) => focus(epId) }),
-    caption('turn lane (user/agent marks, width ∝ text length) · adverse-signal cluster (aggregate counts, not real timeline positions) · shaded cost budget · bracketed mined episodes'),
+    caption('turn lane (user above / agent below the baseline, width ∝ √text length, capped) · adverse-signal cluster (aggregate counts, not real timeline positions) · shaded cost budget · bracketed mined episodes'),
   ])));
 
   // the episode anchors — each links the strip span ↔ the conversation ↔ the

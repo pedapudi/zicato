@@ -353,13 +353,35 @@ test('lane geometry: THE BLOB PIN — the inked marks cover a small fraction of 
   // The quantitative statement of "not a blob": pre-fix the two full-height
   // half-lane slabs inked ~85% of the lane box. A bounded, gapped, capped lane
   // cannot exceed a fraction of it — whatever the theme paints them.
-  for (const t of LIST.traces) {
-    const s = svg.trajectoryStrip(t.strip_model, {});
+  //
+  // The 30 % threshold is what the SHORT committed traces reach; the geometry's
+  // own hard ceiling is LANE_BAR_FRAC (40 %), which a saturated lane of
+  // uniformly-long turns legitimately approaches. A recapture that adds a long
+  // trace should compare against that ceiling, not tighten this number.
+  const inkFraction = (model) => {
+    const s = svg.trajectoryStrip(model, {});
     const lane = laneFrame(s);
     const inked = markBoxes(s).reduce((sum, b) => sum + b.w * b.h, 0);
-    const laneArea = lane.height * (parseFloat(allByClass(s, 'dn-strip-ground')[0].getAttribute('width')));
-    assert(inked / laneArea < 0.30, `${t.trace_id}: marks ink ${(100 * inked / laneArea).toFixed(1)}% of the lane (<30%)`);
+    return inked / (lane.height * parseFloat(allByClass(s, 'dn-strip-ground')[0].getAttribute('width')));
+  };
+  for (const t of LIST.traces) {
+    const f = inkFraction(t.strip_model);
+    assert(f < 0.30, `${t.trace_id}: marks ink ${(100 * f).toFixed(1)}% of the lane (<30%)`);
   }
+  // THE DEGENERATE LANE — a text-free trace (a dialect reader that extracted no
+  // turn bodies) SATURATES the lane, so if the reader claimed a height for it the
+  // figure would tile the lane with maximum bars: the densest field it can paint,
+  // for the least informative input. The reader serves `size` 0 (trace_view), so
+  // this collapses to hairlines.
+  const textless = {
+    trace_id: 'textless',
+    lane: { turn_count: 4, marks: [0, 1, 2, 3].map((i) => ({
+      i, role: i % 2 ? 'agent' : 'user', x0: i / 4, x1: (i + 1) / 4, size: 0, chars: 0,
+    })) },
+    signals: [], budget: {}, episodes: [],
+  };
+  const tf = inkFraction(textless);
+  assert(tf < 0.05, `a text-free saturated lane stays hairline-thin (inked ${(100 * tf).toFixed(1)}%)`);
 });
 
 test('lane geometry: the server CAPS each extent — no single turn walls the lane', () => {
@@ -437,13 +459,18 @@ test('style: svg.dn-strip-hero caps max-WIDTH at the viewBox width — the figur
 });
 
 // ====================================================================
-// TERMINATION — the reported hard-freeze pin.
+// TERMINATION — the render path provably completes.
 //
 // A non-terminating render (an unbounded loop in the strip figure, the detail
 // builders, or the episode-anchor focus wiring over an UNPOSITIONED episode)
 // hangs node exactly as it hangs a browser, so the pin runs the real payloads
 // through the real builders in a CHILD process under a hard wall-clock timeout:
 // a spin fails BY TIMEOUT here instead of hanging the suite forever.
+//
+// No such loop was ever found in this tree (the unresponsive-page report that
+// prompted the search was traced to the capture tooling, not the product); the
+// pin stands as the standing GUARD that keeps it that way, not as evidence of a
+// past product defect.
 // ====================================================================
 test('termination: the real list + detail + dense-lane renders complete under a hard timeout', async () => {
   const { spawnSync } = await import('node:child_process');

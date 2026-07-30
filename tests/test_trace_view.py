@@ -98,7 +98,11 @@ def test_lane_marks_zero_char_even_spacing() -> None:
     marks = lane_marks(["", ""], ["", ""])  # 4 empty turns → even quarters
     assert [m["x0"] for m in marks] == [0.0, 0.25, 0.5, 0.75]
     assert marks[-1]["x1"] == 1.0
-    assert all(m["size"] == 1.0 for m in marks)  # no length ⇒ no height claim
+    # No length ⇒ NO height claim. This must not be 1.0: a text-free lane
+    # saturates (even quarters, edge to edge), so `size` 1.0 would render four
+    # MAXIMUM-height bars tiling the lane — the densest mark field the figure can
+    # paint, for the input that carries the least information.
+    assert all(m["size"] == 0.0 for m in marks)
 
 
 def test_signal_ticks_evenly_distributed_and_unpositioned() -> None:

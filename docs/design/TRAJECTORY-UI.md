@@ -61,7 +61,9 @@ on a wide pane, scaling every glyph and label ~3× with it. Never a `max-height`
   **BOUNDED, not filled (load-bearing).** A mark is a bar of at most **40 % of
   the lane height**, straddling a **mid-lane baseline** — a user turn rises
   above it, an agent turn drops below it (that side is the alternation you read
-  at a glance) — with a **≥1 px gap** to its neighbour. Both sides ride the
+  at a glance) — with a **≥1 px gap** to its neighbour wherever the extent
+  affords one (§3.4: past that density the gap degrades before the mark does).
+  Both sides ride the
   neutral `--v2-ink-soft` token at a **reduced `fill-opacity`** (the house
   large-area treatment, as `.dn-spark-band` / `.dn-strip-budget` tint their
   regions), the two distinguished by a density step, never `good`/`bad` (a turn
@@ -405,7 +407,9 @@ byte-stable). It is the ONE place the render math lives (DQ1). The shape is the
   regardless of turn count — the black-blob regression. `size` =
   `chars / max_chars` (the tallest mark = 1.0) and is a HEIGHT hint only: the
   figure maps it onto a bar of at most 40 % of the lane height (§1.1), never a
-  full-lane slab. A zero-char trace ⇒ even spacing. Rounded to 4 decimals.
+  full-lane slab. A zero-char trace ⇒ even spacing AND `size` 0.0 — a text-free
+  lane saturates, so a height claim there would tile it with maximum bars for the
+  least informative input. Rounded to 4 decimals.
 - **Signals.** One entry per adverse signal present, in a fixed kind order
   (error_cascade, abort_pattern, retry_loop, budget_blowout, transfer_churn),
   each with its tone + glyph (§3.5) + count + label. `x` is evenly distributed
