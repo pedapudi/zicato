@@ -84,10 +84,16 @@ The shipped example (`examples/zicato_examples/target_1_presentation/scoring.jso
 | `promote_margin` | `0.01` | Minimum scalar improvement the child must show over the parent to be promoted (regression-noise floor). |
 | `pass_rate_monotonicity` | `true` | On/off switch for the pass-rate gate. When false, the rule is disabled. |
 | `pass_rate_monotonicity_scope` | `"per_entry"` | Granularity when the rule is on: `"per_entry"` rejects if ANY champion-passed entry flips to fail (invariant/regression boards); `"aggregate"` rejects only if the OVERALL pass-rate drops (sampled evaluation boards). |
+| `namespace_weights` | `{"drift:":1.0,"cost:":0.001,"latency:":0.0001,"rubric:":-1.0,"output:":0.0,"schema:":5.0}` | Per-namespace coefficients for the multi-objective scalar. The SIGN encodes the namespace's "worse" direction — positive = higher is worse, negative = higher is better (rubric), `0.0` = tracked but not optimised. |
+| `namespace_monotonicity` | `{"drift:":false,"rubric:":true,"schema:":true}` | Per-namespace gate guards. A `true` namespace rejects any child that moved in that namespace's worse direction, even when the combined scalar improves. **Default-on for `rubric:` and `schema:`** — see the gate section. |
+| `diff_complexity_weight` | `0.0` (off) | Opt-in parsimony/MDL term: adds `weight * (added + removed + patches)` to the challenger's scalar, biasing toward the smaller, more general edit. At `0.0` the term is exactly absent (omitted from the contract hash, so unset contracts never roll). |
+| `diff_complexity_ceiling` | `0.0` (off) | Opt-in parsimony CEILING — a hard gate rule, not a loss nudge. Any `<= 0` is off; above that, a challenger whose diff complexity exceeds it is rejected outright. |
 
 (The dataclass also carries an optional `regression_gate_enabled` /
 `regression_test_command` test-suite gate; leave it off unless the snapshot
-ships its own suite.)
+ships its own suite. The train/holdout split, tournament structure, and
+proposer-quality knobs also live on `ScoringWeights` — see
+`zicato-configure-tournament` and OVERFITTING.md for those.)
 
 ## `per_judge_weights` and `default_judge_weight`
 
@@ -108,15 +114,20 @@ identically. When one judge's violation should count for more, key
 A custom judge with no entry here scores at `default_judge_weight`. The names
 MUST match the `name` field on the board's judges exactly.
 
-## The promotion gate (two-sided)
+## The promotion gate (the rules, in the order they fire)
 
-A child replaces the parent only when BOTH hold:
+A child replaces the parent only when EVERY applicable rule holds. Rule 1 is
+unconditional, Rules 2 and 3 are default-on, Rule 0 is opt-in:
 
-- **Drift margin:** `child.scalar < parent.scalar - promote_margin`. A larger
-  `promote_margin` demands a more convincing win and absorbs LLM run-to-run
-  noise.
-- **Pass-rate monotonicity:** with `pass_rate_monotonicity: true`, the gate
-  guards pass-rate. The granularity is `pass_rate_monotonicity_scope`:
+- **Rule 0 — diff-complexity ceiling** (opt-in, `diff_complexity_ceiling > 0`):
+  a structural admissibility veto applied *before* the scoring rules, so an
+  over-budget edit is rejected naming the ceiling rather than a scoring
+  near-miss (`diff_complexity_ceiling: diff complexity 14 exceeds ceiling 10`).
+- **Rule 1 — drift margin:** `child.scalar <= parent.scalar - promote_margin`.
+  A larger `promote_margin` demands a more convincing win and absorbs LLM
+  run-to-run noise.
+- **Rule 2 — pass-rate monotonicity:** with `pass_rate_monotonicity: true`, the
+  gate guards pass-rate. The granularity is `pass_rate_monotonicity_scope`:
   - `"per_entry"` (default) — if **any** entry the parent passed comes back
     failing on the child, the child is **rejected** regardless of drift gains
     (rejection reason lists the regressing entries). Best for
@@ -130,6 +141,20 @@ A child replaces the parent only when BOTH hold:
   Both guard against the proposer reducing drift by refusing to attempt hard
   entries. Flip `pass_rate_monotonicity` to `false` only for experimental epochs
   that expect non-monotone exploration (there is no `"off"` scope value).
+
+- **Rule 3 — per-namespace monotonicity** (default-on for `rubric:` and
+  `schema:`): a child that moved a guarded namespace in its worse direction is
+  rejected even when the combined scalar improved
+  (`monotonicity_regression on namespace=rubric:`). This is the rule operators
+  most often forget they have on — a quality drop or a new schema failure vetoes
+  an otherwise-winning challenger. Turn a namespace off in
+  `namespace_monotonicity` if you mean to allow that trade.
+
+One more veto sits *after* those four rules: with the default-on train/holdout
+split (`overfitting.enabled`, boards of `>= 6` entries), a win the train slice
+measured must also not regress on the holdout, or it flips to
+`holdout_not_confirmed`. The holdout is never asked to clear `promote_margin` in
+the improving direction — merely holding flat confirms.
 
 ## Non-linear shapes — the transform registry
 
@@ -224,6 +249,41 @@ Weights — AND the transforms and plugin specs — are frozen per epoch. Editin
 the next `evolve` (default auto-epoching) closes the current epoch and opens a
 fresh one. Tune between epochs, not mid-epoch.
 
+## Calibrating `promote_margin` against measurement
+
+`promote_margin` is the one weight you do not have to guess. Two commands
+measure the window it must sit inside — both are **live runs that spend budget**
+(they execute the harness), so get the operator's go-ahead first:
+
+```sh
+.venv/bin/zicato board audit     --runs 5 --harness-call-llm … --auxiliary-call-llm …
+.venv/bin/zicato board preflight --runs 5 --harness-call-llm … --auxiliary-call-llm …
+```
+
+`board audit` duels the champion against ITSELF and reports the A/A noise floor
+(persisted onto the epoch as `noise_floor`). `board preflight` adds the
+achievable signal — the champion versus deliberately degraded copies of itself —
+and asserts the window `noise < promote_margin < achievable`, naming the side
+that failed:
+
+- `margin_below_floor` (WARN) — promotions cannot be told from re-rolls of the
+  same generation. Raise the margin.
+- `margin_above_achievable` (REFUSE-recommended) — nothing can promote; the run
+  is null by construction. Note the achievable signal is a **single-point lower
+  bound** (the probe degrades one mutation point at a time), so a margin
+  deliberately set above single-point reach — because recombination unions two
+  sub-margin fixes — makes this informational rather than fatal.
+- `empty_window` (EMPTY) — the achievable signal does not clear the noise floor,
+  so **no** margin is defensible. Do not tune the margin; reduce evaluation
+  noise (more `replicates`, steadier judges) or strengthen the board.
+
+The recommended margin is **2.5 × `delta_std`** — the standard deviation of the
+A/A `delta_scalar`, the exact quantity the gate thresholds. Do NOT scale
+`max_abs_delta` instead: it is a *range* statistic that grows without bound in
+the draw count, so more calibration draws would inflate the recommendation and
+push it past the achievable signal (issue #112). `delta_std` sharpens with more
+draws, which is the direction a recommendation should move.
+
 ## Calibration workflow
 
 Good weights are unknown until the loop has run real epochs.
@@ -243,5 +303,6 @@ Good weights are unknown until the loop has run real epochs.
 - Up-weight the drift kinds and judges that matter for *this* harness
   (`per_kind_weights` / `per_judge_weights`); leave the rest at default.
 - Keep `pass_rate_monotonicity: true` for serious epochs.
-- A `promote_margin` above the observed run-to-run noise floor so spurious
-  deltas don't flip promotions.
+- A `promote_margin` inside the measured window — above the A/A noise floor so
+  spurious deltas don't flip promotions, below the achievable signal so
+  something can still win.

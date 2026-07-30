@@ -18,11 +18,12 @@ debugging a single round — never as the normal way to run zicato.
 
 ## The real command names (verify before you script)
 
-The design docs (`docs/design/CLI.md` §3.5–3.8) describe `zicato run`,
-`zicato analyze`, and `zicato patch apply` as separate steps. **Those are not
-in the shipped CLI.** The real surface is:
+Older plans described `zicato run`, `zicato analyze`, and `zicato patch apply`
+as separate steps. **Those never shipped**, and `docs/design/CLI.md` no longer
+claims them — it is a generated reference reconciled against `--help`. If you
+inherited a script or a note using the old names, translate it:
 
-| Doc form | Real CLI | Notes |
+| Old form | Real CLI | Notes |
 |---|---|---|
 | `zicato run --generation vN --entry <id> [--tail]` | *(none)* | No standalone runner. Runs happen *inside* `tournament` / `evolve`, which execute every board entry against each generation. |
 | `zicato analyze` | `zicato analyze-telemetry` | Decision-telemetry analyzer for the current epoch. |
@@ -41,7 +42,8 @@ Z=.venv/bin/zicato
 $Z mutations --show preview                 # add --format json to script it
 
 # 1. Analyzer: (re)build the decision-telemetry insight for this epoch.
-#    Writes insights/round_{N}.md (or insights/latest.md if --round omitted).
+#    Writes insights/round_{N:04d}.md (round_0007.md for --round 7), or
+#    insights/latest.md when --round is omitted.
 $Z analyze-telemetry --round 7              # spends no proposer budget
 
 # 2. Propose: generate ONE Experiment for the next generation. (LLM — gated.)
@@ -62,19 +64,23 @@ $Z tournament v3 v4 --skip-regression       # bypass the regression gate
 
 **`tournament` does NOT encode the verdict in its exit code.** It prints a JSON
 result payload and exits `0` for both promote and reject; a usage/config problem
-raises a `click.ClickException` (exit `1`). The fine-grained codes the design
-docs describe (`6`=reject etc.) are **not implemented** — read the `decision` in
-the printed JSON, do not branch on the exit code for promote-vs-reject.
+raises a `click.ClickException` (exit `1`). There is no fine-grained verdict
+code (no exit `6`=reject) — read the `decision` in the printed JSON, do not
+branch on the exit code for promote-vs-reject.
 
 ## What each stage leaves on disk (the inspection points)
 
 All paths are under `.zicato/epochs/<epoch>/`:
 
-- `insights/round_{N}.md` — analyzer output (stage 1).
+- `insights/round_{N:04d}.md` — analyzer output (stage 1).
 - `generations/vN/experiment.json` — hypothesis (written **before** scoring) +
   `patch_ids` + the `outcome` block (written **after** the tournament).
 - `generations/vN/patches/*.json` — one file per patch.
 - `generations/vN/runs/<entry>/{events.jsonl,loss.json}` — per-entry telemetry.
+  `loss.json` is replicate 0; further replicates land in sibling
+  `loss.r<N>.json` (the default `replicates` is 2, so expect them).
+- `rounds/<round>/round_log.jsonl` — the round's durable typed event log
+  (contract hash → proposal → apply → units → gate → recorded decision).
 - `journal.md` — appended at each promote/reject.
 
 Read these between stages rather than re-running. After any hand-edit of a

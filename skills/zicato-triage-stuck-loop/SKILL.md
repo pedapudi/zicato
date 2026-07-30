@@ -27,32 +27,46 @@ $Z health                 # current epoch; add --epoch <id> to target one
 ```
 
 Exit codes: `0` = no `critical` finding (`ok`/`info`/even `warning`); `1` = a
-`critical` finding is present (`raise SystemExit(1)`; the design-doc `9` is not
-implemented — and a config error like "no active epoch" also exits `1`). Each
-finding carries a `severity` and a concrete `remedy` — read them; the detector
-tells you the fix. The five detectors (`docs/design/LOOP-HEALTH.md` §3):
+`critical` finding is present (`raise SystemExit(1)`; there is no bespoke
+"degenerate" code — and a config error like "no active epoch" also exits `1`).
+Each finding carries a `severity` and a concrete `remedy` — read them; the
+detector tells you the fix. The detectors that bear on a stuck loop
+(`docs/design/LOOP-HEALTH.md` §3; more ship than these — overfitting,
+pre-flight, and infra detectors also file findings):
 
 | Detector | Fires when | Points you at |
 |---|---|---|
-| Degenerate scoring | Scalar is flat / identical across generations (identical = `critical` at once; sustained = `critical`) | The scoring contract or the board — there is no signal to optimise. |
-| Non-differentiating board entries | Individual entries score the same for every generation | Those entries — they add cost but no discrimination. |
-| Flat drift signal | Drift is static (`warning`) or identically zero across the epoch (`critical`) | Telemetry / expectations — the harness emits no usable drift. |
+| Degenerate scoring | The last `scoring_window` tournaments ALL came back with `\|Δscalar\| ≤ scoring_epsilon` (`critical` — the only detector that trips the breaker below) | The scoring contract or the board — there is no signal to optimise. |
+| Non-differentiating board entries | An entry's `drift_loss` is identical across every generation it ran under (`warning`, one finding per entry) | Those entries — they add cost but no discrimination. |
+| Flat drift signal | The `drift:`-namespace metric count is zero across every run in the epoch (`warning`) | Telemetry / expectations — the harness emits no usable drift. |
 | No expectations | Board entries carry no Predicate/Rubric | The board — drift-loss-only is weak signal (severity `info`). |
-| Stalled loop | No promotions for K rounds AND another detector is firing | The detector that co-fires — fix that one. |
+| Dead judge | A board-declared judge never fired in any run of the epoch (`warning`) | That judge — mis-wired or unreachable, so it is coverage on paper only. |
+| Stalled loop | The trailing run of `rejected` decisions reaches `stalled_rejects` (`warning`, no co-firing detector required) | Whatever else is firing; if nothing is, work branches B–D. |
 
 If `health` is `warning`/`critical`, the firing detector + its remedy *is* your
 diagnosis. Jump to the matching branch below. If `health` is `ok`/`info`, the
 evaluation has teeth — the loop is stuck for a non-degenerate reason; continue
 to Step 1.
 
+Two stops to keep straight when the loop ended early on its own.
+`--max-consecutive-rejections` (default 3) is the unproductive-loop stop.
+Separately, the orchestrator's default-on breaker stops the loop with reason
+`degenerate_health` after **2 consecutive rounds** whose health came back
+`critical` — `warning`-only rounds never trip it, and there is no CLI flag for
+it. A refuse-recommended contract pre-flight is not a third stop under the
+defaults: it files `preflight_signal_below_floor` at `warning` under
+`runtime.preflight_gate = "warn"` and so cannot halt anything; only
+`preflight_gate = "refuse"` grades it `critical`, and that mode refuses at
+pre-flight before any round runs.
+
 ## Step 1 — branch on what `health` (and the index) shows
 
 ### A. Degenerate scoring / flat drift / non-differentiating entries → fix the contract
 The board cannot separate generations, or scoring collapses to a constant.
 Editing `board.jsonl` / `brief.md` / `scoring.json` changes the evaluation
-contract, so the next `evolve` auto-rolls a fresh epoch (prefer that to a
-`--force` mid-epoch board edit, which degrades pattern history; AGENTS.md
-rule 5).
+contract, so the next `evolve` auto-rolls a fresh epoch — which is what you
+want. Hand-editing the *frozen* per-epoch board with the `board` subcommands
+instead keeps the epoch but resets its pattern history (AGENTS.md rule 5).
 
 - **Flat scalar across generations** → the board has no discriminating entries
   or scoring weights are degenerate. Tighten/replace board entries so good and
@@ -91,7 +105,7 @@ demand a leap no single small mutation can clear.
 sqlite3 -readonly .zicato/index.db "
   SELECT child_generation_id, decision, parent_scalar, child_scalar,
          delta_scalar, rejection_reason
-  FROM tournaments WHERE epoch_id='e3' AND decision='reject' ORDER BY ran_at;"
+  FROM tournaments WHERE epoch_id='e3' AND decision='rejected' ORDER BY ran_at;"
 ```
 
 If rejections cite pass-rate monotonicity failures on a few brutal entries,

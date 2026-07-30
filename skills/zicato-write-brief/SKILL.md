@@ -37,9 +37,11 @@ example (`examples/zicato_examples/target_1_presentation/rubric.md`):
 # Epoch e0 — <one-line epoch name>
 
 ## Goal
-<2–5 bullets: the concrete behaviour this epoch is trying to improve, and the
- dominant failure mode it attacks. Tie to board tags so the proposer can target
- the slice that matters.>
+<Open with a PROSE paragraph naming the concrete behaviour this epoch is
+ trying to improve — this paragraph is what zicato distils as the epoch's
+ objective (see below). Then 2–5 bullets: the dominant failure mode it
+ attacks, tied to board tags so the proposer can target the slice that
+ matters.>
 
 ## Preferred edits
 <Mutation ids the proposer should touch first — where the signal lives.>
@@ -60,6 +62,18 @@ None for the baseline epoch.
 <Conventions for how spans get rewritten — terseness, what tool descriptions
  should and shouldn't say, tokens to preserve verbatim.>
 ```
+
+## How the epoch objective is distilled from `## Goal`
+
+When an epoch carries no explicit `goal` (`zicato epoch set-goal`), the
+dashboard's objective callout and the publication masthead distil one from the
+brief: the **first prose paragraph** inside `## Goal`, previewed at 120 chars.
+Hard-wrapped lines are joined (hyphen-aware, so `multi-` + `agent` rejoins as
+`multi-agent`), and the paragraph ends at the first blank line, heading, list
+item, or code fence. A `## Goal` that opens straight into bullets therefore
+distils **nothing** — lead with the prose sentence, and put the epoch's point
+in its first ~120 characters. Display-only: nothing here feeds scoring or the
+gate.
 
 ## The `## Forbidden` section
 
