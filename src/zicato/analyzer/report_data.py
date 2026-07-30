@@ -570,30 +570,24 @@ def _load_round_records(workspace_root: Path, epoch_id: str) -> tuple[Any, ...]:
 
 
 def _distill_brief_goal(brief: str) -> str:
-    """The first prose line of the brief's ``## Goal`` section, or ``""``.
+    """The brief's ``## Goal`` paragraph, or ``""`` when there is none.
 
     The operator's goal lives in the proposer brief's ``## Goal`` section,
-    not in ``config.json`` (whose ``goal`` field is usually empty). This
-    mirrors the dashboard's epoch-objective distillation so the report
-    masthead names the same goal the rest of the UI shows. List items and
-    sub-headings are skipped so the summary reads as a sentence.
+    not in ``config.json`` (whose ``goal`` field is usually empty). The
+    masthead must name the same goal the rest of the UI shows, so this
+    DELEGATES to the dashboard's distillation rather than restating it.
+
+    It used to carry its own copy of that logic, and the copy is what made
+    issue #107 outlive its fix: the dashboard learned to reassemble a
+    hard-wrapped goal paragraph while this function still returned the
+    first PHYSICAL line, so the publication masthead kept rendering the
+    shipped ``target_1`` goal truncated mid-word at a dangling hyphen
+    ("… the vendored multi-"). One distiller, one behaviour — do not
+    re-inline it.
     """
-    if not brief:
-        return ""
-    in_goal = False
-    for raw in brief.replace("\r\n", "\n").split("\n"):
-        line = raw.strip()
-        if line.startswith("#"):
-            heading = line.lstrip("#").strip()
-            if in_goal:
-                break  # a later heading closes the Goal section
-            if heading.lower() == "goal":
-                in_goal = True
-            continue
-        if not in_goal or not line or line[0] in "-*>":
-            continue
-        return line
-    return ""
+    from zicato.query.epoch_view import _distill_brief_goal as _distill  # noqa: PLC0415
+
+    return _distill(brief) or ""
 
 
 def gather_epoch_report_data(workspace_root: Path, epoch_id: str) -> EpochReportData:

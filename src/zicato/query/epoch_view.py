@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -191,10 +192,10 @@ def _distill_brief_goal(brief: str) -> str | None:
     dashboard's objective callout truncated mid-sentence — sometimes
     mid-word at a dangling hyphen (issue #107). Consecutive prose lines are
     accumulated instead, stopping at the first line that opens a new block:
-    a blank line, a heading, or a list item / blockquote. Lines are joined
-    with a single space, EXCEPT after a trailing hyphen, where the wrap
-    split one word and the halves are joined directly (``multi-`` + ``agent``
-    → ``multi-agent``).
+    a blank line, a heading, a list item (bulleted OR numbered), a
+    blockquote, or a code fence. Lines are joined with a single space,
+    EXCEPT after a trailing hyphen, where the wrap split one word and the
+    halves are joined directly (``multi-`` + ``agent`` → ``multi-agent``).
 
     A leading list-item or sub-heading line is still skipped, so the
     summary reads as prose rather than a bullet fragment. Note this is a
@@ -204,6 +205,9 @@ def _distill_brief_goal(brief: str) -> str | None:
     section or no prose line within it.
 
     Display-only: nothing here feeds scoring, gating or promotion.
+
+    :func:`zicato.analyzer.report_data._distill_brief_goal` delegates here
+    so the publication masthead names the same goal the dashboard shows.
     """
     if not brief:
         return None
@@ -223,11 +227,11 @@ def _distill_brief_goal(brief: str) -> str | None:
             continue
         if not in_goal:
             continue
-        # Skip list items / blockquotes — the summary should read as
-        # prose, not a bullet fragment. Once a paragraph has started,
-        # a bullet CLOSES it rather than being skipped over: the
-        # paragraph ends where the next block begins.
-        if not line or (line[0] in "-*>"):
+        # Skip list items / blockquotes / code fences — the summary should
+        # read as prose, not a bullet fragment. Once a paragraph has
+        # started, such a line CLOSES it rather than being skipped over:
+        # the paragraph ends where the next block begins.
+        if not line or _opens_a_block(line):
             if paragraph:
                 break
             continue
@@ -237,23 +241,48 @@ def _distill_brief_goal(brief: str) -> str | None:
     return _preview(_join_wrapped(paragraph))
 
 
+#: A markdown line that opens a block other than a paragraph: a bulleted
+#: item (``-``/``*``/``+``), a blockquote (``>``), a fenced code block
+#: (``` or ``~~~``), or an ordered item (``1.`` / ``1)``). Bulleted items
+#: alone are not enough: a numbered goal list joined as prose reads as one
+#: run-on sentence ("1. first 2. second").
+_BLOCK_OPENER_RE = re.compile(r"^(?:[-*+>]|```|~~~|\d+[.)]\s)")
+
+
+def _opens_a_block(line: str) -> bool:
+    """True when a stripped brief line begins a non-paragraph block."""
+    return _BLOCK_OPENER_RE.match(line) is not None
+
+
 def _join_wrapped(lines: list[str]) -> str:
     """Reassemble hard-wrapped prose lines into one line.
 
     Joins with a single space, except where the previous line ends in a
-    hyphen — there the wrap split a single word, so the halves are joined
-    directly. A line ending in an em-dash-style double hyphen (``--``) is
-    left space-joined; that is punctuation, not a split word.
+    hyphen that a word character precedes — there the wrap split a single
+    word, so the halves are joined directly (``multi-`` + ``agent``). The
+    word-character guard is what keeps a hyphen used as PUNCTUATION
+    ("reaching for this -" + "namely speed") space-joined; so is a
+    trailing em-dash-style double hyphen (``--``).
     """
     out = ""
     for line in lines:
         if not out:
             out = line
-        elif out.endswith("-") and not out.endswith("--"):
+        elif _splits_a_word(out):
             out += line
         else:
             out += " " + line
     return out
+
+
+def _splits_a_word(text: str) -> bool:
+    """True when ``text`` ends mid-word at a hard-wrap hyphen.
+
+    A single trailing hyphen preceded by a word character; a ``--`` tail is
+    punctuation, and a hyphen preceded by whitespace is a dash the operator
+    typed, not a wrap.
+    """
+    return len(text) >= 2 and text.endswith("-") and not text.endswith("--") and text[-2].isalnum()
 
 
 def build_epochs_summary(paths: WorkspacePaths) -> list[dict[str, Any]]:

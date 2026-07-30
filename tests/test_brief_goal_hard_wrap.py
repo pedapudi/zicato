@@ -59,3 +59,46 @@ def test_soft_wrapped_goal_is_unchanged() -> None:
 def test_no_goal_section_still_returns_none() -> None:
     assert _distill_brief_goal("## Style\n\nBe terse.\n") is None
     assert _distill_brief_goal("") is None
+
+
+def test_publication_masthead_distils_the_same_goal_as_the_dashboard() -> None:
+    """The analyzer's masthead goal must not be a second implementation.
+
+    ``analyzer.report_data`` carried its own copy of this distillation, which
+    is how #107 outlived its first fix: the dashboard learned to reassemble a
+    wrapped paragraph while the publication masthead still rendered the
+    shipped goal cut mid-word at the dangling hyphen.
+    """
+    from pathlib import Path
+
+    from zicato.analyzer.report_data import _distill_brief_goal as _masthead_goal
+
+    shipped = Path(__file__).resolve().parents[1] / (
+        "examples/zicato_examples/target_1_presentation/rubric.md"
+    )
+    brief = shipped.read_text(encoding="utf-8")
+
+    dashboard = _distill_brief_goal(brief)
+    assert dashboard is not None
+    assert _masthead_goal(brief) == dashboard
+    # The symptom itself: neither surface may end at the wrap hyphen.
+    assert not dashboard.endswith("multi-")
+    assert "multi-agent" in dashboard
+
+
+def test_a_numbered_list_is_a_block_not_prose() -> None:
+    """An ordered list is a list — accumulating it yields a run-on sentence."""
+    brief = "## Goal\n\n1. first item\n2. second item\n\n## Style\n"
+    assert _distill_brief_goal(brief) is None
+
+    closed = "## Goal\n\nHold the line.\n1. first item\n\n## Style\n"
+    assert _distill_brief_goal(closed) == "Hold the line."
+
+
+def test_a_hyphen_used_as_punctuation_is_not_a_wrapped_word() -> None:
+    """Only a hyphen a word character precedes closes across the wrap."""
+    punct = "## Goal\n\nreach for this -\nnamely speed.\n\n## Style\n"
+    assert _distill_brief_goal(punct) == "reach for this - namely speed."
+
+    wrapped = "## Goal\n\nreach for well-\nknown speed.\n\n## Style\n"
+    assert _distill_brief_goal(wrapped) == "reach for well-known speed."

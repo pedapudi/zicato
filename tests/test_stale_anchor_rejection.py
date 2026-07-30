@@ -124,3 +124,47 @@ async def test_transaction_boundary_surfaces_key_error_as_a_finding(tmp_path: Pa
     findings = await validate(candidate)
     assert findings, "a bad patch set must surface as a finding, not propagate"
     assert any("patch set" in f for f in findings)
+
+
+def test_manifest_check_stays_operator_actionable_at_the_cli_boundary() -> None:
+    """Unifying the bad-patch-set TYPE must not cost the clean CLI message.
+
+    ``check_patch_manifest_and_forbidden`` raised ``RuntimeError`` before
+    issue #83 folded it into ``ValueError``. Its immediate call sites sit in
+    no ``try``, but the process boundary does: ``cli/commands/evolve.py``
+    renders ``FileNotFoundError`` / ``RuntimeError`` out of the loop as a
+    clean ``Error: …`` line, so the fold silently turned a stale-manifest
+    fault into a raw traceback. The fix is a ``ValueError`` SUBCLASS: every
+    ``except ValueError`` boundary in the apply path still catches it, and
+    the CLI can name just this condition without swallowing every
+    ``ValueError`` the loop might raise.
+    """
+    import inspect
+    import re
+
+    from zicato.cli.commands import evolve as evolve_cmd
+    from zicato.evolve.round import BadPatchSetError, check_patch_manifest_and_forbidden
+
+    # The unification holds: a bad-patch-set boundary catching ValueError
+    # catches this too.
+    assert issubclass(BadPatchSetError, ValueError)
+
+    class _Patch:
+        id = "p1"
+        mutation_id = "gone"
+
+    class _Experiment:
+        patches = (_Patch(),)
+
+    with pytest.raises(BadPatchSetError, match="unknown mutation_id"):
+        check_patch_manifest_and_forbidden(_Experiment(), [], ())
+
+    # ...and the CLI still renders it as a clean error rather than a traceback.
+    # Matched on the ``except`` clause itself (whitespace-tolerant so ruff may
+    # reflow it) rather than on a bare name occurrence, which a stray comment
+    # would satisfy.
+    source = inspect.getsource(evolve_cmd)
+    assert re.search(r"except\s*\([^)]*\bBadPatchSetError\b[^)]*\)\s*as\s+exc", source), (
+        "the evolve CLI must keep naming BadPatchSetError among the "
+        "operator-actionable errors it turns into a click.ClickException"
+    )

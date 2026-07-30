@@ -21,14 +21,14 @@ plumbing** that each used to inline as its own closure:
 * :func:`check_patch_manifest_and_forbidden` — the post-propose manifest
   cross-check: every patch's ``mutation_id`` must resolve against the
   re-enumerated mutation manifest, and no patch may touch a
-  ``forbidden_ids`` mutation. Raises :class:`RuntimeError` on either
-  violation.
+  ``forbidden_ids`` mutation. Raises :class:`BadPatchSetError` — a
+  ``ValueError`` — on either violation (issue #83).
 
 Both helpers are exact extractions of the previously-triplicated closures;
 the gauntlet path and the field path now call the SAME code. Behaviour is
 identical — the validator factory reproduces the closure's beat / derive /
 validate sequence verbatim, and the manifest check raises the same two
-``RuntimeError`` messages.
+messages.
 
 Concurrency note (WS-CONC): under best-of-N slate parallelism the per-slot
 ``validate`` hook from :func:`build_scratch_validator_factory` calls
@@ -298,6 +298,22 @@ def build_scratch_validator_factory(
     return _factory
 
 
+class BadPatchSetError(ValueError):
+    """A patch set the manifest cross-check refuses.
+
+    A ``ValueError`` SUBCLASS, deliberately: issue #83's unification is that
+    "this patch set cannot be applied" reaches every boundary as one type,
+    and a subclass satisfies every ``except ValueError`` in the apply path
+    unchanged. The distinct class exists only so the ``evolve`` CLI can name
+    this condition among the operator-actionable errors it renders as a
+    clean message instead of a traceback — which is what folding
+    :func:`check_patch_manifest_and_forbidden`'s ``RuntimeError`` into
+    ``ValueError`` otherwise silently took away (``cli/commands/evolve.py``
+    catches ``FileNotFoundError`` and ``RuntimeError`` around the whole
+    loop; nothing between it and this raise catches either type).
+    """
+
+
 def check_patch_manifest_and_forbidden(
     experiment: Experiment,
     mutations: list[Any],
@@ -313,8 +329,9 @@ def check_patch_manifest_and_forbidden(
     * no patch may touch a ``forbidden_ids`` mutation (the operator's
       explicit no-go list).
 
-    Raises :class:`ValueError` with the same message either pipeline raised
-    on the first violation; returns ``None`` when the patch set is clean.
+    Raises :class:`BadPatchSetError` (a ``ValueError``) with the same
+    message either pipeline raised on the first violation; returns ``None``
+    when the patch set is clean.
 
     The exception TYPE is load-bearing (issue #83): "this patch set cannot
     be applied" is ONE logical condition, and it now reaches callers as
@@ -328,18 +345,25 @@ def check_patch_manifest_and_forbidden(
     id is still a hard error that stops the round — by the time it runs the
     proposer already validated its own patch set, so a violation here means
     the manifest changed under the round.
+
+    The ``ValueError`` SUBCLASS is what keeps the severity claim honest at
+    the process boundary too. ``cli/commands/evolve.py`` renders
+    ``FileNotFoundError`` / ``RuntimeError`` out of the loop as a clean
+    ``Error: …`` line, and this condition used to qualify; a bare
+    ``ValueError`` would have started dumping a traceback for an
+    operator-actionable fault instead. See :class:`BadPatchSetError`.
     """
     from zicato.mutation.validator import check_forbidden_ids  # noqa: PLC0415
 
     mutations_by_id = {m.id: m for m in mutations}
     for patch in experiment.patches:
         if patch.mutation_id not in mutations_by_id:
-            raise ValueError(
+            raise BadPatchSetError(
                 f"proposer-emitted patch {patch.id!r} targets unknown "
                 f"mutation_id {patch.mutation_id!r}"
             )
     forbidden_violations = check_forbidden_ids(list(experiment.patches), list(forbidden_ids))
     if forbidden_violations:
-        raise ValueError(
+        raise BadPatchSetError(
             "proposer-emitted patches violate forbidden_ids: " + "; ".join(forbidden_violations)
         )
