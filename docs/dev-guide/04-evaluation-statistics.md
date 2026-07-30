@@ -1061,12 +1061,22 @@ Aggregated:
 
 - `drift_loss` — the arithmetic mean; reaches the scalar as the `"drift"`
   component;
-- `score` — the mean over the replicates that HAVE one (`None` only when every
-  replicate's is `None`). This is the field `entry_score` reads FIRST, hence the
-  continuous outcome axis the duel actually turns on. The reducer populates it
-  whenever an expectation fired — a bool matcher yields `1.0`/`0.0` just as a
-  float scorer yields its clamped value — so it is populated on essentially
-  every scored entry;
+- `score` — the mean of each replicate's **resolved outcome**, i.e. of
+  `entry_score(replicate)`, not of the raw `score` field. This is the field
+  `entry_score` reads FIRST, hence the continuous outcome axis the duel actually
+  turns on, and folding the resolved outcome is what makes the fold correct in
+  the two cases where the raw field is unset. Only ONE of them is an
+  abstention: an entry with **no expectation at all** produces no outcome on any
+  replicate and folds to `None`, excluded from `mean_score` exactly as before
+  replication. An **aborted** replicate (spent budget, infra kill) records
+  `score=None` with `pass_fail=False` — it observed a failure, not nothing — so
+  `entry_score` maps it to `0.0` and it votes. Treating that as an abstention is
+  how a K-replicate duel silently reverts to slot 0: one clean pass plus one
+  abort reported the clean replicate's `1.0` verbatim while `pass_fail`'s
+  majority said `False`, a folded profile contradicting itself. Folding the
+  resolved outcome also means an all-bool board (score-less, `pass_fail` only)
+  gets the same arithmetic as a scored one — 1 of 4 replicates passing reads
+  `0.25`, not the single majority bit;
 - `metrics` — per-key mean over the replicates reporting the key, so the
   decomposition decomposes the folded `score` beside it;
 - `metric_counts` (and the `tokens_spent` / `output_chars` / `schema_failures`
@@ -1080,10 +1090,13 @@ Aggregated:
   plugin can read it;
 - `pass_fail` — the **strict-majority vote** (`true_count * 2 > len(votes)`; an
   even split is a fail), with `None` preserved when no replicate produced a
-  pass/fail. NOTE: now that `score` is folded, this vote is DISPLAY-only for the
-  scalar — `entry_score` returns the continuous `score` before it can consult
-  `pass_fail`. The vote still drives the binary `pass_rate` and the gate's
-  `pass_fail` fallback for score-less aggregates.
+  pass/fail. NOTE: now that `score` is folded, this vote no longer decides the
+  scalar — `entry_score` returns the folded continuous outcome before it can
+  consult `pass_fail`. The vote still drives the binary `pass_rate` and the
+  gate's `pass_fail` fallback for score-less aggregates, so it stays a majority
+  rather than a mean, and it can legitimately disagree in sign with the folded
+  `score` (2 of 5 replicates passing is `pass_fail` `False` and `score` `0.4`).
+  That is the binary and continuous views of one duel, not an inconsistency.
 
 Pass-through from slot 0, and why each may be: `run_id` /
 `expectation_result` (raw provenance of the representative replicate — the fold
@@ -1168,6 +1181,15 @@ round, so round-to-round variation understates the true variance. And
 `check_statistical_power` reads the CONTRACT and the runtime mode is not a
 contract field, so the check cannot gate on it. `--mode full` is the
 configuration the formula actually describes.
+
+Both replicate loops also stop scheduling FURTHER slots once the per-round
+token budget is spent, and settle the fold over the slots that completed. The
+alternative is worse than it looks: a spent budget turns the remaining slots'
+units into skips — synthesised worst-case budget-exceeded losses — and
+`budget_exhausted` is the one cache-*persistable* abort cause, so those worst
+cases would be both averaged into entries that already measured cleanly AND
+written to their cache slots, making the penalty a permanent HIT for the rest
+of the epoch on units that were never attempted.
 
 ---
 

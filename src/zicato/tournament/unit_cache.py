@@ -368,6 +368,47 @@ def _mean_over_present(values: list[float | None]) -> float | None:
     return sum(present) / len(present)
 
 
+def _mean_outcome(profiles: list[LossProfile]) -> float | None:
+    """Fold the per-replicate CONTINUOUS OUTCOME across replicates.
+
+    Means each replicate's :func:`~zicato.tournament.scoring.entry_score` —
+    the single uniform mapping every scoring/gate consumer reads — rather
+    than the raw :attr:`LossProfile.score` field. The distinction is the
+    whole correctness of the fold, because ``score`` is unset in two
+    materially different situations and only ONE of them is an abstention:
+
+    * **No expectation** (``pass_fail is None`` too) — genuinely not
+      measured. ``entry_score`` returns ``None``, the replicate abstains,
+      and an entry with no expectation folds to ``None`` exactly as before
+      replication.
+    * **An expectation that could not fire** — the run was ABORTED (a spent
+      wall-clock/token budget, an infra kill: see
+      :func:`~zicato.tournament.worker_transport._aborted_loss_profile`,
+      which records ``score=None`` with ``pass_fail=False``). That replicate
+      observed a FAILURE, not nothing. ``entry_score`` maps it to ``0.0``
+      and it votes.
+
+    Treating the second case as an abstention is how a K-replicate duel
+    silently reverts to the single-replicate behaviour #108 removed: with
+    one clean pass and one aborted replicate, a raw-``score`` mean reports
+    the clean replicate's ``1.0`` verbatim while ``pass_fail``'s majority
+    vote says ``False`` — a folded profile that contradicts itself, whose
+    ``mean_score`` is a perfect ``1.0`` off a duel half of which never ran.
+
+    Because the mapping is ``entry_score``'s, the fold satisfies
+    ``entry_score(folded) == mean(entry_score(r) for r in replicates)``
+    over the replicates that produced an outcome — including on an
+    all-bool board, where each replicate contributes its ``1.0`` / ``0.0``
+    bit and K replicates therefore move the outcome axis instead of being
+    collapsed to ``pass_fail``'s single majority bit. The majority vote is
+    still folded onto ``pass_fail`` itself, so ``pass_rate`` and every
+    display consumer are unchanged.
+    """
+    from zicato.tournament.scoring import entry_score  # noqa: PLC0415
+
+    return _mean_over_present([entry_score(p) for p in profiles])
+
+
 def _mean_metrics(profiles: list[LossProfile]) -> dict[str, float] | None:
     """Fold the per-entry ``metrics`` decomposition across replicates.
 
@@ -416,6 +457,17 @@ def _mean_metric_counts(profiles: list[LossProfile]) -> tuple[MetricCount, ...]:
     Bucket ORDER is the first-seen order across replicates, so the fold
     is deterministic and replicate 0's ordering is preserved for the
     buckets it carried.
+
+    Scope of that equality: it holds when the replicates agree on which
+    :meth:`LossProfile.unified_metrics` BRANCH they take — in production
+    they do, because the reducer populates ``metric_counts`` on every
+    profile it writes. A set MIXING an explicit-``metric_counts`` replicate
+    with a legacy one carrying only the int scalars is aggregate-preserving
+    only approximately: the fold's non-empty ``metric_counts`` makes the
+    folded profile take the explicit branch, so the legacy replicate's
+    synthesised contribution is dropped from the fold's view. Only
+    hand-built or pre-``metric_counts`` profiles can reach that, and the
+    residual is bounded by those replicates' share of the namespace.
     """
     keys: list[tuple[str, MetricSeverity]] = []
     seen: set[tuple[str, MetricSeverity]] = set()
@@ -500,15 +552,14 @@ def _average_losses(
         Mean across replicates. Reaches the scalar as the ``"drift"``
         component (``drift_weight × drift_loss_mean``).
     ``score``
-        Mean across the replicates that HAVE one (:func:`_mean_over_present`);
-        ``None`` only when every replicate's is ``None``, so a board with
+        Mean of each replicate's RESOLVED OUTCOME
+        (:func:`_mean_outcome` — ``entry_score``, not the raw field), so a
+        replicate whose expectation was recorded as failed WITHOUT a score
+        (an aborted run) votes its ``0.0`` instead of abstaining. ``None``
+        only when no replicate produced an outcome at all, so a board with
         no expectations is unchanged. This is the field
         :func:`~zicato.tournament.scoring.entry_score` reads FIRST, hence
-        the continuous outcome axis the duel actually turns on — the
-        reducer populates it whenever an expectation fired (a bool matcher
-        yields ``1.0`` / ``0.0`` just as a float scorer yields its clamped
-        value), so it is populated on essentially every scored entry, not
-        just float-scorer boards.
+        the continuous outcome axis the duel actually turns on.
     ``metrics``
         Per-key mean over the replicates reporting the key
         (:func:`_mean_metrics`) — the decomposition has to decompose the
@@ -525,19 +576,30 @@ def _average_losses(
         meaned exactly (:func:`_mean_metric_counts`). The three int-typed
         scalars carry the ROUNDED mean: the fields are integer counts by
         contract, and they are consulted only on the synthesised path
-        (a profile with no ``metric_counts``) and by display.
+        (a profile with no ``metric_counts``) and by display. That rounding
+        is the ONE place the reducer's "scalar and its MetricCount mirror
+        agree" invariant relaxes across the fold — a folded
+        ``cost:tokens_spent`` of ``100.5`` sits beside ``tokens_spent=100``.
+        The mirror is what the scalar reads, so the scalar is exact and the
+        disagreement is display-only and sub-unit. Note ``round`` is
+        banker's rounding, so a mean of exactly ``0.5`` floors to ``0`` and
+        ``unified_metrics``' truthiness check then omits the synthesised
+        bucket entirely — reachable only on the legacy synthesised path.
     ``per_judge_loss``
         Meaned per judge (:func:`_mean_per_judge_loss`); it is carried onto
         :class:`~zicato.scoring.api.ScalarContext`, so a scalar PLUGIN can
         read it.
     ``pass_fail``
         Strict-majority vote (``None`` preserved when the entry has no
-        expectation). NOTE: now that ``score`` is folded, this vote is
-        DISPLAY-only for the scalar — :func:`entry_score` returns the
-        continuous ``score`` before it can consult ``pass_fail``, and the
-        reducer leaves ``score`` unset only on entries that have no
-        expectation at all. The vote still drives the binary ``pass_rate``
-        and the gate's ``pass_fail`` fallback for score-less aggregates.
+        expectation). NOTE: now that ``score`` is folded, this vote no
+        longer decides the scalar — :func:`entry_score` returns the folded
+        continuous outcome before it can consult ``pass_fail``. The vote
+        still drives the binary ``pass_rate`` and the gate's ``pass_fail``
+        fallback for score-less aggregates, so it stays a majority rather
+        than a mean. It can therefore legitimately disagree in sign with
+        the folded ``score`` (2 of 5 replicates passing is ``pass_fail``
+        ``False`` and ``score`` ``0.4``); that is the binary and continuous
+        views of the same duel, not an inconsistency.
 
     Replicate-0 pass-through, and why each may be
     ---------------------------------------------
@@ -594,7 +656,7 @@ def _average_losses(
             profiles[0],
             drift_loss=mean_drift,
             pass_fail=majority_pass,
-            score=_mean_over_present([p.score for p in profiles]),
+            score=_mean_outcome(profiles),
             metrics=_mean_metrics(profiles),
             metric_counts=_mean_metric_counts(profiles),
             tokens_spent=round(sum(p.tokens_spent for p in profiles) / n),

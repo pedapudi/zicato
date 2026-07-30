@@ -132,17 +132,112 @@ def test_average_losses_averages_namespace_bearing_counters() -> None:
 
 
 def test_average_losses_score_means_only_the_replicates_that_have_one() -> None:
-    """An unmeasured replicate must not be read as zero on the outcome axis.
+    """An UNMEASURED replicate must not be read as zero on the outcome axis.
 
-    A replicate whose expectation could not fire (aborted before the
-    matcher ran) carries ``score=None``; it abstains from the mean rather
-    than dragging it toward a miss it never observed.
+    "Unmeasured" here means no expectation was recorded at all (no score AND
+    no pass/fail): nothing was observed, so the replicate abstains from the
+    mean rather than dragging it toward a miss. Contrast
+    ``test_average_losses_counts_an_aborted_replicate_as_a_miss``: a replicate
+    that recorded a FAILURE without a score is not unmeasured and does vote.
     """
     from zicato.tournament.unit_cache import _average_losses
 
     runs = [{"e": _loss(score=s)} for s in (1.0, None, 0.5, None)]
     out = _average_losses(runs)
     assert out["e"].score == pytest.approx(0.75)
+
+
+def test_average_losses_counts_an_aborted_replicate_as_a_miss() -> None:
+    """An ABORTED replicate votes ``0.0``; it does not abstain.
+
+    ``score`` is unset in two materially different situations and only one is
+    an abstention. :func:`_aborted_loss_profile` — a spent wall-clock/token
+    budget, an infra kill — records ``score=None`` with ``pass_fail=False``:
+    the run observed a failure, not nothing.
+
+    Folding the raw ``score`` field treats that as an abstention, which is
+    how a K-replicate duel silently reverts to the single-replicate behaviour
+    #108 removed. One clean pass + one abort reported the clean replicate's
+    ``1.0`` VERBATIM on the outcome axis while ``pass_fail``'s majority said
+    ``False`` — a folded profile contradicting itself, whose ``mean_score``
+    was a perfect ``1.0`` off a duel half of which never ran. Folding
+    ``entry_score`` (the mapping every consumer already reads) instead of the
+    raw field is what makes the abort vote.
+
+    Reachable under the default configuration: the gauntlet defaults to
+    ``replicates=2``, and any budget that clips mid-round synthesises exactly
+    this profile for the un-run slot.
+    """
+    from zicato.core import BoardEntry, Expectation, ExpectationKind
+    from zicato.core import ScoringWeights as _Weights
+    from zicato.tournament.scoring import aggregate_generation_score, entry_score
+    from zicato.tournament.unit_cache import _average_losses
+    from zicato.tournament.worker_transport import _aborted_loss_profile
+
+    entry = BoardEntry(
+        id="e",
+        kind="single_turn",
+        wall_clock_budget_seconds=60,
+        input="hi",
+        expectation=Expectation(kind=ExpectationKind.PREDICATE, spec="contains:x"),
+    )
+    clean = _loss(entry_id="e", drift_loss=0.0, pass_fail=True, score=1.0)
+    aborted = _aborted_loss_profile(
+        run_id="run-abort",
+        entry=entry,
+        generation_id="v1",
+        epoch_id="e0",
+        weights=_Weights(),
+        runtime_ms=0,
+        match_id="",
+        abort_cause="budget_exhausted",
+    )
+    # The premise: the abort DID record an expectation failure, with no score.
+    assert aborted.score is None
+    assert aborted.pass_fail is False
+    assert entry_score(aborted) == pytest.approx(0.0)
+
+    folded = _average_losses([{"e": clean}, {"e": aborted}])["e"]
+    assert folded.score == pytest.approx(0.5)
+    assert entry_score(folded) == pytest.approx(0.5)
+    # ...and the continuous axis the scalar runs on agrees with the vote's sign.
+    agg = aggregate_generation_score([folded], _Weights(drift_weight=0.0, pass_weight=1.0))
+    assert agg["mean_score"] == pytest.approx(0.5)
+
+
+def test_average_losses_folds_the_outcome_on_a_score_less_bool_board() -> None:
+    """K replicates move the axis on an all-bool board too, not just a scored one.
+
+    A profile carrying only ``pass_fail`` resolves through ``entry_score``'s
+    bool path, so folding the resolved outcome means 1-of-4 passes reads
+    ``0.25`` — the same arithmetic a float-scorer board gets. Folding the raw
+    ``score`` field instead left this case at ``None`` and let ``pass_fail``'s
+    single majority bit decide, which is the replicate-0-verbatim failure mode
+    one field over.
+    """
+    from zicato.tournament.scoring import entry_score
+    from zicato.tournament.unit_cache import _average_losses
+
+    runs = [{"e": _loss(pass_fail=p, score=None)} for p in (True, False, False, False)]
+    out = _average_losses(runs)
+    assert entry_score(out["e"]) == pytest.approx(0.25)
+    # The binary view is still the strict-majority vote.
+    assert out["e"].pass_fail is False
+
+
+def test_average_losses_no_expectation_board_still_folds_to_none() -> None:
+    """The back-compat floor the outcome fold must not disturb.
+
+    An entry with no expectation at all produces neither a score nor a
+    pass/fail on any replicate, so it must fold to ``None`` and stay EXCLUDED
+    from ``mean_score`` — exactly as before replication existed.
+    """
+    from zicato.tournament.scoring import entry_score
+    from zicato.tournament.unit_cache import _average_losses
+
+    out = _average_losses([{"e": _loss(score=None, pass_fail=None)} for _ in range(3)])
+    assert out["e"].score is None
+    assert entry_score(out["e"]) is None
 
 
 def test_average_losses_folds_the_metrics_decomposition() -> None:
