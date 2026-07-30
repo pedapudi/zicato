@@ -23,8 +23,9 @@ launch a live `evolve` (it spends LLM budget).
 .zicato/
   epochs/{epoch_id}/
     journal.md      # appended every round (running, deterministic)
-    analysis.md     # written ONCE at close by the auxiliary-LLM pass
-    analysis.html   # re-rendered after every generation (deterministic, no LLM)
+    analysis.md     # re-rendered after every generation; mid-epoch its masthead
+                    #   carries `LIVING DRAFT — through round N`
+    analysis.html   # the rendered companion, written alongside analysis.md
     generations/{vN}/experiment.json   # hypothesis + outcome (the ledger row)
   lineage.json      # cross-epoch DAG (one file, all epochs)
 ```
@@ -45,16 +46,23 @@ Match semantics are strict — "predicted down moderate, observed down minor" is
 *reasons* from one that *guesses*.
 
 The running `journal.md` renders one section per round (core_idea, drift/pass
-deltas, hypothesis-match line, modulating mutation points, the decision). The
-closing `analysis.md` aggregates the whole epoch into fixed sections:
+deltas, hypothesis-match line, modulating mutation points, the decision).
+`analysis.md` aggregates the whole epoch into an academic-paper-style
+publication with fixed sections — the data-bearing ones templated
+deterministically from the workspace, the prose ones written by one bounded
+auxiliary-LLM call:
 
 ```
-# Epoch analysis: <epoch_id>
-## Headline movements
-## Hypotheses that held
-## Hypotheses that didn't hold
-## Surface still open
-## Recommended focus for next epoch
+## Abstract                                  (prose)
+## Introduction                               (prose)
+## Methodology                                (deterministic)
+## Approach & Implementation                  (deterministic)
+## Experimental Results                       (deterministic)
+## Statistical Integrity                      (deterministic)
+## Proposer Analytics                         (deterministic)
+## Analysis — What Worked and What Didn't     (prose)
+## Threats to Validity & Limitations          (deterministic)
+## Conclusion & Next Directions               (prose)
 ```
 
 ## 1. Close an epoch (runs the analysis pass)
@@ -64,14 +72,16 @@ closing `analysis.md` aggregates the whole epoch into fixed sections:
 ```
 
 - `EPOCH_ID` omitted → closes the **current** epoch.
-- Runs the auxiliary-LLM analysis pass, writes `analysis.md`, marks the epoch
-  directory read-only (chmod, convention only), and stamps `closed_at` in
-  `lineage.json`.
-- The analysis pass runs **only if an auxiliary LLM is configured**. Without
-  one, close writes a *stub* `analysis.md` you regenerate later (step 4).
-- `evolve` auto-closes the previous epoch when the contract rolls; you rarely
-  close by hand. A manual close lets you steer the pass and is higher quality
-  than the auto-close fallback
+- Stamps `closed` + `closed_at` on the epoch's `config.json` and in
+  `lineage.json`, then re-stamps the persisted report's masthead so the
+  `LIVING DRAFT` line becomes "closed". Nothing is chmod'ed — a closed epoch is
+  read-only by convention, not by permissions.
+- **The CLI close does NOT run the LLM prose pass**: `zicato epoch close` wires
+  no auxiliary callable, so it leaves an existing `analysis.md` in place
+  (re-stamped) and writes a *stub* only when none exists yet. It is `evolve`'s
+  auto-close — which rolls the contract with the aux callable in hand — that
+  runs the full prose render. To get the prose pass by hand after a manual
+  close, use `regenerate-report` (step 3)
   ([EPOCHS-AND-JOURNALING.md §5.1](../../docs/design/EPOCHS-AND-JOURNALING.md#51-closing-manual-primary-auto-close-fallback)).
 
 **A closed epoch is read-only.** Its board, brief, scoring, and generation
@@ -91,7 +101,7 @@ is aspirational, not implemented). Read the files directly:
 # the running per-round journal
 $EDITOR .zicato/epochs/<epoch_id>/journal.md
 
-# the closing retrospective (exists only after close, or after regenerate)
+# the retrospective publication (present mid-epoch too, stamped LIVING DRAFT)
 $EDITOR .zicato/epochs/<epoch_id>/analysis.md
 
 # the archival HTML snapshot — openable mid-epoch via file://
@@ -131,9 +141,10 @@ insight without re-running the loop.
 - venv-only (`.venv/bin/zicato`); never `uv sync` (use `uv sync --all-extras`).
 - Do **not** start a live `evolve`/`tournament` to "freshen" an epoch — that
   spends budget. Closing and report regeneration are the read-side tools.
-- `analysis.md` needs the auxiliary LLM; `analysis.html` and the deterministic
-  sections of `regenerate-report --no-llm` do not. Prefer `--no-llm` when you
-  only need the figures/tables back.
+- Only `analysis.md`'s **prose** sections need the auxiliary LLM; its data
+  sections and `analysis.html` are deterministic. Prefer `--no-llm` when you
+  only need the figures/tables back — without it, `regenerate-report` resolves
+  the aux callable from config and spends a call.
 - A closed epoch is frozen — treat `epochs/{id}/` as read-only.
 
 ## See also

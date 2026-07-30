@@ -37,14 +37,23 @@ wrote).
     --mutable-tree ./my_pkg
 ```
 
-- `--adk module.path:agent_symbol` — the ADK adapter entrypoint (required). Its
-  **top-level module must be the basename of one `--mutable-tree`** (above:
-  `my_pkg` ↔ `./my_pkg`). A generation snapshot copies each mutable tree under
-  its basename and the loader only prepends the snapshot root to `sys.path`,
-  which resolves top-level packages only — so any other form imports the
-  INSTALLED copy and every mutation is a scored no-op. `register` refuses it.
+- `--adk module.path:agent_symbol` — the ADK adapter entrypoint (required). Two
+  shapes are supported. **In-tree** (above): the entrypoint's top-level module
+  IS the basename of one `--mutable-tree` (`my_pkg` ↔ `./my_pkg`) — verified
+  lexically at register time. **Dependency shape**: the entrypoint lives outside
+  every tree and the harness *imports* the mutable trees (target 2's form —
+  mutate goldfive, drive it from a module outside it); `register` accepts it and
+  prints a `NOTICE`, because whether the mutated tree actually ran depends on
+  run-time imports — that is verified per run instead, by the load-time
+  resolution assert and the post-run `harness_load.json` record.
 - `--mutable-tree PATH` — a source root the proposer may mutate; **repeatable**,
-  pass it once per tree.
+  pass it once per tree. Its **basename must be the importable package name**: a
+  generation snapshot copies each tree under its basename and the loader only
+  prepends the snapshot root to `sys.path`, which resolves top-level names only.
+  A tree whose basename Python cannot name can never be shown to have run from
+  the snapshot — every mutation to it would be a scored no-op — so `register`
+  refuses that up front (issue #110). Point it at the importable PACKAGE dir
+  (`--mutable-tree $EX/agent`, not `$EX`).
 - `--board` / `--brief` / `--scoring` — optional; pin the canonical contract
   paths up front (default: alongside the workspace parent). `evolve` resolves
   these itself, so you usually leave them.

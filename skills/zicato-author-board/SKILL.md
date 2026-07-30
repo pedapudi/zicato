@@ -27,8 +27,13 @@ under `.zicato/epochs/{epoch_id}/board.jsonl`. Sibling skills:
 ## The `board_meta` header (optional, must be line 1)
 
 ```jsonc
-{"board_meta": true, "disable_drift": ["user_steer", "user_pause"]}
+{"board_meta": true, "disable_drift": ["user_steer", "user_pause"], "judge_only": true}
 ```
+
+The header carries exactly two keys. `judge_only: true` keeps goldfive *judging*
+but turns off all steering — reach for it to measure the bare, un-steered
+harness; it is emitted only when true, so a board that predates it is
+byte-identical.
 
 `disable_drift` is a board-wide list of goldfive `DriftKind` tokens whose
 built-in detectors are turned off for every entry. Valid tokens (short,
@@ -38,7 +43,7 @@ lowercase): `tool_error`, `agent_refusal`, `plan_divergence`, `user_steer`,
 `confabulation_risk`, `capability_mismatch`, `human_intervention_required`,
 `custom`, … (an unknown token is a hard validation error that lists the valid
 set). Custom judges are removed by deleting them from `judges`, never via
-`disable_drift`. Omit the header entirely when there is nothing to disable.
+`disable_drift`. Omit the header entirely when both keys are at their defaults.
 
 ## Common envelope (every entry)
 

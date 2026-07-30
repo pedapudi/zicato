@@ -47,11 +47,14 @@ a draft without having seen them:
    is its rung count. The `holdout_confirm_runs` term is the extra runs the
    gate spends re-scoring the winner on the held-out slice (see "Board &
    holdout" below). **`replicates` defaults per structure** when the operator
-   leaves it unset — swiss/single_elim/double_elim default to `2`,
-   gauntlet/racing to `1` — and `estimate_cost` reads those same per-structure
-   defaults from one source of truth (`selection.registry`), so the number it
-   shows matches what the run will actually spend even before the operator sets
-   `replicates`. Always defer the exact schedule arithmetic to
+   leaves it unset — the noise-aware base default is `2` (gauntlet, swiss, and
+   both elim brackets inherit it); only `racing` pins `1`, because its
+   replication is intrinsic to the escalating board slices — and `estimate_cost`
+   reads those same per-structure defaults from one source of truth
+   (`selection.registry`), so the number it shows matches what the run will
+   actually spend even before the operator sets `replicates`. A deterministic
+   harness can pin `"replicates": 1` for the historical single-run duel. Always
+   defer the exact schedule arithmetic to
    `zicato-design-tournament-structure`; the copilot's job is to call
    `estimate_cost` and *show the number* before the operator commits.
 
@@ -228,7 +231,7 @@ copilot's tools (conceptual builder surface):
 | `edit_board_entry` / `remove_board_entry` / `add_judge` / `remove_judge` / `set_board_meta` / `set_brief` | the board + its meta header + brief (deep craft in `zicato-build-board`); all reachable from the GUI's board editor too — see the note below |
 | `estimate_cost` | (read-only) board-runs-per-round for the current draft, incl. the evidence-gate confirm budget, screen runs, best-of-N auxiliary calls, and the placebo line |
 | `validate` | (read-only) advisory warnings, incl. the statistical margin-vs-noise-floor rule (`refuse` severity when a measured floor is known and the evidence gate is off) |
-| `preflight` | (read-only, spends the small K-draw measurement budget) measures the DRAFT contract's A/A noise floor + achievable signal against the registered target; verdict `ok`/`warn`/`refuse`, recommend-only; degrades honestly when the workspace has no registered target. CLI equivalents: `zicato board preflight`, `zicato board audit` |
+| `preflight` | (read-only, spends the small K-draw measurement budget) measures the DRAFT contract's A/A noise floor + achievable signal against the registered target; verdict `ok`/`warn` (saturated — every probe scored identically)/`inert` (the probes moved nothing while the A/A draws varied — the signal is UNMEASURED, not zero; re-probe a representative point)/`refuse`, plus a margin-window check (`noise < margin < achievable`) naming the side that failed. Recommend-only; degrades honestly when the workspace has no registered target. CLI equivalents: `zicato board preflight`, `zicato board audit` |
 | `preview_apply` | (read-only) dry-run: the diff, the predicted contract hash, the cost |
 | `fork` / `switch` / `list_drafts` | NAMED draft slots — the fork/compare lifecycle. `fork name` snapshots the working draft into a slot and binds the session to it; `switch` moves between slots with their state intact. Iterating on contract variants never writes anything — only `apply` does |
 | `revert_to_live` / `undo` | the restore lifecycle. `revert_to_live` discards the session's edits and restores the running contract in place (GUI: the slot strip's two-click Reset-to-live); `undo` steps back one write op off a bounded per-session history shared by the form and the chat (GUI: the slot strip's Undo, which surfaces a "nothing to undo" note on an empty history) |

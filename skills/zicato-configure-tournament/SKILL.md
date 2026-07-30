@@ -101,11 +101,11 @@ The short map:
 
 | Situation | Structure | Cost note |
 |---|---|---|
-| One challenger per round; cheapest 1-vs-1 | **gauntlet** (default) | one full-board duel; `replicates 1` |
-| A field; you want a full RANKING | **swiss** | `rounds_n` pairings; `replicates ≥ 2` |
-| A field; you only need the single best | **single_elim** | bracket depth; `replicates ≥ 2` |
+| One challenger per round; cheapest 1-vs-1 | **gauntlet** (default) | one duel, `replicates 2` by default → 2× a full board |
+| A field; you want a full RANKING | **swiss** | `rounds_n` pairings; `replicates 2` |
+| A field; you only need the single best | **single_elim** | bracket depth; `replicates 2` |
 | Same, want a "second chance" vs an upset | **double_elim** | **~3–4× single-elim** (losers'-bracket re-evals) — rarely earns it |
-| LARGE field, pick the best cheaply | **racing** | slice-culls via `eta` / `board_fraction`; `replicates 1` (it replicates intrinsically via growing slices) |
+| LARGE field, pick the best cheaply | **racing** | slice-culls via `eta` / `board_fraction`; the one structure that pins `replicates 1` (it replicates intrinsically via growing slices) |
 
 Two cross-cutting levers worth internalizing:
 
@@ -119,11 +119,21 @@ Two cross-cutting levers worth internalizing:
 
 ## 4. Recommended starting config
 
-**Start at gauntlet.** Adopt a field-structure only once the proposer actually
-emits multiple challengers worth comparing.
+**Check what you already have first.** `zicato init` scaffolds the operator's
+live `scoring.json` (next to the workspace, only when absent — never clobbered)
+with the *full recommended contract* spelled out: racing with `field_size 4`,
+`eta 2`, `board_fraction 0.4`, `replicates 2`, the Bradley–Terry evidence gate
+enabled explicitly (threshold `0.8`, a 32-replicate budget), and a 2-entry
+pre-tournament screen. That is the shipped recommendation for a new workspace —
+read it before replacing it.
+
+**Start at gauntlet** when you want the cheapest thing that can evolve at all,
+and adopt a field-structure once the proposer actually emits multiple challengers
+worth comparing. Overwriting the scaffold with the line below is a deliberate
+step *down* from the recommendation — it drops the evidence gate and the screen:
 
 ```jsonc
-// scoring.json — start here (gauntlet, one challenger, one duel)
+// scoring.json — the minimal contract (gauntlet, one challenger, one duel)
 { "tournament": { "structure": "gauntlet", "params": { "replicates": 1 } } }
 ```
 
@@ -158,6 +168,12 @@ the cache and re-evaluates every unit (noise re-sampling / debugging). Choose
 re-evaluation. Picking wrong either hides regressions behind a stale cache or
 burns budget re-running settled units.
 
+One caveat that bites the noise lever: under `fast` **on the gauntlet the
+champion side is a frozen cached aggregate**, so raising `replicates` reduces
+CHALLENGER-side noise only, and repeated rounds are not independent draws of the
+contrast. When you need a genuinely fresh both-sides measurement of the duel,
+that is what `full` is for.
+
 ## 5. Cost / runtime estimator
 
 The expensive unit is a **board-run** (one full inner-harness execution of one
@@ -174,9 +190,11 @@ wall_clock ≈ board_runs × per_entry_budget ÷ parallelism
   racing = its rung count (each rung on a fraction of the board, so racing's
   *effective* board cost is far below the naive product).
 - `replicates` multiplies directly (~N× per duel). **Left unset, it defaults
-  per structure** (swiss/single_elim/double_elim → `2`, gauntlet/racing → `1`,
-  from `selection.registry`) — so a swiss/elim run already costs ~2× a gauntlet
-  before you touch the knob. The cost estimator and the builder read those same
+  per structure** (from `selection.registry`): the noise-aware base default is
+  `2` — gauntlet, swiss, and both elim brackets — and only `racing` pins `1`.
+  So even a plain gauntlet already costs ~2× a single duel before you touch the
+  knob; pin `"replicates": 1` explicitly for the historical single-run duel (a
+  deterministic harness can). The cost estimator and the builder read those same
   defaults, so an estimate is honest even when `replicates` is unspecified.
 - `rounds` is the OUTER evolve loop — total cost scales linearly in it.
 - `parallelism` is `RuntimeConfig.parallelism` (the run fan-out semaphore);

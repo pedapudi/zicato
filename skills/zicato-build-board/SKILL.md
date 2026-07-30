@@ -222,7 +222,7 @@ directly. The copilot's tools (conceptual):
 | `set_namespace_weights` | the multi-objective namespace coefficients (`namespace_weights`) + the `diff_complexity_weight` parsimony term |
 | `set_holdout` | the train/holdout split (`holdout`-tagged ids and/or fraction) + the wider anti-overfitting block (Ladder, rotation, placebo cadence — detail in `zicato-build-tournament`) |
 | `validate` | (read-only) re-runs board validation (ids unique + filesystem-safe, per-kind fields present, expectation `reads` valid for the kind, judge slugs unique, `disable_drift` tokens resolve) — plus the statistical margin-vs-noise-floor rule when the epoch carries a measured A/A floor |
-| `preflight` | (read-only) measures whether THIS board can out-signal its own noise — the A/A floor vs a deliberate-degradation signal; a `warn` verdict means the board is saturated (cannot discriminate even a broken tree). CLI: `zicato board preflight` / `board audit` |
+| `preflight` | (read-only) measures whether THIS board can out-signal its own noise — the A/A floor vs a deliberate-degradation signal, sampled role-diversely over several mutation points. A `warn` verdict means the board is saturated (every probe scored identically — it cannot discriminate even a broken tree); `inert` means the probes moved nothing while the A/A draws varied, so the signal is unmeasured rather than absent — re-probe a point the board actually exercises. CLI: `zicato board preflight` / `board audit` |
 
 The loop on every operator request:
 
