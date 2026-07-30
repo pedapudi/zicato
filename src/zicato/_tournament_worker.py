@@ -728,58 +728,6 @@ async def _run(args: dict[str, Any]) -> None:
 
     entry = validate_board_entry(args["entry"])
     run_id = f"{generation_id}--{entry.id}"
-
-    # Resolve each LLM role in THIS fresh interpreter — either a dotted
-    # path re-import (legacy / unconfigured role) or a model spec from the
-    # workspace ``models`` block, re-resolved here (reading any api_key_env
-    # from the worker's OWN os.environ — secrets never crossed the boundary).
-    harness_call_llm = _resolve_role_call_llm(args["harness_role"], role="harness")
-    # Inner ADK agent model: when the harness role is a model spec, the agents
-    # run on the configured endpoint (function-calling) instead of the shim.
-    inner_model = _resolve_inner_model_from_role(args["harness_role"])
-    auxiliary_call_llm = _resolve_role_call_llm(args["auxiliary_role"], role="auxiliary")
-    # The judge role falls back to ``None`` when unconfigured, so
-    # ``RuntimeConfig.effective_judge_call_llm`` resolves to the auxiliary.
-    judge_call_llm = None
-    judge_role = args.get("judge_role")
-    if isinstance(judge_role, dict) and (judge_role.get("dotted") or judge_role.get("models_role")):
-        judge_call_llm = _resolve_role_call_llm(judge_role, role="judge")
-
-    # Capture knobs (board reflection's capture fix). Runtime-only,
-    # additive, NEVER contract-hashed. An ABSENT key — a legacy args file
-    # — defaults to True: the capture is always-on with an opt-out, so
-    # historical callers gain the artifacts without a flag. Both writes
-    # are best-effort: a capture failure never re-scores or aborts a run.
-    # With both knobs OFF the worker's behavior (files written, loss
-    # bytes, exit code) is byte-identical to before the knobs existed.
-    persist_run_results = bool(args.get("persist_run_results", True))
-    persist_judge_io = bool(args.get("persist_judge_io", True))
-    judge_io_sink: Any = None
-    if persist_judge_io:
-        from zicato.judge_runtime.io_capture import (  # noqa: PLC0415
-            JudgeIOFileSink,
-            judge_io_path_for_loss,
-        )
-
-        # One sink per run, appending beside the run's loss slot
-        # (judge_io.jsonl / judge_io.r{n}.jsonl) — the adapter reads it
-        # off the config (the token_ledger live-object precedent) and
-        # threads it into every custom inline judge it assembles.
-        judge_io_sink = JudgeIOFileSink(judge_io_path_for_loss(loss_path))
-
-    config = RuntimeConfig(
-        instance_id=str(args.get("instance_id", "default")),
-        workspace_root=workspace_root,
-        harness_call_llm=harness_call_llm,
-        auxiliary_call_llm=auxiliary_call_llm,
-        seed=args.get("seed"),
-        judge_call_llm=judge_call_llm,
-        inner_model=inner_model,
-        persist_run_results=persist_run_results,
-        persist_judge_io=persist_judge_io,
-        judge_io_sink=judge_io_sink,
-    )
-
     weights = _weights_from_args(args)
     budget_s = float(entry.wall_clock_budget_seconds)
 
@@ -847,8 +795,85 @@ async def _run(args: dict[str, Any]) -> None:
     ):
         run_hb.start()
 
+    # Resolve each LLM role in THIS fresh interpreter — either a dotted
+    # path re-import (legacy / unconfigured role) or a model spec from the
+    # workspace ``models`` block, re-resolved here (reading any api_key_env
+    # from the worker's OWN os.environ — secrets never crossed the boundary).
+    #
+    # Deliberately placed AFTER the active-runs write + heartbeat start
+    # above, not before. An endpoint-shaped harness role (spec.model +
+    # endpoint/api_key_env — the live-validation shape) forces
+    # ``_resolve_inner_model_from_role`` to import the whole ``google.adk``
+    # graph right here (~1 s / 80 MB / ~1500 modules, measured — RUNTIME.md
+    # §5.5.8), and ``ADKHarnessAdapter.load()`` a few lines below imports
+    # the SAME graph unconditionally for every ADK-adapter run regardless of
+    # ``inner_model`` — so the import cost is unavoidable for this shape and
+    # deferring it past ``.load()`` saves nothing on top (measured: building
+    # the ``LiteLlm`` object after ``google.adk`` is already resident costs
+    # ~2 ms, vs. ~1 s to import ``google.adk`` itself; see §5.5.8's refuted
+    # entry). What DOES move by resolving here instead of at the top of this
+    # function: the worker's ``active_run`` state file and heartbeat thread
+    # — the two things the supervisor watchdog and the orchestrator's
+    # staleness check key on — are now written/started BEFORE this ~1 s
+    # import instead of after, closing the window where a live worker looks
+    # unregistered to the supervisor while it pays a tax neither the runner
+    # nor the watchdog cares about it paying eagerly.
+    harness_call_llm = _resolve_role_call_llm(args["harness_role"], role="harness")
+    # Inner ADK agent model: when the harness role is a model spec, the agents
+    # run on the configured endpoint (function-calling) instead of the shim.
+    # Only the ADK adapter ever reads ``config.inner_model``
+    # (``ADKHarnessAdapter.run``) — resolving it for a non-ADK adapter kind
+    # would import ADK for a value nothing consumes, so it is skipped there.
+    adapter_spec = args["adapter"]
+    adapter_kind = adapter_spec.get("kind") if isinstance(adapter_spec, dict) else None
+    inner_model = (
+        _resolve_inner_model_from_role(args["harness_role"]) if adapter_kind == "adk" else None
+    )
+    auxiliary_call_llm = _resolve_role_call_llm(args["auxiliary_role"], role="auxiliary")
+    # The judge role falls back to ``None`` when unconfigured, so
+    # ``RuntimeConfig.effective_judge_call_llm`` resolves to the auxiliary.
+    judge_call_llm = None
+    judge_role = args.get("judge_role")
+    if isinstance(judge_role, dict) and (judge_role.get("dotted") or judge_role.get("models_role")):
+        judge_call_llm = _resolve_role_call_llm(judge_role, role="judge")
+
+    # Capture knobs (board reflection's capture fix). Runtime-only,
+    # additive, NEVER contract-hashed. An ABSENT key — a legacy args file
+    # — defaults to True: the capture is always-on with an opt-out, so
+    # historical callers gain the artifacts without a flag. Both writes
+    # are best-effort: a capture failure never re-scores or aborts a run.
+    # With both knobs OFF the worker's behavior (files written, loss
+    # bytes, exit code) is byte-identical to before the knobs existed.
+    persist_run_results = bool(args.get("persist_run_results", True))
+    persist_judge_io = bool(args.get("persist_judge_io", True))
+    judge_io_sink: Any = None
+    if persist_judge_io:
+        from zicato.judge_runtime.io_capture import (  # noqa: PLC0415
+            JudgeIOFileSink,
+            judge_io_path_for_loss,
+        )
+
+        # One sink per run, appending beside the run's loss slot
+        # (judge_io.jsonl / judge_io.r{n}.jsonl) — the adapter reads it
+        # off the config (the token_ledger live-object precedent) and
+        # threads it into every custom inline judge it assembles.
+        judge_io_sink = JudgeIOFileSink(judge_io_path_for_loss(loss_path))
+
+    config = RuntimeConfig(
+        instance_id=str(args.get("instance_id", "default")),
+        workspace_root=workspace_root,
+        harness_call_llm=harness_call_llm,
+        auxiliary_call_llm=auxiliary_call_llm,
+        seed=args.get("seed"),
+        judge_call_llm=judge_call_llm,
+        inner_model=inner_model,
+        persist_run_results=persist_run_results,
+        persist_judge_io=persist_judge_io,
+        judge_io_sink=judge_io_sink,
+    )
+
     sinks, tracker = _build_sinks(events_path, harmonograf_url, harmonograf_grpc)
-    adapter = _build_adapter(args["adapter"])
+    adapter = _build_adapter(adapter_spec)
 
     run_result: RunResult | None = None
     runtime_ms = 0
