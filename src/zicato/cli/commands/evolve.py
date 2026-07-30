@@ -940,6 +940,11 @@ def evolve_cmd(
         _announce_dashboard_still_serving(workspace_root, dashboard_port, dash)
         return result
 
+    # Imported here, not at module scope: CLI discovery imports every command
+    # module to build the root group, so ``zicato --help`` must not pull in
+    # the evolve pipeline.
+    from zicato.evolve.round import BadPatchSetError  # noqa: PLC0415
+
     try:
         outcomes = asyncio.run(_run())
     except asyncio.CancelledError:
@@ -950,11 +955,18 @@ def evolve_cmd(
             # status (128 + SIGTERM) instead of a cancellation traceback.
             raise SystemExit(128 + signal.SIGTERM) from None
         raise
-    except (FileNotFoundError, RuntimeError) as exc:
+    except (FileNotFoundError, RuntimeError, BadPatchSetError) as exc:
         # FileNotFoundError: missing config / epoch marker.
         # RuntimeError: contract drift under --no-auto-epoch, or a
-        # missing baseline. Both are operator-actionable; surface them
-        # as a clean CLI error rather than a traceback.
+        # missing baseline.
+        # BadPatchSetError: a patch targeting a stale / forbidden mutation
+        # id — the manifest changed under the round. It reached this handler
+        # as a RuntimeError until issue #83 folded that into ValueError to
+        # unify the bad-patch-set type; naming its ValueError SUBCLASS keeps
+        # the clean message without widening the handler to every
+        # ValueError, which would bury real bugs behind a one-line error.
+        # All three are operator-actionable; surface them as a clean CLI
+        # error rather than a traceback.
         raise click.ClickException(str(exc)) from exc
 
     # Final summary line — say explicitly why the loop ended. The

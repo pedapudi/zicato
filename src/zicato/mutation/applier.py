@@ -16,6 +16,19 @@ single edit lands and removes the copied tree so generation lineage stays
 append-only. The raw best-effort-sequential behaviour is still reachable
 through :func:`apply_patches_unchecked` for the rare caller that has
 already validated the batch itself.
+
+One condition, one exception type
+---------------------------------
+
+"This patch set cannot be applied" is a single logical condition, and on
+the checked :func:`apply_patches` surface it always raises ``ValueError``:
+the pre-check, the apply-time missing-anchor / vanished-marker sites (an
+earlier patch in the batch can erase a later patch's anchor — the
+re-enumeration then drops it) and the post-apply syntax gate. Signalling
+it through two types across the generation-level transaction boundary in
+:mod:`zicato.evolve.round` is what turned a rejectable candidate into an
+aborted run in issue #83. :func:`apply_patches_unchecked` keeps the legacy
+``KeyError`` for that case as the INTERNAL unchecked contract.
 """
 
 from __future__ import annotations
@@ -628,17 +641,29 @@ def apply_patches(
        compatible with the target point's ``kind``.
     3. If any patch fails validation, remove the copied tree and raise —
        so a malformed batch leaves *nothing* half-applied.
-    4. Otherwise delegate to :func:`apply_patches_unchecked`, which
-       applies every patch in order against the copied tree.
+    4. Otherwise apply every patch in order against the copied tree.
 
     Because the whole batch is validated before the first edit lands, the
     deterministic guarantee holds: an edit can only ever land at a valid,
     enumerated ``# zicato:mutable`` point, and a batch with one bad patch
     applies none.
 
+    The pre-check cannot catch every bad patch set, and it is not meant
+    to. The sequential apply re-enumerates between patches, so an EARLIER
+    patch can erase the anchor a LATER patch resolved against at
+    pre-check time (a file-kind ``whole`` replace that drops the markers
+    below it, say). That is still a bad patch set, and on THIS — the
+    checked, production — surface it raises ``ValueError`` like every
+    other apply-time rejection, with the copied tree removed. One
+    logical condition ("this patch set cannot be applied") therefore
+    reaches callers as exactly ONE exception type, which is what lets the
+    generation-level transaction boundary in :mod:`zicato.evolve.round`
+    degrade it to a rejected challenger instead of aborting the run
+    (issue #83).
+
     Callers that genuinely need the legacy best-effort-sequential
-    behaviour (no atomic pre-check) can call :func:`apply_patches_unchecked`
-    directly.
+    behaviour (no atomic pre-check, missing anchors as ``KeyError``) can
+    call :func:`apply_patches_unchecked` directly.
 
     Raises
     ------
@@ -646,8 +671,11 @@ def apply_patches(
         When ``target_root`` already exists.
     ValueError
         When the patch set fails :func:`validate_patches` — the error
-        message enumerates every problem found. The copied tree is
-        removed before the exception propagates.
+        message enumerates every problem found; when a patch's anchor no
+        longer resolves at apply time (erased by an earlier patch in the
+        same batch); or when the post-apply syntax gate finds a touched
+        ``.py`` file unparseable. The copied tree is removed before the
+        exception propagates in every case.
     """
 
     source_root = Path(source_root).resolve()
@@ -672,7 +700,15 @@ def apply_patches(
             f"{len(problems)} validation problem(s): " + "; ".join(problems)
         )
 
-    _apply_patches_into_tree(target_root, patches)
+    # Apply sequentially. Missing-anchor / vanished-marker sites raise
+    # ``ValueError`` here (not the internal ``KeyError``) so the checked
+    # surface signals every bad-patch-set condition with ONE type; remove
+    # the copied tree so a mid-batch rejection leaves nothing half-applied.
+    try:
+        _apply_patches_into_tree(target_root, patches, missing_anchor_error=ValueError)
+    except ValueError:
+        shutil.rmtree(target_root, ignore_errors=True)
+        raise
 
     # Post-apply syntax gate: attribute corruption to the round that
     # PRODUCED it. A malformed proposer patch must degrade into a rejected
@@ -744,10 +780,21 @@ def apply_patches_unchecked(
 ) -> None:
     """Materialise a child snapshot and apply ``patches`` best-effort.
 
-    This is the **legacy, non-atomic** apply path, preserved for callers
-    that have already pre-validated the patch set themselves (e.g. via
+    This is the **legacy, non-atomic, INTERNAL unchecked** apply path,
+    preserved for callers that have already pre-validated the patch set
+    themselves (e.g. via
     :func:`~zicato.mutation.validator.validate_patches`). Prefer
     :func:`apply_patches`, which validates the batch and is all-or-nothing.
+
+    Its ``KeyError``-on-missing-anchor contract is deliberate and is NOT
+    the production signal: an unresolvable anchor here is a caller
+    contract breach (the caller promised it pre-validated), so it surfaces
+    as a distinct type from the ``ValueError`` "rejectable patch set"
+    class. The checked surface — :func:`apply_patches` — CONVERTS every
+    such site to ``ValueError`` (issue #83), so nothing on the evolve
+    path ever sees a ``KeyError`` from the applier. Do not "unify" this
+    function's contract with the checked one; the two pins in
+    ``tests/test_mutation_applier.py`` hold it.
 
     Behavior
     --------
@@ -792,12 +839,26 @@ def apply_patches_unchecked(
     _apply_patches_into_tree(target_root, patches)
 
 
-def _apply_patches_into_tree(target_root: Path, patches: list[Patch]) -> None:
+def _apply_patches_into_tree(
+    target_root: Path,
+    patches: list[Patch],
+    *,
+    missing_anchor_error: type[Exception] = KeyError,
+) -> None:
     """Apply ``patches`` in order against an already-materialised tree.
 
     The shared, best-effort-sequential core of :func:`apply_patches` and
     :func:`apply_patches_unchecked`. ``target_root`` must already exist
     (the callers handle the copy + their respective pre-checks).
+
+    ``missing_anchor_error`` is the exception type raised when a patch's
+    ``mutation_id`` no longer resolves in the (re-)enumerated tree, or when
+    its marker line has vanished. It exists because the two callers have
+    deliberately different contracts for that ONE condition:
+    :func:`apply_patches` passes ``ValueError`` (a rejectable patch set on
+    the checked, production path — issue #83) while
+    :func:`apply_patches_unchecked` keeps the legacy ``KeyError``.
+    Payload/op mismatches are ``ValueError`` on both paths.
     """
 
     points = enumerate_mutations([target_root])
@@ -809,7 +870,7 @@ def _apply_patches_into_tree(target_root: Path, patches: list[Patch]) -> None:
                 raise ValueError(f"Patch {patch.id!r}: op=replace requires new_content")
             point = index.get(patch.mutation_id)
             if point is None:
-                raise KeyError(
+                raise missing_anchor_error(
                     f"Patch {patch.id!r}: mutation_id {patch.mutation_id!r} not found "
                     f"in target_root {target_root}"
                 )
@@ -822,13 +883,13 @@ def _apply_patches_into_tree(target_root: Path, patches: list[Patch]) -> None:
                 raise ValueError(f"Patch {patch.id!r}: op=set_numeric requires new_numeric")
             point = index.get(patch.mutation_id)
             if point is None:
-                raise KeyError(
+                raise missing_anchor_error(
                     f"Patch {patch.id!r}: mutation_id {patch.mutation_id!r} not found "
                     f"in target_root {target_root}"
                 )
             marker_line = _resolve_marker_line(point.file, patch.mutation_id)
             if marker_line is None:
-                raise KeyError(
+                raise missing_anchor_error(
                     f"Patch {patch.id!r}: marker for {patch.mutation_id!r} "
                     f"vanished in target_root"
                 )
@@ -848,13 +909,13 @@ def _apply_patches_into_tree(target_root: Path, patches: list[Patch]) -> None:
                 raise ValueError(f"Patch {patch.id!r}: op=set_enum requires new_enum")
             point = index.get(patch.mutation_id)
             if point is None:
-                raise KeyError(
+                raise missing_anchor_error(
                     f"Patch {patch.id!r}: mutation_id {patch.mutation_id!r} not found "
                     f"in target_root {target_root}"
                 )
             marker_line = _resolve_marker_line(point.file, patch.mutation_id)
             if marker_line is None:
-                raise KeyError(
+                raise missing_anchor_error(
                     f"Patch {patch.id!r}: marker for {patch.mutation_id!r} "
                     f"vanished in target_root"
                 )
