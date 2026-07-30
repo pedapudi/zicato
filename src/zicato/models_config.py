@@ -51,12 +51,15 @@ never stored on the spec, serialized, logged, or returned to the frontend.
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from zicato.core.types import CallLLM
+
+log = logging.getLogger("zicato.models_config")
 
 #: The LLM roles the unified ``models`` block configures, in the order the
 #: settings UI lists them. ``proposer_breadth`` / ``proposer_depth`` are the
@@ -353,6 +356,119 @@ def _resolve_model_spec_call_llm(spec: RoleSpec, *, role: str) -> CallLLM:
     return call_llm
 
 
+class RoleResolutionError(ValueError):
+    """A DEFERRED model-spec role resolution failed at its first call.
+
+    Distinct from the eager :class:`ValueError`s the resolvers raise so the
+    failure stays identifiable after it has crossed a judge boundary — see
+    :func:`deferred_role_failures` for why that matters.
+    """
+
+
+#: Roles whose DEFERRED resolution failed in this process, ``role`` ⇒ message.
+#: Written by :func:`lazy_text_call_llm`'s first-call path, read by
+#: :func:`zicato._tournament_worker.main`.
+_DEFERRED_ROLE_FAILURES: dict[str, str] = {}
+
+
+def deferred_role_failures() -> dict[str, str]:
+    """Roles whose deferred resolution failed in this process (a copy).
+
+    The reason this register exists. Deferring resolution to the first call
+    moves the failure from worker STARTUP — where a non-zero exit made the
+    board unit an infra abort — to somewhere inside the run, and the judge
+    path SWALLOWS exceptions by hard contract (zicato's
+    ``_InlineCriterionJudge`` and goldfive's ``DefaultSteerer`` both catch
+    and log, because a misbehaving judge must not crash a run). A
+    misconfigured judge model would therefore score as "no signal" on every
+    observation point: the unit completes, drift is undercounted, and the
+    scalar is *better* than the truth. That is evaluation-data corruption
+    from a config typo, so it must not be possible.
+
+    A role-resolution failure is a deterministic CONFIGURATION fault, not a
+    transient call failure, so the worker turns a non-empty register into a
+    non-zero exit — restoring exactly the outcome the eager path produced.
+    """
+    return dict(_DEFERRED_ROLE_FAILURES)
+
+
+def clear_deferred_role_failures() -> None:
+    """Reset the register. For tests; a worker process resolves once."""
+    _DEFERRED_ROLE_FAILURES.clear()
+
+
+def lazy_text_call_llm(spec: RoleSpec, *, role: str) -> CallLLM:
+    """Like :func:`resolve_text_call_llm`, but ADK is imported on FIRST CALL.
+
+    Why this exists (RUNTIME.md §5.5.8). Every board unit runs in a fresh
+    subprocess worker, and resolving a *model spec* role calls
+    :func:`build_adk_model`, which pulls the whole ``google.adk`` import graph
+    — measured at **0.80 s / 88 MB / 1328 modules** on top of the worker's own
+    0.08 s / 32 MB. The worker resolved every configured role eagerly at
+    startup, so a unit whose entry has no LLM judge (or which never reaches
+    the auxiliary side) paid the ADK tax for a role it never called. This
+    wrapper defers that cost to the role's first actual invocation: a role
+    that IS called pays exactly the same cost, just later, so the change is
+    never a regression.
+
+    What is still EAGER, deliberately: the spec *shape* is validated here, at
+    resolve time, by the same rules :func:`resolve_text_call_llm` applies. A
+    ``models`` block that names neither a ``call_llm`` dotted path nor a
+    ``model`` string still fails fast at worker startup, where it is
+    debuggable, rather than surfacing mid-run. Only the ADK import,
+    the ``LiteLlm`` construction, and goldfive's wrapper move.
+
+    What is DEFERRED, and therefore what moves: an environment problem —
+    the ``adk`` extra missing, or a ``model`` string ADK cannot resolve —
+    now raises :class:`RoleResolutionError` from the first call instead of
+    from startup. Such a failure is ALSO recorded in the process-wide
+    register :func:`deferred_role_failures`, because the first call may be a
+    judge's, and every judge boundary swallows exceptions by hard contract —
+    without the register a misconfigured judge would silently score as "no
+    signal" instead of failing the unit. The worker turns a non-empty
+    register into a non-zero exit, so the outcome matches the eager path.
+
+    The dotted-path form is resolved EAGERLY and returned unwrapped: it
+    imports a plain callable and never touched ADK, so there is nothing to
+    defer and no reason to add a layer of indirection to it.
+
+    Each call to this function returns a DISTINCT callable object, so the
+    harness/auxiliary collusion guard
+    (:func:`zicato.core.workspace.assert_distinct_callables`, an identity
+    comparison) behaves exactly as it does for eagerly-resolved model specs.
+    """
+    if spec.uses_call_llm:
+        assert spec.call_llm is not None  # narrowed by uses_call_llm
+        return _import_call_llm(spec.call_llm, role=role)
+    if not spec.model:
+        raise ValueError(f"models.{role}: neither a call_llm dotted path nor a model string is set")
+
+    # One-slot cache: the underlying call_llm is built once, on the first
+    # call, and reused for every later call of this role. A list (not a
+    # ``nonlocal``) keeps the closure trivially readable.
+    resolved: list[CallLLM] = []
+
+    async def _lazy_call_llm(system: str, user: str, model: str) -> str:
+        if not resolved:
+            try:
+                resolved.append(_resolve_model_spec_call_llm(spec, role=role))
+            except Exception as exc:
+                # Record BEFORE raising: the caller may be a judge, and every
+                # judge boundary swallows. See ``deferred_role_failures``.
+                _DEFERRED_ROLE_FAILURES.setdefault(role, str(exc))
+                log.error(
+                    "models.%s: deferred resolution of model %r failed at its first "
+                    "call (%s); this board unit will be reported as a failed run",
+                    role,
+                    spec.model,
+                    exc,
+                )
+                raise RoleResolutionError(str(exc)) from exc
+        return await resolved[0](system, user, model)
+
+    return _lazy_call_llm
+
+
 def resolve_builder_model(spec: RoleSpec, *, role: str = "builder") -> Any:
     """Resolve the BUILDER role to an ADK model object (not a text call_llm).
 
@@ -391,6 +507,10 @@ __all__ = [
     "models_config_from_dict",
     "load_models_config",
     "resolve_text_call_llm",
+    "lazy_text_call_llm",
+    "RoleResolutionError",
+    "deferred_role_failures",
+    "clear_deferred_role_failures",
     "resolve_builder_model",
     "build_adk_model",
 ]

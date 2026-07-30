@@ -230,6 +230,32 @@ class RuntimeConfig:
         a modest default (``4``) is a safe starting point; operators
         raise it only when the endpoint can absorb more in-flight calls.
         Must be ``>= 1``.
+    host_worker_permits:
+        HOST-WIDE ceiling on board-unit worker subprocesses alive at once,
+        across EVERY orchestrator on the machine. :attr:`parallelism` is a
+        per-process :class:`asyncio.Semaphore` and therefore bounds only
+        the run that owns it: two concurrent ``evolve`` runs on one box
+        admit ``2 * parallelism`` board units between them (up to
+        ``4 * parallelism`` workers in full mode), each resolving a
+        ~246 MB import graph. This knob is the missing bound — a permit
+        taken from a file-lock pool in the user's runtime directory
+        (workspace-EXTERNAL, so the cap spans workspaces) before a worker
+        is spawned and released once it is reaped. See
+        :mod:`zicato.runtime.spawn_permit` and RUNTIME.md §5.5.7.
+
+        ``None`` — the DEFAULT — means AUTO:
+        ``max(4, 2 * os.cpu_count())``, deliberately generous enough that
+        a single ordinary run never waits on a permit. ``0`` disables the
+        cap entirely (no filesystem is touched). ``>= 1`` is an explicit
+        ceiling. A run whose permits are all held QUEUES rather than
+        over-subscribing; the throttle degrades OPEN on any
+        infrastructure failure (no usable runtime dir, no ``flock``), so
+        it can never be the reason a run fails to start.
+
+        A RUNTIME tuning knob, NOT part of the frozen evaluation contract
+        — it never enters the scoring canonical form, so changing it does
+        not roll the epoch. Negative values are clamped to ``0`` (off)
+        rather than rejected: a throttle must not fail a run on a typo.
     propose_parallelism:
         Maximum number of best-of-N slate SAMPLES the proposer keeps in
         flight at once — the propose-phase analogue of :attr:`parallelism`
@@ -449,6 +475,14 @@ class RuntimeConfig:
     persist_run_results: bool = True
     persist_judge_io: bool = True
     judge_io_sink: Any = None
+    #: HOST-WIDE ceiling on concurrently-alive worker subprocesses, across
+    #: every orchestrator on the machine (:attr:`parallelism` bounds only
+    #: this process). ``None`` — the default — is AUTO
+    #: (``max(4, 2 * cores)``); ``0`` disables the cap; ``>= 1`` is an
+    #: explicit ceiling. Declared LAST so the positional field order of
+    #: every existing construction site is unchanged. See the class
+    #: docstring and :mod:`zicato.runtime.spawn_permit`.
+    host_worker_permits: int | None = None
 
     def __post_init__(self) -> None:
         """Validate the cheap scalar invariants (``parallelism`` + tolerance)."""

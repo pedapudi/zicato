@@ -204,6 +204,23 @@ def make_runtime_config(
     propose_parallelism_raw = runtime_dict.get("propose_parallelism")
     propose_parallelism = int(propose_parallelism_raw) if propose_parallelism_raw is not None else 4
 
+    # Host-wide worker ceiling (RUNTIME.md §5.5.7): read from the same
+    # ``runtime`` block. ABSENT / null ⇒ None = AUTO (max(4, 2 x cores)), a
+    # deliberately generous cap a single ordinary run never reaches; ``0``
+    # disables it entirely. Unlike ``parallelism`` this bound spans
+    # orchestrators, so two concurrent evolve runs cannot over-subscribe the
+    # box. A runtime tuning knob only — never contract-hashed.
+    # A JSON ``true`` here would otherwise ``int()`` to 1 — pinning the whole
+    # host to ONE worker at a time, a silent throughput collapse — and ``false``
+    # to 0. The name reads boolean-ish enough that an operator writing "on" is
+    # plausible, and neither number is what they meant, so map the intent:
+    # true ⇒ AUTO, false ⇒ off.
+    host_permits_raw = runtime_dict.get("host_worker_permits")
+    if isinstance(host_permits_raw, bool):
+        host_worker_permits = None if host_permits_raw else 0
+    else:
+        host_worker_permits = int(host_permits_raw) if host_permits_raw is not None else None
+
     # Worker env-scrub: opt-in containment read from the same ``runtime``
     # block. Absent ⇒ off (full env inheritance — today's behavior, byte-for-
     # byte unchanged). ``worker_env_passthrough`` is an optional list of extra
@@ -310,6 +327,7 @@ def make_runtime_config(
         preflight_gate=preflight_gate,
         persist_run_results=persist_run_results,
         persist_judge_io=persist_judge_io,
+        host_worker_permits=host_worker_permits,
     )
 
 

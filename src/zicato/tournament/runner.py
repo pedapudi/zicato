@@ -148,6 +148,10 @@ from zicato.core import (
 )
 from zicato.epoch.genstore import EphemeralCheckout
 from zicato.logging_stream import current_log_stream_path
+
+# The HOST-WIDE worker permit (RUNTIME.md §5.5.7): the cross-orchestrator
+# bound ``config.parallelism``'s per-process semaphore cannot provide.
+from zicato.runtime.spawn_permit import OPEN_PERMIT, WorkerPermit, acquire_worker_permit
 from zicato.tournament.gate import GateOutcome, evaluate_gate
 
 # ``_load_ladder_state`` / ``_losses_for`` / ``_save_ladder_state`` are
@@ -513,10 +517,14 @@ async def _run_single(
     os.close(args_fd)
     args_path = Path(args_name)
     result_path = Path(args_name[: -len(".json")] + ".result.json")
-    spawn_started = time.monotonic()
     # The per-run ephemeral snapshot checkout; assigned once the store
     # checkout below succeeds, discarded in this function's ``finally``.
     checkout: EphemeralCheckout | None = None
+
+    # The HOST-WIDE worker permit (RUNTIME.md §5.5.7). Bound to the
+    # always-admitting permit up front so the ``finally`` can release
+    # unconditionally even if the acquire itself somehow raised.
+    permit: WorkerPermit = OPEN_PERMIT
 
     # The run's final LossProfile — assigned on every exit path (clean
     # finish OR abort) so the ``finally`` block can fold the loss summary
@@ -525,6 +533,17 @@ async def _run_single(
     final_loss: LossProfile | None = None
 
     try:
+        # --- 0. Host-wide worker permit. ``config.parallelism`` is a
+        # per-PROCESS semaphore, so it cannot see a second orchestrator on
+        # the same box; this permit is the cross-orchestrator bound. It is
+        # taken BEFORE ``spawn_started`` is stamped so a queue wait never
+        # inflates the run's reported ``runtime_ms``, and it covers the
+        # snapshot checkout as well as the worker (the copytree is real
+        # I/O worth bounding). AUTO by default and generous enough that a
+        # single ordinary run never waits; degrades OPEN on any
+        # infrastructure failure, so it can never block a run.
+        permit = await acquire_worker_permit(config.host_worker_permits)
+        spawn_started = time.monotonic()
         try:
             # --- 1. Per-run ephemeral checkout of the code snapshot,
             # materialised by the workspace's generation store (a
@@ -839,6 +858,12 @@ async def _run_single(
         # if the worker was killed before it could remove its own
         # active_runs file, the parent removes it here. This block runs
         # on every exit path — clean finish, abort, or crash.
+        #
+        # The host-wide permit is released FIRST: the worker is already
+        # gone, so the next queued board unit should not wait on this
+        # run's bookkeeping. ``release()`` never raises, so it cannot mask
+        # an exception unwinding through this block.
+        permit.release()
         _discard_run_snapshot(checkout)
         for tmp in (args_path, result_path):
             try:
