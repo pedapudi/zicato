@@ -40,6 +40,7 @@ are unit-tested against known answers; every position/size is a normalized
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -92,6 +93,13 @@ _MAX_LLM_CALLS: int = 50
 #: The advisory flip-rate ceiling the flip-whisker reference rule sits at
 #: (EVAL-SYNTHESIS.md §5 ``RECOMMENDED_FLIP_CEILING``).
 _FLIP_CEILING: float = 0.25
+
+#: The PER-MARK extent cap on the turn lane (TRAJECTORY-UI.md §3.4): no single
+#: turn mark may occupy more than a quarter of the lane's width, whatever the
+#: turn count. Exported (not private) because it is part of the strip-model
+#: contract the figure + its geometry tests assert against. See
+#: :func:`lane_marks` for the compressive scale this caps.
+LANE_EXTENT_CAP: float = 0.25
 
 
 def _r4(value: float) -> float:
@@ -163,11 +171,36 @@ def _signal_label(trace: ImportedTrace, signal_kind: str) -> str:
 
 
 def lane_marks(user_turns: list[str], agent_turns: list[str]) -> list[dict[str, Any]]:
-    """Alternating user/agent lane marks, each sized by its text length (§3.4).
+    """Alternating user/agent lane marks on the COMPRESSIVE extent scale (§3.4).
 
     Zips the two ordered sides into ``[u0, a0, u1, a1, …]`` (a trailing
-    unmatched turn is appended); each mark's horizontal extent ∝ its char count
-    (a zero-char trace ⇒ even spacing), ``size`` = ``chars / max_chars``.
+    unmatched turn is appended) and lays them end-to-end from ``x0 = 0``.
+
+    THE EXTENT SCALE (load-bearing — the blob fix). A raw ``chars / total`` share
+    forces the marks to TILE the lane no matter how few turns there are, so a
+    2-turn trace renders as two half-lane slabs that fuse into one solid block
+    (the "black blob" the operator hit: two full-height ink rectangles spanning
+    the whole strip). The extent is instead **exactly proportional to
+    ``sqrt(chars + 1)``** under ONE global scale:
+
+    * ``sqrt`` COMPRESSES honestly and monotonically — a 4096-char answer is 8×
+      a 64-char prompt's width, not 64×, so a long agent turn no longer swamps
+      the terse turns around it while the ordering stays truthful;
+    * the global scale is ``min(EXTENT_CAP / max(w), 1 / sum(w))`` — the first
+      term is the **per-mark cap** (the widest mark is at most
+      ``LANE_EXTENT_CAP`` of the lane), the second the **saturation fit** (the
+      marks together never exceed the lane). Because it is a single scalar
+      multiplier, the extent RATIOS are preserved exactly — nothing is flattened
+      or redistributed.
+
+    Consequence, by design: a short 2-turn trace reads as two proportioned bars
+    over a mostly-empty lane (the lane is a CAPACITY, not a pie — the empty room
+    is itself the honest signal "this trace has two turns"), while a many-turn
+    trace saturates and tiles the lane exactly. The vertical extent is left to
+    the figure: ``size`` = ``chars / max_chars`` and ``svg.js`` maps it onto a
+    BOUNDED bar (≤ 40 % of the lane height), never a full-lane slab.
+
+    A zero-char trace degrades to even spacing (all weights equal).
     """
     seq: list[tuple[str, str]] = []
     for i in range(max(len(user_turns), len(agent_turns))):
@@ -178,17 +211,23 @@ def lane_marks(user_turns: list[str], agent_turns: list[str]) -> list[dict[str, 
     if not seq:
         return []
     chars = [len(text) for _role, text in seq]
-    total = sum(chars)
-    max_chars = max(chars) if chars else 0
+    max_chars = max(chars)
+    # the compressive weights (+1 so an empty turn still carries a weight, and a
+    # zero-char trace degrades to equal weights ⇒ even spacing).
+    weights = [math.sqrt(c + 1) for c in chars]
+    total_w = sum(weights)
+    # ONE global scale: cap the widest mark, and fit the whole run in the lane.
+    cap_scale = LANE_EXTENT_CAP / max(weights)
+    fit_scale = 1.0 / total_w
+    scale = min(cap_scale, fit_scale)
+    saturated = fit_scale <= cap_scale  # the lane tiles exactly
     marks: list[dict[str, Any]] = []
     cursor = 0.0
-    n = len(seq)
     for i, ((role, _text), c) in enumerate(zip(seq, chars, strict=True)):
-        width = (c / total) if total > 0 else (1.0 / n)
         x0 = cursor
-        x1 = cursor + width
+        x1 = cursor + weights[i] * scale
         cursor = x1
-        size = (c / max_chars) if max_chars > 0 else (1.0 / n)
+        size = (c / max_chars) if max_chars > 0 else 1.0
         marks.append(
             {
                 "i": i,
@@ -199,8 +238,9 @@ def lane_marks(user_turns: list[str], agent_turns: list[str]) -> list[dict[str, 
                 "chars": c,
             }
         )
-    # Pin the final mark's right edge to 1.0 (float drift over many turns).
-    if marks:
+    # Pin the final right edge to 1.0 ONLY when the lane genuinely saturates
+    # (float drift over many turns); an under-filled lane must stay under-filled.
+    if saturated:
         marks[-1]["x1"] = 1.0
     return marks
 
@@ -739,6 +779,7 @@ def build_suggestion_provenance(
 
 
 __all__ = [
+    "LANE_EXTENT_CAP",
     "budget_fill",
     "build_strip_model",
     "build_suggestion_provenance",

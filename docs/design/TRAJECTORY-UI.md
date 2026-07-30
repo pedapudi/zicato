@@ -42,16 +42,33 @@ three sizes, one grammar.
 
 The strip is a fit-to-width SVG (`width:100%` + `viewBox` +
 `preserveAspectRatio`, §4.2 of the design language — **no** fixed pixel width,
-**no** pan/zoom) composed of three stacked lanes over a shaded budget ground:
+**no** pan/zoom) composed of three stacked lanes over a shaded budget ground.
+**Fit-to-width, but SENSIBLY SIZED**: like every aspect-locked house hero, it
+caps `max-width` (`svg.dn-strip-hero`, and the `svg.` type qualifier is
+load-bearing — a bare class cap loses to `.dn-panel > svg`) at the viewBox width
+so the figure renders 1:1 at its designed ~120 px height with unscaled mono
+text. `max-width: 100%` is NOT a cap: it let the strip balloon to ~2100 × 355 px
+on a wide pane, scaling every glyph and label ~3× with it. Never a `max-height`
+(it would shear the aspect-locked scale). The lanes:
 
 - **The turn lane** (~48 px) — the reconstructed conversation as **alternating
   lane marks**: a user mark then an agent mark, laid end-to-end, **each mark's
-  horizontal extent ∝ that turn's text length** (a long agent answer is a wide
-  mark; a terse user prompt is a narrow one). This is the `sparkbar` /
-  staircase convention (word-sized marks on a shared baseline, `svg.js:792`)
-  applied to turns instead of losses. User marks ride `--v2-ink`; agent marks
-  ride `--v2-ink-soft` — the neutral ground, never `good`/`bad` (a turn is not
-  a verdict; the cardinal rule, design-language §2.1).
+  horizontal extent ∝ `sqrt` of that turn's text length under one global,
+  capped scale** (§3.4 — a long agent answer is a wider mark; a terse user
+  prompt a narrower one, but no single turn may take more than a quarter of the
+  lane). This is the `sparkbar` / staircase convention (word-sized marks on a
+  shared baseline, `svg.js:792`) applied to turns instead of losses.
+  **BOUNDED, not filled (load-bearing).** A mark is a bar of at most **40 % of
+  the lane height**, straddling a **mid-lane baseline** — a user turn rises
+  above it, an agent turn drops below it (that side is the alternation you read
+  at a glance) — with a **≥1 px gap** to its neighbour. Both sides ride the
+  neutral `--v2-ink-soft` token at a **reduced `fill-opacity`** (the house
+  large-area treatment, as `.dn-spark-band` / `.dn-strip-budget` tint their
+  regions), the two distinguished by a density step, never `good`/`bad` (a turn
+  is not a verdict; the cardinal rule, design-language §2.1). A raw `--v2-ink`
+  fill over a mark-sized area is FORBIDDEN: full-lane slabs of foreground ink
+  are what once fused a 2-turn trace into one solid near-black block in a light
+  theme (the regression the geometry pins in `traces.test.mjs` exist for).
 - **The signal row** (~24 px) — the trace's adverse signals as **house
   caution/bad tone ticks**: an error cascade / abort pattern is a `--v2-bad`
   `✕` tick, a retry loop is a `--v2-caution` `↻` tick, a budget blowout is a
@@ -361,11 +378,34 @@ A **pure** function `build_strip_model(trace, episodes, suggestions_by_episode)
 byte-stable). It is the ONE place the render math lives (DQ1). The shape is the
 `strip_model` object in §3.1. The computation:
 
-- **Lane marks.** Zip `user_turns` / `agent_turns` by index into the alternating
-  sequence `[u0, a0, u1, a1, …]` (a trailing unmatched turn is appended). Each
-  mark's width ∝ its `len(text)`: `x0[k] = Σchars[0..k-1] / Σchars`,
-  `x1[k] = Σchars[0..k] / Σchars` (a zero-char trace ⇒ even spacing). `size` =
-  `chars / max_chars` (the tallest mark = 1.0). Rounded to 4 decimals.
+- **Lane marks — the COMPRESSIVE, CAPPED extent scale.** Zip `user_turns` /
+  `agent_turns` by index into the alternating sequence `[u0, a0, u1, a1, …]` (a
+  trailing unmatched turn is appended) and lay them end-to-end from `x0 = 0`.
+  Each mark's extent is **exactly proportional to `sqrt(chars + 1)`** under ONE
+  global scale:
+
+  ```
+  w[k]    = sqrt(chars[k] + 1)
+  scale   = min(LANE_EXTENT_CAP / max(w), 1 / Σw)     # cap, then saturation fit
+  x1[k]   = x0[k] + w[k] * scale                      # x0[k] = x1[k-1]
+  ```
+
+  with `LANE_EXTENT_CAP = 0.25` (exported from `trace_view`). `sqrt` compresses
+  honestly and monotonically — a 4096-char answer is 8× a 64-char prompt's
+  width, not 64× — and because the scale is a single scalar the extent RATIOS
+  are preserved exactly (nothing is flattened or redistributed). The first term
+  caps the WIDEST mark at a quarter of the lane; the second stops the run from
+  overflowing it. **Consequence, by design: the lane is a CAPACITY, not a pie.**
+  A 2-turn trace reads as two proportioned bars over a mostly-empty lane (the
+  empty room is itself the honest signal "this trace has two turns"), a
+  many-turn trace saturates and tiles the lane exactly (only then is the final
+  `x1` pinned to `1.0`), and a 500-turn trace still resolves as a comb (the
+  figure floors a mark at 0.75 px and degrades the gap rather than the mark).
+  Replacing this with a raw `chars / Σchars` share forces every lane to tile
+  regardless of turn count — the black-blob regression. `size` =
+  `chars / max_chars` (the tallest mark = 1.0) and is a HEIGHT hint only: the
+  figure maps it onto a bar of at most 40 % of the lane height (§1.1), never a
+  full-lane slab. A zero-char trace ⇒ even spacing. Rounded to 4 decimals.
 - **Signals.** One entry per adverse signal present, in a fixed kind order
   (error_cascade, abort_pattern, retry_loop, budget_blowout, transfer_churn),
   each with its tone + glyph (§3.5) + count + label. `x` is evenly distributed

@@ -15,6 +15,7 @@
 // builder-inbox hrefs, the digest no-op pin, every empty state, the XSS guard,
 // and the #/e/<e>/traces router round-trip.
 
+import { fileURLToPath } from 'node:url';
 import { installDom, test, run, assert, assertEqual, makeEvent } from './harness.mjs';
 
 installDom();
@@ -279,6 +280,183 @@ test('xss: a markup-bearing turn renders as inert text, not DOM', async () => {
   // element was ever created from it.
   assert(textOf(host).includes(evil), 'the markup is present as inert text');
   assert(!localNames(host).includes('img'), 'no <img> element was injected');
+});
+
+// ====================================================================
+// THE LANE GEOMETRY — the "black blob" regression pins.
+//
+// The shipped strip drew each turn mark as a FULL-LANE-HEIGHT rectangle filled
+// with a raw foreground ink token, so a 2-turn trace (the real fixture below)
+// rendered as two half-lane slabs that fused into one solid block — near-black
+// in a light theme. These assert the geometry that makes that impossible in ANY
+// theme: bounded bars straddling a mid-lane baseline, a real gap between
+// neighbours, a capped horizontal extent, and a soft area fill.
+// ====================================================================
+
+// Read the lane frame back OUT of the rendered figure (never re-derived here):
+// the budget ground rect IS the lane box, the baseline line IS the mid-lane
+// baseline the marks straddle.
+function laneFrame(s) {
+  const ground = allByClass(s, 'dn-strip-ground')[0];
+  const base = allByClass(s, 'dn-strip-baseline')[0];
+  return {
+    top: parseFloat(ground.getAttribute('y')),
+    height: parseFloat(ground.getAttribute('height')),
+    baseY: parseFloat(base.getAttribute('y1')),
+  };
+}
+function markBoxes(s) {
+  return allByClass(s, 'dn-strip-mark').map((r) => ({
+    role: r.getAttribute('data-role'),
+    x: parseFloat(r.getAttribute('x')), w: parseFloat(r.getAttribute('width')),
+    y: parseFloat(r.getAttribute('y')), h: parseFloat(r.getAttribute('height')),
+    cls: (r.getAttribute('class') || '').split(/\s+/),
+  })).sort((a, b) => a.x - b.x);
+}
+// The FULL lane geometry invariants, asserted for both sizes.
+function assertLaneGeometry(s, label) {
+  const lane = laneFrame(s);
+  const boxes = markBoxes(s);
+  assert(boxes.length > 0, `${label}: the lane draws marks`);
+  const capH = 0.40 * lane.height;
+  for (const b of boxes) {
+    // (1) BOUNDED HEIGHT — no mark may fill the lane.
+    assert(b.h <= capH + 0.01, `${label}: mark height ${b.h} within the ≤40% lane cap ${capH}`);
+    assert(b.h > 0, `${label}: every mark still has a visible height`);
+    // (2) THE ALTERNATION — user rides ABOVE the baseline, agent BELOW.
+    if (b.role === 'user') assert(b.y + b.h <= lane.baseY + 0.01, `${label}: a user mark sits above the baseline`);
+    else assert(b.y >= lane.baseY - 0.01, `${label}: an agent mark sits below the baseline`);
+    // (3) inside the lane box.
+    assert(b.y >= lane.top - 0.01 && b.y + b.h <= lane.top + lane.height + 0.01, `${label}: the mark stays inside the lane`);
+    // (4) SOFT FILL — never the raw-ink class the blob was painted with.
+    assert(!b.cls.includes('dn-strip-mark-ink'), `${label}: no raw-ink mark class`);
+    assert(b.cls.includes('dn-strip-mark'), `${label}: every mark carries the shared soft-area class`);
+  }
+  // (5) A REAL GAP between neighbours — adjacent marks never touch or overlap.
+  for (let i = 1; i < boxes.length; i++) {
+    const gap = boxes[i].x - (boxes[i - 1].x + boxes[i - 1].w);
+    assert(gap >= 0.9, `${label}: ≥1px gap between adjacent marks (got ${gap.toFixed(2)})`);
+  }
+}
+
+test('lane geometry: bounded bars straddling the baseline, gapped, soft-filled (both sizes)', () => {
+  const model = LIST.traces[0].strip_model;       // the REAL 2-turn adk trace
+  assertLaneGeometry(svg.trajectoryStrip(model, {}), 'hero');
+  assertLaneGeometry(svg.trajectoryStrip(model, { compact: true }), 'compact');
+  // the multi-turn real trace too (4 marks — the richest lane in the fixtures).
+  const multi = LIST.traces.find((t) => t.strip_model.lane.marks.length > 2);
+  assert(multi, 'a multi-turn trace exists in the real fixtures');
+  assertLaneGeometry(svg.trajectoryStrip(multi.strip_model, {}), 'multi-turn hero');
+});
+
+test('lane geometry: THE BLOB PIN — the inked marks cover a small fraction of the lane', () => {
+  // The quantitative statement of "not a blob": pre-fix the two full-height
+  // half-lane slabs inked ~85% of the lane box. A bounded, gapped, capped lane
+  // cannot exceed a fraction of it — whatever the theme paints them.
+  for (const t of LIST.traces) {
+    const s = svg.trajectoryStrip(t.strip_model, {});
+    const lane = laneFrame(s);
+    const inked = markBoxes(s).reduce((sum, b) => sum + b.w * b.h, 0);
+    const laneArea = lane.height * (parseFloat(allByClass(s, 'dn-strip-ground')[0].getAttribute('width')));
+    assert(inked / laneArea < 0.30, `${t.trace_id}: marks ink ${(100 * inked / laneArea).toFixed(1)}% of the lane (<30%)`);
+  }
+});
+
+test('lane geometry: the server CAPS each extent — no single turn walls the lane', () => {
+  // The extent cap is the reader's (trace_view.LANE_EXTENT_CAP = 0.25); the JS
+  // only draws it. Assert the served fixtures honour it and that a 2-turn lane
+  // is genuinely UNDER-filled (the lane is a capacity, not a pie).
+  for (const t of LIST.traces) {
+    const marks = t.strip_model.lane.marks;
+    for (const m of marks) assert(m.x1 - m.x0 <= 0.2501, `${t.trace_id}: extent ${(m.x1 - m.x0).toFixed(4)} within the 0.25 cap`);
+    if (marks.length <= 4) assert(marks[marks.length - 1].x1 < 1.0, `${t.trace_id}: a short lane stays under-filled`);
+    // laid end-to-end, monotone, non-overlapping.
+    for (let i = 1; i < marks.length; i++) assert(marks[i].x0 >= marks[i - 1].x1 - 1e-9, `${t.trace_id}: marks are monotone`);
+  }
+});
+
+test('lane geometry: a DENSE 500-turn lane still resolves (every mark visible, none overlapping)', () => {
+  const dense = {
+    trace_id: 'stress',
+    lane: { turn_count: 500, marks: Array.from({ length: 500 }, (_, i) => ({
+      i, role: i % 2 ? 'agent' : 'user', x0: i / 500, x1: (i + 1) / 500, size: (i % 17) / 16, chars: i,
+    })) },
+    signals: [], budget: { shaded: true, fill: 0.5, over: false, label: 'stress' }, episodes: [],
+  };
+  const s = svg.trajectoryStrip(dense, {});
+  const boxes = markBoxes(s);
+  assertEqual(boxes.length, 500, 'every dense mark is drawn');
+  for (const b of boxes) assert(b.w >= 0.5 && b.h > 0, 'a dense mark still has extent');
+  for (let i = 1; i < boxes.length; i++) {
+    assert(boxes[i].x >= boxes[i - 1].x + boxes[i - 1].w - 1e-6, 'dense marks never overlap');
+  }
+});
+
+// ====================================================================
+// THE STYLE CONTRACT — read straight out of console.css (the theme tokens
+// differ per theme, so the RULE is what must hold, in both).
+// ====================================================================
+test('style: turn marks take the SOFT area treatment — never a raw --v2-ink large-area fill', () => {
+  const css = fs.readFileSync(new URL('../css/console.css', import.meta.url), 'utf8');
+  const rule = (sel) => {
+    const m = new RegExp('\\' + sel.replace(/^\./, '.') + '\\s*\\{([^}]*)\\}').exec(css);
+    return m ? m[1] : null;
+  };
+  const user = rule('.dn-strip-mark-user');
+  const agent = rule('.dn-strip-mark-agent');
+  assert(user && agent, 'console.css defines both turn-mark classes');
+  // the load-bearing rule: NOT the raw foreground ink token (the black blob).
+  assert(!/fill:\s*var\(--v2-ink\)/.test(user), 'the user mark does NOT fill with raw --v2-ink');
+  assert(!/fill:\s*var\(--v2-ink\)/.test(agent), 'the agent mark does NOT fill with raw --v2-ink');
+  // it IS the soft neutral token at a reduced fill-opacity (the house area
+  // treatment: .dn-spark-band / .dn-strip-budget speak the same way).
+  for (const [name, body] of [['user', user], ['agent', agent]]) {
+    assert(/fill:\s*var\(--v2-ink-soft\)/.test(body), `the ${name} mark fills with the SOFT neutral token`);
+    const op = /fill-opacity:\s*([0-9.]+)/.exec(body);
+    assert(op && parseFloat(op[1]) < 0.7, `the ${name} mark fill is translucent (got ${op && op[1]})`);
+  }
+  // and the two sides stay distinguishable (a density step, not a hue).
+  const uo = parseFloat(/fill-opacity:\s*([0-9.]+)/.exec(user)[1]);
+  const ao = parseFloat(/fill-opacity:\s*([0-9.]+)/.exec(agent)[1]);
+  assert(Math.abs(uo - ao) >= 0.1, 'user vs agent marks differ by a readable density step');
+});
+
+test('style: svg.dn-strip-hero caps max-WIDTH at the viewBox width — the figure never balloons', () => {
+  const css = fs.readFileSync(new URL('../css/console.css', import.meta.url), 'utf8');
+  const m = /svg\.dn-strip-hero\s*\{([^}]*)\}/.exec(css);
+  assert(m, 'console.css caps the strip hero with the load-bearing `svg.` qualifier');
+  const body = m[1];
+  assert(/width:\s*100%/.test(body) && /height:\s*auto/.test(body), 'fit-to-width, height follows the aspect');
+  const cap = /max-width:\s*(\d+)px/.exec(body);
+  assert(cap, 'a real max-WIDTH cap in px (max-width:100% is not a cap)');
+  // the cap == the figure's viewBox width, so it renders 1:1 at its designed
+  // height with unscaled mono text.
+  const vb = svg.trajectoryStrip(LIST.traces[0].strip_model, {}).getAttribute('viewBox').split(/\s+/);
+  assertEqual(parseInt(cap[1], 10), parseInt(vb[2], 10), 'the cap matches the viewBox width');
+  assert(!/max-height/.test(body), 'no max-height (it would shear the aspect-locked scale)');
+});
+
+// ====================================================================
+// TERMINATION — the reported hard-freeze pin.
+//
+// A non-terminating render (an unbounded loop in the strip figure, the detail
+// builders, or the episode-anchor focus wiring over an UNPOSITIONED episode)
+// hangs node exactly as it hangs a browser, so the pin runs the real payloads
+// through the real builders in a CHILD process under a hard wall-clock timeout:
+// a spin fails BY TIMEOUT here instead of hanging the suite forever.
+// ====================================================================
+test('termination: the real list + detail + dense-lane renders complete under a hard timeout', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const probe = fileURLToPath(new URL('./_trace_render_probe.mjs', import.meta.url));
+  const budgetMs = 20_000;                       // ~60× the observed ~0.3 s run
+  const t0 = Date.now();
+  const r = spawnSync(process.execPath, [probe], { timeout: budgetMs, encoding: 'utf8' });
+  const ms = Date.now() - t0;
+  assert(r.signal !== 'SIGTERM' && r.error === undefined,
+    `the render probe did not terminate within ${budgetMs} ms (a spin in the Traces render path): ${r.signal || (r.error && r.error.message)}`);
+  assertEqual(r.status, 0, `the render probe exited clean (stderr: ${(r.stderr || '').slice(0, 400)})`);
+  assert((r.stdout || '').includes('ok'), 'the probe rendered every surface');
+  assert(ms < budgetMs, `completed in ${ms} ms`);
 });
 
 run();
