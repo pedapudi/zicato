@@ -1051,10 +1051,14 @@ Usage: zicato tournament [OPTIONS] PARENT CHILD
   only to re-score a specific generation pair.
 
 Options:
-  --workspace TEXT    Path to the zicato workspace root.  [default: .zicato]
-  --epoch TEXT        Epoch id. Defaults to the workspace's current epoch.
-  --mode [full|fast]  full = run both generations; fast = child vs parent's
-                      historical aggregate.  [default: full]
-  --skip-regression   Skip the regression-suite gate even when enabled in
-                      scoring.
-  --help              Show this message and exit.
+  --workspace TEXT      Path to the zicato workspace root.  [default: .zicato]
+  --epoch TEXT          Epoch id. Defaults to the workspace's current epoch.
+  --mode [full|fast]    full = run both generations; fast = child vs parent's
+                        historical aggregate.  [default: full]
+  --skip-regression     Skip the regression-suite gate even when enabled in
+                        scoring.
+  --replicates INTEGER  Debug override for the per-duel replicate count.
+                        Defaults to the contract's resolved structure value
+                        (what `zicato evolve` uses) — pass this only to force a
+                        different count for this one invocation.
+  --help                Show this message and exit.
