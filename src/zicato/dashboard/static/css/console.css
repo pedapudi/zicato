@@ -3594,12 +3594,17 @@
   /* the build-time statistical pre-flight (Review pane): verdict chip + reasons. */
   .dn-bld-preflight { margin: 10px 0; }
   .dn-bld-pf { margin-top: 8px; background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 4px; padding: 8px 11px; }
-  .dn-bld-pf-head { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+  /* Wraps because the head carries a SECOND chip when the promote_margin
+     window fails (the verdict chip answers signal-vs-noise only). */
+  .dn-bld-pf-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 5px; }
   .dn-bld-pf-chip { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); letter-spacing: 0.05em;
     border-radius: 999px; padding: 2px 9px; border: 1px solid var(--v2-rule); }
   .dn-bld-pf-ok { background: var(--v2-good-soft); border-color: var(--v2-good); }
   .dn-bld-pf-warn { background: var(--v2-bad-soft); }
   .dn-bld-pf-refuse { background: var(--v2-bad-soft); border-color: var(--v2-bad); }
+  /* An inert probe means the signal is UNMEASURED, not bad — the neutral
+     treatment of `unavailable` rather than the bad-soft of warn/refuse. */
+  .dn-bld-pf-inert { background: var(--v2-rule-soft); border-color: var(--v2-rule); }
   .dn-bld-pf-unavailable { background: var(--v2-rule-soft); color: var(--v2-ink-faint); }
   .dn-bld-pf-reasons { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px;
     font-size: calc(11px * var(--dt-font-scale, 1)); line-height: 1.4; color: var(--v2-ink-soft); }

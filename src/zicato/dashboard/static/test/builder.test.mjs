@@ -79,6 +79,20 @@ const OP_CALLS = [];
 let SLOTS = [];
 let UNDO_HAS_HISTORY = false;
 
+// The `preflight` op's canned result. Default is the REFUSE case with a
+// pre-#106 report (no probed_points / window keys) so the backward-compatible
+// read stays exercised; a test replaces it to reach the inert / margin-window
+// branches.
+const PREFLIGHT_REFUSE = {
+  available: true, verdict: 'refuse', reason: '',
+  report: {
+    verdict: 'refuse', signal: 0.02, noise_floor_max_abs_delta: 0.14,
+    noise_floor_runs: 5, degraded_mutation_id: 'style_rules',
+  },
+  noise_floor: { max_abs_delta: 0.14, runs: 5 },
+};
+let PREFLIGHT_RESULT = PREFLIGHT_REFUSE;
+
 function envelope(patch) {
   return {
     draft: DRAFT,
@@ -95,6 +109,7 @@ function installBuilderFetch() {
   DRAFT = freshDraft();
   SLOTS = [];
   UNDO_HAS_HISTORY = false;
+  PREFLIGHT_RESULT = PREFLIGHT_REFUSE;
   globalThis.fetch = async (path, init) => {
     const body = init && init.body ? JSON.parse(init.body) : {};
     if (path === '/builder/config') return jsonRes(CONFIG);
@@ -135,17 +150,11 @@ function installBuilderFetch() {
         return jsonRes(env);
       }
       // the preflight READ op: the normal envelope plus the `preflight` result
-      // (here the REFUSE case) and the just-measured-floor refuse warning.
+      // (PREFLIGHT_RESULT — the REFUSE case by default) and the
+      // just-measured-floor refuse warning.
       if (body.op === 'preflight') {
         const env = envelope({ op: 'preflight', changed: {} });
-        env.preflight = {
-          available: true, verdict: 'refuse', reason: '',
-          report: {
-            verdict: 'refuse', signal: 0.02, noise_floor_max_abs_delta: 0.14,
-            noise_floor_runs: 5, degraded_mutation_id: 'style_rules',
-          },
-          noise_floor: { max_abs_delta: 0.14, runs: 5 },
-        };
+        env.preflight = PREFLIGHT_RESULT;
         env.warnings = [{
           code: 'margin_below_noise_floor', severity: 'refuse',
           message: 'promote_margin 0 does not clear the measured A/A noise floor 0.14…',
@@ -986,6 +995,76 @@ test('builder view: the Review pane runs the preflight op and renders the verdic
   // the REFUSE-severity validate warning surfaces in the Review pane itself.
   const refuse = byClass(host, 'dn-bld-warn-refuse')[0];
   assert(refuse && refuse.textContent.includes('noise floor'), 'the margin-vs-floor refuse warning renders beside apply');
+  // A pre-#106 report carries no probed_points; the count must read as the one
+  // probe it took, in the singular.
+  assert(reasons.textContent.includes('best of 1 probed point:'), 'a report with no probed_points reads as one probe, singular');
+  assertEqual(byClass(host, 'dn-bld-pf-chip').length, 1, 'no window chip when the report carries no window failure');
+});
+
+// The Review pane must not head a guaranteed-null contract with a green OK.
+// The verdict chip answers signal-vs-noise only (issue #112), so the margin
+// window gets its own chip, exactly as `zicato board preflight` prints its own
+// `window:` line.
+async function _renderPreflight(host, result) {
+  installBuilderFetch();
+  PREFLIGHT_RESULT = result;
+  globalThis.window.localStorage.clear();
+  await view.render(host);
+  const rail = byClass(host, 'dn-bld-railitem').find((r) => r.textContent.includes('Review'));
+  rail.dispatchEvent(makeEvent('click'));
+  await tick();
+  byClass(host, 'dn-bld-btn-preflight')[0].dispatchEvent(makeEvent('click'));
+  await tick();
+}
+
+test('builder view: a preflight that clears its floor with an unreachable promote_margin chips the WINDOW failure', async () => {
+  const host = globalThis.document.createElement('div');
+  await _renderPreflight(host, {
+    available: true, verdict: 'ok', reason: '',
+    report: {
+      verdict: 'ok', signal: 0.041, noise_floor_max_abs_delta: 0.02, noise_floor_runs: 5,
+      degraded_mutation_id: 'style_rules', promote_margin: 0.10,
+      window_verdict: 'refuse', window_failure: 'margin_above_achievable',
+      probed_points: [
+        { mutation_id: 'pal', skipped: 'no_op_patch' },
+        { mutation_id: 'docs_tone', signal: 0.0, skipped: '' },
+        { mutation_id: 'style_rules', signal: 0.041, skipped: '' },
+      ],
+    },
+    noise_floor: { max_abs_delta: 0.02, runs: 5 },
+  });
+  const chips = byClass(host, 'dn-bld-pf-chip');
+  assertEqual(chips.length, 2, 'the window failure gets its own chip beside the verdict chip');
+  assert(chips[0].textContent.includes('OK'), 'the verdict chip still reports signal-vs-noise');
+  assert(chips[1].textContent.includes('WINDOW'), 'the second chip names the window');
+  assert(chips[1].textContent.includes('MARGIN ABOVE ACHIEVABLE'), 'and which bound failed');
+  assert(chips[1].classList.contains('dn-bld-pf-refuse'), 'a window refusal carries the refuse class, so OK is not the headline');
+  const reasons = firstClass(host, 'dn-bld-pf-reasons');
+  assert(reasons.textContent.includes('no challenger could ever be promoted'), 'the reasons spell out the consequence');
+  // Two of the three points were drawn; the third was dropped for free and must
+  // not be counted as evidence.
+  assert(reasons.textContent.includes('best of 2 probed points:'), 'skipped points are not counted as probes');
+});
+
+test('builder view: an inert verdict chips as unmeasured, not as a broken board', async () => {
+  const host = globalThis.document.createElement('div');
+  await _renderPreflight(host, {
+    available: true, verdict: 'inert', reason: '',
+    report: {
+      verdict: 'inert', signal: 0.0, noise_floor_max_abs_delta: 0.08, noise_floor_runs: 5,
+      degraded_mutation_id: 'docs_tone', promote_margin: 0.10,
+      window_verdict: 'warn', window_failure: 'empty_window',
+      probed_points: [{ mutation_id: 'docs_tone', signal: 0.0, skipped: '' }],
+    },
+    noise_floor: { max_abs_delta: 0.08, runs: 5 },
+  });
+  const chips = byClass(host, 'dn-bld-pf-chip');
+  assert(chips[0].textContent.includes('INERT'), 'the chip names the inert verdict');
+  assert(chips[0].classList.contains('dn-bld-pf-inert'), 'and carries a styled class rather than falling back to the bare chip');
+  assert(chips[1].classList.contains('dn-bld-pf-warn'), 'an empty window warns rather than refuses');
+  const reasons = firstClass(host, 'dn-bld-pf-reasons');
+  assert(reasons.textContent.includes('UNMEASURED'), 'the reasons say the signal is unmeasured, not zero');
+  assert(reasons.textContent.includes('no promote_margin is defensible'), 'and that no margin is defensible on this board');
 });
 
 test('validateContract twin: margin at/below a measured floor with the evidence gate off → refuse', () => {

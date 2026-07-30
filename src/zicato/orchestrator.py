@@ -3622,7 +3622,7 @@ async def _maybe_contract_preflight(
                 report.signal,
                 report.noise_floor_max_abs_delta,
                 report.promote_margin,
-                len(report.probed_points),
+                report.drawn_probe_count(),
             )
         else:
             # LOUD run-level warning. The diagnosis is per-verdict on purpose:
@@ -3642,7 +3642,7 @@ async def _maybe_contract_preflight(
                 report.signal,
                 report.noise_floor_max_abs_delta,
                 report.promote_margin,
-                len(report.probed_points),
+                report.drawn_probe_count(),
                 report.degraded_mutation_id,
                 report.degraded_scalar,
                 _preflight_diagnosis(report),

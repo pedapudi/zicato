@@ -324,6 +324,18 @@ class PreflightReport:
     window_failure: str | None = None
     recommended_margin: float | None = None
 
+    def drawn_probe_count(self) -> int:
+        """How many probes actually spent a board evaluation.
+
+        :attr:`probed_points` also carries the points that cost nothing
+        (:attr:`ProbedPoint.skipped` — ``no_op_patch`` / ``verdict_settled``),
+        so its length overstates the evidence behind :attr:`signal`. Operator
+        prose reports THIS count: "best of 5 probed points" when three of the
+        eight were dropped for free would tell the operator the sample was
+        broader than the measurement was.
+        """
+        return sum(1 for p in self.probed_points if not p.skipped)
+
     def to_json(self) -> dict[str, Any]:
         """The JSON shape persisted onto the epoch record."""
         return {

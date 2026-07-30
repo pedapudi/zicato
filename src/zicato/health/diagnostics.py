@@ -1037,7 +1037,16 @@ def detect_preflight_verdict(preflight: dict[str, Any] | None) -> list[HealthFin
         )
     elif verdict == "inert":
         probed = preflight.get("probed_points")
-        n_probed = len(probed) if isinstance(probed, list) else 0
+        # Only points that actually SPENT a draw are evidence. ``probed_points``
+        # also carries the ones dropped for free (``no_op_patch`` /
+        # ``verdict_settled``), and counting those would tell an operator the
+        # sample was broader than the measurement really was — the opposite of
+        # what the field exists for.
+        n_probed = (
+            sum(1 for p in probed if isinstance(p, dict) and not p.get("skipped"))
+            if isinstance(probed, list)
+            else 0
+        )
         findings.append(
             HealthFinding(
                 code="preflight_inert_probe",

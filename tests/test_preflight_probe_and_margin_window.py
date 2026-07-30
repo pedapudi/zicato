@@ -418,6 +418,105 @@ def test_recommendation_prefers_delta_std_and_falls_back_to_the_range() -> None:
 
 
 # ---------------------------------------------------------------------------
+# The fix, pinned — operator prose counts the probes that COST something
+# ---------------------------------------------------------------------------
+
+
+def test_only_probes_that_spent_a_draw_are_counted_as_evidence() -> None:
+    """``probed_points`` carries the free skips too; the count must not.
+
+    The field exists so an operator can judge whether the sample was
+    representative. Reporting "best of 5 probed points" when three were dropped
+    for free (a palindromic span, or a point never reached because an earlier
+    probe settled the verdict) claims broader evidence than was measured — the
+    exact misreading #106 is about.
+    """
+    from zicato.epoch.preflight import PreflightReport, ProbedPoint
+
+    report = PreflightReport(
+        epoch_id="e",
+        generation_id="v0",
+        verdict=VERDICT_OK,
+        noise_floor_max_abs_delta=0.02,
+        noise_floor_runs=5,
+        champion_scalars=(0.5, 0.52),
+        degraded_scalar=0.9,
+        signal=0.39,
+        degraded_mutation_id="live_b",
+        degraded_mutation_kind="span",
+        degraded_file="agent.py",
+        measured_at="2026-07-01T00:00:00+00:00",
+        probed_points=(
+            ProbedPoint(mutation_id="pal", kind="span", file="a.py", skipped="no_op_patch"),
+            ProbedPoint(mutation_id="live_a", kind="span", file="a.py", signal=0.0),
+            ProbedPoint(mutation_id="live_b", kind="span", file="a.py", signal=0.39),
+            ProbedPoint(mutation_id="rest", kind="span", file="a.py", skipped="verdict_settled"),
+        ),
+    )
+    assert len(report.probed_points) == 4
+    assert report.drawn_probe_count() == 2
+
+
+def test_the_inert_health_finding_counts_only_drawn_probes() -> None:
+    """The same rule on the persisted-record side of the same sentence."""
+    from zicato.health.diagnostics import detect_preflight_verdict
+
+    (finding,) = detect_preflight_verdict(
+        {
+            "verdict": VERDICT_INERT,
+            "signal": 0.0,
+            "noise_floor_max_abs_delta": 0.08,
+            "probed_points": [
+                {"mutation_id": "pal", "skipped": "no_op_patch"},
+                {"mutation_id": "docs_tone", "signal": 0.0, "skipped": ""},
+            ],
+        }
+    )
+    assert finding.code == "preflight_inert_probe"
+    assert "(1)" in finding.summary, "the free no-op skip is not evidence of an inert probe"
+
+
+# ---------------------------------------------------------------------------
+# The recommendation rule holds on the APPLIABLE recommender too
+# ---------------------------------------------------------------------------
+
+
+def test_the_reflection_set_gate_op_scales_delta_std_not_the_range() -> None:
+    """dev-guide ch.04 §9.4 is a repo rule, and this op is machine-appliable.
+
+    ``check_promotion_hygiene`` proposes a ``set_gate`` op an operator (or the
+    applier) can land directly, so a recommendation scaled off the RANGE puts
+    #112's upward drift into the contract itself: raising the calibration draw
+    count on an unchanged board would raise the proposed margin toward the
+    achievable signal. The range stays the COMPARISON statistic.
+    """
+    from zicato.core import ScoringWeights
+    from zicato.reflection import practices as P
+    from zicato.tournament.calibration import MARGIN_NOISE_MULTIPLE
+
+    floor = {
+        "generation_id": "g0",
+        "epoch_id": "e",
+        "runs": 12,
+        "scalars": [1.0, 1.5],
+        # A range far wider than the dispersion — the K-inflated shape.
+        "max_abs_delta": 0.5,
+        "delta_std": 0.04,
+        "measured_at": "2026-07-01",
+    }
+    check = P.check_promotion_hygiene(
+        weights=ScoringWeights(promote_margin=0.01),
+        experiments=[{"generation_id": "g1", "outcome": {"tournament_decision": "promoted"}}],
+        board_entries=[],
+        noise_floor=floor,
+    )
+    assert check.proposed_op is not None
+    proposed = check.proposed_op["args"]["promote_margin"]
+    assert proposed == pytest.approx(MARGIN_NOISE_MULTIPLE * 0.04)
+    assert proposed < MARGIN_NOISE_MULTIPLE * 0.5, "the range must not set the proposed margin"
+
+
+# ---------------------------------------------------------------------------
 # The knobs are RUNTIME-only: tuning the probe must not roll the epoch
 # ---------------------------------------------------------------------------
 
