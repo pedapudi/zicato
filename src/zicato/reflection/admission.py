@@ -73,7 +73,8 @@ from zicato.reflection.mining import (
 #: slots can never collide with — or pre-seed — a slot another owner reads: real
 #: duel replicates count up from 0, A/A calibration at 1000
 #: (:data:`zicato.tournament.calibration.CALIBRATION_REPLICATE_BASE`), contract
-#: pre-flight at 2000 (:data:`zicato.epoch.preflight.PREFLIGHT_REPLICATE_BASE`),
+#: pre-flight across 2000..2999 (:data:`zicato.epoch.preflight.PREFLIGHT_REPLICATE_BASE`
+#: + :data:`~zicato.epoch.preflight.PREFLIGHT_REPLICATE_SPAN`),
 #: candidate screen at 3000 (:data:`zicato.epoch.screen.SCREEN_REPLICATE_BASE`),
 #: evidence gate at 4000 (:data:`zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE`),
 #: board reflection at 5000 (:data:`zicato.reflection.corpus.REFLECTION_REPLICATE_BASE`).

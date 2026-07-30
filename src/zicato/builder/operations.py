@@ -172,8 +172,12 @@ class PreflightResult:
     available:
         ``True`` iff the measurement ran.
     verdict:
-        The pre-flight verdict (``"ok"`` / ``"warn"`` / ``"refuse"``)
-        when available, else ``None``. Recommend-only, never a gate.
+        The SIGNAL pre-flight verdict (``"ok"`` / ``"warn"`` / ``"inert"`` /
+        ``"refuse"``) when available, else ``None``. Signal-vs-noise only —
+        the ``promote_margin`` window verdict rides along inside
+        :attr:`report` (``window_verdict`` / ``window_failure``) and the
+        Review pane chips it separately, because a draft can clear its floor
+        and still be null. Recommend-only, never a gate.
     reason:
         The honest degrade explanation when ``available`` is ``False``.
     report:

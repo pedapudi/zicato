@@ -59,6 +59,7 @@ from typing import Any
 
 from zicato.config import HealthConfig, load_config
 from zicato.core.experiment import PLACEBO_HYPOTHESIS_MARKER
+from zicato.core.runtime import PREFLIGHT_GATE_DEFAULT
 from zicato.core.types import BoardEntry, LossProfile
 from zicato.util.iso_time import now_iso as _utcnow_iso
 
@@ -933,7 +934,10 @@ def detect_placebo_promoted(experiments: list[Any]) -> list[HealthFinding]:
     return findings
 
 
-def detect_preflight_verdict(preflight: dict[str, Any] | None) -> list[HealthFinding]:
+def detect_preflight_verdict(
+    preflight: dict[str, Any] | None,
+    preflight_gate: str = PREFLIGHT_GATE_DEFAULT,
+) -> list[HealthFinding]:
     """Re-surface a non-OK contract pre-flight verdict as a health finding.
 
     The contract pre-flight (:mod:`zicato.epoch.preflight`) measures the
@@ -944,21 +948,72 @@ def detect_preflight_verdict(preflight: dict[str, Any] | None) -> list[HealthFin
     long as the contract stays un-fixed. Recommend-only — like every
     finding, it never gates.
 
-    * verdict ``"refuse"`` → ``critical`` ``preflight_signal_below_floor``:
-      the measured achievable signal is at or below the measured noise
-      floor, so duels under this contract are decided by noise.
+    ``preflight_gate`` is the operator's
+    :attr:`~zicato.core.runtime.RuntimeConfig.preflight_gate` mode, and it
+    decides the SEVERITY of the refusal finding — see the severity contract
+    below.
+
+    * verdict ``"refuse"`` → ``preflight_signal_below_floor``: the measured
+      achievable signal is at or below the measured noise floor, so duels
+      under this contract are decided by noise. ``critical`` only under
+      ``preflight_gate="refuse"``; ``warning`` under ``"warn"`` (the default)
+      and ``"off"``.
     * verdict ``"warn"`` → ``warning`` ``preflight_saturated_contract``:
       every probe — K A/A draws plus a deliberately-degraded tree —
       scored identically (the historical ``1.000000`` signature); the
       contract cannot discriminate candidates.
+    * verdict ``"inert"`` → ``warning`` ``preflight_inert_probe`` (issue
+      #106): every point the pre-flight degraded moved the scalar by
+      exactly nothing while the champion's own draws did vary. The
+      achievable signal is UNMEASURED, not zero, so the finding must not
+      read like the noise-limited one — the fix is to pin a representative
+      point, and the protection simply is not in force meanwhile.
+
+    Independently of the signal verdict, a ``promote_margin`` window failure
+    (issue #112, ``window_failure``) yields ONE further finding — the two
+    questions are separable and a contract can fail either alone:
+
+    * ``"margin_above_achievable"`` → ``critical``
+      ``preflight_margin_above_achievable``: nothing can be promoted, so the
+      run is guaranteed null before it starts.
+    * ``"margin_below_floor"`` → ``warning`` ``preflight_margin_below_floor``.
+    * ``"empty_window"`` is NOT a finding of its own — it is the same fact the
+      refuse/inert finding already carries — but it rewrites that finding's
+      recommendation to say no margin is defensible, so an operator is not
+      sent to tune a number that has no valid value.
+
+    Severity respects the gate mode
+    -------------------------------
+
+    The refusal finding is a ``critical`` ONLY when the operator asked for the
+    hard gate. Under the default ``preflight_gate="warn"`` it is a
+    ``warning``: fully visible in ``zicato health``, in the per-round report
+    and on the dashboard, but structurally unable to reach
+    :class:`zicato.evolve.loop.DegenerateHealthPolicy`, which observes
+    criticals only.
+
+    That asymmetry is the point. This detector re-emits from the PERSISTED
+    record, so a refuse verdict reappears identically every round for as long
+    as the epoch carries it — which means a ``critical`` here is not one
+    finding, it is an unbroken critical streak, and two rounds of it trip
+    ``_DEGENERATE_HEALTH_STOP_THRESHOLD`` and stop the loop. A run the
+    operator explicitly configured to WARN would then hard-stop anyway, making
+    the knob's ``"warn"`` setting indistinguishable from ``"refuse"`` except
+    for wasting two rounds first. A genuinely noise-limited contract under
+    ``"warn"`` must keep running with a loud warning — that is what "warn"
+    means. Under ``"refuse"`` the loop already stopped at the pre-flight
+    itself, so the breaker is moot and ``critical`` costs nothing.
 
     Silent when no pre-flight was ever run (``None``), when the record is
-    malformed, or when the verdict is ``"ok"``.
+    malformed, or when the verdict is ``"ok"`` with the window intact.
+    Tolerant of pre-#106/#112 records, which carry neither new key.
     """
     if not isinstance(preflight, dict):
         return []
+    hard_gate = str(preflight_gate or PREFLIGHT_GATE_DEFAULT) == "refuse"
     verdict = str(preflight.get("verdict", "") or "")
-    if verdict not in ("refuse", "warn"):
+    window_failure = str(preflight.get("window_failure") or "")
+    if verdict not in ("refuse", "warn", "inert") and not window_failure:
         return []
 
     def _num(key: str) -> float:
@@ -969,6 +1024,7 @@ def detect_preflight_verdict(preflight: dict[str, Any] | None) -> list[HealthFin
 
     signal = _num("signal")
     floor = _num("noise_floor_max_abs_delta")
+    margin = _num("promote_margin")
     detail: dict[str, Any] = {
         "verdict": verdict,
         "signal": signal,
@@ -978,18 +1034,42 @@ def detect_preflight_verdict(preflight: dict[str, Any] | None) -> list[HealthFin
         "degraded_mutation_id": preflight.get("degraded_mutation_id"),
         "generation_id": preflight.get("generation_id"),
         "measured_at": preflight.get("measured_at"),
+        "probed_points": preflight.get("probed_points"),
+        "promote_margin": margin,
+        "window_verdict": preflight.get("window_verdict"),
+        "window_failure": preflight.get("window_failure"),
+        # The gate mode the severity was chosen under, so a reader of a
+        # persisted report can tell "warning because the operator chose warn"
+        # from "warning because the detector graded it mild".
+        "preflight_gate": str(preflight_gate or PREFLIGHT_GATE_DEFAULT),
     }
+    empty_window = window_failure == "empty_window"
+    findings: list[HealthFinding] = []
+
     if verdict == "refuse":
-        detail["recommendation"] = (
-            "refusal recommended: the contract's achievable signal does not "
-            "clear its own noise floor — reduce evaluation noise (more "
-            "replicates, steadier judges) or strengthen the board before "
-            "running rounds"
-        )
-        return [
+        detail = {
+            **detail,
+            "recommendation": (
+                "no promote_margin is defensible on this board — do not tune the "
+                "margin; reduce evaluation noise (more replicates, steadier "
+                "judges) or strengthen the board so a real change out-scores a "
+                "re-roll"
+                if empty_window
+                else "refusal recommended: the contract's achievable signal does "
+                "not clear its own noise floor — reduce evaluation noise (more "
+                "replicates, steadier judges) or strengthen the board before "
+                "running rounds"
+            ),
+        }
+        findings.append(
             HealthFinding(
                 code="preflight_signal_below_floor",
-                severity="critical",
+                # Gate-aware on purpose (see the docstring): a critical here
+                # re-fires every round from the persisted record, and two of
+                # them trip the loop's degenerate-health breaker — which would
+                # turn the DEFAULT "warn" mode into a hard stop and override
+                # the operator's explicit choice.
+                severity="critical" if hard_gate else "warning",
                 summary=(
                     f"contract pre-flight: achievable signal {signal:.6g} is at/below "
                     f"the measured A/A noise floor {floor:.6g} — duels under this "
@@ -997,24 +1077,120 @@ def detect_preflight_verdict(preflight: dict[str, Any] | None) -> list[HealthFin
                 ),
                 detail=detail,
             )
-        ]
-    detail["recommendation"] = (
-        "add expectations / strengthen judges so the board can discriminate "
-        "candidates — even a deliberately-degraded tree scored identically "
-        "to the champion"
-    )
-    return [
-        HealthFinding(
-            code="preflight_saturated_contract",
-            severity="warning",
-            summary=(
-                "contract pre-flight: scalar spread was exactly zero across every "
-                "probe (K A/A draws + a deliberately-degraded tree) — the contract "
-                "cannot discriminate candidates (the 1.000000 saturation signature)"
-            ),
-            detail=detail,
         )
-    ]
+    elif verdict == "inert":
+        probed = preflight.get("probed_points")
+        # Only points that actually SPENT a draw are evidence. ``probed_points``
+        # also carries the ones dropped for free (``no_op_patch`` /
+        # ``verdict_settled``), and counting those would tell an operator the
+        # sample was broader than the measurement really was — the opposite of
+        # what the field exists for.
+        n_probed = (
+            sum(1 for p in probed if isinstance(p, dict) and not p.get("skipped"))
+            if isinstance(probed, list)
+            else 0
+        )
+        findings.append(
+            HealthFinding(
+                code="preflight_inert_probe",
+                severity="warning",
+                summary=(
+                    f"contract pre-flight: every probed mutation point "
+                    f"({n_probed or 'all'}) left the scalar exactly at the champion "
+                    f"mean while the A/A draws varied by {floor:.6g} — the achievable "
+                    "signal is UNMEASURED, not zero; the probe was inert, which is "
+                    "not evidence the contract is unmeasurable"
+                ),
+                detail={
+                    **detail,
+                    "recommendation": (
+                        "pin a mutation point the deliverable demonstrably depends on "
+                        "(runtime.preflight_probe_mutation_ids, or `zicato board "
+                        "preflight --degrade-mutation-id`) and re-measure; raising "
+                        "runtime.preflight_probe_points widens the automatic sample. "
+                        "A point can be inert because the contract routes around it — "
+                        "e.g. a tool description no longer reached once a "
+                        "structured-output schema produces the deliverable"
+                    ),
+                },
+            )
+        )
+    elif verdict == "warn":
+        findings.append(
+            HealthFinding(
+                code="preflight_saturated_contract",
+                severity="warning",
+                summary=(
+                    "contract pre-flight: scalar spread was exactly zero across every "
+                    "probe (K A/A draws + a deliberately-degraded tree) — the contract "
+                    "cannot discriminate candidates (the 1.000000 saturation signature)"
+                ),
+                detail={
+                    **detail,
+                    "recommendation": (
+                        "add expectations / strengthen judges so the board can "
+                        "discriminate candidates — even a deliberately-degraded tree "
+                        "scored identically to the champion"
+                    ),
+                },
+            )
+        )
+
+    if window_failure == "margin_above_achievable":
+        findings.append(
+            HealthFinding(
+                code="preflight_margin_above_achievable",
+                # A WARNING, not a critical, and deliberately so: the pre-flight
+                # degrades ONE point per probe, so its achievable signal is a
+                # single-point LOWER BOUND on the loop's reach. A compound patch
+                # — and recombination unions two of them on purpose — can exceed
+                # it, so this is strong evidence of a mis-set margin, never proof
+                # of nullity. Critical is reserved for "no usable signal at all"
+                # and trips the loop's degenerate-health circuit breaker, which
+                # would wrongly kill a legitimate recombination run whose margin
+                # sits above single-point reach by design.
+                severity="warning",
+                summary=(
+                    f"contract pre-flight: promote_margin {margin:.6g} is at/above the "
+                    f"measured achievable signal {signal:.6g} — no single-point change "
+                    "the probe could demonstrate clears the gate, so unless the "
+                    "proposer lands compound patches this run is null by construction"
+                ),
+                detail={
+                    **detail,
+                    "recommendation": (
+                        "lower promote_margin below the achievable signal (it must sit "
+                        f"strictly inside noise {floor:.6g} < margin < achievable "
+                        f"{signal:.6g}), or raise the achievable signal by strengthening "
+                        "the board. If the margin is deliberately above single-point "
+                        "reach — e.g. recombination is expected to union two sub-margin "
+                        "fixes — this finding is expected and informational"
+                    ),
+                },
+            )
+        )
+    elif window_failure == "margin_below_floor":
+        findings.append(
+            HealthFinding(
+                code="preflight_margin_below_floor",
+                severity="warning",
+                summary=(
+                    f"contract pre-flight: promote_margin {margin:.6g} is at/below the "
+                    f"measured A/A noise floor {floor:.6g} — promotions cannot be "
+                    "distinguished from re-rolls of the same generation"
+                ),
+                detail={
+                    **detail,
+                    "recommendation": (
+                        "raise promote_margin above the measured noise (the pre-flight "
+                        "record's recommended_margin scales the draw-count-stable "
+                        "delta_std, not the range), and/or keep the evidence gate on so "
+                        "promotions must replicate to CI separation"
+                    ),
+                },
+            )
+        )
+    return findings
 
 
 # ---------------------------------------------------------------------------
@@ -1167,6 +1343,7 @@ def assess_loop_health(
     infra_outage: tuple[int, int] | None = None,
     token_clip: tuple[int, int] | None = None,
     tree_import_gaps: dict[str, tuple[str, ...]] | None = None,
+    preflight_gate: str = PREFLIGHT_GATE_DEFAULT,
 ) -> LoopHealth:
     """Run every detector and collect the findings into a :class:`LoopHealth`.
 
@@ -1214,6 +1391,15 @@ def assess_loop_health(
         :func:`detect_preflight_verdict` can keep a REFUSE/saturation
         verdict visible in every round's report. ``None`` (the default)
         disables that detector.
+    preflight_gate:
+        The operator's
+        :attr:`~zicato.core.runtime.RuntimeConfig.preflight_gate` mode,
+        threaded so :func:`detect_preflight_verdict` can grade a refusal
+        ``critical`` only under the hard gate. Defaults to
+        :data:`~zicato.core.runtime.PREFLIGHT_GATE_DEFAULT` (``"warn"``),
+        matching the runtime default, so a caller that does not know the
+        mode gets the recommend-only severity rather than one that can stop
+        the loop.
     infra_outage:
         THIS round's endpoint-outage circuit trip, as an
         ``(infra_aborted_runs, threshold)`` pair — threaded by the
@@ -1262,7 +1448,7 @@ def assess_loop_health(
     findings.extend(detect_generalization_gap(experiments, health))
     findings.extend(detect_refresh_cadence(experiments, max_generations_per_contract))
     findings.extend(detect_margin_below_noise_floor(noise_floor, promote_margin, evidence_gate_on))
-    findings.extend(detect_preflight_verdict(preflight))
+    findings.extend(detect_preflight_verdict(preflight, preflight_gate))
     findings.extend(detect_placebo_promoted(placebo_experiments))
     findings.extend(detect_infra_outage(infra_outage))
     findings.extend(detect_token_budget_clip(token_clip))

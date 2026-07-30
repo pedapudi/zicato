@@ -79,8 +79,10 @@ MIN_CREDIBLE_DUELS: int = 3
 #: Reserved far above every sibling base so the slots can never collide:
 #: real duel replicates count up from 0, A/A calibration draws at 1000
 #: (:data:`zicato.tournament.calibration.CALIBRATION_REPLICATE_BASE`), the
-#: contract pre-flight at 2000
-#: (:data:`zicato.epoch.preflight.PREFLIGHT_REPLICATE_BASE`), and the
+#: contract pre-flight across 2000..2999 (probe ``j`` of its achievable-signal
+#: sample at ``2000 + j``;
+#: :data:`zicato.epoch.preflight.PREFLIGHT_REPLICATE_BASE` +
+#: :data:`~zicato.epoch.preflight.PREFLIGHT_REPLICATE_SPAN`), the
 #: pre-tournament candidate screen at 3000
 #: (:data:`zicato.epoch.screen.SCREEN_REPLICATE_BASE`; its
 #: confirm-before-veto re-run at 3001), board reflection at 5000
