@@ -68,12 +68,13 @@ def test_noise_floor_summary_consumes_persisted_floor() -> None:
     corpus = [_obs("v0", "a", 5000, 1.0), _obs("v0", "a", 5001, 3.0)]
     out = noise_floor_summary(
         corpus=corpus,
-        epoch_noise_floor={"max_abs_delta": 0.5, "runs": 5},
+        epoch_noise_floor={"max_abs_delta": 0.5, "delta_std": 0.2, "runs": 5},
         epoch_preflight={"verdict": "ok"},
     )
     assert out["consumed"] is True
     assert out["fresh"] is False
     assert out["noise_floor_max_abs_delta"] == 0.5
+    assert out["noise_floor_delta_std"] == 0.2
     assert out["noise_floor_runs"] == 5
     assert out["preflight_verdict"] == "ok"
     # Per-candidate scalar SD over the replicate-level draws (1.0, 3.0).
@@ -81,11 +82,23 @@ def test_noise_floor_summary_consumes_persisted_floor() -> None:
     assert out["fidelity_tiers"] == [FIDELITY_PREVIEW]
 
 
+def test_noise_floor_summary_missing_delta_std_is_none_not_zero() -> None:
+    # A pre-#112 floor record carries no ``delta_std`` field — the summary
+    # must read that as "unavailable" (None), never coerce it to 0.0.
+    out = noise_floor_summary(
+        corpus=[],
+        epoch_noise_floor={"max_abs_delta": 0.5, "runs": 5},
+    )
+    assert out["noise_floor_max_abs_delta"] == 0.5
+    assert out["noise_floor_delta_std"] is None
+
+
 def test_noise_floor_summary_fresh_flag_recorded_not_measured() -> None:
     out = noise_floor_summary(corpus=[], epoch_noise_floor=None, fresh=True)
     assert out["fresh"] is True
     assert out["consumed"] is False
     assert out["noise_floor_max_abs_delta"] is None
+    assert out["noise_floor_delta_std"] is None
 
 
 # ---------------------------------------------------------------------------

@@ -191,11 +191,22 @@ def derive_findings(
     adjudications: list[JudgeAdjudication],
     promote_margin: float | None = None,
     noise_floor_max_abs_delta: float | None = None,
+    noise_floor_delta_std: float | None = None,
     workspace_root: Path | None = None,
     epoch_id: str | None = None,
     reflection_id: str | None = None,
 ) -> list[Finding]:
     """Fold scorecards + adjudications + the floor into ranked findings.
+
+    ``noise_floor_delta_std`` is the draw-count-stable A/A dispersion
+    (:attr:`zicato.tournament.calibration.NoiseFloor.delta_std`), additive
+    and ``None`` by default so older callers/records keep working. When
+    present and positive, the margin RECOMMENDATION scales it instead of
+    ``noise_floor_max_abs_delta``: the range statistic grows with the
+    calibration draw count K, so a recommendation built on it drifts upward
+    on an unchanged board as calibration improves (issue #112, ch.04 §9.4).
+    ``noise_floor_max_abs_delta`` stays the COMPARISON statistic that decides
+    whether the finding fires at all — only the recommended value moves.
 
     Returns findings sorted by descending severity (ties keep emission order).
     Every ``proposed_op`` is validated against the real op signature before the
@@ -213,7 +224,22 @@ def derive_findings(
         and noise_floor_max_abs_delta > 0
         and promote_margin < noise_floor_max_abs_delta
     ):
-        recommended = round(MARGIN_FLOOR_MULTIPLE * float(noise_floor_max_abs_delta), 6)
+        from zicato.tournament.calibration import recommended_promote_margin  # noqa: PLC0415
+
+        used_delta_std = noise_floor_delta_std is not None and noise_floor_delta_std > 0
+        recommended = round(
+            recommended_promote_margin(
+                delta_std=noise_floor_delta_std,
+                max_abs_delta=noise_floor_max_abs_delta,
+                multiple=MARGIN_FLOOR_MULTIPLE,
+            ),
+            6,
+        )
+        stat_desc = (
+            f"delta_std={noise_floor_delta_std} (draw-count-stable)"
+            if used_delta_std
+            else f"max_abs_delta={noise_floor_max_abs_delta} (range — no delta_std on this record)"
+        )
         findings.append(
             Finding(
                 finding_id=_finding_id("calibration", "gate", "margin_below_floor"),
@@ -224,7 +250,7 @@ def derive_findings(
                     f"promote_margin={promote_margin} is below the measured noise floor "
                     f"max_abs_delta={noise_floor_max_abs_delta} — the gate is promoting on "
                     f"measurement noise. Recommend lifting it to {recommended} "
-                    f"({MARGIN_FLOOR_MULTIPLE}× the floor)."
+                    f"({MARGIN_FLOOR_MULTIPLE}× {stat_desc})."
                 ),
                 evidence=(),
                 recommendation=f"raise promote_margin to {recommended}",
