@@ -3,27 +3,38 @@
 Issue #129 generalises eleven reports (#118-#128) into two claims:
 
 **A. Detection without explanation.** zicato detects that something is
-wrong and fails to say what. Triage refined the claim: the evidence is
-*collected* — all 19 :class:`~zicato.health.diagnostics.HealthFinding`
-construction sites populate the documented ``detail`` dict ("the numbers
-that tripped the detector"). The gap is the **render** hop. The
-operator-facing one-liner is built by
-:func:`zicato.orchestrator._summarise_loop_health`, whose ``_text``
-helper accepts only *string* attributes (``message`` / ``summary`` /
-``detail`` / ``description``) and returns the first non-empty one.
-``detail`` is a **dict**, so it is skipped by an ``isinstance(val, str)``
-guard: every number the detector measured is structurally unreachable
-from the line the operator actually reads. The evidence does reach the
-per-round health JSON (via :func:`zicato.orchestrator._loop_health_to_json`,
-which uses ``dataclasses.asdict``) — so this is a surfacing gap, not a
-collection gap, and the fix is cheap.
+wrong and fails to say what. Triage narrowed this claim considerably,
+and the narrowing matters: at the detector layer it does not hold. All
+19 :class:`~zicato.health.diagnostics.HealthFinding` construction sites
+populate the documented ``detail`` dict, every one of their ``summary``
+strings interpolates the measured quantities, and 15 of the 19 carry an
+explicit ``detail["recommendation"]`` telling the operator what to do.
+The collection layer is in good shape.
+
+The gap is the **render** hop, and specifically the loss of the
+recommendation. :func:`zicato.orchestrator._summarise_loop_health` builds
+the operator-facing one-liner from a ``_text`` helper that accepts only
+*string* attributes (``message`` / ``summary`` / ``detail`` /
+``description``) and returns the first non-empty one. ``detail`` is a
+**dict**, so an ``isinstance(val, str)`` guard skips it: the
+remediation the detector already wrote is structurally unreachable from
+the line the operator reads. The same renderer also shows only
+``findings[0]``, collapsing every other finding to a ``(+N more)``
+count.
+
+The evidence does survive to the per-round health JSON (via
+:func:`zicato.orchestrator._loop_health_to_json`, which uses
+``dataclasses.asdict``), and a handful of findings get bespoke
+terminal warnings (``_warn_dead_judges`` and siblings) that do inline
+their detail. So this is a surfacing gap on the generic path, not a
+collection gap — which is why the fix is cheap.
 
 The bar is not invented here. zicato's sibling diagnostic contract,
-:class:`zicato.reflection.practices.PracticeCheck`, already specifies it:
-``headline`` is documented as "a single sentence **with the numbers
+:class:`zicato.reflection.practices.PracticeCheck`, already specifies
+it: ``headline`` is documented as "a single sentence **with the numbers
 inline**", carried alongside a structured ``evidence`` dict and a
-``rationale``. ``HealthFinding.summary`` has no such requirement, and the
-renderer drops the dict that would have supplied the numbers.
+``rationale``. The health path collects the same material and then drops
+the actionable half on the way out.
 
 **B. Surfaces that assume the champion advances.** ``PracticeCheck`` also
 models the fix for pattern B: an explicit ``VERDICT_UNMEASURED`` plus an
@@ -114,59 +125,84 @@ def _health(*findings: HealthFinding) -> LoopHealth:
 
 @pytest.mark.xfail(
     strict=True,
-    reason="#129 pattern A: _summarise_loop_health drops HealthFinding.detail — "
-    "the operator-facing line carries none of the numbers that tripped the detector",
+    reason="#129 pattern A: _summarise_loop_health drops detail['recommendation'] — "
+    "the remediation the detector already wrote never reaches the operator",
 )
-def test_loop_health_summary_carries_the_evidence_that_tripped_the_detector() -> None:
-    """The rendered summary must name the numbers, not just the verdict.
+def test_loop_health_summary_carries_the_detector_s_recommendation() -> None:
+    """The one hop that turns a detection into an action.
 
-    A ``dead_judge`` finding knows *which* judge is dead and *how many*
-    rounds it stayed silent. Both live in ``detail``; neither reaches the
-    operator. Without them the line is an assertion the operator cannot
-    act on without going to the JSON — which is exactly the "last hop"
-    #129 describes.
+    Fifteen of the nineteen detectors write an explicit
+    ``detail["recommendation"]`` — a sentence saying what to change. It
+    reaches the per-round health JSON and stops there: the generic
+    terminal renderer reads only string attributes, so the dict holding
+    the remediation is skipped.
+
+    This is #129's "last hop" in its most literal form. The harness has
+    already done the work of deciding what the operator should do, and
+    then does not say it.
     """
     finding = HealthFinding(
-        code="dead_judge",
+        code="margin_below_noise_floor",
         severity="critical",
-        summary="1 declared judge produced no metric",
-        detail={"dead_judges": ["safety"], "rounds_observed": 12, "metrics_seen": 0},
+        summary="promote_margin 0.01 sits below the measured noise floor 0.04",
+        detail={
+            "promote_margin": 0.01,
+            "noise_floor_max_abs_delta": 0.04,
+            "recommendation": (
+                "raise promote_margin clear of the floor, or enable the evidence gate"
+            ),
+        },
     )
 
     summary, has_critical = _summarise_loop_health(_health(finding))
 
     assert has_critical is True
-    # The discriminating evidence: which judge, and over how many rounds.
-    assert "safety" in summary, f"summary names no judge: {summary!r}"
-    assert "12" in summary, f"summary carries no measurement: {summary!r}"
+    assert "raise promote_margin" in summary, (
+        "the detector wrote a remediation and the renderer dropped it; " f"summary={summary!r}"
+    )
 
 
 @pytest.mark.xfail(
     strict=True,
-    reason="#129 pattern A: a finding whose detail dict is empty is indistinguishable "
-    "from one whose evidence was dropped in rendering",
+    reason="#129 pattern A: _summarise_loop_health renders only findings[0]; every "
+    "other finding collapses to a bare '(+N more)' count",
 )
-def test_every_finding_renders_at_least_one_measured_quantity() -> None:
-    """Evidence-bearing rendering must be a property of the renderer, not of luck.
+def test_multiple_findings_are_not_collapsed_to_a_bare_count() -> None:
+    """A round with several problems must not report only the first.
 
-    Pinned as a conformance check over the renderer rather than over one
-    detector: whatever a detector puts in ``detail``, the rendered line
-    must reflect it. This is the generic form of the convention
-    ``PracticeCheck`` already holds itself to.
+    ``_summarise_loop_health`` renders ``findings[0]`` and appends
+    ``(+N more critical)``. An operator whose round tripped three
+    distinct detectors is told about one of them and given a number for
+    the rest — so the second and third findings are, at the terminal,
+    detections with no explanation at all.
     """
-    finding = HealthFinding(
-        code="degenerate_scoring",
-        severity="critical",
-        summary="scoring is degenerate",
-        detail={"distinct_scalars": 1, "generations_compared": 8},
+    findings = (
+        HealthFinding(
+            code="degenerate_scoring",
+            severity="critical",
+            summary="every generation scored identically over the last 5",
+            detail={"window": 5},
+        ),
+        HealthFinding(
+            code="dead_judge",
+            severity="critical",
+            summary="1 board-declared judge never fired: 'safety'",
+            detail={"dead_judges": ["safety"]},
+        ),
+        HealthFinding(
+            code="tree_never_imported",
+            severity="critical",
+            summary="mutable tree 'agent/' was never imported by any run",
+            detail={"tree": "agent/"},
+        ),
     )
 
-    summary, _ = _summarise_loop_health(_health(finding))
+    summary, _ = _summarise_loop_health(_health(*findings))
 
-    rendered = [str(v) for v in finding.detail.values() if str(v) in summary]
-    assert rendered, (
-        "no value from the finding's detail dict reached the operator-facing "
-        f"summary; detail={finding.detail!r} summary={summary!r}"
+    missing = [f.code for f in findings if f.summary not in summary]
+    assert not missing, (
+        f"{len(missing)} of {len(findings)} findings never reach the operator "
+        f"(only a count stands in for them): missing={missing} summary={summary!r}"
     )
 
 
