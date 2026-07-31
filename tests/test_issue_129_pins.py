@@ -65,8 +65,10 @@ few honest degradations is not evidence that a surface family is
 sound — each of these was written independently, and each invented its
 own behaviour for a regime nothing centrally records.
 
-These are ``xfail(strict=True)`` triage pins: they fail today, and the
-marker comes off with the fix.
+These landed as ``xfail(strict=True)`` triage pins. Every marker has now
+come off — each pin asserts the fixed behaviour directly, so a
+regression fails here rather than silently flipping an xfail to an
+xpass.
 """
 
 from __future__ import annotations
@@ -75,8 +77,6 @@ import dataclasses
 import json
 import sqlite3
 from pathlib import Path
-
-import pytest
 
 from zicato.analyzer.report_data import EpochReportData, GenerationView, _cumulate_scalar
 from zicato.analyzer.report_sections import _render_campaign_callout, render_score_sparkline
