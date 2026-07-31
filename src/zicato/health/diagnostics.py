@@ -945,7 +945,7 @@ def detect_preflight_verdict(
     """Re-surface a non-OK contract pre-flight verdict as a health finding.
 
     The contract pre-flight (:mod:`zicato.epoch.preflight`) measures the
-    epoch's A/A noise floor AND its achievable signal (champion vs a
+    epoch's A/A noise floor AND its degradation signal (champion vs a
     deliberately-degraded copy of itself) before rounds burn budget. Its
     verdict persists onto the epoch record; this detector folds it into
     every round's health report so the operator keeps seeing it for as
@@ -958,7 +958,7 @@ def detect_preflight_verdict(
     below.
 
     * verdict ``"refuse"`` → ``preflight_signal_below_floor``: the measured
-      achievable signal is at or below the measured noise floor, so duels
+      signal is at or below the measured noise floor, so duels
       under this contract are decided by noise. ``critical`` only under
       ``preflight_gate="refuse"``; ``warning`` under ``"warn"`` (the default)
       and ``"off"``.
@@ -969,7 +969,7 @@ def detect_preflight_verdict(
     * verdict ``"inert"`` → ``warning`` ``preflight_inert_probe`` (issue
       #106): every point the pre-flight degraded moved the scalar by
       exactly nothing while the champion's own draws did vary. The
-      achievable signal is UNMEASURED, not zero, so the finding must not
+      signal is UNMEASURED, not zero, so the finding must not
       read like the noise-limited one — the fix is to pin a representative
       point, and the protection simply is not in force meanwhile.
 
@@ -1063,7 +1063,7 @@ def detect_preflight_verdict(
                 "judges) or strengthen the board so a real change out-scores a "
                 "re-roll"
                 if empty_window
-                else "refusal recommended: the contract's achievable signal does "
+                else "refusal recommended: the contract's measured signal does "
                 "not clear its own noise floor — reduce evaluation noise (more "
                 "replicates, steadier judges) or strengthen the board before "
                 "running rounds"
@@ -1079,7 +1079,7 @@ def detect_preflight_verdict(
                 # the operator's explicit choice.
                 severity="critical" if hard_gate else "warning",
                 summary=(
-                    f"contract pre-flight: achievable signal {signal:.6g} is at/below "
+                    f"contract pre-flight: measured signal {signal:.6g} is at/below "
                     f"the measured A/A noise floor {floor:.6g} — duels under this "
                     "contract are decided by noise (refusal recommended)"
                 ),

@@ -370,13 +370,13 @@ class RuntimeConfig:
         Ceiling (seconds) on the exponential infra backoff. Must be
         ``>= 0``.
     preflight_gate:
-        Achievable-signal pre-flight gate mode (issue #84). One of
+        Contract pre-flight gate mode (issue #84). One of
         :data:`PREFLIGHT_GATE_MODES` — ``"off"`` | ``"warn"`` | ``"refuse"``.
         At evolve start (round 0, once per epoch, idempotent, best-effort)
-        the loop measures the contract's A/A noise floor AND its achievable
+        the loop measures the contract's A/A noise floor AND its degradation
         signal (champion vs a deliberately-degraded copy of itself; see
         :mod:`zicato.epoch.preflight`). ``"warn"`` (the DEFAULT) LOUDLY warns
-        when the achievable signal does not clear the noise floor (or the
+        when the measured signal does not clear the noise floor (or the
         contract is saturated) and lets the run proceed — matching the
         recommend-only philosophy; ``"refuse"`` additionally HARD-STOPS the
         run (``PreflightRefusedError``) before rounds burn budget on a
@@ -397,7 +397,7 @@ class RuntimeConfig:
         round 0.
     preflight_probe_points:
         CEILING on how many mutation points the pre-flight may degrade to
-        measure achievable signal (issue #106). Defaults to
+        measure the degradation signal (issue #106). Defaults to
         :data:`PREFLIGHT_PROBE_POINTS_DEFAULT`; must be ``>= 1`` (``1``
         reproduces the single-probe behaviour that made one inert point able
         to veto a whole contract) and ``<=``
