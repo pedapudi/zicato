@@ -1344,18 +1344,29 @@ def _decided_generations(conn: sqlite3.Connection, epoch_id: str) -> set[str]:
     """Generation ids a tournament has actually decided, for this epoch.
 
     A generation earns a row in ``experiments`` before its tournament
-    runs, so presence alone is not settlement — the decision column is,
-    and it is empty until the round resolves.
+    runs, so presence alone is not settlement — the non-empty decision
+    column is, and it stays empty until the round resolves. Both tables
+    that record a decision are read, and the union taken: the ingest
+    writes them from the same experiment.json, but a ``tournaments`` row
+    is written only at settle time, so either one saying "decided" is
+    proof, and neither is written for a challenger still racing.
     """
-    return {
-        str(_row_get(r, "generation_id", ""))
-        for r in _query(
-            conn,
-            "SELECT generation_id, tournament_decision FROM experiments WHERE epoch_id = ?",
-            (epoch_id,),
-        )
-        if str(_row_get(r, "tournament_decision", "") or "").strip()
-    }
+    decided: set[str] = set()
+    for sql, id_col in (
+        (
+            "SELECT generation_id AS gid, tournament_decision AS decision "
+            "FROM experiments WHERE epoch_id = ?",
+            "gid",
+        ),
+        (
+            "SELECT child_generation_id AS gid, decision FROM tournaments WHERE epoch_id = ?",
+            "gid",
+        ),
+    ):
+        for row in _query(conn, sql, (epoch_id,)):
+            if str(_row_get(row, "decision", "") or "").strip():
+                decided.add(str(_row_get(row, id_col, "")))
+    return decided
 
 
 def _plateau_measurable(points: list[TrajectoryPoint]) -> bool:
