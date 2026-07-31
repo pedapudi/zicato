@@ -37,6 +37,9 @@ gate's Rule 0 :attr:`~zicato.core.types.ScoringWeights.diff_complexity_ceiling`
 — so any weight or ceiling calibrated against the old file-charging numbers is
 now roughly an order of magnitude too loose on a whole-file mutation surface
 and should be re-tuned against a measured round.
+
+The differencing is exact up to :data:`EXACT_DIFF_MAX_LINES` and bounded above
+it; see that constant for the measured reason a size cap exists at all.
 """
 
 from __future__ import annotations
@@ -85,6 +88,29 @@ def _lines(text: str) -> list[str]:
     return text.split("\n") if text else []
 
 
+#: Line count above which :func:`_line_delta` re-enables ``difflib``'s
+#: ``autojunk`` heuristic. Disabling ``autojunk`` is what makes the measure
+#: exact, but it also removes the only bound on ``SequenceMatcher``'s running
+#: time: with a line that repeats often (a blank line — every source file has
+#: hundreds) and two sides that genuinely differ, the match search degrades
+#: badly. Measured on this machine for a whole-file rewrite, ``autojunk=False``
+#: against ``autojunk=True`` (sub-millisecond at every size):
+#:
+#: ===========  ==============  ==============  ==============
+#: blank lines   1000 lines      2000 lines      4000 lines
+#: ===========  ==============  ==============  ==============
+#: 10%           0.13 s          0.60 s          —
+#: 25%           1.4 s           5.8 s           —
+#: 50%           3.7 s           29 s            157 s
+#: ===========  ==============  ==============  ==============
+#:
+#: This runs once per round inside scoring, with no timeout above it, so an
+#: unlucky whole-file mutation point could stall a round for minutes. The cap
+#: keeps the exact path where it is cheap (worst measured case at 1000 lines:
+#: 1.4 s) and bounded above it.
+EXACT_DIFF_MAX_LINES: int = 1000
+
+
 def _line_delta(parent: str, child: str) -> tuple[int, int]:
     """Return ``(added, removed)`` for one replacement against its parent text.
 
@@ -94,11 +120,22 @@ def _line_delta(parent: str, child: str) -> tuple[int, int]:
     is the honest MDL reading — the edit must describe both the deletion and
     the insertion). Identical texts yield ``(0, 0)``.
 
-    ``autojunk`` is disabled: its heuristic drops lines appearing in more than
-    1% of a long sequence, which on a large generated file silently changes
-    the measured size of an edit that touches those lines.
+    ``autojunk`` is disabled up to :data:`EXACT_DIFF_MAX_LINES`: its heuristic
+    drops lines appearing in more than 1% of a long sequence, which on a large
+    generated file silently changes the measured size of an edit that touches
+    those lines (measured: a 1000-line whole-file rewrite scores 800 exactly
+    and 998 with the heuristic on). Beyond the cap the heuristic comes back —
+    see the constant for why, and read the overcount honestly: it is exact for
+    a TARGETED edit at any file size (a one-line change in a 3000-line file
+    measures ``(1, 1)`` either way, because the popular lines fall in the
+    matched run), and it overstates only a near-total rewrite, where the
+    parsimony toll is large under any accounting. Deterministic either way:
+    the cap is a size threshold, not a timeout.
     """
-    matcher = difflib.SequenceMatcher(a=_lines(parent), b=_lines(child), autojunk=False)
+    parent_lines = _lines(parent)
+    child_lines = _lines(child)
+    autojunk = max(len(parent_lines), len(child_lines)) > EXACT_DIFF_MAX_LINES
+    matcher = difflib.SequenceMatcher(a=parent_lines, b=child_lines, autojunk=autojunk)
     added = 0
     removed = 0
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
@@ -196,6 +233,7 @@ def diff_complexity(diff_size_dict: Mapping[str, int] | None) -> float:
 
 
 __all__ = [
+    "EXACT_DIFF_MAX_LINES",
     "diff_char_size",
     "diff_complexity",
     "diff_size",
