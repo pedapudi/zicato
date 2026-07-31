@@ -513,31 +513,47 @@
         "closed_at": "",
         "generations": [
           {
+            "child_scalar": 0.4,
             "created_at": "<TS>",
+            "delta_scalar": -1.6,
             "id": "v1",
             "parent_id": "v0",
+            "parent_scalar": 2.0,
             "promoted": true,
+            "rejection_reason": "",
             "round_index": 0
           },
           {
+            "child_scalar": 0.8,
             "created_at": "<TS>",
+            "delta_scalar": -1.2,
             "id": "v2",
             "parent_id": "v0",
+            "parent_scalar": 2.0,
             "promoted": false,
+            "rejection_reason": "",
             "round_index": 0
           },
           {
+            "child_scalar": 1.2,
             "created_at": "<TS>",
+            "delta_scalar": -0.8,
             "id": "v3",
             "parent_id": "v0",
+            "parent_scalar": 2.0,
             "promoted": false,
+            "rejection_reason": "",
             "round_index": 0
           },
           {
+            "child_scalar": 1.6,
             "created_at": "<TS>",
+            "delta_scalar": -0.3999999999999999,
             "id": "v4",
             "parent_id": "v0",
+            "parent_scalar": 2.0,
             "promoted": false,
+            "rejection_reason": "",
             "round_index": 0
           }
         ],

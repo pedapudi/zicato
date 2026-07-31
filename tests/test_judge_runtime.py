@@ -7,7 +7,9 @@ Covers:
   kind, the spec's severity, a ``"<criterion>: <reason>"`` detail, and
   ``name == spec.name``);
 * an inline judge stays silent on a non-violating trace / empty trace /
-  a raising auxiliary callable;
+  a raising auxiliary callable — and, for the raising one, that the
+  swallowed failure is still counted in the per-judge error register and
+  marked on the verdict (issue #121);
 * a **python** custom judge loads from a dotted path and runs, with its
   ``name`` re-pinned to the spec and its drift fields normalised to
   strings;
@@ -37,7 +39,9 @@ from goldfive.judges import JudgeContext, JudgeVerdict
 from zicato.judge_runtime import (
     assemble_judges,
     builtin_judge_names_to_suppress,
+    clear_judge_errors,
     default_judges_minus,
+    judge_error_snapshot,
     judge_spec_to_goldfive,
 )
 
@@ -114,6 +118,11 @@ class SampleJudgeClassTarget:
         return JudgeVerdict()
 
 
+async def sample_judge_raising_target(ctx: JudgeContext) -> JudgeVerdict:
+    """A python-mode target whose operator code is broken (issue #121)."""
+    raise RuntimeError("operator judge blew up")
+
+
 async def sample_judge_callable_target(ctx: JudgeContext) -> JudgeVerdict:
     """A python-mode target that is a bare ``evaluate`` callable."""
     if "bad" in (ctx.reasoning_text or "").lower():
@@ -126,6 +135,7 @@ async def sample_judge_callable_target(ctx: JudgeContext) -> JudgeVerdict:
     return JudgeVerdict()
 
 
+_PY_RAISING_PATH = "tests.test_judge_runtime:sample_judge_raising_target"
 _PY_CLASS_PATH = "tests.test_judge_runtime:SampleJudgeClassTarget"
 _PY_CALLABLE_PATH = "tests.test_judge_runtime:sample_judge_callable_target"
 
@@ -235,6 +245,106 @@ async def test_inline_judge_fails_safe_on_aux_error() -> None:
     judge = judge_spec_to_goldfive(spec, _aux_raising())
     verdict = await judge.evaluate(JudgeContext(reasoning_text="some reasoning"))
     assert verdict.drift_emitted is False
+
+
+async def test_inline_judge_error_is_counted_in_the_register() -> None:
+    """The swallowed exception still leaves a durable count (issue #121).
+
+    Both invocations and errors are counted, so the finding can say "raised
+    on N of N" rather than only "raised".
+    """
+    clear_judge_errors()
+    spec = _SpecStub(
+        name="counted", mode="inline", body="stay on task", severity=goldfive.DriftSeverity.WARNING
+    )
+    judge = judge_spec_to_goldfive(spec, _aux_raising())
+    for _ in range(3):
+        await judge.evaluate(JudgeContext(reasoning_text="some reasoning"))
+    # An observation point with nothing to judge never reaches the callable,
+    # so it must not inflate the invocation count.
+    await judge.evaluate(JudgeContext(reasoning_text="   "))
+
+    snapshot = {je.judge_name: je for je in judge_error_snapshot()}
+    assert snapshot["counted"].invocations == 3
+    assert snapshot["counted"].errors == 3
+    assert snapshot["counted"].last_error_type == "RuntimeError"
+    clear_judge_errors()
+
+
+async def test_healthy_inline_judge_records_no_error_entry() -> None:
+    """A judge that answers — fire or silence — never enters the register."""
+    clear_judge_errors()
+    spec = _SpecStub(
+        name="healthy", mode="inline", body="stay on task", severity=goldfive.DriftSeverity.WARNING
+    )
+    judge = judge_spec_to_goldfive(spec, _aux_returning("OK nothing wrong"))
+    verdict = await judge.evaluate(JudgeContext(reasoning_text="some reasoning"))
+    assert verdict.drift_emitted is False
+    assert getattr(verdict, "errored", False) is False
+    assert judge_error_snapshot() == ()
+    clear_judge_errors()
+
+
+async def test_python_judge_error_is_counted_and_marked() -> None:
+    """Operator code that raises is caught HERE, not only by goldfive.
+
+    goldfive's steerer catches it too, but its catch leaves no zicato-side
+    trace: the run then carries a judge that decided nothing and looks
+    exactly like one that decided "no violation".
+    """
+    clear_judge_errors()
+    spec = _SpecStub(
+        name="py_broken",
+        mode="python",
+        body=_PY_RAISING_PATH,
+        severity=goldfive.DriftSeverity.WARNING,
+    )
+    judge = judge_spec_to_goldfive(spec, _aux_returning(""))
+    verdict = await judge.evaluate(JudgeContext(reasoning_text="some reasoning"))
+
+    # Behaviourally neutral on the wire: no flavour is populated, so
+    # goldfive still derives no verdict_kind and emits no JudgementEmitted.
+    assert verdict.drift_emitted is False
+    assert verdict.rubric_score is None
+    assert verdict.boolean_result is None
+    assert verdict.numeric_value is None
+    assert isinstance(verdict, JudgeVerdict)
+    # ...but the failure is now recoverable.
+    assert getattr(verdict, "errored", False) is True
+    snapshot = {je.judge_name: je for je in judge_error_snapshot()}
+    assert snapshot["py_broken"].errors == 1
+    assert snapshot["py_broken"].last_error_type == "RuntimeError"
+    clear_judge_errors()
+
+
+async def test_errored_verdict_emits_no_judgement_through_goldfive() -> None:
+    """The steerer's own emission path must not see a new event.
+
+    The errored verdict is a JudgeVerdict SUBCLASS, so this pins the thing
+    that subclass could plausibly break: goldfive picks ``verdict_kind``
+    from the populated flavour, finds none, and stays silent.
+    """
+    from goldfive.steerer import DefaultSteerer
+
+    clear_judge_errors()
+    spec = _SpecStub(
+        name="wire", mode="inline", body="stay on task", severity=goldfive.DriftSeverity.WARNING
+    )
+    judge = judge_spec_to_goldfive(spec, _aux_raising())
+    emitted: list[Any] = []
+
+    class _Sink:
+        async def emit(self, event: Any) -> None:
+            emitted.append(event)
+
+    steerer = DefaultSteerer()
+    steerer._sinks = [_Sink()]  # type: ignore[attr-defined]
+    verdicts = await steerer.evaluate_judges(
+        JudgeContext(reasoning_text="some reasoning"), judges=[judge]
+    )
+    assert getattr(verdicts[0], "errored", False) is True
+    assert emitted == []
+    clear_judge_errors()
 
 
 # ---------------------------------------------------------------------------

@@ -751,11 +751,21 @@ def judges_cmd(
 
     click.echo(f"\nTest-retest over one frozen transcript (k={retest_k} per judge):")
     for rel in reliabilities:
-        marks = "".join("V" if v else "." for v in rel.verdicts)
+        marks = "".join("V" if v else "." for v in rel.verdicts) + "!" * rel.errors
         click.echo(
             f"  {rel.judge_name}\tfired {rel.fired}/{rel.k} [{marks}]\t"
             f"disagreement={rel.disagreement_rate:.0%}"
         )
+        # A judge that RAISED measured nothing on those calls; without this the
+        # probe reports it as a perfectly self-consistent judge that never
+        # fired, and the operator goes looking at the board (issue #121).
+        if rel.errors:
+            click.echo(
+                f"    WARNING: the judge's callable RAISED on {rel.errors}/{rel.k} "
+                "calls — check the judge/auxiliary endpoint and model config; "
+                "this probe measured only the calls that answered.",
+                err=True,
+            )
 
     from zicato.health.diagnostics import detect_noisy_judge  # noqa: PLC0415
 

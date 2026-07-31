@@ -1161,9 +1161,25 @@ async def evolve_once(
                 round_log=round_log,
             )
 
-    # Cache gen_score.json for future fast-mode runs.
-    _cache_gen_score(workspace_root, resolved_epoch_id, parent_id, tournament_result.parent_agg)
-    _cache_gen_score(workspace_root, resolved_epoch_id, next_id, tournament_result.child_agg)
+    # Cache gen_score.json for future fast-mode runs. The round is threaded
+    # through so the archived measurement beside it (gen_score.history.jsonl)
+    # names the round it was taken in — the champion defends across many
+    # rounds under one generation id, so the round is the only thing that
+    # tells two of its measurements apart (issue #122).
+    _cache_gen_score(
+        workspace_root,
+        resolved_epoch_id,
+        parent_id,
+        tournament_result.parent_agg,
+        round_index=round_index,
+    )
+    _cache_gen_score(
+        workspace_root,
+        resolved_epoch_id,
+        next_id,
+        tournament_result.child_agg,
+        round_index=round_index,
+    )
 
     # WS8: the duel's board units (aggregate — see _emit_tournament_units),
     # the gate verdict, and — when the runner consulted a holdout — the
@@ -1371,6 +1387,10 @@ async def evolve_once(
         outcome=outcome_record,
         lineage_generation=finalised_gen,
         lineage_parent_id=parent_id,
+        # The duel's two numbers, recorded on the lineage node beside the
+        # reason the gate gave (issue #124).
+        lineage_parent_scalar=parent_scalar,
+        lineage_child_scalar=child_scalar,
         advance_current_generation=bookkeeping_decision == "promoted",
     )
     # WS8: the round's terminal decision + provenance (overrides explicit).
@@ -2064,8 +2084,23 @@ async def _evolve_multi_challenger(
         # replicate duels (``cache_scores=False``): one reserved-slot draw
         # must not overwrite the round-scored aggregates.
         if cache_scores:
-            _cache_gen_score(workspace_root, epoch_id, m.left.generation_id, result.parent_agg)
-            _cache_gen_score(workspace_root, epoch_id, m.right.generation_id, result.child_agg)
+            # Every matchup appends its own line to the archive beside the
+            # canonical file, so the within-round measurements the last
+            # matchup's write shadows are still on disk (issue #122).
+            _cache_gen_score(
+                workspace_root,
+                epoch_id,
+                m.left.generation_id,
+                result.parent_agg,
+                round_index=round_index,
+            )
+            _cache_gen_score(
+                workspace_root,
+                epoch_id,
+                m.right.generation_id,
+                result.child_agg,
+                round_index=round_index,
+            )
         # WS8: this matchup's board units + gate verdict onto the round log.
         _emit_tournament_units(round_log, result)
         _emit_harness_loaded(round_log, workspace_root, epoch_id, result)
@@ -2619,7 +2654,29 @@ async def _evolve_multi_challenger(
             promoted=is_crowned,
             round_index=challenger.generation.round_index,
         )
-        append_to_lineage(workspace_root, epoch_id, gen_record, parent_id=parent_id)
+        # The settle-time facts, per challenger (issue #124): the reason
+        # this one was cut — already computed above, including the
+        # holdout-demotion and operator-override phrasings, and read back
+        # off the outcome so the DAG and experiment.json cannot disagree —
+        # and its own standings scalar against the champion's. ``None``,
+        # not 0.0, when a challenger has no aggregate: a zero scalar is a
+        # legal measurement.
+        settled = finalised_by_id.get(gid)
+        gen_agg = _first_aggregate_for(gid, decision)
+        lineage_parent_scalar = float(champion_agg["scalar"]) if champion_agg else None
+        append_to_lineage(
+            workspace_root,
+            epoch_id,
+            gen_record,
+            parent_id=parent_id,
+            rejection_reason=(
+                settled.outcome.rejection_reason
+                if settled is not None and settled.outcome is not None
+                else ""
+            ),
+            parent_scalar=lineage_parent_scalar,
+            child_scalar=float(gen_agg["scalar"]) if gen_agg else None,
+        )
     if promoted_id is not None:
         _set_current_generation(workspace_root, epoch_id, promoted_id)
         # The marker MUST now name the crowned generation — a write that did
@@ -4066,6 +4123,11 @@ def _assess_and_persist_loop_health(
     # round's health JSON (issue #84).
     _warn_dead_judges(epoch_id, round_n, health)
 
+    # Same discipline for the judge that could not answer at all: its zero
+    # drift is an error artifact, and it makes the round's scalar better than
+    # the truth.
+    _warn_erroring_judges(epoch_id, round_n, health)
+
     # Same discipline for the mutated-tree alarm: a generation whose units never
     # imported a mutable tree scored code the loop never changed, which is
     # indistinguishable — from the terminal — from an honest null result.
@@ -4220,6 +4282,44 @@ def _warn_dead_judges(epoch_id: str, round_n: int, health: Any) -> None:
             round_n,
             summary or "a declared judge never fired",
             f" (dead: {named})" if named else "",
+        )
+        return
+
+
+def _warn_erroring_judges(epoch_id: str, round_n: int, health: Any) -> None:
+    """Emit a prominent stderr WARNING for a board-declared judge that RAISED.
+
+    The sibling of :func:`_warn_dead_judges`, for the failure it used to be
+    confused with (issue #121). A judge whose callable raised produced no
+    verdict at all, but every layer below swallows the exception — zicato's
+    judge boundary and goldfive's steerer both catch by hard contract — and
+    goldfive emits no event for the empty verdict that results. So the round
+    scored with that judge's signal silently missing, and its zero drift
+    made the generation look BETTER than the evidence supports. That is a
+    result the operator must see on the terminal in the round it happens,
+    not in a per-round JSON read afterwards.
+
+    Tolerant of the health sibling's exact shape: it scans ``.findings`` for
+    the stable ``code == "judge_erroring"`` and reads the finding's
+    ``summary`` / ``detail`` defensively, so a schema drift never raises here.
+    """
+    for finding in getattr(health, "findings", ()) or ():
+        if str(getattr(finding, "code", "") or "") != "judge_erroring":
+            continue
+        detail = getattr(finding, "detail", None)
+        recommendation = detail.get("recommendation") if isinstance(detail, dict) else None
+        summary = str(getattr(finding, "summary", "") or "")
+        log.warning(
+            "DECLARED JUDGE RAISED — epoch %s round %d: %s %s",
+            epoch_id,
+            round_n,
+            summary or "a declared judge failed on every invocation",
+            str(recommendation)
+            or (
+                "a judge that raised did not decide anything: its silence lowered "
+                "this round's drift loss without evidence. Check the judge / "
+                "auxiliary endpoint and model config."
+            ),
         )
         return
 

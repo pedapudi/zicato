@@ -20,6 +20,13 @@ This package is the runtime bridge between the two:
   ``disable_drift`` suppressed) plus the entry's custom
   :class:`JudgeSpec` judges. The ADK adapter passes the result straight
   into ``goldfive.run(..., judges=...)``.
+* :mod:`zicato.judge_runtime.error_register` is the process-wide count of
+  judge calls that RAISED. Both judge kinds swallow their callable's
+  exceptions by hard contract (a judge must not crash a run), which made a
+  broken judge endpoint byte-identical, in every persisted artifact, to a
+  judge that ran and found nothing; the register is the counter that
+  survives the catch and rides out to
+  :attr:`~zicato.core.loss.LossProfile.judge_errors` and loop health.
 * :mod:`zicato.judge_runtime.io_capture` is the verbatim judge-I/O
   capture seam for board reflection: an optional
   :class:`~zicato.judge_runtime.io_capture.JudgeIOSink` threaded through
@@ -43,7 +50,14 @@ from zicato.judge_runtime.disable import (
     builtin_judge_names_to_suppress,
     default_judges_minus,
 )
+from zicato.judge_runtime.error_register import (
+    clear_judge_errors,
+    judge_error_snapshot,
+    record_judge_error,
+    record_judge_invocation,
+)
 from zicato.judge_runtime.io_capture import (
+    JUDGE_IO_ERROR_KIND,
     JudgeIOFileSink,
     JudgeIOSink,
     judge_io_path_for_loss,
@@ -56,16 +70,21 @@ from zicato.judge_runtime.reliability import (
 )
 
 __all__ = [
+    "JUDGE_IO_ERROR_KIND",
     "JudgeIOFileSink",
     "JudgeIOSink",
     "JudgeReliability",
     "JudgeSpecLike",
     "assemble_judges",
     "builtin_judge_names_to_suppress",
+    "clear_judge_errors",
     "default_judges_minus",
+    "judge_error_snapshot",
     "judge_io_path_for_loss",
     "judge_spec_to_goldfive",
     "read_judge_io",
+    "record_judge_error",
+    "record_judge_invocation",
     "test_retest",
     "test_retest_board",
 ]

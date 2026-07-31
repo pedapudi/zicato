@@ -257,7 +257,18 @@ def _judge_decisions(
     one-line claim, and the ``reasoning_sha256`` span ref the adjudicator can
     verify. Fallback (no sidecar): a lower-fidelity ``fired = raw_loss > 0``
     reconstruction from ``per_judge_loss`` (no span, no rationale).
+
+    ``errored`` marks the record of a call that RAISED rather than returning
+    a verdict (``kind`` is
+    :data:`~zicato.judge_runtime.io_capture.JUDGE_IO_ERROR_KIND`; ``claim``
+    then carries the exception text). Without it an adjudicator sees the same
+    ``fired: False`` a healthy judge produces and re-reads a broken endpoint
+    as a criterion that is too narrow — the exact misdiagnosis reflection
+    exists to prevent. The fallback path cannot know: ``per_judge_loss``
+    records only judges that fired, so its decisions are ``errored: False``.
     """
+    from zicato.judge_runtime.io_capture import JUDGE_IO_ERROR_KIND  # noqa: PLC0415
+
     if judge_io_records:
         decisions: list[dict[str, Any]] = []
         for rec in judge_io_records:
@@ -267,6 +278,7 @@ def _judge_decisions(
                 {
                     "judge_name": str(rec.get("judge_name", "")),
                     "fired": bool(verdict.get("drift_emitted", False)),
+                    "errored": str(verdict.get("kind", "")) == JUDGE_IO_ERROR_KIND,
                     "severity": str(verdict.get("severity", "")),
                     "claim": str(verdict.get("detail", "")),
                     "transcript_span": inp.get("reasoning_sha256"),
@@ -277,12 +289,33 @@ def _judge_decisions(
         {
             "judge_name": getattr(jl, "judge_name", ""),
             "fired": float(getattr(jl, "raw_loss", 0.0)) > 0.0,
+            "errored": False,
             "severity": None,
             "claim": None,
             "transcript_span": None,
         }
         for jl in getattr(loss, "per_judge_loss", ()) or ()
     )
+
+
+def judge_answered(decision: dict[str, Any]) -> bool:
+    """Whether a judge decision is a VERDICT rather than a failed call.
+
+    Every aggregation over ``ObservationRun.judge_decisions`` must filter
+    on this first. A decision with ``errored`` set is a call that RAISED
+    (issue #121): the judge produced no verdict at all, and its
+    ``fired: False`` is an error artifact, not the judgement "no
+    violation". Folding it in as a silent verdict is the misdiagnosis
+    reflection exists to prevent — against a ``exhibits`` label it scores
+    as a FALSE NEGATIVE, so a broken judge endpoint reads as a judge
+    whose criterion is too narrow, and the recommendation that follows
+    ("sharpen the criterion") sends the operator at the board when the
+    fix is the judge's model config.
+
+    Records written before the flag existed carry no ``errored`` key and
+    read as answered, which is what they were.
+    """
+    return not bool(decision.get("errored", False))
 
 
 def _loss_aborted(loss: Any) -> bool:
@@ -690,6 +723,7 @@ __all__ = [
     "ObservationRun",
     "ReflectionDrawInconclusive",
     "ingest_lineage",
+    "judge_answered",
     "read_corpus",
     "run_corpus",
     "write_corpus",

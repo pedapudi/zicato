@@ -117,7 +117,10 @@ Each item: what to check, why, and the pass/fail bar.
       time across the baseline run. A 0-fire judge is mis-wired or its criterion
       is unreachable — dead weight that gives false coverage, never "passing".
       **Automated:** `zicato health` flags this as a `[WARNING] dead_judge`
-      finding (see the recipe below).
+      finding (see the recipe below). Check for a `[WARNING] judge_erroring`
+      finding FIRST: it means the judge's callable raised rather than
+      answering, so the silence is a broken endpoint / model config and the
+      board is not the thing to audit.
 - [ ] **Scalar hand-check.** For 2–3 runs, confirm `gen_score.json`'s
       `scalar_components` sum to `scalar`, and that sorting by `scalar` agrees
       with the metric you actually care about. No single component (e.g. `drift`)

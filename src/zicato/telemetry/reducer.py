@@ -66,6 +66,7 @@ from zicato.core import (
     BoardEntry,
     DriftCount,
     ExpectationResult,
+    JudgeError,
     JudgeLoss,
     LossProfile,
     MetricCount,
@@ -1293,19 +1294,32 @@ def write_loss_profile(profile: LossProfile, target_path: Path) -> None:
 def read_loss_profile(path: Path) -> LossProfile:
     """Read a :class:`LossProfile` previously written by :func:`write_loss_profile`.
 
-    Inverse of :func:`write_loss_profile`. Re-tuples ``drift_counts``
-    (which JSON renders as a list) and re-constructs the nested
-    :class:`DriftCount` and :class:`ExpectationResult` dataclasses.
+    Inverse of :func:`write_loss_profile`; the decode itself lives in
+    :func:`loss_profile_from_dict`, which the archived copies of a
+    displaced profile (``loss.archive.jsonl``, issue #122) share.
+    """
+    with open(path, encoding="utf-8") as f:
+        d = json.load(f)
+    return loss_profile_from_dict(d)
+
+
+def loss_profile_from_dict(d: dict[str, Any]) -> LossProfile:
+    """Rebuild a :class:`LossProfile` from its persisted JSON object.
+
+    Re-tuples ``drift_counts`` (which JSON renders as a list) and
+    re-constructs the nested :class:`DriftCount` and
+    :class:`ExpectationResult` dataclasses.
 
     Back-compat: profiles written before the generalised metric surface
     omit ``metric_counts`` / ``tokens_spent`` / ``output_chars`` /
     ``schema_failures``. The reader treats them as the dataclass
     defaults (empty tuple / 0) so old JSON loads cleanly. New consumers
     that want the merged view should call
-    :meth:`LossProfile.unified_metrics`.
+    :meth:`LossProfile.unified_metrics`. Same for ``judge_errors``: a
+    profile written before per-judge error provenance existed — and every
+    profile of a run whose judges all returned — carries no such key and
+    loads as the empty tuple.
     """
-    with open(path, encoding="utf-8") as f:
-        d = json.load(f)
     drift_counts = tuple(
         DriftCount(
             kind=c["kind"],
@@ -1331,6 +1345,16 @@ def read_loss_profile(path: Path) -> LossProfile:
             weighted_loss=float(j.get("weighted_loss", 0.0) or 0.0),
         )
         for j in d.get("per_judge_loss", ())
+        if isinstance(j, dict)
+    )
+    judge_errors = tuple(
+        JudgeError(
+            judge_name=str(j.get("judge_name", "")),
+            invocations=int(j.get("invocations", 0) or 0),
+            errors=int(j.get("errors", 0) or 0),
+            last_error_type=str(j.get("last_error_type", "") or ""),
+        )
+        for j in d.get("judge_errors", ())
         if isinstance(j, dict)
     )
     exp = d.get("expectation_result")
@@ -1382,6 +1406,7 @@ def read_loss_profile(path: Path) -> LossProfile:
         adk_session_id=str(d.get("adk_session_id", "") or ""),
         match_id=str(d.get("match_id", "") or ""),
         per_judge_loss=per_judge_loss,
+        judge_errors=judge_errors,
         cached=bool(d.get("cached", False)),
         source_epoch=str(d.get("source_epoch", "") or ""),
         source_run=str(d.get("source_run", "") or ""),
@@ -1401,6 +1426,7 @@ __all__ = [
     "not_completed_penalty",
     "split_judge_attributed_kind",
     "read_loss_profile",
+    "loss_profile_from_dict",
     "write_loss_profile",
     "dialect_producer",
 ]

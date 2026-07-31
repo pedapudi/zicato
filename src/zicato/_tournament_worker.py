@@ -72,6 +72,7 @@ from zicato.core import (
     validate_board_entry,
 )
 from zicato.import_path import import_dotted_path
+from zicato.judge_runtime.error_register import judge_error_snapshot
 from zicato.util import best_effort
 
 log = logging.getLogger("zicato._tournament_worker")
@@ -453,9 +454,15 @@ def _build_sinks(
     except ModuleNotFoundError:
         return [], None
 
+    from zicato.telemetry.sink import archive_prior_events  # noqa: PLC0415
     from zicato.telemetry.terminal_event import SequenceTrackingSink  # noqa: PLC0415
 
     events_path.parent.mkdir(parents=True, exist_ok=True)
+    # A re-measured unit (the champion, re-run every round under
+    # ``--mode full``) would otherwise have its prior raw telemetry
+    # truncated by this ``mode="write"`` sink; retain one predecessor as
+    # ``events.prev.jsonl`` first (issue #122).
+    archive_prior_events(events_path)
     tracker = SequenceTrackingSink(JSONLPersistenceSink(path=events_path, mode="write"))
     sinks: list[Any] = [tracker]
 
@@ -1005,6 +1012,31 @@ async def _run(args: dict[str, Any]) -> None:
         from dataclasses import replace as _replace  # noqa: PLC0415
 
         loss = _replace(loss, abort_cause=BUDGET_ABORT_CAUSE)
+    # Stamp per-judge CALL-FAILURE provenance (issue #121). Both judge kinds
+    # swallow their callable's exceptions by hard contract, and goldfive emits
+    # no event for the empty verdict that produces — so without this stamp a
+    # judge whose endpoint 404s on every invocation is byte-identical, in
+    # loss.json AND events.jsonl, to a judge that ran and found nothing, and
+    # loop health reports the broken one as dead weight. This worker process
+    # evaluated exactly this one board unit, so the process-wide register is
+    # this run's count. Empty tuple (the healthy case, every judge returned)
+    # leaves the written bytes unchanged.
+    judge_errors = judge_error_snapshot()
+    if judge_errors:
+        from dataclasses import replace as _replace  # noqa: PLC0415
+
+        loss = _replace(loss, judge_errors=judge_errors)
+    # Retain the measurement this write is about to truncate (issue #122),
+    # the loss-side twin of the events archive in ``_build_sinks``. THIS is
+    # the seam: the champion under ``--mode full`` is re-run every round and
+    # each round's worker overwrites the slot, so by the time the parent's
+    # ``_persist_unit_loss`` re-persists the same profile the predecessor is
+    # already gone. Best-effort — a failed archive never costs the run its
+    # loss.json.
+    from zicato.tournament.unit_cache import archive_outgoing_unit_loss  # noqa: PLC0415
+
+    with best_effort("unit_loss_archive"):
+        archive_outgoing_unit_loss(loss_path)
     reducer_mod.write_loss_profile(loss, loss_path)
 
     # Persist the run's user-facing RunResult as result.json beside

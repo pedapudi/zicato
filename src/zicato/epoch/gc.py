@@ -31,7 +31,13 @@ What pruning NEVER touches
 --------------------------
 ``lineage.json``, the epoch journal, ``experiment.json`` /
 ``gen_score.json`` records, and run telemetry are never modified — GC
-removes source TREES only. The dashboard's tree/diff views degrade to
+removes source TREES only. That covers the measurement archives beside
+them (``gen_score.history.jsonl``, ``loss.archive.jsonl``,
+``events.prev.jsonl``; issue #122) with no special case: pruning
+deletes ONE directory per generation — its ``snapshot/`` — and never
+enumerates or removes files under ``generations/{id}/`` individually,
+so records-not-snapshots is a structural property of the prune, not a
+filename list that has to be kept in sync. The dashboard's tree/diff views degrade to
 an explicit "no source tree" response for a pruned generation (they
 already tolerate a missing tree), and the patch/mutation views keep
 rendering from the surviving records (the git backend's

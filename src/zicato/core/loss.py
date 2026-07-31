@@ -166,6 +166,61 @@ class JudgeLoss:
 
 
 @dataclass(frozen=True, slots=True)
+class JudgeError:
+    """Per-judge CALL-FAILURE provenance for one run.
+
+    :class:`JudgeLoss` covers judges that FIRED. This covers the third
+    outcome a judge can have, which until now was persisted as the second
+    one: the judge's callable RAISED. An inline judge whose auxiliary
+    endpoint 404s (a misconfigured judge model, a revoked key, a
+    transient outage) returns an empty verdict by hard contract — a judge
+    must never crash a run — and goldfive emits no ``JudgementEmitted``
+    for an empty verdict, so a judge that raised on every invocation is
+    byte-identical, in ``loss.json`` and in ``events.jsonl``, to one that
+    ran and found nothing. The only trace was a WARNING in a log that
+    rotates.
+
+    This tuple is that trace made durable: zicato's judge boundary
+    (:mod:`zicato.judge_runtime.error_register`) counts invocations and
+    errors per judge name for the worker process, and the worker stamps
+    the snapshot onto the profile it writes. Loop health reads it to tell
+    "raised on 34 of 34 invocations" — a broken endpoint, actionable —
+    apart from "never fired", which routes the operator into a board
+    audit of a judge that was never given a chance to answer.
+
+    Fields
+    ------
+    judge_name:
+        Stable per-judge identity — the ``name`` of the
+        :class:`~zicato.core.types.JudgeSpec` the board declared, the
+        same key :attr:`JudgeLoss.judge_name` and
+        ``ScoringWeights.per_judge_weights`` use.
+    invocations:
+        How many times this run called the judge's callable (inline: the
+        calls that reached the auxiliary LLM; python: the calls that
+        reached the operator's code). Observation points with nothing to
+        judge — an empty reasoning trace — are not invocations.
+    errors:
+        How many of those invocations raised. ``errors == invocations``
+        is a judge that never once produced a verdict; ``0 < errors <
+        invocations`` is a flaky endpoint whose zero-drift signal is
+        partly an artifact.
+    last_error_type:
+        The exception TYPE name of the most recent failure
+        (``"RuntimeError"``, ``"TimeoutError"``, ...) — enough to route
+        the operator at the right config without copying an endpoint's
+        error text (which can carry request ids / URLs) into a scored,
+        indexed artifact. The verbatim message rides the reflection
+        sidecar (``judge_io.jsonl``'s error entry) instead.
+    """
+
+    judge_name: str
+    invocations: int
+    errors: int
+    last_error_type: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class ExpectationResult:
     """The outcome of evaluating a :class:`BoardEntry`'s expectation.
 
@@ -362,6 +417,17 @@ class LossProfile:
     # default: ``()`` so profiles written before this field was added
     # load cleanly.
     per_judge_loss: tuple[JudgeLoss, ...] = ()
+    # Per-judge CALL-FAILURE provenance — empty tuple when every declared
+    # judge's callable returned (the healthy case, and every profile
+    # written before this field existed). ``per_judge_loss`` covers judges
+    # that FIRED; this covers judges that were INVOKED AND RAISED, whose
+    # silence is an error artifact rather than a verdict. Stamped by the
+    # worker from the process-wide register
+    # (:func:`zicato.judge_runtime.error_register.judge_error_snapshot`)
+    # at profile-write time; read by
+    # :func:`zicato.health.diagnostics.detect_dead_judge`. Back-compat
+    # default: ``()`` so existing loss.json files load unchanged.
+    judge_errors: tuple[JudgeError, ...] = ()
     # Carried-over (cached) provenance. ``cached`` is ``True`` when this
     # profile was NOT produced by a live run in its own epoch but
     # MATERIALISED from a prior evaluation — the champion carried forward

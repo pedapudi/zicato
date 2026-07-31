@@ -42,6 +42,7 @@ from zicato.core import (
     BUDGET_ABORT_CAUSE,
     BoardEntry,
     Generation,
+    JudgeError,
     JudgeLoss,
     LossProfile,
     MetricCount,
@@ -295,6 +296,13 @@ def _persist_unit_loss(
     For replicate r>0 this is the only writer of the sibling
     ``loss.r<r>.json``. Best-effort: a write failure degrades the next
     lookup to another (correct) MISS rather than aborting the tournament.
+
+    When the slot is ALREADY occupied — the champion re-measured under
+    ``--mode full``, which re-runs it every round — the outgoing profile
+    is appended to ``loss.archive.jsonl`` in the same run directory
+    before it is overwritten (issue #122), so the per-entry evidence of
+    the earlier measurement survives. An empty slot (the common case)
+    archives nothing and costs nothing.
     """
     _, reducer_module = _telemetry_helpers()
     writer = getattr(reducer_module, "write_loss_profile", None)
@@ -305,6 +313,12 @@ def _persist_unit_loss(
         # real worker ran) is still on disk for replicate 0.
         return
     path = _unit_loss_path(workspace_root, epoch_id, generation_id, entry_id, replicate_index)
+    # The worker archives what IT displaces (see archive_outgoing_unit_loss);
+    # this call covers the paths where no worker ran — the synthesised
+    # budget-skip loss, and a test stub that drove the unit in-process — and
+    # passes ``incoming`` so the idempotent re-persist of the profile the
+    # worker just wrote is not mistaken for a displaced measurement.
+    archive_outgoing_unit_loss(path, replicate_index=replicate_index, incoming=loss)
     try:
         writer(loss, path)
     except OSError as exc:  # noqa: BLE001 — cache persist is best-effort
@@ -315,6 +329,170 @@ def _persist_unit_loss(
             replicate_index,
             exc,
         )
+
+
+#: Append-only archive of the per-entry loss profiles a re-measurement
+#: overwrote, one JSON line per displaced profile, in the run directory
+#: beside the canonical ``loss.json`` / ``loss.r<n>.json`` slots.
+LOSS_ARCHIVE_FILENAME = "loss.archive.jsonl"
+
+
+def _replicate_index_from_slot(path: Path) -> int:
+    """The replicate index a loss-slot filename encodes — inverse of :func:`_unit_loss_path`.
+
+    ``loss.json`` is replicate 0; ``loss.r<n>.json`` is replicate ``n``.
+    An unrecognised name reads as 0 rather than raising: the index is
+    provenance on an archive record, never a lookup key.
+    """
+    _, _, suffix = path.stem.partition(".r")
+    try:
+        return max(0, int(suffix)) if suffix else 0
+    except ValueError:
+        return 0
+
+
+def archive_outgoing_unit_loss(
+    path: Path,
+    *,
+    replicate_index: int | None = None,
+    incoming: LossProfile | None = None,
+) -> None:
+    """Append the profile currently in ``path`` to the run's loss archive.
+
+    Call this in the process that is ABOUT TO TRUNCATE ``path``, and
+    call it there only. The board unit's canonical ``loss.json`` is
+    written by the worker SUBPROCESS
+    (:func:`zicato._tournament_worker._run`), so that is the archive's
+    seam: by the time the orchestrator's :func:`_persist_unit_loss`
+    re-persists the same profile, the measurement this run displaced is
+    already gone from disk and cannot be archived from there.
+
+    A no-op when the slot is empty — the overwhelmingly common case, in
+    which a unit is measured once and this costs one ``exists()``. The
+    displaced profile is archived VERBATIM (the raw ``loss.json`` object
+    under ``profile``) so the archive needs no schema of its own and
+    stays readable by the same reducer that reads the canonical file;
+    the wrapper adds only the slot coordinates and a monotonic ``seq``.
+
+    ``replicate_index`` is provenance stamped onto the record; omit it
+    and it is read off the slot filename (:func:`_replicate_index_from_slot`).
+
+    ``incoming`` is the profile the caller is about to write, when it
+    has one. A slot already holding THAT profile is not a displaced
+    measurement — it is the same measurement, and the caller is the
+    orchestrator's idempotent re-persist of what the worker just wrote.
+    Archiving it would append a copy of the CURRENT profile on every
+    fresh unit run, so a unit measured once would read back as two
+    measurements. Compared on the decoded profile rather than the raw
+    bytes so a formatting difference between two writers cannot make
+    the same measurement look like two.
+
+    Best-effort throughout: the archive rides ALONGSIDE the canonical
+    write, so an unreadable prior file or an unwritable archive must
+    never cost the caller its ``loss.json``.
+    """
+    if not path.exists():
+        return
+    try:
+        outgoing = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        log.debug("unit-loss archive skipped (unreadable %s): %s", path, exc)
+        return
+    if not isinstance(outgoing, dict):
+        return
+    if incoming is not None and _is_same_measurement(outgoing, incoming):
+        return
+    archive = path.with_name(LOSS_ARCHIVE_FILENAME)
+    seq = 0
+    try:
+        with open(archive, encoding="utf-8") as fh:
+            seq = sum(1 for line in fh if line.strip())
+    except OSError:
+        seq = 0
+    record = {
+        "seq": seq,
+        "slot": path.name,
+        "replicate_index": (
+            _replicate_index_from_slot(path) if replicate_index is None else replicate_index
+        ),
+        "profile": outgoing,
+    }
+    try:
+        with open(archive, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, default=str, sort_keys=True) + "\n")
+    except OSError as exc:  # pragma: no cover — unwritable workspace
+        log.debug("unit-loss archive append skipped for %s: %s", archive, exc)
+
+
+def _is_same_measurement(persisted: dict[str, Any], incoming: LossProfile) -> bool:
+    """Whether ``persisted`` decodes to the profile ``incoming`` already is.
+
+    A decode failure answers ``False``: an unreadable slot is treated as
+    a genuine predecessor and archived, which costs one duplicate line
+    rather than losing a measurement.
+    """
+    from zicato.telemetry.reducer import loss_profile_from_dict  # noqa: PLC0415
+
+    try:
+        return bool(loss_profile_from_dict(persisted) == incoming)
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def read_unit_loss_history(
+    workspace_root: Path,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+    replicate_index: int = 0,
+) -> list[LossProfile]:
+    """Every measurement of ONE board unit, oldest first.
+
+    The displaced profiles from ``loss.archive.jsonl`` (in write order)
+    followed by whatever occupies the canonical slot NOW — so the last
+    element is always the profile :func:`_resolve_cached_unit` would
+    serve, and the earlier ones are the measurements that preceded it
+    (issue #122). A unit measured exactly once yields a single-element
+    list; a unit never measured yields an empty one.
+
+    Best-effort, like every other reader on this path: an unreadable
+    archive line is skipped rather than raising, so a partially written
+    record cannot wedge an analysis.
+    """
+    from zicato.telemetry.reducer import (  # noqa: PLC0415 — avoid import cycle
+        loss_profile_from_dict,
+        read_loss_profile,
+    )
+
+    path = _unit_loss_path(workspace_root, epoch_id, generation_id, entry_id, replicate_index)
+    history: list[LossProfile] = []
+    archive = path.with_name(LOSS_ARCHIVE_FILENAME)
+    try:
+        lines = archive.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict) or record.get("slot") not in (None, path.name):
+            continue
+        profile = record.get("profile")
+        if not isinstance(profile, dict):
+            continue
+        try:
+            history.append(loss_profile_from_dict(profile))
+        except (KeyError, TypeError, ValueError):
+            continue
+    if path.exists():
+        try:
+            history.append(read_loss_profile(path))
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            pass
+    return history
 
 
 @dataclass(frozen=True, slots=True)
@@ -534,6 +712,50 @@ def _mean_per_judge_loss(profiles: list[LossProfile]) -> tuple[JudgeLoss, ...]:
     return tuple(folded)
 
 
+def _sum_judge_errors(profiles: list[LossProfile]) -> tuple[JudgeError, ...]:
+    """Fold per-judge call-failure provenance across replicates by SUMMING.
+
+    Deliberately not a mean, unlike every other fold here. ``invocations``
+    and ``errors`` are event COUNTS of a thing that either happened or did
+    not, and the question the fold has to keep answerable is the operator's:
+    "did this judge ever fail to answer, and how often?". Meaning them would
+    divide a real failure by the replicate count — three of four replicates
+    clean and one that raised 34 times reports "8.5 errors", a number that
+    describes no run — and, worse, it would shrink toward zero as K grows,
+    so the more evidence a duel gathers the less a broken judge looks broken.
+    The sum is the honest total across the duel, and
+    :func:`~zicato.health.diagnostics.detect_dead_judge` re-aggregates over
+    every profile it is handed anyway, so both the folded and the unfolded
+    view lead to the same finding.
+
+    ``last_error_type`` comes from the LAST replicate reporting the judge —
+    a per-judge scalar, not a count; the most recent failure is the one an
+    operator would check first. Judge ORDER is first-seen across replicates.
+    Empty when no replicate recorded a failure, which is every healthy duel.
+    """
+    order: list[str] = []
+    totals: dict[str, list[int]] = {}
+    last_types: dict[str, str] = {}
+    for p in profiles:
+        for je in p.judge_errors:
+            if je.judge_name not in totals:
+                order.append(je.judge_name)
+                totals[je.judge_name] = [0, 0]
+            totals[je.judge_name][0] += int(je.invocations)
+            totals[je.judge_name][1] += int(je.errors)
+            if je.last_error_type:
+                last_types[je.judge_name] = je.last_error_type
+    return tuple(
+        JudgeError(
+            judge_name=name,
+            invocations=totals[name][0],
+            errors=totals[name][1],
+            last_error_type=last_types.get(name, ""),
+        )
+        for name in order
+    )
+
+
 def _average_losses(
     runs: list[dict[str, LossProfile]],
 ) -> dict[str, LossProfile]:
@@ -589,6 +811,13 @@ def _average_losses(
         Meaned per judge (:func:`_mean_per_judge_loss`); it is carried onto
         :class:`~zicato.scoring.api.ScalarContext`, so a scalar PLUGIN can
         read it.
+    ``judge_errors``
+        SUMMED per judge (:func:`_sum_judge_errors`), the one field here that
+        is deliberately not meaned — see that function for why a mean would
+        make a broken judge look less broken the more replicates a duel runs.
+        It is not scalar-bearing (a failed judge call contributes no drift,
+        which is exactly the defect it records); it is aggregated anyway
+        because the operator-facing finding it feeds must survive the fold.
     ``pass_fail``
         Strict-majority vote (``None`` preserved when the entry has no
         expectation). NOTE: now that ``score`` is folded, this vote no
@@ -663,11 +892,13 @@ def _average_losses(
             output_chars=round(sum(p.output_chars for p in profiles) / n),
             schema_failures=round(sum(p.schema_failures for p in profiles) / n),
             per_judge_loss=_mean_per_judge_loss(profiles),
+            judge_errors=_sum_judge_errors(profiles),
         )
     return out
 
 
 __all__ = [
+    "LOSS_ARCHIVE_FILENAME",
     "RUN_RESULT_CLIP_CHARS",
     "RUN_RESULT_CLIP_MARKER",
     "RUN_RESULT_FORMAT_VERSION",
@@ -678,7 +909,9 @@ __all__ = [
     "_resolve_cached_unit",
     "_skipped_unit_loss",
     "_unit_loss_path",
+    "archive_outgoing_unit_loss",
     "read_run_result",
+    "read_unit_loss_history",
     "run_result_to_payload",
     "unit_result_path",
 ]

@@ -13,7 +13,9 @@ ordering authority governs every epoch-list-bearing response.
 The package also owns the per-epoch / per-generation **path math**
 (:class:`WorkspaceLayout`) and the small set of **typed canonical reads**
 (:func:`read_epoch_config`, :func:`read_board`, :func:`read_experiments`,
-:func:`read_loss`, :func:`read_gen_score`) the dashboard consumes, so the
+:func:`read_loss`, :func:`read_gen_score`, and the measurement-history
+readers :func:`read_gen_score_history` / :func:`read_events_history`)
+the dashboard consumes, so the
 leaf filename joins stop being re-implemented at dozens of call sites.
 
 Design constraints (the refactor is behavior-preserving):
@@ -43,9 +45,11 @@ from zicato.workspace.epochs import (
 from zicato.workspace.layout import WorkspaceLayout
 from zicato.workspace.reads import (
     read_board,
+    read_events_history,
     read_experiment,
     read_experiments,
     read_gen_score,
+    read_gen_score_history,
     read_loss,
 )
 
@@ -59,8 +63,10 @@ __all__ = [
     "natural_key",
     "read_board",
     "read_epoch_config",
+    "read_events_history",
     "read_experiment",
     "read_experiments",
     "read_gen_score",
+    "read_gen_score_history",
     "read_loss",
 ]

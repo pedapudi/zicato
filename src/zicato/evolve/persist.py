@@ -55,6 +55,8 @@ def _finalize_generation(
     outcome: OutcomeRecord,
     lineage_generation: Generation | None = None,
     lineage_parent_id: str | None = None,
+    lineage_parent_scalar: float | None = None,
+    lineage_child_scalar: float | None = None,
     advance_current_generation: bool = False,
     journal: bool = True,
 ) -> Experiment:
@@ -69,7 +71,12 @@ def _finalize_generation(
     3. optional lineage upsert (``lineage_generation`` — ``None`` for a
        validation-rejected round that never entered lineage, and for the
        multi-challenger loop which defers lineage until after its crowning
-       invariant checks);
+       invariant checks). The settle-time facts ride along: the outcome's
+       own ``rejection_reason`` and the duel's two scalars
+       (``lineage_parent_scalar`` / ``lineage_child_scalar``, ``None``
+       when the caller has no measurement in scope) land on the lineage
+       node so the DAG says WHY without a per-generation join against
+       ``experiment.json`` (issue #124);
     4. optional champion-marker advance (``advance_current_generation`` —
        the gauntlet's on-promotion step, sequenced between lineage and
        journal exactly as the inline tail wrote them);
@@ -91,7 +98,18 @@ def _finalize_generation(
     # refresh the SQLite analytical index entry for it.
     _ingest_experiment_into_index(workspace_root, epoch_id, generation_id)
     if lineage_generation is not None:
-        append_to_lineage(workspace_root, epoch_id, lineage_generation, parent_id=lineage_parent_id)
+        append_to_lineage(
+            workspace_root,
+            epoch_id,
+            lineage_generation,
+            parent_id=lineage_parent_id,
+            # ``append_to_lineage`` persists the reason only on a settled
+            # rejection, so handing it the outcome's reason unconditionally
+            # is safe on the promoted path too.
+            rejection_reason=outcome.rejection_reason,
+            parent_scalar=lineage_parent_scalar,
+            child_scalar=lineage_child_scalar,
+        )
     if advance_current_generation:
         _set_current_generation(workspace_root, epoch_id, generation_id)
     if journal:

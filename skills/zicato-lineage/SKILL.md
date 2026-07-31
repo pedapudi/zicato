@@ -57,6 +57,7 @@ and `rejected` generations, and the `parent` (the epoch it baselined off, or
 
 ```json
 {
+  "format_version": 1,
   "epochs": [
     {
       "id": "2026-04-01_initial",
@@ -65,9 +66,13 @@ and `rejected` generations, and the `parent` (the epoch it baselined off, or
       "closed_at": "",
       "v0_parent": null,
       "generations": [
-        {"id": "v0", "parent_id": null, "promoted": true,  "created_at": "..."},
-        {"id": "v1", "parent_id": "v0", "promoted": true,  "created_at": "..."},
-        {"id": "v2", "parent_id": "v1", "promoted": false, "created_at": "..."}
+        {"id": "v0", "parent_id": null, "promoted": true, "created_at": "...",
+         "round_index": 0, "rejection_reason": "",
+         "parent_scalar": null, "child_scalar": null, "delta_scalar": null},
+        {"id": "v2", "parent_id": "v1", "promoted": false, "created_at": "...",
+         "round_index": 2,
+         "rejection_reason": "insufficient improvement: 0.7328 vs 0.7601 (margin 0.0200)",
+         "parent_scalar": 0.7601, "child_scalar": 0.7328, "delta_scalar": -0.0273}
       ]
     }
   ]
@@ -90,6 +95,22 @@ Key fields:
   off-spine. `null` means in-flight: the tournament has not settled, so the
   generation counts toward neither the promoted nor the rejected column.
 - `generations[].parent_id` — the lineage edge (`null` for `v0`).
+- `generations[].round_index` — the evolve round that MINTED the generation
+  (its birth round). Set once and never re-stamped, so a champion that defends
+  for ten rounds keeps the round it was born in.
+- `generations[].rejection_reason` — the gate's own phrasing for why this
+  generation was cut, e.g. `"insufficient improvement: 0.7328 vs 0.7188
+  (margin 0.0200)"`. Non-empty **only** when `promoted` is `false`: an empty
+  reason means promoted or in-flight, matching every other persisted surface,
+  so never infer rejection from a non-empty reason on a `null` node — infer it
+  from `promoted is False`.
+- `generations[].parent_scalar` / `child_scalar` / `delta_scalar` — the settling
+  duel's two scalars and their difference (`child - parent`). `null` when
+  unrecorded — never `0.0`, which is a legal measurement, so absent and
+  zero-scoring are distinguishable.
+- `format_version` — the record-format stamp (currently `1`). A record stamped
+  HIGHER than this build understands is refused loudly rather than misread; a
+  record with no stamp is read as version 1.
 
 There is **no `zicato lineage` subcommand** in the shipped CLI (nor in
 [CLI.md](../../docs/design/CLI.md)); `epoch list` is the rendered view and
