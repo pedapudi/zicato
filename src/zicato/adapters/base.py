@@ -285,6 +285,15 @@ class HarnessAdapter(Protocol):
         check, so a malformed adapter is still rejected — and rejected
         with the stock check's instance-level view, which sees
         attributes assigned in ``__init__``.
+
+        The one shape that falls between the two: an adapter that binds
+        the three required methods as INSTANCE attributes in ``__init__``
+        rather than declaring them on the class. This hook cannot see
+        those, so such an adapter takes the stock path — which now also
+        demands the optional ``on_promote``, and rejects it. That is a
+        narrowing versus the pre-#125 check. No adapter in this repo, and
+        no ``isinstance`` gate outside the adapter tests, has that shape;
+        an adapter meant to pass must declare its methods on the class.
         """
         if cls is not HarnessAdapter:
             return NotImplemented

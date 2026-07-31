@@ -26,9 +26,10 @@ and ``tests/test_on_promote_hook.py`` for the behavioural coverage.
 from __future__ import annotations
 
 import dataclasses
+import inspect
 from pathlib import Path
 
-from zicato.adapters.base import HarnessAdapter
+from zicato.adapters.base import OPTIONAL_ADAPTER_MEMBERS, HarnessAdapter
 from zicato.core.epoch import Generation
 
 
@@ -70,8 +71,18 @@ def test_adapter_protocol_declares_a_post_promotion_hook() -> None:
     contract file naming an executable). The carrier is the optional
     coroutine ``HarnessAdapter.on_promote``, fired from both promote seams
     by :func:`zicato.evolve.promote_hook.fire_on_promote`.
+
+    Asserted off the class body rather than ``__protocol_attrs__``: that
+    attribute is a 3.12 addition (3.11 computes the same set on the fly
+    inside ``typing``), and this project supports 3.11. The class body is
+    the declaration the contract is actually about, and it also pins the
+    two properties ``__protocol_attrs__`` cannot express — that the hook
+    is awaitable, and that it is optional.
     """
-    assert "on_promote" in HarnessAdapter.__protocol_attrs__
+    hook = HarnessAdapter.__dict__.get("on_promote")
+    assert hook is not None, "HarnessAdapter must declare an on_promote member"
+    assert inspect.iscoroutinefunction(hook)
+    assert "on_promote" in OPTIONAL_ADAPTER_MEMBERS
 
 
 def test_promotion_side_effects_are_observable() -> None:

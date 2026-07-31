@@ -66,8 +66,13 @@ def _field(name: str, text: str) -> str:
     Single-line values stay inline, which is what every field was before
     the journal stopped truncating (issue #123) — so an ordinary entry is
     byte-identical to one written by the old renderer. A value carrying
-    newlines gets a blank line and then its own paragraph, so the markdown
-    still renders and the bytes survive verbatim.
+    newlines is fenced by a blank line on BOTH sides and becomes its own
+    paragraph, so the markdown still renders and the bytes survive
+    verbatim. The trailing blank line is load-bearing: without it the
+    FOLLOWING field (``**why**``, ``**outcome**``) is only a line break
+    away from the body and markdown folds it into the same paragraph,
+    so a multi-line ``core_idea`` would visually swallow the field
+    after it.
 
     Nothing is dropped here. ``journal.md`` is append-only and is the one
     durable surface the proposer can read its own prior reasoning back
@@ -79,7 +84,7 @@ def _field(name: str, text: str) -> str:
     text = text.strip()
     if "\n" not in text:
         return f"**{name}**: {text}"
-    return f"**{name}**:\n\n{text}"
+    return f"**{name}**:\n\n{text}\n"
 
 
 def _version_label(generation_id: str) -> str:

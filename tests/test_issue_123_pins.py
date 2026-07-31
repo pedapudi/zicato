@@ -176,3 +176,51 @@ def test_read_journal_cap_leaves_a_short_journal_untouched() -> None:
 
     short = "## v1 — idea\n\n**why**: because\n"
     assert _tail_entries(short, 2_000) == short
+
+
+def test_a_multi_line_field_does_not_swallow_the_field_after_it() -> None:
+    """A multi-line body must be fenced by a blank line on BOTH sides.
+
+    Regression guard. The first cut of the de-truncation rendered a
+    multi-line value as ``**core_idea**:\\n\\n<body>`` with no trailing
+    blank line, so the next field sat one line break below the body and
+    every markdown renderer folded it into the same paragraph — the
+    journal displayed ``line idea **why**: because`` as one run of prose.
+    """
+    from zicato.epoch.journal import _render_section
+
+    section = _render_section(
+        _experiment(core_idea="multi\nline idea", why="because", generation_id="v2")
+    )
+
+    assert "**core_idea**:\n\nmulti\nline idea\n\n**why**: because" in section
+
+
+def test_the_cap_does_not_open_the_window_on_prose_that_looks_like_a_heading() -> None:
+    """A ``## `` line inside a ``why`` must not be mistaken for an entry boundary.
+
+    The two halves of issue #123 meet here: the write side now records the
+    proposer's prose verbatim, so a hypothesis about a markdown task puts a
+    real ``## Approach`` line in ``journal.md``. If the reader's cap anchors
+    on a bare ``\\n## `` it opens the proposer's window mid-body, handing the
+    next proposer a fragment of someone's reasoning dressed as run history.
+    """
+    from zicato.epoch.journal import _render_section
+    from zicato.proposer.tools import _tail_entries
+
+    journal = "".join(
+        _render_section(
+            _experiment(
+                core_idea=f"idea {n}",
+                why="The board wants\n## Approach\nsections graded. " + "z" * 120,
+                generation_id=f"v{n}",
+            )
+        )
+        for n in range(1, 12)
+    )
+    kept = _tail_entries(journal, 900)
+
+    assert kept.startswith("[... truncated:")
+    opening_line = kept.split("\n\n", 1)[1].split("\n", 1)[0]
+    assert opening_line.startswith("## v"), opening_line
+    assert opening_line != "## Approach"
