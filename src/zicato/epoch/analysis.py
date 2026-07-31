@@ -190,21 +190,43 @@ def _format_experiment(d: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 
+#: Characters that terminate a flowchart token wherever they appear, so
+#: mermaid rejects the whole ``graph`` block when one lands inside a label.
+#: Node labels are emitted inside double quotes and survive these; EDGE
+#: labels are emitted bare between pipes (``a -.->|text| b``) and do not —
+#: one ``(`` fails the parse for the entire diagram, not just its edge.
+_MERMAID_LABEL_ENTITIES = {
+    "&": "&amp;",
+    '"': "&quot;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "(": "&#40;",
+    ")": "&#41;",
+    "[": "&#91;",
+    "]": "&#93;",
+    "{": "&#123;",
+    "}": "&#125;",
+    "|": "&#124;",
+    "\n": " ",
+    "\r": " ",
+}
+
+
 def _sanitize_label(text: str) -> str:
     """Strip mermaid-hostile characters from a node/edge label.
 
-    Mermaid labels are wrapped in double-quotes; embedded ``"`` ``<`` ``>``
-    break the parser. We replace them with HTML entities so the rendered
-    label preserves the original glyph while staying syntactically valid.
+    Replaces each with an HTML entity so the rendered label preserves the
+    original glyph while staying syntactically valid — the same trick the
+    quote / angle-bracket escapes have always used.
+
+    The bracket family matters because gate reasons carry their measured
+    numbers in parentheses (``"insufficient improvement: loss fell by only
+    0.000200 (champion … -> challenger …)"``). At the old 30-character
+    edge-label clip the parenthetical was always cut off, so the hazard
+    was latent; :data:`_MERMAID_EDGE_LABEL_LIMIT` at 60 reaches it, and an
+    unescaped ``(`` makes the whole lineage diagram unparseable.
     """
-    return (
-        text.replace("&", "&amp;")
-        .replace('"', "&quot;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace("\n", " ")
-        .replace("\r", " ")
-    )
+    return "".join(_MERMAID_LABEL_ENTITIES.get(ch, ch) for ch in text)
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -300,9 +322,9 @@ def render_mermaid_lineage(
     (``✓`` promoted, ``✗`` rejected, neutral for the baseline / pending),
     the scalar-score delta from the parent, and the cumulated scalar
     score. Edges are labelled by the tournament outcome's rejection
-    reason when present (truncated to roughly thirty characters) or by
-    the decision word otherwise; promoted edges use ``==>`` (thick) and
-    rejected edges use ``-.->`` (dashed).
+    reason when present (clipped to :data:`_MERMAID_EDGE_LABEL_LIMIT`
+    characters) or by the decision word otherwise; promoted edges use
+    ``==>`` (thick) and rejected edges use ``-.->`` (dashed).
 
     An empty ``generations`` list yields a placeholder block so the
     surrounding section still has a valid mermaid container.
