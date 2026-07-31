@@ -267,6 +267,18 @@ def append_to_lineage(
             # must not blank the verdict that settled the generation.
             if reason:
                 g["rejection_reason"] = reason
+            elif promoted is not False:
+                # The reason is once-set only WITHIN the rejected state: a
+                # re-record of a settled rejection that passes no reason keeps
+                # the verdict that settled it (``promoted`` is still False, so
+                # this branch is not taken). But a node whose ``promoted`` moves
+                # OFF False must not keep the reason — ``promoted`` is rewritten
+                # unconditionally two lines up, and five persisted surfaces read
+                # a non-empty reason as "rejected", so a stale one would make the
+                # node render as rejected while its own flag says otherwise. That
+                # is the ambiguity #124 exists to remove, so the invariant is
+                # enforced on the RECORD, not just on the write that created it.
+                g["rejection_reason"] = ""
             g.setdefault("rejection_reason", "")
             if parent_scalar is not None:
                 g["parent_scalar"] = parent_scalar

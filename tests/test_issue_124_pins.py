@@ -355,3 +355,41 @@ def test_lineage_view_passes_the_settle_facts_through(
     # A promoted node has no reason to surface and no duel numbers recorded.
     assert "rejection_reason" not in nodes["v2"]
     assert "parent_scalar" not in nodes["v2"]
+
+
+# ---------------------------------------------------------------------------
+# Pin 8 — the "reason ⇒ rejected" invariant belongs to the RECORD
+# ---------------------------------------------------------------------------
+
+
+def test_lineage_reason_does_not_outlive_the_rejection_that_set_it(
+    workspace: Path, board_file: Path, rubric_file: Path
+) -> None:
+    """A reason must never survive its node ceasing to be a rejection.
+
+    The writer refuses to SET a reason on anything but a settled rejection,
+    but ``promoted`` is rewritten unconditionally by every upsert while the
+    reason is once-set and sticky. A node that settles rejected and is later
+    re-recorded promoted (or re-opened pending) would therefore carry both a
+    ``promoted`` that says otherwise and a non-empty reason — and the five
+    persisted surfaces that read a non-empty reason as "rejected" would
+    render it rejected. That is the exact ambiguity this issue removes, so
+    the invariant has to hold on the stored record, not just on the write
+    that created it.
+    """
+    cfg = new_epoch(workspace, "alpha", board_file, rubric_file, ScoringWeights())
+    rejected = _gen(workspace, cfg.id, "v1", "v0", False)
+    append_to_lineage(workspace, cfg.id, rejected, "v0", rejection_reason=REASON)
+    assert _node(workspace, cfg.id, "v1")["rejection_reason"] == REASON
+
+    # Re-recorded as promoted — the reason no longer describes this node.
+    append_to_lineage(workspace, cfg.id, _gen(workspace, cfg.id, "v1", "v0", True), "v0")
+    assert _node(workspace, cfg.id, "v1")["rejection_reason"] == ""
+
+    # And re-opened pending, from a settled rejection.
+    append_to_lineage(workspace, cfg.id, rejected, "v0", rejection_reason=REASON)
+    assert _node(workspace, cfg.id, "v1")["rejection_reason"] == REASON
+    append_to_lineage(workspace, cfg.id, rejected, "v0", pending=True)
+    node = _node(workspace, cfg.id, "v1")
+    assert node["promoted"] is None
+    assert node["rejection_reason"] == ""
