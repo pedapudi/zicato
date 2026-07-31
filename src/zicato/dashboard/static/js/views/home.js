@@ -226,9 +226,15 @@ function fleetCard(row, isCurrent, ctx, sparkVals, live, loop, cost) {
 // history — the champion simply never moved — and saying "yet" reads as a
 // loop that has not started rather than one that is not getting anywhere.
 // Counts come from the trajectory payload, which already carries them.
+// The round count is SETTLED challengers, matching the verdict chip beside it:
+// a challenger that is still racing has retained nothing yet, and counting it
+// would report a round the loop has not finished. `settled_count` is additive,
+// so a payload from before it existed (or the Rust supervisor's) falls back to
+// challenger_count and reads exactly as it did.
 export function heroPlaceholderText(loop) {
   const l = loop && typeof loop === 'object' ? loop : null;
-  const rounds = l && svg.isNum(l.challenger_count) ? l.challenger_count : 0;
+  const rounds = l && svg.isNum(l.settled_count) ? l.settled_count
+    : (l && svg.isNum(l.challenger_count) ? l.challenger_count : 0);
   if (rounds < 1) return 'no trajectory yet';
   const promoted = l && svg.isNum(l.promoted_count) ? l.promoted_count : 0;
   const roundWord = rounds + ' round' + (rounds === 1 ? '' : 's');

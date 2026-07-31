@@ -313,8 +313,10 @@ export function perJudgeTrend(epochId) {
 // along the winners spine + promotion_rate + the UNCERTAINTY-HONEST verdict
 // ("improving" only when the promoted spine actually advanced / "plateaued" /
 // "no_signal" when the movement sits below the measured A/A noise floor /
-// "stalled" when challengers were fielded, none promoted, and no floor was
-// measured / "warming_up" before anything has settled) + the floor itself
+// "stalled" when challengers SETTLED, none promoted, and no floor was measured
+// / "warming_up" before anything has settled — the stall words count
+// `settled_count`, not `challenger_count`, so an in-flight racer never reads as
+// a stall) + the floor itself
 // (build_optimization_trajectory). Absent on the Rust supervisor → cachedJson
 // null-degrades and the panels are simply omitted.
 export function trajectory(epochId) {

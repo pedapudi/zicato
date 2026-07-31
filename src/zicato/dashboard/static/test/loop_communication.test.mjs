@@ -137,6 +137,14 @@ test('heroPlaceholderText: a retained champion is reported, not called "no traje
     'no trajectory yet', 'before any challenger settles, the honest word IS "yet"');
   assertEqual(home.heroPlaceholderText(null), 'no trajectory yet',
     'a null read (Rust supervisor) keeps the original placeholder');
+
+  // Settled rounds, not fielded ones: an in-flight challenger has retained
+  // nothing yet, so counting it would report a round the loop has not
+  // finished — the same over-claim the verdict ladder avoids one field over.
+  assertEqual(home.heroPlaceholderText(trajFixture({ promoted_count: 0, challenger_count: 1, settled_count: 0 })),
+    'no trajectory yet', 'the first challenger, still racing, is not a retained round');
+  assertEqual(home.heroPlaceholderText(trajFixture({ promoted_count: 0, challenger_count: 4, settled_count: 3 })),
+    'champion retained · 3 rounds', 'the racer is excluded; the three decided rounds are reported');
 });
 
 // ── 2. the fleet-card stat labels null-degrade ──────────────────────────────

@@ -275,6 +275,19 @@ class Trajectory:
     ``plateaued=False`` for the second reason, not the first.
     ``plateau_measurable`` names which of the two it is: ``False`` means
     the flag carries no measurement at all.
+
+    ``challenger_count`` and ``settled_count`` are the same kind of pair.
+    ``challenger_count`` counts every non-seed generation the index
+    holds, which includes challengers that have applied a snapshot and
+    are still racing: the propose-side lineage append records an
+    in-flight generation with a null ``promoted`` so it renders as
+    racing rather than as a dead branch, and the ingest reads that null
+    as ``0``. So a run whose FIRST challenger is mid-tournament reports
+    ``challenger_count=1, promoted_count=0`` — indistinguishable, on
+    those two numbers alone, from a run that fielded a challenger and
+    cut it. ``settled_count`` counts only the challengers a tournament
+    has actually decided, which is the denominator any "nothing is
+    promoting" reading needs.
     """
 
     epoch_id: str
@@ -286,6 +299,9 @@ class Trajectory:
     #: Whether the spine holds enough resolved scalars for ``plateaued``
     #: to mean anything (``>= PLATEAU_WINDOW``). See the class docstring.
     plateau_measurable: bool = False
+    #: Challengers a tournament has decided (promoted / rejected /
+    #: deferred). See the class docstring — the rest are still racing.
+    settled_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -1274,6 +1290,10 @@ def optimization_trajectory(db_path: str | Path, epoch_id: str) -> Trajectory:
         promoted_count = sum(1 for g in challengers if bool(_row_get(g, "promoted", 0)))
         promotion_rate = promoted_count / challenger_count if challenger_count else 0.0
         plateaued = _is_plateaued(points)
+        decided = _decided_generations(conn, epoch_id)
+        settled_count = sum(
+            1 for g in challengers if str(_row_get(g, "generation_id", "")) in decided
+        )
         return Trajectory(
             epoch_id=epoch_id,
             points=tuple(points),
@@ -1282,6 +1302,7 @@ def optimization_trajectory(db_path: str | Path, epoch_id: str) -> Trajectory:
             challenger_count=challenger_count,
             plateaued=plateaued,
             plateau_measurable=_plateau_measurable(points),
+            settled_count=settled_count,
         )
     finally:
         conn.close()
@@ -1317,6 +1338,24 @@ def _resolve_scalar(conn: sqlite3.Connection, epoch_id: str, generation_id: str)
         if scalar is not None:
             return scalar
     return None
+
+
+def _decided_generations(conn: sqlite3.Connection, epoch_id: str) -> set[str]:
+    """Generation ids a tournament has actually decided, for this epoch.
+
+    A generation earns a row in ``experiments`` before its tournament
+    runs, so presence alone is not settlement — the decision column is,
+    and it is empty until the round resolves.
+    """
+    return {
+        str(_row_get(r, "generation_id", ""))
+        for r in _query(
+            conn,
+            "SELECT generation_id, tournament_decision FROM experiments WHERE epoch_id = ?",
+            (epoch_id,),
+        )
+        if str(_row_get(r, "tournament_decision", "") or "").strip()
+    }
 
 
 def _plateau_measurable(points: list[TrajectoryPoint]) -> bool:

@@ -248,6 +248,7 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
                     "promotion_rate": None,
                     "promoted_count": 0,
                     "challenger_count": 0,
+                    "settled_count": 0,
                     "plateaued": False,
                     "plateau_measurable": False,
                     "verdict": None,
