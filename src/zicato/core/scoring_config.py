@@ -796,7 +796,9 @@ class ScoringWeights:
         budget is the knob that rule never had. It applies under both
         :attr:`pass_rate_monotonicity_scope` values — per-entry it allows up
         to N regressed entries, aggregate it widens the mean-score tolerance
-        by ``N / (holdout entries)``, the movement N flips would produce.
+        by ``N / (SCORED holdout entries)``, which is exactly the movement N
+        flips would produce on that slice (the scored count is ``mean_score``'s
+        own denominator, so one budget unit means one entry either way).
 
         Deliberately holdout-only: the TRAIN side keeps its zero-tolerance
         rule, so this cannot loosen the gate's primary decision.

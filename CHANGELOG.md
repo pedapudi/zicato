@@ -1,5 +1,40 @@
 # Changelog
 
+### The holdout confirmation gets its own bounds (issue #118)
+
+`promote_margin` served as the Rule 1 train threshold, the holdout
+confirmation's scalar tolerance, AND the Ladder's release threshold. The
+first two are calibrated against different slice sizes and pull the knob
+in opposite directions — a slice of N entries moves its scalar in `1/N`
+steps and the holdout is the smaller slice — so on the default-produced
+12-train / 6-holdout split with one holdout entry flipping, NO margin
+value promotes. Two additive `ScoringWeights` fields split the bounds:
+`holdout_margin` (`None` ⇒ fall back to `promote_margin`; also governs
+the Ladder's release threshold when set) and
+`holdout_entry_regression_budget` (`0` ⇒ today's zero-tolerance
+pass-rate rule; N tolerates N regressed holdout entries under either
+monotonicity scope). Both default-inert and both omitted from the
+contract canonical form at their default, so no existing epoch's contract
+hash moves. `zicato board preflight` now prints a holdout-feasibility note
+when either bound looks infeasible.
+
+### The pre-flight's margin window stops overclaiming (issue #119)
+
+The pre-flight measured `|degraded_scalar - champion_mean|` — DEGRADATION
+headroom, how far the scalar moves when a mutation point is destroyed —
+and enforced it as the achievable IMPROVEMENT a challenger has to clear.
+The two are unrelated in general, so the guard failed in both directions:
+a false refuse for a champion anchored near the failing end (little left
+to lose, plenty to gain) and a silent false OK at the score ceiling. The
+measurement is kept and now persisted as `degradation_signal` (the legacy
+`signal` key is retained for existing readers); `margin_above_achievable`
+is a WARNING that can no longer hard-refuse a run even under
+`preflight_gate="refuse"`, including from records persisted before the
+change. The floor-based refusals, which measure honestly, are unchanged.
+Improvement headroom remains UNMEASURED — deriving one from the namespace
+weights is registered, not built, because the scalar's reachable floor is
+not `0` once a namespace carries a negative weight.
+
 ### Contract hash no longer depends on the process cwd or checkout path
 
 `_canon_mutable_trees` previously RESOLVED the registered mutable-tree
