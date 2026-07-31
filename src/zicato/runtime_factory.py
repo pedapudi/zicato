@@ -46,6 +46,42 @@ from zicato.import_path import import_dotted_path
 from zicato.models_config import load_models_config, resolve_text_call_llm
 
 
+def resolve_parallelism(runtime_dict: Mapping[str, Any]) -> tuple[int, str]:
+    """Resolve the effective ``parallelism`` and say where it came from.
+
+    Three-tier precedence:
+
+    1. An explicit ``--parallelism`` flag, pinned into the typed config
+       tree at CLI startup (``zicato.config.pin_overrides``). A
+       per-invocation flag outranks the per-workspace file, so it is
+       checked FIRST — but only when explicitly pinned, so the mere
+       typed-config default never masks the workspace value.
+    2. The workspace config's ``runtime`` block — the same place
+       ``instance_id`` and ``seed`` are read.
+    3. The typed config tree
+       (:attr:`ZicatoConfig.runtime.parallelism` — its default of 4, or
+       whatever an embedding application pinned).
+
+    ``RuntimeConfig.__post_init__`` re-validates ``parallelism >= 1``.
+
+    The second element of the pair names the winning tier (``"--parallelism
+    flag"`` / ``"workspace runtime.parallelism"`` / ``"default"``) so the
+    run-start configuration line can tell an operator whether the number
+    they are looking at is one they chose (issue #126): a concurrency
+    ceiling nobody ever wrote down is indistinguishable, from the outside,
+    from a machine that is simply slow.
+    """
+    from zicato.config import load_config, pinned_override  # noqa: PLC0415 — avoid import cycle
+
+    pinned = pinned_override("runtime", "parallelism")
+    if pinned is not None:
+        return int(pinned), "--parallelism flag"
+    raw = runtime_dict.get("parallelism")
+    if raw is not None:
+        return int(raw), "workspace runtime.parallelism"
+    return load_config().runtime.parallelism, "default"
+
+
 def make_runtime_config(
     workspace_config: Mapping[str, Any],
     *,
@@ -172,28 +208,7 @@ def make_runtime_config(
     seed_raw = runtime_dict.get("seed")
     seed: int | None = int(seed_raw) if seed_raw is not None else None
 
-    # Resolve ``parallelism`` with three-tier precedence:
-    #   1. An explicit ``--parallelism`` flag, pinned into the typed
-    #      config tree at CLI startup (``zicato.config.pin_overrides``).
-    #      A per-invocation flag outranks the per-workspace file, so it
-    #      is checked FIRST — but only when explicitly pinned, so the
-    #      mere typed-config default never masks the workspace value.
-    #   2. The workspace config's ``runtime`` block — the same place
-    #      ``instance_id`` and ``seed`` are read.
-    #   3. The typed config tree
-    #      (:attr:`ZicatoConfig.runtime.parallelism` — its default of 4,
-    #      or whatever an embedding application pinned).
-    # ``RuntimeConfig.__post_init__`` re-validates ``parallelism >= 1``.
-    from zicato.config import load_config, pinned_override  # noqa: PLC0415 — avoid import cycle
-
-    pinned_parallelism = pinned_override("runtime", "parallelism")
-    parallelism_raw = runtime_dict.get("parallelism")
-    if pinned_parallelism is not None:
-        parallelism = int(pinned_parallelism)
-    elif parallelism_raw is not None:
-        parallelism = int(parallelism_raw)
-    else:
-        parallelism = load_config().runtime.parallelism
+    parallelism, _parallelism_source = resolve_parallelism(runtime_dict)
 
     # Propose-phase concurrency cap (WS-CONC): the best-of-N slate gather's
     # semaphore size — the propose-side analogue of ``parallelism``. Read from
@@ -369,4 +384,4 @@ def _import_callable(dotted: str, *, kind: str) -> CallLLM:
     return result  # type: ignore[no-any-return]
 
 
-__all__ = ["make_runtime_config"]
+__all__ = ["make_runtime_config", "resolve_parallelism"]

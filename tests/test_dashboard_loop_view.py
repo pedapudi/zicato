@@ -231,13 +231,90 @@ def test_trajectory_zero_promotions_below_floor_reads_no_signal(tmp_path: Path) 
 
 def test_trajectory_zero_promotions_without_floor_is_not_fabricated(tmp_path: Path) -> None:
     # The TRAP guard (DQ7): "no floor measured yet" is NOT "no signal". Without
-    # a measured floor, the 0-promotion run falls back to the raw observation
-    # (not-plateaued), never a fabricated no_signal.
+    # a measured floor the stall is reported as "stalled" — a statement about
+    # promotions that did not happen — never a fabricated no_signal, which
+    # would assert a noise measurement nobody took.
     ws = _workspace(tmp_path)  # no floor
     _seed_index(ws / "index.db", scalars=[1.0], rejected=1)
     out = build_optimization_trajectory(WorkspacePaths(ws), EPOCH)
     assert out["promoted_count"] == 0
     assert out["verdict"] != "no_signal"
+    assert out["verdict"] == "stalled"
+
+
+def test_trajectory_in_flight_first_challenger_is_warming_up_not_stalled(tmp_path: Path) -> None:
+    """A challenger that is still racing has decided nothing.
+
+    ``append_to_lineage(..., pending=True)`` records an APPLIED-but-
+    unresolved challenger the moment its snapshot lands, and the ingest
+    reads its null ``promoted`` as ``0`` — so the index holds a
+    challenger row well before any tournament settles. Keying the stall
+    on ``challenger_count`` therefore condemned a fresh run's very first
+    round, mid-tournament, as a loop going nowhere: a caution chip on
+    both surfaces at the moment an operator is most likely watching.
+    """
+    ws = _workspace(tmp_path)  # no floor
+    conn = sqlite3.connect(ws / "index.db")
+    conn.executescript(_SCHEMA)
+    conn.execute("INSERT INTO generations VALUES(?,?,?,?)", (EPOCH, "v0", None, 0))
+    # An applied, unresolved challenger: a generations row, and NO experiments
+    # row, because nothing has been decided.
+    conn.execute("INSERT INTO generations VALUES(?,?,?,?)", (EPOCH, "v1", "v0", 0))
+    conn.commit()
+    conn.close()
+
+    out = build_optimization_trajectory(WorkspacePaths(ws), EPOCH)
+    assert out["challenger_count"] == 1, "the racer is fielded"
+    assert out["settled_count"] == 0, "...but nothing has been decided"
+    assert out["verdict"] == "warming_up", out["verdict"]
+
+
+def test_trajectory_settled_count_excludes_the_undecided(tmp_path: Path) -> None:
+    """One settled rejection beside one in-flight racer still reads stalled.
+
+    The moment a real decision lands, the stall reading is earned — the
+    in-flight sibling neither creates nor suppresses it.
+    """
+    ws = _workspace(tmp_path)  # no floor
+    _seed_index(ws / "index.db", scalars=[1.0], rejected=1)
+    conn = sqlite3.connect(ws / "index.db")
+    conn.execute("INSERT INTO generations VALUES(?,?,?,?)", (EPOCH, "v9", "v0", 0))
+    conn.commit()
+    conn.close()
+
+    out = build_optimization_trajectory(WorkspacePaths(ws), EPOCH)
+    assert out["challenger_count"] == 2
+    assert out["settled_count"] == 1
+    assert out["verdict"] == "stalled"
+
+
+def test_trajectory_no_challengers_yet_is_warming_up(tmp_path: Path) -> None:
+    # Issue #129: the seed alone, nothing fielded. The old ladder read
+    # `not plateaued` and printed "improving" for an epoch that had not yet
+    # done anything. There is no advance to praise and no stall to report.
+    ws = _workspace(tmp_path)
+    _seed_index(ws / "index.db", scalars=[1.0], rejected=0)
+    out = build_optimization_trajectory(WorkspacePaths(ws), EPOCH)
+    assert out["challenger_count"] == 0
+    assert out["promoted_count"] == 0
+    assert out["verdict"] == "warming_up"
+
+
+def test_trajectory_improving_requires_an_advance_on_the_spine(tmp_path: Path) -> None:
+    # "improving" is earned by at least one promotion — a one-node spine reads
+    # `plateaued=False` only because it is too short to plateau, and the
+    # payload now carries `plateau_measurable` so a reader can tell which.
+    ws = _workspace(tmp_path)
+    _seed_index(ws / "index.db", scalars=[3.6, 2.4], rejected=0)
+    two = build_optimization_trajectory(WorkspacePaths(ws), EPOCH)
+    assert two["verdict"] == "improving"  # the spine actually advanced
+    assert two["plateau_measurable"] is False  # ...but 2 points < PLATEAU_WINDOW
+
+    ws2 = _workspace(tmp_path / "long")
+    _seed_index(ws2 / "index.db", scalars=[3.6, 2.4, 1.2], rejected=0)
+    three = build_optimization_trajectory(WorkspacePaths(ws2), EPOCH)
+    assert three["verdict"] == "improving"
+    assert three["plateau_measurable"] is True  # now the flag means something
 
 
 def test_trajectory_degrades_without_index(tmp_path: Path) -> None:

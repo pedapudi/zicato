@@ -1501,6 +1501,29 @@ async def evolve_once(
 # ---------------------------------------------------------------------------
 
 
+def _field_failure_summary(field_status: list[dict[str, Any]]) -> str:
+    """Bucket a multi-challenger field's per-slot failures by reason.
+
+    Each rejected slot already carries a condensed ``reason`` (the
+    proposer's :func:`_short_reject_reason` line, or a field-diversity
+    soft-reject code). Counting them turns "the field failed" into "every
+    slot hit the same parse error" or "four slots, four different
+    failures" — two situations with different first moves. Empty when no
+    slot recorded a status, which leaves the caller's reason as it was.
+    """
+    causes: dict[str, int] = {}
+    for status in field_status:
+        if not isinstance(status, dict) or status.get("status") == "applied":
+            continue
+        reason = str(status.get("reason") or "").strip() or "(no reason recorded)"
+        causes[reason] = causes.get(reason, 0) + 1
+    if not causes:
+        return ""
+    ranked = sorted(causes.items(), key=lambda kv: -kv[1])
+    total = sum(causes.values())
+    return f"{total} slot(s): " + ", ".join(f"{count}x {reason}" for reason, count in ranked)
+
+
 async def _evolve_multi_challenger(
     *,
     workspace_root: Path,
@@ -1897,6 +1920,17 @@ async def _evolve_multi_challenger(
         # field-status so the dashboard's proposing-step tracker reads
         # "N proposed · 0 applied — all rejected" rather than an empty
         # idle state (the recent all-failed run that prompted this).
+        #
+        # The reason folds in the per-slot failures built just above. The
+        # bare "no challenger applied cleanly" was the same sentence
+        # whether every slot hit the same parse error (a broken proposer
+        # prompt) or each hit a different one (an unreachable mutable
+        # surface) — and the journal keeps this string, so the distinction
+        # was lost for good (issue #129).
+        breakdown = _field_failure_summary(field_status)
+        all_failed_reason = "multi-challenger field: no challenger applied cleanly"
+        if breakdown:
+            all_failed_reason += f" ({breakdown})"
         champion_only = [{"generation_id": parent_id, "seed": 1, "role": "champion"}]
         _publish_active_tournament(
             workspace_root,
@@ -1919,7 +1953,7 @@ async def _evolve_multi_challenger(
                 "decision": "rejected",
                 "provenance": {
                     "structure": tournament_spec.structure,
-                    "reason": "multi-challenger field: no challenger applied cleanly",
+                    "reason": all_failed_reason,
                     "parent_generation_id": parent_id,
                     "promoted_generation_id": None,
                 },
@@ -1930,7 +1964,7 @@ async def _evolve_multi_challenger(
             parent_generation_id=parent_id,
             proposed_generation_id="",
             tournament_decision="rejected",
-            rejection_reason="multi-challenger field: no challenger applied cleanly",
+            rejection_reason=all_failed_reason,
             parent_scalar=0.0,
             child_scalar=0.0,
             delta_scalar=0.0,
@@ -4189,14 +4223,30 @@ def _assess_and_persist_loop_health(
     return summary, has_critical
 
 
+#: Longest ``detail["recommendation"]`` rendered inline on the one-line
+#: health summary; longer remediations are clipped with an ellipsis and
+#: read in full from the round's health JSON.
+_HEALTH_RECOMMENDATION_CLIP = 160
+
+
 def _summarise_loop_health(health: Any) -> tuple[str, bool]:
     """Derive a one-line summary + critical flag from a ``LoopHealth`` object.
 
     Tolerant of the sibling's exact :class:`LoopHealth` shape: it is
     documented to expose ``.findings`` and ``.healthy``, and each finding
-    is expected to carry a ``severity`` (string) and a ``message`` /
-    ``summary`` / ``detail`` text field. Anything missing is filled in
-    defensively so a schema drift in the sibling never raises here.
+    is expected to carry a ``code``, a ``severity`` (string) and a
+    ``message`` / ``summary`` / ``detail`` text field. Anything missing is
+    filled in defensively so a schema drift in the sibling never raises
+    here.
+
+    The line names the finding's stable ``code``, its measured summary, and
+    — when the detector wrote one — the ``detail["recommendation"]`` saying
+    what to change. That last part used to be structurally unreachable:
+    the text walker below accepts only *string* attributes, and
+    ``detail`` is a dict, so fifteen of the nineteen detectors composed a
+    remediation that reached the round's health JSON and never the line an
+    operator actually reads (issue #129). Still one line — the clip keeps
+    it that way.
     """
     findings = list(getattr(health, "findings", ()) or ())
     healthy = bool(getattr(health, "healthy", not findings))
@@ -4217,12 +4267,24 @@ def _summarise_loop_health(health: Any) -> tuple[str, bool]:
                 return val.strip()
         return str(f)
 
+    def _head(f: Any) -> str:
+        code = str(getattr(f, "code", "") or "").strip()
+        line = f"[{code}] {_text(f)}" if code else _text(f)
+        detail = getattr(f, "detail", None)
+        rec = detail.get("recommendation") if isinstance(detail, dict) else None
+        if isinstance(rec, str) and rec.strip():
+            rec = rec.strip()
+            if len(rec) > _HEALTH_RECOMMENDATION_CLIP:
+                rec = rec[: _HEALTH_RECOMMENDATION_CLIP - 1].rstrip() + "…"
+            line = f"{line} — recommended: {rec}"
+        return line
+
     if has_critical:
-        head = _text(critical[0])
+        head = _head(critical[0])
         extra = f" (+{len(critical) - 1} more critical)" if len(critical) > 1 else ""
         return f"CRITICAL: {head}{extra}", True
 
-    head = _text(findings[0])
+    head = _head(findings[0])
     extra = f" (+{len(findings) - 1} more)" if len(findings) > 1 else ""
     return f"{len(findings)} finding(s): {head}{extra}", False
 

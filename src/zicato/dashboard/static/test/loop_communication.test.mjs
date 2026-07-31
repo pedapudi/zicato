@@ -79,6 +79,74 @@ test('loopVerdict: no_signal renders the exact honest phrase, plateaued reads pl
   assertEqual(home.loopVerdict({}), null, 'a degraded read (verdict null) → no chip');
 });
 
+// ── 1b. issue #129: the STALLED verdict — challengers fielded, none promoted,
+// no A/A floor measured. This case used to fall through to "improving" on the
+// epoch view and to NOTHING on the fleet card, so the two surfaces disagreed
+// about the worst regime the loop has. Both must now say the same word.
+test('stalled: both surfaces render it, and neither surface can call a 0-promotion run improving', () => {
+  const stalled = trajFixture({
+    points: [{ generation_id: 'v0', scalar: 3.6, namespace_values: {} }],
+    promotion_rate: 0, promoted_count: 0, challenger_count: 6,
+    plateaued: false, plateau_measurable: false, verdict: 'stalled',
+    recent_movement: null, noise_floor: null,
+  });
+
+  const chip = home.loopVerdict(stalled);
+  assert(chip, 'a stalled loop earns a chip on the fleet card — it used to earn none');
+  assertEqual(chip.word, 'stalled (no promotions)', 'the phrase names the promotions that did not happen');
+  assertEqual(chip.cls, 'stalled', 'stalled chips wear their own class');
+
+  // The epoch panel's verdictLine layers "improving" on top of loopVerdict, so
+  // the pin that matters is that it reaches for loopVerdict FIRST.
+  const panel = epoch.buildTrajectoryPanel(stalled, {});
+  const host = mountInto(panel);
+  const verdictChips = allByClass(host, 'dn-looptraj-verdict');
+  assertEqual(verdictChips.length, 1, 'the epoch panel prints exactly one verdict chip');
+  assertEqual(verdictChips[0].textContent, 'stalled (no promotions)',
+    'the epoch view says the same word as the fleet card — never a green "improving"');
+  assert(hasClass(verdictChips[0], 'dn-chip-stalled'), 'and wears the stalled class, not dn-chip-open');
+});
+
+// ── 1c. warming_up: nothing has settled yet. Quiet on BOTH surfaces — there is
+// no advance to praise and no stall to report, and inventing either would be
+// the same defect in the opposite direction.
+test('warming_up: no chip anywhere — an undecided loop is not an improving one', () => {
+  const fresh = trajFixture({
+    points: [{ generation_id: 'v0', scalar: 3.6, namespace_values: {} }],
+    promotion_rate: null, promoted_count: 0, challenger_count: 0,
+    plateaued: false, plateau_measurable: false, verdict: 'warming_up',
+    recent_movement: null, noise_floor: null,
+  });
+  assertEqual(home.loopVerdict(fresh), null, 'the fleet card stays quiet');
+  const host = mountInto(epoch.buildTrajectoryPanel(fresh, {}));
+  assertEqual(allByClass(host, 'dn-looptraj-verdict').length, 0,
+    'and so does the epoch panel — no verdict word is honest yet');
+});
+
+// ── 1d. issue #129: the fleet-card hero placeholder. "no trajectory yet" after
+// twenty settled rounds reads as a loop that never started; the honest reading
+// of a short spine with rejected challengers is a champion that held.
+test('heroPlaceholderText: a retained champion is reported, not called "no trajectory yet"', () => {
+  assertEqual(home.heroPlaceholderText(trajFixture({ promoted_count: 0, challenger_count: 20 })),
+    'champion retained · 20 rounds', 'rejections are history, not absence');
+  assertEqual(home.heroPlaceholderText(trajFixture({ promoted_count: 0, challenger_count: 1 })),
+    'champion retained · 1 round', 'singular round reads singular');
+  assertEqual(home.heroPlaceholderText(trajFixture({ promoted_count: 2, challenger_count: 3 })),
+    '3 rounds · 2 promoted', 'a promoted-but-unplottable epoch reports its promotions');
+  assertEqual(home.heroPlaceholderText(trajFixture({ promoted_count: 0, challenger_count: 0 })),
+    'no trajectory yet', 'before any challenger settles, the honest word IS "yet"');
+  assertEqual(home.heroPlaceholderText(null), 'no trajectory yet',
+    'a null read (Rust supervisor) keeps the original placeholder');
+
+  // Settled rounds, not fielded ones: an in-flight challenger has retained
+  // nothing yet, so counting it would report a round the loop has not
+  // finished — the same over-claim the verdict ladder avoids one field over.
+  assertEqual(home.heroPlaceholderText(trajFixture({ promoted_count: 0, challenger_count: 1, settled_count: 0 })),
+    'no trajectory yet', 'the first challenger, still racing, is not a retained round');
+  assertEqual(home.heroPlaceholderText(trajFixture({ promoted_count: 0, challenger_count: 4, settled_count: 3 })),
+    'champion retained · 3 rounds', 'the racer is excluded; the three decided rounds are reported');
+});
+
 // ── 2. the fleet-card stat labels null-degrade ──────────────────────────────
 test('promotionRateLabel / costPerPromotionLabel: real values format, absent reads null', () => {
   assertEqual(home.promotionRateLabel(trajFixture()), '2/3 · 67%', 'promoted/challengers · percent');
@@ -185,7 +253,7 @@ test('loopStatsDigest: rounded + timestamp-free; null reads fold to nulls (stabl
   const b = JSON.stringify(home.loopStatsDigest(trajFixture(), costFixture()));
   assertEqual(a, b, 'no-op fold is byte-identical');
   const nulls = JSON.stringify(home.loopStatsDigest(null, null));
-  assertEqual(nulls, JSON.stringify([null, null, null, null, null]),
+  assertEqual(nulls, JSON.stringify([null, null, null, null, null, null]),
     'absent reads fold to a stable all-null tuple');
   const moved = JSON.stringify(home.loopStatsDigest(
     trajFixture({ verdict: 'plateaued' }), costFixture()));

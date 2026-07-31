@@ -510,29 +510,42 @@ def render_approach_section(data: EpochReportData) -> str:
 def render_score_trajectory_table(data: EpochReportData) -> str:
     """Render the per-generation scalar trajectory as a markdown table.
 
-    Columns: generation id, cumulative scalar, Δscalar from parent,
-    Δdrift_loss, Δpass_rate, decision, and the proposer's one-line core
+    Columns: generation id, decision, cumulative scalar, Δscalar from
+    parent, Δdrift_loss, Δpass_rate, and the proposer's one-line core
     idea. The baseline row carries the seed scalar and no deltas.
+
+    ``decision`` sits beside ``scalar`` because it qualifies it: for a
+    rejected row the cumulative is a counterfactual — where the lineage
+    would have stood had that challenger been accepted — and the
+    lineage did not in fact move. A note under the table says so, so
+    the column cannot be read as a running score of the champion.
     """
     if not data.generations:
         return "_No generations have been recorded for this epoch._"
     lines: list[str] = []
-    lines.append("| gen | scalar | Δscalar | Δdrift_loss | Δpass_rate " "| decision | core idea |")
+    lines.append("| gen | decision | scalar | Δscalar | Δdrift_loss | Δpass_rate " "| core idea |")
     lines.append("| --- | --- | --- | --- | --- | --- | --- |")
     for g in data.generations:
         if g.is_baseline:
             lines.append(
-                f"| `{g.generation_id}` | {_fmt_delta(g.cumulative_scalar)} "
-                f"| — | — | — | baseline | (seed) |"
+                f"| `{g.generation_id}` | baseline | {_fmt_delta(g.cumulative_scalar)} "
+                f"| — | — | — | (seed) |"
             )
         else:
             core = _esc_cell(g.core_idea.splitlines()[0]) if g.core_idea else ""
             lines.append(
-                f"| `{g.generation_id}` | {_fmt_delta(g.cumulative_scalar)} "
+                f"| `{g.generation_id}` | {g.decision} | {_fmt_delta(g.cumulative_scalar)} "
                 f"| {_fmt_delta(g.scalar_score_delta)} "
                 f"| {_fmt_delta(g.drift_loss_delta)} "
-                f"| {_fmt_delta(g.pass_rate_delta)} | {g.decision} | {core} |"
+                f"| {_fmt_delta(g.pass_rate_delta)} | {core} |"
             )
+    lines.append("")
+    lines.append(
+        "_`scalar` is cumulative from the seed. On a **rejected** row it is the "
+        "counterfactual the challenger would have reached had it been promoted — "
+        "the lineage stayed where it was. Only baseline and promoted rows report "
+        "a score the harness stands behind._"
+    )
     return "\n".join(lines)
 
 
@@ -540,8 +553,14 @@ def render_score_sparkline(data: EpochReportData, width: int = 28) -> str:
     """Render an ASCII bar chart of the cumulative-scalar trajectory.
 
     One line per generation, bar normalised across the observed scalar
-    range. A fenced code block keeps the column alignment intact. The
-    most-recent generation is annotated ``<- current``.
+    range. A fenced code block keeps the column alignment intact.
+
+    ``<- current`` marks the generation actually IN FORCE — the last
+    promoted one, or the baseline when nothing has promoted — not the
+    newest row. The newest row is a rejected challenger whenever the
+    last round did not promote, and its bar is a counterfactual; marking
+    it "current" tells the operator the discarded attempt is the state
+    of the system.
     """
     gens = list(data.generations)
     if not gens:
@@ -555,7 +574,7 @@ def render_score_sparkline(data: EpochReportData, width: int = 28) -> str:
         lo -= spread
         hi += spread
     label_width = max(len(g.generation_id) for g in gens)
-    last_idx = len(gens) - 1
+    current_idx = _champion_index(gens)
     body: list[str] = []
     for i, g in enumerate(gens):
         ratio = (g.cumulative_scalar - lo) / (hi - lo) if hi > lo else 0.5
@@ -571,10 +590,23 @@ def render_score_sparkline(data: EpochReportData, width: int = 28) -> str:
             f"{g.generation_id:<{label_width}}: {bar}  "
             f"{_fmt_delta(g.cumulative_scalar)}  {tail}"
         )
-        if i == last_idx:
+        if i == current_idx:
             line = line.rstrip() + "   <- current"
         body.append(line.rstrip())
     return "```\n" + "\n".join(body) + "\n```"
+
+
+def _champion_index(gens: list[GenerationView]) -> int:
+    """Index of the generation in force: last promoted, else the baseline.
+
+    Falls back to the last row only when the view carries neither a
+    promotion nor a baseline (nothing better is knowable).
+    """
+    champion = -1
+    for i, g in enumerate(gens):
+        if g.is_baseline or g.decision == "promoted":
+            champion = i
+    return champion if champion >= 0 else len(gens) - 1
 
 
 def _promoted_lineage(data: EpochReportData) -> list[GenerationView]:
@@ -716,6 +748,18 @@ def render_per_board_outcomes(data: EpochReportData) -> str:
     chain = _promoted_lineage(data)
     scored = [g for g in chain if g.gen_score]
     if not scored:
+        # Name the true cause. "No scores available yet" reads as a harness
+        # that has not run; when nothing promoted, the harness ran fine and
+        # scored every challenger — the promoted lineage is just the baseline,
+        # so there is no second column to compare against.
+        if data.promoted == 0 and data.rejected > 0:
+            return (
+                f"_Nothing has promoted, so the promoted lineage is the baseline alone "
+                f"and there is no cross-generation comparison to draw. "
+                f"{data.rejected} challenger "
+                f"{'generation was' if data.rejected == 1 else 'generations were'} "
+                f"scored and rejected; those scores are in the trajectory table above._"
+            )
         return "_No cached generation scores are available for the promoted lineage yet._"
     # Aggregate gen-score table — the keys the tournament runner caches.
     agg_keys = ["scalar", "drift_loss_mean", "pass_rate"]
@@ -878,6 +922,12 @@ def _render_campaign_callout(data: EpochReportData) -> str:
     ratio. It uses the ``<!-- CALLOUT:LABEL -->`` marker the HTML
     renderer turns into a sidenote-style block.
 
+    The number is :attr:`~EpochReportData.final_scalar`, which is
+    champion-anchored — so an epoch that promoted nothing is headlined
+    as having *held*, and the last rejected challenger's counterfactual
+    appears (when there is one) under its own label rather than under
+    the lineage's.
+
     Conservative: emits the empty string when there are no challengers
     yet (no story to tell).
     """
@@ -887,13 +937,23 @@ def _render_campaign_callout(data: EpochReportData) -> str:
     direction = "improved" if final < 0 else ("regressed" if final > 0 else "held")
     bits: list[str] = []
     bits.append("<!-- CALLOUT:KEY OBSERVATION -->")
-    bits.append(
+    sentence = (
         f"The promoted lineage's cumulative scalar has {direction} to "
         f"`{final:+.3f}` after {data.attempted} challenger "
         f"{'generation' if data.attempted == 1 else 'generations'} "
         f"({data.promoted} promoted, {data.rejected} rejected). "
         f"A lower scalar is better; the trajectory figure plots the path."
     )
+    counterfactual = data.latest_rejected_scalar
+    if data.promoted == 0 and counterfactual is not None:
+        # With nothing promoted the headline number is the baseline, so the
+        # only measured movement in the epoch is on a path the gate refused.
+        # It is worth reporting — under a label that says whose it is.
+        sentence += (
+            f" The most recent rejected challenger measured `{counterfactual:+.3f}`"
+            f" — a path not taken."
+        )
+    bits.append(sentence)
     return "\n".join(bits)
 
 

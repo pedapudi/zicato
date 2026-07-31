@@ -216,6 +216,22 @@ def _scalar_delta_of(experiment: Any) -> float | None:
         return None
 
 
+def _float_or_none(value: Any) -> float | None:
+    """Coerce a recorded number to ``float``, or ``None`` when it is not one.
+
+    The same tolerance every detector applies to journal-sourced values:
+    a missing key, a ``null``, or a malformed record must leave the
+    quantity out of the finding rather than raise inside an assessment
+    that is always best-effort.
+    """
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _attr_or_key(obj: Any, name: str) -> Any:
     """Read ``name`` from ``obj`` whether it is an object or a mapping.
 
@@ -226,6 +242,52 @@ def _attr_or_key(obj: Any, name: str) -> Any:
     if isinstance(obj, dict):
         return obj.get(name)
     return getattr(obj, name, None)
+
+
+#: Longest bucketing key :func:`_reject_cause` will return before clipping.
+_REJECT_CAUSE_CLIP = 60
+
+#: Where a rejection reason stops naming its CAUSE and starts reporting the
+#: numbers behind it. ``": "`` opens the detail clause on most reasons;
+#: ``" ("`` opens the measured parenthetical on the rest; ``";"`` opens the
+#: trailing "a promotion needs …" advice. The earliest one wins.
+_REJECT_CAUSE_SEPARATORS = (": ", " (", ";")
+
+
+def _reject_cause(reason: str) -> str:
+    """Bucket a gate rejection reason down to its cause clause.
+
+    Every reason :mod:`zicato.tournament.gate` composes leads with the
+    rule that fired and follows it with that rule's measured numbers —
+    ``"insufficient improvement: loss fell by only 0.0012 (champion … ->
+    challenger …)"``. The numbers make each reason unique, which is
+    exactly what a breakdown must NOT be keyed on.
+
+    So the key is the text ahead of the earliest separator that opens a
+    detail clause (:data:`_REJECT_CAUSE_SEPARATORS`), not the first colon
+    alone. Some rules carry no colon at all and open straight into the
+    parenthetical — ``"monotonicity_regression on namespace=rubric
+    (champion 0.412345 -> …)"`` — and keying those on a length clip put
+    the champion's aggregate INSIDE the key, so six rounds rejected by
+    the same rule on the same namespace produced six singleton buckets
+    and a breakdown longer than the summary it qualifies. Cutting at
+    ``" ("`` keys them on the rule and the namespace, which is what the
+    reader is counting.
+
+    The clip stays as the last resort for a reason that carries no
+    separator anywhere.
+    """
+    text = " ".join(str(reason or "").split())
+    if not text:
+        return "(no reason recorded)"
+    cut = min(
+        (i for i in (text.find(sep) for sep in _REJECT_CAUSE_SEPARATORS) if i > 0),
+        default=-1,
+    )
+    head = (text[:cut] if cut > 0 else text).strip()
+    if head and len(head) <= _REJECT_CAUSE_CLIP:
+        return head
+    return text[: _REJECT_CAUSE_CLIP - 1].rstrip() + "…"
 
 
 def detect_degenerate_scoring(
@@ -633,12 +695,20 @@ def detect_stalled_loop(
     Silent when fewer than ``config.stalled_rejects`` evaluated
     experiments exist or the trailing run is shorter than the threshold.
 
+    The finding names WHY each round lost, bucketed by gate reason (issue
+    #129). "Six rejections" is one number covering several very different
+    situations: six near-misses on the promotion margin say the proposer
+    is close and the margin may be mis-set, whereas six pass-rate
+    regressions on the same entry say the mutable surface keeps breaking
+    one thing. Those demand different responses, and the reasons are
+    already on the outcomes the detector walks.
+
     ``config`` defaults to the env-sourced
     :class:`~zicato.config.HealthConfig` via :func:`load_config`.
     """
     threshold = _resolve_health_config(config).stalled_rejects
 
-    decisions: list[tuple[str, str]] = []
+    decisions: list[tuple[str, str, str]] = []
     for exp in experiments:
         outcome = _attr_or_key(exp, "outcome")
         if outcome is None:
@@ -647,18 +717,30 @@ def detect_stalled_loop(
         if decision is None:
             continue
         generation_id = str(_attr_or_key(exp, "generation_id") or "")
-        decisions.append((generation_id, str(decision)))
+        reason = str(_attr_or_key(outcome, "rejection_reason") or "")
+        decisions.append((generation_id, str(decision), reason))
 
     trailing_rejects: list[str] = []
-    for generation_id, decision in reversed(decisions):
+    trailing_reasons: list[str] = []
+    for generation_id, decision, reason in reversed(decisions):
         if decision == "rejected":
             trailing_rejects.append(generation_id)
+            trailing_reasons.append(reason)
         else:
             break
     trailing_rejects.reverse()
+    trailing_reasons.reverse()
 
     if len(trailing_rejects) < threshold:
         return []
+
+    causes: dict[str, int] = {}
+    for reason in trailing_reasons:
+        cause = _reject_cause(reason)
+        causes[cause] = causes.get(cause, 0) + 1
+    # Commonest cause first; ties keep first-seen (lineage) order.
+    ranked = sorted(causes.items(), key=lambda kv: -kv[1])
+    breakdown = ", ".join(f"{count}x {cause}" for cause, count in ranked)
 
     return [
         HealthFinding(
@@ -666,12 +748,14 @@ def detect_stalled_loop(
             severity="warning",
             summary=(
                 f"{len(trailing_rejects)} consecutive generations rejected — "
-                "the proposer is not finding improvements"
+                f"the proposer is not finding improvements ({breakdown})"
             ),
             detail={
                 "consecutive_rejects": len(trailing_rejects),
                 "threshold": threshold,
                 "rejected_generation_ids": trailing_rejects,
+                "rejection_causes": dict(ranked),
+                "rejection_reasons": dict(zip(trailing_rejects, trailing_reasons, strict=True)),
                 "recommendation": (
                     "review the rubric and the mutable surface; the circuit "
                     "breaker is about to or has fired"
@@ -983,7 +1067,11 @@ def _is_placebo_experiment(experiment: Any) -> bool:
     return isinstance(core_idea, str) and core_idea.startswith(PLACEBO_HYPOTHESIS_MARKER)
 
 
-def detect_placebo_promoted(experiments: list[Any]) -> list[HealthFinding]:
+def detect_placebo_promoted(
+    experiments: list[Any],
+    promote_margin: float | None = None,
+    noise_floor: dict[str, Any] | None = None,
+) -> list[HealthFinding]:
     """CRITICAL when a random-baseline (placebo) challenger was PROMOTED.
 
     The placebo arm (OVERFITTING.md #7,
@@ -998,7 +1086,22 @@ def detect_placebo_promoted(experiments: list[Any]) -> list[HealthFinding]:
     Silent when no placebo experiments exist (the knob is off / no
     cadence tick yet) or every placebo was rejected — the arm doing its
     quiet calibration job.
+
+    ``promote_margin`` and ``noise_floor`` are the epoch's decision
+    parameters, threaded from :func:`assess_loop_health` so the alarm can
+    show the comparison that failed rather than only its verdict (issue
+    #129): a no-op whose measured delta cleared a margin that sits inside
+    the measured noise is a mis-set margin, while the same delta clearing
+    a margin well above the floor is a broken reducer or a rigged gate,
+    and the operator's next move differs. Both default to ``None`` (never
+    measured / not supplied), which simply leaves that clause off the
+    line. Absolute parent and child scalars are NOT available here — an
+    :class:`~zicato.core.experiment.Outcome` records deltas only.
     """
+    floor = (
+        _float_or_none(noise_floor.get("max_abs_delta")) if isinstance(noise_floor, dict) else None
+    )
+
     findings: list[HealthFinding] = []
     for exp in experiments:
         if not _is_placebo_experiment(exp):
@@ -1010,18 +1113,32 @@ def detect_placebo_promoted(experiments: list[Any]) -> list[HealthFinding]:
         if decision != "promoted":
             continue
         generation_id = str(_attr_or_key(exp, "generation_id") or "")
+        delta = _float_or_none(_attr_or_key(outcome, "scalar_score_delta"))
+        measured = f"scalar delta {delta:.6g}" if delta is not None else "an unrecorded delta"
+        compared = ""
+        if promote_margin is not None:
+            compared = f" against promote_margin {promote_margin:.6g}"
+            if floor is not None:
+                compared += f" (measured noise floor {floor:.6g})"
+        elif floor is not None:
+            compared = f" (measured noise floor {floor:.6g})"
         findings.append(
             HealthFinding(
                 code="placebo_promoted",
                 severity="critical",
                 summary=(
-                    f"random-baseline placebo {generation_id!r} was PROMOTED — a "
-                    "semantics-preserving no-op won a tournament, so the gate is "
-                    "promoting noise; recent promotions are suspect"
+                    f"random-baseline placebo {generation_id!r} was PROMOTED on "
+                    f"{measured}{compared} — a semantics-preserving no-op won a "
+                    "tournament, so the gate is promoting noise; recent "
+                    "promotions are suspect"
                 ),
                 detail={
                     "generation_id": generation_id,
                     "scalar_score_delta": _attr_or_key(outcome, "scalar_score_delta"),
+                    "pass_rate_delta": _attr_or_key(outcome, "pass_rate_delta"),
+                    "drift_loss_delta": _attr_or_key(outcome, "drift_loss_delta"),
+                    "promote_margin": promote_margin,
+                    "noise_floor_max_abs_delta": floor,
                     "recommendation": (
                         "stop and audit the decision procedure: re-measure the "
                         "noise floor (zicato board audit / board preflight), "
@@ -1722,7 +1839,7 @@ def assess_loop_health(
     findings.extend(detect_refresh_cadence(experiments, max_generations_per_contract))
     findings.extend(detect_margin_below_noise_floor(noise_floor, promote_margin, evidence_gate_on))
     findings.extend(detect_preflight_verdict(preflight, preflight_gate))
-    findings.extend(detect_placebo_promoted(placebo_experiments))
+    findings.extend(detect_placebo_promoted(placebo_experiments, promote_margin, noise_floor))
     findings.extend(detect_infra_outage(infra_outage))
     findings.extend(detect_token_budget_clip(token_clip))
     findings.extend(detect_tree_never_imported(tree_import_gaps))

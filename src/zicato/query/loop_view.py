@@ -71,7 +71,9 @@ def _empty_trajectory(paths: WorkspacePaths, epoch_id: str, note: str) -> dict[s
         "promotion_rate": None,
         "promoted_count": 0,
         "challenger_count": 0,
+        "settled_count": 0,
         "plateaued": False,
+        "plateau_measurable": False,
         "verdict": None,
         "recent_movement": None,
         "noise_floor": _epoch_noise_floor(paths, epoch_id),
@@ -87,21 +89,47 @@ def build_optimization_trajectory(paths: WorkspacePaths, epoch_id: str) -> dict[
     * ``points`` — ``[{generation_id, scalar, namespace_values}]`` along
       the winners spine (:func:`optimization_trajectory`).
     * ``promotion_rate`` / ``promoted_count`` / ``challenger_count``.
+    * ``settled_count`` — challengers a tournament has DECIDED, which is
+      ``challenger_count`` minus those still racing (see
+      :class:`~zicato.tournament.detail.Trajectory`). Every "nothing
+      promoted" reading below counts this one.
     * ``plateaued`` — the RAW detail-layer flag (no improvement across
       the trailing :data:`~zicato.tournament.detail.PLATEAU_WINDOW`).
+    * ``plateau_measurable`` — whether that flag rests on enough spine to
+      mean anything (see :class:`~zicato.tournament.detail.Trajectory`).
     * ``recent_movement`` — max − min of the trailing-window scalars
       (the largest movement the window actually showed), or ``None``
       with fewer than two resolved scalars.
     * ``noise_floor`` — the epoch's measured A/A floor (or ``None``).
-    * ``verdict`` — the UNCERTAINTY-HONEST word the UI renders:
-      ``"improving"`` when not plateaued AND the promoted spine actually
-      advanced; ``"plateaued"`` when plateaued and the recent movement is
-      resolvable ABOVE the floor (or no floor was measured); ``"no_signal"``
-      when plateaued but the window's movement sits at/below the measured
-      floor — the data cannot distinguish that from an A/A re-roll — OR when
-      challengers were fielded and NONE promoted while a floor was measured
-      (a 0-promotion, all-Δ-zero run reads as no detectable signal, never
-      "improving"; issue #84).
+    * ``verdict`` — the UNCERTAINTY-HONEST word the UI renders. The
+      vocabulary, in ladder order:
+
+      ``"no_signal"``
+        Challengers SETTLED, none promoted, AND a floor was measured —
+        every challenger tied inside the A/A spread, so there is no
+        detectable signal (issue #84). Also the verdict for a measured
+        plateau whose whole trailing movement fits inside the floor: the
+        data cannot tell that from an A/A re-roll.
+      ``"stalled"``
+        Challengers SETTLED and none promoted, with NO floor measured.
+        The loop is going nowhere; how far is unmeasured, so this makes
+        no claim about noise (issue #129 — the case that previously fell
+        through to ``"improving"``). Both this and ``no_signal`` count
+        ``settled_count``, never ``challenger_count``: an in-flight
+        challenger has decided nothing, and reading it as a stall would
+        alarm on a run that has not finished its first round.
+      ``"plateaued"``
+        The promoted spine stopped improving, and the movement is
+        resolvable above the floor (or no floor was measured).
+      ``"improving"``
+        The promoted spine actually advanced — at least two points on
+        it — and has not plateaued. Requires a real advance: a
+        one-node spine is never "improving".
+      ``"warming_up"``
+        Nothing has been decided yet, so the spine is the seed alone —
+        whether the epoch has fielded no challenger at all or its first
+        challengers are still racing. Too early to judge, and said so
+        rather than guessed.
 
     Degrades to an empty shape (with the floor still attached) on a
     missing index / any sqlite failure — never raises.
@@ -138,13 +166,32 @@ def build_optimization_trajectory(paths: WorkspacePaths, epoch_id: str) -> dict[
     # Challengers were fielded and NONE promoted: the promoted spine is just
     # the seed, so it has improved nothing. A short spine reads
     # ``not plateaued`` only because it is too short to plateau (< the plateau
-    # window) — calling that "improving" overstates a loop that is going
-    # nowhere (issue #84: a 0/1 promotion-rate, all-Δ-zero run). With a
-    # MEASURED floor this is the noise-floor-honest "no detectable signal"
-    # (every challenger tied within the A/A spread), not "improving" (DQ7).
-    stuck_no_promotions = traj.challenger_count >= 1 and traj.promoted_count == 0
-    if floor is not None and stuck_no_promotions:
-        verdict = "no_signal"
+    # window), so the old fallthrough turned "we cannot tell" into the most
+    # reassuring word the UI can print (issue #129).
+    #
+    # The floor decides which honest word applies, not WHETHER one does. With
+    # a MEASURED floor the stall is the noise-floor-honest "no detectable
+    # signal" (every challenger tied within the A/A spread; issue #84).
+    # Without one, "stalled" reports the promotions that did not happen and
+    # claims nothing about noise — fabricating no_signal here would assert a
+    # measurement that was never taken (DQ7).
+    #
+    # The denominator is SETTLED challengers, not fielded ones. A challenger
+    # that has applied its snapshot and is still racing already holds an index
+    # row with ``promoted=0``, so keying the stall on ``challenger_count``
+    # would report a fresh run's very first round — nothing decided, nothing
+    # possibly promoted yet — as a loop going nowhere, in caution ink, at the
+    # moment an operator is most likely watching. That is the same defect as
+    # the "improving" fallthrough, pointed the other way.
+    stuck_no_promotions = traj.settled_count >= 1 and traj.promoted_count == 0
+    if stuck_no_promotions:
+        verdict = "no_signal" if floor is not None else "stalled"
+    elif not traj.plateaued and len(traj.points) < 2:
+        # Nothing has settled yet: the spine is the seed alone, so there is
+        # neither an advance to call "improving" nor a stall to report. Covers
+        # both the epoch that has fielded nothing and the one whose first
+        # challengers are still in flight.
+        verdict = "warming_up"
     elif not traj.plateaued:
         verdict = "improving"
     elif (
@@ -165,7 +212,9 @@ def build_optimization_trajectory(paths: WorkspacePaths, epoch_id: str) -> dict[
         "promotion_rate": traj.promotion_rate,
         "promoted_count": traj.promoted_count,
         "challenger_count": traj.challenger_count,
+        "settled_count": traj.settled_count,
         "plateaued": traj.plateaued,
+        "plateau_measurable": traj.plateau_measurable,
         "verdict": verdict,
         "recent_movement": recent_movement,
         "noise_floor": floor,

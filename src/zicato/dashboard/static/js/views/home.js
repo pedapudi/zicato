@@ -200,7 +200,7 @@ function fleetCard(row, isCurrent, ctx, sparkVals, live, loop, cost) {
     sparkVals.length >= 2
       ? svg.sparkline({ width: 240, height: 46, values: sparkVals, band: true, goodDirection: 'down',
           noiseBand: noiseBandFor(loop, sparkVals) })
-      : el('span', { class: 'dn-faint', text: 'no trajectory yet' }),
+      : el('span', { class: 'dn-faint', text: heroPlaceholderText(loop) }),
   ]);
   const promo = promotionRateLabel(loop);
   const costLabel = costPerPromotionLabel(cost);
@@ -219,6 +219,29 @@ function fleetCard(row, isCurrent, ctx, sparkVals, live, loop, cost) {
 
 // (loop-communication helpers moved to ui.js — re-exported at the top of this
 // file for back-compat.)
+
+// What the fleet card's hero says when the epoch has fewer than two real
+// scalar points to draw. "no trajectory yet" is true only before anything has
+// run: once challengers have been fielded and rejected, the epoch HAS a
+// history — the champion simply never moved — and saying "yet" reads as a
+// loop that has not started rather than one that is not getting anywhere.
+// Counts come from the trajectory payload, which already carries them.
+// The round count is SETTLED challengers, matching the verdict chip beside it:
+// a challenger that is still racing has retained nothing yet, and counting it
+// would report a round the loop has not finished. `settled_count` is additive,
+// so a payload from before it existed (or the Rust supervisor's) falls back to
+// challenger_count and reads exactly as it did.
+export function heroPlaceholderText(loop) {
+  const l = loop && typeof loop === 'object' ? loop : null;
+  const rounds = l && svg.isNum(l.settled_count) ? l.settled_count
+    : (l && svg.isNum(l.challenger_count) ? l.challenger_count : 0);
+  if (rounds < 1) return 'no trajectory yet';
+  const promoted = l && svg.isNum(l.promoted_count) ? l.promoted_count : 0;
+  const roundWord = rounds + ' round' + (rounds === 1 ? '' : 's');
+  return promoted === 0
+    ? 'champion retained · ' + roundWord
+    : roundWord + ' · ' + promoted + ' promoted';
+}
 
 function miniStat(k, v, tone) {
   return el('div', { class: 'dn-mini' }, [

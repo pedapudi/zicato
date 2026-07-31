@@ -286,6 +286,34 @@ def _regressed_namespaces(
     return regressed
 
 
+def _namespace_regression_reason(
+    parent_agg: dict[str, Any],
+    child_agg: dict[str, Any],
+    regressed: list[str],
+) -> str:
+    """Rule 3's rejection reason, citing each namespace's two aggregates.
+
+    The names alone said WHICH namespaces regressed and never by how much,
+    so an operator could not tell a hair over the tolerance from a
+    collapse, nor which of three cited namespaces to look at first (issue
+    #129). The values are the sign-folded weighted aggregates the rule
+    compared — higher is worse in that view, which is why the champion's
+    number reads lower than the challenger's on every namespace listed.
+    """
+    parent_ns: dict[str, Any] = parent_agg.get("namespace_aggregates", {}) or {}
+    child_ns: dict[str, Any] = child_agg.get("namespace_aggregates", {}) or {}
+    parts = [
+        f"{ns} (champion {float(parent_ns[ns]):.6f} -> " f"challenger {float(child_ns[ns]):.6f})"
+        for ns in regressed
+    ]
+    return (
+        "monotonicity_regression on namespace="
+        + ", ".join(parts)
+        + "; a promotion needs each flagged namespace to stay at or below the "
+        f"champion's weighted aggregate (tolerance {NAMESPACE_MONOTONICITY_TOLERANCE:g})"
+    )
+
+
 def _row_score(row: dict[str, Any] | None) -> float | None:
     """Read one ``per_entry`` row's continuous outcome in ``[0, 1]``, or ``None``.
 
@@ -818,7 +846,7 @@ def evaluate_gate(
     # journal records the full picture (not just the first one).
     regressed_ns = _regressed_namespaces(parent_agg, child_agg, weights)
     if regressed_ns:
-        reason = "monotonicity_regression on namespace=" + ", ".join(regressed_ns)
+        reason = _namespace_regression_reason(parent_agg, child_agg, regressed_ns)
         return GateOutcome(
             decision=TournamentDecision.REJECTED,
             reason=reason,

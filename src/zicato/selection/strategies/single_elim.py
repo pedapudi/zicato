@@ -246,7 +246,7 @@ class SingleEliminationStrategy(SelectionStrategy):
             return SelectionDecision(
                 promoted_generation_id=None,
                 decision=TournamentDecision.REJECTED,
-                reason="no finalist cleared the champion gate",
+                reason=f"no finalist cleared the champion gate: {self._no_final_detail()}",
                 matchups=all_matchups,
                 standings=self._standings(None),
             )
@@ -274,6 +274,36 @@ class SingleEliminationStrategy(SelectionStrategy):
         # ``_audit`` already holds every MatchupResult in record order
         # (including the final), so the flat audit is simply a copy.
         return tuple(self._audit)
+
+    def _no_final_detail(self) -> str:
+        """Why no final was decided, with whatever the bracket measured.
+
+        Three distinct situations shared one sentence: a bracket that
+        never seeded, one that ran duels but produced no finalist, and a
+        final that was scheduled and never reported. Only the third means
+        the finalist LOST to the champion, and the first two are wiring
+        faults — so the reason names which one it is and, where a finalist
+        exists, the two scalars the crowning duel would have compared
+        (issue #129).
+        """
+        if self._champion is None:
+            return "no champion was seeded"
+        if self._survivor is None:
+            return (
+                f"the bracket produced no finalist from {len(self._challengers)} "
+                f"challenger(s) over {len(self._audit)} duel(s)"
+            )
+        champ = self._scalars.get(self._champion.generation_id)
+        finalist = self._scalars.get(self._survivor.generation_id)
+        measured = (
+            f" (champion {champ:.6f} vs finalist {finalist:.6f})"
+            if champ is not None and finalist is not None
+            else ""
+        )
+        return (
+            f"the final against finalist {self._survivor.generation_id} "
+            f"reported no result{measured}"
+        )
 
     def _standings(self, promoted_id: str | None) -> tuple[Standing, ...]:
         entries: list[Standing] = []

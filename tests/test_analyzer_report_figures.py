@@ -15,6 +15,7 @@ markdown→HTML renderer drops into the paper. Coverage:
 
 from __future__ import annotations
 
+import re
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -487,6 +488,88 @@ def test_lineage_compact_renders_node_per_generation() -> None:
     # No raw hex hue should appear in lineage figure markup.
     assert PROMOTED_COLOR not in svg
     assert REJECTED_COLOR not in svg
+
+
+def _lineage_boxes(svg: str) -> list[tuple[float, float, float, float]]:
+    """Every node rect in the lineage figure as ``(x, y, w, h)``."""
+    boxes = []
+    for m in re.finditer(r'<rect x="([-\d.]+)" y="([-\d.]+)" width="(\d+)" height="(\d+)"', svg):
+        boxes.append(tuple(float(v) for v in m.groups()))  # type: ignore[arg-type]
+    return boxes
+
+
+def test_lineage_compact_wraps_instead_of_piling_up_at_high_n() -> None:
+    """Issue #129: the index-positional layout overlapped past ~9 nodes.
+
+    The step is ``(usable_width - node_width) / (n - 1)``, so it shrinks
+    with every generation while the boxes stay 84px wide. Around nine
+    nodes the step drops below the node width and the figure becomes a
+    pile — exactly the regime a champion-retained epoch produces, since
+    every rejected sibling adds a node without advancing the spine.
+    """
+    gens = (_gen(gid="v0", is_baseline=True, decision="baseline"),) + tuple(
+        # one promotion early, then twenty straight rejections: the shape a
+        # long champion-retained run actually has.
+        _gen(gid=f"v{i}", parent="v0", decision="promoted" if i == 1 else "rejected")
+        for i in range(1, 21)
+    )
+    svg = render_svg_lineage_compact(_data(gens))
+    _assert_inline_svg(svg)
+
+    boxes = _lineage_boxes(svg)
+    assert len(boxes) == 21, "one rect per generation survives the wrap"
+    for i, (ax, ay, aw, ah) in enumerate(boxes):
+        for bx, by, bw, bh in boxes[i + 1 :]:
+            overlaps = ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah
+            assert not overlaps, f"nodes overlap at n=21: {(ax, ay)} vs {(bx, by)}"
+
+    # The canvas grew to hold the extra rows rather than cropping them.
+    height = float(re.search(r'viewBox="0 0 \d+ ([\d.]+)"', svg).group(1))  # type: ignore[union-attr]
+    assert height > 160, "the wrapped layout widens the canvas height"
+    assert max(y + h for _, y, _, h in boxes) <= height, "every node fits inside the viewBox"
+
+
+def test_lineage_compact_layout_is_deterministic() -> None:
+    gens = (_gen(gid="v0", is_baseline=True, decision="baseline"),) + tuple(
+        _gen(gid=f"v{i}", parent="v0", decision="rejected") for i in range(1, 21)
+    )
+    first = render_svg_lineage_compact(_data(gens))
+    assert first == render_svg_lineage_compact(_data(gens))
+
+
+def test_lineage_compact_keeps_the_single_row_layout_when_it_fits() -> None:
+    """Small n is untouched — the wrap engages only where boxes would collide."""
+    gens = (
+        _gen(gid="v0", is_baseline=True, decision="baseline"),
+        _gen(gid="v1", parent="v0", decision="promoted"),
+        _gen(gid="v2", parent="v1", decision="rejected"),
+    )
+    svg = render_svg_lineage_compact(_data(gens))
+    boxes = _lineage_boxes(svg)
+    assert len({y for _, y, _, _ in boxes}) == 2, "promoted on the centerline, rejected below"
+    assert 'viewBox="0 0 720 160"' in svg, "the default canvas is unchanged"
+
+
+def test_lineage_compact_canvas_only_ever_grows() -> None:
+    """The caller's ``height`` is a floor the wrap may exceed, never undercut.
+
+    The first wrap is two rows, which needs 142px against the default
+    160 — so returning the computed height unconditionally made the
+    figure jump SHORTER at exactly the generation count where it gains a
+    row. Every count from a single row up must be monotone in the
+    canvas the report reserves for it.
+    """
+    heights = []
+    for n in range(2, 26):
+        gens = (_gen(gid="v0", is_baseline=True, decision="baseline"),) + tuple(
+            _gen(gid=f"v{i}", parent="v0", decision="promoted" if i == 1 else "rejected")
+            for i in range(1, n)
+        )
+        svg = render_svg_lineage_compact(_data(gens))
+        h = float(re.search(r'viewBox="0 0 \d+ ([\d.]+)"', svg).group(1))  # type: ignore[union-attr]
+        assert h >= 160, f"n={n} rendered a canvas shorter than the requested height: {h}"
+        heights.append(h)
+    assert heights == sorted(heights), f"canvas height is not monotone in n: {heights}"
 
 
 # ---------------------------------------------------------------------------
