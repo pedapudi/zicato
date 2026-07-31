@@ -266,6 +266,10 @@ def _ladder_mediated_outcome(
                 reason=raw_reason,
                 delta_scalar=train_outcome.delta_scalar,
                 delta_pass_rate=train_outcome.delta_pass_rate,
+                # The per-entry regression report is an observation about the
+                # TRAIN duel; flipping the verdict on the holdout does not
+                # unmake it, so it travels with the rebuilt outcome.
+                attributable_regressions=train_outcome.attributable_regressions,
             )
         else:
             final = train_outcome
@@ -303,6 +307,7 @@ def _ladder_mediated_outcome(
             reason=raw_reason,
             delta_scalar=train_outcome.delta_scalar,
             delta_pass_rate=train_outcome.delta_pass_rate,
+            attributable_regressions=train_outcome.attributable_regressions,
         )
     else:
         final = train_outcome

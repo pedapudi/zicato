@@ -653,6 +653,22 @@ calibrate. *Tradeoff:* may suppress a legitimately large beneficial refactor;
 pair with the proposer-brief mutation budget (`SELECTION.md` §9 lever 4) rather
 than duplicating it.
 
+*Measurement correction (issue #120).* `diff_size` originally counted every
+line of each patch's replacement as `added` and hard-coded `removed = 0`. For a
+`kind="span"` point the replacement is roughly the edit, so that was roughly
+right; for a `kind="file"` point the replacement is the WHOLE FILE, so every
+proposal paid for the template it was required to preserve — a byte-identical
+re-emit of a 37-line file scored complexity 38. The orchestrator now threads the
+parent-side CONTENT of each patched mutation point (it already holds it from the
+enumeration; the scoring layer stays pure and takes text, never paths) and
+`diff_size` reports a real line diff, with a patch that changed nothing counting
+for nothing. A weight or ceiling calibrated against the old file-charging
+numbers is now roughly an order of magnitude too loose on a whole-file mutation
+surface and should be re-tuned against a measured round. When a Rule 1 rejection
+was driven by the toll, the reason now decomposes it — raw quality delta versus
+parsimony toll, plus the `diff_size` evidence lines — so a challenger that
+improved the board and paid a larger toll is no longer worded as a regression.
+
 **#5 — A `generalization_gap` loop-health detector. (SHIPPED.)**
 *What:* track `train_loss` vs `holdout_loss` across the lineage; fire
 `warning`/`critical` when the gap widens past a threshold. *Where:* a new
