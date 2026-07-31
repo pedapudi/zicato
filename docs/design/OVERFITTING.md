@@ -601,6 +601,34 @@ winner's-curse confirmation idea (§8), so the two share the cost.
 board large enough to split (small boards can't afford it — make the split
 opt-in, off by default, like the namespace guards).
 
+*Amendment (issue #118) — the holdout needs its own bounds.* The
+confirmation reused `promote_margin` for its scalar tolerance and applied
+the train side's zero-tolerance pass-rate rule verbatim. Both are
+calibrated against the *train* slice, and the holdout is the smaller one:
+a slice of N entries moves its scalar in `1/N` steps, so the holdout's
+steps are coarser. On the DEFAULT-produced 12-train / 6-holdout split with
+one holdout entry flipping, **no value of `promote_margin` promotes** — Rule 1
+needs `margin <= 2/12`, tolerating the holdout needs `margin >= 1/6`, and
+those are the same number before float rounding closes even that point.
+Past the scalar bound the pass-rate rule rejects at every margin anyway,
+carrying only its float-noise tolerance and no operator knob.
+
+Two additive `ScoringWeights` fields split the bounds, both defaulting to
+exactly the historical behaviour and both omitted from the contract
+canonical form at their default (no existing epoch's hash moves):
+`holdout_margin` (`None` ⇒ fall back to `promote_margin`;
+`gate.effective_holdout_margin` resolves it, and it also becomes the
+Ladder's release-threshold base when set) and
+`holdout_entry_regression_budget` (`0` ⇒ today's zero tolerance; N tolerates
+N regressed entries under either monotonicity scope). The rationale is this
+step's own doctrine — the holdout **confirms** rather than re-decides, so a
+train-measured win "must merely not regress" — and a confirmation no
+achievable margin can satisfy is a second gate, not a confirmation. The
+TRAIN side keeps its zero-tolerance rule. For commensurable bounds set
+`holdout_margin ≈ promote_margin × N_train / N_holdout`;
+`preflight.holdout_window_note` says so on the pre-flight record when
+either bound looks infeasible.
+
 **#2 — A Ladder/Thresholdout-style noisy, budgeted holdout. (SHIPPED.)**
 *What:* mediate every holdout query through a Ladder rule — release a
 holdout-based promotion signal *only* when the train-measured improvement

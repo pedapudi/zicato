@@ -991,7 +991,7 @@ test('builder view: the Review pane runs the preflight op and renders the verdic
   assert(chip.textContent.includes('REFUSE'), 'the chip names the verdict');
   const reasons = firstClass(host, 'dn-bld-pf-reasons');
   assert(reasons && reasons.textContent.includes('noise floor'), 'the reasons name the measured floor');
-  assert(reasons.textContent.includes('signal'), 'the reasons name the achievable signal');
+  assert(reasons.textContent.includes('degradation signal'), 'the reasons name what was measured');
   // the REFUSE-severity validate warning surfaces in the Review pane itself.
   const refuse = byClass(host, 'dn-bld-warn-refuse')[0];
   assert(refuse && refuse.textContent.includes('noise floor'), 'the margin-vs-floor refuse warning renders beside apply');
@@ -1017,7 +1017,7 @@ async function _renderPreflight(host, result) {
   await tick();
 }
 
-test('builder view: a preflight that clears its floor with an unreachable promote_margin chips the WINDOW failure', async () => {
+test('builder view: a preflight whose margin exceeds the measured degradation signal chips the WINDOW failure', async () => {
   const host = globalThis.document.createElement('div');
   await _renderPreflight(host, {
     available: true, verdict: 'ok', reason: '',
@@ -1040,7 +1040,7 @@ test('builder view: a preflight that clears its floor with an unreachable promot
   assert(chips[1].textContent.includes('MARGIN ABOVE ACHIEVABLE'), 'and which bound failed');
   assert(chips[1].classList.contains('dn-bld-pf-refuse'), 'a window refusal carries the refuse class, so OK is not the headline');
   const reasons = firstClass(host, 'dn-bld-pf-reasons');
-  assert(reasons.textContent.includes('no challenger could ever be promoted'), 'the reasons spell out the consequence');
+  assert(reasons.textContent.includes('improvement headroom is unmeasured'), 'the reasons say what the comparison is worth, not that the run is null');
   // Two of the three points were drawn; the third was dropped for free and must
   // not be counted as evidence.
   assert(reasons.textContent.includes('best of 2 probed points:'), 'skipped points are not counted as probes');

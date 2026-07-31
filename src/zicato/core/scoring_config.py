@@ -754,7 +754,52 @@ class ScoringWeights:
     promote_margin:
         Minimum scalar-score improvement the child generation must show
         over the parent to be promoted. Acts as a regression-noise
-        threshold.
+        threshold. Calibrated against the TRAIN slice — see
+        :attr:`holdout_margin` for why the holdout needs its own bound.
+    holdout_margin:
+        The scalar tolerance the HOLDOUT confirmation applies, or ``None``
+        (the default) to fall back to :attr:`promote_margin`.
+
+        ``promote_margin`` used to do double duty here, and the two uses
+        pull it in opposite directions. Rule 1 wants it SMALL enough that a
+        real train-measured win clears it; the holdout confirmation wants it
+        LARGE enough to absorb the holdout slice's own quantization. A slice
+        of N entries moves its scalar in ``1/N`` steps, and the holdout is
+        the smaller slice by construction (``holdout_fraction`` defaults to
+        0.3), so its steps are the COARSER ones. On the default-produced
+        12-train / 6-holdout split a two-entry train win needs
+        ``margin <= 2/12`` while tolerating one holdout entry regressing
+        needs ``margin >= 1/6`` — the same number, so the feasible window is
+        a single point that float rounding then closes. Separating the two
+        bounds is what makes such a board promotable at all.
+
+        For bounds that mean the same thing on both slices, set
+        ``holdout_margin ≈ promote_margin × N_train / N_holdout`` (on the
+        default split, roughly twice ``promote_margin``). ``None`` keeps the
+        historical single-knob behaviour exactly, so the contract canonical
+        form — and every existing epoch's hash — is unmoved.
+
+        Also governs the Ladder's release threshold when set; see
+        :func:`zicato.tournament.ladder.effective_threshold`.
+    holdout_entry_regression_budget:
+        How many holdout entries may regress before the holdout
+        confirmation rejects. ``0`` (the default) is exactly today's
+        zero-tolerance rule.
+
+        The gate's own doctrine is that the holdout CONFIRMS rather than
+        re-decides — a train-measured win "must merely not regress" there.
+        The pass-rate monotonicity rule the confirmation reuses carries only
+        a float-noise tolerance (``1e-9`` aggregate / ``0.02`` per-entry),
+        which on a 6-entry noisy slice means a single entry flipping
+        pass→fail rejects at EVERY margin: no ``holdout_margin`` can rescue
+        it, because the rejection never came from the scalar bound. This
+        budget is the knob that rule never had. It applies under both
+        :attr:`pass_rate_monotonicity_scope` values — per-entry it allows up
+        to N regressed entries, aggregate it widens the mean-score tolerance
+        by ``N / (holdout entries)``, the movement N flips would produce.
+
+        Deliberately holdout-only: the TRAIN side keeps its zero-tolerance
+        rule, so this cannot loosen the gate's primary decision.
     pass_rate_monotonicity:
         When ``True`` (default), a pass-rate regression rejects the child
         regardless of drift-side improvement. The stricter half of the
@@ -861,6 +906,22 @@ class ScoringWeights:
         metadata=_knob(omit_at_default=True, builder_op="set_namespace_weights"),
     )
     promote_margin: float = 0.01
+    # The holdout confirmation's OWN bounds (issue #118). ``promote_margin``
+    # was calibrated against the train slice and reused verbatim on the
+    # holdout, whose 1/N quantization is coarser; the two uses then pull one
+    # knob in opposite directions and the feasible window can be empty. Both
+    # fields are additive and default to "exactly today": ``holdout_margin=None``
+    # falls back to ``promote_margin``, and a budget of 0 is the current
+    # zero-tolerance per-entry rule. The canonicalizer omits both at their
+    # default so no existing epoch's contract hash moves.
+    holdout_margin: float | None = field(
+        default=None,
+        metadata=_knob(omit_at_default=True),
+    )
+    holdout_entry_regression_budget: int = field(
+        default=0,
+        metadata=_knob(omit_at_default=True),
+    )
     pass_rate_monotonicity: bool = True
     pass_rate_monotonicity_scope: PassRateMonotonicityScope = "per_entry"
     regression_gate_enabled: bool = False
@@ -1071,6 +1132,20 @@ class ScoringWeights:
             known = ", ".join(sorted(KNOWN_TELEMETRY_DIALECTS))
             raise ValueError(
                 f"telemetry_dialect must be one of {{{known}}}, got " f"{self.telemetry_dialect!r}"
+            )
+        # The holdout's own bounds (issue #118). Both are tolerances, so a
+        # negative value is meaningless rather than merely aggressive — reject
+        # at contract load like every other out-of-domain knob, instead of
+        # letting it invert the confirmation into a bar the holdout must clear.
+        if self.holdout_margin is not None and self.holdout_margin < 0.0:
+            raise ValueError(
+                f"holdout_margin must be >= 0 (or None to reuse promote_margin), "
+                f"got {self.holdout_margin!r}"
+            )
+        if self.holdout_entry_regression_budget < 0:
+            raise ValueError(
+                f"holdout_entry_regression_budget must be >= 0, got "
+                f"{self.holdout_entry_regression_budget!r}"
             )
 
     def to_json(self) -> dict[str, Any]:

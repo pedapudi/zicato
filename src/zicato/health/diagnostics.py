@@ -977,10 +977,12 @@ def detect_preflight_verdict(
     questions are separable and a contract can fail either alone:
 
     * ``"margin_above_achievable"`` → ``warning``
-      ``preflight_margin_above_achievable``: no SINGLE-POINT change clears
-      the gate. Deliberately not critical — the achievable signal is a
-      single-point lower bound, and a compound (e.g. recombined) patch can
-      legitimately exceed it, so a hard stop would kill a viable run.
+      ``preflight_margin_above_achievable``: the margin exceeds the measured
+      DEGRADATION signal. Not critical, and after issue #119 not even strong
+      evidence: what the probe measures is how far the scalar fell when a
+      mutation point was destroyed, which does not bound how far a challenger
+      can improve (and, degrading one point per probe, under-reports even
+      that). The finding names a number worth checking, not a null run.
     * ``"margin_below_floor"`` → ``warning`` ``preflight_margin_below_floor``.
     * ``"empty_window"`` is NOT a finding of its own — it is the same fact the
       refuse/inert finding already carries — but it rewrites that finding's
@@ -1145,31 +1147,36 @@ def detect_preflight_verdict(
         findings.append(
             HealthFinding(
                 code="preflight_margin_above_achievable",
-                # A WARNING, not a critical, and deliberately so: the pre-flight
-                # degrades ONE point per probe, so its achievable signal is a
-                # single-point LOWER BOUND on the loop's reach. A compound patch
-                # — and recombination unions two of them on purpose — can exceed
-                # it, so this is strong evidence of a mis-set margin, never proof
-                # of nullity. Critical is reserved for "no usable signal at all"
-                # and trips the loop's degenerate-health circuit breaker, which
-                # would wrongly kill a legitimate recombination run whose margin
-                # sits above single-point reach by design.
+                # A WARNING, and after issue #119 that is not a judgement call
+                # about strength of evidence — it is all the evidence there is.
+                # The probe measures DEGRADATION headroom (how far the scalar
+                # fell when a point was destroyed), which bounds a challenger's
+                # improvement from neither side. On top of that it degrades ONE
+                # point per probe, so it under-reports even the movement it does
+                # measure (a compound patch — and recombination unions two on
+                # purpose — exceeds it). Critical is reserved for the honest
+                # measurement, "no usable signal at all", and it trips the loop's
+                # degenerate-health circuit breaker.
                 severity="warning",
                 summary=(
                     f"contract pre-flight: promote_margin {margin:.6g} is at/above the "
-                    f"measured achievable signal {signal:.6g} — no single-point change "
-                    "the probe could demonstrate clears the gate, so unless the "
-                    "proposer lands compound patches this run is null by construction"
+                    f"measured degradation signal {signal:.6g} — the only movement the "
+                    "probe demonstrated (destroying a mutation point) is smaller than "
+                    "the margin. Improvement headroom is UNMEASURED, so this is a "
+                    "reason to check the margin, not evidence the run is null"
                 ),
                 detail={
                     **detail,
                     "recommendation": (
-                        "lower promote_margin below the achievable signal (it must sit "
-                        f"strictly inside noise {floor:.6g} < margin < achievable "
-                        f"{signal:.6g}), or raise the achievable signal by strengthening "
-                        "the board. If the margin is deliberately above single-point "
-                        "reach — e.g. recombination is expected to union two sub-margin "
-                        "fixes — this finding is expected and informational"
+                        "check promote_margin against what a real fix on this board is "
+                        f"worth; the measured degradation signal {signal:.6g} is a "
+                        "single-point LOWER bound on movement and says nothing about "
+                        "how much a challenger can improve — a champion sitting near "
+                        "the failing end has little left to break and plenty to gain. "
+                        f"The margin does need to clear the noise floor {floor:.6g}, "
+                        "which is measured honestly. If the margin is deliberately "
+                        "above single-point reach — e.g. recombination is expected to "
+                        "union two sub-margin fixes — this finding is informational"
                     ),
                 },
             )

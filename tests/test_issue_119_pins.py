@@ -12,17 +12,23 @@ point is DESTROYED — and then feeds that straight into
 The two quantities are unrelated in general and diverge hardest exactly where
 the loop is most often started: a champion seeded near the failing end has
 little left to lose (small degradation headroom) and everything to gain (large
-improvement headroom). The guard then refuses a margin the board can clear.
+improvement headroom). The guard used to REFUSE such a run outright.
 
-Both pins build the report the way ``run_contract_preflight`` does — the same
+The fix keeps the measurement and drops the claim: the quantity is persisted as
+``degradation_signal`` (with the legacy ``signal`` key retained), and the
+window verdict is a warning that can no longer hard-refuse a run even under
+``preflight_gate="refuse"``. The floor-based refusals, which measure honestly,
+are untouched. Improvement headroom stays UNMEASURED — see
+:func:`test_preflight_record_names_the_headroom_it_measured` for why the
+issue's own suggested number could not be produced honestly.
+
+Every pin builds the report the way ``run_contract_preflight`` does — the same
 ``preflight_window_verdict(floor.max_abs_delta, margin, signal)`` call, the same
 :class:`~zicato.epoch.preflight.PreflightReport` construction — so they follow
 whatever the production path decides rather than restating it.
 """
 
 from __future__ import annotations
-
-import pytest
 
 from zicato.epoch.preflight import (
     VERDICT_OK,
@@ -70,14 +76,6 @@ def _report() -> PreflightReport:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "issue #119: the window compares promote_margin against DEGRADATION "
-        "headroom (0.2), so a floor-anchored champion with 0.8 of improvement "
-        "headroom is refused for a margin of 0.28 the board can clear"
-    ),
-)
 def test_floor_anchored_champion_is_not_refused_for_a_reachable_margin() -> None:
     """A margin inside the improvement headroom must not stop the run.
 
@@ -86,27 +84,41 @@ def test_floor_anchored_champion_is_not_refused_for_a_reachable_margin() -> None
     Degrading a mutation point only moves the scalar 0.20, because there is
     little left to break. Refusing here is the guard reporting the one number
     it has, not the one the decision needs.
+
+    The fix keeps the measurement and drops the claim: the window verdict is a
+    WARNING now, so this board is warned about and allowed to run.
     """
     assert effective_gate_verdict(_report().to_json()) != VERDICT_REFUSE
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "issue #119: the persisted pre-flight record carries only the "
-        "degradation signal, so an operator cannot see that improvement "
-        "headroom was 4x the measured signal and tell whether to believe the "
-        "refusal"
-    ),
-)
-def test_preflight_record_reports_both_headrooms() -> None:
-    """The record must surface improvement headroom alongside ``signal``.
+def test_a_legacy_persisted_refusal_no_longer_stops_a_run() -> None:
+    """Records written before the demotion must not keep hard-stopping runs.
 
-    Even if the verdict were left alone, an operator reading
-    ``signal: 0.2`` next to ``improvement_headroom: 0.8`` learns immediately
-    which bound fired and why it is or is not the right one. Today only the
-    first is written, so the refusal is unexplainable from the artifact.
+    ``effective_gate_verdict`` reads the PERSISTED record, so an epoch
+    pre-flighted under the old code carries ``window_verdict: "refuse"`` on
+    ``margin_above_achievable`` forever. Honouring it would keep refusing on
+    exactly the finding this fix retracted, on every resumed round.
+    """
+    legacy = {
+        **_report().to_json(),
+        "window_verdict": VERDICT_REFUSE,
+        "window_failure": "margin_above_achievable",
+    }
+    assert effective_gate_verdict(legacy) != VERDICT_REFUSE
+
+
+def test_preflight_record_names_the_headroom_it_measured() -> None:
+    """The record must say WHICH headroom ``signal`` is.
+
+    The issue asked for improvement headroom beside the degradation signal.
+    That number is not available: the scalar's reachable floor is not ``0``
+    once a namespace carries a negative weight, so "champion_mean - 0" would
+    be a fabricated bound, and deriving a real one from the namespace weights
+    is registered rather than built. What the record can do — and now does —
+    is name the quantity it actually holds, so an operator reading
+    ``degradation_signal: 0.2`` knows it measures what there is to LOSE and
+    does not read it as what there is to gain.
     """
     record = _report().to_json()
-    assert "signal" in record, "precondition: the degradation signal is persisted today"
-    assert "improvement_headroom" in record
+    assert "signal" in record, "the legacy key stays so existing readers keep working"
+    assert record["degradation_signal"] == record["signal"]

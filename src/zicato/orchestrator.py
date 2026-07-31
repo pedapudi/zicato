@@ -514,16 +514,18 @@ async def evolve_once(
         judge_only=judge_only,
     )
 
-    # --- 2a'. Achievable-signal contract pre-flight (epoch-open step) -----
+    # --- 2a'. Contract pre-flight (epoch-open step) ----------------------
     # DEFAULT-ON (issue #84): unless runtime.preflight_gate == "off", measure
-    # the A/A floor AND the achievable signal (champion vs a deliberately-
+    # the A/A floor AND the degradation signal (champion vs a deliberately-
     # degraded ephemeral copy of itself) once per epoch and persist the
     # verdict. A below-floor / saturated / inert verdict — or a promote_margin
-    # outside the noise < margin < achievable window (issue #112) — is LOUDLY
-    # warned (inside the helper) and flows into the per-round health report.
-    # Under the opt-in HARD gate (preflight_gate == "refuse") a refuse-worthy
-    # verdict STOPS the run here — before rounds burn budget on a contract that
-    # cannot be optimized, or on a margin nothing can clear.
+    # outside the floor/signal window (issue #112) — is LOUDLY warned (inside
+    # the helper) and flows into the per-round health report. Under the opt-in
+    # HARD gate (preflight_gate == "refuse") a refuse-worthy verdict STOPS the
+    # run here, before rounds burn budget on a contract that cannot be
+    # optimized. Only the FLOOR-based verdict refuses: the window's upper
+    # comparison is against degradation headroom, which does not bound what a
+    # challenger can achieve (issue #119).
     # ``zicato board preflight`` is the manual surface.
     _preflight_verdict = await _maybe_contract_preflight(
         workspace_root=workspace_root,
@@ -547,32 +549,19 @@ async def evolve_once(
         str(getattr(config, "preflight_gate", "warn") or "warn") == "refuse"
         and _preflight_verdict == VERDICT_REFUSE
     ):
-        from zicato.health.inputs import epoch_preflight_record  # noqa: PLC0415
-
-        # Name WHICH refusal: "noise swamps the signal" and "the margin is
-        # above anything the loop can produce" are both guaranteed-null runs
-        # with entirely different fixes, so a single generic message would send
-        # half of them to the wrong one.
-        _record = epoch_preflight_record(workspace_root, resolved_epoch_id) or {}
-        _cause = (
-            "the configured promote_margin sits at or above the contract's "
-            "measured achievable signal, so barring a compound patch no "
-            "challenger could be promoted and the run would be null by "
-            "construction. Lower promote_margin inside the window "
-            "(noise < margin < achievable) — or, if the margin is deliberately "
-            "above what a SINGLE mutation point can move (e.g. recombination is "
-            "meant to union two sub-margin fixes), set "
-            "runtime.preflight_gate='warn'"
-            if str(_record.get("window_failure") or "") == "margin_above_achievable"
-            else "the contract's achievable signal is at or below its measured "
-            "A/A noise floor, so every duel would be decided by noise. "
-            "Strengthen the board / reduce evaluation noise"
-        )
+        # One cause reaches here, and it is the honestly-measured one: the
+        # contract's own measured movement does not clear its own A/A noise.
+        # The margin-window failures used to refuse too, and used to need their
+        # own sentence here; they are warnings now (issue #119) because their
+        # upper comparison is against DEGRADATION headroom, which bounds a
+        # challenger's improvement from neither side.
         raise PreflightRefusedError(
-            f"contract pre-flight REFUSE for epoch {resolved_epoch_id}: {_cause}. "
-            "Refusing the run before it spends rounds "
-            "(runtime.preflight_gate='refuse'); set runtime.preflight_gate='warn' "
-            "to proceed anyway."
+            f"contract pre-flight REFUSE for epoch {resolved_epoch_id}: the "
+            "contract's measured signal is at or below its measured A/A noise "
+            "floor, so every duel would be decided by noise. Strengthen the "
+            "board / reduce evaluation noise. Refusing the run before it spends "
+            "rounds (runtime.preflight_gate='refuse'); set "
+            "runtime.preflight_gate='warn' to proceed anyway."
         )
 
     # --- 2b. Margin-vs-noise-floor sanity check (once per invocation) -----
@@ -3701,7 +3690,7 @@ async def _maybe_contract_preflight(
             set_epoch_noise_floor(workspace_root, epoch_id, floor.to_json())
         if report.verdict == VERDICT_OK and report.window_failure is None:
             log.info(
-                "contract pre-flight OK for epoch %s (%s): achievable signal "
+                "contract pre-flight OK for epoch %s (%s): degradation signal "
                 "%.6g clears the measured noise floor %.6g and leaves "
                 "promote_margin %.6g inside the window (probed %d point(s))",
                 epoch_id,
@@ -3713,13 +3702,15 @@ async def _maybe_contract_preflight(
             )
         else:
             # LOUD run-level warning. The diagnosis is per-verdict on purpose:
-            # "noise swamps the signal", "the probe was inert", "the margin is
-            # unreachable" and "the margin is inside the noise" have four
-            # different fixes, and issue #106/#112 both trace operator time
-            # wasted to these being reported in the same words. Whether this
-            # also STOPS the run is the caller's decision, per ``gate_mode``.
+            # "noise swamps the signal", "the probe was inert", "the margin
+            # exceeds what we measured" and "the margin is inside the noise"
+            # have four different fixes, and issue #106/#112 both trace operator
+            # time wasted to these being reported in the same words. Whether
+            # this also STOPS the run is the caller's decision, per
+            # ``gate_mode`` — and only the floor-based verdicts can stop it
+            # (issue #119).
             log.warning(
-                "CONTRACT PRE-FLIGHT %s — epoch %s (%s): achievable signal "
+                "CONTRACT PRE-FLIGHT %s — epoch %s (%s): degradation signal "
                 "%.6g vs measured A/A noise floor %.6g vs promote_margin %.6g "
                 "(best of %d probed point(s): %s → scalar %.6g). %s %s See the "
                 "per-round health report / `zicato board preflight`.",
@@ -3771,7 +3762,7 @@ def _preflight_diagnosis(report: Any) -> str:
     if report.verdict == VERDICT_INERT:
         return (
             "Every probed mutation point left the scalar exactly at the champion "
-            "mean while the A/A draws varied, so the achievable signal is "
+            "mean while the A/A draws varied, so the signal is "
             "UNMEASURED rather than zero — the probe was inert, which is NOT "
             "evidence against the contract. Pin a point the deliverable "
             "demonstrably depends on via runtime.preflight_probe_mutation_ids "
@@ -3786,14 +3777,16 @@ def _preflight_diagnosis(report: Any) -> str:
         )
     if report.window_failure == WINDOW_MARGIN_ABOVE_ACHIEVABLE:
         return (
-            "promote_margin sits at or above the largest improvement any single "
-            "probed mutation point produces, so barring a compound patch no "
-            "challenger can be promoted and the run is null by construction. "
-            "Lower the margin inside the window (noise < margin < achievable). "
-            "The probe degrades ONE point at a time, so this bound is a lower "
-            "bound on the loop's reach — if the margin is deliberately above "
-            "single-point reach (e.g. recombination is meant to union two "
-            "sub-margin fixes) this is expected and informational."
+            "promote_margin sits at or above the measured DEGRADATION signal — "
+            "how far the scalar moved when a mutation point was destroyed, i.e. "
+            "how much this champion has left to LOSE. A promotion needs movement "
+            "the other way, and the two are unrelated in general (a champion near "
+            "the failing end has little left to break and plenty to gain), so "
+            "improvement headroom is UNMEASURED and this is NOT evidence the run "
+            "is null. Check promote_margin against what a real fix on this board "
+            "is worth; it does still need to clear the noise floor, which IS "
+            "measured honestly. The probe also degrades ONE point at a time, so "
+            "it under-reports even the movement it measures."
         )
     if report.window_failure == WINDOW_MARGIN_BELOW_FLOOR:
         return (
@@ -3804,10 +3797,10 @@ def _preflight_diagnosis(report: Any) -> str:
         )
     if report.window_failure == WINDOW_EMPTY:
         return (
-            "The achievable signal does not clear the noise floor, so the window "
-            "noise < margin < achievable is EMPTY and no promote_margin is "
-            "defensible — do not tune the margin. Reduce evaluation noise (more "
-            "replicates, steadier judges) or strengthen the board."
+            "The measured signal does not clear the noise floor, so no "
+            "promote_margin is defensible on this board — do not tune the "
+            "margin. Reduce evaluation noise (more replicates, steadier judges) "
+            "or strengthen the board."
         )
     return (
         "Under this contract every duel is decided by noise, so no challenger "
@@ -3871,10 +3864,8 @@ def _warn_margin_below_noise_floor(workspace_root: Path, epoch_id: str) -> None:
         "range does — and/or enable the evidence gate — "
         '"promote_confidence_threshold": 0.8 with an honest '
         '"promote_confidence_replicates" budget (the scaffolded contracts '
-        "use 32) — so promotions must replicate to CI separation. Check the "
-        "result against the pre-flight's achievable signal: a margin ABOVE it "
-        "promotes nothing at all. (Floor measured by `zicato board audit`; "
-        "this run continues unchanged.)",
+        "use 32) — so promotions must replicate to CI separation. (Floor "
+        "measured by `zicato board audit`; this run continues unchanged.)",
         margin,
         max_abs,
         epoch_id,

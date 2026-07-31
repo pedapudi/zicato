@@ -2,7 +2,8 @@
 
 Board-reflection v1. Before an epoch burns rounds, two cheap measurements
 answer the one question that decides whether an evolve loop can work at
-all: **is the contract's achievable signal larger than its noise floor?**
+all: **is the movement this contract can measure larger than its own
+noise floor?**
 The pre-flight closes the two mirror pathologies at the door:
 
 * **Zero variance / saturation** — a contract that cannot discriminate.
@@ -31,7 +32,8 @@ Measurements
     the pre-flight is idempotent and can never collide with a real duel's
     cache slots. ``max`` over probes of
     ``|degraded_scalar - mean(champion_scalars)|`` is the contract's
-    demonstrated **achievable signal**.
+    demonstrated **degradation signal**. The window section below explains
+    why that is NOT the same as achievable improvement.
 
 Probe selection (issue #106)
 ----------------------------
@@ -68,8 +70,8 @@ Verdict
   deliberately-broken tree scores identically to the champion (the
   ``1.000000`` signature).
 * ``"inert"`` when the best probe moved the scalar by EXACTLY nothing
-  while the champion's own draws demonstrably did vary. The achievable
-  signal is then **unmeasured**, not zero, so the fix is to pick a
+  while the champion's own draws demonstrably did vary. The signal is
+  then **unmeasured**, not zero, so the fix is to pick a
   representative point rather than to fix the board. Read the bound
   honestly: it requires the degraded scalar to land EXACTLY on the mean
   of the varying champion draws, which is reachable only on a
@@ -82,26 +84,51 @@ Verdict
   gate-aware severity (see *Gating* below): under the default
   ``preflight_gate="warn"`` a refusal is a WARNING, loud but structurally
   unable to trip the loop's degenerate-health breaker.
-* ``"refuse"`` (**refuse-recommended**) when the achievable signal is
+* ``"refuse"`` (**refuse-recommended**) when the measured signal is
   positive but at or below the measured noise floor: the contract cannot
   distinguish a real degradation from a re-roll, so it cannot possibly
   resolve the smaller improvements a proposer will offer.
 * ``"ok"`` otherwise.
 
-The promote-margin window (issue #112)
---------------------------------------
+The promote-margin window (issue #112, corrected by #119)
+---------------------------------------------------------
 
-"Can the contract out-signal its noise?" and "is ``promote_margin``
-reachable?" are different questions, and a run can pass the first while
-being guaranteed null by the second: a margin above the largest
-improvement the loop can produce makes every challenger unpromotable, so
-the loop spends its whole budget confirming that. The window the loop
-needs is ``noise < promote_margin < achievable``;
-:func:`preflight_window_verdict` asserts BOTH bounds and names which one
-failed, because "margin above achievable" and "margin below the floor"
-send an operator to opposite fixes — and ``achievable <= noise`` (an
-**empty window**) sends them to neither, since no value of the margin is
-defensible on such a board.
+"Can the contract out-signal its noise?" and "is ``promote_margin`` set
+sanely?" are different questions, and :func:`preflight_window_verdict`
+answers the second by placing the margin against the floor and the
+measured signal, naming which side it fell outside of — because "margin
+above the signal" and "margin below the floor" send an operator to
+opposite fixes, and ``signal <= noise`` (an **empty window**) sends them
+to neither, since no value of the margin is defensible on such a board.
+
+What the upper comparison is worth (issue #119). The probe measures
+``|degraded_scalar - champion_mean|`` — **degradation headroom**, how far
+the scalar moves when a mutation point is DESTROYED. That is how much the
+champion has left to LOSE. A promotion requires movement the other way,
+and the two are unrelated in general: they diverge hardest exactly where
+the loop is most often started, since a champion seeded near the failing
+end has little left to break (small degradation headroom) and everything
+to gain (large improvement headroom). So the measurement is a single-point
+LOWER bound on movement and no bound at all on improvement. The window
+verdict is therefore reported honestly as a **warning** — a margin above
+the measured signal is worth an operator's attention and may well be
+unreachable, but the pre-flight has not shown that it is, and it no longer
+stops a run under ``preflight_gate="refuse"``. Improvement headroom stays
+**unmeasured**: deriving one from the namespace weights (the scalar's
+reachable floor is not ``0`` once a namespace carries a negative weight)
+is registered, not built.
+
+The holdout's margin (issue #118)
+---------------------------------
+
+When the train/holdout split is active the gate applies a SECOND scalar
+bound on the smaller holdout slice
+(:attr:`~zicato.core.ScoringWeights.holdout_margin`, falling back to
+``promote_margin``), and that slice's coarser ``1/N`` quantization can
+make it the binding one. :func:`holdout_window_note` renders the
+feasibility note — recommend-only prose, never a verdict — so an operator
+sees the second bound alongside the first instead of discovering it as a
+run of unexplained ``holdout_not_confirmed`` rejections.
 
 The verdict persists onto the epoch record (``config.json``'s additive
 ``preflight`` field, never hashed) and flows into the per-round
@@ -122,8 +149,10 @@ and acts on :func:`effective_gate_verdict` per the gate mode:
   the hard stop the operator explicitly declined
   (:func:`zicato.health.diagnostics.detect_preflight_verdict`).
 * ``"refuse"`` — additionally raises :class:`PreflightRefusedError` when
-  EITHER verdict refuses (signal at/below the floor, or a margin at/above
-  the achievable signal), stopping the run *before* it spends rounds — and
+  the signal verdict refuses (the measured signal at/below the floor),
+  stopping the run *before* it spends rounds. The margin-window verdicts do
+  NOT refuse — they compare the margin against numbers that do not bound a
+  challenger's reach (see the window section above) — and
   only here is the health finding a CRITICAL (moot for the breaker, since
   the run already stopped at pre-flight). A deterministic
   probe-selection CONFIG error (an unknown pinned mutation id, a probe
@@ -183,7 +212,7 @@ VERDICT_OK: str = "ok"
 #: Saturation — the scalar spread across every probe is exactly zero.
 VERDICT_WARN: str = "warn"
 #: Every probed point was INERT: the best probe moved the scalar by exactly
-#: nothing while the champion's own draws did vary, so the achievable signal
+#: nothing while the champion's own draws did vary, so the signal
 #: is unmeasured rather than measured-as-zero. Deliberately NOT a refusal —
 #: the operator must pick a representative point, not fix a board that may be
 #: perfectly healthy. NARROW by construction: exact equality with the mean of
@@ -194,18 +223,23 @@ VERDICT_WARN: str = "warn"
 #: refusal — the role-diverse sample and the warn-mode severity of
 #: ``preflight_signal_below_floor`` are.
 VERDICT_INERT: str = "inert"
-#: The achievable signal is positive but at or below the measured A/A floor.
+#: The measured signal is positive but at or below the measured A/A floor.
 VERDICT_REFUSE: str = "refuse"
 
 #: ``promote_margin`` window failures (:func:`preflight_window_verdict`), each
 #: naming a DIFFERENT operator fix.
 #:
-#: No margin is defensible: the achievable signal does not clear the noise
-#: floor, so below the floor promotions are noise and above it nothing
-#: promotes. Tuning the margin is wasted work — the board is the problem.
+#: No margin is defensible: the measured signal does not clear the noise
+#: floor, so the board demonstrates no movement outside its own noise for a
+#: margin to sit in. Tuning the margin is wasted work — the board is the
+#: problem.
 WINDOW_EMPTY: str = "empty_window"
-#: The margin sits at or above the largest improvement the loop demonstrably
-#: produces: no challenger can ever be promoted (a guaranteed-null run).
+#: The margin sits at or above the measured DEGRADATION headroom — how far the
+#: scalar moved when a mutation point was destroyed. A WARNING, never a
+#: refusal: what the probe measures is how much there is to LOSE, and the
+#: margin has to be cleared by an IMPROVEMENT, which this measurement does not
+#: bound in either direction (issue #119). The name is kept for record
+#: compatibility with persisted pre-flights.
 WINDOW_MARGIN_ABOVE_ACHIEVABLE: str = "margin_above_achievable"
 #: The margin sits at or below the measured noise floor: promotions cannot be
 #: distinguished from re-rolls of the same generation.
@@ -218,7 +252,7 @@ class PreflightRefusedError(RuntimeError):
     Fired only when the operator opted into the HARD gate
     (:attr:`~zicato.core.runtime.RuntimeConfig.preflight_gate` ``== "refuse"``)
     AND the pre-flight measured a ``refuse`` verdict — the contract's
-    achievable signal is at or below its own A/A noise floor, so every duel
+    measured signal is at or below its own A/A noise floor, so every duel
     would be decided by noise. The default gate mode (``"warn"``) only warns
     and never raises this; the run continues. Carried up through
     ``evolve_n_rounds`` and reported as a clean stop reason (never a
@@ -265,8 +299,10 @@ class ProbedPoint:
         is the axis :func:`select_probe_points` samples across.
     degraded_scalar, signal:
         The degraded copy's aggregate scalar and
-        ``|degraded_scalar - mean(champion_scalars)|``. Both ``None`` when
-        the probe was never run (see :attr:`skipped`).
+        ``|degraded_scalar - mean(champion_scalars)|`` — DEGRADATION
+        headroom, persisted under both ``signal`` (the legacy key) and
+        ``degradation_signal`` (the honest one). Both ``None`` when the probe
+        was never run (see :attr:`skipped`).
     skipped:
         ``""`` when the point was actually degraded and drawn; else the
         machine-readable reason it cost no draw: ``"no_op_patch"`` (the
@@ -293,6 +329,9 @@ class ProbedPoint:
             "role": self.role,
             "degraded_scalar": self.degraded_scalar,
             "signal": self.signal,
+            # The same number under its honest name (issue #119). Additive:
+            # ``signal`` stays so pre-existing readers keep working.
+            "degradation_signal": self.signal,
             "skipped": self.skipped,
         }
 
@@ -320,8 +359,13 @@ class PreflightReport:
         The aggregate scalar of the BEST degraded copy — the probe that
         moved the scalar furthest from the champion's mean.
     signal:
-        ``|degraded_scalar - mean(champion_scalars)|`` for that best probe
-        — the contract's demonstrated achievable signal.
+        ``|degraded_scalar - mean(champion_scalars)|`` for that best probe —
+        the contract's demonstrated DEGRADATION headroom: how far the scalar
+        moved when a mutation point was destroyed. A single-point LOWER bound
+        on movement, and NOT a bound on how much a challenger can improve
+        (issue #119). Persisted twice — under ``signal``, the key every
+        existing reader knows, and under ``degradation_signal``, which says
+        what it is.
     degraded_mutation_id, degraded_mutation_kind, degraded_file:
         Which mutation point the BEST probe degraded, its kind, and the
         file it lives in — so an operator can judge whether the probe was
@@ -339,7 +383,7 @@ class PreflightReport:
         the measured signal so the window comparison is auditable from the
         persisted record alone. Additive (``0.0`` on pre-#112 records).
     window_verdict, window_failure:
-        The ``noise < margin < achievable`` window verdict and which bound
+        The margin-vs-floor/signal window verdict and which bound
         failed (one of :data:`WINDOW_EMPTY`,
         :data:`WINDOW_MARGIN_ABOVE_ACHIEVABLE`,
         :data:`WINDOW_MARGIN_BELOW_FLOOR`, or ``None``). See
@@ -351,6 +395,12 @@ class PreflightReport:
         draw-count-stable statistic
         (:func:`~zicato.tournament.calibration.recommended_promote_margin`),
         or ``None`` when the floor measured no noise to clear. Additive.
+    holdout_note:
+        Recommend-only prose about the HOLDOUT confirmation's own bounds when
+        the train/holdout split is active (:func:`holdout_window_note`), or
+        ``None`` when there is no holdout or both bounds are comfortable.
+        Never a verdict — the window verdicts above are unaffected by it.
+        Additive (issue #118).
     """
 
     epoch_id: str
@@ -370,6 +420,7 @@ class PreflightReport:
     window_verdict: str = VERDICT_OK
     window_failure: str | None = None
     recommended_margin: float | None = None
+    holdout_note: str | None = None
 
     def drawn_probe_count(self) -> int:
         """How many probes actually spent a board evaluation.
@@ -394,6 +445,11 @@ class PreflightReport:
             "champion_scalars": list(self.champion_scalars),
             "degraded_scalar": self.degraded_scalar,
             "signal": self.signal,
+            # Same number, honest name (issue #119) — what the probe measured
+            # is how far the scalar fell when a mutation point was destroyed.
+            # ``signal`` is retained verbatim: dashboards, the builder's
+            # pre-flight panel and every persisted-record reader key off it.
+            "degradation_signal": self.signal,
             "degraded_mutation_id": self.degraded_mutation_id,
             "degraded_mutation_kind": self.degraded_mutation_kind,
             "degraded_file": self.degraded_file,
@@ -403,6 +459,7 @@ class PreflightReport:
             "window_verdict": self.window_verdict,
             "window_failure": self.window_failure,
             "recommended_margin": self.recommended_margin,
+            "holdout_note": self.holdout_note,
         }
 
 
@@ -440,7 +497,7 @@ def is_no_op_degradation(point: MutationPoint) -> bool:
 
     An unconditionally inert probe, detectable for free: a palindromic span
     reverses to itself, and a code region that is already exactly ``pass``
-    blanks to itself. Such a point can never demonstrate achievable signal no
+    blanks to itself. Such a point can never demonstrate any signal no
     matter how healthy the contract is, so :func:`select_probe_points` drops it
     from the sample rather than spending a board evaluation to learn that
     ``signal == 0``. (Inertness that depends on the CONTRACT — a live span the
@@ -463,7 +520,7 @@ def degraded_patch_for(point: MutationPoint) -> Patch:
         new_enum=None,
         rationale=(
             "contract pre-flight: deliberately degrade one enumerated mutation "
-            "point to measure the contract's achievable signal"
+            "point to measure the contract's signal"
         ),
     )
 
@@ -594,7 +651,7 @@ def preflight_verdict(
       (:func:`select_probe_points`) is what out-measures it, and the
       gate-aware severity of the resulting health finding is what keeps a
       warn-mode run alive while the operator fixes the sample.
-    * ``"refuse"`` when the achievable signal is positive but at or below
+    * ``"refuse"`` when the measured signal is positive but at or below
       the measured floor — an A/A re-roll moves the scalar as much as a
       deliberate degradation does, so duels are decided by noise.
     * ``"ok"`` otherwise.
@@ -617,33 +674,51 @@ def preflight_window_verdict(
     promote_margin: float,
     achievable_signal: float,
 ) -> tuple[str, str | None]:
-    """``(verdict, which_side)`` for ``noise < margin < achievable``. Pure.
+    """``(verdict, which_side)`` for the margin against floor and signal. Pure.
 
-    The pre-flight's signal measurement answers the lower bound only. This
-    asserts the whole window and names the side that failed, because the two
-    sides have opposite fixes and reporting them alike sends operators to
-    debug the wrong number (issue #112).
+    ``achievable_signal`` is the pre-flight's DEGRADATION signal (the parameter
+    keeps its name for callers; see :data:`WINDOW_MARGIN_ABOVE_ACHIEVABLE` for
+    why the word "achievable" overstated it). This function names which side of
+    the floor/signal pair the margin fell outside of, because the two sides
+    have opposite fixes and reporting them alike sends operators to debug the
+    wrong number (issue #112).
 
-    * :data:`WINDOW_EMPTY` (``"warn"``) — ``achievable <= noise``. The window
-      is empty: below the floor promotions are noise, above it nothing
-      promotes, so NO value of ``promote_margin`` is defensible. Checked first
+    Every verdict this returns is now a WARNING (issue #119). The floor-based
+    refusal — the contract's signal not clearing its own noise — is
+    :func:`preflight_verdict`'s to render and the ``preflight_gate``'s to act
+    on; this function measures the margin against numbers that do not bound
+    what a challenger can achieve, so it may inform an operator but never stop
+    their run.
+
+    * :data:`WINDOW_EMPTY` (``"warn"``) — ``signal <= noise``. The board
+      demonstrates no movement outside its own noise, so NO value of
+      ``promote_margin`` is defensible. Checked first
       because it invalidates both other diagnoses — an operator told "your
       margin is mis-set" will spend a cycle tuning a number that has no valid
       value. Only ``"warn"`` here, not ``"refuse"``: this is the very
-      achievable-vs-noise comparison :func:`preflight_verdict` already renders
+      signal-vs-noise comparison :func:`preflight_verdict` already renders
       (and the ``preflight_gate`` already acts on), so re-refusing it would
       double-gate one fact. What this branch adds is the *margin* sentence.
-    * :data:`WINDOW_MARGIN_ABOVE_ACHIEVABLE` (``"refuse"``) — the margin sits
-      at or above the largest improvement any probed SINGLE point produces, so
-      barring a compound patch no challenger can be promoted and the run is
-      null before it starts. Unreachable by the signal verdict, and the one
-      failure whose whole cost is avoidable in seconds; refuse-worthy under the
-      opt-in gate. Note the bound's honest reading: the pre-flight degrades one
-      point per probe, so ``achievable_signal`` LOWER-BOUNDS what the loop can
-      reach — a multi-point patch (and recombination, which unions two
-      sub-margin fixes on purpose) can legitimately exceed it. That is why the
-      health finding is a warning rather than a critical, and why the hard gate
-      here is opt-in rather than the default.
+    * :data:`WINDOW_MARGIN_ABOVE_ACHIEVABLE` (``"warn"``) — the margin sits at
+      or above the measured DEGRADATION headroom. Read this one carefully; it
+      used to claim more than it measures (issue #119). ``degradation_signal``
+      is ``|degraded_scalar - champion_mean|``: how far the scalar moved when
+      one mutation point was DESTROYED, i.e. how much this champion has left to
+      LOSE. A promotion needs movement in the opposite direction, and the two
+      quantities are unrelated in general — a champion seeded near the failing
+      end has little left to break and everything to gain, so its degradation
+      headroom is small while its improvement headroom is large. The
+      measurement therefore bounds the loop's reach from NEITHER side: it is a
+      single-point LOWER bound on movement (a compound or recombined patch
+      exceeds even that), and it is not an upper bound on improvement at all.
+
+      So this branch says "the margin is larger than the only movement we
+      measured", which is a real thing to tell an operator and a real reason to
+      look at the margin — but it is not evidence the run is null, and it no
+      longer refuses. Under the opt-in hard gate it warns like everything else
+      in this class. Deriving a true improvement bound from the namespace
+      weights (the scalar's reachable floor is NOT 0 once a namespace carries a
+      negative weight) is REGISTERED, not built.
     * :data:`WINDOW_MARGIN_BELOW_FLOOR` (``"warn"``) — the margin is inside
       measured noise: promotions cannot be told from re-rolls. Warn, matching
       how the loop has always treated this (the evidence gate can still hold
@@ -651,8 +726,8 @@ def preflight_window_verdict(
     * ``("ok", None)`` when the window holds.
 
     Bounds are inclusive on the failing side (``>=`` / ``<=``): a margin
-    exactly AT the achievable signal promotes nothing, and one exactly at the
-    floor is indistinguishable from noise.
+    exactly AT the measured signal exceeds everything the probe saw, and one
+    exactly at the floor is indistinguishable from noise.
     """
     floor = float(noise_floor)
     margin = float(promote_margin)
@@ -660,22 +735,100 @@ def preflight_window_verdict(
     if achievable <= floor:
         return VERDICT_WARN, WINDOW_EMPTY
     if margin >= achievable:
-        return VERDICT_REFUSE, WINDOW_MARGIN_ABOVE_ACHIEVABLE
+        return VERDICT_WARN, WINDOW_MARGIN_ABOVE_ACHIEVABLE
     if margin <= floor:
         return VERDICT_WARN, WINDOW_MARGIN_BELOW_FLOOR
     return VERDICT_OK, None
 
 
+def holdout_window_note(weights: ScoringWeights, holdout_entries: int) -> str | None:
+    """Prose about the HOLDOUT's own promotion bound, or ``None``. Pure.
+
+    The margin window above places ``promote_margin`` — the TRAIN bound. When
+    the board is split, a promotion must also survive the holdout
+    confirmation, which applies its own scalar tolerance
+    (:func:`zicato.tournament.gate.effective_holdout_margin`) and its own
+    pass-rate rule on a SMALLER slice. A slice of N entries moves its scalar in
+    ``1/N`` steps, so the holdout's steps are the coarse ones and its bound can
+    be the binding one while the train window looks perfectly healthy — which
+    is how issue #118 presented: a run of ``holdout_not_confirmed`` rejections
+    with nothing in the pre-flight to explain them.
+
+    This is a WARNING-class note, never a verdict and never a refusal. It
+    reports two feasibility facts an operator cannot otherwise see without
+    doing the arithmetic:
+
+    * the scalar bound — one holdout entry flipping pass→fail moves the
+      holdout scalar by about ``pass_weight / N``, so the holdout margin must
+      reach that for the slice's smallest expressible movement to be
+      tolerated. (About, not exactly: the estimate assumes a linear pass term
+      and no other namespace moving. It is the right order of magnitude for
+      the pass-dominated boards where this bites, and it is prose, not a
+      threshold anything is compared against.)
+    * the pass-rate rule — at
+      :attr:`~zicato.core.ScoringWeights.holdout_entry_regression_budget`
+      ``== 0`` a single flipped holdout entry rejects at EVERY margin, under
+      either scope, because that rule carries only a float-noise tolerance and
+      no scalar bound is consulted once it fires. Raising the holdout margin
+      cannot fix this one; only the budget can.
+
+    ``None`` when there is no holdout to speak of (``holdout_entries <= 0``:
+    the split is disabled or the board was too small), or when both bounds are
+    comfortable.
+    """
+    from zicato.tournament.gate import effective_holdout_margin  # noqa: PLC0415
+
+    if holdout_entries <= 0:
+        return None
+    margin = effective_holdout_margin(weights)
+    step = float(weights.pass_weight) / holdout_entries
+    budget = int(weights.holdout_entry_regression_budget)
+    notes: list[str] = []
+    if weights.pass_rate_monotonicity and budget == 0:
+        notes.append(
+            f"one holdout entry flipping pass->fail rejects the promotion at EVERY "
+            f"margin: pass-rate monotonicity is on with "
+            f"holdout_entry_regression_budget=0, and under "
+            f"{weights.pass_rate_monotonicity_scope} scope that rule carries only "
+            f"its float-noise tolerance. On a {holdout_entries}-entry holdout that "
+            "is a zero-tolerance rule on a noisy slice; set "
+            "holdout_entry_regression_budget=1 to let the confirmation absorb one "
+            "entry, as the confirmation-only doctrine intends"
+        )
+    if step > margin:
+        notes.append(
+            f"the holdout margin {margin:.6g} is under the "
+            f"{holdout_entries}-entry holdout's own step size (~{step:.6g}, the "
+            "scalar movement of a single entry flipping), so the smallest "
+            "regression the slice can express already exceeds it; set "
+            "holdout_margin (commensurable with promote_margin at "
+            "promote_margin x N_train/N_holdout) rather than raising "
+            "promote_margin, which would also raise the train bar"
+        )
+    if not notes:
+        return None
+    return "holdout confirmation feasibility: " + "; ".join(notes)
+
+
 def effective_gate_verdict(record: dict[str, Any] | None) -> str | None:
     """The verdict the ``preflight_gate`` acts on, from a persisted record.
 
-    A pre-flight now renders two verdicts — the signal-vs-noise
+    A pre-flight renders two verdicts — the signal-vs-noise
     :func:`preflight_verdict` and the margin-window
-    :func:`preflight_window_verdict` — and either can be refuse-worthy, so the
-    gate needs one collapsed answer. Returns :data:`VERDICT_REFUSE` when EITHER
-    is a refusal, else the record's own ``verdict`` verbatim (so ``"inert"``
-    stays ``"inert"`` and never stops a run), or ``None`` when there is no
-    verdict to act on.
+    :func:`preflight_window_verdict` — so the gate needs one collapsed answer.
+    Returns :data:`VERDICT_REFUSE` when either is a refusal, else the record's
+    own ``verdict`` verbatim (so ``"inert"`` stays ``"inert"`` and never stops
+    a run), or ``None`` when there is no verdict to act on.
+
+    The one exception is a persisted :data:`WINDOW_MARGIN_ABOVE_ACHIEVABLE`
+    refusal. That verdict was demoted to a warning (issue #119) because it
+    compares the margin against DEGRADATION headroom, which does not bound
+    what a challenger can achieve; records measured before the demotion still
+    carry ``"refuse"`` on it, and honouring them would keep hard-stopping runs
+    on the finding the fix retracted. So the collapse skips exactly that
+    failure and keeps escalating any other window refusal — the window
+    function returns none today, and the branch stays so a future one is not
+    silently swallowed.
 
     Reads the persisted dict rather than a :class:`PreflightReport` so the
     resumed / later-round path — which re-reads ``config.json`` instead of
@@ -687,7 +840,11 @@ def effective_gate_verdict(record: dict[str, Any] | None) -> str | None:
     verdict = str(record.get("verdict") or "")
     if not verdict:
         return None
-    if verdict == VERDICT_REFUSE or str(record.get("window_verdict") or "") == VERDICT_REFUSE:
+    window_refuses = (
+        str(record.get("window_verdict") or "") == VERDICT_REFUSE
+        and str(record.get("window_failure") or "") != WINDOW_MARGIN_ABOVE_ACHIEVABLE
+    )
+    if verdict == VERDICT_REFUSE or window_refuses:
         return VERDICT_REFUSE
     return verdict
 
@@ -707,7 +864,7 @@ async def run_contract_preflight(
     degrade_mutation_id: str | None = None,
     probe_points: int | None = None,
 ) -> tuple[PreflightReport, NoiseFloor]:
-    """Measure the contract's noise floor AND achievable signal; verdict.
+    """Measure the contract's noise floor AND degradation signal; verdict.
 
     Steps (see the module docstring): (b0) probe SELECTION — a
     deterministic, role-diverse SAMPLE of the champion snapshot's mutation
@@ -721,7 +878,7 @@ async def run_contract_preflight(
     scored once through the same board-unit runner, until a probe's signal
     clears every bound the verdict depends on; (c) the pure
     :func:`preflight_verdict` over the best probe's scalars plus
-    :func:`preflight_window_verdict` over the achievable-signal /
+    :func:`preflight_window_verdict` over the measured-signal /
     ``promote_margin`` / floor window.
 
     ``degrade_mutation_id`` pins the probe to ONE named mutation point
@@ -747,6 +904,7 @@ async def run_contract_preflight(
     to a refusal under ``preflight_gate="refuse"``. All four are raised
     before any draw is spent.
     """
+    from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
     from zicato.core.loss import is_infra_abort_cause  # noqa: PLC0415
     from zicato.mutation.applier import apply_patches  # noqa: PLC0415
     from zicato.mutation.enumerator import enumerate_mutations  # noqa: PLC0415
@@ -790,7 +948,7 @@ async def run_contract_preflight(
             f"contract pre-flight: all {len(points)} mutation point(s) under "
             f"{generation.snapshot_root} degrade to byte-identical content "
             "(palindromic spans / already-blank code regions), so no probe can "
-            "demonstrate achievable signal; the mutable surface needs real "
+            "demonstrate any signal; the mutable surface needs real "
             "content before the contract can be pre-flighted"
         )
     if len(sample) > PREFLIGHT_REPLICATE_SPAN:
@@ -835,7 +993,7 @@ async def run_contract_preflight(
     # (``preflight_window_verdict``) settles them, so probing on would only
     # spend champion evaluations to refine a number nothing reads. Note it is
     # the MARGIN and not just the floor — short-circuiting at the floor alone
-    # would let the reported achievable signal understate the true maximum and
+    # would let the reported signal understate the true maximum and
     # spuriously trip the margin-above-achievable branch (issue #112).
     settled_bound = max(float(floor.max_abs_delta), margin)
 
@@ -882,7 +1040,7 @@ async def run_contract_preflight(
             ):
                 raise NoiseFloorInconclusive(
                     "contract pre-flight: the degraded-perturbation draw hit an infra "
-                    "abort (endpoint outage / worker crash); the achievable-signal "
+                    "abort (endpoint outage / worker crash); the signal "
                     "measurement is inconclusive and must not be persisted."
                 )
             agg = aggregate_generation_score(list(losses.values()), weights)
@@ -917,6 +1075,14 @@ async def run_contract_preflight(
     # (c) Verdicts — signal-vs-noise, then the promote-margin window.
     verdict, signal = preflight_verdict(floor.scalars, best_scalar, floor.max_abs_delta)
     window_verdict, window_failure = preflight_window_verdict(floor.max_abs_delta, margin, signal)
+    # The holdout's SECOND bound, when the split is active (issue #118). Split
+    # the same way the runner's holdout duel does — same config, same rotation
+    # seed — so the entry count the note reasons about is the one the gate will
+    # actually confirm against. Prose only: it can neither raise nor lower a
+    # verdict, and an unsplit board yields None.
+    holdout_seed = rotation_seed(weights.overfitting, epoch_id)
+    _train_ids, holdout_ids = split_board(board, weights.overfitting, seed=holdout_seed)
+    holdout_note = holdout_window_note(weights, len(holdout_ids))
     report = PreflightReport(
         epoch_id=epoch_id,
         generation_id=generation.id,
@@ -935,6 +1101,7 @@ async def run_contract_preflight(
         window_verdict=window_verdict,
         window_failure=window_failure,
         recommended_margin=(recommended_promote_margin(scalars=floor.scalars) or None),
+        holdout_note=holdout_note,
     )
     return report, floor
 
@@ -956,6 +1123,7 @@ __all__ = [
     "degraded_content_for",
     "degraded_patch_for",
     "effective_gate_verdict",
+    "holdout_window_note",
     "is_no_op_degradation",
     "preflight_verdict",
     "preflight_window_verdict",

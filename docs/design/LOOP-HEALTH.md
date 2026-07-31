@@ -305,7 +305,7 @@ stay silent):
 | `generalization_gap` | `warning` / `critical` | the champion's `holdout_loss - train_loss` gap has *widened* past `generalization_gap_warn` / `_crit` (board memorization) |
 | `refresh_cadence` | `info` | evaluated generations under the contract reach `max_generations_per_contract` |
 | `placebo_promoted` | `critical` | a random-baseline placebo challenger (OVERFITTING.md #7) was PROMOTED — gate discrimination is broken |
-| `preflight_signal_below_floor` | `critical` under `runtime.preflight_gate="refuse"`, else `warning` | the contract pre-flight verdict is `refuse` (the achievable signal did not clear the measured A/A noise floor) |
+| `preflight_signal_below_floor` | `critical` under `runtime.preflight_gate="refuse"`, else `warning` | the contract pre-flight verdict is `refuse` (the measured signal did not clear the measured A/A noise floor) |
 
 Two more detectors — `margin_below_noise_floor` (`info` / `warning`), `infra_outage` / `token_budget_clip` / `tree_never_imported` (`warning`) — shipped alongside the overfitting / pre-flight / infra-robustness programs after this table was first written; none of them emit `critical`, so they are omitted here for brevity. `health/diagnostics.py`'s `assess_loop_health` is the authoritative full detector list.
 

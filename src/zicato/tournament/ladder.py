@@ -114,8 +114,10 @@ class LadderRelease:
         holdout scalar on a release, or the previous best on a withhold.
         ``None`` when nothing has been released.
     threshold:
-        The effective release threshold this query used (``promote_margin``
-        when ``LadderConfig.threshold`` is ``None``, plus ``noise_scale``).
+        The effective release threshold this query used (see
+        :func:`effective_threshold`: ``LadderConfig.threshold``, else
+        ``ScoringWeights.holdout_margin``, else ``promote_margin`` — plus
+        ``noise_scale``).
     state:
         The new per-epoch state to persist (budget charged, best updated).
     """
@@ -128,14 +130,36 @@ class LadderRelease:
 
 
 def effective_threshold(cfg: LadderConfig, weights: ScoringWeights) -> float:
-    """The release threshold: ``cfg.threshold`` (or ``promote_margin``) + noise band.
+    """The release threshold: ``cfg.threshold`` (or a gate margin) + noise band.
 
-    Parameter-free by default — ``cfg.threshold is None`` reuses the gate's
-    existing ``promote_margin`` noise threshold, and ``cfg.noise_scale`` is
-    ``0`` so the band collapses to that bar. An operator can pin the bar or
-    widen the band explicitly.
+    Parameter-free by default — ``cfg.threshold is None`` reuses a gate
+    margin as the noise threshold, and ``cfg.noise_scale`` is ``0`` so the
+    band collapses to that bar. An operator can pin the bar or widen the band
+    explicitly.
+
+    Which gate margin (issue #118): :attr:`ScoringWeights.holdout_margin`
+    when the operator set one, else ``promote_margin`` as always. This
+    function is part of the HOLDOUT decision path — it decides whether a
+    holdout query's answer is released at all — so when a contract separates
+    the two bounds, the holdout's is the one that governs here.
+
+    Read the substitution honestly, because the quantity compared is not the
+    holdout's. :func:`query_holdout` tests the TRAIN-measured improvement
+    against this bar, and ``holdout_margin`` is calibrated against the
+    (smaller, coarser) holdout slice — under the rule of thumb it is the
+    LARGER number, so setting it raises the release bar and the Ladder
+    withholds more often, re-reporting the previous best. That is the
+    conservative direction for a reused holdout (fewer released signals =
+    less leakage), which is why the substitution is safe, but it is a real
+    behaviour change: an operator who wants the release bar to stay put
+    should pin :attr:`LadderConfig.threshold` explicitly.
     """
-    base = weights.promote_margin if cfg.threshold is None else cfg.threshold
+    if cfg.threshold is not None:
+        base = cfg.threshold
+    elif weights.holdout_margin is not None:
+        base = weights.holdout_margin
+    else:
+        base = weights.promote_margin
     return base + cfg.noise_scale
 
 

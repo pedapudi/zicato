@@ -1,23 +1,32 @@
-"""Pins for issue #118 — ``promote_margin`` doubles as the holdout tolerance.
+"""Pins for issue #118 — the holdout needs its own bounds, not the train knob.
 
-The gate reads ONE knob for two decisions calibrated against two different
-slice sizes:
+The gate used to read ONE knob for two decisions calibrated against two
+different slice sizes:
 
 * :func:`zicato.tournament.gate.evaluate_gate` Rule 1 thresholds the TRAIN
   delta at ``weights.promote_margin``;
-* :func:`zicato.tournament.gate._holdout_confirms` thresholds the HOLDOUT
+* :func:`zicato.tournament.gate._holdout_confirms` thresholded the HOLDOUT
   regression at the same ``weights.promote_margin``.
 
 On a pass-dominated board a slice's scalar moves in ``1/N`` steps, so the two
-uses pull the knob in opposite directions and the feasible window can be empty.
-Both pins here are built from aggregates the REAL scorer produces
+uses pull the knob in opposite directions and the feasible window can be
+empty. Worse, the holdout also runs the pass-rate monotonicity rule, which
+carried no operator tolerance at all — so a single holdout entry flipping
+pass->fail rejected at EVERY margin, under both scopes, and a
+``holdout_margin`` field alone would not have made such a board usable.
+
+The fix splits both bounds off onto the holdout:
+:attr:`~zicato.core.ScoringWeights.holdout_margin` (``None`` ⇒ fall back to
+``promote_margin``) and
+:attr:`~zicato.core.ScoringWeights.holdout_entry_regression_budget` (``0`` ⇒
+today's zero-tolerance rule). These pins assert the board becomes promotable
+once an operator sets them, and — deliberately — that NOTHING moves at their
+defaults.
+
+Every aggregate here is built by the REAL scorer
 (:func:`~zicato.tournament.scoring.aggregate_generation_score` over
 :class:`~zicato.core.LossProfile` rows), not hand-written dicts, so a pin can
 only fail because the gate decided that way.
-
-The second pin records a constraint the issue does not state: the holdout also
-runs the pass-rate monotonicity rule, which has no tolerance knob at all. A
-``holdout_margin`` field alone would satisfy pin 1 and leave pin 2 red.
 """
 
 from __future__ import annotations
@@ -60,11 +69,19 @@ def _slice(prefix: str, total: int, failing: int, weights: ScoringWeights) -> di
 
 #: A pass-dominated contract: ``drift_weight == 0`` leaves the scalar equal to
 #: the slice's failing fraction, so a slice of N entries moves in 1/N steps.
-def _weights(margin: float, scope: str = "aggregate") -> ScoringWeights:
+def _weights(
+    margin: float,
+    scope: str = "aggregate",
+    *,
+    holdout_margin: float | None = None,
+    holdout_budget: int = 0,
+) -> ScoringWeights:
     return ScoringWeights(
         drift_weight=0.0,
         pass_weight=1.0,
         promote_margin=margin,
+        holdout_margin=holdout_margin,
+        holdout_entry_regression_budget=holdout_budget,
         pass_rate_monotonicity_scope=scope,  # type: ignore[arg-type]
     )
 
@@ -76,87 +93,104 @@ _MARGIN_SWEEP: tuple[float, ...] = tuple(
 )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "issue #118: promote_margin is both the train threshold and the holdout "
-        "tolerance, so on a 12-train / 6-holdout pass-dominated board no value "
-        "both admits the best achievable two-entry train win and tolerates one "
-        "holdout entry regressing"
-    ),
-)
-def test_some_margin_admits_the_best_train_win_while_tolerating_one_holdout_entry() -> None:
-    """A 12/6 board must have at least ONE promotable ``promote_margin``.
+def _promotes(weights: ScoringWeights) -> bool:
+    """Decide the 12-train / 6-holdout board with the real gate.
 
     Train: the board's best achievable single-round result — a two-entry win
     (parent fails 5 of 12, child fails 3 of 12), delta ``-2/12``.
     Holdout: exactly one entry regresses (parent fails 1 of 6, child fails 2),
     delta ``+1/6`` — the smallest holdout movement the board can express.
-
-    Promotion needs ``margin <= 2/12`` (Rule 1) and tolerating the holdout
-    needs ``margin >= 1/6`` (the confirmation step). ``2/12 == 1/6`` exactly in
-    the reals, so the window is a single point — and float rounding of
-    ``1 - 7/12`` closes even that, leaving it empty.
     """
-    promoting = [
-        margin
-        for margin in _MARGIN_SWEEP
-        if evaluate_gate(
-            _slice("t", 12, 5, _weights(margin)),
-            _slice("t", 12, 3, _weights(margin)),
-            _weights(margin),
-            holdout_parent_agg=_slice("h", 6, 1, _weights(margin)),
-            holdout_child_agg=_slice("h", 6, 2, _weights(margin)),
+    return (
+        evaluate_gate(
+            _slice("t", 12, 5, weights),
+            _slice("t", 12, 3, weights),
+            weights,
+            holdout_parent_agg=_slice("h", 6, 1, weights),
+            holdout_child_agg=_slice("h", 6, 2, weights),
         ).decision
         == "promoted"
-    ]
-    assert promoting, (
-        "no promote_margin in [0.0, 0.5] promotes a two-entry train win on a "
-        "12-entry train slice while tolerating one regressing entry on a "
-        "6-entry holdout slice"
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "issue #118 (residual the issue does not name): the holdout also applies "
-        "pass-rate monotonicity, which has no tolerance knob, so a single "
-        "holdout entry flipping pass->fail rejects at EVERY margin under both "
-        "scopes — a holdout_margin field alone would not make this board usable"
-    ),
-)
+def test_holdout_bounds_open_a_window_the_shared_knob_could_not() -> None:
+    """A 12/6 board must have at least ONE promotable setting.
+
+    With one knob there was none. Promotion needed ``margin <= 2/12`` (Rule 1)
+    while tolerating the holdout needed ``margin >= 1/6``; ``2/12 == 1/6``
+    exactly in the reals, so the window was a single point that float rounding
+    of ``1 - 7/12`` then closed — and past the scalar bound the holdout's
+    pass-rate rule rejected anyway.
+
+    Separating the bounds makes the window two-dimensional: the train margin
+    stays below ``2/12`` while the holdout margin rises past ``1/6``, and one
+    entry of regression budget absorbs the pass-rate flip that no margin could.
+    """
+    # Short-circuits on the first promotable pair: the sweep is quadratic now
+    # that there are two margins, and one witness is the whole claim.
+    promoting = next(
+        (
+            (margin, holdout_margin)
+            for margin in _MARGIN_SWEEP
+            for holdout_margin in _MARGIN_SWEEP
+            if _promotes(_weights(margin, holdout_margin=holdout_margin, holdout_budget=1))
+        ),
+        None,
+    )
+    assert promoting, (
+        "no (promote_margin, holdout_margin) pair promotes a two-entry train "
+        "win on a 12-entry train slice while tolerating one regressing entry "
+        "on a 6-entry holdout slice"
+    )
+
+
+def test_the_shared_knob_alone_still_admits_no_margin() -> None:
+    """At the DEFAULTS the window is still empty — by design, not by accident.
+
+    ``holdout_margin=None`` and a budget of ``0`` mean "exactly the historical
+    strictness", which is what keeps the contract hash and every existing
+    epoch unmoved. This pins that the defaults really are inert: the board the
+    issue reported stays unpromotable until an operator opts in, so a future
+    change cannot quietly loosen the gate for contracts that never asked.
+
+    The pre-flight is what tells the operator this is happening — see
+    :func:`zicato.epoch.preflight.holdout_window_note`.
+    """
+    assert not [margin for margin in _MARGIN_SWEEP if _promotes(_weights(margin))]
+
+
 @pytest.mark.parametrize("scope", ["aggregate", "per_entry"])
-def test_some_margin_tolerates_one_holdout_flip_given_an_unambiguous_train_win(
-    scope: str,
-) -> None:
-    """With the train win made unambiguous, one holdout flip must be tolerable.
+def test_the_regression_budget_tolerates_one_holdout_flip(scope: str) -> None:
+    """With the train win unambiguous, one holdout flip must be tolerable.
 
     The train side is a FOUR-entry win (parent fails 6 of 12, child fails 2),
     delta ``-4/12``, so Rule 1 clears comfortably for any margin below 1/3 and
     cannot be what rejects. The holdout still regresses by exactly one entry.
 
-    Raising the margin past ``1/6`` clears the holdout's scalar tolerance — and
-    then :func:`~zicato.tournament.gate._pass_rate_regression_reason` rejects
-    instead, under either scope, because the holdout's pass-rate rule carries
-    only :data:`~zicato.tournament.gate.PASS_RATE_MONOTONICITY_TOLERANCE`
-    (``1e-9``) / :data:`~zicato.tournament.gate.PER_ENTRY_SCORE_MONOTONICITY_TOLERANCE`
-    (``0.02``), neither of which an operator can widen to one entry in six.
+    Raising ``holdout_margin`` past ``1/6`` clears the scalar tolerance, and
+    the entry budget clears
+    :func:`~zicato.tournament.gate._pass_rate_regression_reason` — which
+    otherwise rejects under either scope, carrying only
+    :data:`~zicato.tournament.gate.PASS_RATE_MONOTONICITY_TOLERANCE` (``1e-9``)
+    / :data:`~zicato.tournament.gate.PER_ENTRY_SCORE_MONOTONICITY_TOLERANCE`
+    (``0.02``), neither of which an operator can widen to one entry in six. The
+    budget means the same thing under both scopes: one entry.
     """
-    promoting = [
-        margin
-        for margin in _MARGIN_SWEEP
-        if margin < 1.0 / 3.0
-        and evaluate_gate(
-            _slice("t", 12, 6, _weights(margin, scope)),
-            _slice("t", 12, 2, _weights(margin, scope)),
-            _weights(margin, scope),
-            holdout_parent_agg=_slice("h", 6, 1, _weights(margin, scope)),
-            holdout_child_agg=_slice("h", 6, 2, _weights(margin, scope)),
-        ).decision
-        == "promoted"
-    ]
+    promoting: list[float] = []
+    for margin in _MARGIN_SWEEP:
+        if margin >= 1.0 / 3.0:
+            continue
+        weights = _weights(margin, scope, holdout_margin=0.2, holdout_budget=1)
+        outcome = evaluate_gate(
+            _slice("t", 12, 6, weights),
+            _slice("t", 12, 2, weights),
+            weights,
+            holdout_parent_agg=_slice("h", 6, 1, weights),
+            holdout_child_agg=_slice("h", 6, 2, weights),
+        )
+        if outcome.decision == "promoted":
+            promoting.append(margin)
     assert promoting, (
         f"scope={scope}: no promote_margin tolerates one regressing holdout entry "
-        "even when the train win is four entries wide"
+        "even with a holdout margin of 0.2 and a one-entry regression budget"
     )

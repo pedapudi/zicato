@@ -1291,8 +1291,8 @@ hypothetical:
 
 Home: `src/zicato/epoch/preflight.py`. Before an epoch burns rounds, two cheap
 measurements answer the one question that decides whether an evolve loop can
-work at all: **is the contract's achievable signal larger than its noise
-floor?**
+work at all: **is the movement this contract can measure larger than its own
+noise floor?**
 
 - **(a) the A/A floor** — reuses `measure_noise_floor`'s draws (same cache
   slots as `zicato board audit`; idempotent between the two surfaces);
@@ -1304,7 +1304,9 @@ floor?**
   trees never enter the lineage; probe `j`'s draw caches under the
   *champion's* id at `PREFLIGHT_REPLICATE_BASE + j` (2000 + j). The **max**
   over probes of `|degraded_scalar − mean(champion_scalars)|` is the
-  contract's demonstrated **achievable signal**.
+  contract's demonstrated **degradation signal** — how far the scalar moves
+  when a mutation point is destroyed. §9.3 explains why that is not the same as
+  achievable improvement, and what the pre-flight is therefore allowed to claim.
 
 Board reflection's **active observation corpus** reuses this exact discipline
 one reserved base higher: `reflection/corpus.py`'s `run_corpus` mirrors the
@@ -1372,9 +1374,8 @@ champion evaluations refining a number nothing reads. A healthy contract
 therefore still costs exactly **one** degraded draw, identical to pre-#106; the
 extra evidence is bought only on a contract that is about to be called
 unmeasurable. Note the bound is the *margin*, not just the floor:
-short-circuiting at the floor alone would let the reported achievable signal
-understate the true maximum and spuriously trip §9.3's
-`margin_above_achievable`.
+short-circuiting at the floor alone would let the reported signal understate
+the true maximum and spuriously trip §9.3's `margin_above_achievable`.
 
 Every point considered lands on `PreflightReport.probed_points` (additive) with
 its per-point signal or the reason it cost no draw (`no_op_patch` /
@@ -1392,7 +1393,7 @@ whole probe set:
 | Verdict | Condition | Pathology |
 |---|---|---|
 | `warn` (saturated) | spread across ALL probes — every A/A draw plus the best degraded draw — is **exactly zero** | zero variance / saturation: even a deliberately-broken tree scores identically. The historical signature is the `1.000000` null run — the loop spins forever with nothing to climb. The board, not the noise, is the problem. |
-| `inert` | `signal == 0` exactly, while the champion's own draws DID vary | the probe, not the contract. Two facts hold at once: the harness demonstrably can move the scalar, and the degradation moved it by nothing. So the achievable signal is **unmeasured**, not measured-as-zero. Fix = pick a representative point. NARROW — see the honest reading below. |
+| `inert` | `signal == 0` exactly, while the champion's own draws DID vary | the probe, not the contract. Two facts hold at once: the harness demonstrably can move the scalar, and the degradation moved it by nothing. So the signal is **unmeasured**, not measured-as-zero. Fix = pick a representative point. NARROW — see the honest reading below. |
 | `refuse` (recommended) | `0 < signal <= floor_max_abs_delta` | noise swamps the margin: an A/A re-roll moves the scalar as much as a deliberate degradation does; every duel is decided by noise. The contract cannot possibly resolve the *smaller* improvements a proposer will offer. |
 | `ok` | otherwise | signal demonstrably clears noise |
 
@@ -1433,11 +1434,10 @@ The verdict persists onto the epoch record (`config.json`'s additive
 under `preflight_gate="refuse"`, warning otherwise, §9.5 — / warning
 `preflight_saturated_contract` / warning `preflight_inert_probe`).
 
-### 9.3 The promote-margin window (issue #112)
+### 9.3 The promote-margin window (issue #112, corrected by #119)
 
-"Can this contract out-signal its own noise?" and "is `promote_margin`
-reachable?" are **different questions**, and a run can pass the first while
-being guaranteed null by the second. Measured on a real 24-cell, 72-duel
+"Can this contract out-signal its own noise?" and "is `promote_margin` set
+sanely?" are **different questions**. Measured on a real 24-cell, 72-duel
 campaign: floor `delta_std` 0.080–0.106, best single-round improvement across
 all 72 duels **+0.041**, configured `promote_margin` **0.10** ⇒ **71 of 72
 duels rejected**, every cell terminated at its starting generation, and the
@@ -1445,45 +1445,109 @@ comparison the run existed to make could not return anything but a null. The
 pre-flight raised nothing, because the contract *could* out-signal its noise in
 the sense the pre-flight tested. The failure was one level up.
 
-The window the loop needs is `noise < promote_margin < achievable`.
-`preflight_window_verdict` asserts **both** bounds and names the side that
-failed, because the two sides have opposite fixes:
+`preflight_window_verdict` places the margin against the floor and the measured
+signal and names the side it fell outside of, because the two sides have
+opposite fixes:
 
 | `window_failure` | Condition | Verdict | What the operator must do |
 |---|---|---|---|
-| `empty_window` | `achievable <= noise` | `warn` | **Nothing to the margin.** No value of it is defensible: below the floor promotions are noise, above it nothing promotes. Fix the board / reduce noise. |
-| `margin_above_achievable` | `margin >= achievable` | `refuse` | Lower the margin inside the window. Barring a compound patch no challenger can be promoted. |
+| `empty_window` | `signal <= noise` | `warn` | **Nothing to the margin.** No value of it is defensible on a board whose measurable movement is inside its own noise. Fix the board / reduce noise. |
+| `margin_above_achievable` | `margin >= signal` | `warn` | Check the margin against what a real fix is worth. See the reading below — this is NOT proof nothing can promote. |
 | `margin_below_floor` | `margin <= floor` | `warn` | Raise the margin above the noise, and/or keep the evidence gate on. |
-| — (`None`) | window holds | `ok` | — |
+| — (`None`) | both bounds hold | `ok` | — |
 
 `empty_window` is checked first because it invalidates the other two
 diagnoses — an operator told "your margin is mis-set" will spend a cycle tuning
-a number that has no valid value. It returns `warn` rather than `refuse` on
-purpose: `achievable <= noise` is the very comparison §9.2 already renders and
-the gate already acts on, so refusing it again would double-gate one fact.
-What the branch adds is the *margin* sentence. Symmetrically,
-`margin_above_achievable` is `refuse`-worthy precisely because §9.2 can never
-reach it.
+a number that has no valid value. Every outcome is `warn`: the refusal that
+matters is §9.2's floor comparison, which the gate already acts on, and the
+upper comparison here measures something that does not bound a challenger's
+reach (below).
 
 Bounds are inclusive on the failing side (`>=` / `<=`): a margin exactly AT the
-achievable signal promotes nothing, and one exactly at the floor is
-indistinguishable from noise.
+measured signal exceeds everything the probe saw, and one exactly at the floor
+is indistinguishable from noise.
 
-> ⚠️ **`achievable` is a SINGLE-POINT lower bound.** The probe degrades one
-> mutation point per draw, so the measured achievable signal is the best a
-> *single-point* change demonstrably does — not a ceiling on the loop. A patch
-> that touches several points can exceed it, and **recombination does so by
-> design**: `recombine` exists precisely to union two individually sub-margin
-> fixes into a promotable one, so a recombination contract legitimately runs
-> with `promote_margin` above single-point reach (see the known-answer tests in
-> `tests/test_recombination_known_answer.py`). Two consequences, both
-> deliberate: the health finding is a **warning**, never a critical — a critical
-> would trip `evolve_n_rounds`'s degenerate-health circuit breaker
-> (`_DEGENERATE_HEALTH_STOP_THRESHOLD`) and kill exactly that legitimate run —
-> and the hard stop is available only through the opt-in
-> `preflight_gate="refuse"`, never by default. Every operator-facing string for
-> this failure says "no *single-point* change clears the gate", not "no
-> challenger can be promoted".
+> ⛔ **The signal is DEGRADATION headroom, and it was labelled as achievable
+> IMPROVEMENT (issue #119).** `signal = |degraded_scalar − champion_mean|` is
+> how far the scalar moved when a mutation point was **destroyed** — how much
+> this champion has left to **lose**. A promotion needs movement the other way.
+> The two quantities are unrelated in general and diverge hardest exactly where
+> an evolve loop is most often started: a champion seeded near the failing end
+> has little left to break (small degradation headroom) and everything to gain
+> (large improvement headroom). Enforcing the margin against it therefore failed
+> in both directions — a **false refuse** for a floor-anchored champion whose
+> margin the board could clear, and a **silent false OK** for a champion at the
+> score ceiling, whose large degradation headroom said nothing about the
+> improvement that was in fact unavailable.
+>
+> The fix is an honest relabel, not a new number. The measurement is kept and
+> persisted under `degradation_signal` (with the legacy `signal` key retained
+> so existing readers keep working); `margin_above_achievable` became a
+> **warning that can no longer hard-refuse a run**, even under
+> `preflight_gate="refuse"`; and every operator-facing string says what was
+> measured. `effective_gate_verdict` additionally declines to escalate a
+> *persisted* `margin_above_achievable` refusal, so epochs pre-flighted before
+> the demotion do not keep stopping on the retracted finding.
+>
+> **The tempting fix is unsafe.** "Improvement headroom = `champion_mean − 0`"
+> assumes the scalar's reachable floor is zero, and it is not: a namespace with
+> a **negative** weight (a rubric, where higher is better) pushes the scalar
+> below zero, so that subtraction would fabricate a bound. Deriving a real one
+> from the namespace weights is **registered, not built** — improvement headroom
+> is currently **unmeasured**, and the code says so.
+
+> ⚠️ **The signal is also a SINGLE-POINT lower bound.** Independently of the
+> above, the probe degrades one mutation point per draw, so it under-reports even
+> the movement it *does* measure. A patch that touches several points exceeds it,
+> and **recombination does so by design**: `recombine` exists precisely to union
+> two individually sub-margin fixes into a promotable one (see the known-answer
+> tests in `tests/test_recombination_known_answer.py`). This is a second,
+> independent reason the finding is a **warning** rather than a critical — a
+> critical would trip `evolve_n_rounds`'s degenerate-health circuit breaker
+> (`_DEGENERATE_HEALTH_STOP_THRESHOLD`) and kill exactly that legitimate run.
+
+### 9.3.1 The holdout's own bound (issue #118)
+
+The window above places the **train** margin. When the split is active a
+promotion must also survive the holdout confirmation, which applies its own
+scalar tolerance and its own pass-rate rule to a **smaller** slice — and a slice
+of N entries moves its scalar in `1/N` steps, so the holdout's steps are the
+coarse ones and its bound can be the binding one while the train window looks
+perfectly healthy.
+
+`promote_margin` used to serve as that tolerance too (plus the Ladder's release
+threshold — one knob, three duties). On the DEFAULT-produced 12-train /
+6-holdout split with one holdout entry flipping, **no margin value promotes**:
+Rule 1 needs `margin <= 2/12` and tolerating the holdout needs `margin >= 1/6`,
+which are the same number, and float rounding closes even that single point.
+Past the scalar bound the holdout's pass-rate rule — carrying only its
+float-noise tolerance and no operator knob at all — rejects at every margin
+anyway.
+
+Two additive, default-inert contract fields split the bounds off
+(`ScoringWeights`, both omitted from the canonical form at their default so no
+existing epoch's hash moves):
+
+| Field | Default | Effect |
+|---|---|---|
+| `holdout_margin` | `None` | The holdout confirmation's scalar tolerance (`gate.effective_holdout_margin`). `None` ⇒ fall back to `promote_margin`, exactly as before. Also becomes the Ladder's release-threshold base when set. |
+| `holdout_entry_regression_budget` | `0` | How many holdout entries may regress before the confirmation rejects. `0` ⇒ today's zero-tolerance rule. Applies under both monotonicity scopes — per-entry as a count, aggregate as a widened `budget / entries` band, so one budget unit means one entry either way. |
+
+For commensurable bounds set `holdout_margin ≈ promote_margin × N_train /
+N_holdout` (roughly double, on the default split). The rationale for the budget
+is the gate's own doctrine: the holdout **confirms** rather than re-decides — a
+train-measured win "must merely not regress" — and a confirmation that no
+achievable margin can satisfy is not a confirmation, it is a second gate. The
+TRAIN side keeps its zero-tolerance rule; this cannot loosen the primary
+decision.
+
+`preflight.holdout_window_note` renders the feasibility note — prose on the
+pre-flight record (`holdout_note`), printed by `zicato board preflight` and
+surfaced in the builder panel, never a verdict and never a refusal. It names
+both facts an operator cannot otherwise see without doing the arithmetic: that
+one entry flipping moves the holdout scalar by about `pass_weight / N`, and
+that at budget `0` a single flip rejects at **every** margin, which raising the
+holdout margin cannot fix.
 
 ### 9.4 The floor statistic a recommendation may scale
 
@@ -1516,7 +1580,7 @@ additive `recommended_margin`.
 The pre-flight is **default-on**: at evolve start the loop measures it once per
 epoch (idempotent, best-effort) unless the runtime opts out, and acts on
 `effective_gate_verdict` — which collapses the two verdicts of §9.2 and §9.3
-into the one answer the gate needs (`refuse` when EITHER refuses, else the
+into the one answer the gate needs (`refuse` when either refuses, else the
 signal verdict verbatim) — per the runtime-only `RuntimeConfig.preflight_gate`
 knob (never rolls the epoch — a runtime tuning knob like
 `infra_abort_round_threshold`):
@@ -1524,14 +1588,19 @@ knob (never rolls the epoch — a runtime tuning knob like
 | `preflight_gate` | On a refuse-worthy / saturated / inert verdict, or any window failure |
 |---|---|
 | `"warn"` (**default**) | LOUD `log.warning` at evolve start + the per-round health finding at **warning** severity; the run **proceeds** (recommend-only philosophy) |
-| `"refuse"` | additionally raises `PreflightRefusedError` when EITHER verdict refuses — signal at/below the floor, or margin at/above achievable — naming which; `evolve_n_rounds` catches it and stops with reason `preflight_refused` **before spending rounds**, no traceback. The health finding is **critical** here (and moot: no round runs) |
+| `"refuse"` | additionally raises `PreflightRefusedError` when the SIGNAL verdict refuses (signal at/below the floor); `evolve_n_rounds` catches it and stops with reason `preflight_refused` **before spending rounds**, no traceback. The health finding is **critical** here (and moot: no round runs) |
 | `"off"` | skip the measurement entirely — byte-identical to the pre-#84 behavior (the escape hatch deterministic oracles use so the orthogonal probe never runs the champion) |
 
-An `inert` verdict is **never** a refusal, under any gate mode: the probe came
-up short, not the contract, and hard-stopping a possibly-healthy board there is
-exactly what #106 filed. `effective_gate_verdict` reads the persisted record
-rather than the live `PreflightReport` so a resumed / later round reaches the
-identical decision as the round that measured.
+Only the **floor-based** refusal reaches the hard gate. §9.3's window verdicts
+are all warnings since #119 — they compare the margin against numbers that do
+not bound a challenger's reach — and an `inert` verdict is **never** a refusal
+under any gate mode: the probe came up short, not the contract, and
+hard-stopping a possibly-healthy board there is exactly what #106 filed.
+`effective_gate_verdict` reads the persisted record rather than the live
+`PreflightReport` so a resumed / later round reaches the identical decision as
+the round that measured — which is also why it skips a *persisted*
+`margin_above_achievable` refusal written before the demotion, rather than
+re-refusing every round on the finding #119 retracted.
 
 > ⛔ **The health finding's severity MUST follow the gate mode.** This is not
 > presentation polish; it is the difference between the two gate modes actually
@@ -1570,8 +1639,8 @@ alone under `"warn"`.
 
 The evolve-start warning is **per-verdict prose** (`_preflight_diagnosis` in
 `orchestrator.py`): "noise swamps the signal", "the probe was inert", "the
-margin is unreachable" and "the margin is inside the noise" have four different
-fixes, and both #106 and #112 trace wasted operator time to their having been
+margin exceeds what we measured" and "the margin is inside the noise" have four
+different fixes, and both #106 and #112 trace wasted operator time to their having been
 reported in the same words.
 
 Surfaces: `zicato board preflight` (manual, always recommend-only; carries

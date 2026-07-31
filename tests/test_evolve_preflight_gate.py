@@ -247,17 +247,21 @@ def test_inert_verdict_never_hard_stops_the_run(
     assert any("preflight_probe_mutation_ids" in m for m in msgs), msgs
 
 
-def test_margin_above_achievable_hard_stops_the_run(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_margin_above_the_degradation_signal_never_hard_stops_the_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Issue #112: the window refusal reaches the gate on its own.
+    """Issue #119: the window failure warns loudly and lets the run proceed.
 
-    The signal verdict is ``ok`` — the contract DOES out-signal its noise — yet
-    no challenger can clear the margin, so the run is null by construction and
-    the opt-in gate must stop it before it spends rounds.
+    The signal verdict is ``ok`` — the contract DOES out-signal its noise — and
+    the margin sits above the measured DEGRADATION signal. That used to refuse
+    under the hard gate. It cannot any more: the probe measured how much the
+    champion has left to LOSE, which does not bound how much a challenger can
+    gain, so the finding is real but the enforcement was not honest.
+
+    The record here is the PERSISTED pre-#119 shape (``window_verdict:
+    "refuse"``), which is the case that has to keep working — an epoch measured
+    under the old code must not keep stopping every resumed round.
     """
-    from zicato.epoch.preflight import PreflightRefusedError
-
     workspace, epoch_id, _ = _prepare(
         monkeypatch,
         tmp_path,
@@ -269,8 +273,12 @@ def test_margin_above_achievable_hard_stops_the_run(
         window_verdict="refuse",
         window_failure="margin_above_achievable",
     )
-    with pytest.raises(PreflightRefusedError, match="promote_margin"):
-        _run_once(monkeypatch, workspace, epoch_id)
+    with caplog.at_level(logging.WARNING, logger="zicato.orchestrator"):
+        outcome = _run_once(monkeypatch, workspace, epoch_id)
+
+    assert outcome is not None, "the hard gate must not stop this run"
+    msgs = [r.getMessage() for r in caplog.records if r.name == "zicato.orchestrator"]
+    assert any("CONTRACT PRE-FLIGHT MARGIN_ABOVE_ACHIEVABLE" in m for m in msgs), msgs
 
 
 def test_margin_above_achievable_only_warns_by_default(

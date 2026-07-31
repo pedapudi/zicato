@@ -536,7 +536,7 @@ pins the agreement (see `src/zicato/dashboard/static/test/builder.test.mjs`).
 ## 10.4 The statistical pre-flight — a read-op that measures the DRAFT
 
 `preflight` is an `async` read op that runs the SAME measurement `zicato board
-preflight` takes — an A/A noise-floor calibration and an achievable-signal probe
+preflight` takes — an A/A noise-floor calibration and a degradation-signal probe
 — but against the DRAFT's board and scoring, using the workspace's own champion
 tree, adapter, and runtime `call_llm`. Its result is `PreflightResult`:
 

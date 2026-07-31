@@ -67,6 +67,25 @@ def test_threshold_adds_noise_band() -> None:
     assert effective_threshold(cfg, _weights(promote_margin=0.1)) == pytest.approx(0.15)
 
 
+def test_threshold_prefers_the_holdout_margin_when_the_contract_sets_one() -> None:
+    """Issue #118: a contract that separates its bounds governs the Ladder too.
+
+    This function is part of the HOLDOUT decision path — it decides whether a
+    holdout query's answer is released at all — so once ``holdout_margin``
+    exists it is the bound that belongs here. ``LadderConfig.threshold`` still
+    wins outright, and a contract that never sets ``holdout_margin`` is
+    byte-identical to before.
+    """
+    weights = ScoringWeights(promote_margin=0.1, holdout_margin=0.2)
+    assert effective_threshold(LadderConfig(threshold=None), weights) == pytest.approx(0.2)
+    assert effective_threshold(
+        LadderConfig(threshold=None, noise_scale=0.05), weights
+    ) == pytest.approx(0.25)
+    assert effective_threshold(LadderConfig(threshold=0.3), weights) == pytest.approx(
+        0.3
+    ), "an explicit LadderConfig.threshold still pins the bar"
+
+
 # ---------------------------------------------------------------------------
 # Release rule
 # ---------------------------------------------------------------------------

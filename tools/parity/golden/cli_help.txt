@@ -213,7 +213,7 @@ Options:
 ===== zicato board preflight --help =====
 Usage: zicato board preflight [OPTIONS]
 
-  Measure the contract's noise floor AND achievable signal; verdict.
+  Measure the contract's noise floor AND degradation signal; verdict.
 
   Board-reflection v1. Two measurements: (a) the A/A noise floor — the champion
   duels ITSELF --runs times (same draws `zicato board audit` takes); (b) the
@@ -221,14 +221,15 @@ Usage: zicato board preflight [OPTIONS]
   copies of itself (a deterministic, role-diverse sample of mutation points
   blanked/scrambled in scratch trees; the real lineage is never touched),
   reporting the MAX signal so one inert point cannot veto a healthy contract.
-  Verdicts: REFUSE-recommended when the achievable signal is at/below the floor;
+  Verdicts: REFUSE-recommended when the measured signal is at/below the floor;
   WARN when every probe scored identically (a saturated contract — the 1.000000
   signature); INERT when the probes moved nothing while the A/A draws varied
   (the signal is unmeasured, not zero — pick a representative point); OK
-  otherwise. Also asserts the promote_margin window `noise < margin <
-  achievable` and names the side that failed. Recommend-only — never gates. The
-  verdict persists onto the epoch record and flows into the per-round health
-  report.
+  otherwise. Also places promote_margin against the floor and the measured
+  signal and names the side it fell outside of — WARNING-class only, since the
+  upper number is DEGRADATION headroom and does not bound what a challenger can
+  improve (issue #119). Recommend-only — never gates. The verdict persists onto
+  the epoch record and flows into the per-round health report.
 
 Options:
   --workspace TEXT              Path to the zicato workspace root.  [default:

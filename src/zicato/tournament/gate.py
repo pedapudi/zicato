@@ -91,10 +91,18 @@ If no rule rejects, the gate promotes — UNLESS a holdout-confirmation
 step is supplied (OVERFITTING.md §1/§12 #1, §13). When the caller passes
 a held-out slice's parent/child aggregates, a train-measured win must
 *also* confirm on the holdout: the challenger's holdout scalar may not
-regress past ``promote_margin`` versus the champion's, and the holdout
-must not show a pass-rate regression under the SAME
-:attr:`ScoringWeights.pass_rate_monotonicity_scope` the train slice uses
-(per-entry on both sides, or aggregate on both). A failed confirmation
+regress past the HOLDOUT margin
+(:func:`effective_holdout_margin` — :attr:`ScoringWeights.holdout_margin`,
+falling back to ``promote_margin``) versus the champion's, and the holdout
+must not show a pass-rate regression beyond
+:attr:`ScoringWeights.holdout_entry_regression_budget` entries under the
+SAME :attr:`ScoringWeights.pass_rate_monotonicity_scope` the train slice
+uses (per-entry on both sides, or aggregate on both). Both holdout bounds
+are separate knobs because the holdout is the SMALLER slice and therefore
+the coarser-quantized one; sharing the train knob left real board shapes
+with no promotable margin at all (issue #118). At their defaults
+(``holdout_margin=None``, budget ``0``) the confirmation is byte-identical
+to the single-knob version. A failed confirmation
 is just another reason to ``reject`` (reason ``holdout_not_confirmed``);
 the champion stands, exactly as on any other reject — the
 protected-incumbent invariant is untouched. The holdout is
@@ -153,6 +161,27 @@ PASS_RATE_MONOTONICITY_TOLERANCE: float = 1e-9
 #: flip rejects exactly as the historical "must-still-pass" rule did. Kept
 #: small so the bool case stays effectively a strict must-still-pass.
 PER_ENTRY_SCORE_MONOTONICITY_TOLERANCE: float = 0.02
+
+
+def effective_holdout_margin(weights: ScoringWeights) -> float:
+    """The scalar tolerance the HOLDOUT confirmation applies (issue #118).
+
+    :attr:`ScoringWeights.holdout_margin` when the operator set one, else
+    :attr:`ScoringWeights.promote_margin` — so a contract that never heard of
+    the field behaves exactly as before.
+
+    The two bounds want different values. ``promote_margin`` is calibrated
+    against the TRAIN slice and must be small enough for a real win to clear
+    Rule 1; the holdout tolerance is calibrated against the HOLDOUT slice and
+    must be large enough to absorb that slice's own quantization. A slice of N
+    entries moves its scalar in ``1/N`` steps and the holdout is the smaller
+    slice by construction, so its steps are the coarser ones — one knob served
+    both only by luck of the split. See
+    :attr:`ScoringWeights.holdout_margin` for the commensurable-bounds rule of
+    thumb (``promote_margin × N_train / N_holdout``).
+    """
+    margin = weights.holdout_margin
+    return float(weights.promote_margin if margin is None else margin)
 
 
 @dataclass(frozen=True, slots=True)
@@ -319,6 +348,7 @@ def _pass_rate_regression_reason(
     weights: ScoringWeights,
     *,
     prefix: str = "",
+    entry_budget: int = 0,
 ) -> str:
     """Return the pass-rate monotonicity reject reason, or ``""`` to allow.
 
@@ -334,12 +364,36 @@ def _pass_rate_regression_reason(
     The caller has already checked that ``pass_rate_monotonicity`` is on.
     ``prefix`` lets the holdout reuse the same wording with its
     ``holdout_not_confirmed: holdout `` lead-in.
+
+    ``entry_budget`` (issue #118) is how many regressed entries to tolerate
+    before rejecting. ``0`` — the only value the TRAIN side ever passes — is
+    exactly the historical rule under both scopes. The holdout passes
+    :attr:`ScoringWeights.holdout_entry_regression_budget`, and the two scopes
+    express the same allowance differently: per-entry it is a COUNT, while
+    aggregate widens the mean-score band by the movement that many flips
+    produce (``budget / entries``), so an operator's budget of 1 means the
+    same thing whichever scope the contract pins.
     """
     if weights.pass_rate_monotonicity_scope == "aggregate":
         parent_pass = _mean_score(parent_agg)
         child_pass = _mean_score(child_agg)
         delta = child_pass - parent_pass
-        if delta < -PASS_RATE_MONOTONICITY_TOLERANCE:
+        # A budget of N entries is N/scored-entries of mean-score movement on
+        # this slice. The denominator must be the SCORED rows, because that is
+        # the denominator ``mean_score`` itself uses
+        # (:func:`zicato.tournament.scoring.aggregate_generation_score`'s
+        # ``score_count``) — counting unscored rows too would silently shrink
+        # the band below the one entry the operator asked for. With no scored
+        # rows (a hand-built or expectation-free aggregate) there is no scale to
+        # convert on, so the budget contributes nothing rather than an
+        # arbitrary amount.
+        scored = sum(
+            1
+            for row in (parent_agg.get("per_entry", {}) or {}).values()
+            if _row_score(row) is not None
+        )
+        budget_band = (entry_budget / scored) if (entry_budget > 0 and scored) else 0.0
+        if delta < -(PASS_RATE_MONOTONICITY_TOLERANCE + budget_band):
             # Wording kept as "pass-rate" for back-compat with consumers
             # that match this reason text; the quantity is now mean_score,
             # which equals pass_rate on an all-bool board.
@@ -351,8 +405,10 @@ def _pass_rate_regression_reason(
         return ""
     # per_entry (default): every entry the parent scored must hold within
     # tolerance (a bool entry the parent passed must still pass — see
-    # :func:`_regressed_entries`).
+    # :func:`_regressed_entries`), save for the first ``entry_budget`` of them.
     regressed = _regressed_entries(parent_agg, child_agg)
+    if len(regressed) <= entry_budget:
+        regressed = []
     if regressed:
         return f"{prefix}pass-rate regression on entries: " + ", ".join(regressed)
     return ""
@@ -365,37 +421,49 @@ def _holdout_confirms(
 ) -> str:
     """Return ``""`` when the holdout confirms the win, else a reason.
 
-    Reuses the same machinery the train slice is gated by — the
-    ``promote_margin`` regression band on the holdout scalar, and the
-    pass-rate monotonicity check on the holdout's per-entry rows — but in
-    *confirmation* form: the challenger must merely *not regress* on the
-    holdout. Concretely it rejects when
+    Reuses the same machinery the train slice is gated by — a scalar
+    regression band on the holdout scalar, and the pass-rate monotonicity
+    check on the holdout's per-entry rows — but in *confirmation* form: the
+    challenger must merely *not regress* on the holdout. Concretely it
+    rejects when
 
     * the challenger's holdout loss rose past the champion's by more than
-      ``promote_margin`` (a real holdout regression, not noise), OR
-    * the challenger regressed on pass-rate monotonicity (reusing
-      :func:`_pass_rate_regression_reason`, gated by
+      :func:`effective_holdout_margin` (a real holdout regression, not
+      noise), OR
+    * the challenger regressed on pass-rate monotonicity beyond
+      :attr:`ScoringWeights.holdout_entry_regression_budget` entries
+      (reusing :func:`_pass_rate_regression_reason`, gated by
       ``pass_rate_monotonicity`` so operators who disabled it on the train
       side disable it here too, and honoring the SAME
       ``pass_rate_monotonicity_scope`` so train and holdout apply one
       consistent policy — per-entry on both sides, or aggregate on both).
 
-    The holdout is never asked to clear ``promote_margin`` in the
-    *improving* direction — a train-measured win that merely holds flat on
-    the holdout is a confirmation, not a failure. This is the asymmetry
-    that makes the holdout a guard against board-memorization rather than a
-    second, stricter promotion bar.
+    Both bounds are the HOLDOUT's own (issue #118). Reusing the train knob
+    for the scalar band pulled one number in two directions at once, and the
+    pass-rate rule had no operator tolerance at all — only its float-noise
+    band — so on a 6-entry holdout a single entry flipping pass→fail
+    rejected at every margin. That contradicts this step's own doctrine
+    (below): a confirmation that no achievable margin can satisfy is not a
+    confirmation, it is a second gate. Both knobs default to exactly the
+    historical strictness.
+
+    The holdout is never asked to clear the margin in the *improving*
+    direction — a train-measured win that merely holds flat on the holdout
+    is a confirmation, not a failure. This is the asymmetry that makes the
+    holdout a guard against board-memorization rather than a second,
+    stricter promotion bar.
     """
+    margin = effective_holdout_margin(weights)
     parent_scalar = float(holdout_parent_agg["scalar"])
     child_scalar = float(holdout_child_agg["scalar"])
     # A holdout regression: the challenger's holdout loss rose past the
     # champion's by more than the noise band. (delta > +margin ⇒ regressed.)
-    if child_scalar - parent_scalar > weights.promote_margin:
+    if child_scalar - parent_scalar > margin:
         return (
             f"holdout_not_confirmed: holdout loss rose by "
             f"{child_scalar - parent_scalar:.6f} "
             f"(champion {parent_scalar:.6f} -> challenger {child_scalar:.6f}); "
-            f"a train-measured win must hold within {weights.promote_margin:.6f} "
+            f"a train-measured win must hold within {margin:.6f} "
             f"on the holdout slice"
         )
     if weights.pass_rate_monotonicity:
@@ -404,6 +472,7 @@ def _holdout_confirms(
             holdout_child_agg,
             weights,
             prefix="holdout_not_confirmed: holdout ",
+            entry_budget=int(weights.holdout_entry_regression_budget),
         )
         if reason:
             return reason
@@ -605,6 +674,7 @@ __all__ = [
     "PASS_RATE_MONOTONICITY_TOLERANCE",
     "PER_ENTRY_SCORE_MONOTONICITY_TOLERANCE",
     "diff_size_evidence",
+    "effective_holdout_margin",
     "evaluate_gate",
     "holdout_confirms",
 ]

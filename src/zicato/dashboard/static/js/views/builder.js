@@ -1785,7 +1785,7 @@ function preflightPanel() {
   });
   btn.addEventListener('click', () => runOp('preflight', {}));
   const kids = [
-    el('p', { class: 'dn-lede', text: 'Statistical pre-flight: measures the A/A noise floor and the achievable signal of this draft against the registered target, before any round is spent. Recommend-only.' }),
+    el('p', { class: 'dn-lede', text: 'Statistical pre-flight: measures the A/A noise floor and the degradation signal of this draft against the registered target, before any round is spent. Recommend-only.' }),
     el('div', { class: 'dn-bld-applyrow' }, [btn]),
   ];
   if (_preflight) kids.push(preflightVerdict(_preflight));
@@ -1813,16 +1813,19 @@ function preflightVerdict(pf) {
       ? r.probed_points.filter((p) => p && !p.skipped).length
       : 0;
     const n = probed || 1;
-    reasons.push(`achievable signal ${fmtSig(r.signal)} (best of ${n} probed point${n === 1 ? '' : 's'}: ${r.degraded_mutation_id || '?'})`);
+    reasons.push(`degradation signal ${fmtSig(r.degradation_signal != null ? r.degradation_signal : r.signal)} (best of ${n} probed point${n === 1 ? '' : 's'}: ${r.degraded_mutation_id || '?'})`);
     if (verdict === 'refuse') reasons.push('the signal is at or below the floor — duels under this contract would be decided by noise');
     if (verdict === 'warn') reasons.push('saturated: every probe scored identically — the board cannot discriminate even a deliberate degradation');
     if (verdict === 'inert') reasons.push('every probed point left the scalar exactly at the champion mean while the A/A draws varied — the signal is UNMEASURED, not zero; pin a point the deliverable depends on');
-    if (verdict === 'ok') reasons.push('the achievable signal clears the measured floor');
-    // The promote_margin window is a separate question from signal-vs-noise:
-    // a contract can pass the floor check and still be guaranteed null.
-    if (r.window_failure === 'margin_above_achievable') reasons.push(`promote_margin ${fmtSig(r.promote_margin)} is at or above the achievable signal — no challenger could ever be promoted`);
+    if (verdict === 'ok') reasons.push('the measured signal clears the measured floor');
+    // The promote_margin window is a separate question from signal-vs-noise.
+    // Its upper comparison is against DEGRADATION headroom, which does not
+    // bound how far a challenger can improve — say so rather than promising a
+    // null run (issue #119).
+    if (r.window_failure === 'margin_above_achievable') reasons.push(`promote_margin ${fmtSig(r.promote_margin)} is at or above the measured degradation signal — improvement headroom is unmeasured, so check the margin, but this is not proof nothing can promote`);
     else if (r.window_failure === 'margin_below_floor') reasons.push(`promote_margin ${fmtSig(r.promote_margin)} is inside the measured noise — promotions could not be told from re-rolls`);
-    else if (r.window_failure === 'empty_window') reasons.push('the window noise < margin < achievable is EMPTY — no promote_margin is defensible on this board');
+    else if (r.window_failure === 'empty_window') reasons.push('the measured signal does not clear the noise floor — no promote_margin is defensible on this board');
+    if (r.holdout_note) reasons.push(r.holdout_note);
   }
   // The margin window gets its OWN chip, exactly as `zicato board preflight`
   // prints its own `window:` line. The verdict chip reports signal-vs-noise
