@@ -7,7 +7,11 @@ seam (one generation directory):
   before-the-run (the hypothesis landed) and after-the-run (the
   tournament made a decision). Plain markdown so operators read it
   directly in a terminal pager; ``zicato journal show`` is just
-  ``cat`` with a friendly name.
+  ``cat`` with a friendly name. The proposer's ``core_idea`` and ``why``
+  are recorded IN FULL: the file is append-only, so anything dropped
+  here is gone for good, and it is the only channel through which the
+  proposer reads its own prior reasoning. Consumers with a context
+  budget trim on read.
 * **``experiment.json`` + ``patches/{id}.json``** — the typed
   :class:`Experiment` for one generation. The body of
   ``experiment.json`` carries ``patch_ids: [...]``; each patch is
@@ -56,20 +60,31 @@ from zicato.epoch._storage import (
 )
 
 
-def _first_sentence(text: str) -> str:
-    """Best-effort first-sentence extraction for the ``why`` field.
+def _field(name: str, text: str) -> str:
+    """Render one ``**name**: value`` field, preserving ``text`` in full.
 
-    We accept either a period-terminated sentence, a newline break, or
-    the entire string if nothing else terminates. Whitespace is trimmed.
+    Single-line values stay inline, which is what every field was before
+    the journal stopped truncating (issue #123) — so an ordinary entry is
+    byte-identical to one written by the old renderer. A value carrying
+    newlines is fenced by a blank line on BOTH sides and becomes its own
+    paragraph, so the markdown still renders and the bytes survive
+    verbatim. The trailing blank line is load-bearing: without it the
+    FOLLOWING field (``**why**``, ``**outcome**``) is only a line break
+    away from the body and markdown folds it into the same paragraph,
+    so a multi-line ``core_idea`` would visually swallow the field
+    after it.
+
+    Nothing is dropped here. ``journal.md`` is append-only and is the one
+    durable surface the proposer can read its own prior reasoning back
+    from, so a truncation at write time is permanent; budget-limited
+    consumers cap on READ instead (see
+    ``zicato.proposer.tools._JOURNAL_LIMIT_CHARS`` and the analysis /
+    report readers).
     """
     text = text.strip()
-    if not text:
-        return ""
-    for sep in [". ", ".\n", "\n", "."]:
-        idx = text.find(sep)
-        if idx >= 0:
-            return text[:idx].strip()
-    return text
+    if "\n" not in text:
+        return f"**{name}**: {text}"
+    return f"**{name}**:\n\n{text}\n"
 
 
 def _version_label(generation_id: str) -> str:
@@ -100,12 +115,17 @@ def _render_section(experiment: Experiment) -> str:
     """Render one journal section in canonical markdown form.
 
     Format:
-        ## v{N} — {one-line core_idea}
+        ## v{N} — {first line of core_idea}
         **proposed_at**: {ts}
         **modulating**: id1, id2, ...
-        **why**: {first sentence of why}
+        **core_idea**: {full core_idea — only when it spans >1 line}
+        **why**: {full why}
         **outcome**: {decision} (Δscalar=..., Δdrift_loss=..., Δpass_rate=...)
         **rejection_reason**: ... (only when rejected)
+
+    The heading stays one line so it remains a legible markdown heading;
+    a ``core_idea`` with more lines than that repeats in full as its own
+    field rather than losing everything past line one (issue #123).
 
     Missing-outcome experiments render just the proposed_at/modulating/why
     triple. The tournament runner re-renders the same section once
@@ -113,19 +133,23 @@ def _render_section(experiment: Experiment) -> str:
     proposal then the verdict.
     """
     label = _version_label(experiment.generation_id)
-    core = experiment.hypothesis.core_idea.strip().splitlines()[0]
+    core_idea = experiment.hypothesis.core_idea.strip()
+    core_lines = core_idea.splitlines()
+    heading = core_lines[0] if core_lines else ""
 
     lines: list[str] = []
-    lines.append(f"## {label} — {core}")
+    lines.append(f"## {label} — {heading}")
     lines.append("")
     lines.append(f"**proposed_at**: {experiment.proposed_at}")
     if experiment.hypothesis.modulating:
         lines.append("**modulating**: " + ", ".join(experiment.hypothesis.modulating))
     else:
         lines.append("**modulating**: (none)")
-    why = _first_sentence(experiment.hypothesis.why)
+    if len(core_lines) > 1:
+        lines.append(_field("core_idea", core_idea))
+    why = experiment.hypothesis.why.strip()
     if why:
-        lines.append(f"**why**: {why}")
+        lines.append(_field("why", why))
     if experiment.outcome is not None:
         lines.append(_format_outcome(experiment.outcome))
         if (

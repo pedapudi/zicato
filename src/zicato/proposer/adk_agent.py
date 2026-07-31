@@ -58,6 +58,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from zicato.core.types import Experiment, ProposerSpec
+from zicato.import_path import explain_attribute_error
 from zicato.proposer.brief import enforce_forbidden
 from zicato.proposer.prompts import render_system_prompt, render_user_prompt
 from zicato.proposer.proposer import ProposerError
@@ -322,6 +323,9 @@ class ADKProposerAgent:
         try:
             agent = getattr(module, _AGENT_SYMBOL)
         except AttributeError as exc:
+            detail = explain_attribute_error(module, _AGENT_SYMBOL, exc)
+            if detail is not None:
+                raise ProposerError([f"proposer module {agent_py}: {detail}"]) from exc
             raise ProposerError(
                 [f"proposer module {agent_py} has no {_AGENT_SYMBOL!r} symbol"]
             ) from exc

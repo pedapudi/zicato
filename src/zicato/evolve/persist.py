@@ -131,6 +131,7 @@ async def _round_epilogue(
     run_analyzer: bool = True,
     token_clip: tuple[int, int] | None = None,
     attributable_regressions: dict[str, dict[str, Any]] | None = None,
+    on_promote_failure: tuple[str, str, str] | None = None,
 ) -> tuple[str, bool]:
     """The shared end-of-round tail: loop-health + analyzer + epoch report.
 
@@ -154,6 +155,11 @@ async def _round_epilogue(
     — the per-entry evidence behind a PROMOTED duel's
     :attr:`~zicato.tournament.gate.GateOutcome.attributable_regressions` — is
     threaded the same way and is inert on every other round.
+    ``on_promote_failure`` — the ``(adapter_name, generation_id,
+    exception_type)`` triple :func:`zicato.evolve.promote_hook.fire_on_promote`
+    returns when the round's promotion fired an adapter hook that raised or
+    timed out — rides the same rail; ``None`` (every round with no hook, and
+    every successful one) is inert.
 
     Returns ``(health_summary, health_critical)`` for the round outcome.
     """
@@ -170,6 +176,7 @@ async def _round_epilogue(
         board,
         token_clip=token_clip,
         attributable_regressions=attributable_regressions,
+        on_promote_failure=on_promote_failure,
     )
     if health_critical:
         _warn_loop_no_signal(epoch_id, round_n, health_summary)

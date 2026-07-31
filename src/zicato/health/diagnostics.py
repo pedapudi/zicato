@@ -146,7 +146,8 @@ class HealthFinding:
         ``"preflight_margin_below_floor"``, ``"noisy_judge"``,
         ``"dead_judge"``, ``"placebo_promoted"``, ``"infra_outage"``,
         ``"round_token_clipped"``, ``"tree_never_imported"``,
-        ``"attributable_entry_regression"``.
+        ``"attributable_entry_regression"``,
+        ``"on_promote_hook_failed"``.
     severity:
         ``"info"`` | ``"warning"`` | ``"critical"``. A loop is
         considered unhealthy when any ``"warning"`` or ``"critical"``
@@ -1528,6 +1529,63 @@ def _format_measure(value: Any) -> str:
     return "unmeasured"
 
 
+def detect_on_promote_hook_failed(
+    on_promote_failure: tuple[str, str, str] | None,
+) -> list[HealthFinding]:
+    """Surface an adapter post-promotion hook that failed (#125).
+
+    ``on_promote_failure`` is the ``(adapter_name, generation_id,
+    exception_type)`` triple
+    :func:`zicato.evolve.promote_hook.fire_on_promote` returns when an
+    adapter's ``on_promote`` raised or blew the hook timeout. The hook is
+    best-effort by contract — a failure never un-promotes the generation
+    and never fails the round — which is exactly why it needs a finding:
+    the champion advanced but whatever out-of-tree state the adapter
+    keeps in step with the champion did NOT, and nothing else on any
+    surface would say so. A ``warning``, not ``critical``: the loop's own
+    records are correct and it can keep climbing; it is the target's
+    external store the operator has to reconcile.
+
+    ``None`` (every round with no hook, and every round whose hook
+    succeeded) is silent — a runtime event threaded per round by the
+    orchestrator, like :func:`detect_infra_outage`.
+    """
+    if on_promote_failure is None:
+        return []
+    adapter_name, generation_id, exception_type = on_promote_failure
+    timed_out = exception_type == "TimeoutError"
+    return [
+        HealthFinding(
+            code="on_promote_hook_failed",
+            severity="warning",
+            summary=(
+                f"adapter {adapter_name!r} failed to commit the promotion of "
+                f"{generation_id}: its on_promote hook raised {exception_type} — "
+                "the generation IS promoted, but the adapter's out-of-tree state "
+                "was not updated"
+            ),
+            detail={
+                "adapter": adapter_name,
+                "generation_id": generation_id,
+                "exception_type": exception_type,
+                "timed_out": timed_out,
+                "recommendation": (
+                    "the promotion is durable and the round is unaffected — "
+                    f"reconcile {adapter_name!r}'s external side effect for "
+                    f"{generation_id} MANUALLY (the promoted head is the last "
+                    "promoted=true entry in lineage.json), then fix the hook; "
+                    + (
+                        "the hook exceeded its wall-clock ceiling, so check "
+                        "whether the external store is reachable"
+                        if timed_out
+                        else "the full traceback is in the run's ERROR log"
+                    )
+                ),
+            },
+        )
+    ]
+
+
 def assess_loop_health(
     losses_by_generation: dict[str, list[LossProfile]],
     experiments: list[Any],
@@ -1542,6 +1600,7 @@ def assess_loop_health(
     infra_outage: tuple[int, int] | None = None,
     token_clip: tuple[int, int] | None = None,
     tree_import_gaps: dict[str, tuple[str, ...]] | None = None,
+    on_promote_failure: tuple[str, str, str] | None = None,
     preflight_gate: str = PREFLIGHT_GATE_DEFAULT,
     attributable_regressions: dict[str, dict[str, Any]] | None = None,
 ) -> LoopHealth:
@@ -1627,6 +1686,13 @@ def assess_loop_health(
         threaded per round by the orchestrator like ``infra_outage`` (see
         :func:`detect_attributable_entry_regression`). ``None`` / empty (the
         default, every rejection, and every clean promotion) is silent.
+    on_promote_failure:
+        THIS round's failed adapter post-promotion hook, as an
+        ``(adapter_name, generation_id, exception_type)`` triple —
+        threaded by the orchestrator only for a round whose promotion
+        fired an ``on_promote`` that raised or timed out (see
+        :func:`detect_on_promote_hook_failed`). ``None`` (the default,
+        and every round with no hook) is silent.
 
     Returns
     -------
@@ -1661,6 +1727,7 @@ def assess_loop_health(
     findings.extend(detect_token_budget_clip(token_clip))
     findings.extend(detect_tree_never_imported(tree_import_gaps))
     findings.extend(detect_attributable_entry_regression(attributable_regressions))
+    findings.extend(detect_on_promote_hook_failed(on_promote_failure))
 
     healthy = not any(finding.severity in ("warning", "critical") for finding in findings)
     return LoopHealth(
@@ -1691,6 +1758,7 @@ __all__ = [
     "detect_generalization_gap",
     "detect_infra_outage",
     "detect_noisy_judge",
+    "detect_on_promote_hook_failed",
     "detect_placebo_promoted",
     "detect_preflight_verdict",
     "detect_refresh_cadence",
