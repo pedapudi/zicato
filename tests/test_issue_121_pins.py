@@ -414,3 +414,147 @@ def test_orchestrator_lifts_judge_erroring_onto_the_terminal(caplog: Any) -> Non
     assert "DECLARED JUDGE RAISED" in caplog.text
     assert "34/34" in caplog.text
     assert "check the judge endpoint" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Pin 9 — the reflection corpus must not score a failed call as a verdict
+# ---------------------------------------------------------------------------
+#
+# The corpus stamps ``errored`` on the decision of a call that raised, but a
+# flag no aggregation reads is not provenance. Every consumer of
+# ``ObservationRun.judge_decisions`` reads ``fired`` and nothing else, so an
+# errored decision folds in as a SILENT verdict — against an ``exhibits``
+# label it becomes a false negative, which is the reflection surface making
+# exactly the misdiagnosis the loop-health surface was just taught to avoid.
+
+
+def _observation(decisions: list[dict[str, Any]], *, replicate: int = 0) -> Any:
+    """One corpus record carrying the given judge decisions."""
+    from zicato.reflection.corpus import FIDELITY_VERBATIM, ObservationRun
+
+    return ObservationRun(
+        reflection_id="r1",
+        candidate_id="v1",
+        entry_id="e1",
+        replicate=replicate,
+        scalar=1.0,
+        drift_loss=0.0,
+        pass_fail=True,
+        runtime_ms=10,
+        aborted=False,
+        abort_cause=None,
+        fidelity=FIDELITY_VERBATIM,
+        has_result=True,
+        has_judge_io=True,
+        loss_ref=None,
+        transcript_ref=None,
+        judge_decisions=tuple(decisions),
+    )
+
+
+def test_corpus_marks_a_failed_judge_call_as_errored() -> None:
+    """The capture seam's own flag — the input every consumer below filters on."""
+    from zicato.judge_runtime.io_capture import JUDGE_IO_ERROR_KIND
+    from zicato.reflection.corpus import _judge_decisions, judge_answered
+
+    decisions = _judge_decisions(
+        None,
+        [
+            {"judge_name": "j", "verdict": {"drift_emitted": False, "kind": ""}},
+            {
+                "judge_name": "j",
+                "verdict": {"drift_emitted": False, "kind": JUDGE_IO_ERROR_KIND},
+            },
+        ],
+    )
+    assert [judge_answered(d) for d in decisions] == [True, False]
+
+
+def test_an_errored_decision_is_not_a_silent_verdict_in_self_consistency() -> None:
+    """A judge that raised half the time is not thereby self-consistent.
+
+    Both aggregations that fold replicate firings — the scorecard's Fleiss κ
+    and the analysis pass's replicate disagreement — must see ONE verdict
+    here, not two, or an intermittently-broken endpoint reads as a stable
+    judge whose criterion is simply never met.
+    """
+    from zicato.reflection.scorecards import _firing_vectors, _self_consistency
+
+    corpus = [
+        _observation([{"judge_name": "j", "fired": True, "errored": False}], replicate=0),
+        _observation([{"judge_name": "j", "fired": False, "errored": True}], replicate=1),
+    ]
+    _, kappa = _self_consistency(corpus, "j")
+    # One rated verdict for the unit ⇒ no PAIR ⇒ nothing for κ to score.
+    assert kappa is None
+    vectors = _firing_vectors(corpus)
+    assert list(vectors["j"].values()) == [1], "the errored call entered the firing vector"
+
+
+def test_an_errored_decision_is_never_sent_to_the_meta_judge() -> None:
+    """Adjudicating a decision the judge never made manufactures a false negative.
+
+    The meta-judge is asked "should this judge have fired?" about a verdict
+    that does not exist; it answers from the transcript, the ``fn`` lands on
+    the judge's scorecard, and the recommendation that follows sends the
+    operator at the board when the fix is the judge's endpoint. It also
+    spends adjudicator budget per errored call.
+    """
+    import inspect
+
+    from zicato.reflection import adjudicator
+
+    source = inspect.getsource(adjudicator.adjudicate_corpus)
+    assert (
+        "judge_answered(decision)" in source
+    ), "the adjudication loop must skip decisions whose judge raised"
+
+
+# ---------------------------------------------------------------------------
+# Pin 10 — the reliability probe must not report a broken judge as reliable
+# ---------------------------------------------------------------------------
+
+
+def test_test_retest_counts_failed_calls_instead_of_scoring_them() -> None:
+    """``zicato board judges --test-retest`` is the operator's pre-flight.
+
+    Before the judge boundary caught them, a python judge's exception
+    propagated out of the probe and the operator saw it. Now it is swallowed
+    into an errored verdict — so unless the probe COUNTS it, a judge that
+    raised on every call reports ``fired 0/k`` at ``disagreement 0%``: the
+    most reassuring output the tool can produce, for the most broken judge.
+    """
+    from zicato.judge_runtime.reliability import test_retest
+
+    judge = judge_spec_to_goldfive(_inline_spec("j"), _raising_aux)
+    rel = asyncio.run(test_retest(judge, "some settled reasoning", _raising_aux, k=4))
+
+    assert rel.errors == 4
+    assert rel.verdicts == ()
+    assert rel.k == 4
+    assert rel.to_json()["errors"] == 4
+
+
+def test_test_retest_scores_only_the_calls_that_answered() -> None:
+    """A flaky endpoint is not the same as an inconsistent judge.
+
+    Pairing a real verdict against a non-verdict would manufacture
+    disagreement out of an outage, so the rate is computed over the calls
+    that returned — and the error count carries the rest.
+    """
+    from zicato.judge_runtime.reliability import test_retest
+
+    calls = {"n": 0}
+
+    async def _flaky(system: str, user: str, model: str) -> str:
+        calls["n"] += 1
+        if calls["n"] % 2 == 0:
+            raise RuntimeError("ClientError: 503 upstream unavailable")
+        return "OK the reasoning sources its figure"
+
+    judge = judge_spec_to_goldfive(_inline_spec("j"), _flaky)
+    rel = asyncio.run(test_retest(judge, "some settled reasoning", _flaky, k=4))
+
+    assert rel.errors == 2
+    assert rel.verdicts == (False, False)
+    assert rel.disagreement_rate == 0.0

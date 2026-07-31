@@ -54,6 +54,7 @@ from zicato.reflection.corpus import (
     FIDELITY_RESULT,
     FIDELITY_VERBATIM,
     ObservationRun,
+    judge_answered,
 )
 
 #: The default bootstrap resample count for the decision-flip estimate.
@@ -343,7 +344,10 @@ def judge_self_consistency(*, corpus: list[ObservationRun]) -> dict[str, Any]:
     for obs in corpus:
         for decision in obs.judge_decisions:
             name = str(decision.get("judge_name", ""))
-            if not name:
+            # A call that RAISED produced no verdict, so it is not a replicate
+            # of anything: folding its ``fired: False`` in here would report a
+            # judge whose endpoint fails intermittently as STABLE.
+            if not name or not judge_answered(decision):
                 continue
             per_unit.setdefault((name, obs.candidate_id, obs.entry_id), []).append(
                 bool(decision.get("fired", False))

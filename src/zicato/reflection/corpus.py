@@ -298,6 +298,26 @@ def _judge_decisions(
     )
 
 
+def judge_answered(decision: dict[str, Any]) -> bool:
+    """Whether a judge decision is a VERDICT rather than a failed call.
+
+    Every aggregation over ``ObservationRun.judge_decisions`` must filter
+    on this first. A decision with ``errored`` set is a call that RAISED
+    (issue #121): the judge produced no verdict at all, and its
+    ``fired: False`` is an error artifact, not the judgement "no
+    violation". Folding it in as a silent verdict is the misdiagnosis
+    reflection exists to prevent — against a ``exhibits`` label it scores
+    as a FALSE NEGATIVE, so a broken judge endpoint reads as a judge
+    whose criterion is too narrow, and the recommendation that follows
+    ("sharpen the criterion") sends the operator at the board when the
+    fix is the judge's model config.
+
+    Records written before the flag existed carry no ``errored`` key and
+    read as answered, which is what they were.
+    """
+    return not bool(decision.get("errored", False))
+
+
 def _loss_aborted(loss: Any) -> bool:
     """Whether a run aborted — the loss' own ``aborted`` flag, else ``abort_cause``.
 
@@ -703,6 +723,7 @@ __all__ = [
     "ObservationRun",
     "ReflectionDrawInconclusive",
     "ingest_lineage",
+    "judge_answered",
     "read_corpus",
     "run_corpus",
     "write_corpus",
