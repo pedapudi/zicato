@@ -2,21 +2,23 @@
 
 ### The holdout confirmation gets its own bounds (issue #118)
 
-`promote_margin` served as the Rule 1 train threshold, the holdout
-confirmation's scalar tolerance, AND the Ladder's release threshold. The
-first two are calibrated against different slice sizes and pull the knob
-in opposite directions — a slice of N entries moves its scalar in `1/N`
-steps and the holdout is the smaller slice — so on the default-produced
-12-train / 6-holdout split with one holdout entry flipping, NO margin
-value promotes. Two additive `ScoringWeights` fields split the bounds:
-`holdout_margin` (`None` ⇒ fall back to `promote_margin`; also governs
-the Ladder's release threshold when set) and
+`promote_margin` served as both the Rule 1 train threshold and the
+holdout confirmation's scalar tolerance. The two are calibrated against
+different slice sizes and pull the knob in opposite directions — a slice
+of N entries moves its scalar in `1/N` steps and the holdout is the
+smaller slice — so on the default-produced 12-train / 6-holdout split
+with one holdout entry flipping, NO margin value promotes. Two additive
+`ScoringWeights` fields split the bounds:
+`holdout_margin` (`None` ⇒ fall back to `promote_margin`) and
 `holdout_entry_regression_budget` (`0` ⇒ today's zero-tolerance
 pass-rate rule; N tolerates N regressed holdout entries under either
 monotonicity scope). Both default-inert and both omitted from the
 contract canonical form at their default, so no existing epoch's contract
-hash moves. `zicato board preflight` now prints a holdout-feasibility note
-when either bound looks infeasible.
+hash moves. Both are scoped to the confirmation: the Ladder's release
+threshold still reads `promote_margin`, because what it gates is a
+*train*-measured improvement and a withheld query leaves the train
+promote standing unconfirmed. `zicato board preflight` now prints a
+holdout-feasibility note when either bound looks infeasible.
 
 ### The pre-flight's margin window stops overclaiming (issue #119)
 

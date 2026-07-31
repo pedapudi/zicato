@@ -1530,7 +1530,7 @@ existing epoch's hash moves):
 
 | Field | Default | Effect |
 |---|---|---|
-| `holdout_margin` | `None` | The holdout confirmation's scalar tolerance (`gate.effective_holdout_margin`). `None` ⇒ fall back to `promote_margin`, exactly as before. Also becomes the Ladder's release-threshold base when set. |
+| `holdout_margin` | `None` | The holdout confirmation's scalar tolerance (`gate.effective_holdout_margin`). `None` ⇒ fall back to `promote_margin`, exactly as before. Scoped to the confirmation only — it does not move the Ladder's release threshold, which gates a *train*-measured improvement. |
 | `holdout_entry_regression_budget` | `0` | How many holdout entries may regress before the confirmation rejects. `0` ⇒ today's zero-tolerance rule. Applies under both monotonicity scopes — per-entry as a count, aggregate as a widened `budget / entries` band, so one budget unit means one entry either way. |
 
 For commensurable bounds set `holdout_margin ≈ promote_margin × N_train /

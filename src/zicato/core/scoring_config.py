@@ -790,8 +790,12 @@ class ScoringWeights:
         historical single-knob behaviour exactly, so the contract canonical
         form — and every existing epoch's hash — is unmoved.
 
-        Also governs the Ladder's release threshold when set; see
-        :func:`zicato.tournament.ladder.effective_threshold`.
+        Scoped to the holdout CONFIRMATION and nothing else. It deliberately
+        does NOT move the Ladder's release threshold
+        (:func:`zicato.tournament.ladder.effective_threshold`), which gates a
+        TRAIN-measured improvement and where a raised bar would withhold the
+        query — leaving the train promote to stand unconfirmed. Widen that
+        band with :attr:`LadderConfig.threshold` if you mean to.
     holdout_entry_regression_budget:
         How many holdout entries may regress before the holdout
         confirmation rejects. ``0`` (the default) is exactly today's
