@@ -36,6 +36,15 @@ inline**", carried alongside a structured ``evidence`` dict and a
 ``rationale``. The health path collects the same material and then drops
 the actionable half on the way out.
 
+But that precedent has the same defect one layer up, which is why the
+fix has to be a **render conformance rule** rather than another
+well-shaped dataclass field:
+:func:`zicato.cli.commands.reflect._render_practice_section` never reads
+``evidence`` at all, so the numbers behind all eleven practice checks are
+invisible to operators today. Both layers of this codebase collect good
+structured evidence and then drop it at the last hop; adding a third
+evidence field would reproduce the bug rather than fix it.
+
 **B. Surfaces that assume the champion advances.** ``PracticeCheck`` also
 models the fix for pattern B: an explicit ``VERDICT_UNMEASURED`` plus an
 ``unmeasured_reason`` naming the missing input — e.g.
@@ -45,18 +54,33 @@ vacuous pass. Surfaces that degrade silently when the champion is
 retained lack that third state: they cannot distinguish "measured, and
 it is fine" from "there was nothing to measure".
 
+Pattern B is not uniform, and the exceptions cut both ways. Several
+report sections DO degrade honestly (the "_No promoted lineage long
+enough..._" notices), and ``build_round_timeline`` models retention
+correctly with explicit ``held`` steps. But the report's headline
+callout does not: it publishes the last REJECTED challenger's
+counterfactual under a label naming the promoted lineage, so a
+zero-promotion epoch can be headlined as having *improved*. Reading a
+few honest degradations is not evidence that a surface family is
+sound — each of these was written independently, and each invented its
+own behaviour for a regime nothing centrally records.
+
 These are ``xfail(strict=True)`` triage pins: they fail today, and the
 marker comes off with the fix.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import sqlite3
 from pathlib import Path
 
 import pytest
 
+from zicato.analyzer.report_data import EpochReportData, GenerationView, _cumulate_scalar
+from zicato.analyzer.report_sections import _render_campaign_callout, render_score_sparkline
+from zicato.cli.commands.reflect import _render_practice_section
 from zicato.health.diagnostics import HealthFinding, LoopHealth
 from zicato.orchestrator import _summarise_loop_health
 from zicato.tournament.detail import optimization_trajectory
@@ -295,4 +319,175 @@ def test_zero_promotion_run_without_a_measured_floor_is_not_reported_as_improvin
     assert view["verdict"] != "improving", (
         "six challengers, zero promotions, no measured floor — the dashboard "
         f"still calls this {view['verdict']!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Pattern B — the published report
+# ---------------------------------------------------------------------------
+
+
+def _generation(
+    gid: str, parent: str, *, baseline: bool = False, decision: str = "rejected", delta: float = 0.0
+) -> GenerationView:
+    """One generation view carrying only the fields these pins read."""
+    return GenerationView(
+        generation_id=gid,
+        parent_generation_id=parent,
+        is_baseline=baseline,
+        proposed_at="",
+        core_idea="idea",
+        why="why",
+        risks="",
+        modulating=(),
+        expected_pass_rate_delta="",
+        expected_drift_movements=(),
+        decision=decision,
+        rejection_reason="below promote_margin",
+        scalar_score_delta=delta,
+        drift_loss_delta=0.0,
+        pass_rate_delta=0.0,
+        drift_movements=(),
+        metric_movements=(),
+        patches=(),
+    )
+
+
+def _report_data(generations: list[GenerationView]) -> EpochReportData:
+    """Build an ``EpochReportData`` defaulting every field these pins ignore."""
+    cumulated = _cumulate_scalar(generations)
+    kwargs: dict[str, object] = {}
+    for f in dataclasses.fields(EpochReportData):
+        if f.name == "generations":
+            kwargs[f.name] = tuple(cumulated)
+            continue
+        if f.default is not dataclasses.MISSING or f.default_factory is not dataclasses.MISSING:
+            continue
+        annotation = str(f.type)
+        if "tuple" in annotation:
+            kwargs[f.name] = ()
+        elif "dict" in annotation:
+            kwargs[f.name] = {}
+        elif "bool" in annotation:
+            kwargs[f.name] = False
+        else:
+            kwargs[f.name] = ""
+    return EpochReportData(**kwargs)  # type: ignore[arg-type]
+
+
+def _stalled_epoch(rounds: int = 20, delta: float = -0.043) -> EpochReportData:
+    """A baseline plus ``rounds`` rejected challengers — nothing promoted."""
+    return _report_data(
+        [_generation("v0", "", baseline=True, decision="baseline")]
+        + [_generation(f"v{i}", "v0", delta=delta) for i in range(1, rounds + 1)]
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="#129 pattern B: the report's KEY OBSERVATION callout publishes the last "
+    "REJECTED challenger's counterfactual as 'the promoted lineage's cumulative "
+    "scalar', so a zero-promotion epoch can be headlined as having improved",
+)
+def test_campaign_callout_does_not_credit_a_rejected_challenger_to_the_lineage() -> None:
+    """The published headline must not contradict itself.
+
+    ``EpochReportData.final_scalar`` returns
+    ``generations[-1].cumulative_scalar``, and ``_cumulate_scalar`` fills
+    a cumulative for EVERY generation regardless of decision. With zero
+    promotions the newest generation is a rejected one, so the callout
+    reports a score that was measured and then discarded — under a label
+    naming the promoted lineage.
+
+    When that discarded challenger happened to improve on the champion
+    but failed the margin, the direction word compounds the error and the
+    sentence contradicts itself outright: "has improved to `-0.043` ...
+    (0 promoted, 20 rejected)". The honest rendering of a lineage that
+    never advanced is "held to `+0.000`".
+
+    The same number is handed to the prose LLM as ground truth via
+    ``report_prompts.py``'s ``final_cumulative_scalar``, in a digest whose
+    docstring calls itself "the factual substrate ... so the model never
+    has a reason to compute or guess a value".
+    """
+    callout = _render_campaign_callout(_stalled_epoch())
+
+    assert "0 promoted, 20 rejected" in callout
+    assert (
+        "improved" not in callout
+    ), f"a lineage that never advanced is headlined as improving: {callout!r}"
+    assert (
+        "held to `+0.000`" in callout
+    ), f"the callout credits a discarded challenger to the promoted lineage: {callout!r}"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="#129 pattern B: the trajectory chart marks generations[-1] '<- current', "
+    "which is a discarded rejected challenger when nothing has promoted",
+)
+def test_trajectory_chart_marks_the_champion_as_current_not_the_last_attempt() -> None:
+    """``<- current`` must point at the generation actually in force.
+
+    ``render_score_sparkline`` pins the marker to ``last_idx =
+    len(gens) - 1``. With zero promotions that index holds a rejected
+    challenger whose patches were thrown away, while the generation
+    genuinely in force is the baseline at the top of the chart. The
+    operator reads the chart bottom-up and takes the discarded attempt
+    for the state of the system.
+    """
+    data = _stalled_epoch(rounds=3)
+    chart = render_score_sparkline(data)
+
+    current_lines = [ln for ln in chart.splitlines() if "<- current" in ln]
+    assert len(current_lines) == 1, chart
+    assert (
+        "rejected" not in current_lines[0]
+    ), f"'<- current' marks a discarded rejected challenger: {current_lines[0]!r}"
+
+
+# ---------------------------------------------------------------------------
+# Pattern A — the precedent's own renderer
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="#129 pattern A: _render_practice_section never reads PracticeCheck.evidence, "
+    "so the structured evidence behind every practice verdict is invisible to operators",
+)
+def test_practice_review_renders_the_evidence_behind_its_verdict() -> None:
+    """The convention this issue wants to spread has the same defect.
+
+    ``PracticeCheck`` is zicato's best-shaped diagnostic contract —
+    ``evidence`` dict, ``rationale``, and an explicit ``unmeasured``
+    verdict. But its renderer emits ``check_id`` / ``headline`` /
+    ``rationale`` / ``unmeasured_reason`` / ``proposed_op`` and never
+    touches ``evidence``, so the numbers behind all eleven checks never
+    reach the report.
+
+    This is why the fix for pattern A has to be a RENDER conformance
+    rule: adding another well-shaped evidence field to a dataclass
+    reproduces the bug rather than fixing it.
+    """
+    check = {
+        "check_id": "promotion_hygiene",
+        "verdict": "unsound",
+        "headline": "promotions are clearing a margin that sits below the measured floor",
+        "evidence": {
+            "promotions": 4,
+            "promote_margin": 0.01,
+            "margin_below_floor": True,
+            "recommended_promote_margin": 0.075,
+        },
+        "rationale": "a promotion on a sub-floor margin promotes noise",
+        "proposed_op": None,
+        "unmeasured_reason": None,
+    }
+
+    rendered = "\n".join(_render_practice_section([check]))
+
+    assert "0.075" in rendered, (
+        "the recommended margin the check computed never reaches the report; "
+        f"rendered={rendered!r}"
     )
