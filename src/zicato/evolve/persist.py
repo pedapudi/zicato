@@ -112,6 +112,7 @@ async def _round_epilogue(
     meta_loop_emitter: Any,
     run_analyzer: bool = True,
     token_clip: tuple[int, int] | None = None,
+    on_promote_failure: tuple[str, str, str] | None = None,
 ) -> tuple[str, bool]:
     """The shared end-of-round tail: loop-health + analyzer + epoch report.
 
@@ -131,7 +132,12 @@ async def _round_epilogue(
     ``token_clip`` — the round's ``(tokens_spent, max_tokens_per_round)``
     pair when the per-round token budget clipped it
     (:func:`_token_clip_state`) — is threaded into the health assessment;
-    ``None`` (every unclipped round) is inert.
+    ``None`` (every unclipped round) is inert. ``on_promote_failure`` —
+    the ``(adapter_name, generation_id, exception_type)`` triple
+    :func:`zicato.evolve.promote_hook.fire_on_promote` returns when the
+    round's promotion fired an adapter hook that raised or timed out —
+    rides the same rail; ``None`` (every round with no hook, and every
+    successful one) is inert.
 
     Returns ``(health_summary, health_critical)`` for the round outcome.
     """
@@ -142,7 +148,12 @@ async def _round_epilogue(
     )
 
     health_summary, health_critical = _assess_and_persist_loop_health(
-        workspace_root, epoch_id, round_n, board, token_clip=token_clip
+        workspace_root,
+        epoch_id,
+        round_n,
+        board,
+        token_clip=token_clip,
+        on_promote_failure=on_promote_failure,
     )
     if health_critical:
         _warn_loop_no_signal(epoch_id, round_n, health_summary)

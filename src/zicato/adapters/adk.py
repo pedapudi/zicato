@@ -2085,6 +2085,28 @@ class ADKHarnessAdapter:
 
         return _coerce_to_list(enumerate_mutations(roots))
 
+    async def on_promote(
+        self,
+        *,
+        epoch_id: str,
+        generation_id: str,
+        parent_generation_id: str | None,
+        snapshot_root: Path,
+        workspace_root: Path,
+    ) -> None:
+        """No-op: an ADK tree's evolved state IS the snapshot (#125).
+
+        The post-promotion hook exists for targets whose real state
+        lives somewhere the mutable tree cannot reach. An ADK tree has
+        no such state — the promoted snapshot is the whole artifact, and
+        the champion marker already names it — so there is nothing to
+        commit. Declared explicitly rather than omitted so this adapter
+        keeps satisfying the full :class:`HarnessAdapter` surface for the
+        type checker, which (unlike the runtime ``isinstance`` gate) has
+        no notion of :data:`~zicato.adapters.base.OPTIONAL_ADAPTER_MEMBERS`.
+        """
+        return None
+
 
 def _coerce_to_list(points: Iterable[MutationPoint]) -> list[MutationPoint]:
     """Normalize the enumerator's return shape to a concrete ``list``.

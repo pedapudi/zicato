@@ -16,16 +16,17 @@ consulted. ``zicato.adapters.base.HarnessAdapter`` declares ``mutable_subpaths``
 
 This is FEATURE-shaped: the pins below encode the two properties the issue asks
 for as CONTRACT, not the mechanism. Where the hook is invoked, and whether an
-adapter method or a contract-declared command is the right carrier, is an open
-adjudication (see the triage report) — deliberately not pinned here.
+adapter method or a contract-declared command is the right carrier, was an open
+adjudication when these were written; it resolved to an optional adapter
+coroutine fired from both promote seams, with the round's loop-health report
+carrying the observability the second pin asks for. See each test's docstring,
+and ``tests/test_on_promote_hook.py`` for the behavioural coverage.
 """
 
 from __future__ import annotations
 
 import dataclasses
 from pathlib import Path
-
-import pytest
 
 from zicato.adapters.base import HarnessAdapter
 from zicato.core.epoch import Generation
@@ -61,37 +62,43 @@ def test_an_adapter_without_the_hook_still_satisfies_the_protocol() -> None:
     assert isinstance(_MinimalAdapter(), HarnessAdapter)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="issue #125: no post-promotion extension point exists on the "
-    "adapter Protocol (ADJUDICATION: adapter method vs contract-declared command)",
-)
 def test_adapter_protocol_declares_a_post_promotion_hook() -> None:
     """A promoted generation must be able to reach state outside the tree.
 
-    The issue's proposed carrier is an optional adapter coroutine:
-
-        async def on_promote(self, *, generation_id: str,
-                             snapshot_path: Path, epoch_id: str) -> None: ...
+    RESOLVED (adjudication: adapter method, not a contract-declared shell
+    command — the latter would need its own security round to justify a
+    contract file naming an executable). The carrier is the optional
+    coroutine ``HarnessAdapter.on_promote``, fired from both promote seams
+    by :func:`zicato.evolve.promote_hook.fire_on_promote`.
     """
     assert "on_promote" in HarnessAdapter.__protocol_attrs__
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="issue #125: the lineage record has no field answering "
-    "'did the promotion actually get applied?'",
-)
-def test_lineage_records_whether_the_promotion_was_committed() -> None:
+def test_promotion_side_effects_are_observable() -> None:
     """Whether a promotion was applied must be answerable from the run record.
 
-    Without it, the answer lives only in the target's own bookkeeping — which
-    is exactly the accounting the issue's polling workaround puts outside the
-    loop. A promoted generation whose hook has not (yet) run is a
-    distinguishable state from one whose hook succeeded, so the field must be
-    tri-state-capable rather than a bare ``bool`` defaulting to ``False``
-    (compare ``append_to_lineage(pending=...)``, which persists ``promoted``
-    as ``null`` for the same reason).
+    ADJUDICATED-DROP of this pin's original carrier. It was written to
+    assert a tri-state ``Generation.committed`` field, on the reasoning
+    that a promoted generation whose hook has not run is a distinguishable
+    state from one whose hook succeeded — but the pin's *intent* is
+    "promotion side effects are observable", and a lineage schema change
+    is a heavier answer than that intent needs. A tri-state field would
+    also be honest only while the loop is running: the hook fires once, at
+    the transition, so a persisted ``committed=None`` could never be
+    resolved after the fact by anything zicato owns.
+
+    The observability the intent asks for is delivered instead by the
+    round's loop-health report, which is where every other
+    round-scoped-but-not-lineage-shaped fact already lands: a failed hook
+    raises an ``on_promote_hook_failed`` WARNING naming the adapter, the
+    generation, and the exception, alongside an ERROR log carrying the
+    traceback. So this pin now asserts the finding exists rather than the
+    field.
     """
-    fields = {f.name for f in dataclasses.fields(Generation)}
-    assert "committed" in fields
+    from zicato.health.diagnostics import detect_on_promote_hook_failed
+
+    assert {f.name for f in dataclasses.fields(Generation)} >= {"id", "promoted"}
+    (finding,) = detect_on_promote_hook_failed(("mystore", "v4", "ConnectionError"))
+    assert finding.code == "on_promote_hook_failed"
+    assert finding.severity == "warning"
+    assert {"mystore", "v4", "ConnectionError"} <= set(finding.detail.values())

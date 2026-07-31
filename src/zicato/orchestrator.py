@@ -102,6 +102,7 @@ from zicato.evolve.persist import (
     _round_epilogue,
     _skipped_round_outcome,
 )
+from zicato.evolve.promote_hook import fire_on_promote
 from zicato.evolve.propose_apply import (
     _AppliedChallenger,
     _diversity_signature,
@@ -1376,6 +1377,22 @@ async def evolve_once(
         lineage_parent_id=parent_id,
         advance_current_generation=bookkeeping_decision == "promoted",
     )
+    # Post-promotion adapter hook (#125). Fired one statement after the
+    # champion marker advanced inside `_finalize_generation` — the first
+    # moment the promotion is durable — so a target whose real state lives
+    # outside the mutable tree can fold the new champion into it. Fires on
+    # the TRANSITION, so exactly once per settled promotion; best-effort,
+    # so a failure yields a health finding rather than touching the round.
+    on_promote_failure: tuple[str, str, str] | None = None
+    if bookkeeping_decision == "promoted":
+        on_promote_failure = await fire_on_promote(
+            adapter,
+            workspace_root=workspace_root,
+            epoch_id=resolved_epoch_id,
+            generation_id=next_id,
+            parent_generation_id=parent_id,
+            snapshot_root=child_snapshot,
+        )
     # WS8: the round's terminal decision + provenance (overrides explicit).
     round_log.emit(
         "decision_recorded",
@@ -1432,6 +1449,7 @@ async def evolve_once(
         auxiliary_model=str(workspace_config.get("auxiliary_model", "")),
         meta_loop_emitter=meta_loop_emitter,
         token_clip=_token_clip_state(config),
+        on_promote_failure=on_promote_failure,
     )
 
     _beat(
@@ -2637,6 +2655,23 @@ async def _evolve_multi_challenger(
                 "pointer did not advance to the promoted generation"
             )
 
+    # --- Post-promotion adapter hook (#125). Same seam as the gauntlet's:
+    # one statement after the champion marker advanced, once per settled
+    # promotion. Fires for the PRIMARY head only — an operator
+    # multi-promote marks several candidates promoted in lineage, but
+    # ``current_generation`` advances to exactly one, and it is that
+    # crowning the adapter's out-of-tree state has to track.
+    on_promote_failure: tuple[str, str, str] | None = None
+    if promoted_id is not None:
+        on_promote_failure = await fire_on_promote(
+            adapter,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            generation_id=promoted_id,
+            parent_generation_id=parent_id,
+            snapshot_root=by_id[promoted_id].snapshot_root,
+        )
+
     # --- Journal: one entry per challenger (crowned + dead branches).
     for challenger in applied:
         append_journal_entry(workspace_root, epoch_id, finalised_by_id[challenger.generation_id])
@@ -2654,6 +2689,7 @@ async def _evolve_multi_challenger(
         auxiliary_model=auxiliary_model,
         meta_loop_emitter=meta_loop_emitter,
         token_clip=_token_clip_state(config),
+        on_promote_failure=on_promote_failure,
     )
 
     bookkeeping_decision = "promoted" if promoted_id is not None else "rejected"
@@ -3917,6 +3953,7 @@ def _assess_and_persist_loop_health(
     board: list[Any],
     infra_outage: tuple[int, int] | None = None,
     token_clip: tuple[int, int] | None = None,
+    on_promote_failure: tuple[str, str, str] | None = None,
 ) -> tuple[str, bool]:
     """Run the per-round loop-health check and persist its report.
 
@@ -3927,7 +3964,10 @@ def _assess_and_persist_loop_health(
     ``(tokens_spent, max_tokens_per_round)`` pair for a round the token
     budget clipped — feeds
     :func:`~zicato.health.diagnostics.detect_token_budget_clip` the same
-    way.
+    way, as does ``on_promote_failure`` — the ``(adapter_name,
+    generation_id, exception_type)`` triple for a round whose adapter
+    post-promotion hook failed — for
+    :func:`~zicato.health.diagnostics.detect_on_promote_hook_failed`.
 
     Calls :func:`zicato.health.diagnostics.assess_loop_health` with the
     epoch's accumulated losses, experiments, and board, then writes the
@@ -3984,6 +4024,8 @@ def _assess_and_persist_loop_health(
             extra_kwargs["infra_outage"] = infra_outage
         if token_clip is not None:
             extra_kwargs["token_clip"] = token_clip
+        if on_promote_failure is not None:
+            extra_kwargs["on_promote_failure"] = on_promote_failure
         tree_import_gaps = epoch_tree_import_gaps(workspace_root, epoch_id)
         if tree_import_gaps:
             extra_kwargs["tree_import_gaps"] = tree_import_gaps
