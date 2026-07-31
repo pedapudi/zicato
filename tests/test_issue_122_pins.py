@@ -258,3 +258,103 @@ def test_sink_construction_archives_the_prior_events_file(workspace: Path) -> No
     prev = layout.events_prev(EPOCH, CHAMPION, "e1")
     assert prev.exists()
     assert "first" in prev.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Pin 6 — the loss archive must sit in the process that TRUNCATES the slot
+# ---------------------------------------------------------------------------
+#
+# The worker SUBPROCESS writes the canonical ``loss.json``; the orchestrator's
+# ``_persist_unit_loss`` then re-persists the identical profile. Archiving from
+# the orchestrator alone gets both halves wrong: the measurement this run
+# displaced is already gone from disk by then (so nothing real is retained),
+# and the profile it does find is the one it is about to write (so every fresh
+# unit run appends a copy of the CURRENT measurement). These two pins model the
+# real two-writer flow rather than calling ``_persist_unit_loss`` twice.
+
+
+def test_a_unit_measured_once_reads_back_as_one_measurement(workspace: Path) -> None:
+    """The orchestrator's idempotent re-persist is not a second measurement."""
+    from zicato.telemetry.reducer import write_loss_profile  # noqa: PLC0415
+    from zicato.tournament.unit_cache import (  # noqa: PLC0415
+        _persist_unit_loss,
+        _unit_loss_path,
+        archive_outgoing_unit_loss,
+        read_unit_loss_history,
+    )
+
+    only = _loss("e1", drift_loss=2.1, pass_fail=True)
+    path = _unit_loss_path(workspace, EPOCH, CHAMPION, "e1", 0)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    archive_outgoing_unit_loss(path)  # the worker, before it truncates
+    write_loss_profile(only, path)  # the worker's write
+    _persist_unit_loss(  # the orchestrator's idempotent re-persist
+        workspace_root=workspace,
+        epoch_id=EPOCH,
+        generation_id=CHAMPION,
+        entry_id="e1",
+        replicate_index=0,
+        loss=only,
+    )
+
+    history = read_unit_loss_history(workspace, EPOCH, CHAMPION, "e1", 0)
+    assert [round(h.drift_loss, 3) for h in history] == [2.1]
+
+
+def test_worker_archives_the_measurement_its_write_displaces(workspace: Path) -> None:
+    """Three ``--mode full`` rounds yield three measurements, in order."""
+    from zicato.telemetry.reducer import write_loss_profile  # noqa: PLC0415
+    from zicato.tournament.unit_cache import (  # noqa: PLC0415
+        _persist_unit_loss,
+        _unit_loss_path,
+        archive_outgoing_unit_loss,
+        read_unit_loss_history,
+    )
+
+    path = _unit_loss_path(workspace, EPOCH, CHAMPION, "e1", 0)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for drift_loss in (2.1, 1.4, 1.9):
+        loss = _loss("e1", drift_loss=drift_loss, pass_fail=True)
+        archive_outgoing_unit_loss(path)
+        write_loss_profile(loss, path)
+        _persist_unit_loss(
+            workspace_root=workspace,
+            epoch_id=EPOCH,
+            generation_id=CHAMPION,
+            entry_id="e1",
+            replicate_index=0,
+            loss=loss,
+        )
+
+    history = read_unit_loss_history(workspace, EPOCH, CHAMPION, "e1", 0)
+    assert [round(h.drift_loss, 3) for h in history] == [2.1, 1.4, 1.9]
+
+
+def test_a_displacing_write_with_no_worker_still_archives(workspace: Path) -> None:
+    """The skipped-unit path has no worker, so ``_persist_unit_loss`` archives.
+
+    A budget-skip synthesises its own loss and writes it straight over an
+    occupied slot; the ``incoming`` guard must suppress only the re-persist of
+    the SAME profile, never a genuine displacement.
+    """
+    from zicato.tournament.unit_cache import (  # noqa: PLC0415
+        _persist_unit_loss,
+        read_unit_loss_history,
+    )
+
+    for loss in (
+        _loss("e1", drift_loss=2.1, pass_fail=True),
+        _loss("e1", drift_loss=9.9, pass_fail=False),
+    ):
+        _persist_unit_loss(
+            workspace_root=workspace,
+            epoch_id=EPOCH,
+            generation_id=CHAMPION,
+            entry_id="e1",
+            replicate_index=0,
+            loss=loss,
+        )
+
+    history = read_unit_loss_history(workspace, EPOCH, CHAMPION, "e1", 0)
+    assert [round(h.drift_loss, 3) for h in history] == [2.1, 9.9]

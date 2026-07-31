@@ -313,7 +313,12 @@ def _persist_unit_loss(
         # real worker ran) is still on disk for replicate 0.
         return
     path = _unit_loss_path(workspace_root, epoch_id, generation_id, entry_id, replicate_index)
-    _archive_outgoing_unit_loss(path, replicate_index=replicate_index)
+    # The worker archives what IT displaces (see archive_outgoing_unit_loss);
+    # this call covers the paths where no worker ran — the synthesised
+    # budget-skip loss, and a test stub that drove the unit in-process — and
+    # passes ``incoming`` so the idempotent re-persist of the profile the
+    # worker just wrote is not mistaken for a displaced measurement.
+    archive_outgoing_unit_loss(path, replicate_index=replicate_index, incoming=loss)
     try:
         writer(loss, path)
     except OSError as exc:  # noqa: BLE001 — cache persist is best-effort
@@ -332,8 +337,35 @@ def _persist_unit_loss(
 LOSS_ARCHIVE_FILENAME = "loss.archive.jsonl"
 
 
-def _archive_outgoing_unit_loss(path: Path, *, replicate_index: int) -> None:
+def _replicate_index_from_slot(path: Path) -> int:
+    """The replicate index a loss-slot filename encodes — inverse of :func:`_unit_loss_path`.
+
+    ``loss.json`` is replicate 0; ``loss.r<n>.json`` is replicate ``n``.
+    An unrecognised name reads as 0 rather than raising: the index is
+    provenance on an archive record, never a lookup key.
+    """
+    _, _, suffix = path.stem.partition(".r")
+    try:
+        return max(0, int(suffix)) if suffix else 0
+    except ValueError:
+        return 0
+
+
+def archive_outgoing_unit_loss(
+    path: Path,
+    *,
+    replicate_index: int | None = None,
+    incoming: LossProfile | None = None,
+) -> None:
     """Append the profile currently in ``path`` to the run's loss archive.
+
+    Call this in the process that is ABOUT TO TRUNCATE ``path``, and
+    call it there only. The board unit's canonical ``loss.json`` is
+    written by the worker SUBPROCESS
+    (:func:`zicato._tournament_worker._run`), so that is the archive's
+    seam: by the time the orchestrator's :func:`_persist_unit_loss`
+    re-persists the same profile, the measurement this run displaced is
+    already gone from disk and cannot be archived from there.
 
     A no-op when the slot is empty — the overwhelmingly common case, in
     which a unit is measured once and this costs one ``exists()``. The
@@ -341,6 +373,19 @@ def _archive_outgoing_unit_loss(path: Path, *, replicate_index: int) -> None:
     under ``profile``) so the archive needs no schema of its own and
     stays readable by the same reducer that reads the canonical file;
     the wrapper adds only the slot coordinates and a monotonic ``seq``.
+
+    ``replicate_index`` is provenance stamped onto the record; omit it
+    and it is read off the slot filename (:func:`_replicate_index_from_slot`).
+
+    ``incoming`` is the profile the caller is about to write, when it
+    has one. A slot already holding THAT profile is not a displaced
+    measurement — it is the same measurement, and the caller is the
+    orchestrator's idempotent re-persist of what the worker just wrote.
+    Archiving it would append a copy of the CURRENT profile on every
+    fresh unit run, so a unit measured once would read back as two
+    measurements. Compared on the decoded profile rather than the raw
+    bytes so a formatting difference between two writers cannot make
+    the same measurement look like two.
 
     Best-effort throughout: the archive rides ALONGSIDE the canonical
     write, so an unreadable prior file or an unwritable archive must
@@ -355,6 +400,8 @@ def _archive_outgoing_unit_loss(path: Path, *, replicate_index: int) -> None:
         return
     if not isinstance(outgoing, dict):
         return
+    if incoming is not None and _is_same_measurement(outgoing, incoming):
+        return
     archive = path.with_name(LOSS_ARCHIVE_FILENAME)
     seq = 0
     try:
@@ -365,7 +412,9 @@ def _archive_outgoing_unit_loss(path: Path, *, replicate_index: int) -> None:
     record = {
         "seq": seq,
         "slot": path.name,
-        "replicate_index": replicate_index,
+        "replicate_index": (
+            _replicate_index_from_slot(path) if replicate_index is None else replicate_index
+        ),
         "profile": outgoing,
     }
     try:
@@ -373,6 +422,21 @@ def _archive_outgoing_unit_loss(path: Path, *, replicate_index: int) -> None:
             fh.write(json.dumps(record, default=str, sort_keys=True) + "\n")
     except OSError as exc:  # pragma: no cover — unwritable workspace
         log.debug("unit-loss archive append skipped for %s: %s", archive, exc)
+
+
+def _is_same_measurement(persisted: dict[str, Any], incoming: LossProfile) -> bool:
+    """Whether ``persisted`` decodes to the profile ``incoming`` already is.
+
+    A decode failure answers ``False``: an unreadable slot is treated as
+    a genuine predecessor and archived, which costs one duplicate line
+    rather than losing a measurement.
+    """
+    from zicato.telemetry.reducer import loss_profile_from_dict  # noqa: PLC0415
+
+    try:
+        return bool(loss_profile_from_dict(persisted) == incoming)
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 def read_unit_loss_history(
@@ -834,6 +898,7 @@ def _average_losses(
 
 
 __all__ = [
+    "LOSS_ARCHIVE_FILENAME",
     "RUN_RESULT_CLIP_CHARS",
     "RUN_RESULT_CLIP_MARKER",
     "RUN_RESULT_FORMAT_VERSION",
@@ -844,7 +909,9 @@ __all__ = [
     "_resolve_cached_unit",
     "_skipped_unit_loss",
     "_unit_loss_path",
+    "archive_outgoing_unit_loss",
     "read_run_result",
+    "read_unit_loss_history",
     "run_result_to_payload",
     "unit_result_path",
 ]

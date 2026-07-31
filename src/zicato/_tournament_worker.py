@@ -1026,6 +1026,17 @@ async def _run(args: dict[str, Any]) -> None:
         from dataclasses import replace as _replace  # noqa: PLC0415
 
         loss = _replace(loss, judge_errors=judge_errors)
+    # Retain the measurement this write is about to truncate (issue #122),
+    # the loss-side twin of the events archive in ``_build_sinks``. THIS is
+    # the seam: the champion under ``--mode full`` is re-run every round and
+    # each round's worker overwrites the slot, so by the time the parent's
+    # ``_persist_unit_loss`` re-persists the same profile the predecessor is
+    # already gone. Best-effort — a failed archive never costs the run its
+    # loss.json.
+    from zicato.tournament.unit_cache import archive_outgoing_unit_loss  # noqa: PLC0415
+
+    with best_effort("unit_loss_archive"):
+        archive_outgoing_unit_loss(loss_path)
     reducer_mod.write_loss_profile(loss, loss_path)
 
     # Persist the run's user-facing RunResult as result.json beside
