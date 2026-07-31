@@ -245,23 +245,44 @@ def _attr_or_key(obj: Any, name: str) -> Any:
 #: Longest bucketing key :func:`_reject_cause` will return before clipping.
 _REJECT_CAUSE_CLIP = 60
 
+#: Where a rejection reason stops naming its CAUSE and starts reporting the
+#: numbers behind it. ``": "`` opens the detail clause on most reasons;
+#: ``" ("`` opens the measured parenthetical on the rest; ``";"`` opens the
+#: trailing "a promotion needs …" advice. The earliest one wins.
+_REJECT_CAUSE_SEPARATORS = (": ", " (", ";")
+
 
 def _reject_cause(reason: str) -> str:
     """Bucket a gate rejection reason down to its cause clause.
 
     Every reason :mod:`zicato.tournament.gate` composes leads with the
     rule that fired and follows it with that rule's measured numbers —
-    ``"insufficient improvement: loss fell by only 0.0012 (...)"``. The
-    numbers make each reason unique, which is exactly what a breakdown
-    must NOT be keyed on, so the cause is the text ahead of the first
-    colon. A reason with no colon (``"monotonicity_regression on
-    namespace=a, b"``) is clipped instead, which still groups the
-    namespace-monotonicity family under one key in the common case.
+    ``"insufficient improvement: loss fell by only 0.0012 (champion … ->
+    challenger …)"``. The numbers make each reason unique, which is
+    exactly what a breakdown must NOT be keyed on.
+
+    So the key is the text ahead of the earliest separator that opens a
+    detail clause (:data:`_REJECT_CAUSE_SEPARATORS`), not the first colon
+    alone. Some rules carry no colon at all and open straight into the
+    parenthetical — ``"monotonicity_regression on namespace=rubric
+    (champion 0.412345 -> …)"`` — and keying those on a length clip put
+    the champion's aggregate INSIDE the key, so six rounds rejected by
+    the same rule on the same namespace produced six singleton buckets
+    and a breakdown longer than the summary it qualifies. Cutting at
+    ``" ("`` keys them on the rule and the namespace, which is what the
+    reader is counting.
+
+    The clip stays as the last resort for a reason that carries no
+    separator anywhere.
     """
     text = " ".join(str(reason or "").split())
     if not text:
         return "(no reason recorded)"
-    head = text.split(":", 1)[0].strip()
+    cut = min(
+        (i for i in (text.find(sep) for sep in _REJECT_CAUSE_SEPARATORS) if i > 0),
+        default=-1,
+    )
+    head = (text[:cut] if cut > 0 else text).strip()
     if head and len(head) <= _REJECT_CAUSE_CLIP:
         return head
     return text[: _REJECT_CAUSE_CLIP - 1].rstrip() + "…"

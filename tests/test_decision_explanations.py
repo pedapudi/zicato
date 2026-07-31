@@ -27,7 +27,7 @@ from zicato.health.diagnostics import detect_placebo_promoted, detect_stalled_lo
 from zicato.orchestrator import _field_failure_summary
 from zicato.runtime_factory import resolve_parallelism
 from zicato.selection.standings_ext import uncertainty_blocks_promotion
-from zicato.tournament.gate import evaluate_gate
+from zicato.tournament.gate import _namespace_regression_reason, evaluate_gate
 
 # ---------------------------------------------------------------------------
 # #126 — the run-start configuration report
@@ -107,6 +107,43 @@ def test_stalled_loop_breaks_the_streak_down_by_cause() -> None:
     assert "1x pass-rate regression on entries" in summary
     assert findings[0].detail["rejection_causes"]["insufficient improvement"] == 2
     assert findings[0].detail["rejection_reasons"]["v3"] == "pass-rate regression on entries: e7"
+
+
+def test_stalled_loop_buckets_a_colonless_reason_on_its_rule_not_its_numbers() -> None:
+    """The namespace-monotonicity family carries no colon before its numbers.
+
+    Its reason opens straight into the measured parenthetical, so keying
+    the bucket on a length clip put the champion's aggregate inside the
+    key: six rounds rejected by the same rule on the same namespace
+    produced six singleton buckets and a breakdown several times longer
+    than the summary it was meant to qualify. The cause is the rule plus
+    the namespace, which is the thing a reader counts.
+
+    Uses the reason ``gate`` actually composes so a re-wording cannot
+    walk out from under the pin.
+    """
+    reasons = [
+        _namespace_regression_reason(
+            {"namespace_aggregates": {"rubric": 0.40 + i * 0.011}},
+            {"namespace_aggregates": {"rubric": 0.50 + i * 0.011}},
+            ["rubric"],
+        )
+        for i in range(6)
+    ]
+    assert ": " not in reasons[0].split(";")[0], "the pin assumes a colonless cause clause"
+
+    findings = detect_stalled_loop(
+        [_experiment(f"v{i}", "rejected", r) for i, r in enumerate(reasons, start=1)]
+    )
+
+    summary = findings[0].summary
+    assert "6x monotonicity_regression on namespace=rubric" in summary
+    assert findings[0].detail["rejection_causes"] == {
+        "monotonicity_regression on namespace=rubric": 6
+    }
+    # The whole point of a breakdown is that it condenses. A per-round key
+    # would make it grow with the streak instead.
+    assert len(summary) < 200, summary
 
 
 def test_stalled_loop_tolerates_a_missing_reason() -> None:
