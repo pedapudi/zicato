@@ -37,6 +37,223 @@ Improvement headroom remains UNMEASURED — deriving one from the namespace
 weights is registered, not built, because the scalar's reachable floor is
 not `0` once a namespace carries a negative weight.
 
+### The parsimony term charges the edit, not the file (issue #120)
+
+`diff_size` counted every line of a patch's `new_content` as `added` and
+hard-coded `removed = 0`. For a `kind="file"` mutation point the
+replacement is the WHOLE FILE, so every proposal paid for the template it
+was required to preserve — a byte-identical re-emit of a 37-line file
+scored complexity 38, a `0.76` toll at `diff_complexity_weight = 0.02`,
+76x the contract's `promote_margin`. The measure now takes the
+parent-side CONTENT of each patched mutation point and reports a real
+line diff, so a patch that changed nothing counts for nothing, including
+its per-patch constant. The orchestrator threads content it already holds
+from the parent-snapshot enumeration; the scoring layer stays pure and
+takes text, never paths, and absent parent content the historical count
+applies per patch unchanged. The exact path is capped at 1000 lines per
+side with difflib's `autojunk` heuristic re-enabled above it — the exact
+measure is unbounded in running time on a repeated line (measured: 157 s
+at 4000 lines), and this runs once per round inside scoring with no
+timeout above it. The paired half: a Rule 1 rejection whose toll moved
+against the challenger now states the split — raw quality delta versus
+parsimony toll, whether the raw delta alone would have cleared the
+margin, and the per-side evidence — so a challenger that improved the
+board and paid a larger toll is no longer worded identically to one that
+regressed. Inert at the default weight. BREAKING for calibration: a
+weight or ceiling tuned against the old file-charging numbers is now far
+too loose.
+
+### A judge that raised no longer reads as one that found nothing (issue #121)
+
+A board-declared process judge whose callable raises was byte-identical,
+in every persisted artifact, to one that ran and found no violation — the
+inline judge catches everything and returns a bare `JudgeVerdict()`,
+goldfive emits no event for an empty verdict, the reducer writes no drift
+count, and `detect_dead_judge` reported the broken judge with the same
+words it uses for a healthy judge whose criterion was never met. That
+routed the operator into a board audit while the missing drift made the
+generation's scalar better than the evidence supports. Per-judge error
+provenance now rides the pipeline end to end: both catches return an
+errored verdict carrying `errored`/`error`, a process-wide per-judge
+invocation/error register sits at zicato's judge boundary, the inline
+judge's io_sink records the FAILED call, and the worker stamps an
+additive `LossProfile.judge_errors` (empty default — every existing
+`loss.json` loads unchanged; the replicate fold SUMS rather than means,
+because a mean would report "8.5 errors" for a duel). `detect_dead_judge`
+splits the silence accordingly: a judge with errors raises a distinct
+`judge_erroring` WARNING naming the counts, the last error type and the
+config to check, while `dead_judge` now says call failures were ruled
+out. The reflection and reliability surfaces read the flag too — a failed
+call is filtered out of adjudication, the scorecards and replicate
+disagreement rather than folded in as a silent verdict, so an
+intermittently-broken endpoint stops reading as a stable judge, and
+`zicato board judges --test-retest` counts failures and warns instead of
+reporting a judge that raised on every call as fired 0/k at 0%
+disagreement. No abort knob and no goldfive change: a 100%-error round is
+indistinguishable from a transient outage, and an outage never
+disqualifies a contract.
+
+### Re-measured evidence is archived, not destroyed (issue #122)
+
+Every artifact describing one evaluation is keyed by `(epoch, generation,
+entry)` with no round dimension, and the champion defends across many
+rounds under one generation id — so `--mode full`, whose stated purpose
+is re-sampling for noise, overwrote the sample it would be compared
+against. Fixed by archive-on-overwrite, leaving the canonical paths and
+the unit-cache keys UNCHANGED (re-keying the cache would turn every
+champion lookup into a miss and break its at-most-once discipline):
+`gen_score.history.jsonl` appends the full payload with its round and a
+monotonic seq before each overwrite, `loss.archive.jsonl` archives the
+OUTGOING profile when the slot is already occupied, and
+`events.prev.jsonl` keeps exactly one predecessor so the raw layer stays
+bounded. The loss archive lives in the WORKER, beside the write that
+truncates the canonical `loss.json` — the parent process re-persisting
+the identical profile arrived after the displaced measurement was already
+gone, and appended a copy of the current one instead, so a unit measured
+once read back as two. New readers expose the history
+(`read_gen_score_history`, `read_events_history`,
+`read_unit_loss_history`). GC needs no change and `gc.py` now says why.
+
+### The journal keeps the proposer's full reasoning (issue #123)
+
+`journal.md` truncated at WRITE time — `why` to its first sentence,
+`core_idea` to its first physical line (measured: 7% of a 330-character
+`why` surviving). The file is append-only and is the only channel through
+which the proposer reads its own prior reasoning back, so the loss was
+permanent on disk. Both fields are now recorded in full; the heading
+still takes only the first line of `core_idea` so it stays a legible
+markdown heading, and a single-line value renders inline exactly as
+before. A multi-line value is fenced with a blank line on BOTH sides, so
+the following field can no longer fold into its paragraph. The budget
+moved to the readers, where dropping text is recoverable:
+`proposer.tools.read_journal` — the one uncapped LLM-facing journal
+reader — gains a 20,000-character TAIL-biased cap that keeps the NEWEST
+entries, cuts on an entry boundary, and prepends a note saying what was
+dropped. That boundary is anchored on the heading shape the writer emits
+rather than a bare `## `, so an ordinary `## Approach` heading inside a
+recorded `why` cannot open the window mid-body and hand the next proposer
+a fragment of someone's reasoning dressed as run history. Entries written
+before this change stay truncated on disk.
+
+### lineage.json records WHY a generation was rejected (issue #124)
+
+`lineage.json` recorded THAT a generation was rejected and never why,
+though the orchestrator computes the reason and both scalars in the same
+function that appends the node. `append_to_lineage` now takes keyword-only
+`rejection_reason` / `parent_scalar` / `child_scalar` and persists them
+plus a derived `delta_scalar` (no new fields on the `Generation`
+dataclass), threaded from the gauntlet tail and the multi-challenger
+settle loop. Two invariants are enforced at the writer so the tri-state
+`promoted` (True/False/None) cannot be misread: a reason lands only when
+`promoted` is False — a caller passing one for a promoted or pending node
+gets `""` — and absent scalars are null, never `0.0`. The first invariant
+is held on the RECORD rather than only at the write: the upsert rewrites
+`promoted` unconditionally while a reason was once-set and sticky, so a
+node that settled rejected and was later re-recorded promoted kept a
+reason its own flag contradicted; the reason is now cleared whenever
+`promoted` moves off False. `build_lineage_view` passes all four through
+to `/api/lineage`, present-only — no UI renders them yet. Also fixes a
+seeding bug found in triage: `zicato init` wrote `lineage.json` as
+`{"nodes": [], "edges": []}`, which the loader rejects as malformed; it
+now seeds `{"epochs": []}`.
+
+### `evolve` reports its effective parallelism at run start (issue #126)
+
+The parallelism default of 4 bounded every run and appeared in no log
+line, so a capped run on a large host was indistinguishable from slow
+work. `evolve` now logs the effective parallelism, `propose_parallelism`,
+the host worker-permit resolution (`AUTO` ⇒ N) and the usable CPU count
+once at run start, naming the tier each was resolved from. The
+host-aware default itself is deliberately unchanged.
+
+### A failed lazy import stops blaming a missing symbol (issue #127)
+
+Five loaders conflated an `AttributeError` raised DURING lazy symbol
+construction — a PEP-562 module `__getattr__`, or a property — with the
+symbol being genuinely absent, and `import_path` re-raised `from None`,
+destroying the traceback. An operator debugging a renamed attribute in a
+dependency was pointed at their own `agent.py`.
+`zicato.import_path.explain_attribute_error` now makes the distinction
+once, in the shared home of symbol resolution: it returns `None` for a
+genuine absence, so each caller keeps its established wording, and an
+explanation when the access itself raised. CPython stamps `.name`/`.obj`
+on every `AttributeError` escaping an attribute access, so a differing
+name or object proves construction raised; when both match the requested
+symbol, a message that is not the one the attribute machinery writes is a
+`__getattr__` saying something of its own, and is passed through rather
+than overwritten. All five sites route through it, and `import_path` now
+chains `from exc`.
+
+### Issue #128 — closed as not reproducible
+
+No `reconcile` parameter exists on the storage protocol or either backend,
+nothing documents one, neither store has a `NotImplementedError` path, and
+`git log -S"reconcile="` is empty over all history. Invariant guards (not
+xfail pins — there is nothing to fix) hold the property the report would
+have violated: no parameter is accepted or described unless it works.
+
+### Diagnostics carry their evidence to the reader (issue #129)
+
+Two failures with one shape — the harness knows something and does not
+say it. First, a zero-promotion epoch read as a healthy one across eight
+surfaces, each degrading to a reassuring value rather than an absent one,
+which is the worst direction for the regime an operator most needs to
+see. The verdict ladder's stall words now key on a new `settled_count`
+(challengers a tournament has actually DECIDED) beside `challenger_count`,
+which keeps its published meaning: a pending generation is recorded the
+moment its snapshot lands, so the old promotion-count guard could never
+be false while a challenger was racing, and a fresh run's very first
+round resolved to "stalled (no promotions)" mid-tournament. Settlement is
+read as the union of the two tables that record a decision, since a
+`tournaments` row is written only at settle time. Second, the evidence
+itself: `_summarise_loop_health` names the finding code and appends the
+detector's `recommendation` — which the string-only text walker could
+never reach, leaving fifteen detectors' remediations only in the round's
+health JSON; the two evolve stop messages quote what ended the run;
+`detect_stalled_loop` breaks its streak down by gate reason;
+`detect_placebo_promoted` cites the delta against `promote_margin` and
+the measured noise floor; a deferred reason quotes the fitted `P(...)`;
+the namespace-monotonicity reason cites each regressed namespace's
+champion and challenger aggregates; the reflect report renders each
+practice check's evidence dict; the all-failed field reason folds in the
+per-slot breakdown; and the four bare strategy reasons name the missing
+precondition and cite the scalars the crowning duel would have compared.
+A dev-guide subsection codifies the five-slot evidence convention
+(population / measured / compared-against / remedy / remedy safety) as a
+render conformance rule — the collection layer was never the defect, so a
+third well-shaped field would have reproduced the bug rather than fixed
+it. Mermaid edge labels rise from 30 to 60 characters and the bracket
+family is escaped alongside the existing entity table: edge labels are
+emitted bare between pipes, so one unescaped `(` — and every Rule 1
+reason carries its measured pair in parentheses — failed the parse for
+the whole graph block, a hazard the old clip kept latent. The stalled-loop
+breakdown buckets on the earliest separator that opens a detail clause
+rather than the first colon, so a colonless reason no longer clips inside
+its own numbers and produces six singleton buckets for six identical
+rejections. The lineage figure's canvas takes the max of the requested
+and wrapped heights, so it is monotone in generation count.
+
+### Per-entry regressions inside a promoted duel are named (issue #130)
+
+Per-entry `drift_loss` was invisible to every gate rule — Rule 1 decides
+on the scalar, Rule 2 on per-entry score and pass/fail, Rule 3 on
+per-namespace MEANS — so an entry whose drift collapses 6x while it still
+PASSES promoted with an empty reason and was baked into the champion
+lineage. `evaluate_gate` now computes attributable per-entry regressions
+from rows the aggregates already carry: the outcome axis, plus a drift
+axis banded on both a ratio and an absolute limb (`child > max(2 *
+parent, parent + 0.05)`; near zero the ratio alone is meaningless). They
+travel as an additive `GateOutcome.attributable_regressions` on BOTH
+decisions and additively on the `gate_evaluated` round-log event, emitted
+only when non-empty. `reason` is untouched — the empty-reason-on-promote
+invariant is load-bearing for consumers that read a non-empty reason as a
+rejection. A promoted duel carrying regressions raises a new
+`attributable_entry_regression` WARNING naming the entries and their
+movement. Deliberately no blocking mode and no contract knob: per-entry
+evidence is single-sample noisy, and a veto built on it would reject real
+winners at an unmeasured rate, so the finding accumulates the evidence
+first.
+
 ### Contract hash no longer depends on the process cwd or checkout path
 
 `_canon_mutable_trees` previously RESOLVED the registered mutable-tree
