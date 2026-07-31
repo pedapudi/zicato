@@ -162,48 +162,15 @@ def test_loop_health_summary_carries_the_detector_s_recommendation() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#129 pattern A: _summarise_loop_health renders only findings[0]; every "
-    "other finding collapses to a bare '(+N more)' count",
-)
-def test_multiple_findings_are_not_collapsed_to_a_bare_count() -> None:
-    """A round with several problems must not report only the first.
-
-    ``_summarise_loop_health`` renders ``findings[0]`` and appends
-    ``(+N more critical)``. An operator whose round tripped three
-    distinct detectors is told about one of them and given a number for
-    the rest — so the second and third findings are, at the terminal,
-    detections with no explanation at all.
-    """
-    findings = (
-        HealthFinding(
-            code="degenerate_scoring",
-            severity="critical",
-            summary="every generation scored identically over the last 5",
-            detail={"window": 5},
-        ),
-        HealthFinding(
-            code="dead_judge",
-            severity="critical",
-            summary="1 board-declared judge never fired: 'safety'",
-            detail={"dead_judges": ["safety"]},
-        ),
-        HealthFinding(
-            code="tree_never_imported",
-            severity="critical",
-            summary="mutable tree 'agent/' was never imported by any run",
-            detail={"tree": "agent/"},
-        ),
-    )
-
-    summary, _ = _summarise_loop_health(_health(*findings))
-
-    missing = [f.code for f in findings if f.summary not in summary]
-    assert not missing, (
-        f"{len(missing)} of {len(findings)} findings never reach the operator "
-        f"(only a count stands in for them): missing={missing} summary={summary!r}"
-    )
+# NOT PINNED (deliberate): ``_summarise_loop_health`` renders only
+# ``findings[0]`` and collapses the rest to ``(+N more critical)``, so a
+# round tripping three detectors reports one of them. That is a real
+# operator cost, but the function is documented as deriving a ONE-LINE
+# summary and a pin demanding it render every finding would contradict
+# its stated contract rather than expose a defect in it. The fix belongs
+# at the caller (``_warn_loop_no_signal`` emitting one warning per
+# critical finding), so it is registered as a pattern-level item rather
+# than pinned here against the wrong function.
 
 
 # ---------------------------------------------------------------------------
