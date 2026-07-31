@@ -47,6 +47,7 @@ import uuid
 from typing import Any
 
 from zicato.core.types import BoardEntry, RunResult, RuntimeConfig
+from zicato.import_path import explain_attribute_error
 
 
 class AdversarialResolutionError(RuntimeError):
@@ -124,6 +125,11 @@ def resolve_adversarial_agent(spec: str) -> Any:
     try:
         return getattr(module, attr_name)
     except AttributeError as exc:
+        detail = explain_attribute_error(module, attr_name, exc)
+        if detail is not None:
+            raise AdversarialResolutionError(
+                f"module {module_name!r}: {detail} (adversarial agent spec {spec!r})"
+            ) from exc
         raise AdversarialResolutionError(
             f"module {module_name!r} has no attribute {attr_name!r} "
             f"(adversarial agent spec {spec!r})"

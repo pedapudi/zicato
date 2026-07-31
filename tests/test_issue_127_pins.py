@@ -18,8 +18,17 @@ the original traceback:
 * ``src/zicato/synthetic/adversarial.py:126`` — chains ``from exc``
 * ``src/zicato/judge_runtime/builder.py:369`` — chains ``from exc``
 
-Pins marked ``xfail(strict=True)`` must fail today; the unmarked pin is a
-regression guard for behaviour that is already correct and must stay so.
+FIXED: all five sites now route their caught ``AttributeError`` through
+``zicato.import_path.explain_attribute_error``, which distinguishes a
+genuine absence from a failure raised inside the access itself, and
+``import_path`` chains ``from exc``. Every test below is a live guard —
+the ``xfail`` markers were removed when the fix landed.
+
+``adapters/adk.py`` has no direct guard here: reaching its ``getattr``
+needs a snapshot-backed ``ADKHarnessAdapter.load``, which is far more
+setup than the shared helper's own coverage justifies. It keeps raising
+``AttributeError`` as its type so the subprocess worker's catch semantics
+are unchanged.
 """
 
 from __future__ import annotations
@@ -71,11 +80,6 @@ def _load_error(proposer_path: Path) -> ProposerError:
     return excinfo.value
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="issue #127: adk_agent.py:324 reports a construction-time "
-    "AttributeError as 'has no agent symbol', pointing debugging at the wrong file",
-)
 def test_lazy_construction_failure_is_not_blamed_on_a_missing_symbol(
     tmp_path: Path,
 ) -> None:
@@ -119,11 +123,6 @@ def test_both_cases_chain_the_original_attribute_error(tmp_path: Path) -> None:
     assert isinstance(missing.__cause__, AttributeError)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="issue #127 sibling: import_path.py:85 re-raises 'from None', "
-    "destroying the traceback of a construction-time AttributeError",
-)
 def test_import_dotted_path_preserves_the_attribute_error_cause(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -145,3 +144,83 @@ def test_import_dotted_path_preserves_the_attribute_error_cause(
         import_dotted_path("lazy_mod:agent", label="issue127")
 
     assert isinstance(excinfo.value.__cause__, AttributeError)
+    assert "build_llm_agent" in str(excinfo.value)
+
+
+def _lazy_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str) -> str:
+    """Put a lazily-constructing module named ``name`` on ``sys.path``."""
+    root = tmp_path / f"{name}_root"
+    root.mkdir()
+    (root / f"{name}.py").write_text(_LAZY_AGENT_PY, encoding="utf-8")
+    (root / f"{name}_missing.py").write_text(_MISSING_AGENT_PY, encoding="utf-8")
+    monkeypatch.syspath_prepend(str(root))
+    return name
+
+
+def test_adversarial_resolver_separates_construction_from_absence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``resolve_adversarial_agent`` must not blame a construction failure on absence."""
+    from zicato.synthetic.adversarial import (
+        AdversarialResolutionError,
+        resolve_adversarial_agent,
+    )
+
+    name = _lazy_module(tmp_path, monkeypatch, "adv127")
+
+    with pytest.raises(AdversarialResolutionError) as lazy:
+        resolve_adversarial_agent(f"{name}:agent")
+    assert "has no attribute 'agent'" not in str(lazy.value)
+    assert "build_llm_agent" in str(lazy.value)
+
+    with pytest.raises(AdversarialResolutionError) as missing:
+        resolve_adversarial_agent(f"{name}_missing:agent")
+    assert "has no attribute 'agent'" in str(missing.value)
+
+
+def test_judge_builder_resolver_separates_construction_from_absence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``judge_runtime._resolve_dotted_path`` keeps the same distinction."""
+    from zicato.judge_runtime.builder import _resolve_dotted_path
+
+    name = _lazy_module(tmp_path, monkeypatch, "judge127")
+
+    with pytest.raises(AttributeError) as lazy:
+        _resolve_dotted_path(f"{name}:agent")
+    assert "has no attribute 'agent'" not in str(lazy.value)
+    assert "build_llm_agent" in str(lazy.value)
+
+    with pytest.raises(AttributeError) as missing:
+        _resolve_dotted_path(f"{name}_missing:agent")
+    assert "has no attribute 'agent'" in str(missing.value)
+
+
+def test_explain_attribute_error_passes_through_custom_getattr_prose(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``__getattr__`` raising prose of its own must not have it overwritten.
+
+    CPython stamps ``.name``/``.obj`` onto any ``AttributeError`` escaping
+    ``__getattr__``, so those two signals alone would misread this as a
+    plain absence and discard what the module was trying to say.
+    """
+    from zicato.import_path import explain_attribute_error
+
+    root = tmp_path / "prose_root"
+    root.mkdir()
+    (root / "prose127.py").write_text(
+        "def __getattr__(name):\n"
+        "    raise AttributeError('the config backend moved to zicato.settings')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(root))
+
+    import prose127  # type: ignore[import-not-found]
+
+    with pytest.raises(AttributeError) as excinfo:
+        prose127.agent  # noqa: B018
+
+    detail = explain_attribute_error(prose127, "agent", excinfo.value)
+    assert detail is not None
+    assert "the config backend moved to zicato.settings" in detail

@@ -17,8 +17,11 @@ for the dashboard / analyzer masthead). #123 is the per-generation experiment
 record in ``zicato.epoch.journal``. Different module, different input,
 different consumer — only the shape rhymes.
 
-Every pin is ``xfail(strict=True)``: it must fail today and the marker must be
-removed by whoever lands the fix.
+FIXED: ``_render_section`` now records ``why`` and ``core_idea`` in full,
+and the budget moved to the reader — ``proposer.tools.read_journal`` caps
+at ``_JOURNAL_LIMIT_CHARS`` keeping the NEWEST entries. Entries written
+before the fix stay truncated on disk; the journal is append-only and
+there is nothing left to recover them from.
 """
 
 from __future__ import annotations
@@ -99,11 +102,6 @@ def epoch_root(tmp_path: Path) -> tuple[Path, str]:
     return ws, epoch_id
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="issue #123: journal.py:126 stores only _first_sentence(why); "
-    "the remaining ~93% of the proposer's reasoning never reaches read_journal",
-)
 def test_journal_preserves_the_whole_why(epoch_root: tuple[Path, str]) -> None:
     """The full ``why`` must survive into ``journal.md``, not just sentence one.
 
@@ -120,10 +118,6 @@ def test_journal_preserves_the_whole_why(epoch_root: tuple[Path, str]) -> None:
     assert "the judge disagrees with the rubric on tone in 5 of 40" in text
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="issue #123: journal.py:117 keeps only splitlines()[0] of core_idea",
-)
 def test_journal_preserves_a_multi_line_core_idea(epoch_root: tuple[Path, str]) -> None:
     """A ``core_idea`` spanning two lines must not lose its second line.
 
@@ -138,12 +132,6 @@ def test_journal_preserves_a_multi_line_core_idea(epoch_root: tuple[Path, str]) 
     assert "redundant restatement clause the summariser echoes" in text
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="issue #123 budget companion: the read_journal proposer tool returns "
-    "journal.md uncapped, so de-truncating the write side must be paired with a "
-    "render-side cap (ADJUDICATION: cap value + whether it belongs on the tool)",
-)
 def test_read_journal_tool_caps_its_return() -> None:
     """The proposer-facing ``read_journal`` must bound what it returns.
 
@@ -159,3 +147,32 @@ def test_read_journal_tool_caps_its_return() -> None:
 
     limit = getattr(tools, "_JOURNAL_LIMIT_CHARS", None)
     assert isinstance(limit, int) and limit > 0
+
+
+def test_read_journal_cap_keeps_the_newest_whole_entries() -> None:
+    """The cap must be TAIL-biased and land on an entry boundary.
+
+    The journal is chronological-append, so the entries a proposer needs
+    are the most recent ones. Cutting the head off mid-section would hand
+    the model a sentence fragment as its oldest context, so the kept text
+    starts at a ``## `` heading and carries a note saying what was dropped.
+    """
+    from zicato.proposer.tools import _tail_entries
+
+    entries = "".join(f"## v{n} — idea {n}\n\n**why**: {'w' * 200}\n\n" for n in range(60))
+    kept = _tail_entries(entries, 2_000)
+
+    assert kept != entries
+    assert "## v59 — idea 59" in kept  # newest survives
+    assert "## v0 — idea 0" not in kept  # oldest dropped
+    body = kept.split("\n\n", 1)[1]
+    assert body.startswith("## v")  # whole entry, not a fragment
+    assert kept.startswith("[... truncated:")
+
+
+def test_read_journal_cap_leaves_a_short_journal_untouched() -> None:
+    """Under the cap, the text is returned byte-identical — note and all absent."""
+    from zicato.proposer.tools import _tail_entries
+
+    short = "## v1 — idea\n\n**why**: because\n"
+    assert _tail_entries(short, 2_000) == short

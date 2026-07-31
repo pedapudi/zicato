@@ -385,12 +385,49 @@ def mutation_track_record(mutation_id: str) -> str:
     )
 
 
+#: Hard cap on the characters ``read_journal`` returns, matching
+#: ``_PARENT_DIFF_LIMIT_CHARS``. The journal grew unbounded once it stopped
+#: truncating the proposer's own ``why`` at write time (issue #123) — the
+#: budget moved here, to the reader, where dropping text is recoverable.
+#: The other two journal-consuming LLM paths already cap independently
+#: (``epoch.analysis`` at 60_000, ``analyzer.report_data`` at 40_000).
+_JOURNAL_LIMIT_CHARS = 20_000
+
+
+def _tail_entries(text: str, limit: int) -> str:
+    """Keep the NEWEST ``limit``-ish chars of a journal, on an entry boundary.
+
+    The journal is chronological-append, so the tail is the part a proposer
+    reasoning about what to try next actually needs. We take the last
+    ``limit`` characters, then advance to the first whole section inside
+    that window (``\\n## ``, the boundary
+    :func:`~zicato.epoch.journal.append_journal_entry` writes) so the
+    proposer never reads a section that starts mid-sentence. A single
+    section longer than the whole budget has no boundary to find, so it is
+    returned clipped rather than dropped entirely.
+    """
+    if len(text) <= limit:
+        return text
+    tail = text[-limit:]
+    boundary = tail.find("\n## ")
+    if boundary >= 0:
+        tail = tail[boundary + 1 :]
+    dropped = len(text) - len(tail)
+    return (
+        f"[... truncated: {dropped} earlier chars dropped from a {len(text)}-char "
+        f"journal; the newest entries follow ...]\n\n{tail}"
+    )
+
+
 def read_journal() -> str:
     """Return the epoch's running narrative journal, or ``""`` when absent.
 
     Reuses :func:`zicato.core.workspace.journal_path`; the empty string
     is the proposer-side sentinel for "no journal yet", matching how the
     default proposer treats a missing insights file.
+
+    Capped at ``_JOURNAL_LIMIT_CHARS``, keeping the newest entries — the
+    same runaway-context guard the other unbounded tools carry.
     """
     ctx = _active_context()
     from zicato.core.workspace import journal_path  # noqa: PLC0415
@@ -398,7 +435,7 @@ def read_journal() -> str:
     path = journal_path(ctx.workspace_root, ctx.epoch_id)
     if not path.is_file():
         return ""
-    return path.read_text(encoding="utf-8")
+    return _tail_entries(path.read_text(encoding="utf-8"), _JOURNAL_LIMIT_CHARS)
 
 
 def read_insights() -> str:

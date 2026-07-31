@@ -46,6 +46,8 @@ import importlib
 import logging
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
+from zicato.import_path import explain_attribute_error
+
 if TYPE_CHECKING:  # pragma: no cover - typing-only imports
     from collections.abc import Awaitable, Callable
 
@@ -367,6 +369,12 @@ def _resolve_dotted_path(path: str) -> Any:
     try:
         return getattr(module, attr_name)
     except AttributeError as exc:
+        detail = explain_attribute_error(module, attr_name, exc)
+        if detail is not None:
+            raise AttributeError(
+                f"judge_runtime: module {module_name!r}: {detail} "
+                f"(python-mode JudgeSpec.body {spec!r})"
+            ) from exc
         raise AttributeError(
             f"judge_runtime: module {module_name!r} has no attribute "
             f"{attr_name!r} (python-mode JudgeSpec.body {spec!r})"

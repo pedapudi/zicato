@@ -181,9 +181,18 @@ def test_append_journal_entry_appends_multiple_sections(
     assert text.index("## v1 —") < text.index("## v2 —")
 
 
-def test_append_journal_entry_first_sentence_of_why(
+def test_append_journal_entry_keeps_the_whole_why(
     epoch_root: tuple[Path, str],
 ) -> None:
+    """DELIBERATELY INVERTED (issue #123).
+
+    This used to assert ``"Second sentence" not in text`` — it pinned the
+    write-time truncation as intended behaviour. It is not: ``journal.md``
+    is append-only and is the proposer's only channel to its own prior
+    reasoning, so a sentence dropped here is lost permanently. The budget
+    now lives on the readers (``proposer.tools._JOURNAL_LIMIT_CHARS`` and
+    the two analysis paths), where it is recoverable.
+    """
     ws, eid = epoch_root
     exp = _experiment(
         why="First sentence. Second sentence with more detail.",
@@ -191,8 +200,7 @@ def test_append_journal_entry_first_sentence_of_why(
     )
     append_journal_entry(ws, eid, exp)
     text = read_journal(ws, eid)
-    assert "**why**: First sentence" in text
-    assert "Second sentence" not in text
+    assert "**why**: First sentence. Second sentence with more detail." in text
 
 
 def test_append_journal_entry_missing_epoch_dir(tmp_path: Path) -> None:

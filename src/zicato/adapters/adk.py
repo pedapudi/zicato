@@ -187,6 +187,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from zicato.core import BoardEntry, MutationPoint, RunResult, RuntimeConfig
+from zicato.import_path import explain_attribute_error
 
 if TYPE_CHECKING:
     from zicato.adapters.base import RunnableHarness
@@ -1906,6 +1907,15 @@ class ADKHarnessAdapter:
         try:
             agent = getattr(module, self._symbol)
         except AttributeError as exc:
+            # Still an AttributeError: the subprocess worker catches this
+            # type by construction. Only the message improves.
+            detail = explain_attribute_error(module, self._symbol, exc)
+            if detail is not None:
+                raise AttributeError(
+                    f"ADKHarnessAdapter: entrypoint module {self._module_path!r}: "
+                    f"{detail} (loaded from "
+                    f"{getattr(module, '__file__', '<unknown>')!r})"
+                ) from exc
             raise AttributeError(
                 f"ADKHarnessAdapter: entrypoint module {self._module_path!r} "
                 f"has no symbol {self._symbol!r} (loaded from "
