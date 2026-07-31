@@ -25,6 +25,11 @@ Runtime checkability is on for both Protocols so the runner can
 ``isinstance(...)``-check operator-supplied callables at construction
 time and fail fast on shape errors rather than only at the first
 ``run`` invocation.
+
+:class:`HarnessAdapter` also carries one OPTIONAL member,
+:meth:`HarnessAdapter.on_promote` (issue #125) — see
+:data:`OPTIONAL_ADAPTER_MEMBERS` for how "optional" is enforced at
+``isinstance`` time.
 """
 
 from __future__ import annotations
@@ -34,6 +39,20 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from zicato.core import BoardEntry, MutationPoint, RunResult, RuntimeConfig
+
+#: Members of :class:`HarnessAdapter` an adapter MAY omit and still be
+#: an adapter. Every shipped and operator-authored adapter predates the
+#: post-promotion hook, so making :meth:`HarnessAdapter.on_promote`
+#: required would retroactively un-adapt all of them.
+OPTIONAL_ADAPTER_MEMBERS = frozenset({"on_promote"})
+
+#: The members :class:`HarnessAdapter`'s ``isinstance`` gate actually
+#: enforces: the three behavioural methods, which Python guarantees are
+#: class-level and therefore visible to ``__subclasshook__``. The data
+#: attributes (``name``, ``run_output_names``) are deliberately NOT in
+#: this set — an adapter may legitimately assign them in ``__init__``,
+#: where a class-level hook cannot see them.
+REQUIRED_ADAPTER_METHODS = ("mutable_subpaths", "load", "mutation_points")
 
 
 @runtime_checkable
@@ -188,8 +207,96 @@ class HarnessAdapter(Protocol):
         """
         ...
 
+    async def on_promote(
+        self,
+        *,
+        epoch_id: str,
+        generation_id: str,
+        parent_generation_id: str | None,
+        snapshot_root: Path,
+        workspace_root: Path,
+    ) -> None:
+        """OPTIONAL: fold a just-promoted generation into out-of-tree state.
+
+        Called exactly once per settled promotion, immediately after the
+        champion marker advances to ``generation_id`` — the first moment
+        the promotion is durable. An adapter whose evolved state lives
+        only in the mutable tree needs nothing here; this exists for a
+        target whose real state lives somewhere the tree cannot reach (a
+        database row, a served artifact, a remote config) and which
+        therefore has to be told when a generation became the champion.
+
+        Parameters
+        ----------
+        epoch_id:
+            The epoch the promotion settled under.
+        generation_id:
+            The generation just crowned champion. Under a
+            multi-challenger structure with an operator multi-promote,
+            this is the PRIMARY head — the one ``current_generation``
+            advanced to — not every generation marked ``promoted`` in
+            lineage.
+        parent_generation_id:
+            The champion this generation displaced, or ``None`` when the
+            round had no recorded parent.
+        snapshot_root:
+            The promoted generation's realized source tree. Read-only by
+            contract: the snapshot is the run record for that generation
+            and mutating it invalidates the unit cache keyed on it.
+        workspace_root:
+            The zicato workspace the run is writing under.
+
+        Failure semantics
+        -----------------
+        BEST-EFFORT, by contract. A hook that raises — or that exceeds
+        :data:`~zicato.evolve.promote_hook.ON_PROMOTE_TIMEOUT_SECONDS`
+        — never un-promotes the generation and never fails the round:
+        the champion marker has already advanced and the outcome is
+        already durable. The failure is logged at ``ERROR`` and raised
+        as an ``on_promote_hook_failed`` WARNING in the round's
+        loop-health report, and reconciling the external side effect is
+        then the operator's job. Implementations that need a promotion
+        to be all-or-nothing must make their own side effect idempotent
+        and reconcile from ``lineage.json``.
+
+        Optionality
+        -----------
+        This member is in :data:`OPTIONAL_ADAPTER_MEMBERS`: an adapter
+        that does not define it is still a :class:`HarnessAdapter` at
+        ``isinstance`` time and is simply never called. The default
+        implementation here is a no-op, so an adapter that *inherits*
+        this Protocol explicitly also gets hookless behaviour for free.
+        """
+        return None
+
+    @classmethod
+    def __subclasshook__(cls, other: type) -> Any:
+        """Make :data:`OPTIONAL_ADAPTER_MEMBERS` genuinely optional.
+
+        The stock ``runtime_checkable`` instance check requires *every*
+        member in ``__protocol_attrs__``, which would make the optional
+        :meth:`on_promote` mandatory the moment it is declared — the
+        exact back-compat break issue #125 must not cause. ABCs consult
+        ``__subclasshook__`` first, so this short-circuits to ``True``
+        for any class carrying the three :data:`REQUIRED_ADAPTER_METHODS`.
+
+        Returning :data:`NotImplemented` (rather than ``False``) for
+        anything else hands the decision back to the stock protocol
+        check, so a malformed adapter is still rejected — and rejected
+        with the stock check's instance-level view, which sees
+        attributes assigned in ``__init__``.
+        """
+        if cls is not HarnessAdapter:
+            return NotImplemented
+        for method in REQUIRED_ADAPTER_METHODS:
+            if not any(method in base.__dict__ for base in other.__mro__):
+                return NotImplemented
+        return True
+
 
 __all__ = [
+    "OPTIONAL_ADAPTER_MEMBERS",
+    "REQUIRED_ADAPTER_METHODS",
     "HarnessAdapter",
     "RunnableHarness",
 ]

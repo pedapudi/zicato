@@ -72,6 +72,26 @@ canonical pinned deterministic contract).
   a naive margin below the floor promotes pure noise — 20/60 A/A promotes
   in the Tier-2 harness).
 
+### Adapters — optional post-promotion hook (`on_promote`)
+- **`HarnessAdapter` gains an optional `on_promote` coroutine**, fired
+  exactly once per settled promotion from both promote seams (the
+  gauntlet's champion-marker advance and the multi-challenger inline
+  crowning), immediately after the promotion becomes durable. It exists
+  for targets whose evolved state lives outside the mutable tree — a
+  database row, a served artifact, a remote config — which previously had
+  to poll `lineage.json` from outside the loop to learn the promoted head.
+  The hook receives the epoch, the promoted and parent generation ids, the
+  promoted snapshot root, and the workspace root.
+- **Optional means optional.** Every adapter predating the hook remains a
+  `HarnessAdapter`: the runtime `isinstance` gate is keyed on the three
+  required methods, and an adapter that declares no hook is never called.
+- **Best-effort by contract.** A hook that raises, or that runs past the
+  120s ceiling, never un-promotes the generation and never fails the
+  round; it logs at ERROR and raises an `on_promote_hook_failed` WARNING
+  in the round's loop-health report for the operator to reconcile.
+  Contract-declared shell commands were deliberately not adopted as an
+  alternative carrier — see ARCHITECTURE.md §4.1.1.
+
 ### Dashboard — decision-centric console (Variant T)
 - **Cross-epoch meta-loop ledger** on the home view: the fleet of epochs
   and the champion lineage across them now lead the environment overview,
