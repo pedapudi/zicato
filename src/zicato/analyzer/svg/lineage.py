@@ -93,7 +93,7 @@ def render_svg_lineage_compact(
 
     positions: dict[str, tuple[float, float]] = {}
     if n > 1 and x_step < node_w:
-        positions, height = _wrapped_positions(
+        positions, wrapped_h = _wrapped_positions(
             gens,
             width=width,
             margin_x=margin_x,
@@ -101,6 +101,11 @@ def render_svg_lineage_compact(
             node_w=node_w,
             node_h=node_h,
         )
+        # A minimum, not a cap: the first wrap (two rows) needs LESS canvas
+        # than the caller asked for, and letting it shrink would make the
+        # figure jump shorter at the very generation count where it grows
+        # an extra row — the opposite of what the reader expects.
+        height = max(height, wrapped_h)
     else:
         for i, g in enumerate(gens):
             x = margin_x + i * x_step

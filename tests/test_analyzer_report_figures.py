@@ -550,6 +550,28 @@ def test_lineage_compact_keeps_the_single_row_layout_when_it_fits() -> None:
     assert 'viewBox="0 0 720 160"' in svg, "the default canvas is unchanged"
 
 
+def test_lineage_compact_canvas_only_ever_grows() -> None:
+    """The caller's ``height`` is a floor the wrap may exceed, never undercut.
+
+    The first wrap is two rows, which needs 142px against the default
+    160 — so returning the computed height unconditionally made the
+    figure jump SHORTER at exactly the generation count where it gains a
+    row. Every count from a single row up must be monotone in the
+    canvas the report reserves for it.
+    """
+    heights = []
+    for n in range(2, 26):
+        gens = (_gen(gid="v0", is_baseline=True, decision="baseline"),) + tuple(
+            _gen(gid=f"v{i}", parent="v0", decision="promoted" if i == 1 else "rejected")
+            for i in range(1, n)
+        )
+        svg = render_svg_lineage_compact(_data(gens))
+        h = float(re.search(r'viewBox="0 0 \d+ ([\d.]+)"', svg).group(1))  # type: ignore[union-attr]
+        assert h >= 160, f"n={n} rendered a canvas shorter than the requested height: {h}"
+        heights.append(h)
+    assert heights == sorted(heights), f"canvas height is not monotone in n: {heights}"
+
+
 # ---------------------------------------------------------------------------
 # Mutation surface
 # ---------------------------------------------------------------------------
