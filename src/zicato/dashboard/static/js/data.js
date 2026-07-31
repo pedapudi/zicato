@@ -311,10 +311,12 @@ export function perJudgeTrend(epochId) {
 }
 // The promoted-lineage OPTIMIZATION TRAJECTORY for one epoch — scalar points
 // along the winners spine + promotion_rate + the UNCERTAINTY-HONEST verdict
-// ("improving" / "plateaued" / "no_signal" when the recent movement sits below
-// the measured A/A noise floor) + the floor itself (build_optimization_
-// trajectory). Absent on the Rust supervisor → cachedJson null-degrades and
-// the panels are simply omitted.
+// ("improving" only when the promoted spine actually advanced / "plateaued" /
+// "no_signal" when the movement sits below the measured A/A noise floor /
+// "stalled" when challengers were fielded, none promoted, and no floor was
+// measured / "warming_up" before anything has settled) + the floor itself
+// (build_optimization_trajectory). Absent on the Rust supervisor → cachedJson
+// null-degrades and the panels are simply omitted.
 export function trajectory(epochId) {
   return cachedJson(`/api/epoch/${enc(epochId)}/trajectory`);
 }

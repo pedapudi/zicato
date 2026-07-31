@@ -432,6 +432,11 @@ export function objectiveText(ep) {
 // ---- LOOP COMMUNICATION panels (pure builders — node-testable) --------
 
 // The verdict WORD the trajectory panel prints (full honesty phrasing).
+// loopVerdict owns every word that reports a problem, so the two surfaces
+// cannot disagree about one; this panel adds the good news the fleet card
+// deliberately stays quiet about. "improving" is spoken only when the promoted
+// spine actually advanced — the reader owns that test, and a stalled loop now
+// arrives here as "stalled", never as a green chip.
 function verdictLine(traj) {
   const v = loopVerdict(traj);
   if (v) return v;

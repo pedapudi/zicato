@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from zicato.analyzer.report_data import EpochReportData
+from zicato.analyzer.report_data import EpochReportData, GenerationView
 from zicato.analyzer.svg.palette import (
     _VAR_BASELINE,
     _VAR_DEFERRED,
@@ -12,6 +12,50 @@ from zicato.analyzer.svg.palette import (
     _generation_decision_var,
 )
 from zicato.analyzer.svg.primitives import _empty_svg, _esc
+
+#: Minimum clear space between wrapped nodes, horizontally and vertically.
+_GRID_GAP_X, _GRID_GAP_Y = 14, 14
+
+
+def _wrapped_positions(
+    gens: list[GenerationView],
+    *,
+    width: int,
+    margin_x: int,
+    margin_y: int,
+    node_w: int,
+    node_h: int,
+) -> tuple[dict[str, tuple[float, float]], int]:
+    """Grid positions for a lineage too wide to sit on one row.
+
+    Fills the spine (baseline + promoted) first, then the rejected /
+    deferred siblings, at a fixed step of ``node_w + gap`` so boxes
+    cannot overlap at any generation count. The spine finishes its last
+    row before the siblings begin, which keeps the centerline reading of
+    the unwrapped layout: the champion chain leads, the discarded
+    attempts follow beneath it.
+
+    Returns the positions and the canvas height they require. A proper
+    star / tree layout would read better still and is registered
+    separately; this only guarantees legibility.
+    """
+    cols = max(1, int((width - 2 * margin_x + _GRID_GAP_X) // (node_w + _GRID_GAP_X)))
+    spine = [g for g in gens if g.is_baseline or g.decision == "promoted"]
+    siblings = [g for g in gens if not (g.is_baseline or g.decision == "promoted")]
+    spine_rows = -(-len(spine) // cols)
+    row_h = node_h + _GRID_GAP_Y
+
+    positions: dict[str, tuple[float, float]] = {}
+    for i, g in enumerate(spine + siblings):
+        slot = i if i < len(spine) else i - len(spine) + spine_rows * cols
+        row, col = divmod(slot, cols)
+        positions[g.generation_id] = (
+            float(margin_x + col * (node_w + _GRID_GAP_X)),
+            float(margin_y + row * row_h),
+        )
+
+    total_rows = max(1, spine_rows + -(-len(siblings) // cols))
+    return positions, 2 * margin_y + total_rows * row_h - _GRID_GAP_Y
 
 
 def render_svg_lineage_compact(
@@ -27,6 +71,12 @@ def render_svg_lineage_compact(
     below. Decisions are encoded by box stroke and fill — promoted
     green, rejected red dashed, deferred amber dotted, baseline /
     pending neutral grey.
+
+    The single row divides the canvas by generation count, so past
+    roughly nine generations the step falls below a node's width and the
+    boxes pile up illegibly. At that point the layout wraps into a grid
+    (see :func:`_wrapped_positions`) and the canvas grows taller to hold
+    it; the caller's ``height`` is a minimum, not a cap.
     """
     gens = list(data.generations)
     if not gens:
@@ -42,13 +92,23 @@ def render_svg_lineage_compact(
     branch_offset = min(usable_h / 3, 52)
 
     positions: dict[str, tuple[float, float]] = {}
-    for i, g in enumerate(gens):
-        x = margin_x + i * x_step
-        if g.is_baseline or g.decision == "promoted":
-            y = center_y
-        else:
-            y = center_y + branch_offset
-        positions[g.generation_id] = (x, y)
+    if n > 1 and x_step < node_w:
+        positions, height = _wrapped_positions(
+            gens,
+            width=width,
+            margin_x=margin_x,
+            margin_y=margin_y,
+            node_w=node_w,
+            node_h=node_h,
+        )
+    else:
+        for i, g in enumerate(gens):
+            x = margin_x + i * x_step
+            if g.is_baseline or g.decision == "promoted":
+                y = center_y
+            else:
+                y = center_y + branch_offset
+            positions[g.generation_id] = (x, y)
 
     parts: list[str] = []
     parts.append(

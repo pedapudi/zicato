@@ -36,6 +36,15 @@ inline**", carried alongside a structured ``evidence`` dict and a
 ``rationale``. The health path collects the same material and then drops
 the actionable half on the way out.
 
+But that precedent has the same defect one layer up, which is why the
+fix has to be a **render conformance rule** rather than another
+well-shaped dataclass field:
+:func:`zicato.cli.commands.reflect._render_practice_section` never reads
+``evidence`` at all, so the numbers behind all eleven practice checks are
+invisible to operators today. Both layers of this codebase collect good
+structured evidence and then drop it at the last hop; adding a third
+evidence field would reproduce the bug rather than fix it.
+
 **B. Surfaces that assume the champion advances.** ``PracticeCheck`` also
 models the fix for pattern B: an explicit ``VERDICT_UNMEASURED`` plus an
 ``unmeasured_reason`` naming the missing input — e.g.
@@ -45,18 +54,33 @@ vacuous pass. Surfaces that degrade silently when the champion is
 retained lack that third state: they cannot distinguish "measured, and
 it is fine" from "there was nothing to measure".
 
+Pattern B is not uniform, and the exceptions cut both ways. Several
+report sections DO degrade honestly (the "_No promoted lineage long
+enough..._" notices), and ``build_round_timeline`` models retention
+correctly with explicit ``held`` steps. But the report's headline
+callout does not: it publishes the last REJECTED challenger's
+counterfactual under a label naming the promoted lineage, so a
+zero-promotion epoch can be headlined as having *improved*. Reading a
+few honest degradations is not evidence that a surface family is
+sound — each of these was written independently, and each invented its
+own behaviour for a regime nothing centrally records.
+
 These are ``xfail(strict=True)`` triage pins: they fail today, and the
 marker comes off with the fix.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import sqlite3
 from pathlib import Path
 
 import pytest
 
+from zicato.analyzer.report_data import EpochReportData, GenerationView, _cumulate_scalar
+from zicato.analyzer.report_sections import _render_campaign_callout, render_score_sparkline
+from zicato.cli.commands.reflect import _render_practice_section
 from zicato.health.diagnostics import HealthFinding, LoopHealth
 from zicato.orchestrator import _summarise_loop_health
 from zicato.tournament.detail import optimization_trajectory
@@ -175,12 +199,6 @@ def test_loop_health_summary_carries_the_detector_s_recommendation() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#129 pattern B: optimization_trajectory computes `plateaued` over the "
-    "PROMOTED spine only, so a run where nothing promotes reports plateaued=False — "
-    "the same value a healthily-improving run reports",
-)
 def test_stalled_run_is_distinguishable_from_an_improving_one(tmp_path: Path) -> None:
     """Six straight rejections must not read as "not plateaued".
 
@@ -196,6 +214,16 @@ def test_stalled_run_is_distinguishable_from_an_improving_one(tmp_path: Path) ->
     pattern B exactly: the surface degrades in the regime where the
     operator most needs it, and it degrades to a *reassuring* value
     rather than an absent one.
+
+    FIXED as adjudicated: ``plateaued`` stays a property of the promoted
+    spine — redefining it to fold in rejections would make a flag named
+    for a scalar window mean something else, and every reader of it
+    would have to be re-checked. What was missing is the companion fact
+    saying whether the flag rests on a measurement at all, so
+    ``plateau_measurable`` was added beside it and the assertion below
+    reads the pair. The original single-field assertion is kept as a
+    comment: it is now *expected* to be equal, and that equality is
+    exactly why the second field has to exist.
     """
     stalled = _index_db(
         tmp_path / "stalled.db",
@@ -228,19 +256,22 @@ def test_stalled_run_is_distinguishable_from_an_improving_one(tmp_path: Path) ->
     assert stalled_traj.challenger_count == 6
     assert stalled_traj.promoted_count == 0
 
-    # ...but the summary flag an operator reads collapses the two regimes.
-    assert stalled_traj.plateaued != improving_traj.plateaued, (
+    # ...and the raw flag still collapses the two regimes, by design:
+    #   assert stalled_traj.plateaued == improving_traj.plateaued == False
+    # so the flag must not be read alone. The PAIR separates them: the
+    # stalled run's one-node spine cannot support a plateau judgement,
+    # and now says so.
+    assert stalled_traj.plateau_measurable is False
+    assert improving_traj.plateau_measurable is True
+    assert (stalled_traj.plateaued, stalled_traj.plateau_measurable) != (
+        improving_traj.plateaued,
+        improving_traj.plateau_measurable,
+    ), (
         "a run with six rejections and zero promotions reports the same "
         f"plateaued={stalled_traj.plateaued!r} as a run improving every round"
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#129 pattern B: the dashboard trajectory verdict reports 'improving' for a "
-    "run with zero promotions when no noise floor was measured — issue #84's "
-    "stuck_no_promotions guard is gated on `floor is not None`",
-)
 def test_zero_promotion_run_without_a_measured_floor_is_not_reported_as_improving(
     tmp_path: Path,
 ) -> None:
@@ -263,6 +294,15 @@ def test_zero_promotion_run_without_a_measured_floor_is_not_reported_as_improvin
     The floor is the wrong gate: without one the honest verdict is
     unmeasurable, never ``"improving"``. Fixing the gate means letting
     ``stuck_no_promotions`` suppress ``"improving"`` on its own.
+
+    FIXED: the ``floor is not None`` conjunct is gone. The floor now
+    chooses WHICH honest word applies rather than whether one applies —
+    ``"no_signal"`` with a measured floor (every challenger tied inside
+    the A/A spread is a claim about noise, and needs a measurement to
+    back it), ``"stalled"`` without one (a report of promotions that did
+    not happen, which claims nothing about noise). The assertion below
+    pins the exact word rather than merely ``!= "improving"``, so a
+    future fallthrough to some third reassuring word fails here too.
     """
     from zicato.query import WorkspacePaths, build_optimization_trajectory  # noqa: PLC0415
 
@@ -289,7 +329,178 @@ def test_zero_promotion_run_without_a_measured_floor_is_not_reported_as_improvin
     assert view["challenger_count"] == 6
     assert view["promoted_count"] == 0
     assert view["noise_floor"] is None
-    assert view["verdict"] != "improving", (
+    assert view["verdict"] == "stalled", (
         "six challengers, zero promotions, no measured floor — the dashboard "
-        f"still calls this {view['verdict']!r}"
+        f"calls this {view['verdict']!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Pattern B — the published report
+# ---------------------------------------------------------------------------
+
+
+def _generation(
+    gid: str, parent: str, *, baseline: bool = False, decision: str = "rejected", delta: float = 0.0
+) -> GenerationView:
+    """One generation view carrying only the fields these pins read."""
+    return GenerationView(
+        generation_id=gid,
+        parent_generation_id=parent,
+        is_baseline=baseline,
+        proposed_at="",
+        core_idea="idea",
+        why="why",
+        risks="",
+        modulating=(),
+        expected_pass_rate_delta="",
+        expected_drift_movements=(),
+        decision=decision,
+        rejection_reason="below promote_margin",
+        scalar_score_delta=delta,
+        drift_loss_delta=0.0,
+        pass_rate_delta=0.0,
+        drift_movements=(),
+        metric_movements=(),
+        patches=(),
+    )
+
+
+def _report_data(generations: list[GenerationView]) -> EpochReportData:
+    """Build an ``EpochReportData`` defaulting every field these pins ignore."""
+    cumulated = _cumulate_scalar(generations)
+    kwargs: dict[str, object] = {}
+    for f in dataclasses.fields(EpochReportData):
+        if f.name == "generations":
+            kwargs[f.name] = tuple(cumulated)
+            continue
+        if f.default is not dataclasses.MISSING or f.default_factory is not dataclasses.MISSING:
+            continue
+        annotation = str(f.type)
+        if "tuple" in annotation:
+            kwargs[f.name] = ()
+        elif "dict" in annotation:
+            kwargs[f.name] = {}
+        elif "bool" in annotation:
+            kwargs[f.name] = False
+        else:
+            kwargs[f.name] = ""
+    return EpochReportData(**kwargs)  # type: ignore[arg-type]
+
+
+def _stalled_epoch(rounds: int = 20, delta: float = -0.043) -> EpochReportData:
+    """A baseline plus ``rounds`` rejected challengers — nothing promoted."""
+    return _report_data(
+        [_generation("v0", "", baseline=True, decision="baseline")]
+        + [_generation(f"v{i}", "v0", delta=delta) for i in range(1, rounds + 1)]
+    )
+
+
+def test_campaign_callout_does_not_credit_a_rejected_challenger_to_the_lineage() -> None:
+    """The published headline must not contradict itself.
+
+    ``EpochReportData.final_scalar`` returns
+    ``generations[-1].cumulative_scalar``, and ``_cumulate_scalar`` fills
+    a cumulative for EVERY generation regardless of decision. With zero
+    promotions the newest generation is a rejected one, so the callout
+    reports a score that was measured and then discarded — under a label
+    naming the promoted lineage.
+
+    When that discarded challenger happened to improve on the champion
+    but failed the margin, the direction word compounds the error and the
+    sentence contradicts itself outright: "has improved to `-0.043` ...
+    (0 promoted, 20 rejected)". The honest rendering of a lineage that
+    never advanced is "held to `+0.000`".
+
+    The same number is handed to the prose LLM as ground truth via
+    ``report_prompts.py``'s ``final_cumulative_scalar``, in a digest whose
+    docstring calls itself "the factual substrate ... so the model never
+    has a reason to compute or guess a value".
+
+    FIXED: ``final_scalar`` is champion-anchored (last promoted
+    generation, else the baseline). The counterfactual keeps its place
+    in the callout and in the LLM digest, but under
+    ``latest_rejected_scalar`` — a name that says whose number it is.
+    """
+    callout = _render_campaign_callout(_stalled_epoch())
+
+    assert "0 promoted, 20 rejected" in callout
+    assert (
+        "improved" not in callout
+    ), f"a lineage that never advanced is headlined as improving: {callout!r}"
+    assert (
+        "held to `+0.000`" in callout
+    ), f"the callout credits a discarded challenger to the promoted lineage: {callout!r}"
+    # The discarded number survives — labelled as the path not taken.
+    assert "-0.043" in callout and "a path not taken" in callout, callout
+
+
+def test_trajectory_chart_marks_the_champion_as_current_not_the_last_attempt() -> None:
+    """``<- current`` must point at the generation actually in force.
+
+    ``render_score_sparkline`` pins the marker to ``last_idx =
+    len(gens) - 1``. With zero promotions that index holds a rejected
+    challenger whose patches were thrown away, while the generation
+    genuinely in force is the baseline at the top of the chart. The
+    operator reads the chart bottom-up and takes the discarded attempt
+    for the state of the system.
+
+    FIXED: the marker follows the champion row — the last promoted
+    generation, or the baseline when nothing has promoted.
+    """
+    data = _stalled_epoch(rounds=3)
+    chart = render_score_sparkline(data)
+
+    current_lines = [ln for ln in chart.splitlines() if "<- current" in ln]
+    assert len(current_lines) == 1, chart
+    assert (
+        "rejected" not in current_lines[0]
+    ), f"'<- current' marks a discarded rejected challenger: {current_lines[0]!r}"
+    assert "baseline" in current_lines[0], current_lines[0]
+
+
+# ---------------------------------------------------------------------------
+# Pattern A — the precedent's own renderer
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="#129 pattern A: _render_practice_section never reads PracticeCheck.evidence, "
+    "so the structured evidence behind every practice verdict is invisible to operators",
+)
+def test_practice_review_renders_the_evidence_behind_its_verdict() -> None:
+    """The convention this issue wants to spread has the same defect.
+
+    ``PracticeCheck`` is zicato's best-shaped diagnostic contract —
+    ``evidence`` dict, ``rationale``, and an explicit ``unmeasured``
+    verdict. But its renderer emits ``check_id`` / ``headline`` /
+    ``rationale`` / ``unmeasured_reason`` / ``proposed_op`` and never
+    touches ``evidence``, so the numbers behind all eleven checks never
+    reach the report.
+
+    This is why the fix for pattern A has to be a RENDER conformance
+    rule: adding another well-shaped evidence field to a dataclass
+    reproduces the bug rather than fixing it.
+    """
+    check = {
+        "check_id": "promotion_hygiene",
+        "verdict": "unsound",
+        "headline": "promotions are clearing a margin that sits below the measured floor",
+        "evidence": {
+            "promotions": 4,
+            "promote_margin": 0.01,
+            "margin_below_floor": True,
+            "recommended_promote_margin": 0.075,
+        },
+        "rationale": "a promotion on a sub-floor margin promotes noise",
+        "proposed_op": None,
+        "unmeasured_reason": None,
+    }
+
+    rendered = "\n".join(_render_practice_section([check]))
+
+    assert "0.075" in rendered, (
+        "the recommended margin the check computed never reaches the report; "
+        f"rendered={rendered!r}"
     )
