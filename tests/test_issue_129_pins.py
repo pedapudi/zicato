@@ -40,6 +40,7 @@ marker comes off with the fix.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -231,4 +232,64 @@ def test_stalled_run_is_distinguishable_from_an_improving_one(tmp_path: Path) ->
     assert stalled_traj.plateaued != improving_traj.plateaued, (
         "a run with six rejections and zero promotions reports the same "
         f"plateaued={stalled_traj.plateaued!r} as a run improving every round"
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="#129 pattern B: the dashboard trajectory verdict reports 'improving' for a "
+    "run with zero promotions when no noise floor was measured — issue #84's "
+    "stuck_no_promotions guard is gated on `floor is not None`",
+)
+def test_zero_promotion_run_without_a_measured_floor_is_not_reported_as_improving(
+    tmp_path: Path,
+) -> None:
+    """The worst pattern-B instance: a stalled loop rendered as healthy.
+
+    :func:`zicato.query.loop_view.build_optimization_trajectory` computes
+    the word the dashboard shows. It already knows the stalled case —
+    ``stuck_no_promotions`` was added for issue #84 — but the branch
+    reads ``if floor is not None and stuck_no_promotions``. Noise-floor
+    calibration is opt-in, so in a workspace that never ran it the guard
+    is skipped entirely and control falls through to
+    ``elif not traj.plateaued: verdict = "improving"``.
+
+    The raw ``plateaued`` flag is ``False`` here only because the
+    promoted spine is too SHORT to plateau (the defect pinned above), so
+    the fallthrough converts "we have no measurement" into the single
+    most reassuring word the UI can print. An operator watching six
+    consecutive rejections is told the loop is improving.
+
+    The floor is the wrong gate: without one the honest verdict is
+    unmeasurable, never ``"improving"``. Fixing the gate means letting
+    ``stuck_no_promotions`` suppress ``"improving"`` on its own.
+    """
+    from zicato.query import WorkspacePaths, build_optimization_trajectory  # noqa: PLC0415
+
+    # A workspace whose epoch config carries NO measured noise floor.
+    ws = tmp_path / ".zicato"
+    epoch_dir = ws / "epochs" / EPOCH
+    epoch_dir.mkdir(parents=True)
+    (ws / "current_epoch").write_text(EPOCH, encoding="utf-8")
+    (epoch_dir / "config.json").write_text(
+        json.dumps({"contract_hash": "h1", "closed": False}), encoding="utf-8"
+    )
+    _index_db(
+        ws / "index.db",
+        # v0 seed (unpromoted, as the seed row is written) + six rejections.
+        [(EPOCH, "v0", None, 0)] + [(EPOCH, f"v{i}", "v0", 0) for i in range(1, 7)],
+        [
+            (f"t{i}", EPOCH, "v0", f"v{i}", "rejected", 3.6, 3.6, 0.0, "below margin", "x")
+            for i in range(1, 7)
+        ],
+    )
+
+    view = build_optimization_trajectory(WorkspacePaths(ws), EPOCH)
+
+    assert view["challenger_count"] == 6
+    assert view["promoted_count"] == 0
+    assert view["noise_floor"] is None
+    assert view["verdict"] != "improving", (
+        "six challengers, zero promotions, no measured floor — the dashboard "
+        f"still calls this {view['verdict']!r}"
     )
