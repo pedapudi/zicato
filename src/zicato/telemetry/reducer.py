@@ -1294,9 +1294,21 @@ def write_loss_profile(profile: LossProfile, target_path: Path) -> None:
 def read_loss_profile(path: Path) -> LossProfile:
     """Read a :class:`LossProfile` previously written by :func:`write_loss_profile`.
 
-    Inverse of :func:`write_loss_profile`. Re-tuples ``drift_counts``
-    (which JSON renders as a list) and re-constructs the nested
-    :class:`DriftCount` and :class:`ExpectationResult` dataclasses.
+    Inverse of :func:`write_loss_profile`; the decode itself lives in
+    :func:`loss_profile_from_dict`, which the archived copies of a
+    displaced profile (``loss.archive.jsonl``, issue #122) share.
+    """
+    with open(path, encoding="utf-8") as f:
+        d = json.load(f)
+    return loss_profile_from_dict(d)
+
+
+def loss_profile_from_dict(d: dict[str, Any]) -> LossProfile:
+    """Rebuild a :class:`LossProfile` from its persisted JSON object.
+
+    Re-tuples ``drift_counts`` (which JSON renders as a list) and
+    re-constructs the nested :class:`DriftCount` and
+    :class:`ExpectationResult` dataclasses.
 
     Back-compat: profiles written before the generalised metric surface
     omit ``metric_counts`` / ``tokens_spent`` / ``output_chars`` /
@@ -1308,8 +1320,6 @@ def read_loss_profile(path: Path) -> LossProfile:
     profile of a run whose judges all returned — carries no such key and
     loads as the empty tuple.
     """
-    with open(path, encoding="utf-8") as f:
-        d = json.load(f)
     drift_counts = tuple(
         DriftCount(
             kind=c["kind"],
@@ -1416,6 +1426,7 @@ __all__ = [
     "not_completed_penalty",
     "split_judge_attributed_kind",
     "read_loss_profile",
+    "loss_profile_from_dict",
     "write_loss_profile",
     "dialect_producer",
 ]

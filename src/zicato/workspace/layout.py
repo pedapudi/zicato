@@ -241,6 +241,16 @@ class WorkspaceLayout:
         """One generation's cached ``gen_score.json`` aggregate."""
         return self.generation_dir(epoch_id, generation_id) / "gen_score.json"
 
+    def gen_score_history(self, epoch_id: str, generation_id: str) -> Path:
+        """One generation's append-only ``gen_score.history.jsonl`` archive.
+
+        Every aggregate ever written for the generation, one JSON line
+        per write, oldest first — the record that survives a champion's
+        re-measurement overwriting the flat :meth:`gen_score` (issue
+        #122). Absent until a generation has been scored at least once.
+        """
+        return self.generation_dir(epoch_id, generation_id) / "gen_score.history.jsonl"
+
     def harness_load(self, epoch_id: str, generation_id: str) -> Path:
         """One generation's ``harness_load.json`` snapshot-origin provenance.
 
@@ -288,3 +298,22 @@ class WorkspaceLayout:
     def events(self, epoch_id: str, generation_id: str, entry_id: str) -> Path:
         """One run's goldfive event JSONL (``events.jsonl``)."""
         return self.run_dir(epoch_id, generation_id, entry_id) / "events.jsonl"
+
+    def events_prev(self, epoch_id: str, generation_id: str, entry_id: str) -> Path:
+        """The ONE retained predecessor of a run's ``events.jsonl``.
+
+        Written by :func:`zicato.telemetry.sink.archive_prior_events`
+        when a re-measurement is about to truncate the events file
+        (issue #122). Exactly one generation of history is kept, so the
+        archive is bounded no matter how many rounds a champion defends.
+        """
+        return self.run_dir(epoch_id, generation_id, entry_id) / "events.prev.jsonl"
+
+    def loss_archive(self, epoch_id: str, generation_id: str, entry_id: str) -> Path:
+        """One run's displaced-loss archive (``loss.archive.jsonl``).
+
+        The per-entry profiles a re-measurement overwrote, one JSON line
+        each — see :func:`zicato.tournament.unit_cache.read_unit_loss_history`,
+        which joins them with the canonical slot.
+        """
+        return self.run_dir(epoch_id, generation_id, entry_id) / "loss.archive.jsonl"

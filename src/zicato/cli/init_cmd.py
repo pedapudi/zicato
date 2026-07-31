@@ -43,7 +43,11 @@ def initialize_workspace(
 
     * ``{workspace_root}/`` (directory)
     * ``{workspace_root}/config.json`` — ``{instance_id, created_at}``
-    * ``{workspace_root}/lineage.json`` — empty DAG: ``{"nodes": [], "edges": []}``
+    * ``{workspace_root}/lineage.json`` — empty DAG: ``{"epochs": []}``
+      (the shape :func:`zicato.epoch.lineage.load_lineage` reads; the
+      seed used to be ``{"nodes": [], "edges": []}``, which the loader
+      rejected as malformed and silently replaced with the empty DAG on
+      the first mutation)
     * ``{workspace_root_parent}/scoring.json`` — the FULL recommended
       effective contract (racing field 4, replicates 2, evidence gate on;
       see :func:`zicato.core.scoring_config.recommended_scaffold_weights`),
@@ -63,9 +67,7 @@ def initialize_workspace(
 
     lineage_path = workspace_root / LINEAGE_FILENAME
     if force or not lineage_path.exists():
-        lineage_path.write_text(
-            json.dumps({"nodes": [], "edges": []}, indent=2, sort_keys=True) + "\n"
-        )
+        lineage_path.write_text(json.dumps({"epochs": []}, indent=2, sort_keys=True) + "\n")
 
     config: dict[str, Any] = {
         "instance_id": instance_id,

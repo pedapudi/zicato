@@ -41,6 +41,7 @@ from zicato.telemetry.scoring import (
     combined_scalar,
 )
 from zicato.telemetry.sink import (
+    archive_prior_events,
     make_run_sink,
     make_run_sink_path,
     make_run_sinks,
@@ -48,6 +49,7 @@ from zicato.telemetry.sink import (
 )
 
 __all__ = [
+    "archive_prior_events",
     "make_run_sink",
     "make_run_sink_path",
     "make_run_sinks",

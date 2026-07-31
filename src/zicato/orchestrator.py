@@ -1164,9 +1164,25 @@ async def evolve_once(
                 round_log=round_log,
             )
 
-    # Cache gen_score.json for future fast-mode runs.
-    _cache_gen_score(workspace_root, resolved_epoch_id, parent_id, tournament_result.parent_agg)
-    _cache_gen_score(workspace_root, resolved_epoch_id, next_id, tournament_result.child_agg)
+    # Cache gen_score.json for future fast-mode runs. The round is threaded
+    # through so the archived measurement beside it (gen_score.history.jsonl)
+    # names the round it was taken in — the champion defends across many
+    # rounds under one generation id, so the round is the only thing that
+    # tells two of its measurements apart (issue #122).
+    _cache_gen_score(
+        workspace_root,
+        resolved_epoch_id,
+        parent_id,
+        tournament_result.parent_agg,
+        round_index=round_index,
+    )
+    _cache_gen_score(
+        workspace_root,
+        resolved_epoch_id,
+        next_id,
+        tournament_result.child_agg,
+        round_index=round_index,
+    )
 
     # WS8: the duel's board units (aggregate — see _emit_tournament_units),
     # the gate verdict, and — when the runner consulted a holdout — the
@@ -1374,6 +1390,10 @@ async def evolve_once(
         outcome=outcome_record,
         lineage_generation=finalised_gen,
         lineage_parent_id=parent_id,
+        # The duel's two numbers, recorded on the lineage node beside the
+        # reason the gate gave (issue #124).
+        lineage_parent_scalar=parent_scalar,
+        lineage_child_scalar=child_scalar,
         advance_current_generation=bookkeeping_decision == "promoted",
     )
     # WS8: the round's terminal decision + provenance (overrides explicit).
@@ -2066,8 +2086,23 @@ async def _evolve_multi_challenger(
         # replicate duels (``cache_scores=False``): one reserved-slot draw
         # must not overwrite the round-scored aggregates.
         if cache_scores:
-            _cache_gen_score(workspace_root, epoch_id, m.left.generation_id, result.parent_agg)
-            _cache_gen_score(workspace_root, epoch_id, m.right.generation_id, result.child_agg)
+            # Every matchup appends its own line to the archive beside the
+            # canonical file, so the within-round measurements the last
+            # matchup's write shadows are still on disk (issue #122).
+            _cache_gen_score(
+                workspace_root,
+                epoch_id,
+                m.left.generation_id,
+                result.parent_agg,
+                round_index=round_index,
+            )
+            _cache_gen_score(
+                workspace_root,
+                epoch_id,
+                m.right.generation_id,
+                result.child_agg,
+                round_index=round_index,
+            )
         # WS8: this matchup's board units + gate verdict onto the round log.
         _emit_tournament_units(round_log, result)
         _emit_harness_loaded(round_log, workspace_root, epoch_id, result)
@@ -2621,7 +2656,29 @@ async def _evolve_multi_challenger(
             promoted=is_crowned,
             round_index=challenger.generation.round_index,
         )
-        append_to_lineage(workspace_root, epoch_id, gen_record, parent_id=parent_id)
+        # The settle-time facts, per challenger (issue #124): the reason
+        # this one was cut — already computed above, including the
+        # holdout-demotion and operator-override phrasings, and read back
+        # off the outcome so the DAG and experiment.json cannot disagree —
+        # and its own standings scalar against the champion's. ``None``,
+        # not 0.0, when a challenger has no aggregate: a zero scalar is a
+        # legal measurement.
+        settled = finalised_by_id.get(gid)
+        gen_agg = _first_aggregate_for(gid, decision)
+        lineage_parent_scalar = float(champion_agg["scalar"]) if champion_agg else None
+        append_to_lineage(
+            workspace_root,
+            epoch_id,
+            gen_record,
+            parent_id=parent_id,
+            rejection_reason=(
+                settled.outcome.rejection_reason
+                if settled is not None and settled.outcome is not None
+                else ""
+            ),
+            parent_scalar=lineage_parent_scalar,
+            child_scalar=float(gen_agg["scalar"]) if gen_agg else None,
+        )
     if promoted_id is not None:
         _set_current_generation(workspace_root, epoch_id, promoted_id)
         # The marker MUST now name the crowned generation — a write that did
