@@ -14,6 +14,7 @@ Coverage:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 
@@ -25,11 +26,18 @@ from zicato.analyzer.report import (
     render_report_html,
     render_report_html_fragment,
 )
-from zicato.analyzer.report_data import gather_epoch_report_data
+from zicato.analyzer.report_data import (
+    EpochReportData,
+    GenerationView,
+    _cumulate_scalar,
+    gather_epoch_report_data,
+)
 from zicato.analyzer.report_prompts import parse_prose_blocks
 from zicato.analyzer.report_sections import (
     render_methodology_section,
+    render_per_board_outcomes,
     render_results_section,
+    render_score_sparkline,
     render_score_trajectory_table,
 )
 from zicato.core.workspace import analysis_path
@@ -1604,3 +1612,127 @@ def test_gather_orders_generations_identically_via_inner_and_outer_root(tmp_path
     assert [g.generation_id for g in outer.generations] == [
         g.generation_id for g in inner.generations
     ]
+
+
+# ---------------------------------------------------------------------------
+# Champion-anchored publication surfaces (issue #129 pattern B)
+# ---------------------------------------------------------------------------
+#
+# Every number in the report that names "the promoted lineage" must come from
+# a generation the gate accepted. A rejected challenger's cumulative scalar is
+# a counterfactual — where the lineage WOULD have stood — and publishing it
+# under the lineage's name lets a zero-promotion epoch read as an improving
+# one. These cover the anchoring itself plus the two prose degradations that
+# assumed a promotion had happened.
+
+
+def _cv_data(*generations: object) -> EpochReportData:
+    """An ``EpochReportData`` carrying only the fields these tests read."""
+    kwargs: dict[str, object] = {}
+    for f in dataclasses.fields(EpochReportData):
+        if f.name == "generations":
+            kwargs[f.name] = tuple(_cumulate_scalar(list(generations)))  # type: ignore[arg-type]
+        elif f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING:
+            annotation = str(f.type)
+            kwargs[f.name] = (
+                ()
+                if "tuple" in annotation
+                else {}
+                if "dict" in annotation
+                else False
+                if "bool" in annotation
+                else ""
+            )
+    return EpochReportData(**kwargs)  # type: ignore[arg-type]
+
+
+def _cv_gen(gid: str, parent: str, decision: str, delta: float = 0.0) -> GenerationView:
+    return GenerationView(
+        generation_id=gid,
+        parent_generation_id=parent,
+        is_baseline=decision == "baseline",
+        proposed_at="",
+        core_idea="idea",
+        why="",
+        risks="",
+        modulating=(),
+        expected_pass_rate_delta="",
+        expected_drift_movements=(),
+        decision=decision,
+        rejection_reason="below promote_margin" if decision == "rejected" else "",
+        scalar_score_delta=delta,
+        drift_loss_delta=0.0,
+        pass_rate_delta=0.0,
+        drift_movements=(),
+        metric_movements=(),
+        patches=(),
+    )
+
+
+def test_final_scalar_follows_the_champion_past_a_trailing_rejection() -> None:
+    """A promotion followed by a rejection: the lineage stands at the promotion.
+
+    This is the common case, not just the zero-promotion one — any epoch
+    whose last round rejected had its headline number taken from the
+    discarded challenger.
+    """
+    data = _cv_data(
+        _cv_gen("v0", "", "baseline"),
+        _cv_gen("v1", "v0", "promoted", -0.30),
+        _cv_gen("v2", "v1", "rejected", +0.50),
+    )
+    assert data.final_scalar == pytest.approx(-0.30), "the promoted v1, not the rejected v2"
+    assert data.latest_rejected_scalar == pytest.approx(0.20), "v2's counterfactual, named as such"
+    # And the chart marker agrees with the number.
+    current = [ln for ln in render_score_sparkline(data).splitlines() if "<- current" in ln]
+    assert len(current) == 1 and "v1" in current[0], current
+
+
+def test_final_scalar_holds_at_the_baseline_when_nothing_promoted() -> None:
+    data = _cv_data(
+        _cv_gen("v0", "", "baseline"),
+        *[_cv_gen(f"v{i}", "v0", "rejected", -0.04) for i in range(1, 4)],
+    )
+    assert data.final_scalar == 0.0
+    assert data.latest_rejected_scalar == pytest.approx(-0.04)
+
+
+def test_trajectory_table_puts_the_decision_beside_the_scalar_it_qualifies() -> None:
+    """The `scalar` column means different things on promoted and rejected rows.
+
+    Reading down it as a running score is the mistake the layout invited:
+    the decision sat five columns away, past three deltas.
+    """
+    data = _cv_data(
+        _cv_gen("v0", "", "baseline"),
+        _cv_gen("v1", "v0", "rejected", -0.04),
+    )
+    table = render_score_trajectory_table(data)
+    header = table.splitlines()[0]
+    cols = [c.strip() for c in header.strip("|").split("|")]
+    assert cols.index("decision") == cols.index("scalar") - 1, header
+    assert "counterfactual" in table, "the note says what a rejected row's scalar is"
+    # The rows still carry their decisions.
+    assert "| baseline |" in table and "| rejected |" in table
+
+
+def test_per_board_outcomes_names_the_real_cause_when_nothing_promoted() -> None:
+    """ "No cached scores available" reads as a harness that has not run.
+
+    It had run — twelve times — and scored every challenger. What is
+    missing is a second column to compare the baseline against.
+    """
+    data = _cv_data(
+        _cv_gen("v0", "", "baseline"),
+        *[_cv_gen(f"v{i}", "v0", "rejected", -0.04) for i in range(1, 13)],
+    )
+    rendered = render_per_board_outcomes(data)
+    assert "12 challenger generations were scored and rejected" in rendered
+    assert "baseline alone" in rendered
+    assert "No cached generation scores are available" not in rendered
+
+
+def test_per_board_outcomes_keeps_the_original_wording_before_any_round() -> None:
+    """Nothing has run yet — here "not available yet" is the honest sentence."""
+    data = _cv_data(_cv_gen("v0", "", "baseline"))
+    assert "No cached generation scores are available" in render_per_board_outcomes(data)

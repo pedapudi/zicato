@@ -181,10 +181,43 @@ class EpochReportData:
 
     @property
     def final_scalar(self) -> float:
-        """Cumulative scalar of the most-recent generation in the view."""
-        if not self.generations:
-            return 0.0
-        return self.generations[-1].cumulative_scalar
+        """Cumulative scalar of the generation currently IN FORCE.
+
+        CHAMPION-ANCHORED: the last promoted generation, or the baseline
+        (``0.0``) when nothing has promoted. This is the number the
+        harness actually stands behind.
+
+        It is deliberately not ``generations[-1]``. ``_cumulate_scalar``
+        fills a cumulative for every generation regardless of decision,
+        so the newest row is a *rejected* challenger whenever the last
+        round did not promote — and its cumulative is a counterfactual,
+        the score the lineage would have carried had the challenger been
+        accepted. Publishing that as the lineage's score credits the
+        promoted lineage with work that was measured and then discarded,
+        which in a zero-promotion epoch headlines a stalled campaign as
+        an improving one. See :attr:`latest_rejected_scalar` for the
+        counterfactual under its own name.
+        """
+        champion = 0.0
+        for g in self.generations:
+            if g.is_baseline:
+                champion = g.cumulative_scalar
+            elif g.decision == "promoted":
+                champion = g.cumulative_scalar
+        return champion
+
+    @property
+    def latest_rejected_scalar(self) -> float | None:
+        """The most recent REJECTED challenger's counterfactual cumulative.
+
+        The score that challenger would have taken the lineage to had it
+        cleared the gate — a path not taken, never the lineage's own
+        score. ``None`` when nothing has been rejected.
+        """
+        for g in reversed(self.generations):
+            if g.decision == "rejected" and not g.is_baseline:
+                return g.cumulative_scalar
+        return None
 
     @property
     def last_round(self) -> int:

@@ -87,7 +87,15 @@ def _data_digest(data: EpochReportData) -> str:
         "promoted": data.promoted,
         "rejected": data.rejected,
         "deferred": data.deferred,
+        # CHAMPION-ANCHORED (the last promoted generation, or the baseline):
+        # the score the harness stands behind. The newest generation's
+        # cumulative is a different number whenever the last round rejected,
+        # and it travels under its own name below so the model cannot mistake
+        # a discarded challenger's counterfactual for the lineage's score.
         "final_cumulative_scalar": round(data.final_scalar, 4),
+        "latest_rejected_scalar": (
+            None if data.latest_rejected_scalar is None else round(data.latest_rejected_scalar, 4)
+        ),
         "board_entry_count": len(data.board_entries),
         "board_entries": [
             {

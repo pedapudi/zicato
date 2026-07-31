@@ -963,9 +963,17 @@ export function deltaCell(value, opts) {
 // verdict chip / promotion-rate / cost / noise-band the fleet cards AND the
 // epoch view both render. They lived in home.js, which made epoch.js import
 // UPWARD from a sibling view (a reverse dependency); the shared home is ui.js.
+// The verdict words BOTH the fleet card and the epoch panel print. Only the
+// words that report a problem live here: "improving" / "warming_up" return
+// null so a healthy or undecided loop stays quiet on the fleet card (the epoch
+// panel adds "improving" on top — see epoch.js verdictLine). "stalled" is the
+// no-floor sibling of "no_signal": challengers fielded, none promoted, and no
+// A/A floor measured, so the phrase names the promotions that did not happen
+// and claims nothing about noise.
 export function loopVerdict(traj) {
   const v = traj && typeof traj === 'object' ? traj.verdict : null;
   if (v === 'no_signal') return { word: 'no detectable signal (below noise floor)', cls: 'nosignal' };
+  if (v === 'stalled') return { word: 'stalled (no promotions)', cls: 'stalled' };
   if (v === 'plateaued') return { word: 'plateaued', cls: 'plateau' };
   return null;
 }
@@ -1000,6 +1008,7 @@ export function loopStatsDigest(traj, cost) {
     traj && traj.verdict ? String(traj.verdict) : null,
     traj && isNum(traj.promotion_rate) ? traj.promotion_rate.toFixed(3) : null,
     traj && isNum(traj.challenger_count) ? traj.challenger_count : null,
+    traj && isNum(traj.promoted_count) ? traj.promoted_count : null,
     (traj && traj.noise_floor && isNum(traj.noise_floor.max_abs_delta))
       ? traj.noise_floor.max_abs_delta.toFixed(4) : null,
     cost && isNum(cost.cost_per_promotion_ms) ? Math.round(cost.cost_per_promotion_ms) : null,

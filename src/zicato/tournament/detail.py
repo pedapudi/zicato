@@ -264,7 +264,18 @@ class TrajectoryPoint:
 
 @dataclass(frozen=True, slots=True)
 class Trajectory:
-    """The optimisation trajectory across the promoted lineage."""
+    """The optimisation trajectory across the promoted lineage.
+
+    ``plateaued`` and ``plateau_measurable`` are read as a PAIR.
+    ``plateaued`` is a property of the promoted spine, and a spine
+    shorter than :data:`PLATEAU_WINDOW` resolved scalars cannot plateau —
+    so ``plateaued=False`` alone conflates "the lineage is still
+    improving" with "the lineage is too short to tell". A run where every
+    challenger was rejected has a one-node spine and reports
+    ``plateaued=False`` for the second reason, not the first.
+    ``plateau_measurable`` names which of the two it is: ``False`` means
+    the flag carries no measurement at all.
+    """
 
     epoch_id: str
     points: tuple[TrajectoryPoint, ...]
@@ -272,6 +283,9 @@ class Trajectory:
     promoted_count: int
     challenger_count: int
     plateaued: bool
+    #: Whether the spine holds enough resolved scalars for ``plateaued``
+    #: to mean anything (``>= PLATEAU_WINDOW``). See the class docstring.
+    plateau_measurable: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1230,6 +1244,11 @@ def optimization_trajectory(db_path: str | Path, epoch_id: str) -> Trajectory:
       than :data:`PLATEAU_EPSILON`) across the last :data:`PLATEAU_WINDOW`
       promoted generations. A spine shorter than the window cannot
       plateau (returns ``False``).
+    * ``plateau_measurable`` — whether that flag rests on a measurement
+      at all. A run whose challengers were all rejected has a one-node
+      spine, so it reports ``plateaued=False`` for want of data, not for
+      want of a plateau; the pair distinguishes it from a genuinely
+      improving lineage.
 
     Generations whose scalar cannot be resolved contribute a ``None``
     scalar point and are skipped by the plateau check — never raises.
@@ -1262,6 +1281,7 @@ def optimization_trajectory(db_path: str | Path, epoch_id: str) -> Trajectory:
             promoted_count=promoted_count,
             challenger_count=challenger_count,
             plateaued=plateaued,
+            plateau_measurable=_plateau_measurable(points),
         )
     finally:
         conn.close()
@@ -1299,11 +1319,24 @@ def _resolve_scalar(conn: sqlite3.Connection, epoch_id: str, generation_id: str)
     return None
 
 
+def _plateau_measurable(points: list[TrajectoryPoint]) -> bool:
+    """Whether the spine holds enough resolved scalars to judge a plateau.
+
+    The companion to :func:`_is_plateaued`: below
+    :data:`PLATEAU_WINDOW` resolved scalars that function short-circuits
+    to ``False``, which reads as the reassuring "not plateaued" but is
+    really "no measurement". This says which one it is.
+    """
+    return sum(1 for p in points if p.scalar is not None) >= PLATEAU_WINDOW
+
+
 def _is_plateaued(points: list[TrajectoryPoint]) -> bool:
     """Whether the last :data:`PLATEAU_WINDOW` scalars show no improvement.
 
     Considers only points with a resolved scalar. With fewer than
-    ``PLATEAU_WINDOW`` such points, the trajectory cannot plateau.
+    ``PLATEAU_WINDOW`` such points, the trajectory cannot plateau —
+    ``False`` then means "unmeasurable", which
+    :func:`_plateau_measurable` reports alongside it.
     """
     scalars = [p.scalar for p in points if p.scalar is not None]
     if len(scalars) < PLATEAU_WINDOW:

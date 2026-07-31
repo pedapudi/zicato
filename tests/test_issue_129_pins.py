@@ -202,12 +202,6 @@ def test_loop_health_summary_carries_the_detector_s_recommendation() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#129 pattern B: optimization_trajectory computes `plateaued` over the "
-    "PROMOTED spine only, so a run where nothing promotes reports plateaued=False — "
-    "the same value a healthily-improving run reports",
-)
 def test_stalled_run_is_distinguishable_from_an_improving_one(tmp_path: Path) -> None:
     """Six straight rejections must not read as "not plateaued".
 
@@ -223,6 +217,16 @@ def test_stalled_run_is_distinguishable_from_an_improving_one(tmp_path: Path) ->
     pattern B exactly: the surface degrades in the regime where the
     operator most needs it, and it degrades to a *reassuring* value
     rather than an absent one.
+
+    FIXED as adjudicated: ``plateaued`` stays a property of the promoted
+    spine — redefining it to fold in rejections would make a flag named
+    for a scalar window mean something else, and every reader of it
+    would have to be re-checked. What was missing is the companion fact
+    saying whether the flag rests on a measurement at all, so
+    ``plateau_measurable`` was added beside it and the assertion below
+    reads the pair. The original single-field assertion is kept as a
+    comment: it is now *expected* to be equal, and that equality is
+    exactly why the second field has to exist.
     """
     stalled = _index_db(
         tmp_path / "stalled.db",
@@ -255,19 +259,22 @@ def test_stalled_run_is_distinguishable_from_an_improving_one(tmp_path: Path) ->
     assert stalled_traj.challenger_count == 6
     assert stalled_traj.promoted_count == 0
 
-    # ...but the summary flag an operator reads collapses the two regimes.
-    assert stalled_traj.plateaued != improving_traj.plateaued, (
+    # ...and the raw flag still collapses the two regimes, by design:
+    #   assert stalled_traj.plateaued == improving_traj.plateaued == False
+    # so the flag must not be read alone. The PAIR separates them: the
+    # stalled run's one-node spine cannot support a plateau judgement,
+    # and now says so.
+    assert stalled_traj.plateau_measurable is False
+    assert improving_traj.plateau_measurable is True
+    assert (stalled_traj.plateaued, stalled_traj.plateau_measurable) != (
+        improving_traj.plateaued,
+        improving_traj.plateau_measurable,
+    ), (
         "a run with six rejections and zero promotions reports the same "
         f"plateaued={stalled_traj.plateaued!r} as a run improving every round"
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#129 pattern B: the dashboard trajectory verdict reports 'improving' for a "
-    "run with zero promotions when no noise floor was measured — issue #84's "
-    "stuck_no_promotions guard is gated on `floor is not None`",
-)
 def test_zero_promotion_run_without_a_measured_floor_is_not_reported_as_improving(
     tmp_path: Path,
 ) -> None:
@@ -290,6 +297,15 @@ def test_zero_promotion_run_without_a_measured_floor_is_not_reported_as_improvin
     The floor is the wrong gate: without one the honest verdict is
     unmeasurable, never ``"improving"``. Fixing the gate means letting
     ``stuck_no_promotions`` suppress ``"improving"`` on its own.
+
+    FIXED: the ``floor is not None`` conjunct is gone. The floor now
+    chooses WHICH honest word applies rather than whether one applies —
+    ``"no_signal"`` with a measured floor (every challenger tied inside
+    the A/A spread is a claim about noise, and needs a measurement to
+    back it), ``"stalled"`` without one (a report of promotions that did
+    not happen, which claims nothing about noise). The assertion below
+    pins the exact word rather than merely ``!= "improving"``, so a
+    future fallthrough to some third reassuring word fails here too.
     """
     from zicato.query import WorkspacePaths, build_optimization_trajectory  # noqa: PLC0415
 
@@ -316,9 +332,9 @@ def test_zero_promotion_run_without_a_measured_floor_is_not_reported_as_improvin
     assert view["challenger_count"] == 6
     assert view["promoted_count"] == 0
     assert view["noise_floor"] is None
-    assert view["verdict"] != "improving", (
+    assert view["verdict"] == "stalled", (
         "six challengers, zero promotions, no measured floor — the dashboard "
-        f"still calls this {view['verdict']!r}"
+        f"calls this {view['verdict']!r}"
     )
 
 
@@ -383,12 +399,6 @@ def _stalled_epoch(rounds: int = 20, delta: float = -0.043) -> EpochReportData:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#129 pattern B: the report's KEY OBSERVATION callout publishes the last "
-    "REJECTED challenger's counterfactual as 'the promoted lineage's cumulative "
-    "scalar', so a zero-promotion epoch can be headlined as having improved",
-)
 def test_campaign_callout_does_not_credit_a_rejected_challenger_to_the_lineage() -> None:
     """The published headline must not contradict itself.
 
@@ -409,6 +419,11 @@ def test_campaign_callout_does_not_credit_a_rejected_challenger_to_the_lineage()
     ``report_prompts.py``'s ``final_cumulative_scalar``, in a digest whose
     docstring calls itself "the factual substrate ... so the model never
     has a reason to compute or guess a value".
+
+    FIXED: ``final_scalar`` is champion-anchored (last promoted
+    generation, else the baseline). The counterfactual keeps its place
+    in the callout and in the LLM digest, but under
+    ``latest_rejected_scalar`` — a name that says whose number it is.
     """
     callout = _render_campaign_callout(_stalled_epoch())
 
@@ -419,13 +434,10 @@ def test_campaign_callout_does_not_credit_a_rejected_challenger_to_the_lineage()
     assert (
         "held to `+0.000`" in callout
     ), f"the callout credits a discarded challenger to the promoted lineage: {callout!r}"
+    # The discarded number survives — labelled as the path not taken.
+    assert "-0.043" in callout and "a path not taken" in callout, callout
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#129 pattern B: the trajectory chart marks generations[-1] '<- current', "
-    "which is a discarded rejected challenger when nothing has promoted",
-)
 def test_trajectory_chart_marks_the_champion_as_current_not_the_last_attempt() -> None:
     """``<- current`` must point at the generation actually in force.
 
@@ -435,6 +447,9 @@ def test_trajectory_chart_marks_the_champion_as_current_not_the_last_attempt() -
     genuinely in force is the baseline at the top of the chart. The
     operator reads the chart bottom-up and takes the discarded attempt
     for the state of the system.
+
+    FIXED: the marker follows the champion row — the last promoted
+    generation, or the baseline when nothing has promoted.
     """
     data = _stalled_epoch(rounds=3)
     chart = render_score_sparkline(data)
@@ -444,6 +459,7 @@ def test_trajectory_chart_marks_the_champion_as_current_not_the_last_attempt() -
     assert (
         "rejected" not in current_lines[0]
     ), f"'<- current' marks a discarded rejected challenger: {current_lines[0]!r}"
+    assert "baseline" in current_lines[0], current_lines[0]
 
 
 # ---------------------------------------------------------------------------
