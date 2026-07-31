@@ -448,24 +448,21 @@ def test_trajectory_chart_marks_the_champion_as_current_not_the_last_attempt() -
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#129 pattern A: _render_practice_section never reads PracticeCheck.evidence, "
-    "so the structured evidence behind every practice verdict is invisible to operators",
-)
 def test_practice_review_renders_the_evidence_behind_its_verdict() -> None:
-    """The convention this issue wants to spread has the same defect.
+    """The convention this issue wants to spread had the same defect.
 
     ``PracticeCheck`` is zicato's best-shaped diagnostic contract —
     ``evidence`` dict, ``rationale``, and an explicit ``unmeasured``
-    verdict. But its renderer emits ``check_id`` / ``headline`` /
+    verdict. But its renderer emitted ``check_id`` / ``headline`` /
     ``rationale`` / ``unmeasured_reason`` / ``proposed_op`` and never
-    touches ``evidence``, so the numbers behind all eleven checks never
-    reach the report.
+    touched ``evidence``, so the numbers behind all eleven checks never
+    reached the report.
 
     This is why the fix for pattern A has to be a RENDER conformance
     rule: adding another well-shaped evidence field to a dataclass
-    reproduces the bug rather than fixing it.
+    reproduces the bug rather than fixing it. The renderer now emits an
+    ``evidence`` line, and this test is one of the two enforcement
+    precedents the convention names.
     """
     check = {
         "check_id": "promotion_hygiene",

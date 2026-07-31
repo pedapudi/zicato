@@ -136,13 +136,36 @@ or "the judge panel has gone silent".
    that does NOT (assert empty). If you touched the orchestrator threading, add
    a case to `tests/test_orchestrator_health.py`.
 
-**The five-slot evidence convention.**
+**The five-slot evidence convention — a RENDER conformance rule.**
 
 A detector's job does not end at detecting. Issue #129 generalised eleven
 reports into one complaint — zicato says something is wrong and does not say
 what — and every instance was a surface that had the numbers in hand and
-rendered a verdict instead. So a finding, a gate reason, a stop message, or a
-practice check is written to fill five slots:
+rendered a verdict instead.
+
+Read that carefully, because it decides where the rule binds. The collection
+layer was already in good shape: all nineteen `HealthFinding` sites populate
+`detail`, fifteen of them write an explicit `detail["recommendation"]`, and
+`PracticeCheck` carries a structured `evidence` dict beside every verdict. The
+codebase has now collected well-shaped evidence **twice** and dropped it at the
+last hop **both times** — `_summarise_loop_health` skipped `detail` because its
+text walker accepted only string attributes, and `_render_practice_section`
+simply never read `evidence`. A third well-shaped field on a third dataclass
+would reproduce the bug, not fix it.
+
+So the rule is about renderers, not about data shapes:
+
+> **Any renderer that consumes a diagnostic structure must surface that
+> structure's evidence.** Adding a field is not the fix; reading it is.
+
+The two pins in `tests/test_issue_129_pins.py` are the enforcement precedents —
+`test_loop_health_summary_carries_the_detector_s_recommendation` and
+`test_practice_review_renders_the_evidence_behind_its_verdict`. Both assert a
+measured quantity appears in rendered operator-facing output, and neither
+asserts the phrasing around it. Write a new one in that shape when you add a
+renderer: pin the number reaching the reader, leave the prose free to change.
+
+The evidence a renderer must carry fills five slots:
 
 | Slot | The question it answers | Example |
 |---|---|---|
@@ -155,7 +178,7 @@ practice check is written to fill five slots:
 Not every slot applies to every message — a detector with no actionable remedy
 should say nothing rather than invent one — but a message that fills *only* the
 verdict slot is the defect this convention exists to prevent. The two
-precedents to read before writing a new one:
+collection-side precedents to read before writing a new one:
 
 - `check_promotion_hygiene` (`reflection/practices.py`) fills all five. It
   carries the numbers inline in its `headline`, the structured pair in
@@ -176,6 +199,18 @@ measure". Any surface that degrades when its input is absent — a run where the
 champion is never unseated, a workspace that never ran noise-floor calibration —
 needs that third state; reporting the reassuring value in its place is the
 worst form of this bug, because it reads as an answer.
+
+*Registered, not built.* Nothing in the workspace persists **rounds since the
+last promotion**. Every surface that wants it re-derives it from whatever it
+happens to hold — the promoted spine, the experiment list, the tournament rows
+— and each one invents its own degradation when the derivation runs short:
+`optimization_trajectory` reports `plateaued=False` because the promoted spine
+is too short to plateau, and the dashboard's verdict gates on a measured noise
+floor that opt-in calibration may never have produced. Those are separate
+symptoms of one missing field. Persisting the counter once, at the point a
+round settles, would make the whole class unrepresentable rather than patched
+per surface — but it touches the epoch record's shape, so it is a design pass,
+not a render fix, and it is recorded here for one.
 
 **Traps.**
 
