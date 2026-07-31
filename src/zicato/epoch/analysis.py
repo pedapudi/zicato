@@ -74,7 +74,14 @@ _DRIFT_KIND_TABLE_LIMIT = 12
 
 # Max characters of a rejection reason that we render inline on a
 # mermaid edge label. Longer reasons get an ellipsis suffix.
-_MERMAID_EDGE_LABEL_LIMIT = 30
+#
+# Gate reasons lead with the rule that fired and follow it with that
+# rule's numbers, so 30 characters clipped every edge in the graph to the
+# rule name alone — "insufficient improvement: los…" on every rejected
+# branch, which is the one thing the arrow's own style already says
+# (issue #129). 60 reaches the first measured quantity while still fitting
+# a node label at normal zoom.
+_MERMAID_EDGE_LABEL_LIMIT = 60
 
 
 _SYSTEM_PROMPT = """\

@@ -123,23 +123,20 @@ def _health(*findings: HealthFinding) -> LoopHealth:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#129 pattern A: _summarise_loop_health drops detail['recommendation'] — "
-    "the remediation the detector already wrote never reaches the operator",
-)
 def test_loop_health_summary_carries_the_detector_s_recommendation() -> None:
     """The one hop that turns a detection into an action.
 
     Fifteen of the nineteen detectors write an explicit
     ``detail["recommendation"]`` — a sentence saying what to change. It
-    reaches the per-round health JSON and stops there: the generic
-    terminal renderer reads only string attributes, so the dict holding
-    the remediation is skipped.
+    reached the per-round health JSON and stopped there: the generic
+    terminal renderer read only string attributes, so the dict holding
+    the remediation was skipped.
 
-    This is #129's "last hop" in its most literal form. The harness has
+    This is #129's "last hop" in its most literal form. The harness had
     already done the work of deciding what the operator should do, and
-    then does not say it.
+    then did not say it. The renderer now names the finding's stable
+    ``code`` and appends the remediation, clipped so the line stays one
+    line.
     """
     finding = HealthFinding(
         code="margin_below_noise_floor",

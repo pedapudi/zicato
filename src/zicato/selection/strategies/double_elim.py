@@ -308,7 +308,10 @@ class DoubleEliminationStrategy(SelectionStrategy):
             return SelectionDecision(
                 promoted_generation_id=None,
                 decision=TournamentDecision.REJECTED,
-                reason="no grand finalist cleared the champion gate",
+                reason=(
+                    "no grand finalist cleared the champion gate: "
+                    f"{self._no_grand_final_detail()}"
+                ),
                 matchups=audit,
                 standings=self._standings(None),
             )
@@ -334,6 +337,34 @@ class DoubleEliminationStrategy(SelectionStrategy):
             matchups=audit,
             crowning_matchup_id=self._gf_match_id,
             standings=self._standings(promoted_id),
+        )
+
+    def _no_grand_final_detail(self) -> str:
+        """Why no grand final was decided, with the bracket's measured scalars.
+
+        A double-elimination bracket reaches this branch either without
+        ever nominating a grand finalist or with one whose duel never
+        reported. The bare sentence covered both and cited nothing, so an
+        operator could not tell a bracket-wiring fault from a duel that
+        went missing (issue #129).
+        """
+        if self._champion is None:
+            return "no champion was seeded"
+        challenger = getattr(self, "_gf_challenger", None)
+        if challenger is None:
+            return (
+                f"the bracket nominated no grand finalist from "
+                f"{len(self._challengers)} challenger(s) over {len(self._audit)} duel(s)"
+            )
+        champ = self._scalars.get(self._champion.generation_id)
+        finalist = self._scalars.get(challenger.generation_id)
+        measured = (
+            f" (champion {champ:.6f} vs grand finalist {finalist:.6f})"
+            if champ is not None and finalist is not None
+            else ""
+        )
+        return (
+            f"the grand final against {challenger.generation_id} " f"reported no result{measured}"
         )
 
     def _standings(self, promoted_id: str | None) -> tuple[Standing, ...]:

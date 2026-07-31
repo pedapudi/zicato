@@ -79,11 +79,24 @@ class GauntletStrategy(SelectionStrategy):
 
     def champion(self) -> SelectionDecision:
         if self._result is None or self._challenger is None:
-            # No duel ran (degenerate); the champion stands.
+            # No duel ran (degenerate); the champion stands. Say WHICH
+            # precondition was missing — an unfielded challenger and a
+            # scheduled duel that never reported are different failures
+            # with different first moves (issue #129), and the bare
+            # sentence covered both.
+            if self._challenger is None:
+                missing = "no challenger was fielded"
+            elif not self._scheduled:
+                missing = f"the duel against {self._challenger.generation_id} was never scheduled"
+            else:
+                missing = (
+                    f"the scheduled duel against {self._challenger.generation_id} "
+                    "reported no result"
+                )
             return SelectionDecision(
                 promoted_generation_id=None,
                 decision=TournamentDecision.REJECTED,
-                reason="no challenger duel ran",
+                reason=f"no challenger duel ran: {missing}",
             )
         outcome = self._result.outcome
         promoted = outcome.decision == "promoted"

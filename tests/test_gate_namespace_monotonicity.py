@@ -109,8 +109,11 @@ def test_multiple_namespaces_fail_all_listed() -> None:
     )
     outcome = evaluate_gate(parent, child, ScoringWeights())
     assert outcome.decision == "rejected"
-    # Sorted alphabetically, rubric: comes before schema:
-    assert "rubric:, schema:" in outcome.reason
+    # Sorted alphabetically, rubric: comes before schema:, and each is cited
+    # with the two weighted aggregates the rule compared (issue #129).
+    assert outcome.reason.index("rubric:") < outcome.reason.index("schema:")
+    assert "rubric: (champion -4.000000 -> challenger -2.000000)" in outcome.reason
+    assert "schema: (champion 0.000000 -> challenger 3.000000)" in outcome.reason
 
 
 def test_namespace_regression_rejects_even_when_scalar_improves() -> None:

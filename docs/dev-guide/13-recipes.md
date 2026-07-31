@@ -136,6 +136,47 @@ or "the judge panel has gone silent".
    that does NOT (assert empty). If you touched the orchestrator threading, add
    a case to `tests/test_orchestrator_health.py`.
 
+**The five-slot evidence convention.**
+
+A detector's job does not end at detecting. Issue #129 generalised eleven
+reports into one complaint — zicato says something is wrong and does not say
+what — and every instance was a surface that had the numbers in hand and
+rendered a verdict instead. So a finding, a gate reason, a stop message, or a
+practice check is written to fill five slots:
+
+| Slot | The question it answers | Example |
+|---|---|---|
+| Population | what was looked at, and how much of it | `6 consecutive generations`, `fired 3/10` |
+| Measured | the quantity that tripped the rule | `loss fell by only 0.001234` |
+| Compared against | the bound it was measured against | `promote_margin 0.005`, `noise floor 0.04` |
+| Remedy | what to change | `raise promote_margin above the measured floor` |
+| Remedy safety | why the remedy is or is not proposed | `recommendation_raises_margin=False` |
+
+Not every slot applies to every message — a detector with no actionable remedy
+should say nothing rather than invent one — but a message that fills *only* the
+verdict slot is the defect this convention exists to prevent. The two
+precedents to read before writing a new one:
+
+- `check_promotion_hygiene` (`reflection/practices.py`) fills all five. It
+  carries the numbers inline in its `headline`, the structured pair in
+  `evidence`, an appliable `proposed_op`, and — where the recommendation would
+  *lower* `promote_margin` — `recommendation_raises_margin=False` with no op,
+  saying why it declines to propose.
+- `GateEvaluated` (`epoch/round_log.py`) is the structural half. It splits the
+  contract (`champion_scalar` / `challenger_scalar` / `margin_required`, always
+  recorded) from the presentation (`rule_fired`, prose that varies by rule and
+  is empty on a promote). Consumers compute on the fields; operators read the
+  prose. A number that exists only inside a human-readable string is not
+  recorded.
+
+There is a third verdict beyond pass and fail: **unmeasured**. `PracticeCheck`
+models it as `VERDICT_UNMEASURED` plus an `unmeasured_reason` naming the missing
+input, so "measured, and it is fine" never collapses into "there was nothing to
+measure". Any surface that degrades when its input is absent — a run where the
+champion is never unseated, a workspace that never ran noise-floor calibration —
+needs that third state; reporting the reassuring value in its place is the
+worst form of this bug, because it reads as an answer.
+
 **Traps.**
 
 - ⚠️ **Health findings MAY carry entry/generation ids; proposer-visible patterns

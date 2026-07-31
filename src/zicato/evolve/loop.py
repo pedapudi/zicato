@@ -81,6 +81,60 @@ def emit_dialect_capability_warnings(workspace_root: Path) -> tuple[str, ...]:
     return warnings
 
 
+def log_effective_concurrency(workspace_root: Path) -> str:
+    """Log the run's effective concurrency knobs ONCE, at invocation start.
+
+    ``parallelism`` decides how many board units run at a time and defaults
+    to 4 regardless of the host, yet it appeared in no log line anywhere:
+    an operator on a 64-core box saw four units in flight with nothing
+    telling them a ceiling was in force, and nothing distinguishing "the
+    default is holding you at 4" from "the work is simply slow" (issue
+    #126). The same is true of its propose-side analogue and of the
+    host-wide worker permit count, whose AUTO resolution is host-dependent
+    and therefore unguessable from the config file alone.
+
+    So report all three, plus the cores the process may actually run on and
+    the tier ``parallelism`` was resolved from
+    (:func:`zicato.runtime_factory.resolve_parallelism`). Emitted from
+    :func:`evolve_n_rounds` rather than the per-round
+    ``make_runtime_config`` call so the operator gets one line per run, not
+    one per round. Returns the rendered line so a test can assert it.
+    """
+    from zicato import workspace_loader  # noqa: PLC0415
+    from zicato.runtime.spawn_permit import (  # noqa: PLC0415
+        _usable_cpus,
+        effective_permit_count,
+    )
+    from zicato.runtime_factory import resolve_parallelism  # noqa: PLC0415
+
+    runtime_dict = workspace_loader.load_workspace_config(workspace_root).get("runtime", {}) or {}
+    parallelism, source = resolve_parallelism(runtime_dict)
+    propose_raw = runtime_dict.get("propose_parallelism")
+    propose_parallelism = int(propose_raw) if propose_raw is not None else 4
+    # Mirrors the factory's bool-intent mapping: ``true`` reads as AUTO,
+    # ``false`` as off, so neither ``int()``s to a silent 1-worker host.
+    permits_raw = runtime_dict.get("host_worker_permits")
+    if isinstance(permits_raw, bool):
+        permits_limit = None if permits_raw else 0
+    else:
+        permits_limit = int(permits_raw) if permits_raw is not None else None
+    permits = effective_permit_count(permits_limit)
+    if permits_limit is None:
+        permits_text = f"AUTO -> {permits}"
+    elif permits == 0:
+        permits_text = "off"
+    else:
+        permits_text = str(permits)
+
+    line = (
+        f"evolve run configuration: parallelism={parallelism} (from {source}), "
+        f"propose_parallelism={propose_parallelism}, "
+        f"host_worker_permits={permits_text}, usable CPUs={_usable_cpus()}"
+    )
+    log.info("%s", line)
+    return line
+
+
 async def _sleep_for_backoff(seconds: float) -> None:
     """The endpoint-outage backoff sleep — a seam so tests can stub it."""
     await asyncio.sleep(seconds)
@@ -492,6 +546,15 @@ async def evolve_n_rounds(
         on_error=lambda exc: log.debug("dialect-capability preflight skipped: %s", exc),
     ):
         emit_dialect_capability_warnings(workspace_root)
+    # Run-start configuration report (issue #126): the concurrency ceilings
+    # in force for this invocation, named once so an operator can tell a
+    # deliberate cap from an unremarked default. Best-effort, like every
+    # other preflight here — a config read must never fail a run.
+    with best_effort(
+        "concurrency configuration report",
+        on_error=lambda exc: log.debug("concurrency configuration report skipped: %s", exc),
+    ):
+        log_effective_concurrency(workspace_root)
 
     # Workspace lock + heartbeat lifecycle. The lock keeps two concurrent
     # orchestrators from corrupting the same workspace; the beater writes
@@ -805,26 +868,36 @@ async def evolve_n_rounds(
                 continue
             infra_deferral_streak = 0
             if reject_policy.observe(promoted=outcome.tournament_decision == "promoted"):
+                # The streak count alone says the loop stopped, not why it
+                # could not promote. The last round's gate reason carries the
+                # deciding numbers, so it rides along (issue #129).
                 log.warning(
-                    "evolve_n_rounds: stopping after %d consecutive rejections (round %d/%d)",
+                    "evolve_n_rounds: stopping after %d consecutive rejections "
+                    "(round %d/%d); last rejection: %s",
                     reject_policy.streak,
                     round_idx + 1,
                     rounds,
+                    outcome.rejection_reason or "(no reason recorded)",
                 )
                 stop_reason = reject_policy.reason
                 break
             # Loop-health circuit breaker — stop early when the loop has
             # produced no usable signal for too many rounds running.
             if health_policy.observe(health_critical=outcome.health_critical):
+                # Name the finding that tripped the breaker. The streak count
+                # says a CRITICAL fired N rounds running; the round's health
+                # summary says WHICH detector fired, with its measured
+                # quantities and remediation (issue #129).
                 log.warning(
                     "evolve_n_rounds: stopping after %d consecutive rounds with a "
-                    "CRITICAL loop-health finding (round %d/%d) — the loop is "
+                    "CRITICAL loop-health finding (round %d/%d) — %s. The loop is "
                     "producing no usable signal; inspect the scoring weights / "
                     "proposer brief before resuming. (Pass "
                     "stop_on_degenerate_health=False to opt out.)",
                     health_policy.streak,
                     round_idx + 1,
                     rounds,
+                    outcome.health_summary or "no finding recorded",
                 )
                 stop_reason = health_policy.reason
                 break
