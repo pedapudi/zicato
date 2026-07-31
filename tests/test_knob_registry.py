@@ -54,6 +54,12 @@ _FROZEN_OMIT_AT_DEFAULT_FIELDS = frozenset(
     {
         "diff_complexity_weight",
         "diff_complexity_ceiling",
+        # The holdout confirmation's own bounds (issue #118). Additive and
+        # default-inert: ``holdout_margin=None`` reuses ``promote_margin`` and
+        # a budget of 0 is the historical zero-tolerance rule, so omitting
+        # both at their default keeps every existing epoch's hash where it is.
+        "holdout_margin",
+        "holdout_entry_regression_budget",
         "experiment_memory",
         "random_baseline_every_n",
         "block_on_containment_violation",

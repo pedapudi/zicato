@@ -669,7 +669,7 @@ def validate() -> str:
 
 
 async def preflight(runs: int | None = None) -> str:
-    """Measure the DRAFT contract's noise floor + achievable signal.
+    """Measure the DRAFT contract's noise floor + degradation signal.
 
     The build-time statistical pre-flight (the same measurement `zicato
     board preflight` takes, run against the DRAFT's board + scoring):

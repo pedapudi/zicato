@@ -46,6 +46,10 @@ import importlib
 import logging
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
+from zicato.import_path import explain_attribute_error
+from zicato.judge_runtime.error_register import record_judge_error, record_judge_invocation
+from zicato.judge_runtime.io_capture import JUDGE_IO_ERROR_KIND
+
 if TYPE_CHECKING:  # pragma: no cover - typing-only imports
     from collections.abc import Awaitable, Callable
 
@@ -119,6 +123,51 @@ def _severity_str(severity: Any) -> str:
         severity,
     )
     return "warning"
+
+
+#: Cache for the lazily-built errored-verdict subclass (see
+#: :func:`_errored_verdict`). goldfive is imported lazily throughout this
+#: module so ``zicato.judge_runtime`` stays importable without it; the
+#: subclass therefore cannot be declared at module scope.
+_ERRORED_VERDICT_CLS: Any = None
+
+
+def _errored_verdict(exc: BaseException) -> JudgeVerdict:
+    """A verdict that says "this judge did not answer", not "no violation".
+
+    goldfive's :class:`~goldfive.judges.JudgeVerdict` has four flavours —
+    drift / rubric / boolean / numeric — and an empty-default verdict means
+    "the judge had nothing to say". A judge whose callable RAISED had
+    nothing to say either, which is precisely the ambiguity issue #121 is
+    about: the empty verdict a failed call returns is byte-identical to the
+    one a healthy judge returns when the criterion was not violated.
+
+    We cannot add a field to goldfive's dataclass from here, so we return a
+    frozen SUBCLASS carrying two extra fields (``errored`` / ``error``). It
+    is a :class:`JudgeVerdict` by ``isinstance``, and every goldfive read
+    path is a ``getattr`` of a flavour field, so the steerer still derives
+    NO ``verdict_kind`` from it and still emits no ``JudgementEmitted``:
+    the wire, the reducer's counts and the scalar are unchanged. What
+    changes is that an in-process caller — a test, a reliability probe, a
+    future adapter — can now tell the two apart, and the durable half of
+    the provenance rides the register + ``loss.json`` instead.
+    """
+    from goldfive.judges import JudgeVerdict  # noqa: PLC0415
+
+    global _ERRORED_VERDICT_CLS  # noqa: PLW0603 — one-time lazy class build
+    if _ERRORED_VERDICT_CLS is None or not issubclass(_ERRORED_VERDICT_CLS, JudgeVerdict):
+        from dataclasses import dataclass  # noqa: PLC0415
+
+        @dataclass(frozen=True)
+        class _ErroredJudgeVerdict(JudgeVerdict):
+            """An empty-flavoured verdict whose emptiness is a FAILURE."""
+
+            errored: bool = True
+            error: str = ""
+
+        _ERRORED_VERDICT_CLS = _ErroredJudgeVerdict
+    verdict: JudgeVerdict = _ERRORED_VERDICT_CLS(error=f"{type(exc).__name__}: {exc}")
+    return verdict
 
 
 def _custom_kind_str() -> str:
@@ -264,6 +313,7 @@ class _InlineCriterionJudge:
 
         system = _INLINE_SYSTEM_PROMPT
         user = _build_inline_user_prompt(self._criterion, reasoning_text)
+        record_judge_invocation(self.name)
         try:
             # ``model=""`` matches zicato's CallLLM contract: the
             # concrete auxiliary callable resolves its own model. The
@@ -271,13 +321,28 @@ class _InlineCriterionJudge:
             # callable's job.
             response = await self._aux_call_llm(system, user, "")
         except Exception as exc:  # noqa: BLE001 - a judge must not crash the run
+            # The call failed, so this judge has NO verdict for this
+            # observation point. Swallowing stays (a judge must not crash
+            # the run) but the failure is now counted in the process
+            # register — which rides out to ``loss.json`` and loop health —
+            # captured for reflection, and marked on the returned verdict.
+            record_judge_error(self.name, exc)
             log.warning(
                 "judge_runtime: inline judge %r aux_call_llm raised %s (%s); treating as no signal",
                 self.name,
                 type(exc).__name__,
                 exc,
             )
-            return JudgeVerdict()
+            self._capture(
+                ctx,
+                reasoning_text=reasoning_text,
+                raw_response="",
+                drift_emitted=False,
+                kind=JUDGE_IO_ERROR_KIND,
+                severity="",
+                detail=f"{type(exc).__name__}: {exc}",
+            )
+            return _errored_verdict(exc)
 
         violation, reason = _parse_inline_response(response)
         detail = ""
@@ -285,30 +350,15 @@ class _InlineCriterionJudge:
             detail = f"{self._criterion}: {reason}" if reason else self._criterion
         kind = _custom_kind_str() if violation else ""
 
-        # Verbatim I/O capture (board reflection). Best-effort by hard
-        # contract: ANY sink failure is logged and swallowed — capture
-        # must never change the verdict or crash the run. Recorded for
-        # firing AND silent verdicts; the silent ones are exactly the
-        # missed-fire candidates adjudication needs to re-read.
-        if self._io_sink is not None:
-            try:
-                self._io_sink.record(
-                    self.name,
-                    reasoning_text=reasoning_text,
-                    transcript_window=tuple(str(t) for t in (getattr(ctx, "transcript", ()) or ())),
-                    raw_response=str(response),
-                    drift_emitted=violation,
-                    kind=kind,
-                    severity=self._severity_str if violation else "",
-                    detail=detail,
-                )
-            except Exception as exc:  # noqa: BLE001 — capture must never affect the verdict
-                log.warning(
-                    "judge_runtime: inline judge %r io_sink raised %s (%s); capture skipped",
-                    self.name,
-                    type(exc).__name__,
-                    exc,
-                )
+        self._capture(
+            ctx,
+            reasoning_text=reasoning_text,
+            raw_response=str(response),
+            drift_emitted=violation,
+            kind=kind,
+            severity=self._severity_str if violation else "",
+            detail=detail,
+        )
 
         if not violation:
             return JudgeVerdict()
@@ -319,6 +369,50 @@ class _InlineCriterionJudge:
             severity=self._severity_str,
             detail=detail,
         )
+
+    def _capture(
+        self,
+        ctx: JudgeContext,
+        *,
+        reasoning_text: str,
+        raw_response: str,
+        drift_emitted: bool,
+        kind: str,
+        severity: str,
+        detail: str,
+    ) -> None:
+        """Retain one evaluate call's verbatim I/O through ``io_sink``.
+
+        Best-effort by hard contract: ANY sink failure is logged and
+        swallowed — capture must never change the verdict or crash the
+        run. Called for firing AND silent verdicts (the silent ones are
+        exactly the missed-fire candidates adjudication needs to re-read)
+        AND for a call that RAISED, with
+        :data:`~zicato.judge_runtime.io_capture.JUDGE_IO_ERROR_KIND` in
+        the ``kind`` slot: a failed call is not a missed fire, and an
+        adjudicator that cannot see it re-reads a broken endpoint as a
+        criterion that is too narrow.
+        """
+        if self._io_sink is None:
+            return
+        try:
+            self._io_sink.record(
+                self.name,
+                reasoning_text=reasoning_text,
+                transcript_window=tuple(str(t) for t in (getattr(ctx, "transcript", ()) or ())),
+                raw_response=raw_response,
+                drift_emitted=drift_emitted,
+                kind=kind,
+                severity=severity,
+                detail=detail,
+            )
+        except Exception as exc:  # noqa: BLE001 — capture must never affect the verdict
+            log.warning(
+                "judge_runtime: inline judge %r io_sink raised %s (%s); capture skipped",
+                self.name,
+                type(exc).__name__,
+                exc,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -367,6 +461,12 @@ def _resolve_dotted_path(path: str) -> Any:
     try:
         return getattr(module, attr_name)
     except AttributeError as exc:
+        detail = explain_attribute_error(module, attr_name, exc)
+        if detail is not None:
+            raise AttributeError(
+                f"judge_runtime: module {module_name!r}: {detail} "
+                f"(python-mode JudgeSpec.body {spec!r})"
+            ) from exc
         raise AttributeError(
             f"judge_runtime: module {module_name!r} has no attribute "
             f"{attr_name!r} (python-mode JudgeSpec.body {spec!r})"
@@ -437,15 +537,37 @@ class _PythonJudgeWrapper:
             )
 
     async def evaluate(self, ctx: JudgeContext) -> JudgeVerdict:
-        """Delegate to the resolved callable and normalise the verdict."""
+        """Delegate to the resolved callable and normalise the verdict.
+
+        Operator code that RAISES is caught here rather than left to
+        goldfive's ``evaluate_judges``, which logs it and ``continue``s.
+        The catch is behaviourally neutral on the wire — the errored
+        verdict it returns populates no flavour, so goldfive derives no
+        ``verdict_kind`` and emits no ``JudgementEmitted``, exactly as
+        the swallowed exception did — but the failure now lands in the
+        process register, so a python judge that raised on every
+        invocation is distinguishable in ``loss.json`` from one whose
+        criterion was never met.
+        """
         from goldfive.judges import JudgeVerdict
 
-        result = self._inner_evaluate(ctx)
-        # Tolerate both sync and async operator callables.
-        if hasattr(result, "__await__"):
-            verdict = await result
-        else:
-            verdict = result
+        record_judge_invocation(self.name)
+        try:
+            result = self._inner_evaluate(ctx)
+            # Tolerate both sync and async operator callables.
+            if hasattr(result, "__await__"):
+                verdict = await result
+            else:
+                verdict = result
+        except Exception as exc:  # noqa: BLE001 - a judge must not crash the run
+            record_judge_error(self.name, exc)
+            log.warning(
+                "judge_runtime: python judge %r raised %s (%s); treating as no signal",
+                self.name,
+                type(exc).__name__,
+                exc,
+            )
+            return _errored_verdict(exc)
         if verdict is None:
             return JudgeVerdict()
         return _normalise_verdict(verdict)

@@ -956,7 +956,7 @@ def check_promotion_hygiene(
         # ``max_abs_delta`` grows in K, so a recommendation scaled off it drifts
         # upward on an unchanged board as calibration improves — and this
         # recommendation is APPLIABLE (``set_gate``), so the drift lands in the
-        # contract and can push the margin past the achievable signal. The range
+        # contract and can push the margin past the measured signal. The range
         # stays the COMPARISON statistic (``margin_below_floor`` above); only
         # the recommendation moves. Falls back to the range for a record that
         # carries no usable ``delta_std``.

@@ -502,11 +502,11 @@ Fix the harness first; the defect is precise and documented here.*
   zicato board audit --workspace .zicato --runs 5      # K=5 default; raise for noisy harnesses
   # floor persists onto the epoch record (config.json noise_floor, never hashed)
   # optionally wire the epoch-open hook: config.json "calibrate_noise_floor": 5
-  zicato board preflight --workspace .zicato           # floor + achievable signal + verdict
+  zicato board preflight --workspace .zicato           # floor + degradation signal + verdict
   ```
 
 - **What to measure:** `max_abs_delta` and `delta_std`; the per-draw scalars
-  (stationarity — do later draws drift?); the pre-flight's achievable-signal
+  (stationarity — do later draws drift?); the pre-flight's degradation-signal
   ratio; whether `margin_below_noise_floor` fires against the shipped
   margin.
 - **Gate criteria:** a nonzero, stable floor (a 0.0 floor on a live LLM

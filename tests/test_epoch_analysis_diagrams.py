@@ -27,7 +27,9 @@ from zicato.testing.fixtures import (
     make_generation,
     make_hypothesis_spec,
     make_outcome_record,
+    make_scoring_weights,
 )
+from zicato.tournament.gate import evaluate_gate
 
 # ---------------------------------------------------------------------------
 # Fixture helpers
@@ -185,6 +187,41 @@ def test_mermaid_lineage_sanitizes_label_characters() -> None:
     assert '"tool"' not in out
     assert "<flow>" not in out
     assert "&quot;" in out or "&lt;" in out
+
+
+def test_mermaid_edge_label_carries_no_bare_bracket_from_a_real_gate_reason() -> None:
+    """A rejection reason's measured numbers must not break the whole diagram.
+
+    Edge labels are emitted bare between pipes (``a -.->|text| b``), where
+    mermaid's flowchart grammar treats ``( ) [ ] { } |`` as token
+    terminators — one of them anywhere in the label fails the parse for
+    the entire ``graph`` block, not just its own edge. Every Rule-1 gate
+    reason puts the champion/challenger pair in parentheses, so this is
+    the commonest rejection in the system, and it only became reachable
+    when the edge-label clip moved from 30 to 60 characters.
+
+    Uses the reason ``evaluate_gate`` actually composes rather than a
+    hand-written lookalike, so a re-wording of the reason cannot quietly
+    walk out from under the pin.
+    """
+    parent_agg = {"scalar": 0.412345, "pass_rate": 1.0, "per_entry": {}}
+    child_agg = {"scalar": 0.412145, "pass_rate": 1.0, "per_entry": {}}
+    reason = evaluate_gate(parent_agg, child_agg, make_scoring_weights()).reason
+    assert "(" in reason, "the pin is only meaningful while the reason carries a parenthetical"
+
+    gens = [_baseline_gen("v0"), _child_gen("v1", "v0", promoted=False)]
+    exps = [
+        _experiment("v1", "v0", decision="rejected", scalar_delta=+0.0002, rejection_reason=reason)
+    ]
+    out = render_mermaid_lineage(gens, exps)
+
+    edge_lines = [ln for ln in out.splitlines() if "-.->" in ln]
+    assert len(edge_lines) == 1, out
+    label = edge_lines[0].split("|")[1]
+    for ch in "()[]{}":
+        assert ch not in label, f"bare {ch!r} in a mermaid edge label fails the graph: {label!r}"
+    # The escape preserves the glyph rather than dropping the information.
+    assert "&#40;" in label, label
 
 
 # ---------------------------------------------------------------------------

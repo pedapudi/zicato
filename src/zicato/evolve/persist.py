@@ -55,6 +55,8 @@ def _finalize_generation(
     outcome: OutcomeRecord,
     lineage_generation: Generation | None = None,
     lineage_parent_id: str | None = None,
+    lineage_parent_scalar: float | None = None,
+    lineage_child_scalar: float | None = None,
     advance_current_generation: bool = False,
     journal: bool = True,
 ) -> Experiment:
@@ -69,7 +71,12 @@ def _finalize_generation(
     3. optional lineage upsert (``lineage_generation`` — ``None`` for a
        validation-rejected round that never entered lineage, and for the
        multi-challenger loop which defers lineage until after its crowning
-       invariant checks);
+       invariant checks). The settle-time facts ride along: the outcome's
+       own ``rejection_reason`` and the duel's two scalars
+       (``lineage_parent_scalar`` / ``lineage_child_scalar``, ``None``
+       when the caller has no measurement in scope) land on the lineage
+       node so the DAG says WHY without a per-generation join against
+       ``experiment.json`` (issue #124);
     4. optional champion-marker advance (``advance_current_generation`` —
        the gauntlet's on-promotion step, sequenced between lineage and
        journal exactly as the inline tail wrote them);
@@ -91,7 +98,18 @@ def _finalize_generation(
     # refresh the SQLite analytical index entry for it.
     _ingest_experiment_into_index(workspace_root, epoch_id, generation_id)
     if lineage_generation is not None:
-        append_to_lineage(workspace_root, epoch_id, lineage_generation, parent_id=lineage_parent_id)
+        append_to_lineage(
+            workspace_root,
+            epoch_id,
+            lineage_generation,
+            parent_id=lineage_parent_id,
+            # ``append_to_lineage`` persists the reason only on a settled
+            # rejection, so handing it the outcome's reason unconditionally
+            # is safe on the promoted path too.
+            rejection_reason=outcome.rejection_reason,
+            parent_scalar=lineage_parent_scalar,
+            child_scalar=lineage_child_scalar,
+        )
     if advance_current_generation:
         _set_current_generation(workspace_root, epoch_id, generation_id)
     if journal:
@@ -112,6 +130,8 @@ async def _round_epilogue(
     meta_loop_emitter: Any,
     run_analyzer: bool = True,
     token_clip: tuple[int, int] | None = None,
+    attributable_regressions: dict[str, dict[str, Any]] | None = None,
+    on_promote_failure: tuple[str, str, str] | None = None,
 ) -> tuple[str, bool]:
     """The shared end-of-round tail: loop-health + analyzer + epoch report.
 
@@ -131,7 +151,15 @@ async def _round_epilogue(
     ``token_clip`` — the round's ``(tokens_spent, max_tokens_per_round)``
     pair when the per-round token budget clipped it
     (:func:`_token_clip_state`) — is threaded into the health assessment;
-    ``None`` (every unclipped round) is inert.
+    ``None`` (every unclipped round) is inert. ``attributable_regressions``
+    — the per-entry evidence behind a PROMOTED duel's
+    :attr:`~zicato.tournament.gate.GateOutcome.attributable_regressions` — is
+    threaded the same way and is inert on every other round.
+    ``on_promote_failure`` — the ``(adapter_name, generation_id,
+    exception_type)`` triple :func:`zicato.evolve.promote_hook.fire_on_promote`
+    returns when the round's promotion fired an adapter hook that raised or
+    timed out — rides the same rail; ``None`` (every round with no hook, and
+    every successful one) is inert.
 
     Returns ``(health_summary, health_critical)`` for the round outcome.
     """
@@ -142,7 +170,13 @@ async def _round_epilogue(
     )
 
     health_summary, health_critical = _assess_and_persist_loop_health(
-        workspace_root, epoch_id, round_n, board, token_clip=token_clip
+        workspace_root,
+        epoch_id,
+        round_n,
+        board,
+        token_clip=token_clip,
+        attributable_regressions=attributable_regressions,
+        on_promote_failure=on_promote_failure,
     )
     if health_critical:
         _warn_loop_no_signal(epoch_id, round_n, health_summary)

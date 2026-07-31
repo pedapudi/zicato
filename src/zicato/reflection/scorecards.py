@@ -42,7 +42,7 @@ from zicato.reflection.adjudicator import (
     JudgeAdjudication,
 )
 from zicato.reflection.analysis import pearson
-from zicato.reflection.corpus import ObservationRun
+from zicato.reflection.corpus import ObservationRun, judge_answered
 
 #: Fraction of a judge's decisions that may be ``ambiguous`` before the pile is
 #: itself flagged — an underspecified criterion the adjudicator (and operator)
@@ -161,6 +161,11 @@ def _self_consistency(corpus: list[ObservationRun], judge_name: str) -> tuple[fl
         for decision in obs.judge_decisions:
             if str(decision.get("judge_name", "")) != judge_name:
                 continue
+            # A call that RAISED is not a "silent" vote — counting it as one
+            # makes a judge whose endpoint fails intermittently look MORE
+            # self-consistent than one that answers every time.
+            if not judge_answered(decision):
+                continue
             per_unit.setdefault((obs.candidate_id, obs.entry_id), []).append(
                 bool(decision.get("fired", False))
             )
@@ -180,7 +185,7 @@ def _firing_vectors(corpus: list[ObservationRun]) -> dict[str, dict[tuple[str, s
         key = (obs.candidate_id, obs.entry_id, obs.replicate)
         for decision in obs.judge_decisions:
             name = str(decision.get("judge_name", ""))
-            if not name:
+            if not name or not judge_answered(decision):
                 continue
             out.setdefault(name, {})[key] = 1 if decision.get("fired") else 0
     return out

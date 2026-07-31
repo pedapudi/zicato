@@ -690,6 +690,29 @@ _VERDICT_LABEL = {
 }
 
 
+#: Longest rendering of a single ``evidence`` value on the practice
+#: section's evidence line; longer values are clipped with an ellipsis and
+#: read in full from the reflection JSON.
+_EVIDENCE_VALUE_CLIP = 80
+
+
+def _format_evidence(evidence: dict[str, Any]) -> str:
+    """Render a :class:`~zicato.reflection.practices.PracticeCheck` evidence dict.
+
+    One ``key=value`` line. Scalars render bare; lists and dicts go
+    through ``json.dumps`` and are clipped, since the evidence dicts hold
+    the odd long list (``expectation_kinds``, ``term_contributions``) whose
+    tail is better read from the JSON than wrapped across the report.
+    """
+    parts: list[str] = []
+    for key, value in evidence.items():
+        text = value if isinstance(value, str) else json.dumps(value, default=str)
+        if len(text) > _EVIDENCE_VALUE_CLIP:
+            text = text[: _EVIDENCE_VALUE_CLIP - 1].rstrip() + "…"
+        parts.append(f"{key}={text}")
+    return ", ".join(parts)
+
+
 def _render_practice_section(practices: list[dict[str, Any]]) -> list[str]:
     """The 'Practice review' section: affirmations first, then deficiencies, then unmeasured.
 
@@ -698,6 +721,14 @@ def _render_practice_section(practices: list[dict[str, Any]]) -> list[str]:
     they are doing right before the deficiencies land against that baseline.
     Then ``unsound`` above ``attend`` (worst-first), then ``unmeasured`` with the
     input each needs.
+
+    Each check's ``evidence`` dict is rendered too. It is the measured half
+    of the convention this very report documents — the numbers behind the
+    headline, including the ``recommended_promote_margin`` /
+    ``recommendation_raises_margin`` pair that explains why a check
+    proposed no remedy — and it was collected, serialised into the
+    reflection JSON, and then left out of the document an operator reads
+    (issue #129).
     """
     lines: list[str] = ["## Practice review"]
     if not practices:
@@ -724,6 +755,9 @@ def _render_practice_section(practices: list[dict[str, Any]]) -> list[str]:
         lines.append(f"### [{label}] {c.get('check_id')}")
         lines.append(str(c.get("headline", "")))
         lines.append(f"- why it matters: {c.get('rationale', '')}")
+        evidence = c.get("evidence")
+        if isinstance(evidence, dict) and evidence:
+            lines.append(f"- evidence: {_format_evidence(evidence)}")
         reason = c.get("unmeasured_reason")
         if reason:
             lines.append(f"- missing input: {reason}")

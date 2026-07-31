@@ -258,6 +258,83 @@ list of source roots that contain mutation-point annotations.
   in-process accumulators) but MUST NOT modify the sinks zicato
   supplied.
 
+#### 4.1.1 `on_promote` — the post-promotion hook
+
+**Optional.** One more coroutine an adapter MAY declare:
+
+```python
+async def on_promote(
+    self, *,
+    epoch_id: str,
+    generation_id: str,
+    parent_generation_id: str | None,
+    snapshot_root: Path,
+    workspace_root: Path,
+) -> None: ...
+```
+
+**Why it exists.** For most targets the evolved artifact IS the
+snapshot: the promoted tree plus the `current_generation` marker is the
+whole story, and there is nothing further to do. A target whose real
+state lives somewhere the mutable tree cannot reach — a database row, a
+served artifact, a cache, a remote config — has no such closure. Before
+this hook the promotion tail was completely private, so that target's
+only recourse was to poll `lineage.json` from outside the loop and
+reconcile the promoted head itself.
+
+**When it fires.** Exactly once per settled promotion, immediately after
+the champion marker advances — the first moment the promotion is
+durable. Both promote seams fire it through the one helper
+(`zicato.evolve.promote_hook.fire_on_promote`): the gauntlet's
+`_finalize_generation(advance_current_generation=True)` tail and the
+multi-challenger inline crowning. A rejected round never fires it. Under
+a multi-challenger structure with an operator multi-promote it fires for
+the PRIMARY head only — the generation `current_generation` advanced
+to — not for every generation lineage marks `promoted`.
+
+It fires on the *transition*, never on observing promoted state, so it
+cannot repeat: a crash-restart re-enters only an **un-outcomed**
+generation (`prepare_resume`, RUNTIME.md §4.2) and a promoted generation
+always carries a committed outcome. The converse window — a crash
+between the marker advance and the hook — loses the call rather than
+repeating it, which is the deliberate direction given the failure
+semantics below.
+
+**Failure semantics: best-effort.** A hook that raises, or that exceeds
+`ON_PROMOTE_TIMEOUT_SECONDS` (120s), NEVER un-promotes the generation
+and never fails the round — the promotion is already durable on every
+store by the time the hook runs, so the only honest thing a failure can
+do is be reported. It is reported twice: an `ERROR` log carrying the
+traceback, and an `on_promote_hook_failed` WARNING in the round's
+loop-health report naming the adapter, the generation, and the exception
+type. Reconciling the external side effect is then the operator's job.
+An adapter that needs promotion to be all-or-nothing must make its own
+side effect idempotent and reconcile from `lineage.json`.
+
+**Optionality.** Every adapter predating this hook — shipped and
+operator-authored — remains a `HarnessAdapter`: `on_promote` is in
+`OPTIONAL_ADAPTER_MEMBERS`, and the Protocol's `__subclasshook__` keeps
+the runtime `isinstance` gate keyed on the three required methods. An
+adapter that does not declare it is simply never called.
+
+**Trust model.** The hook runs operator-authored adapter code in the
+evolve process — code the operator already registered and which zicato
+already imports and executes to run every board entry. It grants no new
+authority. Contract-declared shell commands were considered as an
+alternative carrier and deliberately NOT adopted: a promotion hook
+spelled as a command string in a contract file makes the epoch contract
+(a data file the loop reads, writes, and hands to a proposer) into an
+executable surface, which is a different trust boundary and would need
+its own security review to justify. Non-Python targets use the polling
+fallback below rather than a command hook.
+
+**Fallback for targets that cannot host a Python hook.** Poll
+`lineage.json` for the promoted head — the last entry with
+`promoted: true` — and reconcile against your own record of the last
+head you applied. This is the pre-hook workaround and it stays supported
+and correct; the hook only removes the latency and the second bookkeeping
+store. See [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md) §6.
+
 ### 4.2 Board
 
 **Responsibility.** The frozen-per-epoch list of tasks the inner

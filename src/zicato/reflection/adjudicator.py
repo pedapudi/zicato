@@ -73,6 +73,7 @@ from zicato.reflection.corpus import (
     FIDELITY_RESULT,
     FIDELITY_VERBATIM,
     ObservationRun,
+    judge_answered,
 )
 
 log = logging.getLogger("zicato.reflection.adjudicator")
@@ -674,6 +675,15 @@ async def adjudicate_corpus(
         for decision in obs.judge_decisions:
             judge_name = str(decision.get("judge_name", ""))
             if not judge_name:
+                continue
+            # A judge whose call RAISED made no decision, so there is nothing
+            # to adjudicate (issue #121). Sending it anyway asks the
+            # meta-judge "should this judge have fired?" about a judge that
+            # never saw the transcript: it answers yes, and the FALSE
+            # NEGATIVE that lands on the scorecard blames the criterion for a
+            # broken endpoint. Skipping also spends no adjudicator budget on
+            # a verdict that does not exist.
+            if not judge_answered(decision):
                 continue
             # Reconstruct the context (and current fidelity tier) ONCE — the
             # cache-validity check needs the tier, and the miss path reuses it.

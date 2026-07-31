@@ -10,6 +10,7 @@ from click.testing import CliRunner
 
 from zicato.cli.commands.init import init_cmd
 from zicato.cli.commands.register import register_cmd
+from zicato.epoch import load_lineage
 from zicato.workspace.config_io import CONFIG_FILENAME, LINEAGE_FILENAME
 
 # ---------------------------------------------------------------------------
@@ -36,7 +37,10 @@ def test_init_creates_workspace(tmp_path: Path) -> None:
     lineage_path = workspace / LINEAGE_FILENAME
     assert lineage_path.exists()
     lineage = json.loads(lineage_path.read_text())
-    assert lineage == {"nodes": [], "edges": []}
+    # The shape the lineage loader reads — a ``nodes``/``edges`` document
+    # is rejected as malformed by ``load_lineage`` (issue #124 triage).
+    assert lineage == {"epochs": []}
+    assert load_lineage(workspace) == {"epochs": []}
 
 
 def test_init_default_instance_id(tmp_path: Path) -> None:

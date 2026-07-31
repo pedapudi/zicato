@@ -91,10 +91,18 @@ If no rule rejects, the gate promotes — UNLESS a holdout-confirmation
 step is supplied (OVERFITTING.md §1/§12 #1, §13). When the caller passes
 a held-out slice's parent/child aggregates, a train-measured win must
 *also* confirm on the holdout: the challenger's holdout scalar may not
-regress past ``promote_margin`` versus the champion's, and the holdout
-must not show a pass-rate regression under the SAME
-:attr:`ScoringWeights.pass_rate_monotonicity_scope` the train slice uses
-(per-entry on both sides, or aggregate on both). A failed confirmation
+regress past the HOLDOUT margin
+(:func:`effective_holdout_margin` — :attr:`ScoringWeights.holdout_margin`,
+falling back to ``promote_margin``) versus the champion's, and the holdout
+must not show a pass-rate regression beyond
+:attr:`ScoringWeights.holdout_entry_regression_budget` entries under the
+SAME :attr:`ScoringWeights.pass_rate_monotonicity_scope` the train slice
+uses (per-entry on both sides, or aggregate on both). Both holdout bounds
+are separate knobs because the holdout is the SMALLER slice and therefore
+the coarser-quantized one; sharing the train knob left real board shapes
+with no promotable margin at all (issue #118). At their defaults
+(``holdout_margin=None``, budget ``0``) the confirmation is byte-identical
+to the single-knob version. A failed confirmation
 is just another reason to ``reject`` (reason ``holdout_not_confirmed``);
 the champion stands, exactly as on any other reject — the
 protected-incumbent invariant is untouched. The holdout is
@@ -107,6 +115,17 @@ entirely and the decision is byte-identical to the pre-split gate.
 The :class:`GateOutcome` records the delta values regardless of the
 decision, so the journal always has the same shape of evidence to
 render whether the experiment passed, failed, or was deferred.
+
+Alongside the verdict — and never as part of it — the outcome carries
+``attributable_regressions``: the entries that regressed on their OWN
+per-entry evidence, whichever way the duel went (see
+:func:`attributable_entry_regressions`). No rule reads the per-entry
+``drift_loss`` the aggregates have always carried, so an entry whose quality
+collapses while it still PASSES is invisible to all three rules and to the
+per-namespace means; and under ``aggregate`` scope a net-positive challenger
+may break an entry by design. Both cases bake the loss into the lineage
+silently. This reports them and stops there: it is WARN-ONLY, it never vetoes,
+and it stays out of ``reason`` so the empty-reason-on-promote invariant holds.
 
 The gate uses ``decision="deferred"`` ONLY when called explicitly by a
 caller who has decided neither rule cleanly fired — the function in
@@ -154,6 +173,39 @@ PASS_RATE_MONOTONICITY_TOLERANCE: float = 1e-9
 #: small so the bool case stays effectively a strict must-still-pass.
 PER_ENTRY_SCORE_MONOTONICITY_TOLERANCE: float = 0.02
 
+#: Ratio limb of the per-entry DRIFT regression band (issue #130). An entry's
+#: drift loss counts as regressed only when the child's exceeds this multiple
+#: of the parent's — a relative test, because drift loss has no natural scale
+#: and the interesting failure is a collapse (0.10 -> 0.60), not a nudge.
+ATTRIBUTABLE_DRIFT_RATIO: float = 2.0
+
+#: Absolute limb of the same band. Near zero the ratio limb degenerates —
+#: 0.001 -> 0.003 triples and means nothing — so the child must ALSO exceed the
+#: parent by this much before the entry is reported. Both limbs must fire:
+#: ``child > max(RATIO * parent, parent + ABSOLUTE)``.
+ATTRIBUTABLE_DRIFT_ABSOLUTE: float = 0.05
+
+
+def effective_holdout_margin(weights: ScoringWeights) -> float:
+    """The scalar tolerance the HOLDOUT confirmation applies (issue #118).
+
+    :attr:`ScoringWeights.holdout_margin` when the operator set one, else
+    :attr:`ScoringWeights.promote_margin` — so a contract that never heard of
+    the field behaves exactly as before.
+
+    The two bounds want different values. ``promote_margin`` is calibrated
+    against the TRAIN slice and must be small enough for a real win to clear
+    Rule 1; the holdout tolerance is calibrated against the HOLDOUT slice and
+    must be large enough to absorb that slice's own quantization. A slice of N
+    entries moves its scalar in ``1/N`` steps and the holdout is the smaller
+    slice by construction, so its steps are the coarser ones — one knob served
+    both only by luck of the split. See
+    :attr:`ScoringWeights.holdout_margin` for the commensurable-bounds rule of
+    thumb (``promote_margin × N_train / N_holdout``).
+    """
+    margin = weights.holdout_margin
+    return float(weights.promote_margin if margin is None else margin)
+
 
 @dataclass(frozen=True, slots=True)
 class GateOutcome:
@@ -173,12 +225,22 @@ class GateOutcome:
         ``child.scalar - parent.scalar``. Negative = improvement.
     delta_pass_rate:
         ``child.pass_rate - parent.pass_rate``. Positive = improvement.
+    attributable_regressions:
+        Sorted ids of the entries that regressed on their OWN evidence,
+        whatever the verdict was (see
+        :func:`attributable_entry_regressions`). Populated on BOTH
+        decisions and deliberately NOT folded into ``reason``: the
+        empty-reason-on-promote invariant is load-bearing for consumers
+        that read a non-empty reason as a rejection, and this report is a
+        warning, never a veto. Empty by default, so every caller that
+        builds a :class:`GateOutcome` by hand is unaffected.
     """
 
     decision: TournamentDecision
     reason: str
     delta_scalar: float
     delta_pass_rate: float
+    attributable_regressions: tuple[str, ...] = ()
 
 
 def _regressed_namespaces(
@@ -222,6 +284,34 @@ def _regressed_namespaces(
             regressed.append(ns)
     regressed.sort()
     return regressed
+
+
+def _namespace_regression_reason(
+    parent_agg: dict[str, Any],
+    child_agg: dict[str, Any],
+    regressed: list[str],
+) -> str:
+    """Rule 3's rejection reason, citing each namespace's two aggregates.
+
+    The names alone said WHICH namespaces regressed and never by how much,
+    so an operator could not tell a hair over the tolerance from a
+    collapse, nor which of three cited namespaces to look at first (issue
+    #129). The values are the sign-folded weighted aggregates the rule
+    compared — higher is worse in that view, which is why the champion's
+    number reads lower than the challenger's on every namespace listed.
+    """
+    parent_ns: dict[str, Any] = parent_agg.get("namespace_aggregates", {}) or {}
+    child_ns: dict[str, Any] = child_agg.get("namespace_aggregates", {}) or {}
+    parts = [
+        f"{ns} (champion {float(parent_ns[ns]):.6f} -> " f"challenger {float(child_ns[ns]):.6f})"
+        for ns in regressed
+    ]
+    return (
+        "monotonicity_regression on namespace="
+        + ", ".join(parts)
+        + "; a promotion needs each flagged namespace to stay at or below the "
+        f"champion's weighted aggregate (tolerance {NAMESPACE_MONOTONICITY_TOLERANCE:g})"
+    )
 
 
 def _row_score(row: dict[str, Any] | None) -> float | None:
@@ -296,6 +386,113 @@ def _regressed_entries(parent_agg: dict[str, Any], child_agg: dict[str, Any]) ->
     return regressed
 
 
+def _row_drift(row: dict[str, Any] | None) -> float | None:
+    """Read one ``per_entry`` row's ``drift_loss``, or ``None`` when absent.
+
+    A non-numeric or missing value reads as ``None`` — no measurement, so no
+    comparison — rather than as a zero, which would make "this row carries no
+    drift" indistinguishable from "this row measured no drift" and could
+    manufacture a regression out of a hand-built aggregate.
+    """
+    if row is None:
+        return None
+    value = row.get("drift_loss")
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        drift = float(value)
+    except (TypeError, ValueError):
+        return None
+    if drift != drift:  # NaN
+        return None
+    return drift
+
+
+def _drift_regressed_entries(parent_agg: dict[str, Any], child_agg: dict[str, Any]) -> list[str]:
+    """Return ids whose per-entry DRIFT loss collapsed (sorted).
+
+    The axis no gate rule reads (issue #130). Rules 1-3 decide on the scalar,
+    on per-entry ``score`` / ``pass_fail``, and on per-namespace MEANS
+    respectively — so an entry whose drift loss multiplies while it still
+    PASSES is invisible to all three, and a simultaneous improvement on
+    another entry hides it from the namespace mean as well. The per-entry rows
+    already carry ``drift_loss`` on both sides; this simply reads it.
+
+    An entry counts as regressed when
+
+        ``child_drift > max(RATIO * parent_drift, parent_drift + ABSOLUTE)``
+
+    — see :data:`ATTRIBUTABLE_DRIFT_RATIO` / :data:`ATTRIBUTABLE_DRIFT_ABSOLUTE`
+    for why both limbs are required. Entries with no drift measurement on
+    either side are skipped.
+    """
+    parent_per: dict[str, dict[str, Any]] = parent_agg.get("per_entry", {})
+    child_per: dict[str, dict[str, Any]] = child_agg.get("per_entry", {})
+    regressed: list[str] = []
+    for entry_id, parent_row in parent_per.items():
+        parent_drift = _row_drift(parent_row)
+        if parent_drift is None:
+            continue
+        child_drift = _row_drift(child_per.get(entry_id))
+        if child_drift is None:
+            continue
+        band = max(
+            ATTRIBUTABLE_DRIFT_RATIO * parent_drift,
+            parent_drift + ATTRIBUTABLE_DRIFT_ABSOLUTE,
+        )
+        if child_drift > band:
+            regressed.append(entry_id)
+    regressed.sort()
+    return regressed
+
+
+def attributable_entry_regressions(
+    parent_agg: dict[str, Any],
+    child_agg: dict[str, Any],
+) -> tuple[str, ...]:
+    """Return the entries that regressed on their own evidence (sorted).
+
+    The union of the two per-entry axes the aggregates carry: the continuous
+    outcome (:func:`_regressed_entries` — the same reader Rule 2's per_entry
+    scope uses) and the drift loss (:func:`_drift_regressed_entries`).
+
+    This is OBSERVATION, not policy. It is computed on every duel and reported
+    on both verdicts, independent of ``pass_rate_monotonicity`` and its scope:
+    a contract that chose ``aggregate`` scope chose to PERMIT entry trades, not
+    to stop hearing about them, and an entry broken by a promotion is baked
+    into the lineage from that round on. Nothing here rejects — see
+    :class:`GateOutcome.attributable_regressions`.
+    """
+    ids = set(_regressed_entries(parent_agg, child_agg))
+    ids.update(_drift_regressed_entries(parent_agg, child_agg))
+    return tuple(sorted(ids))
+
+
+def attributable_regression_detail(
+    parent_agg: dict[str, Any],
+    child_agg: dict[str, Any],
+) -> dict[str, dict[str, float | None]]:
+    """Return ``{entry_id: {parent/child score + drift}}`` for the regressions.
+
+    The evidence behind :func:`attributable_entry_regressions`, in the shape
+    the health finding's ``detail`` carries: for each reported entry, both
+    sides' continuous score and drift loss, with ``None`` where the aggregate
+    carried no measurement. Single-sources the computation so the finding can
+    never name an entry the gate outcome did not.
+    """
+    parent_per: dict[str, dict[str, Any]] = parent_agg.get("per_entry", {})
+    child_per: dict[str, dict[str, Any]] = child_agg.get("per_entry", {})
+    detail: dict[str, dict[str, float | None]] = {}
+    for entry_id in attributable_entry_regressions(parent_agg, child_agg):
+        detail[entry_id] = {
+            "parent_score": _row_score(parent_per.get(entry_id)),
+            "child_score": _row_score(child_per.get(entry_id)),
+            "parent_drift_loss": _row_drift(parent_per.get(entry_id)),
+            "child_drift_loss": _row_drift(child_per.get(entry_id)),
+        }
+    return detail
+
+
 def _mean_score(agg: dict[str, Any]) -> float:
     """Read an aggregate's overall continuous outcome, defaulting to ``1.0``.
 
@@ -319,6 +516,7 @@ def _pass_rate_regression_reason(
     weights: ScoringWeights,
     *,
     prefix: str = "",
+    entry_budget: int = 0,
 ) -> str:
     """Return the pass-rate monotonicity reject reason, or ``""`` to allow.
 
@@ -334,12 +532,36 @@ def _pass_rate_regression_reason(
     The caller has already checked that ``pass_rate_monotonicity`` is on.
     ``prefix`` lets the holdout reuse the same wording with its
     ``holdout_not_confirmed: holdout `` lead-in.
+
+    ``entry_budget`` (issue #118) is how many regressed entries to tolerate
+    before rejecting. ``0`` — the only value the TRAIN side ever passes — is
+    exactly the historical rule under both scopes. The holdout passes
+    :attr:`ScoringWeights.holdout_entry_regression_budget`, and the two scopes
+    express the same allowance differently: per-entry it is a COUNT, while
+    aggregate widens the mean-score band by the movement that many flips
+    produce (``budget / entries``), so an operator's budget of 1 means the
+    same thing whichever scope the contract pins.
     """
     if weights.pass_rate_monotonicity_scope == "aggregate":
         parent_pass = _mean_score(parent_agg)
         child_pass = _mean_score(child_agg)
         delta = child_pass - parent_pass
-        if delta < -PASS_RATE_MONOTONICITY_TOLERANCE:
+        # A budget of N entries is N/scored-entries of mean-score movement on
+        # this slice. The denominator must be the SCORED rows, because that is
+        # the denominator ``mean_score`` itself uses
+        # (:func:`zicato.tournament.scoring.aggregate_generation_score`'s
+        # ``score_count``) — counting unscored rows too would silently shrink
+        # the band below the one entry the operator asked for. With no scored
+        # rows (a hand-built or expectation-free aggregate) there is no scale to
+        # convert on, so the budget contributes nothing rather than an
+        # arbitrary amount.
+        scored = sum(
+            1
+            for row in (parent_agg.get("per_entry", {}) or {}).values()
+            if _row_score(row) is not None
+        )
+        budget_band = (entry_budget / scored) if (entry_budget > 0 and scored) else 0.0
+        if delta < -(PASS_RATE_MONOTONICITY_TOLERANCE + budget_band):
             # Wording kept as "pass-rate" for back-compat with consumers
             # that match this reason text; the quantity is now mean_score,
             # which equals pass_rate on an all-bool board.
@@ -351,8 +573,10 @@ def _pass_rate_regression_reason(
         return ""
     # per_entry (default): every entry the parent scored must hold within
     # tolerance (a bool entry the parent passed must still pass — see
-    # :func:`_regressed_entries`).
+    # :func:`_regressed_entries`), save for the first ``entry_budget`` of them.
     regressed = _regressed_entries(parent_agg, child_agg)
+    if len(regressed) <= entry_budget:
+        regressed = []
     if regressed:
         return f"{prefix}pass-rate regression on entries: " + ", ".join(regressed)
     return ""
@@ -365,37 +589,49 @@ def _holdout_confirms(
 ) -> str:
     """Return ``""`` when the holdout confirms the win, else a reason.
 
-    Reuses the same machinery the train slice is gated by — the
-    ``promote_margin`` regression band on the holdout scalar, and the
-    pass-rate monotonicity check on the holdout's per-entry rows — but in
-    *confirmation* form: the challenger must merely *not regress* on the
-    holdout. Concretely it rejects when
+    Reuses the same machinery the train slice is gated by — a scalar
+    regression band on the holdout scalar, and the pass-rate monotonicity
+    check on the holdout's per-entry rows — but in *confirmation* form: the
+    challenger must merely *not regress* on the holdout. Concretely it
+    rejects when
 
     * the challenger's holdout loss rose past the champion's by more than
-      ``promote_margin`` (a real holdout regression, not noise), OR
-    * the challenger regressed on pass-rate monotonicity (reusing
-      :func:`_pass_rate_regression_reason`, gated by
+      :func:`effective_holdout_margin` (a real holdout regression, not
+      noise), OR
+    * the challenger regressed on pass-rate monotonicity beyond
+      :attr:`ScoringWeights.holdout_entry_regression_budget` entries
+      (reusing :func:`_pass_rate_regression_reason`, gated by
       ``pass_rate_monotonicity`` so operators who disabled it on the train
       side disable it here too, and honoring the SAME
       ``pass_rate_monotonicity_scope`` so train and holdout apply one
       consistent policy — per-entry on both sides, or aggregate on both).
 
-    The holdout is never asked to clear ``promote_margin`` in the
-    *improving* direction — a train-measured win that merely holds flat on
-    the holdout is a confirmation, not a failure. This is the asymmetry
-    that makes the holdout a guard against board-memorization rather than a
-    second, stricter promotion bar.
+    Both bounds are the HOLDOUT's own (issue #118). Reusing the train knob
+    for the scalar band pulled one number in two directions at once, and the
+    pass-rate rule had no operator tolerance at all — only its float-noise
+    band — so on a 6-entry holdout a single entry flipping pass→fail
+    rejected at every margin. That contradicts this step's own doctrine
+    (below): a confirmation that no achievable margin can satisfy is not a
+    confirmation, it is a second gate. Both knobs default to exactly the
+    historical strictness.
+
+    The holdout is never asked to clear the margin in the *improving*
+    direction — a train-measured win that merely holds flat on the holdout
+    is a confirmation, not a failure. This is the asymmetry that makes the
+    holdout a guard against board-memorization rather than a second,
+    stricter promotion bar.
     """
+    margin = effective_holdout_margin(weights)
     parent_scalar = float(holdout_parent_agg["scalar"])
     child_scalar = float(holdout_child_agg["scalar"])
     # A holdout regression: the challenger's holdout loss rose past the
     # champion's by more than the noise band. (delta > +margin ⇒ regressed.)
-    if child_scalar - parent_scalar > weights.promote_margin:
+    if child_scalar - parent_scalar > margin:
         return (
             f"holdout_not_confirmed: holdout loss rose by "
             f"{child_scalar - parent_scalar:.6f} "
             f"(champion {parent_scalar:.6f} -> challenger {child_scalar:.6f}); "
-            f"a train-measured win must hold within {weights.promote_margin:.6f} "
+            f"a train-measured win must hold within {margin:.6f} "
             f"on the holdout slice"
         )
     if weights.pass_rate_monotonicity:
@@ -404,6 +640,7 @@ def _holdout_confirms(
             holdout_child_agg,
             weights,
             prefix="holdout_not_confirmed: holdout ",
+            entry_budget=int(weights.holdout_entry_regression_budget),
         )
         if reason:
             return reason
@@ -425,6 +662,65 @@ def holdout_confirms(
     non-Ladder (raw Phase-A) path.
     """
     return _holdout_confirms(holdout_parent_agg, holdout_child_agg, weights)
+
+
+def _component(agg: dict[str, Any], name: str) -> float:
+    """Read one named entry of an aggregate's ``scalar_components``, or ``0.0``.
+
+    An absent component is exactly zero by construction: the scoring layer
+    omits the key rather than writing a zero when a term is inactive.
+    """
+    components = agg.get("scalar_components")
+    if not isinstance(components, dict):
+        return 0.0
+    value = components.get(name)
+    if value is None or isinstance(value, bool):
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _parsimony_decomposition(
+    parent_agg: dict[str, Any],
+    child_agg: dict[str, Any],
+    weights: ScoringWeights,
+    delta_scalar: float,
+) -> str:
+    """Return the parsimony half of a Rule 1 rejection, or ``""`` when inert.
+
+    Rule 1 compares two scalars, and when the opt-in diff-complexity term is
+    active one of those scalars contains a toll the challenger paid for the
+    SIZE of its edit rather than for anything it did to the board. A challenger
+    that won two entries out of twelve and paid a larger toll for re-emitting a
+    whole-file template nets positive and is rejected — with a message that
+    says only that the loss rose, which reads as a board regression that never
+    happened (issue #120(b)).
+
+    So when the toll MOVED against the challenger, the reason states the split:
+    the raw quality delta (the scalars with the parsimony component removed —
+    what the board actually said), the toll delta, and, when the raw delta
+    alone would have cleared ``promote_margin``, that fact in words. The
+    per-side ``{added, removed, patches}`` sizes come from
+    :func:`diff_size_evidence`, so the operator can see what the toll was
+    charged for.
+
+    Returns ``""`` when the term is off, or when the toll did not move against
+    the challenger — at the default ``diff_complexity_weight == 0.0`` no
+    aggregate carries the component and the reason is byte-identical to before.
+    """
+    toll_delta = _component(child_agg, "diff_complexity") - _component(
+        parent_agg, "diff_complexity"
+    )
+    if toll_delta <= 0.0:
+        return ""
+    raw_delta = delta_scalar - toll_delta
+    parts = [f"diff_complexity: raw quality delta {raw_delta:+.6f}, toll {toll_delta:+.6f}"]
+    if raw_delta <= -weights.promote_margin:
+        parts.append("the raw delta alone would have cleared the promote margin")
+    parts.extend(diff_size_evidence(parent_agg, child_agg))
+    return " [" + "; ".join(parts) + "]"
 
 
 def evaluate_gate(
@@ -457,6 +753,12 @@ def evaluate_gate(
     delta_scalar = child_scalar - parent_scalar
     delta_pass_rate = child_pass - parent_pass
 
+    # Per-entry regressions attributable to THIS duel, on every path and both
+    # verdicts (issue #130). Observation only — it never changes a decision and
+    # never enters ``reason``; the round log and the health report are where it
+    # surfaces. Computed once here so every early return carries the same set.
+    attributable = attributable_entry_regressions(parent_agg, child_agg)
+
     # Rule 0: diff-complexity ceiling (OPT-IN, default 0.0 = OFF). A structural
     # admissibility veto — a challenger whose diff complexity
     # (``added + removed + patches``) exceeds the ceiling is rejected outright,
@@ -480,6 +782,7 @@ def evaluate_gate(
                     ),
                     delta_scalar=delta_scalar,
                     delta_pass_rate=delta_pass_rate,
+                    attributable_regressions=attributable,
                 )
 
     # Rule 1: scalar margin. The scalar is a LOSS — lower is better — so
@@ -509,11 +812,17 @@ def evaluate_gate(
                 f"challenger {child_scalar:.6f}); a promotion needs a drop "
                 f"of at least {weights.promote_margin:.6f}"
             )
+        # ...and when an opt-in parsimony toll moved against the challenger,
+        # say how much of that delta was the toll rather than the board
+        # (issue #120(b)). Inert — and the reason byte-identical — whenever the
+        # diff-complexity term is off, which is the default.
+        verdict += _parsimony_decomposition(parent_agg, child_agg, weights, delta_scalar)
         return GateOutcome(
             decision=TournamentDecision.REJECTED,
             reason=verdict,
             delta_scalar=delta_scalar,
             delta_pass_rate=delta_pass_rate,
+            attributable_regressions=attributable,
         )
 
     # Rule 2: pass-rate monotonicity. The scope decides what "regressed"
@@ -528,6 +837,7 @@ def evaluate_gate(
                 reason=pass_reason,
                 delta_scalar=delta_scalar,
                 delta_pass_rate=delta_pass_rate,
+                attributable_regressions=attributable,
             )
 
     # Rule 3: per-namespace monotonicity. Applied last so the scalar
@@ -536,12 +846,13 @@ def evaluate_gate(
     # journal records the full picture (not just the first one).
     regressed_ns = _regressed_namespaces(parent_agg, child_agg, weights)
     if regressed_ns:
-        reason = "monotonicity_regression on namespace=" + ", ".join(regressed_ns)
+        reason = _namespace_regression_reason(parent_agg, child_agg, regressed_ns)
         return GateOutcome(
             decision=TournamentDecision.REJECTED,
             reason=reason,
             delta_scalar=delta_scalar,
             delta_pass_rate=delta_pass_rate,
+            attributable_regressions=attributable,
         )
 
     # Holdout confirmation (OVERFITTING.md §12 #1). The three train rules
@@ -556,6 +867,7 @@ def evaluate_gate(
                 reason=holdout_reason,
                 delta_scalar=delta_scalar,
                 delta_pass_rate=delta_pass_rate,
+                attributable_regressions=attributable,
             )
 
     return GateOutcome(
@@ -563,6 +875,7 @@ def evaluate_gate(
         reason="",
         delta_scalar=delta_scalar,
         delta_pass_rate=delta_pass_rate,
+        attributable_regressions=attributable,
     )
 
 
@@ -600,11 +913,16 @@ def diff_size_evidence(
 
 
 __all__ = [
+    "ATTRIBUTABLE_DRIFT_ABSOLUTE",
+    "ATTRIBUTABLE_DRIFT_RATIO",
     "GateOutcome",
     "NAMESPACE_MONOTONICITY_TOLERANCE",
     "PASS_RATE_MONOTONICITY_TOLERANCE",
     "PER_ENTRY_SCORE_MONOTONICITY_TOLERANCE",
+    "attributable_entry_regressions",
+    "attributable_regression_detail",
     "diff_size_evidence",
+    "effective_holdout_margin",
     "evaluate_gate",
     "holdout_confirms",
 ]

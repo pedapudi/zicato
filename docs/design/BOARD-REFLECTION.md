@@ -570,12 +570,17 @@ onto the epoch record and surfaces through the loop-health channel.
   error (unknown pinned id, over-wide ceiling) also refuses under the hard gate
   — best-effort exists for outages, not for typos.
 - **Margin sanity** — `detect_margin_below_noise_floor` (promoting on noise),
-  plus the full `noise < promote_margin < achievable` window
-  (`preflight_window_verdict`, issue #112): `margin_above_achievable` is
-  refuse-worthy because no challenger could ever be promoted, `empty_window`
-  says no margin is defensible at all, and margin *recommendations* scale the
-  draw-count-stable `delta_std` rather than the range that drifts upward as
-  calibration improves (`recommended_promote_margin`).
+  plus the margin-vs-floor/signal window (`preflight_window_verdict`, issue
+  #112): `empty_window` says no margin is defensible at all, and
+  `margin_above_achievable` says the margin exceeds the measured DEGRADATION
+  signal. All of them WARN and none refuses — the upper comparison measures how
+  much the champion has left to LOSE, which does not bound how far a challenger
+  can improve (issue #119), so it names a number worth checking rather than a
+  null run. Margin *recommendations* scale the draw-count-stable `delta_std`
+  rather than the range that drifts upward as calibration improves
+  (`recommended_promote_margin`). When the board is split, `holdout_window_note`
+  adds the holdout confirmation's own bounds (`holdout_margin`,
+  `holdout_entry_regression_budget` — issue #118) as prose.
 - **Dead judge / dead entry / degenerate scoring / flat drift** — the
   loop-health detectors (`detect_dead_judge`,
   `detect_non_differentiating_entry`, `detect_degenerate_scoring`,

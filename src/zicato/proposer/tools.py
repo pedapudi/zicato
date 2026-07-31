@@ -385,12 +385,67 @@ def mutation_track_record(mutation_id: str) -> str:
     )
 
 
+#: Hard cap on the characters ``read_journal`` returns, matching
+#: ``_PARENT_DIFF_LIMIT_CHARS``. The journal grew unbounded once it stopped
+#: truncating the proposer's own ``why`` at write time (issue #123) — the
+#: budget moved here, to the reader, where dropping text is recoverable.
+#: The other two journal-consuming LLM paths already cap independently
+#: (``epoch.analysis`` at 60_000, ``analyzer.report_data`` at 40_000).
+_JOURNAL_LIMIT_CHARS = 20_000
+
+
+#: An entry heading as :func:`zicato.epoch.journal._render_section` writes it:
+#: ``## `` then a ``_version_label`` (``v`` + digits, or a backticked free-form
+#: generation id) then the em-dash separator. Deliberately NARROWER than a bare
+#: ``\n## `` scan: since issue #123 stopped truncating, a ``core_idea`` / ``why``
+#: reaches the journal verbatim, so an ordinary markdown heading inside the
+#: proposer's own prose (``## Approach``) sits in the file looking exactly like
+#: an entry boundary. Anchoring on the label shape keeps :func:`_tail_entries`
+#: from opening the window mid-body on a line the proposer wrote as prose.
+_ENTRY_HEADING = re.compile(r"\n## (?:v\d+|`[^`\n]+`) —")
+
+
+def _tail_entries(text: str, limit: int) -> str:
+    """Keep the NEWEST ``limit``-ish chars of a journal, on an entry boundary.
+
+    The journal is chronological-append, so the tail is the part a proposer
+    reasoning about what to try next actually needs. We take the last
+    ``limit`` characters, then advance to the first whole section inside
+    that window (:data:`_ENTRY_HEADING`, the boundary
+    :func:`~zicato.epoch.journal.append_journal_entry` writes) so the
+    proposer never reads a section that starts mid-sentence. A single
+    section longer than the whole budget has no boundary to find, so it is
+    returned clipped rather than dropped entirely.
+
+    A prose line that reproduces the full heading shape (``## v9 — ...``,
+    not just ``## Something``) is still indistinguishable from a real
+    boundary by construction — ``journal.md`` is markdown, not a framed
+    format. The narrowed pattern removes the case that actually occurs;
+    nothing short of escaping the body at write time removes the rest, and
+    that would cost the verbatim preservation issue #123 exists to give.
+    """
+    if len(text) <= limit:
+        return text
+    tail = text[-limit:]
+    match = _ENTRY_HEADING.search(tail)
+    if match is not None:
+        tail = tail[match.start() + 1 :]
+    dropped = len(text) - len(tail)
+    return (
+        f"[... truncated: {dropped} earlier chars dropped from a {len(text)}-char "
+        f"journal; the newest entries follow ...]\n\n{tail}"
+    )
+
+
 def read_journal() -> str:
     """Return the epoch's running narrative journal, or ``""`` when absent.
 
     Reuses :func:`zicato.core.workspace.journal_path`; the empty string
     is the proposer-side sentinel for "no journal yet", matching how the
     default proposer treats a missing insights file.
+
+    Capped at ``_JOURNAL_LIMIT_CHARS``, keeping the newest entries — the
+    same runaway-context guard the other unbounded tools carry.
     """
     ctx = _active_context()
     from zicato.core.workspace import journal_path  # noqa: PLC0415
@@ -398,7 +453,7 @@ def read_journal() -> str:
     path = journal_path(ctx.workspace_root, ctx.epoch_id)
     if not path.is_file():
         return ""
-    return path.read_text(encoding="utf-8")
+    return _tail_entries(path.read_text(encoding="utf-8"), _JOURNAL_LIMIT_CHARS)
 
 
 def read_insights() -> str:

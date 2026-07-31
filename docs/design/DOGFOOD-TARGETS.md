@@ -525,3 +525,54 @@ need to apologize when targets 2 and 3 land".
 | Scoring weights and the non-drift loss extension | [SCORING.md](SCORING.md) |
 | Emulator collusion-proofing (relevant to target 2 + 3) | [EMULATOR.md](EMULATOR.md) |
 | Why mandatory hypothesis schema (the offline-benchmark target) | [RATIONALE.md](RATIONALE.md) |
+| The post-promotion hook contract (`on_promote`) | [ARCHITECTURE.md](ARCHITECTURE.md) §4.1.1 |
+
+## 6. Targets whose state lives outside the tree
+
+All three targets above share a property that is easy to mistake for a
+law: their evolved state IS the mutable tree. Promote a generation and
+the promoted snapshot plus the `current_generation` marker is the entire
+result — there is nothing else to update, which is why none of them
+needed a promotion hook to be built.
+
+That property does not generalize. A target can perfectly well be
+evolvable through a source tree while its *operative* state lives
+somewhere the tree cannot reach: a prompt or policy row in a database, a
+config served to a fleet, a compiled artifact in an object store, a
+cache the running system reads. For those, "the champion advanced" is
+not the end of the round — it is the trigger for a write the loop knows
+nothing about.
+
+Two supported ways to close that gap:
+
+**1. The adapter hook (preferred, Python targets).** Declare the
+optional `on_promote` coroutine on your `HarnessAdapter`; zicato calls
+it exactly once per settled promotion, right after the champion marker
+advances, with the epoch, the promoted and parent generation ids, the
+promoted snapshot root, and the workspace root. It is best-effort by
+contract — a failure never un-promotes the generation, and surfaces as
+an ERROR log plus an `on_promote_hook_failed` health WARNING for the
+operator to reconcile. The full contract is
+[ARCHITECTURE.md](ARCHITECTURE.md) §4.1.1.
+
+Because the hook runs in the evolve process, make the side effect
+idempotent: the one window the hook cannot cover is a crash between the
+marker advance and the call, which loses the notification rather than
+repeating it. An idempotent write plus the reconcile below makes that
+window harmless.
+
+**2. Poll `lineage.json` (the fallback, and the answer for non-Python
+targets).** The promoted head is the last lineage entry with
+`promoted: true`; compare it against your own record of the last head
+you applied and reconcile the difference. This works from any language
+and any process, it is what the hook exists to make unnecessary rather
+than to forbid, and it remains the correct backstop even for targets
+that DO use the hook.
+
+What is deliberately not offered is a contract-declared shell command —
+a promotion hook spelled as a command string in the epoch contract. The
+contract is a data file the loop reads, rewrites, and hands to a
+proposer; making it an executable surface is a different trust boundary
+than "run the operator's registered adapter", and it is not one this
+feature takes on. A non-Python target uses the polling fallback, or
+wraps its integration in a thin Python adapter.

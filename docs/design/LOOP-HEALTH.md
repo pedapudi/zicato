@@ -209,12 +209,47 @@ mode #3 in the board-audit playbook (`skills/zicato-audit-board`).
 
 **Signal.** Collects the set of declared judge `name`s from the board and
 the set of attributed judge names that fired across every run's
-`drift_counts`. Any declared judge absent from the fired set is reported in
-one **`warning`** finding (`detail.dead_judges` lists them). The inverse —
-a judge firing on every run — is *not* a finding: loud is not dead, and a
-judge can be legitimately always-on. Silent when no entry declares a judge
+`drift_counts`. A declared judge that is absent from the fired set **and**
+recorded no call failures is reported in one **`warning`** finding
+(`detail.dead_judges` lists them). The inverse — a judge firing on every
+run — is *not* a finding: loud is not dead, and a judge can be
+legitimately always-on. Silent when no entry declares a judge
 (drift-/expectation-only board) or no run has landed yet (nothing has had a
 chance to fire).
+
+### 3.5b Erroring judge — `judge_erroring`
+
+**What it catches.** A board-declared judge whose callable **raised** rather
+than deciding anything — a misconfigured judge model, a revoked key, an
+endpoint outage. Emitted by the same detector as `dead_judge`, from the same
+silence, because until issue #121 the two were indistinguishable: a judge
+must never crash a run, so zicato's judge boundary and goldfive's steerer
+both swallow the exception; goldfive emits no `JudgementEmitted` for the
+resulting empty verdict; the reducer writes no `custom:<judge_name>` count.
+The broken judge therefore read as "never fired" and routed the operator
+into a board audit, while its missing drift made the generation's scalar
+*better* than the evidence supports.
+
+**Signal.** zicato's judge boundary counts invocations and errors per judge
+name for the worker process
+(`zicato.judge_runtime.error_register`); the worker stamps the snapshot onto
+`LossProfile.judge_errors` at `loss.json`-write time (absent / empty on every
+healthy run and on every profile written before the field existed). Any
+declared judge with a non-zero error count across the epoch's runs is
+reported in one **`warning`** finding whose `detail` carries
+`erroring_judges`, per-judge `judge_error_counts`
+(`invocations` / `errors` / `last_error_type`), and a recommendation pointing
+at the endpoint and model config rather than the board. The orchestrator
+lifts it onto the terminal the round it fires, like `dead_judge`.
+
+**Deliberately not an abort.** A round where a judge errored on 100% of
+invocations is, from the artifacts alone, indistinguishable from a transient
+endpoint outage, and an outage never disqualifies a contract — so there is no
+tolerance knob and nothing here stops or re-runs a round. Registered pending
+live evidence of real error rates. A judge that HANGS rather than raises is
+still a gap: goldfive's steerer bounds each `evaluate` with its own 30s
+timeout and treats an overrun as "no signal" without calling back into
+zicato, so it lands in the `dead_judge` bucket.
 
 ### 3.6 Stalled loop — `stalled_loop`
 
@@ -300,14 +335,15 @@ stay silent):
 | `non_differentiating_entry` | `warning` | a board entry's `drift_loss` is identical across every generation it ran under (one finding per such entry) |
 | `flat_drift_signal` | `warning` | total `drift:`-namespace metric count is zero across all runs |
 | `no_expectations` | `info` | fraction of entries without an expectation `> no_expectations_fraction` |
-| `dead_judge` | `warning` | a board-declared in-run judge never fired (no `custom:<judge_name>` count) across any run in the epoch |
+| `dead_judge` | `warning` | a board-declared in-run judge never fired (no `custom:<judge_name>` count) across any run in the epoch, and recorded no call failures |
+| `judge_erroring` | `warning` | a board-declared in-run judge's callable RAISED on one or more invocations (`LossProfile.judge_errors`) — its zero drift is an error artifact, not a verdict |
 | `stalled_loop` | `warning` | trailing run of `rejected` decisions reaches `stalled_rejects` |
 | `generalization_gap` | `warning` / `critical` | the champion's `holdout_loss - train_loss` gap has *widened* past `generalization_gap_warn` / `_crit` (board memorization) |
 | `refresh_cadence` | `info` | evaluated generations under the contract reach `max_generations_per_contract` |
 | `placebo_promoted` | `critical` | a random-baseline placebo challenger (OVERFITTING.md #7) was PROMOTED — gate discrimination is broken |
-| `preflight_signal_below_floor` | `critical` under `runtime.preflight_gate="refuse"`, else `warning` | the contract pre-flight verdict is `refuse` (the achievable signal did not clear the measured A/A noise floor) |
+| `preflight_signal_below_floor` | `critical` under `runtime.preflight_gate="refuse"`, else `warning` | the contract pre-flight verdict is `refuse` (the measured signal did not clear the measured A/A noise floor) |
 
-Two more detectors — `margin_below_noise_floor` (`info` / `warning`), `infra_outage` / `token_budget_clip` / `tree_never_imported` (`warning`) — shipped alongside the overfitting / pre-flight / infra-robustness programs after this table was first written; none of them emit `critical`, so they are omitted here for brevity. `health/diagnostics.py`'s `assess_loop_health` is the authoritative full detector list.
+Two more detectors — `margin_below_noise_floor` (`info` / `warning`), `infra_outage` / `token_budget_clip` / `tree_never_imported` / `on_promote_hook_failed` (`warning`) — shipped alongside the overfitting / pre-flight / infra-robustness programs after this table was first written; none of them emit `critical`, so they are omitted here for brevity. `health/diagnostics.py`'s `assess_loop_health` is the authoritative full detector list.
 
 Severities mean:
 

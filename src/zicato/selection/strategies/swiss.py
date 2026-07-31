@@ -282,7 +282,7 @@ class SwissStrategy(SelectionStrategy):
             return SelectionDecision(
                 promoted_generation_id=None,
                 decision=TournamentDecision.REJECTED,
-                reason="swiss leader did not clear the champion gate",
+                reason=f"swiss leader did not clear the champion gate: {self._no_final_detail()}",
                 matchups=audit,
                 standings=self._standings(None),
             )
@@ -306,6 +306,29 @@ class SwissStrategy(SelectionStrategy):
             matchups=audit,
             crowning_matchup_id=self._final_match_id,
             standings=self._standings(promoted_id),
+        )
+
+    def _no_final_detail(self) -> str:
+        """Why no crowning duel was decided, with the means the swiss measured.
+
+        A swiss that never produced a leader (every pairing round ran and
+        no challenger came out ahead) and one whose crowning duel was
+        scheduled and never reported are different faults, and only the
+        latter has two scalars to compare. The bare sentence said neither
+        (issue #129).
+        """
+        if self._champion is None:
+            return "no champion was seeded"
+        if self._leader is None:
+            return (
+                f"the swiss rounds produced no leader over {len(self._audit)} duel(s) "
+                f"across {len(self._scalar_n)} contestant(s)"
+            )
+        champ = self._mean_scalar(self._champion.generation_id)
+        leader = self._mean_scalar(self._leader.generation_id)
+        return (
+            f"the crowning duel against leader {self._leader.generation_id} reported "
+            f"no result (champion mean {champ:.6f} vs leader mean {leader:.6f})"
         )
 
     def _standings(self, promoted_id: str | None) -> tuple[Standing, ...]:

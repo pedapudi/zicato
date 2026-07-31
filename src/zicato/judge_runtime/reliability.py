@@ -88,17 +88,32 @@ class JudgeReliability:
         The judge's stable name — the same name ``custom:<judge_name>``
         drift attribution and ``per_judge_weights`` route on.
     k:
-        How many times the frozen transcript was re-judged.
+        How many times the frozen transcript was re-judged — calls
+        ATTEMPTED, so ``k == len(verdicts) + errors``.
     fired:
-        How many of the ``k`` verdicts emitted drift.
+        How many of the returned verdicts emitted drift.
     verdicts:
-        The per-call ``drift_emitted`` flags, in call order.
+        The ``drift_emitted`` flags of the calls that ANSWERED, in call
+        order. Shorter than ``k`` when a call raised.
     disagreement_rate:
         :func:`pairwise_disagreement` over the verdicts — ``0.0`` for a
         perfectly self-consistent judge, ``1.0`` for a k=2 alternator.
     details:
         The per-call verdict ``detail`` strings (empty for non-firing
         calls), kept for the operator's post-mortem.
+    errors:
+        How many of the ``k`` calls RAISED instead of returning a verdict
+        (issue #121). Both judge kinds swallow their callable's exception
+        by hard contract and return an empty verdict, so without this
+        count a judge whose endpoint 404s on every call reports ``fired
+        0/k`` at ``disagreement_rate 0.0`` — indistinguishable from, and
+        flattering relative to, a healthy judge that consistently found
+        no violation. ``errors == k`` means the probe measured nothing.
+
+    Note that ``disagreement_rate`` is computed over the calls that
+    ANSWERED: a judge that raised on some calls is not thereby
+    "inconsistent", and pairing a real verdict against a non-verdict
+    would manufacture disagreement out of an outage.
     """
 
     judge_name: str
@@ -107,6 +122,7 @@ class JudgeReliability:
     verdicts: tuple[bool, ...]
     disagreement_rate: float
     details: tuple[str, ...]
+    errors: int = 0
 
     def to_json(self) -> dict[str, Any]:
         """A JSON-friendly dict (the shape the health detector reads)."""
@@ -117,6 +133,7 @@ class JudgeReliability:
             "verdicts": list(self.verdicts),
             "disagreement_rate": self.disagreement_rate,
             "details": list(self.details),
+            "errors": self.errors,
         }
 
 
@@ -200,8 +217,17 @@ async def test_retest(
     ctx = _freeze_context(transcript)
     verdicts: list[bool] = []
     details: list[str] = []
+    errors = 0
     for _ in range(k):
         verdict = await live.evaluate(ctx)
+        # A call that RAISED is counted, not scored. zicato's judge boundary
+        # swallows the exception and hands back an errored verdict; treating
+        # its empty drift flag as a verdict would report a broken endpoint as
+        # a perfectly self-consistent judge (issue #121).
+        if getattr(verdict, "errored", False):
+            errors += 1
+            details.append(str(getattr(verdict, "error", "") or ""))
+            continue
         verdicts.append(bool(getattr(verdict, "drift_emitted", False)))
         details.append(str(getattr(verdict, "detail", "") or ""))
     fired = sum(verdicts)
@@ -210,8 +236,9 @@ async def test_retest(
         k=k,
         fired=fired,
         verdicts=tuple(verdicts),
-        disagreement_rate=pairwise_disagreement(fired, k),
+        disagreement_rate=pairwise_disagreement(fired, len(verdicts)),
         details=tuple(details),
+        errors=errors,
     )
 
 

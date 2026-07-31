@@ -566,3 +566,150 @@ def test_ceiling_with_no_diff_size_on_child_agg_is_skipped() -> None:
     child = _agg(scalar=1.0)  # no diff_size key
     outcome = evaluate_gate(parent, child, weights)
     assert outcome.decision == "promoted"
+
+
+# ---------------------------------------------------------------------------
+# Attributable per-entry regressions (issue #130). Reported on both verdicts,
+# never folded into ``reason``, never a veto.
+# ---------------------------------------------------------------------------
+
+
+def _row(*, score: float | None = None, drift: float | None = None) -> dict[str, object]:
+    row: dict[str, object] = {}
+    if score is not None:
+        row["score"] = score
+    if drift is not None:
+        row["drift_loss"] = drift
+    return row
+
+
+def test_no_regression_reports_nothing() -> None:
+    parent = _agg(scalar=1.0, per_entry={"a": _row(score=1.0, drift=0.2)})
+    child = _agg(scalar=0.5, per_entry={"a": _row(score=1.0, drift=0.2)})
+    outcome = evaluate_gate(parent, child, ScoringWeights(promote_margin=0.1))
+    assert outcome.decision == "promoted"
+    assert outcome.attributable_regressions == ()
+
+
+def test_a_rejection_reports_its_regressions_too() -> None:
+    """Both decisions carry the report — a reject names the entry as well, so a
+    consumer never has to infer it from the verdict."""
+    parent = _agg(scalar=1.0, per_entry={"a": _row(score=1.0, drift=0.1)})
+    child = _agg(scalar=2.0, per_entry={"a": _row(score=0.0, drift=0.9)})
+    outcome = evaluate_gate(parent, child, ScoringWeights(promote_margin=0.1))
+    assert outcome.decision == "rejected"
+    assert outcome.attributable_regressions == ("a",)
+
+
+def test_drift_band_needs_both_limbs() -> None:
+    """Near zero the ratio alone is meaningless: 0.001 -> 0.010 is a 10x jump
+    that clears no absolute band, so it is not reported; 0.10 -> 0.60 is."""
+    parent = _agg(
+        scalar=1.0,
+        per_entry={
+            "noisy": _row(score=1.0, drift=0.001),
+            "collapsed": _row(score=1.0, drift=0.10),
+            "doubled_slightly": _row(score=1.0, drift=1.00),
+        },
+    )
+    child = _agg(
+        scalar=0.5,
+        per_entry={
+            "noisy": _row(score=1.0, drift=0.010),
+            "collapsed": _row(score=1.0, drift=0.60),
+            # 1.00 -> 1.04 clears the absolute band's arithmetic but not the
+            # ratio limb, so the compound condition holds it back.
+            "doubled_slightly": _row(score=1.0, drift=1.04),
+        },
+    )
+    outcome = evaluate_gate(parent, child, ScoringWeights(promote_margin=0.1))
+    assert outcome.decision == "promoted"
+    assert outcome.attributable_regressions == ("collapsed",)
+
+
+def test_an_entry_with_no_drift_measurement_is_never_reported() -> None:
+    """A hand-built or pre-drift aggregate must not manufacture a regression."""
+    parent = _agg(scalar=1.0, per_entry={"a": {"pass_fail": True}})
+    child = _agg(scalar=0.5, per_entry={"a": {"pass_fail": True, "drift_loss": 0.9}})
+    outcome = evaluate_gate(parent, child, ScoringWeights(promote_margin=0.1))
+    assert outcome.attributable_regressions == ()
+
+
+def test_the_report_is_not_a_veto_and_never_enters_the_reason() -> None:
+    """The whole point: a promotion carrying a reported regression is still a
+    promotion, and its reason is still exactly empty."""
+    parent = _agg(scalar=1.0, per_entry={"a": _row(score=1.0, drift=0.10)})
+    child = _agg(scalar=0.5, per_entry={"a": _row(score=1.0, drift=0.60)})
+    outcome = evaluate_gate(parent, child, ScoringWeights(promote_margin=0.1))
+    assert outcome.decision == "promoted"
+    assert outcome.reason == ""
+    assert outcome.attributable_regressions == ("a",)
+
+
+def test_regression_detail_matches_the_reported_ids() -> None:
+    from zicato.tournament.gate import attributable_regression_detail
+
+    parent = _agg(scalar=1.0, per_entry={"a": _row(score=1.0, drift=0.10)})
+    child = _agg(scalar=0.5, per_entry={"a": _row(score=1.0, drift=0.60)})
+    detail = attributable_regression_detail(parent, child)
+    assert list(detail) == ["a"]
+    assert detail["a"] == {
+        "parent_score": 1.0,
+        "child_score": 1.0,
+        "parent_drift_loss": 0.10,
+        "child_drift_loss": 0.60,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Rule 1's parsimony decomposition (issue #120(b)). Inert at the default
+# weight; on an active term it splits the delta into board and toll.
+# ---------------------------------------------------------------------------
+
+
+def _agg_with_toll(*, scalar: float, toll: float | None = None) -> dict[str, object]:
+    agg = _agg(scalar=scalar)
+    components: dict[str, float] = {"drift": 0.0, "pass": scalar}
+    if toll is not None:
+        components["pass"] = scalar - toll
+        components["diff_complexity"] = toll
+        agg["diff_size"] = {"added": 37, "removed": 0, "patches": 1}
+    agg["scalar_components"] = components
+    return agg
+
+
+def test_rejection_reason_is_unchanged_when_the_parsimony_term_is_off() -> None:
+    """Default contracts carry no ``diff_complexity`` component, so the reason
+    is byte-identical to the pre-decomposition wording."""
+    parent = _agg_with_toll(scalar=1.0)
+    child = _agg_with_toll(scalar=1.5)
+    outcome = evaluate_gate(parent, child, ScoringWeights(promote_margin=0.01))
+    assert outcome.decision == "rejected"
+    assert outcome.reason == (
+        "challenger regressed: loss rose by 0.500000 "
+        "(champion 1.000000 -> challenger 1.500000); a promotion needs the "
+        "loss to drop by at least 0.010000"
+    )
+
+
+def test_a_toll_driven_rejection_says_the_board_improved() -> None:
+    """The board fell 1.00 -> 0.75 and the challenger paid 0.76 for its edit.
+    The operator must be able to read both numbers off the reason."""
+    parent = _agg_with_toll(scalar=1.0)
+    child = _agg_with_toll(scalar=1.51, toll=0.76)
+    outcome = evaluate_gate(parent, child, ScoringWeights(promote_margin=0.01))
+    assert outcome.decision == "rejected"
+    assert "diff_complexity: raw quality delta -0.250000, toll +0.760000" in outcome.reason
+    assert "the raw delta alone would have cleared the promote margin" in outcome.reason
+    assert "diff_size:challenger:added=37,removed=0,patches=1" in outcome.reason
+
+
+def test_a_toll_that_did_not_swing_it_says_so_by_omission() -> None:
+    """A challenger that regressed on the board too gets the decomposition but
+    NOT the "would have cleared" clause — the toll is not the whole story."""
+    parent = _agg_with_toll(scalar=1.0)
+    child = _agg_with_toll(scalar=1.30, toll=0.10)
+    outcome = evaluate_gate(parent, child, ScoringWeights(promote_margin=0.01))
+    assert outcome.decision == "rejected"
+    assert "diff_complexity: raw quality delta +0.200000, toll +0.100000" in outcome.reason
+    assert "would have cleared" not in outcome.reason

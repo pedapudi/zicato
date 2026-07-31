@@ -48,16 +48,17 @@ round now see the identical finding set for anything already written to disk.
 | `non_differentiating_entry` | `warning`, one per entry | a board entry ran under ≥2 generations and produced an *identical* `drift_loss` every time — a dead test |
 | `flat_drift_signal` | `warning` | zero `drift:`-namespace metric counts across every run in the epoch — the drift half of the loss is inert (goldfive drift detection likely unwired) |
 | `no_expectations` | `info` | more than `no_expectations_fraction` (0.5) of board entries carry no expectation — the pass/fail half is mostly absent |
-| `dead_judge` | `warning` | a board-declared judge's `custom:<name>` drift never appears in ANY run of the epoch — 0-fire dead weight, not coverage |
+| `dead_judge` | `warning` | a board-declared judge's `custom:<name>` drift never appears in ANY run of the epoch AND it recorded no call failures — 0-fire dead weight, not coverage |
+| `judge_erroring` | `warning` | a board-declared judge's callable RAISED (`LossProfile.judge_errors` counts invocations/errors/last type) — the same silence as `dead_judge`, but the fix is the judge/auxiliary endpoint and model config, NOT the board. Its missing drift made the round's scalar better than the evidence supports |
 | `stalled_loop` | `warning` | `stalled_rejects` (3) consecutive generations were `rejected` — the proposer isn't finding improvements; the L5 breaker is about to or has fired |
 | `generalization_gap` | `warning` / `critical` | the champion's `holdout_loss - train_loss` **widened** since the first measured generation AND reached `generalization_gap_warn` (0.05) / `_crit` (0.15) — board memorization; critical recommends rolling the epoch |
 | `refresh_cadence` | `info` | evaluated generations reached `overfitting.max_generations_per_contract` (unset by default) — the contract has been mined enough |
 | `placebo_promoted` | `critical` | a random-baseline placebo challenger was **promoted** — a no-op won a tournament, so gate discrimination is broken and recent wins are suspect |
 | `margin_below_noise_floor` | `info` gate ON / `warning` gate OFF | `promote_margin` sits inside the measured A/A noise floor |
-| `preflight_signal_below_floor` | `critical` **only** under `runtime.preflight_gate="refuse"`, else `warning` | pre-flight verdict `refuse` — achievable signal at/below the noise floor. Gate-aware on purpose: this re-fires from the persisted record every round, and two criticals in a row would stop a run the operator explicitly set to `"warn"` |
-| `preflight_inert_probe` | `warning` | every probed mutation point left the scalar exactly at the champion mean while the A/A draws varied — the achievable signal is UNMEASURED, not zero |
+| `preflight_signal_below_floor` | `critical` **only** under `runtime.preflight_gate="refuse"`, else `warning` | pre-flight verdict `refuse` — the measured signal is at/below the noise floor. The one pre-flight finding that can hard-stop a run, because it is the one measured honestly. Gate-aware on purpose: this re-fires from the persisted record every round, and two criticals in a row would stop a run the operator explicitly set to `"warn"` |
+| `preflight_inert_probe` | `warning` | every probed mutation point left the scalar exactly at the champion mean while the A/A draws varied — the signal is UNMEASURED, not zero |
 | `preflight_saturated_contract` | `warning` | pre-flight verdict `warn` — zero spread across every probe including a deliberately-degraded tree (the `1.000000` signature) |
-| `preflight_margin_above_achievable` | `warning` | `promote_margin` ≥ measured achievable signal. Warning, not critical: the probe degrades ONE point, so its signal is a lower bound a compound/recombined patch can exceed |
+| `preflight_margin_above_achievable` | `warning`, never gating | `promote_margin` ≥ the measured DEGRADATION signal — how far the scalar fell when a mutation point was destroyed. That does not bound how far a challenger can improve (issue #119), and the probe degrades ONE point so it under-reports even the movement it measures. Worth checking the margin; not evidence the run is null |
 | `preflight_margin_below_floor` | `warning` | the margin window's lower bound fails — margin inside the floor |
 | `tree_never_imported` | `warning`, one per (generation, tree) | no unit of a generation ever imported a mutable tree, so **mutations to it cannot have been under test** — the board scored code the loop never changed. Read `generations/<gen>/harness_load.json` |
 
@@ -151,9 +152,9 @@ drift). Per project policy, never start a live `evolve` yourself — verify via
 the test suite (`test_orchestrator_health.py`) and the on-disk report files.
 
 Critical findings also fire a bannered `LOOP HEALTH CRITICAL` orchestrator
-warning to stderr; `dead_judge` and `tree_never_imported` get their own
-terminal warnings even though they are only warnings, because from the
-terminal they are indistinguishable from an honest null result. The
+warning to stderr; `dead_judge`, `judge_erroring` and `tree_never_imported`
+get their own terminal warnings even though they are only warnings, because
+from the terminal they are indistinguishable from an honest null result. The
 dashboard's loop-health panel reads `/api/health-report` (the latest round
 report) — see [zicato-watch-dashboard](../zicato-watch-dashboard/SKILL.md).
 

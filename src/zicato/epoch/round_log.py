@@ -269,6 +269,16 @@ class GateEvaluated:
     same ambiguity one layer down. Every pre-existing log decodes with all three
     ``None`` (:func:`_decode_event` defaults absent keys), following the
     ``revise: bool = False`` precedent above.
+
+    ``attributable_regressions`` names the entries that regressed on their own
+    per-entry evidence, on BOTH decisions — the observation the gate makes but
+    never acts on (see
+    :func:`zicato.tournament.gate.attributable_entry_regressions`). A PROMOTED
+    duel carrying entries here is the case worth reading: the loss is now in the
+    lineage and ``rule_fired`` is, correctly, empty. Emitted only when non-empty,
+    so an ordinary duel's payload is unchanged; ``()`` here is "none reported",
+    which for this field is the same statement as "not recorded" — it changes no
+    analysis, so the empty tuple default is safe where a ``0.0`` scalar was not.
     """
 
     TYPE: ClassVar[str] = "gate_evaluated"
@@ -277,6 +287,7 @@ class GateEvaluated:
     champion_scalar: float | None = None
     challenger_scalar: float | None = None
     margin_required: float | None = None
+    attributable_regressions: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

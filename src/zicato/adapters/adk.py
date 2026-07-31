@@ -187,6 +187,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from zicato.core import BoardEntry, MutationPoint, RunResult, RuntimeConfig
+from zicato.import_path import explain_attribute_error
 
 if TYPE_CHECKING:
     from zicato.adapters.base import RunnableHarness
@@ -1906,6 +1907,15 @@ class ADKHarnessAdapter:
         try:
             agent = getattr(module, self._symbol)
         except AttributeError as exc:
+            # Still an AttributeError: the subprocess worker catches this
+            # type by construction. Only the message improves.
+            detail = explain_attribute_error(module, self._symbol, exc)
+            if detail is not None:
+                raise AttributeError(
+                    f"ADKHarnessAdapter: entrypoint module {self._module_path!r}: "
+                    f"{detail} (loaded from "
+                    f"{getattr(module, '__file__', '<unknown>')!r})"
+                ) from exc
             raise AttributeError(
                 f"ADKHarnessAdapter: entrypoint module {self._module_path!r} "
                 f"has no symbol {self._symbol!r} (loaded from "
@@ -2084,6 +2094,28 @@ class ADKHarnessAdapter:
             ) from exc
 
         return _coerce_to_list(enumerate_mutations(roots))
+
+    async def on_promote(
+        self,
+        *,
+        epoch_id: str,
+        generation_id: str,
+        parent_generation_id: str | None,
+        snapshot_root: Path,
+        workspace_root: Path,
+    ) -> None:
+        """No-op: an ADK tree's evolved state IS the snapshot (#125).
+
+        The post-promotion hook exists for targets whose real state
+        lives somewhere the mutable tree cannot reach. An ADK tree has
+        no such state — the promoted snapshot is the whole artifact, and
+        the champion marker already names it — so there is nothing to
+        commit. Declared explicitly rather than omitted so this adapter
+        keeps satisfying the full :class:`HarnessAdapter` surface for the
+        type checker, which (unlike the runtime ``isinstance`` gate) has
+        no notion of :data:`~zicato.adapters.base.OPTIONAL_ADAPTER_MEMBERS`.
+        """
+        return None
 
 
 def _coerce_to_list(points: Iterable[MutationPoint]) -> list[MutationPoint]:

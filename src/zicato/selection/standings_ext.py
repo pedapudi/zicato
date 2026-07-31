@@ -177,10 +177,10 @@ def uncertainty_blocks_promotion(
     parent_id: str,
     child_id: str,
     threshold: float,
-) -> bool:
-    """True when the uncertainty guard should DEFER instead of promoting.
+) -> tuple[bool, float | None]:
+    """``(blocks, p)`` — whether the guard should DEFER, and the measured p.
 
-    Fits Bradley--Terry over the audit and returns ``True`` when
+    Fits Bradley--Terry over the audit and returns ``blocks=True`` when
     ``P(theta_child > theta_parent)`` does **not** clear ``threshold`` —
     i.e. the crowning win is too noisy to trust and the promotion should be
     deferred to spend more replicates. Returns ``False`` (allow the gate's
@@ -189,20 +189,27 @@ def uncertainty_blocks_promotion(
     from missing evidence — the guard can only block on positive evidence of
     a near-tie, never on absence).
 
+    ``p`` is the fitted probability, or ``None`` on the two
+    not-enough-evidence paths where none was computed. It rides back out so
+    the deferral reason can quote the number that decided it rather than
+    only the bar it missed (issue #129) — the same discipline
+    :mod:`zicato.selection.evidence_gate` already applies to its own
+    defer/inconclusive reasons.
+
     This guard ONLY ever blocks; it never forces a promotion. The gate has
     already said "promote" before this is consulted, so a ``False`` here is
     a no-op and the gate's promotion stands.
     """
     duels = audit_duels(audit)
     if not duels:
-        return False
+        return False, None
     rating = fit_bradley_terry(duels)
     if parent_id not in rating or child_id not in rating:
-        return False
+        return False, None
     theta_child, se_child = rating[child_id]
     theta_parent, se_parent = rating[parent_id]
     p = prob_stronger(theta_child, se_child, theta_parent, se_parent)
-    return p <= threshold
+    return p <= threshold, p
 
 
 def apply_uncertainty_guard(
@@ -234,9 +241,11 @@ def apply_uncertainty_guard(
     """
     if threshold is None or decision != "promoted":
         return decision, reason, False
-    if uncertainty_blocks_promotion(audit, parent_id, child_id, threshold):
+    blocks, p = uncertainty_blocks_promotion(audit, parent_id, child_id, threshold)
+    if blocks:
+        measured = f"P(theta_child > theta_parent)={p:.3f}" if p is not None else "the fitted P"
         deferred_reason = (
-            f"deferred: P(theta_child > theta_parent) did not clear the "
+            f"deferred: {measured} did not clear the "
             f"{threshold:.2f} uncertainty bar — the crowning win is within "
             f"rating noise; replicate before promoting"
         )

@@ -181,11 +181,16 @@ def test_detector_fires_on_a_margin_window_failure_alone() -> None:
     """Issue #112: a contract can clear its noise floor and still be null.
 
     The window is a separate question, so the finding must fire even when the
-    signal verdict is ``ok``. It is a WARNING and not a critical on purpose: the
-    probe degrades ONE point per draw, so the achievable signal lower-bounds the
-    loop's reach and a compound patch can exceed it. Critical would trip the
-    loop's degenerate-health circuit breaker and kill a legitimate recombination
-    run whose margin sits above single-point reach by design.
+    signal verdict is ``ok``. It is a WARNING and not a critical for two
+    independent reasons: what the probe measures is DEGRADATION headroom, which
+    does not bound a challenger's improvement at all (issue #119), and it
+    degrades ONE point per draw, so it under-reports even that. Critical would
+    trip the loop's degenerate-health circuit breaker and kill a legitimate
+    recombination run whose margin sits above single-point reach by design.
+
+    The record here carries the pre-#119 ``window_verdict: "refuse"`` on
+    purpose — the DETECTOR still surfaces it; what changed is that the GATE no
+    longer escalates it (see :func:`effective_gate_verdict`).
     """
     (finding,) = detect_preflight_verdict(
         {
@@ -199,7 +204,8 @@ def test_detector_fires_on_a_margin_window_failure_alone() -> None:
     )
     assert finding.code == "preflight_margin_above_achievable"
     assert finding.severity == "warning"
-    assert "single-point" in finding.summary
+    assert "degradation signal" in finding.summary
+    assert "UNMEASURED" in finding.summary, "the summary says improvement headroom is not known"
     assert finding.detail["promote_margin"] == 0.10
 
     (below,) = detect_preflight_verdict(
@@ -628,15 +634,17 @@ def test_probe_draws_use_distinct_reserved_cache_slots(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_margin_above_achievable_signal_refuses_a_guaranteed_null_run(
+def test_margin_above_the_degradation_signal_warns_but_never_refuses(
     tmp_path: Path,
 ) -> None:
-    """A margin nothing can clear is caught in seconds, not after hours.
+    """A margin larger than the measured movement is worth saying — not enforcing.
 
-    The contract out-signals its noise (verdict OK — the check that existed),
-    yet no challenger could ever be promoted because the gate sits above the
-    largest improvement the loop demonstrably produces. The window verdict is
-    what makes that a refusal.
+    The contract out-signals its noise (verdict OK), and the margin sits above
+    the only movement the probe demonstrated. That is a real thing to tell an
+    operator, and it used to be a refusal. It no longer is: what the probe
+    measured is DEGRADATION headroom — how far the scalar fell when a mutation
+    point was destroyed — which does not bound how far a challenger can improve
+    (issue #119). The finding stays; the enforcement goes.
     """
     weights = _scoring_from_dict(json.loads(SCORING_PATH.read_text()))
     # Above any scalar movement target_0's single mutation point can produce.
@@ -648,13 +656,14 @@ def test_margin_above_achievable_signal_refuses_a_guaranteed_null_run(
     assert report.signal > 0.0
     assert report.promote_margin == 99.0
     assert report.window_failure == "margin_above_achievable"
-    assert report.window_verdict == VERDICT_REFUSE
-    # The gate collapses both verdicts, so the hard gate now stops this run.
-    assert effective_gate_verdict(report.to_json()) == VERDICT_REFUSE
+    assert report.window_verdict == VERDICT_WARN
+    # And so the hard gate has nothing to act on: the signal verdict is OK.
+    assert effective_gate_verdict(report.to_json()) == VERDICT_OK
 
     (finding,) = detect_preflight_verdict(report.to_json())
     assert finding.code == "preflight_margin_above_achievable"
     assert finding.severity == "warning"
+    assert "degradation" in finding.summary, "the finding names what was measured"
 
 
 def test_healthy_contract_reports_an_intact_window(tmp_path: Path) -> None:
@@ -740,7 +749,7 @@ def test_board_preflight_cli_measures_and_persists(tmp_path: Path) -> None:
     )
     assert result.exit_code == 0, result.output
     assert "Contract pre-flight" in result.output
-    assert "achievable signal" in result.output
+    assert "degradation signal" in result.output
     assert "verdict:           OK" in result.output
 
     cfg = load_epoch(workspace, epoch_id)

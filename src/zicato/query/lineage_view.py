@@ -41,6 +41,12 @@ def build_lineage_view(
     created_at}`` — ``promoted`` is ``None`` while a generation is still
     being scored. Identical shape to the Rust ``build_lineage_view``.
 
+    A node additionally carries ``rejection_reason`` and the duel's
+    ``parent_scalar`` / ``child_scalar`` / ``delta_scalar`` when
+    ``lineage.json`` recorded them (issue #124) — present-only, so a
+    workspace written before the fields existed keeps its prior payload.
+    This is API passthrough; no UI renders them yet.
+
     ``epoch_id`` scopes the feed to ONE epoch's generations (the
     epoch-scoped generations feed the views consume); ``None`` keeps the
     workspace-global walk. An unknown id yields an empty list — the same
@@ -71,6 +77,12 @@ def build_lineage_view(
                     "parent_id": gen.get("parent_id"),
                     "created_at": gen.get("created_at") or None,
                     "promoted": gen.get("promoted"),
+                    # The settle-time facts the DAG now records (issue
+                    # #124) — passed through verbatim below.
+                    "rejection_reason": gen.get("rejection_reason"),
+                    "parent_scalar": gen.get("parent_scalar"),
+                    "child_scalar": gen.get("child_scalar"),
+                    "delta_scalar": gen.get("delta_scalar"),
                 }
 
     generations: list[dict[str, Any]] = []
@@ -154,6 +166,20 @@ def build_lineage_view(
                 # not null) and the dashboard's lineage fallback kicks in.
                 if round_index is not None:
                     node["round_index"] = round_index
+                # The gate's own account of the decision (issue #124):
+                # why the generation was cut, and the two scalars it was
+                # cut on. Surfaced only when lineage recorded them, on the
+                # same absent-not-null discipline as round_index — a node
+                # written before the field existed keeps its prior payload,
+                # and the reason is empty on anything but a settled
+                # rejection (append_to_lineage enforces that at the write).
+                reason = meta.get("rejection_reason")
+                if isinstance(reason, str) and reason:
+                    node["rejection_reason"] = reason
+                for field in ("parent_scalar", "child_scalar", "delta_scalar"):
+                    value = meta.get(field)
+                    if isinstance(value, int | float) and not isinstance(value, bool):
+                        node[field] = float(value)
                 generations.append(node)
 
     # The visibility rating triple, joined server-side from the index

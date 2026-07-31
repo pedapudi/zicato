@@ -114,8 +114,9 @@ class LadderRelease:
         holdout scalar on a release, or the previous best on a withhold.
         ``None`` when nothing has been released.
     threshold:
-        The effective release threshold this query used (``promote_margin``
-        when ``LadderConfig.threshold`` is ``None``, plus ``noise_scale``).
+        The effective release threshold this query used (see
+        :func:`effective_threshold`: ``LadderConfig.threshold``, else
+        ``promote_margin`` — plus ``noise_scale``).
     state:
         The new per-epoch state to persist (budget charged, best updated).
     """
@@ -134,6 +135,27 @@ def effective_threshold(cfg: LadderConfig, weights: ScoringWeights) -> float:
     existing ``promote_margin`` noise threshold, and ``cfg.noise_scale`` is
     ``0`` so the band collapses to that bar. An operator can pin the bar or
     widen the band explicitly.
+
+    ``promote_margin`` and NOT :attr:`ScoringWeights.holdout_margin`, even
+    though this sits on the holdout path. What :func:`query_holdout` compares
+    against this bar is the TRAIN-measured improvement
+    (``train_parent_scalar - train_child_scalar``), so the train-calibrated
+    bound is the commensurable one; ``holdout_margin`` is calibrated against
+    the holdout slice's own coarser quantization and would be the same
+    category error on this line that issue #118 fixed inside the gate.
+
+    Substituting it here would also invert the guard it belongs to. A
+    WITHHELD query does not gate: the train promote stands and the holdout's
+    veto is skipped for that round. Under the documented rule of thumb
+    ``holdout_margin ≈ promote_margin × N_train / N_holdout`` is the LARGER
+    number, so the substitution raises the release bar and every challenger
+    whose train improvement falls in ``[promote_margin, holdout_margin)`` —
+    which is exactly the marginal band Rule 1 admits — would promote without
+    the holdout ever being consulted. An operator who separates the two
+    bounds to unblock a promotable board would silently switch off
+    board-memorization confirmation for the promotions they just unblocked.
+    Widening the release band is a deliberate act; pin
+    :attr:`LadderConfig.threshold` to do it.
     """
     base = weights.promote_margin if cfg.threshold is None else cfg.threshold
     return base + cfg.noise_scale

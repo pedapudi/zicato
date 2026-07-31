@@ -145,7 +145,9 @@ class HealthFinding:
         ``"preflight_margin_above_achievable"``,
         ``"preflight_margin_below_floor"``, ``"noisy_judge"``,
         ``"dead_judge"``, ``"placebo_promoted"``, ``"infra_outage"``,
-        ``"round_token_clipped"``, ``"tree_never_imported"``.
+        ``"round_token_clipped"``, ``"tree_never_imported"``,
+        ``"attributable_entry_regression"``,
+        ``"on_promote_hook_failed"``.
     severity:
         ``"info"`` | ``"warning"`` | ``"critical"``. A loop is
         considered unhealthy when any ``"warning"`` or ``"critical"``
@@ -214,6 +216,22 @@ def _scalar_delta_of(experiment: Any) -> float | None:
         return None
 
 
+def _float_or_none(value: Any) -> float | None:
+    """Coerce a recorded number to ``float``, or ``None`` when it is not one.
+
+    The same tolerance every detector applies to journal-sourced values:
+    a missing key, a ``null``, or a malformed record must leave the
+    quantity out of the finding rather than raise inside an assessment
+    that is always best-effort.
+    """
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _attr_or_key(obj: Any, name: str) -> Any:
     """Read ``name`` from ``obj`` whether it is an object or a mapping.
 
@@ -224,6 +242,52 @@ def _attr_or_key(obj: Any, name: str) -> Any:
     if isinstance(obj, dict):
         return obj.get(name)
     return getattr(obj, name, None)
+
+
+#: Longest bucketing key :func:`_reject_cause` will return before clipping.
+_REJECT_CAUSE_CLIP = 60
+
+#: Where a rejection reason stops naming its CAUSE and starts reporting the
+#: numbers behind it. ``": "`` opens the detail clause on most reasons;
+#: ``" ("`` opens the measured parenthetical on the rest; ``";"`` opens the
+#: trailing "a promotion needs …" advice. The earliest one wins.
+_REJECT_CAUSE_SEPARATORS = (": ", " (", ";")
+
+
+def _reject_cause(reason: str) -> str:
+    """Bucket a gate rejection reason down to its cause clause.
+
+    Every reason :mod:`zicato.tournament.gate` composes leads with the
+    rule that fired and follows it with that rule's measured numbers —
+    ``"insufficient improvement: loss fell by only 0.0012 (champion … ->
+    challenger …)"``. The numbers make each reason unique, which is
+    exactly what a breakdown must NOT be keyed on.
+
+    So the key is the text ahead of the earliest separator that opens a
+    detail clause (:data:`_REJECT_CAUSE_SEPARATORS`), not the first colon
+    alone. Some rules carry no colon at all and open straight into the
+    parenthetical — ``"monotonicity_regression on namespace=rubric
+    (champion 0.412345 -> …)"`` — and keying those on a length clip put
+    the champion's aggregate INSIDE the key, so six rounds rejected by
+    the same rule on the same namespace produced six singleton buckets
+    and a breakdown longer than the summary it qualifies. Cutting at
+    ``" ("`` keys them on the rule and the namespace, which is what the
+    reader is counting.
+
+    The clip stays as the last resort for a reason that carries no
+    separator anywhere.
+    """
+    text = " ".join(str(reason or "").split())
+    if not text:
+        return "(no reason recorded)"
+    cut = min(
+        (i for i in (text.find(sep) for sep in _REJECT_CAUSE_SEPARATORS) if i > 0),
+        default=-1,
+    )
+    head = (text[:cut] if cut > 0 else text).strip()
+    if head and len(head) <= _REJECT_CAUSE_CLIP:
+        return head
+    return text[: _REJECT_CAUSE_CLIP - 1].rstrip() + "…"
 
 
 def detect_degenerate_scoring(
@@ -441,24 +505,59 @@ def detect_dead_judge(
     losses_by_generation: dict[str, list[LossProfile]],
     board_entries: list[BoardEntry],
 ) -> list[HealthFinding]:
-    """Flag board-declared in-run judges that never fired across the epoch.
+    """Split silent judges into BROKEN ones and genuinely dead ones.
 
     Every board entry's :attr:`BoardEntry.judges` declares one or more
     PROCESS judges. On a violation a judge emits a goldfive ``custom``
     drift the reducer attributes back to the judge as a
     ``custom:<judge_name>`` :class:`DriftCount` on the run's
     ``loss.json``. A judge whose attributed kind never appears in ANY run
-    of the epoch fired zero times — it is either mis-wired (the events it
-    keys on are never emitted) or its criterion is unreachable. Either
-    way it contributes no discrimination and gives a false sense of
-    coverage. This is failure mode #3 in the board-audit playbook
-    (``skills/zicato-audit-board``) and the "judge that never fires"
-    smell in ``skills/zicato-design-judges``.
+    of the epoch fired zero times. That silence has two causes an operator
+    must not confuse, and this detector emits a different finding for each:
 
-    Severity is ``warning``: a 0-fire judge is dead weight, but a board
-    can still optimize on its other signals. Note the inverse is NOT a
-    finding — a judge firing on EVERY run is loud, not dead, and may be
-    perfectly correct.
+    ``judge_erroring`` (the judge RAISED — read
+        :attr:`~zicato.core.loss.LossProfile.judge_errors`)
+        Its callable threw on some or all invocations: a misconfigured
+        judge model, a revoked key, an endpoint outage. Both judge kinds
+        swallow the exception by hard contract (a judge must not crash a
+        run) and goldfive emits no event for the resulting empty verdict,
+        so before per-judge error provenance existed this case was
+        INDISTINGUISHABLE from the one below — and, being zero drift, it
+        made the generation's scalar better than the truth. The fix is at
+        the endpoint/model config, not on the board.
+
+    ``dead_judge`` (the judge ANSWERED, and always answered "no violation")
+        Zero fires with zero errors: the judge is mis-wired (the events it
+        keys on are never emitted) or its criterion is unreachable. It
+        contributes no discrimination and gives a false sense of coverage.
+        This is failure mode #3 in the board-audit playbook
+        (``skills/zicato-audit-board``) and the "judge that never fires"
+        smell in ``skills/zicato-design-judges``. The finding now says
+        explicitly that errors were ruled out, because that is what makes
+        a board audit the right next step rather than a wild goose chase.
+
+    Both are ``warning``: a 0-fire judge is dead weight and a broken judge
+    is a hole in coverage, but a board can still optimize on its other
+    signals. Note the inverse is NOT a finding — a judge firing on EVERY
+    run is loud, not dead, and may be perfectly correct.
+
+    Registered, deliberately NOT done here
+    --------------------------------------
+    * **No abort / tolerance knob.** A round in which one judge errored on
+      100% of invocations is, from the artifacts alone, indistinguishable
+      from a transient endpoint outage, and an outage never disqualifies a
+      contract. Escalating "judge_erroring" into something that can stop or
+      re-run a round is registered pending live evidence of what the error
+      rates actually look like; until then this is observability only —
+      nothing here changes a verdict, a score, or an exit code.
+    * **No zicato-side timeout wrapper.** goldfive's
+      ``DefaultSteerer.evaluate_judges`` bounds each ``evaluate`` with its
+      own 30s timeout and treats an overrun as "no signal" WITHOUT calling
+      back into zicato, so a judge that hangs (rather than raises) still
+      lands in the silent bucket and reads as ``dead_judge``. Closing that
+      gap means either a zicato-side timeout inside ``evaluate`` (a second
+      competing budget) or a goldfive change; both are registered, neither
+      is in this pass.
 
     Silent when there are no runs yet (nothing has had a chance to fire)
     or no entry declares a judge (drift-/expectation-only board).
@@ -477,6 +576,10 @@ def detect_dead_judge(
 
     total_runs = 0
     fired: set[str] = set()
+    # judge_name -> [invocations, errors, last_error_type], summed over every
+    # run of the epoch. ``getattr`` keeps the detector working against a
+    # loss-like record written before the field existed.
+    errored: dict[str, list[Any]] = {}
     for losses in losses_by_generation.values():
         for loss in losses:
             total_runs += 1
@@ -484,38 +587,94 @@ def detect_dead_judge(
                 is_custom, judge_name = split_judge_attributed_kind(count.kind)
                 if is_custom and judge_name:
                     fired.add(judge_name)
+            for je in getattr(loss, "judge_errors", ()) or ():
+                name = str(getattr(je, "judge_name", "") or "")
+                if not name or not int(getattr(je, "errors", 0) or 0):
+                    continue
+                row = errored.setdefault(name, [0, 0, ""])
+                row[0] = int(row[0]) + int(getattr(je, "invocations", 0) or 0)
+                row[1] = int(row[1]) + int(getattr(je, "errors", 0) or 0)
+                row[2] = str(getattr(je, "last_error_type", "") or "") or row[2]
 
     # No runs yet → no judge has had a chance to fire; stay silent rather
     # than flag every declared judge on an epoch with no telemetry.
     if total_runs == 0:
         return []
 
-    dead = sorted(declared - fired)
-    if not dead:
-        return []
+    findings: list[HealthFinding] = []
 
-    return [
-        HealthFinding(
-            code="dead_judge",
-            severity="warning",
-            summary=(
-                f"{len(dead)} board-declared judge(s) never fired across all "
-                f"{total_runs} runs in the epoch — dead weight, not coverage: "
-                + ", ".join(repr(name) for name in dead)
-            ),
-            detail={
-                "dead_judges": dead,
-                "declared_judges": sorted(declared),
-                "fired_judges": sorted(fired),
-                "runs_inspected": total_runs,
-                "recommendation": (
-                    "confirm each dead judge is wired to events that actually "
-                    "fire and its criterion is reachable; if it can never fire, "
-                    "remove it or sharpen its body (see zicato-design-judges)"
-                ),
-            },
+    # A judge that raised is BROKEN, not dead weight — a distinct finding
+    # with a distinct remedy (the endpoint/model config, not the board).
+    broken = sorted(name for name in errored if name in declared)
+    if broken:
+        counts = {
+            name: {
+                "invocations": errored[name][0],
+                "errors": errored[name][1],
+                "last_error_type": errored[name][2],
+            }
+            for name in broken
+        }
+        phrases = ", ".join(
+            f"{name!r} raised on {counts[name]['errors']}/{counts[name]['invocations']} "
+            f"invocations ({counts[name]['last_error_type'] or 'unknown error'})"
+            for name in broken
         )
-    ]
+        findings.append(
+            HealthFinding(
+                code="judge_erroring",
+                severity="warning",
+                summary=(
+                    f"{len(broken)} board-declared judge(s) FAILED to answer across "
+                    f"the epoch's {total_runs} runs — their zero drift is an ERROR "
+                    f"artifact, not a verdict: {phrases}"
+                ),
+                detail={
+                    "erroring_judges": broken,
+                    "judge_error_counts": counts,
+                    "declared_judges": sorted(declared),
+                    "runs_inspected": total_runs,
+                    "recommendation": (
+                        "a judge that raised did not decide anything — its silence "
+                        "lowered the generation's drift loss without evidence. Check "
+                        "the auxiliary/judge endpoint and model config (the judge role "
+                        "in the workspace models config) before reading this epoch's "
+                        "scores; a board audit is the WRONG next step here"
+                    ),
+                },
+            )
+        )
+
+    # Genuinely dead: zero fires AND zero errors — the judge answered every
+    # time, and every answer was "no violation".
+    dead = sorted(declared - fired - set(errored))
+    if dead:
+        findings.append(
+            HealthFinding(
+                code="dead_judge",
+                severity="warning",
+                summary=(
+                    f"{len(dead)} board-declared judge(s) never fired across all "
+                    f"{total_runs} runs in the epoch — dead weight, not coverage: "
+                    + ", ".join(repr(name) for name in dead)
+                ),
+                detail={
+                    "dead_judges": dead,
+                    "declared_judges": sorted(declared),
+                    "fired_judges": sorted(fired),
+                    "runs_inspected": total_runs,
+                    "recommendation": (
+                        "these judges recorded NO call failures, so the silence is a "
+                        "real verdict, not a broken endpoint: confirm each dead judge "
+                        "is wired to events that actually fire and its criterion is "
+                        "reachable; if it can never fire, remove it or sharpen its "
+                        "body (see zicato-design-judges)"
+                    ),
+                },
+            )
+        )
+
+    return findings
 
 
 def detect_stalled_loop(
@@ -536,12 +695,20 @@ def detect_stalled_loop(
     Silent when fewer than ``config.stalled_rejects`` evaluated
     experiments exist or the trailing run is shorter than the threshold.
 
+    The finding names WHY each round lost, bucketed by gate reason (issue
+    #129). "Six rejections" is one number covering several very different
+    situations: six near-misses on the promotion margin say the proposer
+    is close and the margin may be mis-set, whereas six pass-rate
+    regressions on the same entry say the mutable surface keeps breaking
+    one thing. Those demand different responses, and the reasons are
+    already on the outcomes the detector walks.
+
     ``config`` defaults to the env-sourced
     :class:`~zicato.config.HealthConfig` via :func:`load_config`.
     """
     threshold = _resolve_health_config(config).stalled_rejects
 
-    decisions: list[tuple[str, str]] = []
+    decisions: list[tuple[str, str, str]] = []
     for exp in experiments:
         outcome = _attr_or_key(exp, "outcome")
         if outcome is None:
@@ -550,18 +717,30 @@ def detect_stalled_loop(
         if decision is None:
             continue
         generation_id = str(_attr_or_key(exp, "generation_id") or "")
-        decisions.append((generation_id, str(decision)))
+        reason = str(_attr_or_key(outcome, "rejection_reason") or "")
+        decisions.append((generation_id, str(decision), reason))
 
     trailing_rejects: list[str] = []
-    for generation_id, decision in reversed(decisions):
+    trailing_reasons: list[str] = []
+    for generation_id, decision, reason in reversed(decisions):
         if decision == "rejected":
             trailing_rejects.append(generation_id)
+            trailing_reasons.append(reason)
         else:
             break
     trailing_rejects.reverse()
+    trailing_reasons.reverse()
 
     if len(trailing_rejects) < threshold:
         return []
+
+    causes: dict[str, int] = {}
+    for reason in trailing_reasons:
+        cause = _reject_cause(reason)
+        causes[cause] = causes.get(cause, 0) + 1
+    # Commonest cause first; ties keep first-seen (lineage) order.
+    ranked = sorted(causes.items(), key=lambda kv: -kv[1])
+    breakdown = ", ".join(f"{count}x {cause}" for cause, count in ranked)
 
     return [
         HealthFinding(
@@ -569,12 +748,14 @@ def detect_stalled_loop(
             severity="warning",
             summary=(
                 f"{len(trailing_rejects)} consecutive generations rejected — "
-                "the proposer is not finding improvements"
+                f"the proposer is not finding improvements ({breakdown})"
             ),
             detail={
                 "consecutive_rejects": len(trailing_rejects),
                 "threshold": threshold,
                 "rejected_generation_ids": trailing_rejects,
+                "rejection_causes": dict(ranked),
+                "rejection_reasons": dict(zip(trailing_rejects, trailing_reasons, strict=True)),
                 "recommendation": (
                     "review the rubric and the mutable surface; the circuit "
                     "breaker is about to or has fired"
@@ -886,7 +1067,11 @@ def _is_placebo_experiment(experiment: Any) -> bool:
     return isinstance(core_idea, str) and core_idea.startswith(PLACEBO_HYPOTHESIS_MARKER)
 
 
-def detect_placebo_promoted(experiments: list[Any]) -> list[HealthFinding]:
+def detect_placebo_promoted(
+    experiments: list[Any],
+    promote_margin: float | None = None,
+    noise_floor: dict[str, Any] | None = None,
+) -> list[HealthFinding]:
     """CRITICAL when a random-baseline (placebo) challenger was PROMOTED.
 
     The placebo arm (OVERFITTING.md #7,
@@ -901,7 +1086,22 @@ def detect_placebo_promoted(experiments: list[Any]) -> list[HealthFinding]:
     Silent when no placebo experiments exist (the knob is off / no
     cadence tick yet) or every placebo was rejected — the arm doing its
     quiet calibration job.
+
+    ``promote_margin`` and ``noise_floor`` are the epoch's decision
+    parameters, threaded from :func:`assess_loop_health` so the alarm can
+    show the comparison that failed rather than only its verdict (issue
+    #129): a no-op whose measured delta cleared a margin that sits inside
+    the measured noise is a mis-set margin, while the same delta clearing
+    a margin well above the floor is a broken reducer or a rigged gate,
+    and the operator's next move differs. Both default to ``None`` (never
+    measured / not supplied), which simply leaves that clause off the
+    line. Absolute parent and child scalars are NOT available here — an
+    :class:`~zicato.core.experiment.Outcome` records deltas only.
     """
+    floor = (
+        _float_or_none(noise_floor.get("max_abs_delta")) if isinstance(noise_floor, dict) else None
+    )
+
     findings: list[HealthFinding] = []
     for exp in experiments:
         if not _is_placebo_experiment(exp):
@@ -913,18 +1113,32 @@ def detect_placebo_promoted(experiments: list[Any]) -> list[HealthFinding]:
         if decision != "promoted":
             continue
         generation_id = str(_attr_or_key(exp, "generation_id") or "")
+        delta = _float_or_none(_attr_or_key(outcome, "scalar_score_delta"))
+        measured = f"scalar delta {delta:.6g}" if delta is not None else "an unrecorded delta"
+        compared = ""
+        if promote_margin is not None:
+            compared = f" against promote_margin {promote_margin:.6g}"
+            if floor is not None:
+                compared += f" (measured noise floor {floor:.6g})"
+        elif floor is not None:
+            compared = f" (measured noise floor {floor:.6g})"
         findings.append(
             HealthFinding(
                 code="placebo_promoted",
                 severity="critical",
                 summary=(
-                    f"random-baseline placebo {generation_id!r} was PROMOTED — a "
-                    "semantics-preserving no-op won a tournament, so the gate is "
-                    "promoting noise; recent promotions are suspect"
+                    f"random-baseline placebo {generation_id!r} was PROMOTED on "
+                    f"{measured}{compared} — a semantics-preserving no-op won a "
+                    "tournament, so the gate is promoting noise; recent "
+                    "promotions are suspect"
                 ),
                 detail={
                     "generation_id": generation_id,
                     "scalar_score_delta": _attr_or_key(outcome, "scalar_score_delta"),
+                    "pass_rate_delta": _attr_or_key(outcome, "pass_rate_delta"),
+                    "drift_loss_delta": _attr_or_key(outcome, "drift_loss_delta"),
+                    "promote_margin": promote_margin,
+                    "noise_floor_max_abs_delta": floor,
                     "recommendation": (
                         "stop and audit the decision procedure: re-measure the "
                         "noise floor (zicato board audit / board preflight), "
@@ -944,7 +1158,7 @@ def detect_preflight_verdict(
     """Re-surface a non-OK contract pre-flight verdict as a health finding.
 
     The contract pre-flight (:mod:`zicato.epoch.preflight`) measures the
-    epoch's A/A noise floor AND its achievable signal (champion vs a
+    epoch's A/A noise floor AND its degradation signal (champion vs a
     deliberately-degraded copy of itself) before rounds burn budget. Its
     verdict persists onto the epoch record; this detector folds it into
     every round's health report so the operator keeps seeing it for as
@@ -957,7 +1171,7 @@ def detect_preflight_verdict(
     below.
 
     * verdict ``"refuse"`` → ``preflight_signal_below_floor``: the measured
-      achievable signal is at or below the measured noise floor, so duels
+      signal is at or below the measured noise floor, so duels
       under this contract are decided by noise. ``critical`` only under
       ``preflight_gate="refuse"``; ``warning`` under ``"warn"`` (the default)
       and ``"off"``.
@@ -968,7 +1182,7 @@ def detect_preflight_verdict(
     * verdict ``"inert"`` → ``warning`` ``preflight_inert_probe`` (issue
       #106): every point the pre-flight degraded moved the scalar by
       exactly nothing while the champion's own draws did vary. The
-      achievable signal is UNMEASURED, not zero, so the finding must not
+      signal is UNMEASURED, not zero, so the finding must not
       read like the noise-limited one — the fix is to pin a representative
       point, and the protection simply is not in force meanwhile.
 
@@ -977,10 +1191,12 @@ def detect_preflight_verdict(
     questions are separable and a contract can fail either alone:
 
     * ``"margin_above_achievable"`` → ``warning``
-      ``preflight_margin_above_achievable``: no SINGLE-POINT change clears
-      the gate. Deliberately not critical — the achievable signal is a
-      single-point lower bound, and a compound (e.g. recombined) patch can
-      legitimately exceed it, so a hard stop would kill a viable run.
+      ``preflight_margin_above_achievable``: the margin exceeds the measured
+      DEGRADATION signal. Not critical, and after issue #119 not even strong
+      evidence: what the probe measures is how far the scalar fell when a
+      mutation point was destroyed, which does not bound how far a challenger
+      can improve (and, degrading one point per probe, under-reports even
+      that). The finding names a number worth checking, not a null run.
     * ``"margin_below_floor"`` → ``warning`` ``preflight_margin_below_floor``.
     * ``"empty_window"`` is NOT a finding of its own — it is the same fact the
       refuse/inert finding already carries — but it rewrites that finding's
@@ -1060,7 +1276,7 @@ def detect_preflight_verdict(
                 "judges) or strengthen the board so a real change out-scores a "
                 "re-roll"
                 if empty_window
-                else "refusal recommended: the contract's achievable signal does "
+                else "refusal recommended: the contract's measured signal does "
                 "not clear its own noise floor — reduce evaluation noise (more "
                 "replicates, steadier judges) or strengthen the board before "
                 "running rounds"
@@ -1076,7 +1292,7 @@ def detect_preflight_verdict(
                 # the operator's explicit choice.
                 severity="critical" if hard_gate else "warning",
                 summary=(
-                    f"contract pre-flight: achievable signal {signal:.6g} is at/below "
+                    f"contract pre-flight: measured signal {signal:.6g} is at/below "
                     f"the measured A/A noise floor {floor:.6g} — duels under this "
                     "contract are decided by noise (refusal recommended)"
                 ),
@@ -1145,31 +1361,36 @@ def detect_preflight_verdict(
         findings.append(
             HealthFinding(
                 code="preflight_margin_above_achievable",
-                # A WARNING, not a critical, and deliberately so: the pre-flight
-                # degrades ONE point per probe, so its achievable signal is a
-                # single-point LOWER BOUND on the loop's reach. A compound patch
-                # — and recombination unions two of them on purpose — can exceed
-                # it, so this is strong evidence of a mis-set margin, never proof
-                # of nullity. Critical is reserved for "no usable signal at all"
-                # and trips the loop's degenerate-health circuit breaker, which
-                # would wrongly kill a legitimate recombination run whose margin
-                # sits above single-point reach by design.
+                # A WARNING, and after issue #119 that is not a judgement call
+                # about strength of evidence — it is all the evidence there is.
+                # The probe measures DEGRADATION headroom (how far the scalar
+                # fell when a point was destroyed), which bounds a challenger's
+                # improvement from neither side. On top of that it degrades ONE
+                # point per probe, so it under-reports even the movement it does
+                # measure (a compound patch — and recombination unions two on
+                # purpose — exceeds it). Critical is reserved for the honest
+                # measurement, "no usable signal at all", and it trips the loop's
+                # degenerate-health circuit breaker.
                 severity="warning",
                 summary=(
                     f"contract pre-flight: promote_margin {margin:.6g} is at/above the "
-                    f"measured achievable signal {signal:.6g} — no single-point change "
-                    "the probe could demonstrate clears the gate, so unless the "
-                    "proposer lands compound patches this run is null by construction"
+                    f"measured degradation signal {signal:.6g} — the only movement the "
+                    "probe demonstrated (destroying a mutation point) is smaller than "
+                    "the margin. Improvement headroom is UNMEASURED, so this is a "
+                    "reason to check the margin, not evidence the run is null"
                 ),
                 detail={
                     **detail,
                     "recommendation": (
-                        "lower promote_margin below the achievable signal (it must sit "
-                        f"strictly inside noise {floor:.6g} < margin < achievable "
-                        f"{signal:.6g}), or raise the achievable signal by strengthening "
-                        "the board. If the margin is deliberately above single-point "
-                        "reach — e.g. recombination is expected to union two sub-margin "
-                        "fixes — this finding is expected and informational"
+                        "check promote_margin against what a real fix on this board is "
+                        f"worth; the measured degradation signal {signal:.6g} is a "
+                        "single-point LOWER bound on movement and says nothing about "
+                        "how much a challenger can improve — a champion sitting near "
+                        "the failing end has little left to break and plenty to gain. "
+                        f"The margin does need to clear the noise floor {floor:.6g}, "
+                        "which is measured honestly. If the margin is deliberately "
+                        "above single-point reach — e.g. recombination is expected to "
+                        "union two sub-margin fixes — this finding is informational"
                     ),
                 },
             )
@@ -1334,6 +1555,154 @@ def detect_tree_never_imported(
     return findings
 
 
+def detect_attributable_entry_regression(
+    entry_regressions: dict[str, dict[str, Any]] | None,
+) -> list[HealthFinding]:
+    """Surface entries a PROMOTED duel regressed on their own evidence (#130).
+
+    ``entry_regressions`` is ``{entry_id: {parent_score, child_score,
+    parent_drift_loss, child_drift_loss}}`` — the gate's
+    :func:`zicato.tournament.gate.attributable_regression_detail` for a round
+    whose verdict was ``promoted`` and whose
+    ``GateOutcome.attributable_regressions`` was non-empty. The orchestrator
+    threads it per round like :func:`detect_infra_outage` does its circuit
+    trip; ``None`` / empty (every round that promoted cleanly, and every
+    rejection — a rejected challenger is discarded, so nothing was baked in) is
+    silent.
+
+    A ``warning``. The gate promoted, correctly under the contract it was
+    given: an ``aggregate``-scope contract PERMITS entry trades, and no rule
+    reads per-entry drift at all. But the entry is now regressed in the
+    champion lineage and every later round measures against it, while the
+    promotion itself recorded an empty reason. This is the only place that
+    says so.
+
+    Deliberately NOT a veto, and there is no knob to make it one. Per-entry
+    evidence is a single sample per side: at the board sizes this loop runs,
+    one entry's drift moving 0.10 -> 0.60 is inside the range an A/A re-roll
+    produces, so a gate built on it would reject real winners at a rate nobody
+    has measured. The confirm-before-veto discipline (the measured noise floor
+    preceded ``promote_margin`` advice; the placebo arm preceded reading the
+    gate's discrimination) applies here too: this finding accumulates the
+    evidence, and a gated veto — opt-in, thresholded against a measured
+    per-entry floor — is registered for after that evidence exists.
+    """
+    if not entry_regressions:
+        return []
+    findings: list[HealthFinding] = []
+    for entry_id in sorted(entry_regressions):
+        row = entry_regressions[entry_id] or {}
+        parent_drift = row.get("parent_drift_loss")
+        child_drift = row.get("child_drift_loss")
+        if isinstance(parent_drift, int | float) and isinstance(child_drift, int | float):
+            movement = f"drift loss {float(parent_drift):.4g} -> {float(child_drift):.4g}"
+        else:
+            movement = (
+                f"outcome score {_format_measure(row.get('parent_score'))} -> "
+                f"{_format_measure(row.get('child_score'))}"
+            )
+        findings.append(
+            HealthFinding(
+                code="attributable_entry_regression",
+                severity="warning",
+                summary=(
+                    f"board entry {entry_id} regressed ({movement}) in a round that "
+                    "PROMOTED — the gate's rules did not read that movement, so the "
+                    "regression is now the champion's baseline and the promotion "
+                    "recorded no reason"
+                ),
+                detail={
+                    "entry_id": entry_id,
+                    "parent_score": row.get("parent_score"),
+                    "child_score": row.get("child_score"),
+                    "parent_drift_loss": parent_drift,
+                    "child_drift_loss": child_drift,
+                    "recommendation": (
+                        f"population: the one board entry {entry_id}, on this round's "
+                        "champion-vs-challenger duel. measured: its per-entry outcome "
+                        "score and drift loss on both sides, read off the same "
+                        "aggregates the gate decided on. compared against: the "
+                        "per-entry monotonicity tolerance and the drift band "
+                        "(child > 2x parent AND child > parent + 0.05). remedy: "
+                        "inspect the entry's runs on both generations before the next "
+                        "round measures against the new baseline; if entries must not "
+                        "be traded away, set pass_rate_monotonicity_scope=per_entry, "
+                        "which gates the OUTCOME axis. remedy safety: nothing here "
+                        "vetoes, and per-entry drift stays ungated in every scope — a "
+                        "single-sample per-entry movement is not yet distinguishable "
+                        "from noise, so treat one finding as a prompt to look, and a "
+                        "repeat across rounds on the same entry as a real regression"
+                    ),
+                },
+            )
+        )
+    return findings
+
+
+def _format_measure(value: Any) -> str:
+    """Render a per-entry measurement for a summary line, or ``"unmeasured"``."""
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return f"{float(value):.4g}"
+    return "unmeasured"
+
+
+def detect_on_promote_hook_failed(
+    on_promote_failure: tuple[str, str, str] | None,
+) -> list[HealthFinding]:
+    """Surface an adapter post-promotion hook that failed (#125).
+
+    ``on_promote_failure`` is the ``(adapter_name, generation_id,
+    exception_type)`` triple
+    :func:`zicato.evolve.promote_hook.fire_on_promote` returns when an
+    adapter's ``on_promote`` raised or blew the hook timeout. The hook is
+    best-effort by contract — a failure never un-promotes the generation
+    and never fails the round — which is exactly why it needs a finding:
+    the champion advanced but whatever out-of-tree state the adapter
+    keeps in step with the champion did NOT, and nothing else on any
+    surface would say so. A ``warning``, not ``critical``: the loop's own
+    records are correct and it can keep climbing; it is the target's
+    external store the operator has to reconcile.
+
+    ``None`` (every round with no hook, and every round whose hook
+    succeeded) is silent — a runtime event threaded per round by the
+    orchestrator, like :func:`detect_infra_outage`.
+    """
+    if on_promote_failure is None:
+        return []
+    adapter_name, generation_id, exception_type = on_promote_failure
+    timed_out = exception_type == "TimeoutError"
+    return [
+        HealthFinding(
+            code="on_promote_hook_failed",
+            severity="warning",
+            summary=(
+                f"adapter {adapter_name!r} failed to commit the promotion of "
+                f"{generation_id}: its on_promote hook raised {exception_type} — "
+                "the generation IS promoted, but the adapter's out-of-tree state "
+                "was not updated"
+            ),
+            detail={
+                "adapter": adapter_name,
+                "generation_id": generation_id,
+                "exception_type": exception_type,
+                "timed_out": timed_out,
+                "recommendation": (
+                    "the promotion is durable and the round is unaffected — "
+                    f"reconcile {adapter_name!r}'s external side effect for "
+                    f"{generation_id} MANUALLY (the promoted head is the last "
+                    "promoted=true entry in lineage.json), then fix the hook; "
+                    + (
+                        "the hook exceeded its wall-clock ceiling, so check "
+                        "whether the external store is reachable"
+                        if timed_out
+                        else "the full traceback is in the run's ERROR log"
+                    )
+                ),
+            },
+        )
+    ]
+
+
 def assess_loop_health(
     losses_by_generation: dict[str, list[LossProfile]],
     experiments: list[Any],
@@ -1348,7 +1717,9 @@ def assess_loop_health(
     infra_outage: tuple[int, int] | None = None,
     token_clip: tuple[int, int] | None = None,
     tree_import_gaps: dict[str, tuple[str, ...]] | None = None,
+    on_promote_failure: tuple[str, str, str] | None = None,
     preflight_gate: str = PREFLIGHT_GATE_DEFAULT,
+    attributable_regressions: dict[str, dict[str, Any]] | None = None,
 ) -> LoopHealth:
     """Run every detector and collect the findings into a :class:`LoopHealth`.
 
@@ -1425,6 +1796,20 @@ def assess_loop_health(
         :func:`detect_tree_never_imported` can warn that a generation's
         mutations cannot have been under test (issue #110). ``None`` /
         empty (the default, and every healthy epoch) is silent.
+    attributable_regressions:
+        ``{entry_id: {parent/child score + drift}}`` for the entries THIS
+        round's PROMOTED duel regressed on their own evidence — the gate's
+        :func:`zicato.tournament.gate.attributable_regression_detail`,
+        threaded per round by the orchestrator like ``infra_outage`` (see
+        :func:`detect_attributable_entry_regression`). ``None`` / empty (the
+        default, every rejection, and every clean promotion) is silent.
+    on_promote_failure:
+        THIS round's failed adapter post-promotion hook, as an
+        ``(adapter_name, generation_id, exception_type)`` triple —
+        threaded by the orchestrator only for a round whose promotion
+        fired an ``on_promote`` that raised or timed out (see
+        :func:`detect_on_promote_hook_failed`). ``None`` (the default,
+        and every round with no hook) is silent.
 
     Returns
     -------
@@ -1454,10 +1839,12 @@ def assess_loop_health(
     findings.extend(detect_refresh_cadence(experiments, max_generations_per_contract))
     findings.extend(detect_margin_below_noise_floor(noise_floor, promote_margin, evidence_gate_on))
     findings.extend(detect_preflight_verdict(preflight, preflight_gate))
-    findings.extend(detect_placebo_promoted(placebo_experiments))
+    findings.extend(detect_placebo_promoted(placebo_experiments, promote_margin, noise_floor))
     findings.extend(detect_infra_outage(infra_outage))
     findings.extend(detect_token_budget_clip(token_clip))
     findings.extend(detect_tree_never_imported(tree_import_gaps))
+    findings.extend(detect_attributable_entry_regression(attributable_regressions))
+    findings.extend(detect_on_promote_hook_failed(on_promote_failure))
 
     healthy = not any(finding.severity in ("warning", "critical") for finding in findings)
     return LoopHealth(
@@ -1478,6 +1865,7 @@ __all__ = [
     "HealthFinding",
     "LoopHealth",
     "assess_loop_health",
+    "detect_attributable_entry_regression",
     "detect_degenerate_scoring",
     "detect_non_differentiating_entry",
     "detect_flat_drift_signal",
@@ -1487,6 +1875,7 @@ __all__ = [
     "detect_generalization_gap",
     "detect_infra_outage",
     "detect_noisy_judge",
+    "detect_on_promote_hook_failed",
     "detect_placebo_promoted",
     "detect_preflight_verdict",
     "detect_refresh_cadence",

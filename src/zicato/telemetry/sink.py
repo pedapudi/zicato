@@ -98,6 +98,39 @@ def make_run_sink_path(
     return path
 
 
+#: The one retained predecessor of a run's ``events.jsonl``. See
+#: :func:`archive_prior_events`.
+EVENTS_PREV_FILENAME = "events.prev.jsonl"
+
+
+def archive_prior_events(path: Path) -> None:
+    """Retain the events file a ``mode="write"`` sink is about to truncate.
+
+    The per-run events file is keyed by ``(epoch, generation, entry)``
+    with no round dimension, so a re-measured unit — the champion under
+    ``--mode full``, which is re-run every round — used to have its raw
+    telemetry truncated by the next round's sink. ``loss.json`` can in
+    principle be re-derived from the events; once they are gone the
+    measurement is unreconstructable by any means (issue #122).
+
+    This renames an EXISTING events file to ``events.prev.jsonl`` before
+    the sink opens, keeping exactly ONE predecessor: the archive is
+    bounded (a champion defending twenty rounds costs two files, not
+    twenty), which is the trade for preserving the immediately-clobbered
+    measurement without unbounded growth. A no-op when nothing is there
+    (the first run of a unit — the common case).
+
+    Best-effort: a failed rename leaves the truncating sink to do what it
+    did before, never an aborted run.
+    """
+    if not path.is_file():
+        return
+    try:
+        path.replace(path.with_name(EVENTS_PREV_FILENAME))
+    except OSError as exc:  # pragma: no cover — unwritable workspace
+        log.debug("events archive skipped for %s: %s", path, exc)
+
+
 def make_run_sink(
     workspace_root: Path,
     epoch_id: str,
@@ -110,7 +143,9 @@ def make_run_sink(
     prior events file rather than corrupting it with appended events
     from a fresh attempt. Run boundaries are file-level by design (see
     the telemetry-path note); the post-run reducer assumes one events
-    file = one run.
+    file = one run. The file it is about to truncate is first retained
+    as ``events.prev.jsonl`` (:func:`archive_prior_events`) so a
+    re-measured unit's prior raw telemetry survives one clobber.
 
     Goldfive is imported lazily here so this module is import-safe even
     when goldfive is not installed. The return type is annotated as
@@ -136,6 +171,7 @@ def make_run_sink(
         ) from exc
 
     path = make_run_sink_path(workspace_root, epoch_id, generation_id, entry_id)
+    archive_prior_events(path)
     return JSONLPersistenceSink(path=path, mode="write")
 
 
@@ -325,6 +361,7 @@ def make_run_sinks(
         return []
 
     path = make_run_sink_path(workspace_root, epoch_id, generation_id, entry_id)
+    archive_prior_events(path)
     sinks: list[Any] = [JSONLPersistenceSink(path=path, mode="write")]
 
     url = resolve_harmonograf_url(workspace_config)
@@ -338,6 +375,8 @@ def make_run_sinks(
 
 
 __all__ = [
+    "archive_prior_events",
+    "EVENTS_PREV_FILENAME",
     "make_run_sink_path",
     "make_run_sink",
     "make_run_sinks",

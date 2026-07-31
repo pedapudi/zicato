@@ -21,7 +21,7 @@ the repo-root `AGENTS.md`.
 ```
 
 Writes `.zicato/config.json` (`{instance_id, created_at}`) and an empty
-`.zicato/lineage.json` (`{"nodes": [], "edges": []}`). Refuses to clobber an
+`.zicato/lineage.json` (`{"epochs": []}`). Refuses to clobber an
 existing workspace without `--force` (and `--force` only rewrites
 config/lineage — it never deletes epoch artifacts).
 

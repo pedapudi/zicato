@@ -38,16 +38,76 @@ def _cache_gen_score(
     epoch_id: str,
     generation_id: str,
     aggregate: dict[str, Any],
+    *,
+    round_index: int | None = None,
 ) -> None:
-    """Persist the generation aggregate so fast-mode can read it later."""
+    """Persist the generation aggregate so fast-mode can read it later.
+
+    ``gen_score.json`` is keyed by ``(epoch, generation)`` with NO round
+    dimension, and a champion defends across many rounds: under
+    ``--mode full`` the champion is re-measured every round and each
+    measurement overwrote the one before it, and within a single field
+    round each matchup's side-write overwrote its predecessor (last
+    matchup wins). The canonical flat file still holds the LATEST
+    aggregate — every reader is untouched — and the outgoing measurement
+    is retained beside it in ``gen_score.history.jsonl``: one JSON line
+    per write, the FULL payload (``per_entry`` included) stamped with the
+    caller's ``round_index`` and a monotonic ``seq``.
+
+    ``round_index`` is the evolve round this measurement was taken in;
+    ``None`` when the caller has no round in scope (the history line then
+    records ``null``, never a fabricated 0).
+
+    Size: the history grows by one aggregate per write — that is per
+    (round × side-write), a handful of KiB per round for a board of
+    ordinary size. It is an append-only record, never read on the hot
+    path, and is not pruned.
+    """
     gdir = generation_dir(workspace_root, epoch_id, generation_id)
     gdir.mkdir(parents=True, exist_ok=True)
     payload = dict(aggregate)
     payload.setdefault("generation_id", generation_id)
+    _append_gen_score_history(gdir, payload, round_index=round_index)
     (gdir / "gen_score.json").write_text(
         json.dumps(payload, default=str, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+#: Append-only archive of every generation aggregate ever written for a
+#: generation, beside the canonical ``gen_score.json`` it shadows.
+GEN_SCORE_HISTORY_FILENAME = "gen_score.history.jsonl"
+
+
+def _append_gen_score_history(
+    generation_dir_path: Path,
+    payload: dict[str, Any],
+    *,
+    round_index: int | None,
+) -> None:
+    """Append one measurement to a generation's ``gen_score.history.jsonl``.
+
+    Best-effort by construction: the history is a record kept ALONGSIDE
+    the canonical write, so an unwritable / unreadable archive must never
+    cost the caller its ``gen_score.json``. The ``seq`` stamp is the
+    count of entries already present, so the file reads back in write
+    order even if two writes land in the same clock tick.
+    """
+    path = generation_dir_path / GEN_SCORE_HISTORY_FILENAME
+    seq = 0
+    try:
+        with open(path, encoding="utf-8") as fh:
+            seq = sum(1 for line in fh if line.strip())
+    except OSError:
+        seq = 0
+    record = dict(payload)
+    record["seq"] = seq
+    record["round_index"] = round_index
+    try:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, default=str, sort_keys=True) + "\n")
+    except OSError as exc:  # pragma: no cover — unwritable workspace
+        log.debug("gen_score history append skipped for %s: %s", path, exc)
 
 
 # ---------------------------------------------------------------------------

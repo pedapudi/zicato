@@ -683,8 +683,11 @@
   .dn-chip-closed { color: var(--v2-ink-faint); }
   /* loop-communication verdict chips: a plateau is caution ink; a below-noise-
    * floor "no detectable signal" is faint (the honest can't-tell state, never
-   * an alarm hue). */
+   * an alarm hue). "stalled" — challengers fielded, none promoted, no floor
+   * measured — is caution alongside the plateau it resembles: it reports
+   * promotions that did not happen, which is an observation, not an alarm. */
   .dn-chip-plateau { color: var(--v2-caution); border-color: var(--v2-caution); }
+  .dn-chip-stalled { color: var(--v2-caution); border-color: var(--v2-caution); }
   .dn-chip-nosignal { color: var(--v2-ink-faint); border-color: var(--v2-rule); }
 
   /* the overrideChip — operator-override provenance riding BESIDE a verdict

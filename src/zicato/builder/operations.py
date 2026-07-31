@@ -1795,7 +1795,7 @@ async def preflight(
     *,
     runs: int | None = None,
 ) -> PreflightResult:
-    """Measure the DRAFT contract's noise floor + achievable signal.
+    """Measure the DRAFT contract's noise floor + degradation signal.
 
     Runs :func:`zicato.epoch.preflight.run_contract_preflight` — the SAME
     measurement ``zicato board preflight`` takes — but against the
